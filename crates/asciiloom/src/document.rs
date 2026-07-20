@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::parser::{AstBlock, AstDocument, HeadingKind};
+use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, SourceBlock};
 use crate::source::TextRange;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,6 +81,45 @@ pub fn source_language_candidates(prefix: &str) -> Vec<&'static str> {
         .into_iter()
         .filter(|language| language.starts_with(&prefix))
         .collect()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocumentElement<'document> {
+    HeadingMarker(&'document Heading),
+    HeadingText(&'document Heading),
+    SourceLanguage(&'document SourceBlock),
+    SourceAttribute(&'document SourceBlock),
+}
+
+pub fn document_element_at(document: &AstDocument, offset: u32) -> Option<DocumentElement<'_>> {
+    document.blocks.iter().find_map(|block| match block {
+        AstBlock::Heading(heading) if contains(heading.marker_range, offset, false) => {
+            Some(DocumentElement::HeadingMarker(heading))
+        }
+        AstBlock::Heading(heading) if contains(heading.text_range, offset, true) => {
+            Some(DocumentElement::HeadingText(heading))
+        }
+        AstBlock::Source(source)
+            if source
+                .language_range
+                .is_some_and(|range| contains(range, offset, true)) =>
+        {
+            Some(DocumentElement::SourceLanguage(source))
+        }
+        AstBlock::Source(source) if contains(source.attribute_range, offset, false) => {
+            Some(DocumentElement::SourceAttribute(source))
+        }
+        _ => None,
+    })
+}
+
+fn contains(range: TextRange, offset: u32, include_end: bool) -> bool {
+    range.start().to_u32() <= offset
+        && if include_end {
+            offset <= range.end().to_u32()
+        } else {
+            offset < range.end().to_u32()
+        }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -255,6 +294,27 @@ mod tests {
             source_language_candidates(""),
             source_language_candidates("")
         );
+    }
+
+    #[test]
+    fn document_element_at_distinguishes_heading_and_source_parts() {
+        let source = "= 題名😀\n\n[source, ru]\n----\ncode\n----\n";
+        let parsed = parse(source).expect("valid source");
+
+        assert!(matches!(
+            super::document_element_at(&parsed.ast, 0),
+            Some(super::DocumentElement::HeadingMarker(_))
+        ));
+        assert!(matches!(
+            super::document_element_at(&parsed.ast, 2),
+            Some(super::DocumentElement::HeadingText(_))
+        ));
+        let language_end = source.find("ru]").expect("language") as u32 + 2;
+        assert!(matches!(
+            super::document_element_at(&parsed.ast, language_end),
+            Some(super::DocumentElement::SourceLanguage(_))
+        ));
+        assert!(super::document_element_at(&parsed.ast, 13).is_none());
     }
 
     #[test]

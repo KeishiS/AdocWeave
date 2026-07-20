@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 
-use asciiloom::document::{DocumentSymbol, SymbolKind, document_symbols};
+use asciiloom::document::{
+    DocumentElement, DocumentSymbol, SymbolKind, document_element_at, document_symbols,
+    generate_heading_ids, source_language_candidates,
+};
 use asciiloom::parser::{AstDocument, parse};
 use asciiloom::source::{LineIndex, PositionEncoding as CorePositionEncoding, TextRange};
 use asciiloom::{diagnostic::Severity, formatter, lint};
@@ -139,6 +142,10 @@ impl Server {
                                 "documentSymbolProvider": true,
                                 "codeActionProvider": true,
                                 "documentFormattingProvider": true
+                                ,"hoverProvider": true,
+                                "completionProvider": {
+                                    "triggerCharacters": [",", " "]
+                                }
                             },
                             "serverInfo": {"name": "asciiloom-lsp", "version": env!("CARGO_PKG_VERSION")}
                         }
@@ -243,6 +250,34 @@ impl Server {
                     .unwrap_or_default();
                 Ok(id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": edits})))
             }
+            "textDocument/hover" => {
+                let uri = string_field(&params["textDocument"], "uri")?;
+                let result = self
+                    .documents
+                    .get(&uri)
+                    .map(|document| {
+                        let offset =
+                            request_offset(document, &params["position"], self.position_encoding)?;
+                        hover(document, offset, self.position_encoding)
+                    })
+                    .transpose()?
+                    .flatten();
+                Ok(id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": result})))
+            }
+            "textDocument/completion" => {
+                let uri = string_field(&params["textDocument"], "uri")?;
+                let result = self
+                    .documents
+                    .get(&uri)
+                    .map(|document| {
+                        let offset =
+                            request_offset(document, &params["position"], self.position_encoding)?;
+                        completion(document, offset)
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": result})))
+            }
             _ => Ok(id.map(|id| {
                 json!({
                     "jsonrpc": "2.0",
@@ -310,6 +345,95 @@ impl Server {
         }));
         Ok(())
     }
+}
+
+fn request_offset(
+    document: &DocumentState,
+    position: &Value,
+    encoding: PositionEncoding,
+) -> Result<u32, String> {
+    let line = position["line"]
+        .as_u64()
+        .ok_or_else(|| "position.line must be an integer".to_owned())? as u32;
+    let character = position["character"]
+        .as_u64()
+        .ok_or_else(|| "position.character must be an integer".to_owned())?
+        as u32;
+    let encoding = match encoding {
+        PositionEncoding::Utf8 => CorePositionEncoding::Utf8,
+        PositionEncoding::Utf16 => CorePositionEncoding::Utf16,
+    };
+    LineIndex::new(&document.text)
+        .map_err(|error| error.to_string())?
+        .position_to_offset(asciiloom::source::Position { line, character }, encoding)
+        .map(|offset| offset.to_u32())
+        .map_err(|error| error.to_string())
+}
+
+fn hover(
+    document: &DocumentState,
+    offset: u32,
+    encoding: PositionEncoding,
+) -> Result<Option<Value>, String> {
+    let Some(element) = document_element_at(&document.ast, offset) else {
+        return Ok(None);
+    };
+    let (heading, range, part) = match element {
+        DocumentElement::HeadingMarker(heading) => (heading, heading.marker_range, "marker"),
+        DocumentElement::HeadingText(heading) => (heading, heading.text_range, "text"),
+        DocumentElement::SourceLanguage(_) | DocumentElement::SourceAttribute(_) => {
+            return Ok(None);
+        }
+    };
+    let id = generate_heading_ids(&document.ast)
+        .into_iter()
+        .find(|candidate| candidate.range == heading.text_range)
+        .map(|candidate| candidate.id)
+        .unwrap_or_else(|| "_section".to_owned());
+    let level = match heading.kind {
+        asciiloom::parser::HeadingKind::DocumentTitle => "document title".to_owned(),
+        asciiloom::parser::HeadingKind::Section { level } => {
+            format!("section level {level}")
+        }
+    };
+    let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
+    Ok(Some(json!({
+        "contents": {
+            "kind": "markdown",
+            "value": format!("**{level}**  \nGenerated ID: `{id}`  \nPart: {part}")
+        },
+        "range": range_to_lsp(range, &line_index, encoding)?
+    })))
+}
+
+fn completion(document: &DocumentState, offset: u32) -> Result<Vec<Value>, String> {
+    let Some(element) = document_element_at(&document.ast, offset) else {
+        return Ok(Vec::new());
+    };
+    let source = match element {
+        DocumentElement::SourceLanguage(source) | DocumentElement::SourceAttribute(source) => {
+            source
+        }
+        DocumentElement::HeadingMarker(_) | DocumentElement::HeadingText(_) => {
+            return Ok(Vec::new());
+        }
+    };
+    let offset = offset as usize;
+    let attribute_start = source.attribute_range.start().to_usize();
+    if offset > document.text.len() || !document.text[attribute_start..offset].contains(',') {
+        return Ok(Vec::new());
+    }
+    let prefix = source
+        .language_range
+        .and_then(|range| {
+            let start = range.start().to_usize();
+            (start <= offset).then(|| &document.text[start..offset])
+        })
+        .unwrap_or("");
+    Ok(source_language_candidates(prefix)
+        .into_iter()
+        .map(|language| json!({"label": language, "kind": 12}))
+        .collect())
 }
 
 fn symbol_to_lsp(
@@ -886,5 +1010,105 @@ mod tests {
             "file:///format.adoc",
         );
         assert_eq!(second, json!([]));
+    }
+
+    fn position_request(
+        server: &mut Server,
+        method: &str,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> serde_json::Value {
+        server
+            .handle(&json!({
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": method,
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": line, "character": character}
+                }
+            }))
+            .expect("position request succeeds")
+            .expect("response")["result"]
+            .clone()
+    }
+
+    #[test]
+    fn hover_distinguishes_heading_marker_text_and_unrelated_positions() {
+        let mut server = Server::default();
+        open_with_diagnostic(&mut server, "file:///hover.adoc", "= 題名😀\n\nparagraph\n");
+
+        let marker = position_request(
+            &mut server,
+            "textDocument/hover",
+            "file:///hover.adoc",
+            0,
+            0,
+        );
+        let text = position_request(
+            &mut server,
+            "textDocument/hover",
+            "file:///hover.adoc",
+            0,
+            4,
+        );
+        let outside = position_request(
+            &mut server,
+            "textDocument/hover",
+            "file:///hover.adoc",
+            2,
+            2,
+        );
+
+        assert!(
+            marker["contents"]["value"]
+                .as_str()
+                .expect("hover")
+                .contains("Part: marker")
+        );
+        assert!(
+            text["contents"]["value"]
+                .as_str()
+                .expect("hover")
+                .contains("Generated ID")
+        );
+        assert_eq!(outside, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn completion_filters_source_languages_and_ignores_code_or_paragraphs() {
+        let mut server = Server::default();
+        open_with_diagnostic(
+            &mut server,
+            "file:///completion.adoc",
+            "[source, ru]\n----\ncode\n----\n\nparagraph\n",
+        );
+
+        let language = position_request(
+            &mut server,
+            "textDocument/completion",
+            "file:///completion.adoc",
+            0,
+            11,
+        );
+        let code = position_request(
+            &mut server,
+            "textDocument/completion",
+            "file:///completion.adoc",
+            2,
+            2,
+        );
+        let paragraph = position_request(
+            &mut server,
+            "textDocument/completion",
+            "file:///completion.adoc",
+            5,
+            3,
+        );
+
+        assert_eq!(language, json!([{"label": "rust", "kind": 12}]));
+        assert_eq!(code, json!([]));
+        assert_eq!(paragraph, json!([]));
     }
 }
