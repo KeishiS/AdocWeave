@@ -88,7 +88,13 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
             .collect::<Vec<_>>();
         for anchor in &attached {
             targets.push(ReferenceTarget {
-                kind: ReferenceTargetKind::ExplicitAnchor,
+                kind: match block {
+                    AstBlock::Heading(heading) => match heading.kind {
+                        HeadingKind::DocumentTitle => ReferenceTargetKind::DocumentTitle,
+                        HeadingKind::Section { .. } => ReferenceTargetKind::Section,
+                    },
+                    _ => ReferenceTargetKind::ExplicitAnchor,
+                },
                 id: anchor.id.clone(),
                 label: anchor.label.clone().unwrap_or_else(|| block_label(block)),
                 id_range: anchor.id_range,
@@ -464,7 +470,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 (ReferenceTargetKind::DocumentTitle, "_title", "Title"),
-                (ReferenceTargetKind::ExplicitAnchor, "stable", "表示名"),
+                (ReferenceTargetKind::Section, "stable", "表示名"),
                 (
                     ReferenceTargetKind::ExplicitAnchor,
                     "paragraph",
