@@ -46,7 +46,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
 #[test]
 fn release_contract_versions_are_explicit_and_independent() {
     assert_eq!(adocweave::CORE_PROFILE_VERSION, 1);
-    assert_eq!(adocweave::CORE_API_VERSION, 5);
+    assert_eq!(adocweave::CORE_API_VERSION, 6);
     assert_eq!(adocweave::html::HTML_CONTRACT_VERSION, 2);
     assert_eq!(adocweave::projection::PROJECTION_CONTRACT_VERSION, 1);
     assert_eq!(adocweave::conformance::CONFORMANCE_CONTRACT_VERSION, 1);

@@ -15,7 +15,7 @@
 |構文認識、AST意味、置換、既定診断またはstrict・permissive動作の非互換変更
 
 |Rust core API
-|`CORE_API_VERSION = 5`
+|`CORE_API_VERSION = 6`
 |公開Rust型、関数、エラーまたは意味契約の非互換変更
 
 |HTML
@@ -79,6 +79,8 @@ modeでも未知構文をraw HTMLとして通過させない。
 
 ホストは明示的に小さい値を指定できる。同じprofileを名乗るruntimeは、同じ入力と同じ
 `ParseOptions`に対して同じ上限判断を行わなければならない。
+公開上限値はruntimeのword sizeに依存しない`u32`で表す。入力長やnode数を扱う内部の
+`usize`との比較では、`u32`から損失なく変換し、切り詰めるcastを行わない。
 
 == crateのSemVer
 

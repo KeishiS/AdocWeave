@@ -118,10 +118,7 @@ impl AnalysisCacheKey {
             max_attributes,
             max_diagnostics,
         ] {
-            hash_u64(
-                &mut hasher,
-                u64::try_from(value).expect("usize always fits u64 on supported targets"),
-            );
+            hash_u64(&mut hasher, u64::from(value));
         }
         hash_u64(
             &mut hasher,
@@ -305,7 +302,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "c8615ce799730c8d70477d191a9b838ab82dfc6f9e49c8dbe1a5df107a2c8e88"
+            "47eb4508839a5c8b23a054a112d7613926b02f3838240ee161c4a8f9c82b7e1b"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

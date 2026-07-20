@@ -39,4 +39,8 @@ Core Profile 1公開後の実装を見直し、compilerの表示実装やruntime
 == 進捗
 
 持続可能性レビューを実施し、上記4点を改善対象として確定した。fuzz smokeのログ制御から
-着手した。
+着手した。成功時はtargetごとに1行だけを表示し、失敗時だけ保存した完全ログを出力する。
+
+`ProcessingLimits`の全fieldと`LimitExceeded.limit`を`u32`、実測値を`u64`へ変更した。
+これによりnativeとWASMで同じ公開値を表現し、WASM adapterに存在した切り詰めcastを
+除去した。この破壊的公開型変更により`CORE_API_VERSION`を6へ更新した。

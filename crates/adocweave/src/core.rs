@@ -16,7 +16,7 @@ use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
 use crate::source::{LineIndex, PositionError};
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 5;
+pub const CORE_API_VERSION: u16 = 6;
 /// Current host-independent syntax and diagnostic behavior profile.
 pub const CORE_PROFILE_VERSION: u16 = 1;
 
@@ -130,8 +130,8 @@ pub enum ParseError {
     },
     LimitExceeded {
         resource: &'static str,
-        limit: usize,
-        actual: usize,
+        limit: u32,
+        actual: u64,
     },
     Position(PositionError),
     UnsupportedSyntax,
@@ -261,9 +261,9 @@ fn analyze_inner(
     let ParsedDocument { cst, ast } = parser::parse_shared_cancellable(
         Arc::clone(&shared_source),
         &parser::ParseConfig {
-            max_inline_depth: options.limits.max_inline_depth,
-            max_list_depth: options.limits.max_list_depth,
-            max_formula_bytes: options.limits.max_formula_bytes,
+            max_inline_depth: limit_to_usize(options.limits.max_inline_depth),
+            max_list_depth: limit_to_usize(options.limits.max_list_depth),
+            max_formula_bytes: limit_to_usize(options.limits.max_formula_bytes),
         },
         &|| cancellation.is_cancelled(),
     )
@@ -291,9 +291,9 @@ fn analyze_inner(
     }
 
     let mut lint_config = LintConfig::default();
-    lint_config.max_diagnostics = options.limits.max_diagnostics;
-    lint_config.max_inline_depth = options.limits.max_inline_depth;
-    lint_config.max_formula_bytes = options.limits.max_formula_bytes;
+    lint_config.max_diagnostics = limit_to_usize(options.limits.max_diagnostics);
+    lint_config.max_inline_depth = limit_to_usize(options.limits.max_inline_depth);
+    lint_config.max_formula_bytes = limit_to_usize(options.limits.max_formula_bytes);
     lint_config.protected_attributes = options.protected_attributes.clone();
     lint_config.url_policy = options.url_policy.clone();
     lint_config.protected_attribute_severity = if options.profile.mode == SyntaxMode::Strict {
@@ -347,16 +347,20 @@ fn collect_references(document: &parser::AstDocument) -> Vec<crate::inline::Refe
     output
 }
 
-fn enforce_limit(resource: &'static str, limit: usize, actual: usize) -> Result<(), ParseError> {
-    if actual > limit {
+fn enforce_limit(resource: &'static str, limit: u32, actual: usize) -> Result<(), ParseError> {
+    if actual > limit_to_usize(limit) {
         Err(ParseError::LimitExceeded {
             resource,
             limit,
-            actual,
+            actual: u64::try_from(actual).expect("usize fits u64 on supported targets"),
         })
     } else {
         Ok(())
     }
+}
+
+fn limit_to_usize(limit: u32) -> usize {
+    usize::try_from(limit).expect("u32 fits usize on supported targets")
 }
 
 #[cfg(test)]
@@ -452,7 +456,7 @@ mod tests {
         let crate::parser::AstBlock::List(list) = &analysis.ast.blocks[0] else {
             panic!("expected list");
         };
-        assert!(depth(list) <= options.limits.max_list_depth);
+        assert!(depth(list) <= super::limit_to_usize(options.limits.max_list_depth));
         assert!(
             analysis
                 .diagnostics

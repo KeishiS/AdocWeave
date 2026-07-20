@@ -57,8 +57,8 @@ pub enum ProcessError {
     Position(source::PositionError),
     LimitExceeded {
         resource: &'static str,
-        limit: usize,
-        actual: usize,
+        limit: u32,
+        actual: u64,
     },
     UnsupportedSyntax,
     InternalInvariant,
@@ -240,12 +240,13 @@ fn process_error_from_parse(error: core::ParseError) -> ProcessError {
     }
 }
 
-fn enforce_limit(resource: &'static str, limit: usize, actual: usize) -> Result<(), ProcessError> {
-    if actual > limit {
+fn enforce_limit(resource: &'static str, limit: u32, actual: usize) -> Result<(), ProcessError> {
+    let comparable_limit = usize::try_from(limit).expect("u32 fits usize on supported targets");
+    if actual > comparable_limit {
         Err(ProcessError::LimitExceeded {
             resource,
             limit,
-            actual,
+            actual: u64::try_from(actual).expect("usize fits u64 on supported targets"),
         })
     } else {
         Ok(())
@@ -326,7 +327,7 @@ mod tests {
         );
     }
 
-    fn limits(input: usize, output: usize, line: usize) -> ProcessConfig {
+    fn limits(input: u32, output: u32, line: u32) -> ProcessConfig {
         ProcessConfig {
             limits: ProcessingLimits {
                 max_input_bytes: input,

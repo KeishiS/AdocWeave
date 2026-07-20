@@ -11,17 +11,17 @@ pub enum SyntaxMode {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProcessingLimits {
-    pub max_input_bytes: usize,
-    pub max_output_bytes: usize,
-    pub max_line_bytes: usize,
-    pub max_list_depth: usize,
-    pub max_inline_depth: usize,
-    pub max_formula_bytes: usize,
-    pub max_blocks: usize,
-    pub max_nodes: usize,
-    pub max_references: usize,
-    pub max_attributes: usize,
-    pub max_diagnostics: usize,
+    pub max_input_bytes: u32,
+    pub max_output_bytes: u32,
+    pub max_line_bytes: u32,
+    pub max_list_depth: u32,
+    pub max_inline_depth: u32,
+    pub max_formula_bytes: u32,
+    pub max_blocks: u32,
+    pub max_nodes: u32,
+    pub max_references: u32,
+    pub max_attributes: u32,
+    pub max_diagnostics: u32,
 }
 
 impl Default for ProcessingLimits {

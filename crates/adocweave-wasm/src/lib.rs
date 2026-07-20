@@ -81,17 +81,17 @@ impl Default for WasmLimits {
 impl From<ProcessingLimits> for WasmLimits {
     fn from(value: ProcessingLimits) -> Self {
         Self {
-            max_input_bytes: value.max_input_bytes as u32,
-            max_output_bytes: value.max_output_bytes as u32,
-            max_line_bytes: value.max_line_bytes as u32,
-            max_list_depth: value.max_list_depth as u32,
-            max_inline_depth: value.max_inline_depth as u32,
-            max_formula_bytes: value.max_formula_bytes as u32,
-            max_blocks: value.max_blocks as u32,
-            max_nodes: value.max_nodes as u32,
-            max_references: value.max_references as u32,
-            max_attributes: value.max_attributes as u32,
-            max_diagnostics: value.max_diagnostics as u32,
+            max_input_bytes: value.max_input_bytes,
+            max_output_bytes: value.max_output_bytes,
+            max_line_bytes: value.max_line_bytes,
+            max_list_depth: value.max_list_depth,
+            max_inline_depth: value.max_inline_depth,
+            max_formula_bytes: value.max_formula_bytes,
+            max_blocks: value.max_blocks,
+            max_nodes: value.max_nodes,
+            max_references: value.max_references,
+            max_attributes: value.max_attributes,
+            max_diagnostics: value.max_diagnostics,
         }
     }
 }
@@ -99,17 +99,17 @@ impl From<ProcessingLimits> for WasmLimits {
 impl From<WasmLimits> for ProcessingLimits {
     fn from(value: WasmLimits) -> Self {
         Self {
-            max_input_bytes: value.max_input_bytes as usize,
-            max_output_bytes: value.max_output_bytes as usize,
-            max_line_bytes: value.max_line_bytes as usize,
-            max_list_depth: value.max_list_depth as usize,
-            max_inline_depth: value.max_inline_depth as usize,
-            max_formula_bytes: value.max_formula_bytes as usize,
-            max_blocks: value.max_blocks as usize,
-            max_nodes: value.max_nodes as usize,
-            max_references: value.max_references as usize,
-            max_attributes: value.max_attributes as usize,
-            max_diagnostics: value.max_diagnostics as usize,
+            max_input_bytes: value.max_input_bytes,
+            max_output_bytes: value.max_output_bytes,
+            max_line_bytes: value.max_line_bytes,
+            max_list_depth: value.max_list_depth,
+            max_inline_depth: value.max_inline_depth,
+            max_formula_bytes: value.max_formula_bytes,
+            max_blocks: value.max_blocks,
+            max_nodes: value.max_nodes,
+            max_references: value.max_references,
+            max_attributes: value.max_attributes,
+            max_diagnostics: value.max_diagnostics,
         }
     }
 }
@@ -396,7 +396,9 @@ mod tests {
 
     #[test]
     fn wasm_api_large_input_uses_the_same_core_limit() {
-        let source = "x".repeat(ParseOptions::default().limits.max_input_bytes + 1);
+        let max_input = usize::try_from(ParseOptions::default().limits.max_input_bytes)
+            .expect("u32 fits usize on supported targets");
+        let source = "x".repeat(max_input + 1);
         let error = process_request(request(&source), &NeverCancel).expect_err("limit");
         assert_eq!(error.code, "limit-exceeded");
     }
