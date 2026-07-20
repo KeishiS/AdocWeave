@@ -6,7 +6,7 @@ use std::io::{self, BufRead, Write};
 use asciiloom::document::{DocumentSymbol, SymbolKind, document_symbols};
 use asciiloom::parser::{AstDocument, parse};
 use asciiloom::source::{LineIndex, PositionEncoding as CorePositionEncoding, TextRange};
-use asciiloom::{diagnostic::Severity, lint};
+use asciiloom::{diagnostic::Severity, formatter, lint};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,7 +136,9 @@ impl Server {
                                     "change": 1,
                                     "save": {"includeText": true}
                                 },
-                                "documentSymbolProvider": true
+                                "documentSymbolProvider": true,
+                                "codeActionProvider": true,
+                                "documentFormattingProvider": true
                             },
                             "serverInfo": {"name": "asciiloom-lsp", "version": env!("CARGO_PKG_VERSION")}
                         }
@@ -220,6 +222,26 @@ impl Server {
                     .transpose()?
                     .unwrap_or_default();
                 Ok(id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": result})))
+            }
+            "textDocument/codeAction" => {
+                let uri = string_field(&params["textDocument"], "uri")?;
+                let actions = self
+                    .documents
+                    .get(&uri)
+                    .map(|document| code_actions(document, self.position_encoding))
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": actions})))
+            }
+            "textDocument/formatting" => {
+                let uri = string_field(&params["textDocument"], "uri")?;
+                let edits = self
+                    .documents
+                    .get(&uri)
+                    .map(|document| formatting_edits(document, self.position_encoding))
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": edits})))
             }
             _ => Ok(id.map(|id| {
                 json!({
@@ -332,6 +354,64 @@ fn range_to_lsp(
         "start": {"line": start.line, "character": start.character},
         "end": {"line": end.line, "character": end.character}
     }))
+}
+
+fn code_actions(
+    document: &DocumentState,
+    encoding: PositionEncoding,
+) -> Result<Vec<Value>, String> {
+    let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
+    let diagnostics = lint::lint(&document.text, &lint::LintConfig::default())
+        .map_err(|error| error.to_string())?;
+    let mut actions = Vec::new();
+    for diagnostic in diagnostics {
+        for fix in diagnostic.fixes {
+            let edits = fix
+                .edits()
+                .iter()
+                .map(|edit| {
+                    Ok(json!({
+                        "range": range_to_lsp(edit.range, &line_index, encoding)?,
+                        "newText": edit.replacement
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            actions.push(json!({
+                "title": fix.title,
+                "kind": "quickfix",
+                "isPreferred": fix.applicability == asciiloom::diagnostic::Applicability::Always,
+                "edit": {
+                    "documentChanges": [{
+                        "textDocument": {
+                            "uri": document.uri,
+                            "version": document.version
+                        },
+                        "edits": edits
+                    }]
+                }
+            }));
+        }
+    }
+    Ok(actions)
+}
+
+fn formatting_edits(
+    document: &DocumentState,
+    encoding: PositionEncoding,
+) -> Result<Vec<Value>, String> {
+    let output = formatter::format(&document.text, &formatter::FormatConfig::default())
+        .map_err(|error| error.to_string())?;
+    let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
+    output
+        .edits
+        .iter()
+        .map(|edit| {
+            Ok(json!({
+                "range": range_to_lsp(edit.range, &line_index, encoding)?,
+                "newText": edit.replacement
+            }))
+        })
+        .collect()
 }
 
 fn negotiate_encoding(params: &Value) -> PositionEncoding {
@@ -701,5 +781,110 @@ mod tests {
             request_symbols(&mut server, "file:///missing.adoc"),
             json!([])
         );
+    }
+
+    fn request(server: &mut Server, method: &str, uri: &str) -> serde_json::Value {
+        server
+            .handle(&json!({
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": method,
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 4, "insertSpaces": true},
+                    "context": {"diagnostics": []}
+                }
+            }))
+            .expect("request succeeds")
+            .expect("response")["result"]
+            .clone()
+    }
+
+    fn apply_lsp_edits(source: &str, edits: &[serde_json::Value]) -> String {
+        use asciiloom::source::{LineIndex, Position, PositionEncoding as CorePositionEncoding};
+
+        let index = LineIndex::new(source).expect("line index");
+        let mut byte_edits = edits
+            .iter()
+            .map(|edit| {
+                let range = &edit["range"];
+                let position = |value: &serde_json::Value| Position {
+                    line: value["line"].as_u64().expect("line") as u32,
+                    character: value["character"].as_u64().expect("character") as u32,
+                };
+                let start = index
+                    .position_to_offset(position(&range["start"]), CorePositionEncoding::Utf16)
+                    .expect("start")
+                    .to_usize();
+                let end = index
+                    .position_to_offset(position(&range["end"]), CorePositionEncoding::Utf16)
+                    .expect("end")
+                    .to_usize();
+                (
+                    start,
+                    end,
+                    edit["newText"].as_str().expect("newText").to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        byte_edits.sort_by_key(|(start, end, _)| (*start, *end));
+        let mut output = source.to_owned();
+        for (start, end, replacement) in byte_edits.into_iter().rev() {
+            output.replace_range(start..end, &replacement);
+        }
+        output
+    }
+
+    #[test]
+    fn code_action_exposes_safe_fixes_with_current_document_version() {
+        let mut server = Server::default();
+        open_with_diagnostic(&mut server, "file:///fix.adoc", "==Title\ntext  \n");
+        let actions = request(&mut server, "textDocument/codeAction", "file:///fix.adoc");
+
+        assert_eq!(actions.as_array().expect("actions").len(), 2);
+        assert!(actions.as_array().expect("actions").iter().all(|action| {
+            action["edit"]["documentChanges"][0]["textDocument"]["version"] == 1
+        }));
+        let titles = actions
+            .as_array()
+            .expect("actions")
+            .iter()
+            .map(|action| action["title"].as_str().expect("title"))
+            .collect::<Vec<_>>();
+        assert!(titles.contains(&"insert a space after heading marker"));
+        assert!(titles.contains(&"remove trailing whitespace"));
+    }
+
+    #[test]
+    fn formatting_is_idempotent_and_preserves_literal_body() {
+        let source = "before  \n\n....\ncode  \n....\n\nafter  ";
+        let mut server = Server::default();
+        open_with_diagnostic(&mut server, "file:///format.adoc", source);
+        let edits = request(
+            &mut server,
+            "textDocument/formatting",
+            "file:///format.adoc",
+        );
+        let edits = edits.as_array().expect("edits");
+        assert!(edits.iter().all(|edit| edit["range"]["start"]["line"] != 3));
+        let formatted = apply_lsp_edits(source, edits);
+        assert!(formatted.contains("....\ncode  \n....\n"));
+
+        server
+            .handle(&notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": {"uri": "file:///format.adoc", "version": 2},
+                    "contentChanges": [{"text": formatted}]
+                }),
+            ))
+            .expect("change succeeds");
+        server.drain_outgoing().for_each(drop);
+        let second = request(
+            &mut server,
+            "textDocument/formatting",
+            "file:///format.adoc",
+        );
+        assert_eq!(second, json!([]));
     }
 }
