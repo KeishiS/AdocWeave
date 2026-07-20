@@ -11,14 +11,20 @@
 * recognizerの結果をsemantic `Inline`へ変換するbuilderを分離する。
 * link、xref、属性参照およびSTEM macroの共通走査制御と個別payload解析を分離する。
 * 回復時の再開位置を型で表し、同じbyteを無制限に再走査しないことを保証する。
+* macro builderはsemantic nodeだけでなく、再帰的に解析したlabelの診断も呼び出し元へ返す。
+* 完全macroと不完全macroを同じ走査器で分類し、後段のheuristicな再走査を削除する。
 * 現在のCore Profile 1のAST、診断、HTML、Formatterおよびprojectionを維持する。
 
 == 完了条件
 
 * 既存の全インライン構文と不完全入力が新しいrecognizer経由で処理される。
 * recognizer単体テストが境界、escape、入れ子上限、Unicodeおよび不完全macroを網羅する。
-* 1回の走査が入力長に対して有界であることをproperty testまたは計測可能な不変条件で示す。
+* 文字検査回数を計測できる走査器を用い、構文候補が密集した不正入力でも入力byte数に対して
+  線形の上限を持つことをproperty testで示す。
+* macro label内の不完全書式、入れ子上限および不完全macroが外側の診断へ失われず伝播する。
 * nativeとWASMのconformance fixtureが一致する。
+* 少なくとも一つの包括的fixtureについて、nativeとWASMの双方から独立した期待AST、診断、
+  projectionおよびHTMLを比較する。
 * `cargo make release-check`が成功する。
 
 == 依存関係
@@ -41,4 +47,14 @@ formula、短縮xref、`xref:`、`link:`およびURLの構文範囲を`MacroToke
 小さい処理へ分割し、追加Clippy検査でインライン実装の`too_many_lines`警告がなくなった。
 
 既定設定の`cargo make release-check`は2026-07-20に成功した。Core 153 tests、実WASMとの
-9件の適合性比較、3 target各5秒のfuzz smokeを含む。本Issueは完了した。
+9件の適合性比較、3 target各5秒のfuzz smokeを含む。
+
+その後の批判的レビューで、従来の回復テストはcursorの前進だけを検査し、候補探索がsuffixを
+再走査する実装の文字検査量を証明していないことが判明した。また、link、xrefおよび短縮xrefの
+labelを再帰解析した際に`InlineParseOutput.problems`を破棄していた。builderの共通結果型で
+label診断を伝播し、escaped macroではliteral内容の診断を採用しない修正と回帰試験を追加した。
+
+nativeとWASMの比較はruntime adapter差分を検出するが、同じRustコアに共有された意味バグの
+独立なoracleではない。さらに公開ASTへ直接`Serialize`をderiveしたschemaは、semantic APIと
+適合性契約を不要に密結合する。Issue 047を再開し、単一走査化、型付きmacro token、明示的な
+version付きconformance DTOおよび独立golden fixtureまでを残作業とする。

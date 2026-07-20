@@ -187,39 +187,20 @@ fn parse_segment(
     while let Some(candidate) = next_candidate(value, cursor) {
         match candidate {
             InlineCandidate::Macro { open } => {
-                if let Some((inline, end)) = parse_macro(value, range, config, depth, open) {
-                    if let Inline::Formula(formula) = &inline {
-                        if !formula.closed {
-                            output.problems.push(InlineProblem {
-                                kind: InlineProblemKind::UnclosedStem,
-                                range: formula.range,
-                            });
-                        }
-                        if formula.value.is_empty() {
-                            output.problems.push(InlineProblem {
-                                kind: InlineProblemKind::EmptyStem,
-                                range: formula.content_range,
-                            });
-                        }
-                        if formula.value.len() > config.max_formula_bytes {
-                            output.problems.push(InlineProblem {
-                                kind: InlineProblemKind::StemSizeLimitExceeded,
-                                range: formula.content_range,
-                            });
-                        }
-                    }
+                if let Some(built) = parse_macro(value, range, config, depth, open) {
                     if is_escaped(value, open) {
                         push_text(&mut output.inlines, value, range, plain_start, open - 1);
                         output.inlines.push(Inline::Text(InlineText {
-                            range: subrange(range, open - 1, end),
-                            value: value[open..end].to_owned(),
+                            range: subrange(range, open - 1, built.end),
+                            value: value[open..built.end].to_owned(),
                         }));
                     } else {
                         push_text(&mut output.inlines, value, range, plain_start, open);
-                        output.inlines.push(inline);
+                        output.inlines.push(built.inline);
+                        output.problems.extend(built.problems);
                     }
-                    cursor = end;
-                    plain_start = end;
+                    cursor = built.end;
+                    plain_start = built.end;
                     continue;
                 }
                 cursor = next_char_boundary(value, open);
@@ -296,8 +277,9 @@ enum MarkerRecognition {
     },
 }
 
-struct BuiltMarker {
+struct BuiltInline {
     inline: Inline,
+    end: usize,
     problems: Vec<InlineProblem>,
 }
 
@@ -330,7 +312,7 @@ fn build_marker(
     config: InlineParseConfig,
     depth: usize,
     token: MarkerToken,
-) -> BuiltMarker {
+) -> BuiltInline {
     let MarkerToken {
         open,
         close,
@@ -378,7 +360,11 @@ fn build_marker(
         },
         _ => unreachable!("only supported markers are returned"),
     };
-    BuiltMarker { inline, problems }
+    BuiltInline {
+        inline,
+        end,
+        problems,
+    }
 }
 
 fn valid_attribute_name(name: &str) -> bool {
@@ -415,7 +401,7 @@ fn parse_macro(
     config: InlineParseConfig,
     depth: usize,
     open: usize,
-) -> Option<(Inline, usize)> {
+) -> Option<BuiltInline> {
     let token = recognize_macro(value, open)?;
     Some(build_macro(value, range, config, depth, token))
 }
@@ -564,7 +550,7 @@ fn build_macro(
     config: InlineParseConfig,
     depth: usize,
     token: MacroToken,
-) -> (Inline, usize) {
+) -> BuiltInline {
     match token {
         MacroToken::Formula {
             open,
@@ -572,16 +558,39 @@ fn build_macro(
             content_end,
             end,
             closed,
-        } => (
-            Inline::Formula(InlineFormula {
+        } => {
+            let formula = InlineFormula {
                 range: subrange(range, open, end),
                 content_range: subrange(range, content_start, content_end),
                 language: MathLanguage::Latex,
                 value: value[content_start..content_end].to_owned(),
                 closed,
-            }),
-            end,
-        ),
+            };
+            let mut problems = Vec::new();
+            if !formula.closed {
+                problems.push(InlineProblem {
+                    kind: InlineProblemKind::UnclosedStem,
+                    range: formula.range,
+                });
+            }
+            if formula.value.is_empty() {
+                problems.push(InlineProblem {
+                    kind: InlineProblemKind::EmptyStem,
+                    range: formula.content_range,
+                });
+            }
+            if formula.value.len() > config.max_formula_bytes {
+                problems.push(InlineProblem {
+                    kind: InlineProblemKind::StemSizeLimitExceeded,
+                    range: formula.content_range,
+                });
+            }
+            BuiltInline {
+                inline: Inline::Formula(formula),
+                end,
+                problems,
+            }
+        }
         MacroToken::ShortReference { .. } | MacroToken::Xref { .. } => {
             build_reference_macro(value, range, config, depth, token)
         }
@@ -597,7 +606,7 @@ fn build_reference_macro(
     config: InlineParseConfig,
     depth: usize,
     token: MacroToken,
-) -> (Inline, usize) {
+) -> BuiltInline {
     match token {
         MacroToken::ShortReference {
             open,
@@ -611,17 +620,20 @@ fn build_reference_macro(
                 .map_or((target, None), |(anchor, label)| (anchor, Some(label)));
             let target_range = subrange(range, target_start, target_start + anchor.len());
             let label_range = label.map(|label| subrange(range, close - label.len(), close));
-            let label_inlines = label.map_or_else(Vec::new, |label| {
+            let label_output = label.map(|label| {
                 parse_segment(
                     label,
                     label_range.expect("label has range"),
                     config,
                     depth + 1,
                 )
-                .inlines
             });
-            (
-                Inline::Reference(Reference {
+            let (label_inlines, problems) = label_output.map_or_else(
+                || (Vec::new(), Vec::new()),
+                |output| (output.inlines, output.problems),
+            );
+            BuiltInline {
+                inline: Inline::Reference(Reference {
                     range: subrange(range, open, end),
                     target_range,
                     target_source: anchor.to_owned(),
@@ -637,7 +649,8 @@ fn build_reference_macro(
                     label: label_inlines,
                 }),
                 end,
-            )
+                problems,
+            }
         }
         MacroToken::Xref {
             open,
@@ -650,18 +663,19 @@ fn build_reference_macro(
             let label_text = &value[bracket + 1..close];
             let target_range = subrange(range, target_start, bracket);
             let label_range = subrange(range, bracket + 1, close);
-            let label = parse_segment(label_text, label_range, config, depth + 1).inlines;
-            (
-                Inline::Reference(Reference {
+            let label = parse_segment(label_text, label_range, config, depth + 1);
+            BuiltInline {
+                inline: Inline::Reference(Reference {
                     range: subrange(range, open, end),
                     target_range,
                     target_source: target.to_owned(),
                     destination: parse_reference_destination(target, target_range),
                     label_range: Some(label_range),
-                    label,
+                    label: label.inlines,
                 }),
                 end,
-            )
+                problems: label.problems,
+            }
         }
         _ => unreachable!("only reference tokens are passed"),
     }
@@ -673,7 +687,7 @@ fn build_link_macro(
     config: InlineParseConfig,
     depth: usize,
     token: MacroToken,
-) -> (Inline, usize) {
+) -> BuiltInline {
     match token {
         MacroToken::ExplicitLink {
             open,
@@ -685,24 +699,20 @@ fn build_link_macro(
             let target_range = subrange(range, target_start, bracket);
             let label_range = subrange(range, bracket + 1, close);
             let target = value[target_start..bracket].to_owned();
-            (
-                Inline::Link(Link {
+            let label = parse_segment(&value[bracket + 1..close], label_range, config, depth + 1);
+            BuiltInline {
+                inline: Inline::Link(Link {
                     range: subrange(range, open, end),
                     target_range,
                     target_attributes: attribute_uses(&target, target_range),
                     target_source: target.clone(),
                     target,
                     label_range: Some(label_range),
-                    label: parse_segment(
-                        &value[bracket + 1..close],
-                        label_range,
-                        config,
-                        depth + 1,
-                    )
-                    .inlines,
+                    label: label.inlines,
                 }),
                 end,
-            )
+                problems: label.problems,
+            }
         }
         MacroToken::Url {
             open,
@@ -710,17 +720,16 @@ fn build_link_macro(
             label: label_offsets,
             end,
         } => {
-            let (label_range, label) =
-                label_offsets.map_or((None, Vec::new()), |(start, close)| {
+            let (label_range, label, problems) =
+                label_offsets.map_or((None, Vec::new(), Vec::new()), |(start, close)| {
                     let label_range = subrange(range, start, close);
-                    (
-                        Some(label_range),
-                        parse_segment(&value[start..close], label_range, config, depth + 1).inlines,
-                    )
+                    let output =
+                        parse_segment(&value[start..close], label_range, config, depth + 1);
+                    (Some(label_range), output.inlines, output.problems)
                 });
             let target_range = subrange(range, open, target_end);
-            (
-                Inline::Link(Link {
+            BuiltInline {
+                inline: Inline::Link(Link {
                     range: subrange(range, open, end),
                     target_range,
                     target_source: value[open..target_end].to_owned(),
@@ -730,7 +739,8 @@ fn build_link_macro(
                     label,
                 }),
                 end,
-            )
+                problems,
+            }
         }
         _ => unreachable!("only link tokens are passed"),
     }
@@ -1113,6 +1123,42 @@ mod tests {
             }
         ));
         assert!(output.problems.is_empty());
+    }
+
+    #[test]
+    fn macro_labels_propagate_nested_inline_problems() {
+        for (source, expected) in [
+            (
+                "https://example.com[*open]",
+                InlineProblemKind::UnclosedStrong,
+            ),
+            (
+                "xref:other.adoc[_open]",
+                InlineProblemKind::UnclosedEmphasis,
+            ),
+            ("<<target,`open>>", InlineProblemKind::UnclosedMonospace),
+        ] {
+            let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+            assert!(
+                output
+                    .problems
+                    .iter()
+                    .any(|problem| problem.kind == expected),
+                "missing {expected:?} for {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn escaped_macros_do_not_report_literal_contents_as_syntax() {
+        let source = "\\stem:[";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+
+        assert!(output.problems.is_empty());
+        assert!(matches!(
+            output.inlines.as_slice(),
+            [Inline::Text(text)] if text.value == "stem:["
+        ));
     }
 
     #[test]

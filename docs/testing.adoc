@@ -66,10 +66,15 @@ Issue 040で、xref:../fixtures/conformance/cases.json[共通conformance manifes
 構造・順序、診断JSON、シンボルJSON、projection JSONまたはHTMLの意味を変更する場合は、
 fixtureの`contractImpact`を再判定し、必要なら`CONFORMANCE_CONTRACT_VERSION`を更新する。
 
-AST適合性値はcompact JSONであり、Rustの`Debug`表示ではない。object fieldは公開AST型の
-宣言順、列挙値はvariant名、rangeはUTF-8 byte offset、配列はsource順を保持する。AST型の
-fieldまたはvariantを変更した場合はschema変更として適合性versionを再判定する。
+AST適合性値はcompact JSONであり、Rustの`Debug`表示ではない。現在は公開AST型の
+`Serialize`実装を直接利用しているが、これは移行中の構成であり規範的schemaとはみなさない。
+Issue 047で公開semantic APIから独立したversion付きconformance DTOへ移し、object field、
+列挙値、UTF-8 byte rangeおよびsource順を明示的に固定する。AST型の変更と適合性schemaの変更を
+同一視せず、DTO変換とgolden fixtureの差分をレビューしてversionを判定する。
 Rustの型が同じであることだけをruntime一致の代わりにせず、必ず実wasm32成果物を実行する。
+ただしnativeとWASMは同じ解析コアを共有するため、この比較だけを意味上の正しさの証拠に
+してはならない。包括的caseはリポジトリに固定した期待AST、診断、projectionおよびHTMLとも
+比較する。
 
 == Formatterの不変条件
 
