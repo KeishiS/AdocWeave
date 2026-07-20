@@ -213,50 +213,9 @@ impl AstDocument {
     }
 
     pub fn node_count(&self) -> usize {
-        fn inline_count(inlines: &[Inline]) -> usize {
-            inlines
-                .iter()
-                .map(|inline| {
-                    1 + match inline {
-                        Inline::Styled { children, .. } => inline_count(children),
-                        Inline::Link(link) => inline_count(&link.label),
-                        Inline::Reference(reference) => inline_count(&reference.label),
-                        Inline::Text(_)
-                        | Inline::Literal { .. }
-                        | Inline::AttributeReference { .. }
-                        | Inline::Formula(_) => 0,
-                    }
-                })
-                .sum::<usize>()
-        }
-
-        fn list_count(list: &ListBlock) -> usize {
-            1 + list
-                .items
-                .iter()
-                .map(|item| {
-                    1 + inline_count(&item.inlines)
-                        + item.children.iter().map(list_count).sum::<usize>()
-                        + item.continuations.iter().map(block_count).sum::<usize>()
-                })
-                .sum::<usize>()
-        }
-
-        fn block_count(block: &AstBlock) -> usize {
-            1 + match block {
-                AstBlock::Heading(heading) => inline_count(&heading.inlines),
-                AstBlock::Paragraph(paragraph) => inline_count(&paragraph.inlines),
-                AstBlock::List(list) => list_count(list) - 1,
-                AstBlock::Literal(_)
-                | AstBlock::Source(_)
-                | AstBlock::Math(_)
-                | AstBlock::Unsupported(_) => 0,
-            }
-        }
-
-        1 + self.blocks.iter().map(block_count).sum::<usize>()
-            + self.attributes.len()
-            + self.anchors.len()
+        let mut count = 1;
+        crate::walker::walk(self, |_| count += 1);
+        count
     }
 
     pub fn snapshot(&self) -> String {
@@ -363,33 +322,7 @@ impl AstDocument {
         output
     }
 
-    pub fn visit_inline_sequences(&self, mut visitor: impl FnMut(&[Inline])) {
-        fn visit_list(list: &ListBlock, visitor: &mut impl FnMut(&[Inline])) {
-            for item in &list.items {
-                visitor(&item.inlines);
-                for child in &item.children {
-                    visit_list(child, visitor);
-                }
-                visit_blocks(&item.continuations, visitor);
-            }
-        }
-        fn visit_blocks(blocks: &[AstBlock], visitor: &mut impl FnMut(&[Inline])) {
-            for block in blocks {
-                match block {
-                    AstBlock::Heading(heading) => visitor(&heading.inlines),
-                    AstBlock::Paragraph(paragraph) => visitor(&paragraph.inlines),
-                    AstBlock::List(list) => visit_list(list, visitor),
-                    AstBlock::Literal(_)
-                    | AstBlock::Source(_)
-                    | AstBlock::Math(_)
-                    | AstBlock::Unsupported(_) => {}
-                }
-            }
-        }
-        visit_blocks(&self.blocks, &mut visitor);
-    }
-
-    pub fn visit_inline_sequences_mut(&mut self, mut visitor: impl FnMut(&mut Vec<Inline>)) {
+    pub(crate) fn visit_inline_sequences_mut(&mut self, mut visitor: impl FnMut(&mut Vec<Inline>)) {
         fn visit_list(list: &mut ListBlock, visitor: &mut impl FnMut(&mut Vec<Inline>)) {
             for item in &mut list.items {
                 visitor(&mut item.inlines);

@@ -840,8 +840,21 @@ impl LanguageService {
             )?;
         }
         let mut inline_ranges = Vec::new();
-        document.analysis.ast().visit_inline_sequences(|inlines| {
-            collect_inline_semantic_ranges(inlines, &mut inline_ranges);
+        adocweave::walker::walk(document.analysis.ast(), |node| {
+            let adocweave::walker::SemanticNode::Inline(inline) = node else {
+                return;
+            };
+            match inline {
+                Inline::Literal { content_range, .. }
+                | Inline::Formula(adocweave::inline::InlineFormula { content_range, .. }) => {
+                    inline_ranges.push((*content_range, 2))
+                }
+                Inline::Text(_)
+                | Inline::Styled { .. }
+                | Inline::AttributeReference { .. }
+                | Inline::Link(_)
+                | Inline::Reference(_) => {}
+            }
         });
         for (range, token_type) in inline_ranges {
             push_semantic_range(
@@ -935,11 +948,12 @@ fn hover_markup(
 }
 
 fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, CoreTextRange)> {
-    fn find(inlines: &[Inline], offset: u32) -> Option<(String, CoreTextRange)> {
-        for inline in inlines {
-            if !contains(inline.range(), offset) {
-                continue;
-            }
+    let mut found = None;
+    adocweave::walker::walk(document, |node| {
+        let adocweave::walker::SemanticNode::Inline(inline) = node else {
+            return;
+        };
+        if contains(inline.range(), offset) {
             let value = match inline {
                 Inline::Link(link) => {
                     Some(format!("**external link**  \nTarget: `{}`", link.target))
@@ -959,20 +973,11 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
                 Inline::AttributeReference { name, .. } => {
                     Some(format!("**attribute reference**  \nName: `{name}`"))
                 }
-                Inline::Styled { children, .. } => return find(children, offset),
-                Inline::Text(_) | Inline::Literal { .. } => None,
+                Inline::Text(_) | Inline::Literal { .. } | Inline::Styled { .. } => None,
             };
             if let Some(value) = value {
-                return Some((value, inline.range()));
+                found = Some((value, inline.range()));
             }
-        }
-        None
-    }
-
-    let mut found = None;
-    document.visit_inline_sequences(|inlines| {
-        if found.is_none() {
-            found = find(inlines, offset);
         }
     });
     found
@@ -1057,32 +1062,6 @@ fn push_semantic_range(
         }
     }
     Ok(())
-}
-
-fn collect_inline_semantic_ranges(
-    inlines: &[adocweave::inline::Inline],
-    output: &mut Vec<(CoreTextRange, u32)>,
-) {
-    for inline in inlines {
-        match inline {
-            adocweave::inline::Inline::Literal { content_range, .. }
-            | adocweave::inline::Inline::Formula(adocweave::inline::InlineFormula {
-                content_range,
-                ..
-            }) => output.push((*content_range, 2)),
-            adocweave::inline::Inline::Styled { children, .. } => {
-                collect_inline_semantic_ranges(children, output);
-            }
-            adocweave::inline::Inline::Link(link) => {
-                collect_inline_semantic_ranges(&link.label, output);
-            }
-            adocweave::inline::Inline::Reference(reference) => {
-                collect_inline_semantic_ranges(&reference.label, output);
-            }
-            adocweave::inline::Inline::Text(_)
-            | adocweave::inline::Inline::AttributeReference { .. } => {}
-        }
-    }
 }
 
 fn request_offset(

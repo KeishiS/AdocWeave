@@ -28,6 +28,7 @@ pub mod source;
 pub mod source_document;
 pub mod syntax;
 pub mod url;
+pub mod walker;
 
 pub use core::{
     Analysis, CORE_API_VERSION, CORE_PROFILE_VERSION, CancellationCheck, CancellationToken, Engine,

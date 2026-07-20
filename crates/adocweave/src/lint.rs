@@ -286,90 +286,87 @@ fn lint_links_and_references(
 ) {
     let targets = crate::document::reference_targets(document);
     fn inspect(
-        inlines: &[crate::inline::Inline],
+        inline: &crate::inline::Inline,
         targets: &[crate::document::ReferenceTarget],
         config: &LintConfig,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         use crate::inline::{Inline, ReferenceDestination};
-        for inline in inlines {
-            match inline {
-                Inline::Link(link) => {
-                    if !config.url_policy.allows(&link.target) {
+        match inline {
+            Inline::Link(link) => {
+                if !config.url_policy.allows(&link.target) {
+                    push_diagnostic(
+                        diagnostics,
+                        config,
+                        LintRule::InvalidUrlScheme,
+                        link.target_range,
+                        "URL is rejected by the configured policy",
+                        None,
+                    );
+                }
+            }
+            Inline::Reference(reference) => match &reference.destination {
+                ReferenceDestination::Local { anchor, .. } => {
+                    if !targets.iter().any(|target| target.id == *anchor) {
                         push_diagnostic(
                             diagnostics,
                             config,
-                            LintRule::InvalidUrlScheme,
-                            link.target_range,
-                            "URL is rejected by the configured policy",
+                            LintRule::UnresolvedCrossReference,
+                            reference.target_range,
+                            "local cross reference target does not exist",
                             None,
                         );
                     }
-                    inspect(&link.label, targets, config, diagnostics);
                 }
-                Inline::Reference(reference) => {
-                    match &reference.destination {
-                        ReferenceDestination::Local { anchor, .. } => {
-                            if !targets.iter().any(|target| target.id == *anchor) {
-                                push_diagnostic(
-                                    diagnostics,
-                                    config,
-                                    LintRule::UnresolvedCrossReference,
-                                    reference.target_range,
-                                    "local cross reference target does not exist",
-                                    None,
-                                );
-                            }
-                        }
-                        ReferenceDestination::Document { document, .. } => {
-                            if !valid_document_target(document) {
-                                push_diagnostic(
-                                    diagnostics,
-                                    config,
-                                    LintRule::InvalidCrossReference,
-                                    reference.target_range,
-                                    "unsafe cross-document target",
-                                    None,
-                                );
-                            }
-                        }
-                        ReferenceDestination::Scheme {
-                            scheme, locator, ..
-                        } => {
-                            if scheme.is_empty()
-                                || locator.is_empty()
-                                || locator.chars().any(char::is_control)
-                            {
-                                push_diagnostic(
-                                    diagnostics,
-                                    config,
-                                    LintRule::InvalidCrossReference,
-                                    reference.target_range,
-                                    "invalid scheme-based cross reference",
-                                    None,
-                                );
-                            }
-                        }
-                        ReferenceDestination::Invalid => push_diagnostic(
+                ReferenceDestination::Document { document, .. } => {
+                    if !valid_document_target(document) {
+                        push_diagnostic(
                             diagnostics,
                             config,
                             LintRule::InvalidCrossReference,
                             reference.target_range,
-                            "invalid cross reference",
+                            "unsafe cross-document target",
                             None,
-                        ),
+                        );
                     }
-                    inspect(&reference.label, targets, config, diagnostics);
                 }
-                Inline::Styled { children, .. } => {
-                    inspect(children, targets, config, diagnostics);
+                ReferenceDestination::Scheme {
+                    scheme, locator, ..
+                } => {
+                    if scheme.is_empty()
+                        || locator.is_empty()
+                        || locator.chars().any(char::is_control)
+                    {
+                        push_diagnostic(
+                            diagnostics,
+                            config,
+                            LintRule::InvalidCrossReference,
+                            reference.target_range,
+                            "invalid scheme-based cross reference",
+                            None,
+                        );
+                    }
                 }
-                _ => {}
-            }
+                ReferenceDestination::Invalid => push_diagnostic(
+                    diagnostics,
+                    config,
+                    LintRule::InvalidCrossReference,
+                    reference.target_range,
+                    "invalid cross reference",
+                    None,
+                ),
+            },
+            Inline::Text(_)
+            | Inline::Literal { .. }
+            | Inline::Styled { .. }
+            | Inline::AttributeReference { .. }
+            | Inline::Formula(_) => {}
         }
     }
-    document.visit_inline_sequences(|inlines| {
-        inspect(inlines, &targets, config, diagnostics);
+    crate::walker::walk(document, |node| {
+        if let crate::walker::SemanticNode::Inline(inline) = node {
+            inspect(inline, &targets, config, diagnostics);
+        }
     });
 }
 
@@ -520,27 +517,28 @@ fn collect_attribute_references(
     document: &crate::parser::AstDocument,
     used: &mut BTreeMap<String, Vec<TextRange>>,
 ) {
-    fn collect(inlines: &[crate::inline::Inline], used: &mut BTreeMap<String, Vec<TextRange>>) {
-        for inline in inlines {
-            match inline {
-                crate::inline::Inline::AttributeReference {
-                    name, name_range, ..
-                } => used.entry(name.clone()).or_default().push(*name_range),
-                crate::inline::Inline::Styled { children, .. } => collect(children, used),
-                crate::inline::Inline::Link(link) => {
-                    for attribute in &link.target_attributes {
-                        used.entry(attribute.name.clone())
-                            .or_default()
-                            .push(attribute.name_range);
-                    }
-                    collect(&link.label, used);
+    crate::walker::walk(document, |node| {
+        let crate::walker::SemanticNode::Inline(inline) = node else {
+            return;
+        };
+        match inline {
+            crate::inline::Inline::AttributeReference {
+                name, name_range, ..
+            } => used.entry(name.clone()).or_default().push(*name_range),
+            crate::inline::Inline::Link(link) => {
+                for attribute in &link.target_attributes {
+                    used.entry(attribute.name.clone())
+                        .or_default()
+                        .push(attribute.name_range);
                 }
-                crate::inline::Inline::Reference(reference) => collect(&reference.label, used),
-                _ => {}
             }
+            crate::inline::Inline::Text(_)
+            | crate::inline::Inline::Literal { .. }
+            | crate::inline::Inline::Styled { .. }
+            | crate::inline::Inline::Reference(_)
+            | crate::inline::Inline::Formula(_) => {}
         }
-    }
-    document.visit_inline_sequences(|inlines| collect(inlines, used));
+    });
 }
 
 fn lint_headings(

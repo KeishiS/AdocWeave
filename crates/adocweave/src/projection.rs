@@ -90,9 +90,11 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
         });
 
     let mut external_links = Vec::new();
-    analysis
-        .ast()
-        .visit_inline_sequences(|inlines| collect_links(inlines, &mut external_links));
+    crate::walker::walk(analysis.ast(), |node| {
+        if let crate::walker::SemanticNode::Inline(Inline::Link(link)) = node {
+            external_links.push(project_link(link));
+        }
+    });
     external_links.sort_by_key(|link| (link.source_range.start(), link.source_range.end()));
 
     let reference_edges = analysis
@@ -134,23 +136,6 @@ pub fn searchable_text(analysis: &Analysis) -> SearchableText {
         .collect::<Vec<_>>()
         .join("\n");
     SearchableText { text, segments }
-}
-
-fn collect_links(inlines: &[Inline], output: &mut Vec<ExternalLink>) {
-    for inline in inlines {
-        match inline {
-            Inline::Link(link) => {
-                output.push(project_link(link));
-                collect_links(&link.label, output);
-            }
-            Inline::Reference(reference) => collect_links(&reference.label, output),
-            Inline::Styled { children, .. } => collect_links(children, output),
-            Inline::Text(_)
-            | Inline::Literal { .. }
-            | Inline::AttributeReference { .. }
-            | Inline::Formula(_) => {}
-        }
-    }
 }
 
 fn project_link(link: &Link) -> ExternalLink {

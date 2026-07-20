@@ -323,24 +323,14 @@ fn analyze_inner(
 }
 
 fn collect_references(document: &parser::AstDocument) -> Vec<crate::inline::Reference> {
-    fn collect(inlines: &[crate::inline::Inline], output: &mut Vec<crate::inline::Reference>) {
-        for inline in inlines {
-            match inline {
-                crate::inline::Inline::Reference(reference) => {
-                    output.push(reference.clone());
-                    collect(&reference.label, output);
-                }
-                crate::inline::Inline::Link(link) => collect(&link.label, output),
-                crate::inline::Inline::Styled { children, .. } => collect(children, output),
-                crate::inline::Inline::Text(_)
-                | crate::inline::Inline::Literal { .. }
-                | crate::inline::Inline::AttributeReference { .. }
-                | crate::inline::Inline::Formula(_) => {}
-            }
-        }
-    }
     let mut output = Vec::new();
-    document.visit_inline_sequences(|inlines| collect(inlines, &mut output));
+    crate::walker::walk(document, |node| {
+        if let crate::walker::SemanticNode::Inline(crate::inline::Inline::Reference(reference)) =
+            node
+        {
+            output.push(reference.clone());
+        }
+    });
     output
 }
 
