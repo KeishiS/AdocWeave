@@ -17,7 +17,7 @@ use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 9;
+pub const CORE_API_VERSION: u16 = 10;
 /// Current host-independent syntax and diagnostic behavior profile.
 pub const CORE_PROFILE_VERSION: u16 = 2;
 
@@ -37,27 +37,11 @@ impl SourceId {
     }
 }
 
-/// Versioned syntax behavior selected by a host.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SyntaxProfile {
-    pub version: u16,
-    pub mode: SyntaxMode,
-}
-
-impl Default for SyntaxProfile {
-    fn default() -> Self {
-        Self {
-            version: CORE_PROFILE_VERSION,
-            mode: SyntaxMode::Permissive,
-        }
-    }
-}
-
 /// Complete deterministic input to the parsing operation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ParseOptions {
     pub source_id: Option<SourceId>,
-    pub profile: SyntaxProfile,
+    pub syntax_mode: SyntaxMode,
     pub limits: ProcessingLimits,
     /// Host-authoritative values that source text may not change.
     pub protected_attributes: BTreeMap<String, String>,
@@ -101,6 +85,7 @@ impl CancellationCheck for CancellationToken {
 #[derive(Debug)]
 pub struct Analysis {
     source_id: Option<SourceId>,
+    profile_version: u16,
     syntax: SyntaxTree,
     ast: parser::AstDocument,
     diagnostics: Vec<Diagnostic>,
@@ -109,6 +94,9 @@ pub struct Analysis {
 }
 
 impl Analysis {
+    pub const fn profile_version(&self) -> u16 {
+        self.profile_version
+    }
     pub const fn source_id(&self) -> Option<&SourceId> {
         self.source_id.as_ref()
     }
@@ -153,9 +141,6 @@ impl Analysis {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ParseError {
-    InvalidProfileVersion {
-        version: u16,
-    },
     LimitExceeded {
         resource: &'static str,
         limit: u32,
@@ -170,9 +155,7 @@ pub enum ParseError {
 impl ParseError {
     pub const fn code(&self) -> CoreErrorCode {
         match self {
-            Self::InvalidProfileVersion { .. } | Self::UnsupportedSyntax => {
-                CoreErrorCode::InvalidInput
-            }
+            Self::UnsupportedSyntax => CoreErrorCode::InvalidInput,
             Self::LimitExceeded { .. } => CoreErrorCode::LimitExceeded,
             Self::Position(_) => CoreErrorCode::ParseFailed,
             Self::Cancelled => CoreErrorCode::Cancelled,
@@ -184,9 +167,6 @@ impl ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidProfileVersion { version } => {
-                write!(formatter, "unsupported syntax profile version {version}")
-            }
             Self::LimitExceeded {
                 resource,
                 limit,
@@ -250,11 +230,6 @@ fn analyze_inner(
     options: &ParseOptions,
     cancellation: &dyn CancellationCheck,
 ) -> Result<Analysis, ParseError> {
-    if options.profile.version != CORE_PROFILE_VERSION {
-        return Err(ParseError::InvalidProfileVersion {
-            version: options.profile.version,
-        });
-    }
     enforce_limit("input bytes", options.limits.max_input_bytes, source.len())?;
 
     if cancellation.is_cancelled() {
@@ -281,7 +256,7 @@ fn analyze_inner(
         },
         parser::ParseFailure::Cancelled => ParseError::Cancelled,
     })?;
-    if options.profile.mode == SyntaxMode::Strict
+    if options.syntax_mode == SyntaxMode::Strict
         && ast
             .blocks()
             .iter()
@@ -299,7 +274,7 @@ fn analyze_inner(
     lint_config.max_formula_bytes = limit_to_usize(options.limits.max_formula_bytes);
     lint_config.protected_attributes = options.protected_attributes.clone();
     lint_config.url_policy = options.url_policy.clone();
-    lint_config.protected_attribute_severity = if options.profile.mode == SyntaxMode::Strict {
+    lint_config.protected_attribute_severity = if options.syntax_mode == SyntaxMode::Strict {
         crate::diagnostic::Severity::Error
     } else {
         crate::diagnostic::Severity::Warning
@@ -314,6 +289,7 @@ fn analyze_inner(
 
     Ok(Analysis {
         source_id: options.source_id.clone(),
+        profile_version: CORE_PROFILE_VERSION,
         syntax,
         ast,
         diagnostics,
@@ -356,8 +332,8 @@ mod tests {
     use std::thread;
 
     use super::{
-        CancellationCheck, CancellationToken, ParseError, ParseOptions, SourceId, SyntaxProfile,
-        analyze, analyze_cancellable,
+        CancellationCheck, CancellationToken, ParseError, ParseOptions, SourceId, analyze,
+        analyze_cancellable,
     };
 
     fn assert_send_sync<T: Send + Sync>() {}
@@ -502,7 +478,6 @@ mod tests {
     #[test]
     fn public_types_are_send_and_sync() {
         assert_send_sync::<SourceId>();
-        assert_send_sync::<SyntaxProfile>();
         assert_send_sync::<ParseOptions>();
         assert_send_sync::<CancellationToken>();
         assert_send_sync::<ParseError>();
@@ -511,7 +486,7 @@ mod tests {
     #[test]
     fn protected_attribute_is_an_error_in_strict_mode() {
         let mut options = ParseOptions::default();
-        options.profile.mode = crate::limits::SyntaxMode::Strict;
+        options.syntax_mode = crate::limits::SyntaxMode::Strict;
         options.protected_attributes.insert(
             "note-id".to_owned(),
             "123e4567-e89b-12d3-a456-426614174000".to_owned(),

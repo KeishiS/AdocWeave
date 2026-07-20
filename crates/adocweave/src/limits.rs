@@ -3,8 +3,9 @@
 //! The core is pure: it does not read files, environment variables, clocks,
 //! networks, or execute external commands. Hosts provide all input explicitly.
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SyntaxMode {
+    #[default]
     Permissive,
     Strict,
 }

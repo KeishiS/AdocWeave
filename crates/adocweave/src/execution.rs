@@ -70,7 +70,7 @@ impl AnalysisCacheKey {
     pub fn new(source: &str, options: &ParseOptions) -> Self {
         let ParseOptions {
             source_id,
-            profile,
+            syntax_mode,
             limits,
             protected_attributes,
             url_policy,
@@ -97,10 +97,9 @@ impl AnalysisCacheKey {
         hash_u16(&mut hasher, CORE_API_VERSION);
         hash_bytes(&mut hasher, source.as_bytes());
         hash_optional_string(&mut hasher, source_id.as_ref().map(SourceId::as_str));
-        hash_u16(&mut hasher, profile.version);
         hash_u8(
             &mut hasher,
-            match profile.mode {
+            match syntax_mode {
                 crate::limits::SyntaxMode::Permissive => 0,
                 crate::limits::SyntaxMode::Strict => 1,
             },
@@ -196,9 +195,7 @@ impl From<&ParseError> for ExecutionResultClass {
     fn from(error: &ParseError) -> Self {
         match error {
             ParseError::Cancelled => Self::Cancelled,
-            ParseError::InvalidProfileVersion { .. } | ParseError::UnsupportedSyntax => {
-                Self::InvalidInput
-            }
+            ParseError::UnsupportedSyntax => Self::InvalidInput,
             ParseError::LimitExceeded { .. } => Self::LimitExceeded,
             ParseError::Position(_) | ParseError::InternalInvariant => Self::Failed,
         }
@@ -283,7 +280,7 @@ fn hash_u64(hasher: &mut Sha256, value: u64) {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::{CancellationToken, NeverCancel, SyntaxProfile};
+    use crate::{CancellationToken, NeverCancel};
 
     use super::*;
 
@@ -302,17 +299,14 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "86bf76bdfc441926e28abedff4a2e0d5ff2718d4f9d06f637eb9aab4a5da92ad"
+            "d2801eb2d9e901797d6da4ef3e1cac9a4cfc72cf26f1f3559feaf867fbcd3523"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());
 
         let mut variants = Vec::new();
         let mut options = ParseOptions::default();
-        options.profile = SyntaxProfile {
-            version: 1,
-            ..options.profile
-        };
+        options.syntax_mode = crate::limits::SyntaxMode::Strict;
         variants.push(options);
         let mut options = ParseOptions::default();
         options.limits.max_nodes += 1;

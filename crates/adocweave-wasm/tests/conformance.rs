@@ -23,7 +23,6 @@ struct ContractVersions {
     projection: u16,
     conformance: u16,
     wasm_api: u16,
-    worker_protocol: u16,
 }
 
 #[test]
@@ -91,7 +90,7 @@ fn release_contract_versions_are_explicit_and_independent() {
     let manifest: ReleaseManifest =
         serde_json::from_str(include_str!("../../../release-manifest.json"))
             .expect("valid release manifest");
-    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.schema_version, 2);
     assert_eq!(manifest.package_version, env!("CARGO_PKG_VERSION"));
     let contracts = manifest.contracts;
     assert_eq!(contracts.core_profile, adocweave::CORE_PROFILE_VERSION);
@@ -106,7 +105,6 @@ fn release_contract_versions_are_explicit_and_independent() {
         adocweave::conformance::CONFORMANCE_CONTRACT_VERSION
     );
     assert_eq!(contracts.wasm_api, WASM_API_VERSION);
-    assert!(contracts.worker_protocol > 0);
 }
 
 fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {

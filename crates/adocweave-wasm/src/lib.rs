@@ -6,14 +6,11 @@ use adocweave::conformance::{CONFORMANCE_CONTRACT_VERSION, snapshot};
 use adocweave::html::RenderPolicy;
 use adocweave::limits::{ProcessingLimits, SyntaxMode};
 use adocweave::url::UrlPolicy;
-use adocweave::{
-    CORE_PROFILE_VERSION, CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions,
-    SourceId, SyntaxProfile,
-};
+use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 3;
+pub const WASM_API_VERSION: u16 = 4;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -30,7 +27,6 @@ pub struct WasmRequest {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmOptions {
-    pub profile_version: u16,
     pub syntax_mode: WasmSyntaxMode,
     pub limits: WasmLimits,
     pub protected_attributes: BTreeMap<String, String>,
@@ -40,7 +36,6 @@ pub struct WasmOptions {
 impl Default for WasmOptions {
     fn default() -> Self {
         Self {
-            profile_version: CORE_PROFILE_VERSION,
             syntax_mode: WasmSyntaxMode::Permissive,
             limits: WasmLimits::default(),
             protected_attributes: BTreeMap::new(),
@@ -152,6 +147,7 @@ pub struct WasmResponse {
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ParseSummary {
+    pub profile_version: u16,
     pub block_count: usize,
     pub node_count: usize,
     pub reference_count: usize,
@@ -182,12 +178,9 @@ pub fn process_request(
         .expect("u32 fits usize on supported targets");
     let analysis = Engine::new(ParseOptions {
         source_id: request.source_id.map(SourceId::new),
-        profile: SyntaxProfile {
-            version: options.profile_version,
-            mode: match options.syntax_mode {
-                WasmSyntaxMode::Permissive => SyntaxMode::Permissive,
-                WasmSyntaxMode::Strict => SyntaxMode::Strict,
-            },
+        syntax_mode: match options.syntax_mode {
+            WasmSyntaxMode::Permissive => SyntaxMode::Permissive,
+            WasmSyntaxMode::Strict => SyntaxMode::Strict,
         },
         limits: options.limits.into(),
         protected_attributes: options.protected_attributes,
@@ -224,6 +217,7 @@ pub fn process_request(
         generation: request.generation,
         conformance_contract_version: CONFORMANCE_CONTRACT_VERSION,
         parse: ParseSummary {
+            profile_version: analysis.profile_version(),
             block_count: analysis.ast().blocks().len(),
             node_count: analysis.ast().node_count(),
             reference_count: analysis.references().len(),
@@ -421,7 +415,6 @@ mod tests {
             "options": {"limits": {"maxOutputBytes": 1}}
         });
         let request: WasmRequest = serde_json::from_value(value).expect("partial options");
-        assert_eq!(request.options.profile_version, CORE_PROFILE_VERSION);
         assert_eq!(request.options.limits.max_input_bytes, 10 * 1024 * 1024);
         let error = process_request(request, &NeverCancel).expect_err("output limit");
         assert_eq!(error.code, "limit-exceeded");

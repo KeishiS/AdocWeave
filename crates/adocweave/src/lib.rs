@@ -32,7 +32,7 @@ pub mod walker;
 
 pub use core::{
     Analysis, CORE_API_VERSION, CORE_PROFILE_VERSION, CancellationCheck, CancellationToken, Engine,
-    NeverCancel, ParseError, ParseOptions, SourceId, SyntaxProfile, analyze, analyze_cancellable,
+    NeverCancel, ParseError, ParseOptions, SourceId, analyze, analyze_cancellable,
 };
 
 pub const PRODUCT_NAME: &str = "AdocWeave";
@@ -212,10 +212,7 @@ fn analyze_with_policy(
         source,
         &core::ParseOptions {
             source_id: None,
-            profile: core::SyntaxProfile {
-                version: core::CORE_PROFILE_VERSION,
-                mode: config.syntax_mode,
-            },
+            syntax_mode: config.syntax_mode,
             limits: config.limits,
             protected_attributes: std::collections::BTreeMap::new(),
             url_policy: crate::url::UrlPolicy::default(),
@@ -236,9 +233,7 @@ fn process_error_from_parse(error: core::ParseError) -> ProcessError {
             limit,
             actual,
         },
-        core::ParseError::UnsupportedSyntax | core::ParseError::InvalidProfileVersion { .. } => {
-            ProcessError::UnsupportedSyntax
-        }
+        core::ParseError::UnsupportedSyntax => ProcessError::UnsupportedSyntax,
         core::ParseError::Cancelled | core::ParseError::InternalInvariant => {
             ProcessError::InternalInvariant
         }
