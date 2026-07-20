@@ -114,3 +114,15 @@ fn check_supports_human_and_json_diagnostics() {
         String::from_utf8_lossy(&json.stdout).starts_with("[{\"id\":\"trailing-whitespace@8:9\"")
     );
 }
+
+#[test]
+fn format_check_is_non_mutating_and_reports_needed_changes() {
+    let formatted = run_with_stdin(&["format", "--check", "-"], b"clean\n");
+    let unformatted = run_with_stdin(&["format", "--check", "-"], b"dirty  \n");
+
+    assert!(formatted.status.success());
+    assert!(formatted.stdout.is_empty());
+    assert!(!unformatted.status.success());
+    assert!(unformatted.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unformatted.stderr).contains("not formatted"));
+}

@@ -166,7 +166,7 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
                 reason: reason.to_owned(),
             }));
         } else {
-            paragraph_lines.push((*line, content.to_owned()));
+            paragraph_lines.push((*line, content.trim_end_matches([' ', '\t']).to_owned()));
         }
     }
     flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);

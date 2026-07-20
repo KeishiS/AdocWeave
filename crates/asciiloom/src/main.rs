@@ -25,6 +25,7 @@ Arguments:
 
 Options:
   --json      Emit check diagnostics as JSON
+  --check     Check formatting without writing formatted text
   -h, --help  Print help
 ";
 
@@ -37,6 +38,7 @@ enum CliError {
     },
     Write(io::Error),
     Process(asciiloom::ProcessError),
+    FormattingRequired,
 }
 
 impl fmt::Display for CliError {
@@ -49,6 +51,7 @@ impl fmt::Display for CliError {
             } => write!(formatter, "could not read {source_name}: {source}"),
             Self::Write(source) => write!(formatter, "could not write output: {source}"),
             Self::Process(source) => source.fmt(formatter),
+            Self::FormattingRequired => formatter.write_str("document is not formatted"),
         }
     }
 }
@@ -58,7 +61,7 @@ impl Error for CliError {
         match self {
             Self::Read { source, .. } | Self::Write(source) => Some(source),
             Self::Process(source) => Some(source),
-            Self::Usage(_) => None,
+            Self::Usage(_) | Self::FormattingRequired => None,
         }
     }
 }
@@ -67,6 +70,7 @@ struct Arguments {
     operation: Operation,
     input: Option<PathBuf>,
     json: bool,
+    format_check: bool,
 }
 
 enum Action {
@@ -93,10 +97,12 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut input = None;
     let mut stdin_selected = false;
     let mut json = false;
+    let mut format_check = false;
     for argument in arguments {
         match argument.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
             "--json" if operation == Operation::Check => json = true,
+            "--check" if operation == Operation::Format => format_check = true,
             "-" if input.is_none() && !stdin_selected => stdin_selected = true,
             _ if input.is_none() && !stdin_selected => input = Some(PathBuf::from(argument)),
             _ => {
@@ -111,6 +117,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         operation,
         input,
         json,
+        format_check,
     }))
 }
 
@@ -150,6 +157,21 @@ fn run() -> Result<(), CliError> {
                         CheckOutput::Human
                     },
                 )
+            } else if arguments.operation == Operation::Format && arguments.format_check {
+                let source = std::str::from_utf8(&input).map_err(|error| {
+                    CliError::Process(asciiloom::ProcessError::InvalidUtf8 {
+                        valid_up_to: error.valid_up_to(),
+                    })
+                })?;
+                let output = asciiloom::formatter::format(
+                    source,
+                    &asciiloom::formatter::FormatConfig::default(),
+                )
+                .map_err(|error| CliError::Process(asciiloom::ProcessError::Position(error)))?;
+                if output.changed() {
+                    return Err(CliError::FormattingRequired);
+                }
+                Ok(String::new())
             } else {
                 process(arguments.operation, &input)
             }
@@ -233,5 +255,16 @@ mod tests {
                 Some(std::path::Path::new("document.adoc"))
             );
         }
+    }
+
+    #[test]
+    fn format_accepts_check_flag() {
+        let Action::Run(parsed) =
+            parse_arguments(arguments(&["format", "--check", "document.adoc"]))
+                .expect("valid arguments")
+        else {
+            panic!("expected run action");
+        };
+        assert!(parsed.format_check);
     }
 }

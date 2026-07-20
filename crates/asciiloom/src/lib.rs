@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fmt;
 
 pub mod diagnostic;
+pub mod formatter;
 pub mod html;
 pub mod lint;
 pub mod parser;
@@ -63,7 +64,9 @@ pub fn process(operation: Operation, input: &[u8]) -> Result<String, ProcessErro
             let parsed = parser::parse(source).map_err(ProcessError::Position)?;
             Ok(html::render(&parsed.ast, &html::HtmlOptions::default()).html)
         }
-        Operation::Format => Ok(source.to_owned()),
+        Operation::Format => formatter::format(source, &formatter::FormatConfig::default())
+            .map(|output| output.formatted)
+            .map_err(ProcessError::Position),
         Operation::Check => process_check_source(source, CheckOutput::Human),
     }
 }
@@ -125,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn format_preserves_input_until_formatter_is_implemented() {
+    fn format_leaves_clean_input_unchanged() {
         assert_eq!(
             process(Operation::Format, b"paragraph\n"),
             Ok("paragraph\n".to_owned())
