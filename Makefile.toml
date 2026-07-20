@@ -144,7 +144,20 @@ if rg -n '^#{1,6} |^```|\[[^]]+\]\([^)]+\)' -g '*.adoc'; then
 fi
 
 while IFS= read -r document; do
-  asciidoctor --failure-level WARN --out-file /dev/null "$document"
+  first_line="$(head -n 1 "$document")"
+  case "$first_line" in
+    '= '*) ;;
+    *)
+      echo "AsciiDoc document title is missing: $document" >&2
+      exit 1
+      ;;
+  esac
+
+  delimiter_count="$(rg -c '^----$' "$document" || true)"
+  if [ $((delimiter_count % 2)) -ne 0 ]; then
+    echo "unbalanced ---- delimiter: $document" >&2
+    exit 1
+  fi
 done <<EOF
 $(rg --files -g 'README.adoc' -g '*.expectations.adoc' -g 'docs/*.adoc' -g 'issues/*.adoc' | sort)
 EOF

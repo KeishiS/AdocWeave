@@ -23,7 +23,6 @@
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              asciidoctor
               cargo
               cargo-make
               clippy

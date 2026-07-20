@@ -15,8 +15,8 @@ AsciiLoom is an incremental AsciiDoc processor written in Rust.
 
 == Development
 
-Enter the Nix development environment to obtain the Rust toolchain,
-`cargo-make`, and `asciidoctor`:
+Enter the Nix development environment to obtain the Rust toolchain and
+`cargo-make`:
 
 [source,console]
 ----
