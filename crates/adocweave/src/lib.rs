@@ -16,6 +16,7 @@ pub mod execution;
 pub mod formatter;
 pub mod html;
 pub mod inline;
+mod json;
 pub mod limits;
 pub mod lint;
 pub mod parser;

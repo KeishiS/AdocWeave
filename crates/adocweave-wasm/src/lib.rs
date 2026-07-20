@@ -178,7 +178,8 @@ pub fn process_request(
         });
     }
     let options = request.options;
-    let max_output_bytes = options.limits.max_output_bytes as usize;
+    let max_output_bytes = usize::try_from(options.limits.max_output_bytes)
+        .expect("u32 fits usize on supported targets");
     let analysis = Engine::new(ParseOptions {
         source_id: request.source_id.map(SourceId::new),
         profile: SyntaxProfile {

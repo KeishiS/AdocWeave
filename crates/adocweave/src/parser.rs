@@ -665,21 +665,17 @@ pub(crate) fn parse_shared_cancellable(
             if header_attributes_open {
                 header_attributes_open = false;
             }
-        } else if header_attributes_open
-            && parse_attribute_line(
-                content,
-                line.content_range().start().to_usize(),
-                line.full_range(),
-            )
-            .is_some()
+        } else if let Some((attribute, problem)) = header_attributes_open
+            .then(|| {
+                parse_attribute_line(
+                    content,
+                    line.content_range().start().to_usize(),
+                    line.full_range(),
+                )
+            })
+            .flatten()
         {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
-            let (attribute, problem) = parse_attribute_line(
-                content,
-                line.content_range().start().to_usize(),
-                line.full_range(),
-            )
-            .expect("checked above");
             blocks.push(CstBlock {
                 kind: CstBlockKind::DocumentAttribute,
                 range: line.full_range(),
@@ -721,9 +717,8 @@ pub(crate) fn parse_shared_cancellable(
             header_attributes_open = false;
             line_index = next_line;
             continue;
-        } else if unsupported_reason(content).is_some() {
+        } else if let Some(reason) = unsupported_reason(content) {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
-            let reason = unsupported_reason(content).expect("checked above");
             blocks.push(CstBlock {
                 kind: CstBlockKind::Unsupported,
                 range: line.full_range(),

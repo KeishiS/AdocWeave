@@ -44,3 +44,14 @@ Core Profile 1公開後の実装を見直し、compilerの表示実装やruntime
 `ProcessingLimits`の全fieldと`LimitExceeded.limit`を`u32`、実測値を`u64`へ変更した。
 これによりnativeとWASMで同じ公開値を表現し、WASM adapterに存在した切り詰めcastを
 除去した。この破壊的公開型変更により`CORE_API_VERSION`を6へ更新した。
+
+リポジトリ全体の実装ファイル、追加Clippy複雑性指標、`expect`、castおよびJSON生成を
+監査した。診断、文書シンボル、projectionに重複していたJSON文字列escapeを一つの内部
+writerへ統合し、制御文字の扱いを統一した。パーサーの属性行と未対応行の二重判定、WASM
+出力上限の未検査castも除去した。
+
+長い関数としてblock parser、inline parser、heading lintおよびLSP router登録を確認した。
+block parserは構文優先順位を上から読めること、routerはprotocol一覧を一か所で確認できる
+ことが現状では分割より明瞭であり、単純な行数削減のためには分割しない。inline macro解析は
+構文追加時の変更集中が大きいため、canonical AST schema完了後にtoken認識とnode構築の分離を
+別Issueとして検討する。

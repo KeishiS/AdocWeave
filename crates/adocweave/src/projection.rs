@@ -427,23 +427,7 @@ fn json_range(range: TextRange) -> String {
 }
 
 fn json_string(value: &str) -> String {
-    let mut output = String::from("\"");
-    for character in value.chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            character if character <= '\u{1f}' => {
-                write!(output, "\\u{:04x}", character as u32)
-                    .expect("writing to String cannot fail");
-            }
-            character => output.push(character),
-        }
-    }
-    output.push('"');
-    output
+    crate::json::string(value)
 }
 
 #[cfg(test)]

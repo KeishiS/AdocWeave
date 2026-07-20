@@ -312,24 +312,7 @@ fn write_json_field(output: &mut String, name: &str, value: &str) {
 }
 
 fn write_json_string(output: &mut String, value: &str) {
-    output.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\u{08}' => output.push_str("\\b"),
-            '\u{0c}' => output.push_str("\\f"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            '\u{00}'..='\u{1f}' => {
-                write!(output, "\\u{:04x}", u32::from(character))
-                    .expect("writing to a String cannot fail");
-            }
-            _ => output.push(character),
-        }
-    }
-    output.push('"');
+    crate::json::write_string(output, value);
 }
 
 #[cfg(test)]
