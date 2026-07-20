@@ -27,7 +27,21 @@
 ----
 cargo test --workspace grammar
 cargo test --workspace substitutions
+cargo make test-grammar
 ----
+
+== 完了確認
+
+2026-07-20に次を確認した。
+
+- 対応する全ブロック・インラインノードをxref:../docs/grammar.adoc[Core 0.1規範文法]から
+  追跡できる。
+- 曖昧入力のlossless CST、semantic AST、診断およびインライン入れ子を
+  `fixtures/grammar/ambiguous.*`と統合テストで固定している。
+- xref:../docs/substitutions.adoc[Core 0.1置換モデル]の全対応コンテキストについて、
+  semantic ASTからHTMLを生成し、raw入力を安全化する横断テストがある。
+- 将来の構文と置換コンテキストを追加する際の必須契約を規範文書に定義している。
+- `cargo make verify`が成功する。
 
 == 依存関係
 

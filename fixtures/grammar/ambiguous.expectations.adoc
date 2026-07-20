@@ -9,3 +9,7 @@
 - 最後のリテラルブロックは`unclosed-block`を報告し、見出しノードとして残る
   `== Recovered heading`の前で回復する。
 - CSTはfixtureをバイト単位で復元する。
+
+完全なCST、semantic ASTおよび診断の期待値は、それぞれ`ambiguous.cst`、
+`ambiguous.ast`および`ambiguous.diagnostics.json`に固定する。インライン子要素の構造は
+統合テストで追加検証する。

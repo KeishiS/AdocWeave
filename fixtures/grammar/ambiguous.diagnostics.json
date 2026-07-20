@@ -1,0 +1,1 @@
+[{"id":"unclosed-inline@97:98","code":"unclosed-inline","severity":"warning","range":{"start":97,"end":98},"message":"unclosed emphasis span","related":[],"fixes":[]},{"id":"unclosed-block@194:198","code":"unclosed-block","severity":"warning","range":{"start":194,"end":198},"message":"unclosed literal block","related":[],"fixes":[]}]
