@@ -188,7 +188,7 @@ fn parse_segment(
     while let Some(candidate) = scanner.next(cursor) {
         match candidate {
             InlineCandidate::Macro { open } => {
-                match recognize_macro(value, open) {
+                match scanner.recognize_macro(value, open) {
                     MacroRecognition::Complete(token) => {
                         let built = build_macro(value, range, config, depth, token);
                         if is_escaped(value, open) {
@@ -224,26 +224,28 @@ fn parse_segment(
                 }
                 cursor = next_char_boundary(value, open);
             }
-            InlineCandidate::Marker { open, marker } => {
-                match recognize_marker(value, open, marker) {
-                    MarkerRecognition::Complete(token) => {
-                        let built = build_marker(value, range, config, depth, token);
-                        push_text(&mut output.inlines, value, range, plain_start, open);
-                        output.inlines.push(built.inline);
-                        output.problems.extend(built.problems);
-                        cursor = token.end;
-                        plain_start = cursor;
-                    }
-                    MarkerRecognition::Unclosed { next, kind } => {
-                        output.problems.push(InlineProblem {
-                            kind,
-                            range: subrange(range, open, next),
-                        });
-                        cursor = next;
-                    }
-                    MarkerRecognition::Invalid { next } => cursor = next,
+            InlineCandidate::Marker {
+                open,
+                marker,
+                close,
+            } => match recognize_marker(value, open, marker, close) {
+                MarkerRecognition::Complete(token) => {
+                    let built = build_marker(value, range, config, depth, token);
+                    push_text(&mut output.inlines, value, range, plain_start, open);
+                    output.inlines.push(built.inline);
+                    output.problems.extend(built.problems);
+                    cursor = token.end;
+                    plain_start = cursor;
                 }
-            }
+                MarkerRecognition::Unclosed { next, kind } => {
+                    output.problems.push(InlineProblem {
+                        kind,
+                        range: subrange(range, open, next),
+                    });
+                    cursor = next;
+                }
+                MarkerRecognition::Invalid { next } => cursor = next,
+            },
         }
     }
 
@@ -253,12 +255,19 @@ fn parse_segment(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InlineCandidate {
-    Macro { open: usize },
-    Marker { open: usize, marker: char },
+    Macro {
+        open: usize,
+    },
+    Marker {
+        open: usize,
+        marker: char,
+        close: Option<usize>,
+    },
 }
 
 struct InlineScanner {
     candidates: Vec<InlineCandidate>,
+    delimiters: DelimiterIndex,
     next: usize,
     _inspected_positions: usize,
 }
@@ -266,32 +275,38 @@ struct InlineScanner {
 impl InlineScanner {
     fn new(value: &str) -> Self {
         let mut candidates = Vec::new();
-        let mut inspected_positions = 0;
+        let mut inspected_positions: usize = 0;
         for (open, marker) in value.char_indices() {
             inspected_positions += 1;
             let rest = &value[open..];
+            let boundary = is_macro_boundary(value, open);
             let is_macro = rest.starts_with("<<")
-                || starts_ascii_case_insensitive(rest, "xref:")
-                || starts_ascii_case_insensitive(rest, "stem:[")
-                || starts_ascii_case_insensitive(rest, "latexmath:[")
-                || ((is_token_boundary(value[..open].chars().next_back())
-                    || (is_escaped(value, open)
-                        && is_token_boundary(
-                            value[..open.saturating_sub(1)].chars().next_back(),
-                        )))
-                    && url_scheme_end(rest).is_some());
+                || boundary
+                    && (starts_ascii_case_insensitive(rest, "xref:")
+                        || starts_ascii_case_insensitive(rest, "stem:[")
+                        || starts_ascii_case_insensitive(rest, "latexmath:[")
+                        || url_scheme_end(rest).is_some());
             if is_macro {
                 candidates.push(InlineCandidate::Macro { open });
             } else if marker == '{'
                 || matches!(marker, '`' | '*' | '_') && is_open_boundary(value, open, marker)
             {
-                candidates.push(InlineCandidate::Marker { open, marker });
+                candidates.push(InlineCandidate::Marker {
+                    open,
+                    marker,
+                    close: None,
+                });
             }
         }
+        index_marker_closers(value, &mut candidates);
+        let delimiters = DelimiterIndex::new(value);
         Self {
             candidates,
+            delimiters,
             next: 0,
-            _inspected_positions: inspected_positions,
+            _inspected_positions: inspected_positions
+                .saturating_mul(2)
+                .saturating_add(value.len()),
         }
     }
 
@@ -308,9 +323,49 @@ impl InlineScanner {
         Some(candidate)
     }
 
+    fn recognize_macro(&self, value: &str, open: usize) -> MacroRecognition {
+        recognize_macro_with_index(value, open, &self.delimiters)
+    }
+
     #[cfg(test)]
     fn inspected_positions(&self) -> usize {
         self._inspected_positions
+    }
+}
+
+struct DelimiterIndex {
+    next_open_bracket: Vec<Option<usize>>,
+    next_close_bracket: Vec<Option<usize>>,
+    next_double_greater: Vec<Option<usize>>,
+}
+
+impl DelimiterIndex {
+    fn new(value: &str) -> Self {
+        let mut next_open_bracket = vec![None; value.len() + 1];
+        let mut next_close_bracket = vec![None; value.len() + 1];
+        let mut next_double_greater = vec![None; value.len() + 1];
+        let mut open_bracket = None;
+        let mut close_bracket = None;
+        let mut double_greater = None;
+        for offset in (0..value.len()).rev() {
+            if value.as_bytes()[offset] == b'[' {
+                open_bracket = Some(offset);
+            }
+            if value.as_bytes()[offset] == b']' {
+                close_bracket = Some(offset);
+            }
+            if value.as_bytes()[offset] == b'>' && value.as_bytes().get(offset + 1) == Some(&b'>') {
+                double_greater = Some(offset);
+            }
+            next_open_bracket[offset] = open_bracket;
+            next_close_bracket[offset] = close_bracket;
+            next_double_greater[offset] = double_greater;
+        }
+        Self {
+            next_open_bracket,
+            next_close_bracket,
+            next_double_greater,
+        }
     }
 }
 
@@ -357,9 +412,14 @@ struct BuiltInline {
     problems: Vec<InlineProblem>,
 }
 
-fn recognize_marker(value: &str, open: usize, marker: char) -> MarkerRecognition {
+fn recognize_marker(
+    value: &str,
+    open: usize,
+    marker: char,
+    close: Option<usize>,
+) -> MarkerRecognition {
     let next = open + marker.len_utf8();
-    let Some(close) = find_closer(value, open, marker) else {
+    let Some(close) = close else {
         let kind = match marker {
             '`' => InlineProblemKind::UnclosedMonospace,
             '*' => InlineProblemKind::UnclosedStrong,
@@ -378,6 +438,45 @@ fn recognize_marker(value: &str, open: usize, marker: char) -> MarkerRecognition
         end: close + marker.len_utf8(),
         marker,
     })
+}
+
+fn index_marker_closers(value: &str, candidates: &mut [InlineCandidate]) {
+    let mut opener_at = vec![false; value.len() + 1];
+    for candidate in candidates.iter() {
+        if let InlineCandidate::Marker { open, .. } = candidate {
+            opener_at[*open] = true;
+        }
+    }
+
+    let mut closer_at = vec![None; value.len() + 1];
+    let mut last_backtick = None;
+    let mut last_strong = None;
+    let mut last_emphasis = None;
+    let mut last_attribute = None;
+    for (offset, marker) in value.char_indices().rev() {
+        if opener_at[offset] {
+            closer_at[offset] = match marker {
+                '`' => last_backtick,
+                '*' => last_strong,
+                '_' => last_emphasis,
+                '{' => last_attribute,
+                _ => None,
+            };
+        }
+        match marker {
+            '`' if is_close_boundary(value, offset, marker) => last_backtick = Some(offset),
+            '*' if is_close_boundary(value, offset, marker) => last_strong = Some(offset),
+            '_' if is_close_boundary(value, offset, marker) => last_emphasis = Some(offset),
+            '}' => last_attribute = Some(offset),
+            _ => {}
+        }
+    }
+
+    for candidate in candidates {
+        if let InlineCandidate::Marker { open, close, .. } = candidate {
+            *close = closer_at[*open];
+        }
+    }
 }
 
 fn build_marker(
@@ -510,7 +609,11 @@ enum LinkToken {
     },
 }
 
-fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
+fn recognize_macro_with_index(
+    value: &str,
+    open: usize,
+    delimiters: &DelimiterIndex,
+) -> MacroRecognition {
     let rest = &value[open..];
     let formula_prefix = if starts_ascii_case_insensitive(rest, "stem:[") {
         Some("stem:[".len())
@@ -520,9 +623,7 @@ fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
         None
     };
     if let Some(prefix_len) = formula_prefix {
-        let close = value[open + prefix_len..]
-            .find(']')
-            .map(|relative| relative + open + prefix_len);
+        let close = delimiters.next_close_bracket[open + prefix_len];
         return MacroRecognition::Complete(MacroToken::Formula(FormulaToken {
             open,
             content_start: open + prefix_len,
@@ -531,14 +632,13 @@ fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
             closed: close.is_some(),
         }));
     }
-    if let Some(short_reference) = rest.strip_prefix("<<") {
-        let Some(relative_close) = short_reference.find(">>") else {
+    if rest.starts_with("<<") {
+        let Some(close) = delimiters.next_double_greater[open + 2] else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteCrossReference,
                 next: next_char_boundary(value, open),
             };
         };
-        let close = open + 2 + relative_close;
         return MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Short {
             open,
             target_start: open + 2,
@@ -548,13 +648,12 @@ fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
     }
     if starts_ascii_case_insensitive(rest, "xref:") {
         let target_start = open + 5;
-        let Some(relative_bracket) = value[target_start..].find('[') else {
+        let Some(bracket) = delimiters.next_open_bracket[target_start] else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteCrossReference,
                 next: next_char_boundary(value, open),
             };
         };
-        let bracket = target_start + relative_bracket;
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
@@ -563,13 +662,12 @@ fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
                 next: next_char_boundary(value, open),
             };
         }
-        let Some(relative_close) = value[bracket + 1..].find(']') else {
+        let Some(close) = delimiters.next_close_bracket[bracket + 1] else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteCrossReference,
                 next: next_char_boundary(value, open),
             };
         };
-        let close = bracket + 1 + relative_close;
         return MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Xref {
             open,
             target_start,
@@ -580,13 +678,12 @@ fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
     }
     if starts_ascii_case_insensitive(rest, "link:") {
         let target_start = open + 5;
-        let Some(relative_bracket) = value[target_start..].find('[') else {
+        let Some(bracket) = delimiters.next_open_bracket[target_start] else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
                 next: next_char_boundary(value, open),
             };
         };
-        let bracket = target_start + relative_bracket;
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
@@ -595,13 +692,12 @@ fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
                 next: next_char_boundary(value, open),
             };
         }
-        let Some(relative_close) = value[bracket + 1..].find(']') else {
+        let Some(close) = delimiters.next_close_bracket[bracket + 1] else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
                 next: next_char_boundary(value, open),
             };
         };
-        let close = bracket + 1 + relative_close;
         return MacroRecognition::Complete(MacroToken::Link(LinkToken::Explicit {
             open,
             target_start,
@@ -638,13 +734,12 @@ fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
         };
     }
     let (label, end) = if value.as_bytes().get(target_end) == Some(&b'[') {
-        let Some(relative_close) = value[target_end + 1..].find(']') else {
+        let Some(close) = delimiters.next_close_bracket[target_end + 1] else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
                 next: next_char_boundary(value, open),
             };
         };
-        let close = target_end + 1 + relative_close;
         (Some((target_end + 1, close)), close + 1)
     } else {
         (None, target_end)
@@ -655,6 +750,11 @@ fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
         label,
         end,
     }))
+}
+
+#[cfg(test)]
+fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
+    recognize_macro_with_index(value, open, &DelimiterIndex::new(value))
 }
 
 fn build_macro(
@@ -927,7 +1027,15 @@ fn parse_reference_destination(target: &str, range: TextRange) -> ReferenceDesti
 }
 
 fn url_scheme_end(value: &str) -> Option<usize> {
-    let colon = value.find(':')?;
+    let colon = value.char_indices().find_map(|(offset, character)| {
+        if character == ':' {
+            Some(Some(offset))
+        } else if character.is_whitespace() || matches!(character, '[' | ']' | '<' | '>') {
+            Some(None)
+        } else {
+            None
+        }
+    })??;
     let scheme = &value[..colon];
     if scheme.is_empty()
         || !scheme.as_bytes()[0].is_ascii_alphabetic()
@@ -940,6 +1048,12 @@ fn url_scheme_end(value: &str) -> Option<usize> {
     } else {
         Some(colon + 1)
     }
+}
+
+fn is_macro_boundary(value: &str, offset: usize) -> bool {
+    is_token_boundary(value[..offset].chars().next_back())
+        || (is_escaped(value, offset)
+            && is_token_boundary(value[..offset.saturating_sub(1)].chars().next_back()))
 }
 
 fn starts_ascii_case_insensitive(value: &str, prefix: &str) -> bool {
@@ -962,19 +1076,6 @@ fn is_escaped(value: &str, offset: usize) -> bool {
         .count()
         % 2
         == 1
-}
-
-fn find_closer(value: &str, open: usize, marker: char) -> Option<usize> {
-    if marker == '{' {
-        return value[open + 1..].find('}').map(|offset| open + 1 + offset);
-    }
-    value[open + marker.len_utf8()..]
-        .char_indices()
-        .map(|(offset, candidate)| (open + marker.len_utf8() + offset, candidate))
-        .find(|(offset, candidate)| {
-            *candidate == marker && is_close_boundary(value, *offset, marker)
-        })
-        .map(|(offset, _)| offset)
 }
 
 fn is_open_boundary(value: &str, offset: usize, marker: char) -> bool {
@@ -1064,7 +1165,8 @@ mod tests {
             next_candidate("*strong* https://example.org", 0),
             Some(InlineCandidate::Marker {
                 open: 0,
-                marker: '*'
+                marker: '*',
+                close: Some(7),
             })
         );
         assert_eq!(
@@ -1080,11 +1182,26 @@ mod tests {
     }
 
     #[test]
-    fn candidate_scanner_visits_each_utf8_position_once() {
+    fn scanner_has_a_fixed_linear_inspection_budget() {
         let source = "日本語 *open xref:broken[ https://example.org[label] _tail";
         let scanner = InlineScanner::new(source);
 
-        assert_eq!(scanner.inspected_positions(), source.chars().count());
+        assert_eq!(
+            scanner.inspected_positions(),
+            source.chars().count() * 2 + source.len()
+        );
+
+        for repetitions in 1..128 {
+            let hostile = "xref:".repeat(repetitions) + "target[open";
+            let scanner = InlineScanner::new(&hostile);
+            assert!(scanner.inspected_positions() <= hostile.len() * 3);
+            let output = parse(
+                &hostile,
+                range(0, hostile.len()),
+                InlineParseConfig::default(),
+            );
+            assert!(output.problems.len() <= 1);
+        }
     }
 
     #[test]
@@ -1146,7 +1263,7 @@ mod tests {
     #[test]
     fn marker_recognizer_distinguishes_complete_invalid_and_unclosed_input() {
         assert_eq!(
-            recognize_marker("*strong*", 0, '*'),
+            recognize_marker("*strong*", 0, '*', Some(7)),
             MarkerRecognition::Complete(MarkerToken {
                 open: 0,
                 close: 7,
@@ -1155,11 +1272,11 @@ mod tests {
             })
         );
         assert_eq!(
-            recognize_marker("{bad name}", 0, '{'),
+            recognize_marker("{bad name}", 0, '{', Some(9)),
             MarkerRecognition::Invalid { next: 1 }
         );
         assert_eq!(
-            recognize_marker("_open", 0, '_'),
+            recognize_marker("_open", 0, '_', None),
             MarkerRecognition::Unclosed {
                 next: 1,
                 kind: InlineProblemKind::UnclosedEmphasis,

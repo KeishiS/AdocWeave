@@ -65,6 +65,13 @@ builderへ渡せない型構造へ変更した。これによりreference／link
 
 `MacroRecognition`がcomplete、incompleteおよびinvalidを分類し、不完全macroの診断と
 UTF-8安全な再開位置を主走査へ返すようにした。後段の`scan_incomplete_macros`を削除し、
-不完全xrefの後ろにある正常なinline構文を引き続き救済する回帰試験を維持した。残る走査器の
-作業は、候補探索と閉じ記号探索の重複文字検査を一つの前進専用scannerへ統合し、計測可能な
-線形上限をproperty testで固定することである。
+不完全xrefの後ろにある正常なinline構文を引き続き救済する回帰試験を維持した。次の作業として、
+候補探索と閉じ記号探索の重複文字検査を一つのscannerへ統合し、計測可能な線形上限を
+property testで固定する方針を設定した。
+
+候補列を一回の前進走査で構築し、各候補を一度だけ取り出す`InlineScanner`へ移行した。
+markerの有効closerは一回の逆向き走査、macroの`[`、`]`および`>>`は一回のdelimiter走査で
+索引化し、recognizerからsuffixの`find`を除去した。URL系macroはtoken境界からだけ認識し、
+scheme探索が空白や別tokenへ越境しない規則を規範文法へ追加した。生成した密集不正入力を含め、
+scannerの検査量が`2 * Unicode scalar数 + UTF-8 byte数`に一致し、したがって入力byte数の
+3倍以下となる不変条件をテストで固定した。
