@@ -80,11 +80,19 @@ AdocWeaveの解析上限として使用しない。
 Semaphore待機中に要求がキャンセルされた場合は、解析を開始しない。permitは解析完了または
 失敗時に必ず解放し、panic時にも文書状態のlockを残さない。
 
+読み取り要求もhandler開始時点の所有スナップショットをFutureへ移し、同じSemaphoreで
+上限を設けた`spawn_blocking`ワーカー上で計算する。したがって、main loopや
+`DocumentStore`の借用中にCPU処理を行わない。`ConcurrencyLayer`による要求Future数の上限と
+SemaphoreによるCPU処理数の上限は別の制約である。
+
 == キャンセルと古い結果
 
 `$/cancelRequest`によってLSP要求のFutureが破棄されても、開始済みの`spawn_blocking`処理は
-自動停止しない。要求ごとにコアの`CancellationCheck`へ接続したキャンセル状態を作成し、
-Parser、Lint、Formatterおよびprojectionの既存検査点で協調的に停止する。
+自動停止しない。要求ごとのdrop guardを`CancellationCheck`へ接続し、CPUワーカーは開始前、
+対応機能の検査点および完了後に協調的に停止または結果を破棄する。
+
+文書解析は要求固有tokenとは別にgeneration固有tokenを持つ。`didChange`、`didClose`、
+shutdownおよびexitは該当tokenを発火し、解析内部の既存検査点で停止させる。
 
 結果をclientへ公開する直前に、対象文書が開かれており、取得時のgenerationと現在の
 generationが一致することを再確認する。一致しない解析から次を公開してはならない。

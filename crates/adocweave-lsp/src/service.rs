@@ -36,7 +36,7 @@ impl PositionEncoding {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LanguageService {
     pub documents: DocumentStore,
     pub position_encoding: PositionEncoding,
@@ -120,6 +120,10 @@ impl LanguageService {
 
     pub fn close(&mut self, uri: &lsp::Url) -> bool {
         self.documents.close(uri.as_str())
+    }
+
+    pub fn cancel_all(&mut self) {
+        self.documents.cancel_all();
     }
 
     pub fn diagnostics(&self, uri: &lsp::Url) -> Result<lsp::PublishDiagnosticsParams, String> {

@@ -14,7 +14,7 @@ pub struct AnalysisJob {
     pub cancellation: Arc<CancellationToken>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DocumentState {
     pub uri: String,
     pub version: i32,
@@ -48,7 +48,7 @@ pub enum Adoption {
     Closed,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DocumentStore {
     documents: BTreeMap<String, DocumentState>,
     next_generation: u64,
@@ -127,6 +127,12 @@ impl DocumentStore {
         true
     }
 
+    pub fn cancel_all(&mut self) {
+        for document in self.documents.values() {
+            document.cancellation.cancel();
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.documents.len()
     }
@@ -163,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn newer_generation_cancels_and_rejects_the_previous_analysis() {
+    fn notification_order_newer_generation_cancels_and_rejects_previous_analysis() {
         let mut store = DocumentStore::default();
         let old = store.begin_open("file:///a.adoc".to_owned(), 1, "= Old".to_owned());
         let new = store
@@ -190,5 +196,17 @@ mod tests {
         assert!(job.cancellation.is_cancelled());
         assert_eq!(store.adopt(&job, analyze(&job)), Adoption::Closed);
         assert!(store.snapshot("file:///a.adoc").is_none());
+    }
+
+    #[test]
+    fn shutdown_cancels_every_open_document() {
+        let mut store = DocumentStore::default();
+        let first = store.begin_open("file:///a.adoc".to_owned(), 1, "= A".to_owned());
+        let second = store.begin_open("file:///b.adoc".to_owned(), 1, "= B".to_owned());
+
+        store.cancel_all();
+
+        assert!(first.cancellation.is_cancelled());
+        assert!(second.cancellation.is_cancelled());
     }
 }

@@ -3,6 +3,7 @@
 use async_lsp::lsp_types as lsp;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use super::{LanguageService, PositionEncoding, run};
 use crate::state::{Adoption, AnalysisJob};
@@ -13,6 +14,33 @@ fn typed<T: DeserializeOwned>(value: Value) -> T {
 
 fn uri(value: &str) -> lsp::Url {
     value.parse().expect("valid URI")
+}
+
+async fn write_message(output: &mut (impl AsyncWriteExt + Unpin), message: &Value) {
+    let body = serde_json::to_vec(message).expect("serialize");
+    output
+        .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
+        .await
+        .expect("header");
+    output.write_all(&body).await.expect("body");
+    output.flush().await.expect("flush");
+}
+
+async fn read_message(input: &mut BufReader<impl tokio::io::AsyncRead + Unpin>) -> Value {
+    let mut content_length = None;
+    loop {
+        let mut header = String::new();
+        input.read_line(&mut header).await.expect("header");
+        if header == "\r\n" {
+            break;
+        }
+        if let Some(value) = header.strip_prefix("Content-Length:") {
+            content_length = Some(value.trim().parse::<usize>().expect("length"));
+        }
+    }
+    let mut body = vec![0; content_length.expect("content length")];
+    input.read_exact(&mut body).await.expect("body");
+    serde_json::from_slice(&body).expect("json")
 }
 
 fn initialize(service: &mut LanguageService, encodings: &[&str]) -> lsp::InitializeResult {
@@ -351,35 +379,7 @@ fn release_fixture_is_accepted_by_all_existing_features() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn async_lsp_transport_runs_typed_lifecycle_and_features() {
-    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-
-    async fn write_message(output: &mut (impl AsyncWriteExt + Unpin), message: &Value) {
-        let body = serde_json::to_vec(message).expect("serialize");
-        output
-            .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
-            .await
-            .expect("header");
-        output.write_all(&body).await.expect("body");
-        output.flush().await.expect("flush");
-    }
-
-    async fn read_message(input: &mut BufReader<impl tokio::io::AsyncRead + Unpin>) -> Value {
-        let mut content_length = None;
-        loop {
-            let mut header = String::new();
-            input.read_line(&mut header).await.expect("header");
-            if header == "\r\n" {
-                break;
-            }
-            if let Some(value) = header.strip_prefix("Content-Length:") {
-                content_length = Some(value.trim().parse::<usize>().expect("length"));
-            }
-        }
-        let mut body = vec![0; content_length.expect("content length")];
-        input.read_exact(&mut body).await.expect("body");
-        serde_json::from_slice(&body).expect("json")
-    }
 
     let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
     let (server_read, server_write) = tokio::io::split(server_stream);
@@ -442,6 +442,86 @@ async fn async_lsp_transport_runs_typed_lifecycle_and_features() {
         )
         .await;
         assert_eq!(read_message(&mut client_read).await["id"], 2);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"exit","params":null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::join!(server, client);
+    server_result.expect("clean exit");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn async_lsp_lifecycle_rejects_requests_in_invalid_states() {
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
+    let mut client_read = BufReader::new(client_read);
+
+    let client = async move {
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"textDocument/documentSymbol",
+                "params":{"textDocument":{"uri":"file:///lifecycle.adoc"}}
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_message(&mut client_read).await["error"]["code"],
+            -32002
+        );
+
+        let initialize = json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"initialize",
+            "params":{"processId":null,"rootUri":null,"capabilities":{}}
+        });
+        write_message(&mut client_write, &initialize).await;
+        assert_eq!(read_message(&mut client_read).await["id"], 2);
+
+        let mut duplicate = initialize;
+        duplicate["id"] = json!(3);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        )
+        .await;
+        write_message(&mut client_write, &duplicate).await;
+        assert_eq!(
+            read_message(&mut client_read).await["error"]["code"],
+            -32600
+        );
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","id":4,"method":"shutdown","params":null}),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 4);
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":5,
+                "method":"textDocument/documentSymbol",
+                "params":{"textDocument":{"uri":"file:///lifecycle.adoc"}}
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_message(&mut client_read).await["error"]["code"],
+            -32600
+        );
         write_message(
             &mut client_write,
             &json!({"jsonrpc":"2.0","method":"exit","params":null}),
