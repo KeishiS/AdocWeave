@@ -46,6 +46,11 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
                 render_heading(&mut fragment, heading, id, options);
             }
             AstBlock::Paragraph(paragraph) => render_paragraph(&mut fragment, paragraph),
+            AstBlock::Literal(literal) => {
+                fragment.push_str("<pre>");
+                escape_html_into(&mut fragment, &literal.value);
+                fragment.push_str("</pre>\n");
+            }
             AstBlock::Unsupported(unsupported) => render_unsupported(&mut fragment, unsupported),
         }
     }
@@ -208,6 +213,16 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &HtmlOptions::default()).html,
             "<p><em>italic and <strong>bold</strong></em></p>\n"
+        );
+    }
+
+    #[test]
+    fn literal_block_html_escapes_content_without_inline_parsing() {
+        let parsed = parse("....\n<tag> & *strong*\n....\n").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &HtmlOptions::default()).html,
+            "<pre>&lt;tag&gt; &amp; *strong*\n</pre>\n"
         );
     }
 

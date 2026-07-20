@@ -186,6 +186,7 @@ mod tests {
                     Some(paragraph.lines.into_iter().map(|line| line.value).collect())
                 }
                 AstBlock::Heading(_) => None,
+                AstBlock::Literal(_) => None,
                 AstBlock::Unsupported(_) => None,
             })
             .collect()
@@ -234,5 +235,15 @@ mod tests {
         let output = format("one\n\ntwo\n", &config).expect("valid source");
 
         assert_eq!(output.formatted, "one\r\n\r\ntwo");
+    }
+
+    #[test]
+    fn literal_block_formatter_preserves_body_byte_for_byte() {
+        let source = "before  \n\n....\r\ncode  \r\n\r\n....\r\n\nafter  ";
+        let output = format(source, &FormatConfig::default()).expect("valid source");
+
+        assert!(output.formatted.contains("....\r\ncode  \r\n\r\n....\r\n"));
+        assert!(output.formatted.starts_with("before\n"));
+        assert!(output.formatted.ends_with("after\n"));
     }
 }

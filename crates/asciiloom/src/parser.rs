@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use crate::inline::{Inline, InlineParseConfig, InlineProblem, parse as parse_inlines};
-use crate::source::{PositionError, TextRange};
+use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LosslessToken, SourceLine, SourceLines};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -12,6 +12,7 @@ pub enum CstBlockKind {
     Heading,
     MalformedHeading,
     Paragraph,
+    LiteralBlock,
     BlankLine,
     Unsupported,
 }
@@ -85,6 +86,26 @@ pub struct Unsupported {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlockProblemKind {
+    UnclosedBlock,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlockProblem {
+    pub kind: BlockProblemKind,
+    pub range: TextRange,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiteralBlock {
+    pub range: TextRange,
+    pub delimiter_range: TextRange,
+    pub content_range: TextRange,
+    pub value: String,
+    pub problems: Vec<BlockProblem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HeadingKind {
     DocumentTitle,
     Section { level: u8 },
@@ -115,6 +136,7 @@ pub struct Heading {
 pub enum AstBlock {
     Heading(Heading),
     Paragraph(Paragraph),
+    Literal(LiteralBlock),
     Unsupported(Unsupported),
 }
 
@@ -163,6 +185,19 @@ impl AstDocument {
                         .expect("writing to a String cannot fail");
                     }
                 }
+                AstBlock::Literal(literal) => {
+                    writeln!(
+                        output,
+                        "  Literal@{}..{} content={}..{} {:?} problems={:?}",
+                        literal.range.start().to_u32(),
+                        literal.range.end().to_u32(),
+                        literal.content_range.start().to_u32(),
+                        literal.content_range.end().to_u32(),
+                        literal.value,
+                        literal.problems
+                    )
+                    .expect("writing to a String cannot fail");
+                }
                 AstBlock::Unsupported(unsupported) => {
                     writeln!(
                         output,
@@ -193,12 +228,25 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
     let mut paragraph_lines = Vec::new();
     let mut saw_content = false;
 
-    for line in source_lines.lines() {
+    let mut line_index = 0;
+    while line_index < source_lines.lines().len() {
+        let line = source_lines.lines()[line_index];
         let content = source_lines
             .text(line.content_range())
             .expect("line content has valid UTF-8 boundaries");
 
-        if content.trim_matches([' ', '\t']).is_empty() {
+        if content == "...." {
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
+            let (literal, next_line) = parse_literal_block(&source_lines, line_index, source)?;
+            blocks.push(CstBlock {
+                kind: CstBlockKind::LiteralBlock,
+                range: literal.range,
+            });
+            ast_blocks.push(AstBlock::Literal(literal));
+            saw_content = true;
+            line_index = next_line;
+            continue;
+        } else if content.trim_matches([' ', '\t']).is_empty() {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
             blocks.push(CstBlock {
                 kind: CstBlockKind::BlankLine,
@@ -206,7 +254,7 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
             });
         } else if content.starts_with('=') {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
-            let heading = parse_heading(content, *line, !saw_content)?;
+            let heading = parse_heading(content, line, !saw_content)?;
             blocks.push(CstBlock {
                 kind: if heading.problems.is_empty() {
                     match heading.kind {
@@ -234,9 +282,10 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
             }));
             saw_content = true;
         } else {
-            paragraph_lines.push((*line, content.trim_end_matches([' ', '\t']).to_owned()));
+            paragraph_lines.push((line, content.trim_end_matches([' ', '\t']).to_owned()));
             saw_content = true;
         }
+        line_index += 1;
     }
     flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
 
@@ -247,6 +296,76 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
         },
         ast: AstDocument { blocks: ast_blocks },
     })
+}
+
+fn parse_literal_block(
+    source_lines: &SourceLines<'_>,
+    opener_index: usize,
+    source: &str,
+) -> Result<(LiteralBlock, usize), PositionError> {
+    let opener = source_lines.lines()[opener_index];
+    let content_start = opener.full_range().end();
+    let mut closer_index = None;
+    let mut recovery_index = None;
+
+    for (index, line) in source_lines
+        .lines()
+        .iter()
+        .enumerate()
+        .skip(opener_index + 1)
+    {
+        let content = source_lines
+            .text(line.content_range())
+            .expect("line content has valid UTF-8 boundaries");
+        if content == "...." {
+            closer_index = Some(index);
+            break;
+        }
+        if content.starts_with('=') {
+            recovery_index = Some(index);
+            break;
+        }
+    }
+
+    let (range_end, content_end, next_line, problems) = if let Some(index) = closer_index {
+        let closer = source_lines.lines()[index];
+        (
+            closer.full_range().end(),
+            closer.full_range().start(),
+            index + 1,
+            Vec::new(),
+        )
+    } else {
+        let end = recovery_index
+            .map(|index| source_lines.lines()[index].full_range().start())
+            .unwrap_or_else(|| TextSize::new(source.len()).expect("source size was validated"));
+        (
+            end,
+            end,
+            recovery_index.unwrap_or(source_lines.lines().len()),
+            vec![BlockProblem {
+                kind: BlockProblemKind::UnclosedBlock,
+                range: opener.content_range(),
+            }],
+        )
+    };
+    let content_range = TextRange::new(content_start, content_end)?;
+    let range = TextRange::new(opener.full_range().start(), range_end)?;
+    let value = source
+        .get(content_range.start().to_usize()..content_range.end().to_usize())
+        .expect("literal content range has valid UTF-8 boundaries")
+        .to_owned();
+
+    Ok((
+        LiteralBlock {
+            range,
+            delimiter_range: opener.content_range(),
+            content_range,
+            value,
+            problems,
+        },
+        next_line,
+    ))
 }
 
 fn parse_heading(
@@ -378,7 +497,7 @@ fn is_delimiter(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AstBlock, CstBlockKind, HeadingKind, HeadingProblem, parse};
+    use super::{AstBlock, BlockProblemKind, CstBlockKind, HeadingKind, HeadingProblem, parse};
 
     #[test]
     fn paragraph_parser_handles_empty_input() {
@@ -422,6 +541,41 @@ mod tests {
         assert_eq!(unsupported.raw, "[role=test]");
         assert_eq!(unsupported.reason, "block attributes are not implemented");
         assert_eq!(parsed.cst.reconstruct(), source);
+    }
+
+    #[test]
+    fn literal_block_preserves_empty_and_multiline_contents() {
+        let source = "....\n<tag>\n*not strong*\n....\n\n....\n....\n";
+        let parsed = parse(source).expect("valid source");
+        let literals = parsed
+            .ast
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                AstBlock::Literal(literal) => Some(literal),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(literals.len(), 2);
+        assert_eq!(literals[0].value, "<tag>\n*not strong*\n");
+        assert_eq!(literals[1].value, "");
+        assert!(literals.iter().all(|literal| literal.problems.is_empty()));
+        assert_eq!(parsed.cst.reconstruct(), source);
+    }
+
+    #[test]
+    fn literal_block_recovers_at_heading_when_unclosed() {
+        let source = "....\ncontent\n== Next\nparagraph";
+        let parsed = parse(source).expect("valid source");
+        let AstBlock::Literal(literal) = &parsed.ast.blocks[0] else {
+            panic!("expected literal");
+        };
+
+        assert_eq!(literal.value, "content\n");
+        assert_eq!(literal.problems[0].kind, BlockProblemKind::UnclosedBlock);
+        assert!(matches!(parsed.ast.blocks[1], AstBlock::Heading(_)));
+        assert!(matches!(parsed.ast.blocks[2], AstBlock::Paragraph(_)));
     }
 
     #[test]

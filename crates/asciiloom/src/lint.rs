@@ -8,7 +8,7 @@ use crate::diagnostic::{
 };
 use crate::document::heading_id_base;
 use crate::inline::InlineProblemKind;
-use crate::parser::{AstBlock, HeadingKind, HeadingProblem, parse};
+use crate::parser::{AstBlock, BlockProblemKind, HeadingKind, HeadingProblem, parse};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LineEnding, SourceLines};
 
@@ -22,10 +22,11 @@ pub enum LintRule {
     HeadingMarkerSpace,
     UnclosedInline,
     NestingLimitExceeded,
+    UnclosedBlock,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -34,6 +35,7 @@ impl LintRule {
         Self::HeadingMarkerSpace,
         Self::UnclosedInline,
         Self::NestingLimitExceeded,
+        Self::UnclosedBlock,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -46,6 +48,7 @@ impl LintRule {
             Self::HeadingMarkerSpace => "heading-marker-space",
             Self::UnclosedInline => "unclosed-inline",
             Self::NestingLimitExceeded => "nesting-limit-exceeded",
+            Self::UnclosedBlock => "unclosed-block",
         }
     }
 }
@@ -189,6 +192,20 @@ fn lint_headings(
             AstBlock::Paragraph(paragraph) => {
                 for line in &paragraph.lines {
                     push_inline_problems(diagnostics, config, &line.inline_problems);
+                }
+            }
+            AstBlock::Literal(literal) => {
+                for problem in &literal.problems {
+                    match problem.kind {
+                        BlockProblemKind::UnclosedBlock => push_diagnostic(
+                            diagnostics,
+                            config,
+                            LintRule::UnclosedBlock,
+                            problem.range,
+                            "unclosed literal block",
+                            None,
+                        ),
+                    }
                 }
             }
             AstBlock::Unsupported(_) => {}
@@ -509,5 +526,14 @@ mod tests {
         push_inline_problems(&mut diagnostics, &LintConfig::default(), &[problem]);
 
         assert_eq!(diagnostics[0].code.as_str(), "nesting-limit-exceeded");
+    }
+
+    #[test]
+    fn literal_block_lint_reports_unclosed_block() {
+        let diagnostics = lint("....\ncontent", &LintConfig::default()).expect("valid source");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code.as_str(), "unclosed-block");
+        assert_eq!(diagnostics[0].range.start().to_u32(), 0);
     }
 }
