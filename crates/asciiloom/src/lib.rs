@@ -8,6 +8,7 @@ use std::fmt;
 
 pub mod diagnostic;
 pub mod source;
+pub mod source_lines;
 
 /// An operation supported by the AsciiLoom command-line application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
