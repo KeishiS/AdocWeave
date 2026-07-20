@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::diagnostic::Diagnostic;
-use crate::parser::{AstBlock, AstDocument, Paragraph, Unsupported};
+use crate::parser::{AstBlock, AstDocument, Heading, Paragraph, Unsupported};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct HtmlOptions {
@@ -25,6 +25,7 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
     let mut fragment = String::new();
     for block in &document.blocks {
         match block {
+            AstBlock::Heading(heading) => render_heading_as_plain_text(&mut fragment, heading),
             AstBlock::Paragraph(paragraph) => render_paragraph(&mut fragment, paragraph),
             AstBlock::Unsupported(unsupported) => render_unsupported(&mut fragment, unsupported),
         }
@@ -41,6 +42,12 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
         diagnostics: Vec::new(),
         document_attributes: BTreeMap::new(),
     }
+}
+
+fn render_heading_as_plain_text(output: &mut String, heading: &Heading) {
+    output.push_str("<p>");
+    escape_html_into(output, &heading.text);
+    output.push_str("</p>\n");
 }
 
 fn render_paragraph(output: &mut String, paragraph: &Paragraph) {

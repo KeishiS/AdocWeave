@@ -56,7 +56,12 @@ pub fn format(source: &str, config: &FormatConfig) -> Result<FormatOutput, Posit
         .cst
         .blocks()
         .iter()
-        .filter(|block| block.kind == CstBlockKind::Unsupported)
+        .filter(|block| {
+            !matches!(
+                block.kind,
+                CstBlockKind::Paragraph | CstBlockKind::BlankLine
+            )
+        })
         .map(|block| block.range)
         .collect::<Vec<_>>();
     let last_real_line = source_lines
@@ -180,6 +185,7 @@ mod tests {
                 AstBlock::Paragraph(paragraph) => {
                     Some(paragraph.lines.into_iter().map(|line| line.value).collect())
                 }
+                AstBlock::Heading(_) => None,
                 AstBlock::Unsupported(_) => None,
             })
             .collect()
