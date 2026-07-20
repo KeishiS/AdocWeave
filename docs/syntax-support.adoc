@@ -1,0 +1,166 @@
+= AsciiLoom syntax support
+
+This document records the behavior implemented by the current AsciiLoom core.
+It is a product support matrix, not a claim that the listed subset is a
+complete implementation of the AsciiDoc language.
+
+The normative rules for implemented syntax are in xref:grammar.adoc[Core 0.1
+normative grammar]. Differences from the wider AsciiDoc language are described
+in xref:asciidoc-compatibility.adoc[AsciiDoc specification status].
+
+== Status definitions
+
+Supported::
+The syntax has a semantic AST representation and is covered vertically by the
+parser and applicable renderer, diagnostic, formatter, and editor features.
+
+Preserved::
+The syntax does not have its final semantics yet, but input is retained as
+ordinary text or an `Unsupported` node. HTML output escapes the retained text.
+
+Unsupported::
+AsciiLoom does not currently promise AsciiDoc-compatible recognition or
+behavior for the syntax.
+
+== Supported block syntax
+
+[cols="2,1,3",options="header"]
+|===
+|Syntax |Status |Current behavior
+
+|Paragraphs
+|Supported
+|Adjacent nonblank lines form a paragraph. Original source ranges remain
+available in the CST.
+
+|Document title
+|Supported
+|The first one-marker heading before document content becomes the document
+title and is rendered by default.
+
+|Section headings
+|Supported
+|Two through six `=` markers represent section levels one through five.
+Hierarchy diagnostics, symbols, hover information, and stable generated IDs
+are available.
+
+|Delimited literal block (`....`)
+|Supported
+|The body is opaque. Inline substitutions are not applied.
+
+|Source block (`[source,LANGUAGE]` followed by `----`)
+|Supported subset
+|The language and opaque body are represented semantically. Other block
+attributes and shorthand source styles are not supported.
+
+|Blank lines
+|Supported
+|Spaces and tabs on an otherwise empty line count as a blank line.
+
+|Unknown block constructs
+|Preserved
+|Recognized constructs become `Unsupported` in permissive mode. Strict mode
+rejects a document containing such a node.
+|===
+
+== Supported inline syntax
+
+[cols="2,1,3",options="header"]
+|===
+|Syntax |Status |Current behavior
+
+|Strong (`*text*`)
+|Supported subset
+|Only the constrained single-marker form is recognized.
+
+|Emphasis (`_text_`)
+|Supported subset
+|Only the constrained single-marker form is recognized. Identifier
+underscores such as `snake_case` remain text.
+
+|Monospace (pass:[`text`])
+|Supported subset
+|Only the constrained single-marker form is recognized. Its content is opaque.
+
+|Nested strong and emphasis
+|Supported
+|Styled content is parsed recursively up to the configured inline-depth limit.
+
+|Unclosed formatting
+|Supported recovery
+|The opener remains text, a diagnostic is emitted, and scanning continues so
+later safe spans are not lost.
+
+|Unconstrained formatting (`**text**`, `__text__`, double backticks)
+|Unsupported
+|The double-marker form has no formatting semantics in Core 0.1.
+
+|Backslash escaping
+|Unsupported
+|Backslash is currently ordinary text and does not suppress substitutions.
+
+|Highlight, subscript, superscript, typographic quotes
+|Unsupported
+|The corresponding formatting marks have no dedicated semantic nodes.
+
+|Inline passthroughs
+|Unsupported
+|Single, double, and triple plus passthrough forms are not interpreted.
+|===
+
+== Syntax planned but not yet implemented
+
+[cols="2,2,3",options="header"]
+|===
+|Area |Planned Issue |Current treatment
+
+|Document attributes
+|xref:../issues/029-document-attributes.adoc[Issue 029]
+|No attribute expansion; source-language metadata is the only supported
+attribute-like form.
+
+|Explicit anchors and stable IDs
+|xref:../issues/030-anchors-and-stable-ids.adoc[Issue 030]
+|Generated heading IDs only.
+
+|Links and URL policy
+|xref:../issues/031-links-and-url-policy.adoc[Issue 031]
+|Link macros remain text.
+
+|Lists and block continuation
+|xref:../issues/032-lists-and-continuations.adoc[Issue 032]
+|No list AST; input generally remains paragraph text.
+
+|Note references
+|xref:../issues/033-note-reference-macro.adoc[Issue 033]
+|No UUID or host-side resolution.
+
+|STEM and LaTeX
+|xref:../issues/034-latex-stem.adoc[Issue 034]
+|Math macros remain text.
+|===
+
+== Examples
+
+.Supported constrained formatting
+[source,asciidoc]
+....
+Use *strong*, _emphasis_, and `monospace`.
+....
+
+.Unsupported unconstrained formatting
+[source,asciidoc]
+....
+some**strong**word
+some__emphasis__word
+some``monospace``word
+....
+
+.Supported source-block subset
+[source,asciidoc]
+....
+[source,rust]
+----
+fn main() {}
+----
+....

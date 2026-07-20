@@ -127,6 +127,29 @@ env = { "RUSTDOCFLAGS" = "-D warnings" }
 command = "cargo"
 args = ["doc", "--workspace", "--all-features", "--no-deps"]
 
+[tasks.docs-check]
+description = "Reject repository documentation that is not AsciiDoc"
+script_runner = "@shell"
+script = '''
+unexpected="$(rg --files -g '*.md' -g '*.markdown' | rg -v '(^|/)AGENTS\.md$' || true)"
+if [ -n "$unexpected" ]; then
+  echo "repository documentation must use .adoc:" >&2
+  echo "$unexpected" >&2
+  exit 1
+fi
+
+if rg -n '^#{1,6} |^```|\[[^]]+\]\([^)]+\)' -g '*.adoc'; then
+  echo "Markdown syntax found in AsciiDoc documentation" >&2
+  exit 1
+fi
+
+while IFS= read -r document; do
+  asciidoctor --failure-level WARN --out-file /dev/null "$document"
+done <<EOF
+$(rg --files -g 'README.adoc' -g '*.expectations.adoc' -g 'docs/*.adoc' -g 'issues/*.adoc' | sort)
+EOF
+'''
+
 [tasks.build]
 description = "Build all workspace targets and features"
 command = "cargo"
@@ -142,6 +165,7 @@ dependencies = [
   "clippy-zed",
   "test",
   "doc-check",
+  "docs-check",
   "build",
 ]
 

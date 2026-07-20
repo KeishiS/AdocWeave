@@ -1,0 +1,80 @@
+= AsciiLoom roadmap
+
+This roadmap summarizes planned capability rather than promising release
+dates. The authoritative task definitions are in xref:../issues/README.adoc[
+the Issue plan].
+
+== Completed foundation: Issues 001 through 026
+
+The implemented foundation contains:
+
+* lossless UTF-8 source ranges, line indexing, and diagnostics;
+* paragraphs, titles, sections, constrained strong, emphasis, and monospace;
+* literal blocks and a restricted source-block form;
+* HTML conversion, linting, conservative formatting, and CLI commands;
+* Language Server diagnostics, symbols, actions, formatting, hover, and
+  completion;
+* resource limits, strict and permissive unsupported-syntax policy;
+* output-neutral semantic AST, normative Core 0.1 grammar, and substitution
+  model;
+* a development Zed extension.
+
+Zed runtime acceptance remains a manual release gate because the current
+development environment has no Zed GUI session.
+
+== Public core and rendering contracts: Issues 027 through 028
+
+The next architectural stage stabilizes:
+
+* syntax profiles and cancellation-aware public processing APIs;
+* explicit HTML rendering policy and output contracts;
+* backend-independent processing results suitable for native and WASM hosts.
+
+== Note-compatible syntax: Issues 029 through 034
+
+This stage adds, in dependency order:
+
+. document attributes and protected metadata;
+. explicit anchors and stable IDs;
+. ordinary links with a URL security policy;
+. ordered and unordered lists with block continuation;
+. note-reference macros behind a host-provided resolver boundary;
+. STEM and LaTeX nodes behind an extension boundary.
+
+Backslash escaping, unconstrained formatting, passthroughs, and the remaining
+AsciiDoc substitution behavior are specification gaps that must be scheduled
+alongside this stage. They must be added to the normative grammar before the
+project claims broader AsciiDoc compatibility.
+
+== Host integration: Issues 035 through 038
+
+This stage introduces:
+
+* metadata, reference, and search-text projections;
+* server-side execution, caching, cancellation, and observability;
+* WASM and Web Worker integration;
+* the remaining Language Server protocol surface.
+
+The core remains free of implicit filesystem, network, clock, environment, and
+UUID-resolution access. Hosts supply those capabilities explicitly.
+
+== Conformance and profile release: Issues 039 through 041
+
+The final planned stage adds:
+
+* fuzzing, property tests, and security regression testing;
+* shared native and WASM conformance fixtures;
+* release validation for the note-application compatibility profile.
+
+== Documentation maintenance rule
+
+Repository documentation uses AsciiDoc (`.adoc`). Files whose names are fixed
+by external tooling, such as `AGENTS.md`, are exempt.
+
+Every syntax change must update:
+
+* xref:syntax-support.adoc[the support matrix];
+* xref:asciidoc-compatibility.adoc[the external compatibility assessment];
+* xref:grammar.adoc[the normative grammar];
+* xref:substitutions.adoc[the substitution model], when applicable;
+* the corresponding fixtures and tests.

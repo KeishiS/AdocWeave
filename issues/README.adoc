@@ -1,0 +1,97 @@
+= AsciiLoom 実装Issue一覧
+
+各Issueは、単独で動作確認できる最小限の変更単位を表す。原則として番号順に進めるが、依存関係を満たすIssueは並行して実施してよい。
+
+本計画では、段階0から3までを「コア初期リリース」、属性、アンカー、リンク、リスト、ノート参照および数式までを「ノートアプリ互換プロファイル」として分ける。コア初期リリースはノートアプリ対応完了を意味しない。
+
+== 運用方針
+
+- 一つのIssueを、可能な限り一つの独立したコミットとして完了する。
+- 構文追加では、解析だけでなくHTML、診断、LSP、整形のうち該当する機能まで縦に実装する。
+- fixtureを用意し、正常系、不完全入力、境界値を確認する。
+- 各Issueの完了時に `cargo fmt`、`cargo clippy`、関連テストを実行する。
+- 未対応構文を推測して変換せず、安全なプレーンテキストまたは診断として扱う。
+- 文法、置換、HTML出力または公開APIを変更するIssueでは、対応する規範的仕様と互換性fixtureも同じIssueで更新する。
+- ネイティブ、WASM、CLI、LSPおよびサーバ統合で別々の簡易パーサーを実装しない。
+- semantic ASTと解析APIへHTML固有のタグ、属性、classまたは出力設定を持ち込まない。各出力形式は独立したバックエンドとして同じASTを読み取る。
+- semantic ASTでは、内容を再解釈しないリテラルノードと、子要素へ置換を適用するコンテナノードを区別する。出力バックエンドはこの意味上の区別を各形式の表現へ写像する。
+- CLI等のフロントエンドは解析と出力バックエンドを組み合わせるだけとし、レンダラー内で再解析しない。
+- 公開APIはファイル、ネットワーク、環境変数、時刻、UUID解決等のホスト機能へ暗黙にアクセスしない。
+- Issue番号は依存順を示す。実装開始前に各Issueの未決事項が解消されていることを確認する。
+
+== マイルストーン
+
+=== 横断的な開発基盤
+
+* xref:042-cargo-make-development-tasks.adoc[042: cargo-makeによる開発タスク統一]（Issue 004完了後に割り込みで先行実施）
+
+=== M1: プレーンテキスト変換
+
+* xref:001-workspace-and-cli.adoc[001: Cargo workspaceとCLIの初期化]
+* xref:002-source-position-and-line-index.adoc[002: ソース位置と行索引]
+* xref:003-diagnostic-model.adoc[003: 共通診断モデル]
+* xref:004-source-lines.adoc[004: 入力行と改行の認識]
+* xref:005-paragraph-parser.adoc[005: 段落の構文解析]
+* xref:006-paragraph-html.adoc[006: 段落のHTML変換]
+* xref:007-basic-lint.adoc[007: 基本Lint]
+* xref:008-basic-formatter.adoc[008: 最小Formatter]
+
+=== M2: 文書タイトルと見出し
+
+* xref:009-heading-parser.adoc[009: タイトルと見出しの解析]
+* xref:010-heading-html-and-id.adoc[010: 見出しHTMLとID生成]
+* xref:011-heading-lint-and-symbols.adoc[011: 見出しLintと文書シンボル]
+
+=== M3: 基本インライン構文
+
+* xref:012-inline-foundation.adoc[012: インライン構文の基盤]
+* xref:013-monospace-inline.adoc[013: 等幅文字]
+* xref:014-strong-inline.adoc[014: 強調]
+* xref:015-emphasis-and-recovery.adoc[015: 斜体とインラインエラー回復]
+
+=== M4: コードブロック
+
+* xref:016-literal-block.adoc[016: リテラルブロック]
+* xref:017-source-block.adoc[017: ソースコードブロック]
+* xref:018-limits-and-security.adoc[018: 上限とセキュリティ制約]
+
+=== M5: Language Server
+
+* xref:019-lsp-document-sync.adoc[019: LSP起動と文書同期]
+* xref:020-lsp-diagnostics.adoc[020: LSP診断とUnicode位置変換]
+* xref:021-lsp-document-symbols.adoc[021: LSP文書シンボル]
+* xref:022-lsp-actions-and-formatting.adoc[022: Code ActionとFormatting]
+* xref:023-lsp-hover-and-completion.adoc[023: ホバーと補完]
+
+=== M6: Zedとコア初期リリース
+
+* xref:024-zed-integration.adoc[024: Zed Editor連携]
+* xref:025-initial-release.adoc[025: コア初期リリース検証]
+
+=== M7: 規範的契約と公開コア
+
+* xref:026-normative-grammar-and-substitutions.adoc[026: 規範的文法と置換モデル]
+* xref:027-public-core-api.adoc[027: 構文プロファイルとキャンセル可能な公開API]
+* xref:028-html-contract-and-render-policy.adoc[028: HTML出力契約とレンダーポリシー]
+
+=== M8: ノートアプリ互換構文
+
+* xref:029-document-attributes.adoc[029: 文書属性と保護メタデータ]
+* xref:030-anchors-and-stable-ids.adoc[030: 明示アンカーと安定ID]
+* xref:031-links-and-url-policy.adoc[031: 通常リンクとURL検証]
+* xref:032-lists-and-continuations.adoc[032: リストとブロック継続]
+* xref:033-note-reference-macro.adoc[033: note参照マクロとResolver境界]
+* xref:034-latex-stem.adoc[034: LaTeX STEMと数式拡張境界]
+
+=== M9: ノートアプリ統合
+
+* xref:035-note-projections.adoc[035: メタデータ・参照・検索テキスト抽出]
+* xref:036-server-execution.adoc[036: サーバ実行・キャッシュ・観測性]
+* xref:037-wasm-worker-integration.adoc[037: WASM APIとWeb Worker統合]
+* xref:038-lsp-protocol-completion.adoc[038: Language Serverプロトコル完成]
+
+=== M10: 品質保証と互換プロファイル公開
+
+* xref:039-fuzz-property-security-tests.adoc[039: Fuzzing・property test・セキュリティ試験]
+* xref:040-cross-runtime-conformance.adoc[040: ネイティブ・WASM共通fixtureと互換性試験]
+* xref:041-note-profile-release.adoc[041: ノートアプリ互換プロファイルのリリース検証]

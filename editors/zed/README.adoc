@@ -1,0 +1,32 @@
+= Zed development extension
+
+== Prerequisites
+
+Build the Language Server and expose it on `PATH` before starting Zed:
+
+[source,console]
+----
+cargo build -p asciiloom-lsp
+export PATH="$PWD/target/debug:$PATH"
+zed --foreground .
+----
+
+Install this directory using `zed: install dev extension`, then open
+`fixtures/zed/manual.adoc`.
+
+== Manual checklist
+
+- The language selector reports `AsciiDoc` for `.adoc` and `.asciidoc`.
+- `asciiloom-lsp` starts without repeatedly restarting.
+- Trailing whitespace, the missing heading space, and unfinished emphasis
+  produce diagnostics at the expected ranges, including the emoji line.
+- Editing the document replaces diagnostics with the latest version.
+- The outline shows the document title and nested headings.
+- Code Actions remove trailing whitespace and insert the missing heading space.
+- Format Document is idempotent and does not modify the source block body.
+- Hover over a heading shows its level and generated ID.
+- Completion after `[source, ru` suggests `rust`.
+- Closing the document clears its diagnostics.
+
+If startup fails, inspect `zed: open log`. A Language Server failure should be
+reported there and must not terminate Zed itself.

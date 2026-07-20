@@ -1,0 +1,182 @@
+= AsciiDoc specification status
+
+== Reference baseline
+
+AsciiLoom uses the following official project materials as the external
+reference baseline:
+
+* https://asciidoc.org/[AsciiDoc project website]
+* https://docs.asciidoctor.org/asciidoc/latest/[AsciiDoc Language documentation]
+* https://docs.asciidoctor.org/asciidoc/latest/_exports/asciidoc-pre-spec.pdf[AsciiDoc pre-specification]
+* https://docs.asciidoctor.org/asciidoc/latest/syntax-quick-reference/[AsciiDoc syntax quick reference]
+
+The AsciiDoc project states that development of the language specification is
+still underway. Therefore, AsciiLoom records both its chosen baseline and its
+intentional differences instead of claiming conformance to an unspecified
+final version.
+
+Core 0.1 is an intentionally small profile. Passing its tests proves
+conformance to xref:grammar.adoc[AsciiLoom's normative grammar], not full
+AsciiDoc conformance.
+
+== Formatting-pair compatibility
+
+The official language documentation distinguishes constrained and
+unconstrained formatting pairs. Constrained pairs depend on the characters
+adjacent to the formatting marks. Unconstrained pairs use doubled marks and
+can format characters inside words or next to CJK characters.
+
+References:
+
+* https://docs.asciidoctor.org/asciidoc/latest/text/[Text formatting and punctuation]
+* https://docs.asciidoctor.org/asciidoc/latest/text/troubleshoot-unconstrained-formatting/[Troubleshoot unconstrained formatting pairs]
+* https://docs.asciidoctor.org/asciidoc/latest/text/monospace/[Monospace]
+
+[cols="2,2,2",options="header"]
+|===
+|Feature |AsciiDoc reference behavior |AsciiLoom Core 0.1
+
+|Constrained strong
+|Single `*` pair
+|Supported
+
+|Constrained emphasis
+|Single `_` pair
+|Supported
+
+|Constrained monospace
+|Single backtick pair
+|Supported
+
+|Unconstrained strong
+|Double `**` pair
+|Unsupported
+
+|Unconstrained emphasis
+|Double `__` pair
+|Unsupported
+
+|Unconstrained monospace
+|Double backtick pair
+|Unsupported
+
+|Formatting across contiguous lines
+|Formatting pairs can span contiguous lines
+|Unsupported; inline scanning stops at each paragraph line boundary
+
+|Other text styles
+|Highlight, subscript, superscript, and typographic punctuation are defined
+|Unsupported
+|===
+
+AsciiLoom's constrained-boundary predicates are currently its own explicit
+Core 0.1 contract. They are designed to avoid interpreting identifier
+punctuation, but have not yet been demonstrated equivalent to every boundary
+case in the evolving AsciiDoc language.
+
+== Backslash escaping
+
+The official documentation defines backslash as one way to prevent a
+substitution in normal content. The backslash can suppress formatting,
+attribute references, replacements, anchors, macros, and automatic URL
+recognition, and is removed from the rendered result.
+
+Reference:
+https://docs.asciidoctor.org/asciidoc/latest/subs/prevent/[Escape and prevent
+substitutions].
+
+.Reference behavior
+[source,asciidoc]
+....
+\*Stars* remains literal markup rather than strong text.
+\{name} remains an attribute reference in source form.
+\https://example.org is not activated as a link.
+....
+
+AsciiLoom does not implement this behavior. Backslash is an ordinary source
+character. For example, in `\*Stars*`, the backslash remains text and the
+following constrained pair may still become strong content. This is a known,
+intentional Core 0.1 incompatibility, not an accepted alternative spelling.
+
+Implementation requires more than deleting a backslash:
+
+* the lossless CST must retain the escape character and its range;
+* semantic text must distinguish escaped markup from ordinary markup;
+* diagnostics and formatting must preserve the author's intent;
+* each substitution context must define whether escaping is active;
+* HTML and future backends must consume semantic content without reparsing it.
+
+Backslash escapes should be implemented together with the general substitution
+model rather than as a renderer-specific replacement.
+
+== Substitution compatibility
+
+The official documentation describes ordered substitution types: special
+characters, quotes, attributes, replacements, macros, and post replacements.
+It also defines substitution groups such as `normal`, `header`, `verbatim`,
+`pass`, and `none`.
+
+References:
+
+* https://docs.asciidoctor.org/asciidoc/latest/subs/[Substitutions]
+* https://docs.asciidoctor.org/asciidoc/latest/subs/special-characters/[Special character substitutions]
+
+AsciiLoom currently implements only a narrow semantic equivalent:
+
+* paragraphs and headings parse constrained strong, emphasis, and monospace;
+* monospace, literal blocks, and source bodies are opaque;
+* output backends must escape unsafe destination characters;
+* attribute expansion, replacements, macros, passthroughs, and configurable
+  substitution groups are not implemented.
+
+The current order is therefore not equivalent to the full AsciiDoc
+substitution pipeline. See xref:substitutions.adoc[Core 0.1 substitution
+model] for the implemented contract.
+
+== Block and document compatibility
+
+[cols="2,2,2",options="header"]
+|===
+|Area |AsciiDoc language |AsciiLoom Core 0.1
+
+|Document header
+|Title, author, revision, and attributes
+|Title only
+
+|Sections
+|Section titles, IDs, attributes, and broader structural rules
+|Levels one through five with generated IDs
+
+|Literal and listing content
+|Several block forms and substitution configurations
+|Delimited literal block plus a restricted source block
+
+|Lists
+|Ordered, unordered, description, nesting, and continuation
+|Unsupported
+
+|Links and cross references
+|URL, link, email, xref, and related macros
+|Unsupported
+
+|Includes and conditionals
+|Preprocessor directives
+|Unsupported; the core performs no file access
+
+|Passthrough and raw output
+|Defined passthrough mechanisms
+|Unsupported; raw HTML is never passed through
+|===
+
+== Compatibility policy
+
+Until a feature is implemented:
+
+* source must not be silently discarded;
+* unsupported content must not become executable raw HTML;
+* permissive processing should preserve recoverable content;
+* strict processing may reject recognized unsupported block syntax;
+* no backend may invent semantics by reparsing source text.
+
+Each future syntax Issue must update this document, the support matrix, the
+normative grammar, and cross-backend fixtures in the same change.

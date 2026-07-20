@@ -1,0 +1,40 @@
+= Fuzzing・property test・セキュリティ試験
+
+== 目的
+
+任意入力、不変条件および悪意ある入力に対するコア処理系の堅牢性を継続的に検証する。
+
+== 実装範囲
+
+- 任意UTF-8文字列および任意バイト列を対象に、入力境界を含めてpanicしないfuzz targetを追加する。
+- パーサー、レンダラー、位置変換、属性展開およびURL検証のproperty testを追加する。
+- `format(format(x)) == format(x)`、意味同値性および未変更領域のバイト保存を検証する。
+- 悪意あるHTML、URL難読化、深い入れ子、巨大行、閉じ忘れおよび組合せfixtureを追加する。
+- 過去の不具合を最小化した回帰fixtureへ固定する運用を定義する。
+- CIの短時間fuzz smoke testと定期的な長時間実行を分離する。
+
+== 完了条件
+
+- すべての公開入力境界にfuzz targetまたは同等のproperty testがある。
+- 発見したクラッシュを再現するseed corpusをリポジトリへ保存できる。
+- 上限超過とキャンセルがpanicや危険な部分HTMLを生じない。
+- Formatterの三つの不変条件を自動検証できる。
+
+== 検証
+
+[source,console]
+----
+cargo test --workspace property
+cargo fuzz run parser -- -max_total_time=60
+cargo fuzz run render -- -max_total_time=60
+----
+
+== 依存関係
+
+- 028
+- 029
+- 030
+- 031
+- 032
+- 033
+- 034
