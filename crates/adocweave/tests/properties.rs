@@ -4,7 +4,6 @@ use adocweave::html::{RenderPolicy, render};
 use adocweave::projection::{project, searchable_text};
 use adocweave::reference::ReferenceKey;
 use adocweave::source::{PositionEncoding, SourceDocument, TextSize};
-use adocweave::syntax::FormattingPolicy;
 use adocweave::url::{UrlDecision, UrlPolicy};
 use adocweave::{Engine, ParseOptions};
 
@@ -87,15 +86,9 @@ fn formatter_preserves_semantics_and_protected_source_regions() {
         let formatted =
             format_analysis(&before, &FormatConfig::default()).expect("format generated input");
 
-        for block in before
-            .syntax()
-            .blocks()
-            .iter()
-            .filter(|block| block.kind().formatting_policy() == FormattingPolicy::PreserveBytes)
-        {
+        for range in before.syntax().formatting_protected_ranges() {
             assert!(formatted.edits.iter().all(|edit| {
-                edit.range.end() <= block.range().start()
-                    || block.range().end() <= edit.range.start()
+                edit.range.end() <= range.start() || range.end() <= edit.range.start()
             }));
         }
 

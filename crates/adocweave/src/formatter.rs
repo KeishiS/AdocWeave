@@ -6,7 +6,7 @@ use crate::core::{ParseError, ParseOptions, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::LineEnding;
-use crate::syntax::{FormattingPolicy, SyntaxNode, SyntaxTree};
+use crate::syntax::SyntaxTree;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NewlineStyle {
@@ -71,12 +71,7 @@ fn format_syntax(
 ) -> Result<FormatOutput, PositionError> {
     let source = syntax.source();
     let source_document = syntax.source_document();
-    let protected = syntax
-        .blocks()
-        .iter()
-        .filter(|block| block.kind().formatting_policy() == FormattingPolicy::PreserveBytes)
-        .map(SyntaxNode::range)
-        .collect::<Vec<_>>();
+    let protected = syntax.formatting_protected_ranges();
     let last_real_line = source_document
         .lines()
         .iter()
@@ -187,7 +182,7 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 mod tests {
     use super::{FormatConfig, NewlineStyle, format};
     use crate::parser::{AstBlock, parse};
-    use crate::syntax::{FormattingPolicy, SyntaxKind};
+    use crate::syntax::SyntaxKind;
 
     fn semantic_text(source: &str) -> Vec<Vec<String>> {
         parse(source)
@@ -214,15 +209,9 @@ mod tests {
     }
 
     #[test]
-    fn every_cst_block_kind_has_an_explicit_formatting_policy() {
-        assert_eq!(
-            SyntaxKind::Paragraph.formatting_policy(),
-            FormattingPolicy::NormalizeLineWhitespace
-        );
-        assert_eq!(
-            SyntaxKind::BlankLine.formatting_policy(),
-            FormattingPolicy::NormalizeLineWhitespace
-        );
+    fn syntax_kinds_explicitly_identify_byte_protected_subtrees() {
+        assert!(!SyntaxKind::Paragraph.protects_formatting());
+        assert!(!SyntaxKind::BlankLine.protects_formatting());
         for kind in [
             SyntaxKind::DocumentTitle,
             SyntaxKind::Heading,
@@ -235,8 +224,12 @@ mod tests {
             SyntaxKind::List,
             SyntaxKind::MathBlock,
         ] {
-            assert_eq!(kind.formatting_policy(), FormattingPolicy::PreserveBytes);
+            assert!(kind.protects_formatting());
         }
+        assert!(SyntaxKind::InlineSpan.protects_formatting());
+        assert!(SyntaxKind::Macro.protects_formatting());
+        assert!(SyntaxKind::Error.protects_formatting());
+        assert!(SyntaxKind::Unknown.protects_formatting());
     }
 
     #[test]
@@ -276,7 +269,7 @@ mod tests {
         let formatted = format(
             source,
             &FormatConfig {
-                newline: NewlineStyle::CrLf,
+                newline: NewlineStyle::Lf,
                 final_newline: false,
                 ..FormatConfig::default()
             },

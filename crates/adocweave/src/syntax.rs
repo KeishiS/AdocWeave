@@ -36,12 +36,6 @@ pub enum SyntaxKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FormattingPolicy {
-    NormalizeLineWhitespace,
-    PreserveBytes,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyntaxIssueClass {
     HeadingMarkerSpace,
     InvalidHeadingLevel,
@@ -72,36 +66,6 @@ pub struct SyntaxIssue {
 }
 
 impl SyntaxKind {
-    pub const fn formatting_policy(self) -> FormattingPolicy {
-        match self {
-            Self::Paragraph | Self::BlankLine => FormattingPolicy::NormalizeLineWhitespace,
-            Self::DocumentTitle
-            | Self::Heading
-            | Self::MalformedHeading
-            | Self::LiteralBlock
-            | Self::SourceBlock
-            | Self::Unsupported
-            | Self::DocumentAttribute
-            | Self::BlockAnchor
-            | Self::List
-            | Self::MathBlock => FormattingPolicy::PreserveBytes,
-            Self::Document
-            | Self::Token(_)
-            | Self::HeadingMarker
-            | Self::BlockAttribute
-            | Self::BlockDelimiter
-            | Self::ListItem
-            | Self::ListMarker
-            | Self::InlineSpan
-            | Self::InlineDelimiter
-            | Self::Macro
-            | Self::Target
-            | Self::Label
-            | Self::Error
-            | Self::Unknown => FormattingPolicy::PreserveBytes,
-        }
-    }
-
     pub const fn is_block(self) -> bool {
         matches!(
             self,
@@ -117,6 +81,26 @@ impl SyntaxKind {
                 | Self::BlockAnchor
                 | Self::List
                 | Self::MathBlock
+        )
+    }
+
+    pub const fn protects_formatting(self) -> bool {
+        matches!(
+            self,
+            Self::DocumentTitle
+                | Self::Heading
+                | Self::MalformedHeading
+                | Self::LiteralBlock
+                | Self::SourceBlock
+                | Self::Unsupported
+                | Self::DocumentAttribute
+                | Self::BlockAnchor
+                | Self::List
+                | Self::MathBlock
+                | Self::InlineSpan
+                | Self::Macro
+                | Self::Error
+                | Self::Unknown
         )
     }
 }
@@ -233,6 +217,12 @@ impl SyntaxTree {
         &self.issues
     }
 
+    pub fn formatting_protected_ranges(&self) -> Vec<TextRange> {
+        let mut ranges = Vec::new();
+        collect_protected_ranges(&self.root, false, &mut ranges);
+        ranges
+    }
+
     pub fn reconstruct(&self) -> String {
         let mut output = String::with_capacity(self.source().len());
         for node in self.root.descendants() {
@@ -268,6 +258,21 @@ impl SyntaxTree {
         let mut output = String::new();
         write_node(&mut output, &self.root, 0);
         output
+    }
+}
+
+fn collect_protected_ranges(
+    node: &SyntaxNode,
+    parent_protected: bool,
+    output: &mut Vec<TextRange>,
+) {
+    let protected = node.kind.protects_formatting();
+    if protected && !parent_protected {
+        output.push(node.range);
+        return;
+    }
+    for child in &node.children {
+        collect_protected_ranges(child, parent_protected || protected, output);
     }
 }
 
