@@ -1,0 +1,37 @@
+# Language Serverプロトコル完成
+
+## 目的
+
+ノートアプリ互換構文を含むLSPの同期、並行処理、設定および参照解決契約を完成させる。
+
+## 実装範囲
+
+- workspace configuration、リクエストキャンセル、debounceおよび文書ごとの古いタスク破棄を実装する。
+- 複数文書の並行解析上限と異常終了後のホスト側再起動方針を定義する。
+- 属性、アンカー、通常リンク、`note:`、言語名および数式に対するホバー・補完対象を定義する。
+- `textDocument/definition` を実装し、ノート・アンカー解決をホスト注入Resolverへ委譲する。
+- 構文ハイライト用semantic tokensをCST・ASTから生成する。
+- 単一文書機能と将来のワークスペース索引を別レイヤーにする。
+- push diagnostics継続またはpull diagnostics移行を決定し、capabilitiesとfixtureを更新する。
+
+## 完了条件
+
+- キャンセル済みまたは古い解析から診断、補完、Editを返さない。
+- position encoding、full・incremental同期およびCRLFの組合せをテストできる。
+- Resolver障害時もコア構文機能とサーバプロセスが継続する。
+- 同じASTからCLI、ブラウザおよびLSPで一致するシンボルと診断を得られる。
+
+## 検証
+
+```console
+cargo test -p asciiloom-lsp protocol
+cargo test -p asciiloom-lsp cancellation
+cargo test -p asciiloom-lsp definition
+```
+
+## 依存関係
+
+- 033
+- 034
+- 035
+- 036

@@ -1,0 +1,35 @@
+# ネイティブ・WASM共通fixtureと互換性試験
+
+## 目的
+
+ネイティブRust、WASMおよび対応範囲のAsciidoctorに対する互換性を自動検証する。
+
+## 実装範囲
+
+- 同じ入力、プロファイルおよび設定をネイティブとWASMで実行する共通fixture runnerを実装する。
+- CST、semantic AST、診断、projectionおよびHTMLを安定した比較形式へシリアライズする。
+- ノートメタデータ、タグ、アンカー、`note:`、リンク切れ、リストおよびLaTeX STEMの専用fixtureを追加する。
+- 対応構文に限定したAsciidoctorとの差分テストを追加し、意図的差異を承認済みfixtureとして管理する。
+- Unicode、LF・CRLF、厳格・寛容モードおよび各上限の組合せを含める。
+- クロスランタイム差異を構文プロファイルまたは出力契約の変更として扱う。
+
+## 完了条件
+
+- ネイティブとWASMが同じAST、診断、projectionおよびHTMLを生成する。
+- 意図しないAsciidoctor差分をCIで検出できる。
+- fixture更新時に差分理由と契約バージョン変更の要否を記録する。
+- サーバ、ブラウザ、CLIおよびLSPが共通fixtureを再利用する。
+
+## 検証
+
+```console
+cargo test --workspace conformance
+npm test -- cross-runtime
+```
+
+## 依存関係
+
+- 036
+- 037
+- 038
+- 039
