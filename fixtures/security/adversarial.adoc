@@ -1,0 +1,36 @@
+= Security regression
+:host: example.com
+:unsafe-scheme: javascript
+
+<script>alert("raw")</script>
+
+https://{host}/path[*safe*]
+{unsafe-scheme}:alert(1)[unsafe]
+JaVaScRiPt:alert(2)[mixed]
+https://example.com/%0apayload[encoded-control]
+data:text/html,<svg/onload=alert(3)>[data]
+
+[[safe-anchor]]
+== Safe anchor
+
+<<safe-anchor,local>>
+xref:../outside.adoc[traversal]
+xref:missing.adoc#anchor[missing]
+xref:note:item[scheme]
+
+* level 1
+** level 2
+*** level 3
+**** level 4
+***** level 5
+****** level 6
+******* level 7
+******** level 8
+********* over limit
+
+stem:[{unsafe-scheme}:<script>]
+
+[source,html]
+----
+<img src=x onerror=alert(4)>
+----

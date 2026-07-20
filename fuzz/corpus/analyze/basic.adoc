@@ -1,0 +1,13 @@
+= Seed
+
+[[target]]
+== Section
+
+*strong* _emphasis_ `literal` <<target,reference>>
+
+* item
++
+[source,rust]
+----
+fn main() {}
+----

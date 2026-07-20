@@ -46,3 +46,23 @@ cargo fuzz run render -- -max_total_time=60
 Issue 044で、生成したUTF-8コーパスに対するCST再構築、UTF-8範囲、ブロック範囲および
 Formatter冪等性のproperty testを前倒しした。`cargo make test-properties`で実行する。
 任意バイト列と長時間fuzz targetは本Issueで引き続き実装する。
+
+== 進捗
+
+本Issueは完了した。
+
+`analyze`、`process`および`render`の3 targetを追加した。公開バイトAPIは不正UTF-8を含む
+任意バイト列、解析とrendererは任意UTF-8を入力とする。flakeで固定したnightly Rustを
+`adocweave-fuzz`にだけ使用し、通常のstable Rust環境から分離した。
+
+決定的property suiteはCST再構築、UTF-8範囲、UTF-8・UTF-16位置往復、Formatterの冪等性・
+意味保存・保護領域保存、HTML・projectionの決定性、参照キーおよびURL分類を検査する。
+security suiteは属性展開後URL、不正UTF-8、処理上限、安全な構文回復、協調的キャンセル、
+危険なリンク、ホストResolverが返す危険なURLおよび代表的な攻撃入力を検査する。
+
+seed corpusと不具合最小化・回帰fixture化の手順は
+xref:../docs/testing.adoc[品質保証とFuzzing]に定義した。短時間探索と長時間探索を分離し、
+通常の`verify`には決定的property testとsecurity testを含める。
+
+完了時に`cargo make verify`、`cargo make fuzz-check`および3 targetの短時間探索が成功した。
+短時間探索は一時corpusを使用し、管理対象のseedを変更しないことも確認した。

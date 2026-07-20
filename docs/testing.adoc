@@ -1,0 +1,83 @@
+= 品質保証とFuzzing
+
+この文書は、AdocWeaveの決定的試験、fuzzingおよび不具合回帰fixtureの運用契約を定義する。
+
+== 試験層
+
+通常の`cargo make verify`では、workspaceの単体・統合試験の一部として次を毎回実行する。
+
+* `cargo make test-properties`: 生成したUTF-8入力について、CST復元、範囲、位置変換、
+  Formatter、HTML、projectionおよび参照索引の不変条件を検査する。
+* `cargo make test-security`: 攻撃的入力、危険なURL、Resolverが返したURL、処理上限、
+  不正UTF-8および協調的キャンセルを検査する。
+
+`cargo make fuzz-check`はすべてのfuzz targetをコンパイルする。`cargo make fuzz-smoke`は
+開発時またはCIで短時間探索する。`FUZZ_SECONDS`を指定しない場合はtargetごとに5秒実行する。
+smoke testは`target/`下へseedを複製し、追記された探索corpusを終了時に破棄するため、
+リポジトリのseed corpusを変更しない。
+CI用の`cargo make ci`は`verify`に加えて`fuzz-check`と`fuzz-smoke`を実行する。
+
+[source,console]
+----
+cargo make fuzz-check
+FUZZ_SECONDS=30 cargo make fuzz-smoke
+----
+
+長時間探索は通常の検証ゲートから分離し、targetを明示して実行する。
+
+[source,console]
+----
+adocweave-fuzz run --fuzz-dir fuzz analyze -- -max_total_time=3600
+adocweave-fuzz run --fuzz-dir fuzz process -- -max_total_time=3600
+adocweave-fuzz run --fuzz-dir fuzz render -- -max_total_time=3600
+----
+
+`adocweave-fuzz`はflakeで固定したnightly Rustと`cargo-fuzz`だけを選択するラッパーである。
+通常のビルド、Clippyおよびテストは引き続きstable Rustを使用する。
+
+== Fuzz targetと公開入力境界
+
+[cols="1,2,3",options="header"]
+|===
+|Target |入力境界 |主な不変条件
+
+|`analyze`
+|`Engine::analyze`へ渡す任意UTF-8
+|panicしない、CSTが入力を復元する、すべてのtoken範囲が正しいUTF-8境界にある
+
+|`process`
+|`process`、`process_check`へ渡す任意バイト列
+|全operationがpanicせず、UTF-8・上限違反を型付きエラーとして返す
+
+|`render`
+|解析済みsemantic ASTを受け取るHTML backend
+|同じ入力で同じ出力を返し、危険なURLを有効なリンクとして生成しない
+|===
+
+位置変換、Formatter、URL分類、xref正規化、projectionおよびResolver境界は、入力をsemantic
+ASTへ限定した関数であるため、決定的property testとsecurity testで検査する。WASMとLSPの
+transport境界はIssue 040の共通fixture runnerで追加検査する。
+
+== Formatterの不変条件
+
+Formatterは生成入力に対して次の三条件を満たさなければならない。
+
+. 冪等性: `format(format(x)) = format(x)`
+. 意味保存: 検索可能テキスト、参照先および参照キーが変化しない
+. バイト保存: `PreserveBytes`と分類したCST領域へEditを生成しない
+
+意味保存の定義を構文追加に合わせて拡張しなければならない。単に出力文字列が安定している
+ことだけを意味保存の証拠としてはならない。
+
+== 不具合corpusの運用
+
+`fuzz/corpus/<target>/`には探索開始用の小さいseedを保存する。cargo-fuzzが問題を発見した
+場合は次の順序で処理する。
+
+. `fuzz/artifacts/<target>/`の入力で問題を再現する。
+. `cargo fuzz tmin`で入力を最小化する。
+. 原因を修正し、最小入力を通常の回帰fixtureまたはテストへ追加する。
+. 新しい構文経路を探索する価値がある場合だけ、最小入力をseed corpusにも追加する。
+
+`fuzz/artifacts`とビルド生成物はGitへ登録しない。再発防止の正本は通常試験に置き、fuzzing
+だけを実行しなければ検出できない状態を残さない。

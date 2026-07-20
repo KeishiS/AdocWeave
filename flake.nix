@@ -2,9 +2,13 @@
   description = "AdocWeave development environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs =
-    { nixpkgs, ... }:
+    { nixpkgs, rust-overlay, ... }:
     let
       supportedSystems = [
         "aarch64-darwin"
@@ -18,7 +22,15 @@
       devShells = forAllSystems (
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ (import rust-overlay) ];
+          };
+          fuzzRust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default);
+          adocweave-fuzz = pkgs.writeShellScriptBin "adocweave-fuzz" ''
+            export PATH=${fuzzRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH
+            exec cargo fuzz "$@"
+          '';
         in
         {
           default = pkgs.mkShell {
@@ -34,6 +46,7 @@
               rustfmt
               stdenv.cc
               wasm-bindgen-cli
+              adocweave-fuzz
             ];
 
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";

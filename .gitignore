@@ -1,4 +1,6 @@
 /target/
+/fuzz/target/
+/fuzz/artifacts/
 /editors/zed/target/
 /editors/zed/extension.wasm
 /editors/zed/grammars/

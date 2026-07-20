@@ -129,9 +129,35 @@ command = "cargo"
 args = ["test", "-p", "adocweave", "--test", "grammar"]
 
 [tasks.test-properties]
-description = "Run parser and formatter invariant tests"
+description = "Run deterministic parser, renderer, position, and formatter properties"
 command = "cargo"
 args = ["test", "-p", "adocweave", "--test", "properties"]
+
+[tasks.test-security]
+description = "Run adversarial input, resource limit, and cancellation regressions"
+command = "cargo"
+args = ["test", "-p", "adocweave", "--test", "security"]
+
+[tasks.fuzz-check]
+description = "Compile every cargo-fuzz target without running it"
+command = "adocweave-fuzz"
+args = ["check", "--fuzz-dir", "fuzz"]
+
+[tasks.fuzz-smoke]
+description = "Run deterministic short fuzz smoke tests (set FUZZ_SECONDS to override)"
+script_runner = "@shell"
+script = '''
+seconds="${FUZZ_SECONDS:-5}"
+smoke_root="$(mktemp -d target/adocweave-fuzz-smoke.XXXXXX)"
+trap 'rm -rf "$smoke_root"' EXIT
+for target in analyze process render; do
+  corpus="$smoke_root/$target"
+  mkdir -p "$corpus"
+  cp -R "fuzz/corpus/$target/." "$corpus/"
+  adocweave-fuzz run --fuzz-dir fuzz "$target" "$corpus" -- \
+    -seed=1 -max_total_time="$seconds" -timeout=2 -verbosity=0
+done
+'''
 
 [tasks.test-release-core]
 private = true
@@ -209,5 +235,5 @@ dependencies = [
 ]
 
 [tasks.ci]
-description = "Alias for the complete verification gate"
-alias = "verify"
+description = "Run the complete gate plus fuzz target compilation and short exploration"
+dependencies = ["verify", "fuzz-check", "fuzz-smoke"]
