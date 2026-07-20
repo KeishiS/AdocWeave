@@ -23,3 +23,15 @@
 == 依存関係
 
 * 047
+
+== 実施結果
+
+完了。`git ls-files '*.adoc'`をbyte順に整列し、build済みCLIで各文書を寛容mode検査する
+`adoc-check`を追加した。診断はpath付きlogへ完全に保持し、解析失敗は詳細を表示して集約後に
+非0終了する。
+`docs-check`は`.md`混入検査だけに維持し、`adoc-check`を`verify`経由でCIとrelease gateへ
+組み込んだ。
+
+2026-07-20時点で追跡対象103文書の解析に成功した。寛容診断369件は
+`target/adoc-check-diagnostics.log`へpath・位置・code付きで記録した。`cargo make verify`は
+成功した。

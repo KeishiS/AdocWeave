@@ -17,6 +17,19 @@ smoke testは`target/`下へseedを複製し、追記された探索corpusを終
 リポジトリのseed corpusを変更しない。
 CI用の`cargo make ci`は`verify`に加えて`fuzz-check`と`fuzz-smoke`を実行する。
 
+== リポジトリ文書corpus
+
+`cargo make docs-check`は`.md`混入だけを検査する。`cargo make adoc-check`はGitが追跡する
+すべての`.adoc`をbyte順のpathで列挙し、既定処理上限と寛容modeでAdocWeave自身へ渡す。
+未追跡ファイル、`target/`生成物およびネットワークには依存しない。
+
+寛容modeの診断は成功時にも`[path]`、行、列、severityおよびcode付きで
+`target/adoc-check-diagnostics.log`へ完全に残し、標準出力へ件数と保存先を表示する。
+これは未対応記法を含む仕様例と意図的な異常fixtureをcorpusから除外せず分類するためである。
+診断の存在だけでは失敗にせず、解析失敗、入力上限違反、位置不正またはpanicによる非0終了を
+文書pathと詳細付きで即時表示し、全fileの検査後に失敗させる。構文対応が広がった段階で
+診断baselineを縮小し、将来のstrictな文書subsetは別taskとして追加する。
+
 [source,console]
 ----
 cargo make fuzz-check

@@ -246,6 +246,48 @@ if [ -n "$unexpected" ]; then
 fi
 '''
 
+[tasks.build-adoc-check]
+private = true
+command = "cargo"
+args = ["build", "-p", "adocweave", "--bin", "adocweave"]
+
+[tasks.adoc-check]
+description = "Parse every tracked AsciiDoc file with AdocWeave"
+dependencies = ["build-adoc-check"]
+script_runner = "@shell"
+script = '''
+manifest="$(mktemp target/adoc-check.XXXXXX)"
+trap 'rm -f "$manifest"' EXIT
+git ls-files '*.adoc' | LC_ALL=C sort > "$manifest"
+diagnostics_log="target/adoc-check-diagnostics.log"
+: > "$diagnostics_log"
+
+documents=0
+diagnostics=0
+failed=0
+while IFS= read -r path; do
+  documents=$((documents + 1))
+  if output="$(target/debug/adocweave check "$path" 2>&1)"; then
+    if [ -n "$output" ]; then
+      echo "[$path]" >> "$diagnostics_log"
+      echo "$output" >> "$diagnostics_log"
+      count="$(printf '%s\n' "$output" | wc -l)"
+      diagnostics=$((diagnostics + count))
+    fi
+  else
+    echo "[$path]" >&2
+    echo "$output" >&2
+    failed=1
+  fi
+done < "$manifest"
+
+if [ "$failed" -ne 0 ]; then
+  echo "adoc-check failed: $documents documents" >&2
+  exit 1
+fi
+echo "adoc-check passed: $documents documents, $diagnostics permissive diagnostics recorded in $diagnostics_log"
+'''
+
 [tasks.build]
 description = "Build all workspace targets and features"
 command = "cargo"
@@ -265,6 +307,7 @@ dependencies = [
   "test-cross-runtime",
   "doc-check",
   "docs-check",
+  "adoc-check",
   "build",
 ]
 
