@@ -18,6 +18,7 @@ Commands:
   convert  Convert an AsciiDoc document
   check    Check an AsciiDoc document
   format   Format an AsciiDoc document
+  symbols  Print document symbols as JSON
   help     Print this message
 
 Arguments:
@@ -91,6 +92,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         "convert" => Operation::Convert,
         "check" => Operation::Check,
         "format" => Operation::Format,
+        "symbols" => Operation::Symbols,
         _ => return Err(CliError::Usage(format!("unknown command: {command}"))),
     };
 
@@ -231,7 +233,7 @@ mod tests {
 
     #[test]
     fn all_commands_support_help() {
-        for command in ["convert", "check", "format"] {
+        for command in ["convert", "check", "format", "symbols"] {
             assert!(matches!(
                 parse_arguments(arguments(&[command, "--help"])),
                 Ok(Action::Help)

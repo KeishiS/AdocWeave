@@ -3,9 +3,11 @@
 use std::collections::BTreeMap;
 
 use crate::diagnostic::{
-    Applicability, Diagnostic, DiagnosticCode, DiagnosticId, Fix, Severity, TextEdit,
-    sort_diagnostics,
+    Applicability, Diagnostic, DiagnosticCode, DiagnosticId, Fix, RelatedInformation, Severity,
+    TextEdit, sort_diagnostics,
 };
+use crate::document::heading_id_base;
+use crate::parser::{AstBlock, HeadingKind, HeadingProblem, parse};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LineEnding, SourceLines};
 
@@ -14,13 +16,19 @@ pub enum LintRule {
     TrailingWhitespace,
     ExcessiveBlankLines,
     LineTooLong,
+    InvalidHeadingLevel,
+    DuplicateHeadingId,
+    HeadingMarkerSpace,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 6] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
+        Self::InvalidHeadingLevel,
+        Self::DuplicateHeadingId,
+        Self::HeadingMarkerSpace,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -28,6 +36,9 @@ impl LintRule {
             Self::TrailingWhitespace => "trailing-whitespace",
             Self::ExcessiveBlankLines => "excessive-blank-lines",
             Self::LineTooLong => "line-too-long",
+            Self::InvalidHeadingLevel => "invalid-heading-level",
+            Self::DuplicateHeadingId => "duplicate-heading-id",
+            Self::HeadingMarkerSpace => "heading-marker-space",
         }
     }
 }
@@ -149,8 +160,102 @@ pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, Positi
         }
     }
 
+    lint_headings(source, config, &mut diagnostics)?;
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_headings(
+    source: &str,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), PositionError> {
+    let parsed = parse(source)?;
+    let mut previous_level = None;
+    let mut ids = BTreeMap::<String, TextRange>::new();
+
+    for block in &parsed.ast.blocks {
+        let AstBlock::Heading(heading) = block else {
+            continue;
+        };
+
+        if heading.problems.contains(&HeadingProblem::MissingSpace) {
+            let insertion = TextRange::new(heading.marker_range.end(), heading.marker_range.end())
+                .expect("empty insertion range is ordered");
+            push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::HeadingMarkerSpace,
+                insertion,
+                "heading marker must be followed by a space",
+                Some(("insert a space after heading marker", insertion, " ")),
+            );
+        }
+
+        let structurally_invalid = heading.problems.iter().any(|problem| {
+            matches!(
+                problem,
+                HeadingProblem::LevelTooDeep | HeadingProblem::MisplacedDocumentTitle
+            )
+        });
+        match heading.kind {
+            HeadingKind::DocumentTitle => {
+                previous_level = None;
+                if structurally_invalid {
+                    push_diagnostic(
+                        diagnostics,
+                        config,
+                        LintRule::InvalidHeadingLevel,
+                        heading.marker_range,
+                        "document title is only allowed before document content",
+                        None,
+                    );
+                }
+            }
+            HeadingKind::Section { level } => {
+                let hierarchy_invalid =
+                    previous_level.map_or(level > 1, |previous| level > previous + 1);
+                if structurally_invalid || hierarchy_invalid {
+                    push_diagnostic(
+                        diagnostics,
+                        config,
+                        LintRule::InvalidHeadingLevel,
+                        heading.marker_range,
+                        "heading level skips the expected hierarchy",
+                        None,
+                    );
+                }
+                previous_level = Some(level);
+            }
+        }
+
+        let base = heading_id_base(&heading.text);
+        if let Some(first_range) = ids.get(&base).copied() {
+            let settings = config.rule(LintRule::DuplicateHeadingId);
+            if settings.enabled {
+                diagnostics.push(Diagnostic {
+                    id: DiagnosticId::new(format!(
+                        "{}@{}:{}",
+                        LintRule::DuplicateHeadingId.code(),
+                        heading.text_range.start().to_u32(),
+                        heading.text_range.end().to_u32()
+                    )),
+                    code: DiagnosticCode::new(LintRule::DuplicateHeadingId.code()),
+                    severity: settings.severity,
+                    message: format!("duplicate generated heading ID `{base}`"),
+                    range: heading.text_range,
+                    related: vec![RelatedInformation {
+                        message: "first heading with this ID".to_owned(),
+                        range: first_range,
+                    }],
+                    fixes: Vec::new(),
+                });
+            }
+        } else {
+            ids.insert(base, heading.text_range);
+        }
+    }
+    Ok(())
 }
 
 fn push_diagnostic(
@@ -280,5 +385,24 @@ mod tests {
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].code.as_str(), "trailing-whitespace");
         assert_eq!(diagnostics[1].code.as_str(), "line-too-long");
+    }
+
+    #[test]
+    fn heading_lint_reports_hierarchy_duplicates_and_missing_space() {
+        let source = "= Title\n\n=== Too deep\n\n==Same\n\n== Same\n";
+        let diagnostics = lint(source, &LintConfig::default()).expect("valid source");
+        let codes = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(codes.contains(&"invalid-heading-level"));
+        assert!(codes.contains(&"heading-marker-space"));
+        assert!(codes.contains(&"duplicate-heading-id"));
+        let spacing = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "heading-marker-space")
+            .expect("spacing diagnostic");
+        assert_eq!(spacing.fixes[0].edits()[0].replacement, " ");
     }
 }

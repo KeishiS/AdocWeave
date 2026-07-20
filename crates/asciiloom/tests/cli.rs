@@ -126,3 +126,14 @@ fn format_check_is_non_mutating_and_reports_needed_changes() {
     assert!(unformatted.stdout.is_empty());
     assert!(String::from_utf8_lossy(&unformatted.stderr).contains("not formatted"));
 }
+
+#[test]
+fn symbols_command_emits_heading_hierarchy_as_json() {
+    let output = run_with_stdin(&["symbols", "-"], b"= Title\n\n== Section\n=== Child\n");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"name\":\"Title\""));
+    assert!(stdout.contains("\"name\":\"Section\""));
+    assert!(stdout.contains("\"name\":\"Child\""));
+}

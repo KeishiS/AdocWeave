@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fmt;
 
 pub mod diagnostic;
+pub mod document;
 pub mod formatter;
 pub mod html;
 pub mod lint;
@@ -20,6 +21,7 @@ pub enum Operation {
     Convert,
     Check,
     Format,
+    Symbols,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +69,12 @@ pub fn process(operation: Operation, input: &[u8]) -> Result<String, ProcessErro
         Operation::Format => formatter::format(source, &formatter::FormatConfig::default())
             .map(|output| output.formatted)
             .map_err(ProcessError::Position),
+        Operation::Symbols => {
+            let parsed = parser::parse(source).map_err(ProcessError::Position)?;
+            Ok(document::render_symbols_json(&document::document_symbols(
+                &parsed.ast,
+            )))
+        }
         Operation::Check => process_check_source(source, CheckOutput::Human),
     }
 }

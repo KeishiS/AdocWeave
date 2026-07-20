@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 
 use crate::diagnostic::Diagnostic;
+use crate::document::{HeadingId, generate_heading_ids};
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
-use crate::source::TextRange;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HtmlOptions {
@@ -31,12 +31,6 @@ pub struct HtmlOutput {
     pub diagnostics: Vec<Diagnostic>,
     pub document_attributes: BTreeMap<String, String>,
     pub heading_ids: Vec<HeadingId>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HeadingId {
-    pub range: TextRange,
-    pub id: String,
 }
 
 pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
@@ -67,53 +61,6 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
         document_attributes: BTreeMap::new(),
         heading_ids,
     }
-}
-
-pub fn generate_heading_ids(document: &AstDocument) -> Vec<HeadingId> {
-    let mut occurrences = BTreeMap::<String, usize>::new();
-    document
-        .blocks
-        .iter()
-        .filter_map(|block| match block {
-            AstBlock::Heading(heading) => {
-                let base = heading_id_base(&heading.text);
-                let occurrence = occurrences.entry(base.clone()).or_default();
-                *occurrence += 1;
-                let id = if *occurrence == 1 {
-                    base
-                } else {
-                    format!("{base}_{}", *occurrence)
-                };
-                Some(HeadingId {
-                    range: heading.text_range,
-                    id,
-                })
-            }
-            _ => None,
-        })
-        .collect()
-}
-
-fn heading_id_base(text: &str) -> String {
-    let mut id = String::from("_");
-    let mut pending_separator = false;
-    for character in text.chars() {
-        if character.is_alphanumeric() {
-            if pending_separator && id.len() > 1 {
-                id.push('_');
-            }
-            for lower in character.to_lowercase() {
-                id.push(lower);
-            }
-            pending_separator = false;
-        } else {
-            pending_separator = true;
-        }
-    }
-    if id.len() == 1 {
-        id.push_str("section");
-    }
-    id
 }
 
 fn render_heading(output: &mut String, heading: &Heading, id: &str, options: &HtmlOptions) {
