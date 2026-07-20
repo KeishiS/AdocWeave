@@ -68,3 +68,18 @@ HTML出力前に必ず`UrlPolicy`で検証する。
 `ProcessingLimits`は入力、行、ブロック、属性、参照、リスト深さ、インライン深さ、
 数式および診断の上限を一元管理する。上限超過時は診断または公開エラーへ変換し、
 深い入力を上限超過後もそのまま再帰処理してはならない。
+
+== Language Server実行境界
+
+Language Serverのprotocol処理には`async-lsp`、実行runtimeにはTokioを使用する。
+これらは`adocweave-lsp`のアダプター依存であり、`adocweave`コアの公開API、解析型および
+ホスト実行契約へ持ち込まない。
+
+文書更新通知はmain loopで受信順に`DocumentStore`へ適用する。読み取り要求は開始時に
+文書versionと所有スナップショットを取得し、その後は文書状態を借用せずに並行実行する。
+CPU解析はSemaphoreで投入数を制限してから`spawn_blocking`へ渡す。Futureの破棄だけでは
+実行中の同期解析を停止できないため、LSPキャンセルをコアの`CancellationCheck`へ接続する。
+
+解析結果を公開する直前に文書versionまたはgenerationを再確認する。結果が古い場合、
+診断、補完、編集その他の応答へ採用しない。lockを使用する場合も、CPU解析または
+client通信のawait中に保持してはならない。

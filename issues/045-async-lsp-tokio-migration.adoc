@@ -1,0 +1,89 @@
+= async-lspとTokioへのLSP基盤移行
+
+== 目的
+
+手書きJSON-RPC dispatchと部分的なLSP型定義を`async-lsp`へ移行し、Tokio上で
+文書更新通知を受信順に適用しながら、読み取り要求とCPU解析を安全かつ有界に並行実行する
+基盤を作る。
+
+https://github.com/oxalica/async-lsp[`async-lsp`]をLSPのtransport、dispatch、
+ライフサイクルおよびmiddleware基盤として採用し、
+https://tokio.rs/[Tokio]を`adocweave-lsp`の実行runtimeとして採用する。
+`async-lsp`とTokioの型をコアcrateへ公開しない。
+
+== 実装範囲
+
+* `async_lsp::LanguageServer`または`Router`をtransport・protocol境界とし、意味処理を
+  runtime非依存のLSP serviceへ委譲する。
+* 現在の`DocumentStore`、`Analysis`、位置変換および機能テストを再利用する。
+* stdio framing、JSON-RPC error、initialize、shutdown、exitおよびclient通知を
+  `async-lsp`へ委譲する。
+* `async-lsp`が再公開するLSP型を境界だけで使用し、コアParser、AST、診断へ
+  持ち込まない。
+* `didOpen`、`didChange`、`didSave`および`didClose`をmain loop上で受信順に適用し、
+  後続要求が古い文書状態を観測しないようにする。
+* 読み取り要求は、handler開始時に文書versionと所有スナップショットを取得してから
+  並行実行し、handlerのFutureから`DocumentStore`を借用し続けない。
+* `async-lsp`の`Lifecycle`、`Concurrency`、panic隔離およびtracing middlewareを
+  必要最小限の構成で明示的に積む。暗黙の既定構成に依存しない。
+* Tokioの`Semaphore`でCPU解析の投入数を制限した後、`spawn_blocking`で
+  `Engine::analyze`を実行する。Tokio既定のblocking queueだけを上限として扱わない。
+* `$/cancelRequest`によるFutureのキャンセルをコアの`CancellationCheck`へ接続する。
+  `spawn_blocking`開始後のabortに依存せず、解析内部の検査点で協調的に停止する。
+* 文書ごとに単調増加するversionまたはgenerationを保持し、解析結果の採用直前に
+  再確認して、キャンセル済みまたは古い結果を公開しない。
+* 文書状態を保護する場合も、lock保持中にCPU解析やclientへのawaitを行わない。
+* push diagnosticsと既存capabilitiesを移行前後で維持する。
+* 手書きtransport、dispatchおよび一時的なprotocol型を移行完了後に削除する。
+* `async-lsp`とTokioの依存versionおよびfeatureを明示し、不要なclient monitor、
+  process、network等のfeatureを有効にしない。
+
+== 完了条件
+
+* 既存のLSPテストが型付きrequest・response経路で成功する。
+* 不正JSON-RPC、initialize前request、重複initialize、shutdown後requestを安定して処理する。
+* 連続する文書更新通知が受信順に適用され、更新後に到着した要求が更新前の状態を
+  観測しない。
+* 異なる文書の読み取り要求を並行実行でき、同一文書の状態変更通知は逐次処理される。
+* キャンセル済みまたは古いversionの診断・Editを送信しない。
+* middlewareによる同時request数とSemaphoreによるCPU解析数に別々の明示的な上限がある。
+* CPU解析中にも`CancellationCheck`が発火し、キャンセル後の結果が採用されない。
+* Zedで診断、Outline、Code Action、Format、Hoverおよび補完が従来どおり動作する。
+* `adocweave-lsp`に手書きLSP kind番号とstdio framingが残らない。
+* `adocweave`コアcrateの依存関係と公開APIに`async-lsp`、TokioおよびLSP型が現れない。
+
+== 検証
+
+[source,console]
+----
+cargo test -p adocweave-lsp
+cargo test -p adocweave-lsp notification_order
+cargo test -p adocweave-lsp concurrency
+cargo test -p adocweave-lsp cancellation
+cargo make verify
+----
+
+== 依存関係
+
+* 044
+
+== 実装順序
+
+. 現行handlerからruntime非依存の意味処理serviceを抽出し、既存fixtureをそのserviceへ
+  向ける。
+. `async-lsp`のin-memory main loopでinitialize、shutdown、exitおよび既存機能を
+  型付き経路へ移す。
+. 文書通知の逐次適用とスナップショット取得を実装し、通知順序の競合テストを追加する。
+. Tokio runtime、有界request middleware、Semaphoreおよび`spawn_blocking`を導入する。
+. LSPキャンセルとコアの協調的キャンセルを接続し、古いversionの結果破棄を検証する。
+. stdio entry pointを切り替え、手書きtransport、protocol型およびdispatchを削除する。
+. 自動テスト後にZedで既存機能の回帰確認を行う。
+
+== 採用上の注意
+
+`async-lsp`は通知を逐次処理し、要求を並行処理できる設計が本Issueの文書状態モデルに
+適合するため採用する。一方、依存するLSP型crateや公開APIの変更は将来起こり得る。
+その影響をLSP境界へ閉じ込め、コア型との変換関数とprotocol fixtureを移行の安定面とする。
+
+TokioはLSP実行アダプターだけで使用する。Issue 036のホスト実行契約は引き続き特定runtime
+へ依存せず、WASM、CLIおよび外部ホストにTokioを要求しない。
