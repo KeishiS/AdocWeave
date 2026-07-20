@@ -5,15 +5,23 @@ skip_core_tasks = true
 [tasks.default]
 alias = "verify"
 
-[tasks.format]
+[tasks.fmt]
 description = "Format all Rust source files"
 command = "cargo"
 args = ["fmt", "--all"]
 
-[tasks.format-check]
+[tasks.format]
+description = "Alias for fmt"
+alias = "fmt"
+
+[tasks.fmt-check]
 description = "Check Rust formatting without changing files"
 command = "cargo"
 args = ["fmt", "--all", "--", "--check"]
+
+[tasks.format-check]
+description = "Alias for fmt-check"
+alias = "fmt-check"
 
 [tasks.check]
 description = "Type-check all workspace targets and features"
@@ -38,6 +46,27 @@ description = "Run all workspace tests"
 command = "cargo"
 args = ["test", "--workspace", "--all-features"]
 
+[tasks.test-core]
+description = "Run parser, renderer, lint, formatter, and CLI tests"
+command = "cargo"
+args = ["test", "-p", "asciiloom", "--all-features"]
+
+[tasks.test-lsp]
+description = "Run Language Server tests"
+command = "cargo"
+args = ["test", "-p", "asciiloom-lsp", "--all-features"]
+
+[tasks.run-lsp]
+description = "Run the Language Server over standard input/output"
+command = "cargo"
+args = ["run", "-p", "asciiloom-lsp", "--bin", "asciiloom-lsp"]
+
+[tasks.doc-check]
+description = "Build workspace API documentation without dependencies"
+env = { "RUSTDOCFLAGS" = "-D warnings" }
+command = "cargo"
+args = ["doc", "--workspace", "--all-features", "--no-deps"]
+
 [tasks.build]
 description = "Build all workspace targets and features"
 command = "cargo"
@@ -45,4 +74,8 @@ args = ["build", "--workspace", "--all-targets", "--all-features"]
 
 [tasks.verify]
 description = "Run every non-mutating validation task"
-dependencies = ["format-check", "check", "clippy", "test", "build"]
+dependencies = ["fmt-check", "check", "clippy", "test", "doc-check", "build"]
+
+[tasks.ci]
+description = "Alias for the complete verification gate"
+alias = "verify"
