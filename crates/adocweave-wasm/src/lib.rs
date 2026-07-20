@@ -1,14 +1,18 @@
 //! Versioned, allocation-owning WASM boundary over the deterministic core.
 
-use adocweave::diagnostic::render_json as render_diagnostics_json;
-use adocweave::document::{document_symbols, render_symbols_json};
-use adocweave::html::{RenderPolicy, render};
-use adocweave::projection::project;
-use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId};
+use std::collections::{BTreeMap, BTreeSet};
+
+use adocweave::conformance::{CONFORMANCE_CONTRACT_VERSION, snapshot};
+use adocweave::html::RenderPolicy;
+use adocweave::limits::{ProcessingLimits, SyntaxMode};
+use adocweave::url::UrlPolicy;
+use adocweave::{
+    CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId, SyntaxProfile,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 1;
+pub const WASM_API_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -18,6 +22,114 @@ pub struct WasmRequest {
     pub version: u32,
     pub generation: u32,
     pub source: String,
+    #[serde(default)]
+    pub options: WasmOptions,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmOptions {
+    pub profile_version: u16,
+    pub syntax_mode: WasmSyntaxMode,
+    pub limits: WasmLimits,
+    pub protected_attributes: BTreeMap<String, String>,
+    pub url_policy: WasmUrlPolicy,
+}
+
+impl Default for WasmOptions {
+    fn default() -> Self {
+        Self {
+            profile_version: 1,
+            syntax_mode: WasmSyntaxMode::Permissive,
+            limits: WasmLimits::default(),
+            protected_attributes: BTreeMap::new(),
+            url_policy: WasmUrlPolicy::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmSyntaxMode {
+    Permissive,
+    Strict,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmLimits {
+    pub max_input_bytes: u32,
+    pub max_output_bytes: u32,
+    pub max_line_bytes: u32,
+    pub max_list_depth: u32,
+    pub max_inline_depth: u32,
+    pub max_formula_bytes: u32,
+    pub max_blocks: u32,
+    pub max_nodes: u32,
+    pub max_references: u32,
+    pub max_attributes: u32,
+    pub max_diagnostics: u32,
+}
+
+impl Default for WasmLimits {
+    fn default() -> Self {
+        ProcessingLimits::default().into()
+    }
+}
+
+impl From<ProcessingLimits> for WasmLimits {
+    fn from(value: ProcessingLimits) -> Self {
+        Self {
+            max_input_bytes: value.max_input_bytes as u32,
+            max_output_bytes: value.max_output_bytes as u32,
+            max_line_bytes: value.max_line_bytes as u32,
+            max_list_depth: value.max_list_depth as u32,
+            max_inline_depth: value.max_inline_depth as u32,
+            max_formula_bytes: value.max_formula_bytes as u32,
+            max_blocks: value.max_blocks as u32,
+            max_nodes: value.max_nodes as u32,
+            max_references: value.max_references as u32,
+            max_attributes: value.max_attributes as u32,
+            max_diagnostics: value.max_diagnostics as u32,
+        }
+    }
+}
+
+impl From<WasmLimits> for ProcessingLimits {
+    fn from(value: WasmLimits) -> Self {
+        Self {
+            max_input_bytes: value.max_input_bytes as usize,
+            max_output_bytes: value.max_output_bytes as usize,
+            max_line_bytes: value.max_line_bytes as usize,
+            max_list_depth: value.max_list_depth as usize,
+            max_inline_depth: value.max_inline_depth as usize,
+            max_formula_bytes: value.max_formula_bytes as usize,
+            max_blocks: value.max_blocks as usize,
+            max_nodes: value.max_nodes as usize,
+            max_references: value.max_references as usize,
+            max_attributes: value.max_attributes as usize,
+            max_diagnostics: value.max_diagnostics as usize,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmUrlPolicy {
+    pub allowed_schemes: Vec<String>,
+    pub allow_relative: bool,
+    pub allow_data_uris: bool,
+}
+
+impl Default for WasmUrlPolicy {
+    fn default() -> Self {
+        let policy = UrlPolicy::default();
+        Self {
+            allowed_schemes: policy.allowed_schemes.into_iter().collect(),
+            allow_relative: policy.allow_relative,
+            allow_data_uris: policy.allow_data_uris,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
@@ -26,7 +138,10 @@ pub struct WasmResponse {
     pub api_version: u16,
     pub version: u32,
     pub generation: u32,
+    pub conformance_contract_version: u16,
     pub parse: ParseSummary,
+    pub cst: String,
+    pub ast: String,
     pub html: String,
     pub diagnostics: Value,
     pub symbols: Value,
@@ -61,9 +176,29 @@ pub fn process_request(
             ),
         });
     }
+    let options = request.options;
+    let max_output_bytes = options.limits.max_output_bytes as usize;
     let analysis = Engine::new(ParseOptions {
         source_id: request.source_id.map(SourceId::new),
-        ..ParseOptions::default()
+        profile: SyntaxProfile {
+            version: options.profile_version,
+            mode: match options.syntax_mode {
+                WasmSyntaxMode::Permissive => SyntaxMode::Permissive,
+                WasmSyntaxMode::Strict => SyntaxMode::Strict,
+            },
+        },
+        limits: options.limits.into(),
+        protected_attributes: options.protected_attributes,
+        url_policy: UrlPolicy {
+            allowed_schemes: options
+                .url_policy
+                .allowed_schemes
+                .into_iter()
+                .map(|scheme| scheme.to_ascii_lowercase())
+                .collect::<BTreeSet<_>>(),
+            allow_relative: options.url_policy.allow_relative,
+            allow_data_uris: options.url_policy.allow_data_uris,
+        },
     })
     .analyze_cancellable(&request.source, cancellation)
     .map_err(wasm_error)?;
@@ -71,31 +206,45 @@ pub fn process_request(
         return Err(cancelled_error());
     }
 
-    let html = render(&analysis.ast, &RenderPolicy::default()).html;
-    let diagnostics = serde_json::from_str(&render_diagnostics_json(&analysis.diagnostics))
-        .map_err(serialization_error)?;
-    let symbols = serde_json::from_str(&render_symbols_json(&document_symbols(&analysis.ast)))
-        .map_err(serialization_error)?;
-    let projection = serde_json::from_str(&project(&analysis, &[]).render_json())
-        .map_err(serialization_error)?;
+    let products = snapshot(&analysis, &RenderPolicy::default(), &[]);
+    let diagnostics =
+        serde_json::from_str(&products.diagnostics_json).map_err(serialization_error)?;
+    let symbols = serde_json::from_str(&products.symbols_json).map_err(serialization_error)?;
+    let projection =
+        serde_json::from_str(&products.projection_json).map_err(serialization_error)?;
     if cancellation.is_cancelled() {
         return Err(cancelled_error());
     }
 
-    Ok(WasmResponse {
+    let response = WasmResponse {
         api_version: WASM_API_VERSION,
         version: request.version,
         generation: request.generation,
+        conformance_contract_version: CONFORMANCE_CONTRACT_VERSION,
         parse: ParseSummary {
             block_count: analysis.ast.blocks.len(),
             node_count: analysis.ast.node_count(),
             reference_count: analysis.references.len(),
         },
-        html,
+        cst: products.cst,
+        ast: products.ast,
+        html: products.html,
         diagnostics,
         symbols,
         projection,
-    })
+    };
+    let output_bytes = serde_json::to_vec(&response)
+        .map_err(serialization_error)?
+        .len();
+    if output_bytes > max_output_bytes {
+        return Err(WasmError {
+            code: "limit-exceeded".to_owned(),
+            message: format!(
+                "output bytes limit exceeded (limit {max_output_bytes}, actual {output_bytes})"
+            ),
+        });
+    }
+    Ok(response)
 }
 
 pub fn process_json(request: &str) -> Result<String, String> {
@@ -171,7 +320,8 @@ mod bindings {
         })?;
         let response = process_request(request, &JsCancellation(cancellation))
             .map_err(|error| JsValue::from_str(&serialize_error(&error)))?;
-        serde_wasm_bindgen::to_value(&response)
+        response
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
             .map_err(|error| JsValue::from_str(&serialize_error(&serialization_error(error))))
     }
 }
@@ -190,6 +340,7 @@ mod tests {
             version: 3,
             generation: 7,
             source: source.to_owned(),
+            options: WasmOptions::default(),
         }
     }
 
@@ -200,6 +351,9 @@ mod tests {
 
         assert_eq!(response.version, 3);
         assert_eq!(response.generation, 7);
+        assert_eq!(response.conformance_contract_version, 1);
+        assert!(response.cst.contains("Document@"));
+        assert!(response.ast.contains("Document"));
         assert!(response.html.contains("<h1"));
         assert_eq!(response.symbols[0]["name"], "Title");
         assert_eq!(response.projection["contractVersion"], 1);
@@ -243,6 +397,23 @@ mod tests {
     fn wasm_api_large_input_uses_the_same_core_limit() {
         let source = "x".repeat(ParseOptions::default().limits.max_input_bytes + 1);
         let error = process_request(request(&source), &NeverCancel).expect_err("limit");
+        assert_eq!(error.code, "limit-exceeded");
+    }
+
+    #[test]
+    fn wasm_options_are_partial_overrides_and_bound_the_complete_response() {
+        let value = json!({
+            "apiVersion": WASM_API_VERSION,
+            "sourceId": null,
+            "version": 1,
+            "generation": 1,
+            "source": "text",
+            "options": {"limits": {"maxOutputBytes": 1}}
+        });
+        let request: WasmRequest = serde_json::from_value(value).expect("partial options");
+        assert_eq!(request.options.profile_version, 1);
+        assert_eq!(request.options.limits.max_input_bytes, 10 * 1024 * 1024);
+        let error = process_request(request, &NeverCancel).expect_err("output limit");
         assert_eq!(error.code, "limit-exceeded");
     }
 }

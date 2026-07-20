@@ -17,7 +17,7 @@ export class AdocWeaveWorkerClient {
     });
   }
 
-  analyze({ sourceId = null, version, source }) {
+  analyze({ sourceId = null, version, source, options = {} }) {
     const generation = ++this.#generation;
     Atomics.store(this.#cancellation, 0, generation);
     this.#worker.postMessage({
@@ -26,11 +26,12 @@ export class AdocWeaveWorkerClient {
       version,
       generation,
       payload: {
-        apiVersion: 1,
+        apiVersion: 2,
         sourceId,
         version,
         generation,
         source,
+        options,
       },
     });
     return generation;

@@ -19,3 +19,7 @@ wasm-bindgen = "=0.2.121"
 [lib]
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
+
+[[bin]]
+name = "adocweave-conformance-native"
+path = "src/bin/conformance-native.rs"

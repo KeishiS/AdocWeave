@@ -8,6 +8,7 @@ use std::error::Error;
 use std::fmt;
 
 pub mod attributes;
+pub mod conformance;
 pub mod core;
 pub mod diagnostic;
 pub mod document;

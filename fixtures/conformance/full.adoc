@@ -1,0 +1,12 @@
+= 統合文書
+:host: example.com
+
+[[intro]]
+== Introduction
+
+https://{host}/doc[*link*] <<intro,戻る>> xref:other.adoc#part[Other] xref:note:item[Note]
+
+* first
+** nested
+
+stem:[x < y]

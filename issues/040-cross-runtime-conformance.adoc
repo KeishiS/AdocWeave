@@ -10,7 +10,8 @@
 - CST、semantic AST、診断、projectionおよびHTMLを安定した比較形式へシリアライズする。
 - 汎用属性、アンカー、文書内・文書間cross reference、任意スキーム、リンク切れ、
   参照グラフ、リストおよびLaTeX STEMの専用fixtureを追加する。
-- 対応構文に限定したAsciidoctorとの差分テストを追加し、意図的差異を承認済みfixtureとして管理する。
+- 対応構文に限定した承認済みAsciidoctor互換HTMLとの差分テストを追加し、意図的差異を
+  fixture manifestで管理する。Asciidoctor実行時依存は導入しない。
 - Unicode、LF・CRLF、厳格・寛容モードおよび各上限の組合せを含める。
 - クロスランタイム差異を構文プロファイルまたは出力契約の変更として扱う。
 
@@ -19,14 +20,35 @@
 - ネイティブとWASMが同じAST、診断、projectionおよびHTMLを生成する。
 - 意図しないAsciidoctor差分をCIで検出できる。
 - fixture更新時に差分理由と契約バージョン変更の要否を記録する。
-- サーバ、ブラウザ、CLIおよびLSPが共通fixtureを再利用する。
+- native、実WASM、CLIおよびLSPが共通fixtureを再利用し、外部サーバとブラウザホストも
+  同じversion付きmanifestを利用できる。
+
+== 進捗
+
+本Issueは完了した。
+
+コアへversion 1の`ConformanceSnapshot`を追加し、一つの`Analysis`から全CST token、全
+semantic AST、診断、シンボル、projectionおよびHTMLを生成する。WASM APIはversion 2へ
+破壊的に更新し、nativeの`ParseOptions`に対応するprofile、全上限、保護属性およびURL
+policyを要求に含めた。
+
+共通manifestは基本構文、属性、アンカー、通常リンク、文書内・文書間・任意スキームxref、
+参照projection、リスト、STEM、Unicode、LF・CRLF、strict・permissive mode、上限および
+ホスト設定を含む。各caseへ互換性分類と差分理由を必須化した。
+
+Node.js上で実wasm32成果物を読み込み、native adapterの応答全体と比較する。CLIとLSPも
+manifestが参照する同じsource fixtureを利用する。Asciidoctorには依存せず、既存の承認済み
+互換HTMLとの差分をCIで検出する。
+
+完了時には9件の共通caseについてnative・実WASM応答の完全一致を確認し、workspaceの
+通常試験、LSP再利用試験および`cargo make verify`へ統合した。
 
 == 検証
 
 [source,console]
 ----
-cargo test --workspace conformance
-npm test -- cross-runtime
+cargo test -p adocweave-wasm --test conformance
+cargo make test-cross-runtime
 ----
 
 == 依存関係

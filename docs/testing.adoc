@@ -58,6 +58,15 @@ adocweave-fuzz run --fuzz-dir fuzz render -- -max_total_time=3600
 ASTへ限定した関数であるため、決定的property testとsecurity testで検査する。WASMとLSPの
 transport境界はIssue 040の共通fixture runnerで追加検査する。
 
+Issue 040で、xref:../fixtures/conformance/cases.json[共通conformance manifest]をnativeと
+実WASMで実行する`cargo make test-cross-runtime`を追加した。各caseは互換性分類と差分理由を
+必須とし、CST、AST、診断、シンボル、projectionおよびHTMLを応答全体で比較する。
+
+`ConformanceSnapshot`は比較専用のversion付き契約である。CST token表現、semantic ASTの
+構造・順序、診断JSON、シンボルJSON、projection JSONまたはHTMLの意味を変更する場合は、
+fixtureの`contractImpact`を再判定し、必要なら`CONFORMANCE_CONTRACT_VERSION`を更新する。
+Rustの型が同じであることだけをruntime一致の代わりにせず、必ず実wasm32成果物を実行する。
+
 == Formatterの不変条件
 
 Formatterは生成入力に対して次の三条件を満たさなければならない。

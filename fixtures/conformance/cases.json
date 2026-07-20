@@ -1,0 +1,82 @@
+{
+  "contractVersion": 1,
+  "cases": [
+    {
+      "name": "release-lf",
+      "sourceFile": "../release/core.adoc",
+      "expectedHtmlFile": "../release/core.html",
+      "compatibility": "supported-subset",
+      "rationale": "基本ブロックとconstrainedインラインはAsciidoctorと同じ意味構造を期待する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "attributes-anchors-links-references-lists-stem",
+      "sourceFile": "full.adoc",
+      "expectedHtmlFile": "full.html",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "未解決文書xrefはホストResolverを暗黙に呼ばず安全なテキストとして出力する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "asciidoctor-compatible-lists",
+      "sourceFile": "../lists/asciidoctor-compatible.adoc",
+      "expectedHtmlFile": "../lists/asciidoctor-compatible.html",
+      "compatibility": "supported-subset",
+      "rationale": "対応するリストとblock continuationのHTMLは承認済みAsciidoctor互換fixtureに一致する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "stem-substitutions",
+      "sourceFile": "../stem/substitutions.adoc",
+      "expectedHtmlFile": "../stem/substitutions.html",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "数式は評価せずopaqueなLaTeXとして安全に出力するAdocWeave契約を固定する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "unicode-crlf",
+      "source": "= 日本語\r\n\r\n== 節🙂\r\n\r\n本文 é\r\n",
+      "compatibility": "supported-subset",
+      "rationale": "改行表現はCSTで保持し、semantic出力はLF入力と同じ意味を持つ",
+      "contractImpact": "none"
+    },
+    {
+      "name": "strict-unsupported",
+      "source": "[role=raw]\n",
+      "options": { "syntaxMode": "strict" },
+      "expectedErrorCode": "invalid-input",
+      "compatibility": "intentional-difference",
+      "rationale": "Core profileのstrict modeは未対応ブロックを明示的に拒否する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "input-limit",
+      "source": "12345",
+      "options": { "limits": { "maxInputBytes": 4 } },
+      "expectedErrorCode": "limit-exceeded",
+      "compatibility": "host-safety-contract",
+      "rationale": "処理上限はAsciiDoc意味論ではなく全runtime共通のホスト安全契約である",
+      "contractImpact": "none"
+    },
+    {
+      "name": "aggregate-output-limit",
+      "source": "text",
+      "options": { "limits": { "maxOutputBytes": 1 } },
+      "expectedErrorCode": "limit-exceeded",
+      "compatibility": "host-safety-contract",
+      "rationale": "WASM応答全体にもnative公開処理と同じ出力上限を適用する",
+      "contractImpact": "none"
+    },
+    {
+      "name": "protected-attribute-and-relative-url",
+      "source": "= Options\n:name: source\n\n{name} link.adoc[relative]\n",
+      "options": {
+        "protectedAttributes": { "name": "host" },
+        "urlPolicy": { "allowRelative": true }
+      },
+      "compatibility": "host-extension-contract",
+      "rationale": "保護属性とURL policyは標準構文から独立した明示的ホスト設定である",
+      "contractImpact": "none"
+    }
+  ]
+}

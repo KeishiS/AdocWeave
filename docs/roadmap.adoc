@@ -80,7 +80,7 @@ Language Serverの機能拡張に先立ち、Issue 045で手書きJSON-RPC基盤
 最後の予定段階では次を追加する。
 
 * fuzzing、property test、セキュリティ回帰テスト
-* nativeとWASMで共有する適合性fixture
+* nativeとWASMで共有する適合性fixture（Issue 040完了）
 * ホスト非依存コアプロファイルのリリース検証
 
 Issue 039では、解析、公開バイトAPIおよびHTML出力のfuzz target、決定的property suite、

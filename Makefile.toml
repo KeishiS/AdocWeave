@@ -112,6 +112,28 @@ wasm-bindgen \
   target/wasm32-unknown-unknown/release/adocweave_wasm.wasm
 '''
 
+[tasks.build-wasm-node]
+description = "Build wasm-bindgen Node.js artifacts for cross-runtime conformance"
+script_runner = "@shell"
+script = '''
+cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
+wasm-bindgen \
+  --target nodejs \
+  --out-dir target/adocweave-wasm-node \
+  target/wasm32-unknown-unknown/release/adocweave_wasm.wasm
+'''
+
+[tasks.build-conformance-native]
+description = "Build the native JSON conformance adapter"
+command = "cargo"
+args = ["build", "-p", "adocweave-wasm", "--bin", "adocweave-conformance-native"]
+
+[tasks.test-cross-runtime]
+description = "Compare native and actual WASM results over shared conformance fixtures"
+dependencies = ["build-conformance-native", "build-wasm-node"]
+command = "npm"
+args = ["run", "test:cross-runtime", "--prefix", "web-worker"]
+
 [tasks.wasm-size]
 description = "Build WASM and report generated artifact byte sizes"
 dependencies = ["build-wasm"]
@@ -229,6 +251,7 @@ dependencies = [
   "clippy-zed",
   "test",
   "test-web-worker",
+  "test-cross-runtime",
   "doc-check",
   "docs-check",
   "build",
