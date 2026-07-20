@@ -32,3 +32,16 @@ cargo test --workspace stem_recovery
 
 - 028
 - 029
+
+== 実装記録
+
+完了。
+
+- `stem`文書属性、`stem:[...]`/`latexmath:[...]`および`[stem]`/`++++`ブロックを
+  解析する。
+- `InlineFormula`と`MathBlock`がLaTeX言語、元範囲および不透明な本文を保持する。
+- 空、未閉鎖、1 MiB超過を`invalid-stem`で診断し、未閉鎖インラインにもASTを返す。
+- HTMLは数式本文を`code`/`pre`内でエスケープし、評価やraw HTML通過を行わない。
+- `MathLanguage`を閉じた意味variantとして定義し、将来のTypst追加がLaTeXの意味を
+  変更しない境界にした。
+- 置換fixtureと信頼境界を`docs/stem.adoc`および規範的置換表へ記録した。

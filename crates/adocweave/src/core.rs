@@ -15,7 +15,7 @@ use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
 use crate::source::PositionError;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 2;
+pub const CORE_API_VERSION: u16 = 3;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -58,6 +58,7 @@ pub struct ParseOptions {
     /// Host-authoritative values that source text may not change.
     pub protected_attributes: BTreeMap<String, String>,
     pub url_policy: crate::url::UrlPolicy,
+    pub extensions: crate::extension::ExtensionConfig,
 }
 
 /// Cooperative cancellation checked at deterministic parsing checkpoints.
@@ -261,6 +262,7 @@ fn parse_inner<'source>(
     lint_config.max_inline_depth = options.limits.max_inline_depth;
     lint_config.protected_attributes = options.protected_attributes.clone();
     lint_config.url_policy = options.url_policy.clone();
+    lint_config.extensions = options.extensions.clone();
     lint_config.protected_attribute_severity = if options.profile.mode == SyntaxMode::Strict {
         crate::diagnostic::Severity::Error
     } else {
@@ -438,7 +440,11 @@ mod tests {
         );
         assert!(matches!(
             queries[1].target,
-            crate::reference::ReferenceKey::Note { .. }
+            crate::reference::ReferenceKey::Scheme {
+                ref scheme,
+                ref locator,
+                ..
+            } if scheme == "note" && locator == "123e4567-e89b-12d3-a456-426614174000"
         ));
     }
 

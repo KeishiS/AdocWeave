@@ -1,5 +1,6 @@
 //! Output-independent inline syntax.
 
+use crate::limits::MAX_FORMULA_BYTES;
 use crate::source::{TextRange, TextSize};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,6 +24,21 @@ pub struct Link {
 pub struct AttributeUse {
     pub name: String,
     pub name_range: TextRange,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathLanguage {
+    Latex,
+    Typst,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InlineFormula {
+    pub range: TextRange,
+    pub content_range: TextRange,
+    pub language: MathLanguage,
+    pub value: String,
+    pub closed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +96,7 @@ pub enum Inline {
     },
     Link(Link),
     Reference(Reference),
+    Formula(InlineFormula),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -102,6 +119,7 @@ impl Inline {
             | Self::AttributeReference { range, .. } => *range,
             Self::Link(link) => link.range,
             Self::Reference(reference) => reference.range,
+            Self::Formula(formula) => formula.range,
         }
     }
 }
@@ -116,6 +134,9 @@ pub enum InlineProblemKind {
     IncompleteLink,
     IncompleteCrossReference,
     InvalidCrossReference,
+    UnclosedStem,
+    EmptyStem,
+    StemSizeLimitExceeded,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,6 +188,26 @@ fn parse_segment(
         }) {
             let open = macro_open.expect("checked above");
             if let Some((inline, end)) = parse_macro(value, range, config, depth, open) {
+                if let Inline::Formula(formula) = &inline {
+                    if !formula.closed {
+                        output.problems.push(InlineProblem {
+                            kind: InlineProblemKind::UnclosedStem,
+                            range: formula.range,
+                        });
+                    }
+                    if formula.value.is_empty() {
+                        output.problems.push(InlineProblem {
+                            kind: InlineProblemKind::EmptyStem,
+                            range: formula.content_range,
+                        });
+                    }
+                    if formula.value.len() > MAX_FORMULA_BYTES {
+                        output.problems.push(InlineProblem {
+                            kind: InlineProblemKind::StemSizeLimitExceeded,
+                            range: formula.content_range,
+                        });
+                    }
+                }
                 if is_escaped(value, open) {
                     push_text(&mut output.inlines, value, range, plain_start, open - 1);
                     output.inlines.push(Inline::Text(InlineText {
@@ -281,6 +322,11 @@ fn next_macro_start(value: &str, cursor: usize) -> Option<usize> {
             if rest.starts_with("<<") || starts_ascii_case_insensitive(rest, "xref:") {
                 return true;
             }
+            if starts_ascii_case_insensitive(rest, "stem:[")
+                || starts_ascii_case_insensitive(rest, "latexmath:[")
+            {
+                return true;
+            }
             (is_token_boundary(value[..*offset].chars().next_back())
                 || (is_escaped(value, *offset)
                     && is_token_boundary(value[..offset.saturating_sub(1)].chars().next_back())))
@@ -296,6 +342,33 @@ fn parse_macro(
     open: usize,
 ) -> Option<(Inline, usize)> {
     let rest = &value[open..];
+    let formula_prefix = if starts_ascii_case_insensitive(rest, "stem:[") {
+        Some("stem:[".len())
+    } else if starts_ascii_case_insensitive(rest, "latexmath:[") {
+        Some("latexmath:[".len())
+    } else {
+        None
+    };
+    if let Some(prefix_len) = formula_prefix {
+        let close = value[open + prefix_len..]
+            .find(']')
+            .map(|relative| relative + open + prefix_len);
+        let content_end = close.unwrap_or(value.len());
+        let end = close.map_or(value.len(), |close| close + 1);
+        let content_range = subrange(range, open + prefix_len, content_end);
+        let formula_range = subrange(range, open, end);
+        let formula = &value[open + prefix_len..content_end];
+        return Some((
+            Inline::Formula(InlineFormula {
+                range: formula_range,
+                content_range,
+                language: MathLanguage::Latex,
+                value: formula.to_owned(),
+                closed: close.is_some(),
+            }),
+            end,
+        ));
+    }
     if let Some(short_reference) = rest.strip_prefix("<<") {
         let close_relative = short_reference.find(">>")?;
         let close = open + 2 + close_relative;
@@ -536,7 +609,12 @@ fn scan_incomplete_macros(value: &str, range: TextRange, problems: &mut Vec<Inli
                 && (rest.find('[').is_none() || bracket_is_unclosed(rest)))
         {
             Some(InlineProblemKind::IncompleteCrossReference)
-        } else if url_scheme_end(rest).is_some() && bracket_is_unclosed(rest) {
+        } else if !starts_ascii_case_insensitive(rest, "stem:[")
+            && !starts_ascii_case_insensitive(rest, "latexmath:[")
+            && is_token_boundary(value[..offset].chars().next_back())
+            && url_scheme_end(rest).is_some()
+            && bracket_is_unclosed(rest)
+        {
             Some(InlineProblemKind::IncompleteLink)
         } else {
             None

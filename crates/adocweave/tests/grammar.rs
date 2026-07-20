@@ -152,7 +152,10 @@ fn substitutions_cover_every_supported_semantic_context() {
     assert!(html.contains(
         "<pre><code class=\"language-rust-script\">_source_ &lt;&amp;&gt;\n</code></pre>"
     ));
-    assert!(html.contains("<p><a href=\"https://example.test\">label</a> stem:[x &lt; y]</p>"));
+    assert!(html.contains(
+        "<p><a href=\"https://example.test\">label</a> \
+         <code class=\"math-latex\">x &lt; y</code></p>"
+    ));
     assert!(!html.contains("<tag>"));
     assert!(!html.contains("<unsafe>"));
 }

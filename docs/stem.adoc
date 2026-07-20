@@ -1,0 +1,34 @@
+= STEMとLaTeX
+
+AdocWeaveはLaTeX数式を、AsciiDoc本文とは別言語の不透明なsemantic nodeとして扱う。
+コアは数式を評価、実行またはHTMLとして解釈しない。
+
+文書ヘッダーでは`:stem: latexmath`または`:stem: latex`を指定できる。インラインは
+`stem:[...]`または`latexmath:[...]`、ブロックは`[stem]`または`[latexmath]`に続く
+`++++`区切りを使用する。
+
+[source,asciidoc]
+----
+= 数式
+:stem: latexmath
+
+inline stem:[x < y]
+
+[stem]
+++++
+\int_0^1 x^2 dx
+++++
+----
+
+数式内容では属性参照、強調、リンク、xrefその他のAsciiDoc置換を行わない。
+元の内容範囲と言語を`InlineFormula`または`MathBlock`へ保持する。未閉鎖入力にも
+Formulaノードと`invalid-stem`診断を返す。空内容と1 MiBを超える内容も同じ安定コードで
+診断する。
+
+`MathLanguage`はLaTeXと将来のTypstを別variantとして表す。Typstを追加するときも
+LaTeX variantの意味を変更しない。
+
+HTMLバックエンドは数式レンダリングエンジンを内蔵しない。インライン数式は
+`code.math-latex`、ブロック数式は`pre.math-latex > code`としてHTMLエスケープして
+出力する。将来ホストがKaTeX等の出力を注入する場合、その出力は別の信頼境界として
+サニタイズしなければならない。

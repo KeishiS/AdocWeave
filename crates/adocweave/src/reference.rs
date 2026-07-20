@@ -1,4 +1,4 @@
-//! Host boundary for cross-document and note reference resolution.
+//! Host boundary for generic cross-document and scheme reference resolution.
 //!
 //! Parsing never calls a resolver. Hosts translate parsed `Reference` values into
 //! queries, await this interface, and pass validated results to consumers.
@@ -16,10 +16,6 @@ pub type ResolverFuture<'a, T> =
 pub enum ReferenceKey {
     Document {
         document: String,
-        anchor: Option<String>,
-    },
-    Note {
-        uuid: String,
         anchor: Option<String>,
     },
     Scheme {
@@ -124,7 +120,11 @@ pub trait ReferenceResolver: Send + Sync {
         document: &'a str,
     ) -> ResolverFuture<'a, SourceId>;
 
-    fn resolve_note<'a>(&'a self, uuid: &'a str) -> ResolverFuture<'a, SourceId>;
+    fn resolve_scheme<'a>(
+        &'a self,
+        scheme: &'a str,
+        locator: &'a str,
+    ) -> ResolverFuture<'a, SourceId>;
 
     fn resolve_anchor<'a>(
         &'a self,
@@ -138,17 +138,6 @@ pub trait ReferenceResolver: Send + Sync {
     ) -> ResolverFuture<'a, Vec<ReverseReference>>;
 }
 
-pub fn is_canonical_uuid(value: &str) -> bool {
-    value.len() == 36
-        && value.bytes().enumerate().all(|(index, byte)| {
-            if matches!(index, 8 | 13 | 18 | 23) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()
-            }
-        })
-}
-
 pub fn query_from_reference(
     source_id: Option<SourceId>,
     reference: &crate::inline::Reference,
@@ -159,15 +148,6 @@ pub fn query_from_reference(
             document, anchor, ..
         } => ReferenceKey::Document {
             document: document.clone(),
-            anchor: anchor.clone(),
-        },
-        ReferenceDestination::Scheme {
-            scheme,
-            locator,
-            anchor,
-            ..
-        } if scheme == "note" => ReferenceKey::Note {
-            uuid: locator.clone(),
             anchor: anchor.clone(),
         },
         ReferenceDestination::Scheme {
@@ -191,14 +171,7 @@ pub fn query_from_reference(
 
 #[cfg(test)]
 mod tests {
-    use super::{ResolutionFailureKind, is_canonical_uuid};
-
-    #[test]
-    fn note_reference_accepts_only_canonical_lowercase_uuid() {
-        assert!(is_canonical_uuid("123e4567-e89b-12d3-a456-426614174000"));
-        assert!(!is_canonical_uuid("123"));
-        assert!(!is_canonical_uuid("123E4567-E89B-12D3-A456-426614174000"));
-    }
+    use super::ResolutionFailureKind;
 
     #[test]
     fn resolver_contract_exposes_stable_failure_codes() {

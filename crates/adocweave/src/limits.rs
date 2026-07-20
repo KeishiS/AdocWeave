@@ -3,6 +3,8 @@
 //! The core is pure: it does not read files, environment variables, clocks,
 //! networks, or execute external commands. Hosts provide all input explicitly.
 
+pub const MAX_FORMULA_BYTES: usize = 1024 * 1024;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyntaxMode {
     Permissive,

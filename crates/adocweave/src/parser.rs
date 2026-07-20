@@ -3,7 +3,9 @@
 use std::fmt::Write as _;
 
 use crate::attributes::{AttributeProblem, DocumentAttribute, parse_line as parse_attribute_line};
-use crate::inline::{Inline, InlineParseConfig, InlineProblem, parse as parse_inlines};
+use crate::inline::{
+    Inline, InlineParseConfig, InlineProblem, MathLanguage, parse as parse_inlines,
+};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LosslessToken, SourceLine, SourceLines};
 
@@ -20,6 +22,7 @@ pub enum CstBlockKind {
     DocumentAttribute,
     BlockAnchor,
     List,
+    MathBlock,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,6 +142,30 @@ pub struct SourceBlock {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathProblemKind {
+    Unclosed,
+    Empty,
+    SizeLimitExceeded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathProblem {
+    pub kind: MathProblemKind,
+    pub range: TextRange,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MathBlock {
+    pub range: TextRange,
+    pub attribute_range: TextRange,
+    pub delimiter_range: TextRange,
+    pub content_range: TextRange,
+    pub language: MathLanguage,
+    pub value: String,
+    pub problems: Vec<MathProblem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ListKind {
     Unordered,
     Ordered,
@@ -215,6 +242,7 @@ pub enum AstBlock {
     Literal(LiteralBlock),
     Source(SourceBlock),
     List(ListBlock),
+    Math(MathBlock),
     Unsupported(Unsupported),
 }
 
@@ -300,6 +328,20 @@ impl AstDocument {
                         list.range.start().to_u32(),
                         list.range.end().to_u32(),
                         list.items.len()
+                    )
+                    .expect("writing to a String cannot fail");
+                }
+                AstBlock::Math(math) => {
+                    writeln!(
+                        output,
+                        "  Math({:?})@{}..{} content={}..{} {:?} problems={:?}",
+                        math.language,
+                        math.range.start().to_u32(),
+                        math.range.end().to_u32(),
+                        math.content_range.start().to_u32(),
+                        math.content_range.end().to_u32(),
+                        math.value,
+                        math.problems
                     )
                     .expect("writing to a String cannot fail");
                 }
@@ -426,6 +468,23 @@ pub fn parse_with_config<'source>(
                 range: source_block.range,
             });
             ast_blocks.push(AstBlock::Source(source_block));
+            saw_content = true;
+            line_index = next_line;
+            continue;
+        } else if parse_math_attribute(content).is_some()
+            && source_lines
+                .lines()
+                .get(line_index + 1)
+                .and_then(|next| source_lines.text(next.content_range()))
+                == Some("++++")
+        {
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            let (math, next_line) = parse_math_block(&source_lines, line_index, source)?;
+            blocks.push(CstBlock {
+                kind: CstBlockKind::MathBlock,
+                range: math.range,
+            });
+            ast_blocks.push(AstBlock::Math(math));
             saw_content = true;
             line_index = next_line;
             continue;
@@ -681,7 +740,67 @@ fn ast_block_range(block: &AstBlock) -> TextRange {
         AstBlock::Literal(value) => value.range,
         AstBlock::Source(value) => value.range,
         AstBlock::List(value) => value.range,
+        AstBlock::Math(value) => value.range,
         AstBlock::Unsupported(value) => value.range,
+    }
+}
+
+fn parse_math_block(
+    source_lines: &SourceLines<'_>,
+    attribute_index: usize,
+    source: &str,
+) -> Result<(MathBlock, usize), PositionError> {
+    let attribute = source_lines.lines()[attribute_index];
+    let attribute_text = source_lines.text(attribute.content_range()).expect("valid");
+    let language = parse_math_attribute(attribute_text).expect("recognized math attribute");
+    let delimiter_index = attribute_index + 1;
+    let delimiter = source_lines.lines()[delimiter_index];
+    let body = parse_delimited_body(source_lines, delimiter_index, "++++", source)?;
+    let value = source
+        .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
+        .expect("valid math content")
+        .to_owned();
+    let mut problems = Vec::new();
+    if body
+        .problems
+        .iter()
+        .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock)
+    {
+        problems.push(MathProblem {
+            kind: MathProblemKind::Unclosed,
+            range: delimiter.content_range(),
+        });
+    }
+    if value.is_empty() {
+        problems.push(MathProblem {
+            kind: MathProblemKind::Empty,
+            range: body.content_range,
+        });
+    }
+    if value.len() > crate::limits::MAX_FORMULA_BYTES {
+        problems.push(MathProblem {
+            kind: MathProblemKind::SizeLimitExceeded,
+            range: body.content_range,
+        });
+    }
+    Ok((
+        MathBlock {
+            range: TextRange::new(attribute.full_range().start(), body.range_end)?,
+            attribute_range: attribute.content_range(),
+            delimiter_range: delimiter.content_range(),
+            content_range: body.content_range,
+            language,
+            value,
+            problems,
+        },
+        body.next_line,
+    ))
+}
+
+fn parse_math_attribute(text: &str) -> Option<MathLanguage> {
+    match text {
+        "[stem]" | "[latexmath]" => Some(MathLanguage::Latex),
+        _ => None,
     }
 }
 
@@ -1167,8 +1286,12 @@ fn is_delimiter(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AstBlock, BlockProblemKind, CstBlockKind, HeadingKind, HeadingProblem, parse};
+    use super::{
+        AstBlock, BlockProblemKind, CstBlockKind, HeadingKind, HeadingProblem, MathProblemKind,
+        parse,
+    };
     use crate::attributes::{AttributeOperation, AttributeValue, StemKind};
+    use crate::inline::{Inline, MathLanguage};
 
     #[test]
     fn paragraph_parser_handles_empty_input() {
@@ -1436,6 +1559,61 @@ mod tests {
         assert!(matches!(
             list.items[1].continuations[0],
             AstBlock::Source(_)
+        ));
+    }
+
+    #[test]
+    fn stem_builds_opaque_inline_and_block_nodes() {
+        let parsed =
+            parse(include_str!("../../../fixtures/stem/substitutions.adoc")).expect("parse");
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[1] else {
+            panic!("paragraph");
+        };
+        assert!(paragraph.lines[0].inlines.iter().any(|inline| {
+            matches!(
+                inline,
+                Inline::Formula(formula)
+                    if formula.value == "{x} * y < z"
+                        && formula.language == MathLanguage::Latex
+            )
+        }));
+        let AstBlock::Math(math) = &parsed.ast.blocks[2] else {
+            panic!("math block");
+        };
+        assert!(math.value.contains("{x} * y < z"));
+    }
+
+    #[test]
+    fn stem_recovery_keeps_unclosed_block_before_heading() {
+        let parsed = parse("stem:[inline open\n\n[stem]\n++++\nx + y\n== Next\n").expect("parse");
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[0] else {
+            panic!("paragraph");
+        };
+        assert!(matches!(
+            paragraph.lines[0].inlines[0],
+            Inline::Formula(ref formula) if !formula.closed && formula.value == "inline open"
+        ));
+        let AstBlock::Math(math) = &parsed.ast.blocks[1] else {
+            panic!("math");
+        };
+        assert!(
+            math.problems
+                .iter()
+                .any(|problem| problem.kind == MathProblemKind::Unclosed)
+        );
+        assert!(matches!(parsed.ast.blocks[2], AstBlock::Heading(_)));
+    }
+
+    #[test]
+    fn stem_language_boundary_keeps_latex_distinct_from_future_typst() {
+        assert_ne!(MathLanguage::Latex, MathLanguage::Typst);
+        let parsed = parse("stem:[x]").expect("parse");
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[0] else {
+            panic!("paragraph");
+        };
+        assert!(matches!(
+            paragraph.lines[0].inlines[0],
+            Inline::Formula(ref formula) if formula.language == MathLanguage::Latex
         ));
     }
 }

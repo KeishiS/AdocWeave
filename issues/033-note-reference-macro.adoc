@@ -48,9 +48,11 @@ cargo test --workspace resolver_contract
 
 完了。
 
-- `note:`をxref参照先スキームとして維持し、canonical lowercase UUIDを検証する。
+- `note:`をxref参照先スキームとして維持する。標準コアはnoteを特別扱いせず、
+  任意登録する`ReferenceSchemeExtension`がcanonical lowercase UUIDを検証する。
 - 別文書、noteおよび任意スキームを共通の`ReferenceQuery`/`ReferenceKey`へ正規化した。
-- 文書候補、文書、UUID、アンカーおよび逆参照の非同期`ReferenceResolver`境界を追加した。
+- 文書候補、文書、任意スキーム、アンカーおよび逆参照の非同期
+  `ReferenceResolver`境界を追加した。
 - Resolver失敗の分類、安定診断コード、逆参照範囲およびキャッシュキーを公開型にした。
 - Resolverなしの解析・抽出・HTML回復と、解決hrefへのURLポリシー再検査を維持した。
 - 規範契約を`docs/reference-resolution.adoc`へ記録した。

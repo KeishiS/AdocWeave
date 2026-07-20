@@ -1,0 +1,10 @@
+= STEM
+:x: expanded
+:stem: latexmath
+
+Normal {x}; formula stem:[{x} * y < z].
+
+[stem]
+++++
+{x} * y < z
+++++

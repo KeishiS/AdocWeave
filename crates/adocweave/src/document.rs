@@ -128,6 +128,7 @@ fn block_range(block: &AstBlock) -> TextRange {
         AstBlock::Literal(value) => value.range,
         AstBlock::Source(value) => value.range,
         AstBlock::List(value) => value.range,
+        AstBlock::Math(value) => value.range,
         AstBlock::Unsupported(value) => value.range,
     }
 }
@@ -148,6 +149,7 @@ fn block_label(block: &AstBlock) -> String {
             .items
             .first()
             .map_or_else(|| "list".to_owned(), |item| item.text.clone()),
+        AstBlock::Math(_) => "math block".to_owned(),
         AstBlock::Unsupported(_) => "unsupported block".to_owned(),
     }
 }

@@ -37,7 +37,7 @@ pub enum LintRule {
     InvalidCrossReference,
     UnresolvedCrossReference,
     InconsistentList,
-    InvalidNoteUuid,
+    InvalidStem,
 }
 
 impl LintRule {
@@ -63,7 +63,7 @@ impl LintRule {
         Self::InvalidCrossReference,
         Self::UnresolvedCrossReference,
         Self::InconsistentList,
-        Self::InvalidNoteUuid,
+        Self::InvalidStem,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -89,7 +89,7 @@ impl LintRule {
             Self::InvalidCrossReference => "invalid-cross-reference",
             Self::UnresolvedCrossReference => "unresolved-cross-reference",
             Self::InconsistentList => "inconsistent-list",
-            Self::InvalidNoteUuid => "invalid-note-uuid",
+            Self::InvalidStem => "invalid-stem",
         }
     }
 }
@@ -111,6 +111,7 @@ pub struct LintConfig {
     pub protected_attributes: BTreeMap<String, String>,
     pub protected_attribute_severity: Severity,
     pub url_policy: crate::url::UrlPolicy,
+    pub extensions: crate::extension::ExtensionConfig,
 }
 
 impl Default for LintConfig {
@@ -136,6 +137,7 @@ impl Default for LintConfig {
             protected_attributes: BTreeMap::new(),
             protected_attribute_severity: Severity::Error,
             url_policy: crate::url::UrlPolicy::default(),
+            extensions: crate::extension::ExtensionConfig::default(),
         }
     }
 }
@@ -304,14 +306,14 @@ fn lint_links_and_references(
                         ReferenceDestination::Scheme {
                             scheme, locator, ..
                         } => {
-                            if scheme == "note" && !crate::reference::is_canonical_uuid(locator) {
-                                push_diagnostic(
+                            if let Some(extension) = config.extensions.reference_scheme(scheme)
+                                && !extension.accepts(locator)
+                            {
+                                push_extension_diagnostic(
                                     diagnostics,
-                                    config,
-                                    LintRule::InvalidNoteUuid,
                                     reference.target_range,
-                                    "note reference requires a canonical lowercase UUID",
-                                    None,
+                                    &extension.diagnostic_code,
+                                    &extension.diagnostic_message,
                                 );
                             } else if scheme.is_empty()
                                 || locator.is_empty()
@@ -579,6 +581,25 @@ fn lint_headings(
                 }
             }
             AstBlock::List(list) => lint_list(list, config, diagnostics),
+            AstBlock::Math(math) => {
+                for problem in &math.problems {
+                    let message = match problem.kind {
+                        crate::parser::MathProblemKind::Unclosed => "unclosed STEM block",
+                        crate::parser::MathProblemKind::Empty => "STEM block is empty",
+                        crate::parser::MathProblemKind::SizeLimitExceeded => {
+                            "STEM block exceeds the size limit"
+                        }
+                    };
+                    push_diagnostic(
+                        diagnostics,
+                        config,
+                        LintRule::InvalidStem,
+                        problem.range,
+                        message,
+                        None,
+                    );
+                }
+            }
             AstBlock::Unsupported(_) => {}
         }
         let AstBlock::Heading(heading) = block else {
@@ -798,6 +819,30 @@ fn push_inline_problems(
                 "incomplete or invalid cross reference",
                 None,
             ),
+            InlineProblemKind::UnclosedStem => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InvalidStem,
+                problem.range,
+                "unclosed inline STEM",
+                None,
+            ),
+            InlineProblemKind::EmptyStem => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InvalidStem,
+                problem.range,
+                "inline STEM is empty",
+                None,
+            ),
+            InlineProblemKind::StemSizeLimitExceeded => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InvalidStem,
+                problem.range,
+                "inline STEM exceeds the size limit",
+                None,
+            ),
         }
     }
 }
@@ -842,6 +887,27 @@ fn push_diagnostic(
         range,
         related: Vec::new(),
         fixes,
+    });
+}
+
+fn push_extension_diagnostic(
+    diagnostics: &mut Vec<Diagnostic>,
+    range: TextRange,
+    code: &str,
+    message: &str,
+) {
+    diagnostics.push(Diagnostic {
+        id: DiagnosticId::new(format!(
+            "{code}@{}:{}",
+            range.start().to_u32(),
+            range.end().to_u32()
+        )),
+        code: DiagnosticCode::new(code),
+        severity: Severity::Warning,
+        message: message.to_owned(),
+        range,
+        related: Vec::new(),
+        fixes: Vec::new(),
     });
 }
 
@@ -1147,9 +1213,19 @@ mod tests {
 
     #[test]
     fn note_reference_validates_uuid_without_resolving_it() {
+        let mut config = LintConfig::default();
+        config
+            .extensions
+            .register_reference_scheme(crate::extension::ReferenceSchemeExtension::new(
+                "note",
+                crate::extension::LocatorConstraint::CanonicalUuid,
+                "invalid-note-uuid",
+                "note reference requires a canonical lowercase UUID",
+            ))
+            .expect("register extension");
         let diagnostics = lint(
             "xref:note:123[bad] xref:note:123e4567-e89b-12d3-a456-426614174000[ok]",
-            &LintConfig::default(),
+            &config,
         )
         .expect("lint");
 
@@ -1163,10 +1239,52 @@ mod tests {
     }
 
     #[test]
+    fn unknown_reference_schemes_have_no_note_specific_semantics_by_default() {
+        let diagnostics =
+            lint("xref:note:not-a-uuid[label]", &LintConfig::default()).expect("lint");
+
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "invalid-note-uuid")
+        );
+    }
+
+    #[test]
     fn note_reference_incomplete_fixture_recovers_without_panicking() {
         let source = include_str!("../../../fixtures/references/incomplete-note.adoc");
         let parsed = crate::parser::parse(source).expect("parse");
 
         assert_eq!(parsed.ast.blocks.len(), 1);
+    }
+
+    #[test]
+    fn stem_recovery_reports_empty_and_unclosed_formulas() {
+        let diagnostics = lint(
+            "stem:[] and stem:[open\n\n[stem]\n++++\n++++\n",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "invalid-stem")
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn stem_size_limit_is_reported_without_evaluating_the_formula() {
+        let source = format!(
+            "stem:[{}]",
+            "x".repeat(crate::limits::MAX_FORMULA_BYTES + 1)
+        );
+        let diagnostics = lint(&source, &LintConfig::default()).expect("lint");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "invalid-stem" && diagnostic.message.contains("size limit")
+        }));
     }
 }

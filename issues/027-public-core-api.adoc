@@ -62,3 +62,5 @@ cargo test --workspace send_sync
   `Send + Sync` の契約を単体テストで固定した。
 - Issue 031で未解決参照の公開フィールドを`references`へ改め、参照モデルを
   具体化した破壊的変更に伴い、`CORE_API_VERSION`を2へ更新した。
+- note専用参照型を汎用スキーム拡張へ置き換え、`ExtensionConfig`を公開入力へ追加した
+  破壊的変更に伴い、`CORE_API_VERSION`を3へ更新した。

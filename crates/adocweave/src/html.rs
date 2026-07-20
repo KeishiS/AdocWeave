@@ -136,6 +136,15 @@ pub fn render_with_resolutions(
             AstBlock::List(list) => {
                 render_list(&mut fragment, list, explicit_id, &mut inline_context)
             }
+            AstBlock::Math(math) => {
+                fragment.push_str("<pre");
+                render_optional_id(&mut fragment, explicit_id);
+                fragment.push_str(" class=\"");
+                fragment.push_str(math_class(math.language));
+                fragment.push_str("\"><code>");
+                escape_html_into(&mut fragment, &math.value);
+                fragment.push_str("</code></pre>\n");
+            }
             AstBlock::Unsupported(unsupported) => {
                 render_unsupported(&mut fragment, unsupported, explicit_id)
             }
@@ -312,7 +321,21 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
             }
             Inline::Link(link) => render_link(output, link, context),
             Inline::Reference(reference) => render_reference(output, reference, context),
+            Inline::Formula(formula) => {
+                output.push_str("<code class=\"");
+                output.push_str(math_class(formula.language));
+                output.push_str("\">");
+                escape_html_into(output, &formula.value);
+                output.push_str("</code>");
+            }
         }
+    }
+}
+
+const fn math_class(language: crate::inline::MathLanguage) -> &'static str {
+    match language {
+        crate::inline::MathLanguage::Latex => "math-latex",
+        crate::inline::MathLanguage::Typst => "math-typst",
     }
 }
 
@@ -476,6 +499,7 @@ fn block_range(block: &AstBlock) -> crate::source::TextRange {
         AstBlock::Literal(value) => value.range,
         AstBlock::Source(value) => value.range,
         AstBlock::List(value) => value.range,
+        AstBlock::Math(value) => value.range,
         AstBlock::Unsupported(value) => value.range,
     }
 }
@@ -928,5 +952,18 @@ mod tests {
         let output = render(&parsed.ast, &RenderPolicy::default());
 
         assert!(output.html.contains("Note:123"));
+    }
+
+    #[test]
+    fn stem_html_is_escaped_and_matches_the_substitution_fixture() {
+        let parsed =
+            parse(include_str!("../../../fixtures/stem/substitutions.adoc")).expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            include_str!("../../../fixtures/stem/substitutions.html")
+        );
+        assert!(!output.html.contains("<z>"));
     }
 }

@@ -11,6 +11,7 @@ pub mod attributes;
 pub mod core;
 pub mod diagnostic;
 pub mod document;
+pub mod extension;
 pub mod formatter;
 pub mod html;
 pub mod inline;
@@ -213,6 +214,7 @@ fn parse_with_policy<'source>(
             limits: config.limits,
             protected_attributes: std::collections::BTreeMap::new(),
             url_policy: crate::url::UrlPolicy::default(),
+            extensions: crate::extension::ExtensionConfig::default(),
         },
     )
     .map_err(process_error_from_parse)?;

@@ -197,6 +197,7 @@ mod tests {
                 AstBlock::Literal(_) => None,
                 AstBlock::Source(_) => None,
                 AstBlock::List(_) => None,
+                AstBlock::Math(_) => None,
                 AstBlock::Unsupported(_) => None,
             })
             .collect()
@@ -283,6 +284,17 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn formatter_preserves_stem_contents_byte_for_byte() {
+        let source = "stem:[{x} * y < z]  \n\n[stem]\n++++\n  {x} * y < z  \n++++\n";
+        let formatted = format(source, &FormatConfig::default()).expect("format");
+
+        assert!(formatted.formatted.contains("stem:[{x} * y < z]"));
+        assert!(formatted.formatted.contains("  {x} * y < z  \n"));
+        let reparsed = parse(&formatted.formatted).expect("parse formatted");
+        assert!(matches!(reparsed.ast.blocks[1], AstBlock::Math(_)));
     }
 
     fn block_inlines(block: &AstBlock) -> Vec<&crate::inline::Inline> {

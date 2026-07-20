@@ -148,7 +148,12 @@ xref:substitutions.adoc[Core 0.1置換モデル]で定義する。
 |リンクと相互参照
 |URL、link、email、xrefなどのマクロ
 |URL単体、`URL[label]`、文書内・文書間xrefおよびスキーム付きxrefに対応。
-文書間・`note:`参照の実データ解決はIssue 033のホスト注入型Resolverで追加する
+文書間・任意スキーム参照の実データ解決はホスト注入型Resolverへ委譲する。
+`note:`のUUID制約は任意のスキーム拡張である
+
+|STEMと数式
+|インライン・ブロック数式、複数の数式言語
+|LaTeXのインライン・ブロックSTEMを不透明ノードとして保持。数式評価は行わない
 
 |includeと条件分岐
 |プリプロセッサディレクティブ
