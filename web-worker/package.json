@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test controller.test.mjs",
+    "test": "node --test controller.test.mjs release-manifest.test.mjs",
     "test:cross-runtime": "node --test cross-runtime.test.mjs"
   }
 }

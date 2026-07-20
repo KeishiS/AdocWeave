@@ -3,7 +3,28 @@ use std::path::{Path, PathBuf};
 
 use adocweave::NeverCancel;
 use adocweave_wasm::{WASM_API_VERSION, WasmRequest, process_request};
+use serde::Deserialize;
 use serde_json::{Value, json};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReleaseManifest {
+    schema_version: u16,
+    package_version: String,
+    contracts: ContractVersions,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContractVersions {
+    core_profile: u16,
+    core_api: u16,
+    html: u16,
+    projection: u16,
+    conformance: u16,
+    wasm_api: u16,
+    worker_protocol: u16,
+}
 
 #[test]
 fn native_adapter_accepts_every_shared_conformance_case() {
@@ -45,12 +66,25 @@ fn native_adapter_accepts_every_shared_conformance_case() {
 
 #[test]
 fn release_contract_versions_are_explicit_and_independent() {
-    assert_eq!(adocweave::CORE_PROFILE_VERSION, 1);
-    assert_eq!(adocweave::CORE_API_VERSION, 6);
-    assert_eq!(adocweave::html::HTML_CONTRACT_VERSION, 2);
-    assert_eq!(adocweave::projection::PROJECTION_CONTRACT_VERSION, 1);
-    assert_eq!(adocweave::conformance::CONFORMANCE_CONTRACT_VERSION, 2);
-    assert_eq!(WASM_API_VERSION, 2);
+    let manifest: ReleaseManifest =
+        serde_json::from_str(include_str!("../../../release-manifest.json"))
+            .expect("valid release manifest");
+    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.package_version, env!("CARGO_PKG_VERSION"));
+    let contracts = manifest.contracts;
+    assert_eq!(contracts.core_profile, adocweave::CORE_PROFILE_VERSION);
+    assert_eq!(contracts.core_api, adocweave::CORE_API_VERSION);
+    assert_eq!(contracts.html, adocweave::html::HTML_CONTRACT_VERSION);
+    assert_eq!(
+        contracts.projection,
+        adocweave::projection::PROJECTION_CONTRACT_VERSION
+    );
+    assert_eq!(
+        contracts.conformance,
+        adocweave::conformance::CONFORMANCE_CONTRACT_VERSION
+    );
+    assert_eq!(contracts.wasm_api, WASM_API_VERSION);
+    assert!(contracts.worker_protocol > 0);
 }
 
 fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {

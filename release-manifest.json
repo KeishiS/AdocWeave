@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "0.1.0",
+  "contracts": {
+    "coreProfile": 1,
+    "coreApi": 6,
+    "html": 2,
+    "projection": 1,
+    "conformance": 2,
+    "wasmApi": 2,
+    "workerProtocol": 1
+  }
+}

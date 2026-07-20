@@ -13,6 +13,8 @@ cargo make release-check
 このtaskはstable Rustの全workspace・Clippy・docs・Zed・WASM型検査、native／実WASM
 conformance、短時間fuzz、Web Worker、release fixtureおよびWASM sizeを実行する。
 長時間fuzzはxref:testing.adoc[品質保証とFuzzing]の手順で別途定期実行する。
+Rust、WASMおよびWorkerの契約versionがxref:../release-manifest.json[release manifest]と
+一致しない場合も失敗する。
 
 == Zed
 

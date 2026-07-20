@@ -6,6 +6,10 @@
 
 == 契約version
 
+machine-readableな正本はxref:../release-manifest.json[release manifest]である。Rustおよび
+Workerの公開定数は、このmanifestとの一致をrelease gateで検査する。version変更では最初に
+manifestを更新し、対応する実装、fixture、移行説明および以下の人向け一覧を同じ変更で同期する。
+
 [cols="2,1,3",options="header"]
 |===
 |契約 |現在値 |更新する変更

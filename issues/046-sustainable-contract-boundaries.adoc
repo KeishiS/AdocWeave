@@ -59,3 +59,9 @@ block parserは構文優先順位を上から読めること、routerはprotocol
 conformance snapshotのASTをderived `Debug`から、AST型のfield宣言順、列挙variant、UTF-8
 byte rangeおよび配列順を保持するcompact JSONへ変更した。schemaの破壊的変更として
 `CONFORMANCE_CONTRACT_VERSION`を2へ更新した。
+
+ルートの`release-manifest.json`をpackage versionと7種の契約versionのmachine-readableな
+正本として追加した。Rust統合テストとNode Workerテストが各公開定数との一致を検査するため、
+一部だけを更新したreleaseは自動ゲートで拒否される。
+
+既定設定の`cargo make release-check`は2026-07-20に成功した。本Issueは完了した。
