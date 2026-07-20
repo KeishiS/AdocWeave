@@ -4,26 +4,128 @@
 //! do not depend on this module, so additional output backends can consume the
 //! same document without changing parsing behavior.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::Diagnostic;
 use crate::document::{HeadingId, generate_heading_ids};
 use crate::inline::{Inline, InlineLiteralKind, InlineStyle};
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 
+pub const HTML_CONTRACT_VERSION: u16 = 1;
+pub const ALLOWED_ELEMENTS: &[&str] = &[
+    "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "p", "pre", "strong",
+];
+pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "href", "id"];
+pub const ALLOWED_CLASSES: &[&str] = &["document-title", "language-*"];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct HtmlOptions {
-    pub complete_document: bool,
-    pub render_document_title: bool,
+pub enum HtmlDocumentMode {
+    Fragment,
+    Complete,
 }
 
-impl Default for HtmlOptions {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderPolicy {
+    pub contract_version: u16,
+    pub document_mode: HtmlDocumentMode,
+    pub render_document_title: bool,
+    pub allowed_url_schemes: BTreeSet<String>,
+    pub allow_relative_urls: bool,
+    pub allow_external_images: bool,
+    pub allow_data_uris: bool,
+}
+
+impl Default for RenderPolicy {
     fn default() -> Self {
         Self {
-            complete_document: false,
+            contract_version: HTML_CONTRACT_VERSION,
+            document_mode: HtmlDocumentMode::Fragment,
             render_document_title: true,
+            allowed_url_schemes: ["http", "https"].map(String::from).into_iter().collect(),
+            allow_relative_urls: false,
+            allow_external_images: false,
+            allow_data_uris: false,
         }
     }
+}
+
+impl RenderPolicy {
+    pub fn allows_url(&self, value: &str) -> bool {
+        matches!(self.classify_url(value), UrlDecision::Allowed)
+    }
+
+    pub fn classify_url(&self, value: &str) -> UrlDecision {
+        if value.is_empty()
+            || value
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace())
+            || contains_encoded_control(value)
+        {
+            return UrlDecision::Rejected;
+        }
+        let Some(colon) = value.find(':') else {
+            return if self.allow_relative_urls
+                && !value.starts_with('/')
+                && !value.starts_with('\\')
+                && !value.contains('\\')
+                && !value.split('/').any(|segment| segment == "..")
+            {
+                UrlDecision::Allowed
+            } else {
+                UrlDecision::Rejected
+            };
+        };
+        let scheme = &value[..colon];
+        if scheme.is_empty()
+            || !scheme.bytes().enumerate().all(|(index, byte)| {
+                byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
+            })
+            || !scheme.as_bytes()[0].is_ascii_alphabetic()
+        {
+            return UrlDecision::Rejected;
+        }
+        let normalized = scheme.to_ascii_lowercase();
+        if normalized == "data" && !self.allow_data_uris {
+            return UrlDecision::Rejected;
+        }
+        if self.allowed_url_schemes.contains(&normalized) {
+            UrlDecision::Allowed
+        } else {
+            UrlDecision::Rejected
+        }
+    }
+}
+
+fn contains_encoded_control(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.windows(3).any(|window| {
+        if window[0] != b'%' {
+            return false;
+        }
+        let Some(high) = hex(window[1]) else {
+            return false;
+        };
+        let Some(low) = hex(window[2]) else {
+            return false;
+        };
+        let decoded = high * 16 + low;
+        decoded <= 0x20 || decoded == 0x7f
+    })
+}
+
+const fn hex(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UrlDecision {
+    Allowed,
+    Rejected,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -34,7 +136,7 @@ pub struct HtmlOutput {
     pub heading_ids: Vec<HeadingId>,
 }
 
-pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
+pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
     let mut fragment = String::new();
     let heading_ids = generate_heading_ids(document);
     let mut heading_index = 0;
@@ -43,7 +145,7 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
             AstBlock::Heading(heading) => {
                 let id = &heading_ids[heading_index].id;
                 heading_index += 1;
-                render_heading(&mut fragment, heading, id, options);
+                render_heading(&mut fragment, heading, id, policy);
             }
             AstBlock::Paragraph(paragraph) => render_paragraph(&mut fragment, paragraph),
             AstBlock::Literal(literal) => {
@@ -66,7 +168,7 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
         }
     }
 
-    let html = if options.complete_document {
+    let html = if policy.document_mode == HtmlDocumentMode::Complete {
         format!("<!doctype html>\n<html>\n<body>\n{fragment}</body>\n</html>\n")
     } else {
         fragment
@@ -93,7 +195,7 @@ fn safe_language_class(language: &str) -> String {
         .collect()
 }
 
-fn render_heading(output: &mut String, heading: &Heading, id: &str, options: &HtmlOptions) {
+fn render_heading(output: &mut String, heading: &Heading, id: &str, policy: &RenderPolicy) {
     if !heading.problems.is_empty() {
         output.push_str("<p>");
         render_inlines(output, &heading.inlines);
@@ -102,7 +204,7 @@ fn render_heading(output: &mut String, heading: &Heading, id: &str, options: &Ht
     }
 
     match heading.kind {
-        HeadingKind::DocumentTitle if options.render_document_title => {
+        HeadingKind::DocumentTitle if policy.render_document_title => {
             output.push_str("<h1 class=\"document-title\" id=\"");
             output.push_str(id);
             output.push_str("\">");
@@ -187,7 +289,10 @@ fn escape_html_into(output: &mut String, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{HtmlOptions, render};
+    use super::{
+        ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, HTML_CONTRACT_VERSION,
+        HtmlDocumentMode, RenderPolicy, UrlDecision, render,
+    };
     use crate::parser::parse;
 
     #[test]
@@ -195,7 +300,7 @@ mod tests {
         let parsed = parse("first line\nsecond line\n\nlast").expect("valid source");
 
         assert_eq!(
-            render(&parsed.ast, &HtmlOptions::default()).html,
+            render(&parsed.ast, &RenderPolicy::default()).html,
             "<p>first line second line</p>\n<p>last</p>\n"
         );
     }
@@ -205,7 +310,7 @@ mod tests {
         let parsed = parse("plain <text>\nnext").expect("valid source");
 
         assert_eq!(
-            render(&parsed.ast, &HtmlOptions::default()).html,
+            render(&parsed.ast, &RenderPolicy::default()).html,
             "<p>plain &lt;text&gt; next</p>\n"
         );
     }
@@ -215,7 +320,7 @@ mod tests {
         let parsed = parse("use `<tag>` now").expect("valid source");
 
         assert_eq!(
-            render(&parsed.ast, &HtmlOptions::default()).html,
+            render(&parsed.ast, &RenderPolicy::default()).html,
             "<p>use <code>&lt;tag&gt;</code> now</p>\n"
         );
     }
@@ -225,7 +330,7 @@ mod tests {
         let parsed = parse("*bold and `code`*").expect("valid source");
 
         assert_eq!(
-            render(&parsed.ast, &HtmlOptions::default()).html,
+            render(&parsed.ast, &RenderPolicy::default()).html,
             "<p><strong>bold and <code>code</code></strong></p>\n"
         );
     }
@@ -235,7 +340,7 @@ mod tests {
         let parsed = parse("_italic and *bold*_").expect("valid source");
 
         assert_eq!(
-            render(&parsed.ast, &HtmlOptions::default()).html,
+            render(&parsed.ast, &RenderPolicy::default()).html,
             "<p><em>italic and <strong>bold</strong></em></p>\n"
         );
     }
@@ -245,7 +350,7 @@ mod tests {
         let parsed = parse("....\n<tag> & *strong*\n....\n").expect("valid source");
 
         assert_eq!(
-            render(&parsed.ast, &HtmlOptions::default()).html,
+            render(&parsed.ast, &RenderPolicy::default()).html,
             "<pre>&lt;tag&gt; &amp; *strong*\n</pre>\n"
         );
     }
@@ -255,7 +360,7 @@ mod tests {
         let parsed = parse("[source, Rust<script>]\n----\n<&>\n----\n").expect("valid source");
 
         assert_eq!(
-            render(&parsed.ast, &HtmlOptions::default()).html,
+            render(&parsed.ast, &RenderPolicy::default()).html,
             "<pre><code class=\"language-rust-script-\">&lt;&amp;&gt;\n</code></pre>\n"
         );
     }
@@ -266,7 +371,7 @@ mod tests {
         let parsed = parse(source).expect("valid source");
 
         assert_eq!(
-            render(&parsed.ast, &HtmlOptions::default()).html,
+            render(&parsed.ast, &RenderPolicy::default()).html,
             include_str!("../../../fixtures/plain/escaping.html")
         );
     }
@@ -274,7 +379,7 @@ mod tests {
     #[test]
     fn html_renderer_is_deterministic() {
         let parsed = parse("same input").expect("valid source");
-        let options = HtmlOptions::default();
+        let options = RenderPolicy::default();
 
         assert_eq!(render(&parsed.ast, &options), render(&parsed.ast, &options));
     }
@@ -286,9 +391,9 @@ mod tests {
         assert_eq!(
             render(
                 &parsed.ast,
-                &HtmlOptions {
-                    complete_document: true,
-                    ..HtmlOptions::default()
+                &RenderPolicy {
+                    document_mode: HtmlDocumentMode::Complete,
+                    ..RenderPolicy::default()
                 }
             )
             .html,
@@ -304,10 +409,95 @@ mod tests {
     }
 
     #[test]
+    fn html_contract_golden_covers_fragment_and_complete_document() {
+        let parsed =
+            parse(include_str!("../../../fixtures/html/contract.adoc")).expect("valid source");
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            include_str!("../../../fixtures/html/contract.fragment.html")
+        );
+        assert_eq!(
+            render(
+                &parsed.ast,
+                &RenderPolicy {
+                    document_mode: HtmlDocumentMode::Complete,
+                    ..RenderPolicy::default()
+                }
+            )
+            .html,
+            include_str!("../../../fixtures/html/contract.complete.html")
+        );
+    }
+
+    #[test]
+    fn render_policy_allows_only_configured_safe_schemes() {
+        let mut policy = RenderPolicy::default();
+        assert_eq!(
+            policy.classify_url("https://example.com"),
+            UrlDecision::Allowed
+        );
+        assert_eq!(
+            policy.classify_url("HTTP://example.com"),
+            UrlDecision::Allowed
+        );
+        assert_eq!(
+            policy.classify_url("javascript:alert(1)"),
+            UrlDecision::Rejected
+        );
+        assert_eq!(
+            policy.classify_url("java%0ascript:alert(1)"),
+            UrlDecision::Rejected
+        );
+        assert_eq!(policy.classify_url("relative.adoc"), UrlDecision::Rejected);
+        assert_eq!(policy.classify_url("/absolute"), UrlDecision::Rejected);
+        assert_eq!(
+            policy.classify_url("data:text/html,x"),
+            UrlDecision::Rejected
+        );
+
+        policy.allowed_url_schemes.insert("mailto".to_owned());
+        policy.allow_relative_urls = true;
+        assert!(policy.allows_url("mailto:user@example.com"));
+        assert!(policy.allows_url("relative.adoc"));
+        assert!(!policy.allows_url("../outside.adoc"));
+    }
+
+    #[test]
+    fn html_contract_has_explicit_allowlists() {
+        assert_eq!(HTML_CONTRACT_VERSION, 1);
+        assert_eq!(
+            ALLOWED_ELEMENTS,
+            [
+                "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "p", "pre", "strong"
+            ]
+        );
+        assert_eq!(ALLOWED_ATTRIBUTES, ["class", "href", "id"]);
+        assert_eq!(ALLOWED_CLASSES, ["document-title", "language-*"]);
+    }
+
+    #[test]
+    fn html_security_never_passes_input_elements_or_attributes_through() {
+        let parsed = parse(
+            "<script>alert(1)</script>\n\
+             <svg onload=\"alert(1)\"></svg>\n\
+             <p style=\"color:red\">unsafe</p>\n",
+        )
+        .expect("valid source");
+        let html = render(&parsed.ast, &RenderPolicy::default()).html;
+
+        assert!(!html.contains("<script"));
+        assert!(!html.contains("<svg"));
+        assert!(!html.contains("<svg onload="));
+        assert!(!html.contains("<p style="));
+        assert!(html.contains("&lt;script&gt;"));
+        assert!(html.contains("&lt;svg onload=&#34;alert(1)&#34;&gt;"));
+    }
+
+    #[test]
     fn heading_html_and_ids_match_fixture() {
         let source = include_str!("../../../fixtures/heading/basic.adoc");
         let parsed = parse(source).expect("valid source");
-        let output = render(&parsed.ast, &HtmlOptions::default());
+        let output = render(&parsed.ast, &RenderPolicy::default());
 
         assert_eq!(
             output.html,
@@ -333,9 +523,9 @@ mod tests {
         let parsed = parse("= Title\n\n== Section").expect("valid source");
         let output = render(
             &parsed.ast,
-            &HtmlOptions {
+            &RenderPolicy {
                 render_document_title: false,
-                ..HtmlOptions::default()
+                ..RenderPolicy::default()
             },
         );
 
@@ -345,7 +535,7 @@ mod tests {
     #[test]
     fn heading_id_has_a_deterministic_empty_fallback() {
         let parsed = parse("== !!!").expect("valid source");
-        let output = render(&parsed.ast, &HtmlOptions::default());
+        let output = render(&parsed.ast, &RenderPolicy::default());
 
         assert_eq!(output.heading_ids[0].id, "_section");
     }

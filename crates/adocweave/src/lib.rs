@@ -130,7 +130,7 @@ fn process_inner(
     let output = match operation {
         Operation::Convert => {
             let parsed = parse_with_policy(source, config)?;
-            Ok(html::render(&parsed.ast, &html::HtmlOptions::default()).html)
+            Ok(html::render(&parsed.ast, &html::RenderPolicy::default()).html)
         }
         Operation::Format => {
             let parsed = parse_with_policy(source, config)?;
