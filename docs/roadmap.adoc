@@ -78,3 +78,7 @@ Every syntax change must update:
 * xref:grammar.adoc[the normative grammar];
 * xref:substitutions.adoc[the substitution model], when applicable;
 * the corresponding fixtures and tests.
+
+Once AsciiLoom can parse the repository's documentation profile, `docs-check`
+should use AsciiLoom itself to validate `.adoc` content. Until then, the task
+only prevents new `.md` files.

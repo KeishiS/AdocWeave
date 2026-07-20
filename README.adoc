@@ -37,7 +37,7 @@ The following tasks are available:
 - `cargo make check-zed`: type-check the Zed extension crate;
 - `cargo make clippy-zed`: lint the Zed extension crate;
 - `cargo make doc-check`: build API documentation with warnings denied;
-- `cargo make docs-check`: verify that repository documentation uses AsciiDoc;
+- `cargo make docs-check`: reject `.md` files;
 - `cargo make build`: build all targets and features;
 - `cargo make run-lsp`: run the Language Server over standard input/output;
 - `cargo make verify`, `cargo make ci`, or `cargo make`: run every non-mutating validation task.

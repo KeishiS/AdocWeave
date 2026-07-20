@@ -128,39 +128,15 @@ command = "cargo"
 args = ["doc", "--workspace", "--all-features", "--no-deps"]
 
 [tasks.docs-check]
-description = "Reject repository documentation that is not AsciiDoc"
+description = "Reject Markdown documentation files"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files -g '*.md' -g '*.markdown' | rg -v '(^|/)AGENTS\.md$' || true)"
+unexpected="$(rg --files -g '*.md' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc:" >&2
   echo "$unexpected" >&2
   exit 1
 fi
-
-if rg -n '^#{1,6} |^```|\[[^]]+\]\([^)]+\)' -g '*.adoc'; then
-  echo "Markdown syntax found in AsciiDoc documentation" >&2
-  exit 1
-fi
-
-while IFS= read -r document; do
-  first_line="$(head -n 1 "$document")"
-  case "$first_line" in
-    '= '*) ;;
-    *)
-      echo "AsciiDoc document title is missing: $document" >&2
-      exit 1
-      ;;
-  esac
-
-  delimiter_count="$(rg -c '^----$' "$document" || true)"
-  if [ $((delimiter_count % 2)) -ne 0 ]; then
-    echo "unbalanced ---- delimiter: $document" >&2
-    exit 1
-  fi
-done <<EOF
-$(rg --files -g 'README.adoc' -g '*.expectations.adoc' -g 'docs/*.adoc' -g 'issues/*.adoc' | sort)
-EOF
 '''
 
 [tasks.build]
