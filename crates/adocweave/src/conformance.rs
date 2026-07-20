@@ -8,7 +8,7 @@ use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, ResolvedReference, render_with_resolutions};
 use crate::projection::project;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 1;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 2;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -33,7 +33,8 @@ pub fn snapshot(
     ConformanceSnapshot {
         contract_version: CONFORMANCE_CONTRACT_VERSION,
         cst: canonical_cst(analysis),
-        ast: format!("{:#?}", analysis.ast),
+        ast: serde_json::to_string(&analysis.ast)
+            .expect("the canonical AST contains only serializable owned values"),
         diagnostics_json: render_diagnostics_json(&analysis.diagnostics),
         symbols_json: render_symbols_json(&document_symbols(&analysis.ast)),
         projection_json: project(analysis, resolutions).render_json(),
@@ -74,7 +75,7 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.contract_version, CONFORMANCE_CONTRACT_VERSION);
         assert!(first.cst.contains("Document@"));
-        assert!(first.ast.contains("ExplicitAnchor"));
+        assert!(first.ast.contains("\"anchors\""));
         assert!(first.ast.contains("Reference"));
         assert!(first.projection_json.contains("referenceEdges"));
         assert!(first.html.contains("href=\"#target\""));

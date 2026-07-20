@@ -65,6 +65,10 @@ Issue 040で、xref:../fixtures/conformance/cases.json[共通conformance manifes
 `ConformanceSnapshot`は比較専用のversion付き契約である。CST token表現、semantic ASTの
 構造・順序、診断JSON、シンボルJSON、projection JSONまたはHTMLの意味を変更する場合は、
 fixtureの`contractImpact`を再判定し、必要なら`CONFORMANCE_CONTRACT_VERSION`を更新する。
+
+AST適合性値はcompact JSONであり、Rustの`Debug`表示ではない。object fieldは公開AST型の
+宣言順、列挙値はvariant名、rangeはUTF-8 byte offset、配列はsource順を保持する。AST型の
+fieldまたはvariantを変更した場合はschema変更として適合性versionを再判定する。
 Rustの型が同じであることだけをruntime一致の代わりにせず、必ず実wasm32成果物を実行する。
 
 == Formatterの不変条件

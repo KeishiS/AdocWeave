@@ -2,13 +2,13 @@
 
 use crate::source::{TextRange, TextSize};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct InlineText {
     pub range: TextRange,
     pub value: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct Link {
     pub range: TextRange,
     pub target_range: TextRange,
@@ -19,19 +19,19 @@ pub struct Link {
     pub label: Vec<Inline>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct AttributeUse {
     pub name: String,
     pub name_range: TextRange,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum MathLanguage {
     Latex,
     Typst,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct InlineFormula {
     pub range: TextRange,
     pub content_range: TextRange,
@@ -40,7 +40,7 @@ pub struct InlineFormula {
     pub closed: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct Reference {
     pub range: TextRange,
     pub target_range: TextRange,
@@ -50,7 +50,7 @@ pub struct Reference {
     pub label: Vec<Inline>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ReferenceDestination {
     Local {
         anchor: String,
@@ -73,7 +73,7 @@ pub enum ReferenceDestination {
     Invalid,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum Inline {
     Text(InlineText),
     Literal {
@@ -98,12 +98,12 @@ pub enum Inline {
     Formula(InlineFormula),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum InlineLiteralKind {
     Monospace,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum InlineStyle {
     Strong,
     Emphasis,
@@ -123,7 +123,7 @@ impl Inline {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum InlineProblemKind {
     UnclosedMonospace,
     UnclosedStrong,
@@ -138,7 +138,7 @@ pub enum InlineProblemKind {
     StemSizeLimitExceeded,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct InlineProblem {
     pub kind: InlineProblemKind,
     pub range: TextRange,

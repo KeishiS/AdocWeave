@@ -27,7 +27,7 @@
 |検索テキスト、参照edge、通常リンクまたは安定JSON表現の非互換変更
 
 |Conformance snapshot
-|`CONFORMANCE_CONTRACT_VERSION = 1`
+|`CONFORMANCE_CONTRACT_VERSION = 2`
 |CST・AST比較表現または比較対象productの非互換変更
 
 |WASM API

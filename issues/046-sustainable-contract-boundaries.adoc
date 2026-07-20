@@ -55,3 +55,7 @@ block parserは構文優先順位を上から読めること、routerはprotocol
 ことが現状では分割より明瞭であり、単純な行数削減のためには分割しない。inline macro解析は
 構文追加時の変更集中が大きいため、canonical AST schema完了後にtoken認識とnode構築の分離を
 別Issueとして検討する。
+
+conformance snapshotのASTをderived `Debug`から、AST型のfield宣言順、列挙variant、UTF-8
+byte rangeおよび配列順を保持するcompact JSONへ変更した。schemaの破壊的変更として
+`CONFORMANCE_CONTRACT_VERSION`を2へ更新した。
