@@ -1,11 +1,12 @@
-= Heading compatibility notes
+= 見出し互換性に関する注記
 
-AsciiLoom intentionally defines heading IDs as part of its own HTML contract:
+AsciiLoomは見出しIDを独自のHTML契約として意図的に定義する。
 
-- IDs start with `_`.
-- Unicode alphanumeric characters are preserved and lowercased where applicable.
-- Runs of other characters become a single `_`.
-- Empty results use `_section`.
-- Repeated IDs receive `_2`, `_3`, and so on in document order.
+- IDは`_`で始まる。
+- Unicode英数字を保持し、適用可能な場合は小文字化する。
+- その他の文字が連続する箇所を一つの`_`へ変換する。
+- 結果が空の場合は`_section`を使う。
+- 重複IDには文書順に`_2`、`_3`のような接尾辞を付ける。
 
-This is semantic compatibility with Asciidoctor, not a byte-for-byte promise. The exact IDs in `basic.html` are the normative AsciiLoom output.
+これはAsciidoctorとの意味上の互換性であり、バイト単位の一致を保証しない。
+`basic.html`に記録したIDをAsciiLoomの規範出力とする。

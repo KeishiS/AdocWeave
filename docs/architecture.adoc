@@ -1,26 +1,24 @@
-= Architecture
+= アーキテクチャ
 
-AsciiLoom separates source recognition, semantic interpretation, editor
-services, and output backends.
+AsciiLoomはソース認識、意味解釈、エディターサービス、出力バックエンドを分離する。
 
 [source,text]
 ----
-source text
-  -> lossless source lines and CST
-  -> output-neutral semantic AST
-       -> document services, lint, formatter
-       -> HTML backend
-       -> future output backends
+ソーステキスト
+  -> 損失のないソース行とCST
+  -> 出力形式に依存しないsemantic AST
+       -> 文書サービス、Lint、Formatter
+       -> HTMLバックエンド
+       -> 将来の出力バックエンド
 
-CLI and Language Server are adapters around these core APIs.
+CLIとLanguage ServerはコアAPIのアダプターである。
 ----
 
-The semantic AST represents language meaning rather than HTML. In particular,
-inline content distinguishes plain text, opaque literal content, and styled
-child content; block nodes contain source ranges and semantic values but no
-tag, class, or rendering option. The HTML module depends on the AST. The parser,
-AST, lint, formatter, CLI, and Language Server do not depend on the HTML module.
+semantic ASTはHTMLではなく言語上の意味を表現する。インライン内容では通常テキスト、
+再解釈しないリテラル内容、スタイル付き子要素を区別する。ブロックノードはソース範囲と
+意味値を保持するが、タグ、class、レンダリングオプションを保持しない。HTMLモジュールは
+ASTへ依存するが、Parser、AST、Lint、Formatter、CLI、Language ServerはHTMLモジュールへ
+依存しない。
 
-The core accepts source and configuration explicitly and performs no file,
-network, environment, clock, or external-command access. Host adapters own
-those effects.
+コアはソースと設定を明示的に受け取り、ファイル、ネットワーク、環境変数、時刻、
+外部コマンドへアクセスしない。これらの副作用はホストアダプターが所有する。

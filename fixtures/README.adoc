@@ -1,13 +1,14 @@
-= Fixtures
+= Fixture
 
-Fixtures are grouped by the feature that owns them. Each feature directory may contain:
+fixtureは担当機能ごとに分類する。各機能ディレクトリには次のファイルを配置できる。
 
-- `*.adoc`: source documents;
-- `*.html`: expected HTML fragments;
-- `*.diagnostics.json`: expected diagnostics;
-- `*.formatted.adoc`: expected formatter output.
+- `*.adoc`: ソース文書
+- `*.html`: 期待するHTML断片
+- `*.diagnostics.json`: 期待する診断
+- `*.formatted.adoc`: 期待するFormatter出力
 
-Keep each fixture focused on one behavior. Use descriptive names and add separate files for valid, invalid, incomplete, and boundary inputs.
+各fixtureは一つの動作へ集中させる。内容を表す名前を使い、正常、不正、不完全、境界値の
+入力を別ファイルとして追加する。
 
-`release/core.adoc` is the cross-feature core-release fixture. Its expected
-HTML is stored beside it; CLI, lint, and formatter tests use the same source.
+`release/core.adoc`は機能横断のコアリリースfixtureである。期待HTMLを同じディレクトリへ
+置き、CLI、Lint、Formatterのテストで同じソースを使う。

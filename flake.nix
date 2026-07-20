@@ -26,6 +26,7 @@
               cargo
               cargo-make
               clippy
+              ripgrep
               rust-analyzer
               rustc
               rustfmt

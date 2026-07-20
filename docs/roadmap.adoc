@@ -1,84 +1,78 @@
-= AsciiLoom roadmap
+= AsciiLoomロードマップ
 
-This roadmap summarizes planned capability rather than promising release
-dates. The authoritative task definitions are in xref:../issues/README.adoc[
-the Issue plan].
+このロードマップは予定する能力をまとめたものであり、リリース日を約束するものではない。
+正式なタスク定義はxref:../issues/README.adoc[Issue計画]に記載する。
 
-== Completed foundation: Issues 001 through 026
+== 実装済み基盤: Issue 001から026
 
-The implemented foundation contains:
+実装済み基盤には次が含まれる。
 
-* lossless UTF-8 source ranges, line indexing, and diagnostics;
-* paragraphs, titles, sections, constrained strong, emphasis, and monospace;
-* literal blocks and a restricted source-block form;
-* HTML conversion, linting, conservative formatting, and CLI commands;
-* Language Server diagnostics, symbols, actions, formatting, hover, and
-  completion;
-* resource limits, strict and permissive unsupported-syntax policy;
-* output-neutral semantic AST, normative Core 0.1 grammar, and substitution
-  model;
-* a development Zed extension.
+* losslessなUTF-8ソース範囲、行索引、診断
+* 段落、タイトル、セクション、constrainedな強調、斜体、等幅
+* リテラルブロックと限定的なソースブロック
+* HTML変換、Lint、保守的なFormatter、CLIコマンド
+* Language Serverの診断、シンボル、アクション、Formatting、hover、補完
+* 資源上限と、未対応構文に対する厳格・寛容ポリシー
+* 出力形式に依存しないsemantic AST、Core 0.1規範文法、置換モデル
+* Zed開発用拡張
 
-Zed runtime acceptance remains a manual release gate because the current
-development environment has no Zed GUI session.
+現在の開発環境にはZedのGUIセッションがないため、Zed実機の受け入れ確認は手動リリース
+ゲートとして残る。
 
-== Public core and rendering contracts: Issues 027 through 028
+== 公開コアとレンダリング契約: Issue 027から028
 
-The next architectural stage stabilizes:
+次のアーキテクチャ段階では次を安定化する。
 
-* syntax profiles and cancellation-aware public processing APIs;
-* explicit HTML rendering policy and output contracts;
-* backend-independent processing results suitable for native and WASM hosts.
+* 構文プロファイルとキャンセル可能な公開処理API
+* 明示的なHTMLレンダリングポリシーと出力契約
+* nativeおよびWASMホスト向けのバックエンド非依存処理結果
 
-== Note-compatible syntax: Issues 029 through 034
+== ノート互換構文: Issue 029から034
 
-This stage adds, in dependency order:
+この段階では依存順に次を追加する。
 
-. document attributes and protected metadata;
-. explicit anchors and stable IDs;
-. ordinary links with a URL security policy;
-. ordered and unordered lists with block continuation;
-. note-reference macros behind a host-provided resolver boundary;
-. STEM and LaTeX nodes behind an extension boundary.
+. 文書属性と保護メタデータ
+. 明示アンカーと安定ID
+. URLセキュリティポリシー付き通常リンク
+. ブロック継続を含む順序付き・順序なしリスト
+. ホスト提供Resolver境界の背後にあるノート参照マクロ
+. 拡張境界の背後にあるSTEMおよびLaTeXノード
 
-Backslash escaping, unconstrained formatting, passthroughs, and the remaining
-AsciiDoc substitution behavior are specification gaps that must be scheduled
-alongside this stage. They must be added to the normative grammar before the
-project claims broader AsciiDoc compatibility.
+バックスラッシュエスケープ、unconstrained書式、passthrough、その他のAsciiDoc置換動作は
+仕様上の未対応項目であり、この段階と合わせてIssue化する必要がある。より広いAsciiDoc
+互換性を主張する前に規範文法へ追加しなければならない。
 
-== Host integration: Issues 035 through 038
+== ホスト統合: Issue 035から038
 
-This stage introduces:
+この段階では次を導入する。
 
-* metadata, reference, and search-text projections;
-* server-side execution, caching, cancellation, and observability;
-* WASM and Web Worker integration;
-* the remaining Language Server protocol surface.
+* メタデータ、参照、検索テキストのprojection
+* サーバー側実行、キャッシュ、キャンセル、観測性
+* WASMとWeb Workerの統合
+* 残りのLanguage Serverプロトコル機能
 
-The core remains free of implicit filesystem, network, clock, environment, and
-UUID-resolution access. Hosts supply those capabilities explicitly.
+コアはファイルシステム、ネットワーク、時刻、環境変数、UUID解決へ暗黙にアクセスしない。
+ホストがこれらの能力を明示的に提供する。
 
-== Conformance and profile release: Issues 039 through 041
+== 適合性とプロファイル公開: Issue 039から041
 
-The final planned stage adds:
+最後の予定段階では次を追加する。
 
-* fuzzing, property tests, and security regression testing;
-* shared native and WASM conformance fixtures;
-* release validation for the note-application compatibility profile.
+* fuzzing、property test、セキュリティ回帰テスト
+* nativeとWASMで共有する適合性fixture
+* ノートアプリ互換プロファイルのリリース検証
 
-== Documentation maintenance rule
+== ドキュメント保守規則
 
-Repository documentation uses AsciiDoc (`.adoc`). Files whose names are fixed
-by external tooling, such as `AGENTS.md`, are exempt.
+リポジトリのドキュメントはAsciiDoc（`.adoc`）で記述し、`.md`ファイルを受け入れない。
+構文を変更するたびに次を更新する。
 
-Every syntax change must update:
+* xref:syntax-support.adoc[対応表]
+* xref:compatibility.adoc[外部仕様との互換性評価]
+* xref:grammar.adoc[規範文法]
+* 該当する場合はxref:substitutions.adoc[置換モデル]
+* 対応するfixtureとテスト
 
-* xref:syntax-support.adoc[the support matrix];
-* xref:asciidoc-compatibility.adoc[the external compatibility assessment];
-* xref:grammar.adoc[the normative grammar];
-* xref:substitutions.adoc[the substitution model], when applicable;
-* the corresponding fixtures and tests.
-
-Once AsciiLoom can parse the repository's documentation profile, `docs-check`
-should use AsciiLoom itself to validate `.adoc` content. Until then, the task
-only prevents new `.md` files.
+AsciiLoomがリポジトリのドキュメントプロファイルを解析できるようになった段階で、
+`docs-check`はAsciiLoom自身を使って`.adoc`内容を検証する。それまでは新しい`.md`
+ファイルの混入だけを防止する。

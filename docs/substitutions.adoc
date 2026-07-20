@@ -1,64 +1,63 @@
-= Core 0.1 substitution model
+= Core 0.1 置換モデル
 
-Substitution is determined by semantic context before an output backend runs.
-It is not an HTML-specific parser pass.
+置換は出力バックエンドの実行前に意味コンテキストから決定する。HTML固有の
+再解析処理として実装してはならない。
 
 [cols="2,2,1,1,2",options="header"]
 |===
-|Context |Inline parsing |Attribute expansion |Raw HTML |Backend escaping
+|コンテキスト |インライン解析 |属性展開 |Raw HTML |バックエンドのエスケープ
 
-|Paragraph and heading text
-|constrained monospace, strong, emphasis
-|none
-|never
-|required
+|段落と見出しのテキスト
+|constrainedな等幅、強調、斜体
+|なし
+|禁止
+|必須
 
-|Monospace inline literal
-|none
-|none
-|never
-|required
+|インライン等幅リテラル
+|なし
+|なし
+|禁止
+|必須
 
-|Literal block
-|none
-|none
-|never
-|required
+|リテラルブロック
+|なし
+|なし
+|禁止
+|必須
 
-|Source block body
-|none
-|none
-|never
-|required
+|ソースブロック本体
+|なし
+|なし
+|禁止
+|必須
 
-|Source language
-|none
-|none
-|never
-|sanitize for destination metadata
+|ソース言語
+|なし
+|なし
+|禁止
+|出力先のメタデータとして無害化
 
-|Unsupported node
-|none
-|none
-|never
-|required in permissive mode
+|`Unsupported`ノード
+|なし
+|なし
+|禁止
+|寛容モードでは必須
 
-|Link, math, generic attribute
-|unsupported
-|none
-|never
-|treat as unsupported/text
+|リンク、数式、一般属性
+|未対応
+|なし
+|禁止
+|未対応構文またはテキストとして扱う
 |===
 
-`Text`, `Literal`, and `Styled` encode the distinction in the semantic AST:
+semantic ASTでは`Text`、`Literal`、`Styled`がこの区別を表現する。
 
-- `Text` is ordinary text interpreted by the destination backend.
-- `Literal` is opaque content and must not be recursively substituted.
-- `Styled` owns recursively parsed semantic children.
+- `Text`は出力先バックエンドが解釈する通常テキストである。
+- `Literal`は不透明な内容であり、再帰的な置換を行わない。
+- `Styled`は再帰的に解析した意味上の子要素を所有する。
 
-An output backend must consume this AST and must not reparse source markup.
-HTML escapes `&`, `<`, `>`, `"`, and `'` in all text-bearing contexts. A
-future non-HTML backend must apply the equivalent safety rules for its own
-format without changing parsing behavior.
+出力バックエンドはこのASTだけを入力とし、ソースマークアップを再解析してはならない。
+HTMLはテキストを含む全コンテキストで`&`、`<`、`>`、`"`、`'`をエスケープする。
+将来の非HTMLバックエンドも、解析動作を変更せず出力形式に対応する安全規則を適用する。
 
-The test names containing `substitutions` fix the cross-context behavior.
+名前に`substitutions`を含むテストがコンテキスト横断の動作を固定する。

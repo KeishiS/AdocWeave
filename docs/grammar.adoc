@@ -1,12 +1,11 @@
-= Core 0.1 normative grammar
+= Core 0.1 規範文法
 
-This document defines the accepted language of the AsciiLoom 0.1 core
-profile. “Must” statements are normative. Byte ranges are UTF-8, zero-based,
-half-open ranges.
+この文書はAsciiLoom 0.1コアプロファイルが受理する言語を定義する。「〜しなければ
+ならない」という記述は規範的である。バイト範囲はUTF-8、ゼロ始まり、半開区間とする。
 
-== Lexical model
+== 字句モデル
 
-An input is valid UTF-8. A line is:
+入力は正しいUTF-8でなければならない。行を次のように定義する。
 
 [source,ebnf]
 ----
@@ -14,11 +13,10 @@ line        = content, [ line-ending ] ;
 line-ending = LF | CRLF ;
 ----
 
-A lone CR is content. The lossless layer must preserve every byte and the
-original line ending. Block markers are recognized only at column zero unless
-stated otherwise.
+単独のCRは内容である。lossless層は全バイトと元の改行を保持しなければならない。
+別途指定しない限り、ブロックマーカーは列0でのみ認識する。
 
-== Document and blocks
+== 文書とブロック
 
 [source,ebnf]
 ----
@@ -45,19 +43,17 @@ source-attribute = "[source]"
 language       = nonempty text excluding "," and "]" ;
 ----
 
-The first one-marker heading before document content is a document title.
-Markers of length two through six are section levels one through five.
-Other placements or depths remain heading nodes with problems attached, so a
-consumer can recover without discarding source.
+文書内容より前に現れる最初の1個マーカーの見出しは文書タイトルである。2個から6個の
+マーカーはセクションレベル1から5を表す。それ以外の位置または深さでも、問題情報を
+付与した見出しノードとして保持し、利用側がソースを破棄せず回復できるようにする。
 
-A source attribute must be immediately followed by an exact `----` line.
-There may be no blank line between them. Indented attributes and delimiters are
-not recognized. Other attribute lines are `Unsupported`.
+ソース属性の直後には正確な`----`行が必要であり、間に空行を許可しない。インデントした
+属性と区切りは認識しない。それ以外の属性行は`Unsupported`とする。
 
-Literal and source content is opaque. A line equal to the opening delimiter
-closes the block; a longer or indented delimiter-like line is content.
+リテラルおよびソースの内容は不透明である。開始区切りと等しい行がブロックを閉じる。
+より長い行やインデントした区切り状の行は内容として扱う。
 
-== Inline syntax
+== インライン構文
 
 [source,ebnf]
 ----
@@ -67,41 +63,38 @@ strong          = "*", inline-sequence, "*" ;
 emphasis        = "_", inline-sequence, "_" ;
 ----
 
-The EBNF is constrained by the following delimiter predicates:
+EBNFには次の区切り記号条件を追加する。
 
-- An opener is valid when its next scalar exists, is neither whitespace nor
-  the marker, and its previous scalar is absent or non-alphanumeric.
-- A closer is valid when its previous scalar exists, is neither whitespace nor
-  the marker, and its next scalar is absent or non-alphanumeric.
-- Scanning chooses the earliest valid opener. Its first valid same-marker
-  closer is used. Ties therefore follow source order.
-- Monospace content is opaque. Strong and emphasis content is parsed
-  recursively.
-- The default recursive depth limit is 32. A span at the limit becomes text
-  and reports `nesting-limit-exceeded`.
+- 開始記号は、直後にUnicode scalarが存在して空白でも同じマーカーでもなく、直前の
+  scalarが存在しないか英数字以外の場合に有効である。
+- 終了記号は、直前にscalarが存在して空白でも同じマーカーでもなく、直後のscalarが
+  存在しないか英数字以外の場合に有効である。
+- 走査では最初の有効な開始記号を選び、その後の最初の同種の有効な終了記号を使う。
+  同順位の場合はソース順に従う。
+- 等幅内容は不透明である。強調と斜体の内容は再帰的に解析する。
+- 既定の再帰深さ上限は32である。上限に達したspanはテキストとし、
+  `nesting-limit-exceeded`を報告する。
 
-Only constrained forms are supported. Unconstrained double-marker forms have
-no special meaning. Backslash is ordinary text; the 0.1 profile defines no
-escape sequence.
+constrained形式だけを対応対象とする。unconstrainedな二重マーカー形式に特別な意味は
+ない。バックスラッシュは通常テキストであり、0.1プロファイルはエスケープ列を定義しない。
 
-== Recovery
+== 回復規則
 
-- An unclosed inline opener remains text, reports `unclosed-inline`, and
-  scanning resumes after that marker so later safe spans remain available.
-- Inline scanning never crosses a paragraph line or heading boundary.
-- An unclosed delimited block consumes through end of file, except that an
-  exact column-zero heading begins recovery. The heading is parsed normally
-  and the opener reports `unclosed-block`.
-- Unsupported syntax becomes an explicit `Unsupported` node in permissive
-  mode. Strict processing rejects a document containing such a node.
-- Empty input, incomplete input, and malformed headings must still yield a
-  recoverable CST/AST without panic.
+- 閉じていないインライン開始記号はテキストとして残して`unclosed-inline`を報告する。
+  後続の安全なspanを失わないよう、そのマーカーの直後から走査を再開する。
+- インライン走査は段落の行境界または見出し境界を越えない。
+- 閉じていない区切りブロックはファイル末尾までを内容とする。ただし列0の正確な見出しを
+  検出した場合はそこで回復を開始する。見出しは通常どおり解析し、開始区切りへ
+  `unclosed-block`を報告する。
+- 未対応構文は寛容モードで明示的な`Unsupported`ノードになる。厳格モードではこの
+  ノードを含む文書を拒否する。
+- 空入力、不完全入力、不正な見出しに対してもpanicせず、回復可能なCST/ASTを返す。
 
-== AST traceability
+== ASTへの追跡可能性
 
 [cols="1,2",options="header"]
 |===
-|Grammar rule |Semantic node
+|文法規則 |semantic node
 
 |`heading`
 |`AstBlock::Heading`
@@ -118,7 +111,7 @@ escape sequence.
 |`unsupported`
 |`AstBlock::Unsupported`
 
-|ordinary inline text
+|通常インラインテキスト
 |`Inline::Text`
 
 |`monospace`
@@ -128,5 +121,5 @@ escape sequence.
 |`Inline::Styled`
 |===
 
-The fixture `fixtures/grammar/ambiguous.adoc` is the normative ambiguous and
-recovery example. Its assertions live in the tests named `grammar`.
+`fixtures/grammar/ambiguous.adoc`を曖昧入力と回復の規範fixtureとする。名前に
+`grammar`を含むテストが期待値を固定する。

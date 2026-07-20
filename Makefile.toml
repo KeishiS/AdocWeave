@@ -128,10 +128,10 @@ command = "cargo"
 args = ["doc", "--workspace", "--all-features", "--no-deps"]
 
 [tasks.docs-check]
-description = "Reject Markdown documentation files"
+description = "Reject .md files"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files -g '*.md' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' || true)"
 if [ -n "$unexpected" ]; then
   echo "repository documentation must use .adoc:" >&2
   echo "$unexpected" >&2
