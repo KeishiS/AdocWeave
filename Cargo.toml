@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/asciiloom"]
+members = ["crates/asciiloom", "crates/asciiloom-lsp"]
 resolver = "2"
 
 [workspace.package]

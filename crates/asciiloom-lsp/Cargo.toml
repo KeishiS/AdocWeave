@@ -1,0 +1,19 @@
+[package]
+name = "asciiloom-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Language Server for AsciiLoom"
+
+[dependencies]
+asciiloom = { path = "../asciiloom" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "asciiloom-lsp"
+path = "src/main.rs"
