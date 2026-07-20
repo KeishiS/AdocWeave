@@ -23,3 +23,15 @@
 == 依存関係
 
 * 047
+
+== 進捗
+
+normal contextのconstrained書式、属性参照、URL、xref、STEM macroおよびanchor開始記号へ
+共通のescape処理を追加した。奇数個の連続バックスラッシュは最後の一つで構文認識を抑止し、
+偶数個では認識を維持する。末尾バックスラッシュ、不完全escaped macro、opaqueな等幅・STEM内容、
+Unicode安全なrangeおよび診断抑止を回帰試験で固定した。
+
+規範文法、置換表、互換性表、対応状況表およびnative／WASM共通conformance fixtureを更新した。
+
+既定設定の`cargo make release-check`は2026-07-20に成功した。Core 160 tests、実WASMとの
+10件の適合性比較、3 target各5秒のfuzz smokeを含む。本Issueは完了した。

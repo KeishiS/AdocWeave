@@ -187,6 +187,15 @@ fn parse_segment(
 
     while let Some(candidate) = scanner.next(cursor) {
         match candidate {
+            InlineCandidate::EscapedAnchor { slash } => {
+                push_text(&mut output.inlines, value, range, plain_start, slash);
+                output.inlines.push(Inline::Text(InlineText {
+                    range: subrange(range, slash, slash + 2),
+                    value: "[".to_owned(),
+                }));
+                cursor = slash + 2;
+                plain_start = cursor;
+            }
             InlineCandidate::Macro { open } => {
                 match scanner.recognize_macro(value, open) {
                     MacroRecognition::Complete(token) => {
@@ -206,13 +215,21 @@ fn parse_segment(
                         plain_start = built.end;
                     }
                     MacroRecognition::Incomplete { kind, next } => {
-                        if !is_escaped(value, open) {
+                        if is_escaped(value, open) {
+                            push_text(&mut output.inlines, value, range, plain_start, open - 1);
+                            output.inlines.push(Inline::Text(InlineText {
+                                range: subrange(range, open - 1, value.len()),
+                                value: value[open..].to_owned(),
+                            }));
+                            cursor = value.len();
+                            plain_start = cursor;
+                        } else {
                             output.problems.push(InlineProblem {
                                 kind,
                                 range: subrange(range, open, value.len()),
                             });
+                            cursor = next;
                         }
-                        cursor = next;
                     }
                     MacroRecognition::Invalid { next } => cursor = next,
                 }
@@ -267,6 +284,9 @@ fn parse_segment(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InlineCandidate {
+    EscapedAnchor {
+        slash: usize,
+    },
     Macro {
         open: usize,
     },
@@ -291,6 +311,13 @@ impl InlineScanner {
         for (open, marker) in value.char_indices() {
             inspected_positions += 1;
             let rest = &value[open..];
+            if marker == '\\'
+                && (rest.starts_with("\\[[") || rest.starts_with("\\[#"))
+                && !is_escaped(value, open)
+            {
+                candidates.push(InlineCandidate::EscapedAnchor { slash: open });
+                continue;
+            }
             let boundary = is_macro_boundary(value, open);
             let is_macro = rest.starts_with("<<")
                 || boundary
@@ -384,6 +411,7 @@ impl DelimiterIndex {
 impl InlineCandidate {
     fn open(self) -> usize {
         match self {
+            Self::EscapedAnchor { slash } => slash,
             Self::Macro { open } | Self::Marker { open, .. } => open,
         }
     }
@@ -1302,9 +1330,7 @@ mod tests {
         let mut cursor = 0;
         let mut steps = 0;
         while let Some(candidate) = next_candidate(source, cursor) {
-            let open = match candidate {
-                InlineCandidate::Macro { open } | InlineCandidate::Marker { open, .. } => open,
-            };
+            let open = candidate.open();
             let next = super::next_char_boundary(source, open);
             assert!(next > cursor);
             assert!(source.is_char_boundary(next));
@@ -1364,14 +1390,14 @@ mod tests {
 
     #[test]
     fn escaped_macros_do_not_report_literal_contents_as_syntax() {
-        let source = "\\stem:[";
-        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
-
-        assert!(output.problems.is_empty());
-        assert!(matches!(
-            output.inlines.as_slice(),
-            [Inline::Text(text)] if text.value == "stem:["
-        ));
+        for (source, expected) in [("\\stem:[", "stem:["), ("\\xref:broken[", "xref:broken[")] {
+            let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+            assert!(output.problems.is_empty());
+            assert!(matches!(
+                output.inlines.as_slice(),
+                [Inline::Text(text)] if text.value == expected
+            ));
+        }
     }
 
     #[test]
@@ -1395,6 +1421,68 @@ mod tests {
             assert_eq!(visible, expected);
             assert!(output.problems.is_empty());
         }
+    }
+
+    #[test]
+    fn escaped_anchor_openers_are_literal_text() {
+        for (source, expected) in [("\\[[id]]", "[[id]]"), ("\\[#id]", "[#id]")] {
+            let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+            let visible = output
+                .inlines
+                .iter()
+                .map(|inline| match inline {
+                    Inline::Text(text) => text.value.as_str(),
+                    _ => panic!("escaped anchor must remain text"),
+                })
+                .collect::<String>();
+            assert_eq!(visible, expected);
+            assert!(output.problems.is_empty());
+        }
+    }
+
+    #[test]
+    fn backslash_runs_and_trailing_backslashes_recover_deterministically() {
+        let trailing = parse("text\\", range(0, 5), InlineParseConfig::default());
+        assert!(matches!(
+            trailing.inlines.as_slice(),
+            [Inline::Text(text)] if text.value == "text\\"
+        ));
+
+        let even = parse("\\\\*strong*", range(0, 10), InlineParseConfig::default());
+        assert!(matches!(even.inlines[1], Inline::Styled { .. }));
+        assert!(matches!(&even.inlines[0], Inline::Text(text) if text.value == "\\\\"));
+
+        let odd = parse("\\\\\\*strong*", range(0, 11), InlineParseConfig::default());
+        assert!(
+            odd.inlines
+                .iter()
+                .all(|inline| matches!(inline, Inline::Text(_)))
+        );
+        let visible = odd
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text(text) => Some(text.value.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(visible, "\\\\*strong*");
+    }
+
+    #[test]
+    fn escapes_are_not_interpreted_inside_opaque_inline_contexts() {
+        let source = "`\\*literal*` stem:[\\{x}]";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+
+        assert!(matches!(
+            &output.inlines[0],
+            Inline::Literal { value, .. } if value == "\\*literal*"
+        ));
+        assert!(matches!(
+            &output.inlines[2],
+            Inline::Formula(formula) if formula.value == "\\{x}"
+        ));
+        assert!(output.problems.is_empty());
     }
 
     #[test]

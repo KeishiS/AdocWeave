@@ -153,7 +153,7 @@ fn substitutions_cover_every_supported_semantic_context() {
     ));
     assert!(html.contains(
         "<p>Paragraph &lt;tag&gt; &amp; &#34;double&#34; &#39;single&#39; and \
-         <code>code &lt;&amp;&gt;</code> plus \\<strong>strong</strong></p>"
+         <code>code &lt;&amp;&gt;</code> plus *strong*</p>"
     ));
     assert!(html.contains("<p>[role=&lt;unsafe&gt;]</p>"));
     assert!(html.contains("<pre>*literal* &lt;&amp;&gt;\n</pre>"));

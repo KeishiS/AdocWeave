@@ -38,6 +38,14 @@
       "contractImpact": "none"
     },
     {
+      "name": "general-backslash-escapes",
+      "sourceFile": "escapes.adoc",
+      "expectedHtmlFile": "escapes.html",
+      "compatibility": "supported-subset",
+      "rationale": "対応済みinline構文とanchorのescapeは認識を抑止しescape文字を表示から除去する",
+      "contractImpact": "none"
+    },
+    {
       "name": "unicode-crlf",
       "source": "= 日本語\r\n\r\n== 節🙂\r\n\r\n本文 é\r\n",
       "compatibility": "supported-subset",

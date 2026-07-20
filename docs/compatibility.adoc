@@ -85,16 +85,15 @@ https://docs.asciidoctor.org/asciidoc/latest/subs/prevent/[Escape and prevent su
 \https://example.org is not activated as a link.
 ....
 
-AdocWeaveは通常リンク、`xref:`および`<<...>>`に限ってこの動作へ対応する。これらの
-直前のバックスラッシュは認識を抑止し、表示から除去する。書式、属性参照、文字置換、
-アンカーその他のマクロに対する一般的なエスケープは未対応である。たとえば
-`\*Stars*`ではバックスラッシュがテキストとして残り、後続のconstrainedペアが強調として
-解釈される可能性がある。
+AdocWeaveは対応済みのconstrained書式、属性参照、通常リンク、`xref:`、`<<...>>`、STEM macro
+およびanchor開始記号でこの動作へ対応する。直前のescape用バックスラッシュは認識を抑止し、
+表示から除去する。リテラル、source、等幅およびSTEM内容は不透明であり、その内部の
+バックスラッシュを変更しない。未対応構文に対する予防的escapeは解釈しない。
 
 実装時には単にバックスラッシュを削除するだけでなく、次を満たす必要がある。
 
 * lossless CSTがエスケープ文字とその範囲を保持する。
-* semantic textがエスケープ済みマークアップと通常マークアップを区別する。
+* semantic textがエスケープ済みマークアップをliteral textとして保持する。
 * 診断とFormatterが著者の意図を保持する。
 * 置換コンテキストごとにエスケープの有効性を定義する。
 * HTMLおよび将来のバックエンドがソースを再解析せず意味内容を利用する。
