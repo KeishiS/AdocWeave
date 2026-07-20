@@ -288,6 +288,22 @@ fn push_inline_problems(
                 "unclosed monospace span",
                 None,
             ),
+            InlineProblemKind::UnclosedStrong => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::UnclosedInline,
+                problem.range,
+                "unclosed strong span",
+                None,
+            ),
+            InlineProblemKind::NestingLimitExceeded => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::UnclosedInline,
+                problem.range,
+                "inline nesting limit exceeded",
+                None,
+            ),
         }
     }
 }
@@ -449,5 +465,14 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code.as_str() == "unclosed-inline")
         );
+    }
+
+    #[test]
+    fn strong_lint_reports_unclosed_span() {
+        let diagnostics = lint("*open text", &LintConfig::default()).expect("valid source");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "unclosed-inline" && diagnostic.message.contains("strong")
+        }));
     }
 }

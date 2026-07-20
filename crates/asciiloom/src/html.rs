@@ -116,6 +116,11 @@ fn render_inlines(output: &mut String, inlines: &[Inline]) {
                 escape_html_into(output, value);
                 output.push_str("</code>");
             }
+            Inline::Strong { children, .. } => {
+                output.push_str("<strong>");
+                render_inlines(output, children);
+                output.push_str("</strong>");
+            }
         }
     }
 }
@@ -171,6 +176,16 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &HtmlOptions::default()).html,
             "<p>use <code>&lt;tag&gt;</code> now</p>\n"
+        );
+    }
+
+    #[test]
+    fn strong_html_renders_nested_inlines() {
+        let parsed = parse("*bold and `code`*").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &HtmlOptions::default()).html,
+            "<p><strong>bold and <code>code</code></strong></p>\n"
         );
     }
 
