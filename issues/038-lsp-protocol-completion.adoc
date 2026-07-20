@@ -46,3 +46,4 @@ cargo test -p adocweave-lsp document_links
 - 034
 - 035
 - 036
+- 045

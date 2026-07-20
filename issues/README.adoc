@@ -32,6 +32,7 @@
 * xref:042-cargo-make-development-tasks.adoc[042: cargo-makeによる開発タスク統一]（Issue 004完了後に割り込みで先行実施）
 * xref:043-adocweave-rename.adoc[043: AdocWeaveへの全面改名]（Issue 027開始前に割り込みで実施）
 * xref:044-owned-analysis-and-extension-boundary.adoc[044: 所有型Analysisとホスト拡張境界の再設計]
+* xref:045-tower-lsp-server-migration.adoc[045: tower-lsp-serverへのLSP基盤移行]
 
 === M1: プレーンテキスト変換
 

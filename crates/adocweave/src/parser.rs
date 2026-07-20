@@ -26,6 +26,30 @@ pub enum CstBlockKind {
     MathBlock,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FormattingPolicy {
+    NormalizeLineWhitespace,
+    PreserveBytes,
+}
+
+impl CstBlockKind {
+    pub const fn formatting_policy(self) -> FormattingPolicy {
+        match self {
+            Self::Paragraph | Self::BlankLine => FormattingPolicy::NormalizeLineWhitespace,
+            Self::DocumentTitle
+            | Self::Heading
+            | Self::MalformedHeading
+            | Self::LiteralBlock
+            | Self::SourceBlock
+            | Self::Unsupported
+            | Self::DocumentAttribute
+            | Self::BlockAnchor
+            | Self::List
+            | Self::MathBlock => FormattingPolicy::PreserveBytes,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CstBlock {
     pub kind: CstBlockKind,
@@ -481,13 +505,13 @@ impl AstBlock {
 }
 
 #[derive(Debug)]
-pub struct ParsedDocument {
+pub(crate) struct ParsedDocument {
     pub cst: CstDocument,
     pub ast: AstDocument,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ParseConfig {
+pub(crate) struct ParseConfig {
     pub max_inline_depth: usize,
     pub max_list_depth: usize,
     pub max_formula_bytes: usize,
@@ -503,21 +527,48 @@ impl Default for ParseConfig {
     }
 }
 
-pub fn parse(source: &str) -> Result<ParsedDocument, PositionError> {
+#[cfg(test)]
+pub(crate) fn parse(source: &str) -> Result<ParsedDocument, PositionError> {
     parse_with_config(source, &ParseConfig::default())
 }
 
-pub fn parse_with_config(
+#[cfg(test)]
+pub(crate) fn parse_with_config(
     source: &str,
     config: &ParseConfig,
 ) -> Result<ParsedDocument, PositionError> {
     parse_shared(Arc::from(source), config)
 }
 
+#[cfg(test)]
 pub(crate) fn parse_shared(
     source: Arc<str>,
     config: &ParseConfig,
 ) -> Result<ParsedDocument, PositionError> {
+    match parse_shared_cancellable(source, config, &|| false) {
+        Ok(document) => Ok(document),
+        Err(ParseFailure::Position(error)) => Err(error),
+        Err(ParseFailure::Cancelled) => unreachable!("non-cancelling parser control"),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ParseFailure {
+    Position(PositionError),
+    Cancelled,
+}
+
+impl From<PositionError> for ParseFailure {
+    fn from(error: PositionError) -> Self {
+        Self::Position(error)
+    }
+}
+
+pub(crate) fn parse_shared_cancellable(
+    source: Arc<str>,
+    config: &ParseConfig,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<ParsedDocument, ParseFailure> {
     let source_lines = SourceLines::from_shared(Arc::clone(&source))?;
     let source = source.as_ref();
     let mut blocks = Vec::new();
@@ -531,6 +582,9 @@ pub(crate) fn parse_shared(
 
     let mut line_index = 0;
     while line_index < source_lines.lines().len() {
+        if is_cancelled() {
+            return Err(ParseFailure::Cancelled);
+        }
         let line = source_lines.lines()[line_index];
         let content = source_lines
             .text(line.content_range())

@@ -256,15 +256,19 @@ fn analyze_inner(
     }
 
     let shared_source: Arc<str> = Arc::from(source);
-    let ParsedDocument { cst, ast } = parser::parse_shared(
+    let ParsedDocument { cst, ast } = parser::parse_shared_cancellable(
         Arc::clone(&shared_source),
         &parser::ParseConfig {
             max_inline_depth: options.limits.max_inline_depth,
             max_list_depth: options.limits.max_list_depth,
             max_formula_bytes: options.limits.max_formula_bytes,
         },
+        &|| cancellation.is_cancelled(),
     )
-    .map_err(ParseError::Position)?;
+    .map_err(|failure| match failure {
+        parser::ParseFailure::Position(error) => ParseError::Position(error),
+        parser::ParseFailure::Cancelled => ParseError::Cancelled,
+    })?;
     enforce_limit(
         "document attributes",
         options.limits.max_attributes,
@@ -295,8 +299,7 @@ fn analyze_inner(
     } else {
         crate::diagnostic::Severity::Warning
     };
-    let diagnostics =
-        lint::lint_parsed(source, &ast, &lint_config).map_err(ParseError::Position)?;
+    let diagnostics = lint::lint_cst(&cst, &ast, &lint_config).map_err(ParseError::Position)?;
     let reference_targets = crate::document::reference_targets(&ast);
     let references = collect_references(&ast);
     enforce_limit(
@@ -471,6 +474,26 @@ mod tests {
             .expect_err("cancelled");
         assert_eq!(error, ParseError::Cancelled);
         assert_eq!(error.code().as_str(), "cancelled");
+    }
+
+    #[test]
+    fn cancellation_is_checked_inside_the_block_parser_loop() {
+        struct CancelDuringParser(std::sync::atomic::AtomicUsize);
+        impl CancellationCheck for CancelDuringParser {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 3
+            }
+        }
+
+        let cancellation = CancelDuringParser(std::sync::atomic::AtomicUsize::new(0));
+        assert!(matches!(
+            analyze_cancellable(
+                "first\nsecond\nthird\n",
+                &ParseOptions::default(),
+                &cancellation,
+            ),
+            Err(ParseError::Cancelled)
+        ));
     }
 
     #[test]

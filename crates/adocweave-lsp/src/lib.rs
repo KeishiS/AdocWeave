@@ -8,6 +8,7 @@ use adocweave::source::{LineIndex, PositionEncoding as CorePositionEncoding, Tex
 use adocweave::{diagnostic::Severity, formatter};
 use serde_json::{Value, json};
 
+mod protocol;
 mod state;
 mod transport;
 
@@ -255,17 +256,17 @@ impl Server {
                     .offset_to_position(diagnostic.range.end(), encoding)
                     .map_err(|error| error.to_string())?;
                 let severity = match diagnostic.severity {
-                    Severity::Error => 1,
-                    Severity::Warning => 2,
-                    Severity::Information => 3,
-                    Severity::Hint => 4,
+                    Severity::Error => protocol::DiagnosticSeverity::Error,
+                    Severity::Warning => protocol::DiagnosticSeverity::Warning,
+                    Severity::Information => protocol::DiagnosticSeverity::Information,
+                    Severity::Hint => protocol::DiagnosticSeverity::Hint,
                 };
                 Ok(json!({
                     "range": {
                         "start": {"line": start.line, "character": start.character},
                         "end": {"line": end.line, "character": end.character}
                     },
-                    "severity": severity,
+                    "severity": severity.code(),
                     "code": diagnostic.code.as_str(),
                     "source": "adocweave",
                     "message": diagnostic.message
@@ -290,13 +291,10 @@ fn request_offset(
     position: &Value,
     encoding: PositionEncoding,
 ) -> Result<u32, String> {
-    let line = position["line"]
-        .as_u64()
-        .ok_or_else(|| "position.line must be an integer".to_owned())? as u32;
-    let character = position["character"]
-        .as_u64()
-        .ok_or_else(|| "position.character must be an integer".to_owned())?
-        as u32;
+    let position: protocol::Position = serde_json::from_value(position.clone())
+        .map_err(|error| format!("invalid position: {error}"))?;
+    let line = position.line;
+    let character = position.character;
     if !document.contains_line(line) {
         return Err("position.line is outside the document".to_owned());
     }
@@ -374,7 +372,12 @@ fn completion(document: &DocumentState, offset: u32) -> Result<Vec<Value>, Strin
         .unwrap_or("");
     Ok(source_language_candidates(prefix)
         .into_iter()
-        .map(|language| json!({"label": language, "kind": 12}))
+        .map(|language| {
+            json!({
+                "label": language,
+                "kind": protocol::CompletionItemKind::Value.code()
+            })
+        })
         .collect())
 }
 
@@ -384,9 +387,9 @@ fn symbol_to_lsp(
     encoding: PositionEncoding,
 ) -> Result<Value, String> {
     let kind = match symbol.kind {
-        SymbolKind::DocumentTitle => 1,
-        SymbolKind::Section => 3,
-        SymbolKind::ListItem => 15,
+        SymbolKind::DocumentTitle => protocol::SymbolKind::File,
+        SymbolKind::Section => protocol::SymbolKind::Namespace,
+        SymbolKind::ListItem => protocol::SymbolKind::String,
     };
     let children = symbol
         .children
@@ -395,7 +398,7 @@ fn symbol_to_lsp(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(json!({
         "name": symbol.name,
-        "kind": kind,
+        "kind": kind.code(),
         "range": range_to_lsp(symbol.range, line_index, encoding)?,
         "selectionRange": range_to_lsp(symbol.selection_range, line_index, encoding)?,
         "children": children
@@ -417,10 +420,17 @@ fn range_to_lsp(
     let end = line_index
         .offset_to_position(range.end(), encoding)
         .map_err(|error| error.to_string())?;
-    Ok(json!({
-        "start": {"line": start.line, "character": start.character},
-        "end": {"line": end.line, "character": end.character}
-    }))
+    serde_json::to_value(protocol::Range {
+        start: protocol::Position {
+            line: start.line,
+            character: start.character,
+        },
+        end: protocol::Position {
+            line: end.line,
+            character: end.character,
+        },
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn code_actions(

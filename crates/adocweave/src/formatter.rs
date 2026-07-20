@@ -1,8 +1,10 @@
 //! Conservative, CST-aware source formatting.
 
-use crate::core::{Analysis, ParseError, ParseOptions, analyze};
+use crate::core::Analysis;
+#[cfg(test)]
+use crate::core::{ParseError, ParseOptions, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
-use crate::parser::{CstBlockKind, CstDocument};
+use crate::parser::{CstDocument, FormattingPolicy};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::LineEnding;
 
@@ -50,7 +52,8 @@ impl FormatOutput {
     }
 }
 
-pub fn format(source: &str, config: &FormatConfig) -> Result<FormatOutput, ParseError> {
+#[cfg(test)]
+fn format(source: &str, config: &FormatConfig) -> Result<FormatOutput, ParseError> {
     let analysis = analyze(source, &ParseOptions::default())?;
     format_analysis(&analysis, config).map_err(ParseError::Position)
 }
@@ -68,12 +71,7 @@ fn format_cst(cst: &CstDocument, config: &FormatConfig) -> Result<FormatOutput, 
     let protected = cst
         .blocks()
         .iter()
-        .filter(|block| {
-            !matches!(
-                block.kind,
-                CstBlockKind::Paragraph | CstBlockKind::BlankLine
-            )
-        })
+        .filter(|block| block.kind.formatting_policy() == FormattingPolicy::PreserveBytes)
         .map(|block| block.range)
         .collect::<Vec<_>>();
     let last_real_line = source_lines
@@ -185,7 +183,7 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 #[cfg(test)]
 mod tests {
     use super::{FormatConfig, NewlineStyle, format};
-    use crate::parser::{AstBlock, parse};
+    use crate::parser::{AstBlock, CstBlockKind, FormattingPolicy, parse};
 
     fn semantic_text(source: &str) -> Vec<Vec<String>> {
         parse(source)
@@ -205,6 +203,32 @@ mod tests {
                 AstBlock::Unsupported(_) => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn every_cst_block_kind_has_an_explicit_formatting_policy() {
+        assert_eq!(
+            CstBlockKind::Paragraph.formatting_policy(),
+            FormattingPolicy::NormalizeLineWhitespace
+        );
+        assert_eq!(
+            CstBlockKind::BlankLine.formatting_policy(),
+            FormattingPolicy::NormalizeLineWhitespace
+        );
+        for kind in [
+            CstBlockKind::DocumentTitle,
+            CstBlockKind::Heading,
+            CstBlockKind::MalformedHeading,
+            CstBlockKind::LiteralBlock,
+            CstBlockKind::SourceBlock,
+            CstBlockKind::Unsupported,
+            CstBlockKind::DocumentAttribute,
+            CstBlockKind::BlockAnchor,
+            CstBlockKind::List,
+            CstBlockKind::MathBlock,
+        ] {
+            assert_eq!(kind.formatting_policy(), FormattingPolicy::PreserveBytes);
+        }
     }
 
     #[test]

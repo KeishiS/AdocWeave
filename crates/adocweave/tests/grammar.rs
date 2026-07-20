@@ -1,11 +1,18 @@
 use adocweave::inline::{Inline, InlineLiteralKind, InlineStyle};
-use adocweave::parser::{AstBlock, BlockProblemKind, CstBlockKind, parse};
+use adocweave::parser::{AstBlock, BlockProblemKind, CstBlockKind};
+use adocweave::{Analysis, Engine, ParseOptions};
 
 const SOURCE: &str = include_str!("../../../fixtures/grammar/ambiguous.adoc");
 
+fn parse(source: &str) -> Analysis {
+    Engine::new(ParseOptions::default())
+        .analyze(source)
+        .expect("fixture analyzes")
+}
+
 #[test]
 fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
-    let parsed = parse(SOURCE).expect("fixture parses");
+    let parsed = parse(SOURCE);
     assert_eq!(parsed.cst.reconstruct(), SOURCE);
     assert_eq!(
         parsed.cst.snapshot(),
@@ -75,8 +82,9 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         Some(AstBlock::Heading(_))
     ));
 
-    let diagnostics = adocweave::lint::lint(SOURCE, &adocweave::lint::LintConfig::default())
-        .expect("fixture lints");
+    let diagnostics =
+        adocweave::lint::lint_analysis(&parsed, &adocweave::lint::LintConfig::default())
+            .expect("fixture lints");
     assert_eq!(
         adocweave::diagnostic::render_json(&diagnostics),
         include_str!("../../../fixtures/grammar/ambiguous.diagnostics.json").trim_end()
@@ -90,7 +98,7 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
 
 #[test]
 fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
-    let parsed = parse(SOURCE).expect("fixture parses");
+    let parsed = parse(SOURCE);
     let source_block = parsed
         .ast
         .blocks
@@ -131,7 +139,7 @@ fn substitutions_cover_every_supported_semantic_context() {
         "\n",
         "https://example.test[label] stem:[x < y]\n",
     );
-    let parsed = parse(source).expect("all substitution contexts parse");
+    let parsed = parse(source);
     assert!(matches!(parsed.ast.blocks[0], AstBlock::Heading(_)));
     assert!(matches!(parsed.ast.blocks[1], AstBlock::Paragraph(_)));
     assert!(matches!(parsed.ast.blocks[2], AstBlock::Unsupported(_)));
@@ -162,7 +170,7 @@ fn substitutions_cover_every_supported_semantic_context() {
 
 #[test]
 fn grammar_rejects_invalid_source_language_syntax() {
-    let parsed = parse("[source, rust]extra]\n----\ncode\n----\n").expect("recoverable source");
+    let parsed = parse("[source, rust]extra]\n----\ncode\n----\n");
 
     assert!(
         parsed
@@ -189,7 +197,7 @@ fn grammar_source_attribute_requires_an_adjacent_column_zero_delimiter() {
         " [source, rust]\n",
         " ----\n",
     );
-    let parsed = parse(source).expect("unsupported forms remain recoverable");
+    let parsed = parse(source);
 
     assert!(
         parsed

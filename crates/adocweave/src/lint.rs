@@ -8,11 +8,11 @@ use crate::diagnostic::{
 };
 use crate::document::heading_id_base;
 use crate::inline::InlineProblemKind;
-use crate::parser::{
-    AstBlock, BlockProblemKind, HeadingKind, HeadingProblem, ParseConfig, parse_with_config,
-};
+use crate::parser::{AstBlock, BlockProblemKind, CstDocument, HeadingKind, HeadingProblem};
+#[cfg(test)]
+use crate::parser::{ParseConfig, parse_with_config};
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_lines::{LineEnding, SourceLines};
+use crate::source_lines::LineEnding;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LintRule {
@@ -155,7 +155,8 @@ impl LintConfig {
     }
 }
 
-pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, PositionError> {
+#[cfg(test)]
+fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, PositionError> {
     let parsed = parse_with_config(
         source,
         &ParseConfig {
@@ -164,15 +165,22 @@ pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, Positi
             max_formula_bytes: config.max_formula_bytes,
         },
     )?;
-    lint_parsed(source, &parsed.ast, config)
+    lint_cst(&parsed.cst, &parsed.ast, config)
 }
 
-pub fn lint_parsed(
-    source: &str,
+pub fn lint_analysis(
+    analysis: &crate::core::Analysis,
+    config: &LintConfig,
+) -> Result<Vec<Diagnostic>, PositionError> {
+    lint_cst(&analysis.cst, &analysis.ast, config)
+}
+
+pub(crate) fn lint_cst(
+    cst: &CstDocument,
     document: &crate::parser::AstDocument,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    let source_lines = SourceLines::new(source)?;
+    let source_lines = cst.source_lines();
     let mut diagnostics = Vec::new();
     let mut blank_count = 0;
 
@@ -1097,14 +1105,14 @@ mod tests {
     }
 
     #[test]
-    fn lint_parsed_reuses_ast_without_changing_diagnostics() {
+    fn lint_cst_reuses_analysis_without_changing_diagnostics() {
         let source = "= Note\n:name: value\n\n{name}  \n";
         let parsed = crate::parser::parse(source).expect("parse");
         let config = LintConfig::default();
 
         assert_eq!(
             lint(source, &config).expect("standalone lint"),
-            super::lint_parsed(source, &parsed.ast, &config).expect("lint existing AST")
+            super::lint_cst(&parsed.cst, &parsed.ast, &config).expect("lint existing analysis")
         );
     }
 
@@ -1139,7 +1147,7 @@ mod tests {
         let source = ":scheme: https\n\n{scheme}://example.com[label]\n";
         let parsed = crate::parser::parse(source).expect("parse");
         let diagnostics =
-            super::lint_parsed(source, &parsed.ast, &LintConfig::default()).expect("lint");
+            super::lint_cst(&parsed.cst, &parsed.ast, &LintConfig::default()).expect("lint");
 
         assert!(
             !diagnostics

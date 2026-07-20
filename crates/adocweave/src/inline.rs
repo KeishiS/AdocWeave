@@ -145,13 +145,13 @@ pub struct InlineProblem {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct InlineParseOutput {
+pub(crate) struct InlineParseOutput {
     pub inlines: Vec<Inline>,
     pub problems: Vec<InlineProblem>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InlineParseConfig {
+pub(crate) struct InlineParseConfig {
     pub max_depth: usize,
     pub max_formula_bytes: usize,
 }
@@ -165,11 +165,16 @@ impl Default for InlineParseConfig {
     }
 }
 
-pub fn parse_text(value: &str, range: TextRange, config: InlineParseConfig) -> Vec<Inline> {
+#[cfg(test)]
+fn parse_text(value: &str, range: TextRange, config: InlineParseConfig) -> Vec<Inline> {
     parse(value, range, config).inlines
 }
 
-pub fn parse(value: &str, range: TextRange, config: InlineParseConfig) -> InlineParseOutput {
+pub(crate) fn parse(
+    value: &str,
+    range: TextRange,
+    config: InlineParseConfig,
+) -> InlineParseOutput {
     parse_segment(value, range, config, 0)
 }
 
