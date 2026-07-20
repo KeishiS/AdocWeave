@@ -249,7 +249,27 @@ pub struct ParsedDocument<'source> {
     pub ast: AstDocument,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseConfig {
+    pub max_inline_depth: usize,
+}
+
+impl Default for ParseConfig {
+    fn default() -> Self {
+        Self {
+            max_inline_depth: 32,
+        }
+    }
+}
+
 pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
+    parse_with_config(source, &ParseConfig::default())
+}
+
+pub fn parse_with_config<'source>(
+    source: &'source str,
+    config: &ParseConfig,
+) -> Result<ParsedDocument<'source>, PositionError> {
     let source_lines = SourceLines::new(source)?;
     let mut blocks = Vec::new();
     let mut ast_blocks = Vec::new();
@@ -270,7 +290,7 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
                 .and_then(|next| source_lines.text(next.content_range()))
                 == Some("----")
         {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
             let (source_block, next_line) = parse_source_block(&source_lines, line_index, source)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::SourceBlock,
@@ -281,7 +301,7 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
             line_index = next_line;
             continue;
         } else if content == "...." {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
             let (literal, next_line) = parse_literal_block(&source_lines, line_index, source)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::LiteralBlock,
@@ -292,14 +312,14 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
             line_index = next_line;
             continue;
         } else if content.trim_matches([' ', '\t']).is_empty() {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
             blocks.push(CstBlock {
                 kind: CstBlockKind::BlankLine,
                 range: line.full_range(),
             });
         } else if content.starts_with('=') {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
-            let heading = parse_heading(content, line, !saw_content)?;
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            let heading = parse_heading(content, line, !saw_content, config)?;
             blocks.push(CstBlock {
                 kind: if heading.problems.is_empty() {
                     match heading.kind {
@@ -314,7 +334,7 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
             ast_blocks.push(AstBlock::Heading(heading));
             saw_content = true;
         } else if unsupported_reason(content).is_some() {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
             let reason = unsupported_reason(content).expect("checked above");
             blocks.push(CstBlock {
                 kind: CstBlockKind::Unsupported,
@@ -332,7 +352,7 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
         }
         line_index += 1;
     }
-    flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
+    flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
 
     Ok(ParsedDocument {
         cst: CstDocument {
@@ -502,6 +522,7 @@ fn parse_heading(
     content: &str,
     line: SourceLine,
     document_title_position: bool,
+    config: &ParseConfig,
 ) -> Result<Heading, PositionError> {
     let marker_len = content.bytes().take_while(|byte| *byte == b'=').count();
     let content_start = line.content_range().start().to_usize();
@@ -541,7 +562,13 @@ fn parse_heading(
         }
     };
 
-    let inline_output = parse_inlines(text, text_range, InlineParseConfig::default());
+    let inline_output = parse_inlines(
+        text,
+        text_range,
+        InlineParseConfig {
+            max_depth: config.max_inline_depth,
+        },
+    );
     Ok(Heading {
         range: line.full_range(),
         marker_range,
@@ -559,6 +586,7 @@ fn flush_paragraph(
     cst_blocks: &mut Vec<CstBlock>,
     ast_blocks: &mut Vec<AstBlock>,
     lines: &mut Vec<(SourceLine, String)>,
+    config: &ParseConfig,
 ) {
     let (Some((first, _)), Some((last, _))) = (lines.first(), lines.last()) else {
         return;
@@ -582,8 +610,13 @@ fn flush_paragraph(
                     .expect("source offset fits"),
                 )
                 .expect("trimmed text range is ordered");
-                let inline_output =
-                    parse_inlines(&value, value_range, InlineParseConfig::default());
+                let inline_output = parse_inlines(
+                    &value,
+                    value_range,
+                    InlineParseConfig {
+                        max_depth: config.max_inline_depth,
+                    },
+                );
                 TextNode {
                     range: value_range,
                     inlines: inline_output.inlines,

@@ -8,7 +8,9 @@ use crate::diagnostic::{
 };
 use crate::document::heading_id_base;
 use crate::inline::InlineProblemKind;
-use crate::parser::{AstBlock, BlockProblemKind, HeadingKind, HeadingProblem, parse};
+use crate::parser::{
+    AstBlock, BlockProblemKind, HeadingKind, HeadingProblem, ParseConfig, parse_with_config,
+};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LineEnding, SourceLines};
 
@@ -67,6 +69,8 @@ pub struct LintConfig {
     rules: BTreeMap<LintRule, RuleSettings>,
     pub max_line_length: usize,
     pub max_consecutive_blank_lines: usize,
+    pub max_diagnostics: usize,
+    pub max_inline_depth: usize,
 }
 
 impl Default for LintConfig {
@@ -86,6 +90,8 @@ impl Default for LintConfig {
                 .collect(),
             max_line_length: 100,
             max_consecutive_blank_lines: 2,
+            max_diagnostics: 1_000,
+            max_inline_depth: 32,
         }
     }
 }
@@ -175,6 +181,7 @@ pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, Positi
 
     lint_headings(source, config, &mut diagnostics)?;
     sort_diagnostics(&mut diagnostics);
+    diagnostics.truncate(config.max_diagnostics);
     Ok(diagnostics)
 }
 
@@ -183,7 +190,12 @@ fn lint_headings(
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<(), PositionError> {
-    let parsed = parse(source)?;
+    let parsed = parse_with_config(
+        source,
+        &ParseConfig {
+            max_inline_depth: config.max_inline_depth,
+        },
+    )?;
     let mut previous_level = None;
     let mut ids = BTreeMap::<String, TextRange>::new();
 
