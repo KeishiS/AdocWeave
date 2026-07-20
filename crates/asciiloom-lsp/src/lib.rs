@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 
+use asciiloom::document::{DocumentSymbol, SymbolKind, document_symbols};
 use asciiloom::parser::{AstDocument, parse};
-use asciiloom::source::{LineIndex, PositionEncoding as CorePositionEncoding};
+use asciiloom::source::{LineIndex, PositionEncoding as CorePositionEncoding, TextRange};
 use asciiloom::{diagnostic::Severity, lint};
 use serde_json::{Value, json};
 
@@ -134,7 +135,8 @@ impl Server {
                                     "openClose": true,
                                     "change": 1,
                                     "save": {"includeText": true}
-                                }
+                                },
+                                "documentSymbolProvider": true
                             },
                             "serverInfo": {"name": "asciiloom-lsp", "version": env!("CARGO_PKG_VERSION")}
                         }
@@ -199,6 +201,25 @@ impl Server {
                     "params": {"uri": uri, "diagnostics": []}
                 }));
                 Ok(None)
+            }
+            "textDocument/documentSymbol" => {
+                let uri = string_field(&params["textDocument"], "uri")?;
+                let result = self
+                    .documents
+                    .get(&uri)
+                    .map(|document| {
+                        let line_index =
+                            LineIndex::new(&document.text).map_err(|error| error.to_string())?;
+                        document_symbols(&document.ast)
+                            .iter()
+                            .map(|symbol| {
+                                symbol_to_lsp(symbol, &line_index, self.position_encoding)
+                            })
+                            .collect::<Result<Vec<_>, String>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": result})))
             }
             _ => Ok(id.map(|id| {
                 json!({
@@ -267,6 +288,50 @@ impl Server {
         }));
         Ok(())
     }
+}
+
+fn symbol_to_lsp(
+    symbol: &DocumentSymbol,
+    line_index: &LineIndex<'_>,
+    encoding: PositionEncoding,
+) -> Result<Value, String> {
+    let kind = match symbol.kind {
+        SymbolKind::DocumentTitle => 1,
+        SymbolKind::Section => 3,
+    };
+    let children = symbol
+        .children
+        .iter()
+        .map(|child| symbol_to_lsp(child, line_index, encoding))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({
+        "name": symbol.name,
+        "kind": kind,
+        "range": range_to_lsp(symbol.range, line_index, encoding)?,
+        "selectionRange": range_to_lsp(symbol.selection_range, line_index, encoding)?,
+        "children": children
+    }))
+}
+
+fn range_to_lsp(
+    range: TextRange,
+    line_index: &LineIndex<'_>,
+    encoding: PositionEncoding,
+) -> Result<Value, String> {
+    let encoding = match encoding {
+        PositionEncoding::Utf8 => CorePositionEncoding::Utf8,
+        PositionEncoding::Utf16 => CorePositionEncoding::Utf16,
+    };
+    let start = line_index
+        .offset_to_position(range.start(), encoding)
+        .map_err(|error| error.to_string())?;
+    let end = line_index
+        .offset_to_position(range.end(), encoding)
+        .map_err(|error| error.to_string())?;
+    Ok(json!({
+        "start": {"line": start.line, "character": start.character},
+        "end": {"line": end.line, "character": end.character}
+    }))
 }
 
 fn negotiate_encoding(params: &Value) -> PositionEncoding {
@@ -590,5 +655,51 @@ mod tests {
         let notification = server.drain_outgoing().next().expect("clear notification");
         assert_eq!(notification["params"]["uri"], "file:///a.adoc");
         assert_eq!(notification["params"]["diagnostics"], json!([]));
+    }
+
+    fn request_symbols(server: &mut Server, uri: &str) -> serde_json::Value {
+        server
+            .handle(&json!({
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "textDocument/documentSymbol",
+                "params": {"textDocument": {"uri": uri}}
+            }))
+            .expect("symbol request succeeds")
+            .expect("symbol response")["result"]
+            .clone()
+    }
+
+    #[test]
+    fn document_symbols_match_core_hierarchy_and_ranges() {
+        let mut server = Server::default();
+        open_with_diagnostic(
+            &mut server,
+            "file:///symbols.adoc",
+            "= 題名😀\n\n== 一\n\n=== 子\n\n== 二\n",
+        );
+        let symbols = request_symbols(&mut server, "file:///symbols.adoc");
+
+        assert_eq!(symbols[0]["name"], "題名😀");
+        assert_eq!(symbols[0]["children"][0]["name"], "一");
+        assert_eq!(symbols[0]["children"][0]["children"][0]["name"], "子");
+        assert_eq!(symbols[0]["children"][1]["name"], "二");
+        assert_eq!(symbols[0]["selectionRange"]["end"]["character"], 6);
+        assert_ne!(symbols[0]["range"], symbols[0]["selectionRange"]);
+    }
+
+    #[test]
+    fn document_symbols_return_empty_for_empty_or_unknown_document() {
+        let mut server = Server::default();
+        open_with_diagnostic(&mut server, "file:///empty.adoc", "");
+
+        assert_eq!(
+            request_symbols(&mut server, "file:///empty.adoc"),
+            json!([])
+        );
+        assert_eq!(
+            request_symbols(&mut server, "file:///missing.adoc"),
+            json!([])
+        );
     }
 }
