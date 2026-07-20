@@ -1,5 +1,6 @@
 //! Typed `async-lsp` adapter with generation-checked background analysis.
 
+use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -16,8 +17,9 @@ use serde_json::Value;
 use tokio::sync::Semaphore;
 use tower::ServiceBuilder;
 
+use crate::service::LanguageService;
 use crate::state::{Adoption, AnalysisJob};
-use crate::{HostReferenceIndex, LanguageService, NoHostReferenceIndex};
+use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
 const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MAX_CONCURRENT_ANALYSES: usize = 2;
@@ -26,6 +28,12 @@ pub(crate) struct Backend {
     client: ClientSocket,
     service: LanguageService,
     cpu_limit: Arc<Semaphore>,
+    analysis_tasks: BTreeMap<String, AnalysisTask>,
+}
+
+struct AnalysisTask {
+    generation: u64,
+    handle: tokio::task::JoinHandle<()>,
 }
 
 struct AnalysisCompleted {
@@ -48,6 +56,7 @@ impl Backend {
             client,
             service: LanguageService::with_host_index(host_index),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
+            analysis_tasks: BTreeMap::new(),
         });
 
         router
@@ -57,11 +66,11 @@ impl Backend {
             })
             .notification::<notification::Initialized>(|_, _| ControlFlow::Continue(()))
             .request::<request::Shutdown, _>(|state, _| {
-                state.service.cancel_all();
+                state.cancel_all_analysis();
                 async move { Ok(()) }
             })
             .notification::<notification::Exit>(|state, _| {
-                state.service.cancel_all();
+                state.cancel_all_analysis();
                 ControlFlow::Break(Ok(()))
             })
             .notification::<notification::DidOpenTextDocument>(|state, params| {
@@ -88,34 +97,44 @@ impl Backend {
             })
             .notification::<notification::DidCloseTextDocument>(|state, params| {
                 let uri = params.text_document.uri;
+                state.cancel_analysis(uri.as_str());
                 state.service.close(&uri);
                 state.publish_current_diagnostics(uri)
             })
             .request::<request::DocumentSymbolRequest, _>(|state, params| {
+                let cancellation = state
+                    .service
+                    .document_cancellation(&params.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.document_symbols(&params.text_document.uri)
                     })
                     .await
                 }
             })
             .request::<request::CodeActionRequest, _>(|state, params| {
+                let cancellation = state
+                    .service
+                    .document_cancellation(&params.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.code_actions(&params.text_document.uri)
                     })
                     .await
                 }
             })
             .request::<request::Formatting, _>(|state, params| {
+                let cancellation = state
+                    .service
+                    .document_cancellation(&params.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.formatting(&params.text_document.uri)
                     })
                     .await
@@ -123,10 +142,13 @@ impl Backend {
             })
             .request::<request::HoverRequest, _>(|state, params| {
                 let request = params.text_document_position_params;
+                let cancellation = state
+                    .service
+                    .document_cancellation(&request.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.hover(&request.text_document.uri, request.position)
                     })
                     .await
@@ -134,10 +156,13 @@ impl Backend {
             })
             .request::<request::Completion, _>(|state, params| {
                 let request = params.text_document_position;
+                let cancellation = state
+                    .service
+                    .document_cancellation(&request.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.completion(&request.text_document.uri, request.position)
                     })
                     .await
@@ -145,10 +170,13 @@ impl Backend {
             })
             .request::<request::GotoDefinition, _>(|state, params| {
                 let request = params.text_document_position_params;
+                let cancellation = state
+                    .service
+                    .document_cancellation(&request.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.definition(&request.text_document.uri, request.position)
                     })
                     .await
@@ -157,10 +185,13 @@ impl Backend {
             .request::<request::References, _>(|state, params| {
                 let request = params.text_document_position;
                 let include_declaration = params.context.include_declaration;
+                let cancellation = state
+                    .service
+                    .document_cancellation(&request.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.references(
                             &request.text_document.uri,
                             request.position,
@@ -171,20 +202,26 @@ impl Backend {
                 }
             })
             .request::<request::DocumentLinkRequest, _>(|state, params| {
+                let cancellation = state
+                    .service
+                    .document_cancellation(&params.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.document_links(&params.text_document.uri)
                     })
                     .await
                 }
             })
             .request::<request::SemanticTokensFullRequest, _>(|state, params| {
+                let cancellation = state
+                    .service
+                    .document_cancellation(&params.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.semantic_tokens(&params.text_document.uri)
                     })
                     .await
@@ -193,10 +230,13 @@ impl Backend {
             .request::<request::Rename, _>(|state, params| {
                 let request = params.text_document_position;
                 let new_name = params.new_name;
+                let cancellation = state
+                    .service
+                    .document_cancellation(&request.text_document.uri);
                 let service = state.service.clone();
                 let limit = state.cpu_limit.clone();
                 async move {
-                    run_cpu_request(limit, move |_| {
+                    run_cpu_request(limit, cancellation, move |_| {
                         service.rename(&request.text_document.uri, request.position, &new_name)
                     })
                     .await
@@ -214,11 +254,14 @@ impl Backend {
             .service(router)
     }
 
-    fn schedule_analysis(&self, job: AnalysisJob) {
+    fn schedule_analysis(&mut self, job: AnalysisJob) {
+        self.cancel_analysis(&job.uri);
         let limit = self.cpu_limit.clone();
         let client = self.client.clone();
         let debounce_ms = self.service.debounce_ms();
-        tokio::spawn(async move {
+        let uri = job.uri.clone();
+        let generation = job.generation;
+        let handle = tokio::spawn(async move {
             if debounce_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
             }
@@ -241,12 +284,21 @@ impl Backend {
             .unwrap_or_else(|error| Err(format!("analysis worker failed: {error}")));
             let _ = client.emit(AnalysisCompleted { job, result });
         });
+        self.analysis_tasks
+            .insert(uri, AnalysisTask { generation, handle });
     }
 
     fn analysis_completed(
         &mut self,
         completed: AnalysisCompleted,
     ) -> ControlFlow<async_lsp::Result<()>> {
+        if self
+            .analysis_tasks
+            .get(&completed.job.uri)
+            .is_some_and(|task| task.generation == completed.job.generation)
+        {
+            self.analysis_tasks.remove(&completed.job.uri);
+        }
         let Ok(analysis) = completed.result else {
             return ControlFlow::Continue(());
         };
@@ -256,6 +308,19 @@ impl Backend {
         match completed.job.uri.parse() {
             Ok(uri) => self.publish_current_diagnostics(uri),
             Err(error) => ControlFlow::Break(Err(async_lsp::Error::Routing(error.to_string()))),
+        }
+    }
+
+    fn cancel_analysis(&mut self, uri: &str) {
+        if let Some(task) = self.analysis_tasks.remove(uri) {
+            task.handle.abort();
+        }
+    }
+
+    fn cancel_all_analysis(&mut self) {
+        self.service.cancel_all();
+        for (_, task) in std::mem::take(&mut self.analysis_tasks) {
+            task.handle.abort();
         }
     }
 
@@ -284,7 +349,11 @@ impl Drop for CancelWorkerOnDrop {
     }
 }
 
-async fn run_cpu_request<T, F>(limit: Arc<Semaphore>, operation: F) -> Result<T, ResponseError>
+async fn run_cpu_request<T, F>(
+    limit: Arc<Semaphore>,
+    document_cancellation: Option<Arc<CancellationToken>>,
+    operation: F,
+) -> Result<T, ResponseError>
 where
     T: Send + 'static,
     F: FnOnce(Arc<CancellationToken>) -> Result<T, String> + Send + 'static,
@@ -301,26 +370,51 @@ where
             "request was cancelled",
         ));
     }
+    if document_cancellation
+        .as_ref()
+        .is_some_and(|token| token.is_cancelled())
+    {
+        return Err(content_modified());
+    }
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        if cancellation.is_cancelled() {
+        if cancellation.is_cancelled()
+            || document_cancellation
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
+        {
             return Err("request was cancelled".to_owned());
         }
         let result = operation(cancellation.clone());
         if cancellation.is_cancelled() {
             return Err("request was cancelled".to_owned());
         }
-        result
+        Ok((
+            result,
+            document_cancellation
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled()),
+        ))
     })
     .await
-    .map_err(|error| internal_error(format!("request worker failed: {error}")))?
-    .map_err(internal_error);
+    .map_err(|error| internal_error(format!("request worker failed: {error}")))?;
     drop(cancel_on_drop);
-    result
+    let (result, document_changed) = result.map_err(internal_error)?;
+    if document_changed {
+        return Err(content_modified());
+    }
+    result.map_err(internal_error)
 }
 
 fn internal_error(error: impl ToString) -> ResponseError {
     ResponseError::new(ErrorCode::INTERNAL_ERROR, error.to_string())
+}
+
+fn content_modified() -> ResponseError {
+    ResponseError::new(
+        ErrorCode::CONTENT_MODIFIED,
+        "document changed while the request was running",
+    )
 }
 
 #[cfg(test)]
@@ -338,7 +432,7 @@ mod tests {
         let requests = (0..8).map(|_| {
             let active = active.clone();
             let maximum = maximum.clone();
-            run_cpu_request(limit.clone(), move |_| {
+            run_cpu_request(limit.clone(), None, move |_| {
                 let current = active.fetch_add(1, Ordering::SeqCst) + 1;
                 maximum.fetch_max(current, Ordering::SeqCst);
                 std::thread::sleep(Duration::from_millis(10));
@@ -358,6 +452,7 @@ mod tests {
         let (cancelled_tx, cancelled_rx) = std::sync::mpsc::channel();
         let task = tokio::spawn(run_cpu_request(
             Arc::new(Semaphore::new(1)),
+            None,
             move |cancellation| {
                 started_tx.send(()).expect("started receiver");
                 while !cancellation.is_cancelled() {
@@ -375,5 +470,36 @@ mod tests {
         cancelled_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("worker observed cancellation");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancellation_document_change_discards_a_completed_request() {
+        let document_cancellation = Arc::new(CancellationToken::new());
+        let worker_token = document_cancellation.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let task = tokio::spawn(run_cpu_request(
+            Arc::new(Semaphore::new(1)),
+            Some(worker_token),
+            move |_| {
+                started_tx.send(()).expect("started receiver");
+                finish_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("finish signal");
+                Ok(())
+            },
+        ));
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker started");
+        document_cancellation.cancel();
+        finish_tx.send(()).expect("finish receiver");
+        let error = task
+            .await
+            .expect("request task")
+            .expect_err("content modified");
+
+        assert_eq!(error.code, ErrorCode::CONTENT_MODIFIED);
     }
 }

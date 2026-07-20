@@ -66,3 +66,7 @@ generation、`ReferenceKey`およびposition encodingを含め、ホストが古
 補完対象を定義した。Semantic TokensはASTとprojectionから生成し、別parserを持たない。
 in-memory protocol、Resolver障害、UTF-8・UTF-16、full・incremental、CRLF、キャンセル、
 Definition、ReferencesおよびDocument Linkを自動試験する。
+
+M9完了後の設計レビューでは、`HostReferenceRequest`へsource versionとgenerationを必須化し、
+stale索引結果をホスト側でも判定可能にした。外部へはrunnerとホスト索引契約だけを公開し、
+文書storeと意味処理serviceは実装詳細へ戻した。

@@ -5,10 +5,8 @@ mod service;
 mod state;
 
 pub use service::{
-    HostReferenceIndex, HostReferenceRequest, LanguageService, NoHostReferenceIndex,
-    PositionEncoding,
+    HostReferenceIndex, HostReferenceRequest, NoHostReferenceIndex, PositionEncoding,
 };
-pub use state::{DocumentState, DocumentStore};
 
 pub const SERVER_NAME: &str = "adocweave-lsp";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -24,20 +24,11 @@ pub struct DocumentState {
     cancellation: Arc<CancellationToken>,
 }
 
-impl DocumentState {
-    pub fn contains_line(&self, line: u32) -> bool {
-        self.analysis
-            .as_ref()
-            .is_some_and(|analysis| line < analysis.line_index.line_count())
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct DocumentSnapshot {
     pub uri: String,
     pub version: i32,
     pub generation: u64,
-    pub source: Arc<str>,
     pub analysis: Arc<Analysis>,
 }
 
@@ -50,7 +41,7 @@ pub enum Adoption {
 
 #[derive(Clone, Debug, Default)]
 pub struct DocumentStore {
-    documents: BTreeMap<String, DocumentState>,
+    documents: Arc<BTreeMap<String, DocumentState>>,
     next_generation: u64,
 }
 
@@ -65,7 +56,6 @@ impl DocumentStore {
             uri: document.uri.clone(),
             version: document.version,
             generation: document.generation,
-            source: document.source.clone(),
             analysis: document.analysis.clone()?,
         })
     }
@@ -77,12 +67,18 @@ impl DocumentStore {
             .collect()
     }
 
+    pub fn cancellation(&self, uri: &str) -> Option<Arc<CancellationToken>> {
+        self.documents
+            .get(uri)
+            .map(|document| document.cancellation.clone())
+    }
+
     pub fn begin_open(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
         if let Some(previous) = self.documents.get(&uri) {
             previous.cancellation.cancel();
         }
         let job = self.new_job(uri.clone(), version, text);
-        self.documents.insert(
+        Arc::make_mut(&mut self.documents).insert(
             uri.clone(),
             DocumentState {
                 uri,
@@ -103,8 +99,7 @@ impl DocumentStore {
         }
         current.cancellation.cancel();
         let job = self.new_job(uri.to_owned(), version, text);
-        let current = self
-            .documents
+        let current = Arc::make_mut(&mut self.documents)
             .get_mut(uri)
             .expect("document existence checked");
         current.version = version;
@@ -116,20 +111,26 @@ impl DocumentStore {
     }
 
     pub fn adopt(&mut self, job: &AnalysisJob, analysis: Analysis) -> Adoption {
-        let Some(document) = self.documents.get_mut(&job.uri) else {
+        let Some(document) = self.documents.get(&job.uri) else {
             return Adoption::Closed;
         };
         if document.generation != job.generation || document.version != job.version {
             return Adoption::Stale;
         }
+        let document = Arc::make_mut(&mut self.documents)
+            .get_mut(&job.uri)
+            .expect("document existence checked");
         document.analysis = Some(Arc::new(analysis));
         Adoption::Adopted
     }
 
     pub fn close(&mut self, uri: &str) -> bool {
-        let Some(document) = self.documents.remove(uri) else {
+        if !self.documents.contains_key(uri) {
             return false;
-        };
+        }
+        let document = Arc::make_mut(&mut self.documents)
+            .remove(uri)
+            .expect("document existence checked");
         document.cancellation.cancel();
         true
     }
@@ -138,14 +139,6 @@ impl DocumentStore {
         for document in self.documents.values() {
             document.cancellation.cancel();
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.documents.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.documents.is_empty()
     }
 
     fn new_job(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
@@ -215,5 +208,35 @@ mod tests {
 
         assert!(first.cancellation.is_cancelled());
         assert!(second.cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn cloned_store_is_an_owned_copy_on_write_snapshot() {
+        let mut store = DocumentStore::default();
+        let first = store.begin_open("file:///a.adoc".to_owned(), 1, "= Old".to_owned());
+        assert_eq!(store.adopt(&first, analyze(&first)), Adoption::Adopted);
+        let snapshot = store.clone();
+
+        let second = store
+            .begin_change("file:///a.adoc", 2, "= New".to_owned())
+            .expect("new generation");
+        assert_eq!(store.adopt(&second, analyze(&second)), Adoption::Adopted);
+
+        assert_eq!(
+            snapshot
+                .snapshot("file:///a.adoc")
+                .expect("old snapshot")
+                .analysis
+                .source(),
+            "= Old"
+        );
+        assert_eq!(
+            store
+                .snapshot("file:///a.adoc")
+                .expect("new snapshot")
+                .analysis
+                .source(),
+            "= New"
+        );
     }
 }

@@ -18,8 +18,9 @@ use adocweave::{formatter, parser};
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
+use crate::state::DocumentStore;
 use crate::state::{Adoption, AnalysisJob, DocumentSnapshot};
-use crate::{DocumentStore, SERVER_NAME, VERSION};
+use crate::{SERVER_NAME, VERSION};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PositionEncoding {
@@ -86,7 +87,7 @@ impl HostReferenceIndex for NoHostReferenceIndex {
 }
 
 #[derive(Clone)]
-pub struct LanguageService {
+pub(crate) struct LanguageService {
     pub documents: DocumentStore,
     pub position_encoding: PositionEncoding,
     settings: ServerSettings,
@@ -253,6 +254,13 @@ impl LanguageService {
 
     pub fn cancel_all(&mut self) {
         self.documents.cancel_all();
+    }
+
+    pub fn document_cancellation(
+        &self,
+        uri: &lsp::Url,
+    ) -> Option<Arc<adocweave::CancellationToken>> {
+        self.documents.cancellation(uri.as_str())
     }
 
     pub fn update_configuration(&mut self, settings: serde_json::Value) -> Result<(), String> {

@@ -110,5 +110,10 @@ CPUワーカーで並行実行する。`ConcurrencyLayer`は同時要求数を16
 CPU上限、ワーカーの協調キャンセル、不正なライフサイクル、更新順序および古い解析結果の
 不採用を自動試験で検証した。
 
+M9完了後の設計レビューで、文書storeをcopy-on-writeスナップショットへ変更し、要求開始時の
+cloneをO(1)にした。文書ごとの解析taskを一つに制限し、更新中に完了した読み取り要求も
+文書tokenで検出して`ContentModified`として破棄する。内部`LanguageService`と
+`DocumentStore`は公開APIから除外した。
+
 残る作業は、Linux版Zedで診断、Outline、Code Action、Format、Hoverおよび補完の回帰を
 確認することである。

@@ -505,6 +505,17 @@ mod tests {
     }
 
     #[test]
+    fn projections_keep_the_version_one_json_contract() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze("= T")
+            .expect("analysis");
+        assert_eq!(
+            project(&analysis, &[]).render_json(),
+            "{\"contractVersion\":1,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+        );
+    }
+
+    #[test]
     fn searchable_text_excludes_attributes_math_and_invisible_anchor_syntax() {
         let source = "= Visible\n:name: hidden\n\n[[secret]]\n== Section\n\nstem:[hidden-math]\n\n....\nvisible code\n....\n";
         let analysis = Engine::new(ParseOptions::default())
