@@ -11,23 +11,36 @@ pub struct InlineText {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Inline {
     Text(InlineText),
-    Monospace {
+    Literal {
+        kind: InlineLiteralKind,
         range: TextRange,
         content_range: TextRange,
         value: String,
     },
-    Strong {
+    Styled {
+        style: InlineStyle,
         range: TextRange,
         content_range: TextRange,
         children: Vec<Inline>,
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InlineLiteralKind {
+    Monospace,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InlineStyle {
+    Strong,
+    Emphasis,
+}
+
 impl Inline {
     pub const fn range(&self) -> TextRange {
         match self {
             Self::Text(text) => text.range,
-            Self::Monospace { range, .. } | Self::Strong { range, .. } => *range,
+            Self::Literal { range, .. } | Self::Styled { range, .. } => *range,
         }
     }
 }
@@ -36,6 +49,7 @@ impl Inline {
 pub enum InlineProblemKind {
     UnclosedMonospace,
     UnclosedStrong,
+    UnclosedEmphasis,
     NestingLimitExceeded,
 }
 
@@ -86,6 +100,7 @@ fn parse_segment(
                 kind: match marker {
                     '`' => InlineProblemKind::UnclosedMonospace,
                     '*' => InlineProblemKind::UnclosedStrong,
+                    '_' => InlineProblemKind::UnclosedEmphasis,
                     _ => unreachable!("only supported markers are returned"),
                 },
                 range: subrange(range, open, open + marker.len_utf8()),
@@ -98,12 +113,13 @@ fn parse_segment(
         let node_range = subrange(range, open, close + marker.len_utf8());
         let content_range = subrange(range, open + marker.len_utf8(), close);
         match marker {
-            '`' => output.inlines.push(Inline::Monospace {
+            '`' => output.inlines.push(Inline::Literal {
+                kind: InlineLiteralKind::Monospace,
                 range: node_range,
                 content_range,
                 value: value[open + 1..close].to_owned(),
             }),
-            '*' if depth >= config.max_depth => {
+            '*' | '_' if depth >= config.max_depth => {
                 output.inlines.push(Inline::Text(InlineText {
                     range: node_range,
                     value: value[open..=close].to_owned(),
@@ -117,7 +133,19 @@ fn parse_segment(
                 let inner =
                     parse_segment(&value[open + 1..close], content_range, config, depth + 1);
                 output.problems.extend(inner.problems);
-                output.inlines.push(Inline::Strong {
+                output.inlines.push(Inline::Styled {
+                    style: InlineStyle::Strong,
+                    range: node_range,
+                    content_range,
+                    children: inner.inlines,
+                });
+            }
+            '_' => {
+                let inner =
+                    parse_segment(&value[open + 1..close], content_range, config, depth + 1);
+                output.problems.extend(inner.problems);
+                output.inlines.push(Inline::Styled {
+                    style: InlineStyle::Emphasis,
                     range: node_range,
                     content_range,
                     children: inner.inlines,
@@ -138,7 +166,7 @@ fn next_opener(value: &str, cursor: usize) -> Option<(usize, char)> {
         .char_indices()
         .map(|(offset, marker)| (cursor + offset, marker))
         .find(|(offset, marker)| {
-            matches!(marker, '`' | '*') && is_open_boundary(value, *offset, *marker)
+            matches!(marker, '`' | '*' | '_') && is_open_boundary(value, *offset, *marker)
         })
 }
 
@@ -189,7 +217,7 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
         let range = inline.range();
         if range.start().to_u32() <= offset && offset < range.end().to_u32() {
             match inline {
-                Inline::Strong { children, .. } => inline_at(children, offset).or(Some(inline)),
+                Inline::Styled { children, .. } => inline_at(children, offset).or(Some(inline)),
                 _ => Some(inline),
             }
         } else {
@@ -200,7 +228,10 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Inline, InlineParseConfig, InlineProblemKind, inline_at, parse, parse_text};
+    use super::{
+        Inline, InlineLiteralKind, InlineParseConfig, InlineProblemKind, InlineStyle, inline_at,
+        parse, parse_text,
+    };
     use crate::source::{TextRange, TextSize};
 
     fn range(start: usize, end: usize) -> TextRange {
@@ -238,11 +269,19 @@ mod tests {
         assert_eq!(output.inlines.len(), 4);
         assert!(matches!(
             &output.inlines[1],
-            Inline::Monospace { value, .. } if value == "one"
+            Inline::Literal {
+                kind: InlineLiteralKind::Monospace,
+                value,
+                ..
+            } if value == "one"
         ));
         assert!(matches!(
             &output.inlines[3],
-            Inline::Monospace { value, .. } if value == "二"
+            Inline::Literal {
+                kind: InlineLiteralKind::Monospace,
+                value,
+                ..
+            } if value == "二"
         ));
         assert!(output.problems.is_empty());
     }
@@ -282,14 +321,22 @@ mod tests {
             range(0, 26),
             InlineParseConfig::default(),
         );
-        let Inline::Strong { children, .. } = &output.inlines[1] else {
+        let Inline::Styled {
+            style: InlineStyle::Strong,
+            children,
+            ..
+        } = &output.inlines[1]
+        else {
             panic!("expected strong");
         };
-        assert!(
-            children
-                .iter()
-                .any(|inline| matches!(inline, Inline::Monospace { value, .. } if value == "code"))
-        );
+        assert!(children.iter().any(|inline| matches!(
+            inline,
+            Inline::Literal {
+                kind: InlineLiteralKind::Monospace,
+                value,
+                ..
+            } if value == "code"
+        )));
         assert!(output.problems.is_empty());
     }
 
@@ -300,12 +347,13 @@ mod tests {
             range(0, 17),
             InlineParseConfig::default(),
         );
-        assert!(
-            output
-                .inlines
-                .iter()
-                .any(|inline| matches!(inline, Inline::Monospace { .. }))
-        );
+        assert!(output.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Literal {
+                kind: InlineLiteralKind::Monospace,
+                ..
+            }
+        )));
         assert!(
             output
                 .problems
@@ -326,7 +374,13 @@ mod tests {
             output
                 .inlines
                 .iter()
-                .filter(|inline| matches!(inline, Inline::Strong { .. }))
+                .filter(|inline| matches!(
+                    inline,
+                    Inline::Styled {
+                        style: InlineStyle::Strong,
+                        ..
+                    }
+                ))
                 .count(),
             2
         );
@@ -334,5 +388,85 @@ mod tests {
             output.inlines.last(),
             Some(Inline::Text(text)) if text.value.ends_with("plus **")
         ));
+    }
+
+    #[test]
+    fn emphasis_parses_combinations_and_ignores_identifier_underscores() {
+        let source = "_italic *bold `code`*_ and some_identifier";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+        let Inline::Styled {
+            style: InlineStyle::Emphasis,
+            children,
+            ..
+        } = &output.inlines[0]
+        else {
+            panic!("expected emphasis");
+        };
+        assert!(matches!(
+            children[1],
+            Inline::Styled {
+                style: InlineStyle::Strong,
+                ..
+            }
+        ));
+        assert!(matches!(
+            output.inlines.last(),
+            Some(Inline::Text(text)) if text.value.ends_with("some_identifier")
+        ));
+        assert!(output.problems.is_empty());
+    }
+
+    #[test]
+    fn inline_recovery_keeps_safe_spans_after_unclosed_emphasis() {
+        let source = "_open then *strong* and `code`";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+        assert!(output.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Styled {
+                style: InlineStyle::Strong,
+                ..
+            }
+        )));
+        assert!(output.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Literal {
+                kind: InlineLiteralKind::Monospace,
+                ..
+            }
+        )));
+        assert!(
+            output
+                .problems
+                .iter()
+                .any(|problem| problem.kind == InlineProblemKind::UnclosedEmphasis)
+        );
+    }
+
+    #[test]
+    fn inline_recovery_reports_nesting_limit_and_keeps_source_text() {
+        let source = "*outer _inner_*";
+        let output = parse(
+            source,
+            range(0, source.len()),
+            InlineParseConfig { max_depth: 1 },
+        );
+        let Inline::Styled {
+            style: InlineStyle::Strong,
+            children,
+            ..
+        } = &output.inlines[0]
+        else {
+            panic!("expected outer strong");
+        };
+        assert!(matches!(
+            &children[1],
+            Inline::Text(text) if text.value == "_inner_"
+        ));
+        assert!(
+            output
+                .problems
+                .iter()
+                .any(|problem| problem.kind == InlineProblemKind::NestingLimitExceeded)
+        );
     }
 }

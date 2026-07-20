@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use crate::diagnostic::Diagnostic;
 use crate::document::{HeadingId, generate_heading_ids};
-use crate::inline::Inline;
+use crate::inline::{Inline, InlineLiteralKind, InlineStyle};
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,15 +111,27 @@ fn render_inlines(output: &mut String, inlines: &[Inline]) {
     for inline in inlines {
         match inline {
             Inline::Text(text) => escape_html_into(output, &text.value),
-            Inline::Monospace { value, .. } => {
-                output.push_str("<code>");
-                escape_html_into(output, value);
-                output.push_str("</code>");
-            }
-            Inline::Strong { children, .. } => {
-                output.push_str("<strong>");
+            Inline::Literal { kind, value, .. } => match kind {
+                InlineLiteralKind::Monospace => {
+                    output.push_str("<code>");
+                    escape_html_into(output, value);
+                    output.push_str("</code>");
+                }
+            },
+            Inline::Styled {
+                style, children, ..
+            } => {
+                let tag = match style {
+                    InlineStyle::Strong => "strong",
+                    InlineStyle::Emphasis => "em",
+                };
+                output.push('<');
+                output.push_str(tag);
+                output.push('>');
                 render_inlines(output, children);
-                output.push_str("</strong>");
+                output.push_str("</");
+                output.push_str(tag);
+                output.push('>');
             }
         }
     }
@@ -186,6 +198,16 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &HtmlOptions::default()).html,
             "<p><strong>bold and <code>code</code></strong></p>\n"
+        );
+    }
+
+    #[test]
+    fn emphasis_html_renders_nested_inlines() {
+        let parsed = parse("_italic and *bold*_").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &HtmlOptions::default()).html,
+            "<p><em>italic and <strong>bold</strong></em></p>\n"
         );
     }
 

@@ -21,10 +21,11 @@ pub enum LintRule {
     DuplicateHeadingId,
     HeadingMarkerSpace,
     UnclosedInline,
+    NestingLimitExceeded,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -32,6 +33,7 @@ impl LintRule {
         Self::DuplicateHeadingId,
         Self::HeadingMarkerSpace,
         Self::UnclosedInline,
+        Self::NestingLimitExceeded,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -43,6 +45,7 @@ impl LintRule {
             Self::DuplicateHeadingId => "duplicate-heading-id",
             Self::HeadingMarkerSpace => "heading-marker-space",
             Self::UnclosedInline => "unclosed-inline",
+            Self::NestingLimitExceeded => "nesting-limit-exceeded",
         }
     }
 }
@@ -296,10 +299,18 @@ fn push_inline_problems(
                 "unclosed strong span",
                 None,
             ),
-            InlineProblemKind::NestingLimitExceeded => push_diagnostic(
+            InlineProblemKind::UnclosedEmphasis => push_diagnostic(
                 diagnostics,
                 config,
                 LintRule::UnclosedInline,
+                problem.range,
+                "unclosed emphasis span",
+                None,
+            ),
+            InlineProblemKind::NestingLimitExceeded => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::NestingLimitExceeded,
                 problem.range,
                 "inline nesting limit exceeded",
                 None,
@@ -357,7 +368,10 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LintConfig, LintRule, RuleSettings, lint};
+    use super::{
+        InlineProblemKind, LintConfig, LintRule, RuleSettings, lint, push_inline_problems,
+        text_range,
+    };
     use crate::diagnostic::Severity;
 
     #[test]
@@ -474,5 +488,26 @@ mod tests {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_str() == "unclosed-inline" && diagnostic.message.contains("strong")
         }));
+    }
+
+    #[test]
+    fn emphasis_lint_reports_unclosed_span() {
+        let diagnostics = lint("_open", &LintConfig::default()).expect("valid source");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "unclosed-inline" && diagnostic.message.contains("emphasis")
+        }));
+    }
+
+    #[test]
+    fn inline_recovery_uses_dedicated_nesting_limit_code() {
+        let problem = crate::inline::InlineProblem {
+            kind: InlineProblemKind::NestingLimitExceeded,
+            range: text_range(0, 1).expect("valid range"),
+        };
+        let mut diagnostics = Vec::new();
+        push_inline_problems(&mut diagnostics, &LintConfig::default(), &[problem]);
+
+        assert_eq!(diagnostics[0].code.as_str(), "nesting-limit-exceeded");
     }
 }
