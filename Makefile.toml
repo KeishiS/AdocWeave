@@ -174,10 +174,15 @@ smoke_root="$(mktemp -d target/adocweave-fuzz-smoke.XXXXXX)"
 trap 'rm -rf "$smoke_root"' EXIT
 for target in analyze process render; do
   corpus="$smoke_root/$target"
+  log="$smoke_root/$target.log"
   mkdir -p "$corpus"
   cp -R "fuzz/corpus/$target/." "$corpus/"
-  adocweave-fuzz run --fuzz-dir fuzz "$target" "$corpus" -- \
-    -seed=1 -max_total_time="$seconds" -timeout=2 -verbosity=0
+  if ! adocweave-fuzz run --fuzz-dir fuzz "$target" "$corpus" -- \
+    -seed=1 -max_total_time="$seconds" -timeout=2 -verbosity=0 >"$log" 2>&1; then
+    cat "$log" >&2
+    exit 1
+  fi
+  echo "fuzz smoke passed: $target (${seconds}s)"
 done
 '''
 

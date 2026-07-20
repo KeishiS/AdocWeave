@@ -33,6 +33,7 @@
 * xref:043-adocweave-rename.adoc[043: AdocWeaveへの全面改名]（Issue 027開始前に割り込みで実施）
 * xref:044-owned-analysis-and-extension-boundary.adoc[044: 所有型Analysisとホスト拡張境界の再設計]
 * xref:045-async-lsp-tokio-migration.adoc[045: async-lspとTokioへのLSP基盤移行]
+* xref:046-sustainable-contract-boundaries.adoc[046: 契約境界の持続可能性改善]
 
 === M1: プレーンテキスト変換
 

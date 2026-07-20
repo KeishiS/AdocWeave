@@ -1,0 +1,42 @@
+= 契約境界の持続可能性改善
+
+== 目的
+
+Core Profile 1公開後の実装を見直し、compilerの表示実装やruntimeのword sizeに依存しない
+長期的な適合性契約へ移行する。
+
+== 評価
+
+現在のコア、LSP、WASMおよびホスト拡張境界は分離されており、機能追加の基盤として妥当で
+ある。一方、次の技術的負債は契約変更と同時に解消する必要がある。
+
+* conformance snapshotのASTがRustのderived `Debug`表現に依存する。
+* `ProcessingLimits`が`usize`である一方、WASM境界は`u32`であり、変換に`as`を使う。
+* 契約versionが複数crateと文書に分散し、release時の確認がテストコードに依存する。
+* fuzz smokeは成功時にもlibFuzzerの探索ログを大量に出力する。
+
+== 実装範囲
+
+. fuzz smokeは成功時にtargetと実行時間だけを表示し、失敗時には完全なlibFuzzerログを表示する。
+. AST snapshotを明示的なcanonical schemaへ置き換え、field名、列挙値、rangeおよび配列順を固定する。
+. 公開処理上限をruntime非依存の固定幅整数へ統一し、内部の`usize`変換を検査付きにする。
+. profile、Core API、HTML、projection、conformance、WASMおよびWorkerのversion一覧を
+  machine-readableなrelease manifestとして一か所から生成する。
+. 変更した契約version、適合性fixture、WASM size基準および移行説明を同じ変更で更新する。
+
+== 完了条件
+
+* Rust compilerの`Debug`出力変更が適合性schemaを暗黙に変更しない。
+* 32 bitと64 bit runtimeで同じ公開上限値と拒否判断になる。
+* release manifestと公開定数の不一致を自動テストが検出する。
+* `cargo make fuzz-smoke`の成功ログがtargetごとに1行となり、失敗調査情報は失われない。
+* `cargo make release-check`が成功する。
+
+== 依存関係
+
+* 041
+
+== 進捗
+
+持続可能性レビューを実施し、上記4点を改善対象として確定した。fuzz smokeのログ制御から
+着手した。
