@@ -1,0 +1,27 @@
+= ソース文書と行索引の統合
+
+== 目的
+
+入力長検査、SourceLinesおよびLineIndexが個別に行走査と行情報を保持する重複をなくし、
+ソース、改行、lossless tokenおよびUTF-8／UTF-16位置変換の正本を一つにする。
+
+== 作業
+
+* Arc付きsourceと正規の行tableを所有するSourceDocumentを導入する。
+* 行の内容範囲、改行を含む範囲、改行種別およびlossless tokenを同じ走査で構築する。
+* 1行のbyte上限をSourceDocument構築中に検査する。
+* SourceLinesとLineIndexの利用側を段階的にSourceDocumentへ移行して削除する。
+* CRLF内部offset、終端改行、空入力、Unicode位置変換の既存契約を維持する。
+
+== 完了条件
+
+* 一つの解析で行境界を索引する全入力走査が一回だけである。
+* CST、診断、FormatterおよびLSPが同じ行tableを参照する。
+* source bytesを複製せず、CST復元とUTF-8／UTF-16往復試験が通る。
+
+== 依存関係
+
+Issue 052。
+
+移行用に`SourceLines`と`LineIndex`の恒久的adapterを設けない。途中commitでconsumerが未移行でも、
+Issue 058完了時には旧表現を削除する。

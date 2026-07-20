@@ -3,6 +3,10 @@
 標準診断は構文・意味解析から生成し、`Analysis.diagnostics`へ同じ文書版の結果として
 格納する。CLI、LSP、HTMLその他のconsumerは独自にLintを再実行しない。
 
+Issue 055では生成経路を、syntax認識時の`SyntaxDiagnostic`、semantic lowering時の診断、
+意味・style lintに分ける。回復済みASTに保持した`problems`をLintが再び標準診断へ変換する
+重複を廃止し、`Analysis`構築時に一度だけ安定順序へ統合する。
+
 == 安定識別子
 
 `LintRule`を標準診断コードの単一レジストリとする。診断コードはASCII小文字、数字、

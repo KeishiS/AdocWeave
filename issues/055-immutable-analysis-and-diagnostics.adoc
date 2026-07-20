@@ -1,0 +1,28 @@
+= 不変Analysisと診断pipeline
+
+== 目的
+
+解析後にCST、AST、診断、参照を個別変更できる公開状態を廃止し、一つの解析snapshotの
+整合性を型で保証する。AST nodeに分散した`problems`とLintによる再変換を整理する。
+
+== 作業
+
+* Analysisのfieldを非公開にし、immutableな参照とquery APIを公開する。
+* semantic ASTのfieldを原則非公開とし、lowering以外から構築・変更できないようにする。
+* parser／syntax層の問題を`SyntaxDiagnostic`として収集する。
+* lowering診断、semantic lintおよびstyle lintの責務と実行順を定義する。
+* ASTから診断生成専用の`inline_problems`等を除去し、回復に必要な構文状態はsyntax nodeに残す。
+* 標準診断とホスト診断は従来どおり別結果とし、表示時の安定統合規則を維持する。
+
+== 完了条件
+
+* 公開APIだけでは`Analysis`内部の相互整合性を壊せない。
+* 構文診断を得るためにASTを再走査してproblem型を変換しない。
+* 診断code、範囲、Fixおよび安定順序が規範fixtureで固定される。
+
+== 依存関係
+
+Issue 054。
+
+公開fieldをdeprecatedとして残さず削除する。途中段階で旧公開APIの利用側がbuild不能になることを
+許容し、後続Issueでworkspace内consumerを新query APIへ移行する。

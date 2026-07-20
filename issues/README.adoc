@@ -43,6 +43,26 @@
 * xref:050-multiline-inline-spans.adoc[050: 複数行インラインspan]
 * xref:051-adoc-document-validation.adoc[051: AdocWeave自身によるリポジトリ文書検査]
 
+=== M12: 持続可能な解析基盤
+
+Issue 001から051の実装を対象とした批判的レビューに基づき、構文追加より先に
+安全性、構文表現および公開snapshotの不変条件を再構築する。この段階では
+後方互換性を要求せず、影響する契約versionとfixtureを各Issueで更新する。
+
+M12は全体を一つの破壊的移行として扱う。各Issueは設計・差分レビューの境界を示すが、
+Issue単位でworkspace全体がbuild・動作することは要求しない。旧CST・ASTと新syntax・semantic
+modelを長期間並存させるadapterは作らず、最後のIssue 058完了時にnative、WASM、CLI、LSP、
+Zed連携、文書および全検証gateが一斉に動作することを完了条件とする。ただし各途中commitは
+対象範囲の不変条件を可能な限りtestで固定し、未完了状態と既知の失敗をIssueへ明記する。
+
+* xref:052-construction-time-budgets.adoc[052: 構築時の処理予算と計測可能な線形性]
+* xref:053-unified-source-document.adoc[053: ソース文書と行索引の統合]
+* xref:054-structured-syntax-and-lowering.adoc[054: 構造化syntax treeとsemantic lowering]
+* xref:055-immutable-analysis-and-diagnostics.adoc[055: 不変Analysisと診断pipeline]
+* xref:056-consumer-walker-and-formatter.adoc[056: Consumer走査とFormatterの構造化syntax移行]
+* xref:057-public-contract-and-execution-simplification.adoc[057: 公開契約と実行境界の簡素化]
+* xref:058-documentation-and-corpus-governance.adoc[058: 文書・Issue・corpus検査の持続可能な運用]
+
 === M1: プレーンテキスト変換
 
 * xref:001-workspace-and-cli.adoc[001: Cargo workspaceとCLIの初期化]

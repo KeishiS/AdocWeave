@@ -1,0 +1,29 @@
+= 公開契約と実行境界の簡素化
+
+== 目的
+
+実際には過去profileを選択できない`SyntaxProfile.version`、分散した契約version参照、
+コアとLSPで重複するrevision・解析job表現を整理する。
+
+== 作業
+
+* 現行profileだけを実装する間はversionを解析要求のselectorから除き、解析結果metadataで公開する。
+* 複数profileを同時実装する場合だけ、明示的なprofile dispatchを再導入する。
+* release manifestとRust定数・Worker定数・文書表の正本関係を自動検査する。
+* `AnalysisRequest`、`AnalysisResult`、LSPの`AnalysisJob`とgeneration採用規則を比較し、
+  runtime非依存部分を共通化する。
+* `Engine`、free function、CLI convenience APIの重複を監査し、主要入口を一つにする。
+* async-lsp、TokioおよびLSP型は引き続きadapter crate内に限定する。
+
+== 完了条件
+
+* 利用者が選択不能なversionを毎回入力しない。
+* 契約versionの更新漏れをrelease gateが検出する。
+* revision、cache key、cancellationおよびstale判定の規則がコア実行契約とLSPで重複しない。
+
+== 依存関係
+
+Issue 055。Issue 056とは並行可能。
+
+互換shimや旧version要求形式を残さず、workspace内の呼び出し側、WASM schema、Worker protocol、
+fixtureおよび文書を同時に新契約へ更新する。

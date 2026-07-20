@@ -1,0 +1,28 @@
+= Consumer走査とFormatterの構造化syntax移行
+
+== 目的
+
+AST variant追加時に各consumerが独自の再帰処理を複製する状態を解消し、Formatterを
+block単位の保存方針から構造化syntaxとtriviaに基づく安全なEdit生成へ移行する。
+
+== 作業
+
+* 既定再帰を持つimmutableなsemantic AST walkerを導入する。
+* node count、参照収集、文書要素抽出および共通queryをwalkerへ移行する。
+* HTML、projection等の出力固有mappingは明示的な網羅matchを維持する。
+* 属性展開をASTの後処理による可変走査からloweringまたは明示的評価結果へ移す。
+* Formatterをsyntax tokenとtriviaからEditを作る構成へ移行する。
+* unknown node、error nodeおよび意味を理解しない領域はbyte単位で保存する。
+
+== 完了条件
+
+* 共通の木構造再帰がconsumerごとに重複しない。
+* semantic ASTは解析完了後に変更されない。
+* Formatterの冪等性、意味保存、未知領域のbyte保存がproperty testで確認される。
+
+== 依存関係
+
+Issue 055。
+
+このIssueでHTML、projection、CLIおよびLSPを新しいAnalysisへ一括接続する。旧AST向けvisitorや
+Formatter adapterは削除し、二系統を維持しない。

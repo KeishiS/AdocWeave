@@ -1,0 +1,32 @@
+= 構造化syntax treeとsemantic lowering
+
+== 目的
+
+block種別と範囲だけの現行CSTを、delimiter、属性、trivia、不完全構文および未対応領域を
+表現できる構造化syntax treeへ置き換える。構文認識とsemantic AST構築を分離する。
+
+== 作業
+
+* token、node kind、child順序、rangeおよびerror・unknown nodeを持つsyntax表現を定義する。
+* block parserとinline parserをsyntax eventまたはsyntax nodeの生成へ限定する。
+* syntax treeから出力非依存semantic ASTを構築するlowering passを導入する。
+* source表記はrangeまたはtoken参照で保持し、正規化・属性展開後の値だけを所有値にする。
+* 不完全入力の同期点と回復nodeを規範文法およびfixtureへ明記する。
+* 既存のcanonical conformance DTOを公開syntax型から独立したまま移行する。
+
+外部tree crateの採否は、必要なlossless性、WASM size、error recovery、arena共有および
+Formatter APIを小さな試作で比較してから決定する。crate導入自体を完了条件にしない。
+
+== 完了条件
+
+* syntax treeだけから元入力をbyte単位で復元できる。
+* inline delimiter、macro、block属性および回復地点を構造として問い合わせられる。
+* parserはsemantic値の属性展開やHTML・LSP向け変換を行わない。
+* semantic ASTは一つのlowering passで構築され、既存の意味fixtureと意図した差分だけを持つ。
+
+== 依存関係
+
+Issue 053。
+
+旧CSTと新syntax treeを同時に正式出力する二重pipelineは作らない。conformance DTOとconsumerは
+後続Issueで新しい正本へ直接移行する。
