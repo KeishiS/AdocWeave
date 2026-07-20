@@ -170,11 +170,7 @@ fn parse_text(value: &str, range: TextRange, config: InlineParseConfig) -> Vec<I
     parse(value, range, config).inlines
 }
 
-pub(crate) fn parse(
-    value: &str,
-    range: TextRange,
-    config: InlineParseConfig,
-) -> InlineParseOutput {
+pub(crate) fn parse(value: &str, range: TextRange, config: InlineParseConfig) -> InlineParseOutput {
     parse_segment(value, range, config, 0)
 }
 
