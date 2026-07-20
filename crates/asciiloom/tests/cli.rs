@@ -97,3 +97,20 @@ fn missing_file_is_a_user_facing_error() {
     assert!(stderr.contains("could not read"));
     assert!(stderr.contains(missing));
 }
+
+#[test]
+fn check_supports_human_and_json_diagnostics() {
+    let source = b"trailing \n";
+    let human = run_with_stdin(&["check", "-"], source);
+    let json = run_with_stdin(&["check", "--json", "-"], source);
+
+    assert!(human.status.success());
+    assert!(
+        String::from_utf8_lossy(&human.stdout)
+            .contains("1:9: warning[trailing-whitespace]: trailing whitespace")
+    );
+    assert!(json.status.success());
+    assert!(
+        String::from_utf8_lossy(&json.stdout).starts_with("[{\"id\":\"trailing-whitespace@8:9\"")
+    );
+}

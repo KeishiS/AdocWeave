@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use asciiloom::{Operation, process};
+use asciiloom::{CheckOutput, Operation, process, process_check};
 
 const HELP: &str = "\
 AsciiLoom command-line interface
@@ -24,6 +24,7 @@ Arguments:
   [FILE]   Input file; omit it or use '-' to read standard input
 
 Options:
+  --json      Emit check diagnostics as JSON
   -h, --help  Print help
 ";
 
@@ -65,6 +66,7 @@ impl Error for CliError {
 struct Arguments {
     operation: Operation,
     input: Option<PathBuf>,
+    json: bool,
 }
 
 enum Action {
@@ -88,22 +90,28 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         _ => return Err(CliError::Usage(format!("unknown command: {command}"))),
     };
 
-    let input = match arguments.next() {
-        Some(argument) if matches!(argument.as_str(), "-h" | "--help") => {
-            return Ok(Action::Help);
+    let mut input = None;
+    let mut stdin_selected = false;
+    let mut json = false;
+    for argument in arguments {
+        match argument.as_str() {
+            "-h" | "--help" => return Ok(Action::Help),
+            "--json" if operation == Operation::Check => json = true,
+            "-" if input.is_none() && !stdin_selected => stdin_selected = true,
+            _ if input.is_none() && !stdin_selected => input = Some(PathBuf::from(argument)),
+            _ => {
+                return Err(CliError::Usage(format!(
+                    "unexpected argument after input: {argument}"
+                )));
+            }
         }
-        Some(argument) if argument == "-" => None,
-        Some(argument) => Some(PathBuf::from(argument)),
-        None => None,
-    };
-
-    if let Some(argument) = arguments.next() {
-        return Err(CliError::Usage(format!(
-            "unexpected argument after input: {argument}"
-        )));
     }
 
-    Ok(Action::Run(Arguments { operation, input }))
+    Ok(Action::Run(Arguments {
+        operation,
+        input,
+        json,
+    }))
 }
 
 fn read_input(path: Option<PathBuf>) -> Result<Vec<u8>, CliError> {
@@ -133,7 +141,19 @@ fn run() -> Result<(), CliError> {
         }
         Action::Run(arguments) => {
             let input = read_input(arguments.input)?;
-            let output = process(arguments.operation, &input).map_err(CliError::Process)?;
+            let output = if arguments.operation == Operation::Check {
+                process_check(
+                    &input,
+                    if arguments.json {
+                        CheckOutput::Json
+                    } else {
+                        CheckOutput::Human
+                    },
+                )
+            } else {
+                process(arguments.operation, &input)
+            }
+            .map_err(CliError::Process)?;
             io::stdout()
                 .write_all(output.as_bytes())
                 .map_err(CliError::Write)
@@ -194,6 +214,24 @@ mod tests {
                 parse_arguments(arguments(&[command, "--help"])),
                 Ok(Action::Help)
             ));
+        }
+    }
+
+    #[test]
+    fn check_accepts_json_before_or_after_input() {
+        for values in [
+            ["check", "--json", "document.adoc"],
+            ["check", "document.adoc", "--json"],
+        ] {
+            let Action::Run(parsed) = parse_arguments(arguments(&values)).expect("valid arguments")
+            else {
+                panic!("expected run action");
+            };
+            assert!(parsed.json);
+            assert_eq!(
+                parsed.input.as_deref(),
+                Some(std::path::Path::new("document.adoc"))
+            );
         }
     }
 }

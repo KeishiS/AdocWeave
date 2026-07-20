@@ -8,6 +8,7 @@ use std::fmt;
 
 pub mod diagnostic;
 pub mod html;
+pub mod lint;
 pub mod parser;
 pub mod source;
 pub mod source_lines;
@@ -18,6 +19,12 @@ pub enum Operation {
     Convert,
     Check,
     Format,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckOutput {
+    Human,
+    Json,
 }
 
 /// An error produced while decoding or processing a document.
@@ -57,13 +64,33 @@ pub fn process(operation: Operation, input: &[u8]) -> Result<String, ProcessErro
             Ok(html::render(&parsed.ast, &html::HtmlOptions::default()).html)
         }
         Operation::Format => Ok(source.to_owned()),
-        Operation::Check => Ok(String::new()),
+        Operation::Check => process_check_source(source, CheckOutput::Human),
+    }
+}
+
+pub fn process_check(input: &[u8], output: CheckOutput) -> Result<String, ProcessError> {
+    let source = std::str::from_utf8(input).map_err(|error| ProcessError::InvalidUtf8 {
+        valid_up_to: error.valid_up_to(),
+    })?;
+    process_check_source(source, output)
+}
+
+fn process_check_source(source: &str, output: CheckOutput) -> Result<String, ProcessError> {
+    let diagnostics =
+        lint::lint(source, &lint::LintConfig::default()).map_err(ProcessError::Position)?;
+    match output {
+        CheckOutput::Human => {
+            let line_index = source::LineIndex::new(source).map_err(ProcessError::Position)?;
+            diagnostic::render_human(&diagnostics, &line_index, source::PositionEncoding::Utf16)
+                .map_err(ProcessError::Position)
+        }
+        CheckOutput::Json => Ok(diagnostic::render_json(&diagnostics)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Operation, ProcessError, process};
+    use super::{CheckOutput, Operation, ProcessError, process, process_check};
 
     #[test]
     fn convert_renders_html() {
@@ -78,6 +105,23 @@ mod tests {
     #[test]
     fn check_accepts_valid_input_without_output() {
         assert_eq!(process(Operation::Check, b"paragraph\n"), Ok(String::new()));
+    }
+
+    #[test]
+    fn check_can_render_json() {
+        assert_eq!(
+            process_check(b"trailing \n", CheckOutput::Json),
+            Ok(concat!(
+                "[{\"id\":\"trailing-whitespace@8:9\",",
+                "\"code\":\"trailing-whitespace\",\"severity\":\"warning\",",
+                "\"range\":{\"start\":8,\"end\":9},",
+                "\"message\":\"trailing whitespace\",\"related\":[],",
+                "\"fixes\":[{\"title\":\"remove trailing whitespace\",",
+                "\"applicability\":\"always\",\"edits\":[{\"range\":",
+                "{\"start\":8,\"end\":9},\"replacement\":\"\"}]}]}]"
+            )
+            .to_owned())
+        );
     }
 
     #[test]

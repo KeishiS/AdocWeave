@@ -1,0 +1,2 @@
+trailing whitespace 
+This line is intentionally longer than one hundred characters so that the default line-too-long rule reports it.
