@@ -1,8 +1,8 @@
-= Zed development extension
+= Zed開発用拡張
 
-== Prerequisites
+== 前提条件
 
-Build the Language Server and expose it on `PATH` before starting Zed:
+Zedを起動する前にLanguage Serverをビルドし、`PATH`から参照できるようにする。
 
 [source,console]
 ----
@@ -11,22 +11,25 @@ export PATH="$PWD/target/debug:$PATH"
 zed --foreground .
 ----
 
-Install this directory using `zed: install dev extension`, then open
-`fixtures/zed/manual.adoc`.
+`zed: install dev extension`でこのディレクトリをインストールし、
+`fixtures/zed/manual.adoc`を開く。
 
-== Manual checklist
+開発用拡張はサーバーを既定の寛容構文モードで起動する。エディター固有の構文モード設定は
+公開しない。
 
-- The language selector reports `AsciiDoc` for `.adoc` and `.asciidoc`.
-- `asciiloom-lsp` starts without repeatedly restarting.
-- Trailing whitespace, the missing heading space, and unfinished emphasis
-  produce diagnostics at the expected ranges, including the emoji line.
-- Editing the document replaces diagnostics with the latest version.
-- The outline shows the document title and nested headings.
-- Code Actions remove trailing whitespace and insert the missing heading space.
-- Format Document is idempotent and does not modify the source block body.
-- Hover over a heading shows its level and generated ID.
-- Completion after `[source, ru` suggests `rust`.
-- Closing the document clears its diagnostics.
+== 手動チェックリスト
 
-If startup fails, inspect `zed: open log`. A Language Server failure should be
-reported there and must not terminate Zed itself.
+- `.adoc`と`.asciidoc`に対して言語セレクターが`AsciiDoc`を表示する。
+- `asciiloom-lsp`が再起動を繰り返さず起動する。
+- 行末空白、見出し後の空白欠落、閉じていない斜体について、絵文字を含む行でも
+  期待範囲に診断が表示される。
+- 文書を編集すると診断が最新versionへ置き換わる。
+- outlineに文書タイトルと入れ子の見出しが表示される。
+- Code Actionで行末空白を削除し、欠けている見出し後の空白を挿入できる。
+- Format Documentが冪等であり、ソースブロック本体を変更しない。
+- 見出しへのhoverでレベルと生成IDが表示される。
+- `[source, ru`の後の補完候補に`rust`が表示される。
+- 文書を閉じると診断が消去される。
+
+起動に失敗した場合は`zed: open log`を確認する。Language Serverの失敗はログへ報告され、
+Zed本体を終了させてはならない。

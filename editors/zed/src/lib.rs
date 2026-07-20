@@ -23,16 +23,6 @@ impl zed::Extension for AsciiLoomExtension {
             env: worktree.shell_env(),
         })
     }
-
-    fn language_server_initialization_options(
-        &mut self,
-        _language_server_id: &zed::LanguageServerId,
-        _worktree: &zed::Worktree,
-    ) -> zed::Result<Option<serde_json::Value>> {
-        Ok(Some(serde_json::json!({
-            "syntaxMode": "permissive"
-        })))
-    }
 }
 
 zed::register_extension!(AsciiLoomExtension);

@@ -7,7 +7,7 @@ AsciiLoom Language ServerをZed Editorから起動し、初期編集支援を利
 == 実装範囲
 
 - `.adoc` と `.asciidoc` を認識する最小拡張または設定を追加する。
-- Language Serverの起動コマンドと設定受け渡しを実装する。
+- Language Serverの起動コマンドとシェル環境の受け渡しを実装する。
 - サーバー本体をZed固有コードへ依存させない。
 - 動作確認用のサンプル文書と手順を追加する。
 
