@@ -102,17 +102,12 @@ impl CstDocument {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TextNode {
+pub struct Paragraph {
     pub range: TextRange,
+    pub content_range: TextRange,
     pub value: String,
     pub inlines: Vec<Inline>,
     pub inline_problems: Vec<InlineProblem>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Paragraph {
-    pub range: TextRange,
-    pub lines: Vec<TextNode>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -313,11 +308,7 @@ impl AstDocument {
         fn block_count(block: &AstBlock) -> usize {
             1 + match block {
                 AstBlock::Heading(heading) => inline_count(&heading.inlines),
-                AstBlock::Paragraph(paragraph) => paragraph
-                    .lines
-                    .iter()
-                    .map(|line| 1 + inline_count(&line.inlines))
-                    .sum(),
+                AstBlock::Paragraph(paragraph) => inline_count(&paragraph.inlines),
                 AstBlock::List(list) => list_count(list) - 1,
                 AstBlock::Literal(_)
                 | AstBlock::Source(_)
@@ -359,16 +350,14 @@ impl AstDocument {
                         paragraph.range.end().to_u32()
                     )
                     .expect("writing to a String cannot fail");
-                    for line in &paragraph.lines {
-                        writeln!(
-                            output,
-                            "    Text@{}..{} {:?}",
-                            line.range.start().to_u32(),
-                            line.range.end().to_u32(),
-                            line.value
-                        )
-                        .expect("writing to a String cannot fail");
-                    }
+                    writeln!(
+                        output,
+                        "    Text@{}..{} {:?}",
+                        paragraph.content_range.start().to_u32(),
+                        paragraph.content_range.end().to_u32(),
+                        paragraph.value
+                    )
+                    .expect("writing to a String cannot fail");
                 }
                 AstBlock::Literal(literal) => {
                     writeln!(
@@ -451,11 +440,7 @@ impl AstDocument {
             for block in blocks {
                 match block {
                     AstBlock::Heading(heading) => visitor(&heading.inlines),
-                    AstBlock::Paragraph(paragraph) => {
-                        for line in &paragraph.lines {
-                            visitor(&line.inlines);
-                        }
-                    }
+                    AstBlock::Paragraph(paragraph) => visitor(&paragraph.inlines),
                     AstBlock::List(list) => visit_list(list, visitor),
                     AstBlock::Literal(_)
                     | AstBlock::Source(_)
@@ -481,11 +466,7 @@ impl AstDocument {
             for block in blocks {
                 match block {
                     AstBlock::Heading(heading) => visitor(&mut heading.inlines),
-                    AstBlock::Paragraph(paragraph) => {
-                        for line in &mut paragraph.lines {
-                            visitor(&mut line.inlines);
-                        }
-                    }
+                    AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines),
                     AstBlock::List(list) => visit_list(list, visitor),
                     AstBlock::Literal(_)
                     | AstBlock::Source(_)
@@ -730,7 +711,7 @@ pub(crate) fn parse_shared_cancellable(
             }));
             saw_content = true;
         } else {
-            paragraph_lines.push((line, content.trim_end_matches([' ', '\t']).to_owned()));
+            paragraph_lines.push((line, content.to_owned()));
             saw_content = true;
         }
         line_index += 1;
@@ -1360,34 +1341,39 @@ fn flush_paragraph(
     });
     ast_blocks.push(AstBlock::Paragraph(Paragraph {
         range,
-        lines: lines
-            .drain(..)
-            .map(|(line, value)| {
-                let value_range = TextRange::new(
-                    line.content_range().start(),
-                    crate::source::TextSize::new(
-                        line.content_range().start().to_usize() + value.len(),
-                    )
-                    .expect("source offset fits"),
-                )
-                .expect("trimmed text range is ordered");
-                let inline_output = parse_inlines(
-                    &value,
-                    value_range,
-                    InlineParseConfig {
-                        max_depth: config.max_inline_depth,
-                        max_formula_bytes: config.max_formula_bytes,
-                    },
-                );
-                TextNode {
-                    range: value_range,
-                    inlines: inline_output.inlines,
-                    inline_problems: inline_output.problems,
-                    value,
-                }
-            })
-            .collect(),
+        content_range: {
+            TextRange::new(first.content_range().start(), last.content_range().end())
+                .expect("paragraph content range is ordered")
+        },
+        value: String::new(),
+        inlines: Vec::new(),
+        inline_problems: Vec::new(),
     }));
+
+    let AstBlock::Paragraph(paragraph) = ast_blocks.last_mut().expect("paragraph was inserted")
+    else {
+        unreachable!("inserted a paragraph")
+    };
+    for (line, value) in lines.drain(..) {
+        paragraph.value.push_str(&value);
+        if line.full_range().end() < paragraph.content_range.end() {
+            paragraph.value.push_str(match line.ending() {
+                crate::source_lines::LineEnding::Lf => "\n",
+                crate::source_lines::LineEnding::CrLf => "\r\n",
+                crate::source_lines::LineEnding::None => "",
+            });
+        }
+    }
+    let inline_output = parse_inlines(
+        &paragraph.value,
+        paragraph.content_range,
+        InlineParseConfig {
+            max_depth: config.max_inline_depth,
+            max_formula_bytes: config.max_formula_bytes,
+        },
+    );
+    paragraph.inlines = inline_output.inlines;
+    paragraph.inline_problems = inline_output.problems;
 }
 
 fn unsupported_reason(content: &str) -> Option<&'static str> {
@@ -1488,15 +1474,40 @@ mod tests {
         let AstBlock::Paragraph(first) = &parsed.ast.blocks[0] else {
             panic!("expected paragraph");
         };
-        assert_eq!(
-            first
-                .lines
-                .iter()
-                .map(|line| line.value.as_str())
-                .collect::<Vec<_>>(),
-            ["first line", "second line"]
-        );
+        assert_eq!(first.value, "first line\nsecond line");
         assert_eq!(parsed.cst.reconstruct().as_bytes(), source.as_bytes());
+    }
+
+    #[test]
+    fn paragraph_inlines_span_lf_crlf_unicode_and_macro_labels() {
+        let source =
+            "before *strong\n日本語* and ``mono\r\ncode`` https://example.org[label\n続き]";
+        let parsed = parse(source).expect("valid source");
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[0] else {
+            panic!("paragraph");
+        };
+
+        assert_eq!(paragraph.content_range.start().to_usize(), 0);
+        assert_eq!(paragraph.content_range.end().to_usize(), source.len());
+        assert_eq!(paragraph.value, source);
+        assert!(paragraph.inline_problems.is_empty());
+        assert!(paragraph.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Styled {
+                style: crate::inline::InlineStyle::Strong,
+                children,
+                ..
+            } if matches!(&children[..], [Inline::Text(text)] if text.value == "strong\n日本語")
+        )));
+        assert!(paragraph.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Literal { value, .. } if value == "mono\r\ncode"
+        )));
+        assert!(paragraph.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Link(link)
+                if matches!(&link.label[..], [Inline::Text(text)] if text.value == "label\n続き")
+        )));
     }
 
     #[test]
@@ -1698,7 +1709,7 @@ mod tests {
         let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[1] else {
             panic!("paragraph");
         };
-        assert!(paragraph.lines[0].inlines.iter().any(|inline| {
+        assert!(paragraph.inlines.iter().any(|inline| {
             matches!(
                 inline,
                 Inline::Formula(formula)
@@ -1719,7 +1730,7 @@ mod tests {
             panic!("paragraph");
         };
         assert!(matches!(
-            paragraph.lines[0].inlines[0],
+            paragraph.inlines[0],
             Inline::Formula(ref formula) if !formula.closed && formula.value == "inline open"
         ));
         let AstBlock::Math(math) = &parsed.ast.blocks[1] else {
@@ -1741,7 +1752,7 @@ mod tests {
             panic!("paragraph");
         };
         assert!(matches!(
-            paragraph.lines[0].inlines[0],
+            paragraph.inlines[0],
             Inline::Formula(ref formula) if formula.language == MathLanguage::Latex
         ));
     }

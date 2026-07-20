@@ -326,6 +326,7 @@ impl InlineScanner {
     fn new(value: &str) -> Self {
         let mut candidates = Vec::new();
         let mut inspected_positions: usize = 0;
+        let unconstrained_pairs = index_unconstrained_pairs(value);
         for (open, marker) in value.char_indices() {
             inspected_positions += 1;
             let rest = &value[open..];
@@ -345,9 +346,7 @@ impl InlineScanner {
                         || url_scheme_end(rest).is_some());
             if is_macro {
                 candidates.push(InlineCandidate::Macro { open });
-            } else if matches!(marker, '`' | '*' | '_')
-                && is_unconstrained_pair_at(value, open, marker)
-            {
+            } else if matches!(marker, '`' | '*' | '_') && unconstrained_pairs[open] {
                 candidates.push(InlineCandidate::Marker {
                     open,
                     marker,
@@ -365,7 +364,7 @@ impl InlineScanner {
                 });
             }
         }
-        index_marker_closers(value, &mut candidates);
+        index_marker_closers(value, &unconstrained_pairs, &mut candidates);
         let delimiters = DelimiterIndex::new(value);
         Self {
             candidates,
@@ -454,22 +453,28 @@ fn next_char_boundary(value: &str, offset: usize) -> usize {
     offset + value[offset..].chars().next().map_or(1, char::len_utf8)
 }
 
-fn is_unconstrained_pair_at(value: &str, offset: usize, marker: char) -> bool {
-    if !matches!(marker, '`' | '*' | '_') {
-        return false;
-    }
-    let marker = marker as u8;
+fn index_unconstrained_pairs(value: &str) -> Vec<bool> {
     let bytes = value.as_bytes();
-    if bytes.get(offset) != Some(&marker) || bytes.get(offset + 1) != Some(&marker) {
-        return false;
+    let mut pairs = vec![false; bytes.len() + 1];
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let marker = bytes[cursor];
+        if !matches!(marker, b'`' | b'*' | b'_') {
+            cursor += 1;
+            continue;
+        }
+        let mut run_end = cursor + 1;
+        while bytes.get(run_end) == Some(&marker) {
+            run_end += 1;
+        }
+        let mut pair = cursor;
+        while pair + 1 < run_end {
+            pairs[pair] = true;
+            pair += 2;
+        }
+        cursor = run_end;
     }
-
-    let preceding_run = bytes[..offset]
-        .iter()
-        .rev()
-        .take_while(|byte| **byte == marker)
-        .count();
-    preceding_run % 2 == 0
+    pairs
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -544,7 +549,11 @@ fn recognize_marker(
     })
 }
 
-fn index_marker_closers(value: &str, candidates: &mut [InlineCandidate]) {
+fn index_marker_closers(
+    value: &str,
+    unconstrained_pairs: &[bool],
+    candidates: &mut [InlineCandidate],
+) {
     let mut opener_at = vec![None; value.len() + 1];
     for candidate in candidates.iter() {
         if let InlineCandidate::Marker {
@@ -576,7 +585,7 @@ fn index_marker_closers(value: &str, candidates: &mut [InlineCandidate]) {
                 _ => None,
             };
         }
-        if is_unconstrained_pair_at(value, offset, marker) {
+        if unconstrained_pairs[offset] {
             match marker {
                 '`' => last_unconstrained_backtick = Some(offset),
                 '*' => last_unconstrained_strong = Some(offset),

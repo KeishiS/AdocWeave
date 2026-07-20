@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 3;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 4;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -105,17 +105,8 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
         AstBlock::Paragraph(node) => CanonicalNode {
             kind: "paragraph",
             range: range(node.range),
-            value: None,
-            children: node
-                .lines
-                .iter()
-                .map(|line| CanonicalNode {
-                    kind: "line",
-                    range: range(line.range),
-                    value: Some(line.value.clone()),
-                    children: inline_nodes(&line.inlines),
-                })
-                .collect(),
+            value: Some(node.value.clone()),
+            children: inline_nodes(&node.inlines),
         },
         AstBlock::Literal(node) => leaf("literal-block", node.range, &node.value),
         AstBlock::Source(node) => CanonicalNode {

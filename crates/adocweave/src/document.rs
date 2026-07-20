@@ -124,10 +124,7 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
 fn block_label(block: &AstBlock) -> String {
     match block {
         AstBlock::Heading(value) => value.text.clone(),
-        AstBlock::Paragraph(value) => value
-            .lines
-            .first()
-            .map_or_else(String::new, |line| line.value.clone()),
+        AstBlock::Paragraph(value) => value.value.lines().next().unwrap_or_default().to_owned(),
         AstBlock::Literal(_) => "literal block".to_owned(),
         AstBlock::Source(value) => value.language.as_ref().map_or_else(
             || "source block".to_owned(),

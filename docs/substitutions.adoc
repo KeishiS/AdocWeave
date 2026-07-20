@@ -83,6 +83,10 @@
 semantic ASTでは`Text`、`Literal`、`Styled`、`AttributeReference`、`Link`、
 `Reference`および`Formula`がこの区別を表現する。
 
+段落は行ごとの置換列ではなく、LF／CRLFを含む一つのinline列を所有する。書式spanと
+リンク・xrefの表示文字列は連続行をまたげる。出力バックエンドはnormal inline contextの
+改行を一つの表示上の空白へ写像し、不透明なblock本文の改行規則と混同してはならない。
+
 - `Text`は出力先バックエンドが解釈する通常テキストである。
 - `Literal`は不透明な内容であり、再帰的な置換を行わない。
 - `Styled`は再帰的に解析した意味上の子要素を所有する。

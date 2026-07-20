@@ -192,9 +192,13 @@ mod tests {
             .blocks
             .into_iter()
             .filter_map(|block| match block {
-                AstBlock::Paragraph(paragraph) => {
-                    Some(paragraph.lines.into_iter().map(|line| line.value).collect())
-                }
+                AstBlock::Paragraph(paragraph) => Some(
+                    paragraph
+                        .value
+                        .lines()
+                        .map(|line| line.trim_end_matches([' ', '\t']).to_owned())
+                        .collect(),
+                ),
                 AstBlock::Heading(_) => None,
                 AstBlock::Literal(_) => None,
                 AstBlock::Source(_) => None,
@@ -263,6 +267,22 @@ mod tests {
     }
 
     #[test]
+    fn formatter_preserves_line_boundaries_inside_multiline_spans() {
+        let source = "before *strong\r\n日本語* and ``mono\r\ncode``";
+        let formatted = format(
+            source,
+            &FormatConfig {
+                newline: NewlineStyle::CrLf,
+                final_newline: false,
+                ..FormatConfig::default()
+            },
+        )
+        .expect("format");
+
+        assert_eq!(formatted.formatted, source);
+    }
+
+    #[test]
     fn formatter_preserves_unsupported_regions_byte_for_byte() {
         let source = "before  \r\n\n== Unsupported  \r\n\nafter  ";
         let output = format(source, &FormatConfig::default()).expect("valid source");
@@ -328,11 +348,7 @@ mod tests {
     fn block_inlines(block: &AstBlock) -> Vec<&crate::inline::Inline> {
         match block {
             AstBlock::Heading(heading) => heading.inlines.iter().collect(),
-            AstBlock::Paragraph(paragraph) => paragraph
-                .lines
-                .iter()
-                .flat_map(|line| line.inlines.iter())
-                .collect(),
+            AstBlock::Paragraph(paragraph) => paragraph.inlines.iter().collect(),
             _ => Vec::new(),
         }
     }

@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 1;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -173,14 +173,12 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                 inline_text(&heading.inlines),
             ),
             AstBlock::Paragraph(paragraph) => {
-                for line in &paragraph.lines {
-                    push_search(
-                        output,
-                        SearchTextKind::Prose,
-                        line.range,
-                        inline_text(&line.inlines),
-                    );
-                }
+                push_search(
+                    output,
+                    SearchTextKind::Prose,
+                    paragraph.content_range,
+                    fold_line_endings(&inline_text(&paragraph.inlines)),
+                );
             }
             AstBlock::Literal(literal) => push_search(
                 output,
@@ -258,6 +256,14 @@ fn inline_text(inlines: &[Inline]) -> String {
         }
     }
     output
+}
+
+fn fold_line_endings(value: &str) -> String {
+    value
+        .lines()
+        .map(|line| line.trim_end_matches([' ', '\t']))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl DocumentProjection {
@@ -489,13 +495,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_one_json_contract() {
+    fn projections_keep_the_version_two_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":1,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":2,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

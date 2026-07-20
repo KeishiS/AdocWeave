@@ -54,6 +54,14 @@
       "contractImpact": "core-profile"
     },
     {
+      "name": "multiline-inline-spans-crlf",
+      "source": "before *strong\r\n日本語* and ``mono\r\ncode`` https://example.org[label\r\n続き]",
+      "expectedHtmlFile": "multiline.html",
+      "compatibility": "supported-subset",
+      "rationale": "段落inline列はCRLFとUnicodeのsource rangeを保持し、書式とmacro labelを行境界越しに解析する",
+      "contractImpact": "core-api,projection,conformance"
+    },
+    {
       "name": "unicode-crlf",
       "source": "= 日本語\r\n\r\n== 節🙂\r\n\r\n本文 é\r\n",
       "compatibility": "supported-subset",

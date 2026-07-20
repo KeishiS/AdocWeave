@@ -26,19 +26,13 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
     let AstBlock::Paragraph(first) = &parsed.ast.blocks[1] else {
         panic!("first content block is a paragraph");
     };
-    assert!(
-        first.lines[0]
-            .inlines
-            .iter()
-            .all(|inline| matches!(inline, Inline::Text(_)))
-    );
-    assert!(matches!(
-        first.lines[1].inlines.as_slice(),
-        [Inline::Styled {
+    assert!(first.inlines.iter().any(|inline| matches!(
+        inline,
+        Inline::Styled {
             style: InlineStyle::Strong,
             children,
             ..
-        }] if children.iter().any(|child| matches!(
+        } if children.iter().any(|child| matches!(
             child,
             Inline::Styled {
                 style: InlineStyle::Emphasis,
@@ -51,9 +45,9 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
                 ..
             }
         ))
-    ));
-    assert!(!first.lines[2].inline_problems.is_empty());
-    assert!(first.lines[2].inlines.iter().any(|inline| matches!(
+    )));
+    assert!(!first.inline_problems.is_empty());
+    assert!(first.inlines.iter().any(|inline| matches!(
         inline,
         Inline::Literal {
             kind: InlineLiteralKind::Monospace,

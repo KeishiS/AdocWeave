@@ -353,12 +353,18 @@ mod tests {
 
         assert_eq!(response.version, 3);
         assert_eq!(response.generation, 7);
-        assert_eq!(response.conformance_contract_version, 3);
+        assert_eq!(
+            response.conformance_contract_version,
+            CONFORMANCE_CONTRACT_VERSION
+        );
         assert!(response.cst.contains("Document@"));
         assert!(response.ast.contains("\"blocks\""));
         assert!(response.html.contains("<h1"));
         assert_eq!(response.symbols[0]["name"], "Title");
-        assert_eq!(response.projection["contractVersion"], 1);
+        assert_eq!(
+            response.projection["contractVersion"],
+            adocweave::projection::PROJECTION_CONTRACT_VERSION
+        );
         assert_eq!(response.parse.reference_count, 0);
     }
 

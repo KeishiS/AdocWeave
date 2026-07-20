@@ -137,6 +137,21 @@ impl LineIndex {
         u32::try_from(self.lines.len()).expect("source length limits the number of lines")
     }
 
+    pub fn line_length(&self, line: u32, encoding: PositionEncoding) -> Result<u32, PositionError> {
+        let Some(line) = self.lines.get(line as usize) else {
+            return Err(PositionError::LineOutOfBounds {
+                line,
+                line_count: self.line_count(),
+            });
+        };
+        let content = &self.source[line.start..line.content_end];
+        let length = match encoding {
+            PositionEncoding::Utf8 => content.len(),
+            PositionEncoding::Utf16 => content.encode_utf16().count(),
+        };
+        Ok(u32::try_from(length).expect("source length limits the line length"))
+    }
+
     pub fn offset_to_position(
         &self,
         offset: TextSize,
@@ -374,6 +389,15 @@ mod tests {
                 character: 0,
             })
         );
+    }
+
+    #[test]
+    fn line_lengths_use_the_requested_position_encoding() {
+        let index = LineIndex::new("a😀\r\nb").expect("valid source");
+
+        assert_eq!(index.line_length(0, PositionEncoding::Utf8), Ok(5));
+        assert_eq!(index.line_length(0, PositionEncoding::Utf16), Ok(3));
+        assert_eq!(index.line_length(1, PositionEncoding::Utf8), Ok(1));
     }
 
     #[test]

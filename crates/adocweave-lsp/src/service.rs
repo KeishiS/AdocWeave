@@ -839,6 +839,19 @@ impl LanguageService {
                 self.position_encoding,
             )?;
         }
+        let mut inline_ranges = Vec::new();
+        document.analysis.ast.visit_inline_sequences(|inlines| {
+            collect_inline_semantic_ranges(inlines, &mut inline_ranges);
+        });
+        for (range, token_type) in inline_ranges {
+            push_semantic_range(
+                &mut raw,
+                range,
+                token_type,
+                &document.analysis.line_index,
+                self.position_encoding,
+            )?;
+        }
         raw.sort_by_key(|(position, length, token_type)| {
             (position.line, position.character, *length, *token_type)
         });
@@ -1026,14 +1039,50 @@ fn push_semantic_range(
     encoding: PositionEncoding,
 ) -> Result<(), String> {
     let range = range_to_lsp(range, line_index, encoding)?;
-    if range.start.line == range.end.line && range.end.character > range.start.character {
-        output.push((
-            range.start,
-            range.end.character - range.start.character,
-            token_type,
-        ));
+    for line in range.start.line..=range.end.line {
+        let start = if line == range.start.line {
+            range.start.character
+        } else {
+            0
+        };
+        let end = if line == range.end.line {
+            range.end.character
+        } else {
+            line_index
+                .line_length(line, encoding.core())
+                .map_err(|error| error.to_string())?
+        };
+        if end > start {
+            output.push((lsp::Position::new(line, start), end - start, token_type));
+        }
     }
     Ok(())
+}
+
+fn collect_inline_semantic_ranges(
+    inlines: &[adocweave::inline::Inline],
+    output: &mut Vec<(CoreTextRange, u32)>,
+) {
+    for inline in inlines {
+        match inline {
+            adocweave::inline::Inline::Literal { content_range, .. }
+            | adocweave::inline::Inline::Formula(adocweave::inline::InlineFormula {
+                content_range,
+                ..
+            }) => output.push((*content_range, 2)),
+            adocweave::inline::Inline::Styled { children, .. } => {
+                collect_inline_semantic_ranges(children, output);
+            }
+            adocweave::inline::Inline::Link(link) => {
+                collect_inline_semantic_ranges(&link.label, output);
+            }
+            adocweave::inline::Inline::Reference(reference) => {
+                collect_inline_semantic_ranges(&reference.label, output);
+            }
+            adocweave::inline::Inline::Text(_)
+            | adocweave::inline::Inline::AttributeReference { .. } => {}
+        }
+    }
 }
 
 fn request_offset(

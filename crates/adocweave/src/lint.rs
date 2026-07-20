@@ -547,9 +547,7 @@ fn lint_headings(
                 push_inline_problems(diagnostics, config, &heading.inline_problems);
             }
             AstBlock::Paragraph(paragraph) => {
-                for line in &paragraph.lines {
-                    push_inline_problems(diagnostics, config, &line.inline_problems);
-                }
+                push_inline_problems(diagnostics, config, &paragraph.inline_problems);
             }
             AstBlock::Literal(literal) => {
                 for problem in &literal.problems {

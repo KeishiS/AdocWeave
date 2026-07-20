@@ -276,23 +276,18 @@ fn render_paragraph(
     output.push_str("<p");
     render_optional_id(output, id);
     output.push('>');
-    for (index, line) in paragraph.lines.iter().enumerate() {
-        if index != 0 {
-            output.push(' ');
-        }
-        render_inlines(output, &line.inlines, context);
-    }
+    render_inlines(output, &paragraph.inlines, context);
     output.push_str("</p>\n");
 }
 
 fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineRenderContext<'_>) {
     for inline in inlines {
         match inline {
-            Inline::Text(text) => escape_html_into(output, &text.value),
+            Inline::Text(text) => escape_inline_text(output, &text.value),
             Inline::Literal { kind, value, .. } => match kind {
                 InlineLiteralKind::Monospace => {
                     output.push_str("<code>");
-                    escape_html_into(output, value);
+                    escape_inline_text(output, value);
                     output.push_str("</code>");
                 }
             },
@@ -326,7 +321,7 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
                 output.push_str("<code class=\"");
                 output.push_str(math_class(formula.language));
                 output.push_str("\">");
-                escape_html_into(output, &formula.value);
+                escape_inline_text(output, &formula.value);
                 output.push_str("</code>");
             }
         }
@@ -506,6 +501,23 @@ fn escape_html_into(output: &mut String, text: &str) {
     }
 }
 
+fn escape_inline_text(output: &mut String, text: &str) {
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\r' {
+            if characters.peek() == Some(&'\n') {
+                characters.next();
+            }
+            output.push(' ');
+        } else if character == '\n' {
+            output.push(' ');
+        } else {
+            let mut encoded = [0; 4];
+            escape_html_into(output, character.encode_utf8(&mut encoded));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -534,6 +546,18 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &RenderPolicy::default()).html,
             "<p>plain &lt;text&gt; next</p>\n"
+        );
+    }
+
+    #[test]
+    fn multiline_inline_spans_fold_source_endings_without_losing_markup() {
+        let source =
+            "before *strong\n日本語* and ``mono\r\ncode`` https://example.org[label\n続き]";
+        let parsed = parse(source).expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<p>before <strong>strong 日本語</strong> and <code>mono code</code> <a href=\"https://example.org\">label 続き</a></p>\n"
         );
     }
 
@@ -780,7 +804,7 @@ mod tests {
         let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[1] else {
             panic!("paragraph");
         };
-        let Inline::Link(link) = &paragraph.lines[0].inlines[0] else {
+        let Inline::Link(link) = &paragraph.inlines[0] else {
             panic!("link");
         };
 
@@ -798,20 +822,17 @@ mod tests {
             .iter()
             .find_map(|block| match block {
                 AstBlock::Paragraph(paragraph) => {
-                    paragraph.lines[0]
-                        .inlines
-                        .iter()
-                        .find_map(|inline| match inline {
-                            Inline::Reference(reference)
-                                if matches!(
-                                    reference.destination,
-                                    ReferenceDestination::Document { .. }
-                                ) =>
-                            {
-                                Some(reference.range)
-                            }
-                            _ => None,
-                        })
+                    paragraph.inlines.iter().find_map(|inline| match inline {
+                        Inline::Reference(reference)
+                            if matches!(
+                                reference.destination,
+                                ReferenceDestination::Document { .. }
+                            ) =>
+                        {
+                            Some(reference.range)
+                        }
+                        _ => None,
+                    })
                 }
                 _ => None,
             })

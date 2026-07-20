@@ -22,3 +22,10 @@
 == 依存関係
 
 * 049
+
+== 実施結果
+
+完了。行単位の`TextNode`を廃止し、段落を`content_range`、改行を含む`value`、一つの
+`inlines`および`inline_problems`で表現する公開ASTへ移行した。LF／CRLFを元source offsetの
+まま解析し、HTMLでは段落改行を空白へ畳み込む。LSP semantic tokenは複数行rangeを行ごとの
+tokenへ分割する。
