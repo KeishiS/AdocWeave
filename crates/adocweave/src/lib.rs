@@ -26,8 +26,8 @@ pub mod source_lines;
 pub mod url;
 
 pub use core::{
-    Analysis, CORE_API_VERSION, CancellationCheck, CancellationToken, Engine, NeverCancel,
-    ParseError, ParseOptions, SourceId, SyntaxProfile, analyze, analyze_cancellable,
+    Analysis, CORE_API_VERSION, CORE_PROFILE_VERSION, CancellationCheck, CancellationToken, Engine,
+    NeverCancel, ParseError, ParseOptions, SourceId, SyntaxProfile, analyze, analyze_cancellable,
 };
 
 pub const PRODUCT_NAME: &str = "AdocWeave";
@@ -208,7 +208,7 @@ fn analyze_with_policy(
         &core::ParseOptions {
             source_id: None,
             profile: core::SyntaxProfile {
-                version: 1,
+                version: core::CORE_PROFILE_VERSION,
                 mode: config.syntax_mode,
             },
             limits: config.limits,

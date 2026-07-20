@@ -31,3 +31,25 @@ cargo make verify
 == 依存関係
 
 * 040
+
+== 進捗
+
+`CORE_PROFILE_VERSION = 1`を公開し、構文profileの直書きversionを一元化した。
+xref:../docs/core-profile.adoc[AdocWeave Core Profile 1]に必須構文、未対応範囲、mode、既定上限、
+Rust API・診断・HTML・projection・conformance・WASM・Workerの契約version、crate SemVerおよび
+成果物別の再構築条件を定義した。
+
+xref:../docs/release-checklist.adoc[Core Profileリリース確認]に自動ゲートとZed、ブラウザWorker、
+nativeホストの手動確認項目を定義した。`cargo make release-check`は全検証、実WASM適合性、
+短時間fuzz、release fixtureおよびWASM sizeをまとめる。
+
+CLI、LSP、native WASM adapterおよび実WASMは共通conformance fixtureを再利用する。
+契約versionの独立性を自動試験で固定し、fixtureごとに互換性、差分理由およびversion影響を
+記録する。
+
+コアcrateの通常依存が`sha2`だけであり、DB、ノートメタデータ型およびアプリ固有サーバを
+含まないことを依存関係とソース検索で確認した。既定設定の`cargo make release-check`は
+2026-07-20に成功した。これには全workspace、WASM、LSP、9件のnative／実WASM適合性比較、
+3 target各5秒のfuzz smokeおよびWASM size検査を含む。
+
+本Issueは完了した。

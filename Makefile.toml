@@ -195,6 +195,12 @@ args = ["test", "-p", "adocweave-lsp", "release_fixture"]
 description = "Run the cross-component initial release fixture tests"
 dependencies = ["test-release-core", "test-release-lsp"]
 
+[tasks.test-profile-release]
+description = "Run versioned core-profile and cross-runtime release contracts"
+dependencies = ["test-release", "test-cross-runtime"]
+command = "cargo"
+args = ["test", "-p", "adocweave-wasm", "--test", "conformance"]
+
 [tasks.check-zed]
 description = "Type-check the excluded Zed extension crate"
 command = "cargo"
@@ -260,3 +266,7 @@ dependencies = [
 [tasks.ci]
 description = "Run the complete gate plus fuzz target compilation and short exploration"
 dependencies = ["verify", "fuzz-check", "fuzz-smoke"]
+
+[tasks.release-check]
+description = "Run the publish gate and report release WASM artifact sizes"
+dependencies = ["ci", "test-profile-release", "wasm-size"]

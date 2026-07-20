@@ -7,7 +7,8 @@ use adocweave::html::RenderPolicy;
 use adocweave::limits::{ProcessingLimits, SyntaxMode};
 use adocweave::url::UrlPolicy;
 use adocweave::{
-    CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId, SyntaxProfile,
+    CORE_PROFILE_VERSION, CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions,
+    SourceId, SyntaxProfile,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -39,7 +40,7 @@ pub struct WasmOptions {
 impl Default for WasmOptions {
     fn default() -> Self {
         Self {
-            profile_version: 1,
+            profile_version: CORE_PROFILE_VERSION,
             syntax_mode: WasmSyntaxMode::Permissive,
             limits: WasmLimits::default(),
             protected_attributes: BTreeMap::new(),

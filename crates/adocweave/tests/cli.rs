@@ -169,3 +169,18 @@ fn release_fixture_works_across_convert_check_and_format() {
     assert_eq!(formatted.stdout, source);
     assert!(formatted.stderr.is_empty());
 }
+
+#[test]
+fn core_profile_fixture_is_shared_by_cli_conversion_and_symbols() {
+    let source = include_bytes!("../../../fixtures/conformance/full.adoc");
+    let expected_html = include_bytes!("../../../fixtures/conformance/full.html");
+
+    let converted = run_with_stdin(&["convert", "-"], source);
+    let symbols = run_with_stdin(&["symbols", "-"], source);
+
+    assert!(converted.status.success());
+    assert_eq!(converted.stdout, expected_html);
+    assert!(converted.stderr.is_empty());
+    assert!(symbols.status.success());
+    assert!(String::from_utf8_lossy(&symbols.stdout).contains("統合文書"));
+}

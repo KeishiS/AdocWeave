@@ -33,8 +33,9 @@ CLI、Formatter、HTMLバックエンドおよびLanguage Serverは、既存の`
 してはならない。文字列だけを受け取る便利関数は、内部で`Engine::analyze`を一度だけ
 呼び出してよい。
 
-`CORE_API_VERSION`は公開型、意味、診断またはエラー契約の破壊的変更時に更新する。
-HTML生成物の変更は別に`HTML_CONTRACT_VERSION`で管理する。
+`CORE_PROFILE_VERSION`は構文と既定意味、`CORE_API_VERSION`は公開型とAPI、HTML生成物は
+`HTML_CONTRACT_VERSION`で管理する。各versionと再構築条件は
+xref:core-profile.adoc[AdocWeave Core Profile 1]で定義する。
 
 == 構文層と意味層
 
@@ -107,7 +108,8 @@ M9完了時の設計レビューにより、今後の変更では次を維持す
 * ASTへブロックまたはインラインvariantを追加した場合、visitor、projection、HTML、
   Formatter、Lint、LSPおよび規範fixtureの網羅性を同じ変更で確認する。
 * 公開schemaは`CORE_API_VERSION`、`HTML_CONTRACT_VERSION`、
-  `PROJECTION_CONTRACT_VERSION`、`WASM_API_VERSION`またはWorker protocol versionの
+  `CORE_PROFILE_VERSION`、`PROJECTION_CONTRACT_VERSION`、
+  `CONFORMANCE_CONTRACT_VERSION`、`WASM_API_VERSION`またはWorker protocol versionの
   対応する契約で管理する。
 * async runtime、LSP型、WASM bindingおよび製品DB型をコアcrateへ持ち込まない。
 * キャッシュキーは`ParseOptions`を網羅的に分解し、設定追加時にコンパイルエラーで

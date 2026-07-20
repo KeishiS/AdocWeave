@@ -1,0 +1,43 @@
+= Core Profileリリース確認
+
+この確認項目はZed、ブラウザWorkerおよび将来のnativeホストで再利用する。製品固有の
+DB migration、認証、配布またはノートアプリの受け入れ確認は外部リポジトリで追加する。
+
+== 自動ゲート
+
+[source,console]
+----
+cargo make release-check
+----
+
+このtaskはstable Rustの全workspace・Clippy・docs・Zed・WASM型検査、native／実WASM
+conformance、短時間fuzz、Web Worker、release fixtureおよびWASM sizeを実行する。
+長時間fuzzはxref:testing.adoc[品質保証とFuzzing]の手順で別途定期実行する。
+
+== Zed
+
+. `.adoc`をAsciiDocとして認識する。
+. 診断、Outline、Code Action、Format、Hoverおよび補完が動作する。
+. 文書を編集した直後に診断、Outlineおよびsemantic highlightingが最新内容へ更新される。
+. 明示アンカーと文書xrefでDefinitionおよびFind All Referencesが動作する。
+. 通常リンク、文書xrefおよび任意スキームxrefがDocument Linkとして区別される。
+. Language Server再起動後も同じ結果になり、古い診断やEditが残らない。
+
+== ブラウザWorker
+
+. `cargo make build-wasm`の成果物を専用Workerで読み込める。
+. xref:../fixtures/conformance/full.adoc[共通fixture]でHTML、診断、シンボルおよびprojectionを表示できる。
+. 高頻度編集後に最新generationだけを表示する。
+. SharedArrayBufferを使える環境では解析中キャンセルが働く。
+. SharedArrayBufferを使えない環境ではWorker再生成による縮退経路が働く。
+. CSPとcross-origin isolationがxref:wasm-worker.adoc[WASM統合契約]を満たす。
+
+== Nativeホスト
+
+. `CORE_PROFILE_VERSION`と必要な各契約versionを起動時またはbuild時に照合する。
+. `ParseOptions`、`SourceId`、文書versionおよびgenerationを明示的に渡す。
+. DB、ネットワーク、ファイル、権限および任意スキームResolverをコアの外に置く。
+. cache keyと再構築範囲がxref:core-profile.adoc[Core Profile 1]に一致する。
+. Resolverが返したURLをHTML生成前に`UrlPolicy`で再検証する。
+
+手動確認の実施日、対象commit、OS・ブラウザ・Zed versionおよび不一致をリリース記録へ残す。
