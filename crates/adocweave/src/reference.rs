@@ -14,6 +14,9 @@ pub type ResolverFuture<'a, T> =
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ReferenceKey {
+    Local {
+        anchor: String,
+    },
     Document {
         document: String,
         anchor: Option<String>,
@@ -23,6 +26,34 @@ pub enum ReferenceKey {
         locator: String,
         anchor: Option<String>,
     },
+}
+
+impl ReferenceKey {
+    pub fn from_destination(destination: &crate::inline::ReferenceDestination) -> Option<Self> {
+        use crate::inline::ReferenceDestination;
+        match destination {
+            ReferenceDestination::Local { anchor, .. } => Some(Self::Local {
+                anchor: anchor.clone(),
+            }),
+            ReferenceDestination::Document {
+                document, anchor, ..
+            } => Some(Self::Document {
+                document: document.clone(),
+                anchor: anchor.clone(),
+            }),
+            ReferenceDestination::Scheme {
+                scheme,
+                locator,
+                anchor,
+                ..
+            } => Some(Self::Scheme {
+                scheme: scheme.clone(),
+                locator: locator.clone(),
+                anchor: anchor.clone(),
+            }),
+            ReferenceDestination::Invalid => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -142,26 +173,7 @@ pub fn query_from_reference(
     source_id: Option<SourceId>,
     reference: &crate::inline::Reference,
 ) -> Option<ReferenceQuery> {
-    use crate::inline::ReferenceDestination;
-    let target = match &reference.destination {
-        ReferenceDestination::Document {
-            document, anchor, ..
-        } => ReferenceKey::Document {
-            document: document.clone(),
-            anchor: anchor.clone(),
-        },
-        ReferenceDestination::Scheme {
-            scheme,
-            locator,
-            anchor,
-            ..
-        } => ReferenceKey::Scheme {
-            scheme: scheme.clone(),
-            locator: locator.clone(),
-            anchor: anchor.clone(),
-        },
-        ReferenceDestination::Local { .. } | ReferenceDestination::Invalid => return None,
-    };
+    let target = ReferenceKey::from_destination(&reference.destination)?;
     Some(ReferenceQuery {
         source_id,
         source_range: reference.range,

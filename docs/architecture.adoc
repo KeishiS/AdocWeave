@@ -16,6 +16,7 @@ AdocWeaveは標準AsciiDocの解析コア、出力バックエンド、ホスト
             └─ Reference
                  ├─ Formatter
                  ├─ HTMLその他の出力バックエンド
+                 ├─ 汎用文書projection
                  ├─ CLI
                  ├─ Language Server
                  └─ ホスト固有の解析・参照解決
@@ -55,6 +56,10 @@ wildcard分岐を避ける。
 ホストは標準解析の完了後に、同じ`Analysis`からアプリケーション固有の値を検証・投影
 する。DB、ファイル、ネットワーク、時刻、環境変数およびアクセス制御はホストが所有する。
 ホスト診断は標準診断と別の結果として生成し、必要なら表示層で決定的に統合する。
+
+検索テキスト、参照edge、通常リンクおよびアンカー索引は、同じ`Analysis`を入力とする
+xref:projections.adoc[汎用文書projection]から取得する。ノートアプリ固有projectionは
+その出力を別リポジトリで変換し、コアASTへDBスキーマを追加しない。
 
 Parserへ任意コードを注入するプラグイン機構は提供しない。新しい表面構文には、
 AdocWeave側でCST、AST、回復規則、診断およびfixtureを定義する必要がある。

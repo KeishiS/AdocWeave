@@ -34,3 +34,16 @@ cargo test --workspace searchable_text
 == 依存関係
 
 * 044
+
+== 実装結果
+
+`adocweave::projection`に契約version 1の`DocumentProjection`を追加した。一つの
+`Analysis`からタイトル、参照先、通常リンク、統一参照edgeおよび検索テキストを抽出し、
+安定JSONを生成する。`ReferenceKey`には文書内参照を表す`Local`を追加し、文書内・文書間・
+任意スキーム参照を同じedge型で表現する。
+
+検索テキストはproseとcodeの元範囲付きsegmentを保持する。コードは対象、数式、属性行、
+不可視アンカーおよび未対応ブロックは対象外とした。規範は
+xref:../docs/projections.adoc[汎用文書projection契約]に記載する。
+
+この公開契約追加と`ReferenceKey`の破壊的拡張により`CORE_API_VERSION`を5へ更新した。

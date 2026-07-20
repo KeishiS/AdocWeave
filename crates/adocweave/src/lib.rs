@@ -17,6 +17,7 @@ pub mod inline;
 pub mod limits;
 pub mod lint;
 pub mod parser;
+pub mod projection;
 pub mod reference;
 pub mod source;
 pub mod source_lines;

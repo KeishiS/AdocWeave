@@ -1,0 +1,68 @@
+= 汎用文書projection契約
+
+`adocweave::projection::project`は、一つの所有型`Analysis`からHTMLとは独立した
+ホスト向け情報を抽出する。projection生成時にソースを再解析せず、ファイル、DB、
+ネットワークまたはノートアプリ固有スキーマへアクセスしない。
+
+現在の`PROJECTION_CONTRACT_VERSION`は1である。公開フィールドの意味または安定JSON表現を
+破壊的に変更する場合は、このversionを更新する。
+
+== 出力
+
+`DocumentProjection`は次を保持する。
+
+* 文書タイトルと元範囲
+* 文書タイトル、見出しおよび明示アンカーからなる参照先
+* 通常の外部リンクと、表示文字列・URLそれぞれの元範囲
+* 文書内、文書間および任意スキームxrefを統一した`ReferenceEdge`
+* 検索用文字列と、prose・codeを区別する元範囲付きsegment
+* 不透明な参照元`SourceId`とprojection契約version
+
+`ReferenceEdge.target`は`ReferenceKey::Local`、`Document`または`Scheme`のいずれかである。
+通常リンクはxref edgeへ混在させず、`ExternalLink`として型で区別する。Resolver結果を
+渡した場合は、参照元範囲が完全に一致するedgeだけへ解決結果を付加する。projection自身は
+解決を実行しない。
+
+同じ`Analysis`と同じ解決結果列からは、同じ順序と同じ`render_json()`結果を得なければ
+ならない。出現順を基本とし、外部リンクは元範囲順、参照先は`Analysis`の規範順を維持する。
+重複するリンクまたは参照を暗黙にまとめない。
+
+== 検索テキスト
+
+[cols="2,1,3",options="header"]
+|===
+|要素 |対象 |規則
+
+|タイトル、見出し、段落、リスト項目
+|含める
+|インライン装飾を除いた可読文字列を`prose` segmentにする。
+
+|通常リンク、xref
+|含める
+|表示文字列があれば表示文字列、なければソース上の参照先を使う。
+
+|literal block、source block
+|含める
+|内容を`code` segmentにする。末尾の改行だけを検索用表現から除く。
+
+|インライン・ブロック数式
+|含めない
+|数式言語固有の検索・索引はホスト拡張へ委譲する。
+
+|文書属性行、アンカー記号
+|含めない
+|不可視メタデータであり、表示テキストへ混在させない。
+
+|未対応ブロック
+|含めない
+|意味を推測せず、将来その構文を正式対応した時点で規則を追加する。
+|===
+
+segmentの`source_range`は元入力のUTF-8 byte範囲である。連結済み`text`のoffsetとは
+一致しないため、位置対応が必要なホストは`segments`を使用する。
+
+== ホスト境界
+
+ノートID、タグ、DB列、アクセス制御および検索エンジン固有tokenはこのprojectionへ
+追加しない。ホストは汎用projectionを入力としてアプリ固有projectionを別リポジトリで
+構築する。通常リンクの到達確認やxrefの実在確認もホストのResolver責務である。

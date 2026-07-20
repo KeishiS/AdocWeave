@@ -1,7 +1,7 @@
 = cross reference解決契約
 
 コア解析は参照解決を行わない。`Analysis.references`は範囲付きの構文表現を保持し、
-`reference_queries()`は別文書および任意のスキーム参照を
+`reference_queries()`は文書内、別文書および任意のスキーム参照を
 `ReferenceQuery`へ正規化する。参照元は不透明な`SourceId`のままホストへ渡す。
 
 `note:`は独立したマクロではなく、xref参照先スキームである。
@@ -27,6 +27,10 @@ noteアプリは標準解析後に`Analysis::reference_queries()`を読み、UUI
 
 Resolverが返したhrefは信頼境界を越える外部入力である。HTMLは必ずURLポリシーを
 再適用し、拒否したhrefをリンクとして出力しない。
+
+参照グラフや検索索引へ渡す場合は
+xref:projections.adoc[汎用文書projection契約]の`ReferenceEdge`を使用する。通常の外部URLは
+`ExternalLink`としてxrefと型で区別する。
 
 別リポジトリで拡張を実装する際の登録、Resolver、キャッシュ、診断および安全性の
 規範要件はxref:extensions.adoc[ホスト拡張実装契約]に定義する。このリポジトリは

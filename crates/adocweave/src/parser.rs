@@ -444,23 +444,27 @@ impl AstDocument {
                 for child in &item.children {
                     visit_list(child, visitor);
                 }
+                visit_blocks(&item.continuations, visitor);
             }
         }
-        for block in &self.blocks {
-            match block {
-                AstBlock::Heading(heading) => visitor(&heading.inlines),
-                AstBlock::Paragraph(paragraph) => {
-                    for line in &paragraph.lines {
-                        visitor(&line.inlines);
+        fn visit_blocks(blocks: &[AstBlock], visitor: &mut impl FnMut(&[Inline])) {
+            for block in blocks {
+                match block {
+                    AstBlock::Heading(heading) => visitor(&heading.inlines),
+                    AstBlock::Paragraph(paragraph) => {
+                        for line in &paragraph.lines {
+                            visitor(&line.inlines);
+                        }
                     }
+                    AstBlock::List(list) => visit_list(list, visitor),
+                    AstBlock::Literal(_)
+                    | AstBlock::Source(_)
+                    | AstBlock::Math(_)
+                    | AstBlock::Unsupported(_) => {}
                 }
-                AstBlock::List(list) => visit_list(list, &mut visitor),
-                AstBlock::Literal(_)
-                | AstBlock::Source(_)
-                | AstBlock::Math(_)
-                | AstBlock::Unsupported(_) => {}
             }
         }
+        visit_blocks(&self.blocks, &mut visitor);
     }
 
     pub fn visit_inline_sequences_mut(&mut self, mut visitor: impl FnMut(&mut Vec<Inline>)) {
@@ -470,23 +474,27 @@ impl AstDocument {
                 for child in &mut item.children {
                     visit_list(child, visitor);
                 }
+                visit_blocks(&mut item.continuations, visitor);
             }
         }
-        for block in &mut self.blocks {
-            match block {
-                AstBlock::Heading(heading) => visitor(&mut heading.inlines),
-                AstBlock::Paragraph(paragraph) => {
-                    for line in &mut paragraph.lines {
-                        visitor(&mut line.inlines);
+        fn visit_blocks(blocks: &mut [AstBlock], visitor: &mut impl FnMut(&mut Vec<Inline>)) {
+            for block in blocks {
+                match block {
+                    AstBlock::Heading(heading) => visitor(&mut heading.inlines),
+                    AstBlock::Paragraph(paragraph) => {
+                        for line in &mut paragraph.lines {
+                            visitor(&mut line.inlines);
+                        }
                     }
+                    AstBlock::List(list) => visit_list(list, visitor),
+                    AstBlock::Literal(_)
+                    | AstBlock::Source(_)
+                    | AstBlock::Math(_)
+                    | AstBlock::Unsupported(_) => {}
                 }
-                AstBlock::List(list) => visit_list(list, &mut visitor),
-                AstBlock::Literal(_)
-                | AstBlock::Source(_)
-                | AstBlock::Math(_)
-                | AstBlock::Unsupported(_) => {}
             }
         }
+        visit_blocks(&mut self.blocks, &mut visitor);
     }
 }
 
