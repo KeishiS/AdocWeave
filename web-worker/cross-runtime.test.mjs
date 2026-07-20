@@ -66,6 +66,24 @@ for (const entry of manifest.cases) {
         readFileSync(resolve(fixtures, entry.expectedHtmlFile), "utf8"),
       );
     }
+    if (entry.expectedAstFile) {
+      assert.equal(
+        actual.value.ast,
+        readFileSync(resolve(fixtures, entry.expectedAstFile), "utf8").trimEnd(),
+      );
+    }
+    for (const [field, product] of [
+      ["expectedDiagnosticsFile", "diagnostics"],
+      ["expectedProjectionFile", "projection"],
+      ["expectedSymbolsFile", "symbols"],
+    ]) {
+      if (entry[field]) {
+        assert.deepEqual(
+          actual.value[product],
+          JSON.parse(readFileSync(resolve(fixtures, entry[field]), "utf8")),
+        );
+      }
+    }
     if (entry.expectedErrorCode) {
       assert.equal(actual.error.code, entry.expectedErrorCode);
     }

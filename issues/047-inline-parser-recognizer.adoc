@@ -75,3 +75,9 @@ markerの有効closerは一回の逆向き走査、macroの`[`、`]`および`>>
 scheme探索が空白や別tokenへ越境しない規則を規範文法へ追加した。生成した密集不正入力を含め、
 scannerの検査量が`2 * Unicode scalar数 + UTF-8 byte数`に一致し、したがって入力byte数の
 3倍以下となる不変条件をテストで固定した。
+
+nativeとWASMの同一実装比較とは独立したoracleとして、属性、anchor、通常リンク、三種のxref、
+入れ子リストおよびSTEMを含む包括的caseへAST、診断、projection、symbolおよびHTMLの固定goldenを
+追加した。native runnerと実WASM runnerの双方がmanifestに指定された期待ファイルを検証する。
+残る作業はconformance ASTを公開ASTの`Serialize`実装から明示的なversion付きDTOへ分離する
+ことである。

@@ -61,6 +61,28 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                 "{name}"
             );
         }
+        if let Some(file) = entry["expectedAstFile"].as_str() {
+            assert_eq!(
+                response.ast,
+                fs::read_to_string(resolve(&fixtures, file))
+                    .expect("expected AST")
+                    .trim_end(),
+                "{name}: AST golden"
+            );
+        }
+        for (field, actual) in [
+            ("expectedDiagnosticsFile", &response.diagnostics),
+            ("expectedProjectionFile", &response.projection),
+            ("expectedSymbolsFile", &response.symbols),
+        ] {
+            if let Some(file) = entry[field].as_str() {
+                let expected: Value = serde_json::from_str(
+                    &fs::read_to_string(resolve(&fixtures, file)).expect("expected JSON product"),
+                )
+                .expect("valid expected JSON product");
+                assert_eq!(*actual, expected, "{name}: {field}");
+            }
+        }
     }
 }
 

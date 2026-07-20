@@ -76,6 +76,10 @@ Rustの型が同じであることだけをruntime一致の代わりにせず、
 してはならない。包括的caseはリポジトリに固定した期待AST、診断、projectionおよびHTMLとも
 比較する。
 
+`attributes-anchors-links-references-lists-stem` caseはAST、診断、projection、symbolおよびHTMLの
+固定goldenを持つ。runnerの出力から試験時に期待値を再生成してはならない。意図した契約変更では
+各差分をレビューし、`contractImpact`と契約versionを判定してから期待ファイルを更新する。
+
 == Formatterの不変条件
 
 Formatterは生成入力に対して次の三条件を満たさなければならない。

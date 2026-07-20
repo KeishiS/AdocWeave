@@ -13,6 +13,10 @@
       "name": "attributes-anchors-links-references-lists-stem",
       "sourceFile": "full.adoc",
       "expectedHtmlFile": "full.html",
+      "expectedAstFile": "full.ast.json",
+      "expectedDiagnosticsFile": "full.diagnostics.json",
+      "expectedProjectionFile": "full.projection.json",
+      "expectedSymbolsFile": "full.symbols.json",
       "compatibility": "approved-adocweave-output",
       "rationale": "未解決文書xrefはホストResolverを暗黙に呼ばず安全なテキストとして出力する",
       "contractImpact": "none"
