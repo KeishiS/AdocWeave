@@ -2,6 +2,7 @@
 
 use std::fmt::Write as _;
 
+use crate::inline::{Inline, InlineParseConfig, parse_text};
 use crate::source::{PositionError, TextRange};
 use crate::source_lines::{LosslessToken, SourceLine, SourceLines};
 
@@ -66,6 +67,7 @@ impl<'source> CstDocument<'source> {
 pub struct TextNode {
     pub range: TextRange,
     pub value: String,
+    pub inlines: Vec<Inline>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,6 +105,7 @@ pub struct Heading {
     pub text_range: TextRange,
     pub kind: HeadingKind,
     pub text: String,
+    pub inlines: Vec<Inline>,
     pub problems: Vec<HeadingProblem>,
 }
 
@@ -294,6 +297,7 @@ fn parse_heading(
         text_range,
         kind,
         text: text.to_owned(),
+        inlines: parse_text(text, text_range, InlineParseConfig::default()),
         problems,
     })
 }
@@ -316,9 +320,20 @@ fn flush_paragraph(
         range,
         lines: lines
             .drain(..)
-            .map(|(line, value)| TextNode {
-                range: line.content_range(),
-                value,
+            .map(|(line, value)| {
+                let value_range = TextRange::new(
+                    line.content_range().start(),
+                    crate::source::TextSize::new(
+                        line.content_range().start().to_usize() + value.len(),
+                    )
+                    .expect("source offset fits"),
+                )
+                .expect("trimmed text range is ordered");
+                TextNode {
+                    range: value_range,
+                    inlines: parse_text(&value, value_range, InlineParseConfig::default()),
+                    value,
+                }
             })
             .collect(),
     }));

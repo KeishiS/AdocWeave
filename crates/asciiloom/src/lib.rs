@@ -10,6 +10,7 @@ pub mod diagnostic;
 pub mod document;
 pub mod formatter;
 pub mod html;
+pub mod inline;
 pub mod lint;
 pub mod parser;
 pub mod source;

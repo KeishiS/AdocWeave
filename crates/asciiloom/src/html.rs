@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use crate::diagnostic::Diagnostic;
 use crate::document::{HeadingId, generate_heading_ids};
+use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -66,7 +67,7 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
 fn render_heading(output: &mut String, heading: &Heading, id: &str, options: &HtmlOptions) {
     if !heading.problems.is_empty() {
         output.push_str("<p>");
-        escape_html_into(output, &heading.text);
+        render_inlines(output, &heading.inlines);
         output.push_str("</p>\n");
         return;
     }
@@ -76,7 +77,7 @@ fn render_heading(output: &mut String, heading: &Heading, id: &str, options: &Ht
             output.push_str("<h1 class=\"document-title\" id=\"");
             output.push_str(id);
             output.push_str("\">");
-            escape_html_into(output, &heading.text);
+            render_inlines(output, &heading.inlines);
             output.push_str("</h1>\n");
         }
         HeadingKind::DocumentTitle => {}
@@ -87,7 +88,7 @@ fn render_heading(output: &mut String, heading: &Heading, id: &str, options: &Ht
             output.push_str(" id=\"");
             output.push_str(id);
             output.push_str("\">");
-            escape_html_into(output, &heading.text);
+            render_inlines(output, &heading.inlines);
             output.push_str("</h");
             output.push(level);
             output.push_str(">\n");
@@ -101,9 +102,17 @@ fn render_paragraph(output: &mut String, paragraph: &Paragraph) {
         if index != 0 {
             output.push(' ');
         }
-        escape_html_into(output, &line.value);
+        render_inlines(output, &line.inlines);
     }
     output.push_str("</p>\n");
+}
+
+fn render_inlines(output: &mut String, inlines: &[Inline]) {
+    for inline in inlines {
+        match inline {
+            Inline::Text(text) => escape_html_into(output, &text.value),
+        }
+    }
 }
 
 fn render_unsupported(output: &mut String, unsupported: &Unsupported) {
@@ -137,6 +146,16 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &HtmlOptions::default()).html,
             "<p>first line second line</p>\n<p>last</p>\n"
+        );
+    }
+
+    #[test]
+    fn inline_html_regression_keeps_plain_text_output_unchanged() {
+        let parsed = parse("plain <text>\nnext").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &HtmlOptions::default()).html,
+            "<p>plain &lt;text&gt; next</p>\n"
         );
     }
 
