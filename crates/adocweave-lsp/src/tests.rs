@@ -1,6 +1,6 @@
 //! AdocWeave Language Server protocol tests.
 
-use super::{PositionEncoding, Server, run};
+use super::{PositionEncoding, Server, run, run_legacy};
 use serde_json::json;
 use std::io::Cursor;
 
@@ -140,10 +140,122 @@ fn document_sync_stdio_runs_initialize_shutdown_exit() {
     }
     let mut output = Vec::new();
 
-    run(Cursor::new(input), &mut output).expect("server exits cleanly");
+    run_legacy(Cursor::new(input), &mut output).expect("server exits cleanly");
     let output = String::from_utf8(output).expect("utf-8 protocol");
     assert!(output.contains("\"id\":1"));
     assert!(output.contains("\"id\":2"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn async_lsp_stdio_path_handles_lifecycle() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    async fn write_message(output: &mut (impl AsyncWriteExt + Unpin), message: &serde_json::Value) {
+        let body = serde_json::to_vec(message).expect("serialize");
+        output
+            .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
+            .await
+            .expect("header");
+        output.write_all(&body).await.expect("body");
+        output.flush().await.expect("flush");
+    }
+
+    async fn read_message(
+        input: &mut BufReader<impl tokio::io::AsyncRead + Unpin>,
+    ) -> serde_json::Value {
+        let mut content_length = None;
+        loop {
+            let mut header = String::new();
+            input.read_line(&mut header).await.expect("header");
+            if header == "\r\n" {
+                break;
+            }
+            if let Some(value) = header.strip_prefix("Content-Length:") {
+                content_length = Some(value.trim().parse::<usize>().expect("length"));
+            }
+        }
+        let mut body = vec![0; content_length.expect("content length")];
+        input.read_exact(&mut body).await.expect("body");
+        serde_json::from_slice(&body).expect("json")
+    }
+
+    let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
+    let mut client_read = BufReader::new(client_read);
+
+    let client = async move {
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"initialize",
+                "params":{"processId":null,"rootUri":null,"capabilities":{}}
+            }),
+        )
+        .await;
+        let initialized = read_message(&mut client_read).await;
+        assert_eq!(initialized["id"], 1);
+        assert_eq!(
+            initialized["result"]["capabilities"]["documentSymbolProvider"],
+            true
+        );
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        )
+        .await;
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "method":"textDocument/didOpen",
+                "params":{"textDocument":{
+                    "uri":"file:///typed.adoc",
+                    "languageId":"asciidoc",
+                    "version":1,
+                    "text":"= Typed path\n"
+                }}
+            }),
+        )
+        .await;
+        let diagnostics = read_message(&mut client_read).await;
+        assert_eq!(diagnostics["method"], "textDocument/publishDiagnostics");
+        assert_eq!(diagnostics["params"]["version"], 1);
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":3,
+                "method":"textDocument/documentSymbol",
+                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+            }),
+        )
+        .await;
+        let symbols = read_message(&mut client_read).await;
+        assert_eq!(symbols["id"], 3);
+        assert_eq!(symbols["result"][0]["name"], "Typed path");
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 2);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"exit","params":null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::join!(server, client);
+    server_result.expect("clean exit");
 }
 
 fn open_with_diagnostic(server: &mut Server, uri: &str, text: &str) -> serde_json::Value {

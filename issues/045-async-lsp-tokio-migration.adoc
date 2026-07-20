@@ -87,3 +87,15 @@ cargo make verify
 
 TokioはLSP実行アダプターだけで使用する。Issue 036のホスト実行契約は引き続き特定runtime
 へ依存せず、WASM、CLIおよび外部ホストにTokioを要求しない。
+
+== 進捗
+
+=== async-lsp frontend
+
+`async-lsp 0.2.4`とTokioを最小featureで導入し、実行バイナリのstdio、型付きRouter、
+Lifecycle、Concurrency、panic隔離およびtracingを新基盤へ切り替えた。in-memory transportで
+initialize、診断通知、Document Symbol、shutdownおよびexitを検証する。
+
+意味処理は回帰を避けるため従来のJSON dispatchを一時的に再利用している。次の作業で
+文書状態と各機能を型付きserviceへ抽出し、手書きtransport、protocol型およびJSON dispatchを
+削除する。有界CPU解析、キャンセル伝播およびgeneration管理も未完了である。

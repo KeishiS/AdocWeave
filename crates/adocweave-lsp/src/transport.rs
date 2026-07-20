@@ -1,16 +1,10 @@
 //! AdocWeave Language Server standard-I/O transport.
 
-use std::io::{self, BufRead, Write};
+use std::io::{BufRead, Write};
 
 use serde_json::Value;
 
 use crate::Server;
-
-pub fn run_stdio() -> Result<(), String> {
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    run(stdin.lock(), stdout.lock())
-}
 
 pub fn run<R: BufRead, W: Write>(mut input: R, mut output: W) -> Result<(), String> {
     let mut server = Server::default();
