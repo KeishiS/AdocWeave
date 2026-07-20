@@ -70,3 +70,6 @@ Definition、ReferencesおよびDocument Linkを自動試験する。
 M9完了後の設計レビューでは、`HostReferenceRequest`へsource versionとgenerationを必須化し、
 stale索引結果をホスト側でも判定可能にした。外部へはrunnerとホスト索引契約だけを公開し、
 文書storeと意味処理serviceは実装詳細へ戻した。
+
+自動完了条件は満たした。Linux版ZedでのDefinition、References、Document Link、
+Semantic Tokensおよびincremental同期の回帰確認を残す。
