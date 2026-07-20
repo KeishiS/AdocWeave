@@ -115,17 +115,17 @@ hover情報、安定した生成IDを提供する。
 |xref:../issues/030-anchors-and-stable-ids.adoc[Issue 030]
 |生成した見出しIDだけを提供する。
 
-|リンクとURLポリシー
+|通常リンク、cross referenceとURLポリシー
 |xref:../issues/031-links-and-url-policy.adoc[Issue 031]
-|リンクマクロをテキストとして残す。
+|通常リンク、`<<id,label>>`、`xref:#id[label]`および文書間xrefをテキストとして残す。
 
 |リストとブロック継続
 |xref:../issues/032-lists-and-continuations.adoc[Issue 032]
 |リストASTはなく、入力は通常段落のテキストとして残る。
 
-|ノート参照
+|cross reference解決とノート参照
 |xref:../issues/033-note-reference-macro.adoc[Issue 033]
-|UUIDやホスト側解決は行わない。
+|文書間xrefや`note:`のホスト側解決は行わない。
 
 |STEMとLaTeX
 |xref:../issues/034-latex-stem.adoc[Issue 034]

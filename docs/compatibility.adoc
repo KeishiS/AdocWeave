@@ -146,7 +146,8 @@ xref:substitutions.adoc[Core 0.1置換モデル]で定義する。
 
 |リンクと相互参照
 |URL、link、email、xrefなどのマクロ
-|未対応
+|未対応。Issue 031で文書内・文書間xrefの構文を追加し、Issue 033でホスト注入型
+Resolverによる解決を追加する
 
 |includeと条件分岐
 |プリプロセッサディレクティブ

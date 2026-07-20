@@ -8,8 +8,12 @@
 
 - workspace configuration、リクエストキャンセル、debounceおよび文書ごとの古いタスク破棄を実装する。
 - 複数文書の並行解析上限と異常終了後のホスト側再起動方針を定義する。
-- 属性、アンカー、通常リンク、`note:`、言語名および数式に対するホバー・補完対象を定義する。
-- `textDocument/definition` を実装し、ノート・アンカー解決をホスト注入Resolverへ委譲する。
+- 属性、アンカー、通常リンク、標準cross reference、`note:`、言語名および数式に対する
+  ホバー・補完対象を定義する。
+- `textDocument/definition`、`textDocument/references`および`textDocument/documentLink`
+  を実装し、文書・ノート・アンカー解決をホスト注入Resolverへ委譲する。
+- アンカー名変更に伴うrenameは、全参照を完全に列挙できるResolverがある場合だけ
+  `WorkspaceEdit`を返し、不完全な索引で破壊的編集を行わない。
 - 構文ハイライト用semantic tokensをCST・ASTから生成する。
 - 単一文書機能と将来のワークスペース索引を別レイヤーにする。
 - push diagnostics継続またはpull diagnostics移行を決定し、capabilitiesとfixtureを更新する。
@@ -19,6 +23,9 @@
 - キャンセル済みまたは古い解析から診断、補完、Editを返さない。
 - position encoding、full・incremental同期およびCRLFの組合せをテストできる。
 - Resolver障害時もコア構文機能とサーバプロセスが継続する。
+- 文書内、文書間および`note:`参照について定義移動と参照検索の位置がUTF-8・UTF-16の
+  双方で一致する。
+- 未解決参照、曖昧な参照および索引更新中の参照に対して、古い移動先を返さない。
 - 同じASTからCLI、ブラウザおよびLSPで一致するシンボルと診断を得られる。
 
 == 検証
@@ -28,6 +35,8 @@
 cargo test -p asciiloom-lsp protocol
 cargo test -p asciiloom-lsp cancellation
 cargo test -p asciiloom-lsp definition
+cargo test -p asciiloom-lsp references
+cargo test -p asciiloom-lsp document_links
 ----
 
 == 依存関係
