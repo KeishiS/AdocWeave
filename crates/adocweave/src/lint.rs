@@ -31,10 +31,12 @@ pub enum LintRule {
     UndefinedAttribute,
     UnusedAttribute,
     ProtectedAttribute,
+    InvalidAnchor,
+    DuplicateAnchor,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 17] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -50,6 +52,8 @@ impl LintRule {
         Self::UndefinedAttribute,
         Self::UnusedAttribute,
         Self::ProtectedAttribute,
+        Self::InvalidAnchor,
+        Self::DuplicateAnchor,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -69,6 +73,8 @@ impl LintRule {
             Self::UndefinedAttribute => "undefined-attribute",
             Self::UnusedAttribute => "unused-attribute",
             Self::ProtectedAttribute => "protected-attribute",
+            Self::InvalidAnchor => "invalid-anchor",
+            Self::DuplicateAnchor => "duplicate-anchor",
         }
     }
 }
@@ -200,9 +206,61 @@ pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, Positi
 
     lint_headings(source, config, &mut diagnostics)?;
     lint_attributes(source, config, &mut diagnostics)?;
+    lint_anchors(source, config, &mut diagnostics)?;
     sort_diagnostics(&mut diagnostics);
     diagnostics.truncate(config.max_diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_anchors(
+    source: &str,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), PositionError> {
+    let parsed = parse_with_config(
+        source,
+        &ParseConfig {
+            max_inline_depth: config.max_inline_depth,
+        },
+    )?;
+    let mut ids = BTreeMap::<String, TextRange>::new();
+    for anchor in &parsed.ast.anchors {
+        if !anchor.valid {
+            push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InvalidAnchor,
+                anchor.range,
+                "invalid or unattached explicit anchor",
+                None,
+            );
+        }
+    }
+    for target in crate::document::reference_targets(&parsed.ast) {
+        if let Some(first) = ids.insert(target.id.clone(), target.id_range) {
+            let settings = config.rule(LintRule::DuplicateAnchor);
+            if settings.enabled {
+                diagnostics.push(Diagnostic {
+                    id: DiagnosticId::new(format!(
+                        "{}@{}:{}",
+                        LintRule::DuplicateAnchor.code(),
+                        target.id_range.start().to_u32(),
+                        target.id_range.end().to_u32()
+                    )),
+                    code: DiagnosticCode::new(LintRule::DuplicateAnchor.code()),
+                    severity: settings.severity,
+                    message: format!("duplicate anchor ID `{}`", target.id),
+                    range: target.id_range,
+                    related: vec![RelatedInformation {
+                        message: "first target with this ID".to_owned(),
+                        range: first,
+                    }],
+                    fixes: Vec::new(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn lint_attributes(
@@ -757,5 +815,27 @@ mod tests {
         assert!(codes.contains(&"duplicate-attribute"));
         assert!(codes.contains(&"undefined-attribute"));
         assert!(codes.contains(&"unused-attribute"));
+    }
+
+    #[test]
+    fn anchors_report_invalid_unattached_and_duplicate_ids() {
+        let diagnostics = lint(
+            "[[same]]\n== One\n\n[[same]]\n== Two\n\n[[bad id]]\nParagraph\n\n[[orphan]]\n",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+        let codes = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(codes.contains(&"duplicate-anchor"));
+        assert!(
+            codes
+                .iter()
+                .filter(|code| **code == "invalid-anchor")
+                .count()
+                >= 2
+        );
     }
 }

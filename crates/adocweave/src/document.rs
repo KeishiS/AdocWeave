@@ -15,21 +15,41 @@ pub struct HeadingId {
 
 pub fn generate_heading_ids(document: &AstDocument) -> Vec<HeadingId> {
     let mut occurrences = BTreeMap::<String, usize>::new();
+    let mut used = document
+        .anchors
+        .iter()
+        .filter(|anchor| anchor.valid)
+        .map(|anchor| anchor.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     document
         .blocks
         .iter()
         .filter_map(|block| match block {
             AstBlock::Heading(heading) => {
                 let base = heading_id_base(&heading.text);
-                let occurrence = occurrences.entry(base.clone()).or_default();
-                *occurrence += 1;
-                let id = if *occurrence == 1 {
-                    base.clone()
-                } else {
-                    format!("{base}_{}", *occurrence)
-                };
+                let explicit = document
+                    .anchors
+                    .iter()
+                    .find(|anchor| anchor.valid && anchor.target_range == Some(heading.range));
+                let id = explicit.map_or_else(
+                    || {
+                        let occurrence = occurrences.entry(base.clone()).or_default();
+                        loop {
+                            *occurrence += 1;
+                            let candidate = if *occurrence == 1 {
+                                base.clone()
+                            } else {
+                                format!("{base}_{}", *occurrence)
+                            };
+                            if used.insert(candidate.clone()) {
+                                break candidate;
+                            }
+                        }
+                    },
+                    |anchor| anchor.id.clone(),
+                );
                 Some(HeadingId {
-                    range: heading.text_range,
+                    range: explicit.map_or(heading.text_range, |anchor| anchor.id_range),
                     base,
                     id,
                 })
@@ -37,6 +57,88 @@ pub fn generate_heading_ids(document: &AstDocument) -> Vec<HeadingId> {
             _ => None,
         })
         .collect()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceTargetKind {
+    DocumentTitle,
+    Section,
+    ExplicitAnchor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceTarget {
+    pub kind: ReferenceTargetKind,
+    pub id: String,
+    pub label: String,
+    pub id_range: TextRange,
+    pub target_range: TextRange,
+}
+
+pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
+    let heading_ids = generate_heading_ids(document);
+    let mut heading_index = 0;
+    let mut targets = Vec::new();
+    for block in &document.blocks {
+        let range = block_range(block);
+        let attached = document
+            .anchors
+            .iter()
+            .filter(|anchor| anchor.valid && anchor.target_range == Some(range))
+            .collect::<Vec<_>>();
+        for anchor in &attached {
+            targets.push(ReferenceTarget {
+                kind: ReferenceTargetKind::ExplicitAnchor,
+                id: anchor.id.clone(),
+                label: anchor.label.clone().unwrap_or_else(|| block_label(block)),
+                id_range: anchor.id_range,
+                target_range: range,
+            });
+        }
+        if let AstBlock::Heading(heading) = block {
+            let generated = &heading_ids[heading_index];
+            heading_index += 1;
+            if attached.is_empty() {
+                targets.push(ReferenceTarget {
+                    kind: match heading.kind {
+                        HeadingKind::DocumentTitle => ReferenceTargetKind::DocumentTitle,
+                        HeadingKind::Section { .. } => ReferenceTargetKind::Section,
+                    },
+                    id: generated.id.clone(),
+                    label: heading.text.clone(),
+                    id_range: generated.range,
+                    target_range: heading.range,
+                });
+            }
+        }
+    }
+    targets
+}
+
+fn block_range(block: &AstBlock) -> TextRange {
+    match block {
+        AstBlock::Heading(value) => value.range,
+        AstBlock::Paragraph(value) => value.range,
+        AstBlock::Literal(value) => value.range,
+        AstBlock::Source(value) => value.range,
+        AstBlock::Unsupported(value) => value.range,
+    }
+}
+
+fn block_label(block: &AstBlock) -> String {
+    match block {
+        AstBlock::Heading(value) => value.text.clone(),
+        AstBlock::Paragraph(value) => value
+            .lines
+            .first()
+            .map_or_else(String::new, |line| line.value.clone()),
+        AstBlock::Literal(_) => "literal block".to_owned(),
+        AstBlock::Source(value) => value.language.as_ref().map_or_else(
+            || "source block".to_owned(),
+            |name| format!("{name} source block"),
+        ),
+        AstBlock::Unsupported(_) => "unsupported block".to_owned(),
+    }
 }
 
 pub fn heading_id_base(text: &str) -> String {
@@ -283,7 +385,8 @@ fn write_json_string(output: &mut String, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        document_symbols, generate_heading_ids, render_symbols_json, source_language_candidates,
+        ReferenceTargetKind, document_symbols, generate_heading_ids, reference_targets,
+        render_symbols_json, source_language_candidates,
     };
     use crate::parser::parse;
 
@@ -344,6 +447,53 @@ mod tests {
         assert_eq!(
             render_symbols_json(&document_symbols(&parsed.ast)),
             render_symbols_json(&document_symbols(&parsed.ast))
+        );
+    }
+
+    #[test]
+    fn anchors_create_stable_reference_targets_and_override_heading_ids() {
+        let parsed =
+            parse("= Title\n\n[[stable,表示名]]\n== Generated title\n\n[#paragraph]\nParagraph\n")
+                .expect("parse");
+        let targets = reference_targets(&parsed.ast);
+
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| (target.kind, target.id.as_str(), target.label.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (ReferenceTargetKind::DocumentTitle, "_title", "Title"),
+                (ReferenceTargetKind::ExplicitAnchor, "stable", "表示名"),
+                (
+                    ReferenceTargetKind::ExplicitAnchor,
+                    "paragraph",
+                    "Paragraph"
+                ),
+            ]
+        );
+        assert_eq!(
+            generate_heading_ids(&parsed.ast)
+                .iter()
+                .map(|heading| heading.id.as_str())
+                .collect::<Vec<_>>(),
+            ["_title", "stable"]
+        );
+    }
+
+    #[test]
+    fn anchors_keep_unicode_combining_emoji_and_case_distinct() {
+        let parsed =
+            parse(include_str!("../../../fixtures/anchors/boundaries.adoc")).expect("parse");
+        let ids = reference_targets(&parsed.ast)
+            .into_iter()
+            .map(|target| target.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, ["_文書", "日本語", "Café", "😀", "Case", "case"]);
+        assert_eq!(
+            reference_targets(&parsed.ast),
+            reference_targets(&parsed.ast)
         );
     }
 }

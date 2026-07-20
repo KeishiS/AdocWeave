@@ -18,6 +18,7 @@ pub enum CstBlockKind {
     BlankLine,
     Unsupported,
     DocumentAttribute,
+    BlockAnchor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,6 +91,17 @@ pub struct Unsupported {
     pub range: TextRange,
     pub raw: String,
     pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExplicitAnchor {
+    pub range: TextRange,
+    pub id_range: TextRange,
+    pub label_range: Option<TextRange>,
+    pub id: String,
+    pub label: Option<String>,
+    pub target_range: Option<TextRange>,
+    pub valid: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -166,6 +178,7 @@ pub struct AstDocument {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttribute>,
     pub attribute_problems: Vec<AttributeProblem>,
+    pub anchors: Vec<ExplicitAnchor>,
 }
 
 impl AstDocument {
@@ -286,6 +299,7 @@ pub fn parse_with_config<'source>(
     let mut header_attributes_open = false;
     let mut attributes = Vec::new();
     let mut attribute_problems = Vec::new();
+    let mut anchors = Vec::new();
 
     let mut line_index = 0;
     while line_index < source_lines.lines().len() {
@@ -322,6 +336,19 @@ pub fn parse_with_config<'source>(
             saw_content = true;
             line_index = next_line;
             continue;
+        } else if let Some(anchor) = parse_explicit_anchor(
+            content,
+            line.content_range().start().to_usize(),
+            line.full_range(),
+        ) {
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            blocks.push(CstBlock {
+                kind: CstBlockKind::BlockAnchor,
+                range: line.full_range(),
+            });
+            anchors.push(anchor);
+            saw_content = true;
+            header_attributes_open = false;
         } else if content.trim_matches([' ', '\t']).is_empty() {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
             blocks.push(CstBlock {
@@ -395,6 +422,24 @@ pub fn parse_with_config<'source>(
         line_index += 1;
     }
     flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+    for anchor in &mut anchors {
+        anchor.target_range = ast_blocks
+            .iter()
+            .map(ast_block_range)
+            .find(|range| range.start() >= anchor.range.end());
+    }
+    let mut anchored_targets = std::collections::BTreeSet::new();
+    for anchor in &mut anchors {
+        if anchor.valid {
+            if let Some(target) = anchor.target_range {
+                if !anchored_targets.insert((target.start().to_u32(), target.end().to_u32())) {
+                    anchor.valid = false;
+                }
+            } else {
+                anchor.valid = false;
+            }
+        }
+    }
 
     Ok(ParsedDocument {
         cst: CstDocument {
@@ -405,8 +450,72 @@ pub fn parse_with_config<'source>(
             blocks: ast_blocks,
             attributes,
             attribute_problems,
+            anchors,
         },
     })
+}
+
+fn parse_explicit_anchor(
+    content: &str,
+    absolute_start: usize,
+    full_range: TextRange,
+) -> Option<ExplicitAnchor> {
+    let (inner, prefix_len) = if let Some(inner) = content
+        .strip_prefix("[[")
+        .and_then(|value| value.strip_suffix("]]"))
+    {
+        (inner, 2)
+    } else if let Some(inner) = content
+        .strip_prefix("[#")
+        .and_then(|value| value.strip_suffix(']'))
+    {
+        (inner, 2)
+    } else {
+        return None;
+    };
+    let (id, label) = inner
+        .split_once(',')
+        .map_or((inner, None), |(id, label)| (id, Some(label)));
+    let id_range = text_range(
+        absolute_start + prefix_len,
+        absolute_start + prefix_len + id.len(),
+    )
+    .expect("anchor range fits");
+    let label_range = label.map(|label| {
+        text_range(
+            absolute_start + prefix_len + id.len() + 1,
+            absolute_start + prefix_len + id.len() + 1 + label.len(),
+        )
+        .expect("anchor label range fits")
+    });
+    Some(ExplicitAnchor {
+        range: full_range,
+        id_range,
+        label_range,
+        id: id.to_owned(),
+        label: label.map(str::to_owned),
+        target_range: None,
+        valid: valid_anchor_id(id),
+    })
+}
+
+fn valid_anchor_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().all(|character| {
+            !character.is_control()
+                && !character.is_whitespace()
+                && !matches!(character, '[' | ']' | '<' | '>' | ',' | '#')
+        })
+}
+
+fn ast_block_range(block: &AstBlock) -> TextRange {
+    match block {
+        AstBlock::Heading(value) => value.range,
+        AstBlock::Paragraph(value) => value.range,
+        AstBlock::Literal(value) => value.range,
+        AstBlock::Source(value) => value.range,
+        AstBlock::Unsupported(value) => value.range,
+    }
 }
 
 fn parse_literal_block(

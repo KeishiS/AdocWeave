@@ -153,6 +153,11 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
     let heading_ids = generate_heading_ids(document);
     let mut heading_index = 0;
     for block in &document.blocks {
+        let explicit_id = document
+            .anchors
+            .iter()
+            .find(|anchor| anchor.valid && anchor.target_range == Some(block_range(block)))
+            .map(|anchor| anchor.id.as_str());
         match block {
             AstBlock::Heading(heading) => {
                 let id = &heading_ids[heading_index].id;
@@ -160,15 +165,19 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
                 render_heading(&mut fragment, heading, id, policy, &document_attributes);
             }
             AstBlock::Paragraph(paragraph) => {
-                render_paragraph(&mut fragment, paragraph, &document_attributes)
+                render_paragraph(&mut fragment, paragraph, explicit_id, &document_attributes)
             }
             AstBlock::Literal(literal) => {
-                fragment.push_str("<pre>");
+                fragment.push_str("<pre");
+                render_optional_id(&mut fragment, explicit_id);
+                fragment.push('>');
                 escape_html_into(&mut fragment, &literal.value);
                 fragment.push_str("</pre>\n");
             }
             AstBlock::Source(source) => {
-                fragment.push_str("<pre><code");
+                fragment.push_str("<pre");
+                render_optional_id(&mut fragment, explicit_id);
+                fragment.push_str("><code");
                 if let Some(language) = &source.language {
                     fragment.push_str(" class=\"language-");
                     escape_html_into(&mut fragment, &safe_language_class(language));
@@ -178,7 +187,9 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
                 escape_html_into(&mut fragment, &source.value);
                 fragment.push_str("</code></pre>\n");
             }
-            AstBlock::Unsupported(unsupported) => render_unsupported(&mut fragment, unsupported),
+            AstBlock::Unsupported(unsupported) => {
+                render_unsupported(&mut fragment, unsupported, explicit_id)
+            }
         }
     }
 
@@ -250,9 +261,12 @@ fn render_heading(
 fn render_paragraph(
     output: &mut String,
     paragraph: &Paragraph,
+    id: Option<&str>,
     attributes: &BTreeMap<String, String>,
 ) {
-    output.push_str("<p>");
+    output.push_str("<p");
+    render_optional_id(output, id);
+    output.push('>');
     for (index, line) in paragraph.lines.iter().enumerate() {
         if index != 0 {
             output.push(' ');
@@ -301,10 +315,30 @@ fn render_inlines(output: &mut String, inlines: &[Inline], attributes: &BTreeMap
     }
 }
 
-fn render_unsupported(output: &mut String, unsupported: &Unsupported) {
-    output.push_str("<p>");
+fn render_unsupported(output: &mut String, unsupported: &Unsupported, id: Option<&str>) {
+    output.push_str("<p");
+    render_optional_id(output, id);
+    output.push('>');
     escape_html_into(output, &unsupported.raw);
     output.push_str("</p>\n");
+}
+
+fn render_optional_id(output: &mut String, id: Option<&str>) {
+    if let Some(id) = id {
+        output.push_str(" id=\"");
+        escape_html_into(output, id);
+        output.push('"');
+    }
+}
+
+fn block_range(block: &AstBlock) -> crate::source::TextRange {
+    match block {
+        AstBlock::Heading(value) => value.range,
+        AstBlock::Paragraph(value) => value.range,
+        AstBlock::Literal(value) => value.range,
+        AstBlock::Source(value) => value.range,
+        AstBlock::Unsupported(value) => value.range,
+    }
 }
 
 fn escape_html_into(output: &mut String, text: &str) {
@@ -587,5 +621,23 @@ mod tests {
         let output = render(&parsed.ast, &RenderPolicy::default());
 
         assert_eq!(output.heading_ids[0].id, "_section");
+    }
+
+    #[test]
+    fn anchors_use_the_same_ids_in_html_and_reference_index() {
+        let parsed =
+            parse("[[heading-id]]\n== Heading\n\n[#paragraph-id]\nParagraph\n").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            "<h1 id=\"heading-id\">Heading</h1>\n\
+             <p id=\"paragraph-id\">Paragraph</p>\n"
+        );
+        let target_ids = crate::document::reference_targets(&parsed.ast)
+            .into_iter()
+            .map(|target| target.id)
+            .collect::<Vec<_>>();
+        assert_eq!(target_ids, ["heading-id", "paragraph-id"]);
     }
 }

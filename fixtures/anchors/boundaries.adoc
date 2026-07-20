@@ -1,0 +1,16 @@
+= 文書
+
+[[日本語]]
+== 日本語
+
+[[Café]]
+== Combining
+
+[[😀]]
+== Emoji
+
+[[Case]]
+== Upper
+
+[[case]]
+== Lower
