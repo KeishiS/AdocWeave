@@ -96,6 +96,11 @@ TokioはLSP実行アダプターだけで使用する。Issue 036のホスト実
 Lifecycle、Concurrency、panic隔離およびtracingを新基盤へ切り替えた。in-memory transportで
 initialize、診断通知、Document Symbol、shutdownおよびexitを検証する。
 
-意味処理は回帰を避けるため従来のJSON dispatchを一時的に再利用している。次の作業で
-文書状態と各機能を型付きserviceへ抽出し、手書きtransport、protocol型およびJSON dispatchを
-削除する。有界CPU解析、キャンセル伝播およびgeneration管理も未完了である。
+意味処理を型付き`LanguageService`へ移行し、手書きtransport、protocol型およびJSON
+dispatchを削除した。文書更新はmain loopでsource、versionおよびgenerationを先に更新し、
+CPU解析を2 permitのSemaphore取得後に`spawn_blocking`で実行する。新しい更新とcloseは
+以前の`CancellationToken`を発火し、完了結果はgeneration一致時だけ採用する。
+
+残る作業は、読み取り要求の計算を所有スナップショット上のFutureへ移して実際に並行実行
+すること、`$/cancelRequest`と要求固有の協調的キャンセルを接続すること、および競合試験と
+Zed回帰確認である。
