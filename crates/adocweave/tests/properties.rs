@@ -49,15 +49,15 @@ fn arbitrary_utf8_like_corpus_is_lossless_and_has_valid_ranges() {
         let analysis = engine
             .analyze(&source)
             .expect("bounded UTF-8 input analyzes");
-        assert_eq!(analysis.syntax.reconstruct(), source);
-        for token in analysis.syntax.tokens() {
+        assert_eq!(analysis.syntax().reconstruct(), source);
+        for token in analysis.syntax().tokens() {
             let start = token.range.start().to_usize();
             let end = token.range.end().to_usize();
             assert!(start <= end && end <= source.len());
             assert!(source.is_char_boundary(start));
             assert!(source.is_char_boundary(end));
         }
-        for block in &analysis.ast.blocks {
+        for block in &analysis.ast().blocks {
             let range = block.range();
             assert!(range.start() <= range.end());
             assert!(range.end().to_usize() <= source.len());
@@ -88,7 +88,7 @@ fn formatter_preserves_semantics_and_protected_source_regions() {
             format_analysis(&before, &FormatConfig::default()).expect("format generated input");
 
         for block in before
-            .syntax
+            .syntax()
             .blocks()
             .iter()
             .filter(|block| block.kind().formatting_policy() == FormattingPolicy::PreserveBytes)
@@ -126,8 +126,8 @@ fn renderer_and_projections_are_deterministic_for_generated_input() {
     let engine = Engine::new(ParseOptions::default());
     for source in corpus() {
         let analysis = engine.analyze(&source).expect("analysis");
-        let first_html = render(&analysis.ast, &RenderPolicy::default());
-        let second_html = render(&analysis.ast, &RenderPolicy::default());
+        let first_html = render(&analysis.ast(), &RenderPolicy::default());
+        let second_html = render(&analysis.ast(), &RenderPolicy::default());
         assert_eq!(first_html, second_html);
         assert_eq!(project(&analysis, &[]), project(&analysis, &[]));
         assert_eq!(searchable_text(&analysis), searchable_text(&analysis));
@@ -141,11 +141,14 @@ fn generated_reference_keys_and_targets_are_stable_and_bounded() {
     for source in corpus() {
         let analysis = engine.analyze(&source).expect("analysis");
         assert_eq!(
-            generate_heading_ids(&analysis.ast),
-            generate_heading_ids(&analysis.ast)
+            generate_heading_ids(&analysis.ast()),
+            generate_heading_ids(&analysis.ast())
         );
-        assert_eq!(reference_targets(&analysis.ast), analysis.reference_targets);
-        for reference in &analysis.references {
+        assert_eq!(
+            reference_targets(&analysis.ast()),
+            analysis.reference_targets()
+        );
+        for reference in analysis.references() {
             if let Some(key) = ReferenceKey::from_destination(&reference.destination) {
                 assert_eq!(
                     Some(key.clone()),
@@ -189,12 +192,12 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
 fn semantic_signature(analysis: &adocweave::Analysis) -> (String, Vec<String>, Vec<ReferenceKey>) {
     (
         searchable_text(analysis).text,
-        reference_targets(&analysis.ast)
+        reference_targets(&analysis.ast())
             .into_iter()
             .map(|target| format!("{:?}:{}:{}", target.kind, target.id, target.label))
             .collect(),
         analysis
-            .references
+            .references()
             .iter()
             .filter_map(|reference| ReferenceKey::from_destination(&reference.destination))
             .collect(),

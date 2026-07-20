@@ -292,7 +292,7 @@ impl LanguageService {
             ));
         };
         let diagnostics = analysis
-            .diagnostics
+            .diagnostics()
             .iter()
             .map(|diagnostic| {
                 Ok(lsp::Diagnostic {
@@ -330,7 +330,7 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())));
         };
-        let symbols = document_symbols(&document.analysis.ast)
+        let symbols = document_symbols(&document.analysis.ast())
             .iter()
             .map(|symbol| {
                 symbol_to_lsp(
@@ -351,7 +351,7 @@ impl LanguageService {
             return Ok(Some(Vec::new()));
         };
         let mut actions = Vec::new();
-        for diagnostic in &document.analysis.diagnostics {
+        for diagnostic in document.analysis.diagnostics() {
             for fix in &diagnostic.fixes {
                 let edits = fix
                     .edits()
@@ -425,7 +425,7 @@ impl LanguageService {
         let offset = request_offset(&document, position, self.position_encoding)?;
         if let Some(attribute) = document
             .analysis
-            .ast
+            .ast()
             .attributes
             .iter()
             .find(|attribute| contains(attribute.range, offset))
@@ -440,9 +440,9 @@ impl LanguageService {
                 self.position_encoding,
             );
         }
-        if let Some(target) = document.analysis.reference_targets.iter().find(|target| {
+        if let Some(target) = document.analysis.reference_targets().iter().find(|target| {
             contains(target.id_range, offset)
-                && !document.analysis.ast.blocks.iter().any(|block| {
+                && !document.analysis.ast().blocks.iter().any(|block| {
                     matches!(
                         block,
                         parser::AstBlock::Heading(heading)
@@ -457,10 +457,10 @@ impl LanguageService {
                 self.position_encoding,
             );
         }
-        if let Some((value, range)) = inline_hover(&document.analysis.ast, offset) {
+        if let Some((value, range)) = inline_hover(&document.analysis.ast(), offset) {
             return hover_markup(value, range, &document, self.position_encoding);
         }
-        let Some(element) = document_element_at(&document.analysis.ast, offset) else {
+        let Some(element) = document_element_at(&document.analysis.ast(), offset) else {
             return Ok(None);
         };
         let (heading, range, part) = match element {
@@ -470,7 +470,7 @@ impl LanguageService {
                 return Ok(None);
             }
         };
-        let id = generate_heading_ids(&document.analysis.ast)
+        let id = generate_heading_ids(&document.analysis.ast())
             .into_iter()
             .find(|candidate| candidate.range == heading.text_range)
             .map(|candidate| candidate.id)
@@ -503,13 +503,13 @@ impl LanguageService {
         let offset = request_offset(&document, position, self.position_encoding)?;
         if document
             .analysis
-            .references
+            .references()
             .iter()
             .any(|reference| contains(reference.target_range, offset))
         {
             let items = document
                 .analysis
-                .reference_targets
+                .reference_targets()
                 .iter()
                 .map(|target| lsp::CompletionItem {
                     label: target.id.clone(),
@@ -520,7 +520,7 @@ impl LanguageService {
                 .collect();
             return Ok(Some(lsp::CompletionResponse::Array(items)));
         }
-        let Some(element) = document_element_at(&document.analysis.ast, offset) else {
+        let Some(element) = document_element_at(&document.analysis.ast(), offset) else {
             return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
         };
         let source = match element {
@@ -566,7 +566,7 @@ impl LanguageService {
         let offset = request_offset(&document, position, self.position_encoding)?;
         let Some(reference) = document
             .analysis
-            .references
+            .references()
             .iter()
             .find(|reference| contains(reference.range, offset))
         else {
@@ -600,7 +600,7 @@ impl LanguageService {
         let offset = request_offset(&document, position, self.position_encoding)?;
         let reference_at_position = document
             .analysis
-            .references
+            .references()
             .iter()
             .find(|reference| contains(reference.range, offset));
         let key = reference_at_position
@@ -608,7 +608,7 @@ impl LanguageService {
             .or_else(|| {
                 document
                     .analysis
-                    .reference_targets
+                    .reference_targets()
                     .iter()
                     .find(|target| contains(target.id_range, offset))
                     .map(|target| ReferenceKey::Local {
@@ -658,7 +658,7 @@ impl LanguageService {
                 .uri
                 .parse()
                 .map_err(|error| format!("invalid open document URI {}: {error}", candidate.uri))?;
-            for reference in &candidate.analysis.references {
+            for reference in candidate.analysis.references() {
                 if reference_identity(&candidate_uri, &reference.destination).as_ref()
                     == Some(&identity)
                 {
@@ -691,7 +691,7 @@ impl LanguageService {
         let offset = request_offset(&document, position, self.position_encoding)?;
         let Some(target) = document
             .analysis
-            .reference_targets
+            .reference_targets()
             .iter()
             .find(|target| contains(target.id_range, offset))
         else {
@@ -740,7 +740,7 @@ impl LanguageService {
                 data: None,
             });
         }
-        for reference in &document.analysis.references {
+        for reference in document.analysis.references() {
             let target = if let Some(identity) = reference_identity(uri, &reference.destination) {
                 let mut target = identity.uri;
                 target.set_fragment(identity.anchor.as_deref());
@@ -794,7 +794,7 @@ impl LanguageService {
             )));
         };
         let mut raw = Vec::<(lsp::Position, u32, u32)>::new();
-        for block in &document.analysis.ast.blocks {
+        for block in &document.analysis.ast().blocks {
             if let parser::AstBlock::Heading(heading) = block {
                 push_semantic_range(
                     &mut raw,
@@ -821,7 +821,7 @@ impl LanguageService {
                 self.position_encoding,
             )?;
         }
-        for reference in &document.analysis.references {
+        for reference in document.analysis.references() {
             push_semantic_range(
                 &mut raw,
                 reference.target_range,
@@ -830,7 +830,7 @@ impl LanguageService {
                 self.position_encoding,
             )?;
         }
-        for target in &document.analysis.reference_targets {
+        for target in document.analysis.reference_targets() {
             push_semantic_range(
                 &mut raw,
                 target.id_range,
@@ -840,7 +840,7 @@ impl LanguageService {
             )?;
         }
         let mut inline_ranges = Vec::new();
-        document.analysis.ast.visit_inline_sequences(|inlines| {
+        document.analysis.ast().visit_inline_sequences(|inlines| {
             collect_inline_semantic_ranges(inlines, &mut inline_ranges);
         });
         for (range, token_type) in inline_ranges {
@@ -896,11 +896,11 @@ impl LanguageService {
             .and_then(|anchor| {
                 document
                     .analysis
-                    .reference_targets
+                    .reference_targets()
                     .iter()
                     .find(|target| target.id == anchor)
             })
-            .or_else(|| document.analysis.reference_targets.first());
+            .or_else(|| document.analysis.reference_targets().first());
         let Some(target) = target else {
             return Ok(None);
         };

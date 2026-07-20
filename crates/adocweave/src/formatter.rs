@@ -62,7 +62,7 @@ pub fn format_analysis(
     analysis: &Analysis,
     config: &FormatConfig,
 ) -> Result<FormatOutput, PositionError> {
-    format_syntax(&analysis.syntax, config)
+    format_syntax(&analysis.syntax(), config)
 }
 
 fn format_syntax(

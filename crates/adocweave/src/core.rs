@@ -100,15 +100,39 @@ impl CancellationCheck for CancellationToken {
 /// Owned output of one analysis. Every consumer must use this same snapshot.
 #[derive(Debug)]
 pub struct Analysis {
-    pub source_id: Option<SourceId>,
-    pub syntax: SyntaxTree,
-    pub ast: parser::AstDocument,
-    pub diagnostics: Vec<Diagnostic>,
-    pub reference_targets: Vec<crate::document::ReferenceTarget>,
-    pub references: Vec<crate::inline::Reference>,
+    source_id: Option<SourceId>,
+    syntax: SyntaxTree,
+    ast: parser::AstDocument,
+    diagnostics: Vec<Diagnostic>,
+    reference_targets: Vec<crate::document::ReferenceTarget>,
+    references: Vec<crate::inline::Reference>,
 }
 
 impl Analysis {
+    pub const fn source_id(&self) -> Option<&SourceId> {
+        self.source_id.as_ref()
+    }
+
+    pub const fn syntax(&self) -> &SyntaxTree {
+        &self.syntax
+    }
+
+    pub const fn ast(&self) -> &parser::AstDocument {
+        &self.ast
+    }
+
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    pub fn reference_targets(&self) -> &[crate::document::ReferenceTarget] {
+        &self.reference_targets
+    }
+
+    pub fn references(&self) -> &[crate::inline::Reference] {
+        &self.references
+    }
+
     pub fn source(&self) -> &str {
         self.syntax.source()
     }
@@ -380,7 +404,7 @@ mod tests {
         };
 
         assert_eq!(analysis.source(), "== 所有される見出し\n");
-        assert_eq!(analysis.syntax.reconstruct(), analysis.source());
+        assert_eq!(analysis.syntax().reconstruct(), analysis.source());
         assert_eq!(analysis.source_document().line_count(), 2);
     }
 
@@ -426,7 +450,7 @@ mod tests {
             &options,
         )
         .expect("recover deep list");
-        let crate::parser::AstBlock::List(list) = &analysis.ast.blocks[0] else {
+        let crate::parser::AstBlock::List(list) = &analysis.ast().blocks[0] else {
             panic!("expected list");
         };
         assert!(depth(list) <= super::limit_to_usize(options.limits.max_list_depth));

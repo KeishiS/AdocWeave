@@ -226,7 +226,7 @@ impl ExecutionObservation {
             elapsed,
             input_bytes: request.source.len(),
             output_bytes,
-            diagnostic_count: result.analysis.diagnostics.len(),
+            diagnostic_count: result.analysis.diagnostics().len(),
         }
     }
 
@@ -302,7 +302,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "f83de6e8b83d845546f9f8e11d9c34ef65d3f5ce80aafcfd315d1f73af7684d6"
+            "86bf76bdfc441926e28abedff4a2e0d5ff2718d4f9d06f637eb9aab4a5da92ad"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

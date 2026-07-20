@@ -174,7 +174,7 @@ pub fn lint_analysis(
     analysis: &crate::core::Analysis,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    lint_syntax(&analysis.syntax, &analysis.ast, config)
+    lint_syntax(&analysis.syntax(), &analysis.ast(), config)
 }
 
 pub(crate) fn lint_syntax(

@@ -224,9 +224,9 @@ pub fn process_request(
         generation: request.generation,
         conformance_contract_version: CONFORMANCE_CONTRACT_VERSION,
         parse: ParseSummary {
-            block_count: analysis.ast.blocks.len(),
-            node_count: analysis.ast.node_count(),
-            reference_count: analysis.references.len(),
+            block_count: analysis.ast().blocks.len(),
+            node_count: analysis.ast().node_count(),
+            reference_count: analysis.references().len(),
         },
         syntax: products.syntax,
         ast: products.ast,

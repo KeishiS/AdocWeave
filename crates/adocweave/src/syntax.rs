@@ -308,22 +308,31 @@ mod tests {
         let link = crate::Engine::new(crate::ParseOptions::default())
             .analyze("https://example.test[*label*]\n")
             .expect("link source");
-        assert_eq!(link.syntax.nodes(SyntaxKind::Macro).count(), 1);
-        assert_eq!(link.syntax.nodes(SyntaxKind::Target).count(), 1);
-        assert_eq!(link.syntax.nodes(SyntaxKind::Label).count(), 1);
-        assert_eq!(link.syntax.nodes(SyntaxKind::InlineDelimiter).count(), 2);
-        assert_eq!(link.syntax.reconstruct(), "https://example.test[*label*]\n");
+        assert_eq!(link.syntax().nodes(SyntaxKind::Macro).count(), 1);
+        assert_eq!(link.syntax().nodes(SyntaxKind::Target).count(), 1);
+        assert_eq!(link.syntax().nodes(SyntaxKind::Label).count(), 1);
+        assert_eq!(link.syntax().nodes(SyntaxKind::InlineDelimiter).count(), 2);
+        assert_eq!(
+            link.syntax().reconstruct(),
+            "https://example.test[*label*]\n"
+        );
 
         let unclosed = crate::Engine::new(crate::ParseOptions::default())
             .analyze("[source,rust]\n----\nfn main() {}\n")
             .expect("unclosed source block");
-        assert_eq!(unclosed.syntax.nodes(SyntaxKind::BlockAttribute).count(), 1);
-        assert_eq!(unclosed.syntax.nodes(SyntaxKind::BlockDelimiter).count(), 1);
-        assert_eq!(unclosed.syntax.nodes(SyntaxKind::Error).count(), 1);
+        assert_eq!(
+            unclosed.syntax().nodes(SyntaxKind::BlockAttribute).count(),
+            1
+        );
+        assert_eq!(
+            unclosed.syntax().nodes(SyntaxKind::BlockDelimiter).count(),
+            1
+        );
+        assert_eq!(unclosed.syntax().nodes(SyntaxKind::Error).count(), 1);
 
         let unknown = crate::Engine::new(crate::ParseOptions::default())
             .analyze("[quote]\n")
             .expect("unsupported block attribute");
-        assert_eq!(unknown.syntax.nodes(SyntaxKind::Unknown).count(), 1);
+        assert_eq!(unknown.syntax().nodes(SyntaxKind::Unknown).count(), 1);
     }
 }

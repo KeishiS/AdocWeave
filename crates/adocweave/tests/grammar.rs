@@ -14,17 +14,17 @@ fn parse(source: &str) -> Analysis {
 #[test]
 fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
     let parsed = parse(SOURCE);
-    assert_eq!(parsed.syntax.reconstruct(), SOURCE);
+    assert_eq!(parsed.syntax().reconstruct(), SOURCE);
     assert_eq!(
-        parsed.syntax.snapshot(),
+        parsed.syntax().snapshot(),
         include_str!("../../../fixtures/grammar/ambiguous.syntax")
     );
     assert_eq!(
-        parsed.ast.snapshot(),
+        parsed.ast().snapshot(),
         include_str!("../../../fixtures/grammar/ambiguous.ast")
     );
 
-    let AstBlock::Paragraph(first) = &parsed.ast.blocks[1] else {
+    let AstBlock::Paragraph(first) = &parsed.ast().blocks[1] else {
         panic!("first content block is a paragraph");
     };
     assert!(first.inlines.iter().any(|inline| matches!(
@@ -57,7 +57,7 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
     )));
 
     let literals = parsed
-        .ast
+        .ast()
         .blocks
         .iter()
         .filter_map(|block| match block {
@@ -73,7 +73,7 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
             .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock)
     );
     assert!(matches!(
-        parsed.ast.blocks.last(),
+        parsed.ast().blocks.last(),
         Some(AstBlock::Heading(_))
     ));
 
@@ -95,7 +95,7 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
 fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
     let parsed = parse(SOURCE);
     let source_block = parsed
-        .ast
+        .ast()
         .blocks
         .iter()
         .find_map(|block| match block {
@@ -105,7 +105,8 @@ fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
         .expect("source block");
     assert_eq!(source_block.value, "_source_ <tag>\n");
 
-    let html = adocweave::html::render(&parsed.ast, &adocweave::html::RenderPolicy::default()).html;
+    let html =
+        adocweave::html::render(&parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
     assert!(html.contains("<pre>*literal* &lt;tag&gt;\n.....\n</pre>"));
     assert!(
         html.contains("<pre><code class=\"language-rust\">_source_ &lt;tag&gt;\n</code></pre>")
@@ -135,14 +136,15 @@ fn substitutions_cover_every_supported_semantic_context() {
         "https://example.test[label] stem:[x < y]\n",
     );
     let parsed = parse(source);
-    assert!(matches!(parsed.ast.blocks[0], AstBlock::Heading(_)));
-    assert!(matches!(parsed.ast.blocks[1], AstBlock::Paragraph(_)));
-    assert!(matches!(parsed.ast.blocks[2], AstBlock::Unsupported(_)));
-    assert!(matches!(parsed.ast.blocks[3], AstBlock::Literal(_)));
-    assert!(matches!(parsed.ast.blocks[4], AstBlock::Source(_)));
-    assert!(matches!(parsed.ast.blocks[5], AstBlock::Paragraph(_)));
+    assert!(matches!(parsed.ast().blocks[0], AstBlock::Heading(_)));
+    assert!(matches!(parsed.ast().blocks[1], AstBlock::Paragraph(_)));
+    assert!(matches!(parsed.ast().blocks[2], AstBlock::Unsupported(_)));
+    assert!(matches!(parsed.ast().blocks[3], AstBlock::Literal(_)));
+    assert!(matches!(parsed.ast().blocks[4], AstBlock::Source(_)));
+    assert!(matches!(parsed.ast().blocks[5], AstBlock::Paragraph(_)));
 
-    let html = adocweave::html::render(&parsed.ast, &adocweave::html::RenderPolicy::default()).html;
+    let html =
+        adocweave::html::render(&parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
     assert!(html.contains(
         "&lt;Title&gt; <strong>strong <em>nested</em> and <code>code &lt;&amp;&gt;</code></strong>"
     ));
@@ -169,13 +171,13 @@ fn grammar_rejects_invalid_source_language_syntax() {
 
     assert!(
         parsed
-            .ast
+            .ast()
             .blocks
             .iter()
             .all(|block| !matches!(block, AstBlock::Source(_)))
     );
     assert!(matches!(
-        parsed.ast.blocks.first(),
+        parsed.ast().blocks.first(),
         Some(AstBlock::Unsupported(_))
     ));
 }
@@ -196,14 +198,14 @@ fn grammar_source_attribute_requires_an_adjacent_column_zero_delimiter() {
 
     assert!(
         parsed
-            .ast
+            .ast()
             .blocks
             .iter()
             .all(|block| !matches!(block, AstBlock::Source(_)))
     );
     assert_eq!(
         parsed
-            .syntax
+            .syntax()
             .blocks()
             .iter()
             .map(|block| block.kind())
@@ -220,5 +222,5 @@ fn grammar_source_attribute_requires_an_adjacent_column_zero_delimiter() {
             SyntaxKind::BlankLine,
         ]
     );
-    assert_eq!(parsed.syntax.reconstruct(), source);
+    assert_eq!(parsed.syntax().reconstruct(), source);
 }

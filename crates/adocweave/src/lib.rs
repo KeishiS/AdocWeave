@@ -139,7 +139,7 @@ fn process_inner(
     let output = match operation {
         Operation::Convert => {
             let analysis = analyze_with_policy(source, config)?;
-            Ok(html::render(&analysis.ast, &html::RenderPolicy::default()).html)
+            Ok(html::render(&analysis.ast(), &html::RenderPolicy::default()).html)
         }
         Operation::Format => {
             let analysis = analyze_with_policy(source, config)?;
@@ -150,7 +150,7 @@ fn process_inner(
         Operation::Symbols => {
             let parsed = analyze_with_policy(source, config)?;
             Ok(document::render_symbols_json(&document::document_symbols(
-                &parsed.ast,
+                parsed.ast(),
             )))
         }
         Operation::Check => process_check_source_with_config(source, CheckOutput::Human, config),
@@ -191,7 +191,7 @@ fn process_check_source_with_config(
     config: &limits::ProcessConfig,
 ) -> Result<String, ProcessError> {
     let analysis = analyze_with_policy(source, config)?;
-    let diagnostics = &analysis.diagnostics;
+    let diagnostics = &analysis.diagnostics();
     match output {
         CheckOutput::Human => diagnostic::render_human(
             diagnostics,

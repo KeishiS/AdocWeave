@@ -73,7 +73,7 @@ pub struct SearchableText {
 }
 
 pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> DocumentProjection {
-    let title = analysis.ast.blocks.iter().find_map(|block| match block {
+    let title = analysis.ast().blocks.iter().find_map(|block| match block {
         AstBlock::Heading(heading)
             if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle) =>
         {
@@ -87,12 +87,12 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
 
     let mut external_links = Vec::new();
     analysis
-        .ast
+        .ast()
         .visit_inline_sequences(|inlines| collect_links(inlines, &mut external_links));
     external_links.sort_by_key(|link| (link.source_range.start(), link.source_range.end()));
 
     let reference_edges = analysis
-        .references
+        .references()
         .iter()
         .filter_map(|reference| {
             let target = ReferenceKey::from_destination(&reference.destination)?;
@@ -101,7 +101,7 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
                 .find(|resolution| resolution.source_range == reference.range)
                 .map(|resolution| resolution.outcome.clone());
             Some(ReferenceEdge {
-                source_id: analysis.source_id.clone(),
+                source_id: analysis.source_id().cloned(),
                 source_range: reference.range,
                 target,
                 resolution,
@@ -111,9 +111,9 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
 
     DocumentProjection {
         contract_version: PROJECTION_CONTRACT_VERSION,
-        source_id: analysis.source_id.clone(),
+        source_id: analysis.source_id().cloned(),
         title,
-        targets: analysis.reference_targets.clone(),
+        targets: analysis.reference_targets().to_vec(),
         external_links,
         reference_edges,
         searchable_text: searchable_text(analysis),
@@ -122,7 +122,7 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
 
 pub fn searchable_text(analysis: &Analysis) -> SearchableText {
     let mut segments = Vec::new();
-    collect_search_blocks(&analysis.ast.blocks, &mut segments);
+    collect_search_blocks(&analysis.ast().blocks, &mut segments);
     let text = segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -452,7 +452,7 @@ mod tests {
         .analyze(source)
         .expect("analysis");
         let projected = project(&analysis, &[]);
-        let html = crate::html::render(&analysis.ast, &crate::html::RenderPolicy::default());
+        let html = crate::html::render(&analysis.ast(), &crate::html::RenderPolicy::default());
 
         assert_eq!(projected.contract_version, PROJECTION_CONTRACT_VERSION);
         assert!(html.html.contains("<h1"));
@@ -484,7 +484,7 @@ mod tests {
             .analyze("xref:other.adoc[Other]")
             .expect("analysis");
         let resolution =
-            ResolvedReference::resolved(analysis.references[0].range, "https://example/other");
+            ResolvedReference::resolved(analysis.references()[0].range, "https://example/other");
         let projected = project(&analysis, &[resolution]);
 
         assert!(matches!(
