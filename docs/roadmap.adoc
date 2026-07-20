@@ -16,8 +16,8 @@
 * 出力形式に依存しないsemantic AST、Core 0.1規範文法、置換モデル
 * Zed開発用拡張
 
-現在の開発環境にはZedのGUIセッションがないため、Zed実機の受け入れ確認は手動リリース
-ゲートとして残る。
+Linux版Zedでの初期受け入れ確認は2026-07-20に完了した。LSP文書シンボルをOutlineへ
+表示するには、ZedのAsciiDoc言語設定で`document_symbols`を`on`にする。
 
 == 公開コアとレンダリング契約: Issue 027から028
 

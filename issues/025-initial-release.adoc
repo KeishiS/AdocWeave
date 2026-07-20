@@ -27,10 +27,11 @@
 
 [source,console]
 ----
-cargo fmt --check
-cargo clippy --workspace --all-targets --all-features
-cargo test --workspace
+cargo make verify
 ----
+
+Zedの手動受け入れ確認は2026-07-20に完了した。確認内容とZed固有設定は
+xref:../editors/zed/README.adoc[Zed開発用拡張]を参照する。
 
 == 依存関係
 

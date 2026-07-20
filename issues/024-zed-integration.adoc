@@ -23,6 +23,11 @@ AsciiLoom Language ServerをZed Editorから起動し、初期編集支援を利
 
 自動LSP統合テストに加え、Zed上でチェックリストに従って手動確認する。
 
+2026-07-20にLinux版Zedで、言語認識、Language Server起動、診断、文書シンボル、
+Code Action、Format Document、Hoverおよび補完を手動確認した。ZedでLSP文書シンボルを
+Outlineへ表示するには、AsciiDoc言語設定の`document_symbols`を`on`にする必要がある。
+具体的な設定と操作はxref:../editors/zed/README.adoc[Zed開発用拡張]に記載する。
+
 == 依存関係
 
 - 022

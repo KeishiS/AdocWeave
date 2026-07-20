@@ -17,6 +17,25 @@ zed --foreground .
 開発用拡張はサーバーを既定の寛容構文モードで起動する。エディター固有の構文モード設定は
 公開しない。
 
+== 文書アウトライン
+
+Zedは既定ではTree-sitterから文書シンボルを取得する。AsciiLoom Language Serverが返す
+文書シンボルをOutlineで使用するには、Zedの `settings.json` へ次を追加する。
+
+[source,json]
+----
+{
+  "languages": {
+    "AsciiDoc": {
+      "document_symbols": "on"
+    }
+  }
+}
+----
+
+既存の `languages` または `AsciiDoc` 設定がある場合は、対応するオブジェクトへ
+`"document_symbols": "on"`だけを追加する。
+
 == 手動チェックリスト
 
 - `.adoc`と`.asciidoc`に対して言語セレクターが`AsciiDoc`を表示する。
@@ -33,3 +52,20 @@ zed --foreground .
 
 起動に失敗した場合は`zed: open log`を確認する。Language Serverの失敗はログへ報告され、
 Zed本体を終了させてはならない。
+
+Code Actionは対象の診断へカーソルを置き、Linuxでは `Ctrl+.`、またはコマンドパレットの
+`editor: toggle code actions`で開く。Formattingは保存時の空白削除と区別するため、
+保存前にコマンドパレットの`editor: format`を明示的に実行する。補完は
+`[source, ru]`の`ru`直後で `Ctrl+Space`を実行する。
+
+== 受け入れ確認
+
+2026-07-20にLinux版Zedで次を確認した。
+
+- AsciiDocの言語認識と`asciiloom-lsp`の自動起動
+- Unicodeを含む診断と編集後の診断更新
+- LSP文書シンボルを使用したOutline
+- 見出し空白を挿入するCode Action
+- 通常テキストを整形し、ソースブロック本体を保持する冪等なFormat Document
+- 見出しレベル、生成IDおよび対象部分を表示するHover
+- ソース言語`ru`に対する`rust`補完
