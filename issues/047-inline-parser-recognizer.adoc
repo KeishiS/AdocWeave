@@ -30,3 +30,8 @@
 macroとmarkerをsource位置順に統合する`InlineCandidate` recognizerを追加し、主走査ループから
 候補優先順位とUnicode安全なskip位置の計算を分離した。次にmacro payload認識とsemantic
 node構築を分離する。
+
+formula、短縮xref、`xref:`、`link:`およびURLの構文範囲を`MacroToken`として認識する
+`recognize_macro`と、再帰的なlabel解析を含む`build_macro`へ分離した。recognizer単体で
+各rangeを検査し、不完全入力のskipが必ず次のUTF-8境界へ進み、文字数を超える回数にならない
+不変条件を追加した。

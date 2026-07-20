@@ -372,6 +372,48 @@ fn parse_macro(
     depth: usize,
     open: usize,
 ) -> Option<(Inline, usize)> {
+    let token = recognize_macro(value, open)?;
+    Some(build_macro(value, range, config, depth, token))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacroToken {
+    Formula {
+        open: usize,
+        content_start: usize,
+        content_end: usize,
+        end: usize,
+        closed: bool,
+    },
+    ShortReference {
+        open: usize,
+        target_start: usize,
+        close: usize,
+        end: usize,
+    },
+    Xref {
+        open: usize,
+        target_start: usize,
+        bracket: usize,
+        close: usize,
+        end: usize,
+    },
+    ExplicitLink {
+        open: usize,
+        target_start: usize,
+        bracket: usize,
+        close: usize,
+        end: usize,
+    },
+    Url {
+        open: usize,
+        target_end: usize,
+        label: Option<(usize, usize)>,
+        end: usize,
+    },
+}
+
+fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
     let rest = &value[open..];
     let formula_prefix = if starts_ascii_case_insensitive(rest, "stem:[") {
         Some("stem:[".len())
@@ -384,127 +426,69 @@ fn parse_macro(
         let close = value[open + prefix_len..]
             .find(']')
             .map(|relative| relative + open + prefix_len);
-        let content_end = close.unwrap_or(value.len());
-        let end = close.map_or(value.len(), |close| close + 1);
-        let content_range = subrange(range, open + prefix_len, content_end);
-        let formula_range = subrange(range, open, end);
-        let formula = &value[open + prefix_len..content_end];
-        return Some((
-            Inline::Formula(InlineFormula {
-                range: formula_range,
-                content_range,
-                language: MathLanguage::Latex,
-                value: formula.to_owned(),
-                closed: close.is_some(),
-            }),
-            end,
-        ));
+        return Some(MacroToken::Formula {
+            open,
+            content_start: open + prefix_len,
+            content_end: close.unwrap_or(value.len()),
+            end: close.map_or(value.len(), |close| close + 1),
+            closed: close.is_some(),
+        });
     }
     if let Some(short_reference) = rest.strip_prefix("<<") {
-        let close_relative = short_reference.find(">>")?;
-        let close = open + 2 + close_relative;
-        let target = &value[open + 2..close];
-        let (anchor, label) = target
-            .split_once(',')
-            .map_or((target, None), |(anchor, label)| (anchor, Some(label)));
-        let target_range = subrange(range, open + 2, open + 2 + anchor.len());
-        let label_range = label.map(|label| subrange(range, close - label.len(), close));
-        let label_inlines = label.map_or_else(Vec::new, |label| {
-            parse_segment(
-                label,
-                label_range.expect("label has range"),
-                config,
-                depth + 1,
-            )
-            .inlines
+        let close = open + 2 + short_reference.find(">>")?;
+        return Some(MacroToken::ShortReference {
+            open,
+            target_start: open + 2,
+            close,
+            end: close + 2,
         });
-        let end = close + 2;
-        return Some((
-            Inline::Reference(Reference {
-                range: subrange(range, open, end),
-                target_range,
-                target_source: anchor.to_owned(),
-                destination: if anchor.is_empty() {
-                    ReferenceDestination::Invalid
-                } else {
-                    ReferenceDestination::Local {
-                        anchor: anchor.to_owned(),
-                        anchor_range: target_range,
-                    }
-                },
-                label_range,
-                label: label_inlines,
-            }),
-            end,
-        ));
     }
     if starts_ascii_case_insensitive(rest, "xref:") {
         let target_start = open + 5;
-        let bracket_relative = value[target_start..].find('[')?;
-        let bracket = target_start + bracket_relative;
+        let bracket = target_start + value[target_start..].find('[')?;
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
         {
             return None;
         }
-        let close = value[bracket + 1..].find(']')? + bracket + 1;
-        let target = &value[target_start..bracket];
-        let label_text = &value[bracket + 1..close];
-        let target_range = subrange(range, target_start, bracket);
-        let label_range = subrange(range, bracket + 1, close);
-        let label = parse_segment(label_text, label_range, config, depth + 1).inlines;
-        let end = close + 1;
-        return Some((
-            Inline::Reference(Reference {
-                range: subrange(range, open, end),
-                target_range,
-                target_source: target.to_owned(),
-                destination: parse_reference_destination(target, target_range),
-                label_range: Some(label_range),
-                label,
-            }),
-            end,
-        ));
+        let close = bracket + 1 + value[bracket + 1..].find(']')?;
+        return Some(MacroToken::Xref {
+            open,
+            target_start,
+            bracket,
+            close,
+            end: close + 1,
+        });
     }
     if starts_ascii_case_insensitive(rest, "link:") {
         let target_start = open + 5;
-        let bracket = value[target_start..].find('[')? + target_start;
+        let bracket = target_start + value[target_start..].find('[')?;
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
         {
             return None;
         }
-        let close = value[bracket + 1..].find(']')? + bracket + 1;
-        let target_range = subrange(range, target_start, bracket);
-        let label_range = subrange(range, bracket + 1, close);
-        let target = value[target_start..bracket].to_owned();
-        let end = close + 1;
-        return Some((
-            Inline::Link(Link {
-                range: subrange(range, open, end),
-                target_range,
-                target_attributes: attribute_uses(&target, target_range),
-                target_source: target.clone(),
-                target,
-                label_range: Some(label_range),
-                label: parse_segment(&value[bracket + 1..close], label_range, config, depth + 1)
-                    .inlines,
-            }),
-            end,
-        ));
+        let close = bracket + 1 + value[bracket + 1..].find(']')?;
+        return Some(MacroToken::ExplicitLink {
+            open,
+            target_start,
+            bracket,
+            close,
+            end: close + 1,
+        });
     }
 
     let scheme_end = url_scheme_end(rest)?;
-    let target_end = rest
+    let relative_target_end = rest
         .char_indices()
         .find_map(|(offset, character)| {
             (offset > scheme_end && (character.is_whitespace() || character == '['))
                 .then_some(offset)
         })
         .unwrap_or(rest.len());
-    let mut target_end = open + target_end;
+    let mut target_end = open + relative_target_end;
     while target_end > open
         && matches!(
             value[..target_end].chars().next_back(),
@@ -516,35 +500,166 @@ fn parse_macro(
     if target_end <= open + scheme_end {
         return None;
     }
-    let mut end = target_end;
-    let mut label_range = None;
-    let mut label = Vec::new();
-    if value.as_bytes().get(target_end) == Some(&b'[') {
-        let close = value[target_end + 1..].find(']')? + target_end + 1;
-        let range_for_label = subrange(range, target_end + 1, close);
-        label = parse_segment(
-            &value[target_end + 1..close],
-            range_for_label,
-            config,
-            depth + 1,
-        )
-        .inlines;
-        label_range = Some(range_for_label);
-        end = close + 1;
-    }
-    let target_range = subrange(range, open, target_end);
-    Some((
-        Inline::Link(Link {
-            range: subrange(range, open, end),
-            target_range,
-            target_source: value[open..target_end].to_owned(),
-            target: value[open..target_end].to_owned(),
-            target_attributes: attribute_uses(&value[open..target_end], target_range),
-            label_range,
-            label,
-        }),
+    let (label, end) = if value.as_bytes().get(target_end) == Some(&b'[') {
+        let close = target_end + 1 + value[target_end + 1..].find(']')?;
+        (Some((target_end + 1, close)), close + 1)
+    } else {
+        (None, target_end)
+    };
+    Some(MacroToken::Url {
+        open,
+        target_end,
+        label,
         end,
-    ))
+    })
+}
+
+fn build_macro(
+    value: &str,
+    range: TextRange,
+    config: InlineParseConfig,
+    depth: usize,
+    token: MacroToken,
+) -> (Inline, usize) {
+    match token {
+        MacroToken::Formula {
+            open,
+            content_start,
+            content_end,
+            end,
+            closed,
+        } => (
+            Inline::Formula(InlineFormula {
+                range: subrange(range, open, end),
+                content_range: subrange(range, content_start, content_end),
+                language: MathLanguage::Latex,
+                value: value[content_start..content_end].to_owned(),
+                closed,
+            }),
+            end,
+        ),
+        MacroToken::ShortReference {
+            open,
+            target_start,
+            close,
+            end,
+        } => {
+            let target = &value[target_start..close];
+            let (anchor, label) = target
+                .split_once(',')
+                .map_or((target, None), |(anchor, label)| (anchor, Some(label)));
+            let target_range = subrange(range, target_start, target_start + anchor.len());
+            let label_range = label.map(|label| subrange(range, close - label.len(), close));
+            let label_inlines = label.map_or_else(Vec::new, |label| {
+                parse_segment(
+                    label,
+                    label_range.expect("label has range"),
+                    config,
+                    depth + 1,
+                )
+                .inlines
+            });
+            (
+                Inline::Reference(Reference {
+                    range: subrange(range, open, end),
+                    target_range,
+                    target_source: anchor.to_owned(),
+                    destination: if anchor.is_empty() {
+                        ReferenceDestination::Invalid
+                    } else {
+                        ReferenceDestination::Local {
+                            anchor: anchor.to_owned(),
+                            anchor_range: target_range,
+                        }
+                    },
+                    label_range,
+                    label: label_inlines,
+                }),
+                end,
+            )
+        }
+        MacroToken::Xref {
+            open,
+            target_start,
+            bracket,
+            close,
+            end,
+        } => {
+            let target = &value[target_start..bracket];
+            let label_text = &value[bracket + 1..close];
+            let target_range = subrange(range, target_start, bracket);
+            let label_range = subrange(range, bracket + 1, close);
+            let label = parse_segment(label_text, label_range, config, depth + 1).inlines;
+            (
+                Inline::Reference(Reference {
+                    range: subrange(range, open, end),
+                    target_range,
+                    target_source: target.to_owned(),
+                    destination: parse_reference_destination(target, target_range),
+                    label_range: Some(label_range),
+                    label,
+                }),
+                end,
+            )
+        }
+        MacroToken::ExplicitLink {
+            open,
+            target_start,
+            bracket,
+            close,
+            end,
+        } => {
+            let target_range = subrange(range, target_start, bracket);
+            let label_range = subrange(range, bracket + 1, close);
+            let target = value[target_start..bracket].to_owned();
+            (
+                Inline::Link(Link {
+                    range: subrange(range, open, end),
+                    target_range,
+                    target_attributes: attribute_uses(&target, target_range),
+                    target_source: target.clone(),
+                    target,
+                    label_range: Some(label_range),
+                    label: parse_segment(
+                        &value[bracket + 1..close],
+                        label_range,
+                        config,
+                        depth + 1,
+                    )
+                    .inlines,
+                }),
+                end,
+            )
+        }
+        MacroToken::Url {
+            open,
+            target_end,
+            label: label_offsets,
+            end,
+        } => {
+            let (label_range, label) =
+                label_offsets.map_or((None, Vec::new()), |(start, close)| {
+                    let label_range = subrange(range, start, close);
+                    (
+                        Some(label_range),
+                        parse_segment(&value[start..close], label_range, config, depth + 1).inlines,
+                    )
+                });
+            let target_range = subrange(range, open, target_end);
+            (
+                Inline::Link(Link {
+                    range: subrange(range, open, end),
+                    target_range,
+                    target_source: value[open..target_end].to_owned(),
+                    target: value[open..target_end].to_owned(),
+                    target_attributes: attribute_uses(&value[open..target_end], target_range),
+                    label_range,
+                    label,
+                }),
+                end,
+            )
+        }
+    }
 }
 
 fn attribute_uses(value: &str, range: TextRange) -> Vec<AttributeUse> {
@@ -771,7 +886,8 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 mod tests {
     use super::{
         Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig, InlineProblemKind,
-        InlineStyle, ReferenceDestination, inline_at, next_candidate, parse, parse_text,
+        InlineStyle, MacroToken, ReferenceDestination, inline_at, next_candidate, parse,
+        parse_text, recognize_macro,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -819,6 +935,66 @@ mod tests {
                 open: "日本語 ".len()
             })
         );
+    }
+
+    #[test]
+    fn macro_recognizer_returns_ranges_without_building_nodes() {
+        assert!(matches!(
+            recognize_macro("stem:[x]", 0),
+            Some(MacroToken::Formula {
+                content_start: 6,
+                content_end: 7,
+                end: 8,
+                closed: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            recognize_macro("<<id,label>>", 0),
+            Some(MacroToken::ShortReference {
+                target_start: 2,
+                close: 10,
+                end: 12,
+                ..
+            })
+        ));
+        assert!(matches!(
+            recognize_macro("xref:other.adoc[Other]", 0),
+            Some(MacroToken::Xref {
+                target_start: 5,
+                bracket: 15,
+                close: 21,
+                end: 22,
+                ..
+            })
+        ));
+        assert!(matches!(
+            recognize_macro("https://example.org[label]", 0),
+            Some(MacroToken::Url {
+                target_end: 19,
+                label: Some((20, 25)),
+                end: 26,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn candidate_recovery_always_advances_on_utf8_boundaries() {
+        let source = "日本語 xref:broken[ *open _also";
+        let mut cursor = 0;
+        let mut steps = 0;
+        while let Some(candidate) = next_candidate(source, cursor) {
+            let open = match candidate {
+                InlineCandidate::Macro { open } | InlineCandidate::Marker { open, .. } => open,
+            };
+            let next = super::next_char_boundary(source, open);
+            assert!(next > cursor);
+            assert!(source.is_char_boundary(next));
+            cursor = next;
+            steps += 1;
+        }
+        assert!(steps <= source.chars().count());
     }
 
     #[test]
