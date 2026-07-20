@@ -1,4 +1,3 @@
-
 use super::{PositionEncoding, Server, run};
 use serde_json::json;
 use std::io::Cursor;
