@@ -39,3 +39,24 @@ cargo test --workspace send_sync
 == 依存関係
 
 - 026
+
+== 実装記録
+
+完了。
+
+- 公開境界を `adocweave::core` に集約し、契約バージョン
+  `CORE_API_VERSION = 1` を定義した。
+- `SyntaxProfile`、`ParseOptions`、`ProcessingLimits`、`ParseResult`、
+  `ParseError` および不透明な `SourceId` を公開した。
+- `ParseResult` はlossless CST、semantic AST、決定的に整列された診断、および
+  将来の参照解決に用いる未解決参照の格納先を持つ。
+- `CancellationCheck`、`CancellationToken` および `NeverCancel` を定義し、
+  入力走査、構文解析後、診断生成後の協調的キャンセルを実装した。
+- `ParseError::code()` により、不正入力、解析失敗、上限超過、キャンセルおよび
+  内部不整合を安定した `CoreErrorCode` へ対応付けた。
+- CLIとLSPの文書管理を同じ公開APIへ移行した。LSPのURIは不透明な
+  `SourceId` として渡し、コアはURIを解釈しない。
+- 公開APIは入力文字列と明示的な設定だけを参照し、I/O、DB、時刻、乱数、
+  環境変数およびグローバル可変状態を使用しない。
+- 決定性、匿名ソース、不透明な文書ID、キャンセル、スレッド共有および
+  `Send + Sync` の契約を単体テストで固定した。

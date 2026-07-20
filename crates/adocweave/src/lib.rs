@@ -7,6 +7,7 @@
 use std::error::Error;
 use std::fmt;
 
+pub mod core;
 pub mod diagnostic;
 pub mod document;
 pub mod formatter;
@@ -17,6 +18,12 @@ pub mod lint;
 pub mod parser;
 pub mod source;
 pub mod source_lines;
+
+pub use core::{
+    CORE_API_VERSION, CancellationCheck, CancellationToken, NeverCancel, ParseError, ParseOptions,
+    ParseResult, SourceId, SyntaxProfile, UnresolvedReference, parse as parse_document,
+    parse_cancellable,
+};
 
 pub const PRODUCT_NAME: &str = "AdocWeave";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -193,15 +200,43 @@ fn parse_with_policy<'source>(
     source: &'source str,
     config: &limits::ProcessConfig,
 ) -> Result<parser::ParsedDocument<'source>, ProcessError> {
-    let parsed = parser::parse_with_config(
+    let parsed = core::parse(
         source,
-        &parser::ParseConfig {
-            max_inline_depth: config.limits.max_inline_depth,
+        &core::ParseOptions {
+            source_id: None,
+            profile: core::SyntaxProfile {
+                version: 1,
+                mode: config.syntax_mode,
+            },
+            limits: config.limits,
         },
     )
-    .map_err(ProcessError::Position)?;
-    enforce_syntax_mode(&parsed.ast, config.syntax_mode)?;
-    Ok(parsed)
+    .map_err(process_error_from_parse)?;
+    Ok(parser::ParsedDocument {
+        cst: parsed.cst,
+        ast: parsed.ast,
+    })
+}
+
+fn process_error_from_parse(error: core::ParseError) -> ProcessError {
+    match error {
+        core::ParseError::Position(error) => ProcessError::Position(error),
+        core::ParseError::LimitExceeded {
+            resource,
+            limit,
+            actual,
+        } => ProcessError::LimitExceeded {
+            resource,
+            limit,
+            actual,
+        },
+        core::ParseError::UnsupportedSyntax | core::ParseError::InvalidProfileVersion { .. } => {
+            ProcessError::UnsupportedSyntax
+        }
+        core::ParseError::Cancelled | core::ParseError::InternalInvariant => {
+            ProcessError::InternalInvariant
+        }
+    }
 }
 
 fn enforce_limit(resource: &'static str, limit: usize, actual: usize) -> Result<(), ProcessError> {
@@ -232,22 +267,6 @@ fn longest_line_bytes(source: &str) -> usize {
         }
     }
     longest.max(bytes.len() - start)
-}
-
-fn enforce_syntax_mode(
-    document: &parser::AstDocument,
-    mode: limits::SyntaxMode,
-) -> Result<(), ProcessError> {
-    if mode == limits::SyntaxMode::Strict
-        && document
-            .blocks
-            .iter()
-            .any(|block| matches!(block, parser::AstBlock::Unsupported(_)))
-    {
-        Err(ProcessError::UnsupportedSyntax)
-    } else {
-        Ok(())
-    }
 }
 
 #[cfg(test)]

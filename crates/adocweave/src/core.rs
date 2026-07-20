@@ -1,0 +1,355 @@
+//! Stable, host-independent parsing boundary.
+//!
+//! Hosts own all I/O and reference resolution. This module only consumes
+//! caller-provided text and deterministic options.
+
+use std::error::Error;
+use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::diagnostic::{CoreErrorCode, Diagnostic};
+use crate::limits::{ProcessingLimits, SyntaxMode};
+use crate::lint::{self, LintConfig};
+use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
+use crate::source::{PositionError, TextRange};
+
+/// Version of the public parsing contract.
+pub const CORE_API_VERSION: u16 = 1;
+
+/// A caller-defined, opaque source identity.
+///
+/// AdocWeave never interprets this value as a path, URL, UUID, or database key.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct SourceId(String);
+
+impl SourceId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Versioned syntax behavior selected by a host.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SyntaxProfile {
+    pub version: u16,
+    pub mode: SyntaxMode,
+}
+
+impl Default for SyntaxProfile {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            mode: SyntaxMode::Permissive,
+        }
+    }
+}
+
+/// Complete deterministic input to the parsing operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseOptions {
+    pub source_id: Option<SourceId>,
+    pub profile: SyntaxProfile,
+    pub limits: ProcessingLimits,
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self {
+            source_id: None,
+            profile: SyntaxProfile::default(),
+            limits: ProcessingLimits::default(),
+        }
+    }
+}
+
+/// A parsed reference before a host attempts resolution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnresolvedReference {
+    pub target: String,
+    pub target_range: TextRange,
+    pub source_range: TextRange,
+}
+
+/// Cooperative cancellation checked at deterministic parsing checkpoints.
+pub trait CancellationCheck: Send + Sync {
+    fn is_cancelled(&self) -> bool;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NeverCancel;
+
+impl CancellationCheck for NeverCancel {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct CancellationToken(AtomicBool);
+
+impl CancellationToken {
+    pub const fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+impl CancellationCheck for CancellationToken {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+/// Output of one parse. CST and AST are renderer-independent.
+#[derive(Debug)]
+pub struct ParseResult<'source> {
+    pub source_id: Option<SourceId>,
+    pub cst: CstDocument<'source>,
+    pub ast: parser::AstDocument,
+    pub diagnostics: Vec<Diagnostic>,
+    pub unresolved_references: Vec<UnresolvedReference>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ParseError {
+    InvalidProfileVersion {
+        version: u16,
+    },
+    LimitExceeded {
+        resource: &'static str,
+        limit: usize,
+        actual: usize,
+    },
+    Position(PositionError),
+    UnsupportedSyntax,
+    Cancelled,
+    InternalInvariant,
+}
+
+impl ParseError {
+    pub const fn code(&self) -> CoreErrorCode {
+        match self {
+            Self::InvalidProfileVersion { .. } | Self::UnsupportedSyntax => {
+                CoreErrorCode::InvalidInput
+            }
+            Self::LimitExceeded { .. } => CoreErrorCode::LimitExceeded,
+            Self::Position(_) => CoreErrorCode::ParseFailed,
+            Self::Cancelled => CoreErrorCode::Cancelled,
+            Self::InternalInvariant => CoreErrorCode::InternalInvariant,
+        }
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidProfileVersion { version } => {
+                write!(formatter, "unsupported syntax profile version {version}")
+            }
+            Self::LimitExceeded {
+                resource,
+                limit,
+                actual,
+            } => write!(
+                formatter,
+                "{resource} limit exceeded (limit {limit}, actual {actual})"
+            ),
+            Self::Position(error) => error.fmt(formatter),
+            Self::UnsupportedSyntax => {
+                formatter.write_str("unsupported syntax is forbidden in strict mode")
+            }
+            Self::Cancelled => formatter.write_str("parsing was cancelled"),
+            Self::InternalInvariant => formatter.write_str("internal parsing invariant failed"),
+        }
+    }
+}
+
+impl Error for ParseError {}
+
+/// Parses with a cancellation token that never cancels.
+pub fn parse<'source>(
+    source: &'source str,
+    options: &ParseOptions,
+) -> Result<ParseResult<'source>, ParseError> {
+    parse_cancellable(source, options, &NeverCancel)
+}
+
+/// Parses caller-provided source without performing I/O or reference resolution.
+pub fn parse_cancellable<'source>(
+    source: &'source str,
+    options: &ParseOptions,
+    cancellation: &dyn CancellationCheck,
+) -> Result<ParseResult<'source>, ParseError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        parse_inner(source, options, cancellation)
+    }))
+    .unwrap_or(Err(ParseError::InternalInvariant))
+}
+
+fn parse_inner<'source>(
+    source: &'source str,
+    options: &ParseOptions,
+    cancellation: &dyn CancellationCheck,
+) -> Result<ParseResult<'source>, ParseError> {
+    if options.profile.version != 1 {
+        return Err(ParseError::InvalidProfileVersion {
+            version: options.profile.version,
+        });
+    }
+    enforce_limit("input bytes", options.limits.max_input_bytes, source.len())?;
+
+    let mut line_start = 0;
+    for (index, byte) in source.bytes().enumerate() {
+        if index % 4096 == 0 && cancellation.is_cancelled() {
+            return Err(ParseError::Cancelled);
+        }
+        if byte == b'\n' {
+            let end = if index > line_start && source.as_bytes()[index - 1] == b'\r' {
+                index - 1
+            } else {
+                index
+            };
+            enforce_limit(
+                "line bytes",
+                options.limits.max_line_bytes,
+                end - line_start,
+            )?;
+            line_start = index + 1;
+        }
+    }
+    enforce_limit(
+        "line bytes",
+        options.limits.max_line_bytes,
+        source.len() - line_start,
+    )?;
+    if cancellation.is_cancelled() {
+        return Err(ParseError::Cancelled);
+    }
+
+    let ParsedDocument { cst, ast } = parser::parse_with_config(
+        source,
+        &parser::ParseConfig {
+            max_inline_depth: options.limits.max_inline_depth,
+        },
+    )
+    .map_err(ParseError::Position)?;
+    if options.profile.mode == SyntaxMode::Strict
+        && ast
+            .blocks
+            .iter()
+            .any(|block| matches!(block, AstBlock::Unsupported(_)))
+    {
+        return Err(ParseError::UnsupportedSyntax);
+    }
+    if cancellation.is_cancelled() {
+        return Err(ParseError::Cancelled);
+    }
+
+    let mut lint_config = LintConfig::default();
+    lint_config.max_diagnostics = options.limits.max_diagnostics;
+    lint_config.max_inline_depth = options.limits.max_inline_depth;
+    let diagnostics = lint::lint(source, &lint_config).map_err(ParseError::Position)?;
+    if cancellation.is_cancelled() {
+        return Err(ParseError::Cancelled);
+    }
+
+    Ok(ParseResult {
+        source_id: options.source_id.clone(),
+        cst,
+        ast,
+        diagnostics,
+        unresolved_references: Vec::new(),
+    })
+}
+
+fn enforce_limit(resource: &'static str, limit: usize, actual: usize) -> Result<(), ParseError> {
+    if actual > limit {
+        Err(ParseError::LimitExceeded {
+            resource,
+            limit,
+            actual,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::thread;
+
+    use super::{
+        CancellationCheck, CancellationToken, ParseError, ParseOptions, SourceId, SyntaxProfile,
+        parse, parse_cancellable,
+    };
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn public_api_is_deterministic_and_source_id_is_opaque() {
+        let options = ParseOptions {
+            source_id: Some(SourceId::new("host:any/value")),
+            ..ParseOptions::default()
+        };
+        let first = parse("== 日本語\n", &options).expect("parse");
+        let second = parse("== 日本語\n", &options).expect("parse");
+
+        assert_eq!(first.source_id, second.source_id);
+        assert_eq!(first.cst.snapshot(), second.cst.snapshot());
+        assert_eq!(first.ast, second.ast);
+        assert_eq!(
+            first.source_id.as_ref().map(SourceId::as_str),
+            Some("host:any/value")
+        );
+    }
+
+    #[test]
+    fn public_api_accepts_anonymous_sources() {
+        let result = parse("paragraph", &ParseOptions::default()).expect("parse");
+        assert_eq!(result.source_id, None);
+    }
+
+    #[test]
+    fn cancellation_is_reported_with_stable_code() {
+        struct CancelAfterFirstCheck(std::sync::atomic::AtomicUsize);
+        impl CancellationCheck for CancelAfterFirstCheck {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0
+            }
+        }
+
+        let source = "a".repeat(16 * 1024);
+        let cancellation = CancelAfterFirstCheck(std::sync::atomic::AtomicUsize::new(0));
+        let error = parse_cancellable(&source, &ParseOptions::default(), &cancellation)
+            .expect_err("cancelled");
+        assert_eq!(error, ParseError::Cancelled);
+        assert_eq!(error.code().as_str(), "cancelled");
+    }
+
+    #[test]
+    fn cancellation_token_can_be_shared_across_threads() {
+        let token = Arc::new(CancellationToken::new());
+        let other = Arc::clone(&token);
+        thread::spawn(move || other.cancel())
+            .join()
+            .expect("thread");
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn public_types_are_send_and_sync() {
+        assert_send_sync::<SourceId>();
+        assert_send_sync::<SyntaxProfile>();
+        assert_send_sync::<ParseOptions>();
+        assert_send_sync::<CancellationToken>();
+        assert_send_sync::<ParseError>();
+    }
+}
