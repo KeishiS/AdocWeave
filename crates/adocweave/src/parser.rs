@@ -4,9 +4,11 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::attributes::{AttributeProblem, DocumentAttribute, parse_line as parse_attribute_line};
+use crate::budget::{BudgetExceeded, ParseBudget};
 use crate::inline::{
-    Inline, InlineParseConfig, InlineProblem, MathLanguage, parse as parse_inlines,
+    Inline, InlineParseConfig, InlineProblem, MathLanguage, parse_with_budget as parse_inlines,
 };
+use crate::limits::ProcessingLimits;
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LosslessToken, SourceLine, SourceLines};
 
@@ -504,6 +506,7 @@ pub(crate) struct ParseConfig {
     pub max_inline_depth: usize,
     pub max_list_depth: usize,
     pub max_formula_bytes: usize,
+    pub limits: ProcessingLimits,
 }
 
 impl Default for ParseConfig {
@@ -512,6 +515,7 @@ impl Default for ParseConfig {
             max_inline_depth: 32,
             max_list_depth: 8,
             max_formula_bytes: 1024 * 1024,
+            limits: ProcessingLimits::default(),
         }
     }
 }
@@ -537,13 +541,16 @@ pub(crate) fn parse_shared(
     match parse_shared_cancellable(source, config, &|| false) {
         Ok(document) => Ok(document),
         Err(ParseFailure::Position(error)) => Err(error),
-        Err(ParseFailure::Cancelled) => unreachable!("non-cancelling parser control"),
+        Err(ParseFailure::Cancelled | ParseFailure::Budget(_)) => {
+            unreachable!("default test parser cannot be cancelled or exhaust its budget")
+        }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ParseFailure {
     Position(PositionError),
+    Budget(BudgetExceeded),
     Cancelled,
 }
 
@@ -553,11 +560,18 @@ impl From<PositionError> for ParseFailure {
     }
 }
 
+impl From<BudgetExceeded> for ParseFailure {
+    fn from(error: BudgetExceeded) -> Self {
+        Self::Budget(error)
+    }
+}
+
 pub(crate) fn parse_shared_cancellable(
     source: Arc<str>,
     config: &ParseConfig,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<ParsedDocument, ParseFailure> {
+    let mut budget = ParseBudget::new(config.limits)?;
     let source_lines = SourceLines::from_shared(Arc::clone(&source))?;
     let source = source.as_ref();
     let mut blocks = Vec::new();
@@ -586,7 +600,15 @@ pub(crate) fn parse_shared_cancellable(
                 .and_then(|next| source_lines.text(next.content_range()))
                 == Some("----")
         {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
             let (source_block, next_line) = parse_source_block(&source_lines, line_index, source)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::SourceBlock,
@@ -603,7 +625,15 @@ pub(crate) fn parse_shared_cancellable(
                 .and_then(|next| source_lines.text(next.content_range()))
                 == Some("++++")
         {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
             let (math, next_line) = parse_math_block(&source_lines, line_index, source, config)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::MathBlock,
@@ -614,7 +644,15 @@ pub(crate) fn parse_shared_cancellable(
             line_index = next_line;
             continue;
         } else if content == "...." {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
             let (literal, next_line) = parse_literal_block(&source_lines, line_index, source)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::LiteralBlock,
@@ -629,7 +667,14 @@ pub(crate) fn parse_shared_cancellable(
             line.content_range().start().to_usize(),
             line.full_range(),
         ) {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
+            budget.consume_node()?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::BlockAnchor,
                 range: line.full_range(),
@@ -638,7 +683,13 @@ pub(crate) fn parse_shared_cancellable(
             saw_content = true;
             header_attributes_open = false;
         } else if content.trim_matches([' ', '\t']).is_empty() {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::BlankLine,
                 range: line.full_range(),
@@ -656,7 +707,15 @@ pub(crate) fn parse_shared_cancellable(
             })
             .flatten()
         {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
+            budget.consume_attribute()?;
+            budget.consume_node()?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::DocumentAttribute,
                 range: line.full_range(),
@@ -664,8 +723,16 @@ pub(crate) fn parse_shared_cancellable(
             attributes.push(attribute);
             attribute_problems.extend(problem);
         } else if content.starts_with('=') {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
-            let heading = parse_heading(content, line, !saw_content, config)?;
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
+            let heading = parse_heading(content, line, !saw_content, config, &mut budget)?;
             blocks.push(CstBlock {
                 kind: if heading.problems.is_empty() {
                     match heading.kind {
@@ -687,8 +754,15 @@ pub(crate) fn parse_shared_cancellable(
             );
             saw_content = true;
         } else if list_marker(content).is_some() {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
-            let (lists, next_line, range) = parse_lists(&source_lines, line_index, source, config)?;
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
+            let (lists, next_line, range) =
+                parse_lists(&source_lines, line_index, source, config, &mut budget)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::List,
                 range,
@@ -699,7 +773,15 @@ pub(crate) fn parse_shared_cancellable(
             line_index = next_line;
             continue;
         } else if let Some(reason) = unsupported_reason(content) {
-            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::Unsupported,
                 range: line.full_range(),
@@ -716,7 +798,13 @@ pub(crate) fn parse_shared_cancellable(
         }
         line_index += 1;
     }
-    flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+    flush_paragraph(
+        &mut blocks,
+        &mut ast_blocks,
+        &mut paragraph_lines,
+        config,
+        &mut budget,
+    )?;
     for anchor in &mut anchors {
         anchor.target_range = ast_blocks
             .iter()
@@ -937,7 +1025,8 @@ fn parse_lists(
     start: usize,
     source: &str,
     config: &ParseConfig,
-) -> Result<(Vec<ListBlock>, usize, TextRange), PositionError> {
+    budget: &mut ParseBudget,
+) -> Result<(Vec<ListBlock>, usize, TextRange), ParseFailure> {
     let mut flat = Vec::new();
     let mut index = start;
     let mut previous: Option<(usize, ListKind)> = None;
@@ -961,7 +1050,8 @@ fn parse_lists(
                 max_depth: config.max_inline_depth,
                 max_formula_bytes: config.max_formula_bytes,
             },
-        );
+            budget,
+        )?;
         let mut problems = Vec::new();
         if text.is_empty() {
             problems.push(ListProblem {
@@ -1001,6 +1091,7 @@ fn parse_lists(
         }
         kinds_by_depth.resize(kinds_by_depth.len().max(effective_depth + 1), None);
         kinds_by_depth[effective_depth] = Some(kind);
+        budget.consume_node()?;
         let mut item = ListItem {
             range: line.full_range(),
             marker_range,
@@ -1047,6 +1138,7 @@ fn parse_lists(
             };
             item.continuation_ranges.push(continuation.full_range());
             item.range = TextRange::new(item.range.start(), block.range().end())?;
+            budget.consume_node()?;
             item.continuations.push(block);
             index = end;
         }
@@ -1068,7 +1160,14 @@ fn parse_lists(
     while cursor < flat.len() {
         let depth = flat[cursor].depth;
         let kind = flat[cursor].kind;
-        roots.push(build_list_tree(&mut flat, &mut cursor, depth, kind)?);
+        budget.consume_block()?;
+        roots.push(build_list_tree(
+            &mut flat,
+            &mut cursor,
+            depth,
+            kind,
+            budget,
+        )?);
     }
     Ok((roots, index, range))
 }
@@ -1078,7 +1177,8 @@ fn build_list_tree(
     cursor: &mut usize,
     depth: usize,
     kind: ListKind,
-) -> Result<ListBlock, PositionError> {
+    budget: &mut ParseBudget,
+) -> Result<ListBlock, ParseFailure> {
     let mut items = Vec::new();
     while *cursor < flat.len() && flat[*cursor].depth == depth && flat[*cursor].kind == kind {
         let mut item = flat[*cursor].item.clone();
@@ -1086,8 +1186,13 @@ fn build_list_tree(
         while *cursor < flat.len() && flat[*cursor].depth > depth {
             let child_depth = flat[*cursor].depth;
             let child_kind = flat[*cursor].kind;
-            item.children
-                .push(build_list_tree(flat, cursor, child_depth, child_kind)?);
+            item.children.push(build_list_tree(
+                flat,
+                cursor,
+                child_depth,
+                child_kind,
+                budget,
+            )?);
         }
         if let Some(child) = item.children.last() {
             item.range = TextRange::new(item.range.start(), child.range.end())?;
@@ -1098,6 +1203,7 @@ fn build_list_tree(
         items.first().expect("list has item").range.start(),
         items.last().expect("list has item").range.end(),
     )?;
+    budget.consume_node()?;
     Ok(ListBlock { kind, range, items })
 }
 
@@ -1264,7 +1370,8 @@ fn parse_heading(
     line: SourceLine,
     document_title_position: bool,
     config: &ParseConfig,
-) -> Result<Heading, PositionError> {
+    budget: &mut ParseBudget,
+) -> Result<Heading, ParseFailure> {
     let marker_len = content.bytes().take_while(|byte| *byte == b'=').count();
     let content_start = line.content_range().start().to_usize();
     let marker_range = text_range(content_start, content_start + marker_len)?;
@@ -1310,7 +1417,8 @@ fn parse_heading(
             max_depth: config.max_inline_depth,
             max_formula_bytes: config.max_formula_bytes,
         },
-    );
+        budget,
+    )?;
     Ok(Heading {
         range: line.full_range(),
         marker_range,
@@ -1329,17 +1437,16 @@ fn flush_paragraph(
     ast_blocks: &mut Vec<AstBlock>,
     lines: &mut Vec<(SourceLine, String)>,
     config: &ParseConfig,
-) {
+    budget: &mut ParseBudget,
+) -> Result<(), ParseFailure> {
     let (Some((first, _)), Some((last, _))) = (lines.first(), lines.last()) else {
-        return;
+        return Ok(());
     };
+    budget.consume_block()?;
+    budget.consume_node()?;
     let range = TextRange::new(first.full_range().start(), last.full_range().end())
         .expect("ordered source lines form an ordered paragraph");
-    cst_blocks.push(CstBlock {
-        kind: CstBlockKind::Paragraph,
-        range,
-    });
-    ast_blocks.push(AstBlock::Paragraph(Paragraph {
+    let mut paragraph = Paragraph {
         range,
         content_range: {
             TextRange::new(first.content_range().start(), last.content_range().end())
@@ -1348,11 +1455,6 @@ fn flush_paragraph(
         value: String::new(),
         inlines: Vec::new(),
         inline_problems: Vec::new(),
-    }));
-
-    let AstBlock::Paragraph(paragraph) = ast_blocks.last_mut().expect("paragraph was inserted")
-    else {
-        unreachable!("inserted a paragraph")
     };
     for (line, value) in lines.drain(..) {
         paragraph.value.push_str(&value);
@@ -1371,9 +1473,16 @@ fn flush_paragraph(
             max_depth: config.max_inline_depth,
             max_formula_bytes: config.max_formula_bytes,
         },
-    );
+        budget,
+    )?;
     paragraph.inlines = inline_output.inlines;
     paragraph.inline_problems = inline_output.problems;
+    cst_blocks.push(CstBlock {
+        kind: CstBlockKind::Paragraph,
+        range,
+    });
+    ast_blocks.push(AstBlock::Paragraph(paragraph));
+    Ok(())
 }
 
 fn unsupported_reason(content: &str) -> Option<&'static str> {

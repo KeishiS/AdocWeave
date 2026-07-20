@@ -27,10 +27,15 @@
 
 M12移行方針により、このIssue単独で旧parserの全consumerとの互換性を維持する必要はない。
 
-== 進捗
+== 実装結果
 
 InlineScannerの走査量を入力長から合成した値ではなく、unconstrained marker索引、候補収集、
 closer索引およびdelimiter索引で実際に検査した位置の合計へ変更した。ASCIIの既知入力と
 不正macroが密集する可変長入力で、計測値そのものと入力長に対する定数倍上限を検証する。
 
-構築時ParseBudgetとblock、node、属性、参照の事前拒否は未完了である。
+共有ParseBudgetを導入し、文書root、block、semantic node、文書属性およびxrefを結果collectionへ
+追加する前に予算を消費するよう変更した。コア解析後のblock、node、属性、参照の事後検査は
+削除した。診断も全件生成後のtruncateを廃止し、上限到達後は新しい診断を構築しない。
+
+各構造資源について上限直前、同値および1超過を公開Engine経由で検証し、超過時のresource、
+limitおよびactualを固定した。escaped macroは参照nodeを構築せず、参照予算も消費しない。

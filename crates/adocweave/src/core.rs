@@ -264,20 +264,19 @@ fn analyze_inner(
             max_inline_depth: limit_to_usize(options.limits.max_inline_depth),
             max_list_depth: limit_to_usize(options.limits.max_list_depth),
             max_formula_bytes: limit_to_usize(options.limits.max_formula_bytes),
+            limits: options.limits,
         },
         &|| cancellation.is_cancelled(),
     )
     .map_err(|failure| match failure {
         parser::ParseFailure::Position(error) => ParseError::Position(error),
+        parser::ParseFailure::Budget(error) => ParseError::LimitExceeded {
+            resource: error.resource,
+            limit: error.limit,
+            actual: error.actual,
+        },
         parser::ParseFailure::Cancelled => ParseError::Cancelled,
     })?;
-    enforce_limit(
-        "document attributes",
-        options.limits.max_attributes,
-        ast.attributes.len(),
-    )?;
-    enforce_limit("blocks", options.limits.max_blocks, ast.blocks.len())?;
-    enforce_limit("nodes", options.limits.max_nodes, ast.node_count())?;
     if options.profile.mode == SyntaxMode::Strict
         && ast
             .blocks
@@ -304,11 +303,6 @@ fn analyze_inner(
     let diagnostics = lint::lint_cst(&cst, &ast, &lint_config).map_err(ParseError::Position)?;
     let reference_targets = crate::document::reference_targets(&ast);
     let references = collect_references(&ast);
-    enforce_limit(
-        "references",
-        options.limits.max_references,
-        references.len(),
-    )?;
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
     }

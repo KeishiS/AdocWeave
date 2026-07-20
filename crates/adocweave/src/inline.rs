@@ -1,5 +1,6 @@
 //! Output-independent inline syntax.
 
+use crate::budget::{BudgetExceeded, ParseBudget};
 use crate::source::{TextRange, TextSize};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -170,8 +171,19 @@ fn parse_text(value: &str, range: TextRange, config: InlineParseConfig) -> Vec<I
     parse(value, range, config).inlines
 }
 
+#[cfg(test)]
 pub(crate) fn parse(value: &str, range: TextRange, config: InlineParseConfig) -> InlineParseOutput {
-    parse_segment(value, range, config, 0)
+    parse_with_budget(value, range, config, &mut ParseBudget::unlimited())
+        .expect("the test and compatibility parser uses an unlimited budget")
+}
+
+pub(crate) fn parse_with_budget(
+    value: &str,
+    range: TextRange,
+    config: InlineParseConfig,
+    budget: &mut ParseBudget,
+) -> Result<InlineParseOutput, BudgetExceeded> {
+    parse_segment(value, range, config, 0, budget)
 }
 
 fn parse_segment(
@@ -179,7 +191,8 @@ fn parse_segment(
     range: TextRange,
     config: InlineParseConfig,
     depth: usize,
-) -> InlineParseOutput {
+    budget: &mut ParseBudget,
+) -> Result<InlineParseOutput, BudgetExceeded> {
     let mut output = InlineParseOutput::default();
     let mut cursor = 0;
     let mut plain_start = 0;
@@ -188,39 +201,82 @@ fn parse_segment(
     while let Some(candidate) = scanner.next(cursor) {
         match candidate {
             InlineCandidate::EscapedAnchor { slash } => {
-                push_text(&mut output.inlines, value, range, plain_start, slash);
-                output.inlines.push(Inline::Text(InlineText {
-                    range: subrange(range, slash, slash + 2),
-                    value: "[".to_owned(),
-                }));
+                push_text(
+                    &mut output.inlines,
+                    value,
+                    range,
+                    plain_start,
+                    slash,
+                    budget,
+                )?;
+                push_inline(
+                    &mut output.inlines,
+                    Inline::Text(InlineText {
+                        range: subrange(range, slash, slash + 2),
+                        value: "[".to_owned(),
+                    }),
+                    budget,
+                )?;
                 cursor = slash + 2;
                 plain_start = cursor;
             }
             InlineCandidate::Macro { open } => {
                 match scanner.recognize_macro(value, open) {
                     MacroRecognition::Complete(token) => {
-                        let built = build_macro(value, range, config, depth, token);
                         if is_escaped(value, open) {
-                            push_text(&mut output.inlines, value, range, plain_start, open - 1);
-                            output.inlines.push(Inline::Text(InlineText {
-                                range: subrange(range, open - 1, built.end),
-                                value: value[open..built.end].to_owned(),
-                            }));
+                            let end = token.end();
+                            push_text(
+                                &mut output.inlines,
+                                value,
+                                range,
+                                plain_start,
+                                open - 1,
+                                budget,
+                            )?;
+                            push_inline(
+                                &mut output.inlines,
+                                Inline::Text(InlineText {
+                                    range: subrange(range, open - 1, end),
+                                    value: value[open..end].to_owned(),
+                                }),
+                                budget,
+                            )?;
+                            cursor = end;
+                            plain_start = end;
                         } else {
-                            push_text(&mut output.inlines, value, range, plain_start, open);
-                            output.inlines.push(built.inline);
+                            let built = build_macro(value, range, config, depth, token, budget)?;
+                            push_text(
+                                &mut output.inlines,
+                                value,
+                                range,
+                                plain_start,
+                                open,
+                                budget,
+                            )?;
+                            push_inline(&mut output.inlines, built.inline, budget)?;
+                            cursor = built.end;
+                            plain_start = built.end;
                             output.problems.extend(built.problems);
                         }
-                        cursor = built.end;
-                        plain_start = built.end;
                     }
                     MacroRecognition::Incomplete { kind, next } => {
                         if is_escaped(value, open) {
-                            push_text(&mut output.inlines, value, range, plain_start, open - 1);
-                            output.inlines.push(Inline::Text(InlineText {
-                                range: subrange(range, open - 1, value.len()),
-                                value: value[open..].to_owned(),
-                            }));
+                            push_text(
+                                &mut output.inlines,
+                                value,
+                                range,
+                                plain_start,
+                                open - 1,
+                                budget,
+                            )?;
+                            push_inline(
+                                &mut output.inlines,
+                                Inline::Text(InlineText {
+                                    range: subrange(range, open - 1, value.len()),
+                                    value: value[open..].to_owned(),
+                                }),
+                                budget,
+                            )?;
                             cursor = value.len();
                             plain_start = cursor;
                         } else {
@@ -249,20 +305,31 @@ fn parse_segment(
             } => {
                 if is_escaped(value, open) {
                     let marker_width = form.width();
-                    push_text(&mut output.inlines, value, range, plain_start, open - 1);
-                    output.inlines.push(Inline::Text(InlineText {
-                        range: subrange(range, open - 1, open + marker_width),
-                        value: value[open..open + marker_width].to_owned(),
-                    }));
+                    push_text(
+                        &mut output.inlines,
+                        value,
+                        range,
+                        plain_start,
+                        open - 1,
+                        budget,
+                    )?;
+                    push_inline(
+                        &mut output.inlines,
+                        Inline::Text(InlineText {
+                            range: subrange(range, open - 1, open + marker_width),
+                            value: value[open..open + marker_width].to_owned(),
+                        }),
+                        budget,
+                    )?;
                     cursor = open + marker_width;
                     plain_start = cursor;
                     continue;
                 }
                 match recognize_marker(value, open, marker, form, close) {
                     MarkerRecognition::Complete(token) => {
-                        let built = build_marker(value, range, config, depth, token);
-                        push_text(&mut output.inlines, value, range, plain_start, open);
-                        output.inlines.push(built.inline);
+                        let built = build_marker(value, range, config, depth, token, budget)?;
+                        push_text(&mut output.inlines, value, range, plain_start, open, budget)?;
+                        push_inline(&mut output.inlines, built.inline, budget)?;
                         output.problems.extend(built.problems);
                         cursor = token.end;
                         plain_start = cursor;
@@ -280,8 +347,15 @@ fn parse_segment(
         }
     }
 
-    push_text(&mut output.inlines, value, range, plain_start, value.len());
-    output
+    push_text(
+        &mut output.inlines,
+        value,
+        range,
+        plain_start,
+        value.len(),
+        budget,
+    )?;
+    Ok(output)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -631,7 +705,8 @@ fn build_marker(
     config: InlineParseConfig,
     depth: usize,
     token: MarkerToken,
-) -> BuiltInline {
+    budget: &mut ParseBudget,
+) -> Result<BuiltInline, BudgetExceeded> {
     let MarkerToken {
         open,
         close,
@@ -666,7 +741,8 @@ fn build_marker(
                 content_range,
                 config,
                 depth + 1,
-            );
+                budget,
+            )?;
             problems.extend(inner.problems);
             Inline::Styled {
                 style: if marker == '*' {
@@ -686,11 +762,11 @@ fn build_marker(
         },
         _ => unreachable!("only supported markers are returned"),
     };
-    BuiltInline {
+    Ok(BuiltInline {
         inline,
         end,
         problems,
-    }
+    })
 }
 
 fn valid_attribute_name(name: &str) -> bool {
@@ -705,6 +781,18 @@ enum MacroToken {
     Formula(FormulaToken),
     Reference(ReferenceToken),
     Link(LinkToken),
+}
+
+impl MacroToken {
+    const fn end(self) -> usize {
+        match self {
+            Self::Formula(token) => token.end,
+            Self::Reference(ReferenceToken::Short { end, .. })
+            | Self::Reference(ReferenceToken::Xref { end, .. })
+            | Self::Link(LinkToken::Explicit { end, .. })
+            | Self::Link(LinkToken::Url { end, .. }) => end,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -916,7 +1004,8 @@ fn build_macro(
     config: InlineParseConfig,
     depth: usize,
     token: MacroToken,
-) -> BuiltInline {
+    budget: &mut ParseBudget,
+) -> Result<BuiltInline, BudgetExceeded> {
     match token {
         MacroToken::Formula(FormulaToken {
             open,
@@ -951,14 +1040,16 @@ fn build_macro(
                     range: formula.content_range,
                 });
             }
-            BuiltInline {
+            Ok(BuiltInline {
                 inline: Inline::Formula(formula),
                 end,
                 problems,
-            }
+            })
         }
-        MacroToken::Reference(token) => build_reference_macro(value, range, config, depth, token),
-        MacroToken::Link(token) => build_link_macro(value, range, config, depth, token),
+        MacroToken::Reference(token) => {
+            build_reference_macro(value, range, config, depth, token, budget)
+        }
+        MacroToken::Link(token) => build_link_macro(value, range, config, depth, token, budget),
     }
 }
 
@@ -968,7 +1059,9 @@ fn build_reference_macro(
     config: InlineParseConfig,
     depth: usize,
     token: ReferenceToken,
-) -> BuiltInline {
+    budget: &mut ParseBudget,
+) -> Result<BuiltInline, BudgetExceeded> {
+    budget.consume_reference()?;
     match token {
         ReferenceToken::Short {
             open,
@@ -988,13 +1081,15 @@ fn build_reference_macro(
                     label_range.expect("label has range"),
                     config,
                     depth + 1,
+                    budget,
                 )
             });
+            let label_output = label_output.transpose()?;
             let (label_inlines, problems) = label_output.map_or_else(
                 || (Vec::new(), Vec::new()),
                 |output| (output.inlines, output.problems),
             );
-            BuiltInline {
+            Ok(BuiltInline {
                 inline: Inline::Reference(Reference {
                     range: subrange(range, open, end),
                     target_range,
@@ -1012,7 +1107,7 @@ fn build_reference_macro(
                 }),
                 end,
                 problems,
-            }
+            })
         }
         ReferenceToken::Xref {
             open,
@@ -1025,8 +1120,8 @@ fn build_reference_macro(
             let label_text = &value[bracket + 1..close];
             let target_range = subrange(range, target_start, bracket);
             let label_range = subrange(range, bracket + 1, close);
-            let label = parse_segment(label_text, label_range, config, depth + 1);
-            BuiltInline {
+            let label = parse_segment(label_text, label_range, config, depth + 1, budget)?;
+            Ok(BuiltInline {
                 inline: Inline::Reference(Reference {
                     range: subrange(range, open, end),
                     target_range,
@@ -1037,7 +1132,7 @@ fn build_reference_macro(
                 }),
                 end,
                 problems: label.problems,
-            }
+            })
         }
     }
 }
@@ -1048,7 +1143,8 @@ fn build_link_macro(
     config: InlineParseConfig,
     depth: usize,
     token: LinkToken,
-) -> BuiltInline {
+    budget: &mut ParseBudget,
+) -> Result<BuiltInline, BudgetExceeded> {
     match token {
         LinkToken::Explicit {
             open,
@@ -1060,8 +1156,14 @@ fn build_link_macro(
             let target_range = subrange(range, target_start, bracket);
             let label_range = subrange(range, bracket + 1, close);
             let target = value[target_start..bracket].to_owned();
-            let label = parse_segment(&value[bracket + 1..close], label_range, config, depth + 1);
-            BuiltInline {
+            let label = parse_segment(
+                &value[bracket + 1..close],
+                label_range,
+                config,
+                depth + 1,
+                budget,
+            )?;
+            Ok(BuiltInline {
                 inline: Inline::Link(Link {
                     range: subrange(range, open, end),
                     target_range,
@@ -1073,7 +1175,7 @@ fn build_link_macro(
                 }),
                 end,
                 problems: label.problems,
-            }
+            })
         }
         LinkToken::Url {
             open,
@@ -1081,15 +1183,22 @@ fn build_link_macro(
             label: label_offsets,
             end,
         } => {
-            let (label_range, label, problems) =
-                label_offsets.map_or((None, Vec::new(), Vec::new()), |(start, close)| {
+            let (label_range, label, problems) = match label_offsets {
+                Some((start, close)) => {
                     let label_range = subrange(range, start, close);
-                    let output =
-                        parse_segment(&value[start..close], label_range, config, depth + 1);
+                    let output = parse_segment(
+                        &value[start..close],
+                        label_range,
+                        config,
+                        depth + 1,
+                        budget,
+                    )?;
                     (Some(label_range), output.inlines, output.problems)
-                });
+                }
+                None => (None, Vec::new(), Vec::new()),
+            };
             let target_range = subrange(range, open, target_end);
-            BuiltInline {
+            Ok(BuiltInline {
                 inline: Inline::Link(Link {
                     range: subrange(range, open, end),
                     target_range,
@@ -1101,7 +1210,7 @@ fn build_link_macro(
                 }),
                 end,
                 problems,
-            }
+            })
         }
     }
 }
@@ -1245,13 +1354,35 @@ fn is_close_boundary(value: &str, offset: usize, marker: char) -> bool {
         && next.is_none_or(|character| !character.is_alphanumeric())
 }
 
-fn push_text(inlines: &mut Vec<Inline>, value: &str, range: TextRange, start: usize, end: usize) {
+fn push_text(
+    inlines: &mut Vec<Inline>,
+    value: &str,
+    range: TextRange,
+    start: usize,
+    end: usize,
+    budget: &mut ParseBudget,
+) -> Result<(), BudgetExceeded> {
     if start != end {
-        inlines.push(Inline::Text(InlineText {
-            range: subrange(range, start, end),
-            value: value[start..end].to_owned(),
-        }));
+        push_inline(
+            inlines,
+            Inline::Text(InlineText {
+                range: subrange(range, start, end),
+                value: value[start..end].to_owned(),
+            }),
+            budget,
+        )?;
     }
+    Ok(())
+}
+
+fn push_inline(
+    inlines: &mut Vec<Inline>,
+    inline: Inline,
+    budget: &mut ParseBudget,
+) -> Result<(), BudgetExceeded> {
+    budget.consume_node()?;
+    inlines.push(inline);
+    Ok(())
 }
 
 fn subrange(parent: TextRange, start: usize, end: usize) -> TextRange {

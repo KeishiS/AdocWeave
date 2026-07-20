@@ -163,6 +163,7 @@ fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, PositionEr
             max_inline_depth: config.max_inline_depth,
             max_list_depth: config.max_list_depth,
             max_formula_bytes: config.max_formula_bytes,
+            ..ParseConfig::default()
         },
     )?;
     lint_cst(&parsed.cst, &parsed.ast, config)
@@ -254,7 +255,6 @@ pub(crate) fn lint_cst(
     lint_anchors(document, config, &mut diagnostics);
     lint_links_and_references(document, config, &mut diagnostics);
     sort_diagnostics(&mut diagnostics);
-    diagnostics.truncate(config.max_diagnostics);
     Ok(diagnostics)
 }
 
@@ -385,7 +385,7 @@ fn lint_anchors(
     for target in crate::document::reference_targets(document) {
         if let Some(first) = ids.insert(target.id.clone(), target.id_range) {
             let settings = config.rule(LintRule::DuplicateAnchor);
-            if settings.enabled {
+            if settings.enabled && diagnostics.len() < config.max_diagnostics {
                 diagnostics.push(Diagnostic {
                     id: DiagnosticId::new(format!(
                         "{}@{}:{}",
@@ -434,7 +434,7 @@ fn lint_attributes(
     for attribute in &document.attributes {
         if let Some(first) = definitions.insert(attribute.name.clone(), attribute.name_range) {
             let settings = config.rule(LintRule::DuplicateAttribute);
-            if settings.enabled {
+            if settings.enabled && diagnostics.len() < config.max_diagnostics {
                 diagnostics.push(Diagnostic {
                     id: DiagnosticId::new(format!(
                         "{}@{}:{}",
@@ -459,7 +459,10 @@ fn lint_attributes(
                 AttributeOperation::Set => &attribute.raw_value != expected,
                 AttributeOperation::Unset => true,
             };
-            if changed && config.rule(LintRule::ProtectedAttribute).enabled {
+            if changed
+                && config.rule(LintRule::ProtectedAttribute).enabled
+                && diagnostics.len() < config.max_diagnostics
+            {
                 diagnostics.push(Diagnostic {
                     id: DiagnosticId::new(format!(
                         "{}@{}:{}",
@@ -657,7 +660,7 @@ fn lint_headings(
         let base = heading_id_base(&heading.text);
         if let Some(first_range) = ids.get(&base).copied() {
             let settings = config.rule(LintRule::DuplicateHeadingId);
-            if settings.enabled {
+            if settings.enabled && diagnostics.len() < config.max_diagnostics {
                 diagnostics.push(Diagnostic {
                     id: DiagnosticId::new(format!(
                         "{}@{}:{}",
@@ -853,6 +856,9 @@ fn push_diagnostic(
     message: &str,
     fix: Option<(&str, TextRange, &str)>,
 ) {
+    if diagnostics.len() >= config.max_diagnostics {
+        return;
+    }
     let settings = config.rule(rule);
     if !settings.enabled {
         return;

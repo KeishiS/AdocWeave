@@ -9,6 +9,12 @@ use adocweave::{
 };
 
 type LimitCase = (&'static str, fn(&mut ProcessingLimits));
+type BoundaryCase = (
+    &'static str,
+    &'static str,
+    u32,
+    fn(&mut ProcessingLimits, u32),
+);
 
 #[test]
 fn adversarial_fixture_never_emits_active_input_or_unsafe_urls() {
@@ -129,6 +135,67 @@ fn each_structural_resource_limit_rejects_the_corresponding_input() {
             matches!(result, Err(ProcessError::LimitExceeded { .. })),
             "{source:?}"
         );
+    }
+}
+
+#[test]
+fn construction_budgets_accept_exact_boundaries_and_reject_the_next_item() {
+    let cases: [BoundaryCase; 4] = [
+        (
+            "blocks",
+            "one\n\ntwo",
+            2_u32,
+            |limits: &mut ProcessingLimits, value| {
+                limits.max_blocks = value;
+            },
+        ),
+        (
+            "nodes",
+            "plain",
+            3_u32,
+            |limits: &mut ProcessingLimits, value| {
+                limits.max_nodes = value;
+            },
+        ),
+        (
+            "references",
+            "xref:#a[] xref:#b[]",
+            2_u32,
+            |limits: &mut ProcessingLimits, value| {
+                limits.max_references = value;
+            },
+        ),
+        (
+            "document attributes",
+            "= T\n:a: 1\n:b: 2\n",
+            2_u32,
+            |limits: &mut ProcessingLimits, value| {
+                limits.max_attributes = value;
+            },
+        ),
+    ];
+
+    for (resource, source, exact, set_limit) in cases {
+        let mut accepted = ParseOptions::default();
+        set_limit(&mut accepted.limits, exact);
+        Engine::new(accepted)
+            .analyze(source)
+            .unwrap_or_else(|error| panic!("{resource} exact boundary failed: {error}"));
+
+        let mut rejected = ParseOptions::default();
+        set_limit(&mut rejected.limits, exact - 1);
+        match Engine::new(rejected).analyze(source) {
+            Err(ParseError::LimitExceeded {
+                resource: actual_resource,
+                limit,
+                actual,
+            }) => {
+                assert_eq!(actual_resource, resource);
+                assert_eq!(limit, exact - 1);
+                assert_eq!(actual, u64::from(exact));
+            }
+            other => panic!("{resource} over-boundary result was {other:?}"),
+        }
     }
 }
 
