@@ -27,6 +27,7 @@ Arguments:
 Options:
   --json      Emit check diagnostics as JSON
   --check     Check formatting without writing formatted text
+  -V, --version  Print version
   -h, --help  Print help
 ";
 
@@ -77,6 +78,7 @@ struct Arguments {
 enum Action {
     Run(Arguments),
     Help,
+    Version,
 }
 
 fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action, CliError> {
@@ -86,6 +88,9 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
 
     if matches!(command.as_str(), "-h" | "--help" | "help") {
         return Ok(Action::Help);
+    }
+    if matches!(command.as_str(), "-V" | "--version") {
+        return Ok(Action::Version);
     }
 
     let operation = match command.as_str() {
@@ -146,6 +151,10 @@ fn run() -> Result<(), CliError> {
     match parse_arguments(env::args().skip(1))? {
         Action::Help => {
             print!("{HELP}");
+            Ok(())
+        }
+        Action::Version => {
+            println!("asciiloom {}", asciiloom::VERSION);
             Ok(())
         }
         Action::Run(arguments) => {

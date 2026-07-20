@@ -17,6 +17,9 @@ pub mod parser;
 pub mod source;
 pub mod source_lines;
 
+pub const PRODUCT_NAME: &str = "AsciiLoom";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// An operation supported by the AsciiLoom command-line application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {

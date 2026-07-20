@@ -44,6 +44,18 @@ fn every_subcommand_displays_help() {
 }
 
 #[test]
+fn cli_reports_release_name_and_version() {
+    let output = asciiloom()
+        .arg("--version")
+        .output()
+        .expect("the asciiloom binary should run");
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"asciiloom 0.1.0\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn convert_reads_a_file() {
     let fixture = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -136,4 +148,24 @@ fn symbols_command_emits_heading_hierarchy_as_json() {
     assert!(stdout.contains("\"name\":\"Title\""));
     assert!(stdout.contains("\"name\":\"Section\""));
     assert!(stdout.contains("\"name\":\"Child\""));
+}
+
+#[test]
+fn release_fixture_works_across_convert_check_and_format() {
+    let source = include_bytes!("../../../fixtures/release/core.adoc");
+    let expected_html = include_bytes!("../../../fixtures/release/core.html");
+
+    let converted = run_with_stdin(&["convert", "-"], source);
+    let checked = run_with_stdin(&["check", "--json", "-"], source);
+    let formatted = run_with_stdin(&["format", "-"], source);
+
+    assert!(converted.status.success());
+    assert_eq!(converted.stdout, expected_html);
+    assert!(converted.stderr.is_empty());
+    assert!(checked.status.success());
+    assert_eq!(checked.stdout, b"[]");
+    assert!(checked.stderr.is_empty());
+    assert!(formatted.status.success());
+    assert_eq!(formatted.stdout, source);
+    assert!(formatted.stderr.is_empty());
 }

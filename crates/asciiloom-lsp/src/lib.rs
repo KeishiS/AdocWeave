@@ -14,6 +14,9 @@ mod transport;
 pub use state::{DocumentState, DocumentStore};
 pub use transport::{run, run_stdio};
 
+pub const SERVER_NAME: &str = "asciiloom-lsp";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PositionEncoding {
     Utf8,
@@ -80,7 +83,7 @@ impl Server {
                                     "triggerCharacters": [",", " "]
                                 }
                             },
-                            "serverInfo": {"name": "asciiloom-lsp", "version": env!("CARGO_PKG_VERSION")}
+                            "serverInfo": {"name": SERVER_NAME, "version": VERSION}
                         }
                     })
                 }))

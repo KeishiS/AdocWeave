@@ -1,0 +1,20 @@
+= AsciiLoom 初期リリース
+
+== Inline
+
+Plain *strong*, _emphasis_, and `mono`.
+
+== Literal
+
+....
+<tag> stays *literal*
+....
+
+== Source
+
+[source, rust]
+----
+fn main() {
+    println!("hello");
+}
+----

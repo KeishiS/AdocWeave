@@ -381,6 +381,28 @@ fn formatting_is_idempotent_and_preserves_literal_body() {
     assert_eq!(second, json!([]));
 }
 
+#[test]
+fn release_fixture_is_accepted_by_lsp_features() {
+    let source = include_str!("../../../fixtures/release/core.adoc");
+    let mut server = Server::default();
+    let diagnostics = open_with_diagnostic(&mut server, "file:///release.adoc", source);
+    assert_eq!(diagnostics["params"]["diagnostics"], json!([]));
+
+    let symbols = request_symbols(&mut server, "file:///release.adoc");
+    assert_eq!(symbols[0]["name"], "AsciiLoom 初期リリース");
+    assert_eq!(
+        symbols[0]["children"].as_array().expect("children").len(),
+        3
+    );
+
+    let formatting = request(
+        &mut server,
+        "textDocument/formatting",
+        "file:///release.adoc",
+    );
+    assert_eq!(formatting, json!([]));
+}
+
 fn position_request(
     server: &mut Server,
     method: &str,
