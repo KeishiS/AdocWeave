@@ -345,33 +345,9 @@ fn lint_links_and_references(
             }
         }
     }
-    fn inspect_list(
-        list: &crate::parser::ListBlock,
-        targets: &[crate::document::ReferenceTarget],
-        config: &LintConfig,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        for item in &list.items {
-            inspect(&item.inlines, targets, config, diagnostics);
-            for child in &item.children {
-                inspect_list(child, targets, config, diagnostics);
-            }
-        }
-    }
-    for block in &document.blocks {
-        match block {
-            AstBlock::Heading(heading) => {
-                inspect(&heading.inlines, &targets, config, diagnostics);
-            }
-            AstBlock::Paragraph(paragraph) => {
-                for line in &paragraph.lines {
-                    inspect(&line.inlines, &targets, config, diagnostics);
-                }
-            }
-            AstBlock::List(list) => inspect_list(list, &targets, config, diagnostics),
-            _ => {}
-        }
-    }
+    document.visit_inline_sequences(|inlines| {
+        inspect(inlines, &targets, config, diagnostics);
+    });
 }
 
 fn valid_document_target(value: &str) -> bool {
@@ -499,9 +475,7 @@ fn lint_attributes(
             }
         }
     }
-    for block in &document.blocks {
-        collect_attribute_references(block, &mut used);
-    }
+    collect_attribute_references(document, &mut used);
     for (name, ranges) in &used {
         if !definitions.contains_key(name) {
             for range in ranges {
@@ -530,7 +504,10 @@ fn lint_attributes(
     }
 }
 
-fn collect_attribute_references(block: &AstBlock, used: &mut BTreeMap<String, Vec<TextRange>>) {
+fn collect_attribute_references(
+    document: &crate::parser::AstDocument,
+    used: &mut BTreeMap<String, Vec<TextRange>>,
+) {
     fn collect(inlines: &[crate::inline::Inline], used: &mut BTreeMap<String, Vec<TextRange>>) {
         for inline in inlines {
             match inline {
@@ -551,24 +528,7 @@ fn collect_attribute_references(block: &AstBlock, used: &mut BTreeMap<String, Ve
             }
         }
     }
-    fn collect_list(list: &crate::parser::ListBlock, used: &mut BTreeMap<String, Vec<TextRange>>) {
-        for item in &list.items {
-            collect(&item.inlines, used);
-            for child in &item.children {
-                collect_list(child, used);
-            }
-        }
-    }
-    match block {
-        AstBlock::Heading(heading) => collect(&heading.inlines, used),
-        AstBlock::Paragraph(paragraph) => {
-            for line in &paragraph.lines {
-                collect(&line.inlines, used);
-            }
-        }
-        AstBlock::List(list) => collect_list(list, used),
-        _ => {}
-    }
+    document.visit_inline_sequences(|inlines| collect(inlines, used));
 }
 
 fn lint_headings(

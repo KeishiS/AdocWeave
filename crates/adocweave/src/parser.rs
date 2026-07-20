@@ -318,6 +318,52 @@ impl AstDocument {
         }
         output
     }
+
+    pub fn visit_inline_sequences(&self, mut visitor: impl FnMut(&[Inline])) {
+        fn visit_list(list: &ListBlock, visitor: &mut impl FnMut(&[Inline])) {
+            for item in &list.items {
+                visitor(&item.inlines);
+                for child in &item.children {
+                    visit_list(child, visitor);
+                }
+            }
+        }
+        for block in &self.blocks {
+            match block {
+                AstBlock::Heading(heading) => visitor(&heading.inlines),
+                AstBlock::Paragraph(paragraph) => {
+                    for line in &paragraph.lines {
+                        visitor(&line.inlines);
+                    }
+                }
+                AstBlock::List(list) => visit_list(list, &mut visitor),
+                _ => {}
+            }
+        }
+    }
+
+    pub fn visit_inline_sequences_mut(&mut self, mut visitor: impl FnMut(&mut Vec<Inline>)) {
+        fn visit_list(list: &mut ListBlock, visitor: &mut impl FnMut(&mut Vec<Inline>)) {
+            for item in &mut list.items {
+                visitor(&mut item.inlines);
+                for child in &mut item.children {
+                    visit_list(child, visitor);
+                }
+            }
+        }
+        for block in &mut self.blocks {
+            match block {
+                AstBlock::Heading(heading) => visitor(&mut heading.inlines),
+                AstBlock::Paragraph(paragraph) => {
+                    for line in &mut paragraph.lines {
+                        visitor(&mut line.inlines);
+                    }
+                }
+                AstBlock::List(list) => visit_list(list, &mut visitor),
+                _ => {}
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -572,27 +618,7 @@ fn resolve_document_attributes(document: &mut AstDocument) {
             }
         }
     }
-    for block in &mut document.blocks {
-        match block {
-            AstBlock::Heading(heading) => resolve(&mut heading.inlines, &attributes),
-            AstBlock::Paragraph(paragraph) => {
-                for line in &mut paragraph.lines {
-                    resolve(&mut line.inlines, &attributes);
-                }
-            }
-            AstBlock::List(list) => resolve_list(list, &attributes),
-            _ => {}
-        }
-    }
-
-    fn resolve_list(list: &mut ListBlock, attributes: &std::collections::BTreeMap<String, String>) {
-        for item in &mut list.items {
-            resolve(&mut item.inlines, attributes);
-            for child in &mut item.children {
-                resolve_list(child, attributes);
-            }
-        }
-    }
+    document.visit_inline_sequences_mut(|inlines| resolve(inlines, &attributes));
 }
 
 fn parse_explicit_anchor(

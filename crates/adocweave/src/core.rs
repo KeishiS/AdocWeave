@@ -299,31 +299,7 @@ fn collect_references(document: &parser::AstDocument) -> Vec<crate::inline::Refe
         }
     }
     let mut output = Vec::new();
-    fn collect_block(block: &AstBlock, output: &mut Vec<crate::inline::Reference>) {
-        match block {
-            AstBlock::Heading(heading) => collect(&heading.inlines, output),
-            AstBlock::Paragraph(paragraph) => {
-                for line in &paragraph.lines {
-                    collect(&line.inlines, output);
-                }
-            }
-            AstBlock::List(list) => {
-                for item in &list.items {
-                    collect(&item.inlines, output);
-                    for child in &item.children {
-                        collect_block(&AstBlock::List(child.clone()), output);
-                    }
-                    for continuation in &item.continuations {
-                        collect_block(continuation, output);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    for block in &document.blocks {
-        collect_block(block, &mut output);
-    }
+    document.visit_inline_sequences(|inlines| collect(inlines, &mut output));
     output
 }
 
