@@ -1,6 +1,6 @@
 use adocweave::inline::{Inline, InlineLiteralKind, InlineStyle};
-use adocweave::parser::{AstBlock, BlockProblemKind};
-use adocweave::syntax::SyntaxKind;
+use adocweave::parser::AstBlock;
+use adocweave::syntax::{SyntaxIssueClass, SyntaxKind};
 use adocweave::{Analysis, Engine, ParseOptions};
 
 const SOURCE: &str = include_str!("../../../fixtures/grammar/ambiguous.adoc");
@@ -47,7 +47,13 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
             }
         ))
     )));
-    assert!(!first.inline_problems.is_empty());
+    assert!(
+        parsed
+            .syntax()
+            .issues()
+            .iter()
+            .any(|issue| issue.class == SyntaxIssueClass::UnclosedInline)
+    );
     assert!(first.inlines.iter().any(|inline| matches!(
         inline,
         Inline::Literal {
@@ -66,12 +72,7 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         })
         .collect::<Vec<_>>();
     assert_eq!(literals[0].value, "*literal* <tag>\n.....\n");
-    assert!(
-        literals[1]
-            .problems
-            .iter()
-            .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock)
-    );
+    assert_eq!(parsed.syntax().nodes(SyntaxKind::Error).count(), 1);
     assert!(matches!(
         parsed.ast().blocks().last(),
         Some(AstBlock::Heading(_))

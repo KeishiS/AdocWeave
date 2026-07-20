@@ -7,7 +7,7 @@ use crate::diagnostic::{
     TextEdit, sort_diagnostics,
 };
 use crate::document::heading_id_base;
-use crate::parser::{AstBlock, HeadingKind, HeadingProblem};
+use crate::parser::{AstBlock, HeadingKind};
 #[cfg(test)]
 use crate::parser::{ParseConfig, parse_with_config};
 use crate::source::{PositionError, TextRange, TextSize};
@@ -556,12 +556,7 @@ fn lint_headings(
             continue;
         };
 
-        let structurally_invalid = heading.problems.iter().any(|problem| {
-            matches!(
-                problem,
-                HeadingProblem::LevelTooDeep | HeadingProblem::MisplacedDocumentTitle
-            )
-        });
+        let structurally_invalid = !heading.hierarchy_valid;
         match heading.kind {
             HeadingKind::DocumentTitle => {
                 previous_level = None;

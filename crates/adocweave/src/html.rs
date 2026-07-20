@@ -236,7 +236,7 @@ fn render_heading(
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_>,
 ) {
-    if !heading.problems.is_empty() {
+    if !heading.well_formed {
         output.push_str("<p>");
         render_inlines(output, &heading.inlines, context);
         output.push_str("</p>\n");

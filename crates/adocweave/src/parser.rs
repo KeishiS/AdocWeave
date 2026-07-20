@@ -19,7 +19,7 @@ pub struct Paragraph {
     pub content_range: TextRange,
     pub value: String,
     pub inlines: Vec<Inline>,
-    pub inline_problems: Vec<InlineProblem>,
+    inline_problems: Vec<InlineProblem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,7 +58,7 @@ pub struct LiteralBlock {
     pub delimiter_range: TextRange,
     pub content_range: TextRange,
     pub value: String,
-    pub problems: Vec<BlockProblem>,
+    problems: Vec<BlockProblem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,7 +70,7 @@ pub struct SourceBlock {
     pub delimiter_range: TextRange,
     pub content_range: TextRange,
     pub value: String,
-    pub problems: Vec<BlockProblem>,
+    problems: Vec<BlockProblem>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,7 +94,7 @@ pub struct MathBlock {
     pub content_range: TextRange,
     pub language: MathLanguage,
     pub value: String,
-    pub problems: Vec<MathProblem>,
+    problems: Vec<MathProblem>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,11 +133,11 @@ pub struct ListItem {
     pub text_range: TextRange,
     pub text: String,
     pub inlines: Vec<Inline>,
-    pub inline_problems: Vec<InlineProblem>,
+    inline_problems: Vec<InlineProblem>,
     pub children: Vec<ListBlock>,
     pub continuations: Vec<AstBlock>,
     pub continuation_ranges: Vec<TextRange>,
-    pub problems: Vec<ListProblem>,
+    problems: Vec<ListProblem>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,10 +161,12 @@ pub struct Heading {
     pub separator_range: TextRange,
     pub text_range: TextRange,
     pub kind: HeadingKind,
+    pub well_formed: bool,
+    pub hierarchy_valid: bool,
     pub text: String,
     pub inlines: Vec<Inline>,
-    pub inline_problems: Vec<InlineProblem>,
-    pub problems: Vec<HeadingProblem>,
+    inline_problems: Vec<InlineProblem>,
+    problems: Vec<HeadingProblem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,7 +184,6 @@ pub enum AstBlock {
 pub struct AstDocument {
     blocks: Vec<AstBlock>,
     attributes: Vec<DocumentAttribute>,
-    attribute_problems: Vec<AttributeProblem>,
     anchors: Vec<ExplicitAnchor>,
 }
 
@@ -190,13 +191,11 @@ impl AstDocument {
     pub(crate) fn new(
         blocks: Vec<AstBlock>,
         attributes: Vec<DocumentAttribute>,
-        attribute_problems: Vec<AttributeProblem>,
         anchors: Vec<ExplicitAnchor>,
     ) -> Self {
         Self {
             blocks,
             attributes,
-            attribute_problems,
             anchors,
         }
     }
@@ -207,10 +206,6 @@ impl AstDocument {
 
     pub fn attributes(&self) -> &[DocumentAttribute] {
         &self.attributes
-    }
-
-    pub fn attribute_problems(&self) -> &[AttributeProblem] {
-        &self.attribute_problems
     }
 
     pub fn anchors(&self) -> &[ExplicitAnchor] {
@@ -754,7 +749,6 @@ pub(crate) fn parse_shared_cancellable(
     let ast = crate::lowering::lower(crate::lowering::ParsedFacts {
         blocks: ast_blocks,
         attributes,
-        attribute_problems,
         anchors,
     });
 
@@ -1662,6 +1656,13 @@ fn parse_heading(
         separator_range,
         text_range,
         kind,
+        well_formed: problems.is_empty(),
+        hierarchy_valid: !problems.iter().any(|problem| {
+            matches!(
+                problem,
+                HeadingProblem::LevelTooDeep | HeadingProblem::MisplacedDocumentTitle
+            )
+        }),
         text: text.to_owned(),
         inlines: inline_output.inlines,
         inline_problems: inline_output.problems,
@@ -1793,14 +1794,14 @@ mod tests {
             parsed.ast.attributes[4].operation,
             AttributeOperation::Unset
         );
-        assert!(parsed.ast.attribute_problems.is_empty());
+        assert!(parsed.syntax.issues().is_empty());
     }
 
     #[test]
     fn empty_generic_attribute_values_are_preserved_without_host_semantics() {
         let parsed = parse("= Note\n:note-id:\n:tags:\n\nbody\n").expect("recover");
         assert_eq!(parsed.ast.attributes.len(), 2);
-        assert!(parsed.ast.attribute_problems.is_empty());
+        assert!(parsed.syntax.issues().is_empty());
         assert!(matches!(
             parsed.ast.blocks().last(),
             Some(AstBlock::Paragraph(_))

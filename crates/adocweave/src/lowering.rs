@@ -2,25 +2,19 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::attributes::{AttributeOperation, AttributeProblem, DocumentAttribute};
+use crate::attributes::{AttributeOperation, DocumentAttribute};
 use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, ExplicitAnchor};
 
 pub(crate) struct ParsedFacts {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttribute>,
-    pub attribute_problems: Vec<AttributeProblem>,
     pub anchors: Vec<ExplicitAnchor>,
 }
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     attach_anchors(&mut facts.anchors, &facts.blocks);
-    let mut document = AstDocument::new(
-        facts.blocks,
-        facts.attributes,
-        facts.attribute_problems,
-        facts.anchors,
-    );
+    let mut document = AstDocument::new(facts.blocks, facts.attributes, facts.anchors);
     resolve_document_attributes(&mut document);
     document
 }
