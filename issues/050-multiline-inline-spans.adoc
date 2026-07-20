@@ -1,0 +1,24 @@
+= 複数行インラインspan
+
+== 目的
+
+段落を行単位で独立解析する制約を除き、連続行をまたぐ書式とmacro labelを一つの意味構造で
+扱えるようにする。
+
+== 実装範囲
+
+* 段落全体の論理テキストと元source rangeの対応表を構築する。
+* 改行をまたぐstrong、emphasis、monospaceおよび対応済みmacro labelの規則を定義する。
+* Edit、診断、LSP位置およびFormatterが元のLF／CRLF範囲を保持する。
+* 行単位の`TextNode`公開構造を再評価し、必要なら段落inline列へ破壊的に再構成する。
+
+== 完了条件
+
+* LF、CRLF、Unicodeおよび最終改行なしの複数行fixtureを持つ。
+* source offset、UTF-8／UTF-16位置変換、診断範囲およびsemantic tokenが一致する。
+* Formatterが段落改行を意図せず統合または分割しない。
+* nativeとWASMの結果が一致し、`cargo make release-check`が成功する。
+
+== 依存関係
+
+* 049

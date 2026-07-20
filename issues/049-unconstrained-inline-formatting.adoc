@@ -1,0 +1,24 @@
+= Unconstrainedインライン書式
+
+== 目的
+
+AsciiDocの二重マーカーによるstrong、emphasisおよびmonospaceを、単語内部とCJK境界で
+予測可能に扱う。
+
+== 実装範囲
+
+* `**text**`、`__text__`および二重バッククォートを専用recognizerで解析する。
+* constrainedとunconstrainedの優先順位、入れ子、空spanおよび隣接markerを規範化する。
+* 既存の`InlineStyle`とliteral意味を再利用し、必要ならmarker形式を明示する型へ破壊的に変更する。
+* HTML、Formatter、診断、semantic tokenおよびHoverを縦断して実装する。
+
+== 完了条件
+
+* ASCII単語内部、日本語、emoji、句読点隣接および入れ子fixtureを持つ。
+* constrained記法と識別子中のunderscoreに回帰がない。
+* AsciiDoc参照動作との差異を`docs/compatibility.adoc`へ明記する。
+* nativeとWASMの結果が一致し、`cargo make release-check`が成功する。
+
+== 依存関係
+
+* 048

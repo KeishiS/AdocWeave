@@ -1,0 +1,25 @@
+= AdocWeave自身によるリポジトリ文書検査
+
+== 目的
+
+拡張子検査だけの`docs-check`とは別に、リポジトリのAsciiDoc文書をAdocWeave自身で解析し、
+実装と文書corpusを継続的に相互検証する。
+
+== 実装範囲
+
+* 追跡対象の`.adoc`を決定的な順序で列挙する`adoc-check` taskを追加する。
+* 各文書へ入力・出力上限を適用し、panic、位置不正およびstrict対象を報告する。
+* 意図的な未対応構文は明示的なallowlistまたは寛容modeで分類し、警告を無差別に隠さない。
+* `docs-check`は従来どおり`.md`混入検査だけに保つ。
+* CIとrelease gateへ`adoc-check`を追加する。
+
+== 完了条件
+
+* リポジトリ内の全`.adoc`が対象になり、新規文書が自動的に追加される。
+* 失敗時に文書path、診断code、行および列を表示する。
+* 検査が生成物、Git外ファイルまたはネットワークへ依存しない。
+* `cargo make verify`と`cargo make release-check`が成功する。
+
+== 依存関係
+
+* 047

@@ -35,6 +35,14 @@
 * xref:045-async-lsp-tokio-migration.adoc[045: async-lspとTokioへのLSP基盤移行]
 * xref:046-sustainable-contract-boundaries.adoc[046: 契約境界の持続可能性改善]
 
+=== M11: インライン解析と置換互換性
+
+* xref:047-inline-parser-recognizer.adoc[047: インライン認識とsemantic node構築の分離]
+* xref:048-general-backslash-escapes.adoc[048: 一般的なバックスラッシュエスケープ]
+* xref:049-unconstrained-inline-formatting.adoc[049: Unconstrainedインライン書式]
+* xref:050-multiline-inline-spans.adoc[050: 複数行インラインspan]
+* xref:051-adoc-document-validation.adoc[051: AdocWeave自身によるリポジトリ文書検査]
+
 === M1: プレーンテキスト変換
 
 * xref:001-workspace-and-cli.adoc[001: Cargo workspaceとCLIの初期化]

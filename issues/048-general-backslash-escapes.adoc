@@ -1,0 +1,25 @@
+= 一般的なバックスラッシュエスケープ
+
+== 目的
+
+リンクとxrefだけに限定したescape処理を、規範的な置換contextに基づく一般機構へ拡張する。
+
+== 実装範囲
+
+* 書式、属性参照、URL自動認識、anchorおよび対応済みmacroに対するescape規則を定義する。
+* lossless CSTでバックスラッシュと対象範囲を保持する。
+* semantic ASTでは表示文字とescape由来のliteral性を、backendによる再解析なしで表現する。
+* normal、verbatimおよびliteral contextごとの適用可否を置換表へ追加する。
+* Formatter、診断、HTML、LSP semantic tokenおよびHoverを同じ意味モデルへ同期する。
+
+== 完了条件
+
+* `\*text*`、`\{name}`、`\https://example.org`およびescaped macroが文字どおり表示される。
+* リテラル、ソース、等幅およびSTEMの不透明内容を誤って変更しない。
+* 末尾の単独バックスラッシュと連続バックスラッシュが決定的に回復する。
+* 規範文法、置換表、互換性表およびconformance fixtureが更新される。
+* `cargo make release-check`が成功する。
+
+== 依存関係
+
+* 047

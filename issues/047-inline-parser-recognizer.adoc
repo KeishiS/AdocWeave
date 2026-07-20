@@ -1,0 +1,26 @@
+= インライン認識とsemantic node構築の分離
+
+== 目的
+
+長大な`parse_segment`と`parse_macro`へ構文追加が集中する状態を解消し、今後のインライン
+互換性拡張を局所的かつ検証可能にする。
+
+== 実装範囲
+
+* opener探索、境界判定、閉じ記号探索およびescape判定を副作用のないrecognizerへ分離する。
+* recognizerの結果をsemantic `Inline`へ変換するbuilderを分離する。
+* link、xref、属性参照およびSTEM macroの共通走査制御と個別payload解析を分離する。
+* 回復時の再開位置を型で表し、同じbyteを無制限に再走査しないことを保証する。
+* 現在のCore Profile 1のAST、診断、HTML、Formatterおよびprojectionを維持する。
+
+== 完了条件
+
+* 既存の全インライン構文と不完全入力が新しいrecognizer経由で処理される。
+* recognizer単体テストが境界、escape、入れ子上限、Unicodeおよび不完全macroを網羅する。
+* 1回の走査が入力長に対して有界であることをproperty testまたは計測可能な不変条件で示す。
+* nativeとWASMのconformance fixtureが一致する。
+* `cargo make release-check`が成功する。
+
+== 依存関係
+
+* 046
