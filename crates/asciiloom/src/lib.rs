@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fmt;
 
 pub mod diagnostic;
+pub mod html;
 pub mod parser;
 pub mod source;
 pub mod source_lines;
@@ -23,6 +24,7 @@ pub enum Operation {
 #[derive(Debug, Eq, PartialEq)]
 pub enum ProcessError {
     InvalidUtf8 { valid_up_to: usize },
+    Position(source::PositionError),
 }
 
 impl fmt::Display for ProcessError {
@@ -32,6 +34,7 @@ impl fmt::Display for ProcessError {
                 formatter,
                 "input is not valid UTF-8 (invalid byte starts at offset {valid_up_to})"
             ),
+            Self::Position(error) => error.fmt(formatter),
         }
     }
 }
@@ -49,7 +52,11 @@ pub fn process(operation: Operation, input: &[u8]) -> Result<String, ProcessErro
     })?;
 
     match operation {
-        Operation::Convert | Operation::Format => Ok(source.to_owned()),
+        Operation::Convert => {
+            let parsed = parser::parse(source).map_err(ProcessError::Position)?;
+            Ok(html::render(&parsed.ast, &html::HtmlOptions::default()).html)
+        }
+        Operation::Format => Ok(source.to_owned()),
         Operation::Check => Ok(String::new()),
     }
 }
@@ -59,12 +66,12 @@ mod tests {
     use super::{Operation, ProcessError, process};
 
     #[test]
-    fn convert_preserves_utf8_input() {
-        let source = "= 日本語 😀\n";
+    fn convert_renders_html() {
+        let source = "日本語 😀\n";
 
         assert_eq!(
             process(Operation::Convert, source.as_bytes()),
-            Ok(source.to_owned())
+            Ok("<p>日本語 😀</p>\n".to_owned())
         );
     }
 
