@@ -292,6 +292,9 @@ fn request_offset(
         .as_u64()
         .ok_or_else(|| "position.character must be an integer".to_owned())?
         as u32;
+    if !document.contains_line(line) {
+        return Err("position.line is outside the document".to_owned());
+    }
     let encoding = match encoding {
         PositionEncoding::Utf8 => CorePositionEncoding::Utf8,
         PositionEncoding::Utf16 => CorePositionEncoding::Utf16,

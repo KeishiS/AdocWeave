@@ -7,7 +7,7 @@ pub struct DocumentState {
     pub uri: String,
     pub version: i64,
     pub text: String,
-    pub line_starts: Vec<usize>,
+    line_starts: Vec<usize>,
     pub ast: AstDocument,
 }
 
@@ -27,6 +27,10 @@ impl DocumentState {
             line_starts,
             ast,
         })
+    }
+
+    pub fn contains_line(&self, line: u32) -> bool {
+        usize::try_from(line).is_ok_and(|line| line < self.line_starts.len())
     }
 }
 
