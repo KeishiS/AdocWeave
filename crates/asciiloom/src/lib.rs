@@ -6,6 +6,8 @@
 use std::error::Error;
 use std::fmt;
 
+pub mod source;
+
 /// An operation supported by the AsciiLoom command-line application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
