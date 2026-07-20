@@ -408,14 +408,23 @@ fn parse_macro(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MacroToken {
-    Formula {
-        open: usize,
-        content_start: usize,
-        content_end: usize,
-        end: usize,
-        closed: bool,
-    },
-    ShortReference {
+    Formula(FormulaToken),
+    Reference(ReferenceToken),
+    Link(LinkToken),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FormulaToken {
+    open: usize,
+    content_start: usize,
+    content_end: usize,
+    end: usize,
+    closed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReferenceToken {
+    Short {
         open: usize,
         target_start: usize,
         close: usize,
@@ -428,7 +437,11 @@ enum MacroToken {
         close: usize,
         end: usize,
     },
-    ExplicitLink {
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LinkToken {
+    Explicit {
         open: usize,
         target_start: usize,
         bracket: usize,
@@ -456,22 +469,22 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
         let close = value[open + prefix_len..]
             .find(']')
             .map(|relative| relative + open + prefix_len);
-        return Some(MacroToken::Formula {
+        return Some(MacroToken::Formula(FormulaToken {
             open,
             content_start: open + prefix_len,
             content_end: close.unwrap_or(value.len()),
             end: close.map_or(value.len(), |close| close + 1),
             closed: close.is_some(),
-        });
+        }));
     }
     if let Some(short_reference) = rest.strip_prefix("<<") {
         let close = open + 2 + short_reference.find(">>")?;
-        return Some(MacroToken::ShortReference {
+        return Some(MacroToken::Reference(ReferenceToken::Short {
             open,
             target_start: open + 2,
             close,
             end: close + 2,
-        });
+        }));
     }
     if starts_ascii_case_insensitive(rest, "xref:") {
         let target_start = open + 5;
@@ -483,13 +496,13 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
             return None;
         }
         let close = bracket + 1 + value[bracket + 1..].find(']')?;
-        return Some(MacroToken::Xref {
+        return Some(MacroToken::Reference(ReferenceToken::Xref {
             open,
             target_start,
             bracket,
             close,
             end: close + 1,
-        });
+        }));
     }
     if starts_ascii_case_insensitive(rest, "link:") {
         let target_start = open + 5;
@@ -501,13 +514,13 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
             return None;
         }
         let close = bracket + 1 + value[bracket + 1..].find(']')?;
-        return Some(MacroToken::ExplicitLink {
+        return Some(MacroToken::Link(LinkToken::Explicit {
             open,
             target_start,
             bracket,
             close,
             end: close + 1,
-        });
+        }));
     }
 
     let scheme_end = url_scheme_end(rest)?;
@@ -536,12 +549,12 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
     } else {
         (None, target_end)
     };
-    Some(MacroToken::Url {
+    Some(MacroToken::Link(LinkToken::Url {
         open,
         target_end,
         label,
         end,
-    })
+    }))
 }
 
 fn build_macro(
@@ -552,13 +565,13 @@ fn build_macro(
     token: MacroToken,
 ) -> BuiltInline {
     match token {
-        MacroToken::Formula {
+        MacroToken::Formula(FormulaToken {
             open,
             content_start,
             content_end,
             end,
             closed,
-        } => {
+        }) => {
             let formula = InlineFormula {
                 range: subrange(range, open, end),
                 content_range: subrange(range, content_start, content_end),
@@ -591,12 +604,8 @@ fn build_macro(
                 problems,
             }
         }
-        MacroToken::ShortReference { .. } | MacroToken::Xref { .. } => {
-            build_reference_macro(value, range, config, depth, token)
-        }
-        MacroToken::ExplicitLink { .. } | MacroToken::Url { .. } => {
-            build_link_macro(value, range, config, depth, token)
-        }
+        MacroToken::Reference(token) => build_reference_macro(value, range, config, depth, token),
+        MacroToken::Link(token) => build_link_macro(value, range, config, depth, token),
     }
 }
 
@@ -605,10 +614,10 @@ fn build_reference_macro(
     range: TextRange,
     config: InlineParseConfig,
     depth: usize,
-    token: MacroToken,
+    token: ReferenceToken,
 ) -> BuiltInline {
     match token {
-        MacroToken::ShortReference {
+        ReferenceToken::Short {
             open,
             target_start,
             close,
@@ -652,7 +661,7 @@ fn build_reference_macro(
                 problems,
             }
         }
-        MacroToken::Xref {
+        ReferenceToken::Xref {
             open,
             target_start,
             bracket,
@@ -677,7 +686,6 @@ fn build_reference_macro(
                 problems: label.problems,
             }
         }
-        _ => unreachable!("only reference tokens are passed"),
     }
 }
 
@@ -686,10 +694,10 @@ fn build_link_macro(
     range: TextRange,
     config: InlineParseConfig,
     depth: usize,
-    token: MacroToken,
+    token: LinkToken,
 ) -> BuiltInline {
     match token {
-        MacroToken::ExplicitLink {
+        LinkToken::Explicit {
             open,
             target_start,
             bracket,
@@ -714,7 +722,7 @@ fn build_link_macro(
                 problems: label.problems,
             }
         }
-        MacroToken::Url {
+        LinkToken::Url {
             open,
             target_end,
             label: label_offsets,
@@ -742,7 +750,6 @@ fn build_link_macro(
                 problems,
             }
         }
-        _ => unreachable!("only link tokens are passed"),
     }
 }
 
@@ -965,9 +972,10 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig, InlineProblemKind,
-        InlineStyle, MacroToken, MarkerRecognition, MarkerToken, ReferenceDestination, inline_at,
-        next_candidate, parse, parse_text, recognize_macro, recognize_marker,
+        FormulaToken, Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig,
+        InlineProblemKind, InlineStyle, LinkToken, MacroToken, MarkerRecognition, MarkerToken,
+        ReferenceDestination, ReferenceToken, inline_at, next_candidate, parse, parse_text,
+        recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -1021,41 +1029,41 @@ mod tests {
     fn macro_recognizer_returns_ranges_without_building_nodes() {
         assert!(matches!(
             recognize_macro("stem:[x]", 0),
-            Some(MacroToken::Formula {
+            Some(MacroToken::Formula(FormulaToken {
                 content_start: 6,
                 content_end: 7,
                 end: 8,
                 closed: true,
                 ..
-            })
+            }))
         ));
         assert!(matches!(
             recognize_macro("<<id,label>>", 0),
-            Some(MacroToken::ShortReference {
+            Some(MacroToken::Reference(ReferenceToken::Short {
                 target_start: 2,
                 close: 10,
                 end: 12,
                 ..
-            })
+            }))
         ));
         assert!(matches!(
             recognize_macro("xref:other.adoc[Other]", 0),
-            Some(MacroToken::Xref {
+            Some(MacroToken::Reference(ReferenceToken::Xref {
                 target_start: 5,
                 bracket: 15,
                 close: 21,
                 end: 22,
                 ..
-            })
+            }))
         ));
         assert!(matches!(
             recognize_macro("https://example.org[label]", 0),
-            Some(MacroToken::Url {
+            Some(MacroToken::Link(LinkToken::Url {
                 target_end: 19,
                 label: Some((20, 25)),
                 end: 26,
                 ..
-            })
+            }))
         ));
     }
 
