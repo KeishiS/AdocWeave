@@ -5,7 +5,7 @@ use adocweave::document::{
     generate_heading_ids, source_language_candidates,
 };
 use adocweave::source::{LineIndex, PositionEncoding as CorePositionEncoding, TextRange};
-use adocweave::{diagnostic::Severity, formatter, lint};
+use adocweave::{diagnostic::Severity, formatter};
 use serde_json::{Value, json};
 
 mod state;
@@ -236,14 +236,13 @@ impl Server {
         let Some(document) = self.documents.get(uri) else {
             return Ok(());
         };
-        let diagnostics = lint::lint(&document.text, &lint::LintConfig::default())
-            .map_err(|error| error.to_string())?;
         let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
         let encoding = match self.position_encoding {
             PositionEncoding::Utf8 => CorePositionEncoding::Utf8,
             PositionEncoding::Utf16 => CorePositionEncoding::Utf16,
         };
-        let diagnostics = diagnostics
+        let diagnostics = document
+            .diagnostics
             .iter()
             .map(|diagnostic| {
                 let start = line_index
@@ -424,11 +423,9 @@ fn code_actions(
     encoding: PositionEncoding,
 ) -> Result<Vec<Value>, String> {
     let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
-    let diagnostics = lint::lint(&document.text, &lint::LintConfig::default())
-        .map_err(|error| error.to_string())?;
     let mut actions = Vec::new();
-    for diagnostic in diagnostics {
-        for fix in diagnostic.fixes {
+    for diagnostic in &document.diagnostics {
+        for fix in &diagnostic.fixes {
             let edits = fix
                 .edits()
                 .iter()

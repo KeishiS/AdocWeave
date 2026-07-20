@@ -135,6 +135,20 @@ impl LintConfig {
 }
 
 pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, PositionError> {
+    let parsed = parse_with_config(
+        source,
+        &ParseConfig {
+            max_inline_depth: config.max_inline_depth,
+        },
+    )?;
+    lint_parsed(source, &parsed.ast, config)
+}
+
+pub fn lint_parsed(
+    source: &str,
+    document: &crate::parser::AstDocument,
+    config: &LintConfig,
+) -> Result<Vec<Diagnostic>, PositionError> {
     let source_lines = SourceLines::new(source)?;
     let mut diagnostics = Vec::new();
     let mut blank_count = 0;
@@ -204,27 +218,21 @@ pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, Positi
         }
     }
 
-    lint_headings(source, config, &mut diagnostics)?;
-    lint_attributes(source, config, &mut diagnostics)?;
-    lint_anchors(source, config, &mut diagnostics)?;
+    lint_headings(document, config, &mut diagnostics);
+    lint_attributes(document, config, &mut diagnostics);
+    lint_anchors(document, config, &mut diagnostics);
     sort_diagnostics(&mut diagnostics);
     diagnostics.truncate(config.max_diagnostics);
     Ok(diagnostics)
 }
 
 fn lint_anchors(
-    source: &str,
+    document: &crate::parser::AstDocument,
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<(), PositionError> {
-    let parsed = parse_with_config(
-        source,
-        &ParseConfig {
-            max_inline_depth: config.max_inline_depth,
-        },
-    )?;
+) {
     let mut ids = BTreeMap::<String, TextRange>::new();
-    for anchor in &parsed.ast.anchors {
+    for anchor in &document.anchors {
         if !anchor.valid {
             push_diagnostic(
                 diagnostics,
@@ -236,7 +244,7 @@ fn lint_anchors(
             );
         }
     }
-    for target in crate::document::reference_targets(&parsed.ast) {
+    for target in crate::document::reference_targets(document) {
         if let Some(first) = ids.insert(target.id.clone(), target.id_range) {
             let settings = config.rule(LintRule::DuplicateAnchor);
             if settings.enabled {
@@ -260,25 +268,18 @@ fn lint_anchors(
             }
         }
     }
-    Ok(())
 }
 
 fn lint_attributes(
-    source: &str,
+    document: &crate::parser::AstDocument,
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<(), PositionError> {
+) {
     use crate::attributes::{AttributeOperation, AttributeProblemKind};
 
-    let parsed = parse_with_config(
-        source,
-        &ParseConfig {
-            max_inline_depth: config.max_inline_depth,
-        },
-    )?;
     let mut definitions = BTreeMap::<String, TextRange>::new();
     let mut used = BTreeMap::<String, Vec<TextRange>>::new();
-    for problem in &parsed.ast.attribute_problems {
+    for problem in &document.attribute_problems {
         let message = match problem.kind {
             AttributeProblemKind::InvalidName => "invalid document attribute name",
             AttributeProblemKind::InvalidValue => "invalid document attribute value",
@@ -292,7 +293,7 @@ fn lint_attributes(
             None,
         );
     }
-    for attribute in &parsed.ast.attributes {
+    for attribute in &document.attributes {
         if let Some(first) = definitions.insert(attribute.name.clone(), attribute.name_range) {
             let settings = config.rule(LintRule::DuplicateAttribute);
             if settings.enabled {
@@ -338,7 +339,7 @@ fn lint_attributes(
             }
         }
     }
-    for block in &parsed.ast.blocks {
+    for block in &document.blocks {
         collect_attribute_references(block, &mut used);
     }
     for (name, ranges) in &used {
@@ -367,7 +368,6 @@ fn lint_attributes(
             );
         }
     }
-    Ok(())
 }
 
 fn collect_attribute_references(block: &AstBlock, used: &mut BTreeMap<String, Vec<TextRange>>) {
@@ -394,20 +394,14 @@ fn collect_attribute_references(block: &AstBlock, used: &mut BTreeMap<String, Ve
 }
 
 fn lint_headings(
-    source: &str,
+    document: &crate::parser::AstDocument,
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<(), PositionError> {
-    let parsed = parse_with_config(
-        source,
-        &ParseConfig {
-            max_inline_depth: config.max_inline_depth,
-        },
-    )?;
+) {
     let mut previous_level = None;
     let mut ids = BTreeMap::<String, TextRange>::new();
 
-    for block in &parsed.ast.blocks {
+    for block in &document.blocks {
         match block {
             AstBlock::Heading(heading) => {
                 push_inline_problems(diagnostics, config, &heading.inline_problems);
@@ -528,7 +522,6 @@ fn lint_headings(
             ids.insert(base, heading.text_range);
         }
     }
-    Ok(())
 }
 
 fn push_inline_problems(
@@ -836,6 +829,18 @@ mod tests {
                 .filter(|code| **code == "invalid-anchor")
                 .count()
                 >= 2
+        );
+    }
+
+    #[test]
+    fn lint_parsed_reuses_ast_without_changing_diagnostics() {
+        let source = "= Note\n:name: value\n\n{name}  \n";
+        let parsed = crate::parser::parse(source).expect("parse");
+        let config = LintConfig::default();
+
+        assert_eq!(
+            lint(source, &config).expect("standalone lint"),
+            super::lint_parsed(source, &parsed.ast, &config).expect("lint existing AST")
         );
     }
 }

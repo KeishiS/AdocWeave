@@ -27,24 +27,20 @@ pub enum HtmlDocumentMode {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderPolicy {
-    pub contract_version: u16,
     pub document_mode: HtmlDocumentMode,
     pub render_document_title: bool,
     pub allowed_url_schemes: BTreeSet<String>,
     pub allow_relative_urls: bool,
-    pub allow_external_images: bool,
     pub allow_data_uris: bool,
 }
 
 impl Default for RenderPolicy {
     fn default() -> Self {
         Self {
-            contract_version: HTML_CONTRACT_VERSION,
             document_mode: HtmlDocumentMode::Fragment,
             render_document_title: true,
             allowed_url_schemes: ["http", "https"].map(String::from).into_iter().collect(),
             allow_relative_urls: false,
-            allow_external_images: false,
             allow_data_uris: false,
         }
     }
@@ -131,6 +127,7 @@ pub enum UrlDecision {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HtmlOutput {
+    pub contract_version: u16,
     pub html: String,
     pub diagnostics: Vec<Diagnostic>,
     pub document_attributes: BTreeMap<String, String>,
@@ -200,6 +197,7 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
     };
 
     HtmlOutput {
+        contract_version: HTML_CONTRACT_VERSION,
         html,
         diagnostics: Vec::new(),
         document_attributes,
@@ -540,6 +538,11 @@ mod tests {
         );
         assert_eq!(ALLOWED_ATTRIBUTES, ["class", "href", "id"]);
         assert_eq!(ALLOWED_CLASSES, ["document-title", "language-*"]);
+        let parsed = parse("paragraph").expect("parse");
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).contract_version,
+            HTML_CONTRACT_VERSION
+        );
     }
 
     #[test]

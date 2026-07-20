@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use adocweave::diagnostic::Diagnostic;
 use adocweave::parser::AstDocument;
 use adocweave::{ParseOptions, SourceId, parse_document};
 
@@ -12,19 +13,22 @@ pub struct DocumentState {
     pub text: String,
     line_starts: Vec<usize>,
     pub ast: AstDocument,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 impl DocumentState {
     fn new(uri: String, version: i64, text: String) -> Result<Self, String> {
-        let ast = parse_document(
-            &text,
-            &ParseOptions {
-                source_id: Some(SourceId::new(uri.clone())),
-                ..ParseOptions::default()
-            },
-        )
-        .map_err(|error| error.to_string())?
-        .ast;
+        let (ast, diagnostics) = {
+            let parsed = parse_document(
+                &text,
+                &ParseOptions {
+                    source_id: Some(SourceId::new(uri.clone())),
+                    ..ParseOptions::default()
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            (parsed.ast, parsed.diagnostics)
+        };
         let mut line_starts = vec![0];
         line_starts.extend(
             text.bytes()
@@ -37,6 +41,7 @@ impl DocumentState {
             text,
             line_starts,
             ast,
+            diagnostics,
         })
     }
 

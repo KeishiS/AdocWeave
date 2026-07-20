@@ -50,24 +50,13 @@ impl Default for SyntaxProfile {
 }
 
 /// Complete deterministic input to the parsing operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ParseOptions {
     pub source_id: Option<SourceId>,
     pub profile: SyntaxProfile,
     pub limits: ProcessingLimits,
     /// Host-authoritative values that source text may not change.
     pub protected_attributes: BTreeMap<String, String>,
-}
-
-impl Default for ParseOptions {
-    fn default() -> Self {
-        Self {
-            source_id: None,
-            profile: SyntaxProfile::default(),
-            limits: ProcessingLimits::default(),
-            protected_attributes: BTreeMap::new(),
-        }
-    }
 }
 
 /// A parsed reference before a host attempts resolution.
@@ -118,6 +107,7 @@ pub struct ParseResult<'source> {
     pub cst: CstDocument<'source>,
     pub ast: parser::AstDocument,
     pub diagnostics: Vec<Diagnostic>,
+    pub reference_targets: Vec<crate::document::ReferenceTarget>,
     pub unresolved_references: Vec<UnresolvedReference>,
 }
 
@@ -270,7 +260,9 @@ fn parse_inner<'source>(
     } else {
         crate::diagnostic::Severity::Warning
     };
-    let diagnostics = lint::lint(source, &lint_config).map_err(ParseError::Position)?;
+    let diagnostics =
+        lint::lint_parsed(source, &ast, &lint_config).map_err(ParseError::Position)?;
+    let reference_targets = crate::document::reference_targets(&ast);
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
     }
@@ -280,6 +272,7 @@ fn parse_inner<'source>(
         cst,
         ast,
         diagnostics,
+        reference_targets,
         unresolved_references: Vec::new(),
     })
 }
