@@ -22,3 +22,9 @@
 Fixは重複しない`TextEdit`だけを保持する。`Always`は構文上安全に適用できる変更、
 `Maybe`は利用者判断を必要とする変更を表す。FormatterとCode Actionは同じEdit契約を
 利用する。
+
+== Language Serverへの公開
+
+Language Serverは同じ`Analysis`に属する診断と`LineIndex`を使用してLSP範囲へ変換する。
+文書更新後に完了した古い解析、またはキャンセル済み解析の診断を公開してはならない。
+通知順序と結果採用規則はxref:language-server.adoc[Language Server設計]に従う。

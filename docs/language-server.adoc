@@ -1,0 +1,147 @@
+= Language Server設計
+
+この文書は`adocweave-lsp`の責務、実行モデルおよびIssue 045以降の設計を定義する。
+AsciiDocの構文・意味・診断・整形は`adocweave`コアが所有し、Language Serverは
+LSPとの変換、文書世代管理および実行制御だけを所有する。
+
+== 現在の状態と移行範囲
+
+現在の最小Language Serverは手書きのstdio framing、JSON-RPC dispatchおよび部分的な
+protocol型で動作し、診断、Outline、Code Action、Format、Hoverおよび補完を提供する。
+Linux版Zedでの初期受け入れ確認は完了している。
+
+Issue 045では、既存機能の意味処理とfixtureを維持しながら、protocol基盤を
+https://github.com/oxalica/async-lsp[`async-lsp`]、実行runtimeを
+https://tokio.rs/[Tokio]へ破壊的に移行する。移行完了までは、この文書の実行モデルを
+実装済み機能ではなく目標契約として扱う。
+
+== crate境界
+
+[source,text]
+----
+Zedまたは他のLSP client
+  -> async-lsp main loop
+       -> protocol adapter
+            -> DocumentStore
+            -> LSP意味処理service
+                 -> adocweave::Engine
+                      -> 所有型Analysis
+----
+
+`adocweave-lsp`は次を所有する。
+
+* LSPのinitialize、shutdown、exitおよびstdio transport
+* URI、position encodingおよびLSP型とコア型の変換
+* 開いている文書のtext、version、generationおよび解析スナップショット
+* 通知順序、要求並行数、CPU解析数、debounceおよび結果採用判定
+* clientへの診断、応答、通知および進捗報告
+
+`adocweave`コアは次を所有する。
+
+* AsciiDocのCST、AST、診断、Formatterおよびprojection
+* UTF-8ソース範囲とスナップショット固有の`LineIndex`
+* `ProcessingLimits`と協調的な`CancellationCheck`
+* 外部I/Oを行わない決定的な`Engine::analyze`
+
+`async-lsp`、TokioおよびLSP型をコアcrateの依存関係または公開APIへ持ち込んではならない。
+Issue 036のホスト実行契約も特定async runtimeへ依存しない。
+
+== 通知と要求
+
+LSP通知と要求は同じ並行処理規則を使用しない。
+
+`didOpen`、`didChange`、`didSave`および`didClose`はmain loopで受信順に適用する。
+状態変更通知のhandlerから、順序が確定する前に文書状態の更新を別taskへ移してはならない。
+
+読み取り要求は並行処理できる。handlerは開始時に次を所有値として取得し、その後は
+`DocumentStore`を借用し続けない。
+
+* 文書URI
+* clientが送った文書version
+* server内部のgeneration
+* ソースまたは既存`Analysis`のスナップショット
+* position encodingと有効な設定
+
+この分離により、通知は決定的な順序で状態を変更し、HoverやDocument Symbol等の要求は
+同じ時点のスナップショット上で安全に並行実行できる。
+
+== CPU解析とbackpressure
+
+`Engine::analyze`は同期CPU処理である。Tokio executor上で直接実行せず、CPU解析用
+`Semaphore`を取得してから`spawn_blocking`へ渡す。
+
+同時LSP要求数と同時CPU解析数は異なる上限として設定する。Tokioのblocking thread上限は
+他のblocking処理と共有され、待ちqueueにも適切なbackpressureを与えないため、
+AdocWeaveの解析上限として使用しない。
+
+Semaphore待機中に要求がキャンセルされた場合は、解析を開始しない。permitは解析完了または
+失敗時に必ず解放し、panic時にも文書状態のlockを残さない。
+
+== キャンセルと古い結果
+
+`$/cancelRequest`によってLSP要求のFutureが破棄されても、開始済みの`spawn_blocking`処理は
+自動停止しない。要求ごとにコアの`CancellationCheck`へ接続したキャンセル状態を作成し、
+Parser、Lint、Formatterおよびprojectionの既存検査点で協調的に停止する。
+
+結果をclientへ公開する直前に、対象文書が開かれており、取得時のgenerationと現在の
+generationが一致することを再確認する。一致しない解析から次を公開してはならない。
+
+* 診断
+* Hover、補完、シンボルその他の応答
+* Code ActionまたはWorkspace Edit
+* 参照解決結果またはDocument Link
+
+キャンセルとgeneration不一致は通常の構文診断ではなく、結果を採用しないための
+実行制御である。
+
+== lock規則
+
+共有状態のlock区間は、文書の検索、スナップショット取得、generation比較および
+結果差し替えに限定する。次の処理中にlockを保持してはならない。
+
+* `Engine::analyze`その他のCPU処理
+* ResolverのI/O
+* Semaphoreの待機
+* clientへのrequest、notificationまたは進捗送信
+
+文書単位の更新順序はmain loopで保証し、文書状態全体を長時間lockすることで代用しない。
+
+== async-lsp middleware
+
+採用するmiddlewareはコード上で明示し、既定featureだけに依存しない。
+
+* server lifecycle
+* 要求の同時実行制限と`$/cancelRequest`
+* panic隔離
+* 本文を記録しない構造化tracing
+
+client process監視、network transportその他の不要なfeatureは、利用要件が生じるまで
+有効にしない。LSP仕様型はprotocol境界でのみ使用し、コア型との変換関数をテスト可能な
+安定面とする。
+
+== 診断
+
+Language Serverは`Analysis.diagnostics`をLSP診断へ変換し、同じ入力を独自にLintしない。
+push diagnosticsを送る場合、文書URI、versionまたはgenerationおよびposition encodingを
+同じスナップショットから得る。
+
+ホストResolver由来の診断は標準診断と区別し、安定した順序で統合する。Resolver障害が
+コア構文診断の公開を妨げてはならない。
+
+== 検証
+
+移行では既存機能の回帰試験に加え、少なくとも次を自動検証する。
+
+* initialize前、重複initialize、shutdown後およびexitのライフサイクル
+* `didOpen`から複数`didChange`までの受信順
+* 更新通知直後の要求が更新前の状態を観測しないこと
+* 異なる文書の要求を並行処理できること
+* LSP要求数とCPU解析数の独立した上限
+* Semaphore待機中とCPU解析中のキャンセル
+* 古いgenerationの診断と編集を破棄すること
+* UTF-8、UTF-16およびCRLFの位置変換
+* stdioとin-memory transportで同じprotocol fixtureを利用できること
+
+自動試験後にZedで診断、Outline、Code Action、Format、Hoverおよび補完を再確認する。
+Definition、References、Document Linkおよびsemantic tokensはIssue 038で同じ実行基盤へ
+追加する。

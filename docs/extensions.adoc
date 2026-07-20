@@ -74,6 +74,10 @@ Resolverは次を守る。
 `ReferenceQuery`および解決結果を共有する。機能ごとに対象文字列を再解析しない。
 入力途中の構文失敗と、確定した対象不在を区別する。
 
+LSPアダプターはxref:language-server.adoc[Language Server設計]の通知順序、generation、
+キャンセルおよびlock規則に従う。`ReferenceResolver`の契約自体は特定async runtimeへ
+依存せず、外部ホストへTokioを要求しない。
+
 == HTMLと信頼境界
 
 Resolverが返すhrefは信頼済みHTMLではない。HTML出力前にAdocWeaveの`UrlPolicy`を

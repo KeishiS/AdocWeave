@@ -67,6 +67,7 @@ Language Serverの機能拡張に先立ち、Issue 045で手書きJSON-RPC基盤
 `async-lsp`へ移行し、`adocweave-lsp`の実行runtimeとしてTokioを採用する。
 文書更新通知は受信順に適用し、読み取り要求は所有スナップショット上で有界に並行実行する。
 `async-lsp`、TokioおよびLSP型はアダプター内に限定し、コア解析APIへ依存させない。
+実行モデルと移行時の不変条件はxref:language-server.adoc[Language Server設計]に記載する。
 
 コアはファイルシステム、ネットワーク、時刻、環境変数、UUID解決へ暗黙にアクセスしない。
 ホストがこれらの能力を明示的に提供する。
