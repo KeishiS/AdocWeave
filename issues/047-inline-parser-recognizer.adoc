@@ -58,3 +58,13 @@ nativeとWASMの比較はruntime adapter差分を検出するが、同じRustコ
 独立なoracleではない。さらに公開ASTへ直接`Serialize`をderiveしたschemaは、semantic APIと
 適合性契約を不要に密結合する。Issue 047を再開し、単一走査化、型付きmacro token、明示的な
 version付きconformance DTOおよび独立golden fixtureまでを残作業とする。
+
+macro tokenを`FormulaToken`、`ReferenceToken`および`LinkToken`へ分割し、異なる構文familyを
+builderへ渡せない型構造へ変更した。これによりreference／link builderのwildcard分岐と
+`unreachable!`を削除した。
+
+`MacroRecognition`がcomplete、incompleteおよびinvalidを分類し、不完全macroの診断と
+UTF-8安全な再開位置を主走査へ返すようにした。後段の`scan_incomplete_macros`を削除し、
+不完全xrefの後ろにある正常なinline構文を引き続き救済する回帰試験を維持した。残る走査器の
+作業は、候補探索と閉じ記号探索の重複文字検査を一つの前進専用scannerへ統合し、計測可能な
+線形上限をproperty testで固定することである。

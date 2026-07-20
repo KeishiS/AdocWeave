@@ -187,24 +187,41 @@ fn parse_segment(
     while let Some(candidate) = next_candidate(value, cursor) {
         match candidate {
             InlineCandidate::Macro { open } => {
-                if let Some(built) = parse_macro(value, range, config, depth, open) {
-                    if is_escaped(value, open) {
-                        push_text(&mut output.inlines, value, range, plain_start, open - 1);
-                        output.inlines.push(Inline::Text(InlineText {
-                            range: subrange(range, open - 1, built.end),
-                            value: value[open..built.end].to_owned(),
-                        }));
-                    } else {
-                        push_text(&mut output.inlines, value, range, plain_start, open);
-                        output.inlines.push(built.inline);
-                        output.problems.extend(built.problems);
+                match recognize_macro(value, open) {
+                    MacroRecognition::Complete(token) => {
+                        let built = build_macro(value, range, config, depth, token);
+                        if is_escaped(value, open) {
+                            push_text(&mut output.inlines, value, range, plain_start, open - 1);
+                            output.inlines.push(Inline::Text(InlineText {
+                                range: subrange(range, open - 1, built.end),
+                                value: value[open..built.end].to_owned(),
+                            }));
+                        } else {
+                            push_text(&mut output.inlines, value, range, plain_start, open);
+                            output.inlines.push(built.inline);
+                            output.problems.extend(built.problems);
+                        }
+                        cursor = built.end;
+                        plain_start = built.end;
                     }
-                    cursor = built.end;
-                    plain_start = built.end;
+                    MacroRecognition::Incomplete { kind, next } => {
+                        if !is_escaped(value, open) {
+                            output.problems.push(InlineProblem {
+                                kind,
+                                range: subrange(range, open, value.len()),
+                            });
+                        }
+                        cursor = next;
+                    }
+                    MacroRecognition::Invalid { next } => cursor = next,
+                }
+                if cursor == value.len() {
+                    break;
+                }
+                if cursor > open {
                     continue;
                 }
                 cursor = next_char_boundary(value, open);
-                continue;
             }
             InlineCandidate::Marker { open, marker } => {
                 match recognize_marker(value, open, marker) {
@@ -230,7 +247,6 @@ fn parse_segment(
     }
 
     push_text(&mut output.inlines, value, range, plain_start, value.len());
-    scan_incomplete_macros(value, range, &mut output.problems);
     output
 }
 
@@ -395,22 +411,23 @@ fn next_macro_start(value: &str, cursor: usize) -> Option<usize> {
         })
 }
 
-fn parse_macro(
-    value: &str,
-    range: TextRange,
-    config: InlineParseConfig,
-    depth: usize,
-    open: usize,
-) -> Option<BuiltInline> {
-    let token = recognize_macro(value, open)?;
-    Some(build_macro(value, range, config, depth, token))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MacroToken {
     Formula(FormulaToken),
     Reference(ReferenceToken),
     Link(LinkToken),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacroRecognition {
+    Complete(MacroToken),
+    Incomplete {
+        kind: InlineProblemKind,
+        next: usize,
+    },
+    Invalid {
+        next: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -456,7 +473,7 @@ enum LinkToken {
     },
 }
 
-fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
+fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
     let rest = &value[open..];
     let formula_prefix = if starts_ascii_case_insensitive(rest, "stem:[") {
         Some("stem:[".len())
@@ -469,7 +486,7 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
         let close = value[open + prefix_len..]
             .find(']')
             .map(|relative| relative + open + prefix_len);
-        return Some(MacroToken::Formula(FormulaToken {
+        return MacroRecognition::Complete(MacroToken::Formula(FormulaToken {
             open,
             content_start: open + prefix_len,
             content_end: close.unwrap_or(value.len()),
@@ -478,8 +495,14 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
         }));
     }
     if let Some(short_reference) = rest.strip_prefix("<<") {
-        let close = open + 2 + short_reference.find(">>")?;
-        return Some(MacroToken::Reference(ReferenceToken::Short {
+        let Some(relative_close) = short_reference.find(">>") else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteCrossReference,
+                next: next_char_boundary(value, open),
+            };
+        };
+        let close = open + 2 + relative_close;
+        return MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Short {
             open,
             target_start: open + 2,
             close,
@@ -488,15 +511,29 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
     }
     if starts_ascii_case_insensitive(rest, "xref:") {
         let target_start = open + 5;
-        let bracket = target_start + value[target_start..].find('[')?;
+        let Some(relative_bracket) = value[target_start..].find('[') else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteCrossReference,
+                next: next_char_boundary(value, open),
+            };
+        };
+        let bracket = target_start + relative_bracket;
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
         {
-            return None;
+            return MacroRecognition::Invalid {
+                next: next_char_boundary(value, open),
+            };
         }
-        let close = bracket + 1 + value[bracket + 1..].find(']')?;
-        return Some(MacroToken::Reference(ReferenceToken::Xref {
+        let Some(relative_close) = value[bracket + 1..].find(']') else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteCrossReference,
+                next: next_char_boundary(value, open),
+            };
+        };
+        let close = bracket + 1 + relative_close;
+        return MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Xref {
             open,
             target_start,
             bracket,
@@ -506,15 +543,29 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
     }
     if starts_ascii_case_insensitive(rest, "link:") {
         let target_start = open + 5;
-        let bracket = target_start + value[target_start..].find('[')?;
+        let Some(relative_bracket) = value[target_start..].find('[') else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteLink,
+                next: next_char_boundary(value, open),
+            };
+        };
+        let bracket = target_start + relative_bracket;
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
         {
-            return None;
+            return MacroRecognition::Invalid {
+                next: next_char_boundary(value, open),
+            };
         }
-        let close = bracket + 1 + value[bracket + 1..].find(']')?;
-        return Some(MacroToken::Link(LinkToken::Explicit {
+        let Some(relative_close) = value[bracket + 1..].find(']') else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteLink,
+                next: next_char_boundary(value, open),
+            };
+        };
+        let close = bracket + 1 + relative_close;
+        return MacroRecognition::Complete(MacroToken::Link(LinkToken::Explicit {
             open,
             target_start,
             bracket,
@@ -523,7 +574,11 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
         }));
     }
 
-    let scheme_end = url_scheme_end(rest)?;
+    let Some(scheme_end) = url_scheme_end(rest) else {
+        return MacroRecognition::Invalid {
+            next: next_char_boundary(value, open),
+        };
+    };
     let relative_target_end = rest
         .char_indices()
         .find_map(|(offset, character)| {
@@ -541,15 +596,23 @@ fn recognize_macro(value: &str, open: usize) -> Option<MacroToken> {
         target_end -= 1;
     }
     if target_end <= open + scheme_end {
-        return None;
+        return MacroRecognition::Invalid {
+            next: next_char_boundary(value, open),
+        };
     }
     let (label, end) = if value.as_bytes().get(target_end) == Some(&b'[') {
-        let close = target_end + 1 + value[target_end + 1..].find(']')?;
+        let Some(relative_close) = value[target_end + 1..].find(']') else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteLink,
+                next: next_char_boundary(value, open),
+            };
+        };
+        let close = target_end + 1 + relative_close;
         (Some((target_end + 1, close)), close + 1)
     } else {
         (None, target_end)
     };
-    Some(MacroToken::Link(LinkToken::Url {
+    MacroRecognition::Complete(MacroToken::Link(LinkToken::Url {
         open,
         target_end,
         label,
@@ -826,42 +889,6 @@ fn parse_reference_destination(target: &str, range: TextRange) -> ReferenceDesti
     }
 }
 
-fn scan_incomplete_macros(value: &str, range: TextRange, problems: &mut Vec<InlineProblem>) {
-    for (offset, _) in value.char_indices() {
-        if is_escaped(value, offset) {
-            continue;
-        }
-        let rest = &value[offset..];
-        let bracket_is_unclosed = |candidate: &str| {
-            candidate
-                .find('[')
-                .is_some_and(|open| !candidate[open + 1..].contains(']'))
-        };
-        let kind = if (rest.starts_with("<<") && !rest.contains(">>"))
-            || (starts_ascii_case_insensitive(rest, "xref:")
-                && (rest.find('[').is_none() || bracket_is_unclosed(rest)))
-        {
-            Some(InlineProblemKind::IncompleteCrossReference)
-        } else if !starts_ascii_case_insensitive(rest, "stem:[")
-            && !starts_ascii_case_insensitive(rest, "latexmath:[")
-            && is_token_boundary(value[..offset].chars().next_back())
-            && url_scheme_end(rest).is_some()
-            && bracket_is_unclosed(rest)
-        {
-            Some(InlineProblemKind::IncompleteLink)
-        } else {
-            None
-        };
-        if let Some(kind) = kind {
-            problems.push(InlineProblem {
-                kind,
-                range: subrange(range, offset, value.len()),
-            });
-            break;
-        }
-    }
-}
-
 fn url_scheme_end(value: &str) -> Option<usize> {
     let colon = value.find(':')?;
     let scheme = &value[..colon];
@@ -973,9 +1000,9 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 mod tests {
     use super::{
         FormulaToken, Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig,
-        InlineProblemKind, InlineStyle, LinkToken, MacroToken, MarkerRecognition, MarkerToken,
-        ReferenceDestination, ReferenceToken, inline_at, next_candidate, parse, parse_text,
-        recognize_macro, recognize_marker,
+        InlineProblemKind, InlineStyle, LinkToken, MacroRecognition, MacroToken, MarkerRecognition,
+        MarkerToken, ReferenceDestination, ReferenceToken, inline_at, next_candidate, parse,
+        parse_text, recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -1029,7 +1056,7 @@ mod tests {
     fn macro_recognizer_returns_ranges_without_building_nodes() {
         assert!(matches!(
             recognize_macro("stem:[x]", 0),
-            Some(MacroToken::Formula(FormulaToken {
+            MacroRecognition::Complete(MacroToken::Formula(FormulaToken {
                 content_start: 6,
                 content_end: 7,
                 end: 8,
@@ -1039,7 +1066,7 @@ mod tests {
         ));
         assert!(matches!(
             recognize_macro("<<id,label>>", 0),
-            Some(MacroToken::Reference(ReferenceToken::Short {
+            MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Short {
                 target_start: 2,
                 close: 10,
                 end: 12,
@@ -1048,7 +1075,7 @@ mod tests {
         ));
         assert!(matches!(
             recognize_macro("xref:other.adoc[Other]", 0),
-            Some(MacroToken::Reference(ReferenceToken::Xref {
+            MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Xref {
                 target_start: 5,
                 bracket: 15,
                 close: 21,
@@ -1058,13 +1085,27 @@ mod tests {
         ));
         assert!(matches!(
             recognize_macro("https://example.org[label]", 0),
-            Some(MacroToken::Link(LinkToken::Url {
+            MacroRecognition::Complete(MacroToken::Link(LinkToken::Url {
                 target_end: 19,
                 label: Some((20, 25)),
                 end: 26,
                 ..
             }))
         ));
+        assert_eq!(
+            recognize_macro("xref:other.adoc[open", 0),
+            MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteCrossReference,
+                next: 1,
+            }
+        );
+        assert_eq!(
+            recognize_macro("https://example.org[open", 0),
+            MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteLink,
+                next: 1,
+            }
+        );
     }
 
     #[test]
