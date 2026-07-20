@@ -12,6 +12,7 @@
 - 閉じた文書の診断を消去する。
 - 不完全入力を受けてもサーバーを終了しない。
 - 初期実装ではpush diagnosticsを採用し、pull diagnosticsへの移行条件を文書化する。
+  - クライアント側のpull diagnostics対応が一般化し、workspace diagnosticsまたは結果IDによる再利用が必要になった時点で移行する。
 
 ## 完了条件
 

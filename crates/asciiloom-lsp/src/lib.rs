@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
 
 use asciiloom::parser::{AstDocument, parse};
+use asciiloom::source::{LineIndex, PositionEncoding as CorePositionEncoding};
+use asciiloom::{diagnostic::Severity, lint};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,6 +97,7 @@ pub struct Server {
     pub documents: DocumentStore,
     pub position_encoding: PositionEncoding,
     shutdown_requested: bool,
+    outgoing: Vec<Value>,
 }
 
 impl Default for Server {
@@ -103,6 +106,7 @@ impl Default for Server {
             documents: DocumentStore::default(),
             position_encoding: PositionEncoding::Utf16,
             shutdown_requested: false,
+            outgoing: Vec::new(),
         }
     }
 }
@@ -137,7 +141,12 @@ impl Server {
                     })
                 }))
             }
-            "initialized" | "textDocument/didSave" => Ok(None),
+            "initialized" => Ok(None),
+            "textDocument/didSave" => {
+                let uri = string_field(&params["textDocument"], "uri")?;
+                self.publish_diagnostics(&uri)?;
+                Ok(None)
+            }
             "shutdown" => {
                 self.shutdown_requested = true;
                 Ok(id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": null})))
@@ -149,6 +158,11 @@ impl Server {
                     string_field(document, "uri")?,
                     integer_field(document, "version")?,
                     string_field(document, "text")?,
+                )?;
+                self.publish_diagnostics(
+                    params["textDocument"]["uri"]
+                        .as_str()
+                        .expect("validated URI"),
                 )?;
                 Ok(None)
             }
@@ -165,16 +179,25 @@ impl Server {
                     .and_then(|change| change.get("text"))
                     .and_then(Value::as_str)
                     .ok_or_else(|| "full change text is missing".to_owned())?;
-                self.documents.change_full(
-                    &string_field(document, "uri")?,
+                let uri = string_field(document, "uri")?;
+                let changed = self.documents.change_full(
+                    &uri,
                     integer_field(document, "version")?,
                     text.to_owned(),
                 )?;
+                if changed {
+                    self.publish_diagnostics(&uri)?;
+                }
                 Ok(None)
             }
             "textDocument/didClose" => {
-                self.documents
-                    .close(&string_field(&params["textDocument"], "uri")?);
+                let uri = string_field(&params["textDocument"], "uri")?;
+                self.documents.close(&uri);
+                self.outgoing.push(json!({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/publishDiagnostics",
+                    "params": {"uri": uri, "diagnostics": []}
+                }));
                 Ok(None)
             }
             _ => Ok(id.map(|id| {
@@ -189,6 +212,60 @@ impl Server {
 
     pub const fn should_exit(&self) -> bool {
         self.shutdown_requested
+    }
+
+    pub fn drain_outgoing(&mut self) -> impl Iterator<Item = Value> + '_ {
+        self.outgoing.drain(..)
+    }
+
+    fn publish_diagnostics(&mut self, uri: &str) -> Result<(), String> {
+        let Some(document) = self.documents.get(uri) else {
+            return Ok(());
+        };
+        let diagnostics = lint::lint(&document.text, &lint::LintConfig::default())
+            .map_err(|error| error.to_string())?;
+        let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
+        let encoding = match self.position_encoding {
+            PositionEncoding::Utf8 => CorePositionEncoding::Utf8,
+            PositionEncoding::Utf16 => CorePositionEncoding::Utf16,
+        };
+        let diagnostics = diagnostics
+            .iter()
+            .map(|diagnostic| {
+                let start = line_index
+                    .offset_to_position(diagnostic.range.start(), encoding)
+                    .map_err(|error| error.to_string())?;
+                let end = line_index
+                    .offset_to_position(diagnostic.range.end(), encoding)
+                    .map_err(|error| error.to_string())?;
+                let severity = match diagnostic.severity {
+                    Severity::Error => 1,
+                    Severity::Warning => 2,
+                    Severity::Information => 3,
+                    Severity::Hint => 4,
+                };
+                Ok(json!({
+                    "range": {
+                        "start": {"line": start.line, "character": start.character},
+                        "end": {"line": end.line, "character": end.character}
+                    },
+                    "severity": severity,
+                    "code": diagnostic.code.as_str(),
+                    "source": "asciiloom",
+                    "message": diagnostic.message
+                }))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        self.outgoing.push(json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": uri,
+                "version": document.version,
+                "diagnostics": diagnostics
+            }
+        }));
+        Ok(())
     }
 }
 
@@ -230,6 +307,9 @@ pub fn run<R: BufRead, W: Write>(mut input: R, mut output: W) -> Result<(), Stri
         let exit = message.get("method").and_then(Value::as_str) == Some("exit");
         if let Some(response) = server.handle(&message)? {
             write_message(&mut output, &response)?;
+        }
+        for notification in server.drain_outgoing() {
+            write_message(&mut output, &notification)?;
         }
         if exit {
             return if server.should_exit() {
@@ -425,5 +505,90 @@ mod tests {
         let output = String::from_utf8(output).expect("utf-8 protocol");
         assert!(output.contains("\"id\":1"));
         assert!(output.contains("\"id\":2"));
+    }
+
+    fn open_with_diagnostic(server: &mut Server, uri: &str, text: &str) -> serde_json::Value {
+        server
+            .handle(&notify(
+                "textDocument/didOpen",
+                json!({"textDocument": {
+                    "uri": uri, "version": 1, "text": text
+                }}),
+            ))
+            .expect("open succeeds");
+        server.drain_outgoing().next().expect("diagnostics")
+    }
+
+    #[test]
+    fn diagnostics_preserve_code_severity_version_and_latest_change() {
+        let mut server = Server::default();
+        let first = open_with_diagnostic(&mut server, "file:///a.adoc", "one ");
+        assert_eq!(first["params"]["version"], 1);
+        assert_eq!(
+            first["params"]["diagnostics"][0]["code"],
+            "trailing-whitespace"
+        );
+        assert_eq!(first["params"]["diagnostics"][0]["severity"], 2);
+
+        server
+            .handle(&notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": {"uri": "file:///a.adoc", "version": 2},
+                    "contentChanges": [{"text": "_unfinished"}]
+                }),
+            ))
+            .expect("incomplete input is accepted");
+        let latest = server.drain_outgoing().next().expect("latest diagnostics");
+        assert_eq!(latest["params"]["version"], 2);
+        assert_eq!(
+            latest["params"]["diagnostics"][0]["code"],
+            "unclosed-inline"
+        );
+
+        server
+            .handle(&notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": {"uri": "file:///a.adoc", "version": 1},
+                    "contentChanges": [{"text": "stale "}]
+                }),
+            ))
+            .expect("stale input is ignored");
+        assert!(server.drain_outgoing().next().is_none());
+    }
+
+    #[test]
+    fn unicode_positions_follow_negotiated_utf8_and_utf16() {
+        let text = "日😀e\u{301} ";
+        for (encoding, expected_start, expected_end) in [
+            (PositionEncoding::Utf8, 10, 11),
+            (PositionEncoding::Utf16, 5, 6),
+        ] {
+            let mut server = Server {
+                position_encoding: encoding,
+                ..Server::default()
+            };
+            let notification = open_with_diagnostic(&mut server, "file:///unicode.adoc", text);
+            let range = &notification["params"]["diagnostics"][0]["range"];
+            assert_eq!(range["start"]["character"], expected_start);
+            assert_eq!(range["end"]["character"], expected_end);
+        }
+    }
+
+    #[test]
+    fn diagnostics_are_cleared_when_document_closes() {
+        let mut server = Server::default();
+        open_with_diagnostic(&mut server, "file:///a.adoc", "bad ");
+        server
+            .handle(&notify(
+                "textDocument/didClose",
+                json!({"textDocument": {"uri": "file:///a.adoc"}}),
+            ))
+            .expect("close succeeds");
+
+        let notification = server.drain_outgoing().next().expect("clear notification");
+        assert_eq!(notification["params"]["uri"], "file:///a.adoc");
+        assert_eq!(notification["params"]["diagnostics"], json!([]));
     }
 }
