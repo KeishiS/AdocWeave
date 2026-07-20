@@ -39,6 +39,10 @@ impl<'source> CstDocument<'source> {
         &self.blocks
     }
 
+    pub(crate) const fn source_lines(&self) -> &SourceLines<'source> {
+        &self.source_lines
+    }
+
     pub fn tokens(&self) -> &[LosslessToken] {
         self.source_lines.tokens()
     }

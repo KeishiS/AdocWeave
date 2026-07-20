@@ -1,154 +1,146 @@
-= AsciiLoom syntax support
+= AsciiLoom対応構文
 
-This document records the behavior implemented by the current AsciiLoom core.
-It is a product support matrix, not a claim that the listed subset is a
-complete implementation of the AsciiDoc language.
+この文書は現在のAsciiLoomコアが実装する動作を記録する。対応する部分集合を列挙する
+製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-The normative rules for implemented syntax are in xref:grammar.adoc[Core 0.1
-normative grammar]. Differences from the wider AsciiDoc language are described
-in xref:asciidoc-compatibility.adoc[AsciiDoc specification status].
+実装済み構文の規範的規則はxref:grammar.adoc[Core 0.1規範文法]で定義する。
+AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
 
-== Status definitions
+== 状態の定義
 
-Supported::
-The syntax has a semantic AST representation and is covered vertically by the
-parser and applicable renderer, diagnostic, formatter, and editor features.
+対応::
+構文にsemantic AST表現があり、Parserと、該当するRenderer、診断、Formatter、
+エディター機能を縦断してテストしている。
 
-Preserved::
-The syntax does not have its final semantics yet, but input is retained as
-ordinary text or an `Unsupported` node. HTML output escapes the retained text.
+保持::
+最終的な意味は未実装だが、入力を通常テキストまたは`Unsupported`ノードとして保持する。
+HTML出力では保持したテキストをエスケープする。
 
-Unsupported::
-AsciiLoom does not currently promise AsciiDoc-compatible recognition or
-behavior for the syntax.
+未対応::
+その構文についてAsciiDoc互換の認識または動作を保証しない。
 
-== Supported block syntax
+== 対応済みブロック構文
 
 [cols="2,1,3",options="header"]
 |===
-|Syntax |Status |Current behavior
+|構文 |状態 |現在の動作
 
-|Paragraphs
-|Supported
-|Adjacent nonblank lines form a paragraph. Original source ranges remain
-available in the CST.
+|段落
+|対応
+|連続する非空行を段落にする。CSTでは元のソース範囲を利用できる。
 
-|Document title
-|Supported
-|The first one-marker heading before document content becomes the document
-title and is rendered by default.
+|文書タイトル
+|対応
+|文書内容より前にある最初の1個マーカーの見出しを文書タイトルとし、既定で出力する。
 
-|Section headings
-|Supported
-|Two through six `=` markers represent section levels one through five.
-Hierarchy diagnostics, symbols, hover information, and stable generated IDs
-are available.
+|セクション見出し
+|対応
+|2個から6個の`=`マーカーをセクションレベル1から5とする。階層診断、文書シンボル、
+hover情報、安定した生成IDを提供する。
 
-|Delimited literal block (`....`)
-|Supported
-|The body is opaque. Inline substitutions are not applied.
+|区切り付きリテラルブロック（`....`）
+|対応
+|本体を不透明として扱い、インライン置換を適用しない。
 
-|Source block (`[source,LANGUAGE]` followed by `----`)
-|Supported subset
-|The language and opaque body are represented semantically. Other block
-attributes and shorthand source styles are not supported.
+|ソースブロック（`[source,LANGUAGE]`と後続する`----`）
+|部分対応
+|言語と不透明な本体を意味表現へ変換する。その他のブロック属性とソース短縮記法には
+対応しない。
 
-|Blank lines
-|Supported
-|Spaces and tabs on an otherwise empty line count as a blank line.
+|空行
+|対応
+|空白またはタブだけの行を空行とする。
 
-|Unknown block constructs
-|Preserved
-|Recognized constructs become `Unsupported` in permissive mode. Strict mode
-rejects a document containing such a node.
+|未知のブロック構文
+|保持
+|認識できた構文は寛容モードで`Unsupported`になる。厳格モードでは、このノードを
+含む文書を全コア操作で拒否する。
 |===
 
-== Supported inline syntax
+== 対応済みインライン構文
 
 [cols="2,1,3",options="header"]
 |===
-|Syntax |Status |Current behavior
+|構文 |状態 |現在の動作
 
-|Strong (`*text*`)
-|Supported subset
-|Only the constrained single-marker form is recognized.
+|強調（`*text*`）
+|部分対応
+|constrainedな単一マーカー形式だけを認識する。
 
-|Emphasis (`_text_`)
-|Supported subset
-|Only the constrained single-marker form is recognized. Identifier
-underscores such as `snake_case` remain text.
+|斜体（`_text_`）
+|部分対応
+|constrainedな単一マーカー形式だけを認識する。`snake_case`のような識別子中の
+アンダースコアはテキストとして残す。
 
-|Monospace (pass:[`text`])
-|Supported subset
-|Only the constrained single-marker form is recognized. Its content is opaque.
+|等幅（pass:[`text`]）
+|部分対応
+|constrainedな単一マーカー形式だけを認識し、内容を不透明として扱う。
 
-|Nested strong and emphasis
-|Supported
-|Styled content is parsed recursively up to the configured inline-depth limit.
+|強調と斜体の入れ子
+|対応
+|設定したインライン深さ上限まで、スタイル付き内容を再帰的に解析する。
 
-|Unclosed formatting
-|Supported recovery
-|The opener remains text, a diagnostic is emitted, and scanning continues so
-later safe spans are not lost.
+|閉じていない書式
+|回復対応
+|開始記号をテキストとして残して診断を出し、後続の安全なspanを失わないよう走査を続ける。
 
-|Unconstrained formatting (`**text**`, `__text__`, double backticks)
-|Unsupported
-|The double-marker form has no formatting semantics in Core 0.1.
+|Unconstrained書式（`**text**`、`__text__`、二重バッククォート）
+|未対応
+|Core 0.1では二重マーカー形式に書式上の意味を与えない。
 
-|Backslash escaping
-|Unsupported
-|Backslash is currently ordinary text and does not suppress substitutions.
+|バックスラッシュエスケープ
+|未対応
+|バックスラッシュを通常テキストとして扱い、置換を抑止しない。
 
-|Highlight, subscript, superscript, typographic quotes
-|Unsupported
-|The corresponding formatting marks have no dedicated semantic nodes.
+|ハイライト、下付き、上付き、組版用引用符
+|未対応
+|対応する書式マーカー専用のsemantic nodeはない。
 
-|Inline passthroughs
-|Unsupported
-|Single, double, and triple plus passthrough forms are not interpreted.
+|インラインpassthrough
+|未対応
+|単一、二重、三重のプラス記号によるpassthroughを解釈しない。
 |===
 
-== Syntax planned but not yet implemented
+== 実装予定の構文
 
 [cols="2,2,3",options="header"]
 |===
-|Area |Planned Issue |Current treatment
+|領域 |予定Issue |現在の扱い
 
-|Document attributes
+|文書属性
 |xref:../issues/029-document-attributes.adoc[Issue 029]
-|No attribute expansion; source-language metadata is the only supported
-attribute-like form.
+|属性展開は行わない。ソース言語メタデータだけが対応済みの属性に似た形式である。
 
-|Explicit anchors and stable IDs
+|明示アンカーと安定ID
 |xref:../issues/030-anchors-and-stable-ids.adoc[Issue 030]
-|Generated heading IDs only.
+|生成した見出しIDだけを提供する。
 
-|Links and URL policy
+|リンクとURLポリシー
 |xref:../issues/031-links-and-url-policy.adoc[Issue 031]
-|Link macros remain text.
+|リンクマクロをテキストとして残す。
 
-|Lists and block continuation
+|リストとブロック継続
 |xref:../issues/032-lists-and-continuations.adoc[Issue 032]
-|No list AST; input generally remains paragraph text.
+|リストASTはなく、入力は通常段落のテキストとして残る。
 
-|Note references
+|ノート参照
 |xref:../issues/033-note-reference-macro.adoc[Issue 033]
-|No UUID or host-side resolution.
+|UUIDやホスト側解決は行わない。
 
-|STEM and LaTeX
+|STEMとLaTeX
 |xref:../issues/034-latex-stem.adoc[Issue 034]
-|Math macros remain text.
+|数式マクロをテキストとして残す。
 |===
 
-== Examples
+== 例
 
-.Supported constrained formatting
+.対応済みのconstrained書式
 [source,asciidoc]
 ....
 Use *strong*, _emphasis_, and `monospace`.
 ....
 
-.Unsupported unconstrained formatting
+.未対応のunconstrained書式
 [source,asciidoc]
 ....
 some**strong**word
@@ -156,7 +148,7 @@ some__emphasis__word
 some``monospace``word
 ....
 
-.Supported source-block subset
+.対応済みソースブロック部分集合
 [source,asciidoc]
 ....
 [source,rust]

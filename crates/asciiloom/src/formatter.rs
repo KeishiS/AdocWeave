@@ -1,9 +1,9 @@
 //! Conservative, CST-aware source formatting.
 
 use crate::diagnostic::{Applicability, Fix, TextEdit};
-use crate::parser::{CstBlockKind, parse};
+use crate::parser::{CstBlockKind, ParsedDocument, parse};
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_lines::{LineEnding, SourceLines};
+use crate::source_lines::LineEnding;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NewlineStyle {
@@ -51,7 +51,15 @@ impl FormatOutput {
 
 pub fn format(source: &str, config: &FormatConfig) -> Result<FormatOutput, PositionError> {
     let parsed = parse(source)?;
-    let source_lines = SourceLines::new(source)?;
+    format_parsed(&parsed, config)
+}
+
+pub(crate) fn format_parsed(
+    parsed: &ParsedDocument<'_>,
+    config: &FormatConfig,
+) -> Result<FormatOutput, PositionError> {
+    let source = parsed.cst.source();
+    let source_lines = parsed.cst.source_lines();
     let protected = parsed
         .cst
         .blocks()

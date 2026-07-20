@@ -1,7 +1,8 @@
 //! Core application boundary for AsciiLoom.
 //!
-//! Parsing and rendering will be implemented behind this API. The command-line
-//! interface is intentionally kept in a separate module and only handles I/O.
+//! The command-line interface is a host adapter around this API and owns file
+//! and standard-stream I/O. Parsing, diagnostics, formatting, and rendering
+//! remain deterministic core operations over caller-provided input.
 
 use std::error::Error;
 use std::fmt;
@@ -92,9 +93,8 @@ impl ProcessError {
 
 /// Decodes a document and performs the selected operation.
 ///
-/// This first implementation deliberately preserves the input for conversion
-/// and formatting. Later issues will replace these placeholders with the
-/// parser, renderer, linter, and formatter.
+/// Resource limits and the configured unsupported-syntax policy apply
+/// consistently to every operation.
 pub fn process(operation: Operation, input: &[u8]) -> Result<String, ProcessError> {
     process_with_config(operation, input, &limits::ProcessConfig::default())
 }
@@ -122,27 +122,17 @@ fn process_inner(
 
     let output = match operation {
         Operation::Convert => {
-            let parsed = parser::parse_with_config(
-                source,
-                &parser::ParseConfig {
-                    max_inline_depth: config.limits.max_inline_depth,
-                },
-            )
-            .map_err(ProcessError::Position)?;
-            enforce_syntax_mode(&parsed.ast, config.syntax_mode)?;
+            let parsed = parse_with_policy(source, config)?;
             Ok(html::render(&parsed.ast, &html::HtmlOptions::default()).html)
         }
-        Operation::Format => formatter::format(source, &formatter::FormatConfig::default())
-            .map(|output| output.formatted)
-            .map_err(ProcessError::Position),
+        Operation::Format => {
+            let parsed = parse_with_policy(source, config)?;
+            formatter::format_parsed(&parsed, &formatter::FormatConfig::default())
+                .map(|output| output.formatted)
+                .map_err(ProcessError::Position)
+        }
         Operation::Symbols => {
-            let parsed = parser::parse_with_config(
-                source,
-                &parser::ParseConfig {
-                    max_inline_depth: config.limits.max_inline_depth,
-                },
-            )
-            .map_err(ProcessError::Position)?;
+            let parsed = parse_with_policy(source, config)?;
             Ok(document::render_symbols_json(&document::document_symbols(
                 &parsed.ast,
             )))
@@ -184,14 +174,7 @@ fn process_check_source_with_config(
     output: CheckOutput,
     config: &limits::ProcessConfig,
 ) -> Result<String, ProcessError> {
-    let parsed = parser::parse_with_config(
-        source,
-        &parser::ParseConfig {
-            max_inline_depth: config.limits.max_inline_depth,
-        },
-    )
-    .map_err(ProcessError::Position)?;
-    enforce_syntax_mode(&parsed.ast, config.syntax_mode)?;
+    parse_with_policy(source, config)?;
     let mut lint_config = lint::LintConfig::default();
     lint_config.max_diagnostics = config.limits.max_diagnostics;
     lint_config.max_inline_depth = config.limits.max_inline_depth;
@@ -204,6 +187,21 @@ fn process_check_source_with_config(
         }
         CheckOutput::Json => Ok(diagnostic::render_json(&diagnostics)),
     }
+}
+
+fn parse_with_policy<'source>(
+    source: &'source str,
+    config: &limits::ProcessConfig,
+) -> Result<parser::ParsedDocument<'source>, ProcessError> {
+    let parsed = parser::parse_with_config(
+        source,
+        &parser::ParseConfig {
+            max_inline_depth: config.limits.max_inline_depth,
+        },
+    )
+    .map_err(ProcessError::Position)?;
+    enforce_syntax_mode(&parsed.ast, config.syntax_mode)?;
+    Ok(parsed)
 }
 
 fn enforce_limit(resource: &'static str, limit: usize, actual: usize) -> Result<(), ProcessError> {
@@ -371,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn security_modes_escape_html_and_reject_unsupported_syntax() {
+    fn security_modes_escape_html_and_apply_strict_policy_to_every_operation() {
         assert_eq!(
             process(Operation::Convert, b"<script>alert(1)</script>"),
             Ok("<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>\n".to_owned())
@@ -381,8 +379,14 @@ mod tests {
             syntax_mode: SyntaxMode::Strict,
             ..ProcessConfig::default()
         };
+        for operation in [Operation::Convert, Operation::Format, Operation::Symbols] {
+            assert_eq!(
+                process_with_config(operation, b"[role=raw]", &strict),
+                Err(ProcessError::UnsupportedSyntax)
+            );
+        }
         assert_eq!(
-            process_with_config(Operation::Convert, b"[role=raw]", &strict),
+            process_check_with_config(b"[role=raw]", CheckOutput::Human, &strict),
             Err(ProcessError::UnsupportedSyntax)
         );
         assert_eq!(

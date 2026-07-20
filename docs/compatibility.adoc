@@ -1,33 +1,171 @@
-= Core 0.1 compatibility
+= AsciiDoc仕様との互換性
 
-For a feature-by-feature view, see xref:syntax-support.adoc[Supported syntax].
-For comparison with the AsciiDoc language, see
-xref:asciidoc-compatibility.adoc[AsciiDoc specification status].
+== 参照基準
 
-The 0.1 core profile supports:
+AsciiLoomは次の公式資料を外部仕様の参照基準とする。
 
-- paragraphs, document titles, and section headings;
-- constrained monospace, strong, and emphasis inline spans;
-- delimited literal blocks;
-- `[source, LANGUAGE]` source blocks;
-- HTML conversion, lint diagnostics, conservative formatting, document
-  symbols, and the initial Language Server features.
+* https://asciidoc.org/[AsciiDoc公式サイト]
+* https://docs.asciidoctor.org/asciidoc/latest/[AsciiDoc Language documentation]
+* https://docs.asciidoctor.org/asciidoc/latest/_exports/asciidoc-pre-spec.pdf[AsciiDoc pre-specification]
+* https://docs.asciidoctor.org/asciidoc/latest/syntax-quick-reference/[AsciiDoc syntax quick reference]
 
-The following AsciiDoc features are intentionally outside this profile:
+AsciiDocプロジェクトは言語仕様が現在も策定中であると説明している。そのためAsciiLoomは、
+未確定の最終仕様への準拠を主張せず、採用した参照基準と意図的な差異を記録する。
 
-- document and block attributes other than the source-block language;
-- explicit anchors and cross references;
-- links and URL policy;
-- lists and block continuations;
-- note-reference macros and host-side UUID resolution;
-- STEM and LaTeX math;
-- raw HTML passthrough.
+Core 0.1は意図的に小さく定義したプロファイルである。そのテスト成功が証明するのは
+xref:grammar.adoc[AsciiLoomの規範文法]への準拠であり、AsciiDoc全体への準拠ではない。
 
-Recognized unsupported block constructs are preserved as explicit
-`Unsupported` semantic nodes in permissive mode and rendered as escaped text.
-Unsupported inline forms such as links and math remain ordinary text. Strict
-processing rejects documents containing an `Unsupported` node. No unsupported
-construct is guessed or silently interpreted.
+== 書式ペアの互換性
 
-AsciiLoom is not yet a complete AsciiDoc implementation and the 0.1 core
-profile does not claim compatibility with a specific note application.
+公式言語文書はconstrainedとunconstrainedの書式ペアを区別する。constrainedペアは
+書式マーカーに隣接する文字へ依存する。unconstrainedペアは二重マーカーを使い、
+単語内部やCJK文字に隣接する箇所にも書式を適用できる。
+
+参照資料:
+
+* https://docs.asciidoctor.org/asciidoc/latest/text/[Text formatting and punctuation]
+* https://docs.asciidoctor.org/asciidoc/latest/text/troubleshoot-unconstrained-formatting/[Troubleshoot unconstrained formatting pairs]
+* https://docs.asciidoctor.org/asciidoc/latest/text/monospace/[Monospace]
+
+[cols="2,2,2",options="header"]
+|===
+|機能 |AsciiDoc参照動作 |AsciiLoom Core 0.1
+
+|Constrained strong
+|単一の`*`ペア
+|対応
+
+|Constrained emphasis
+|単一の`_`ペア
+|対応
+
+|Constrained monospace
+|単一のバッククォートペア
+|対応
+
+|Unconstrained strong
+|二重の`**`ペア
+|未対応
+
+|Unconstrained emphasis
+|二重の`__`ペア
+|未対応
+
+|Unconstrained monospace
+|二重のバッククォートペア
+|未対応
+
+|連続行をまたぐ書式
+|書式ペアは連続する複数行をまたげる
+|未対応。インライン走査は段落の各行末で停止する
+
+|その他のテキストスタイル
+|ハイライト、下付き、上付き、組版用句読点を定義する
+|未対応
+|===
+
+AsciiLoomのconstrained境界条件は、現時点ではCore 0.1固有の明示的契約である。
+識別子中の記号を誤認しないよう設計しているが、策定中のAsciiDoc言語に含まれる全境界例と
+等価であることはまだ証明していない。
+
+== バックスラッシュエスケープ
+
+公式文書は、通常内容で置換を抑止する方法の一つとしてバックスラッシュを定義する。
+バックスラッシュは書式、属性参照、文字置換、アンカー、マクロ、URL自動認識などを抑止でき、
+レンダリング結果からは除去される。
+
+参照資料:
+https://docs.asciidoctor.org/asciidoc/latest/subs/prevent/[Escape and prevent substitutions]
+
+.参照仕様の動作
+[source,asciidoc]
+....
+\*Stars* remains literal markup rather than strong text.
+\{name} remains an attribute reference in source form.
+\https://example.org is not activated as a link.
+....
+
+AsciiLoomはこの動作に未対応である。バックスラッシュを通常のソース文字として扱う。
+たとえば`\*Stars*`ではバックスラッシュがテキストとして残り、後続のconstrainedペアが
+強調として解釈される可能性がある。これはCore 0.1で把握済みの意図的な非互換点であり、
+別表記として認めたものではない。
+
+実装時には単にバックスラッシュを削除するだけでなく、次を満たす必要がある。
+
+* lossless CSTがエスケープ文字とその範囲を保持する。
+* semantic textがエスケープ済みマークアップと通常マークアップを区別する。
+* 診断とFormatterが著者の意図を保持する。
+* 置換コンテキストごとにエスケープの有効性を定義する。
+* HTMLおよび将来のバックエンドがソースを再解析せず意味内容を利用する。
+
+バックスラッシュエスケープはレンダラー固有の置換としてではなく、一般的な置換モデルと
+一体で実装する。
+
+== 置換の互換性
+
+公式文書は、特殊文字、quotes、属性、文字置換、マクロ、後置換という順序付きの置換種別を
+説明している。また`normal`、`header`、`verbatim`、`pass`、`none`などの置換グループを
+定義している。
+
+参照資料:
+
+* https://docs.asciidoctor.org/asciidoc/latest/subs/[Substitutions]
+* https://docs.asciidoctor.org/asciidoc/latest/subs/special-characters/[Special character substitutions]
+
+AsciiLoomが現在実装するのは、次の限定的な意味上の対応だけである。
+
+* 段落と見出しでconstrainedな強調、斜体、等幅を解析する。
+* 等幅、リテラルブロック、ソース本体を不透明として扱う。
+* 出力バックエンドが出力先で危険な文字をエスケープする。
+* 属性展開、文字置換、マクロ、passthrough、設定可能な置換グループには未対応である。
+
+したがって現在の処理順はAsciiDocの完全な置換パイプラインと等価ではない。実装済み契約は
+xref:substitutions.adoc[Core 0.1置換モデル]で定義する。
+
+== ブロックと文書の互換性
+
+[cols="2,2,2",options="header"]
+|===
+|領域 |AsciiDoc言語 |AsciiLoom Core 0.1
+
+|文書ヘッダー
+|タイトル、著者、改訂、属性
+|タイトルのみ
+
+|セクション
+|セクションタイトル、ID、属性、その他の構造規則
+|レベル1から5と生成ID
+
+|リテラルおよびlisting内容
+|複数のブロック形式と置換設定
+|区切り付きリテラルブロックと限定的なソースブロック
+
+|リスト
+|順序付き、順序なし、説明、入れ子、継続
+|未対応
+
+|リンクと相互参照
+|URL、link、email、xrefなどのマクロ
+|未対応
+
+|includeと条件分岐
+|プリプロセッサディレクティブ
+|未対応。コアはファイルへアクセスしない
+
+|passthroughとraw出力
+|passthrough機構を定義する
+|未対応。raw HTMLを通過させない
+|===
+
+== 互換性方針
+
+機能が実装されるまでは次を守る。
+
+* ソースを黙って破棄しない。
+* 未対応内容を実行可能なraw HTMLへ変換しない。
+* 寛容モードでは回復可能な内容を保持する。
+* 厳格モードでは、認識した未対応ブロック構文を全コア操作で拒否する。
+* 出力バックエンドがソーステキストを再解析して意味を推測しない。
+
+今後の構文Issueでは、この文書、対応表、規範文法、バックエンド横断fixtureを同じ変更で
+更新しなければならない。
