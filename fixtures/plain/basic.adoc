@@ -1,0 +1,3 @@
+= AsciiLoom
+
+Small steps produce reliable software.
