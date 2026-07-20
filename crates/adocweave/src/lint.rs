@@ -7,13 +7,12 @@ use crate::diagnostic::{
     TextEdit, sort_diagnostics,
 };
 use crate::document::heading_id_base;
-use crate::inline::InlineProblemKind;
-use crate::parser::{AstBlock, BlockProblemKind, HeadingKind, HeadingProblem};
+use crate::parser::{AstBlock, HeadingKind, HeadingProblem};
 #[cfg(test)]
 use crate::parser::{ParseConfig, parse_with_config};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::LineEnding;
-use crate::syntax::SyntaxTree;
+use crate::syntax::{SyntaxIssueClass, SyntaxTree};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LintRule {
@@ -251,12 +250,33 @@ pub(crate) fn lint_syntax(
         }
     }
 
+    lint_syntax_issues(syntax, config, &mut diagnostics);
     lint_headings(document, config, &mut diagnostics);
     lint_attributes(document, config, &mut diagnostics);
     lint_anchors(document, config, &mut diagnostics);
     lint_links_and_references(document, config, &mut diagnostics);
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_syntax_issues(syntax: &SyntaxTree, config: &LintConfig, diagnostics: &mut Vec<Diagnostic>) {
+    for issue in syntax.issues() {
+        let rule = match issue.class {
+            SyntaxIssueClass::HeadingMarkerSpace => LintRule::HeadingMarkerSpace,
+            SyntaxIssueClass::InvalidHeadingLevel => LintRule::InvalidHeadingLevel,
+            SyntaxIssueClass::UnclosedInline => LintRule::UnclosedInline,
+            SyntaxIssueClass::NestingLimitExceeded => LintRule::NestingLimitExceeded,
+            SyntaxIssueClass::UnclosedBlock => LintRule::UnclosedBlock,
+            SyntaxIssueClass::MissingSourceLanguage => LintRule::MissingSourceLanguage,
+            SyntaxIssueClass::InvalidAttribute => LintRule::InvalidAttribute,
+            SyntaxIssueClass::InvalidUrl => LintRule::InvalidUrlScheme,
+            SyntaxIssueClass::InvalidCrossReference => LintRule::InvalidCrossReference,
+            SyntaxIssueClass::InconsistentList => LintRule::InconsistentList,
+            SyntaxIssueClass::InvalidStem => LintRule::InvalidStem,
+        };
+        let fix = issue.fix.map(|fix| (fix.label, fix.range, fix.replacement));
+        push_diagnostic(diagnostics, config, rule, issue.range, issue.message, fix);
+    }
 }
 
 fn lint_links_and_references(
@@ -414,24 +434,10 @@ fn lint_attributes(
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    use crate::attributes::{AttributeOperation, AttributeProblemKind};
+    use crate::attributes::AttributeOperation;
 
     let mut definitions = BTreeMap::<String, TextRange>::new();
     let mut used = BTreeMap::<String, Vec<TextRange>>::new();
-    for problem in document.attribute_problems() {
-        let message = match problem.kind {
-            AttributeProblemKind::InvalidName => "invalid document attribute name",
-            AttributeProblemKind::InvalidValue => "invalid document attribute value",
-        };
-        push_diagnostic(
-            diagnostics,
-            config,
-            LintRule::InvalidAttribute,
-            problem.range,
-            message,
-            None,
-        );
-    }
     for attribute in document.attributes() {
         if let Some(first) = definitions.insert(attribute.name.clone(), attribute.name_range) {
             let settings = config.rule(LintRule::DuplicateAttribute);
@@ -546,80 +552,9 @@ fn lint_headings(
     let mut ids = BTreeMap::<String, TextRange>::new();
 
     for block in document.blocks() {
-        match block {
-            AstBlock::Heading(heading) => {
-                push_inline_problems(diagnostics, config, &heading.inline_problems);
-            }
-            AstBlock::Paragraph(paragraph) => {
-                push_inline_problems(diagnostics, config, &paragraph.inline_problems);
-            }
-            AstBlock::Literal(literal) => {
-                for problem in &literal.problems {
-                    match problem.kind {
-                        BlockProblemKind::UnclosedBlock => push_diagnostic(
-                            diagnostics,
-                            config,
-                            LintRule::UnclosedBlock,
-                            problem.range,
-                            "unclosed literal block",
-                            None,
-                        ),
-                        BlockProblemKind::MissingSourceLanguage => {}
-                    }
-                }
-            }
-            AstBlock::Source(source) => {
-                for problem in &source.problems {
-                    let (rule, message) = match problem.kind {
-                        BlockProblemKind::UnclosedBlock => {
-                            (LintRule::UnclosedBlock, "unclosed source block")
-                        }
-                        BlockProblemKind::MissingSourceLanguage => (
-                            LintRule::MissingSourceLanguage,
-                            "source block requires a language",
-                        ),
-                    };
-                    push_diagnostic(diagnostics, config, rule, problem.range, message, None);
-                }
-            }
-            AstBlock::List(list) => lint_list(list, config, diagnostics),
-            AstBlock::Math(math) => {
-                for problem in &math.problems {
-                    let message = match problem.kind {
-                        crate::parser::MathProblemKind::Unclosed => "unclosed STEM block",
-                        crate::parser::MathProblemKind::Empty => "STEM block is empty",
-                        crate::parser::MathProblemKind::SizeLimitExceeded => {
-                            "STEM block exceeds the size limit"
-                        }
-                    };
-                    push_diagnostic(
-                        diagnostics,
-                        config,
-                        LintRule::InvalidStem,
-                        problem.range,
-                        message,
-                        None,
-                    );
-                }
-            }
-            AstBlock::Unsupported(_) => {}
-        }
         let AstBlock::Heading(heading) = block else {
             continue;
         };
-
-        if heading.problems.contains(&HeadingProblem::MissingSpace) {
-            let insertion = TextRange::new(heading.marker_range.end(), heading.marker_range.end())
-                .expect("empty insertion range is ordered");
-            push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::HeadingMarkerSpace,
-                insertion,
-                "heading marker must be followed by a space",
-                Some(("insert a space after heading marker", insertion, " ")),
-            );
-        }
 
         let structurally_invalid = heading.problems.iter().any(|problem| {
             matches!(
@@ -630,21 +565,11 @@ fn lint_headings(
         match heading.kind {
             HeadingKind::DocumentTitle => {
                 previous_level = None;
-                if structurally_invalid {
-                    push_diagnostic(
-                        diagnostics,
-                        config,
-                        LintRule::InvalidHeadingLevel,
-                        heading.marker_range,
-                        "document title is only allowed before document content",
-                        None,
-                    );
-                }
             }
             HeadingKind::Section { level } => {
                 let hierarchy_invalid =
                     previous_level.map_or(level > 1, |previous| level > previous + 1);
-                if structurally_invalid || hierarchy_invalid {
+                if !structurally_invalid && hierarchy_invalid {
                     push_diagnostic(
                         diagnostics,
                         config,
@@ -682,169 +607,6 @@ fn lint_headings(
             }
         } else {
             ids.insert(base, heading.text_range);
-        }
-    }
-}
-
-fn lint_list(
-    list: &crate::parser::ListBlock,
-    config: &LintConfig,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    use crate::parser::ListProblemKind;
-    for item in &list.items {
-        push_inline_problems(diagnostics, config, &item.inline_problems);
-        for problem in &item.problems {
-            let (message, fix) = match problem.kind {
-                ListProblemKind::EmptyItem => ("list item is empty", None),
-                ListProblemKind::InconsistentMarker => {
-                    ("list marker kind changes at the same depth", None)
-                }
-                ListProblemKind::InvalidNesting => ("list nesting skips a depth", None),
-                ListProblemKind::DepthLimitExceeded => {
-                    ("list nesting exceeds the configured limit", None)
-                }
-                ListProblemKind::NonCanonicalSeparator => (
-                    "list marker must be followed by one space",
-                    Some(("replace the separator with a space", problem.range, " ")),
-                ),
-            };
-            push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::InconsistentList,
-                problem.range,
-                message,
-                fix,
-            );
-        }
-        for child in &item.children {
-            lint_list(child, config, diagnostics);
-        }
-        for continuation in &item.continuations {
-            match continuation {
-                AstBlock::Literal(block) => {
-                    for problem in &block.problems {
-                        if problem.kind == BlockProblemKind::UnclosedBlock {
-                            push_diagnostic(
-                                diagnostics,
-                                config,
-                                LintRule::UnclosedBlock,
-                                problem.range,
-                                "unclosed literal block",
-                                None,
-                            );
-                        }
-                    }
-                }
-                AstBlock::Source(block) => {
-                    for problem in &block.problems {
-                        let (rule, message) = match problem.kind {
-                            BlockProblemKind::UnclosedBlock => {
-                                (LintRule::UnclosedBlock, "unclosed source block")
-                            }
-                            BlockProblemKind::MissingSourceLanguage => (
-                                LintRule::MissingSourceLanguage,
-                                "source block requires a language",
-                            ),
-                        };
-                        push_diagnostic(diagnostics, config, rule, problem.range, message, None);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-fn push_inline_problems(
-    diagnostics: &mut Vec<Diagnostic>,
-    config: &LintConfig,
-    problems: &[crate::inline::InlineProblem],
-) {
-    for problem in problems {
-        match problem.kind {
-            InlineProblemKind::UnclosedMonospace => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::UnclosedInline,
-                problem.range,
-                "unclosed monospace span",
-                None,
-            ),
-            InlineProblemKind::UnclosedStrong => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::UnclosedInline,
-                problem.range,
-                "unclosed strong span",
-                None,
-            ),
-            InlineProblemKind::UnclosedEmphasis => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::UnclosedInline,
-                problem.range,
-                "unclosed emphasis span",
-                None,
-            ),
-            InlineProblemKind::NestingLimitExceeded => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::NestingLimitExceeded,
-                problem.range,
-                "inline nesting limit exceeded",
-                None,
-            ),
-            InlineProblemKind::UnclosedAttributeReference => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::UnclosedInline,
-                problem.range,
-                "unclosed attribute reference",
-                None,
-            ),
-            InlineProblemKind::IncompleteLink => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::InvalidUrlScheme,
-                problem.range,
-                "incomplete link macro",
-                None,
-            ),
-            InlineProblemKind::IncompleteCrossReference
-            | InlineProblemKind::InvalidCrossReference => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::InvalidCrossReference,
-                problem.range,
-                "incomplete or invalid cross reference",
-                None,
-            ),
-            InlineProblemKind::UnclosedStem => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::InvalidStem,
-                problem.range,
-                "unclosed inline STEM",
-                None,
-            ),
-            InlineProblemKind::EmptyStem => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::InvalidStem,
-                problem.range,
-                "inline STEM is empty",
-                None,
-            ),
-            InlineProblemKind::StemSizeLimitExceeded => push_diagnostic(
-                diagnostics,
-                config,
-                LintRule::InvalidStem,
-                problem.range,
-                "inline STEM exceeds the size limit",
-                None,
-            ),
         }
     }
 }
@@ -901,10 +663,7 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        InlineProblemKind, LintConfig, LintRule, RuleSettings, lint, push_inline_problems,
-        text_range,
-    };
+    use super::{LintConfig, LintRule, RuleSettings, lint};
     use crate::diagnostic::Severity;
 
     #[test]
@@ -1034,12 +793,14 @@ mod tests {
 
     #[test]
     fn inline_recovery_uses_dedicated_nesting_limit_code() {
-        let problem = crate::inline::InlineProblem {
-            kind: InlineProblemKind::NestingLimitExceeded,
-            range: text_range(0, 1).expect("valid range"),
-        };
-        let mut diagnostics = Vec::new();
-        push_inline_problems(&mut diagnostics, &LintConfig::default(), &[problem]);
+        let diagnostics = lint(
+            "*nested*",
+            &LintConfig {
+                max_inline_depth: 0,
+                ..LintConfig::default()
+            },
+        )
+        .expect("valid source");
 
         assert_eq!(diagnostics[0].code.as_str(), "nesting-limit-exceeded");
     }

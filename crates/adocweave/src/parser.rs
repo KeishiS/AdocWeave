@@ -11,7 +11,7 @@ use crate::inline::{
 use crate::limits::ProcessingLimits;
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::{SourceDocument, SourceDocumentBuildError, SourceLine};
-use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxTree};
+use crate::syntax::{SyntaxFix, SyntaxIssue, SyntaxIssueClass, SyntaxKind, SyntaxNode, SyntaxTree};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Paragraph {
@@ -750,6 +750,7 @@ pub(crate) fn parse_shared_cancellable(
         config,
         &mut budget,
     )?;
+    let syntax_issues = collect_syntax_issues(&ast_blocks, &attribute_problems);
     let ast = crate::lowering::lower(crate::lowering::ParsedFacts {
         blocks: ast_blocks,
         attributes,
@@ -758,9 +759,189 @@ pub(crate) fn parse_shared_cancellable(
     });
 
     Ok(ParsedDocument {
-        syntax: SyntaxTree::from_blocks(source_document, blocks),
+        syntax: SyntaxTree::from_blocks(source_document, blocks, syntax_issues),
         ast,
     })
+}
+
+fn collect_syntax_issues(
+    blocks: &[AstBlock],
+    attribute_problems: &[AttributeProblem],
+) -> Vec<SyntaxIssue> {
+    use crate::attributes::AttributeProblemKind;
+
+    fn issue(class: SyntaxIssueClass, range: TextRange, message: &'static str) -> SyntaxIssue {
+        SyntaxIssue {
+            class,
+            range,
+            message,
+            fix: None,
+        }
+    }
+
+    fn inline_issues(problems: &[InlineProblem], output: &mut Vec<SyntaxIssue>) {
+        use crate::inline::InlineProblemKind as Kind;
+        for problem in problems {
+            let (class, message) = match problem.kind {
+                Kind::UnclosedMonospace => {
+                    (SyntaxIssueClass::UnclosedInline, "unclosed monospace span")
+                }
+                Kind::UnclosedStrong => (SyntaxIssueClass::UnclosedInline, "unclosed strong span"),
+                Kind::UnclosedEmphasis => {
+                    (SyntaxIssueClass::UnclosedInline, "unclosed emphasis span")
+                }
+                Kind::NestingLimitExceeded => (
+                    SyntaxIssueClass::NestingLimitExceeded,
+                    "inline nesting limit exceeded",
+                ),
+                Kind::UnclosedAttributeReference => (
+                    SyntaxIssueClass::UnclosedInline,
+                    "unclosed attribute reference",
+                ),
+                Kind::IncompleteLink => (SyntaxIssueClass::InvalidUrl, "incomplete link macro"),
+                Kind::IncompleteCrossReference | Kind::InvalidCrossReference => (
+                    SyntaxIssueClass::InvalidCrossReference,
+                    "incomplete or invalid cross reference",
+                ),
+                Kind::UnclosedStem => (SyntaxIssueClass::InvalidStem, "unclosed inline STEM"),
+                Kind::EmptyStem => (SyntaxIssueClass::InvalidStem, "inline STEM is empty"),
+                Kind::StemSizeLimitExceeded => (
+                    SyntaxIssueClass::InvalidStem,
+                    "inline STEM exceeds the size limit",
+                ),
+            };
+            output.push(issue(class, problem.range, message));
+        }
+    }
+
+    fn block_issues(block: &AstBlock, output: &mut Vec<SyntaxIssue>) {
+        match block {
+            AstBlock::Heading(heading) => {
+                inline_issues(&heading.inline_problems, output);
+                for problem in &heading.problems {
+                    match problem {
+                        HeadingProblem::MissingSpace => {
+                            let range = TextRange::new(
+                                heading.marker_range.end(),
+                                heading.marker_range.end(),
+                            )
+                            .expect("empty insertion range is ordered");
+                            output.push(SyntaxIssue {
+                                class: SyntaxIssueClass::HeadingMarkerSpace,
+                                range,
+                                message: "heading marker must be followed by a space",
+                                fix: Some(SyntaxFix {
+                                    label: "insert a space after heading marker",
+                                    range,
+                                    replacement: " ",
+                                }),
+                            });
+                        }
+                        HeadingProblem::LevelTooDeep | HeadingProblem::MisplacedDocumentTitle => {
+                            output.push(issue(
+                                SyntaxIssueClass::InvalidHeadingLevel,
+                                heading.marker_range,
+                                "invalid heading level or document title position",
+                            ));
+                        }
+                        HeadingProblem::EmptyText => {}
+                    }
+                }
+            }
+            AstBlock::Paragraph(paragraph) => inline_issues(&paragraph.inline_problems, output),
+            AstBlock::Literal(block) => block_problem_issues(&block.problems, "literal", output),
+            AstBlock::Source(block) => block_problem_issues(&block.problems, "source", output),
+            AstBlock::List(list) => list_issues(list, output),
+            AstBlock::Math(math) => {
+                for problem in &math.problems {
+                    let message = match problem.kind {
+                        MathProblemKind::Unclosed => "unclosed STEM block",
+                        MathProblemKind::Empty => "STEM block is empty",
+                        MathProblemKind::SizeLimitExceeded => "STEM block exceeds the size limit",
+                    };
+                    output.push(issue(SyntaxIssueClass::InvalidStem, problem.range, message));
+                }
+            }
+            AstBlock::Unsupported(_) => {}
+        }
+    }
+
+    fn block_problem_issues(
+        problems: &[BlockProblem],
+        block_name: &'static str,
+        output: &mut Vec<SyntaxIssue>,
+    ) {
+        for problem in problems {
+            let (class, message) = match (problem.kind, block_name) {
+                (BlockProblemKind::UnclosedBlock, "literal") => {
+                    (SyntaxIssueClass::UnclosedBlock, "unclosed literal block")
+                }
+                (BlockProblemKind::UnclosedBlock, _) => {
+                    (SyntaxIssueClass::UnclosedBlock, "unclosed source block")
+                }
+                (BlockProblemKind::MissingSourceLanguage, _) => (
+                    SyntaxIssueClass::MissingSourceLanguage,
+                    "source block requires a language",
+                ),
+            };
+            output.push(issue(class, problem.range, message));
+        }
+    }
+
+    fn list_issues(list: &ListBlock, output: &mut Vec<SyntaxIssue>) {
+        for item in &list.items {
+            inline_issues(&item.inline_problems, output);
+            for problem in &item.problems {
+                let (message, fix) = match problem.kind {
+                    ListProblemKind::EmptyItem => ("list item is empty", None),
+                    ListProblemKind::InconsistentMarker => {
+                        ("list marker kind changes at the same depth", None)
+                    }
+                    ListProblemKind::InvalidNesting => ("list nesting skips a depth", None),
+                    ListProblemKind::DepthLimitExceeded => {
+                        ("list nesting exceeds the configured limit", None)
+                    }
+                    ListProblemKind::NonCanonicalSeparator => (
+                        "list marker must be followed by one space",
+                        Some(SyntaxFix {
+                            label: "replace the separator with a space",
+                            range: problem.range,
+                            replacement: " ",
+                        }),
+                    ),
+                };
+                output.push(SyntaxIssue {
+                    class: SyntaxIssueClass::InconsistentList,
+                    range: problem.range,
+                    message,
+                    fix,
+                });
+            }
+            for child in &item.children {
+                list_issues(child, output);
+            }
+            for continuation in &item.continuations {
+                block_issues(continuation, output);
+            }
+        }
+    }
+
+    let mut output = Vec::new();
+    for problem in attribute_problems {
+        let message = match problem.kind {
+            AttributeProblemKind::InvalidName => "invalid document attribute name",
+            AttributeProblemKind::InvalidValue => "invalid document attribute value",
+        };
+        output.push(issue(
+            SyntaxIssueClass::InvalidAttribute,
+            problem.range,
+            message,
+        ));
+    }
+    for block in blocks {
+        block_issues(block, &mut output);
+    }
+    output
 }
 
 fn heading_syntax(heading: &Heading, kind: SyntaxKind) -> SyntaxNode {

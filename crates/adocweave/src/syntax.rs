@@ -41,6 +41,36 @@ pub enum FormattingPolicy {
     PreserveBytes,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SyntaxIssueClass {
+    HeadingMarkerSpace,
+    InvalidHeadingLevel,
+    UnclosedInline,
+    NestingLimitExceeded,
+    UnclosedBlock,
+    MissingSourceLanguage,
+    InvalidAttribute,
+    InvalidUrl,
+    InvalidCrossReference,
+    InconsistentList,
+    InvalidStem,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SyntaxFix {
+    pub label: &'static str,
+    pub range: TextRange,
+    pub replacement: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SyntaxIssue {
+    pub class: SyntaxIssueClass,
+    pub range: TextRange,
+    pub message: &'static str,
+    pub fix: Option<SyntaxFix>,
+}
+
 impl SyntaxKind {
     pub const fn formatting_policy(self) -> FormattingPolicy {
         match self {
@@ -148,10 +178,15 @@ impl<'a> Iterator for SyntaxDescendants<'a> {
 pub struct SyntaxTree {
     source: SourceDocument,
     root: SyntaxNode,
+    issues: Vec<SyntaxIssue>,
 }
 
 impl SyntaxTree {
-    pub(crate) fn from_blocks(source: SourceDocument, mut blocks: Vec<SyntaxNode>) -> Self {
+    pub(crate) fn from_blocks(
+        source: SourceDocument,
+        mut blocks: Vec<SyntaxNode>,
+        issues: Vec<SyntaxIssue>,
+    ) -> Self {
         for block in &mut blocks {
             debug_assert!(block.kind.is_block());
             materialize(&source, block);
@@ -164,6 +199,7 @@ impl SyntaxTree {
                 TextRange::new(TextSize::ZERO, end).expect("document range is ordered"),
                 blocks,
             ),
+            issues,
         }
     }
 
@@ -191,6 +227,10 @@ impl SyntaxTree {
 
     pub fn tokens(&self) -> &[LosslessToken] {
         self.source.tokens()
+    }
+
+    pub fn issues(&self) -> &[SyntaxIssue] {
+        &self.issues
     }
 
     pub fn reconstruct(&self) -> String {
@@ -281,7 +321,7 @@ fn append_tokens(source: &SourceDocument, range: TextRange, output: &mut Vec<Syn
 
 #[cfg(test)]
 mod tests {
-    use super::{SyntaxKind, SyntaxNode, SyntaxTree};
+    use super::{SyntaxIssueClass, SyntaxKind, SyntaxNode, SyntaxTree};
     use crate::source::{TextRange, TextSize};
     use crate::source_document::SourceDocument;
 
@@ -289,8 +329,11 @@ mod tests {
     fn tree_reconstructs_only_from_ordered_token_leaves() {
         let source = SourceDocument::new("text \r\n").expect("source");
         let range = TextRange::new(TextSize::ZERO, TextSize::new(7).expect("size")).expect("range");
-        let tree =
-            SyntaxTree::from_blocks(source, vec![SyntaxNode::leaf(SyntaxKind::Paragraph, range)]);
+        let tree = SyntaxTree::from_blocks(
+            source,
+            vec![SyntaxNode::leaf(SyntaxKind::Paragraph, range)],
+            Vec::new(),
+        );
 
         assert_eq!(tree.reconstruct(), "text \r\n");
         assert_eq!(tree.root().kind(), SyntaxKind::Document);
@@ -329,6 +372,11 @@ mod tests {
             1
         );
         assert_eq!(unclosed.syntax().nodes(SyntaxKind::Error).count(), 1);
+        assert_eq!(unclosed.syntax().issues().len(), 1);
+        assert_eq!(
+            unclosed.syntax().issues()[0].class,
+            SyntaxIssueClass::UnclosedBlock
+        );
 
         let unknown = crate::Engine::new(crate::ParseOptions::default())
             .analyze("[quote]\n")
