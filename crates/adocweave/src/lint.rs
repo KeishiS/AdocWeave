@@ -37,10 +37,11 @@ pub enum LintRule {
     InvalidCrossReference,
     UnresolvedCrossReference,
     InconsistentList,
+    InvalidNoteUuid,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -62,6 +63,7 @@ impl LintRule {
         Self::InvalidCrossReference,
         Self::UnresolvedCrossReference,
         Self::InconsistentList,
+        Self::InvalidNoteUuid,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -87,6 +89,7 @@ impl LintRule {
             Self::InvalidCrossReference => "invalid-cross-reference",
             Self::UnresolvedCrossReference => "unresolved-cross-reference",
             Self::InconsistentList => "inconsistent-list",
+            Self::InvalidNoteUuid => "invalid-note-uuid",
         }
     }
 }
@@ -301,7 +304,16 @@ fn lint_links_and_references(
                         ReferenceDestination::Scheme {
                             scheme, locator, ..
                         } => {
-                            if scheme.is_empty()
+                            if scheme == "note" && !crate::reference::is_canonical_uuid(locator) {
+                                push_diagnostic(
+                                    diagnostics,
+                                    config,
+                                    LintRule::InvalidNoteUuid,
+                                    reference.target_range,
+                                    "note reference requires a canonical lowercase UUID",
+                                    None,
+                                );
+                            } else if scheme.is_empty()
                                 || locator.is_empty()
                                 || locator.chars().any(char::is_control)
                             {
@@ -1171,5 +1183,30 @@ mod tests {
                 .iter()
                 .any(|fix| fix.edits()[0].replacement == " ")
         }));
+    }
+
+    #[test]
+    fn note_reference_validates_uuid_without_resolving_it() {
+        let diagnostics = lint(
+            "xref:note:123[bad] xref:note:123e4567-e89b-12d3-a456-426614174000[ok]",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "invalid-note-uuid")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn note_reference_incomplete_fixture_recovers_without_panicking() {
+        let source = include_str!("../../../fixtures/references/incomplete-note.adoc");
+        let parsed = crate::parser::parse(source).expect("parse");
+
+        assert_eq!(parsed.ast.blocks.len(), 1);
     }
 }

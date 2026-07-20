@@ -68,11 +68,7 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
     render_with_resolutions(document, policy, &[])
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolvedReference {
-    pub source_range: crate::source::TextRange,
-    pub href: String,
-}
+pub use crate::reference::ResolvedReference;
 
 pub fn render_with_resolutions(
     document: &AstDocument,
@@ -373,21 +369,28 @@ fn render_reference(
                 .iter()
                 .find(|resolution| resolution.source_range == reference.range);
             if let Some(resolution) = resolution {
-                if context.policy.allows_url(&resolution.href) {
-                    (
-                        Some(resolution.href.clone()),
-                        reference_text(reference),
-                        None,
-                    )
-                } else {
-                    (
+                match &resolution.outcome {
+                    crate::reference::ResolutionOutcome::Resolved { href }
+                        if context.policy.allows_url(href) =>
+                    {
+                        (Some(href.clone()), reference_text(reference), None)
+                    }
+                    crate::reference::ResolutionOutcome::Resolved { .. } => (
                         None,
                         reference_text(reference),
                         Some((
                             "invalid-url-scheme",
                             "resolved reference URL is rejected by the render policy",
                         )),
-                    )
+                    ),
+                    crate::reference::ResolutionOutcome::Failed(failure) => (
+                        None,
+                        reference_text(reference),
+                        Some((
+                            failure.kind.diagnostic_code(),
+                            "reference resolution failed",
+                        )),
+                    ),
                 }
             } else {
                 (
@@ -800,10 +803,10 @@ mod tests {
         let output = render_with_resolutions(
             &parsed.ast,
             &RenderPolicy::default(),
-            &[ResolvedReference {
-                source_range: external,
-                href: "https://notes.example/part".to_owned(),
-            }],
+            &[ResolvedReference::resolved(
+                external,
+                "https://notes.example/part",
+            )],
         );
 
         assert!(output.html.contains("<a href=\"#local\">Here</a>"));

@@ -104,6 +104,17 @@ pub struct ParseResult<'source> {
     pub references: Vec<crate::inline::Reference>,
 }
 
+impl ParseResult<'_> {
+    pub fn reference_queries(&self) -> Vec<crate::reference::ReferenceQuery> {
+        self.references
+            .iter()
+            .filter_map(|reference| {
+                crate::reference::query_from_reference(self.source_id.clone(), reference)
+            })
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ParseError {
     InvalidProfileVersion {
@@ -429,6 +440,30 @@ mod tests {
 
         assert_eq!(parsed.references.len(), 3);
         assert_eq!(parsed.reference_targets.len(), 1);
+    }
+
+    #[test]
+    fn reference_resolution_queries_are_host_independent() {
+        let options = ParseOptions {
+            source_id: Some(SourceId::new("opaque:source")),
+            ..ParseOptions::default()
+        };
+        let parsed = parse(
+            "xref:other.adoc#part[] xref:note:123e4567-e89b-12d3-a456-426614174000#part[]",
+            &options,
+        )
+        .expect("parse");
+        let queries = parsed.reference_queries();
+
+        assert_eq!(queries.len(), 2);
+        assert_eq!(
+            queries[0].source_id.as_ref().map(SourceId::as_str),
+            Some("opaque:source")
+        );
+        assert!(matches!(
+            queries[1].target,
+            crate::reference::ReferenceKey::Note { .. }
+        ));
     }
 
     #[test]

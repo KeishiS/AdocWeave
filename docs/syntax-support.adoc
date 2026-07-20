@@ -141,7 +141,8 @@ HTML IDに使用する。
 
 |cross reference解決とノート参照
 |xref:../issues/033-note-reference-macro.adoc[Issue 033]
-|文書間xrefや`note:`のホスト側解決は行わない。
+|対応。コアは共通問い合わせを構築し、I/Oは非同期ホストResolverへ委譲する。
+`note:`はcanonical UUIDを検証する。
 
 |STEMとLaTeX
 |xref:../issues/034-latex-stem.adoc[Issue 034]
