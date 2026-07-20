@@ -15,12 +15,13 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 1;
+pub const HTML_CONTRACT_VERSION: u16 = 2;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "p", "pre", "strong",
+    "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "li", "ol", "p", "pre",
+    "strong", "ul",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "href", "id"];
-pub const ALLOWED_CLASSES: &[&str] = &["document-title", "language-*"];
+pub const ALLOWED_CLASSES: &[&str] = &["document-title", "language-*", "math-latex", "math-typst"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HtmlDocumentMode {
@@ -79,7 +80,7 @@ pub fn render_with_resolutions(
     let mut document_attributes = BTreeMap::new();
     for attribute in &document.attributes {
         match &attribute.operation {
-            AttributeOperation::Set(_) => {
+            AttributeOperation::Set => {
                 document_attributes.insert(attribute.name.clone(), attribute.raw_value.clone());
             }
             AttributeOperation::Unset => {
@@ -102,7 +103,7 @@ pub fn render_with_resolutions(
         let explicit_id = document
             .anchors
             .iter()
-            .find(|anchor| anchor.valid && anchor.target_range == Some(block_range(block)))
+            .find(|anchor| anchor.valid && anchor.target_range == Some(block.range()))
             .map(|anchor| anchor.id.as_str());
         match block {
             AstBlock::Heading(heading) => {
@@ -492,18 +493,6 @@ fn render_optional_id(output: &mut String, id: Option<&str>) {
     }
 }
 
-fn block_range(block: &AstBlock) -> crate::source::TextRange {
-    match block {
-        AstBlock::Heading(value) => value.range,
-        AstBlock::Paragraph(value) => value.range,
-        AstBlock::Literal(value) => value.range,
-        AstBlock::Source(value) => value.range,
-        AstBlock::List(value) => value.range,
-        AstBlock::Math(value) => value.range,
-        AstBlock::Unsupported(value) => value.range,
-    }
-}
-
 fn escape_html_into(output: &mut String, text: &str) {
     for character in text.chars() {
         match character {
@@ -706,16 +695,19 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 1);
+        assert_eq!(HTML_CONTRACT_VERSION, 2);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
-                "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "p", "pre",
-                "strong"
+                "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "li", "ol", "p",
+                "pre", "strong", "ul"
             ]
         );
         assert_eq!(ALLOWED_ATTRIBUTES, ["class", "href", "id"]);
-        assert_eq!(ALLOWED_CLASSES, ["document-title", "language-*"]);
+        assert_eq!(
+            ALLOWED_CLASSES,
+            ["document-title", "language-*", "math-latex", "math-typst"]
+        );
         let parsed = parse("paragraph").expect("parse");
         assert_eq!(
             render(&parsed.ast, &RenderPolicy::default()).contract_version,

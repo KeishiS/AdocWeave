@@ -8,7 +8,7 @@
 
 - 同じ入力、プロファイルおよび設定をネイティブとWASMで実行する共通fixture runnerを実装する。
 - CST、semantic AST、診断、projectionおよびHTMLを安定した比較形式へシリアライズする。
-- ノートメタデータ、タグ、アンカー、文書内・文書間cross reference、`note:`、リンク切れ、
+- 汎用属性、アンカー、文書内・文書間cross reference、任意スキーム、リンク切れ、
   参照グラフ、リストおよびLaTeX STEMの専用fixtureを追加する。
 - 対応構文に限定したAsciidoctorとの差分テストを追加し、意図的差異を承認済みfixtureとして管理する。
 - Unicode、LF・CRLF、厳格・寛容モードおよび各上限の組合せを含める。

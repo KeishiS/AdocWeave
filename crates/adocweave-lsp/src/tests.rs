@@ -35,7 +35,8 @@ fn document_sync_keeps_documents_independent_and_ignores_stale_versions() {
             .documents
             .get("file:///a.adoc")
             .expect("document")
-            .text,
+            .analysis
+            .source(),
         "= A"
     );
     assert_eq!(
@@ -43,7 +44,8 @@ fn document_sync_keeps_documents_independent_and_ignores_stale_versions() {
             .documents
             .get("file:///b.adoc")
             .expect("document")
-            .text,
+            .analysis
+            .source(),
         "= B"
     );
 
@@ -116,7 +118,8 @@ fn document_sync_rejects_incremental_changes_explicitly() {
             .documents
             .get("file:///a.adoc")
             .expect("document")
-            .text,
+            .analysis
+            .source(),
         "one"
     );
 }

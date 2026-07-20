@@ -85,6 +85,11 @@ description = "Run normative grammar and substitution contract tests"
 command = "cargo"
 args = ["test", "-p", "adocweave", "--test", "grammar"]
 
+[tasks.test-properties]
+description = "Run parser and formatter invariant tests"
+command = "cargo"
+args = ["test", "-p", "adocweave", "--test", "properties"]
+
 [tasks.test-release-core]
 private = true
 command = "cargo"

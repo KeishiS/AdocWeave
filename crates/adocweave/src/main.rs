@@ -174,12 +174,8 @@ fn run() -> Result<(), CliError> {
                         valid_up_to: error.valid_up_to(),
                     })
                 })?;
-                let output = adocweave::formatter::format(
-                    source,
-                    &adocweave::formatter::FormatConfig::default(),
-                )
-                .map_err(|error| CliError::Process(adocweave::ProcessError::Position(error)))?;
-                if output.changed() {
+                let output = process(Operation::Format, &input).map_err(CliError::Process)?;
+                if output != source {
                     return Err(CliError::FormattingRequired);
                 }
                 Ok(String::new())

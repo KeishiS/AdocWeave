@@ -1,6 +1,5 @@
 //! Output-independent inline syntax.
 
-use crate::limits::MAX_FORMULA_BYTES;
 use crate::source::{TextRange, TextSize};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -154,11 +153,15 @@ pub struct InlineParseOutput {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InlineParseConfig {
     pub max_depth: usize,
+    pub max_formula_bytes: usize,
 }
 
 impl Default for InlineParseConfig {
     fn default() -> Self {
-        Self { max_depth: 32 }
+        Self {
+            max_depth: 32,
+            max_formula_bytes: 1024 * 1024,
+        }
     }
 }
 
@@ -201,7 +204,7 @@ fn parse_segment(
                             range: formula.content_range,
                         });
                     }
-                    if formula.value.len() > MAX_FORMULA_BYTES {
+                    if formula.value.len() > config.max_formula_bytes {
                         output.problems.push(InlineProblem {
                             kind: InlineProblemKind::StemSizeLimitExceeded,
                             range: formula.content_range,
@@ -1054,7 +1057,10 @@ mod tests {
         let output = parse(
             source,
             range(0, source.len()),
-            InlineParseConfig { max_depth: 1 },
+            InlineParseConfig {
+                max_depth: 1,
+                ..InlineParseConfig::default()
+            },
         );
         let Inline::Styled {
             style: InlineStyle::Strong,

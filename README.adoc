@@ -1,6 +1,7 @@
 = AdocWeave
 
-AdocWeaveはRustで実装するインクリメンタルなAsciiDoc処理系です。
+AdocWeaveはRustで実装するAsciiDoc処理系です。損失のないCST、出力形式に依存しない
+semantic AST、診断、整形、HTML変換およびLanguage Serverを提供します。
 
 == ドキュメント
 
@@ -34,6 +35,7 @@ nix develop
 - `cargo make test-core`: コアとCLIのテストを実行する。
 - `cargo make test-lsp`: Language Serverのテストを実行する。
 - `cargo make test-grammar`: 規範文法と置換契約のテストを実行する。
+- `cargo make test-properties`: CST範囲、lossless性、Formatter冪等性の不変条件を検証する。
 - `cargo make test-release`: CLIとLanguage Serverで共通の初期リリースfixtureを検証する。
 - `cargo make check-zed`: Zed拡張crateを型検査する。
 - `cargo make clippy-zed`: Zed拡張crateへClippyを実行する。

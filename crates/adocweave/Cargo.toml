@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "An incremental AsciiDoc processor"
+description = "An AsciiDoc processor with lossless syntax and language services"
 
 [lib]
 path = "src/lib.rs"

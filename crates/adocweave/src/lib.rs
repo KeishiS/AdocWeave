@@ -11,7 +11,6 @@ pub mod attributes;
 pub mod core;
 pub mod diagnostic;
 pub mod document;
-pub mod extension;
 pub mod formatter;
 pub mod html;
 pub mod inline;
@@ -24,8 +23,8 @@ pub mod source_lines;
 pub mod url;
 
 pub use core::{
-    CORE_API_VERSION, CancellationCheck, CancellationToken, NeverCancel, ParseError, ParseOptions,
-    ParseResult, SourceId, SyntaxProfile, parse as parse_document, parse_cancellable,
+    Analysis, CORE_API_VERSION, CancellationCheck, CancellationToken, Engine, NeverCancel,
+    ParseError, ParseOptions, SourceId, SyntaxProfile, analyze, analyze_cancellable,
 };
 
 pub const PRODUCT_NAME: &str = "AdocWeave";
@@ -132,17 +131,17 @@ fn process_inner(
 
     let output = match operation {
         Operation::Convert => {
-            let parsed = parse_with_policy(source, config)?;
-            Ok(html::render(&parsed.ast, &html::RenderPolicy::default()).html)
+            let analysis = analyze_with_policy(source, config)?;
+            Ok(html::render(&analysis.ast, &html::RenderPolicy::default()).html)
         }
         Operation::Format => {
-            let parsed = parse_with_policy(source, config)?;
-            formatter::format_parsed(&parsed, &formatter::FormatConfig::default())
+            let analysis = analyze_with_policy(source, config)?;
+            formatter::format_analysis(&analysis, &formatter::FormatConfig::default())
                 .map(|output| output.formatted)
                 .map_err(ProcessError::Position)
         }
         Operation::Symbols => {
-            let parsed = parse_with_policy(source, config)?;
+            let parsed = analyze_with_policy(source, config)?;
             Ok(document::render_symbols_json(&document::document_symbols(
                 &parsed.ast,
             )))
@@ -184,26 +183,24 @@ fn process_check_source_with_config(
     output: CheckOutput,
     config: &limits::ProcessConfig,
 ) -> Result<String, ProcessError> {
-    parse_with_policy(source, config)?;
-    let mut lint_config = lint::LintConfig::default();
-    lint_config.max_diagnostics = config.limits.max_diagnostics;
-    lint_config.max_inline_depth = config.limits.max_inline_depth;
-    let diagnostics = lint::lint(source, &lint_config).map_err(ProcessError::Position)?;
+    let analysis = analyze_with_policy(source, config)?;
+    let diagnostics = &analysis.diagnostics;
     match output {
-        CheckOutput::Human => {
-            let line_index = source::LineIndex::new(source).map_err(ProcessError::Position)?;
-            diagnostic::render_human(&diagnostics, &line_index, source::PositionEncoding::Utf16)
-                .map_err(ProcessError::Position)
-        }
-        CheckOutput::Json => Ok(diagnostic::render_json(&diagnostics)),
+        CheckOutput::Human => diagnostic::render_human(
+            diagnostics,
+            &analysis.line_index,
+            source::PositionEncoding::Utf16,
+        )
+        .map_err(ProcessError::Position),
+        CheckOutput::Json => Ok(diagnostic::render_json(diagnostics)),
     }
 }
 
-fn parse_with_policy<'source>(
-    source: &'source str,
+fn analyze_with_policy(
+    source: &str,
     config: &limits::ProcessConfig,
-) -> Result<parser::ParsedDocument<'source>, ProcessError> {
-    let parsed = core::parse(
+) -> Result<core::Analysis, ProcessError> {
+    core::analyze(
         source,
         &core::ParseOptions {
             source_id: None,
@@ -214,14 +211,9 @@ fn parse_with_policy<'source>(
             limits: config.limits,
             protected_attributes: std::collections::BTreeMap::new(),
             url_policy: crate::url::UrlPolicy::default(),
-            extensions: crate::extension::ExtensionConfig::default(),
         },
     )
-    .map_err(process_error_from_parse)?;
-    Ok(parser::ParsedDocument {
-        cst: parsed.cst,
-        ast: parsed.ast,
-    })
+    .map_err(process_error_from_parse)
 }
 
 fn process_error_from_parse(error: core::ParseError) -> ProcessError {

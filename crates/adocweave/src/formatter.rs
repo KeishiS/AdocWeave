@@ -1,7 +1,8 @@
 //! Conservative, CST-aware source formatting.
 
+use crate::core::{Analysis, ParseError, ParseOptions, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
-use crate::parser::{CstBlockKind, ParsedDocument, parse};
+use crate::parser::{CstBlockKind, CstDocument};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::LineEnding;
 
@@ -49,19 +50,22 @@ impl FormatOutput {
     }
 }
 
-pub fn format(source: &str, config: &FormatConfig) -> Result<FormatOutput, PositionError> {
-    let parsed = parse(source)?;
-    format_parsed(&parsed, config)
+pub fn format(source: &str, config: &FormatConfig) -> Result<FormatOutput, ParseError> {
+    let analysis = analyze(source, &ParseOptions::default())?;
+    format_analysis(&analysis, config).map_err(ParseError::Position)
 }
 
-pub(crate) fn format_parsed(
-    parsed: &ParsedDocument<'_>,
+pub fn format_analysis(
+    analysis: &Analysis,
     config: &FormatConfig,
 ) -> Result<FormatOutput, PositionError> {
-    let source = parsed.cst.source();
-    let source_lines = parsed.cst.source_lines();
-    let protected = parsed
-        .cst
+    format_cst(&analysis.cst, config)
+}
+
+fn format_cst(cst: &CstDocument, config: &FormatConfig) -> Result<FormatOutput, PositionError> {
+    let source = cst.source();
+    let source_lines = cst.source_lines();
+    let protected = cst
         .blocks()
         .iter()
         .filter(|block| {

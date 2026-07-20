@@ -108,10 +108,10 @@ pub struct LintConfig {
     pub max_diagnostics: usize,
     pub max_inline_depth: usize,
     pub max_list_depth: usize,
+    pub max_formula_bytes: usize,
     pub protected_attributes: BTreeMap<String, String>,
     pub protected_attribute_severity: Severity,
     pub url_policy: crate::url::UrlPolicy,
-    pub extensions: crate::extension::ExtensionConfig,
 }
 
 impl Default for LintConfig {
@@ -134,10 +134,10 @@ impl Default for LintConfig {
             max_diagnostics: 1_000,
             max_inline_depth: 32,
             max_list_depth: 8,
+            max_formula_bytes: 1024 * 1024,
             protected_attributes: BTreeMap::new(),
             protected_attribute_severity: Severity::Error,
             url_policy: crate::url::UrlPolicy::default(),
-            extensions: crate::extension::ExtensionConfig::default(),
         }
     }
 }
@@ -161,6 +161,7 @@ pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, Positi
         &ParseConfig {
             max_inline_depth: config.max_inline_depth,
             max_list_depth: config.max_list_depth,
+            max_formula_bytes: config.max_formula_bytes,
         },
     )?;
     lint_parsed(source, &parsed.ast, config)
@@ -306,16 +307,7 @@ fn lint_links_and_references(
                         ReferenceDestination::Scheme {
                             scheme, locator, ..
                         } => {
-                            if let Some(extension) = config.extensions.reference_scheme(scheme)
-                                && !extension.accepts(locator)
-                            {
-                                push_extension_diagnostic(
-                                    diagnostics,
-                                    reference.target_range,
-                                    &extension.diagnostic_code,
-                                    &extension.diagnostic_message,
-                                );
-                            } else if scheme.is_empty()
+                            if scheme.is_empty()
                                 || locator.is_empty()
                                 || locator.chars().any(char::is_control)
                             {
@@ -456,7 +448,7 @@ fn lint_attributes(
         }
         if let Some(expected) = config.protected_attributes.get(&attribute.name) {
             let changed = match &attribute.operation {
-                AttributeOperation::Set(_) => &attribute.raw_value != expected,
+                AttributeOperation::Set => &attribute.raw_value != expected,
                 AttributeOperation::Unset => true,
             };
             if changed && config.rule(LintRule::ProtectedAttribute).enabled {
@@ -890,27 +882,6 @@ fn push_diagnostic(
     });
 }
 
-fn push_extension_diagnostic(
-    diagnostics: &mut Vec<Diagnostic>,
-    range: TextRange,
-    code: &str,
-    message: &str,
-) {
-    diagnostics.push(Diagnostic {
-        id: DiagnosticId::new(format!(
-            "{code}@{}:{}",
-            range.start().to_u32(),
-            range.end().to_u32()
-        )),
-        code: DiagnosticCode::new(code),
-        severity: Severity::Warning,
-        message: message.to_owned(),
-        range,
-        related: Vec::new(),
-        fixes: Vec::new(),
-    });
-}
-
 fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
     TextRange::new(TextSize::new(start)?, TextSize::new(end)?)
 }
@@ -1081,10 +1052,10 @@ mod tests {
     }
 
     #[test]
-    fn document_attributes_report_duplicate_undefined_unused_and_invalid_values() {
+    fn document_attributes_report_duplicate_undefined_unused_and_invalid_names() {
         let diagnostics = lint(
             "= Note\n\
-             :note-id: invalid\n\
+             :bad name: value\n\
              :unused: value\n\
              :name: first\n\
              :name: second\n\
@@ -1212,33 +1183,6 @@ mod tests {
     }
 
     #[test]
-    fn note_reference_validates_uuid_without_resolving_it() {
-        let mut config = LintConfig::default();
-        config
-            .extensions
-            .register_reference_scheme(crate::extension::ReferenceSchemeExtension::new(
-                "note",
-                crate::extension::LocatorConstraint::CanonicalUuid,
-                "invalid-note-uuid",
-                "note reference requires a canonical lowercase UUID",
-            ))
-            .expect("register extension");
-        let diagnostics = lint(
-            "xref:note:123[bad] xref:note:123e4567-e89b-12d3-a456-426614174000[ok]",
-            &config,
-        )
-        .expect("lint");
-
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.code.as_str() == "invalid-note-uuid")
-                .count(),
-            1
-        );
-    }
-
-    #[test]
     fn unknown_reference_schemes_have_no_note_specific_semantics_by_default() {
         let diagnostics =
             lint("xref:note:not-a-uuid[label]", &LintConfig::default()).expect("lint");
@@ -1279,7 +1223,7 @@ mod tests {
     fn stem_size_limit_is_reported_without_evaluating_the_formula() {
         let source = format!(
             "stem:[{}]",
-            "x".repeat(crate::limits::MAX_FORMULA_BYTES + 1)
+            "x".repeat(LintConfig::default().max_formula_bytes + 1)
         );
         let diagnostics = lint(&source, &LintConfig::default()).expect("lint");
 

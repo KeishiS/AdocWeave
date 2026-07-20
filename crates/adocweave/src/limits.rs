@@ -3,8 +3,6 @@
 //! The core is pure: it does not read files, environment variables, clocks,
 //! networks, or execute external commands. Hosts provide all input explicitly.
 
-pub const MAX_FORMULA_BYTES: usize = 1024 * 1024;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyntaxMode {
     Permissive,
@@ -16,10 +14,12 @@ pub struct ProcessingLimits {
     pub max_input_bytes: usize,
     pub max_output_bytes: usize,
     pub max_line_bytes: usize,
-    /// Reserved for list parsing; enforced when list nodes are enabled.
     pub max_list_depth: usize,
     pub max_inline_depth: usize,
-    /// Reserved for document attributes; enforced when attributes are enabled.
+    pub max_formula_bytes: usize,
+    pub max_blocks: usize,
+    pub max_nodes: usize,
+    pub max_references: usize,
     pub max_attributes: usize,
     pub max_diagnostics: usize,
 }
@@ -32,6 +32,10 @@ impl Default for ProcessingLimits {
             max_line_bytes: 1024 * 1024,
             max_list_depth: 8,
             max_inline_depth: 32,
+            max_formula_bytes: 1024 * 1024,
+            max_blocks: 100_000,
+            max_nodes: 1_000_000,
+            max_references: 100_000,
             max_attributes: 1_000,
             max_diagnostics: 1_000,
         }

@@ -1,5 +1,7 @@
 //! Lossless recognition of source lines and their line endings.
 
+use std::sync::Arc;
+
 use crate::source::{PositionError, TextRange, TextSize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,21 +57,26 @@ pub struct LosslessToken {
     pub range: TextRange,
 }
 
-/// A line and token view borrowing the original UTF-8 source.
+/// An owned line and token view of the original UTF-8 source.
 #[derive(Debug)]
-pub struct SourceLines<'source> {
-    source: &'source str,
+pub struct SourceLines {
+    source: Arc<str>,
     lines: Vec<SourceLine>,
     tokens: Vec<LosslessToken>,
 }
 
-impl<'source> SourceLines<'source> {
-    pub fn new(source: &'source str) -> Result<Self, PositionError> {
-        TextSize::new(source.len())?;
+impl SourceLines {
+    pub fn new(source: &str) -> Result<Self, PositionError> {
+        Self::from_shared(Arc::from(source))
+    }
+
+    pub fn from_shared(source: Arc<str>) -> Result<Self, PositionError> {
+        let source_text = source.as_ref();
+        TextSize::new(source_text.len())?;
 
         let mut lines = Vec::new();
         let mut tokens = Vec::new();
-        let bytes = source.as_bytes();
+        let bytes = source_text.as_bytes();
         let mut line_start = 0;
         let mut cursor = 0;
 
@@ -86,7 +93,7 @@ impl<'source> SourceLines<'source> {
             };
 
             push_line(
-                source,
+                source_text,
                 &mut lines,
                 &mut tokens,
                 line_start,
@@ -99,12 +106,12 @@ impl<'source> SourceLines<'source> {
         }
 
         push_line(
-            source,
+            source_text,
             &mut lines,
             &mut tokens,
             line_start,
-            source.len(),
-            source.len(),
+            source_text.len(),
+            source_text.len(),
             LineEnding::None,
         )?;
 
@@ -115,8 +122,8 @@ impl<'source> SourceLines<'source> {
         })
     }
 
-    pub fn source(&self) -> &'source str {
-        self.source
+    pub fn source(&self) -> &str {
+        &self.source
     }
 
     pub fn lines(&self) -> &[SourceLine] {
@@ -127,7 +134,7 @@ impl<'source> SourceLines<'source> {
         &self.tokens
     }
 
-    pub fn text(&self, range: TextRange) -> Option<&'source str> {
+    pub fn text(&self, range: TextRange) -> Option<&str> {
         self.source
             .get(range.start().to_usize()..range.end().to_usize())
     }

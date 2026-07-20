@@ -1,6 +1,7 @@
 //! Lossless concrete syntax and HTML-independent semantic syntax.
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use crate::attributes::{AttributeProblem, DocumentAttribute, parse_line as parse_attribute_line};
 use crate::inline::{
@@ -32,13 +33,13 @@ pub struct CstBlock {
 }
 
 #[derive(Debug)]
-pub struct CstDocument<'source> {
-    source_lines: SourceLines<'source>,
+pub struct CstDocument {
+    source_lines: SourceLines,
     blocks: Vec<CstBlock>,
 }
 
-impl<'source> CstDocument<'source> {
-    pub fn source(&self) -> &'source str {
+impl CstDocument {
+    pub fn source(&self) -> &str {
         self.source_lines.source()
     }
 
@@ -46,7 +47,7 @@ impl<'source> CstDocument<'source> {
         &self.blocks
     }
 
-    pub(crate) const fn source_lines(&self) -> &SourceLines<'source> {
+    pub(crate) const fn source_lines(&self) -> &SourceLines {
         &self.source_lines
     }
 
@@ -255,6 +256,57 @@ pub struct AstDocument {
 }
 
 impl AstDocument {
+    pub fn node_count(&self) -> usize {
+        fn inline_count(inlines: &[Inline]) -> usize {
+            inlines
+                .iter()
+                .map(|inline| {
+                    1 + match inline {
+                        Inline::Styled { children, .. } => inline_count(children),
+                        Inline::Link(link) => inline_count(&link.label),
+                        Inline::Reference(reference) => inline_count(&reference.label),
+                        Inline::Text(_)
+                        | Inline::Literal { .. }
+                        | Inline::AttributeReference { .. }
+                        | Inline::Formula(_) => 0,
+                    }
+                })
+                .sum::<usize>()
+        }
+
+        fn list_count(list: &ListBlock) -> usize {
+            1 + list
+                .items
+                .iter()
+                .map(|item| {
+                    1 + inline_count(&item.inlines)
+                        + item.children.iter().map(list_count).sum::<usize>()
+                        + item.continuations.iter().map(block_count).sum::<usize>()
+                })
+                .sum::<usize>()
+        }
+
+        fn block_count(block: &AstBlock) -> usize {
+            1 + match block {
+                AstBlock::Heading(heading) => inline_count(&heading.inlines),
+                AstBlock::Paragraph(paragraph) => paragraph
+                    .lines
+                    .iter()
+                    .map(|line| 1 + inline_count(&line.inlines))
+                    .sum(),
+                AstBlock::List(list) => list_count(list) - 1,
+                AstBlock::Literal(_)
+                | AstBlock::Source(_)
+                | AstBlock::Math(_)
+                | AstBlock::Unsupported(_) => 0,
+            }
+        }
+
+        1 + self.blocks.iter().map(block_count).sum::<usize>()
+            + self.attributes.len()
+            + self.anchors.len()
+    }
+
     pub fn snapshot(&self) -> String {
         let mut output = String::from("Document\n");
         for block in &self.blocks {
@@ -379,7 +431,10 @@ impl AstDocument {
                     }
                 }
                 AstBlock::List(list) => visit_list(list, &mut visitor),
-                _ => {}
+                AstBlock::Literal(_)
+                | AstBlock::Source(_)
+                | AstBlock::Math(_)
+                | AstBlock::Unsupported(_) => {}
             }
         }
     }
@@ -402,15 +457,32 @@ impl AstDocument {
                     }
                 }
                 AstBlock::List(list) => visit_list(list, &mut visitor),
-                _ => {}
+                AstBlock::Literal(_)
+                | AstBlock::Source(_)
+                | AstBlock::Math(_)
+                | AstBlock::Unsupported(_) => {}
             }
         }
     }
 }
 
+impl AstBlock {
+    pub const fn range(&self) -> TextRange {
+        match self {
+            Self::Heading(value) => value.range,
+            Self::Paragraph(value) => value.range,
+            Self::Literal(value) => value.range,
+            Self::Source(value) => value.range,
+            Self::List(value) => value.range,
+            Self::Math(value) => value.range,
+            Self::Unsupported(value) => value.range,
+        }
+    }
+}
+
 #[derive(Debug)]
-pub struct ParsedDocument<'source> {
-    pub cst: CstDocument<'source>,
+pub struct ParsedDocument {
+    pub cst: CstDocument,
     pub ast: AstDocument,
 }
 
@@ -418,6 +490,7 @@ pub struct ParsedDocument<'source> {
 pub struct ParseConfig {
     pub max_inline_depth: usize,
     pub max_list_depth: usize,
+    pub max_formula_bytes: usize,
 }
 
 impl Default for ParseConfig {
@@ -425,19 +498,28 @@ impl Default for ParseConfig {
         Self {
             max_inline_depth: 32,
             max_list_depth: 8,
+            max_formula_bytes: 1024 * 1024,
         }
     }
 }
 
-pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
+pub fn parse(source: &str) -> Result<ParsedDocument, PositionError> {
     parse_with_config(source, &ParseConfig::default())
 }
 
-pub fn parse_with_config<'source>(
-    source: &'source str,
+pub fn parse_with_config(
+    source: &str,
     config: &ParseConfig,
-) -> Result<ParsedDocument<'source>, PositionError> {
-    let source_lines = SourceLines::new(source)?;
+) -> Result<ParsedDocument, PositionError> {
+    parse_shared(Arc::from(source), config)
+}
+
+pub(crate) fn parse_shared(
+    source: Arc<str>,
+    config: &ParseConfig,
+) -> Result<ParsedDocument, PositionError> {
+    let source_lines = SourceLines::from_shared(Arc::clone(&source))?;
+    let source = source.as_ref();
     let mut blocks = Vec::new();
     let mut ast_blocks = Vec::new();
     let mut paragraph_lines = Vec::new();
@@ -479,7 +561,7 @@ pub fn parse_with_config<'source>(
                 == Some("++++")
         {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
-            let (math, next_line) = parse_math_block(&source_lines, line_index, source)?;
+            let (math, next_line) = parse_math_block(&source_lines, line_index, source, config)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::MathBlock,
                 range: math.range,
@@ -600,7 +682,7 @@ pub fn parse_with_config<'source>(
     for anchor in &mut anchors {
         anchor.target_range = ast_blocks
             .iter()
-            .map(ast_block_range)
+            .map(AstBlock::range)
             .find(|range| range.start() >= anchor.range.end());
     }
     let mut anchored_targets = std::collections::BTreeSet::new();
@@ -638,7 +720,7 @@ fn resolve_document_attributes(document: &mut AstDocument) {
     let mut attributes = std::collections::BTreeMap::new();
     for attribute in &document.attributes {
         match &attribute.operation {
-            AttributeOperation::Set(_) => {
+            AttributeOperation::Set => {
                 attributes.insert(attribute.name.clone(), attribute.raw_value.clone());
             }
             AttributeOperation::Unset => {
@@ -733,22 +815,11 @@ fn valid_anchor_id(id: &str) -> bool {
         })
 }
 
-fn ast_block_range(block: &AstBlock) -> TextRange {
-    match block {
-        AstBlock::Heading(value) => value.range,
-        AstBlock::Paragraph(value) => value.range,
-        AstBlock::Literal(value) => value.range,
-        AstBlock::Source(value) => value.range,
-        AstBlock::List(value) => value.range,
-        AstBlock::Math(value) => value.range,
-        AstBlock::Unsupported(value) => value.range,
-    }
-}
-
 fn parse_math_block(
-    source_lines: &SourceLines<'_>,
+    source_lines: &SourceLines,
     attribute_index: usize,
     source: &str,
+    config: &ParseConfig,
 ) -> Result<(MathBlock, usize), PositionError> {
     let attribute = source_lines.lines()[attribute_index];
     let attribute_text = source_lines.text(attribute.content_range()).expect("valid");
@@ -777,7 +848,7 @@ fn parse_math_block(
             range: body.content_range,
         });
     }
-    if value.len() > crate::limits::MAX_FORMULA_BYTES {
+    if value.len() > config.max_formula_bytes {
         problems.push(MathProblem {
             kind: MathProblemKind::SizeLimitExceeded,
             range: body.content_range,
@@ -824,7 +895,7 @@ fn list_marker(content: &str) -> Option<(ListKind, usize, usize)> {
 }
 
 fn parse_lists(
-    source_lines: &SourceLines<'_>,
+    source_lines: &SourceLines,
     start: usize,
     source: &str,
     config: &ParseConfig,
@@ -839,6 +910,7 @@ fn parse_lists(
         let Some((kind, depth, text_start)) = list_marker(content) else {
             break;
         };
+        let effective_depth = depth.min(config.max_list_depth.max(1));
         let absolute = line.content_range().start().to_usize();
         let text = &content[text_start..];
         let marker_range = text_range(absolute, absolute + depth)?;
@@ -849,6 +921,7 @@ fn parse_lists(
             text_range,
             InlineParseConfig {
                 max_depth: config.max_inline_depth,
+                max_formula_bytes: config.max_formula_bytes,
             },
         );
         let mut problems = Vec::new();
@@ -871,7 +944,7 @@ fn parse_lists(
             });
         }
         if let Some((previous_depth, _)) = previous {
-            if depth > previous_depth + 1 {
+            if effective_depth > previous_depth + 1 {
                 problems.push(ListProblem {
                     kind: ListProblemKind::InvalidNesting,
                     range: marker_range,
@@ -879,7 +952,7 @@ fn parse_lists(
             }
         }
         if kinds_by_depth
-            .get(depth)
+            .get(effective_depth)
             .and_then(|kind| *kind)
             .is_some_and(|established| established != kind)
         {
@@ -888,8 +961,8 @@ fn parse_lists(
                 range: marker_range,
             });
         }
-        kinds_by_depth.resize(kinds_by_depth.len().max(depth + 1), None);
-        kinds_by_depth[depth] = Some(kind);
+        kinds_by_depth.resize(kinds_by_depth.len().max(effective_depth + 1), None);
+        kinds_by_depth[effective_depth] = Some(kind);
         let mut item = ListItem {
             range: line.full_range(),
             marker_range,
@@ -935,12 +1008,16 @@ fn parse_lists(
                 break;
             };
             item.continuation_ranges.push(continuation.full_range());
-            item.range = TextRange::new(item.range.start(), ast_block_range(&block).end())?;
+            item.range = TextRange::new(item.range.start(), block.range().end())?;
             item.continuations.push(block);
             index = end;
         }
-        previous = Some((depth, kind));
-        flat.push(FlatListItem { depth, kind, item });
+        previous = Some((effective_depth, kind));
+        flat.push(FlatListItem {
+            depth: effective_depth,
+            kind,
+            item,
+        });
     }
     let end = flat
         .last()
@@ -987,7 +1064,7 @@ fn build_list_tree(
 }
 
 fn parse_literal_block(
-    source_lines: &SourceLines<'_>,
+    source_lines: &SourceLines,
     opener_index: usize,
     source: &str,
 ) -> Result<(LiteralBlock, usize), PositionError> {
@@ -1018,7 +1095,7 @@ struct DelimitedBody {
 }
 
 fn parse_delimited_body(
-    source_lines: &SourceLines<'_>,
+    source_lines: &SourceLines,
     opener_index: usize,
     delimiter: &str,
     source: &str,
@@ -1078,7 +1155,7 @@ fn parse_delimited_body(
 }
 
 fn parse_source_block(
-    source_lines: &SourceLines<'_>,
+    source_lines: &SourceLines,
     attribute_index: usize,
     source: &str,
 ) -> Result<(SourceBlock, usize), PositionError> {
@@ -1193,6 +1270,7 @@ fn parse_heading(
         text_range,
         InlineParseConfig {
             max_depth: config.max_inline_depth,
+            max_formula_bytes: config.max_formula_bytes,
         },
     );
     Ok(Heading {
@@ -1241,6 +1319,7 @@ fn flush_paragraph(
                     value_range,
                     InlineParseConfig {
                         max_depth: config.max_inline_depth,
+                        max_formula_bytes: config.max_formula_bytes,
                     },
                 );
                 TextNode {
@@ -1290,7 +1369,7 @@ mod tests {
         AstBlock, BlockProblemKind, CstBlockKind, HeadingKind, HeadingProblem, MathProblemKind,
         parse,
     };
-    use crate::attributes::{AttributeOperation, AttributeValue, StemKind};
+    use crate::attributes::AttributeOperation;
     use crate::inline::{Inline, MathLanguage};
 
     #[test]
@@ -1304,7 +1383,7 @@ mod tests {
     }
 
     #[test]
-    fn document_attributes_preserve_cst_and_produce_typed_ast() {
+    fn document_attributes_preserve_cst_and_produce_generic_ast() {
         let source = concat!(
             "= Note\n",
             ":note-id: 123E4567-E89B-12D3-A456-426614174000\n",
@@ -1318,20 +1397,13 @@ mod tests {
 
         assert_eq!(parsed.cst.reconstruct(), source);
         assert_eq!(parsed.ast.attributes.len(), 5);
-        assert!(matches!(
-            parsed.ast.attributes[0].operation,
-            AttributeOperation::Set(AttributeValue::Uuid(ref value))
-                if value == "123e4567-e89b-12d3-a456-426614174000"
-        ));
-        assert!(matches!(
-            parsed.ast.attributes[2].operation,
-            AttributeOperation::Set(AttributeValue::Tags(ref tags))
-                if tags == &["rust", "AsciiDoc"]
-        ));
+        assert_eq!(parsed.ast.attributes[0].operation, AttributeOperation::Set);
         assert_eq!(
-            parsed.ast.attributes[3].operation,
-            AttributeOperation::Set(AttributeValue::Stem(StemKind::LatexMath))
+            parsed.ast.attributes[0].raw_value,
+            "123E4567-E89B-12D3-A456-426614174000"
         );
+        assert_eq!(parsed.ast.attributes[2].raw_value, "rust, AsciiDoc");
+        assert_eq!(parsed.ast.attributes[3].raw_value, "latexmath");
         assert_eq!(
             parsed.ast.attributes[4].operation,
             AttributeOperation::Unset
@@ -1340,10 +1412,10 @@ mod tests {
     }
 
     #[test]
-    fn document_attributes_recover_from_incomplete_values() {
+    fn empty_generic_attribute_values_are_preserved_without_host_semantics() {
         let parsed = parse("= Note\n:note-id:\n:tags:\n\nbody\n").expect("recover");
         assert_eq!(parsed.ast.attributes.len(), 2);
-        assert_eq!(parsed.ast.attribute_problems.len(), 2);
+        assert!(parsed.ast.attribute_problems.is_empty());
         assert!(matches!(
             parsed.ast.blocks.last(),
             Some(AstBlock::Paragraph(_))

@@ -1,6 +1,6 @@
 = cross reference解決契約
 
-コア解析は参照解決を行わない。`ParseResult.references`は範囲付きの構文表現を保持し、
+コア解析は参照解決を行わない。`Analysis.references`は範囲付きの構文表現を保持し、
 `reference_queries()`は別文書および任意のスキーム参照を
 `ReferenceQuery`へ正規化する。参照元は不透明な`SourceId`のままホストへ渡す。
 
@@ -13,9 +13,9 @@ xref:note:123e4567-e89b-12d3-a456-426614174000#section[節]
 ----
 
 標準コアは`note:`やUUIDを知らず、未知スキームのlocatorを不透明な文字列として保持する。
-noteアプリは`ExtensionConfig`へ`ReferenceSchemeExtension`を登録し、
-`CanonicalUuid`制約と`invalid-note-uuid`を後付けする。拡張を登録しなければ
-`xref:note:not-a-uuid[]`にもnote固有診断は出ない。アンカーは任意である。
+noteアプリは標準解析後に`Analysis::reference_queries()`を読み、UUID制約と
+`invalid-note-uuid`等のホスト診断を後付けする。標準コアは
+`xref:note:not-a-uuid[]`にもnote固有診断を出さない。アンカーは任意である。
 
 `ReferenceResolver`は文書候補、相対文書、任意スキーム、アンカーおよび逆参照を非同期に
 問い合わせるホスト境界である。コアはDB、ファイルシステム、ワークスペースルートを

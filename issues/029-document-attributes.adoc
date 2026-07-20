@@ -50,3 +50,9 @@ cargo test --workspace protected_metadata
 - 属性参照は一回だけ置換し、再帰展開、条件分岐および外部環境参照を実装しない。
 - 属性数に `ProcessingLimits.max_attributes` を適用した。
 - 構文、型、保護属性および対象外機能を `docs/document-attributes.adoc` に記録した。
+
+== 後続の破壊的変更
+
+Issue 044で、ノート固有のUUID、日時、タグおよびSTEM型を汎用属性ASTから除去した。
+標準コアは属性の原値と操作だけを保持する。ノートメタデータの型検証と投影は外部
+ホスト拡張が所有する。保護属性は任意名に使えるホスト提供ポリシーとして維持する。

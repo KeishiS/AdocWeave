@@ -1,0 +1,44 @@
+= 所有型Analysisとホスト拡張境界の再設計
+
+== 目的
+
+機能ごとの再解析とアプリ固有意味の混入を解消し、今後のバックエンド、WASMおよびLSP
+拡張が同じ解析スナップショットを安全に共有できるようにする。
+
+== 実装範囲
+
+* CST、AST、行索引、診断、参照先および参照を所有する`Analysis`を公開する。
+* `Engine::analyze`を標準入口とし、CLI、Formatter、HTMLおよびLSPの再解析を除去する。
+* 文書属性を汎用文字列として保持し、ノート固有のUUID、日時、タグ型をコアから除去する。
+* xrefスキームのアプリ固有検証を解析後のホスト拡張へ移す。
+* HTML許可集合を実出力へ同期し、`HTML_CONTRACT_VERSION`を2へ更新する。
+* 数式、ブロック、参照を含む処理上限を`ProcessingLimits`へ集約する。
+* AST範囲取得と構造走査の重複を削減する。
+* README、docsおよびIssue 027以降を新しい責務境界へ同期する。
+
+== 完了条件
+
+* 同じ文書操作中にParserを二度呼ぶ経路がない。
+* LSP文書状態が所有型`Analysis`を保持し、行索引を要求ごとに再構築しない。
+* 標準コアに`note-id`、タグ、UUID検証または`note`専用APIが存在しない。
+* HTMLの生成要素とclassが公開許可集合に含まれる。
+* 深いリストは設定上限を超える再帰木を生成しない。
+* 全workspace検証とドキュメント検査が成功する。
+
+== 依存関係
+
+* 034
+
+== 実装記録
+
+完了。
+
+* `ParseResult`を所有型`Analysis`へ置き換え、`Engine::analyze`を公開した。
+* CSTと行索引は同じ`Arc<str>`を共有する。
+* CLIのCheck、Convert、Format、SymbolsとLSP文書状態を単一解析へ統合した。
+* ノート固有属性型と`ExtensionConfig`を削除した。
+* HTML許可集合、リスト深さ、数式・ブロック・ノード・参照上限を修正した。
+* 生成コーパスによるlossless性、範囲およびFormatter冪等性テストを追加した。
+* `cargo make verify`が成功した。
+
+`CORE_API_VERSION`は4、`HTML_CONTRACT_VERSION`は2とする。

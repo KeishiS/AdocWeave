@@ -2,51 +2,32 @@
 
 use std::collections::BTreeMap;
 
-use adocweave::diagnostic::Diagnostic;
-use adocweave::parser::AstDocument;
-use adocweave::{ParseOptions, SourceId, parse_document};
+use adocweave::{Analysis, Engine, ParseOptions, SourceId};
 
 #[derive(Debug)]
 pub struct DocumentState {
     pub uri: String,
     pub version: i64,
-    pub text: String,
-    line_starts: Vec<usize>,
-    pub ast: AstDocument,
-    pub diagnostics: Vec<Diagnostic>,
+    pub analysis: Analysis,
 }
 
 impl DocumentState {
     fn new(uri: String, version: i64, text: String) -> Result<Self, String> {
-        let (ast, diagnostics) = {
-            let parsed = parse_document(
-                &text,
-                &ParseOptions {
-                    source_id: Some(SourceId::new(uri.clone())),
-                    ..ParseOptions::default()
-                },
-            )
-            .map_err(|error| error.to_string())?;
-            (parsed.ast, parsed.diagnostics)
-        };
-        let mut line_starts = vec![0];
-        line_starts.extend(
-            text.bytes()
-                .enumerate()
-                .filter_map(|(index, byte)| (byte == b'\n').then_some(index + 1)),
-        );
+        let analysis = Engine::new(ParseOptions {
+            source_id: Some(SourceId::new(uri.clone())),
+            ..ParseOptions::default()
+        })
+        .analyze(&text)
+        .map_err(|error| error.to_string())?;
         Ok(Self {
             uri,
             version,
-            text,
-            line_starts,
-            ast,
-            diagnostics,
+            analysis,
         })
     }
 
     pub fn contains_line(&self, line: u32) -> bool {
-        usize::try_from(line).is_ok_and(|line| line < self.line_starts.len())
+        line < self.analysis.line_index.line_count()
     }
 }
 

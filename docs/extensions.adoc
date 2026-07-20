@@ -1,113 +1,86 @@
 = ホスト拡張実装契約
 
-この文書は、別リポジトリでAdocWeaveのホスト拡張を実装するプログラムが従うべき
-規範契約を定義する。AdocWeave本体は標準AsciiDocの構文・意味を所有し、特定の
-ノートアプリ、DBまたはワークスペース構造を所有しない。
+この文書は、別リポジトリでAdocWeaveのホスト拡張を実装するプログラムが従う規範契約を
+定義する。AdocWeave本体は標準AsciiDocの構文と意味を所有し、特定のノートアプリ、
+DBまたはワークスペース構造を所有しない。
 
-== 拡張できる境界
+== 二段階解析
 
-現行APIが提供するのは、標準xrefの参照先スキームに対する意味拡張である。
+ホスト拡張は、必ず標準コア解析の後に動作する。
+
+[source,text]
+----
+let analysis = Engine::new(options).analyze(source)?;
+let host_result = host_extension.analyze(&analysis, host_context).await?;
+----
+
+ホストは`Analysis`を変更せず、別の結果型へアプリケーション固有の診断、メタデータ投影、
+解決済み参照および検索情報を格納する。標準診断とホスト診断を統合する場合は、範囲、
+診断コードおよび安定IDによる決定的な順序を定義する。
+
+== 属性拡張
+
+ホストは`Analysis.ast.attributes`の名前、`raw_value`、操作および範囲を使用する。
+たとえばノートアプリは`note-id`をUUIDとして検証できるが、コアASTへノート専用variantを
+追加してはならない。
+
+属性検証は次を満たす。
+
+* 同じ入力、設定およびホストスキーマから同じ結果を返す。
+* 診断を属性全体ではなく、可能な限り`name_range`または`value_range`へ付ける。
+* 未知属性を暗黙に削除または書き換えない。
+* 正規化値と原値を区別し、Formatterが原値を失わないようにする。
+* DB、時刻等を必要とする検証は純粋な構文・型検証と分離する。
+
+== xrefスキーム拡張
+
+ノート参照には独立マクロを追加せず、標準xrefを使用する。
 
 [source,asciidoc]
 ----
-xref:<scheme>:<locator>#<anchor>[<label>]
+xref:note:123e4567-e89b-12d3-a456-426614174000#section[関連ノート]
 ----
 
-これは新しい字句マクロをParserへ注入するプラグインAPIではない。ノート参照は
-`note:...[]`という独立マクロを追加せず、標準の`xref:`を使用しなければならない。
-Parserは未知の`scheme`と`locator`も`ReferenceDestination::Scheme`へ損失なく保持する。
+Parserは未知のスキームも`ReferenceDestination::Scheme`へ保持する。ホストは
+`Analysis::reference_queries()`から`ReferenceKey::Scheme`を取得し、scheme、locator、
+anchorを検証・解決する。標準ParserやLintへUUID規則を登録してはならない。
 
-新しい表面構文が必要な場合は、ホスト拡張だけでParserを変更してはならない。
-AdocWeave側で文法、CST、semantic AST、回復規則およびfixtureを追加するIssueが必要である。
-
-== 登録
-
-拡張側は`ExtensionConfig`へ`ReferenceSchemeExtension`を登録し、その設定を
-`ParseOptions.extensions`へ渡す。登録しないスキームには、標準コアがアプリ固有の
-検証や診断を行わない。
-
-[source,rust]
-----
-use adocweave::extension::{
-    ExtensionConfig, LocatorConstraint, ReferenceSchemeExtension,
-};
-
-let mut extensions = ExtensionConfig::default();
-extensions.register_reference_scheme(ReferenceSchemeExtension::new(
-    "note",
-    LocatorConstraint::CanonicalUuid,
-    "invalid-note-uuid",
-    "note reference requires a canonical lowercase UUID",
-))?;
-----
-
-登録には次の規則を適用する。
-
-* スキーム名はASCII小文字へ正規化し、URI schemeと同じく英字で始める。
-* 同じスキームを二重登録してはならない。登録順で暗黙に上書きしない。
-* 診断コードはASCII小文字、数字、`-`および`.`だけから構成し、拡張内で安定させる。
-* 診断メッセージは人間向けであり、プログラムはメッセージではなくコードを判定する。
-* `Opaque`は空でないlocatorだけを要求する。`CanonicalUuid`はハイフン付き小文字UUIDを
-  要求する。
-
-登録設定とlocator検証は純粋かつ決定的でなければならない。ファイル、DB、環境変数、
-ネットワーク、時刻または乱数へアクセスしてはならない。
-
-== 解析後の問い合わせ
-
-ホストは`ParseResult::reference_queries()`から`ReferenceQuery`を取得する。
-`ReferenceKey::Scheme`の`scheme`、`locator`および任意の`anchor`を解釈する。
-`source_id`は不透明値であり、パスやURLであると仮定してはならない。
-
-構文解析中にResolverを呼んではならない。編集中の不完全なxrefにも解析結果と位置付き
-診断を返し、I/O待ちによってParser、Formatterまたは通常Lintを停止させない。
+構文解析中にResolverを呼ばない。不完全xrefにも標準解析結果を返し、I/O待ちによって
+Parser、Formatterまたは標準Lintを停止させない。
 
 == Resolver
 
-I/Oを必要とするホストは`ReferenceResolver`を実装する。特定アプリ用メソッドを追加せず、
-`resolve_scheme(scheme, locator)`で対象文書の不透明な`SourceId`を返す。その後
-`resolve_anchor()`でアンカー確認と最終href生成を行う。
+I/Oを必要とするホストは`ReferenceResolver`を実装する。アプリ専用メソッドではなく、
+`resolve_scheme(scheme, locator)`で不透明な`SourceId`を返し、`resolve_anchor()`で
+アンカー確認と最終href生成を行う。
 
-Resolver実装は次を守る。
+Resolverは次を守る。
 
-* `Send + Sync`であり、複数文書から同時に呼び出せる。
-* 返すFutureはキャンセルされても共有状態を破損しない。
-* 対象不在、アンカー不在、曖昧、ルート外および内部障害を
-  `ResolutionFailureKind`へ正規化する。
-* OSパス、DB主キーおよび認証情報を診断メッセージやhrefへ漏らさない。
-* 逆参照では参照元`SourceId`と`TextRange`を失わない。
+* `Send + Sync`であり、複数文書から同時に利用できる。
+* キャンセルされても共有状態を破損しない。
+* 対象不在、アンカー不在、曖昧、ルート外、権限不足および内部障害を安定コードへ正規化する。
+* OSパス、DB主キー、認証情報を診断やhrefへ漏らさない。
+* 参照元`SourceId`、文書versionおよび`TextRange`を失わない。
 
 == キャッシュと無効化
 
-キャッシュキーには少なくとも次を含める。
+キャッシュキーには参照元`SourceId`、正規化済み`ReferenceKey`、構文プロファイルversion、
+参照元文書versionおよびホストスキーマversionを含める。対象文書、アンカー索引、権限
+またはスキーマが変化した場合、成功結果と失敗結果をともに無効化する。
 
-* 参照元`SourceId`
-* 正規化済み`ReferenceKey`
-* 構文プロファイルversion
-* 参照元文書version
+== エディター統合
 
-対象文書、アンカー索引またはアクセス権が変化した場合、関連する成功結果と失敗結果を
-ともに無効化する。文書候補検索のキャッシュと確定解決のキャッシュを混同しない。
-
-== 診断とエディター統合
-
-構文・locator検証の範囲はxref全体ではなく、可能な限り`target_range`へ付ける。
-Resolver診断は問い合わせの`source_range`へ戻す。補完、Hover、Definition、
-ReferencesおよびDocument Linkは同じ`ReferenceQuery`と解決結果を共有し、機能ごとに
-対象文字列を再解析してはならない。
-
-入力途中の失敗と確定した対象不在を区別する。閉じていないマクロに対して
-「対象が存在しない」というResolver診断を出して点滅させてはならない。
+補完、Hover、Definition、ReferencesおよびDocument Linkは同じ`Analysis`、
+`ReferenceQuery`および解決結果を共有する。機能ごとに対象文字列を再解析しない。
+入力途中の構文失敗と、確定した対象不在を区別する。
 
 == HTMLと信頼境界
 
-Resolverが返すhrefは信頼済みHTMLではない。`ResolvedReference`としてHTMLへ渡した後も、
-AdocWeaveの`UrlPolicy`を必ず通過する。拡張はraw HTML、イベント属性、`javascript:`、
-許可されていない`data:` URI等を許可する手段としてResolverを使用してはならない。
+Resolverが返すhrefは信頼済みHTMLではない。HTML出力前にAdocWeaveの`UrlPolicy`を
+必ず通過させる。拡張はraw HTML、イベント属性、`javascript:`または許可されていない
+`data:` URIを許可する経路を提供してはならない。
 
 == 互換性
 
-拡張は起動時に`CORE_API_VERSION`を確認する。公開参照型、登録契約またはResolver契約の
-破壊的変更ではこの値が更新される。未知の新しい`ResolutionFailureKind`や
-`ReferenceKey`を安全な未解決状態へフォールバックできるよう、永続データへRust enumの
-序数を保存してはならない。
+ホストは起動時またはビルド時に`CORE_API_VERSION`を照合する。公開型またはResolver契約の
+破壊的変更に備え、Rust enumの序数を永続化せず、未知の値を安全な未解決状態として扱う。

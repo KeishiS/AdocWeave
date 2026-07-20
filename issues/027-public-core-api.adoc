@@ -64,3 +64,6 @@ cargo test --workspace send_sync
   具体化した破壊的変更に伴い、`CORE_API_VERSION`を2へ更新した。
 - note専用参照型を汎用スキーム拡張へ置き換え、`ExtensionConfig`を公開入力へ追加した
   破壊的変更に伴い、`CORE_API_VERSION`を3へ更新した。
+- Issue 044で借用型`ParseResult`を所有型`Analysis`と`Engine::analyze`へ置き換えた。
+  同時に固定的な`ExtensionConfig`を廃止し、アプリ固有検証を解析後のホスト拡張へ
+  移したため、`CORE_API_VERSION`を4へ更新した。

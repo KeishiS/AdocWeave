@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 /// A zero-based offset in the original UTF-8 byte sequence.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -82,15 +83,18 @@ struct Line {
 
 /// Converts between source byte offsets and zero-based UTF-8 or UTF-16 positions.
 #[derive(Debug)]
-pub struct LineIndex<'source> {
-    source: &'source str,
+pub struct LineIndex {
+    source: Arc<str>,
     lines: Vec<Line>,
 }
 
-impl<'source> LineIndex<'source> {
-    pub fn new(source: &'source str) -> Result<Self, PositionError> {
-        TextSize::new(source.len())?;
+impl LineIndex {
+    pub fn new(source: &str) -> Result<Self, PositionError> {
+        Self::from_shared(Arc::from(source))
+    }
 
+    pub fn from_shared(source: Arc<str>) -> Result<Self, PositionError> {
+        TextSize::new(source.len())?;
         let bytes = source.as_bytes();
         let mut lines = Vec::new();
         let mut line_start = 0;

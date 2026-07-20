@@ -6,16 +6,17 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::diagnostic::{CoreErrorCode, Diagnostic};
 use crate::limits::{ProcessingLimits, SyntaxMode};
 use crate::lint::{self, LintConfig};
 use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
-use crate::source::PositionError;
+use crate::source::{LineIndex, PositionError};
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 3;
+pub const CORE_API_VERSION: u16 = 4;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -58,7 +59,6 @@ pub struct ParseOptions {
     /// Host-authoritative values that source text may not change.
     pub protected_attributes: BTreeMap<String, String>,
     pub url_policy: crate::url::UrlPolicy,
-    pub extensions: crate::extension::ExtensionConfig,
 }
 
 /// Cooperative cancellation checked at deterministic parsing checkpoints.
@@ -94,18 +94,23 @@ impl CancellationCheck for CancellationToken {
     }
 }
 
-/// Output of one parse. CST and AST are renderer-independent.
+/// Owned output of one analysis. Every consumer must use this same snapshot.
 #[derive(Debug)]
-pub struct ParseResult<'source> {
+pub struct Analysis {
     pub source_id: Option<SourceId>,
-    pub cst: CstDocument<'source>,
+    pub cst: CstDocument,
     pub ast: parser::AstDocument,
+    pub line_index: LineIndex,
     pub diagnostics: Vec<Diagnostic>,
     pub reference_targets: Vec<crate::document::ReferenceTarget>,
     pub references: Vec<crate::inline::Reference>,
 }
 
-impl ParseResult<'_> {
+impl Analysis {
+    pub fn source(&self) -> &str {
+        self.cst.source()
+    }
+
     pub fn reference_queries(&self) -> Vec<crate::reference::ReferenceQuery> {
         self.references
             .iter()
@@ -172,31 +177,49 @@ impl fmt::Display for ParseError {
 
 impl Error for ParseError {}
 
-/// Parses with a cancellation token that never cancels.
-pub fn parse<'source>(
-    source: &'source str,
-    options: &ParseOptions,
-) -> Result<ParseResult<'source>, ParseError> {
-    parse_cancellable(source, options, &NeverCancel)
+/// Stateless analysis engine with deterministic options.
+#[derive(Clone, Debug)]
+pub struct Engine {
+    options: ParseOptions,
 }
 
-/// Parses caller-provided source without performing I/O or reference resolution.
-pub fn parse_cancellable<'source>(
-    source: &'source str,
-    options: &ParseOptions,
-    cancellation: &dyn CancellationCheck,
-) -> Result<ParseResult<'source>, ParseError> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        parse_inner(source, options, cancellation)
-    }))
-    .unwrap_or(Err(ParseError::InternalInvariant))
+impl Engine {
+    pub fn new(options: ParseOptions) -> Self {
+        Self { options }
+    }
+
+    pub fn analyze(&self, source: &str) -> Result<Analysis, ParseError> {
+        analyze(source, &self.options)
+    }
+
+    pub fn analyze_cancellable(
+        &self,
+        source: &str,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<Analysis, ParseError> {
+        analyze_cancellable(source, &self.options, cancellation)
+    }
 }
 
-fn parse_inner<'source>(
-    source: &'source str,
+/// Analyzes with a cancellation token that never cancels.
+pub fn analyze(source: &str, options: &ParseOptions) -> Result<Analysis, ParseError> {
+    analyze_cancellable(source, options, &NeverCancel)
+}
+
+/// Analyzes caller-provided source without performing I/O or reference resolution.
+pub fn analyze_cancellable(
+    source: &str,
     options: &ParseOptions,
     cancellation: &dyn CancellationCheck,
-) -> Result<ParseResult<'source>, ParseError> {
+) -> Result<Analysis, ParseError> {
+    analyze_inner(source, options, cancellation)
+}
+
+fn analyze_inner(
+    source: &str,
+    options: &ParseOptions,
+    cancellation: &dyn CancellationCheck,
+) -> Result<Analysis, ParseError> {
     if options.profile.version != 1 {
         return Err(ParseError::InvalidProfileVersion {
             version: options.profile.version,
@@ -232,11 +255,13 @@ fn parse_inner<'source>(
         return Err(ParseError::Cancelled);
     }
 
-    let ParsedDocument { cst, ast } = parser::parse_with_config(
-        source,
+    let shared_source: Arc<str> = Arc::from(source);
+    let ParsedDocument { cst, ast } = parser::parse_shared(
+        Arc::clone(&shared_source),
         &parser::ParseConfig {
             max_inline_depth: options.limits.max_inline_depth,
             max_list_depth: options.limits.max_list_depth,
+            max_formula_bytes: options.limits.max_formula_bytes,
         },
     )
     .map_err(ParseError::Position)?;
@@ -245,6 +270,8 @@ fn parse_inner<'source>(
         options.limits.max_attributes,
         ast.attributes.len(),
     )?;
+    enforce_limit("blocks", options.limits.max_blocks, ast.blocks.len())?;
+    enforce_limit("nodes", options.limits.max_nodes, ast.node_count())?;
     if options.profile.mode == SyntaxMode::Strict
         && ast
             .blocks
@@ -260,9 +287,9 @@ fn parse_inner<'source>(
     let mut lint_config = LintConfig::default();
     lint_config.max_diagnostics = options.limits.max_diagnostics;
     lint_config.max_inline_depth = options.limits.max_inline_depth;
+    lint_config.max_formula_bytes = options.limits.max_formula_bytes;
     lint_config.protected_attributes = options.protected_attributes.clone();
     lint_config.url_policy = options.url_policy.clone();
-    lint_config.extensions = options.extensions.clone();
     lint_config.protected_attribute_severity = if options.profile.mode == SyntaxMode::Strict {
         crate::diagnostic::Severity::Error
     } else {
@@ -272,14 +299,21 @@ fn parse_inner<'source>(
         lint::lint_parsed(source, &ast, &lint_config).map_err(ParseError::Position)?;
     let reference_targets = crate::document::reference_targets(&ast);
     let references = collect_references(&ast);
+    enforce_limit(
+        "references",
+        options.limits.max_references,
+        references.len(),
+    )?;
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
     }
 
-    Ok(ParseResult {
+    let line_index = LineIndex::from_shared(shared_source).map_err(ParseError::Position)?;
+    Ok(Analysis {
         source_id: options.source_id.clone(),
         cst,
         ast,
+        line_index,
         diagnostics,
         reference_targets,
         references,
@@ -296,7 +330,10 @@ fn collect_references(document: &parser::AstDocument) -> Vec<crate::inline::Refe
                 }
                 crate::inline::Inline::Link(link) => collect(&link.label, output),
                 crate::inline::Inline::Styled { children, .. } => collect(children, output),
-                _ => {}
+                crate::inline::Inline::Text(_)
+                | crate::inline::Inline::Literal { .. }
+                | crate::inline::Inline::AttributeReference { .. }
+                | crate::inline::Inline::Formula(_) => {}
             }
         }
     }
@@ -324,7 +361,7 @@ mod tests {
 
     use super::{
         CancellationCheck, CancellationToken, ParseError, ParseOptions, SourceId, SyntaxProfile,
-        parse, parse_cancellable,
+        analyze, analyze_cancellable,
     };
 
     fn assert_send_sync<T: Send + Sync>() {}
@@ -335,8 +372,8 @@ mod tests {
             source_id: Some(SourceId::new("host:any/value")),
             ..ParseOptions::default()
         };
-        let first = parse("== 日本語\n", &options).expect("parse");
-        let second = parse("== 日本語\n", &options).expect("parse");
+        let first = analyze("== 日本語\n", &options).expect("analyze");
+        let second = analyze("== 日本語\n", &options).expect("analyze");
 
         assert_eq!(first.source_id, second.source_id);
         assert_eq!(first.cst.snapshot(), second.cst.snapshot());
@@ -349,8 +386,74 @@ mod tests {
 
     #[test]
     fn public_api_accepts_anonymous_sources() {
-        let result = parse("paragraph", &ParseOptions::default()).expect("parse");
+        let result = analyze("paragraph", &ParseOptions::default()).expect("analyze");
         assert_eq!(result.source_id, None);
+    }
+
+    #[test]
+    fn analysis_owns_the_source_and_all_indexes_share_that_snapshot() {
+        let analysis = {
+            let source = String::from("== 所有される見出し\n");
+            analyze(&source, &ParseOptions::default()).expect("analyze")
+        };
+
+        assert_eq!(analysis.source(), "== 所有される見出し\n");
+        assert_eq!(analysis.cst.reconstruct(), analysis.source());
+        assert_eq!(analysis.line_index.line_count(), 2);
+    }
+
+    #[test]
+    fn configured_structure_limits_are_enforced() {
+        let mut options = ParseOptions::default();
+        options.limits.max_blocks = 1;
+        assert!(matches!(
+            analyze("one\n\ntwo\n", &options),
+            Err(ParseError::LimitExceeded {
+                resource: "blocks",
+                ..
+            })
+        ));
+
+        options.limits.max_blocks = 100;
+        options.limits.max_references = 1;
+        assert!(matches!(
+            analyze("xref:a.adoc[] xref:b.adoc[]", &options),
+            Err(ParseError::LimitExceeded {
+                resource: "references",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn list_tree_is_capped_at_the_configured_depth() {
+        fn depth(list: &crate::parser::ListBlock) -> usize {
+            1 + list
+                .items
+                .iter()
+                .flat_map(|item| &item.children)
+                .map(depth)
+                .max()
+                .unwrap_or(0)
+        }
+
+        let mut options = ParseOptions::default();
+        options.limits.max_list_depth = 3;
+        let analysis = analyze(
+            "* one\n** two\n*** three\n**** four\n***** five\n",
+            &options,
+        )
+        .expect("recover deep list");
+        let crate::parser::AstBlock::List(list) = &analysis.ast.blocks[0] else {
+            panic!("expected list");
+        };
+        assert!(depth(list) <= options.limits.max_list_depth);
+        assert!(
+            analysis
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.code.as_str() == "inconsistent-list" })
+        );
     }
 
     #[test]
@@ -364,7 +467,7 @@ mod tests {
 
         let source = "a".repeat(16 * 1024);
         let cancellation = CancelAfterFirstCheck(std::sync::atomic::AtomicUsize::new(0));
-        let error = parse_cancellable(&source, &ParseOptions::default(), &cancellation)
+        let error = analyze_cancellable(&source, &ParseOptions::default(), &cancellation)
             .expect_err("cancelled");
         assert_eq!(error, ParseError::Cancelled);
         assert_eq!(error.code().as_str(), "cancelled");
@@ -390,18 +493,18 @@ mod tests {
     }
 
     #[test]
-    fn protected_metadata_is_an_error_in_strict_mode() {
+    fn protected_attribute_is_an_error_in_strict_mode() {
         let mut options = ParseOptions::default();
         options.profile.mode = crate::limits::SyntaxMode::Strict;
         options.protected_attributes.insert(
             "note-id".to_owned(),
             "123e4567-e89b-12d3-a456-426614174000".to_owned(),
         );
-        let result = parse(
+        let result = analyze(
             "= Note\n:note-id: 00000000-0000-0000-0000-000000000000\n",
             &options,
         )
-        .expect("parse recovers with diagnostic");
+        .expect("analysis recovers with diagnostic");
         assert!(result.diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_str() == "protected-attribute"
                 && diagnostic.severity == crate::diagnostic::Severity::Error
@@ -410,11 +513,11 @@ mod tests {
 
     #[test]
     fn public_api_extracts_cross_references_without_resolving_them() {
-        let parsed = parse(
+        let parsed = analyze(
             "[[local]]\n== Local\n\n<<local>> xref:other.adoc#part[] xref:note:123#part[]",
             &ParseOptions::default(),
         )
-        .expect("parse");
+        .expect("analyze");
 
         assert_eq!(parsed.references.len(), 3);
         assert_eq!(parsed.reference_targets.len(), 1);
@@ -426,11 +529,11 @@ mod tests {
             source_id: Some(SourceId::new("opaque:source")),
             ..ParseOptions::default()
         };
-        let parsed = parse(
+        let parsed = analyze(
             "xref:other.adoc#part[] xref:note:123e4567-e89b-12d3-a456-426614174000#part[]",
             &options,
         )
-        .expect("parse");
+        .expect("analyze");
         let queries = parsed.reference_queries();
 
         assert_eq!(queries.len(), 2);
@@ -455,7 +558,7 @@ mod tests {
             .url_policy
             .allowed_schemes
             .insert("mailto".to_owned());
-        let parsed = parse("mailto:user@example.com[mail]", &options).expect("parse");
+        let parsed = analyze("mailto:user@example.com[mail]", &options).expect("analyze");
 
         assert!(
             !parsed

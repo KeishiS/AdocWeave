@@ -40,3 +40,9 @@ cargo fuzz run render -- -max_total_time=60
 - 032
 - 033
 - 034
+
+== 先行実装
+
+Issue 044で、生成したUTF-8コーパスに対するCST再構築、UTF-8範囲、ブロック範囲および
+Formatter冪等性のproperty testを前倒しした。`cargo make test-properties`で実行する。
+任意バイト列と長時間fuzz targetは本Issueで引き続き実装する。

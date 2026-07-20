@@ -209,7 +209,7 @@ impl CoreErrorCode {
 
 pub fn render_human(
     diagnostics: &[Diagnostic],
-    line_index: &LineIndex<'_>,
+    line_index: &LineIndex,
     encoding: PositionEncoding,
 ) -> Result<String, PositionError> {
     let mut diagnostics = diagnostics.to_vec();

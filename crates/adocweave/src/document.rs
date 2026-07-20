@@ -80,7 +80,7 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
     let mut heading_index = 0;
     let mut targets = Vec::new();
     for block in &document.blocks {
-        let range = block_range(block);
+        let range = block.range();
         let attached = document
             .anchors
             .iter()
@@ -119,18 +119,6 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
         }
     }
     targets
-}
-
-fn block_range(block: &AstBlock) -> TextRange {
-    match block {
-        AstBlock::Heading(value) => value.range,
-        AstBlock::Paragraph(value) => value.range,
-        AstBlock::Literal(value) => value.range,
-        AstBlock::Source(value) => value.range,
-        AstBlock::List(value) => value.range,
-        AstBlock::Math(value) => value.range,
-        AstBlock::Unsupported(value) => value.range,
-    }
 }
 
 fn block_label(block: &AstBlock) -> String {

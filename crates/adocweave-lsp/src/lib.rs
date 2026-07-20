@@ -153,12 +153,14 @@ impl Server {
                     .documents
                     .get(&uri)
                     .map(|document| {
-                        let line_index =
-                            LineIndex::new(&document.text).map_err(|error| error.to_string())?;
-                        document_symbols(&document.ast)
+                        document_symbols(&document.analysis.ast)
                             .iter()
                             .map(|symbol| {
-                                symbol_to_lsp(symbol, &line_index, self.position_encoding)
+                                symbol_to_lsp(
+                                    symbol,
+                                    &document.analysis.line_index,
+                                    self.position_encoding,
+                                )
                             })
                             .collect::<Result<Vec<_>, String>>()
                     })
@@ -236,12 +238,13 @@ impl Server {
         let Some(document) = self.documents.get(uri) else {
             return Ok(());
         };
-        let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
+        let line_index = &document.analysis.line_index;
         let encoding = match self.position_encoding {
             PositionEncoding::Utf8 => CorePositionEncoding::Utf8,
             PositionEncoding::Utf16 => CorePositionEncoding::Utf16,
         };
         let diagnostics = document
+            .analysis
             .diagnostics
             .iter()
             .map(|diagnostic| {
@@ -301,8 +304,9 @@ fn request_offset(
         PositionEncoding::Utf8 => CorePositionEncoding::Utf8,
         PositionEncoding::Utf16 => CorePositionEncoding::Utf16,
     };
-    LineIndex::new(&document.text)
-        .map_err(|error| error.to_string())?
+    document
+        .analysis
+        .line_index
         .position_to_offset(adocweave::source::Position { line, character }, encoding)
         .map(|offset| offset.to_u32())
         .map_err(|error| error.to_string())
@@ -313,7 +317,7 @@ fn hover(
     offset: u32,
     encoding: PositionEncoding,
 ) -> Result<Option<Value>, String> {
-    let Some(element) = document_element_at(&document.ast, offset) else {
+    let Some(element) = document_element_at(&document.analysis.ast, offset) else {
         return Ok(None);
     };
     let (heading, range, part) = match element {
@@ -323,7 +327,7 @@ fn hover(
             return Ok(None);
         }
     };
-    let id = generate_heading_ids(&document.ast)
+    let id = generate_heading_ids(&document.analysis.ast)
         .into_iter()
         .find(|candidate| candidate.range == heading.text_range)
         .map(|candidate| candidate.id)
@@ -334,18 +338,17 @@ fn hover(
             format!("section level {level}")
         }
     };
-    let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
     Ok(Some(json!({
         "contents": {
             "kind": "markdown",
             "value": format!("**{level}**  \nGenerated ID: `{id}`  \nPart: {part}")
         },
-        "range": range_to_lsp(range, &line_index, encoding)?
+        "range": range_to_lsp(range, &document.analysis.line_index, encoding)?
     })))
 }
 
 fn completion(document: &DocumentState, offset: u32) -> Result<Vec<Value>, String> {
-    let Some(element) = document_element_at(&document.ast, offset) else {
+    let Some(element) = document_element_at(&document.analysis.ast, offset) else {
         return Ok(Vec::new());
     };
     let source = match element {
@@ -357,15 +360,16 @@ fn completion(document: &DocumentState, offset: u32) -> Result<Vec<Value>, Strin
         }
     };
     let offset = offset as usize;
+    let text = document.analysis.source();
     let attribute_start = source.attribute_range.start().to_usize();
-    if offset > document.text.len() || !document.text[attribute_start..offset].contains(',') {
+    if offset > text.len() || !text[attribute_start..offset].contains(',') {
         return Ok(Vec::new());
     }
     let prefix = source
         .language_range
         .and_then(|range| {
             let start = range.start().to_usize();
-            (start <= offset).then(|| &document.text[start..offset])
+            (start <= offset).then(|| &text[start..offset])
         })
         .unwrap_or("");
     Ok(source_language_candidates(prefix)
@@ -376,7 +380,7 @@ fn completion(document: &DocumentState, offset: u32) -> Result<Vec<Value>, Strin
 
 fn symbol_to_lsp(
     symbol: &DocumentSymbol,
-    line_index: &LineIndex<'_>,
+    line_index: &LineIndex,
     encoding: PositionEncoding,
 ) -> Result<Value, String> {
     let kind = match symbol.kind {
@@ -400,7 +404,7 @@ fn symbol_to_lsp(
 
 fn range_to_lsp(
     range: TextRange,
-    line_index: &LineIndex<'_>,
+    line_index: &LineIndex,
     encoding: PositionEncoding,
 ) -> Result<Value, String> {
     let encoding = match encoding {
@@ -423,16 +427,19 @@ fn code_actions(
     document: &DocumentState,
     encoding: PositionEncoding,
 ) -> Result<Vec<Value>, String> {
-    let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
     let mut actions = Vec::new();
-    for diagnostic in &document.diagnostics {
+    for diagnostic in &document.analysis.diagnostics {
         for fix in &diagnostic.fixes {
             let edits = fix
                 .edits()
                 .iter()
                 .map(|edit| {
                     Ok(json!({
-                        "range": range_to_lsp(edit.range, &line_index, encoding)?,
+                        "range": range_to_lsp(
+                            edit.range,
+                            &document.analysis.line_index,
+                            encoding,
+                        )?,
                         "newText": edit.replacement
                     }))
                 })
@@ -460,15 +467,15 @@ fn formatting_edits(
     document: &DocumentState,
     encoding: PositionEncoding,
 ) -> Result<Vec<Value>, String> {
-    let output = formatter::format(&document.text, &formatter::FormatConfig::default())
-        .map_err(|error| error.to_string())?;
-    let line_index = LineIndex::new(&document.text).map_err(|error| error.to_string())?;
+    let output =
+        formatter::format_analysis(&document.analysis, &formatter::FormatConfig::default())
+            .map_err(|error| error.to_string())?;
     output
         .edits
         .iter()
         .map(|edit| {
             Ok(json!({
-                "range": range_to_lsp(edit.range, &line_index, encoding)?,
+                "range": range_to_lsp(edit.range, &document.analysis.line_index, encoding)?,
                 "newText": edit.replacement
             }))
         })

@@ -59,7 +59,7 @@ cargo test --workspace url_policy
   解析する。
 - 外部 `Link` と解決対象 `Reference` を型で分離し、ターゲット、文書、スキーム、
   locator、アンカーおよび表示文字列の独立範囲を保持する。
-- `ParseResult.references` がResolverなしで全参照を返す。文書内参照は同じ結果の
+- `Analysis.references` がResolverなしで全参照を返す。文書内参照は同じ結果の
   `ReferenceTarget` 索引で決定的に解決する。
 - 文書間表記について `..`、絶対パス、バックスラッシュ、空白・制御文字および
   URL風表記をホスト解決前に拒否する。

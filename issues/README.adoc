@@ -2,10 +2,8 @@
 
 各Issueは、単独で動作確認できる最小限の変更単位を表す。原則として番号順に進めるが、依存関係を満たすIssueは並行して実施してよい。
 
-本計画では、段階0から3までを「コア初期リリース」、属性、アンカー、通常リンク、
-文書内・文書間cross reference、リスト、ノート参照および数式までを
-「ノートアプリ互換プロファイル」として分ける。コア初期リリースはノートアプリ対応完了を
-意味しない。
+本計画は標準AsciiDocの部分集合とホスト非依存な解析・出力・エディター基盤を扱う。
+特定ノートアプリの属性スキーマ、DB投影、サーバおよび製品統合は外部リポジトリが所有する。
 
 == 運用方針
 
@@ -22,7 +20,7 @@
 - 公開APIはファイル、ネットワーク、環境変数、時刻、UUID解決等のホスト機能へ暗黙にアクセスしない。
 - cross referenceは構文解析、対象索引、ホスト解決および最終URL生成を分離する。
   コアは未解決参照を保持するが、ファイルシステムやDBへアクセスしない。
-- 文書内、文書間およびノート参照は共通の参照型、診断、投影およびLSP問い合わせを
+- 文書内、文書間および任意スキーム参照は共通の参照型、診断、投影およびLSP問い合わせを
   利用し、通常の外部URLとは型で区別する。
 - リポジトリの説明文書は原則として日本語で記述し、形式はAsciiDoc（`.adoc`）に統一する。
 - Issue番号は依存順を示す。実装開始前に各Issueの未決事項が解消されていることを確認する。
@@ -33,6 +31,7 @@
 
 * xref:042-cargo-make-development-tasks.adoc[042: cargo-makeによる開発タスク統一]（Issue 004完了後に割り込みで先行実施）
 * xref:043-adocweave-rename.adoc[043: AdocWeaveへの全面改名]（Issue 027開始前に割り込みで実施）
+* xref:044-owned-analysis-and-extension-boundary.adoc[044: 所有型Analysisとホスト拡張境界の再設計]
 
 === M1: プレーンテキスト変換
 
@@ -83,24 +82,24 @@
 * xref:027-public-core-api.adoc[027: 構文プロファイルとキャンセル可能な公開API]
 * xref:028-html-contract-and-render-policy.adoc[028: HTML出力契約とレンダーポリシー]
 
-=== M8: ノートアプリ互換構文
+=== M8: 標準属性・参照・リスト・STEM
 
-* xref:029-document-attributes.adoc[029: 文書属性と保護メタデータ]
+* xref:029-document-attributes.adoc[029: 文書属性と保護属性]
 * xref:030-anchors-and-stable-ids.adoc[030: 明示アンカーと安定ID]
 * xref:031-links-and-url-policy.adoc[031: リンク・cross reference構文とURLポリシー]
 * xref:032-lists-and-continuations.adoc[032: リストとブロック継続]
-* xref:033-note-reference-macro.adoc[033: cross reference解決とnote参照Resolver]
+* xref:033-note-reference-macro.adoc[033: cross reference解決と任意スキームResolver]
 * xref:034-latex-stem.adoc[034: LaTeX STEMと数式拡張境界]
 
-=== M9: ノートアプリ統合
+=== M9: ホスト非依存統合
 
-* xref:035-note-projections.adoc[035: メタデータ・参照グラフ・検索テキスト抽出]
-* xref:036-server-execution.adoc[036: サーバ実行・キャッシュ・観測性]
+* xref:035-note-projections.adoc[035: 汎用文書projection]
+* xref:036-server-execution.adoc[036: ホスト実行境界とキャッシュ契約]
 * xref:037-wasm-worker-integration.adoc[037: WASM APIとWeb Worker統合]
 * xref:038-lsp-protocol-completion.adoc[038: Language Serverプロトコル完成]
 
-=== M10: 品質保証と互換プロファイル公開
+=== M10: 品質保証とコアプロファイル公開
 
 * xref:039-fuzz-property-security-tests.adoc[039: Fuzzing・property test・セキュリティ試験]
 * xref:040-cross-runtime-conformance.adoc[040: ネイティブ・WASM共通fixtureと互換性試験]
-* xref:041-note-profile-release.adoc[041: ノートアプリ互換プロファイルのリリース検証]
+* xref:041-note-profile-release.adoc[041: ホスト非依存コアプロファイルのリリース検証]
