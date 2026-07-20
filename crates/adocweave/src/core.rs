@@ -12,7 +12,7 @@ use crate::diagnostic::{CoreErrorCode, Diagnostic};
 use crate::limits::{ProcessingLimits, SyntaxMode};
 use crate::lint::{self, LintConfig};
 use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
-use crate::source::{PositionError, TextRange};
+use crate::source::PositionError;
 
 /// Version of the public parsing contract.
 pub const CORE_API_VERSION: u16 = 1;
@@ -57,14 +57,7 @@ pub struct ParseOptions {
     pub limits: ProcessingLimits,
     /// Host-authoritative values that source text may not change.
     pub protected_attributes: BTreeMap<String, String>,
-}
-
-/// A parsed reference before a host attempts resolution.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnresolvedReference {
-    pub target: String,
-    pub target_range: TextRange,
-    pub source_range: TextRange,
+    pub url_policy: crate::url::UrlPolicy,
 }
 
 /// Cooperative cancellation checked at deterministic parsing checkpoints.
@@ -108,7 +101,7 @@ pub struct ParseResult<'source> {
     pub ast: parser::AstDocument,
     pub diagnostics: Vec<Diagnostic>,
     pub reference_targets: Vec<crate::document::ReferenceTarget>,
-    pub unresolved_references: Vec<UnresolvedReference>,
+    pub references: Vec<crate::inline::Reference>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -255,6 +248,7 @@ fn parse_inner<'source>(
     lint_config.max_diagnostics = options.limits.max_diagnostics;
     lint_config.max_inline_depth = options.limits.max_inline_depth;
     lint_config.protected_attributes = options.protected_attributes.clone();
+    lint_config.url_policy = options.url_policy.clone();
     lint_config.protected_attribute_severity = if options.profile.mode == SyntaxMode::Strict {
         crate::diagnostic::Severity::Error
     } else {
@@ -263,6 +257,7 @@ fn parse_inner<'source>(
     let diagnostics =
         lint::lint_parsed(source, &ast, &lint_config).map_err(ParseError::Position)?;
     let reference_targets = crate::document::reference_targets(&ast);
+    let references = collect_references(&ast);
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
     }
@@ -273,8 +268,37 @@ fn parse_inner<'source>(
         ast,
         diagnostics,
         reference_targets,
-        unresolved_references: Vec::new(),
+        references,
     })
+}
+
+fn collect_references(document: &parser::AstDocument) -> Vec<crate::inline::Reference> {
+    fn collect(inlines: &[crate::inline::Inline], output: &mut Vec<crate::inline::Reference>) {
+        for inline in inlines {
+            match inline {
+                crate::inline::Inline::Reference(reference) => {
+                    output.push(reference.clone());
+                    collect(&reference.label, output);
+                }
+                crate::inline::Inline::Link(link) => collect(&link.label, output),
+                crate::inline::Inline::Styled { children, .. } => collect(children, output),
+                _ => {}
+            }
+        }
+    }
+    let mut output = Vec::new();
+    for block in &document.blocks {
+        match block {
+            AstBlock::Heading(heading) => collect(&heading.inlines, &mut output),
+            AstBlock::Paragraph(paragraph) => {
+                for line in &paragraph.lines {
+                    collect(&line.inlines, &mut output);
+                }
+            }
+            _ => {}
+        }
+    }
+    output
 }
 
 fn enforce_limit(resource: &'static str, limit: usize, actual: usize) -> Result<(), ParseError> {
@@ -378,5 +402,34 @@ mod tests {
             diagnostic.code.as_str() == "protected-attribute"
                 && diagnostic.severity == crate::diagnostic::Severity::Error
         }));
+    }
+
+    #[test]
+    fn public_api_extracts_cross_references_without_resolving_them() {
+        let parsed = parse(
+            "[[local]]\n== Local\n\n<<local>> xref:other.adoc#part[] xref:note:123#part[]",
+            &ParseOptions::default(),
+        )
+        .expect("parse");
+
+        assert_eq!(parsed.references.len(), 3);
+        assert_eq!(parsed.reference_targets.len(), 1);
+    }
+
+    #[test]
+    fn public_api_accepts_host_configured_url_schemes() {
+        let mut options = ParseOptions::default();
+        options
+            .url_policy
+            .allowed_schemes
+            .insert("mailto".to_owned());
+        let parsed = parse("mailto:user@example.com[mail]", &options).expect("parse");
+
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme")
+        );
     }
 }

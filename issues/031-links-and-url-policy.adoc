@@ -46,3 +46,28 @@ cargo test --workspace url_policy
 - 028
 - 029
 - 030
+
+== 実装記録
+
+完了。
+
+- URL単体、`URL[label]`、バックスラッシュエスケープおよびターゲット内の単純な
+  属性置換を実装した。
+- `<<id,label>>`、`xref:#id[label]`、`xref:path.adoc#id[label]` および
+  `xref:scheme:locator#id[label]` を共通の `Reference` へ正規化した。
+- `note:` は独立マクロではなく、`xref:note:<uuid>#id[label]` の参照先スキームとして
+  解析する。
+- 外部 `Link` と解決対象 `Reference` を型で分離し、ターゲット、文書、スキーム、
+  locator、アンカーおよび表示文字列の独立範囲を保持する。
+- `ParseResult.references` がResolverなしで全参照を返す。文書内参照は同じ結果の
+  `ReferenceTarget` 索引で決定的に解決する。
+- 文書間表記について `..`、絶対パス、バックスラッシュ、空白・制御文字および
+  URL風表記をホスト解決前に拒否する。
+- URLポリシーを出力非依存の `url` モジュールへ分離し、LintとHTMLで共有する。
+  大小文字、制御文字、percent encodingされた制御文字および不正スキームを検査する。
+- 不正URL、不正xref、未解決の文書内xrefおよび不完全入力を位置付きで診断する。
+- HTMLは安全なURLだけをリンクにし、未解決・解決失敗・ポリシー違反をエスケープ済み
+  非リンク表現へ回復する。文書間・スキーム付き参照はホストが
+  `render_with_resolutions()` に安全なhrefを渡した場合だけリンクにする。
+- 不完全マクロをプレーンテキストとして保持し、後続インライン解析を継続する。
+- 規範的な対応範囲を `docs/links-and-cross-references.adoc` に記録した。

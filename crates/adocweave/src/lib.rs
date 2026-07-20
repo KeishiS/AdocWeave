@@ -19,11 +19,11 @@ pub mod lint;
 pub mod parser;
 pub mod source;
 pub mod source_lines;
+pub mod url;
 
 pub use core::{
     CORE_API_VERSION, CancellationCheck, CancellationToken, NeverCancel, ParseError, ParseOptions,
-    ParseResult, SourceId, SyntaxProfile, UnresolvedReference, parse as parse_document,
-    parse_cancellable,
+    ParseResult, SourceId, SyntaxProfile, parse as parse_document, parse_cancellable,
 };
 
 pub const PRODUCT_NAME: &str = "AdocWeave";
@@ -211,6 +211,7 @@ fn parse_with_policy<'source>(
             },
             limits: config.limits,
             protected_attributes: std::collections::BTreeMap::new(),
+            url_policy: crate::url::UrlPolicy::default(),
         },
     )
     .map_err(process_error_from_parse)?;

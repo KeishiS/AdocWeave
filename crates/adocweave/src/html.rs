@@ -4,17 +4,20 @@
 //! do not depend on this module, so additional output backends can consume the
 //! same document without changing parsing behavior.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::attributes::AttributeOperation;
-use crate::diagnostic::Diagnostic;
-use crate::document::{HeadingId, generate_heading_ids};
-use crate::inline::{Inline, InlineLiteralKind, InlineStyle};
+use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
+use crate::document::{HeadingId, ReferenceTarget, generate_heading_ids, reference_targets};
+use crate::inline::{
+    Inline, InlineLiteralKind, InlineStyle, Link, Reference, ReferenceDestination,
+};
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
+use crate::url::UrlPolicy;
 
 pub const HTML_CONTRACT_VERSION: u16 = 1;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "p", "pre", "strong",
+    "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "p", "pre", "strong",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "href", "id"];
 pub const ALLOWED_CLASSES: &[&str] = &["document-title", "language-*"];
@@ -29,9 +32,7 @@ pub enum HtmlDocumentMode {
 pub struct RenderPolicy {
     pub document_mode: HtmlDocumentMode,
     pub render_document_title: bool,
-    pub allowed_url_schemes: BTreeSet<String>,
-    pub allow_relative_urls: bool,
-    pub allow_data_uris: bool,
+    pub url_policy: UrlPolicy,
 }
 
 impl Default for RenderPolicy {
@@ -39,90 +40,19 @@ impl Default for RenderPolicy {
         Self {
             document_mode: HtmlDocumentMode::Fragment,
             render_document_title: true,
-            allowed_url_schemes: ["http", "https"].map(String::from).into_iter().collect(),
-            allow_relative_urls: false,
-            allow_data_uris: false,
+            url_policy: UrlPolicy::default(),
         }
     }
 }
 
 impl RenderPolicy {
     pub fn allows_url(&self, value: &str) -> bool {
-        matches!(self.classify_url(value), UrlDecision::Allowed)
+        self.url_policy.allows(value)
     }
 
-    pub fn classify_url(&self, value: &str) -> UrlDecision {
-        if value.is_empty()
-            || value
-                .chars()
-                .any(|character| character.is_control() || character.is_whitespace())
-            || contains_encoded_control(value)
-        {
-            return UrlDecision::Rejected;
-        }
-        let Some(colon) = value.find(':') else {
-            return if self.allow_relative_urls
-                && !value.starts_with('/')
-                && !value.starts_with('\\')
-                && !value.contains('\\')
-                && !value.split('/').any(|segment| segment == "..")
-            {
-                UrlDecision::Allowed
-            } else {
-                UrlDecision::Rejected
-            };
-        };
-        let scheme = &value[..colon];
-        if scheme.is_empty()
-            || !scheme.bytes().enumerate().all(|(index, byte)| {
-                byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
-            })
-            || !scheme.as_bytes()[0].is_ascii_alphabetic()
-        {
-            return UrlDecision::Rejected;
-        }
-        let normalized = scheme.to_ascii_lowercase();
-        if normalized == "data" && !self.allow_data_uris {
-            return UrlDecision::Rejected;
-        }
-        if self.allowed_url_schemes.contains(&normalized) {
-            UrlDecision::Allowed
-        } else {
-            UrlDecision::Rejected
-        }
+    pub fn classify_url(&self, value: &str) -> crate::url::UrlDecision {
+        self.url_policy.classify(value)
     }
-}
-
-fn contains_encoded_control(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.windows(3).any(|window| {
-        if window[0] != b'%' {
-            return false;
-        }
-        let Some(high) = hex(window[1]) else {
-            return false;
-        };
-        let Some(low) = hex(window[2]) else {
-            return false;
-        };
-        let decoded = high * 16 + low;
-        decoded <= 0x20 || decoded == 0x7f
-    })
-}
-
-const fn hex(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UrlDecision {
-    Allowed,
-    Rejected,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -135,6 +65,20 @@ pub struct HtmlOutput {
 }
 
 pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
+    render_with_resolutions(document, policy, &[])
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedReference {
+    pub source_range: crate::source::TextRange,
+    pub href: String,
+}
+
+pub fn render_with_resolutions(
+    document: &AstDocument,
+    policy: &RenderPolicy,
+    resolutions: &[ResolvedReference],
+) -> HtmlOutput {
     let mut fragment = String::new();
     let mut document_attributes = BTreeMap::new();
     for attribute in &document.attributes {
@@ -148,6 +92,15 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
         }
     }
     let heading_ids = generate_heading_ids(document);
+    let targets = reference_targets(document);
+    let mut diagnostics = Vec::new();
+    let mut inline_context = InlineRenderContext {
+        attributes: &document_attributes,
+        policy,
+        targets: &targets,
+        resolutions,
+        diagnostics: &mut diagnostics,
+    };
     let mut heading_index = 0;
     for block in &document.blocks {
         let explicit_id = document
@@ -159,10 +112,10 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
             AstBlock::Heading(heading) => {
                 let id = &heading_ids[heading_index].id;
                 heading_index += 1;
-                render_heading(&mut fragment, heading, id, policy, &document_attributes);
+                render_heading(&mut fragment, heading, id, policy, &mut inline_context);
             }
             AstBlock::Paragraph(paragraph) => {
-                render_paragraph(&mut fragment, paragraph, explicit_id, &document_attributes)
+                render_paragraph(&mut fragment, paragraph, explicit_id, &mut inline_context)
             }
             AstBlock::Literal(literal) => {
                 fragment.push_str("<pre");
@@ -199,7 +152,7 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
     HtmlOutput {
         contract_version: HTML_CONTRACT_VERSION,
         html,
-        diagnostics: Vec::new(),
+        diagnostics,
         document_attributes,
         heading_ids,
     }
@@ -223,11 +176,11 @@ fn render_heading(
     heading: &Heading,
     id: &str,
     policy: &RenderPolicy,
-    attributes: &BTreeMap<String, String>,
+    context: &mut InlineRenderContext<'_>,
 ) {
     if !heading.problems.is_empty() {
         output.push_str("<p>");
-        render_inlines(output, &heading.inlines, attributes);
+        render_inlines(output, &heading.inlines, context);
         output.push_str("</p>\n");
         return;
     }
@@ -237,7 +190,7 @@ fn render_heading(
             output.push_str("<h1 class=\"document-title\" id=\"");
             output.push_str(id);
             output.push_str("\">");
-            render_inlines(output, &heading.inlines, attributes);
+            render_inlines(output, &heading.inlines, context);
             output.push_str("</h1>\n");
         }
         HeadingKind::DocumentTitle => {}
@@ -248,7 +201,7 @@ fn render_heading(
             output.push_str(" id=\"");
             output.push_str(id);
             output.push_str("\">");
-            render_inlines(output, &heading.inlines, attributes);
+            render_inlines(output, &heading.inlines, context);
             output.push_str("</h");
             output.push(level);
             output.push_str(">\n");
@@ -260,7 +213,7 @@ fn render_paragraph(
     output: &mut String,
     paragraph: &Paragraph,
     id: Option<&str>,
-    attributes: &BTreeMap<String, String>,
+    context: &mut InlineRenderContext<'_>,
 ) {
     output.push_str("<p");
     render_optional_id(output, id);
@@ -269,12 +222,12 @@ fn render_paragraph(
         if index != 0 {
             output.push(' ');
         }
-        render_inlines(output, &line.inlines, attributes);
+        render_inlines(output, &line.inlines, context);
     }
     output.push_str("</p>\n");
 }
 
-fn render_inlines(output: &mut String, inlines: &[Inline], attributes: &BTreeMap<String, String>) {
+fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineRenderContext<'_>) {
     for inline in inlines {
         match inline {
             Inline::Text(text) => escape_html_into(output, &text.value),
@@ -295,13 +248,13 @@ fn render_inlines(output: &mut String, inlines: &[Inline], attributes: &BTreeMap
                 output.push('<');
                 output.push_str(tag);
                 output.push('>');
-                render_inlines(output, children, attributes);
+                render_inlines(output, children, context);
                 output.push_str("</");
                 output.push_str(tag);
                 output.push('>');
             }
             Inline::AttributeReference { name, .. } => {
-                if let Some(value) = attributes.get(name) {
+                if let Some(value) = context.attributes.get(name) {
                     escape_html_into(output, value);
                 } else {
                     output.push('{');
@@ -309,7 +262,156 @@ fn render_inlines(output: &mut String, inlines: &[Inline], attributes: &BTreeMap
                     output.push('}');
                 }
             }
+            Inline::Link(link) => render_link(output, link, context),
+            Inline::Reference(reference) => render_reference(output, reference, context),
         }
+    }
+}
+
+struct InlineRenderContext<'a> {
+    attributes: &'a BTreeMap<String, String>,
+    policy: &'a RenderPolicy,
+    targets: &'a [ReferenceTarget],
+    resolutions: &'a [ResolvedReference],
+    diagnostics: &'a mut Vec<Diagnostic>,
+}
+
+fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_>) {
+    if context.policy.allows_url(&link.target) {
+        output.push_str("<a href=\"");
+        escape_html_into(output, &link.target);
+        output.push_str("\">");
+        render_label_or_text(output, &link.label, &link.target_source, context);
+        output.push_str("</a>");
+    } else {
+        render_label_or_text(output, &link.label, &link.target_source, context);
+        context.diagnostics.push(render_diagnostic(
+            "invalid-url-scheme",
+            "URL is rejected by the render policy",
+            link.target_range,
+        ));
+    }
+}
+
+fn render_reference(
+    output: &mut String,
+    reference: &Reference,
+    context: &mut InlineRenderContext<'_>,
+) {
+    let (href, fallback, diagnostic) = match &reference.destination {
+        ReferenceDestination::Local { anchor, .. } => {
+            if let Some(target) = context.targets.iter().find(|target| target.id == *anchor) {
+                (Some(format!("#{anchor}")), target.label.clone(), None)
+            } else {
+                (
+                    None,
+                    anchor.clone(),
+                    Some(("unresolved-cross-reference", "local anchor does not exist")),
+                )
+            }
+        }
+        ReferenceDestination::Invalid => (
+            None,
+            reference_text(reference),
+            Some(("invalid-cross-reference", "invalid cross reference target")),
+        ),
+        ReferenceDestination::Document { .. } | ReferenceDestination::Scheme { .. } => {
+            let resolution = context
+                .resolutions
+                .iter()
+                .find(|resolution| resolution.source_range == reference.range);
+            if let Some(resolution) = resolution {
+                if context.policy.allows_url(&resolution.href) {
+                    (
+                        Some(resolution.href.clone()),
+                        reference_text(reference),
+                        None,
+                    )
+                } else {
+                    (
+                        None,
+                        reference_text(reference),
+                        Some((
+                            "invalid-url-scheme",
+                            "resolved reference URL is rejected by the render policy",
+                        )),
+                    )
+                }
+            } else {
+                (
+                    None,
+                    reference_text(reference),
+                    Some((
+                        "unresolved-cross-reference",
+                        "cross reference requires host resolution",
+                    )),
+                )
+            }
+        }
+    };
+    if let Some(href) = href {
+        output.push_str("<a href=\"");
+        escape_html_into(output, &href);
+        output.push_str("\">");
+        render_label_or_text(output, &reference.label, &fallback, context);
+        output.push_str("</a>");
+    } else {
+        render_label_or_text(output, &reference.label, &fallback, context);
+    }
+    if let Some((code, message)) = diagnostic {
+        context
+            .diagnostics
+            .push(render_diagnostic(code, message, reference.target_range));
+    }
+}
+
+fn render_label_or_text(
+    output: &mut String,
+    label: &[Inline],
+    fallback: &str,
+    context: &mut InlineRenderContext<'_>,
+) {
+    if label.is_empty() {
+        escape_html_into(output, fallback);
+    } else {
+        render_inlines(output, label, context);
+    }
+}
+
+fn reference_text(reference: &Reference) -> String {
+    match &reference.destination {
+        ReferenceDestination::Local { anchor, .. } => anchor.clone(),
+        ReferenceDestination::Document {
+            document, anchor, ..
+        } => anchor
+            .as_ref()
+            .map_or_else(|| document.clone(), |anchor| format!("{document}#{anchor}")),
+        ReferenceDestination::Scheme {
+            scheme,
+            locator,
+            anchor,
+            ..
+        } => anchor.as_ref().map_or_else(
+            || format!("{scheme}:{locator}"),
+            |anchor| format!("{scheme}:{locator}#{anchor}"),
+        ),
+        ReferenceDestination::Invalid => String::new(),
+    }
+}
+
+fn render_diagnostic(code: &str, message: &str, range: crate::source::TextRange) -> Diagnostic {
+    Diagnostic {
+        id: DiagnosticId::new(format!(
+            "{code}@{}:{}",
+            range.start().to_u32(),
+            range.end().to_u32()
+        )),
+        code: DiagnosticCode::new(code),
+        severity: Severity::Warning,
+        message: message.to_owned(),
+        range,
+        related: Vec::new(),
+        fixes: Vec::new(),
     }
 }
 
@@ -356,9 +458,12 @@ fn escape_html_into(output: &mut String, text: &str) {
 mod tests {
     use super::{
         ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, HTML_CONTRACT_VERSION,
-        HtmlDocumentMode, RenderPolicy, UrlDecision, render,
+        HtmlDocumentMode, RenderPolicy, ResolvedReference, render, render_with_resolutions,
     };
+    use crate::inline::{Inline, ReferenceDestination};
+    use crate::parser::AstBlock;
     use crate::parser::parse;
+    use crate::url::UrlDecision;
 
     #[test]
     fn html_renderer_renders_paragraphs_and_folds_source_lines() {
@@ -520,11 +625,20 @@ mod tests {
             UrlDecision::Rejected
         );
 
-        policy.allowed_url_schemes.insert("mailto".to_owned());
-        policy.allow_relative_urls = true;
+        policy
+            .url_policy
+            .allowed_schemes
+            .insert("mailto".to_owned());
+        policy.url_policy.allow_relative = true;
         assert!(policy.allows_url("mailto:user@example.com"));
         assert!(policy.allows_url("relative.adoc"));
         assert!(!policy.allows_url("../outside.adoc"));
+
+        let parsed = parse("link:relative.adoc[relative]").expect("parse");
+        assert_eq!(
+            render(&parsed.ast, &policy).html,
+            "<p><a href=\"relative.adoc\">relative</a></p>\n"
+        );
     }
 
     #[test]
@@ -533,7 +647,8 @@ mod tests {
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
-                "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "p", "pre", "strong"
+                "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "p", "pre",
+                "strong"
             ]
         );
         assert_eq!(ALLOWED_ATTRIBUTES, ["class", "href", "id"]);
@@ -576,6 +691,107 @@ mod tests {
         assert_eq!(
             output.document_attributes.get("name"),
             Some(&"<Alice>".to_owned())
+        );
+    }
+
+    #[test]
+    fn links_apply_attributes_labels_and_url_policy() {
+        let parsed = parse(
+            "= Links\n:host: example.com\n\n\
+             https://{host}[*safe*] javascript:alert(1)[unsafe]\n",
+        )
+        .expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert!(
+            output
+                .html
+                .contains("<a href=\"https://example.com\"><strong>safe</strong></a>")
+        );
+        assert!(output.html.contains(" unsafe</p>"));
+        assert!(!output.html.contains("javascript:"));
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme")
+        );
+    }
+
+    #[test]
+    fn link_target_attributes_expand_exactly_once() {
+        let parsed = parse("= Links\n:a: {b}\n:b: expanded\n\nhttps://example.com/{a}[target]\n")
+            .expect("parse");
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[1] else {
+            panic!("paragraph");
+        };
+        let Inline::Link(link) = &paragraph.lines[0].inlines[0] else {
+            panic!("link");
+        };
+
+        assert_eq!(link.target, "https://example.com/{b}");
+        assert_ne!(link.target, "https://example.com/expanded");
+    }
+
+    #[test]
+    fn cross_references_resolve_locally_or_from_safe_host_results() {
+        let source = "[[local]]\n== Local\n\n<<local,Here>> xref:other.adoc#part[There]";
+        let parsed = parse(source).expect("parse");
+        let external = parsed
+            .ast
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                AstBlock::Paragraph(paragraph) => {
+                    paragraph.lines[0]
+                        .inlines
+                        .iter()
+                        .find_map(|inline| match inline {
+                            Inline::Reference(reference)
+                                if matches!(
+                                    reference.destination,
+                                    ReferenceDestination::Document { .. }
+                                ) =>
+                            {
+                                Some(reference.range)
+                            }
+                            _ => None,
+                        })
+                }
+                _ => None,
+            })
+            .expect("external reference");
+        let output = render_with_resolutions(
+            &parsed.ast,
+            &RenderPolicy::default(),
+            &[ResolvedReference {
+                source_range: external,
+                href: "https://notes.example/part".to_owned(),
+            }],
+        );
+
+        assert!(output.html.contains("<a href=\"#local\">Here</a>"));
+        assert!(
+            output
+                .html
+                .contains("<a href=\"https://notes.example/part\">There</a>")
+        );
+        assert!(output.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn unresolved_cross_references_render_as_safe_non_links() {
+        let parsed = parse("xref:#missing[<Missing>] xref:other.adoc[Other]").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(output.html, "<p>&lt;Missing&gt; Other</p>\n");
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["unresolved-cross-reference", "unresolved-cross-reference"]
         );
     }
 

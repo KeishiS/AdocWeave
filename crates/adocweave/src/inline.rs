@@ -9,6 +9,55 @@ pub struct InlineText {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Link {
+    pub range: TextRange,
+    pub target_range: TextRange,
+    pub target_source: String,
+    pub target: String,
+    pub target_attributes: Vec<AttributeUse>,
+    pub label_range: Option<TextRange>,
+    pub label: Vec<Inline>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttributeUse {
+    pub name: String,
+    pub name_range: TextRange,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reference {
+    pub range: TextRange,
+    pub target_range: TextRange,
+    pub destination: ReferenceDestination,
+    pub label_range: Option<TextRange>,
+    pub label: Vec<Inline>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReferenceDestination {
+    Local {
+        anchor: String,
+        anchor_range: TextRange,
+    },
+    Document {
+        document: String,
+        document_range: TextRange,
+        anchor: Option<String>,
+        anchor_range: Option<TextRange>,
+    },
+    Scheme {
+        scheme: String,
+        scheme_range: TextRange,
+        locator: String,
+        locator_range: TextRange,
+        anchor: Option<String>,
+        anchor_range: Option<TextRange>,
+    },
+    Invalid,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Inline {
     Text(InlineText),
     Literal {
@@ -28,6 +77,8 @@ pub enum Inline {
         name_range: TextRange,
         name: String,
     },
+    Link(Link),
+    Reference(Reference),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +99,8 @@ impl Inline {
             Self::Literal { range, .. }
             | Self::Styled { range, .. }
             | Self::AttributeReference { range, .. } => *range,
+            Self::Link(link) => link.range,
+            Self::Reference(reference) => reference.range,
         }
     }
 }
@@ -59,6 +112,9 @@ pub enum InlineProblemKind {
     UnclosedEmphasis,
     NestingLimitExceeded,
     UnclosedAttributeReference,
+    IncompleteLink,
+    IncompleteCrossReference,
+    InvalidCrossReference,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -102,7 +158,34 @@ fn parse_segment(
     let mut cursor = 0;
     let mut plain_start = 0;
 
-    while let Some((open, marker)) = next_opener(value, cursor) {
+    loop {
+        let marker = next_opener(value, cursor);
+        let macro_open = next_macro_start(value, cursor);
+        if macro_open.is_some_and(|macro_open| {
+            marker.is_none_or(|(marker_open, _)| macro_open <= marker_open)
+        }) {
+            let open = macro_open.expect("checked above");
+            if let Some((inline, end)) = parse_macro(value, range, config, depth, open) {
+                if is_escaped(value, open) {
+                    push_text(&mut output.inlines, value, range, plain_start, open - 1);
+                    output.inlines.push(Inline::Text(InlineText {
+                        range: subrange(range, open - 1, end),
+                        value: value[open..end].to_owned(),
+                    }));
+                } else {
+                    push_text(&mut output.inlines, value, range, plain_start, open);
+                    output.inlines.push(inline);
+                }
+                cursor = end;
+                plain_start = end;
+                continue;
+            }
+            cursor = open + value[open..].chars().next().map_or(1, char::len_utf8);
+            continue;
+        }
+        let Some((open, marker)) = marker else {
+            break;
+        };
         let Some(close) = find_closer(value, open, marker) else {
             output.problems.push(InlineProblem {
                 kind: match marker {
@@ -184,7 +267,318 @@ fn parse_segment(
     }
 
     push_text(&mut output.inlines, value, range, plain_start, value.len());
+    scan_incomplete_macros(value, range, &mut output.problems);
     output
+}
+
+fn next_macro_start(value: &str, cursor: usize) -> Option<usize> {
+    value[cursor..]
+        .char_indices()
+        .map(|(offset, _)| cursor + offset)
+        .find(|offset| {
+            let rest = &value[*offset..];
+            if rest.starts_with("<<") || starts_ascii_case_insensitive(rest, "xref:") {
+                return true;
+            }
+            (is_token_boundary(value[..*offset].chars().next_back())
+                || (is_escaped(value, *offset)
+                    && is_token_boundary(value[..offset.saturating_sub(1)].chars().next_back())))
+                && url_scheme_end(rest).is_some()
+        })
+}
+
+fn parse_macro(
+    value: &str,
+    range: TextRange,
+    config: InlineParseConfig,
+    depth: usize,
+    open: usize,
+) -> Option<(Inline, usize)> {
+    let rest = &value[open..];
+    if let Some(short_reference) = rest.strip_prefix("<<") {
+        let close_relative = short_reference.find(">>")?;
+        let close = open + 2 + close_relative;
+        let target = &value[open + 2..close];
+        let (anchor, label) = target
+            .split_once(',')
+            .map_or((target, None), |(anchor, label)| (anchor, Some(label)));
+        let target_range = subrange(range, open + 2, open + 2 + anchor.len());
+        let label_range = label.map(|label| subrange(range, close - label.len(), close));
+        let label_inlines = label.map_or_else(Vec::new, |label| {
+            parse_segment(
+                label,
+                label_range.expect("label has range"),
+                config,
+                depth + 1,
+            )
+            .inlines
+        });
+        let end = close + 2;
+        return Some((
+            Inline::Reference(Reference {
+                range: subrange(range, open, end),
+                target_range,
+                destination: if anchor.is_empty() {
+                    ReferenceDestination::Invalid
+                } else {
+                    ReferenceDestination::Local {
+                        anchor: anchor.to_owned(),
+                        anchor_range: target_range,
+                    }
+                },
+                label_range,
+                label: label_inlines,
+            }),
+            end,
+        ));
+    }
+    if starts_ascii_case_insensitive(rest, "xref:") {
+        let target_start = open + 5;
+        let bracket_relative = value[target_start..].find('[')?;
+        let bracket = target_start + bracket_relative;
+        if value[target_start..bracket]
+            .chars()
+            .any(char::is_whitespace)
+        {
+            return None;
+        }
+        let close = value[bracket + 1..].find(']')? + bracket + 1;
+        let target = &value[target_start..bracket];
+        let label_text = &value[bracket + 1..close];
+        let target_range = subrange(range, target_start, bracket);
+        let label_range = subrange(range, bracket + 1, close);
+        let label = parse_segment(label_text, label_range, config, depth + 1).inlines;
+        let end = close + 1;
+        return Some((
+            Inline::Reference(Reference {
+                range: subrange(range, open, end),
+                target_range,
+                destination: parse_reference_destination(target, target_range),
+                label_range: Some(label_range),
+                label,
+            }),
+            end,
+        ));
+    }
+    if starts_ascii_case_insensitive(rest, "link:") {
+        let target_start = open + 5;
+        let bracket = value[target_start..].find('[')? + target_start;
+        if value[target_start..bracket]
+            .chars()
+            .any(char::is_whitespace)
+        {
+            return None;
+        }
+        let close = value[bracket + 1..].find(']')? + bracket + 1;
+        let target_range = subrange(range, target_start, bracket);
+        let label_range = subrange(range, bracket + 1, close);
+        let target = value[target_start..bracket].to_owned();
+        let end = close + 1;
+        return Some((
+            Inline::Link(Link {
+                range: subrange(range, open, end),
+                target_range,
+                target_attributes: attribute_uses(&target, target_range),
+                target_source: target.clone(),
+                target,
+                label_range: Some(label_range),
+                label: parse_segment(&value[bracket + 1..close], label_range, config, depth + 1)
+                    .inlines,
+            }),
+            end,
+        ));
+    }
+
+    let scheme_end = url_scheme_end(rest)?;
+    let target_end = rest
+        .char_indices()
+        .find_map(|(offset, character)| {
+            (offset > scheme_end && (character.is_whitespace() || character == '['))
+                .then_some(offset)
+        })
+        .unwrap_or(rest.len());
+    let mut target_end = open + target_end;
+    while target_end > open
+        && matches!(
+            value[..target_end].chars().next_back(),
+            Some('.' | ',' | ';')
+        )
+    {
+        target_end -= 1;
+    }
+    if target_end <= open + scheme_end {
+        return None;
+    }
+    let mut end = target_end;
+    let mut label_range = None;
+    let mut label = Vec::new();
+    if value.as_bytes().get(target_end) == Some(&b'[') {
+        let close = value[target_end + 1..].find(']')? + target_end + 1;
+        let range_for_label = subrange(range, target_end + 1, close);
+        label = parse_segment(
+            &value[target_end + 1..close],
+            range_for_label,
+            config,
+            depth + 1,
+        )
+        .inlines;
+        label_range = Some(range_for_label);
+        end = close + 1;
+    }
+    let target_range = subrange(range, open, target_end);
+    Some((
+        Inline::Link(Link {
+            range: subrange(range, open, end),
+            target_range,
+            target_source: value[open..target_end].to_owned(),
+            target: value[open..target_end].to_owned(),
+            target_attributes: attribute_uses(&value[open..target_end], target_range),
+            label_range,
+            label,
+        }),
+        end,
+    ))
+}
+
+fn attribute_uses(value: &str, range: TextRange) -> Vec<AttributeUse> {
+    let mut output = Vec::new();
+    let mut cursor = 0;
+    while let Some(open_relative) = value[cursor..].find('{') {
+        let open = cursor + open_relative;
+        let Some(close_relative) = value[open + 1..].find('}') else {
+            break;
+        };
+        let close = open + 1 + close_relative;
+        let name = &value[open + 1..close];
+        if !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        {
+            output.push(AttributeUse {
+                name: name.to_owned(),
+                name_range: subrange(range, open + 1, close),
+            });
+        }
+        cursor = close + 1;
+    }
+    output
+}
+
+fn parse_reference_destination(target: &str, range: TextRange) -> ReferenceDestination {
+    if let Some(anchor) = target.strip_prefix('#') {
+        return if anchor.is_empty() {
+            ReferenceDestination::Invalid
+        } else {
+            ReferenceDestination::Local {
+                anchor: anchor.to_owned(),
+                anchor_range: subrange(range, 1, target.len()),
+            }
+        };
+    }
+    if let Some(colon) = target.find(':') {
+        let scheme = &target[..colon];
+        if scheme.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
+        }) {
+            let remainder = &target[colon + 1..];
+            let (locator, anchor) = remainder
+                .split_once('#')
+                .map_or((remainder, None), |(locator, anchor)| {
+                    (locator, Some(anchor))
+                });
+            let locator_start = colon + 1;
+            return ReferenceDestination::Scheme {
+                scheme: scheme.to_ascii_lowercase(),
+                scheme_range: subrange(range, 0, colon),
+                locator: locator.to_owned(),
+                locator_range: subrange(range, locator_start, locator_start + locator.len()),
+                anchor: anchor.map(str::to_owned),
+                anchor_range: anchor
+                    .map(|anchor| subrange(range, target.len() - anchor.len(), target.len())),
+            };
+        }
+    }
+    let (document, anchor) = target
+        .split_once('#')
+        .map_or((target, None), |(document, anchor)| {
+            (document, Some(anchor))
+        });
+    if document.is_empty() {
+        ReferenceDestination::Invalid
+    } else {
+        ReferenceDestination::Document {
+            document: document.to_owned(),
+            document_range: subrange(range, 0, document.len()),
+            anchor: anchor.map(str::to_owned),
+            anchor_range: anchor
+                .map(|anchor| subrange(range, target.len() - anchor.len(), target.len())),
+        }
+    }
+}
+
+fn scan_incomplete_macros(value: &str, range: TextRange, problems: &mut Vec<InlineProblem>) {
+    for (offset, _) in value.char_indices() {
+        if is_escaped(value, offset) {
+            continue;
+        }
+        let rest = &value[offset..];
+        let kind = if (rest.starts_with("<<") && !rest.contains(">>"))
+            || (starts_ascii_case_insensitive(rest, "xref:")
+                && (!rest.contains('[') || !rest.contains(']')))
+        {
+            Some(InlineProblemKind::IncompleteCrossReference)
+        } else if url_scheme_end(rest).is_some() && rest.contains('[') && !rest.contains(']') {
+            Some(InlineProblemKind::IncompleteLink)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            problems.push(InlineProblem {
+                kind,
+                range: subrange(range, offset, value.len()),
+            });
+            break;
+        }
+    }
+}
+
+fn url_scheme_end(value: &str) -> Option<usize> {
+    let colon = value.find(':')?;
+    let scheme = &value[..colon];
+    if scheme.is_empty()
+        || !scheme.as_bytes()[0].is_ascii_alphabetic()
+        || !scheme
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.' | b'%'))
+        || scheme.eq_ignore_ascii_case("xref")
+    {
+        None
+    } else {
+        Some(colon + 1)
+    }
+}
+
+fn starts_ascii_case_insensitive(value: &str, prefix: &str) -> bool {
+    value
+        .get(..prefix.len())
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(prefix))
+}
+
+fn is_token_boundary(previous: Option<char>) -> bool {
+    previous.is_none_or(|character| {
+        character.is_whitespace() || matches!(character, '(' | '[' | '{' | '<' | '"' | '\'')
+    })
+}
+
+fn is_escaped(value: &str, offset: usize) -> bool {
+    value[..offset]
+        .chars()
+        .rev()
+        .take_while(|character| *character == '\\')
+        .count()
+        % 2
+        == 1
 }
 
 fn next_opener(value: &str, cursor: usize) -> Option<(usize, char)> {
@@ -259,8 +653,8 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Inline, InlineLiteralKind, InlineParseConfig, InlineProblemKind, InlineStyle, inline_at,
-        parse, parse_text,
+        Inline, InlineLiteralKind, InlineParseConfig, InlineProblemKind, InlineStyle,
+        ReferenceDestination, inline_at, parse, parse_text,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -287,6 +681,89 @@ mod tests {
     #[test]
     fn inline_text_handles_empty_input() {
         assert!(parse_text("", range(0, 0), InlineParseConfig::default()).is_empty());
+    }
+
+    #[test]
+    fn links_keep_target_label_and_source_ranges_separate() {
+        let source = "see https://example.com[*site*].";
+        let output = parse(source, range(10, 42), InlineParseConfig::default());
+        let Inline::Link(link) = &output.inlines[1] else {
+            panic!("expected link");
+        };
+        assert_eq!(link.target_source, "https://example.com");
+        assert_eq!(link.target, "https://example.com");
+        assert_eq!(
+            &source[link.target_range.start().to_usize() - 10
+                ..link.target_range.end().to_usize() - 10],
+            "https://example.com"
+        );
+        assert!(matches!(
+            link.label[0],
+            Inline::Styled {
+                style: InlineStyle::Strong,
+                ..
+            }
+        ));
+        assert!(output.problems.is_empty());
+    }
+
+    #[test]
+    fn cross_references_share_one_typed_model() {
+        let source = concat!(
+            "<<local,Local>> ",
+            "xref:#local[] ",
+            "xref:other.adoc#part[Other] ",
+            "xref:note:123#part[Note]"
+        );
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+        let references = output
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Reference(reference) => Some(reference),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(references.len(), 4);
+        assert!(matches!(
+            references[0].destination,
+            ReferenceDestination::Local { ref anchor, .. } if anchor == "local"
+        ));
+        assert!(matches!(
+            references[2].destination,
+            ReferenceDestination::Document { ref document, ref anchor, .. }
+                if document == "other.adoc" && anchor.as_deref() == Some("part")
+        ));
+        assert!(matches!(
+            references[3].destination,
+            ReferenceDestination::Scheme { ref scheme, ref locator, .. }
+                if scheme == "note" && locator == "123"
+        ));
+    }
+
+    #[test]
+    fn links_and_cross_references_support_backslash_escape_and_recovery() {
+        let source = "\\https://example.com[x] xref:broken[ then `code`";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+        let visible_text = output
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text(text) => Some(text.value.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(visible_text, "https://example.com[x] xref:broken[ then ");
+        assert!(output.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Literal { value, .. } if value == "code"
+        )));
+        assert!(
+            output
+                .problems
+                .iter()
+                .any(|problem| problem.kind == InlineProblemKind::IncompleteCrossReference)
+        );
     }
 
     #[test]

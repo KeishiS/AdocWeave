@@ -85,10 +85,11 @@ https://docs.asciidoctor.org/asciidoc/latest/subs/prevent/[Escape and prevent su
 \https://example.org is not activated as a link.
 ....
 
-AdocWeaveはこの動作に未対応である。バックスラッシュを通常のソース文字として扱う。
-たとえば`\*Stars*`ではバックスラッシュがテキストとして残り、後続のconstrainedペアが
-強調として解釈される可能性がある。これはCore 0.1で把握済みの意図的な非互換点であり、
-別表記として認めたものではない。
+AdocWeaveは通常リンク、`xref:`および`<<...>>`に限ってこの動作へ対応する。これらの
+直前のバックスラッシュは認識を抑止し、表示から除去する。書式、属性参照、文字置換、
+アンカーその他のマクロに対する一般的なエスケープは未対応である。たとえば
+`\*Stars*`ではバックスラッシュがテキストとして残り、後続のconstrainedペアが強調として
+解釈される可能性がある。
 
 実装時には単にバックスラッシュを削除するだけでなく、次を満たす必要がある。
 
@@ -146,8 +147,8 @@ xref:substitutions.adoc[Core 0.1置換モデル]で定義する。
 
 |リンクと相互参照
 |URL、link、email、xrefなどのマクロ
-|未対応。Issue 031で文書内・文書間xrefの構文を追加し、Issue 033でホスト注入型
-Resolverによる解決を追加する
+|URL単体、`URL[label]`、文書内・文書間xrefおよびスキーム付きxrefに対応。
+文書間・`note:`参照の実データ解決はIssue 033のホスト注入型Resolverで追加する
 
 |includeと条件分岐
 |プリプロセッサディレクティブ

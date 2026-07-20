@@ -263,4 +263,36 @@ mod tests {
         assert!(output.formatted.starts_with("before\n"));
         assert!(output.formatted.ends_with("after\n"));
     }
+
+    #[test]
+    fn formatter_preserves_links_and_cross_references_without_a_resolver() {
+        let source = "[[target]]  \n== Target  \n\nhttps://example.com[label] <<target,Here>>  ";
+        let output = format(source, &FormatConfig::default()).expect("format");
+        let after = parse(&output.formatted).expect("parse formatted");
+
+        assert!(output.formatted.contains("https://example.com[label]"));
+        assert!(output.formatted.contains("<<target,Here>>"));
+        assert_eq!(
+            after
+                .ast
+                .blocks
+                .iter()
+                .flat_map(block_inlines)
+                .filter(|inline| matches!(inline, crate::inline::Inline::Reference(_)))
+                .count(),
+            1
+        );
+    }
+
+    fn block_inlines(block: &AstBlock) -> Vec<&crate::inline::Inline> {
+        match block {
+            AstBlock::Heading(heading) => heading.inlines.iter().collect(),
+            AstBlock::Paragraph(paragraph) => paragraph
+                .lines
+                .iter()
+                .flat_map(|line| line.inlines.iter())
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
 }

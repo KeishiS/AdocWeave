@@ -51,5 +51,5 @@ cargo test --workspace html_security
 - fragmentと完全HTMLのDOM構造、属性順、空白および末尾改行を
   `fixtures/html/contract.*` のgolden fixtureで固定した。
 - 未解決参照はレンダラーで解決せず、安全なhrefだけをホストから受け取る境界とした。
-  Issue 031で非リンク回復と位置付き診断を接続する。
+  Issue 031で非リンク回復と位置付き診断を接続済みである。
 - 詳細な契約を `docs/html-contract.adoc` に記録した。

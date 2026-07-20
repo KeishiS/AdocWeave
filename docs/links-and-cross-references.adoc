@@ -1,0 +1,81 @@
+= リンクとcross reference
+
+== 意味上の区別
+
+外部URLは `Link`、文書内・文書間・スキーム付き参照は共通の `Reference` として
+保持する。両者は表示文字列を持てるが、外部リンクはURLポリシーの対象、
+`Reference` は参照解決、定義移動、参照検索およびバックリンクの対象である。
+
+== 通常リンク
+
+次を対応記法とする。
+
+[source,asciidoc]
+----
+https://example.com
+https://example.com[表示名]
+mailto:user@example.com[メール]
+\https://example.com[リンクにしない]
+----
+
+URL単体は空白で終了し、直後の `.`, `,`, `;` はURLに含めない。`URL[label]` の
+表示名では通常のインライン置換を行う。URLターゲットでは文書属性を一回だけ置換し、
+それ以外のインライン構文を解釈しない。
+
+直前のバックスラッシュはリンクまたはcross referenceの認識を抑止し、HTML表示から
+バックスラッシュ自身を除く。CSTとFormatterは元のバイト列を保持する。
+
+既定URLポリシーは `http` と `https` だけを許可する。スキームはASCII大小文字を
+区別しない。制御文字、空白、percent encodingされた制御文字、不正スキーム、
+許可されていないスキームを拒否し、表示名またはURL文字列を安全な非リンク表現として
+出力する。
+
+== cross reference
+
+次を同じ `Reference` モデルへ正規化する。
+
+[source,asciidoc]
+----
+<<section-id,表示名>>
+xref:#section-id[表示名]
+xref:path/to/document.adoc#section-id[表示名]
+xref:note:<uuid>#section-id[表示名]
+----
+
+`<<...>>` は同一文書参照の短縮形式である。`xref:#id[]` は同一文書、
+`xref:path#id[]` は別文書、`xref:scheme:locator#id[]` はホストresolverが扱う
+スキーム付き参照になる。`note:` は独立したインラインマクロではなく、xrefの
+参照先スキームである。
+
+ASTは参照全体、ターゲット、文書表記、スキーム、locator、アンカーおよび表示文字列を
+独立したUTF-8バイト範囲として保持する。コアは文書間・スキーム付き参照を解析して
+`ParseResult.references` に抽出するが、ファイル、DBまたはネットワークへアクセス
+しない。
+
+== 相対文書表記
+
+文書表記はホスト解決前に字句検査する。次を拒否する。
+
+- 空の文書名
+- `..` パス要素
+- `/` または `\` で始まる絶対表記
+- バックスラッシュ
+- 空白または制御文字
+- `://` を含むURL風表記
+
+安全な相対表記もコアでは実在確認しない。FormatterはResolverなしで原表記を保持する。
+
+== 解決とHTML
+
+同一文書参照は同じ解析結果の `ReferenceTarget` 索引で解決する。存在しないIDには
+`unresolved-cross-reference` を付ける。
+
+文書間・スキーム付き参照は、ホストが参照範囲と安全なhrefの組を
+`render_with_resolutions()` へ渡した場合だけリンクにする。未解決、解決失敗または
+URLポリシー違反では非リンク表現と位置付き診断を返す。
+
+== 不完全入力
+
+閉じていない `URL[`、`xref:...[` および不正ターゲットを位置付きで診断する。
+不完全なマクロはプレーンテキストとして保持し、後続の強調、等幅文字、属性参照等の
+解析を継続する。

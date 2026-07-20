@@ -441,18 +441,78 @@ pub fn parse_with_config<'source>(
         }
     }
 
+    let mut ast = AstDocument {
+        blocks: ast_blocks,
+        attributes,
+        attribute_problems,
+        anchors,
+    };
+    resolve_document_attributes(&mut ast);
+
     Ok(ParsedDocument {
         cst: CstDocument {
             source_lines,
             blocks,
         },
-        ast: AstDocument {
-            blocks: ast_blocks,
-            attributes,
-            attribute_problems,
-            anchors,
-        },
+        ast,
     })
+}
+
+fn resolve_document_attributes(document: &mut AstDocument) {
+    use crate::attributes::AttributeOperation;
+    let mut attributes = std::collections::BTreeMap::new();
+    for attribute in &document.attributes {
+        match &attribute.operation {
+            AttributeOperation::Set(_) => {
+                attributes.insert(attribute.name.clone(), attribute.raw_value.clone());
+            }
+            AttributeOperation::Unset => {
+                attributes.remove(&attribute.name);
+            }
+        }
+    }
+    fn resolve(inlines: &mut [Inline], attributes: &std::collections::BTreeMap<String, String>) {
+        for inline in inlines {
+            match inline {
+                Inline::Link(link) => {
+                    let mut value = String::new();
+                    let mut cursor = 0;
+                    for attribute in &link.target_attributes {
+                        let name_start = attribute.name_range.start().to_usize()
+                            - link.target_range.start().to_usize();
+                        let name_end = attribute.name_range.end().to_usize()
+                            - link.target_range.start().to_usize();
+                        let open = name_start.saturating_sub(1);
+                        let close_end = (name_end + 1).min(link.target_source.len());
+                        value.push_str(&link.target_source[cursor..open]);
+                        if let Some(replacement) = attributes.get(&attribute.name) {
+                            value.push_str(replacement);
+                        } else {
+                            value.push_str(&link.target_source[open..close_end]);
+                        }
+                        cursor = close_end;
+                    }
+                    value.push_str(&link.target_source[cursor..]);
+                    link.target = value;
+                    resolve(&mut link.label, attributes);
+                }
+                Inline::Reference(reference) => resolve(&mut reference.label, attributes),
+                Inline::Styled { children, .. } => resolve(children, attributes),
+                _ => {}
+            }
+        }
+    }
+    for block in &mut document.blocks {
+        match block {
+            AstBlock::Heading(heading) => resolve(&mut heading.inlines, &attributes),
+            AstBlock::Paragraph(paragraph) => {
+                for line in &mut paragraph.lines {
+                    resolve(&mut line.inlines, &attributes);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn parse_explicit_anchor(

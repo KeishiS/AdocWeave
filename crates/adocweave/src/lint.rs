@@ -33,10 +33,13 @@ pub enum LintRule {
     ProtectedAttribute,
     InvalidAnchor,
     DuplicateAnchor,
+    InvalidUrlScheme,
+    InvalidCrossReference,
+    UnresolvedCrossReference,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 20] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -54,6 +57,9 @@ impl LintRule {
         Self::ProtectedAttribute,
         Self::InvalidAnchor,
         Self::DuplicateAnchor,
+        Self::InvalidUrlScheme,
+        Self::InvalidCrossReference,
+        Self::UnresolvedCrossReference,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -75,6 +81,9 @@ impl LintRule {
             Self::ProtectedAttribute => "protected-attribute",
             Self::InvalidAnchor => "invalid-anchor",
             Self::DuplicateAnchor => "duplicate-anchor",
+            Self::InvalidUrlScheme => "invalid-url-scheme",
+            Self::InvalidCrossReference => "invalid-cross-reference",
+            Self::UnresolvedCrossReference => "unresolved-cross-reference",
         }
     }
 }
@@ -94,6 +103,7 @@ pub struct LintConfig {
     pub max_inline_depth: usize,
     pub protected_attributes: BTreeMap<String, String>,
     pub protected_attribute_severity: Severity,
+    pub url_policy: crate::url::UrlPolicy,
 }
 
 impl Default for LintConfig {
@@ -117,6 +127,7 @@ impl Default for LintConfig {
             max_inline_depth: 32,
             protected_attributes: BTreeMap::new(),
             protected_attribute_severity: Severity::Error,
+            url_policy: crate::url::UrlPolicy::default(),
         }
     }
 }
@@ -221,9 +232,126 @@ pub fn lint_parsed(
     lint_headings(document, config, &mut diagnostics);
     lint_attributes(document, config, &mut diagnostics);
     lint_anchors(document, config, &mut diagnostics);
+    lint_links_and_references(document, config, &mut diagnostics);
     sort_diagnostics(&mut diagnostics);
     diagnostics.truncate(config.max_diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_links_and_references(
+    document: &crate::parser::AstDocument,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let targets = crate::document::reference_targets(document);
+    fn inspect(
+        inlines: &[crate::inline::Inline],
+        targets: &[crate::document::ReferenceTarget],
+        config: &LintConfig,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        use crate::inline::{Inline, ReferenceDestination};
+        for inline in inlines {
+            match inline {
+                Inline::Link(link) => {
+                    if !config.url_policy.allows(&link.target) {
+                        push_diagnostic(
+                            diagnostics,
+                            config,
+                            LintRule::InvalidUrlScheme,
+                            link.target_range,
+                            "URL is rejected by the configured policy",
+                            None,
+                        );
+                    }
+                    inspect(&link.label, targets, config, diagnostics);
+                }
+                Inline::Reference(reference) => {
+                    match &reference.destination {
+                        ReferenceDestination::Local { anchor, .. } => {
+                            if !targets.iter().any(|target| target.id == *anchor) {
+                                push_diagnostic(
+                                    diagnostics,
+                                    config,
+                                    LintRule::UnresolvedCrossReference,
+                                    reference.target_range,
+                                    "local cross reference target does not exist",
+                                    None,
+                                );
+                            }
+                        }
+                        ReferenceDestination::Document { document, .. } => {
+                            if !valid_document_target(document) {
+                                push_diagnostic(
+                                    diagnostics,
+                                    config,
+                                    LintRule::InvalidCrossReference,
+                                    reference.target_range,
+                                    "unsafe cross-document target",
+                                    None,
+                                );
+                            }
+                        }
+                        ReferenceDestination::Scheme {
+                            scheme, locator, ..
+                        } => {
+                            if scheme.is_empty()
+                                || locator.is_empty()
+                                || locator.chars().any(char::is_control)
+                            {
+                                push_diagnostic(
+                                    diagnostics,
+                                    config,
+                                    LintRule::InvalidCrossReference,
+                                    reference.target_range,
+                                    "invalid scheme-based cross reference",
+                                    None,
+                                );
+                            }
+                        }
+                        ReferenceDestination::Invalid => push_diagnostic(
+                            diagnostics,
+                            config,
+                            LintRule::InvalidCrossReference,
+                            reference.target_range,
+                            "invalid cross reference",
+                            None,
+                        ),
+                    }
+                    inspect(&reference.label, targets, config, diagnostics);
+                }
+                Inline::Styled { children, .. } => {
+                    inspect(children, targets, config, diagnostics);
+                }
+                _ => {}
+            }
+        }
+    }
+    for block in &document.blocks {
+        match block {
+            AstBlock::Heading(heading) => {
+                inspect(&heading.inlines, &targets, config, diagnostics);
+            }
+            AstBlock::Paragraph(paragraph) => {
+                for line in &paragraph.lines {
+                    inspect(&line.inlines, &targets, config, diagnostics);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn valid_document_target(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('/')
+        && !value.starts_with('\\')
+        && !value.contains('\\')
+        && !value.contains("://")
+        && !value.split('/').any(|segment| segment == "..")
+        && !value
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
 }
 
 fn lint_anchors(
@@ -378,6 +506,15 @@ fn collect_attribute_references(block: &AstBlock, used: &mut BTreeMap<String, Ve
                     name, name_range, ..
                 } => used.entry(name.clone()).or_default().push(*name_range),
                 crate::inline::Inline::Styled { children, .. } => collect(children, used),
+                crate::inline::Inline::Link(link) => {
+                    for attribute in &link.target_attributes {
+                        used.entry(attribute.name.clone())
+                            .or_default()
+                            .push(attribute.name_range);
+                    }
+                    collect(&link.label, used);
+                }
+                crate::inline::Inline::Reference(reference) => collect(&reference.label, used),
                 _ => {}
             }
         }
@@ -569,6 +706,23 @@ fn push_inline_problems(
                 LintRule::UnclosedInline,
                 problem.range,
                 "unclosed attribute reference",
+                None,
+            ),
+            InlineProblemKind::IncompleteLink => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InvalidUrlScheme,
+                problem.range,
+                "incomplete link macro",
+                None,
+            ),
+            InlineProblemKind::IncompleteCrossReference
+            | InlineProblemKind::InvalidCrossReference => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InvalidCrossReference,
+                problem.range,
+                "incomplete or invalid cross reference",
                 None,
             ),
         }
@@ -842,5 +996,47 @@ mod tests {
             lint(source, &config).expect("standalone lint"),
             super::lint_parsed(source, &parsed.ast, &config).expect("lint existing AST")
         );
+    }
+
+    #[test]
+    fn links_and_url_policy_reject_dangerous_schemes() {
+        let source = include_str!("../../../fixtures/links/security.adoc");
+        let diagnostics = lint(source, &LintConfig::default()).expect("lint");
+        let codes = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            codes
+                .iter()
+                .filter(|code| **code == "invalid-url-scheme")
+                .count()
+                >= 2
+        );
+        assert!(
+            codes
+                .iter()
+                .filter(|code| **code == "invalid-cross-reference")
+                .count()
+                >= 2
+        );
+        assert!(codes.contains(&"unresolved-cross-reference"));
+    }
+
+    #[test]
+    fn cross_references_resolve_local_targets_but_leave_documents_for_hosts() {
+        let diagnostics = lint(
+            "[[target]]\n== Target\n\n<<target>> xref:#target[] xref:other.adoc#part[]",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+
+        assert!(!diagnostics.iter().any(|diagnostic| {
+            matches!(
+                diagnostic.code.as_str(),
+                "invalid-cross-reference" | "unresolved-cross-reference"
+            )
+        }));
     }
 }

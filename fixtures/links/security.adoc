@@ -1,0 +1,6 @@
+https://example.com[安全]
+javascript:alert(1)[危険]
+java%0ascript:alert(1)[難読化]
+xref:../outside.adoc#id[外部]
+xref:/absolute.adoc#id[絶対]
+xref:#missing[欠落]
