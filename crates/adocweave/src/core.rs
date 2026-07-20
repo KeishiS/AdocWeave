@@ -283,7 +283,7 @@ fn analyze_inner(
     })?;
     if options.profile.mode == SyntaxMode::Strict
         && ast
-            .blocks
+            .blocks()
             .iter()
             .any(|block| matches!(block, AstBlock::Unsupported(_)))
     {
@@ -450,7 +450,7 @@ mod tests {
             &options,
         )
         .expect("recover deep list");
-        let crate::parser::AstBlock::List(list) = &analysis.ast().blocks[0] else {
+        let crate::parser::AstBlock::List(list) = &analysis.ast().blocks()[0] else {
             panic!("expected list");
         };
         assert!(depth(list) <= super::limit_to_usize(options.limits.max_list_depth));

@@ -73,17 +73,21 @@ pub struct SearchableText {
 }
 
 pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> DocumentProjection {
-    let title = analysis.ast().blocks.iter().find_map(|block| match block {
-        AstBlock::Heading(heading)
-            if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle) =>
-        {
-            Some(ProjectedText {
-                source_range: heading.text_range,
-                text: inline_text(&heading.inlines),
-            })
-        }
-        _ => None,
-    });
+    let title = analysis
+        .ast()
+        .blocks()
+        .iter()
+        .find_map(|block| match block {
+            AstBlock::Heading(heading)
+                if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle) =>
+            {
+                Some(ProjectedText {
+                    source_range: heading.text_range,
+                    text: inline_text(&heading.inlines),
+                })
+            }
+            _ => None,
+        });
 
     let mut external_links = Vec::new();
     analysis
@@ -122,7 +126,7 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
 
 pub fn searchable_text(analysis: &Analysis) -> SearchableText {
     let mut segments = Vec::new();
-    collect_search_blocks(&analysis.ast().blocks, &mut segments);
+    collect_search_blocks(&analysis.ast().blocks(), &mut segments);
     let text = segments
         .iter()
         .map(|segment| segment.text.as_str())

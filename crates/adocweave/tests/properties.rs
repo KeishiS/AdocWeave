@@ -57,7 +57,7 @@ fn arbitrary_utf8_like_corpus_is_lossless_and_has_valid_ranges() {
             assert!(source.is_char_boundary(start));
             assert!(source.is_char_boundary(end));
         }
-        for block in &analysis.ast().blocks {
+        for block in analysis.ast().blocks() {
             let range = block.range();
             assert!(range.start() <= range.end());
             assert!(range.end().to_usize() <= source.len());

@@ -193,7 +193,7 @@ mod tests {
         parse(source)
             .expect("valid source")
             .ast
-            .blocks
+            .blocks()
             .into_iter()
             .filter_map(|block| match block {
                 AstBlock::Paragraph(paragraph) => Some(
@@ -329,7 +329,7 @@ mod tests {
         assert_eq!(
             after
                 .ast
-                .blocks
+                .blocks()
                 .iter()
                 .flat_map(block_inlines)
                 .filter(|inline| matches!(inline, crate::inline::Inline::Reference(_)))
@@ -346,7 +346,7 @@ mod tests {
         assert!(formatted.formatted.contains("stem:[{x} * y < z]"));
         assert!(formatted.formatted.contains("  {x} * y < z  \n"));
         let reparsed = parse(&formatted.formatted).expect("parse formatted");
-        assert!(matches!(reparsed.ast.blocks[1], AstBlock::Math(_)));
+        assert!(matches!(reparsed.ast.blocks()[1], AstBlock::Math(_)));
     }
 
     fn block_inlines(block: &AstBlock) -> Vec<&crate::inline::Inline> {

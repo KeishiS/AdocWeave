@@ -16,19 +16,19 @@ pub struct HeadingId {
 pub fn generate_heading_ids(document: &AstDocument) -> Vec<HeadingId> {
     let mut occurrences = BTreeMap::<String, usize>::new();
     let mut used = document
-        .anchors
+        .anchors()
         .iter()
         .filter(|anchor| anchor.valid)
         .map(|anchor| anchor.id.clone())
         .collect::<std::collections::BTreeSet<_>>();
     document
-        .blocks
+        .blocks()
         .iter()
         .filter_map(|block| match block {
             AstBlock::Heading(heading) => {
                 let base = heading_id_base(&heading.text);
                 let explicit = document
-                    .anchors
+                    .anchors()
                     .iter()
                     .find(|anchor| anchor.valid && anchor.target_range == Some(heading.range));
                 let id = explicit.map_or_else(
@@ -79,10 +79,10 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
     let heading_ids = generate_heading_ids(document);
     let mut heading_index = 0;
     let mut targets = Vec::new();
-    for block in &document.blocks {
+    for block in document.blocks() {
         let range = block.range();
         let attached = document
-            .anchors
+            .anchors()
             .iter()
             .filter(|anchor| anchor.valid && anchor.target_range == Some(range))
             .collect::<Vec<_>>();
@@ -192,7 +192,7 @@ pub enum DocumentElement<'document> {
 }
 
 pub fn document_element_at(document: &AstDocument, offset: u32) -> Option<DocumentElement<'_>> {
-    document.blocks.iter().find_map(|block| match block {
+    document.blocks().iter().find_map(|block| match block {
         AstBlock::Heading(heading) if contains(heading.marker_range, offset, false) => {
             Some(DocumentElement::HeadingMarker(heading))
         }
@@ -259,7 +259,7 @@ pub fn document_symbols(document: &AstDocument) -> Vec<DocumentSymbol> {
     let mut section_stack = Vec::<(u8, usize)>::new();
     let mut title_index = None;
 
-    for block in &document.blocks {
+    for block in document.blocks() {
         let AstBlock::Heading(heading) = block else {
             if let AstBlock::List(list) = block {
                 let parent = section_stack

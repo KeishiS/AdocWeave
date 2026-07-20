@@ -78,7 +78,7 @@ pub fn render_with_resolutions(
 ) -> HtmlOutput {
     let mut fragment = String::new();
     let mut document_attributes = BTreeMap::new();
-    for attribute in &document.attributes {
+    for attribute in document.attributes() {
         match &attribute.operation {
             AttributeOperation::Set => {
                 document_attributes.insert(attribute.name.clone(), attribute.raw_value.clone());
@@ -99,9 +99,9 @@ pub fn render_with_resolutions(
         diagnostics: &mut diagnostics,
     };
     let mut heading_index = 0;
-    for block in &document.blocks {
+    for block in document.blocks() {
         let explicit_id = document
-            .anchors
+            .anchors()
             .iter()
             .find(|anchor| anchor.valid && anchor.target_range == Some(block.range()))
             .map(|anchor| anchor.id.as_str());
@@ -801,7 +801,7 @@ mod tests {
     fn link_target_attributes_expand_exactly_once() {
         let parsed = parse("= Links\n:a: {b}\n:b: expanded\n\nhttps://example.com/{a}[target]\n")
             .expect("parse");
-        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[1] else {
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[1] else {
             panic!("paragraph");
         };
         let Inline::Link(link) = &paragraph.inlines[0] else {
@@ -818,7 +818,7 @@ mod tests {
         let parsed = parse(source).expect("parse");
         let external = parsed
             .ast
-            .blocks
+            .blocks()
             .iter()
             .find_map(|block| match block {
                 AstBlock::Paragraph(paragraph) => {

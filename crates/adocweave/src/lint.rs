@@ -371,7 +371,7 @@ fn lint_anchors(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut ids = BTreeMap::<String, TextRange>::new();
-    for anchor in &document.anchors {
+    for anchor in document.anchors() {
         if !anchor.valid {
             push_diagnostic(
                 diagnostics,
@@ -418,7 +418,7 @@ fn lint_attributes(
 
     let mut definitions = BTreeMap::<String, TextRange>::new();
     let mut used = BTreeMap::<String, Vec<TextRange>>::new();
-    for problem in &document.attribute_problems {
+    for problem in document.attribute_problems() {
         let message = match problem.kind {
             AttributeProblemKind::InvalidName => "invalid document attribute name",
             AttributeProblemKind::InvalidValue => "invalid document attribute value",
@@ -432,7 +432,7 @@ fn lint_attributes(
             None,
         );
     }
-    for attribute in &document.attributes {
+    for attribute in document.attributes() {
         if let Some(first) = definitions.insert(attribute.name.clone(), attribute.name_range) {
             let settings = config.rule(LintRule::DuplicateAttribute);
             if settings.enabled && diagnostics.len() < config.max_diagnostics {
@@ -545,7 +545,7 @@ fn lint_headings(
     let mut previous_level = None;
     let mut ids = BTreeMap::<String, TextRange>::new();
 
-    for block in &document.blocks {
+    for block in document.blocks() {
         match block {
             AstBlock::Heading(heading) => {
                 push_inline_problems(diagnostics, config, &heading.inline_problems);
@@ -1213,7 +1213,7 @@ mod tests {
         let source = include_str!("../../../fixtures/references/incomplete-note.adoc");
         let parsed = crate::parser::parse(source).expect("parse");
 
-        assert_eq!(parsed.ast.blocks.len(), 1);
+        assert_eq!(parsed.ast.blocks().len(), 1);
     }
 
     #[test]

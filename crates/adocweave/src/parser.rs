@@ -180,13 +180,43 @@ pub enum AstBlock {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AstDocument {
-    pub blocks: Vec<AstBlock>,
-    pub attributes: Vec<DocumentAttribute>,
-    pub attribute_problems: Vec<AttributeProblem>,
-    pub anchors: Vec<ExplicitAnchor>,
+    blocks: Vec<AstBlock>,
+    attributes: Vec<DocumentAttribute>,
+    attribute_problems: Vec<AttributeProblem>,
+    anchors: Vec<ExplicitAnchor>,
 }
 
 impl AstDocument {
+    pub(crate) fn new(
+        blocks: Vec<AstBlock>,
+        attributes: Vec<DocumentAttribute>,
+        attribute_problems: Vec<AttributeProblem>,
+        anchors: Vec<ExplicitAnchor>,
+    ) -> Self {
+        Self {
+            blocks,
+            attributes,
+            attribute_problems,
+            anchors,
+        }
+    }
+
+    pub fn blocks(&self) -> &[AstBlock] {
+        &self.blocks
+    }
+
+    pub fn attributes(&self) -> &[DocumentAttribute] {
+        &self.attributes
+    }
+
+    pub fn attribute_problems(&self) -> &[AttributeProblem] {
+        &self.attribute_problems
+    }
+
+    pub fn anchors(&self) -> &[ExplicitAnchor] {
+        &self.anchors
+    }
+
     pub fn node_count(&self) -> usize {
         fn inline_count(inlines: &[Inline]) -> usize {
             inlines
@@ -1550,7 +1580,7 @@ mod tests {
     fn paragraph_parser_handles_empty_input() {
         let parsed = parse("").expect("valid source");
 
-        assert!(parsed.ast.blocks.is_empty());
+        assert!(parsed.ast.blocks().is_empty());
         assert_eq!(parsed.syntax.blocks().len(), 1);
         assert_eq!(parsed.syntax.blocks()[0].kind(), SyntaxKind::BlankLine);
         assert_eq!(parsed.syntax.reconstruct(), "");
@@ -1591,7 +1621,7 @@ mod tests {
         assert_eq!(parsed.ast.attributes.len(), 2);
         assert!(parsed.ast.attribute_problems.is_empty());
         assert!(matches!(
-            parsed.ast.blocks.last(),
+            parsed.ast.blocks().last(),
             Some(AstBlock::Paragraph(_))
         ));
     }
@@ -1601,8 +1631,8 @@ mod tests {
         let source = "\nfirst line\nsecond line\n \t\nlast";
         let parsed = parse(source).expect("valid source");
 
-        assert_eq!(parsed.ast.blocks.len(), 2);
-        let AstBlock::Paragraph(first) = &parsed.ast.blocks[0] else {
+        assert_eq!(parsed.ast.blocks().len(), 2);
+        let AstBlock::Paragraph(first) = &parsed.ast.blocks()[0] else {
             panic!("expected paragraph");
         };
         assert_eq!(first.value, "first line\nsecond line");
@@ -1614,7 +1644,7 @@ mod tests {
         let source =
             "before *strong\n日本語* and ``mono\r\ncode`` https://example.org[label\n続き]";
         let parsed = parse(source).expect("valid source");
-        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[0] else {
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[0] else {
             panic!("paragraph");
         };
 
@@ -1646,8 +1676,8 @@ mod tests {
         let source = "before\n\n[role=test]\n\nafter";
         let parsed = parse(source).expect("valid source");
 
-        assert_eq!(parsed.ast.blocks.len(), 3);
-        let AstBlock::Unsupported(unsupported) = &parsed.ast.blocks[1] else {
+        assert_eq!(parsed.ast.blocks().len(), 3);
+        let AstBlock::Unsupported(unsupported) = &parsed.ast.blocks()[1] else {
             panic!("expected unsupported node");
         };
         assert_eq!(unsupported.raw, "[role=test]");
@@ -1661,7 +1691,7 @@ mod tests {
         let parsed = parse(source).expect("valid source");
         let literals = parsed
             .ast
-            .blocks
+            .blocks()
             .iter()
             .filter_map(|block| match block {
                 AstBlock::Literal(literal) => Some(literal),
@@ -1680,21 +1710,21 @@ mod tests {
     fn literal_block_recovers_at_heading_when_unclosed() {
         let source = "....\ncontent\n== Next\nparagraph";
         let parsed = parse(source).expect("valid source");
-        let AstBlock::Literal(literal) = &parsed.ast.blocks[0] else {
+        let AstBlock::Literal(literal) = &parsed.ast.blocks()[0] else {
             panic!("expected literal");
         };
 
         assert_eq!(literal.value, "content\n");
         assert_eq!(literal.problems[0].kind, BlockProblemKind::UnclosedBlock);
-        assert!(matches!(parsed.ast.blocks[1], AstBlock::Heading(_)));
-        assert!(matches!(parsed.ast.blocks[2], AstBlock::Paragraph(_)));
+        assert!(matches!(parsed.ast.blocks()[1], AstBlock::Heading(_)));
+        assert!(matches!(parsed.ast.blocks()[2], AstBlock::Paragraph(_)));
     }
 
     #[test]
     fn source_block_keeps_language_code_and_ranges() {
         let source = "[source, rust]\n----\nfn main() {}\n----\n";
         let parsed = parse(source).expect("valid source");
-        let AstBlock::Source(block) = &parsed.ast.blocks[0] else {
+        let AstBlock::Source(block) = &parsed.ast.blocks()[0] else {
             panic!("expected source block");
         };
 
@@ -1712,7 +1742,7 @@ mod tests {
     #[test]
     fn source_block_handles_missing_language_empty_and_unclosed() {
         let parsed = parse("[source]\n----\n== Next\n").expect("valid source");
-        let AstBlock::Source(block) = &parsed.ast.blocks[0] else {
+        let AstBlock::Source(block) = &parsed.ast.blocks()[0] else {
             panic!("expected source block");
         };
 
@@ -1730,7 +1760,7 @@ mod tests {
                 .iter()
                 .any(|problem| { problem.kind == BlockProblemKind::UnclosedBlock })
         );
-        assert!(matches!(parsed.ast.blocks[1], AstBlock::Heading(_)));
+        assert!(matches!(parsed.ast.blocks()[1], AstBlock::Heading(_)));
     }
 
     #[test]
@@ -1739,7 +1769,7 @@ mod tests {
         let parsed = parse(source).expect("valid source");
         let headings = parsed
             .ast
-            .blocks
+            .blocks()
             .iter()
             .filter_map(|block| match block {
                 AstBlock::Heading(heading) => Some(heading),
@@ -1763,7 +1793,7 @@ mod tests {
     #[test]
     fn heading_parser_keeps_marker_separator_and_text_ranges() {
         let parsed = parse("== 日本語").expect("valid source");
-        let AstBlock::Heading(heading) = &parsed.ast.blocks[0] else {
+        let AstBlock::Heading(heading) = &parsed.ast.blocks()[0] else {
             panic!("expected heading");
         };
 
@@ -1778,15 +1808,15 @@ mod tests {
     #[test]
     fn heading_parser_preserves_malformed_headings_and_recovers() {
         let parsed = parse("==Missing\n\n======= Too deep\n\nafter").expect("valid source");
-        let AstBlock::Heading(first) = &parsed.ast.blocks[0] else {
+        let AstBlock::Heading(first) = &parsed.ast.blocks()[0] else {
             panic!("expected malformed heading");
         };
         assert!(first.problems.contains(&HeadingProblem::MissingSpace));
-        let AstBlock::Heading(second) = &parsed.ast.blocks[1] else {
+        let AstBlock::Heading(second) = &parsed.ast.blocks()[1] else {
             panic!("expected malformed heading");
         };
         assert!(second.problems.contains(&HeadingProblem::LevelTooDeep));
-        assert!(matches!(parsed.ast.blocks[2], AstBlock::Paragraph(_)));
+        assert!(matches!(parsed.ast.blocks()[2], AstBlock::Paragraph(_)));
     }
 
     #[test]
@@ -1807,12 +1837,12 @@ mod tests {
     #[test]
     fn lists_build_recursive_semantic_nodes() {
         let parsed = parse("* one\n** nested\n* two\n. ordered\n").expect("parse");
-        let AstBlock::List(unordered) = &parsed.ast.blocks[0] else {
+        let AstBlock::List(unordered) = &parsed.ast.blocks()[0] else {
             panic!("unordered list");
         };
         assert_eq!(unordered.items.len(), 2);
         assert_eq!(unordered.items[0].children[0].items[0].text, "nested");
-        assert!(matches!(parsed.ast.blocks[1], AstBlock::List(_)));
+        assert!(matches!(parsed.ast.blocks()[1], AstBlock::List(_)));
     }
 
     #[test]
@@ -1820,7 +1850,7 @@ mod tests {
         let source =
             "* item\n+\n....\nliteral\n....\n* code\n+\n[source,rust]\n----\nfn main() {}\n----\n";
         let parsed = parse(source).expect("parse");
-        let AstBlock::List(list) = &parsed.ast.blocks[0] else {
+        let AstBlock::List(list) = &parsed.ast.blocks()[0] else {
             panic!("list");
         };
         assert!(matches!(
@@ -1837,7 +1867,7 @@ mod tests {
     fn stem_builds_opaque_inline_and_block_nodes() {
         let parsed =
             parse(include_str!("../../../fixtures/stem/substitutions.adoc")).expect("parse");
-        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[1] else {
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[1] else {
             panic!("paragraph");
         };
         assert!(paragraph.inlines.iter().any(|inline| {
@@ -1848,7 +1878,7 @@ mod tests {
                         && formula.language == MathLanguage::Latex
             )
         }));
-        let AstBlock::Math(math) = &parsed.ast.blocks[2] else {
+        let AstBlock::Math(math) = &parsed.ast.blocks()[2] else {
             panic!("math block");
         };
         assert!(math.value.contains("{x} * y < z"));
@@ -1857,14 +1887,14 @@ mod tests {
     #[test]
     fn stem_recovery_keeps_unclosed_block_before_heading() {
         let parsed = parse("stem:[inline open\n\n[stem]\n++++\nx + y\n== Next\n").expect("parse");
-        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[0] else {
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[0] else {
             panic!("paragraph");
         };
         assert!(matches!(
             paragraph.inlines[0],
             Inline::Formula(ref formula) if !formula.closed && formula.value == "inline open"
         ));
-        let AstBlock::Math(math) = &parsed.ast.blocks[1] else {
+        let AstBlock::Math(math) = &parsed.ast.blocks()[1] else {
             panic!("math");
         };
         assert!(
@@ -1872,14 +1902,14 @@ mod tests {
                 .iter()
                 .any(|problem| problem.kind == MathProblemKind::Unclosed)
         );
-        assert!(matches!(parsed.ast.blocks[2], AstBlock::Heading(_)));
+        assert!(matches!(parsed.ast.blocks()[2], AstBlock::Heading(_)));
     }
 
     #[test]
     fn stem_language_boundary_keeps_latex_distinct_from_future_typst() {
         assert_ne!(MathLanguage::Latex, MathLanguage::Typst);
         let parsed = parse("stem:[x]").expect("parse");
-        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks[0] else {
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[0] else {
             panic!("paragraph");
         };
         assert!(matches!(

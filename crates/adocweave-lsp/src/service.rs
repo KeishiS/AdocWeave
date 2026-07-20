@@ -426,7 +426,7 @@ impl LanguageService {
         if let Some(attribute) = document
             .analysis
             .ast()
-            .attributes
+            .attributes()
             .iter()
             .find(|attribute| contains(attribute.range, offset))
         {
@@ -442,7 +442,7 @@ impl LanguageService {
         }
         if let Some(target) = document.analysis.reference_targets().iter().find(|target| {
             contains(target.id_range, offset)
-                && !document.analysis.ast().blocks.iter().any(|block| {
+                && !document.analysis.ast().blocks().iter().any(|block| {
                     matches!(
                         block,
                         parser::AstBlock::Heading(heading)
@@ -794,7 +794,7 @@ impl LanguageService {
             )));
         };
         let mut raw = Vec::<(lsp::Position, u32, u32)>::new();
-        for block in &document.analysis.ast().blocks {
+        for block in document.analysis.ast().blocks() {
             if let parser::AstBlock::Heading(heading) = block {
                 push_semantic_range(
                     &mut raw,

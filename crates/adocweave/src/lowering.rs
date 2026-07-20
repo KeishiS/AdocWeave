@@ -15,12 +15,12 @@ pub(crate) struct ParsedFacts {
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     attach_anchors(&mut facts.anchors, &facts.blocks);
-    let mut document = AstDocument {
-        blocks: facts.blocks,
-        attributes: facts.attributes,
-        attribute_problems: facts.attribute_problems,
-        anchors: facts.anchors,
-    };
+    let mut document = AstDocument::new(
+        facts.blocks,
+        facts.attributes,
+        facts.attribute_problems,
+        facts.anchors,
+    );
     resolve_document_attributes(&mut document);
     document
 }
@@ -48,7 +48,7 @@ fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
 
 fn resolve_document_attributes(document: &mut AstDocument) {
     let mut attributes = BTreeMap::new();
-    for attribute in &document.attributes {
+    for attribute in document.attributes() {
         match &attribute.operation {
             AttributeOperation::Set => {
                 attributes.insert(attribute.name.clone(), attribute.raw_value.clone());

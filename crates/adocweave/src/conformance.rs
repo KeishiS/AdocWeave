@@ -66,9 +66,9 @@ struct CanonicalNode {
 fn canonical_ast(document: &AstDocument) -> String {
     let dto = CanonicalAst {
         schema_version: 1,
-        blocks: document.blocks.iter().map(block_node).collect(),
+        blocks: document.blocks().iter().map(block_node).collect(),
         attributes: document
-            .attributes
+            .attributes()
             .iter()
             .map(|attribute| CanonicalNode {
                 kind: "attribute",
@@ -78,7 +78,7 @@ fn canonical_ast(document: &AstDocument) -> String {
             })
             .collect(),
         anchors: document
-            .anchors
+            .anchors()
             .iter()
             .map(|anchor| CanonicalNode {
                 kind: "anchor",
