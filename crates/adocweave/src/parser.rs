@@ -10,98 +10,8 @@ use crate::inline::{
 };
 use crate::limits::ProcessingLimits;
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_document::{LosslessToken, SourceDocument, SourceDocumentBuildError, SourceLine};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CstBlockKind {
-    DocumentTitle,
-    Heading,
-    MalformedHeading,
-    Paragraph,
-    LiteralBlock,
-    SourceBlock,
-    BlankLine,
-    Unsupported,
-    DocumentAttribute,
-    BlockAnchor,
-    List,
-    MathBlock,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FormattingPolicy {
-    NormalizeLineWhitespace,
-    PreserveBytes,
-}
-
-impl CstBlockKind {
-    pub const fn formatting_policy(self) -> FormattingPolicy {
-        match self {
-            Self::Paragraph | Self::BlankLine => FormattingPolicy::NormalizeLineWhitespace,
-            Self::DocumentTitle
-            | Self::Heading
-            | Self::MalformedHeading
-            | Self::LiteralBlock
-            | Self::SourceBlock
-            | Self::Unsupported
-            | Self::DocumentAttribute
-            | Self::BlockAnchor
-            | Self::List
-            | Self::MathBlock => FormattingPolicy::PreserveBytes,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CstBlock {
-    pub kind: CstBlockKind,
-    pub range: TextRange,
-}
-
-#[derive(Debug)]
-pub struct CstDocument {
-    source_document: SourceDocument,
-    blocks: Vec<CstBlock>,
-}
-
-impl CstDocument {
-    pub fn source(&self) -> &str {
-        self.source_document.source()
-    }
-
-    pub fn blocks(&self) -> &[CstBlock] {
-        &self.blocks
-    }
-
-    pub const fn source_document(&self) -> &SourceDocument {
-        &self.source_document
-    }
-
-    pub fn tokens(&self) -> &[LosslessToken] {
-        self.source_document.tokens()
-    }
-
-    pub fn reconstruct(&self) -> String {
-        self.source_document.reconstruct()
-    }
-
-    pub fn snapshot(&self) -> String {
-        let mut output = String::new();
-        writeln!(output, "Document@0..{}", self.source().len())
-            .expect("writing to a String cannot fail");
-        for block in &self.blocks {
-            writeln!(
-                output,
-                "  {:?}@{}..{}",
-                block.kind,
-                block.range.start().to_u32(),
-                block.range.end().to_u32()
-            )
-            .expect("writing to a String cannot fail");
-        }
-        output
-    }
-}
+use crate::source_document::{SourceDocument, SourceDocumentBuildError, SourceLine};
+use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxTree};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Paragraph {
@@ -497,7 +407,7 @@ impl AstBlock {
 
 #[derive(Debug)]
 pub(crate) struct ParsedDocument {
-    pub cst: CstDocument,
+    pub syntax: SyntaxTree,
     pub ast: AstDocument,
 }
 
@@ -634,10 +544,7 @@ pub(crate) fn parse_shared_cancellable(
             budget.consume_node()?;
             let (source_block, next_line) =
                 parse_source_block(&source_document, line_index, source)?;
-            blocks.push(CstBlock {
-                kind: CstBlockKind::SourceBlock,
-                range: source_block.range,
-            });
+            blocks.push(source_block_syntax(&source_block));
             ast_blocks.push(AstBlock::Source(source_block));
             saw_content = true;
             line_index = next_line;
@@ -659,10 +566,7 @@ pub(crate) fn parse_shared_cancellable(
             budget.consume_block()?;
             budget.consume_node()?;
             let (math, next_line) = parse_math_block(&source_document, line_index, source, config)?;
-            blocks.push(CstBlock {
-                kind: CstBlockKind::MathBlock,
-                range: math.range,
-            });
+            blocks.push(math_block_syntax(&math));
             ast_blocks.push(AstBlock::Math(math));
             saw_content = true;
             line_index = next_line;
@@ -678,10 +582,7 @@ pub(crate) fn parse_shared_cancellable(
             budget.consume_block()?;
             budget.consume_node()?;
             let (literal, next_line) = parse_literal_block(&source_document, line_index, source)?;
-            blocks.push(CstBlock {
-                kind: CstBlockKind::LiteralBlock,
-                range: literal.range,
-            });
+            blocks.push(literal_syntax(&literal));
             ast_blocks.push(AstBlock::Literal(literal));
             saw_content = true;
             line_index = next_line;
@@ -699,10 +600,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut budget,
             )?;
             budget.consume_node()?;
-            blocks.push(CstBlock {
-                kind: CstBlockKind::BlockAnchor,
-                range: line.full_range(),
-            });
+            blocks.push(SyntaxNode::leaf(SyntaxKind::BlockAnchor, line.full_range()));
             anchors.push(anchor);
             saw_content = true;
             header_attributes_open = false;
@@ -714,10 +612,7 @@ pub(crate) fn parse_shared_cancellable(
                 config,
                 &mut budget,
             )?;
-            blocks.push(CstBlock {
-                kind: CstBlockKind::BlankLine,
-                range: line.full_range(),
-            });
+            blocks.push(SyntaxNode::leaf(SyntaxKind::BlankLine, line.full_range()));
             if header_attributes_open {
                 header_attributes_open = false;
             }
@@ -740,10 +635,10 @@ pub(crate) fn parse_shared_cancellable(
             )?;
             budget.consume_attribute()?;
             budget.consume_node()?;
-            blocks.push(CstBlock {
-                kind: CstBlockKind::DocumentAttribute,
-                range: line.full_range(),
-            });
+            blocks.push(SyntaxNode::leaf(
+                SyntaxKind::DocumentAttribute,
+                line.full_range(),
+            ));
             attributes.push(attribute);
             attribute_problems.extend(problem);
         } else if content.starts_with('=') {
@@ -757,17 +652,15 @@ pub(crate) fn parse_shared_cancellable(
             budget.consume_block()?;
             budget.consume_node()?;
             let heading = parse_heading(content, line, !saw_content, config, &mut budget)?;
-            blocks.push(CstBlock {
-                kind: if heading.problems.is_empty() {
-                    match heading.kind {
-                        HeadingKind::DocumentTitle => CstBlockKind::DocumentTitle,
-                        HeadingKind::Section { .. } => CstBlockKind::Heading,
-                    }
-                } else {
-                    CstBlockKind::MalformedHeading
-                },
-                range: line.full_range(),
-            });
+            let syntax_kind = if heading.problems.is_empty() {
+                match heading.kind {
+                    HeadingKind::DocumentTitle => SyntaxKind::DocumentTitle,
+                    HeadingKind::Section { .. } => SyntaxKind::Heading,
+                }
+            } else {
+                SyntaxKind::MalformedHeading
+            };
+            blocks.push(heading_syntax(&heading, syntax_kind));
             ast_blocks.push(AstBlock::Heading(heading));
             header_attributes_open = matches!(
                 ast_blocks.last(),
@@ -787,10 +680,7 @@ pub(crate) fn parse_shared_cancellable(
             )?;
             let (lists, next_line, range) =
                 parse_lists(&source_document, line_index, source, config, &mut budget)?;
-            blocks.push(CstBlock {
-                kind: CstBlockKind::List,
-                range,
-            });
+            blocks.push(list_syntax(range, &lists));
             ast_blocks.extend(lists.into_iter().map(AstBlock::List));
             saw_content = true;
             header_attributes_open = false;
@@ -806,10 +696,11 @@ pub(crate) fn parse_shared_cancellable(
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            blocks.push(CstBlock {
-                kind: CstBlockKind::Unsupported,
-                range: line.full_range(),
-            });
+            blocks.push(SyntaxNode::new(
+                SyntaxKind::Unsupported,
+                line.full_range(),
+                vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
+            ));
             ast_blocks.push(AstBlock::Unsupported(Unsupported {
                 range: line.full_range(),
                 raw: content.to_owned(),
@@ -829,87 +720,194 @@ pub(crate) fn parse_shared_cancellable(
         config,
         &mut budget,
     )?;
-    for anchor in &mut anchors {
-        anchor.target_range = ast_blocks
-            .iter()
-            .map(AstBlock::range)
-            .find(|range| range.start() >= anchor.range.end());
-    }
-    let mut anchored_targets = std::collections::BTreeSet::new();
-    for anchor in &mut anchors {
-        if anchor.valid {
-            if let Some(target) = anchor.target_range {
-                if !anchored_targets.insert((target.start().to_u32(), target.end().to_u32())) {
-                    anchor.valid = false;
-                }
-            } else {
-                anchor.valid = false;
-            }
-        }
-    }
-
-    let mut ast = AstDocument {
+    let ast = crate::lowering::lower(crate::lowering::ParsedFacts {
         blocks: ast_blocks,
         attributes,
         attribute_problems,
         anchors,
-    };
-    resolve_document_attributes(&mut ast);
+    });
 
     Ok(ParsedDocument {
-        cst: CstDocument {
-            source_document,
-            blocks,
-        },
+        syntax: SyntaxTree::from_blocks(source_document, blocks),
         ast,
     })
 }
 
-fn resolve_document_attributes(document: &mut AstDocument) {
-    use crate::attributes::AttributeOperation;
-    let mut attributes = std::collections::BTreeMap::new();
-    for attribute in &document.attributes {
-        match &attribute.operation {
-            AttributeOperation::Set => {
-                attributes.insert(attribute.name.clone(), attribute.raw_value.clone());
-            }
-            AttributeOperation::Unset => {
-                attributes.remove(&attribute.name);
-            }
-        }
+fn heading_syntax(heading: &Heading, kind: SyntaxKind) -> SyntaxNode {
+    let mut children = vec![SyntaxNode::leaf(
+        SyntaxKind::HeadingMarker,
+        heading.marker_range,
+    )];
+    children.extend(inline_syntax(&heading.inlines));
+    SyntaxNode::new(kind, heading.range, children)
+}
+
+fn paragraph_syntax(paragraph: &Paragraph) -> SyntaxNode {
+    SyntaxNode::new(
+        SyntaxKind::Paragraph,
+        paragraph.range,
+        inline_syntax(&paragraph.inlines),
+    )
+}
+
+fn literal_syntax(literal: &LiteralBlock) -> SyntaxNode {
+    SyntaxNode::new(
+        SyntaxKind::LiteralBlock,
+        literal.range,
+        vec![delimiter_syntax(
+            literal.delimiter_range,
+            literal
+                .problems
+                .iter()
+                .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock),
+        )],
+    )
+}
+
+fn source_block_syntax(source: &SourceBlock) -> SyntaxNode {
+    SyntaxNode::new(
+        SyntaxKind::SourceBlock,
+        source.range,
+        vec![
+            SyntaxNode::leaf(SyntaxKind::BlockAttribute, source.attribute_range),
+            delimiter_syntax(
+                source.delimiter_range,
+                source
+                    .problems
+                    .iter()
+                    .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock),
+            ),
+        ],
+    )
+}
+
+fn math_block_syntax(math: &MathBlock) -> SyntaxNode {
+    SyntaxNode::new(
+        SyntaxKind::MathBlock,
+        math.range,
+        vec![
+            SyntaxNode::leaf(SyntaxKind::BlockAttribute, math.attribute_range),
+            delimiter_syntax(
+                math.delimiter_range,
+                math.problems
+                    .iter()
+                    .any(|problem| problem.kind == MathProblemKind::Unclosed),
+            ),
+        ],
+    )
+}
+
+fn delimiter_syntax(range: TextRange, is_error: bool) -> SyntaxNode {
+    let delimiter = SyntaxNode::leaf(SyntaxKind::BlockDelimiter, range);
+    if is_error {
+        SyntaxNode::new(SyntaxKind::Error, range, vec![delimiter])
+    } else {
+        delimiter
     }
-    fn resolve(inlines: &mut [Inline], attributes: &std::collections::BTreeMap<String, String>) {
-        for inline in inlines {
-            match inline {
-                Inline::Link(link) => {
-                    let mut value = String::new();
-                    let mut cursor = 0;
-                    for attribute in &link.target_attributes {
-                        let name_start = attribute.name_range.start().to_usize()
-                            - link.target_range.start().to_usize();
-                        let name_end = attribute.name_range.end().to_usize()
-                            - link.target_range.start().to_usize();
-                        let open = name_start.saturating_sub(1);
-                        let close_end = (name_end + 1).min(link.target_source.len());
-                        value.push_str(&link.target_source[cursor..open]);
-                        if let Some(replacement) = attributes.get(&attribute.name) {
-                            value.push_str(replacement);
-                        } else {
-                            value.push_str(&link.target_source[open..close_end]);
-                        }
-                        cursor = close_end;
-                    }
-                    value.push_str(&link.target_source[cursor..]);
-                    link.target = value;
-                    resolve(&mut link.label, attributes);
-                }
-                Inline::Reference(reference) => resolve(&mut reference.label, attributes),
-                Inline::Styled { children, .. } => resolve(children, attributes),
-                _ => {}
-            }
-        }
+}
+
+fn list_syntax(range: TextRange, lists: &[ListBlock]) -> SyntaxNode {
+    fn item_syntax(item: &ListItem) -> SyntaxNode {
+        let mut children = vec![SyntaxNode::leaf(SyntaxKind::ListMarker, item.marker_range)];
+        children.extend(inline_syntax(&item.inlines));
+        children.extend(
+            item.children
+                .iter()
+                .flat_map(|list| list.items.iter().map(item_syntax)),
+        );
+        SyntaxNode::new(SyntaxKind::ListItem, item.range, children)
     }
-    document.visit_inline_sequences_mut(|inlines| resolve(inlines, &attributes));
+
+    SyntaxNode::new(
+        SyntaxKind::List,
+        range,
+        lists
+            .iter()
+            .flat_map(|list| list.items.iter().map(item_syntax))
+            .collect(),
+    )
+}
+
+fn inline_syntax(inlines: &[Inline]) -> Vec<SyntaxNode> {
+    inlines.iter().filter_map(inline_node).collect()
+}
+
+fn inline_node(inline: &Inline) -> Option<SyntaxNode> {
+    match inline {
+        Inline::Text(_) => None,
+        Inline::Literal {
+            range,
+            content_range,
+            ..
+        } => Some(span_syntax(*range, *content_range, Vec::new())),
+        Inline::Styled {
+            range,
+            content_range,
+            children,
+            ..
+        } => Some(span_syntax(*range, *content_range, inline_syntax(children))),
+        Inline::AttributeReference {
+            range, name_range, ..
+        } => Some(SyntaxNode::new(
+            SyntaxKind::Macro,
+            *range,
+            vec![SyntaxNode::leaf(SyntaxKind::Target, *name_range)],
+        )),
+        Inline::Link(link) => Some(macro_syntax(
+            link.range,
+            link.target_range,
+            link.label_range,
+            &link.label,
+        )),
+        Inline::Reference(reference) => Some(macro_syntax(
+            reference.range,
+            reference.target_range,
+            reference.label_range,
+            &reference.label,
+        )),
+        Inline::Formula(formula) => Some(macro_syntax(
+            formula.range,
+            formula.content_range,
+            None,
+            &[],
+        )),
+    }
+}
+
+fn span_syntax(
+    range: TextRange,
+    content_range: TextRange,
+    mut content: Vec<SyntaxNode>,
+) -> SyntaxNode {
+    let mut children = vec![SyntaxNode::leaf(
+        SyntaxKind::InlineDelimiter,
+        TextRange::new(range.start(), content_range.start()).expect("ordered inline range"),
+    )];
+    children.append(&mut content);
+    if content_range.end() < range.end() {
+        children.push(SyntaxNode::leaf(
+            SyntaxKind::InlineDelimiter,
+            TextRange::new(content_range.end(), range.end()).expect("ordered inline range"),
+        ));
+    }
+    SyntaxNode::new(SyntaxKind::InlineSpan, range, children)
+}
+
+fn macro_syntax(
+    range: TextRange,
+    target_range: TextRange,
+    label_range: Option<TextRange>,
+    label: &[Inline],
+) -> SyntaxNode {
+    let mut children = vec![SyntaxNode::leaf(SyntaxKind::Target, target_range)];
+    if let Some(label_range) = label_range {
+        children.push(SyntaxNode::new(
+            SyntaxKind::Label,
+            label_range,
+            inline_syntax(label),
+        ));
+    }
+    SyntaxNode::new(SyntaxKind::Macro, range, children)
 }
 
 fn parse_explicit_anchor(
@@ -1461,7 +1459,7 @@ fn parse_heading(
 }
 
 fn flush_paragraph(
-    cst_blocks: &mut Vec<CstBlock>,
+    cst_blocks: &mut Vec<SyntaxNode>,
     ast_blocks: &mut Vec<AstBlock>,
     lines: &mut Vec<(SourceLine, String)>,
     config: &ParseConfig,
@@ -1505,10 +1503,7 @@ fn flush_paragraph(
     )?;
     paragraph.inlines = inline_output.inlines;
     paragraph.inline_problems = inline_output.problems;
-    cst_blocks.push(CstBlock {
-        kind: CstBlockKind::Paragraph,
-        range,
-    });
+    cst_blocks.push(paragraph_syntax(&paragraph));
     ast_blocks.push(AstBlock::Paragraph(paragraph));
     Ok(())
 }
@@ -1546,8 +1541,7 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AstBlock, BlockProblemKind, CstBlockKind, HeadingKind, HeadingProblem, MathProblemKind,
-        parse,
+        AstBlock, BlockProblemKind, HeadingKind, HeadingProblem, MathProblemKind, SyntaxKind, parse,
     };
     use crate::attributes::AttributeOperation;
     use crate::inline::{Inline, MathLanguage};
@@ -1557,9 +1551,9 @@ mod tests {
         let parsed = parse("").expect("valid source");
 
         assert!(parsed.ast.blocks.is_empty());
-        assert_eq!(parsed.cst.blocks().len(), 1);
-        assert_eq!(parsed.cst.blocks()[0].kind, CstBlockKind::BlankLine);
-        assert_eq!(parsed.cst.reconstruct(), "");
+        assert_eq!(parsed.syntax.blocks().len(), 1);
+        assert_eq!(parsed.syntax.blocks()[0].kind(), SyntaxKind::BlankLine);
+        assert_eq!(parsed.syntax.reconstruct(), "");
     }
 
     #[test]
@@ -1575,7 +1569,7 @@ mod tests {
         );
         let parsed = parse(source).expect("valid source");
 
-        assert_eq!(parsed.cst.reconstruct(), source);
+        assert_eq!(parsed.syntax.reconstruct(), source);
         assert_eq!(parsed.ast.attributes.len(), 5);
         assert_eq!(parsed.ast.attributes[0].operation, AttributeOperation::Set);
         assert_eq!(
@@ -1612,7 +1606,7 @@ mod tests {
             panic!("expected paragraph");
         };
         assert_eq!(first.value, "first line\nsecond line");
-        assert_eq!(parsed.cst.reconstruct().as_bytes(), source.as_bytes());
+        assert_eq!(parsed.syntax.reconstruct().as_bytes(), source.as_bytes());
     }
 
     #[test]
@@ -1658,7 +1652,7 @@ mod tests {
         };
         assert_eq!(unsupported.raw, "[role=test]");
         assert_eq!(unsupported.reason, "block attributes are not implemented");
-        assert_eq!(parsed.cst.reconstruct(), source);
+        assert_eq!(parsed.syntax.reconstruct(), source);
     }
 
     #[test]
@@ -1679,7 +1673,7 @@ mod tests {
         assert_eq!(literals[0].value, "<tag>\n*not strong*\n");
         assert_eq!(literals[1].value, "");
         assert!(literals.iter().all(|literal| literal.problems.is_empty()));
-        assert_eq!(parsed.cst.reconstruct(), source);
+        assert_eq!(parsed.syntax.reconstruct(), source);
     }
 
     #[test]
@@ -1712,7 +1706,7 @@ mod tests {
         );
         assert_eq!(block.value, "fn main() {}\n");
         assert!(block.problems.is_empty());
-        assert_eq!(parsed.cst.reconstruct(), source);
+        assert_eq!(parsed.syntax.reconstruct(), source);
     }
 
     #[test]
@@ -1801,8 +1795,8 @@ mod tests {
         let parsed = parse(source).expect("valid source");
 
         assert_eq!(
-            parsed.cst.snapshot(),
-            include_str!("../../../fixtures/paragraph/basic.cst")
+            parsed.syntax.snapshot(),
+            include_str!("../../../fixtures/paragraph/basic.syntax")
         );
         assert_eq!(
             parsed.ast.snapshot(),

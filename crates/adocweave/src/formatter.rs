@@ -4,9 +4,9 @@ use crate::core::Analysis;
 #[cfg(test)]
 use crate::core::{ParseError, ParseOptions, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
-use crate::parser::{CstDocument, FormattingPolicy};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::LineEnding;
+use crate::syntax::{FormattingPolicy, SyntaxNode, SyntaxTree};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NewlineStyle {
@@ -62,17 +62,20 @@ pub fn format_analysis(
     analysis: &Analysis,
     config: &FormatConfig,
 ) -> Result<FormatOutput, PositionError> {
-    format_cst(&analysis.cst, config)
+    format_syntax(&analysis.syntax, config)
 }
 
-fn format_cst(cst: &CstDocument, config: &FormatConfig) -> Result<FormatOutput, PositionError> {
-    let source = cst.source();
-    let source_document = cst.source_document();
-    let protected = cst
+fn format_syntax(
+    syntax: &SyntaxTree,
+    config: &FormatConfig,
+) -> Result<FormatOutput, PositionError> {
+    let source = syntax.source();
+    let source_document = syntax.source_document();
+    let protected = syntax
         .blocks()
         .iter()
-        .filter(|block| block.kind.formatting_policy() == FormattingPolicy::PreserveBytes)
-        .map(|block| block.range)
+        .filter(|block| block.kind().formatting_policy() == FormattingPolicy::PreserveBytes)
+        .map(SyntaxNode::range)
         .collect::<Vec<_>>();
     let last_real_line = source_document
         .lines()
@@ -183,7 +186,8 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 #[cfg(test)]
 mod tests {
     use super::{FormatConfig, NewlineStyle, format};
-    use crate::parser::{AstBlock, CstBlockKind, FormattingPolicy, parse};
+    use crate::parser::{AstBlock, parse};
+    use crate::syntax::{FormattingPolicy, SyntaxKind};
 
     fn semantic_text(source: &str) -> Vec<Vec<String>> {
         parse(source)
@@ -212,24 +216,24 @@ mod tests {
     #[test]
     fn every_cst_block_kind_has_an_explicit_formatting_policy() {
         assert_eq!(
-            CstBlockKind::Paragraph.formatting_policy(),
+            SyntaxKind::Paragraph.formatting_policy(),
             FormattingPolicy::NormalizeLineWhitespace
         );
         assert_eq!(
-            CstBlockKind::BlankLine.formatting_policy(),
+            SyntaxKind::BlankLine.formatting_policy(),
             FormattingPolicy::NormalizeLineWhitespace
         );
         for kind in [
-            CstBlockKind::DocumentTitle,
-            CstBlockKind::Heading,
-            CstBlockKind::MalformedHeading,
-            CstBlockKind::LiteralBlock,
-            CstBlockKind::SourceBlock,
-            CstBlockKind::Unsupported,
-            CstBlockKind::DocumentAttribute,
-            CstBlockKind::BlockAnchor,
-            CstBlockKind::List,
-            CstBlockKind::MathBlock,
+            SyntaxKind::DocumentTitle,
+            SyntaxKind::Heading,
+            SyntaxKind::MalformedHeading,
+            SyntaxKind::LiteralBlock,
+            SyntaxKind::SourceBlock,
+            SyntaxKind::Unsupported,
+            SyntaxKind::DocumentAttribute,
+            SyntaxKind::BlockAnchor,
+            SyntaxKind::List,
+            SyntaxKind::MathBlock,
         ] {
             assert_eq!(kind.formatting_policy(), FormattingPolicy::PreserveBytes);
         }

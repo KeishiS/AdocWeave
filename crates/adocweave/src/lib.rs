@@ -20,11 +20,13 @@ pub mod inline;
 mod json;
 pub mod limits;
 pub mod lint;
+mod lowering;
 pub mod parser;
 pub mod projection;
 pub mod reference;
 pub mod source;
 pub mod source_document;
+pub mod syntax;
 pub mod url;
 
 pub use core::{

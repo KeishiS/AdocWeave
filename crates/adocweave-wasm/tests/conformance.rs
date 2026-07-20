@@ -52,7 +52,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
         }
         let response = result.expect(name);
         assert_eq!(response.api_version, WASM_API_VERSION, "{name}");
-        assert!(!response.cst.is_empty(), "{name}: CST");
+        assert!(!response.syntax.is_empty(), "{name}: syntax tree");
         assert!(!response.ast.is_empty(), "{name}: AST");
         if let Some(file) = entry["expectedHtmlFile"].as_str() {
             assert_eq!(

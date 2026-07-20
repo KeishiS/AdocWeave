@@ -12,11 +12,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::diagnostic::{CoreErrorCode, Diagnostic};
 use crate::limits::{ProcessingLimits, SyntaxMode};
 use crate::lint::{self, LintConfig};
-use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
+use crate::parser::{self, AstBlock, ParsedDocument};
 use crate::source::{PositionError, SourceDocument};
+use crate::syntax::SyntaxTree;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 8;
+pub const CORE_API_VERSION: u16 = 9;
 /// Current host-independent syntax and diagnostic behavior profile.
 pub const CORE_PROFILE_VERSION: u16 = 2;
 
@@ -100,7 +101,7 @@ impl CancellationCheck for CancellationToken {
 #[derive(Debug)]
 pub struct Analysis {
     pub source_id: Option<SourceId>,
-    pub cst: CstDocument,
+    pub syntax: SyntaxTree,
     pub ast: parser::AstDocument,
     pub diagnostics: Vec<Diagnostic>,
     pub reference_targets: Vec<crate::document::ReferenceTarget>,
@@ -109,11 +110,11 @@ pub struct Analysis {
 
 impl Analysis {
     pub fn source(&self) -> &str {
-        self.cst.source()
+        self.syntax.source()
     }
 
     pub fn source_document(&self) -> &SourceDocument {
-        self.cst.source_document()
+        self.syntax.source_document()
     }
 
     pub fn reference_queries(&self) -> Vec<crate::reference::ReferenceQuery> {
@@ -237,7 +238,7 @@ fn analyze_inner(
     }
 
     let shared_source: Arc<str> = Arc::from(source);
-    let ParsedDocument { cst, ast } = parser::parse_shared_cancellable(
+    let ParsedDocument { syntax, ast } = parser::parse_shared_cancellable(
         shared_source,
         &parser::ParseConfig {
             max_inline_depth: limit_to_usize(options.limits.max_inline_depth),
@@ -279,7 +280,8 @@ fn analyze_inner(
     } else {
         crate::diagnostic::Severity::Warning
     };
-    let diagnostics = lint::lint_cst(&cst, &ast, &lint_config).map_err(ParseError::Position)?;
+    let diagnostics =
+        lint::lint_syntax(&syntax, &ast, &lint_config).map_err(ParseError::Position)?;
     let reference_targets = crate::document::reference_targets(&ast);
     let references = collect_references(&ast);
     if cancellation.is_cancelled() {
@@ -288,7 +290,7 @@ fn analyze_inner(
 
     Ok(Analysis {
         source_id: options.source_id.clone(),
-        cst,
+        syntax,
         ast,
         diagnostics,
         reference_targets,
@@ -356,7 +358,7 @@ mod tests {
         let second = analyze("== 日本語\n", &options).expect("analyze");
 
         assert_eq!(first.source_id, second.source_id);
-        assert_eq!(first.cst.snapshot(), second.cst.snapshot());
+        assert_eq!(first.syntax.snapshot(), second.syntax.snapshot());
         assert_eq!(first.ast, second.ast);
         assert_eq!(
             first.source_id.as_ref().map(SourceId::as_str),
@@ -378,7 +380,7 @@ mod tests {
         };
 
         assert_eq!(analysis.source(), "== 所有される見出し\n");
-        assert_eq!(analysis.cst.reconstruct(), analysis.source());
+        assert_eq!(analysis.syntax.reconstruct(), analysis.source());
         assert_eq!(analysis.source_document().line_count(), 2);
     }
 

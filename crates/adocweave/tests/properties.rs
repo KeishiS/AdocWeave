@@ -1,10 +1,10 @@
 use adocweave::document::{generate_heading_ids, reference_targets};
 use adocweave::formatter::{FormatConfig, format_analysis};
 use adocweave::html::{RenderPolicy, render};
-use adocweave::parser::FormattingPolicy;
 use adocweave::projection::{project, searchable_text};
 use adocweave::reference::ReferenceKey;
 use adocweave::source::{PositionEncoding, SourceDocument, TextSize};
+use adocweave::syntax::FormattingPolicy;
 use adocweave::url::{UrlDecision, UrlPolicy};
 use adocweave::{Engine, ParseOptions};
 
@@ -49,8 +49,8 @@ fn arbitrary_utf8_like_corpus_is_lossless_and_has_valid_ranges() {
         let analysis = engine
             .analyze(&source)
             .expect("bounded UTF-8 input analyzes");
-        assert_eq!(analysis.cst.reconstruct(), source);
-        for token in analysis.cst.tokens() {
+        assert_eq!(analysis.syntax.reconstruct(), source);
+        for token in analysis.syntax.tokens() {
             let start = token.range.start().to_usize();
             let end = token.range.end().to_usize();
             assert!(start <= end && end <= source.len());
@@ -88,13 +88,14 @@ fn formatter_preserves_semantics_and_protected_source_regions() {
             format_analysis(&before, &FormatConfig::default()).expect("format generated input");
 
         for block in before
-            .cst
+            .syntax
             .blocks()
             .iter()
-            .filter(|block| block.kind.formatting_policy() == FormattingPolicy::PreserveBytes)
+            .filter(|block| block.kind().formatting_policy() == FormattingPolicy::PreserveBytes)
         {
             assert!(formatted.edits.iter().all(|edit| {
-                edit.range.end() <= block.range.start() || block.range.end() <= edit.range.start()
+                edit.range.end() <= block.range().start()
+                    || block.range().end() <= edit.range.start()
             }));
         }
 

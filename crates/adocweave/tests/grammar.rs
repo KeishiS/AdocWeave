@@ -1,5 +1,6 @@
 use adocweave::inline::{Inline, InlineLiteralKind, InlineStyle};
-use adocweave::parser::{AstBlock, BlockProblemKind, CstBlockKind};
+use adocweave::parser::{AstBlock, BlockProblemKind};
+use adocweave::syntax::SyntaxKind;
 use adocweave::{Analysis, Engine, ParseOptions};
 
 const SOURCE: &str = include_str!("../../../fixtures/grammar/ambiguous.adoc");
@@ -13,10 +14,10 @@ fn parse(source: &str) -> Analysis {
 #[test]
 fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
     let parsed = parse(SOURCE);
-    assert_eq!(parsed.cst.reconstruct(), SOURCE);
+    assert_eq!(parsed.syntax.reconstruct(), SOURCE);
     assert_eq!(
-        parsed.cst.snapshot(),
-        include_str!("../../../fixtures/grammar/ambiguous.cst")
+        parsed.syntax.snapshot(),
+        include_str!("../../../fixtures/grammar/ambiguous.syntax")
     );
     assert_eq!(
         parsed.ast.snapshot(),
@@ -202,22 +203,22 @@ fn grammar_source_attribute_requires_an_adjacent_column_zero_delimiter() {
     );
     assert_eq!(
         parsed
-            .cst
+            .syntax
             .blocks()
             .iter()
-            .map(|block| block.kind)
+            .map(|block| block.kind())
             .collect::<Vec<_>>(),
         [
-            CstBlockKind::Unsupported,
-            CstBlockKind::BlankLine,
-            CstBlockKind::Unsupported,
-            CstBlockKind::Paragraph,
-            CstBlockKind::Unsupported,
-            CstBlockKind::BlankLine,
-            CstBlockKind::Unsupported,
-            CstBlockKind::Unsupported,
-            CstBlockKind::BlankLine,
+            SyntaxKind::Unsupported,
+            SyntaxKind::BlankLine,
+            SyntaxKind::Unsupported,
+            SyntaxKind::Paragraph,
+            SyntaxKind::Unsupported,
+            SyntaxKind::BlankLine,
+            SyntaxKind::Unsupported,
+            SyntaxKind::Unsupported,
+            SyntaxKind::BlankLine,
         ]
     );
-    assert_eq!(parsed.cst.reconstruct(), source);
+    assert_eq!(parsed.syntax.reconstruct(), source);
 }

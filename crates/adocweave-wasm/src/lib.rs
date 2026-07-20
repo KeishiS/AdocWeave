@@ -13,7 +13,7 @@ use adocweave::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 2;
+pub const WASM_API_VERSION: u16 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -141,7 +141,7 @@ pub struct WasmResponse {
     pub generation: u32,
     pub conformance_contract_version: u16,
     pub parse: ParseSummary,
-    pub cst: String,
+    pub syntax: String,
     pub ast: String,
     pub html: String,
     pub diagnostics: Value,
@@ -228,7 +228,7 @@ pub fn process_request(
             node_count: analysis.ast.node_count(),
             reference_count: analysis.references.len(),
         },
-        cst: products.cst,
+        syntax: products.syntax,
         ast: products.ast,
         html: products.html,
         diagnostics,
@@ -357,7 +357,7 @@ mod tests {
             response.conformance_contract_version,
             CONFORMANCE_CONTRACT_VERSION
         );
-        assert!(response.cst.contains("Document@"));
+        assert!(response.syntax.contains("Document@"));
         assert!(response.ast.contains("\"blocks\""));
         assert!(response.html.contains("<h1"));
         assert_eq!(response.symbols[0]["name"], "Title");

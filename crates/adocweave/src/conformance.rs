@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 4;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 5;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -20,7 +20,7 @@ pub const CONFORMANCE_CONTRACT_VERSION: u16 = 4;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConformanceSnapshot {
     pub contract_version: u16,
-    pub cst: String,
+    pub syntax: String,
     pub ast: String,
     pub diagnostics_json: String,
     pub symbols_json: String,
@@ -35,7 +35,7 @@ pub fn snapshot(
 ) -> ConformanceSnapshot {
     ConformanceSnapshot {
         contract_version: CONFORMANCE_CONTRACT_VERSION,
-        cst: canonical_cst(analysis),
+        syntax: canonical_syntax(analysis),
         ast: canonical_ast(&analysis.ast),
         diagnostics_json: render_diagnostics_json(&analysis.diagnostics),
         symbols_json: render_symbols_json(&document_symbols(&analysis.ast)),
@@ -214,10 +214,10 @@ fn range(value: TextRange) -> [u32; 2] {
     [value.start().to_u32(), value.end().to_u32()]
 }
 
-fn canonical_cst(analysis: &Analysis) -> String {
-    let mut output = analysis.cst.snapshot();
+fn canonical_syntax(analysis: &Analysis) -> String {
+    let mut output = analysis.syntax.snapshot();
     output.push_str("Tokens\n");
-    for token in analysis.cst.tokens() {
+    for token in analysis.syntax.tokens() {
         writeln!(
             output,
             "  {:?}@{}..{}",
@@ -246,7 +246,7 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(first.contract_version, CONFORMANCE_CONTRACT_VERSION);
-        assert!(first.cst.contains("Document@"));
+        assert!(first.syntax.contains("Document@"));
         assert!(first.ast.contains("\"schemaVersion\":1"));
         assert!(first.ast.contains("local-reference"));
         assert!(first.projection_json.contains("referenceEdges"));

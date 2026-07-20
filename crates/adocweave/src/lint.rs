@@ -8,11 +8,12 @@ use crate::diagnostic::{
 };
 use crate::document::heading_id_base;
 use crate::inline::InlineProblemKind;
-use crate::parser::{AstBlock, BlockProblemKind, CstDocument, HeadingKind, HeadingProblem};
+use crate::parser::{AstBlock, BlockProblemKind, HeadingKind, HeadingProblem};
 #[cfg(test)]
 use crate::parser::{ParseConfig, parse_with_config};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::LineEnding;
+use crate::syntax::SyntaxTree;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LintRule {
@@ -166,22 +167,22 @@ fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, PositionEr
             ..ParseConfig::default()
         },
     )?;
-    lint_cst(&parsed.cst, &parsed.ast, config)
+    lint_syntax(&parsed.syntax, &parsed.ast, config)
 }
 
 pub fn lint_analysis(
     analysis: &crate::core::Analysis,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    lint_cst(&analysis.cst, &analysis.ast, config)
+    lint_syntax(&analysis.syntax, &analysis.ast, config)
 }
 
-pub(crate) fn lint_cst(
-    cst: &CstDocument,
+pub(crate) fn lint_syntax(
+    syntax: &SyntaxTree,
     document: &crate::parser::AstDocument,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    let source_document = cst.source_document();
+    let source_document = syntax.source_document();
     let mut diagnostics = Vec::new();
     let mut blank_count = 0;
 
@@ -1116,7 +1117,8 @@ mod tests {
 
         assert_eq!(
             lint(source, &config).expect("standalone lint"),
-            super::lint_cst(&parsed.cst, &parsed.ast, &config).expect("lint existing analysis")
+            super::lint_syntax(&parsed.syntax, &parsed.ast, &config)
+                .expect("lint existing analysis")
         );
     }
 
@@ -1151,7 +1153,7 @@ mod tests {
         let source = ":scheme: https\n\n{scheme}://example.com[label]\n";
         let parsed = crate::parser::parse(source).expect("parse");
         let diagnostics =
-            super::lint_cst(&parsed.cst, &parsed.ast, &LintConfig::default()).expect("lint");
+            super::lint_syntax(&parsed.syntax, &parsed.ast, &LintConfig::default()).expect("lint");
 
         assert!(
             !diagnostics
