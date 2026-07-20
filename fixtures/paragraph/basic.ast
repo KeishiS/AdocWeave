@@ -1,0 +1,6 @@
+Document
+  Paragraph@0..32
+    Text@0..15 "First paragraph"
+    Text@16..31 "continues here."
+  Paragraph@33..51
+    Text@33..50 "Second paragraph."

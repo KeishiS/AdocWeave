@@ -7,6 +7,7 @@
 ## 実装範囲
 
 - `render(ast, render_policy)` 相当の公開APIを定義する。
+- HTMLを独立した出力バックエンドとして公開し、解析コアやsemantic ASTからHTML APIへの依存を禁止する。
 - fragmentと完全HTMLのDOM構造、見出しID、class名、属性順、空白および警告の扱いを仕様化する。
 - 出力可能なHTML要素、属性およびclassの許可集合を定義する。
 - URLスキーム、相対URL、外部画像およびdata URIの許否を `RenderPolicy` から注入できるようにする。

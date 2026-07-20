@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fmt;
 
 pub mod diagnostic;
+pub mod parser;
 pub mod source;
 pub mod source_lines;
 
