@@ -31,3 +31,17 @@ cargo test --workspace cancellation
 == 依存関係
 
 * 035
+
+== 実装結果
+
+`adocweave::execution`にruntime非依存の`AnalysisRequest`、`DocumentRevision`、
+`AnalysisResult`、`AnalysisCacheKey`および`ExecutionObservation`を追加した。
+要求は所有ソースと完全な`ParseOptions`を持ち、結果は文書revision一致と未キャンセルを
+満たす場合だけ採用できる。
+
+キャッシュキーにはSHA-256を採用し、生入力、`SourceId`、構文プロファイル、全処理上限、
+保護属性、URLポリシーおよび`CORE_API_VERSION`を規範順で符号化する。網羅的な型分解により
+設定フィールド追加時の更新漏れをコンパイルエラーにする。
+
+規範的な実行順序、panic隔離および本文を含まない観測項目は
+xref:../docs/server-execution.adoc[ホスト実行・キャッシュ契約]に記載する。

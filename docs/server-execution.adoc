@@ -1,0 +1,61 @@
+= ホスト実行・キャッシュ契約
+
+この契約は、サーバ、デスクトップアプリ、Language ServerおよびWorkerがAdocWeaveの
+同期CPU解析を安全に実行するためのホスト非依存境界を定義する。コアcrateはthread pool、
+async runtime、HTTP、DB、時刻およびログ出力を所有しない。
+
+== 所有権と実行順序
+
+ホストは`AnalysisRequest`へ次を所有値として渡す。
+
+* 不透明な`SourceId`
+* ホストの文書versionと単調増加generation
+* `Arc<str>`の入力スナップショット
+* 完全な`ParseOptions`
+
+推奨手順は次のとおりである。
+
+. ホストの逐次更新処理で新しいgenerationとキャンセルtokenを作る。
+. ホストが管理する有界CPUワーカーのpermitを得る。
+. `AnalysisRequest::analyze`へtokenを`CancellationCheck`として渡す。
+. 結果を共有状態へ入れる前に`AnalysisResult::is_current`を呼ぶ。
+. 文書revisionが一致し、tokenが未キャンセルの場合だけ結果を採用する。
+
+Semaphore、`spawn_blocking`、thread pool等の具体的な投入機構はホストが選ぶ。待ち行列にも
+明示的な上限を設け、runtime既定の無制限queueをAdocWeaveの資源制限として扱わない。
+
+`AnalysisRequest::analyze`はpanicを捕捉しない。通常入力の失敗は`ParseError`であり、
+panic隔離とworker再起動はFFI、task、thread等のホスト信頼境界で行う。panicを構文診断へ
+変換して処理継続したように見せてはならない。
+
+== キャッシュキー
+
+`AnalysisCacheKey`はSHA-256で次を長さ区切りの規範表現へ符号化する。
+
+* `CORE_API_VERSION`
+* 生入力byte列
+* `SourceId`
+* 構文プロファイルversionとmode
+* `ProcessingLimits`の全フィールド
+* 保護属性の全名前と値
+* `UrlPolicy`の全フィールドと許可scheme
+
+`BTreeMap`と`BTreeSet`の規範順を使用するため、挿入順は結果に影響しない。
+`ParseOptions`またはその構成型へフィールドを追加すると、網羅的分解がコンパイルエラーに
+なり、キャッシュキー更新漏れを防ぐ。
+
+文書versionとgenerationはキャッシュキーへ含めない。同じ入力・設定・処理系なら解析物を
+共有できるためである。ただし、キャッシュから得た解析物を公開する際のrevision採用判定は
+省略してはならない。`SourceId`は`Analysis`とprojectionの出力へ現れるためキーへ含める。
+
+== 観測
+
+通常ログ、メトリクスおよびtraceは`ExecutionObservation`相当の次の値だけで成立させる。
+
+* 成功、キャンセル、入力不正、上限超過、失敗、panicまたはstaleの結果分類
+* 処理時間
+* 入力・出力byte数
+* 診断数
+
+入力本文、展開後属性値、リンク先、xref locatorおよび生成HTMLを通常の観測情報へ含めない。
+詳細本文が必要なデバッグ機能は、ホスト側で明示的なopt-inとアクセス制御を設ける。

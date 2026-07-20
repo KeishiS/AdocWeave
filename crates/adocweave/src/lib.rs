@@ -11,6 +11,7 @@ pub mod attributes;
 pub mod core;
 pub mod diagnostic;
 pub mod document;
+pub mod execution;
 pub mod formatter;
 pub mod html;
 pub mod inline;

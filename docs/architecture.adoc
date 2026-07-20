@@ -91,3 +91,7 @@ client通信のawait中に保持してはならない。
 
 通知順序、backpressure、キャンセルおよび検証項目の詳細は
 xref:language-server.adoc[Language Server設計]で定義する。
+
+Language Server以外のサーバ、Workerおよびデスクトップホストも
+xref:server-execution.adoc[ホスト実行・キャッシュ契約]に従い、同じrevision採用判定と
+本文を含まない観測モデルを使用する。
