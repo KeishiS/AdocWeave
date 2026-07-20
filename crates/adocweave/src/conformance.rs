@@ -6,9 +6,12 @@ use crate::Analysis;
 use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, ResolvedReference, render_with_resolutions};
+use crate::inline::{Inline, ReferenceDestination};
+use crate::parser::{AstBlock, AstDocument, ListBlock, ListItem};
 use crate::projection::project;
+use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 2;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 3;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -33,13 +36,191 @@ pub fn snapshot(
     ConformanceSnapshot {
         contract_version: CONFORMANCE_CONTRACT_VERSION,
         cst: canonical_cst(analysis),
-        ast: serde_json::to_string(&analysis.ast)
-            .expect("the canonical AST contains only serializable owned values"),
+        ast: canonical_ast(&analysis.ast),
         diagnostics_json: render_diagnostics_json(&analysis.diagnostics),
         symbols_json: render_symbols_json(&document_symbols(&analysis.ast)),
         projection_json: project(analysis, resolutions).render_json(),
         html: render_with_resolutions(&analysis.ast, policy, resolutions).html,
     }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CanonicalAst {
+    schema_version: u16,
+    blocks: Vec<CanonicalNode>,
+    attributes: Vec<CanonicalNode>,
+    anchors: Vec<CanonicalNode>,
+}
+
+#[derive(serde::Serialize)]
+struct CanonicalNode {
+    kind: &'static str,
+    range: [u32; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    children: Vec<CanonicalNode>,
+}
+
+fn canonical_ast(document: &AstDocument) -> String {
+    let dto = CanonicalAst {
+        schema_version: 1,
+        blocks: document.blocks.iter().map(block_node).collect(),
+        attributes: document
+            .attributes
+            .iter()
+            .map(|attribute| CanonicalNode {
+                kind: "attribute",
+                range: range(attribute.range),
+                value: Some(format!("{}={}", attribute.name, attribute.raw_value)),
+                children: Vec::new(),
+            })
+            .collect(),
+        anchors: document
+            .anchors
+            .iter()
+            .map(|anchor| CanonicalNode {
+                kind: "anchor",
+                range: range(anchor.range),
+                value: Some(anchor.id.clone()),
+                children: Vec::new(),
+            })
+            .collect(),
+    };
+    serde_json::to_string(&dto).expect("canonical DTO contains owned serializable values")
+}
+
+fn block_node(block: &AstBlock) -> CanonicalNode {
+    match block {
+        AstBlock::Heading(node) => CanonicalNode {
+            kind: match node.kind {
+                crate::parser::HeadingKind::DocumentTitle => "document-title",
+                crate::parser::HeadingKind::Section { .. } => "section",
+            },
+            range: range(node.range),
+            value: Some(node.text.clone()),
+            children: inline_nodes(&node.inlines),
+        },
+        AstBlock::Paragraph(node) => CanonicalNode {
+            kind: "paragraph",
+            range: range(node.range),
+            value: None,
+            children: node
+                .lines
+                .iter()
+                .map(|line| CanonicalNode {
+                    kind: "line",
+                    range: range(line.range),
+                    value: Some(line.value.clone()),
+                    children: inline_nodes(&line.inlines),
+                })
+                .collect(),
+        },
+        AstBlock::Literal(node) => leaf("literal-block", node.range, &node.value),
+        AstBlock::Source(node) => CanonicalNode {
+            kind: "source-block",
+            range: range(node.range),
+            value: Some(format!(
+                "{}:{}",
+                node.language.as_deref().unwrap_or(""),
+                node.value
+            )),
+            children: Vec::new(),
+        },
+        AstBlock::List(node) => list_node(node),
+        AstBlock::Math(node) => leaf("math-block", node.range, &node.value),
+        AstBlock::Unsupported(node) => leaf("unsupported", node.range, &node.raw),
+    }
+}
+
+fn list_node(list: &ListBlock) -> CanonicalNode {
+    CanonicalNode {
+        kind: match list.kind {
+            crate::parser::ListKind::Unordered => "unordered-list",
+            crate::parser::ListKind::Ordered => "ordered-list",
+        },
+        range: range(list.range),
+        value: None,
+        children: list.items.iter().map(list_item_node).collect(),
+    }
+}
+
+fn list_item_node(item: &ListItem) -> CanonicalNode {
+    let mut children = inline_nodes(&item.inlines);
+    children.extend(item.children.iter().map(list_node));
+    children.extend(item.continuations.iter().map(block_node));
+    CanonicalNode {
+        kind: "list-item",
+        range: range(item.range),
+        value: Some(item.text.clone()),
+        children,
+    }
+}
+
+fn inline_nodes(inlines: &[Inline]) -> Vec<CanonicalNode> {
+    inlines.iter().map(inline_node).collect()
+}
+
+fn inline_node(inline: &Inline) -> CanonicalNode {
+    match inline {
+        Inline::Text(node) => leaf("text", node.range, &node.value),
+        Inline::Literal {
+            range: node_range,
+            value,
+            ..
+        } => leaf("monospace", *node_range, value),
+        Inline::Styled {
+            style,
+            range: node_range,
+            children,
+            ..
+        } => CanonicalNode {
+            kind: match style {
+                crate::inline::InlineStyle::Strong => "strong",
+                crate::inline::InlineStyle::Emphasis => "emphasis",
+            },
+            range: range(*node_range),
+            value: None,
+            children: inline_nodes(children),
+        },
+        Inline::AttributeReference {
+            range: node_range,
+            name,
+            ..
+        } => leaf("attribute-reference", *node_range, name),
+        Inline::Link(node) => CanonicalNode {
+            kind: "link",
+            range: range(node.range),
+            value: Some(node.target.clone()),
+            children: inline_nodes(&node.label),
+        },
+        Inline::Reference(node) => CanonicalNode {
+            kind: match node.destination {
+                ReferenceDestination::Local { .. } => "local-reference",
+                ReferenceDestination::Document { .. } => "document-reference",
+                ReferenceDestination::Scheme { .. } => "scheme-reference",
+                ReferenceDestination::Invalid => "invalid-reference",
+            },
+            range: range(node.range),
+            value: Some(node.target_source.clone()),
+            children: inline_nodes(&node.label),
+        },
+        Inline::Formula(node) => leaf("inline-math", node.range, &node.value),
+    }
+}
+
+fn leaf(kind: &'static str, node_range: TextRange, value: &str) -> CanonicalNode {
+    CanonicalNode {
+        kind,
+        range: range(node_range),
+        value: Some(value.to_owned()),
+        children: Vec::new(),
+    }
+}
+
+fn range(value: TextRange) -> [u32; 2] {
+    [value.start().to_u32(), value.end().to_u32()]
 }
 
 fn canonical_cst(analysis: &Analysis) -> String {
@@ -75,8 +256,8 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.contract_version, CONFORMANCE_CONTRACT_VERSION);
         assert!(first.cst.contains("Document@"));
-        assert!(first.ast.contains("\"anchors\""));
-        assert!(first.ast.contains("Reference"));
+        assert!(first.ast.contains("\"schemaVersion\":1"));
+        assert!(first.ast.contains("local-reference"));
         assert!(first.projection_json.contains("referenceEdges"));
         assert!(first.html.contains("href=\"#target\""));
     }

@@ -6,7 +6,7 @@
     "coreApi": 6,
     "html": 2,
     "projection": 1,
-    "conformance": 2,
+    "conformance": 3,
     "wasmApi": 2,
     "workerProtocol": 1
   }

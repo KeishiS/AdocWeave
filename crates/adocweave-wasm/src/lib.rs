@@ -353,7 +353,7 @@ mod tests {
 
         assert_eq!(response.version, 3);
         assert_eq!(response.generation, 7);
-        assert_eq!(response.conformance_contract_version, 2);
+        assert_eq!(response.conformance_contract_version, 3);
         assert!(response.cst.contains("Document@"));
         assert!(response.ast.contains("\"blocks\""));
         assert!(response.html.contains("<h1"));
