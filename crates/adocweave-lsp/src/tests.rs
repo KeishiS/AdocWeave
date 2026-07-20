@@ -86,14 +86,10 @@ fn change(
 }
 
 fn adopt(service: &mut LanguageService, job: AnalysisJob) {
-    use adocweave::{Engine, ParseOptions, SourceId};
-
-    let analysis = Engine::new(ParseOptions {
-        source_id: Some(SourceId::new(job.uri.clone())),
-        ..ParseOptions::default()
-    })
-    .analyze_cancellable(&job.source, job.cancellation.as_ref())
-    .expect("analysis");
+    let analysis = job
+        .request
+        .analyze(job.cancellation.as_ref())
+        .expect("analysis");
     assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
 }
 

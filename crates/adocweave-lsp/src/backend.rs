@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use adocweave::{CancellationCheck, CancellationToken, Engine, ParseOptions, SourceId};
+use adocweave::{CancellationCheck, CancellationToken};
 use async_lsp::concurrency::ConcurrencyLayer;
 use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
 use async_lsp::panic::CatchUnwindLayer;
@@ -38,7 +38,7 @@ struct AnalysisTask {
 
 struct AnalysisCompleted {
     job: AnalysisJob,
-    result: Result<adocweave::Analysis, String>,
+    result: Result<adocweave::AnalysisResult, String>,
 }
 
 impl Backend {
@@ -260,7 +260,7 @@ impl Backend {
         let client = self.client.clone();
         let debounce_ms = self.service.debounce_ms();
         let uri = job.uri.clone();
-        let generation = job.generation;
+        let generation = job.request.revision.generation;
         let handle = tokio::spawn(async move {
             if debounce_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
@@ -273,12 +273,10 @@ impl Backend {
             }
             let worker_job = job.clone();
             let result = tokio::task::spawn_blocking(move || {
-                Engine::new(ParseOptions {
-                    source_id: Some(SourceId::new(worker_job.uri.clone())),
-                    ..ParseOptions::default()
-                })
-                .analyze_cancellable(&worker_job.source, worker_job.cancellation.as_ref())
-                .map_err(|error| error.to_string())
+                worker_job
+                    .request
+                    .analyze(worker_job.cancellation.as_ref())
+                    .map_err(|error| error.to_string())
             })
             .await
             .unwrap_or_else(|error| Err(format!("analysis worker failed: {error}")));
@@ -295,7 +293,7 @@ impl Backend {
         if self
             .analysis_tasks
             .get(&completed.job.uri)
-            .is_some_and(|task| task.generation == completed.job.generation)
+            .is_some_and(|task| task.generation == completed.job.request.revision.generation)
         {
             self.analysis_tasks.remove(&completed.job.uri);
         }

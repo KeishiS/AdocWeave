@@ -34,6 +34,7 @@ pub use core::{
     Analysis, CORE_API_VERSION, CORE_PROFILE_VERSION, CancellationCheck, CancellationToken, Engine,
     NeverCancel, ParseError, ParseOptions, SourceId, analyze, analyze_cancellable,
 };
+pub use execution::{AnalysisRequest, AnalysisResult, DocumentRevision};
 
 pub const PRODUCT_NAME: &str = "AdocWeave";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

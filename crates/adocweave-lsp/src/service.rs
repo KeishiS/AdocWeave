@@ -209,10 +209,10 @@ impl LanguageService {
         let Some(current) = self.documents.get(params.text_document.uri.as_str()) else {
             return Ok(None);
         };
-        if params.text_document.version <= current.version {
+        if i64::from(params.text_document.version) <= current.request.revision.version {
             return Ok(None);
         }
-        let mut source = current.source.to_string();
+        let mut source = current.request.source.to_string();
         for change in params.content_changes {
             match change.range {
                 None => source = change.text,
@@ -244,8 +244,8 @@ impl LanguageService {
         ))
     }
 
-    pub fn adopt(&mut self, job: &AnalysisJob, analysis: adocweave::Analysis) -> Adoption {
-        self.documents.adopt(job, analysis)
+    pub fn adopt(&mut self, job: &AnalysisJob, result: adocweave::AnalysisResult) -> Adoption {
+        self.documents.adopt(job, result)
     }
 
     pub fn close(&mut self, uri: &lsp::Url) -> bool {
@@ -288,7 +288,7 @@ impl LanguageService {
             return Ok(lsp::PublishDiagnosticsParams::new(
                 uri.clone(),
                 Vec::new(),
-                Some(document.version),
+                Some(revision_version_i32(&document.request.revision)),
             ));
         };
         let diagnostics = analysis
@@ -319,7 +319,7 @@ impl LanguageService {
         Ok(lsp::PublishDiagnosticsParams::new(
             uri.clone(),
             diagnostics,
-            Some(document.version),
+            Some(revision_version_i32(&document.request.revision)),
         ))
     }
 
@@ -375,7 +375,7 @@ impl LanguageService {
                             lsp::TextDocumentEdit {
                                 text_document: lsp::OptionalVersionedTextDocumentIdentifier {
                                     uri: uri.clone(),
-                                    version: Some(document.version),
+                                    version: Some(revision_version_i32(&document.revision)),
                                 },
                                 edits,
                             },
@@ -1020,11 +1020,15 @@ fn host_reference_request(
 ) -> HostReferenceRequest {
     HostReferenceRequest {
         source: uri.clone(),
-        source_version: document.version,
-        source_generation: document.generation,
+        source_version: revision_version_i32(&document.revision),
+        source_generation: document.revision.generation,
         target,
         encoding,
     }
+}
+
+fn revision_version_i32(revision: &adocweave::DocumentRevision) -> i32 {
+    i32::try_from(revision.version).expect("LSP document versions originate as i32")
 }
 
 fn valid_anchor_name(value: &str) -> bool {

@@ -3,23 +3,22 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use adocweave::{Analysis, CancellationToken};
+use adocweave::{
+    Analysis, AnalysisRequest, AnalysisResult, CancellationToken, DocumentRevision, ParseOptions,
+    SourceId,
+};
 
 #[derive(Clone, Debug)]
 pub struct AnalysisJob {
     pub uri: String,
-    pub version: i32,
-    pub generation: u64,
-    pub source: Arc<str>,
+    pub request: AnalysisRequest,
     pub cancellation: Arc<CancellationToken>,
 }
 
 #[derive(Clone, Debug)]
 pub struct DocumentState {
     pub uri: String,
-    pub version: i32,
-    pub generation: u64,
-    pub source: Arc<str>,
+    pub request: AnalysisRequest,
     pub analysis: Option<Arc<Analysis>>,
     cancellation: Arc<CancellationToken>,
 }
@@ -27,8 +26,7 @@ pub struct DocumentState {
 #[derive(Clone, Debug)]
 pub struct DocumentSnapshot {
     pub uri: String,
-    pub version: i32,
-    pub generation: u64,
+    pub revision: DocumentRevision,
     pub analysis: Arc<Analysis>,
 }
 
@@ -54,8 +52,7 @@ impl DocumentStore {
         let document = self.documents.get(uri)?;
         Some(DocumentSnapshot {
             uri: document.uri.clone(),
-            version: document.version,
-            generation: document.generation,
+            revision: document.request.revision.clone(),
             analysis: document.analysis.clone()?,
         })
     }
@@ -82,9 +79,7 @@ impl DocumentStore {
             uri.clone(),
             DocumentState {
                 uri,
-                version,
-                generation: job.generation,
-                source: job.source.clone(),
+                request: job.request.clone(),
                 analysis: None,
                 cancellation: job.cancellation.clone(),
             },
@@ -94,7 +89,7 @@ impl DocumentStore {
 
     pub fn begin_change(&mut self, uri: &str, version: i32, text: String) -> Option<AnalysisJob> {
         let current = self.documents.get(uri)?;
-        if version <= current.version {
+        if i64::from(version) <= current.request.revision.version {
             return None;
         }
         current.cancellation.cancel();
@@ -102,25 +97,23 @@ impl DocumentStore {
         let current = Arc::make_mut(&mut self.documents)
             .get_mut(uri)
             .expect("document existence checked");
-        current.version = version;
-        current.generation = job.generation;
-        current.source = job.source.clone();
+        current.request = job.request.clone();
         current.analysis = None;
         current.cancellation = job.cancellation.clone();
         Some(job)
     }
 
-    pub fn adopt(&mut self, job: &AnalysisJob, analysis: Analysis) -> Adoption {
+    pub fn adopt(&mut self, job: &AnalysisJob, result: AnalysisResult) -> Adoption {
         let Some(document) = self.documents.get(&job.uri) else {
             return Adoption::Closed;
         };
-        if document.generation != job.generation || document.version != job.version {
+        if !result.is_current(&document.request.revision, job.cancellation.as_ref()) {
             return Adoption::Stale;
         }
         let document = Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
             .expect("document existence checked");
-        document.analysis = Some(Arc::new(analysis));
+        document.analysis = Some(Arc::new(result.analysis));
         Adoption::Adopted
     }
 
@@ -143,11 +136,16 @@ impl DocumentStore {
 
     fn new_job(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
         self.next_generation = self.next_generation.saturating_add(1);
+        let request = AnalysisRequest::new(
+            Some(SourceId::new(uri.clone())),
+            i64::from(version),
+            self.next_generation,
+            text,
+            ParseOptions::default(),
+        );
         AnalysisJob {
             uri,
-            version,
-            generation: self.next_generation,
-            source: Arc::from(text),
+            request,
             cancellation: Arc::new(CancellationToken::new()),
         }
     }
@@ -155,17 +153,12 @@ impl DocumentStore {
 
 #[cfg(test)]
 mod tests {
-    use adocweave::{CancellationCheck, Engine, NeverCancel, ParseOptions, SourceId};
+    use adocweave::{CancellationCheck, NeverCancel};
 
     use super::{Adoption, AnalysisJob, DocumentStore};
 
-    fn analyze(job: &AnalysisJob) -> adocweave::Analysis {
-        Engine::new(ParseOptions {
-            source_id: Some(SourceId::new(job.uri.clone())),
-            ..ParseOptions::default()
-        })
-        .analyze_cancellable(&job.source, &NeverCancel)
-        .expect("analysis")
+    fn analyze(job: &AnalysisJob) -> adocweave::AnalysisResult {
+        job.request.analyze(&NeverCancel).expect("analysis")
     }
 
     #[test]
@@ -181,8 +174,11 @@ mod tests {
         assert_eq!(store.adopt(&old, analyze(&old)), Adoption::Stale);
         assert_eq!(store.adopt(&new, analyze(&new)), Adoption::Adopted);
         let snapshot = store.snapshot("file:///a.adoc").expect("snapshot");
-        assert_eq!(snapshot.version, 2);
-        assert_eq!(snapshot.generation, new.generation);
+        assert_eq!(snapshot.revision.version, 2);
+        assert_eq!(
+            snapshot.revision.generation,
+            new.request.revision.generation
+        );
         assert_eq!(snapshot.analysis.source(), "= New");
     }
 
