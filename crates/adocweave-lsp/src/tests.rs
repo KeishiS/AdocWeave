@@ -1,11 +1,14 @@
 //! Typed Language Server service and transport tests.
 
+use std::sync::Arc;
+
+use adocweave::reference::ReferenceKey;
 use async_lsp::lsp_types as lsp;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-use super::{LanguageService, PositionEncoding, run};
+use super::{HostReferenceIndex, HostReferenceRequest, LanguageService, PositionEncoding, run};
 use crate::state::{Adoption, AnalysisJob};
 
 fn typed<T: DeserializeOwned>(value: Value) -> T {
@@ -70,7 +73,7 @@ fn change(
     version: i32,
     changes: Value,
 ) -> Result<bool, String> {
-    let job = service.begin_change_full(typed(json!({
+    let job = service.begin_change(typed(json!({
         "textDocument": {"uri": uri, "version": version},
         "contentChanges": changes
     })))?;
@@ -101,9 +104,32 @@ fn initialize_negotiates_encoding_and_advertises_existing_features() {
 
     assert_eq!(service.position_encoding, PositionEncoding::Utf8);
     assert_eq!(value["capabilities"]["positionEncoding"], "utf-8");
-    assert_eq!(value["capabilities"]["textDocumentSync"]["change"], 1);
+    assert_eq!(value["capabilities"]["textDocumentSync"]["change"], 2);
     assert_eq!(value["capabilities"]["documentSymbolProvider"], true);
+    assert_eq!(value["capabilities"]["definitionProvider"], true);
+    assert_eq!(value["capabilities"]["referencesProvider"], true);
+    assert!(value["capabilities"]["documentLinkProvider"].is_object());
+    assert!(value["capabilities"]["semanticTokensProvider"].is_object());
     assert_eq!(value["serverInfo"]["name"], "adocweave-lsp");
+}
+
+#[test]
+fn workspace_configuration_updates_and_caps_debounce() {
+    let mut service = LanguageService::default();
+    service
+        .update_configuration(json!({"adocweave": {"debounceMs": 25}}))
+        .expect("configuration");
+    assert_eq!(service.debounce_ms(), 25);
+
+    service
+        .update_configuration(json!({"debounceMs": 50_000}))
+        .expect("configuration");
+    assert_eq!(service.debounce_ms(), 1_000);
+    assert!(
+        service
+            .update_configuration(json!({"unknown": true}))
+            .is_err()
+    );
 }
 
 #[test]
@@ -146,22 +172,33 @@ fn document_updates_are_ordered_and_stale_versions_are_ignored() {
 }
 
 #[test]
-fn incremental_changes_are_rejected_without_changing_the_snapshot() {
+fn incremental_changes_apply_sequentially_with_negotiated_positions() {
     let mut service = LanguageService::default();
-    open(&mut service, "file:///a.adoc", 1, "one");
-    let result = change(
-        &mut service,
-        "file:///a.adoc",
-        2,
-        json!([{
-            "range": {
-                "start": {"line": 0, "character": 0},
-                "end": {"line": 0, "character": 3}
-            },
-            "text": "two"
-        }]),
+    open(&mut service, "file:///a.adoc", 1, "a😀c");
+    assert!(
+        change(
+            &mut service,
+            "file:///a.adoc",
+            2,
+            json!([
+                {
+                    "range": {
+                        "start": {"line": 0, "character": 1},
+                        "end": {"line": 0,"character": 3}
+                    },
+                    "text": "b"
+                },
+                {
+                    "range": {
+                        "start": {"line": 0, "character": 2},
+                        "end": {"line": 0,"character": 3}
+                    },
+                    "text": "d"
+                }
+            ]),
+        )
+        .expect("incremental change")
     );
-    assert!(result.is_err());
     assert_eq!(
         service
             .documents
@@ -171,7 +208,39 @@ fn incremental_changes_are_rejected_without_changing_the_snapshot() {
             .as_ref()
             .expect("analysis")
             .source(),
-        "one"
+        "abd"
+    );
+}
+
+#[test]
+fn incremental_changes_preserve_crlf_line_boundaries() {
+    let mut service = LanguageService::default();
+    open(&mut service, "file:///crlf.adoc", 1, "one\r\ntwo\r\n");
+    assert!(
+        change(
+            &mut service,
+            "file:///crlf.adoc",
+            2,
+            json!([{
+                "range": {
+                    "start": {"line": 1, "character": 0},
+                    "end": {"line": 1, "character": 3}
+                },
+                "text": "second"
+            }])
+        )
+        .expect("incremental change")
+    );
+    assert_eq!(
+        service
+            .documents
+            .get("file:///crlf.adoc")
+            .expect("document")
+            .analysis
+            .as_ref()
+            .expect("analysis")
+            .source(),
+        "one\r\nsecond\r\n"
     );
 }
 
@@ -182,10 +251,8 @@ fn diagnostics_use_current_version_codes_and_unicode_positions() {
         (PositionEncoding::Utf8, 10, 11),
         (PositionEncoding::Utf16, 5, 6),
     ] {
-        let mut service = LanguageService {
-            position_encoding: encoding,
-            ..LanguageService::default()
-        };
+        let mut service = LanguageService::default();
+        service.position_encoding = encoding;
         open(&mut service, "file:///unicode.adoc", 3, text);
         let diagnostics = service
             .diagnostics(&uri("file:///unicode.adoc"))
@@ -350,6 +417,294 @@ fn hover_and_completion_use_the_same_analysis_snapshot() {
 }
 
 #[test]
+fn hover_and_completion_cover_attributes_references_links_and_math() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///rich-features.adoc",
+        1,
+        "= Title\n:name: value\n\n[[part]]\n== Part\n\nhttps://example.com[Site] <<part>> stem:[x+y]\n",
+    );
+    let document_uri = uri("file:///rich-features.adoc");
+    for (position, expected) in [
+        (lsp::Position::new(1, 2), "document attribute"),
+        (lsp::Position::new(3, 3), "reference target"),
+        (lsp::Position::new(6, 3), "external link"),
+        (lsp::Position::new(6, 29), "cross reference"),
+        (lsp::Position::new(6, 43), "LaTeX formula"),
+    ] {
+        let hover = service
+            .hover(&document_uri, position)
+            .expect("hover")
+            .expect("value");
+        let value = serde_json::to_value(hover).expect("serialize");
+        assert!(
+            value["contents"]["value"]
+                .as_str()
+                .expect("hover text")
+                .contains(expected),
+            "expected {expected} at {position:?}: {value}"
+        );
+    }
+    let completion = service
+        .completion(&document_uri, lsp::Position::new(6, 31))
+        .expect("completion")
+        .expect("response");
+    let value = serde_json::to_value(completion).expect("serialize");
+    assert!(
+        value
+            .as_array()
+            .expect("items")
+            .iter()
+            .any(|item| item["label"] == "part")
+    );
+}
+
+fn open_reference_workspace(service: &mut LanguageService) {
+    open(
+        service,
+        "file:///a.adoc",
+        1,
+        "[[target]]\n== Target\n\nSee <<target>> and xref:b.adoc#other[B].\nhttps://example.com[Site]\n",
+    );
+    open(
+        service,
+        "file:///b.adoc",
+        1,
+        "[[other]]\n== Other\n\nxref:a.adoc#target[A]\n",
+    );
+}
+
+#[test]
+fn definition_resolves_local_and_open_document_targets() {
+    let mut service = LanguageService::default();
+    open_reference_workspace(&mut service);
+    let document_uri = uri("file:///a.adoc");
+
+    let local = service
+        .definition(&document_uri, lsp::Position::new(3, 7))
+        .expect("definition")
+        .expect("local definition");
+    let local = serde_json::to_value(local).expect("serialize");
+    assert_eq!(local["uri"], "file:///a.adoc");
+    assert_eq!(local["range"]["start"]["line"], 1);
+
+    let external = service
+        .definition(&document_uri, lsp::Position::new(3, 28))
+        .expect("definition")
+        .expect("document definition");
+    let external = serde_json::to_value(external).expect("serialize");
+    assert_eq!(external["uri"], "file:///b.adoc");
+    assert_eq!(external["range"]["start"]["line"], 1);
+}
+
+#[test]
+fn references_use_one_workspace_identity_for_local_and_document_xrefs() {
+    let mut service = LanguageService::default();
+    open_reference_workspace(&mut service);
+    let locations = service
+        .references(&uri("file:///a.adoc"), lsp::Position::new(0, 3), true)
+        .expect("references")
+        .expect("locations");
+    let values = serde_json::to_value(locations).expect("serialize");
+
+    assert_eq!(values.as_array().expect("locations").len(), 3);
+    assert!(
+        values
+            .as_array()
+            .expect("locations")
+            .iter()
+            .any(|location| location["uri"] == "file:///b.adoc")
+    );
+}
+
+#[test]
+fn references_report_unicode_ranges_in_utf8_and_utf16() {
+    let source = "[[節😀]]\n== 見出し\n\n<<節😀>>\n";
+    for (encoding, expected_end) in [(PositionEncoding::Utf8, 9), (PositionEncoding::Utf16, 5)] {
+        let mut service = LanguageService::default();
+        service.position_encoding = encoding;
+        open(&mut service, "file:///unicode-ref.adoc", 1, source);
+        let references = service
+            .references(
+                &uri("file:///unicode-ref.adoc"),
+                lsp::Position::new(0, 2),
+                false,
+            )
+            .expect("references")
+            .expect("locations");
+
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].range.start.character, 2);
+        assert_eq!(references[0].range.end.character, expected_end);
+    }
+}
+
+#[test]
+fn document_links_keep_safe_urls_and_xrefs_separate_but_navigable() {
+    let mut service = LanguageService::default();
+    open_reference_workspace(&mut service);
+    let links = service
+        .document_links(&uri("file:///a.adoc"))
+        .expect("document links")
+        .expect("links");
+    let values = serde_json::to_value(links).expect("serialize");
+    let targets = values
+        .as_array()
+        .expect("links")
+        .iter()
+        .map(|link| link["target"].as_str().expect("target"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(targets.len(), 3);
+    assert!(targets.contains(&"https://example.com/"));
+    assert!(targets.contains(&"file:///a.adoc#target"));
+    assert!(targets.contains(&"file:///b.adoc#other"));
+}
+
+#[test]
+fn semantic_tokens_are_sorted_and_delta_encoded_from_the_analysis() {
+    let mut service = LanguageService::default();
+    open_reference_workspace(&mut service);
+    let tokens = service
+        .semantic_tokens(&uri("file:///a.adoc"))
+        .expect("semantic tokens")
+        .expect("tokens");
+    let value = serde_json::to_value(tokens).expect("serialize");
+    let data = value["data"].as_array().expect("data");
+
+    assert!(!data.is_empty());
+    assert_eq!(data.len() % 5, 0);
+    assert_eq!(data[0], 0);
+}
+
+#[derive(Debug)]
+struct TestHostIndex {
+    complete: bool,
+    fail: bool,
+}
+
+impl HostReferenceIndex for TestHostIndex {
+    fn definition(&self, request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String> {
+        assert!(request.source_generation > 0);
+        if self.fail {
+            return Err("host index unavailable".to_owned());
+        }
+        Ok(
+            matches!(request.target, ReferenceKey::Scheme { .. }).then(|| {
+                lsp::Location::new(
+                    uri("file:///resolved-note.adoc"),
+                    lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 5)),
+                )
+            }),
+        )
+    }
+
+    fn references(
+        &self,
+        request: &HostReferenceRequest,
+        _include_declaration: bool,
+    ) -> Result<Option<Vec<lsp::Location>>, String> {
+        assert!(request.source_generation > 0);
+        if self.fail {
+            return Err("host index unavailable".to_owned());
+        }
+        Ok(self.complete.then(|| {
+            vec![
+                lsp::Location::new(
+                    request.source.clone(),
+                    lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 8)),
+                ),
+                lsp::Location::new(
+                    uri("file:///b.adoc"),
+                    lsp::Range::new(lsp::Position::new(3, 7), lsp::Position::new(3, 13)),
+                ),
+            ]
+        }))
+    }
+
+    fn is_complete(&self) -> bool {
+        self.complete
+    }
+}
+
+#[test]
+fn definition_uses_injected_host_index_for_scheme_references() {
+    let mut service = LanguageService::with_host_index(Arc::new(TestHostIndex {
+        complete: true,
+        fail: false,
+    }));
+    open(&mut service, "file:///a.adoc", 1, "xref:note:42[Note]\n");
+    let definition = service
+        .definition(&uri("file:///a.adoc"), lsp::Position::new(0, 8))
+        .expect("definition")
+        .expect("resolved");
+    let value = serde_json::to_value(definition).expect("serialize");
+    assert_eq!(value["uri"], "file:///resolved-note.adoc");
+    let links = service
+        .document_links(&uri("file:///a.adoc"))
+        .expect("document links")
+        .expect("links");
+    assert_eq!(
+        links[0].target.as_ref().map(lsp::Url::as_str),
+        Some("file:///resolved-note.adoc")
+    );
+    let references = service
+        .references(&uri("file:///a.adoc"), lsp::Position::new(0, 8), true)
+        .expect("references")
+        .expect("resolved references");
+    assert_eq!(references.len(), 2);
+}
+
+#[test]
+fn rename_requires_a_complete_host_index() {
+    let mut incomplete = LanguageService::default();
+    open(&mut incomplete, "file:///a.adoc", 1, "[[target]]\n== A\n");
+    assert!(
+        incomplete
+            .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+            .expect("rename")
+            .is_none()
+    );
+
+    let mut complete = LanguageService::with_host_index(Arc::new(TestHostIndex {
+        complete: true,
+        fail: false,
+    }));
+    open(&mut complete, "file:///a.adoc", 1, "[[target]]\n== A\n");
+    let edit = complete
+        .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+        .expect("rename")
+        .expect("complete edit");
+    assert_eq!(edit.changes.expect("changes").len(), 2);
+}
+
+#[test]
+fn host_index_failure_does_not_disable_core_language_features() {
+    let mut service = LanguageService::with_host_index(Arc::new(TestHostIndex {
+        complete: false,
+        fail: true,
+    }));
+    open(
+        &mut service,
+        "file:///a.adoc",
+        1,
+        "= Title\n\nxref:note:42[Note]\n",
+    );
+    assert!(
+        service
+            .definition(&uri("file:///a.adoc"), lsp::Position::new(2, 8))
+            .is_err()
+    );
+    assert!(
+        service
+            .document_symbols(&uri("file:///a.adoc"))
+            .expect("symbols remain available")
+            .is_some()
+    );
+}
+
+#[test]
 fn release_fixture_is_accepted_by_all_existing_features() {
     let source = include_str!("../../../fixtures/release/core.adoc");
     let mut service = LanguageService::default();
@@ -378,7 +733,7 @@ fn release_fixture_is_accepted_by_all_existing_features() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn async_lsp_transport_runs_typed_lifecycle_and_features() {
+async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
     let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
@@ -413,7 +768,7 @@ async fn async_lsp_transport_runs_typed_lifecycle_and_features() {
                     "uri":"file:///typed.adoc",
                     "languageId":"asciidoc",
                     "version":1,
-                    "text":"= Typed path\n"
+                    "text":"[[part]]\n= Typed path\n\n<<part>>\n"
                 }}
             }),
         )
@@ -438,6 +793,72 @@ async fn async_lsp_transport_runs_typed_lifecycle_and_features() {
         );
         write_message(
             &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":6,
+                "method":"textDocument/definition",
+                "params":{
+                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "position":{"line":3,"character":3}
+                }
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_message(&mut client_read).await["result"]["uri"],
+            "file:///typed.adoc"
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":7,
+                "method":"textDocument/semanticTokens/full",
+                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+            }),
+        )
+        .await;
+        assert!(
+            read_message(&mut client_read).await["result"]["data"]
+                .as_array()
+                .is_some_and(|data| !data.is_empty())
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":8,
+                "method":"textDocument/documentLink",
+                "params":{"textDocument":{"uri":"file:///typed.adoc"}}
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_message(&mut client_read).await["result"][0]["target"],
+            "file:///typed.adoc#part"
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":9,
+                "method":"textDocument/references",
+                "params":{
+                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "position":{"line":0,"character":3},
+                    "context":{"includeDeclaration":false}
+                }
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_message(&mut client_read).await["result"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        write_message(
+            &mut client_write,
             &json!({"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}),
         )
         .await;
@@ -454,7 +875,7 @@ async fn async_lsp_transport_runs_typed_lifecycle_and_features() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn async_lsp_lifecycle_rejects_requests_in_invalid_states() {
+async fn protocol_async_lsp_lifecycle_rejects_requests_in_invalid_states() {
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
     let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);

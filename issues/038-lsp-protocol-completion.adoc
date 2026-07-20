@@ -49,3 +49,20 @@ cargo test -p adocweave-lsp document_links
 - 035
 - 036
 - 045
+
+== 実装結果
+
+Issue 045のRouterと有界CPU実行経路へincremental同期、設定可能なdebounce、Definition、
+References、Document Link、条件付きRenameおよびSemantic Tokensを追加した。
+同一`didChange`内の変更を交渉済みUTF-8・UTF-16位置で逐次適用し、CRLFも共通`LineIndex`で
+扱う。診断はgeneration確認付きpush方式を継続する。
+
+open文書は同じ`DocumentStore`の所有`Analysis`から索引する。任意スキームと未open文書は
+`HostReferenceIndex`を`run_with_host_index`へ注入して解決する。要求にはsource version、
+generation、`ReferenceKey`およびposition encodingを含め、ホストが古い索引結果を拒否
+できる。Renameはホスト索引が完全性を宣言した場合だけ返す。
+
+文書属性、アンカー、通常リンク、xrefおよび数式のHover、source言語と文書内アンカーの
+補完対象を定義した。Semantic TokensはASTとprojectionから生成し、別parserを持たない。
+in-memory protocol、Resolver障害、UTF-8・UTF-16、full・incremental、CRLF、キャンセル、
+Definition、ReferencesおよびDocument Linkを自動試験する。

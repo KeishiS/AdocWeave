@@ -16,8 +16,8 @@ use serde_json::Value;
 use tokio::sync::Semaphore;
 use tower::ServiceBuilder;
 
-use crate::LanguageService;
 use crate::state::{Adoption, AnalysisJob};
+use crate::{HostReferenceIndex, LanguageService, NoHostReferenceIndex};
 
 const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MAX_CONCURRENT_ANALYSES: usize = 2;
@@ -37,9 +37,16 @@ impl Backend {
     pub(crate) fn router(
         client: ClientSocket,
     ) -> impl async_lsp::LspService<Response = Value, Error = ResponseError> {
+        Self::router_with_index(client, Arc::new(NoHostReferenceIndex))
+    }
+
+    pub(crate) fn router_with_index(
+        client: ClientSocket,
+        host_index: Arc<dyn HostReferenceIndex>,
+    ) -> impl async_lsp::LspService<Response = Value, Error = ResponseError> {
         let mut router = Router::new(Self {
             client,
-            service: LanguageService::default(),
+            service: LanguageService::with_host_index(host_index),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
         });
 
@@ -63,7 +70,7 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeTextDocument>(|state, params| {
-                match state.service.begin_change_full(params) {
+                match state.service.begin_change(params) {
                     Ok(Some(job)) => {
                         state.schedule_analysis(job);
                         ControlFlow::Continue(())
@@ -74,6 +81,10 @@ impl Backend {
             })
             .notification::<notification::DidSaveTextDocument>(|state, params| {
                 state.publish_current_diagnostics(params.text_document.uri)
+            })
+            .notification::<notification::DidChangeConfiguration>(|state, params| {
+                let _ = state.service.update_configuration(params.settings);
+                ControlFlow::Continue(())
             })
             .notification::<notification::DidCloseTextDocument>(|state, params| {
                 let uri = params.text_document.uri;
@@ -132,6 +143,65 @@ impl Backend {
                     .await
                 }
             })
+            .request::<request::GotoDefinition, _>(|state, params| {
+                let request = params.text_document_position_params;
+                let service = state.service.clone();
+                let limit = state.cpu_limit.clone();
+                async move {
+                    run_cpu_request(limit, move |_| {
+                        service.definition(&request.text_document.uri, request.position)
+                    })
+                    .await
+                }
+            })
+            .request::<request::References, _>(|state, params| {
+                let request = params.text_document_position;
+                let include_declaration = params.context.include_declaration;
+                let service = state.service.clone();
+                let limit = state.cpu_limit.clone();
+                async move {
+                    run_cpu_request(limit, move |_| {
+                        service.references(
+                            &request.text_document.uri,
+                            request.position,
+                            include_declaration,
+                        )
+                    })
+                    .await
+                }
+            })
+            .request::<request::DocumentLinkRequest, _>(|state, params| {
+                let service = state.service.clone();
+                let limit = state.cpu_limit.clone();
+                async move {
+                    run_cpu_request(limit, move |_| {
+                        service.document_links(&params.text_document.uri)
+                    })
+                    .await
+                }
+            })
+            .request::<request::SemanticTokensFullRequest, _>(|state, params| {
+                let service = state.service.clone();
+                let limit = state.cpu_limit.clone();
+                async move {
+                    run_cpu_request(limit, move |_| {
+                        service.semantic_tokens(&params.text_document.uri)
+                    })
+                    .await
+                }
+            })
+            .request::<request::Rename, _>(|state, params| {
+                let request = params.text_document_position;
+                let new_name = params.new_name;
+                let service = state.service.clone();
+                let limit = state.cpu_limit.clone();
+                async move {
+                    run_cpu_request(limit, move |_| {
+                        service.rename(&request.text_document.uri, request.position, &new_name)
+                    })
+                    .await
+                }
+            })
             .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed));
 
         ServiceBuilder::new()
@@ -147,7 +217,11 @@ impl Backend {
     fn schedule_analysis(&self, job: AnalysisJob) {
         let limit = self.cpu_limit.clone();
         let client = self.client.clone();
+        let debounce_ms = self.service.debounce_ms();
         tokio::spawn(async move {
+            if debounce_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
+            }
             let Ok(_permit) = limit.acquire_owned().await else {
                 return;
             };

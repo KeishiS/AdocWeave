@@ -70,6 +70,13 @@ impl DocumentStore {
         })
     }
 
+    pub fn snapshots(&self) -> Vec<DocumentSnapshot> {
+        self.documents
+            .values()
+            .filter_map(|document| self.snapshot(&document.uri))
+            .collect()
+    }
+
     pub fn begin_open(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
         if let Some(previous) = self.documents.get(&uri) {
             previous.cancellation.cancel();
