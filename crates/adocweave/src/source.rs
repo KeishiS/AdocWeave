@@ -2,7 +2,8 @@
 
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+
+pub use crate::source_document::SourceDocument;
 
 /// A zero-based offset in the original UTF-8 byte sequence.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -74,165 +75,10 @@ pub struct Position {
     pub character: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Line {
-    start: usize,
-    content_end: usize,
-    full_end: usize,
-}
-
-/// Converts between source byte offsets and zero-based UTF-8 or UTF-16 positions.
-#[derive(Debug)]
-pub struct LineIndex {
-    source: Arc<str>,
-    lines: Vec<Line>,
-}
-
-impl LineIndex {
-    pub fn new(source: &str) -> Result<Self, PositionError> {
-        Self::from_shared(Arc::from(source))
-    }
-
-    pub fn from_shared(source: Arc<str>) -> Result<Self, PositionError> {
-        TextSize::new(source.len())?;
-        let bytes = source.as_bytes();
-        let mut lines = Vec::new();
-        let mut line_start = 0;
-        let mut cursor = 0;
-
-        while cursor < bytes.len() {
-            match bytes[cursor] {
-                b'\r' if bytes.get(cursor + 1) == Some(&b'\n') => {
-                    lines.push(Line {
-                        start: line_start,
-                        content_end: cursor,
-                        full_end: cursor + 2,
-                    });
-                    cursor += 2;
-                    line_start = cursor;
-                }
-                b'\n' => {
-                    lines.push(Line {
-                        start: line_start,
-                        content_end: cursor,
-                        full_end: cursor + 1,
-                    });
-                    cursor += 1;
-                    line_start = cursor;
-                }
-                _ => cursor += 1,
-            }
-        }
-
-        lines.push(Line {
-            start: line_start,
-            content_end: bytes.len(),
-            full_end: bytes.len(),
-        });
-
-        Ok(Self { source, lines })
-    }
-
-    pub fn line_count(&self) -> u32 {
-        u32::try_from(self.lines.len()).expect("source length limits the number of lines")
-    }
-
-    pub fn line_length(&self, line: u32, encoding: PositionEncoding) -> Result<u32, PositionError> {
-        let Some(line) = self.lines.get(line as usize) else {
-            return Err(PositionError::LineOutOfBounds {
-                line,
-                line_count: self.line_count(),
-            });
-        };
-        let content = &self.source[line.start..line.content_end];
-        let length = match encoding {
-            PositionEncoding::Utf8 => content.len(),
-            PositionEncoding::Utf16 => content.encode_utf16().count(),
-        };
-        Ok(u32::try_from(length).expect("source length limits the line length"))
-    }
-
-    pub fn offset_to_position(
-        &self,
-        offset: TextSize,
-        encoding: PositionEncoding,
-    ) -> Result<Position, PositionError> {
-        let offset = offset.to_usize();
-        if offset > self.source.len() {
-            return Err(PositionError::OffsetOutOfBounds {
-                offset: TextSize::new(offset)?,
-                source_len: TextSize::new(self.source.len())?,
-            });
-        }
-        if !self.source.is_char_boundary(offset) {
-            return Err(PositionError::InvalidCharBoundary {
-                offset: TextSize::new(offset)?,
-            });
-        }
-
-        let line_number = self
-            .lines
-            .partition_point(|line| line.full_end <= offset && line.full_end != line.content_end);
-        let line = self
-            .lines
-            .get(line_number)
-            .expect("an in-bounds offset belongs to a line");
-
-        if offset > line.content_end {
-            return Err(PositionError::InsideLineEnding {
-                offset: TextSize::new(offset)?,
-            });
-        }
-
-        let prefix = &self.source[line.start..offset];
-        let character = match encoding {
-            PositionEncoding::Utf8 => prefix.len(),
-            PositionEncoding::Utf16 => prefix.encode_utf16().count(),
-        };
-
-        Ok(Position {
-            line: u32::try_from(line_number).expect("source length limits the line number"),
-            character: u32::try_from(character).expect("source length limits the character"),
-        })
-    }
-
-    pub fn position_to_offset(
-        &self,
-        position: Position,
-        encoding: PositionEncoding,
-    ) -> Result<TextSize, PositionError> {
-        let Some(line) = self.lines.get(position.line as usize) else {
-            return Err(PositionError::LineOutOfBounds {
-                line: position.line,
-                line_count: self.line_count(),
-            });
-        };
-        let content = &self.source[line.start..line.content_end];
-        let requested = position.character as usize;
-
-        let relative_offset = match encoding {
-            PositionEncoding::Utf8 => {
-                if requested > content.len() {
-                    return Err(PositionError::CharacterOutOfBounds {
-                        position,
-                        line_length: u32::try_from(content.len())
-                            .expect("source length limits the line length"),
-                        encoding,
-                    });
-                }
-                if !content.is_char_boundary(requested) {
-                    return Err(PositionError::InvalidCharacterBoundary { position, encoding });
-                }
-                requested
-            }
-            PositionEncoding::Utf16 => utf16_character_to_byte(content, position)?,
-        };
-
-        TextSize::new(line.start + relative_offset)
-    }
-}
-
-fn utf16_character_to_byte(content: &str, position: Position) -> Result<usize, PositionError> {
+pub(crate) fn utf16_character_to_byte(
+    content: &str,
+    position: Position,
+) -> Result<usize, PositionError> {
     let requested = position.character as usize;
     let mut utf16_offset = 0;
 
@@ -305,7 +151,7 @@ impl Error for PositionError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{LineIndex, Position, PositionEncoding, PositionError, TextRange, TextSize};
+    use super::{Position, PositionEncoding, PositionError, SourceDocument, TextRange, TextSize};
 
     fn size(value: usize) -> TextSize {
         TextSize::new(value).expect("small test offset")
@@ -329,9 +175,9 @@ mod tests {
     }
 
     #[test]
-    fn line_index_converts_ascii_japanese_emoji_and_combining_characters() {
+    fn source_document_converts_ascii_japanese_emoji_and_combining_characters() {
         let source = "a日😀e\u{301}\n";
-        let index = LineIndex::new(source).expect("valid source");
+        let index = SourceDocument::new(source).expect("valid source");
 
         let cases = [
             (0, 0, 0),
@@ -360,8 +206,8 @@ mod tests {
     }
 
     #[test]
-    fn line_index_handles_lf_crlf_and_document_end() {
-        let index = LineIndex::new("a\r\nb\n").expect("valid source");
+    fn source_document_handles_lf_crlf_and_document_end() {
+        let index = SourceDocument::new("a\r\nb\n").expect("valid source");
 
         assert_eq!(index.line_count(), 3);
         assert_eq!(
@@ -393,7 +239,7 @@ mod tests {
 
     #[test]
     fn line_lengths_use_the_requested_position_encoding() {
-        let index = LineIndex::new("a😀\r\nb").expect("valid source");
+        let index = SourceDocument::new("a😀\r\nb").expect("valid source");
 
         assert_eq!(index.line_length(0, PositionEncoding::Utf8), Ok(5));
         assert_eq!(index.line_length(0, PositionEncoding::Utf16), Ok(3));
@@ -401,9 +247,9 @@ mod tests {
     }
 
     #[test]
-    fn line_index_keeps_bom_nul_and_tab_in_the_source() {
+    fn source_document_keeps_bom_nul_and_tab_in_the_source() {
         let source = "\u{feff}\0\tX";
-        let index = LineIndex::new(source).expect("valid source");
+        let index = SourceDocument::new(source).expect("valid source");
 
         assert_eq!(
             index.offset_to_position(size(source.len()), PositionEncoding::Utf8),
@@ -422,8 +268,8 @@ mod tests {
     }
 
     #[test]
-    fn line_index_rejects_offsets_and_positions_inside_characters() {
-        let index = LineIndex::new("😀").expect("valid source");
+    fn source_document_rejects_offsets_and_positions_inside_characters() {
+        let index = SourceDocument::new("😀").expect("valid source");
 
         assert_eq!(
             index.offset_to_position(size(1), PositionEncoding::Utf8),
@@ -464,9 +310,9 @@ mod tests {
     }
 
     #[test]
-    fn line_index_round_trips_valid_positions_for_both_encodings() {
+    fn source_document_round_trips_valid_positions_for_both_encodings() {
         let source = "日本語\r\nemoji 😀\n";
-        let index = LineIndex::new(source).expect("valid source");
+        let index = SourceDocument::new(source).expect("valid source");
 
         for offset in 0..=source.len() {
             if !source.is_char_boundary(offset) || offset == 10 {

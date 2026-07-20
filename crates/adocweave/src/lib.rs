@@ -24,7 +24,7 @@ pub mod parser;
 pub mod projection;
 pub mod reference;
 pub mod source;
-pub mod source_lines;
+pub mod source_document;
 pub mod url;
 
 pub use core::{
@@ -193,7 +193,7 @@ fn process_check_source_with_config(
     match output {
         CheckOutput::Human => diagnostic::render_human(
             diagnostics,
-            &analysis.line_index,
+            analysis.source_document(),
             source::PositionEncoding::Utf16,
         )
         .map_err(ProcessError::Position),

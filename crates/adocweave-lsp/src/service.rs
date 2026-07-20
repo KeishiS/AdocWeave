@@ -12,7 +12,7 @@ use adocweave::inline::{Inline, MathLanguage, ReferenceDestination};
 use adocweave::projection::project;
 use adocweave::reference::ReferenceKey;
 use adocweave::source::{
-    LineIndex, PositionEncoding as CorePositionEncoding, TextRange as CoreTextRange,
+    PositionEncoding as CorePositionEncoding, SourceDocument, TextRange as CoreTextRange,
 };
 use adocweave::{formatter, parser};
 use async_lsp::lsp_types as lsp;
@@ -217,7 +217,7 @@ impl LanguageService {
             match change.range {
                 None => source = change.text,
                 Some(range) => {
-                    let index = LineIndex::new(&source).map_err(|error| error.to_string())?;
+                    let index = SourceDocument::new(&source).map_err(|error| error.to_string())?;
                     let position = |position: lsp::Position| adocweave::source::Position {
                         line: position.line,
                         character: position.character,
@@ -298,7 +298,7 @@ impl LanguageService {
                 Ok(lsp::Diagnostic {
                     range: range_to_lsp(
                         diagnostic.range,
-                        &analysis.line_index,
+                        analysis.source_document(),
                         self.position_encoding,
                     )?,
                     severity: Some(match diagnostic.severity {
@@ -335,7 +335,7 @@ impl LanguageService {
             .map(|symbol| {
                 symbol_to_lsp(
                     symbol,
-                    &document.analysis.line_index,
+                    document.analysis.source_document(),
                     self.position_encoding,
                 )
             })
@@ -360,7 +360,7 @@ impl LanguageService {
                         Ok(lsp::OneOf::Left(lsp::TextEdit::new(
                             range_to_lsp(
                                 edit.range,
-                                &document.analysis.line_index,
+                                document.analysis.source_document(),
                                 self.position_encoding,
                             )?,
                             edit.replacement.clone(),
@@ -404,7 +404,7 @@ impl LanguageService {
                 Ok(lsp::TextEdit::new(
                     range_to_lsp(
                         edit.range,
-                        &document.analysis.line_index,
+                        document.analysis.source_document(),
                         self.position_encoding,
                     )?,
                     edit.replacement.clone(),
@@ -486,7 +486,7 @@ impl LanguageService {
             }),
             range: Some(range_to_lsp(
                 range,
-                &document.analysis.line_index,
+                document.analysis.source_document(),
                 self.position_encoding,
             )?),
         }))
@@ -666,7 +666,7 @@ impl LanguageService {
                         candidate_uri.clone(),
                         range_to_lsp(
                             reference.target_range,
-                            &candidate.analysis.line_index,
+                            candidate.analysis.source_document(),
                             self.position_encoding,
                         )?,
                     ));
@@ -732,7 +732,7 @@ impl LanguageService {
             links.push(lsp::DocumentLink {
                 range: range_to_lsp(
                     link.target_range,
-                    &document.analysis.line_index,
+                    document.analysis.source_document(),
                     self.position_encoding,
                 )?,
                 target: Some(target),
@@ -762,7 +762,7 @@ impl LanguageService {
             links.push(lsp::DocumentLink {
                 range: range_to_lsp(
                     reference.target_range,
-                    &document.analysis.line_index,
+                    document.analysis.source_document(),
                     self.position_encoding,
                 )?,
                 target: Some(target),
@@ -800,14 +800,14 @@ impl LanguageService {
                     &mut raw,
                     heading.marker_range,
                     0,
-                    &document.analysis.line_index,
+                    document.analysis.source_document(),
                     self.position_encoding,
                 )?;
                 push_semantic_range(
                     &mut raw,
                     heading.text_range,
                     1,
-                    &document.analysis.line_index,
+                    document.analysis.source_document(),
                     self.position_encoding,
                 )?;
             }
@@ -817,7 +817,7 @@ impl LanguageService {
                 &mut raw,
                 link.target_range,
                 2,
-                &document.analysis.line_index,
+                document.analysis.source_document(),
                 self.position_encoding,
             )?;
         }
@@ -826,7 +826,7 @@ impl LanguageService {
                 &mut raw,
                 reference.target_range,
                 2,
-                &document.analysis.line_index,
+                document.analysis.source_document(),
                 self.position_encoding,
             )?;
         }
@@ -835,7 +835,7 @@ impl LanguageService {
                 &mut raw,
                 target.id_range,
                 3,
-                &document.analysis.line_index,
+                document.analysis.source_document(),
                 self.position_encoding,
             )?;
         }
@@ -848,7 +848,7 @@ impl LanguageService {
                 &mut raw,
                 range,
                 token_type,
-                &document.analysis.line_index,
+                document.analysis.source_document(),
                 self.position_encoding,
             )?;
         }
@@ -908,7 +908,7 @@ impl LanguageService {
             uri.clone(),
             range_to_lsp(
                 target.target_range,
-                &document.analysis.line_index,
+                document.analysis.source_document(),
                 self.position_encoding,
             )?,
         )))
@@ -928,7 +928,7 @@ fn hover_markup(
         }),
         range: Some(range_to_lsp(
             range,
-            &document.analysis.line_index,
+            document.analysis.source_document(),
             encoding,
         )?),
     }))
@@ -1035,10 +1035,10 @@ fn push_semantic_range(
     output: &mut Vec<(lsp::Position, u32, u32)>,
     range: CoreTextRange,
     token_type: u32,
-    line_index: &LineIndex,
+    source_document: &SourceDocument,
     encoding: PositionEncoding,
 ) -> Result<(), String> {
-    let range = range_to_lsp(range, line_index, encoding)?;
+    let range = range_to_lsp(range, source_document, encoding)?;
     for line in range.start.line..=range.end.line {
         let start = if line == range.start.line {
             range.start.character
@@ -1048,7 +1048,7 @@ fn push_semantic_range(
         let end = if line == range.end.line {
             range.end.character
         } else {
-            line_index
+            source_document
                 .line_length(line, encoding.core())
                 .map_err(|error| error.to_string())?
         };
@@ -1090,12 +1090,12 @@ fn request_offset(
     position: lsp::Position,
     encoding: PositionEncoding,
 ) -> Result<u32, String> {
-    if position.line >= document.analysis.line_index.line_count() {
+    if position.line >= document.analysis.source_document().line_count() {
         return Err("position.line is outside the document".to_owned());
     }
     document
         .analysis
-        .line_index
+        .source_document()
         .position_to_offset(
             adocweave::source::Position {
                 line: position.line,
@@ -1110,7 +1110,7 @@ fn request_offset(
 #[allow(deprecated)]
 fn symbol_to_lsp(
     symbol: &CoreDocumentSymbol,
-    line_index: &LineIndex,
+    source_document: &SourceDocument,
     encoding: PositionEncoding,
 ) -> Result<lsp::DocumentSymbol, String> {
     Ok(lsp::DocumentSymbol {
@@ -1123,13 +1123,13 @@ fn symbol_to_lsp(
         },
         tags: None,
         deprecated: None,
-        range: range_to_lsp(symbol.range, line_index, encoding)?,
-        selection_range: range_to_lsp(symbol.selection_range, line_index, encoding)?,
+        range: range_to_lsp(symbol.range, source_document, encoding)?,
+        selection_range: range_to_lsp(symbol.selection_range, source_document, encoding)?,
         children: Some(
             symbol
                 .children
                 .iter()
-                .map(|child| symbol_to_lsp(child, line_index, encoding))
+                .map(|child| symbol_to_lsp(child, source_document, encoding))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
     })
@@ -1137,13 +1137,13 @@ fn symbol_to_lsp(
 
 fn range_to_lsp(
     range: CoreTextRange,
-    line_index: &LineIndex,
+    source_document: &SourceDocument,
     encoding: PositionEncoding,
 ) -> Result<lsp::Range, String> {
-    let start = line_index
+    let start = source_document
         .offset_to_position(range.start(), encoding.core())
         .map_err(|error| error.to_string())?;
-    let end = line_index
+    let end = source_document
         .offset_to_position(range.end(), encoding.core())
         .map_err(|error| error.to_string())?;
     Ok(lsp::Range::new(

@@ -6,7 +6,7 @@ use crate::core::{ParseError, ParseOptions, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
 use crate::parser::{CstDocument, FormattingPolicy};
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_lines::LineEnding;
+use crate::source_document::LineEnding;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NewlineStyle {
@@ -67,21 +67,21 @@ pub fn format_analysis(
 
 fn format_cst(cst: &CstDocument, config: &FormatConfig) -> Result<FormatOutput, PositionError> {
     let source = cst.source();
-    let source_lines = cst.source_lines();
+    let source_document = cst.source_document();
     let protected = cst
         .blocks()
         .iter()
         .filter(|block| block.kind.formatting_policy() == FormattingPolicy::PreserveBytes)
         .map(|block| block.range)
         .collect::<Vec<_>>();
-    let last_real_line = source_lines
+    let last_real_line = source_document
         .lines()
         .iter()
         .rposition(|line| !line.full_range().is_empty());
     let mut edits = Vec::new();
     let mut blank_count = 0;
 
-    for (index, line) in source_lines.lines().iter().enumerate() {
+    for (index, line) in source_document.lines().iter().enumerate() {
         if protected
             .iter()
             .any(|range| ranges_overlap(*range, line.full_range()))
@@ -90,7 +90,7 @@ fn format_cst(cst: &CstDocument, config: &FormatConfig) -> Result<FormatOutput, 
             continue;
         }
 
-        let content = source_lines
+        let content = source_document
             .text(line.content_range())
             .expect("line ranges are valid");
         let virtual_final = line.full_range().is_empty() && line.ending() == LineEnding::None;
@@ -126,7 +126,7 @@ fn format_cst(cst: &CstDocument, config: &FormatConfig) -> Result<FormatOutput, 
             } else {
                 config.newline.text()
             };
-            let current = source_lines
+            let current = source_document
                 .text(line.ending_range())
                 .expect("line ending range is valid");
             if current != replacement {
@@ -142,7 +142,7 @@ fn format_cst(cst: &CstDocument, config: &FormatConfig) -> Result<FormatOutput, 
         && !source.is_empty()
         && !source.ends_with('\n')
         && last_real_line.is_some_and(|index| {
-            let line = source_lines.lines()[index];
+            let line = source_document.lines()[index];
             !protected
                 .iter()
                 .any(|range| ranges_overlap(*range, line.full_range()))

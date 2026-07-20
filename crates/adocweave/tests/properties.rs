@@ -4,7 +4,7 @@ use adocweave::html::{RenderPolicy, render};
 use adocweave::parser::FormattingPolicy;
 use adocweave::projection::{project, searchable_text};
 use adocweave::reference::ReferenceKey;
-use adocweave::source::{LineIndex, PositionEncoding, TextSize};
+use adocweave::source::{PositionEncoding, SourceDocument, TextSize};
 use adocweave::url::{UrlDecision, UrlPolicy};
 use adocweave::{Engine, ParseOptions};
 
@@ -108,7 +108,7 @@ fn formatter_preserves_semantics_and_protected_source_regions() {
 #[test]
 fn positions_round_trip_at_every_character_boundary() {
     for source in corpus() {
-        let index = LineIndex::new(&source).expect("bounded generated source");
+        let index = SourceDocument::new(&source).expect("bounded generated source");
         for offset in (0..=source.len()).filter(|offset| source.is_char_boundary(*offset)) {
             let offset = TextSize::new(offset).expect("small corpus offset");
             for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {

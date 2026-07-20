@@ -12,7 +12,7 @@ use crate::parser::{AstBlock, BlockProblemKind, CstDocument, HeadingKind, Headin
 #[cfg(test)]
 use crate::parser::{ParseConfig, parse_with_config};
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_lines::LineEnding;
+use crate::source_document::LineEnding;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LintRule {
@@ -181,12 +181,12 @@ pub(crate) fn lint_cst(
     document: &crate::parser::AstDocument,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    let source_lines = cst.source_lines();
+    let source_document = cst.source_document();
     let mut diagnostics = Vec::new();
     let mut blank_count = 0;
 
-    for line in source_lines.lines() {
-        let content = source_lines
+    for line in source_document.lines() {
+        let content = source_document
             .text(line.content_range())
             .expect("line ranges are valid");
         let is_virtual_final_line =

@@ -10,7 +10,7 @@ use crate::inline::{
 };
 use crate::limits::ProcessingLimits;
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_lines::{LosslessToken, SourceLine, SourceLines};
+use crate::source_document::{LosslessToken, SourceDocument, SourceDocumentBuildError, SourceLine};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CstBlockKind {
@@ -60,29 +60,29 @@ pub struct CstBlock {
 
 #[derive(Debug)]
 pub struct CstDocument {
-    source_lines: SourceLines,
+    source_document: SourceDocument,
     blocks: Vec<CstBlock>,
 }
 
 impl CstDocument {
     pub fn source(&self) -> &str {
-        self.source_lines.source()
+        self.source_document.source()
     }
 
     pub fn blocks(&self) -> &[CstBlock] {
         &self.blocks
     }
 
-    pub(crate) const fn source_lines(&self) -> &SourceLines {
-        &self.source_lines
+    pub const fn source_document(&self) -> &SourceDocument {
+        &self.source_document
     }
 
     pub fn tokens(&self) -> &[LosslessToken] {
-        self.source_lines.tokens()
+        self.source_document.tokens()
     }
 
     pub fn reconstruct(&self) -> String {
-        self.source_lines.reconstruct()
+        self.source_document.reconstruct()
     }
 
     pub fn snapshot(&self) -> String {
@@ -511,11 +511,19 @@ pub(crate) struct ParseConfig {
 
 impl Default for ParseConfig {
     fn default() -> Self {
+        let limits = ProcessingLimits {
+            max_line_bytes: u32::MAX,
+            max_blocks: u32::MAX,
+            max_nodes: u32::MAX,
+            max_references: u32::MAX,
+            max_attributes: u32::MAX,
+            ..ProcessingLimits::default()
+        };
         Self {
             max_inline_depth: 32,
             max_list_depth: 8,
             max_formula_bytes: 1024 * 1024,
-            limits: ProcessingLimits::default(),
+            limits,
         }
     }
 }
@@ -572,7 +580,22 @@ pub(crate) fn parse_shared_cancellable(
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<ParsedDocument, ParseFailure> {
     let mut budget = ParseBudget::new(config.limits)?;
-    let source_lines = SourceLines::from_shared(Arc::clone(&source))?;
+    let source_document = SourceDocument::from_shared_bounded(
+        Arc::clone(&source),
+        config.limits.max_line_bytes,
+        is_cancelled,
+    )
+    .map_err(|error| match error {
+        SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
+        SourceDocumentBuildError::LineLimitExceeded { limit, actual } => {
+            ParseFailure::Budget(BudgetExceeded {
+                resource: "line bytes",
+                limit,
+                actual,
+            })
+        }
+        SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
+    })?;
     let source = source.as_ref();
     let mut blocks = Vec::new();
     let mut ast_blocks = Vec::new();
@@ -584,20 +607,20 @@ pub(crate) fn parse_shared_cancellable(
     let mut anchors = Vec::new();
 
     let mut line_index = 0;
-    while line_index < source_lines.lines().len() {
+    while line_index < source_document.lines().len() {
         if is_cancelled() {
             return Err(ParseFailure::Cancelled);
         }
-        let line = source_lines.lines()[line_index];
-        let content = source_lines
+        let line = source_document.lines()[line_index];
+        let content = source_document
             .text(line.content_range())
             .expect("line content has valid UTF-8 boundaries");
 
         if parse_source_attribute(content).is_some()
-            && source_lines
+            && source_document
                 .lines()
                 .get(line_index + 1)
-                .and_then(|next| source_lines.text(next.content_range()))
+                .and_then(|next| source_document.text(next.content_range()))
                 == Some("----")
         {
             flush_paragraph(
@@ -609,7 +632,8 @@ pub(crate) fn parse_shared_cancellable(
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let (source_block, next_line) = parse_source_block(&source_lines, line_index, source)?;
+            let (source_block, next_line) =
+                parse_source_block(&source_document, line_index, source)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::SourceBlock,
                 range: source_block.range,
@@ -619,10 +643,10 @@ pub(crate) fn parse_shared_cancellable(
             line_index = next_line;
             continue;
         } else if parse_math_attribute(content).is_some()
-            && source_lines
+            && source_document
                 .lines()
                 .get(line_index + 1)
-                .and_then(|next| source_lines.text(next.content_range()))
+                .and_then(|next| source_document.text(next.content_range()))
                 == Some("++++")
         {
             flush_paragraph(
@@ -634,7 +658,7 @@ pub(crate) fn parse_shared_cancellable(
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let (math, next_line) = parse_math_block(&source_lines, line_index, source, config)?;
+            let (math, next_line) = parse_math_block(&source_document, line_index, source, config)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::MathBlock,
                 range: math.range,
@@ -653,7 +677,7 @@ pub(crate) fn parse_shared_cancellable(
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let (literal, next_line) = parse_literal_block(&source_lines, line_index, source)?;
+            let (literal, next_line) = parse_literal_block(&source_document, line_index, source)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::LiteralBlock,
                 range: literal.range,
@@ -762,7 +786,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut budget,
             )?;
             let (lists, next_line, range) =
-                parse_lists(&source_lines, line_index, source, config, &mut budget)?;
+                parse_lists(&source_document, line_index, source, config, &mut budget)?;
             blocks.push(CstBlock {
                 kind: CstBlockKind::List,
                 range,
@@ -834,7 +858,7 @@ pub(crate) fn parse_shared_cancellable(
 
     Ok(ParsedDocument {
         cst: CstDocument {
-            source_lines,
+            source_document,
             blocks,
         },
         ast,
@@ -942,17 +966,19 @@ fn valid_anchor_id(id: &str) -> bool {
 }
 
 fn parse_math_block(
-    source_lines: &SourceLines,
+    source_document: &SourceDocument,
     attribute_index: usize,
     source: &str,
     config: &ParseConfig,
 ) -> Result<(MathBlock, usize), PositionError> {
-    let attribute = source_lines.lines()[attribute_index];
-    let attribute_text = source_lines.text(attribute.content_range()).expect("valid");
+    let attribute = source_document.lines()[attribute_index];
+    let attribute_text = source_document
+        .text(attribute.content_range())
+        .expect("valid");
     let language = parse_math_attribute(attribute_text).expect("recognized math attribute");
     let delimiter_index = attribute_index + 1;
-    let delimiter = source_lines.lines()[delimiter_index];
-    let body = parse_delimited_body(source_lines, delimiter_index, "++++", source)?;
+    let delimiter = source_document.lines()[delimiter_index];
+    let body = parse_delimited_body(source_document, delimiter_index, "++++", source)?;
     let value = source
         .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
         .expect("valid math content")
@@ -1021,7 +1047,7 @@ fn list_marker(content: &str) -> Option<(ListKind, usize, usize)> {
 }
 
 fn parse_lists(
-    source_lines: &SourceLines,
+    source_document: &SourceDocument,
     start: usize,
     source: &str,
     config: &ParseConfig,
@@ -1031,9 +1057,11 @@ fn parse_lists(
     let mut index = start;
     let mut previous: Option<(usize, ListKind)> = None;
     let mut kinds_by_depth = Vec::<Option<ListKind>>::new();
-    while index < source_lines.lines().len() {
-        let line = source_lines.lines()[index];
-        let content = source_lines.text(line.content_range()).expect("valid line");
+    while index < source_document.lines().len() {
+        let line = source_document.lines()[index];
+        let content = source_document
+            .text(line.content_range())
+            .expect("valid line");
         let Some((kind, depth, text_start)) = list_marker(content) else {
             break;
         };
@@ -1106,27 +1134,27 @@ fn parse_lists(
             problems,
         };
         index += 1;
-        while source_lines
+        while source_document
             .lines()
             .get(index)
-            .is_some_and(|next| source_lines.text(next.content_range()) == Some("+"))
+            .is_some_and(|next| source_document.text(next.content_range()) == Some("+"))
         {
-            let continuation = source_lines.lines()[index];
+            let continuation = source_document.lines()[index];
             let next = index + 1;
-            let parsed_block = source_lines.lines().get(next).and_then(|next_line| {
-                let next_text = source_lines.text(next_line.content_range())?;
+            let parsed_block = source_document.lines().get(next).and_then(|next_line| {
+                let next_text = source_document.text(next_line.content_range())?;
                 if next_text == "...." {
-                    parse_literal_block(source_lines, next, source)
+                    parse_literal_block(source_document, next, source)
                         .ok()
                         .map(|(block, end)| (AstBlock::Literal(block), end))
                 } else if parse_source_attribute(next_text).is_some()
-                    && source_lines
+                    && source_document
                         .lines()
                         .get(next + 1)
-                        .and_then(|line| source_lines.text(line.content_range()))
+                        .and_then(|line| source_document.text(line.content_range()))
                         == Some("----")
                 {
-                    parse_source_block(source_lines, next, source)
+                    parse_source_block(source_document, next, source)
                         .ok()
                         .map(|(block, end)| (AstBlock::Source(block), end))
                 } else {
@@ -1151,10 +1179,10 @@ fn parse_lists(
     }
     let end = flat
         .last()
-        .map_or(source_lines.lines()[start].full_range().end(), |item| {
+        .map_or(source_document.lines()[start].full_range().end(), |item| {
             item.item.range.end()
         });
-    let range = TextRange::new(source_lines.lines()[start].full_range().start(), end)?;
+    let range = TextRange::new(source_document.lines()[start].full_range().start(), end)?;
     let mut cursor = 0;
     let mut roots = Vec::new();
     while cursor < flat.len() {
@@ -1208,12 +1236,12 @@ fn build_list_tree(
 }
 
 fn parse_literal_block(
-    source_lines: &SourceLines,
+    source_document: &SourceDocument,
     opener_index: usize,
     source: &str,
 ) -> Result<(LiteralBlock, usize), PositionError> {
-    let opener = source_lines.lines()[opener_index];
-    let body = parse_delimited_body(source_lines, opener_index, "....", source)?;
+    let opener = source_document.lines()[opener_index];
+    let body = parse_delimited_body(source_document, opener_index, "....", source)?;
     let value = source
         .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
         .expect("literal content range has valid UTF-8 boundaries")
@@ -1239,23 +1267,23 @@ struct DelimitedBody {
 }
 
 fn parse_delimited_body(
-    source_lines: &SourceLines,
+    source_document: &SourceDocument,
     opener_index: usize,
     delimiter: &str,
     source: &str,
 ) -> Result<DelimitedBody, PositionError> {
-    let opener = source_lines.lines()[opener_index];
+    let opener = source_document.lines()[opener_index];
     let content_start = opener.full_range().end();
     let mut closer_index = None;
     let mut recovery_index = None;
 
-    for (index, line) in source_lines
+    for (index, line) in source_document
         .lines()
         .iter()
         .enumerate()
         .skip(opener_index + 1)
     {
-        let content = source_lines
+        let content = source_document
             .text(line.content_range())
             .expect("line content has valid UTF-8 boundaries");
         if content == delimiter {
@@ -1269,7 +1297,7 @@ fn parse_delimited_body(
     }
 
     let (range_end, content_end, next_line, problems) = if let Some(index) = closer_index {
-        let closer = source_lines.lines()[index];
+        let closer = source_document.lines()[index];
         (
             closer.full_range().end(),
             closer.full_range().start(),
@@ -1278,12 +1306,12 @@ fn parse_delimited_body(
         )
     } else {
         let end = recovery_index
-            .map(|index| source_lines.lines()[index].full_range().start())
+            .map(|index| source_document.lines()[index].full_range().start())
             .unwrap_or_else(|| TextSize::new(source.len()).expect("source size was validated"));
         (
             end,
             end,
-            recovery_index.unwrap_or(source_lines.lines().len()),
+            recovery_index.unwrap_or(source_document.lines().len()),
             vec![BlockProblem {
                 kind: BlockProblemKind::UnclosedBlock,
                 range: opener.content_range(),
@@ -1299,12 +1327,12 @@ fn parse_delimited_body(
 }
 
 fn parse_source_block(
-    source_lines: &SourceLines,
+    source_document: &SourceDocument,
     attribute_index: usize,
     source: &str,
 ) -> Result<(SourceBlock, usize), PositionError> {
-    let attribute = source_lines.lines()[attribute_index];
-    let attribute_text = source_lines
+    let attribute = source_document.lines()[attribute_index];
+    let attribute_text = source_document
         .text(attribute.content_range())
         .expect("attribute range is valid");
     let language_relative =
@@ -1319,8 +1347,8 @@ fn parse_source_block(
         .transpose()?;
     let language = language_relative.map(|(start, end)| attribute_text[start..end].to_owned());
     let delimiter_index = attribute_index + 1;
-    let delimiter = source_lines.lines()[delimiter_index];
-    let mut body = parse_delimited_body(source_lines, delimiter_index, "----", source)?;
+    let delimiter = source_document.lines()[delimiter_index];
+    let mut body = parse_delimited_body(source_document, delimiter_index, "----", source)?;
     if language.is_none() {
         body.problems.push(BlockProblem {
             kind: BlockProblemKind::MissingSourceLanguage,
@@ -1460,9 +1488,9 @@ fn flush_paragraph(
         paragraph.value.push_str(&value);
         if line.full_range().end() < paragraph.content_range.end() {
             paragraph.value.push_str(match line.ending() {
-                crate::source_lines::LineEnding::Lf => "\n",
-                crate::source_lines::LineEnding::CrLf => "\r\n",
-                crate::source_lines::LineEnding::None => "",
+                crate::source_document::LineEnding::Lf => "\n",
+                crate::source_document::LineEnding::CrLf => "\r\n",
+                crate::source_document::LineEnding::None => "",
             });
         }
     }

@@ -25,3 +25,14 @@ Issue 052。
 
 移行用に`SourceLines`と`LineIndex`の恒久的adapterを設けない。途中commitでconsumerが未移行でも、
 Issue 058完了時には旧表現を削除する。
+
+== 実装結果
+
+SourceDocumentが一つのArc付きsource、行の内容・改行・全体範囲、lossless tokenおよび
+UTF-8／UTF-16位置変換を所有する構成へ移行した。行長上限と協調キャンセルは改行認識と同じ
+走査で検査し、コアの独立した事前行走査を削除した。
+
+AnalysisはCST内のSourceDocumentを唯一の正本として公開し、別のLineIndexを所有しない。
+Parser、Formatter、Lint、診断表示、CLIおよびLanguage Serverを同じSourceDocumentへ移行し、
+SourceLines型、LineIndex型および旧moduleを削除した。CRLF内部offset、終端改行、空入力、
+UnicodeのUTF-8／UTF-16往復とキャンセル・行長上限はworkspace試験で確認した。

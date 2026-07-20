@@ -13,7 +13,7 @@ use crate::diagnostic::{CoreErrorCode, Diagnostic};
 use crate::limits::{ProcessingLimits, SyntaxMode};
 use crate::lint::{self, LintConfig};
 use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
-use crate::source::{LineIndex, PositionError};
+use crate::source::{PositionError, SourceDocument};
 
 /// Version of the public parsing contract.
 pub const CORE_API_VERSION: u16 = 8;
@@ -102,7 +102,6 @@ pub struct Analysis {
     pub source_id: Option<SourceId>,
     pub cst: CstDocument,
     pub ast: parser::AstDocument,
-    pub line_index: LineIndex,
     pub diagnostics: Vec<Diagnostic>,
     pub reference_targets: Vec<crate::document::ReferenceTarget>,
     pub references: Vec<crate::inline::Reference>,
@@ -111,6 +110,10 @@ pub struct Analysis {
 impl Analysis {
     pub fn source(&self) -> &str {
         self.cst.source()
+    }
+
+    pub fn source_document(&self) -> &SourceDocument {
+        self.cst.source_document()
     }
 
     pub fn reference_queries(&self) -> Vec<crate::reference::ReferenceQuery> {
@@ -229,37 +232,13 @@ fn analyze_inner(
     }
     enforce_limit("input bytes", options.limits.max_input_bytes, source.len())?;
 
-    let mut line_start = 0;
-    for (index, byte) in source.bytes().enumerate() {
-        if index % 4096 == 0 && cancellation.is_cancelled() {
-            return Err(ParseError::Cancelled);
-        }
-        if byte == b'\n' {
-            let end = if index > line_start && source.as_bytes()[index - 1] == b'\r' {
-                index - 1
-            } else {
-                index
-            };
-            enforce_limit(
-                "line bytes",
-                options.limits.max_line_bytes,
-                end - line_start,
-            )?;
-            line_start = index + 1;
-        }
-    }
-    enforce_limit(
-        "line bytes",
-        options.limits.max_line_bytes,
-        source.len() - line_start,
-    )?;
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
     }
 
     let shared_source: Arc<str> = Arc::from(source);
     let ParsedDocument { cst, ast } = parser::parse_shared_cancellable(
-        Arc::clone(&shared_source),
+        shared_source,
         &parser::ParseConfig {
             max_inline_depth: limit_to_usize(options.limits.max_inline_depth),
             max_list_depth: limit_to_usize(options.limits.max_list_depth),
@@ -307,12 +286,10 @@ fn analyze_inner(
         return Err(ParseError::Cancelled);
     }
 
-    let line_index = LineIndex::from_shared(shared_source).map_err(ParseError::Position)?;
     Ok(Analysis {
         source_id: options.source_id.clone(),
         cst,
         ast,
-        line_index,
         diagnostics,
         reference_targets,
         references,
@@ -402,7 +379,7 @@ mod tests {
 
         assert_eq!(analysis.source(), "== 所有される見出し\n");
         assert_eq!(analysis.cst.reconstruct(), analysis.source());
-        assert_eq!(analysis.line_index.line_count(), 2);
+        assert_eq!(analysis.source_document().line_count(), 2);
     }
 
     #[test]

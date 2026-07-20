@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::source::{PositionError, TextRange, TextSize};
+use crate::source::{
+    Position, PositionEncoding, PositionError, TextRange, TextSize, utf16_character_to_byte,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LineEnding {
@@ -59,18 +61,46 @@ pub struct LosslessToken {
 
 /// An owned line and token view of the original UTF-8 source.
 #[derive(Debug)]
-pub struct SourceLines {
+pub struct SourceDocument {
     source: Arc<str>,
     lines: Vec<SourceLine>,
     tokens: Vec<LosslessToken>,
 }
 
-impl SourceLines {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceDocumentBuildError {
+    Position(PositionError),
+    LineLimitExceeded { limit: u32, actual: u64 },
+    Cancelled,
+}
+
+impl From<PositionError> for SourceDocumentBuildError {
+    fn from(error: PositionError) -> Self {
+        Self::Position(error)
+    }
+}
+
+impl SourceDocument {
     pub fn new(source: &str) -> Result<Self, PositionError> {
         Self::from_shared(Arc::from(source))
     }
 
     pub fn from_shared(source: Arc<str>) -> Result<Self, PositionError> {
+        match Self::from_shared_bounded(source, u32::MAX, &|| false) {
+            Ok(document) => Ok(document),
+            Err(SourceDocumentBuildError::Position(error)) => Err(error),
+            Err(
+                SourceDocumentBuildError::LineLimitExceeded { .. }
+                | SourceDocumentBuildError::Cancelled,
+            ) => unreachable!("unbounded non-cancellable source construction"),
+        }
+    }
+
+    pub(crate) fn from_shared_bounded(
+        source: Arc<str>,
+        max_line_bytes: u32,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, SourceDocumentBuildError> {
         let source_text = source.as_ref();
         TextSize::new(source_text.len())?;
 
@@ -81,6 +111,9 @@ impl SourceLines {
         let mut cursor = 0;
 
         while cursor < bytes.len() {
+            if cursor % 4096 == 0 && is_cancelled() {
+                return Err(SourceDocumentBuildError::Cancelled);
+            }
             let (content_end, full_end, ending) = match bytes[cursor] {
                 b'\r' if bytes.get(cursor + 1) == Some(&b'\n') => {
                     (cursor, cursor + 2, LineEnding::CrLf)
@@ -91,6 +124,8 @@ impl SourceLines {
                     continue;
                 }
             };
+
+            enforce_line_limit(max_line_bytes, content_end - line_start)?;
 
             push_line(
                 source_text,
@@ -103,6 +138,11 @@ impl SourceLines {
             )?;
             cursor = full_end;
             line_start = full_end;
+        }
+
+        enforce_line_limit(max_line_bytes, source_text.len() - line_start)?;
+        if is_cancelled() {
+            return Err(SourceDocumentBuildError::Cancelled);
         }
 
         push_line(
@@ -130,6 +170,105 @@ impl SourceLines {
         &self.lines
     }
 
+    pub fn line_count(&self) -> u32 {
+        u32::try_from(self.lines.len()).expect("source length limits the number of lines")
+    }
+
+    pub fn line_length(&self, line: u32, encoding: PositionEncoding) -> Result<u32, PositionError> {
+        let Some(line) = self.lines.get(line as usize) else {
+            return Err(PositionError::LineOutOfBounds {
+                line,
+                line_count: self.line_count(),
+            });
+        };
+        let content = self
+            .text(line.content_range())
+            .expect("source line ranges are valid UTF-8 boundaries");
+        let length = match encoding {
+            PositionEncoding::Utf8 => content.len(),
+            PositionEncoding::Utf16 => content.encode_utf16().count(),
+        };
+        Ok(u32::try_from(length).expect("source length limits the line length"))
+    }
+
+    pub fn offset_to_position(
+        &self,
+        offset: TextSize,
+        encoding: PositionEncoding,
+    ) -> Result<Position, PositionError> {
+        let offset = offset.to_usize();
+        if offset > self.source.len() {
+            return Err(PositionError::OffsetOutOfBounds {
+                offset: TextSize::new(offset)?,
+                source_len: TextSize::new(self.source.len())?,
+            });
+        }
+        if !self.source.is_char_boundary(offset) {
+            return Err(PositionError::InvalidCharBoundary {
+                offset: TextSize::new(offset)?,
+            });
+        }
+
+        let line_number = self.lines.partition_point(|line| {
+            line.full_range().end().to_usize() <= offset
+                && line.full_range().end() != line.content_range().end()
+        });
+        let line = self
+            .lines
+            .get(line_number)
+            .expect("an in-bounds offset belongs to a line");
+        if offset > line.content_range().end().to_usize() {
+            return Err(PositionError::InsideLineEnding {
+                offset: TextSize::new(offset)?,
+            });
+        }
+
+        let prefix = &self.source[line.content_range().start().to_usize()..offset];
+        let character = match encoding {
+            PositionEncoding::Utf8 => prefix.len(),
+            PositionEncoding::Utf16 => prefix.encode_utf16().count(),
+        };
+        Ok(Position {
+            line: u32::try_from(line_number).expect("source length limits the line number"),
+            character: u32::try_from(character).expect("source length limits the character"),
+        })
+    }
+
+    pub fn position_to_offset(
+        &self,
+        position: Position,
+        encoding: PositionEncoding,
+    ) -> Result<TextSize, PositionError> {
+        let Some(line) = self.lines.get(position.line as usize) else {
+            return Err(PositionError::LineOutOfBounds {
+                line: position.line,
+                line_count: self.line_count(),
+            });
+        };
+        let content = self
+            .text(line.content_range())
+            .expect("source line ranges are valid UTF-8 boundaries");
+        let requested = position.character as usize;
+        let relative_offset = match encoding {
+            PositionEncoding::Utf8 => {
+                if requested > content.len() {
+                    return Err(PositionError::CharacterOutOfBounds {
+                        position,
+                        line_length: u32::try_from(content.len())
+                            .expect("source length limits the line length"),
+                        encoding,
+                    });
+                }
+                if !content.is_char_boundary(requested) {
+                    return Err(PositionError::InvalidCharacterBoundary { position, encoding });
+                }
+                requested
+            }
+            PositionEncoding::Utf16 => utf16_character_to_byte(content, position)?,
+        };
+        TextSize::new(line.content_range().start().to_usize() + relative_offset)
+    }
+
     pub fn tokens(&self) -> &[LosslessToken] {
         &self.tokens
     }
@@ -149,6 +288,15 @@ impl SourceLines {
             );
         }
         output
+    }
+}
+
+fn enforce_line_limit(limit: u32, actual: usize) -> Result<(), SourceDocumentBuildError> {
+    let actual = u64::try_from(actual).expect("usize fits u64 on supported targets");
+    if actual > u64::from(limit) {
+        Err(SourceDocumentBuildError::LineLimitExceeded { limit, actual })
+    } else {
+        Ok(())
     }
 }
 
@@ -241,17 +389,19 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LineEnding, LosslessTokenKind, SourceLines};
+    use std::sync::Arc;
+
+    use super::{LineEnding, LosslessTokenKind, SourceDocument, SourceDocumentBuildError};
     use crate::source::{TextRange, TextSize};
 
     #[test]
-    fn source_lines_distinguish_empty_input_and_trailing_newline() {
-        let empty = SourceLines::new("").expect("valid source");
+    fn source_document_distinguish_empty_input_and_trailing_newline() {
+        let empty = SourceDocument::new("").expect("valid source");
         assert_eq!(empty.lines().len(), 1);
         assert_eq!(empty.text(empty.lines()[0].full_range()), Some(""));
         assert_eq!(empty.lines()[0].ending(), LineEnding::None);
 
-        let terminated = SourceLines::new("text\n").expect("valid source");
+        let terminated = SourceDocument::new("text\n").expect("valid source");
         assert_eq!(terminated.lines().len(), 2);
         assert_eq!(
             terminated.text(terminated.lines()[0].content_range()),
@@ -269,9 +419,9 @@ mod tests {
     }
 
     #[test]
-    fn source_lines_recognize_empty_lines_and_mixed_endings() {
+    fn source_document_recognize_empty_lines_and_mixed_endings() {
         let source = "\n\r\nlast";
-        let parsed = SourceLines::new(source).expect("valid source");
+        let parsed = SourceDocument::new(source).expect("valid source");
 
         assert_eq!(parsed.lines().len(), 3);
         assert_eq!(parsed.lines()[0].ending(), LineEnding::Lf);
@@ -283,8 +433,27 @@ mod tests {
     }
 
     #[test]
-    fn source_lines_keep_crlf_as_one_token() {
-        let parsed = SourceLines::new("a\r\nb").expect("valid source");
+    fn bounded_construction_checks_each_line_and_cancellation_during_the_same_scan() {
+        for source in ["1234\n1", "1234\r\n1", "1\n1234"] {
+            assert!(SourceDocument::from_shared_bounded(Arc::from(source), 4, &|| false).is_ok());
+            assert!(matches!(
+                SourceDocument::from_shared_bounded(Arc::from(source), 3, &|| false),
+                Err(SourceDocumentBuildError::LineLimitExceeded {
+                    limit: 3,
+                    actual: 4,
+                })
+            ));
+        }
+
+        assert!(matches!(
+            SourceDocument::from_shared_bounded(Arc::from("text"), u32::MAX, &|| true),
+            Err(SourceDocumentBuildError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn source_document_keep_crlf_as_one_token() {
+        let parsed = SourceDocument::new("a\r\nb").expect("valid source");
         let ending = parsed
             .tokens()
             .iter()
@@ -296,9 +465,9 @@ mod tests {
     }
 
     #[test]
-    fn source_lines_preserve_whitespace_comments_and_unicode() {
+    fn source_document_preserve_whitespace_comments_and_unicode() {
         let source = "\t// 日本語 😀\ntext  value";
-        let parsed = SourceLines::new(source).expect("valid source");
+        let parsed = SourceDocument::new(source).expect("valid source");
         let kinds = parsed
             .tokens()
             .iter()
@@ -320,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn source_lines_token_ranges_are_contiguous_and_lossless() {
+    fn source_document_token_ranges_are_contiguous_and_lossless() {
         let sources = [
             "",
             "plain",
@@ -332,7 +501,7 @@ mod tests {
         ];
 
         for source in sources {
-            let parsed = SourceLines::new(source).expect("valid source");
+            let parsed = SourceDocument::new(source).expect("valid source");
             let mut expected_start = 0;
             for token in parsed.tokens() {
                 assert_eq!(token.range.start().to_usize(), expected_start);
@@ -344,8 +513,8 @@ mod tests {
     }
 
     #[test]
-    fn source_lines_reject_invalid_slice_boundaries_without_panicking() {
-        let parsed = SourceLines::new("😀").expect("valid source");
+    fn source_document_reject_invalid_slice_boundaries_without_panicking() {
+        let parsed = SourceDocument::new("😀").expect("valid source");
         let invalid = TextRange::new(
             TextSize::new(1).expect("small offset"),
             TextSize::new(2).expect("small offset"),
@@ -356,9 +525,9 @@ mod tests {
     }
 
     #[test]
-    fn source_lines_accept_one_mib_single_line_boundary() {
+    fn source_document_accept_one_mib_single_line_boundary() {
         let source = "x".repeat(1024 * 1024);
-        let parsed = SourceLines::new(&source).expect("valid source");
+        let parsed = SourceDocument::new(&source).expect("valid source");
 
         assert_eq!(parsed.lines().len(), 1);
         assert_eq!(

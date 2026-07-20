@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt::{self, Write as _};
 
-use crate::source::{LineIndex, PositionEncoding, PositionError, TextRange};
+use crate::source::{PositionEncoding, PositionError, SourceDocument, TextRange};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct DiagnosticId(String);
@@ -209,7 +209,7 @@ impl CoreErrorCode {
 
 pub fn render_human(
     diagnostics: &[Diagnostic],
-    line_index: &LineIndex,
+    source_document: &SourceDocument,
     encoding: PositionEncoding,
 ) -> Result<String, PositionError> {
     let mut diagnostics = diagnostics.to_vec();
@@ -217,7 +217,7 @@ pub fn render_human(
     let mut output = String::new();
 
     for diagnostic in diagnostics {
-        let start = line_index.offset_to_position(diagnostic.range.start(), encoding)?;
+        let start = source_document.offset_to_position(diagnostic.range.start(), encoding)?;
         writeln!(
             output,
             "{}:{}: {}[{}]: {}",
@@ -425,14 +425,14 @@ mod tests {
     #[test]
     fn diagnostic_human_output_uses_one_based_line_and_column() {
         let source = "日本語\nproblem\n";
-        let line_index = LineIndex::new(source).expect("valid source");
+        let source_document = SourceDocument::new(source).expect("valid source");
         let diagnostics = [Diagnostic {
             message: "問題です".to_owned(),
             ..diagnostic("parse-1", "parse-error", Severity::Error, range(10, 17))
         }];
 
         assert_eq!(
-            render_human(&diagnostics, &line_index, PositionEncoding::Utf16),
+            render_human(&diagnostics, &source_document, PositionEncoding::Utf16),
             Ok("2:1: error[parse-error]: 問題です\n".to_owned())
         );
     }

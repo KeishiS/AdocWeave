@@ -327,9 +327,9 @@ fn code_actions_use_typed_versioned_workspace_edits() {
 }
 
 fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {
-    use adocweave::source::{LineIndex, Position, PositionEncoding as CorePositionEncoding};
+    use adocweave::source::{Position, PositionEncoding as CorePositionEncoding, SourceDocument};
 
-    let index = LineIndex::new(source).expect("line index");
+    let index = SourceDocument::new(source).expect("line index");
     let mut byte_edits = edits
         .iter()
         .map(|edit| {
