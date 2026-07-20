@@ -26,3 +26,11 @@
 なし。後続の構文木再設計より先に実施する。
 
 M12移行方針により、このIssue単独で旧parserの全consumerとの互換性を維持する必要はない。
+
+== 進捗
+
+InlineScannerの走査量を入力長から合成した値ではなく、unconstrained marker索引、候補収集、
+closer索引およびdelimiter索引で実際に検査した位置の合計へ変更した。ASCIIの既知入力と
+不正macroが密集する可変長入力で、計測値そのものと入力長に対する定数倍上限を検証する。
+
+構築時ParseBudgetとblock、node、属性、参照の事前拒否は未完了である。

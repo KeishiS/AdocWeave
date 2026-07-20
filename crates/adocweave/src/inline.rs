@@ -326,7 +326,7 @@ impl InlineScanner {
     fn new(value: &str) -> Self {
         let mut candidates = Vec::new();
         let mut inspected_positions: usize = 0;
-        let unconstrained_pairs = index_unconstrained_pairs(value);
+        let unconstrained_pairs = index_unconstrained_pairs(value, &mut inspected_positions);
         for (open, marker) in value.char_indices() {
             inspected_positions += 1;
             let rest = &value[open..];
@@ -364,15 +364,18 @@ impl InlineScanner {
                 });
             }
         }
-        index_marker_closers(value, &unconstrained_pairs, &mut candidates);
-        let delimiters = DelimiterIndex::new(value);
+        index_marker_closers(
+            value,
+            &unconstrained_pairs,
+            &mut candidates,
+            &mut inspected_positions,
+        );
+        let delimiters = DelimiterIndex::new_counted(value, &mut inspected_positions);
         Self {
             candidates,
             delimiters,
             next: 0,
-            _inspected_positions: inspected_positions
-                .saturating_mul(2)
-                .saturating_add(value.len()),
+            _inspected_positions: inspected_positions,
         }
     }
 
@@ -406,7 +409,13 @@ struct DelimiterIndex {
 }
 
 impl DelimiterIndex {
+    #[cfg(test)]
     fn new(value: &str) -> Self {
+        let mut ignored = 0;
+        Self::new_counted(value, &mut ignored)
+    }
+
+    fn new_counted(value: &str, inspected_positions: &mut usize) -> Self {
         let mut next_open_bracket = vec![None; value.len() + 1];
         let mut next_close_bracket = vec![None; value.len() + 1];
         let mut next_double_greater = vec![None; value.len() + 1];
@@ -414,6 +423,7 @@ impl DelimiterIndex {
         let mut close_bracket = None;
         let mut double_greater = None;
         for offset in (0..value.len()).rev() {
+            *inspected_positions = (*inspected_positions).saturating_add(1);
             if value.as_bytes()[offset] == b'[' {
                 open_bracket = Some(offset);
             }
@@ -453,11 +463,12 @@ fn next_char_boundary(value: &str, offset: usize) -> usize {
     offset + value[offset..].chars().next().map_or(1, char::len_utf8)
 }
 
-fn index_unconstrained_pairs(value: &str) -> Vec<bool> {
+fn index_unconstrained_pairs(value: &str, inspected_positions: &mut usize) -> Vec<bool> {
     let bytes = value.as_bytes();
     let mut pairs = vec![false; bytes.len() + 1];
     let mut cursor = 0;
     while cursor < bytes.len() {
+        *inspected_positions = (*inspected_positions).saturating_add(1);
         let marker = bytes[cursor];
         if !matches!(marker, b'`' | b'*' | b'_') {
             cursor += 1;
@@ -465,6 +476,7 @@ fn index_unconstrained_pairs(value: &str) -> Vec<bool> {
         }
         let mut run_end = cursor + 1;
         while bytes.get(run_end) == Some(&marker) {
+            *inspected_positions = (*inspected_positions).saturating_add(1);
             run_end += 1;
         }
         let mut pair = cursor;
@@ -553,9 +565,11 @@ fn index_marker_closers(
     value: &str,
     unconstrained_pairs: &[bool],
     candidates: &mut [InlineCandidate],
+    inspected_positions: &mut usize,
 ) {
     let mut opener_at = vec![None; value.len() + 1];
     for candidate in candidates.iter() {
+        *inspected_positions = (*inspected_positions).saturating_add(1);
         if let InlineCandidate::Marker {
             open, marker, form, ..
         } = candidate
@@ -573,6 +587,7 @@ fn index_marker_closers(
     let mut last_unconstrained_emphasis = None;
     let mut last_attribute = None;
     for (offset, marker) in value.char_indices().rev() {
+        *inspected_positions = (*inspected_positions).saturating_add(1);
         if let Some((marker, form)) = opener_at[offset] {
             closer_at[offset] = match (marker, form) {
                 ('`', MarkerForm::Constrained) => last_backtick,
@@ -603,6 +618,7 @@ fn index_marker_closers(
     }
 
     for candidate in candidates {
+        *inspected_positions = (*inspected_positions).saturating_add(1);
         if let InlineCandidate::Marker { open, close, .. } = candidate {
             *close = closer_at[*open];
         }
@@ -1321,18 +1337,18 @@ mod tests {
 
     #[test]
     fn scanner_has_a_fixed_linear_inspection_budget() {
+        assert_eq!(InlineScanner::new("abc").inspected_positions(), 12);
+
         let source = "日本語 *open xref:broken[ https://example.org[label] _tail";
         let scanner = InlineScanner::new(source);
 
-        assert_eq!(
-            scanner.inspected_positions(),
-            source.chars().count() * 2 + source.len()
-        );
+        assert!(scanner.inspected_positions() > source.len());
+        assert!(scanner.inspected_positions() <= source.len() * 8);
 
         for repetitions in 1..128 {
             let hostile = "xref:".repeat(repetitions) + "target[open";
             let scanner = InlineScanner::new(&hostile);
-            assert!(scanner.inspected_positions() <= hostile.len() * 3);
+            assert!(scanner.inspected_positions() <= hostile.len() * 8);
             let output = parse(
                 &hostile,
                 range(0, hostile.len()),
