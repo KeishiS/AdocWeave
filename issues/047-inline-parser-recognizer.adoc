@@ -24,3 +24,9 @@
 == 依存関係
 
 * 046
+
+== 進捗
+
+macroとmarkerをsource位置順に統合する`InlineCandidate` recognizerを追加し、主走査ループから
+候補優先順位とUnicode安全なskip位置の計算を分離した。次にmacro payload認識とsemantic
+node構築を分離する。

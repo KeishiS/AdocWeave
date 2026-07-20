@@ -184,137 +184,164 @@ fn parse_segment(
     let mut cursor = 0;
     let mut plain_start = 0;
 
-    loop {
-        let marker = next_opener(value, cursor);
-        let macro_open = next_macro_start(value, cursor);
-        if macro_open.is_some_and(|macro_open| {
-            marker.is_none_or(|(marker_open, _)| macro_open <= marker_open)
-        }) {
-            let open = macro_open.expect("checked above");
-            if let Some((inline, end)) = parse_macro(value, range, config, depth, open) {
-                if let Inline::Formula(formula) = &inline {
-                    if !formula.closed {
-                        output.problems.push(InlineProblem {
-                            kind: InlineProblemKind::UnclosedStem,
-                            range: formula.range,
-                        });
+    while let Some(candidate) = next_candidate(value, cursor) {
+        match candidate {
+            InlineCandidate::Macro { open } => {
+                if let Some((inline, end)) = parse_macro(value, range, config, depth, open) {
+                    if let Inline::Formula(formula) = &inline {
+                        if !formula.closed {
+                            output.problems.push(InlineProblem {
+                                kind: InlineProblemKind::UnclosedStem,
+                                range: formula.range,
+                            });
+                        }
+                        if formula.value.is_empty() {
+                            output.problems.push(InlineProblem {
+                                kind: InlineProblemKind::EmptyStem,
+                                range: formula.content_range,
+                            });
+                        }
+                        if formula.value.len() > config.max_formula_bytes {
+                            output.problems.push(InlineProblem {
+                                kind: InlineProblemKind::StemSizeLimitExceeded,
+                                range: formula.content_range,
+                            });
+                        }
                     }
-                    if formula.value.is_empty() {
-                        output.problems.push(InlineProblem {
-                            kind: InlineProblemKind::EmptyStem,
-                            range: formula.content_range,
-                        });
+                    if is_escaped(value, open) {
+                        push_text(&mut output.inlines, value, range, plain_start, open - 1);
+                        output.inlines.push(Inline::Text(InlineText {
+                            range: subrange(range, open - 1, end),
+                            value: value[open..end].to_owned(),
+                        }));
+                    } else {
+                        push_text(&mut output.inlines, value, range, plain_start, open);
+                        output.inlines.push(inline);
                     }
-                    if formula.value.len() > config.max_formula_bytes {
-                        output.problems.push(InlineProblem {
-                            kind: InlineProblemKind::StemSizeLimitExceeded,
-                            range: formula.content_range,
-                        });
-                    }
+                    cursor = end;
+                    plain_start = end;
+                    continue;
                 }
-                if is_escaped(value, open) {
-                    push_text(&mut output.inlines, value, range, plain_start, open - 1);
-                    output.inlines.push(Inline::Text(InlineText {
-                        range: subrange(range, open - 1, end),
-                        value: value[open..end].to_owned(),
-                    }));
-                } else {
-                    push_text(&mut output.inlines, value, range, plain_start, open);
-                    output.inlines.push(inline);
-                }
-                cursor = end;
-                plain_start = end;
+                cursor = next_char_boundary(value, open);
                 continue;
             }
-            cursor = open + value[open..].chars().next().map_or(1, char::len_utf8);
-            continue;
-        }
-        let Some((open, marker)) = marker else {
-            break;
-        };
-        let Some(close) = find_closer(value, open, marker) else {
-            output.problems.push(InlineProblem {
-                kind: match marker {
-                    '`' => InlineProblemKind::UnclosedMonospace,
-                    '*' => InlineProblemKind::UnclosedStrong,
-                    '_' => InlineProblemKind::UnclosedEmphasis,
-                    '{' => InlineProblemKind::UnclosedAttributeReference,
+            InlineCandidate::Marker { open, marker } => {
+                let Some(close) = find_closer(value, open, marker) else {
+                    output.problems.push(InlineProblem {
+                        kind: match marker {
+                            '`' => InlineProblemKind::UnclosedMonospace,
+                            '*' => InlineProblemKind::UnclosedStrong,
+                            '_' => InlineProblemKind::UnclosedEmphasis,
+                            '{' => InlineProblemKind::UnclosedAttributeReference,
+                            _ => unreachable!("only supported markers are returned"),
+                        },
+                        range: subrange(range, open, open + marker.len_utf8()),
+                    });
+                    cursor = open + marker.len_utf8();
+                    continue;
+                };
+
+                if marker == '{' {
+                    let name = &value[open + 1..close];
+                    if name.is_empty()
+                        || !name.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
+                        })
+                    {
+                        cursor = open + 1;
+                        continue;
+                    }
+                }
+
+                push_text(&mut output.inlines, value, range, plain_start, open);
+                let node_range = subrange(range, open, close + marker.len_utf8());
+                let content_range = subrange(range, open + marker.len_utf8(), close);
+                match marker {
+                    '`' => output.inlines.push(Inline::Literal {
+                        kind: InlineLiteralKind::Monospace,
+                        range: node_range,
+                        content_range,
+                        value: value[open + 1..close].to_owned(),
+                    }),
+                    '*' | '_' if depth >= config.max_depth => {
+                        output.inlines.push(Inline::Text(InlineText {
+                            range: node_range,
+                            value: value[open..=close].to_owned(),
+                        }));
+                        output.problems.push(InlineProblem {
+                            kind: InlineProblemKind::NestingLimitExceeded,
+                            range: node_range,
+                        });
+                    }
+                    '*' => {
+                        let inner = parse_segment(
+                            &value[open + 1..close],
+                            content_range,
+                            config,
+                            depth + 1,
+                        );
+                        output.problems.extend(inner.problems);
+                        output.inlines.push(Inline::Styled {
+                            style: InlineStyle::Strong,
+                            range: node_range,
+                            content_range,
+                            children: inner.inlines,
+                        });
+                    }
+                    '_' => {
+                        let inner = parse_segment(
+                            &value[open + 1..close],
+                            content_range,
+                            config,
+                            depth + 1,
+                        );
+                        output.problems.extend(inner.problems);
+                        output.inlines.push(Inline::Styled {
+                            style: InlineStyle::Emphasis,
+                            range: node_range,
+                            content_range,
+                            children: inner.inlines,
+                        });
+                    }
+                    '{' => output.inlines.push(Inline::AttributeReference {
+                        range: node_range,
+                        name_range: subrange(range, open + 1, close),
+                        name: value[open + 1..close].to_owned(),
+                    }),
                     _ => unreachable!("only supported markers are returned"),
-                },
-                range: subrange(range, open, open + marker.len_utf8()),
-            });
-            cursor = open + marker.len_utf8();
-            continue;
-        };
-
-        if marker == '{' {
-            let name = &value[open + 1..close];
-            if name.is_empty()
-                || !name
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-            {
-                cursor = open + 1;
-                continue;
+                }
+                cursor = close + marker.len_utf8();
+                plain_start = cursor;
             }
         }
-
-        push_text(&mut output.inlines, value, range, plain_start, open);
-        let node_range = subrange(range, open, close + marker.len_utf8());
-        let content_range = subrange(range, open + marker.len_utf8(), close);
-        match marker {
-            '`' => output.inlines.push(Inline::Literal {
-                kind: InlineLiteralKind::Monospace,
-                range: node_range,
-                content_range,
-                value: value[open + 1..close].to_owned(),
-            }),
-            '*' | '_' if depth >= config.max_depth => {
-                output.inlines.push(Inline::Text(InlineText {
-                    range: node_range,
-                    value: value[open..=close].to_owned(),
-                }));
-                output.problems.push(InlineProblem {
-                    kind: InlineProblemKind::NestingLimitExceeded,
-                    range: node_range,
-                });
-            }
-            '*' => {
-                let inner =
-                    parse_segment(&value[open + 1..close], content_range, config, depth + 1);
-                output.problems.extend(inner.problems);
-                output.inlines.push(Inline::Styled {
-                    style: InlineStyle::Strong,
-                    range: node_range,
-                    content_range,
-                    children: inner.inlines,
-                });
-            }
-            '_' => {
-                let inner =
-                    parse_segment(&value[open + 1..close], content_range, config, depth + 1);
-                output.problems.extend(inner.problems);
-                output.inlines.push(Inline::Styled {
-                    style: InlineStyle::Emphasis,
-                    range: node_range,
-                    content_range,
-                    children: inner.inlines,
-                });
-            }
-            '{' => output.inlines.push(Inline::AttributeReference {
-                range: node_range,
-                name_range: subrange(range, open + 1, close),
-                name: value[open + 1..close].to_owned(),
-            }),
-            _ => unreachable!("only supported markers are returned"),
-        }
-        cursor = close + marker.len_utf8();
-        plain_start = cursor;
     }
 
     push_text(&mut output.inlines, value, range, plain_start, value.len());
     scan_incomplete_macros(value, range, &mut output.problems);
     output
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InlineCandidate {
+    Macro { open: usize },
+    Marker { open: usize, marker: char },
+}
+
+fn next_candidate(value: &str, cursor: usize) -> Option<InlineCandidate> {
+    let marker = next_opener(value, cursor);
+    let macro_open = next_macro_start(value, cursor);
+    match (macro_open, marker) {
+        (Some(open), Some((marker_open, _))) if open <= marker_open => {
+            Some(InlineCandidate::Macro { open })
+        }
+        (Some(open), None) => Some(InlineCandidate::Macro { open }),
+        (_, Some((open, marker))) => Some(InlineCandidate::Marker { open, marker }),
+        (None, None) => None,
+    }
+}
+
+fn next_char_boundary(value: &str, offset: usize) -> usize {
+    offset + value[offset..].chars().next().map_or(1, char::len_utf8)
 }
 
 fn next_macro_start(value: &str, cursor: usize) -> Option<usize> {
@@ -743,8 +770,8 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Inline, InlineLiteralKind, InlineParseConfig, InlineProblemKind, InlineStyle,
-        ReferenceDestination, inline_at, parse, parse_text,
+        Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig, InlineProblemKind,
+        InlineStyle, ReferenceDestination, inline_at, next_candidate, parse, parse_text,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -771,6 +798,27 @@ mod tests {
     #[test]
     fn inline_text_handles_empty_input() {
         assert!(parse_text("", range(0, 0), InlineParseConfig::default()).is_empty());
+    }
+
+    #[test]
+    fn recognizer_orders_macros_and_markers_by_source_position() {
+        assert_eq!(
+            next_candidate("*strong* https://example.org", 0),
+            Some(InlineCandidate::Marker {
+                open: 0,
+                marker: '*'
+            })
+        );
+        assert_eq!(
+            next_candidate("https://example.org *strong*", 0),
+            Some(InlineCandidate::Macro { open: 0 })
+        );
+        assert_eq!(
+            next_candidate("日本語 xref:other.adoc[]", "日本語 ".len()),
+            Some(InlineCandidate::Macro {
+                open: "日本語 ".len()
+            })
+        );
     }
 
     #[test]
