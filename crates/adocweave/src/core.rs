@@ -3,6 +3,7 @@
 //! Hosts own all I/O and reference resolution. This module only consumes
 //! caller-provided text and deterministic options.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,6 +55,8 @@ pub struct ParseOptions {
     pub source_id: Option<SourceId>,
     pub profile: SyntaxProfile,
     pub limits: ProcessingLimits,
+    /// Host-authoritative values that source text may not change.
+    pub protected_attributes: BTreeMap<String, String>,
 }
 
 impl Default for ParseOptions {
@@ -62,6 +65,7 @@ impl Default for ParseOptions {
             source_id: None,
             profile: SyntaxProfile::default(),
             limits: ProcessingLimits::default(),
+            protected_attributes: BTreeMap::new(),
         }
     }
 }
@@ -240,6 +244,11 @@ fn parse_inner<'source>(
         },
     )
     .map_err(ParseError::Position)?;
+    enforce_limit(
+        "document attributes",
+        options.limits.max_attributes,
+        ast.attributes.len(),
+    )?;
     if options.profile.mode == SyntaxMode::Strict
         && ast
             .blocks
@@ -255,6 +264,12 @@ fn parse_inner<'source>(
     let mut lint_config = LintConfig::default();
     lint_config.max_diagnostics = options.limits.max_diagnostics;
     lint_config.max_inline_depth = options.limits.max_inline_depth;
+    lint_config.protected_attributes = options.protected_attributes.clone();
+    lint_config.protected_attribute_severity = if options.profile.mode == SyntaxMode::Strict {
+        crate::diagnostic::Severity::Error
+    } else {
+        crate::diagnostic::Severity::Warning
+    };
     let diagnostics = lint::lint(source, &lint_config).map_err(ParseError::Position)?;
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
@@ -351,5 +366,24 @@ mod tests {
         assert_send_sync::<ParseOptions>();
         assert_send_sync::<CancellationToken>();
         assert_send_sync::<ParseError>();
+    }
+
+    #[test]
+    fn protected_metadata_is_an_error_in_strict_mode() {
+        let mut options = ParseOptions::default();
+        options.profile.mode = crate::limits::SyntaxMode::Strict;
+        options.protected_attributes.insert(
+            "note-id".to_owned(),
+            "123e4567-e89b-12d3-a456-426614174000".to_owned(),
+        );
+        let result = parse(
+            "= Note\n:note-id: 00000000-0000-0000-0000-000000000000\n",
+            &options,
+        )
+        .expect("parse recovers with diagnostic");
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "protected-attribute"
+                && diagnostic.severity == crate::diagnostic::Severity::Error
+        }));
     }
 }

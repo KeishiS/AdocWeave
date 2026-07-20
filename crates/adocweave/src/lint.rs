@@ -26,10 +26,15 @@ pub enum LintRule {
     NestingLimitExceeded,
     UnclosedBlock,
     MissingSourceLanguage,
+    InvalidAttribute,
+    DuplicateAttribute,
+    UndefinedAttribute,
+    UnusedAttribute,
+    ProtectedAttribute,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 15] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -40,6 +45,11 @@ impl LintRule {
         Self::NestingLimitExceeded,
         Self::UnclosedBlock,
         Self::MissingSourceLanguage,
+        Self::InvalidAttribute,
+        Self::DuplicateAttribute,
+        Self::UndefinedAttribute,
+        Self::UnusedAttribute,
+        Self::ProtectedAttribute,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -54,6 +64,11 @@ impl LintRule {
             Self::NestingLimitExceeded => "nesting-limit-exceeded",
             Self::UnclosedBlock => "unclosed-block",
             Self::MissingSourceLanguage => "missing-source-language",
+            Self::InvalidAttribute => "invalid-attribute",
+            Self::DuplicateAttribute => "duplicate-attribute",
+            Self::UndefinedAttribute => "undefined-attribute",
+            Self::UnusedAttribute => "unused-attribute",
+            Self::ProtectedAttribute => "protected-attribute",
         }
     }
 }
@@ -71,6 +86,8 @@ pub struct LintConfig {
     pub max_consecutive_blank_lines: usize,
     pub max_diagnostics: usize,
     pub max_inline_depth: usize,
+    pub protected_attributes: BTreeMap<String, String>,
+    pub protected_attribute_severity: Severity,
 }
 
 impl Default for LintConfig {
@@ -92,6 +109,8 @@ impl Default for LintConfig {
             max_consecutive_blank_lines: 2,
             max_diagnostics: 1_000,
             max_inline_depth: 32,
+            protected_attributes: BTreeMap::new(),
+            protected_attribute_severity: Severity::Error,
         }
     }
 }
@@ -180,9 +199,140 @@ pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, Positi
     }
 
     lint_headings(source, config, &mut diagnostics)?;
+    lint_attributes(source, config, &mut diagnostics)?;
     sort_diagnostics(&mut diagnostics);
     diagnostics.truncate(config.max_diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_attributes(
+    source: &str,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<(), PositionError> {
+    use crate::attributes::{AttributeOperation, AttributeProblemKind};
+
+    let parsed = parse_with_config(
+        source,
+        &ParseConfig {
+            max_inline_depth: config.max_inline_depth,
+        },
+    )?;
+    let mut definitions = BTreeMap::<String, TextRange>::new();
+    let mut used = BTreeMap::<String, Vec<TextRange>>::new();
+    for problem in &parsed.ast.attribute_problems {
+        let message = match problem.kind {
+            AttributeProblemKind::InvalidName => "invalid document attribute name",
+            AttributeProblemKind::InvalidValue => "invalid document attribute value",
+        };
+        push_diagnostic(
+            diagnostics,
+            config,
+            LintRule::InvalidAttribute,
+            problem.range,
+            message,
+            None,
+        );
+    }
+    for attribute in &parsed.ast.attributes {
+        if let Some(first) = definitions.insert(attribute.name.clone(), attribute.name_range) {
+            let settings = config.rule(LintRule::DuplicateAttribute);
+            if settings.enabled {
+                diagnostics.push(Diagnostic {
+                    id: DiagnosticId::new(format!(
+                        "{}@{}:{}",
+                        LintRule::DuplicateAttribute.code(),
+                        attribute.name_range.start().to_u32(),
+                        attribute.name_range.end().to_u32()
+                    )),
+                    code: DiagnosticCode::new(LintRule::DuplicateAttribute.code()),
+                    severity: settings.severity,
+                    message: format!("duplicate document attribute `{}`", attribute.name),
+                    range: attribute.name_range,
+                    related: vec![RelatedInformation {
+                        message: "previous definition".to_owned(),
+                        range: first,
+                    }],
+                    fixes: Vec::new(),
+                });
+            }
+        }
+        if let Some(expected) = config.protected_attributes.get(&attribute.name) {
+            let changed = match &attribute.operation {
+                AttributeOperation::Set(_) => &attribute.raw_value != expected,
+                AttributeOperation::Unset => true,
+            };
+            if changed && config.rule(LintRule::ProtectedAttribute).enabled {
+                diagnostics.push(Diagnostic {
+                    id: DiagnosticId::new(format!(
+                        "{}@{}:{}",
+                        LintRule::ProtectedAttribute.code(),
+                        attribute.range.start().to_u32(),
+                        attribute.range.end().to_u32()
+                    )),
+                    code: DiagnosticCode::new(LintRule::ProtectedAttribute.code()),
+                    severity: config.protected_attribute_severity,
+                    message: format!("protected attribute `{}` cannot be changed", attribute.name),
+                    range: attribute.range,
+                    related: Vec::new(),
+                    fixes: Vec::new(),
+                });
+            }
+        }
+    }
+    for block in &parsed.ast.blocks {
+        collect_attribute_references(block, &mut used);
+    }
+    for (name, ranges) in &used {
+        if !definitions.contains_key(name) {
+            for range in ranges {
+                push_diagnostic(
+                    diagnostics,
+                    config,
+                    LintRule::UndefinedAttribute,
+                    *range,
+                    &format!("undefined document attribute `{name}`"),
+                    None,
+                );
+            }
+        }
+    }
+    for (name, range) in definitions {
+        if !used.contains_key(&name) && !config.protected_attributes.contains_key(&name) {
+            push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::UnusedAttribute,
+                range,
+                &format!("unused document attribute `{name}`"),
+                None,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn collect_attribute_references(block: &AstBlock, used: &mut BTreeMap<String, Vec<TextRange>>) {
+    fn collect(inlines: &[crate::inline::Inline], used: &mut BTreeMap<String, Vec<TextRange>>) {
+        for inline in inlines {
+            match inline {
+                crate::inline::Inline::AttributeReference {
+                    name, name_range, ..
+                } => used.entry(name.clone()).or_default().push(*name_range),
+                crate::inline::Inline::Styled { children, .. } => collect(children, used),
+                _ => {}
+            }
+        }
+    }
+    match block {
+        AstBlock::Heading(heading) => collect(&heading.inlines, used),
+        AstBlock::Paragraph(paragraph) => {
+            for line in &paragraph.lines {
+                collect(&line.inlines, used);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn lint_headings(
@@ -360,6 +510,14 @@ fn push_inline_problems(
                 LintRule::NestingLimitExceeded,
                 problem.range,
                 "inline nesting limit exceeded",
+                None,
+            ),
+            InlineProblemKind::UnclosedAttributeReference => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::UnclosedInline,
+                problem.range,
+                "unclosed attribute reference",
                 None,
             ),
         }
@@ -576,5 +734,28 @@ mod tests {
         assert_eq!(diagnostics[0].code.as_str(), "missing-source-language");
         assert_eq!(diagnostics[0].range.start().to_u32(), 0);
         assert_eq!(diagnostics[0].range.end().to_u32(), 8);
+    }
+
+    #[test]
+    fn document_attributes_report_duplicate_undefined_unused_and_invalid_values() {
+        let diagnostics = lint(
+            "= Note\n\
+             :note-id: invalid\n\
+             :unused: value\n\
+             :name: first\n\
+             :name: second\n\
+             \n\
+             {name} {missing}\n",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+        let codes = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"invalid-attribute"));
+        assert!(codes.contains(&"duplicate-attribute"));
+        assert!(codes.contains(&"undefined-attribute"));
+        assert!(codes.contains(&"unused-attribute"));
     }
 }

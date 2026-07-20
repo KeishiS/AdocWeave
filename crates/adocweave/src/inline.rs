@@ -23,6 +23,11 @@ pub enum Inline {
         content_range: TextRange,
         children: Vec<Inline>,
     },
+    AttributeReference {
+        range: TextRange,
+        name_range: TextRange,
+        name: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,7 +45,9 @@ impl Inline {
     pub const fn range(&self) -> TextRange {
         match self {
             Self::Text(text) => text.range,
-            Self::Literal { range, .. } | Self::Styled { range, .. } => *range,
+            Self::Literal { range, .. }
+            | Self::Styled { range, .. }
+            | Self::AttributeReference { range, .. } => *range,
         }
     }
 }
@@ -51,6 +58,7 @@ pub enum InlineProblemKind {
     UnclosedStrong,
     UnclosedEmphasis,
     NestingLimitExceeded,
+    UnclosedAttributeReference,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,6 +109,7 @@ fn parse_segment(
                     '`' => InlineProblemKind::UnclosedMonospace,
                     '*' => InlineProblemKind::UnclosedStrong,
                     '_' => InlineProblemKind::UnclosedEmphasis,
+                    '{' => InlineProblemKind::UnclosedAttributeReference,
                     _ => unreachable!("only supported markers are returned"),
                 },
                 range: subrange(range, open, open + marker.len_utf8()),
@@ -108,6 +117,18 @@ fn parse_segment(
             cursor = open + marker.len_utf8();
             continue;
         };
+
+        if marker == '{' {
+            let name = &value[open + 1..close];
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+            {
+                cursor = open + 1;
+                continue;
+            }
+        }
 
         push_text(&mut output.inlines, value, range, plain_start, open);
         let node_range = subrange(range, open, close + marker.len_utf8());
@@ -151,6 +172,11 @@ fn parse_segment(
                     children: inner.inlines,
                 });
             }
+            '{' => output.inlines.push(Inline::AttributeReference {
+                range: node_range,
+                name_range: subrange(range, open + 1, close),
+                name: value[open + 1..close].to_owned(),
+            }),
             _ => unreachable!("only supported markers are returned"),
         }
         cursor = close + marker.len_utf8();
@@ -166,11 +192,15 @@ fn next_opener(value: &str, cursor: usize) -> Option<(usize, char)> {
         .char_indices()
         .map(|(offset, marker)| (cursor + offset, marker))
         .find(|(offset, marker)| {
-            matches!(marker, '`' | '*' | '_') && is_open_boundary(value, *offset, *marker)
+            *marker == '{'
+                || matches!(marker, '`' | '*' | '_') && is_open_boundary(value, *offset, *marker)
         })
 }
 
 fn find_closer(value: &str, open: usize, marker: char) -> Option<usize> {
+    if marker == '{' {
+        return value[open + 1..].find('}').map(|offset| open + 1 + offset);
+    }
     value[open + marker.len_utf8()..]
         .char_indices()
         .map(|(offset, candidate)| (open + marker.len_utf8() + offset, candidate))

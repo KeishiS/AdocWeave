@@ -32,3 +32,21 @@ cargo test --workspace protected_metadata
 
 - 026
 - 027
+
+== 実装記録
+
+完了。
+
+- 文書タイトル直後の定義 `:name: value`、解除 `:name!:`・`:!name:` と、
+  通常インライン文脈の `{name}` を実装した。
+- CSTは属性行の原表記を保持し、ASTは名前・値の独立範囲、操作、原値および
+  型付き値を保持する。
+- `note-id`、`creator-id`、`created-at`、`updated-at`、`tags` および `stem`
+  の字句検証と正規化を実装した。
+- `ParseOptions.protected_attributes` により、ホストが保護値を注入できる。
+  変更または解除は寛容モードで警告、厳格モードでエラーになる。
+- `invalid-attribute`、`duplicate-attribute`、`undefined-attribute`、
+  `unused-attribute` および `protected-attribute` を追加した。
+- 属性参照は一回だけ置換し、再帰展開、条件分岐および外部環境参照を実装しない。
+- 属性数に `ProcessingLimits.max_attributes` を適用した。
+- 構文、型、保護属性および対象外機能を `docs/document-attributes.adoc` に記録した。

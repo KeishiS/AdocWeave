@@ -2,6 +2,7 @@
 
 use std::fmt::Write as _;
 
+use crate::attributes::{AttributeProblem, DocumentAttribute, parse_line as parse_attribute_line};
 use crate::inline::{Inline, InlineParseConfig, InlineProblem, parse as parse_inlines};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LosslessToken, SourceLine, SourceLines};
@@ -16,6 +17,7 @@ pub enum CstBlockKind {
     SourceBlock,
     BlankLine,
     Unsupported,
+    DocumentAttribute,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -162,6 +164,8 @@ pub enum AstBlock {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AstDocument {
     pub blocks: Vec<AstBlock>,
+    pub attributes: Vec<DocumentAttribute>,
+    pub attribute_problems: Vec<AttributeProblem>,
 }
 
 impl AstDocument {
@@ -279,6 +283,9 @@ pub fn parse_with_config<'source>(
     let mut ast_blocks = Vec::new();
     let mut paragraph_lines = Vec::new();
     let mut saw_content = false;
+    let mut header_attributes_open = false;
+    let mut attributes = Vec::new();
+    let mut attribute_problems = Vec::new();
 
     let mut line_index = 0;
     while line_index < source_lines.lines().len() {
@@ -321,6 +328,30 @@ pub fn parse_with_config<'source>(
                 kind: CstBlockKind::BlankLine,
                 range: line.full_range(),
             });
+            if header_attributes_open {
+                header_attributes_open = false;
+            }
+        } else if header_attributes_open
+            && parse_attribute_line(
+                content,
+                line.content_range().start().to_usize(),
+                line.full_range(),
+            )
+            .is_some()
+        {
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            let (attribute, problem) = parse_attribute_line(
+                content,
+                line.content_range().start().to_usize(),
+                line.full_range(),
+            )
+            .expect("checked above");
+            blocks.push(CstBlock {
+                kind: CstBlockKind::DocumentAttribute,
+                range: line.full_range(),
+            });
+            attributes.push(attribute);
+            attribute_problems.extend(problem);
         } else if content.starts_with('=') {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
             let heading = parse_heading(content, line, !saw_content, config)?;
@@ -336,6 +367,13 @@ pub fn parse_with_config<'source>(
                 range: line.full_range(),
             });
             ast_blocks.push(AstBlock::Heading(heading));
+            header_attributes_open = matches!(
+                ast_blocks.last(),
+                Some(AstBlock::Heading(Heading {
+                    kind: HeadingKind::DocumentTitle,
+                    ..
+                }))
+            );
             saw_content = true;
         } else if unsupported_reason(content).is_some() {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
@@ -363,7 +401,11 @@ pub fn parse_with_config<'source>(
             source_lines,
             blocks,
         },
-        ast: AstDocument { blocks: ast_blocks },
+        ast: AstDocument {
+            blocks: ast_blocks,
+            attributes,
+            attribute_problems,
+        },
     })
 }
 
@@ -668,6 +710,7 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{AstBlock, BlockProblemKind, CstBlockKind, HeadingKind, HeadingProblem, parse};
+    use crate::attributes::{AttributeOperation, AttributeValue, StemKind};
 
     #[test]
     fn paragraph_parser_handles_empty_input() {
@@ -677,6 +720,53 @@ mod tests {
         assert_eq!(parsed.cst.blocks().len(), 1);
         assert_eq!(parsed.cst.blocks()[0].kind, CstBlockKind::BlankLine);
         assert_eq!(parsed.cst.reconstruct(), "");
+    }
+
+    #[test]
+    fn document_attributes_preserve_cst_and_produce_typed_ast() {
+        let source = concat!(
+            "= Note\n",
+            ":note-id: 123E4567-E89B-12D3-A456-426614174000\n",
+            ":created-at: 2026-07-20T12:34:56Z\n",
+            ":tags: rust, AsciiDoc\n",
+            ":stem: latexmath\n",
+            ":draft!:\n",
+            "body {note-id}\n",
+        );
+        let parsed = parse(source).expect("valid source");
+
+        assert_eq!(parsed.cst.reconstruct(), source);
+        assert_eq!(parsed.ast.attributes.len(), 5);
+        assert!(matches!(
+            parsed.ast.attributes[0].operation,
+            AttributeOperation::Set(AttributeValue::Uuid(ref value))
+                if value == "123e4567-e89b-12d3-a456-426614174000"
+        ));
+        assert!(matches!(
+            parsed.ast.attributes[2].operation,
+            AttributeOperation::Set(AttributeValue::Tags(ref tags))
+                if tags == &["rust", "AsciiDoc"]
+        ));
+        assert_eq!(
+            parsed.ast.attributes[3].operation,
+            AttributeOperation::Set(AttributeValue::Stem(StemKind::LatexMath))
+        );
+        assert_eq!(
+            parsed.ast.attributes[4].operation,
+            AttributeOperation::Unset
+        );
+        assert!(parsed.ast.attribute_problems.is_empty());
+    }
+
+    #[test]
+    fn document_attributes_recover_from_incomplete_values() {
+        let parsed = parse("= Note\n:note-id:\n:tags:\n\nbody\n").expect("recover");
+        assert_eq!(parsed.ast.attributes.len(), 2);
+        assert_eq!(parsed.ast.attribute_problems.len(), 2);
+        assert!(matches!(
+            parsed.ast.blocks.last(),
+            Some(AstBlock::Paragraph(_))
+        ));
     }
 
     #[test]

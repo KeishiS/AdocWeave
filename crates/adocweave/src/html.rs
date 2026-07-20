@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::attributes::AttributeOperation;
 use crate::diagnostic::Diagnostic;
 use crate::document::{HeadingId, generate_heading_ids};
 use crate::inline::{Inline, InlineLiteralKind, InlineStyle};
@@ -138,6 +139,17 @@ pub struct HtmlOutput {
 
 pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
     let mut fragment = String::new();
+    let mut document_attributes = BTreeMap::new();
+    for attribute in &document.attributes {
+        match &attribute.operation {
+            AttributeOperation::Set(_) => {
+                document_attributes.insert(attribute.name.clone(), attribute.raw_value.clone());
+            }
+            AttributeOperation::Unset => {
+                document_attributes.remove(&attribute.name);
+            }
+        }
+    }
     let heading_ids = generate_heading_ids(document);
     let mut heading_index = 0;
     for block in &document.blocks {
@@ -145,9 +157,11 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
             AstBlock::Heading(heading) => {
                 let id = &heading_ids[heading_index].id;
                 heading_index += 1;
-                render_heading(&mut fragment, heading, id, policy);
+                render_heading(&mut fragment, heading, id, policy, &document_attributes);
             }
-            AstBlock::Paragraph(paragraph) => render_paragraph(&mut fragment, paragraph),
+            AstBlock::Paragraph(paragraph) => {
+                render_paragraph(&mut fragment, paragraph, &document_attributes)
+            }
             AstBlock::Literal(literal) => {
                 fragment.push_str("<pre>");
                 escape_html_into(&mut fragment, &literal.value);
@@ -177,7 +191,7 @@ pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
     HtmlOutput {
         html,
         diagnostics: Vec::new(),
-        document_attributes: BTreeMap::new(),
+        document_attributes,
         heading_ids,
     }
 }
@@ -195,10 +209,16 @@ fn safe_language_class(language: &str) -> String {
         .collect()
 }
 
-fn render_heading(output: &mut String, heading: &Heading, id: &str, policy: &RenderPolicy) {
+fn render_heading(
+    output: &mut String,
+    heading: &Heading,
+    id: &str,
+    policy: &RenderPolicy,
+    attributes: &BTreeMap<String, String>,
+) {
     if !heading.problems.is_empty() {
         output.push_str("<p>");
-        render_inlines(output, &heading.inlines);
+        render_inlines(output, &heading.inlines, attributes);
         output.push_str("</p>\n");
         return;
     }
@@ -208,7 +228,7 @@ fn render_heading(output: &mut String, heading: &Heading, id: &str, policy: &Ren
             output.push_str("<h1 class=\"document-title\" id=\"");
             output.push_str(id);
             output.push_str("\">");
-            render_inlines(output, &heading.inlines);
+            render_inlines(output, &heading.inlines, attributes);
             output.push_str("</h1>\n");
         }
         HeadingKind::DocumentTitle => {}
@@ -219,7 +239,7 @@ fn render_heading(output: &mut String, heading: &Heading, id: &str, policy: &Ren
             output.push_str(" id=\"");
             output.push_str(id);
             output.push_str("\">");
-            render_inlines(output, &heading.inlines);
+            render_inlines(output, &heading.inlines, attributes);
             output.push_str("</h");
             output.push(level);
             output.push_str(">\n");
@@ -227,18 +247,22 @@ fn render_heading(output: &mut String, heading: &Heading, id: &str, policy: &Ren
     }
 }
 
-fn render_paragraph(output: &mut String, paragraph: &Paragraph) {
+fn render_paragraph(
+    output: &mut String,
+    paragraph: &Paragraph,
+    attributes: &BTreeMap<String, String>,
+) {
     output.push_str("<p>");
     for (index, line) in paragraph.lines.iter().enumerate() {
         if index != 0 {
             output.push(' ');
         }
-        render_inlines(output, &line.inlines);
+        render_inlines(output, &line.inlines, attributes);
     }
     output.push_str("</p>\n");
 }
 
-fn render_inlines(output: &mut String, inlines: &[Inline]) {
+fn render_inlines(output: &mut String, inlines: &[Inline], attributes: &BTreeMap<String, String>) {
     for inline in inlines {
         match inline {
             Inline::Text(text) => escape_html_into(output, &text.value),
@@ -259,10 +283,19 @@ fn render_inlines(output: &mut String, inlines: &[Inline]) {
                 output.push('<');
                 output.push_str(tag);
                 output.push('>');
-                render_inlines(output, children);
+                render_inlines(output, children, attributes);
                 output.push_str("</");
                 output.push_str(tag);
                 output.push('>');
+            }
+            Inline::AttributeReference { name, .. } => {
+                if let Some(value) = attributes.get(name) {
+                    escape_html_into(output, value);
+                } else {
+                    output.push('{');
+                    escape_html_into(output, name);
+                    output.push('}');
+                }
             }
         }
     }
@@ -491,6 +524,22 @@ mod tests {
         assert!(!html.contains("<p style="));
         assert!(html.contains("&lt;script&gt;"));
         assert!(html.contains("&lt;svg onload=&#34;alert(1)&#34;&gt;"));
+    }
+
+    #[test]
+    fn document_attributes_are_substituted_once_and_exposed_as_metadata() {
+        let parsed = parse("= Note\n:name: <Alice>\n\nHello {name}; {missing}.\n").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            "<h1 class=\"document-title\" id=\"_note\">Note</h1>\n\
+             <p>Hello &lt;Alice&gt;; {missing}.</p>\n"
+        );
+        assert_eq!(
+            output.document_attributes.get("name"),
+            Some(&"<Alice>".to_owned())
+        );
     }
 
     #[test]

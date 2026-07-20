@@ -7,6 +7,7 @@
 use std::error::Error;
 use std::fmt;
 
+pub mod attributes;
 pub mod core;
 pub mod diagnostic;
 pub mod document;
@@ -209,6 +210,7 @@ fn parse_with_policy<'source>(
                 mode: config.syntax_mode,
             },
             limits: config.limits,
+            protected_attributes: std::collections::BTreeMap::new(),
         },
     )
     .map_err(process_error_from_parse)?;
