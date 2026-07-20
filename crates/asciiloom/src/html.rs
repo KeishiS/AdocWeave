@@ -51,6 +51,17 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
                 escape_html_into(&mut fragment, &literal.value);
                 fragment.push_str("</pre>\n");
             }
+            AstBlock::Source(source) => {
+                fragment.push_str("<pre><code");
+                if let Some(language) = &source.language {
+                    fragment.push_str(" class=\"language-");
+                    escape_html_into(&mut fragment, &safe_language_class(language));
+                    fragment.push('"');
+                }
+                fragment.push('>');
+                escape_html_into(&mut fragment, &source.value);
+                fragment.push_str("</code></pre>\n");
+            }
             AstBlock::Unsupported(unsupported) => render_unsupported(&mut fragment, unsupported),
         }
     }
@@ -67,6 +78,19 @@ pub fn render(document: &AstDocument, options: &HtmlOptions) -> HtmlOutput {
         document_attributes: BTreeMap::new(),
         heading_ids,
     }
+}
+
+fn safe_language_class(language: &str) -> String {
+    language
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 fn render_heading(output: &mut String, heading: &Heading, id: &str, options: &HtmlOptions) {
@@ -223,6 +247,16 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &HtmlOptions::default()).html,
             "<pre>&lt;tag&gt; &amp; *strong*\n</pre>\n"
+        );
+    }
+
+    #[test]
+    fn source_block_html_escapes_code_and_sanitizes_language_class() {
+        let parsed = parse("[source, Rust<script>]\n----\n<&>\n----\n").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &HtmlOptions::default()).html,
+            "<pre><code class=\"language-rust-script-\">&lt;&amp;&gt;\n</code></pre>\n"
         );
     }
 

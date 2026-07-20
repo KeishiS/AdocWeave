@@ -23,10 +23,11 @@ pub enum LintRule {
     UnclosedInline,
     NestingLimitExceeded,
     UnclosedBlock,
+    MissingSourceLanguage,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -36,6 +37,7 @@ impl LintRule {
         Self::UnclosedInline,
         Self::NestingLimitExceeded,
         Self::UnclosedBlock,
+        Self::MissingSourceLanguage,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -49,6 +51,7 @@ impl LintRule {
             Self::UnclosedInline => "unclosed-inline",
             Self::NestingLimitExceeded => "nesting-limit-exceeded",
             Self::UnclosedBlock => "unclosed-block",
+            Self::MissingSourceLanguage => "missing-source-language",
         }
     }
 }
@@ -205,7 +208,22 @@ fn lint_headings(
                             "unclosed literal block",
                             None,
                         ),
+                        BlockProblemKind::MissingSourceLanguage => {}
                     }
+                }
+            }
+            AstBlock::Source(source) => {
+                for problem in &source.problems {
+                    let (rule, message) = match problem.kind {
+                        BlockProblemKind::UnclosedBlock => {
+                            (LintRule::UnclosedBlock, "unclosed source block")
+                        }
+                        BlockProblemKind::MissingSourceLanguage => (
+                            LintRule::MissingSourceLanguage,
+                            "source block requires a language",
+                        ),
+                    };
+                    push_diagnostic(diagnostics, config, rule, problem.range, message, None);
                 }
             }
             AstBlock::Unsupported(_) => {}
@@ -535,5 +553,16 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code.as_str(), "unclosed-block");
         assert_eq!(diagnostics[0].range.start().to_u32(), 0);
+    }
+
+    #[test]
+    fn source_block_lint_reports_missing_language() {
+        let diagnostics =
+            lint("[source]\n----\ncode\n----\n", &LintConfig::default()).expect("valid source");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code.as_str(), "missing-source-language");
+        assert_eq!(diagnostics[0].range.start().to_u32(), 0);
+        assert_eq!(diagnostics[0].range.end().to_u32(), 8);
     }
 }

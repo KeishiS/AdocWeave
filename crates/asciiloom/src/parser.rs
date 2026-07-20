@@ -13,6 +13,7 @@ pub enum CstBlockKind {
     MalformedHeading,
     Paragraph,
     LiteralBlock,
+    SourceBlock,
     BlankLine,
     Unsupported,
 }
@@ -88,6 +89,7 @@ pub struct Unsupported {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BlockProblemKind {
     UnclosedBlock,
+    MissingSourceLanguage,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,6 +101,18 @@ pub struct BlockProblem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LiteralBlock {
     pub range: TextRange,
+    pub delimiter_range: TextRange,
+    pub content_range: TextRange,
+    pub value: String,
+    pub problems: Vec<BlockProblem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceBlock {
+    pub range: TextRange,
+    pub attribute_range: TextRange,
+    pub language_range: Option<TextRange>,
+    pub language: Option<String>,
     pub delimiter_range: TextRange,
     pub content_range: TextRange,
     pub value: String,
@@ -137,6 +151,7 @@ pub enum AstBlock {
     Heading(Heading),
     Paragraph(Paragraph),
     Literal(LiteralBlock),
+    Source(SourceBlock),
     Unsupported(Unsupported),
 }
 
@@ -198,6 +213,19 @@ impl AstDocument {
                     )
                     .expect("writing to a String cannot fail");
                 }
+                AstBlock::Source(source) => {
+                    writeln!(
+                        output,
+                        "  Source@{}..{} language={:?} content={}..{} problems={:?}",
+                        source.range.start().to_u32(),
+                        source.range.end().to_u32(),
+                        source.language,
+                        source.content_range.start().to_u32(),
+                        source.content_range.end().to_u32(),
+                        source.problems
+                    )
+                    .expect("writing to a String cannot fail");
+                }
                 AstBlock::Unsupported(unsupported) => {
                     writeln!(
                         output,
@@ -235,7 +263,24 @@ pub fn parse(source: &str) -> Result<ParsedDocument<'_>, PositionError> {
             .text(line.content_range())
             .expect("line content has valid UTF-8 boundaries");
 
-        if content == "...." {
+        if parse_source_attribute(content).is_some()
+            && source_lines
+                .lines()
+                .get(line_index + 1)
+                .and_then(|next| source_lines.text(next.content_range()))
+                == Some("----")
+        {
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
+            let (source_block, next_line) = parse_source_block(&source_lines, line_index, source)?;
+            blocks.push(CstBlock {
+                kind: CstBlockKind::SourceBlock,
+                range: source_block.range,
+            });
+            ast_blocks.push(AstBlock::Source(source_block));
+            saw_content = true;
+            line_index = next_line;
+            continue;
+        } else if content == "...." {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines);
             let (literal, next_line) = parse_literal_block(&source_lines, line_index, source)?;
             blocks.push(CstBlock {
@@ -304,6 +349,38 @@ fn parse_literal_block(
     source: &str,
 ) -> Result<(LiteralBlock, usize), PositionError> {
     let opener = source_lines.lines()[opener_index];
+    let body = parse_delimited_body(source_lines, opener_index, "....", source)?;
+    let value = source
+        .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
+        .expect("literal content range has valid UTF-8 boundaries")
+        .to_owned();
+
+    Ok((
+        LiteralBlock {
+            range: TextRange::new(opener.full_range().start(), body.range_end)?,
+            delimiter_range: opener.content_range(),
+            content_range: body.content_range,
+            value,
+            problems: body.problems,
+        },
+        body.next_line,
+    ))
+}
+
+struct DelimitedBody {
+    range_end: TextSize,
+    content_range: TextRange,
+    next_line: usize,
+    problems: Vec<BlockProblem>,
+}
+
+fn parse_delimited_body(
+    source_lines: &SourceLines<'_>,
+    opener_index: usize,
+    delimiter: &str,
+    source: &str,
+) -> Result<DelimitedBody, PositionError> {
+    let opener = source_lines.lines()[opener_index];
     let content_start = opener.full_range().end();
     let mut closer_index = None;
     let mut recovery_index = None;
@@ -317,7 +394,7 @@ fn parse_literal_block(
         let content = source_lines
             .text(line.content_range())
             .expect("line content has valid UTF-8 boundaries");
-        if content == "...." {
+        if content == delimiter {
             closer_index = Some(index);
             break;
         }
@@ -349,23 +426,76 @@ fn parse_literal_block(
             }],
         )
     };
-    let content_range = TextRange::new(content_start, content_end)?;
-    let range = TextRange::new(opener.full_range().start(), range_end)?;
+    Ok(DelimitedBody {
+        range_end,
+        content_range: TextRange::new(content_start, content_end)?,
+        next_line,
+        problems,
+    })
+}
+
+fn parse_source_block(
+    source_lines: &SourceLines<'_>,
+    attribute_index: usize,
+    source: &str,
+) -> Result<(SourceBlock, usize), PositionError> {
+    let attribute = source_lines.lines()[attribute_index];
+    let attribute_text = source_lines
+        .text(attribute.content_range())
+        .expect("attribute range is valid");
+    let language_relative =
+        parse_source_attribute(attribute_text).expect("caller recognized source attribute");
+    let language_range = language_relative
+        .map(|(start, end)| {
+            text_range(
+                attribute.content_range().start().to_usize() + start,
+                attribute.content_range().start().to_usize() + end,
+            )
+        })
+        .transpose()?;
+    let language = language_relative.map(|(start, end)| attribute_text[start..end].to_owned());
+    let delimiter_index = attribute_index + 1;
+    let delimiter = source_lines.lines()[delimiter_index];
+    let mut body = parse_delimited_body(source_lines, delimiter_index, "----", source)?;
+    if language.is_none() {
+        body.problems.push(BlockProblem {
+            kind: BlockProblemKind::MissingSourceLanguage,
+            range: attribute.content_range(),
+        });
+    }
     let value = source
-        .get(content_range.start().to_usize()..content_range.end().to_usize())
-        .expect("literal content range has valid UTF-8 boundaries")
+        .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
+        .expect("source block content range is valid")
         .to_owned();
 
     Ok((
-        LiteralBlock {
-            range,
-            delimiter_range: opener.content_range(),
-            content_range,
+        SourceBlock {
+            range: TextRange::new(attribute.full_range().start(), body.range_end)?,
+            attribute_range: attribute.content_range(),
+            language_range,
+            language,
+            delimiter_range: delimiter.content_range(),
+            content_range: body.content_range,
             value,
-            problems,
+            problems: body.problems,
         },
-        next_line,
+        body.next_line,
     ))
+}
+
+fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)>> {
+    let inner = text.strip_prefix("[source")?.strip_suffix(']')?;
+    if inner.is_empty() {
+        return Some(None);
+    }
+    let language = inner.strip_prefix(',')?;
+    let leading = language.len() - language.trim_start_matches([' ', '\t']).len();
+    let trimmed = language.trim_matches([' ', '\t']);
+    if trimmed.is_empty() || trimmed.contains(',') {
+        return Some(None);
+    }
+    let start = "[source,".len() + leading;
+    Some(Some((start, start + trimmed.len())))
 }
 
 fn parse_heading(
@@ -576,6 +706,49 @@ mod tests {
         assert_eq!(literal.problems[0].kind, BlockProblemKind::UnclosedBlock);
         assert!(matches!(parsed.ast.blocks[1], AstBlock::Heading(_)));
         assert!(matches!(parsed.ast.blocks[2], AstBlock::Paragraph(_)));
+    }
+
+    #[test]
+    fn source_block_keeps_language_code_and_ranges() {
+        let source = "[source, rust]\n----\nfn main() {}\n----\n";
+        let parsed = parse(source).expect("valid source");
+        let AstBlock::Source(block) = &parsed.ast.blocks[0] else {
+            panic!("expected source block");
+        };
+
+        assert_eq!(block.language.as_deref(), Some("rust"));
+        let language_range = block.language_range.expect("language range");
+        assert_eq!(
+            &source[language_range.start().to_usize()..language_range.end().to_usize()],
+            "rust"
+        );
+        assert_eq!(block.value, "fn main() {}\n");
+        assert!(block.problems.is_empty());
+        assert_eq!(parsed.cst.reconstruct(), source);
+    }
+
+    #[test]
+    fn source_block_handles_missing_language_empty_and_unclosed() {
+        let parsed = parse("[source]\n----\n== Next\n").expect("valid source");
+        let AstBlock::Source(block) = &parsed.ast.blocks[0] else {
+            panic!("expected source block");
+        };
+
+        assert!(block.language.is_none());
+        assert_eq!(block.value, "");
+        assert!(
+            block
+                .problems
+                .iter()
+                .any(|problem| { problem.kind == BlockProblemKind::MissingSourceLanguage })
+        );
+        assert!(
+            block
+                .problems
+                .iter()
+                .any(|problem| { problem.kind == BlockProblemKind::UnclosedBlock })
+        );
+        assert!(matches!(parsed.ast.blocks[1], AstBlock::Heading(_)));
     }
 
     #[test]

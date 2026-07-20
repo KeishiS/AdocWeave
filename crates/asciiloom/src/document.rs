@@ -61,6 +61,28 @@ pub fn heading_id_base(text: &str) -> String {
     id
 }
 
+pub fn source_language_candidates(prefix: &str) -> Vec<&'static str> {
+    const LANGUAGES: [&str; 12] = [
+        "bash",
+        "c",
+        "cpp",
+        "css",
+        "html",
+        "javascript",
+        "json",
+        "python",
+        "rust",
+        "sql",
+        "typescript",
+        "yaml",
+    ];
+    let prefix = prefix.to_ascii_lowercase();
+    LANGUAGES
+        .into_iter()
+        .filter(|language| language.starts_with(&prefix))
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SymbolKind {
     DocumentTitle,
@@ -221,8 +243,19 @@ fn write_json_string(output: &mut String, value: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{document_symbols, generate_heading_ids, render_symbols_json};
+    use super::{
+        document_symbols, generate_heading_ids, render_symbols_json, source_language_candidates,
+    };
     use crate::parser::parse;
+
+    #[test]
+    fn source_block_language_candidates_are_deterministic_and_filtered() {
+        assert_eq!(source_language_candidates("ru"), ["rust"]);
+        assert_eq!(
+            source_language_candidates(""),
+            source_language_candidates("")
+        );
+    }
 
     #[test]
     fn document_symbols_follow_heading_hierarchy() {
