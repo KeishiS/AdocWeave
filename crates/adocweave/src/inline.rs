@@ -228,24 +228,36 @@ fn parse_segment(
                 open,
                 marker,
                 close,
-            } => match recognize_marker(value, open, marker, close) {
-                MarkerRecognition::Complete(token) => {
-                    let built = build_marker(value, range, config, depth, token);
-                    push_text(&mut output.inlines, value, range, plain_start, open);
-                    output.inlines.push(built.inline);
-                    output.problems.extend(built.problems);
-                    cursor = token.end;
+            } => {
+                if is_escaped(value, open) {
+                    push_text(&mut output.inlines, value, range, plain_start, open - 1);
+                    output.inlines.push(Inline::Text(InlineText {
+                        range: subrange(range, open - 1, open + marker.len_utf8()),
+                        value: marker.to_string(),
+                    }));
+                    cursor = open + marker.len_utf8();
                     plain_start = cursor;
+                    continue;
                 }
-                MarkerRecognition::Unclosed { next, kind } => {
-                    output.problems.push(InlineProblem {
-                        kind,
-                        range: subrange(range, open, next),
-                    });
-                    cursor = next;
+                match recognize_marker(value, open, marker, close) {
+                    MarkerRecognition::Complete(token) => {
+                        let built = build_marker(value, range, config, depth, token);
+                        push_text(&mut output.inlines, value, range, plain_start, open);
+                        output.inlines.push(built.inline);
+                        output.problems.extend(built.problems);
+                        cursor = token.end;
+                        plain_start = cursor;
+                    }
+                    MarkerRecognition::Unclosed { next, kind } => {
+                        output.problems.push(InlineProblem {
+                            kind,
+                            range: subrange(range, open, next),
+                        });
+                        cursor = next;
+                    }
+                    MarkerRecognition::Invalid { next } => cursor = next,
                 }
-                MarkerRecognition::Invalid { next } => cursor = next,
-            },
+            }
         }
     }
 
@@ -1360,6 +1372,29 @@ mod tests {
             output.inlines.as_slice(),
             [Inline::Text(text)] if text.value == "stem:["
         ));
+    }
+
+    #[test]
+    fn escaped_markers_are_literal_without_the_escape_character() {
+        for (source, expected) in [
+            ("\\*strong*", "*strong*"),
+            ("\\_emphasis_", "_emphasis_"),
+            ("\\`mono`", "`mono`"),
+            ("\\{name}", "{name}"),
+            ("before \\*open", "before *open"),
+        ] {
+            let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+            let visible = output
+                .inlines
+                .iter()
+                .map(|inline| match inline {
+                    Inline::Text(text) => text.value.as_str(),
+                    _ => panic!("escaped syntax must remain text: {source}"),
+                })
+                .collect::<String>();
+            assert_eq!(visible, expected);
+            assert!(output.problems.is_empty());
+        }
     }
 
     #[test]
