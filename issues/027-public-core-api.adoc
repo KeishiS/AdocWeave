@@ -60,3 +60,5 @@ cargo test --workspace send_sync
   環境変数およびグローバル可変状態を使用しない。
 - 決定性、匿名ソース、不透明な文書ID、キャンセル、スレッド共有および
   `Send + Sync` の契約を単体テストで固定した。
+- Issue 031で未解決参照の公開フィールドを`references`へ改め、参照モデルを
+  具体化した破壊的変更に伴い、`CORE_API_VERSION`を2へ更新した。

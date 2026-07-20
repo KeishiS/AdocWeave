@@ -27,6 +27,16 @@ cargo test --workspace lists
 cargo test --workspace list_continuation
 ----
 
+== 実装記録
+
+完了。
+
+- 順序付き・順序なしリストを再帰的な`ListBlock`/`ListItem` ASTへ変換した。
+- リテラルブロックとソースブロックへの`+`継続を項目へ関連付けた。
+- `inconsistent-list`診断と、タブ区切りに対する安全な空白修正を追加した。
+- HTMLの`ul`/`ol`/`li`、文書シンボル、Formatterによる原表記保持を追加した。
+- 対応範囲と未対応範囲を`docs/lists.adoc`へ記録した。
+
 == 依存関係
 
 - 026

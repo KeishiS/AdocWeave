@@ -136,7 +136,8 @@ HTML IDに使用する。
 
 |リストとブロック継続
 |xref:../issues/032-lists-and-continuations.adoc[Issue 032]
-|リストASTはなく、入力は通常段落のテキストとして残る。
+|対応。`*`と`.`の反復による入れ子、およびリテラル・ソースブロックへの`+`継続を
+扱う。詳細はxref:lists.adoc[リストとブロック継続]を参照。
 
 |cross reference解決とノート参照
 |xref:../issues/033-note-reference-macro.adoc[Issue 033]

@@ -19,6 +19,7 @@ pub enum CstBlockKind {
     Unsupported,
     DocumentAttribute,
     BlockAnchor,
+    List,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,6 +139,49 @@ pub struct SourceBlock {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ListKind {
+    Unordered,
+    Ordered,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ListProblemKind {
+    EmptyItem,
+    InconsistentMarker,
+    InvalidNesting,
+    DepthLimitExceeded,
+    NonCanonicalSeparator,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ListProblem {
+    pub kind: ListProblemKind,
+    pub range: TextRange,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListBlock {
+    pub kind: ListKind,
+    pub range: TextRange,
+    pub items: Vec<ListItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListItem {
+    pub range: TextRange,
+    pub marker_range: TextRange,
+    pub separator_range: TextRange,
+    pub text_range: TextRange,
+    pub text: String,
+    pub inlines: Vec<Inline>,
+    pub inline_problems: Vec<InlineProblem>,
+    pub children: Vec<ListBlock>,
+    pub continuations: Vec<AstBlock>,
+    pub continuation_ranges: Vec<TextRange>,
+    pub problems: Vec<ListProblem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HeadingKind {
     DocumentTitle,
     Section { level: u8 },
@@ -170,6 +214,7 @@ pub enum AstBlock {
     Paragraph(Paragraph),
     Literal(LiteralBlock),
     Source(SourceBlock),
+    List(ListBlock),
     Unsupported(Unsupported),
 }
 
@@ -247,6 +292,17 @@ impl AstDocument {
                     )
                     .expect("writing to a String cannot fail");
                 }
+                AstBlock::List(list) => {
+                    writeln!(
+                        output,
+                        "  {:?}List@{}..{} items={}",
+                        list.kind,
+                        list.range.start().to_u32(),
+                        list.range.end().to_u32(),
+                        list.items.len()
+                    )
+                    .expect("writing to a String cannot fail");
+                }
                 AstBlock::Unsupported(unsupported) => {
                     writeln!(
                         output,
@@ -273,12 +329,14 @@ pub struct ParsedDocument<'source> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParseConfig {
     pub max_inline_depth: usize,
+    pub max_list_depth: usize,
 }
 
 impl Default for ParseConfig {
     fn default() -> Self {
         Self {
             max_inline_depth: 32,
+            max_list_depth: 8,
         }
     }
 }
@@ -402,6 +460,18 @@ pub fn parse_with_config<'source>(
                 }))
             );
             saw_content = true;
+        } else if list_marker(content).is_some() {
+            flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
+            let (lists, next_line, range) = parse_lists(&source_lines, line_index, source, config)?;
+            blocks.push(CstBlock {
+                kind: CstBlockKind::List,
+                range,
+            });
+            ast_blocks.extend(lists.into_iter().map(AstBlock::List));
+            saw_content = true;
+            header_attributes_open = false;
+            line_index = next_line;
+            continue;
         } else if unsupported_reason(content).is_some() {
             flush_paragraph(&mut blocks, &mut ast_blocks, &mut paragraph_lines, config);
             let reason = unsupported_reason(content).expect("checked above");
@@ -510,7 +580,17 @@ fn resolve_document_attributes(document: &mut AstDocument) {
                     resolve(&mut line.inlines, &attributes);
                 }
             }
+            AstBlock::List(list) => resolve_list(list, &attributes),
             _ => {}
+        }
+    }
+
+    fn resolve_list(list: &mut ListBlock, attributes: &std::collections::BTreeMap<String, String>) {
+        for item in &mut list.items {
+            resolve(&mut item.inlines, attributes);
+            for child in &mut item.children {
+                resolve_list(child, attributes);
+            }
         }
     }
 }
@@ -574,8 +654,191 @@ fn ast_block_range(block: &AstBlock) -> TextRange {
         AstBlock::Paragraph(value) => value.range,
         AstBlock::Literal(value) => value.range,
         AstBlock::Source(value) => value.range,
+        AstBlock::List(value) => value.range,
         AstBlock::Unsupported(value) => value.range,
     }
+}
+
+#[derive(Debug)]
+struct FlatListItem {
+    depth: usize,
+    kind: ListKind,
+    item: ListItem,
+}
+
+fn list_marker(content: &str) -> Option<(ListKind, usize, usize)> {
+    let marker = content.as_bytes().first().copied()?;
+    let kind = match marker {
+        b'*' => ListKind::Unordered,
+        b'.' => ListKind::Ordered,
+        _ => return None,
+    };
+    let depth = content.bytes().take_while(|byte| *byte == marker).count();
+    let separator = *content.as_bytes().get(depth)?;
+    matches!(separator, b' ' | b'\t').then_some((kind, depth, depth + 1))
+}
+
+fn parse_lists(
+    source_lines: &SourceLines<'_>,
+    start: usize,
+    source: &str,
+    config: &ParseConfig,
+) -> Result<(Vec<ListBlock>, usize, TextRange), PositionError> {
+    let mut flat = Vec::new();
+    let mut index = start;
+    let mut previous: Option<(usize, ListKind)> = None;
+    let mut kinds_by_depth = Vec::<Option<ListKind>>::new();
+    while index < source_lines.lines().len() {
+        let line = source_lines.lines()[index];
+        let content = source_lines.text(line.content_range()).expect("valid line");
+        let Some((kind, depth, text_start)) = list_marker(content) else {
+            break;
+        };
+        let absolute = line.content_range().start().to_usize();
+        let text = &content[text_start..];
+        let marker_range = text_range(absolute, absolute + depth)?;
+        let separator_range = text_range(absolute + depth, absolute + text_start)?;
+        let text_range = text_range(absolute + text_start, absolute + content.len())?;
+        let parsed = parse_inlines(
+            text,
+            text_range,
+            InlineParseConfig {
+                max_depth: config.max_inline_depth,
+            },
+        );
+        let mut problems = Vec::new();
+        if text.is_empty() {
+            problems.push(ListProblem {
+                kind: ListProblemKind::EmptyItem,
+                range: text_range,
+            });
+        }
+        if content.as_bytes()[depth] == b'\t' {
+            problems.push(ListProblem {
+                kind: ListProblemKind::NonCanonicalSeparator,
+                range: separator_range,
+            });
+        }
+        if depth > config.max_list_depth {
+            problems.push(ListProblem {
+                kind: ListProblemKind::DepthLimitExceeded,
+                range: marker_range,
+            });
+        }
+        if let Some((previous_depth, _)) = previous {
+            if depth > previous_depth + 1 {
+                problems.push(ListProblem {
+                    kind: ListProblemKind::InvalidNesting,
+                    range: marker_range,
+                });
+            }
+        }
+        if kinds_by_depth
+            .get(depth)
+            .and_then(|kind| *kind)
+            .is_some_and(|established| established != kind)
+        {
+            problems.push(ListProblem {
+                kind: ListProblemKind::InconsistentMarker,
+                range: marker_range,
+            });
+        }
+        kinds_by_depth.resize(kinds_by_depth.len().max(depth + 1), None);
+        kinds_by_depth[depth] = Some(kind);
+        let mut item = ListItem {
+            range: line.full_range(),
+            marker_range,
+            separator_range,
+            text_range,
+            text: text.to_owned(),
+            inlines: parsed.inlines,
+            inline_problems: parsed.problems,
+            children: Vec::new(),
+            continuations: Vec::new(),
+            continuation_ranges: Vec::new(),
+            problems,
+        };
+        index += 1;
+        while source_lines
+            .lines()
+            .get(index)
+            .is_some_and(|next| source_lines.text(next.content_range()) == Some("+"))
+        {
+            let continuation = source_lines.lines()[index];
+            let next = index + 1;
+            let parsed_block = source_lines.lines().get(next).and_then(|next_line| {
+                let next_text = source_lines.text(next_line.content_range())?;
+                if next_text == "...." {
+                    parse_literal_block(source_lines, next, source)
+                        .ok()
+                        .map(|(block, end)| (AstBlock::Literal(block), end))
+                } else if parse_source_attribute(next_text).is_some()
+                    && source_lines
+                        .lines()
+                        .get(next + 1)
+                        .and_then(|line| source_lines.text(line.content_range()))
+                        == Some("----")
+                {
+                    parse_source_block(source_lines, next, source)
+                        .ok()
+                        .map(|(block, end)| (AstBlock::Source(block), end))
+                } else {
+                    None
+                }
+            });
+            let Some((block, end)) = parsed_block else {
+                break;
+            };
+            item.continuation_ranges.push(continuation.full_range());
+            item.range = TextRange::new(item.range.start(), ast_block_range(&block).end())?;
+            item.continuations.push(block);
+            index = end;
+        }
+        previous = Some((depth, kind));
+        flat.push(FlatListItem { depth, kind, item });
+    }
+    let end = flat
+        .last()
+        .map_or(source_lines.lines()[start].full_range().end(), |item| {
+            item.item.range.end()
+        });
+    let range = TextRange::new(source_lines.lines()[start].full_range().start(), end)?;
+    let mut cursor = 0;
+    let mut roots = Vec::new();
+    while cursor < flat.len() {
+        let depth = flat[cursor].depth;
+        let kind = flat[cursor].kind;
+        roots.push(build_list_tree(&mut flat, &mut cursor, depth, kind)?);
+    }
+    Ok((roots, index, range))
+}
+
+fn build_list_tree(
+    flat: &mut [FlatListItem],
+    cursor: &mut usize,
+    depth: usize,
+    kind: ListKind,
+) -> Result<ListBlock, PositionError> {
+    let mut items = Vec::new();
+    while *cursor < flat.len() && flat[*cursor].depth == depth && flat[*cursor].kind == kind {
+        let mut item = flat[*cursor].item.clone();
+        *cursor += 1;
+        while *cursor < flat.len() && flat[*cursor].depth > depth {
+            let child_depth = flat[*cursor].depth;
+            let child_kind = flat[*cursor].kind;
+            item.children
+                .push(build_list_tree(flat, cursor, child_depth, child_kind)?);
+        }
+        if let Some(child) = item.children.last() {
+            item.range = TextRange::new(item.range.start(), child.range.end())?;
+        }
+        items.push(item);
+    }
+    let range = TextRange::new(
+        items.first().expect("list has item").range.start(),
+        items.last().expect("list has item").range.end(),
+    )?;
+    Ok(ListBlock { kind, range, items })
 }
 
 fn parse_literal_block(
@@ -1119,5 +1382,34 @@ mod tests {
             parsed.ast.snapshot(),
             include_str!("../../../fixtures/paragraph/basic.ast")
         );
+    }
+
+    #[test]
+    fn lists_build_recursive_semantic_nodes() {
+        let parsed = parse("* one\n** nested\n* two\n. ordered\n").expect("parse");
+        let AstBlock::List(unordered) = &parsed.ast.blocks[0] else {
+            panic!("unordered list");
+        };
+        assert_eq!(unordered.items.len(), 2);
+        assert_eq!(unordered.items[0].children[0].items[0].text, "nested");
+        assert!(matches!(parsed.ast.blocks[1], AstBlock::List(_)));
+    }
+
+    #[test]
+    fn list_continuation_attaches_literal_and_source_blocks() {
+        let source =
+            "* item\n+\n....\nliteral\n....\n* code\n+\n[source,rust]\n----\nfn main() {}\n----\n";
+        let parsed = parse(source).expect("parse");
+        let AstBlock::List(list) = &parsed.ast.blocks[0] else {
+            panic!("list");
+        };
+        assert!(matches!(
+            list.items[0].continuations[0],
+            AstBlock::Literal(_)
+        ));
+        assert!(matches!(
+            list.items[1].continuations[0],
+            AstBlock::Source(_)
+        ));
     }
 }

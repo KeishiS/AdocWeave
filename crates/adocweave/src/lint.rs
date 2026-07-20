@@ -36,10 +36,11 @@ pub enum LintRule {
     InvalidUrlScheme,
     InvalidCrossReference,
     UnresolvedCrossReference,
+    InconsistentList,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -60,6 +61,7 @@ impl LintRule {
         Self::InvalidUrlScheme,
         Self::InvalidCrossReference,
         Self::UnresolvedCrossReference,
+        Self::InconsistentList,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -84,6 +86,7 @@ impl LintRule {
             Self::InvalidUrlScheme => "invalid-url-scheme",
             Self::InvalidCrossReference => "invalid-cross-reference",
             Self::UnresolvedCrossReference => "unresolved-cross-reference",
+            Self::InconsistentList => "inconsistent-list",
         }
     }
 }
@@ -101,6 +104,7 @@ pub struct LintConfig {
     pub max_consecutive_blank_lines: usize,
     pub max_diagnostics: usize,
     pub max_inline_depth: usize,
+    pub max_list_depth: usize,
     pub protected_attributes: BTreeMap<String, String>,
     pub protected_attribute_severity: Severity,
     pub url_policy: crate::url::UrlPolicy,
@@ -125,6 +129,7 @@ impl Default for LintConfig {
             max_consecutive_blank_lines: 2,
             max_diagnostics: 1_000,
             max_inline_depth: 32,
+            max_list_depth: 8,
             protected_attributes: BTreeMap::new(),
             protected_attribute_severity: Severity::Error,
             url_policy: crate::url::UrlPolicy::default(),
@@ -150,6 +155,7 @@ pub fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, Positi
         source,
         &ParseConfig {
             max_inline_depth: config.max_inline_depth,
+            max_list_depth: config.max_list_depth,
         },
     )?;
     lint_parsed(source, &parsed.ast, config)
@@ -327,6 +333,19 @@ fn lint_links_and_references(
             }
         }
     }
+    fn inspect_list(
+        list: &crate::parser::ListBlock,
+        targets: &[crate::document::ReferenceTarget],
+        config: &LintConfig,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        for item in &list.items {
+            inspect(&item.inlines, targets, config, diagnostics);
+            for child in &item.children {
+                inspect_list(child, targets, config, diagnostics);
+            }
+        }
+    }
     for block in &document.blocks {
         match block {
             AstBlock::Heading(heading) => {
@@ -337,6 +356,7 @@ fn lint_links_and_references(
                     inspect(&line.inlines, &targets, config, diagnostics);
                 }
             }
+            AstBlock::List(list) => inspect_list(list, &targets, config, diagnostics),
             _ => {}
         }
     }
@@ -519,6 +539,14 @@ fn collect_attribute_references(block: &AstBlock, used: &mut BTreeMap<String, Ve
             }
         }
     }
+    fn collect_list(list: &crate::parser::ListBlock, used: &mut BTreeMap<String, Vec<TextRange>>) {
+        for item in &list.items {
+            collect(&item.inlines, used);
+            for child in &item.children {
+                collect_list(child, used);
+            }
+        }
+    }
     match block {
         AstBlock::Heading(heading) => collect(&heading.inlines, used),
         AstBlock::Paragraph(paragraph) => {
@@ -526,6 +554,7 @@ fn collect_attribute_references(block: &AstBlock, used: &mut BTreeMap<String, Ve
                 collect(&line.inlines, used);
             }
         }
+        AstBlock::List(list) => collect_list(list, used),
         _ => {}
     }
 }
@@ -577,6 +606,7 @@ fn lint_headings(
                     push_diagnostic(diagnostics, config, rule, problem.range, message, None);
                 }
             }
+            AstBlock::List(list) => lint_list(list, config, diagnostics),
             AstBlock::Unsupported(_) => {}
         }
         let AstBlock::Heading(heading) = block else {
@@ -657,6 +687,77 @@ fn lint_headings(
             }
         } else {
             ids.insert(base, heading.text_range);
+        }
+    }
+}
+
+fn lint_list(
+    list: &crate::parser::ListBlock,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    use crate::parser::ListProblemKind;
+    for item in &list.items {
+        push_inline_problems(diagnostics, config, &item.inline_problems);
+        for problem in &item.problems {
+            let (message, fix) = match problem.kind {
+                ListProblemKind::EmptyItem => ("list item is empty", None),
+                ListProblemKind::InconsistentMarker => {
+                    ("list marker kind changes at the same depth", None)
+                }
+                ListProblemKind::InvalidNesting => ("list nesting skips a depth", None),
+                ListProblemKind::DepthLimitExceeded => {
+                    ("list nesting exceeds the configured limit", None)
+                }
+                ListProblemKind::NonCanonicalSeparator => (
+                    "list marker must be followed by one space",
+                    Some(("replace the separator with a space", problem.range, " ")),
+                ),
+            };
+            push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InconsistentList,
+                problem.range,
+                message,
+                fix,
+            );
+        }
+        for child in &item.children {
+            lint_list(child, config, diagnostics);
+        }
+        for continuation in &item.continuations {
+            match continuation {
+                AstBlock::Literal(block) => {
+                    for problem in &block.problems {
+                        if problem.kind == BlockProblemKind::UnclosedBlock {
+                            push_diagnostic(
+                                diagnostics,
+                                config,
+                                LintRule::UnclosedBlock,
+                                problem.range,
+                                "unclosed literal block",
+                                None,
+                            );
+                        }
+                    }
+                }
+                AstBlock::Source(block) => {
+                    for problem in &block.problems {
+                        let (rule, message) = match problem.kind {
+                            BlockProblemKind::UnclosedBlock => {
+                                (LintRule::UnclosedBlock, "unclosed source block")
+                            }
+                            BlockProblemKind::MissingSourceLanguage => (
+                                LintRule::MissingSourceLanguage,
+                                "source block requires a language",
+                            ),
+                        };
+                        push_diagnostic(diagnostics, config, rule, problem.range, message, None);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -1025,6 +1126,20 @@ mod tests {
     }
 
     #[test]
+    fn url_policy_checks_the_semantically_expanded_link_target() {
+        let source = ":scheme: https\n\n{scheme}://example.com[label]\n";
+        let parsed = crate::parser::parse(source).expect("parse");
+        let diagnostics =
+            super::lint_parsed(source, &parsed.ast, &LintConfig::default()).expect("lint");
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.code.as_str() == "invalid-url-scheme" })
+        );
+    }
+
+    #[test]
     fn cross_references_resolve_local_targets_but_leave_documents_for_hosts() {
         let diagnostics = lint(
             "[[target]]\n== Target\n\n<<target>> xref:#target[] xref:other.adoc#part[]",
@@ -1037,6 +1152,24 @@ mod tests {
                 diagnostic.code.as_str(),
                 "invalid-cross-reference" | "unresolved-cross-reference"
             )
+        }));
+    }
+
+    #[test]
+    fn lists_report_structure_and_offer_a_safe_separator_fix() {
+        let diagnostics =
+            lint("*\titem\n*** skipped\n. changed\n", &LintConfig::default()).expect("lint");
+        let list_diagnostics = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "inconsistent-list")
+            .collect::<Vec<_>>();
+
+        assert!(list_diagnostics.len() >= 3);
+        assert!(list_diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .fixes
+                .iter()
+                .any(|fix| fix.edits()[0].replacement == " ")
         }));
     }
 }

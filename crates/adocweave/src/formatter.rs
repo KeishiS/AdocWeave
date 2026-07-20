@@ -196,6 +196,7 @@ mod tests {
                 AstBlock::Heading(_) => None,
                 AstBlock::Literal(_) => None,
                 AstBlock::Source(_) => None,
+                AstBlock::List(_) => None,
                 AstBlock::Unsupported(_) => None,
             })
             .collect()

@@ -382,6 +382,7 @@ fn symbol_to_lsp(
     let kind = match symbol.kind {
         SymbolKind::DocumentTitle => 1,
         SymbolKind::Section => 3,
+        SymbolKind::ListItem => 15,
     };
     let children = symbol
         .children

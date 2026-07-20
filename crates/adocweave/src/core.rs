@@ -15,7 +15,7 @@ use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
 use crate::source::PositionError;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 1;
+pub const CORE_API_VERSION: u16 = 2;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -224,6 +224,7 @@ fn parse_inner<'source>(
         source,
         &parser::ParseConfig {
             max_inline_depth: options.limits.max_inline_depth,
+            max_list_depth: options.limits.max_list_depth,
         },
     )
     .map_err(ParseError::Position)?;
@@ -287,16 +288,30 @@ fn collect_references(document: &parser::AstDocument) -> Vec<crate::inline::Refe
         }
     }
     let mut output = Vec::new();
-    for block in &document.blocks {
+    fn collect_block(block: &AstBlock, output: &mut Vec<crate::inline::Reference>) {
         match block {
-            AstBlock::Heading(heading) => collect(&heading.inlines, &mut output),
+            AstBlock::Heading(heading) => collect(&heading.inlines, output),
             AstBlock::Paragraph(paragraph) => {
                 for line in &paragraph.lines {
-                    collect(&line.inlines, &mut output);
+                    collect(&line.inlines, output);
+                }
+            }
+            AstBlock::List(list) => {
+                for item in &list.items {
+                    collect(&item.inlines, output);
+                    for child in &item.children {
+                        collect_block(&AstBlock::List(child.clone()), output);
+                    }
+                    for continuation in &item.continuations {
+                        collect_block(continuation, output);
+                    }
                 }
             }
             _ => {}
         }
+    }
+    for block in &document.blocks {
+        collect_block(block, &mut output);
     }
     output
 }

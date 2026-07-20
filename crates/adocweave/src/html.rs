@@ -137,6 +137,9 @@ pub fn render_with_resolutions(
                 escape_html_into(&mut fragment, &source.value);
                 fragment.push_str("</code></pre>\n");
             }
+            AstBlock::List(list) => {
+                render_list(&mut fragment, list, explicit_id, &mut inline_context)
+            }
             AstBlock::Unsupported(unsupported) => {
                 render_unsupported(&mut fragment, unsupported, explicit_id)
             }
@@ -156,6 +159,55 @@ pub fn render_with_resolutions(
         document_attributes,
         heading_ids,
     }
+}
+
+fn render_list(
+    output: &mut String,
+    list: &crate::parser::ListBlock,
+    explicit_id: Option<&str>,
+    context: &mut InlineRenderContext<'_>,
+) {
+    let tag = match list.kind {
+        crate::parser::ListKind::Unordered => "ul",
+        crate::parser::ListKind::Ordered => "ol",
+    };
+    output.push('<');
+    output.push_str(tag);
+    render_optional_id(output, explicit_id);
+    output.push_str(">\n");
+    for item in &list.items {
+        output.push_str("<li>");
+        render_inlines(output, &item.inlines, context);
+        for child in &item.children {
+            output.push('\n');
+            render_list(output, child, None, context);
+        }
+        for continuation in &item.continuations {
+            match continuation {
+                AstBlock::Literal(block) => {
+                    output.push_str("\n<pre>");
+                    escape_html_into(output, &block.value);
+                    output.push_str("</pre>");
+                }
+                AstBlock::Source(block) => {
+                    output.push_str("\n<pre><code");
+                    if let Some(language) = &block.language {
+                        output.push_str(" class=\"language-");
+                        escape_html_into(output, &safe_language_class(language));
+                        output.push('"');
+                    }
+                    output.push('>');
+                    escape_html_into(output, &block.value);
+                    output.push_str("</code></pre>");
+                }
+                _ => {}
+            }
+        }
+        output.push_str("</li>\n");
+    }
+    output.push_str("</");
+    output.push_str(tag);
+    output.push_str(">\n");
 }
 
 fn safe_language_class(language: &str) -> String {
@@ -379,24 +431,7 @@ fn render_label_or_text(
 }
 
 fn reference_text(reference: &Reference) -> String {
-    match &reference.destination {
-        ReferenceDestination::Local { anchor, .. } => anchor.clone(),
-        ReferenceDestination::Document {
-            document, anchor, ..
-        } => anchor
-            .as_ref()
-            .map_or_else(|| document.clone(), |anchor| format!("{document}#{anchor}")),
-        ReferenceDestination::Scheme {
-            scheme,
-            locator,
-            anchor,
-            ..
-        } => anchor.as_ref().map_or_else(
-            || format!("{scheme}:{locator}"),
-            |anchor| format!("{scheme}:{locator}#{anchor}"),
-        ),
-        ReferenceDestination::Invalid => String::new(),
-    }
+    reference.target_source.clone()
 }
 
 fn render_diagnostic(code: &str, message: &str, range: crate::source::TextRange) -> Diagnostic {
@@ -437,6 +472,7 @@ fn block_range(block: &AstBlock) -> crate::source::TextRange {
         AstBlock::Paragraph(value) => value.range,
         AstBlock::Literal(value) => value.range,
         AstBlock::Source(value) => value.range,
+        AstBlock::List(value) => value.range,
         AstBlock::Unsupported(value) => value.range,
     }
 }
@@ -858,5 +894,36 @@ mod tests {
             .map(|target| target.id)
             .collect::<Vec<_>>();
         assert_eq!(target_ids, ["heading-id", "paragraph-id"]);
+    }
+
+    #[test]
+    fn lists_render_nested_and_continued_blocks() {
+        let parsed = parse("* one\n** nested\n* code\n+\n....\n<raw>\n....\n").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert!(output.html.contains("<li>one\n<ul>"));
+        assert!(output.html.contains("<pre>&lt;raw&gt;"));
+    }
+
+    #[test]
+    fn lists_match_the_supported_asciidoctor_fixture() {
+        let parsed = parse(include_str!(
+            "../../../fixtures/lists/asciidoctor-compatible.adoc"
+        ))
+        .expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            include_str!("../../../fixtures/lists/asciidoctor-compatible.html")
+        );
+    }
+
+    #[test]
+    fn reference_fallback_preserves_the_source_scheme_spelling() {
+        let parsed = parse("xref:Note:123[]").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert!(output.html.contains("Note:123"));
     }
 }

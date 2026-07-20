@@ -1,0 +1,11 @@
+* first
+** nested
+* code
++
+[source,rust]
+----
+fn main() {}
+----
+
+. ordered
+. second

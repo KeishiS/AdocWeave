@@ -127,6 +127,7 @@ fn block_range(block: &AstBlock) -> TextRange {
         AstBlock::Paragraph(value) => value.range,
         AstBlock::Literal(value) => value.range,
         AstBlock::Source(value) => value.range,
+        AstBlock::List(value) => value.range,
         AstBlock::Unsupported(value) => value.range,
     }
 }
@@ -143,6 +144,10 @@ fn block_label(block: &AstBlock) -> String {
             || "source block".to_owned(),
             |name| format!("{name} source block"),
         ),
+        AstBlock::List(value) => value
+            .items
+            .first()
+            .map_or_else(|| "list".to_owned(), |item| item.text.clone()),
         AstBlock::Unsupported(_) => "unsupported block".to_owned(),
     }
 }
@@ -234,6 +239,7 @@ fn contains(range: TextRange, offset: u32, include_end: bool) -> bool {
 pub enum SymbolKind {
     DocumentTitle,
     Section,
+    ListItem,
 }
 
 impl SymbolKind {
@@ -241,6 +247,7 @@ impl SymbolKind {
         match self {
             Self::DocumentTitle => "document-title",
             Self::Section => "section",
+            Self::ListItem => "list-item",
         }
     }
 }
@@ -267,6 +274,13 @@ pub fn document_symbols(document: &AstDocument) -> Vec<DocumentSymbol> {
 
     for block in &document.blocks {
         let AstBlock::Heading(heading) = block else {
+            if let AstBlock::List(list) = block {
+                let parent = section_stack
+                    .last()
+                    .map(|(_, index)| *index)
+                    .or(title_index);
+                append_list_symbols(&mut arena, list, parent);
+            }
             continue;
         };
         match heading.kind {
@@ -334,6 +348,29 @@ pub fn document_symbols(document: &AstDocument) -> Vec<DocumentSymbol> {
         }
     }
     roots
+}
+
+fn append_list_symbols(
+    arena: &mut Vec<ArenaSymbol>,
+    list: &crate::parser::ListBlock,
+    parent: Option<usize>,
+) {
+    for item in &list.items {
+        let index = arena.len();
+        arena.push(ArenaSymbol {
+            symbol: DocumentSymbol {
+                name: item.text.clone(),
+                kind: SymbolKind::ListItem,
+                range: item.range,
+                selection_range: item.text_range,
+                children: Vec::new(),
+            },
+            parent,
+        });
+        for child in &item.children {
+            append_list_symbols(arena, child, Some(index));
+        }
+    }
 }
 
 pub fn render_symbols_json(symbols: &[DocumentSymbol]) -> String {

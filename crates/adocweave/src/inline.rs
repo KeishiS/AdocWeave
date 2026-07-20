@@ -29,6 +29,7 @@ pub struct AttributeUse {
 pub struct Reference {
     pub range: TextRange,
     pub target_range: TextRange,
+    pub target_source: String,
     pub destination: ReferenceDestination,
     pub label_range: Option<TextRange>,
     pub label: Vec<Inline>,
@@ -318,6 +319,7 @@ fn parse_macro(
             Inline::Reference(Reference {
                 range: subrange(range, open, end),
                 target_range,
+                target_source: anchor.to_owned(),
                 destination: if anchor.is_empty() {
                     ReferenceDestination::Invalid
                 } else {
@@ -353,6 +355,7 @@ fn parse_macro(
             Inline::Reference(Reference {
                 range: subrange(range, open, end),
                 target_range,
+                target_source: target.to_owned(),
                 destination: parse_reference_destination(target, target_range),
                 label_range: Some(label_range),
                 label,
@@ -523,12 +526,17 @@ fn scan_incomplete_macros(value: &str, range: TextRange, problems: &mut Vec<Inli
             continue;
         }
         let rest = &value[offset..];
+        let bracket_is_unclosed = |candidate: &str| {
+            candidate
+                .find('[')
+                .is_some_and(|open| !candidate[open + 1..].contains(']'))
+        };
         let kind = if (rest.starts_with("<<") && !rest.contains(">>"))
             || (starts_ascii_case_insensitive(rest, "xref:")
-                && (!rest.contains('[') || !rest.contains(']')))
+                && (rest.find('[').is_none() || bracket_is_unclosed(rest)))
         {
             Some(InlineProblemKind::IncompleteCrossReference)
-        } else if url_scheme_end(rest).is_some() && rest.contains('[') && !rest.contains(']') {
+        } else if url_scheme_end(rest).is_some() && bracket_is_unclosed(rest) {
             Some(InlineProblemKind::IncompleteLink)
         } else {
             None
@@ -763,6 +771,19 @@ mod tests {
                 .problems
                 .iter()
                 .any(|problem| problem.kind == InlineProblemKind::IncompleteCrossReference)
+        );
+    }
+
+    #[test]
+    fn incomplete_macro_detection_ignores_brackets_before_the_macro() {
+        let source = "] https://example.com[open";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+
+        assert!(
+            output
+                .problems
+                .iter()
+                .any(|problem| problem.kind == InlineProblemKind::IncompleteLink)
         );
     }
 
