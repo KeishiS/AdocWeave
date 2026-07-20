@@ -57,7 +57,7 @@ fn convert_reads_a_file() {
     assert!(output.status.success());
     assert_eq!(
         output.stdout,
-        b"<p>AsciiLoom</p>\n<p>Small steps produce reliable software.</p>\n"
+        b"<h1 class=\"document-title\" id=\"_asciiloom\">AsciiLoom</h1>\n<p>Small steps produce reliable software.</p>\n"
     );
     assert!(output.stderr.is_empty());
 }
