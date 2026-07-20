@@ -7,6 +7,7 @@ use crate::diagnostic::{
     TextEdit, sort_diagnostics,
 };
 use crate::document::heading_id_base;
+use crate::inline::InlineProblemKind;
 use crate::parser::{AstBlock, HeadingKind, HeadingProblem, parse};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LineEnding, SourceLines};
@@ -19,16 +20,18 @@ pub enum LintRule {
     InvalidHeadingLevel,
     DuplicateHeadingId,
     HeadingMarkerSpace,
+    UnclosedInline,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
         Self::InvalidHeadingLevel,
         Self::DuplicateHeadingId,
         Self::HeadingMarkerSpace,
+        Self::UnclosedInline,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -39,6 +42,7 @@ impl LintRule {
             Self::InvalidHeadingLevel => "invalid-heading-level",
             Self::DuplicateHeadingId => "duplicate-heading-id",
             Self::HeadingMarkerSpace => "heading-marker-space",
+            Self::UnclosedInline => "unclosed-inline",
         }
     }
 }
@@ -175,6 +179,17 @@ fn lint_headings(
     let mut ids = BTreeMap::<String, TextRange>::new();
 
     for block in &parsed.ast.blocks {
+        match block {
+            AstBlock::Heading(heading) => {
+                push_inline_problems(diagnostics, config, &heading.inline_problems);
+            }
+            AstBlock::Paragraph(paragraph) => {
+                for line in &paragraph.lines {
+                    push_inline_problems(diagnostics, config, &line.inline_problems);
+                }
+            }
+            AstBlock::Unsupported(_) => {}
+        }
         let AstBlock::Heading(heading) = block else {
             continue;
         };
@@ -256,6 +271,25 @@ fn lint_headings(
         }
     }
     Ok(())
+}
+
+fn push_inline_problems(
+    diagnostics: &mut Vec<Diagnostic>,
+    config: &LintConfig,
+    problems: &[crate::inline::InlineProblem],
+) {
+    for problem in problems {
+        match problem.kind {
+            InlineProblemKind::UnclosedMonospace => push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::UnclosedInline,
+                problem.range,
+                "unclosed monospace span",
+                None,
+            ),
+        }
+    }
 }
 
 fn push_diagnostic(
@@ -404,5 +438,16 @@ mod tests {
             .find(|diagnostic| diagnostic.code.as_str() == "heading-marker-space")
             .expect("spacing diagnostic");
         assert_eq!(spacing.fixes[0].edits()[0].replacement, " ");
+    }
+
+    #[test]
+    fn monospace_lint_reports_unclosed_span() {
+        let diagnostics = lint("before `open\nnext", &LintConfig::default()).expect("valid source");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "unclosed-inline")
+        );
     }
 }

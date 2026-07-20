@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use crate::inline::{Inline, InlineParseConfig, parse_text};
+use crate::inline::{Inline, InlineParseConfig, InlineProblem, parse as parse_inlines};
 use crate::source::{PositionError, TextRange};
 use crate::source_lines::{LosslessToken, SourceLine, SourceLines};
 
@@ -68,6 +68,7 @@ pub struct TextNode {
     pub range: TextRange,
     pub value: String,
     pub inlines: Vec<Inline>,
+    pub inline_problems: Vec<InlineProblem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,6 +107,7 @@ pub struct Heading {
     pub kind: HeadingKind,
     pub text: String,
     pub inlines: Vec<Inline>,
+    pub inline_problems: Vec<InlineProblem>,
     pub problems: Vec<HeadingProblem>,
 }
 
@@ -290,6 +292,7 @@ fn parse_heading(
         }
     };
 
+    let inline_output = parse_inlines(text, text_range, InlineParseConfig::default());
     Ok(Heading {
         range: line.full_range(),
         marker_range,
@@ -297,7 +300,8 @@ fn parse_heading(
         text_range,
         kind,
         text: text.to_owned(),
-        inlines: parse_text(text, text_range, InlineParseConfig::default()),
+        inlines: inline_output.inlines,
+        inline_problems: inline_output.problems,
         problems,
     })
 }
@@ -329,9 +333,12 @@ fn flush_paragraph(
                     .expect("source offset fits"),
                 )
                 .expect("trimmed text range is ordered");
+                let inline_output =
+                    parse_inlines(&value, value_range, InlineParseConfig::default());
                 TextNode {
                     range: value_range,
-                    inlines: parse_text(&value, value_range, InlineParseConfig::default()),
+                    inlines: inline_output.inlines,
+                    inline_problems: inline_output.problems,
                     value,
                 }
             })

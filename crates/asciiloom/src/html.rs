@@ -111,6 +111,11 @@ fn render_inlines(output: &mut String, inlines: &[Inline]) {
     for inline in inlines {
         match inline {
             Inline::Text(text) => escape_html_into(output, &text.value),
+            Inline::Monospace { value, .. } => {
+                output.push_str("<code>");
+                escape_html_into(output, value);
+                output.push_str("</code>");
+            }
         }
     }
 }
@@ -156,6 +161,16 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &HtmlOptions::default()).html,
             "<p>plain &lt;text&gt; next</p>\n"
+        );
+    }
+
+    #[test]
+    fn monospace_html_escapes_code_content() {
+        let parsed = parse("use `<tag>` now").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &HtmlOptions::default()).html,
+            "<p>use <code>&lt;tag&gt;</code> now</p>\n"
         );
     }
 
