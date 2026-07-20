@@ -32,11 +32,11 @@
 
 [source,console]
 ----
-cargo test -p asciiloom-lsp protocol
-cargo test -p asciiloom-lsp cancellation
-cargo test -p asciiloom-lsp definition
-cargo test -p asciiloom-lsp references
-cargo test -p asciiloom-lsp document_links
+cargo test -p adocweave-lsp protocol
+cargo test -p adocweave-lsp cancellation
+cargo test -p adocweave-lsp definition
+cargo test -p adocweave-lsp references
+cargo test -p adocweave-lsp document_links
 ----
 
 == 依存関係

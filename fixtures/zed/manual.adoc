@@ -1,4 +1,4 @@
-= AsciiLoom Zed確認
+= AdocWeave Zed確認
 
 == 診断😀
 

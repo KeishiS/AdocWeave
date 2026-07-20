@@ -25,8 +25,8 @@
 
 [source,console]
 ----
-cargo test -p asciiloom-lsp diagnostics
-cargo test -p asciiloom-lsp unicode_positions
+cargo test -p adocweave-lsp diagnostics
+cargo test -p adocweave-lsp unicode_positions
 ----
 
 == 依存関係

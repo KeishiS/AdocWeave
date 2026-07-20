@@ -1,4 +1,4 @@
-= AsciiLoom 実装Issue一覧
+= AdocWeave 実装Issue一覧
 
 各Issueは、単独で動作確認できる最小限の変更単位を表す。原則として番号順に進めるが、依存関係を満たすIssueは並行して実施してよい。
 
@@ -32,6 +32,7 @@
 === 横断的な開発基盤
 
 * xref:042-cargo-make-development-tasks.adoc[042: cargo-makeによる開発タスク統一]（Issue 004完了後に割り込みで先行実施）
+* xref:043-adocweave-rename.adoc[043: AdocWeaveへの全面改名]（Issue 027開始前に割り込みで実施）
 
 === M1: プレーンテキスト変換
 

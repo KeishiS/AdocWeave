@@ -1,3 +1,5 @@
+//! AdocWeave Language Server protocol tests.
+
 use super::{PositionEncoding, Server, run};
 use serde_json::json;
 use std::io::Cursor;
@@ -290,7 +292,7 @@ fn request(server: &mut Server, method: &str, uri: &str) -> serde_json::Value {
 }
 
 fn apply_lsp_edits(source: &str, edits: &[serde_json::Value]) -> String {
-    use asciiloom::source::{LineIndex, Position, PositionEncoding as CorePositionEncoding};
+    use adocweave::source::{LineIndex, Position, PositionEncoding as CorePositionEncoding};
 
     let index = LineIndex::new(source).expect("line index");
     let mut byte_edits = edits
@@ -389,7 +391,7 @@ fn release_fixture_is_accepted_by_lsp_features() {
     assert_eq!(diagnostics["params"]["diagnostics"], json!([]));
 
     let symbols = request_symbols(&mut server, "file:///release.adoc");
-    assert_eq!(symbols[0]["name"], "AsciiLoom 初期リリース");
+    assert_eq!(symbols[0]["name"], "AdocWeave 初期リリース");
     assert_eq!(
         symbols[0]["children"].as_array().expect("children").len(),
         3

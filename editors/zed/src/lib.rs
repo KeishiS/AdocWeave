@@ -1,8 +1,8 @@
 use zed_extension_api as zed;
 
-struct AsciiLoomExtension;
+struct AdocWeaveExtension;
 
-impl zed::Extension for AsciiLoomExtension {
+impl zed::Extension for AdocWeaveExtension {
     fn new() -> Self {
         Self
     }
@@ -12,8 +12,8 @@ impl zed::Extension for AsciiLoomExtension {
         _language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> zed::Result<zed::Command> {
-        let command = worktree.which("asciiloom-lsp").ok_or_else(|| {
-            "asciiloom-lsp was not found on PATH; build it with `cargo build -p asciiloom-lsp` \
+        let command = worktree.which("adocweave-lsp").ok_or_else(|| {
+            "adocweave-lsp was not found on PATH; build it with `cargo build -p adocweave-lsp` \
              and expose target/debug on PATH"
                 .to_owned()
         })?;
@@ -25,4 +25,4 @@ impl zed::Extension for AsciiLoomExtension {
     }
 }
 
-zed::register_extension!(AsciiLoomExtension);
+zed::register_extension!(AdocWeaveExtension);

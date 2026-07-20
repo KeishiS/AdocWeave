@@ -1,6 +1,6 @@
-= AsciiLoom
+= AdocWeave
 
-AsciiLoomはRustで実装するインクリメンタルなAsciiDoc処理系です。
+AdocWeaveはRustで実装するインクリメンタルなAsciiDoc処理系です。
 
 == ドキュメント
 

@@ -1,11 +1,11 @@
 //! LSP transport and document state, isolated from the parsing core.
 
-use asciiloom::document::{
+use adocweave::document::{
     DocumentElement, DocumentSymbol, SymbolKind, document_element_at, document_symbols,
     generate_heading_ids, source_language_candidates,
 };
-use asciiloom::source::{LineIndex, PositionEncoding as CorePositionEncoding, TextRange};
-use asciiloom::{diagnostic::Severity, formatter, lint};
+use adocweave::source::{LineIndex, PositionEncoding as CorePositionEncoding, TextRange};
+use adocweave::{diagnostic::Severity, formatter, lint};
 use serde_json::{Value, json};
 
 mod state;
@@ -14,7 +14,7 @@ mod transport;
 pub use state::{DocumentState, DocumentStore};
 pub use transport::{run, run_stdio};
 
-pub const SERVER_NAME: &str = "asciiloom-lsp";
+pub const SERVER_NAME: &str = "adocweave-lsp";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -265,7 +265,7 @@ impl Server {
                     },
                     "severity": severity,
                     "code": diagnostic.code.as_str(),
-                    "source": "asciiloom",
+                    "source": "adocweave",
                     "message": diagnostic.message
                 }))
             })
@@ -304,7 +304,7 @@ fn request_offset(
     };
     LineIndex::new(&document.text)
         .map_err(|error| error.to_string())?
-        .position_to_offset(asciiloom::source::Position { line, character }, encoding)
+        .position_to_offset(adocweave::source::Position { line, character }, encoding)
         .map(|offset| offset.to_u32())
         .map_err(|error| error.to_string())
 }
@@ -330,8 +330,8 @@ fn hover(
         .map(|candidate| candidate.id)
         .unwrap_or_else(|| "_section".to_owned());
     let level = match heading.kind {
-        asciiloom::parser::HeadingKind::DocumentTitle => "document title".to_owned(),
-        asciiloom::parser::HeadingKind::Section { level } => {
+        adocweave::parser::HeadingKind::DocumentTitle => "document title".to_owned(),
+        adocweave::parser::HeadingKind::Section { level } => {
             format!("section level {level}")
         }
     };
@@ -442,7 +442,7 @@ fn code_actions(
             actions.push(json!({
                 "title": fix.title,
                 "kind": "quickfix",
-                "isPreferred": fix.applicability == asciiloom::diagnostic::Applicability::Always,
+                "isPreferred": fix.applicability == adocweave::diagnostic::Applicability::Always,
                 "edit": {
                     "documentChanges": [{
                         "textDocument": {

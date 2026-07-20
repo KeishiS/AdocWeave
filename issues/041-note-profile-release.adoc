@@ -12,7 +12,7 @@
 - 保存時のサーバ再検証、保護メタデータ、文書内・文書間cross reference、
   逆参照を含むリンク解決およびブラウザプレビューの受け入れ試験を追加する。
 - Zed、ブラウザ、サーバおよび将来のTauriで再利用する手動確認項目を整備する。
-- 正式公開前にAsciiLoom名称、crate、CLI、リポジトリおよびLanguage Server名を再調査する。
+- 正式公開前にAdocWeave名称、crate、CLI、リポジトリおよびLanguage Server名を再調査する。
 
 == 完了条件
 

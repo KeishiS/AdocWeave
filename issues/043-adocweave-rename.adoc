@@ -1,0 +1,45 @@
+= AdocWeaveへの全面改名
+
+== 目的
+
+公開APIを確定する前に、製品、crate、実行ファイルおよびエディター統合の名称を
+`AdocWeave`へ統一する。
+
+== 実装範囲
+
+- 製品表示名を`AdocWeave`へ変更する。
+- コアcrateとCLIを`adocweave`へ変更する。
+- Language Server crateと実行ファイルを`adocweave-lsp`へ変更する。
+- Zed拡張のID、crate、表示名、Language Server IDおよび実行コマンドを変更する。
+- crateディレクトリ、workspace設定、cargo-makeタスク、lockfileを新名称へ揃える。
+- ソース、fixture、診断source、ドキュメントおよびIssue計画から旧名称を除去する。
+- リモートリポジトリを改名した後に使用するメタデータURLを
+  `https://github.com/KeishiS/AdocWeave`へ変更する。
+
+== 完了条件
+
+- `adocweave --version`が新名称を表示する。
+- Zed拡張が`adocweave-lsp`を要求し、拡張crateとLanguage Serverを型検査できる。
+- `cargo metadata`に旧crateまたは旧実行ファイルが現れない。
+- Git管理対象のパスと内容に旧名称が残らない。
+- 全workspaceとZed拡張の検証が成功する。
+
+== 検証
+
+[source,console]
+----
+cargo make verify
+git grep -i -e 'ascii''loom' -e 'ascii''[[:space:]]+loom'
+----
+
+== 依存関係
+
+- 026
+
+Issue 027より前に割り込みで実施する。
+
+== 完了確認
+
+2026-07-20に、製品、crate、CLI、Language Server、Zed拡張、ソース、fixture、
+ドキュメントおよびIssue計画の改名を完了した。`cargo metadata`、CLIのversion表示、
+旧名称の残存検査および`cargo make verify`で確認する。

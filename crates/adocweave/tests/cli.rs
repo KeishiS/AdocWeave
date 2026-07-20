@@ -1,18 +1,18 @@
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
-fn asciiloom() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_asciiloom"))
+fn adocweave() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_adocweave"))
 }
 
 fn run_with_stdin(arguments: &[&str], input: &[u8]) -> Output {
-    let mut child = asciiloom()
+    let mut child = adocweave()
         .args(arguments)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("the asciiloom binary should start");
+        .expect("the adocweave binary should start");
 
     child
         .stdin
@@ -23,16 +23,16 @@ fn run_with_stdin(arguments: &[&str], input: &[u8]) -> Output {
 
     child
         .wait_with_output()
-        .expect("the asciiloom binary should exit")
+        .expect("the adocweave binary should exit")
 }
 
 #[test]
 fn every_subcommand_displays_help() {
     for command in ["convert", "check", "format"] {
-        let output = asciiloom()
+        let output = adocweave()
             .args([command, "--help"])
             .output()
-            .expect("the asciiloom binary should run");
+            .expect("the adocweave binary should run");
 
         assert!(output.status.success(), "{command} --help should succeed");
         assert!(
@@ -45,13 +45,13 @@ fn every_subcommand_displays_help() {
 
 #[test]
 fn cli_reports_release_name_and_version() {
-    let output = asciiloom()
+    let output = adocweave()
         .arg("--version")
         .output()
-        .expect("the asciiloom binary should run");
+        .expect("the adocweave binary should run");
 
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"asciiloom 0.1.0\n");
+    assert_eq!(output.stdout, b"adocweave 0.1.0\n");
     assert!(output.stderr.is_empty());
 }
 
@@ -61,15 +61,15 @@ fn convert_reads_a_file() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/plain/basic.adoc"
     );
-    let output = asciiloom()
+    let output = adocweave()
         .args(["convert", fixture])
         .output()
-        .expect("the asciiloom binary should run");
+        .expect("the adocweave binary should run");
 
     assert!(output.status.success());
     assert_eq!(
         output.stdout,
-        b"<h1 class=\"document-title\" id=\"_asciiloom\">AsciiLoom</h1>\n<p>Small steps produce reliable software.</p>\n"
+        b"<h1 class=\"document-title\" id=\"_adocweave\">AdocWeave</h1>\n<p>Small steps produce reliable software.</p>\n"
     );
     assert!(output.stderr.is_empty());
 }
@@ -98,10 +98,10 @@ fn invalid_utf8_is_a_user_facing_error() {
 #[test]
 fn missing_file_is_a_user_facing_error() {
     let missing = "fixtures/plain/does-not-exist.adoc";
-    let output = asciiloom()
+    let output = adocweave()
         .args(["check", missing])
         .output()
-        .expect("the asciiloom binary should run");
+        .expect("the adocweave binary should run");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(!output.status.success());

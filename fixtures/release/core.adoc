@@ -1,4 +1,4 @@
-= AsciiLoom 初期リリース
+= AdocWeave 初期リリース
 
 == Inline
 

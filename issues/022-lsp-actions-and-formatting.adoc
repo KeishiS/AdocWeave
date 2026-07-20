@@ -23,8 +23,8 @@
 
 [source,console]
 ----
-cargo test -p asciiloom-lsp code_action
-cargo test -p asciiloom-lsp formatting
+cargo test -p adocweave-lsp code_action
+cargo test -p adocweave-lsp formatting
 ----
 
 == 依存関係

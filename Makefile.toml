@@ -73,27 +73,27 @@ args = ["test", "--workspace", "--all-features"]
 [tasks.test-core]
 description = "Run parser, renderer, lint, formatter, and CLI tests"
 command = "cargo"
-args = ["test", "-p", "asciiloom", "--all-features"]
+args = ["test", "-p", "adocweave", "--all-features"]
 
 [tasks.test-lsp]
 description = "Run Language Server tests"
 command = "cargo"
-args = ["test", "-p", "asciiloom-lsp", "--all-features"]
+args = ["test", "-p", "adocweave-lsp", "--all-features"]
 
 [tasks.test-grammar]
 description = "Run normative grammar and substitution contract tests"
 command = "cargo"
-args = ["test", "-p", "asciiloom", "--test", "grammar"]
+args = ["test", "-p", "adocweave", "--test", "grammar"]
 
 [tasks.test-release-core]
 private = true
 command = "cargo"
-args = ["test", "-p", "asciiloom", "--test", "cli", "release_fixture"]
+args = ["test", "-p", "adocweave", "--test", "cli", "release_fixture"]
 
 [tasks.test-release-lsp]
 private = true
 command = "cargo"
-args = ["test", "-p", "asciiloom-lsp", "release_fixture"]
+args = ["test", "-p", "adocweave-lsp", "release_fixture"]
 
 [tasks.test-release]
 description = "Run the cross-component initial release fixture tests"
@@ -119,7 +119,7 @@ args = [
 [tasks.run-lsp]
 description = "Run the Language Server over standard input/output"
 command = "cargo"
-args = ["run", "-p", "asciiloom-lsp", "--bin", "asciiloom-lsp"]
+args = ["run", "-p", "adocweave-lsp", "--bin", "adocweave-lsp"]
 
 [tasks.doc-check]
 description = "Build workspace API documentation without dependencies"

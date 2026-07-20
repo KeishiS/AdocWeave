@@ -1,6 +1,8 @@
+//! AdocWeave Language Server document state.
+
 use std::collections::BTreeMap;
 
-use asciiloom::parser::{AstDocument, parse};
+use adocweave::parser::{AstDocument, parse};
 
 #[derive(Debug)]
 pub struct DocumentState {

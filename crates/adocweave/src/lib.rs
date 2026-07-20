@@ -1,4 +1,4 @@
-//! Core application boundary for AsciiLoom.
+//! Core application boundary for AdocWeave.
 //!
 //! The command-line interface is a host adapter around this API and owns file
 //! and standard-stream I/O. Parsing, diagnostics, formatting, and rendering
@@ -18,10 +18,10 @@ pub mod parser;
 pub mod source;
 pub mod source_lines;
 
-pub const PRODUCT_NAME: &str = "AsciiLoom";
+pub const PRODUCT_NAME: &str = "AdocWeave";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// An operation supported by the AsciiLoom command-line application.
+/// An operation supported by the AdocWeave command-line application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
     Convert,

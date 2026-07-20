@@ -2,7 +2,7 @@
 
 == 目的
 
-AsciiLoom Language ServerをZed Editorから起動し、初期編集支援を利用可能にする。
+AdocWeave Language ServerをZed Editorから起動し、初期編集支援を利用可能にする。
 
 == 実装範囲
 

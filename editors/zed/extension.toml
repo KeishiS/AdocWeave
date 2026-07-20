@@ -1,13 +1,13 @@
-id = "asciiloom"
-name = "AsciiLoom"
+id = "adocweave"
+name = "AdocWeave"
 version = "0.1.0"
 schema_version = 1
-authors = ["AsciiLoom contributors"]
-description = "AsciiDoc editing support powered by the AsciiLoom Language Server"
-repository = "https://github.com/asciiloom/asciiloom"
+authors = ["AdocWeave contributors"]
+description = "AsciiDoc editing support powered by the AdocWeave Language Server"
+repository = "https://github.com/KeishiS/AdocWeave"
 
-[language_servers.asciiloom]
-name = "AsciiLoom Language Server"
+[language_servers.adocweave]
+name = "AdocWeave Language Server"
 languages = ["AsciiDoc"]
 
 [grammars.asciidoc]

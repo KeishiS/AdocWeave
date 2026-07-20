@@ -22,8 +22,8 @@
 
 [source,console]
 ----
-cargo test -p asciiloom-lsp hover
-cargo test -p asciiloom-lsp completion
+cargo test -p adocweave-lsp hover
+cargo test -p adocweave-lsp completion
 ----
 
 == 依存関係

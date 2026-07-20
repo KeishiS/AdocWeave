@@ -1,3 +1,5 @@
+//! AdocWeave Language Server standard-I/O transport.
+
 use std::io::{self, BufRead, Write};
 
 use serde_json::Value;

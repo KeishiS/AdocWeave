@@ -21,7 +21,7 @@
 
 [source,console]
 ----
-cargo test -p asciiloom-lsp document_symbols
+cargo test -p adocweave-lsp document_symbols
 ----
 
 == 依存関係

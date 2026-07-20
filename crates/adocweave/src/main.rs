@@ -6,13 +6,13 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use asciiloom::{CheckOutput, Operation, process, process_check};
+use adocweave::{CheckOutput, Operation, process, process_check};
 
 const HELP: &str = "\
-AsciiLoom command-line interface
+AdocWeave command-line interface
 
 Usage:
-  asciiloom <COMMAND> [FILE]
+  adocweave <COMMAND> [FILE]
 
 Commands:
   convert  Convert an AsciiDoc document
@@ -39,7 +39,7 @@ enum CliError {
         source: io::Error,
     },
     Write(io::Error),
-    Process(asciiloom::ProcessError),
+    Process(adocweave::ProcessError),
     FormattingRequired,
 }
 
@@ -154,7 +154,7 @@ fn run() -> Result<(), CliError> {
             Ok(())
         }
         Action::Version => {
-            println!("asciiloom {}", asciiloom::VERSION);
+            println!("adocweave {}", adocweave::VERSION);
             Ok(())
         }
         Action::Run(arguments) => {
@@ -170,15 +170,15 @@ fn run() -> Result<(), CliError> {
                 )
             } else if arguments.operation == Operation::Format && arguments.format_check {
                 let source = std::str::from_utf8(&input).map_err(|error| {
-                    CliError::Process(asciiloom::ProcessError::InvalidUtf8 {
+                    CliError::Process(adocweave::ProcessError::InvalidUtf8 {
                         valid_up_to: error.valid_up_to(),
                     })
                 })?;
-                let output = asciiloom::formatter::format(
+                let output = adocweave::formatter::format(
                     source,
-                    &asciiloom::formatter::FormatConfig::default(),
+                    &adocweave::formatter::FormatConfig::default(),
                 )
-                .map_err(|error| CliError::Process(asciiloom::ProcessError::Position(error)))?;
+                .map_err(|error| CliError::Process(adocweave::ProcessError::Position(error)))?;
                 if output.changed() {
                     return Err(CliError::FormattingRequired);
                 }
@@ -198,8 +198,8 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("asciiloom: {error}");
-            eprintln!("Try 'asciiloom --help' for more information.");
+            eprintln!("adocweave: {error}");
+            eprintln!("Try 'adocweave --help' for more information.");
             ExitCode::FAILURE
         }
     }

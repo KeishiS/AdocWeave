@@ -6,7 +6,7 @@
 
 == 実装範囲
 
-- `asciiloom-lsp` workspace memberを追加する。
+- `adocweave-lsp` workspace memberを追加する。
 - `initialize`、`initialized`、`shutdown`、`exit` とserver capabilitiesを実装する。
 - `didOpen`、`didChange`、`didClose`、`didSave` を処理する。
 - 初期化時にUTF-8またはUTF-16のposition encodingをネゴシエーションする。
@@ -25,7 +25,7 @@
 
 [source,console]
 ----
-cargo test -p asciiloom-lsp document_sync
+cargo test -p adocweave-lsp document_sync
 ----
 
 == 依存関係

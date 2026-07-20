@@ -1,5 +1,5 @@
-use asciiloom::inline::{Inline, InlineLiteralKind, InlineStyle};
-use asciiloom::parser::{AstBlock, BlockProblemKind, CstBlockKind, parse};
+use adocweave::inline::{Inline, InlineLiteralKind, InlineStyle};
+use adocweave::parser::{AstBlock, BlockProblemKind, CstBlockKind, parse};
 
 const SOURCE: &str = include_str!("../../../fixtures/grammar/ambiguous.adoc");
 
@@ -75,10 +75,10 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         Some(AstBlock::Heading(_))
     ));
 
-    let diagnostics = asciiloom::lint::lint(SOURCE, &asciiloom::lint::LintConfig::default())
+    let diagnostics = adocweave::lint::lint(SOURCE, &adocweave::lint::LintConfig::default())
         .expect("fixture lints");
     assert_eq!(
-        asciiloom::diagnostic::render_json(&diagnostics),
+        adocweave::diagnostic::render_json(&diagnostics),
         include_str!("../../../fixtures/grammar/ambiguous.diagnostics.json").trim_end()
     );
     let codes = diagnostics
@@ -102,7 +102,7 @@ fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
         .expect("source block");
     assert_eq!(source_block.value, "_source_ <tag>\n");
 
-    let html = asciiloom::html::render(&parsed.ast, &asciiloom::html::HtmlOptions::default()).html;
+    let html = adocweave::html::render(&parsed.ast, &adocweave::html::HtmlOptions::default()).html;
     assert!(html.contains("<pre>*literal* &lt;tag&gt;\n.....\n</pre>"));
     assert!(
         html.contains("<pre><code class=\"language-rust\">_source_ &lt;tag&gt;\n</code></pre>")
@@ -139,7 +139,7 @@ fn substitutions_cover_every_supported_semantic_context() {
     assert!(matches!(parsed.ast.blocks[4], AstBlock::Source(_)));
     assert!(matches!(parsed.ast.blocks[5], AstBlock::Paragraph(_)));
 
-    let html = asciiloom::html::render(&parsed.ast, &asciiloom::html::HtmlOptions::default()).html;
+    let html = adocweave::html::render(&parsed.ast, &adocweave::html::HtmlOptions::default()).html;
     assert!(html.contains(
         "&lt;Title&gt; <strong>strong <em>nested</em> and <code>code &lt;&amp;&gt;</code></strong>"
     ));

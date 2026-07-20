@@ -1,5 +1,5 @@
 {
-  description = "AsciiLoom development environment";
+  description = "AdocWeave development environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

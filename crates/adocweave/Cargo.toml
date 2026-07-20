@@ -1,5 +1,5 @@
 [package]
-name = "asciiloom"
+name = "adocweave"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,5 +10,5 @@ description = "An incremental AsciiDoc processor"
 path = "src/lib.rs"
 
 [[bin]]
-name = "asciiloom"
+name = "adocweave"
 path = "src/main.rs"

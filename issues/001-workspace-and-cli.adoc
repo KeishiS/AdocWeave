@@ -2,12 +2,12 @@
 
 == 目的
 
-AsciiLoomを小さく実行・検証できるRust workspaceとして初期化する。
+AdocWeaveを小さく実行・検証できるRust workspaceとして初期化する。
 
 == 実装範囲
 
 - ルートのCargo workspaceを作成する。
-- `asciiloom` ライブラリ兼CLI crateを作成する。
+- `adocweave` ライブラリ兼CLI crateを作成する。
 - `convert`、`check`、`format` サブコマンドの骨格を用意する。
 - fixtureの配置規約と最小サンプルを追加する。
 - 入力は標準入力またはファイルから読み、出力は標準出力へ書く。
