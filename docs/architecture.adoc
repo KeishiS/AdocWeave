@@ -35,7 +35,7 @@ CLI、Formatter、HTMLバックエンドおよびLanguage Serverは、既存の`
 
 `CORE_PROFILE_VERSION`は構文と既定意味、`CORE_API_VERSION`は公開型とAPI、HTML生成物は
 `HTML_CONTRACT_VERSION`で管理する。各versionと再構築条件は
-xref:core-profile.adoc[AdocWeave Core Profile 1]で定義する。
+xref:core-profile.adoc[AdocWeave Core Profile 2]で定義する。
 
 == 構文層と意味層
 

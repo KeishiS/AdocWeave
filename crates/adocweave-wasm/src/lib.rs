@@ -415,7 +415,7 @@ mod tests {
             "options": {"limits": {"maxOutputBytes": 1}}
         });
         let request: WasmRequest = serde_json::from_value(value).expect("partial options");
-        assert_eq!(request.options.profile_version, 1);
+        assert_eq!(request.options.profile_version, CORE_PROFILE_VERSION);
         assert_eq!(request.options.limits.max_input_bytes, 10 * 1024 * 1024);
         let error = process_request(request, &NeverCancel).expect_err("output limit");
         assert_eq!(error.code, "limit-exceeded");

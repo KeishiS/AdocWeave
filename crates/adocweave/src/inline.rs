@@ -244,19 +244,21 @@ fn parse_segment(
             InlineCandidate::Marker {
                 open,
                 marker,
+                form,
                 close,
             } => {
                 if is_escaped(value, open) {
+                    let marker_width = form.width();
                     push_text(&mut output.inlines, value, range, plain_start, open - 1);
                     output.inlines.push(Inline::Text(InlineText {
-                        range: subrange(range, open - 1, open + marker.len_utf8()),
-                        value: marker.to_string(),
+                        range: subrange(range, open - 1, open + marker_width),
+                        value: value[open..open + marker_width].to_owned(),
                     }));
-                    cursor = open + marker.len_utf8();
+                    cursor = open + marker_width;
                     plain_start = cursor;
                     continue;
                 }
-                match recognize_marker(value, open, marker, close) {
+                match recognize_marker(value, open, marker, form, close) {
                     MarkerRecognition::Complete(token) => {
                         let built = build_marker(value, range, config, depth, token);
                         push_text(&mut output.inlines, value, range, plain_start, open);
@@ -293,8 +295,24 @@ enum InlineCandidate {
     Marker {
         open: usize,
         marker: char,
+        form: MarkerForm,
         close: Option<usize>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MarkerForm {
+    Constrained,
+    Unconstrained,
+}
+
+impl MarkerForm {
+    const fn width(self) -> usize {
+        match self {
+            Self::Constrained => 1,
+            Self::Unconstrained => 2,
+        }
+    }
 }
 
 struct InlineScanner {
@@ -327,12 +345,22 @@ impl InlineScanner {
                         || url_scheme_end(rest).is_some());
             if is_macro {
                 candidates.push(InlineCandidate::Macro { open });
+            } else if matches!(marker, '`' | '*' | '_')
+                && is_unconstrained_pair_at(value, open, marker)
+            {
+                candidates.push(InlineCandidate::Marker {
+                    open,
+                    marker,
+                    form: MarkerForm::Unconstrained,
+                    close: None,
+                });
             } else if marker == '{'
                 || matches!(marker, '`' | '*' | '_') && is_open_boundary(value, open, marker)
             {
                 candidates.push(InlineCandidate::Marker {
                     open,
                     marker,
+                    form: MarkerForm::Constrained,
                     close: None,
                 });
             }
@@ -426,12 +454,31 @@ fn next_char_boundary(value: &str, offset: usize) -> usize {
     offset + value[offset..].chars().next().map_or(1, char::len_utf8)
 }
 
+fn is_unconstrained_pair_at(value: &str, offset: usize, marker: char) -> bool {
+    if !matches!(marker, '`' | '*' | '_') {
+        return false;
+    }
+    let marker = marker as u8;
+    let bytes = value.as_bytes();
+    if bytes.get(offset) != Some(&marker) || bytes.get(offset + 1) != Some(&marker) {
+        return false;
+    }
+
+    let preceding_run = bytes[..offset]
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == marker)
+        .count();
+    preceding_run % 2 == 0
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MarkerToken {
     open: usize,
     close: usize,
     end: usize,
     marker: char,
+    form: MarkerForm,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -456,10 +503,21 @@ fn recognize_marker(
     value: &str,
     open: usize,
     marker: char,
+    form: MarkerForm,
     close: Option<usize>,
 ) -> MarkerRecognition {
-    let next = open + marker.len_utf8();
+    let width = form.width();
+    let next = open + width;
     let Some(close) = close else {
+        if form == MarkerForm::Unconstrained
+            && (next == value.len()
+                || value[next..]
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_whitespace))
+        {
+            return MarkerRecognition::Invalid { next };
+        }
         let kind = match marker {
             '`' => InlineProblemKind::UnclosedMonospace,
             '*' => InlineProblemKind::UnclosedStrong,
@@ -469,22 +527,31 @@ fn recognize_marker(
         };
         return MarkerRecognition::Unclosed { next, kind };
     };
-    if marker == '{' && !valid_attribute_name(&value[open + 1..close]) {
+    if close == next {
+        return MarkerRecognition::Invalid {
+            next: close + width,
+        };
+    }
+    if marker == '{' && !valid_attribute_name(&value[next..close]) {
         return MarkerRecognition::Invalid { next };
     }
     MarkerRecognition::Complete(MarkerToken {
         open,
         close,
-        end: close + marker.len_utf8(),
+        end: close + width,
         marker,
+        form,
     })
 }
 
 fn index_marker_closers(value: &str, candidates: &mut [InlineCandidate]) {
-    let mut opener_at = vec![false; value.len() + 1];
+    let mut opener_at = vec![None; value.len() + 1];
     for candidate in candidates.iter() {
-        if let InlineCandidate::Marker { open, .. } = candidate {
-            opener_at[*open] = true;
+        if let InlineCandidate::Marker {
+            open, marker, form, ..
+        } = candidate
+        {
+            opener_at[*open] = Some((*marker, *form));
         }
     }
 
@@ -492,16 +559,30 @@ fn index_marker_closers(value: &str, candidates: &mut [InlineCandidate]) {
     let mut last_backtick = None;
     let mut last_strong = None;
     let mut last_emphasis = None;
+    let mut last_unconstrained_backtick = None;
+    let mut last_unconstrained_strong = None;
+    let mut last_unconstrained_emphasis = None;
     let mut last_attribute = None;
     for (offset, marker) in value.char_indices().rev() {
-        if opener_at[offset] {
-            closer_at[offset] = match marker {
-                '`' => last_backtick,
-                '*' => last_strong,
-                '_' => last_emphasis,
-                '{' => last_attribute,
+        if let Some((marker, form)) = opener_at[offset] {
+            closer_at[offset] = match (marker, form) {
+                ('`', MarkerForm::Constrained) => last_backtick,
+                ('*', MarkerForm::Constrained) => last_strong,
+                ('_', MarkerForm::Constrained) => last_emphasis,
+                ('`', MarkerForm::Unconstrained) => last_unconstrained_backtick,
+                ('*', MarkerForm::Unconstrained) => last_unconstrained_strong,
+                ('_', MarkerForm::Unconstrained) => last_unconstrained_emphasis,
+                ('{', MarkerForm::Constrained) => last_attribute,
                 _ => None,
             };
+        }
+        if is_unconstrained_pair_at(value, offset, marker) {
+            match marker {
+                '`' => last_unconstrained_backtick = Some(offset),
+                '*' => last_unconstrained_strong = Some(offset),
+                '_' => last_unconstrained_emphasis = Some(offset),
+                _ => {}
+            }
         }
         match marker {
             '`' if is_close_boundary(value, offset, marker) => last_backtick = Some(offset),
@@ -531,16 +612,18 @@ fn build_marker(
         close,
         end,
         marker,
+        form,
     } = token;
+    let marker_width = form.width();
     let node_range = subrange(range, open, end);
-    let content_range = subrange(range, open + marker.len_utf8(), close);
+    let content_range = subrange(range, open + marker_width, close);
     let mut problems = Vec::new();
     let inline = match marker {
         '`' => Inline::Literal {
             kind: InlineLiteralKind::Monospace,
             range: node_range,
             content_range,
-            value: value[open + 1..close].to_owned(),
+            value: value[open + marker_width..close].to_owned(),
         },
         '*' | '_' if depth >= config.max_depth => {
             problems.push(InlineProblem {
@@ -553,7 +636,12 @@ fn build_marker(
             })
         }
         '*' | '_' => {
-            let inner = parse_segment(&value[open + 1..close], content_range, config, depth + 1);
+            let inner = parse_segment(
+                &value[open + marker_width..close],
+                content_range,
+                config,
+                depth + 1,
+            );
             problems.extend(inner.problems);
             Inline::Styled {
                 style: if marker == '*' {
@@ -569,7 +657,7 @@ fn build_marker(
         '{' => Inline::AttributeReference {
             range: node_range,
             name_range: content_range,
-            name: value[open + 1..close].to_owned(),
+            name: value[open + marker_width..close].to_owned(),
         },
         _ => unreachable!("only supported markers are returned"),
     };
@@ -1169,8 +1257,8 @@ mod tests {
     use super::{
         FormulaToken, Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig,
         InlineProblemKind, InlineScanner, InlineStyle, LinkToken, MacroRecognition, MacroToken,
-        MarkerRecognition, MarkerToken, ReferenceDestination, ReferenceToken, inline_at,
-        next_candidate, parse, parse_text, recognize_macro, recognize_marker,
+        MarkerForm, MarkerRecognition, MarkerToken, ReferenceDestination, ReferenceToken,
+        inline_at, next_candidate, parse, parse_text, recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -1206,6 +1294,7 @@ mod tests {
             Some(InlineCandidate::Marker {
                 open: 0,
                 marker: '*',
+                form: MarkerForm::Constrained,
                 close: Some(7),
             })
         );
@@ -1303,20 +1392,21 @@ mod tests {
     #[test]
     fn marker_recognizer_distinguishes_complete_invalid_and_unclosed_input() {
         assert_eq!(
-            recognize_marker("*strong*", 0, '*', Some(7)),
+            recognize_marker("*strong*", 0, '*', MarkerForm::Constrained, Some(7),),
             MarkerRecognition::Complete(MarkerToken {
                 open: 0,
                 close: 7,
                 end: 8,
                 marker: '*',
+                form: MarkerForm::Constrained,
             })
         );
         assert_eq!(
-            recognize_marker("{bad name}", 0, '{', Some(9)),
+            recognize_marker("{bad name}", 0, '{', MarkerForm::Constrained, Some(9),),
             MarkerRecognition::Invalid { next: 1 }
         );
         assert_eq!(
-            recognize_marker("_open", 0, '_', None),
+            recognize_marker("_open", 0, '_', MarkerForm::Constrained, None),
             MarkerRecognition::Unclosed {
                 next: 1,
                 kind: InlineProblemKind::UnclosedEmphasis,
@@ -1609,6 +1699,69 @@ mod tests {
                 .iter()
                 .all(|inline| matches!(inline, Inline::Text(_)))
         );
+        assert!(output.problems.is_empty());
+    }
+
+    #[test]
+    fn unconstrained_markers_work_inside_words_and_across_unicode_boundaries() {
+        let source = "word**strong**word 日本語__強調__日本語 😀``code``😀";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+
+        assert!(output.problems.is_empty());
+        assert!(output.inlines.iter().any(|inline| {
+            matches!(inline, Inline::Styled { style: InlineStyle::Strong, children, .. }
+                if matches!(&children[..], [Inline::Text(text)] if text.value == "strong"))
+        }));
+        assert!(output.inlines.iter().any(|inline| {
+            matches!(inline, Inline::Styled { style: InlineStyle::Emphasis, children, .. }
+                if matches!(&children[..], [Inline::Text(text)] if text.value == "強調"))
+        }));
+        assert!(output.inlines.iter().any(|inline| {
+            matches!(inline, Inline::Literal { kind: InlineLiteralKind::Monospace, value, .. }
+                if value == "code")
+        }));
+    }
+
+    #[test]
+    fn unconstrained_styles_nest_and_adjacent_pairs_remain_deterministic() {
+        let source = "**outer __inner__** **one****two**";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+
+        assert!(output.problems.is_empty());
+        let styled: Vec<_> = output
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Styled { children, .. } => Some(children),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(styled.len(), 3);
+        assert!(styled[0].iter().any(|inline| matches!(
+            inline,
+            Inline::Styled {
+                style: InlineStyle::Emphasis,
+                ..
+            }
+        )));
+        assert!(matches!(&styled[1][..], [Inline::Text(text)] if text.value == "one"));
+        assert!(matches!(&styled[2][..], [Inline::Text(text)] if text.value == "two"));
+    }
+
+    #[test]
+    fn unconstrained_empty_and_escaped_pairs_stay_literal() {
+        let source = "**** ____ `` \\**literal**";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+        let visible = output
+            .inlines
+            .iter()
+            .map(|inline| match inline {
+                Inline::Text(text) => text.value.as_str(),
+                _ => panic!("expected only literal text"),
+            })
+            .collect::<String>();
+
+        assert_eq!(visible, "**** ____ `` **literal**");
         assert!(output.problems.is_empty());
     }
 

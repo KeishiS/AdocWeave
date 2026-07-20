@@ -46,6 +46,14 @@
       "contractImpact": "none"
     },
     {
+      "name": "unconstrained-inline-formatting",
+      "sourceFile": "unconstrained.adoc",
+      "expectedHtmlFile": "unconstrained.html",
+      "compatibility": "supported-subset",
+      "rationale": "二重マーカーは単語、CJKおよびemoji境界に依存せずstrong、emphasis、monospaceを表す",
+      "contractImpact": "core-profile"
+    },
+    {
       "name": "unicode-crlf",
       "source": "= 日本語\r\n\r\n== 節🙂\r\n\r\n本文 é\r\n",
       "compatibility": "supported-subset",

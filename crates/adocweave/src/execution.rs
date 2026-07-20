@@ -302,7 +302,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "9ee3dea9811f980af1e00cb46ad62a98a0882bd691d1b25fa6031380928baa2f"
+            "f6255673a54e265009e73397a783f26024a881854e863f64f9de2f72d8e667fa"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());
@@ -310,7 +310,7 @@ mod tests {
         let mut variants = Vec::new();
         let mut options = ParseOptions::default();
         options.profile = SyntaxProfile {
-            version: 2,
+            version: 1,
             ..options.profile
         };
         variants.push(options);

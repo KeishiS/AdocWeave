@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "packageVersion": "0.1.0",
   "contracts": {
-    "coreProfile": 1,
+    "coreProfile": 2,
     "coreApi": 7,
     "html": 2,
     "projection": 1,
