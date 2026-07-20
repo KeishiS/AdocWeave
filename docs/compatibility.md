@@ -19,10 +19,11 @@ The following AsciiDoc features are intentionally outside this profile:
 - STEM and LaTeX math;
 - raw HTML passthrough.
 
-Unsupported constructs are preserved as explicit `Unsupported` semantic nodes
-in permissive mode and rendered as escaped text. Strict processing rejects
-documents containing such nodes. No unsupported construct is guessed or
-silently interpreted.
+Recognized unsupported block constructs are preserved as explicit
+`Unsupported` semantic nodes in permissive mode and rendered as escaped text.
+Unsupported inline forms such as links and math remain ordinary text. Strict
+processing rejects documents containing an `Unsupported` node. No unsupported
+construct is guessed or silently interpreted.
 
 AsciiLoom is not yet a complete AsciiDoc implementation and the 0.1 core
 profile does not claim compatibility with a specific note application.

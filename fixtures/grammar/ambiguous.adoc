@@ -1,0 +1,19 @@
+= Grammar recovery
+
+word`not-code`word and some_identifier
+*strong _nested_ and `code`*
+unclosed _emphasis then `safe`
+
+....
+*literal* <tag>
+.....
+....
+
+[source, rust]
+----
+_source_ <tag>
+----
+
+....
+unclosed literal
+== Recovered heading

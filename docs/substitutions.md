@@ -1,0 +1,27 @@
+# Core 0.1 substitution model
+
+Substitution is determined by semantic context before an output backend runs.
+It is not an HTML-specific parser pass.
+
+| Context | Inline parsing | Attribute expansion | Raw HTML | Backend escaping |
+| --- | --- | --- | --- | --- |
+| Paragraph and heading text | constrained monospace, strong, emphasis | none | never | required |
+| Monospace inline literal | none | none | never | required |
+| Literal block | none | none | never | required |
+| Source block body | none | none | never | required |
+| Source language | none | none | never | sanitize for destination metadata |
+| Unsupported node | none | none | never | required in permissive mode |
+| Link, math, generic attribute | unsupported | none | never | treat as unsupported/text |
+
+`Text`, `Literal`, and `Styled` encode the distinction in the semantic AST:
+
+- `Text` is ordinary text interpreted by the destination backend.
+- `Literal` is opaque content and must not be recursively substituted.
+- `Styled` owns recursively parsed semantic children.
+
+An output backend must consume this AST and must not reparse source markup.
+HTML escapes `&`, `<`, `>`, `"`, and `'` in all text-bearing contexts. A
+future non-HTML backend must apply the equivalent safety rules for its own
+format without changing parsing behavior.
+
+The test names containing `substitutions` fix the cross-context behavior.

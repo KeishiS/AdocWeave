@@ -511,8 +511,11 @@ fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)>> {
     let language = inner.strip_prefix(',')?;
     let leading = language.len() - language.trim_start_matches([' ', '\t']).len();
     let trimmed = language.trim_matches([' ', '\t']);
-    if trimmed.is_empty() || trimmed.contains(',') {
+    if trimmed.is_empty() {
         return Some(None);
+    }
+    if trimmed.contains([',', ']']) {
+        return None;
     }
     let start = "[source,".len() + leading;
     Some(Some((start, start + trimmed.len())))
