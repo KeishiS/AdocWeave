@@ -1,0 +1,6 @@
+name = "AsciiDoc"
+grammar = "asciidoc"
+path_suffixes = ["adoc", "asciidoc"]
+line_comments = ["// "]
+tab_size = 2
+hard_tabs = false

@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/asciiloom", "crates/asciiloom-lsp"]
+exclude = ["editors/zed"]
 resolver = "2"
 
 [workspace.package]

@@ -5,19 +5,43 @@ skip_core_tasks = true
 [tasks.default]
 alias = "verify"
 
-[tasks.fmt]
-description = "Format all Rust source files"
+[tasks.fmt-workspace]
+description = "Format workspace Rust source files"
 command = "cargo"
 args = ["fmt", "--all"]
+
+[tasks.fmt-zed]
+description = "Format the excluded Zed extension crate"
+command = "cargo"
+args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml"]
+
+[tasks.fmt]
+description = "Format workspace and Zed extension Rust source files"
+dependencies = ["fmt-workspace", "fmt-zed"]
 
 [tasks.format]
 description = "Alias for fmt"
 alias = "fmt"
 
-[tasks.fmt-check]
-description = "Check Rust formatting without changing files"
+[tasks.fmt-check-workspace]
+description = "Check workspace Rust formatting without changing files"
 command = "cargo"
 args = ["fmt", "--all", "--", "--check"]
+
+[tasks.fmt-check-zed]
+description = "Check Zed extension formatting without changing files"
+command = "cargo"
+args = [
+  "fmt",
+  "--manifest-path",
+  "editors/zed/Cargo.toml",
+  "--",
+  "--check",
+]
+
+[tasks.fmt-check]
+description = "Check all Rust formatting without changing files"
+dependencies = ["fmt-check-workspace", "fmt-check-zed"]
 
 [tasks.format-check]
 description = "Alias for fmt-check"
@@ -56,6 +80,23 @@ description = "Run Language Server tests"
 command = "cargo"
 args = ["test", "-p", "asciiloom-lsp", "--all-features"]
 
+[tasks.check-zed]
+description = "Type-check the excluded Zed extension crate"
+command = "cargo"
+args = ["check", "--manifest-path", "editors/zed/Cargo.toml"]
+
+[tasks.clippy-zed]
+description = "Run Clippy for the excluded Zed extension crate"
+command = "cargo"
+args = [
+  "clippy",
+  "--manifest-path",
+  "editors/zed/Cargo.toml",
+  "--",
+  "-D",
+  "warnings",
+]
+
 [tasks.run-lsp]
 description = "Run the Language Server over standard input/output"
 command = "cargo"
@@ -74,7 +115,16 @@ args = ["build", "--workspace", "--all-targets", "--all-features"]
 
 [tasks.verify]
 description = "Run every non-mutating validation task"
-dependencies = ["fmt-check", "check", "clippy", "test", "doc-check", "build"]
+dependencies = [
+  "fmt-check",
+  "check",
+  "check-zed",
+  "clippy",
+  "clippy-zed",
+  "test",
+  "doc-check",
+  "build",
+]
 
 [tasks.ci]
 description = "Alias for the complete verification gate"

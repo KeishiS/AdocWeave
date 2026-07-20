@@ -1,0 +1,15 @@
+id = "asciiloom"
+name = "AsciiLoom"
+version = "0.1.0"
+schema_version = 1
+authors = ["AsciiLoom contributors"]
+description = "AsciiDoc editing support powered by the AsciiLoom Language Server"
+repository = "https://github.com/asciiloom/asciiloom"
+
+[language_servers.asciiloom]
+name = "AsciiLoom Language Server"
+languages = ["AsciiDoc"]
+
+[grammars.asciidoc]
+repository = "https://github.com/cathaysia/tree-sitter-asciidoc"
+rev = "e0710115e7b060ce6681b5182a49a792813006f1"

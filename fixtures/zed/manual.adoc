@@ -1,0 +1,16 @@
+= AsciiLoom Zed確認
+
+== 診断😀
+
+This line has trailing whitespace.  
+
+==Missing heading space
+
+[source, ru]
+----
+fn main() {
+    println!("code block remains unchanged");
+}
+----
+
+_unfinished emphasis
