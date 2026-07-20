@@ -27,6 +27,8 @@ The following tasks are available:
 - `cargo make test`: run the workspace tests;
 - `cargo make test-core`: run core and CLI tests;
 - `cargo make test-lsp`: run Language Server tests;
+- `cargo make test-grammar`: run normative grammar and substitution contract tests;
+- `cargo make test-release`: run the shared initial-release fixture across the CLI and Language Server;
 - `cargo make check-zed`: type-check the Zed extension crate;
 - `cargo make clippy-zed`: lint the Zed extension crate;
 - `cargo make doc-check`: build API documentation with warnings denied;

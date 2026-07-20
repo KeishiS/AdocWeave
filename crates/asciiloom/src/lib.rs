@@ -321,15 +321,26 @@ mod tests {
     }
 
     #[test]
-    fn limits_accept_exact_boundaries_and_reject_excess_without_output() {
-        assert_eq!(
-            process_with_config(Operation::Convert, b"abc", &limits(3, 11, 3)),
-            Ok("<p>abc</p>\n".to_owned())
-        );
+    fn limits_accept_below_and_exact_boundaries_then_reject_excess() {
+        let expected = Ok("<p>abc</p>\n".to_owned());
+        for config in [
+            limits(4, 100, 100),
+            limits(3, 100, 100),
+            limits(100, 100, 4),
+            limits(100, 100, 3),
+            limits(100, 12, 100),
+            limits(100, 11, 100),
+        ] {
+            assert_eq!(
+                process_with_config(Operation::Convert, b"abc", &config),
+                expected
+            );
+        }
+
         for (config, resource) in [
             (limits(2, 100, 100), "input bytes"),
             (limits(100, 100, 2), "line bytes"),
-            (limits(100, 9, 100), "output bytes"),
+            (limits(100, 10, 100), "output bytes"),
         ] {
             assert!(matches!(
                 process_with_config(Operation::Convert, b"abc", &config),

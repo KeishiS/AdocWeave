@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_html_regression_keeps_plain_text_output_unchanged() {
+    fn inline_regression_keeps_plain_text_html_output_unchanged() {
         let parsed = parse("plain <text>\nnext").expect("valid source");
 
         assert_eq!(

@@ -217,6 +217,14 @@ mod tests {
     }
 
     #[test]
+    fn formatter_preserves_monospace_content_byte_for_byte() {
+        let source = "before `  <tag>  ` after  ";
+        let output = format(source, &FormatConfig::default()).expect("valid source");
+
+        assert_eq!(output.formatted, "before `  <tag>  ` after\n");
+    }
+
+    #[test]
     fn formatter_preserves_unsupported_regions_byte_for_byte() {
         let source = "before  \r\n\n== Unsupported  \r\n\nafter  ";
         let output = format(source, &FormatConfig::default()).expect("valid source");
