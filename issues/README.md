@@ -18,6 +18,10 @@
 
 ## マイルストーン
 
+### 横断的な開発基盤
+
+- [042: cargo-makeによる開発タスク統一](042-cargo-make-development-tasks.md)（Issue 004完了後に割り込みで先行実施）
+
 ### M1: プレーンテキスト変換
 
 - [001: Cargo workspaceとCLIの初期化](001-workspace-and-cli.md)

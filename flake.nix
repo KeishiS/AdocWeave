@@ -24,6 +24,7 @@
           default = pkgs.mkShell {
             packages = with pkgs; [
               cargo
+              cargo-make
               clippy
               rust-analyzer
               rustc
