@@ -183,8 +183,9 @@ fn parse_segment(
     let mut output = InlineParseOutput::default();
     let mut cursor = 0;
     let mut plain_start = 0;
+    let mut scanner = InlineScanner::new(value);
 
-    while let Some(candidate) = next_candidate(value, cursor) {
+    while let Some(candidate) = scanner.next(cursor) {
         match candidate {
             InlineCandidate::Macro { open } => {
                 match recognize_macro(value, open) {
@@ -256,17 +257,74 @@ enum InlineCandidate {
     Marker { open: usize, marker: char },
 }
 
-fn next_candidate(value: &str, cursor: usize) -> Option<InlineCandidate> {
-    let marker = next_opener(value, cursor);
-    let macro_open = next_macro_start(value, cursor);
-    match (macro_open, marker) {
-        (Some(open), Some((marker_open, _))) if open <= marker_open => {
-            Some(InlineCandidate::Macro { open })
+struct InlineScanner {
+    candidates: Vec<InlineCandidate>,
+    next: usize,
+    _inspected_positions: usize,
+}
+
+impl InlineScanner {
+    fn new(value: &str) -> Self {
+        let mut candidates = Vec::new();
+        let mut inspected_positions = 0;
+        for (open, marker) in value.char_indices() {
+            inspected_positions += 1;
+            let rest = &value[open..];
+            let is_macro = rest.starts_with("<<")
+                || starts_ascii_case_insensitive(rest, "xref:")
+                || starts_ascii_case_insensitive(rest, "stem:[")
+                || starts_ascii_case_insensitive(rest, "latexmath:[")
+                || ((is_token_boundary(value[..open].chars().next_back())
+                    || (is_escaped(value, open)
+                        && is_token_boundary(
+                            value[..open.saturating_sub(1)].chars().next_back(),
+                        )))
+                    && url_scheme_end(rest).is_some());
+            if is_macro {
+                candidates.push(InlineCandidate::Macro { open });
+            } else if marker == '{'
+                || matches!(marker, '`' | '*' | '_') && is_open_boundary(value, open, marker)
+            {
+                candidates.push(InlineCandidate::Marker { open, marker });
+            }
         }
-        (Some(open), None) => Some(InlineCandidate::Macro { open }),
-        (_, Some((open, marker))) => Some(InlineCandidate::Marker { open, marker }),
-        (None, None) => None,
+        Self {
+            candidates,
+            next: 0,
+            _inspected_positions: inspected_positions,
+        }
     }
+
+    fn next(&mut self, cursor: usize) -> Option<InlineCandidate> {
+        while self
+            .candidates
+            .get(self.next)
+            .is_some_and(|candidate| candidate.open() < cursor)
+        {
+            self.next += 1;
+        }
+        let candidate = self.candidates.get(self.next).copied()?;
+        self.next += 1;
+        Some(candidate)
+    }
+
+    #[cfg(test)]
+    fn inspected_positions(&self) -> usize {
+        self._inspected_positions
+    }
+}
+
+impl InlineCandidate {
+    fn open(self) -> usize {
+        match self {
+            Self::Macro { open } | Self::Marker { open, .. } => open,
+        }
+    }
+}
+
+#[cfg(test)]
+fn next_candidate(value: &str, cursor: usize) -> Option<InlineCandidate> {
+    InlineScanner::new(value).next(cursor)
 }
 
 fn next_char_boundary(value: &str, offset: usize) -> usize {
@@ -388,27 +446,6 @@ fn valid_attribute_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-}
-
-fn next_macro_start(value: &str, cursor: usize) -> Option<usize> {
-    value[cursor..]
-        .char_indices()
-        .map(|(offset, _)| cursor + offset)
-        .find(|offset| {
-            let rest = &value[*offset..];
-            if rest.starts_with("<<") || starts_ascii_case_insensitive(rest, "xref:") {
-                return true;
-            }
-            if starts_ascii_case_insensitive(rest, "stem:[")
-                || starts_ascii_case_insensitive(rest, "latexmath:[")
-            {
-                return true;
-            }
-            (is_token_boundary(value[..*offset].chars().next_back())
-                || (is_escaped(value, *offset)
-                    && is_token_boundary(value[..offset.saturating_sub(1)].chars().next_back())))
-                && url_scheme_end(rest).is_some()
-        })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -927,16 +964,6 @@ fn is_escaped(value: &str, offset: usize) -> bool {
         == 1
 }
 
-fn next_opener(value: &str, cursor: usize) -> Option<(usize, char)> {
-    value[cursor..]
-        .char_indices()
-        .map(|(offset, marker)| (cursor + offset, marker))
-        .find(|(offset, marker)| {
-            *marker == '{'
-                || matches!(marker, '`' | '*' | '_') && is_open_boundary(value, *offset, *marker)
-        })
-}
-
 fn find_closer(value: &str, open: usize, marker: char) -> Option<usize> {
     if marker == '{' {
         return value[open + 1..].find('}').map(|offset| open + 1 + offset);
@@ -1000,9 +1027,9 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 mod tests {
     use super::{
         FormulaToken, Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig,
-        InlineProblemKind, InlineStyle, LinkToken, MacroRecognition, MacroToken, MarkerRecognition,
-        MarkerToken, ReferenceDestination, ReferenceToken, inline_at, next_candidate, parse,
-        parse_text, recognize_macro, recognize_marker,
+        InlineProblemKind, InlineScanner, InlineStyle, LinkToken, MacroRecognition, MacroToken,
+        MarkerRecognition, MarkerToken, ReferenceDestination, ReferenceToken, inline_at,
+        next_candidate, parse, parse_text, recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -1050,6 +1077,14 @@ mod tests {
                 open: "日本語 ".len()
             })
         );
+    }
+
+    #[test]
+    fn candidate_scanner_visits_each_utf8_position_once() {
+        let source = "日本語 *open xref:broken[ https://example.org[label] _tail";
+        let scanner = InlineScanner::new(source);
+
+        assert_eq!(scanner.inspected_positions(), source.chars().count());
     }
 
     #[test]
