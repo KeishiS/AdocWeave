@@ -26,11 +26,14 @@
               cargo
               cargo-make
               clippy
+              lld
+              nodejs
               ripgrep
               rust-analyzer
               rustc
               rustfmt
               stdenv.cc
+              wasm-bindgen-cli
             ];
 
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";

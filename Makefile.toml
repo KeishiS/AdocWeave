@@ -80,6 +80,49 @@ description = "Run Language Server tests"
 command = "cargo"
 args = ["test", "-p", "adocweave-lsp", "--all-features"]
 
+[tasks.test-wasm-api]
+description = "Run the native WASM API contract tests"
+command = "cargo"
+args = ["test", "-p", "adocweave-wasm", "--all-features"]
+
+[tasks.test-web-worker]
+description = "Run the Web Worker protocol tests"
+command = "npm"
+args = ["test", "--prefix", "web-worker"]
+
+[tasks.check-wasm]
+description = "Type-check the WASM adapter for wasm32-unknown-unknown"
+command = "cargo"
+args = [
+  "check",
+  "-p",
+  "adocweave-wasm",
+  "--target",
+  "wasm32-unknown-unknown",
+]
+
+[tasks.build-wasm]
+description = "Build wasm-bindgen web artifacts under target/adocweave-wasm"
+script_runner = "@shell"
+script = '''
+cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
+wasm-bindgen \
+  --target web \
+  --out-dir target/adocweave-wasm \
+  target/wasm32-unknown-unknown/release/adocweave_wasm.wasm
+'''
+
+[tasks.wasm-size]
+description = "Build WASM and report generated artifact byte sizes"
+dependencies = ["build-wasm"]
+script_runner = "@shell"
+script = '''
+for artifact in target/adocweave-wasm/*; do
+  bytes="$(wc -c < "$artifact")"
+  echo "$bytes $artifact"
+done
+'''
+
 [tasks.test-grammar]
 description = "Run normative grammar and substitution contract tests"
 command = "cargo"
@@ -154,10 +197,12 @@ description = "Run every non-mutating validation task"
 dependencies = [
   "fmt-check",
   "check",
+  "check-wasm",
   "check-zed",
   "clippy",
   "clippy-zed",
   "test",
+  "test-web-worker",
   "doc-check",
   "docs-check",
   "build",

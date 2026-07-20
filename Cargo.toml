@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/adocweave", "crates/adocweave-lsp"]
+members = ["crates/adocweave", "crates/adocweave-lsp", "crates/adocweave-wasm"]
 exclude = ["editors/zed"]
 resolver = "2"
 

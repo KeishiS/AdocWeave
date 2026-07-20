@@ -1,0 +1,96 @@
+= WASM APIとWeb Worker統合
+
+`adocweave-wasm`は`adocweave`コアの薄いversion付きアダプターである。構文解析、HTML、
+診断、シンボルおよびprojectionは一つの`Analysis`から生成し、WASM側で簡易parserを
+実装しない。現在の`WASM_API_VERSION`とWorker protocol versionはいずれも1である。
+
+== ビルド
+
+[source,console]
+----
+cargo make build-wasm
+cargo make wasm-size
+----
+
+生成物は追跡対象外の`target/adocweave-wasm/`へ出力する。`wasm-size`はWASM本体とJS glueの
+byte数を表示する。release判断時は同じtoolchainとprofileで計測し、値をCI artifactへ
+保存する。初期ロード時間とpeak memoryはブラウザ・端末依存であるため、製品ホスト側で
+Performance APIとブラウザのmemory profilerを用いて測定する。
+
+2026-07-20時点のrelease profile基準値は、WASM本体407,921 bytes、JS glue 15,576 bytes
+である。この値は機能追加時の比較基準であり、恒久的な上限ではない。
+
+== API schema
+
+入力は未知フィールドを拒否する。
+
+[source,json]
+----
+{
+  "apiVersion": 1,
+  "sourceId": "host:opaque-document",
+  "version": 12,
+  "generation": 18,
+  "source": "= Title\n"
+}
+----
+
+応答は入力versionとgenerationに加え、parse概要、HTML、診断、文書シンボルおよび
+契約version付きprojectionを返す。エラーは`code`と`message`だけからなる。
+
+[source,json]
+----
+{
+  "code": "unsupported-api-version",
+  "message": "unsupported WASM API version 2 (expected 1)"
+}
+----
+
+JSへ渡すversionとgenerationは`u32`に制限し、JavaScript numberの整数精度差を避ける。
+ソース、応答およびエラーは呼び出しごとの所有値であり、次回呼び出しで無効化される
+借用pointerを公開しない。
+
+== Worker protocol
+
+UIはxref:../web-worker/client.mjs[`AdocWeaveWorkerClient`]を通じて専用Workerへ要求する。
+clientはgenerationを単調増加させ、共有された32 bit整数へ最新generationを書いてから
+要求を送る。Workerは短いdebounce後に最新要求だけを実行し、versionとgenerationが
+現在値に一致する結果だけを通知する。
+
+同期WASMの実行中、Workerのmessage loopは次のキャンセル通知を処理できない。そのため、
+`SharedArrayBuffer`上のgenerationを`Atomics.load`するcallbackを
+`CancellationCheck`へ接続する。main threadはWASM実行中でも`Atomics.store`でき、
+Parserの検査点で協調停止できる。
+
+`SharedArrayBuffer`を利用できない環境では、ホストは古いWorkerを`terminate()`して
+新しいWorkerを生成する。Futureの破棄やmessage送信だけで同期WASMが停止したと仮定しては
+ならない。
+
+== 資源上限と縮退
+
+WASMもネイティブと同じ`ProcessingLimits::default()`を使用する。既定では10 MiBを超える
+入力を解析前に`limit-exceeded`として拒否する。大きな文書で部分的な別parserへ切り替えず、
+最後の成功結果をUIに保持したまま、ホストが上限エラーと再試行手段を表示する。
+
+応答はHTML、診断、シンボルおよびprojectionを同時に所有するため、peak memoryには入力と
+複数出力が含まれる。製品要件で問題になる場合は、API versionを更新したうえで要求する
+出力集合を明示する方式を検討し、暗黙に一部出力を欠落させない。
+
+== CSPと信頼境界
+
+SharedArrayBufferにはcross-origin isolationが必要であり、通常は次のheaderをホストが
+設定する。
+
+[source,text]
+----
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+----
+
+CSPでは少なくとも`worker-src 'self'`を設定し、WASMの読み込み元を`script-src`と
+`connect-src`で必要最小限に許可する。ブラウザが要求する場合だけ
+`'wasm-unsafe-eval'`を追加し、`unsafe-eval`全体を許可しない。
+
+生成HTMLは信頼済みDOMではない。ホストは`innerHTML`へ無条件に挿入せず、AdocWeaveの
+HTML契約とホスト側sanitization・表示sandboxを適用する。KaTeX等の数式レンダラーは
+別の依存・CSP・入力検証境界として統合する。

@@ -33,3 +33,18 @@ npm test -- web-worker
 - 027
 - 028
 - 035
+
+== 実装結果
+
+`adocweave-wasm` crateにversion 1の所有型APIを追加し、一つの`Analysis`からparse概要、
+HTML、診断、シンボルおよびprojectionを返す。未知フィールド、API version、コア上限および
+キャンセルを安定したエラーとして扱い、native契約テストと`wasm32-unknown-unknown`の
+型検査を追加した。
+
+`web-worker`にはversion 1のclient、Workerおよび純粋なcontrollerを追加した。debounce、
+文書version、generation、古い結果の破棄を実装し、SharedArrayBufferのgenerationを
+WASM callbackから読むことで同期解析中の協調キャンセルを可能にした。
+
+ビルド、bundle size測定、メモリ・大文書の縮退、CSP、cross-origin isolationおよび
+数式レンダラーの信頼境界はxref:../docs/wasm-worker.adoc[WASM APIとWeb Worker統合]に
+記載する。
