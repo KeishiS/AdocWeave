@@ -226,92 +226,24 @@ fn parse_segment(
                 continue;
             }
             InlineCandidate::Marker { open, marker } => {
-                let Some(close) = find_closer(value, open, marker) else {
-                    output.problems.push(InlineProblem {
-                        kind: match marker {
-                            '`' => InlineProblemKind::UnclosedMonospace,
-                            '*' => InlineProblemKind::UnclosedStrong,
-                            '_' => InlineProblemKind::UnclosedEmphasis,
-                            '{' => InlineProblemKind::UnclosedAttributeReference,
-                            _ => unreachable!("only supported markers are returned"),
-                        },
-                        range: subrange(range, open, open + marker.len_utf8()),
-                    });
-                    cursor = open + marker.len_utf8();
-                    continue;
-                };
-
-                if marker == '{' {
-                    let name = &value[open + 1..close];
-                    if name.is_empty()
-                        || !name.bytes().all(|byte| {
-                            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
-                        })
-                    {
-                        cursor = open + 1;
-                        continue;
+                match recognize_marker(value, open, marker) {
+                    MarkerRecognition::Complete(token) => {
+                        let built = build_marker(value, range, config, depth, token);
+                        push_text(&mut output.inlines, value, range, plain_start, open);
+                        output.inlines.push(built.inline);
+                        output.problems.extend(built.problems);
+                        cursor = token.end;
+                        plain_start = cursor;
                     }
-                }
-
-                push_text(&mut output.inlines, value, range, plain_start, open);
-                let node_range = subrange(range, open, close + marker.len_utf8());
-                let content_range = subrange(range, open + marker.len_utf8(), close);
-                match marker {
-                    '`' => output.inlines.push(Inline::Literal {
-                        kind: InlineLiteralKind::Monospace,
-                        range: node_range,
-                        content_range,
-                        value: value[open + 1..close].to_owned(),
-                    }),
-                    '*' | '_' if depth >= config.max_depth => {
-                        output.inlines.push(Inline::Text(InlineText {
-                            range: node_range,
-                            value: value[open..=close].to_owned(),
-                        }));
+                    MarkerRecognition::Unclosed { next, kind } => {
                         output.problems.push(InlineProblem {
-                            kind: InlineProblemKind::NestingLimitExceeded,
-                            range: node_range,
+                            kind,
+                            range: subrange(range, open, next),
                         });
+                        cursor = next;
                     }
-                    '*' => {
-                        let inner = parse_segment(
-                            &value[open + 1..close],
-                            content_range,
-                            config,
-                            depth + 1,
-                        );
-                        output.problems.extend(inner.problems);
-                        output.inlines.push(Inline::Styled {
-                            style: InlineStyle::Strong,
-                            range: node_range,
-                            content_range,
-                            children: inner.inlines,
-                        });
-                    }
-                    '_' => {
-                        let inner = parse_segment(
-                            &value[open + 1..close],
-                            content_range,
-                            config,
-                            depth + 1,
-                        );
-                        output.problems.extend(inner.problems);
-                        output.inlines.push(Inline::Styled {
-                            style: InlineStyle::Emphasis,
-                            range: node_range,
-                            content_range,
-                            children: inner.inlines,
-                        });
-                    }
-                    '{' => output.inlines.push(Inline::AttributeReference {
-                        range: node_range,
-                        name_range: subrange(range, open + 1, close),
-                        name: value[open + 1..close].to_owned(),
-                    }),
-                    _ => unreachable!("only supported markers are returned"),
+                    MarkerRecognition::Invalid { next } => cursor = next,
                 }
-                cursor = close + marker.len_utf8();
-                plain_start = cursor;
             }
         }
     }
@@ -342,6 +274,118 @@ fn next_candidate(value: &str, cursor: usize) -> Option<InlineCandidate> {
 
 fn next_char_boundary(value: &str, offset: usize) -> usize {
     offset + value[offset..].chars().next().map_or(1, char::len_utf8)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MarkerToken {
+    open: usize,
+    close: usize,
+    end: usize,
+    marker: char,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MarkerRecognition {
+    Complete(MarkerToken),
+    Unclosed {
+        next: usize,
+        kind: InlineProblemKind,
+    },
+    Invalid {
+        next: usize,
+    },
+}
+
+struct BuiltMarker {
+    inline: Inline,
+    problems: Vec<InlineProblem>,
+}
+
+fn recognize_marker(value: &str, open: usize, marker: char) -> MarkerRecognition {
+    let next = open + marker.len_utf8();
+    let Some(close) = find_closer(value, open, marker) else {
+        let kind = match marker {
+            '`' => InlineProblemKind::UnclosedMonospace,
+            '*' => InlineProblemKind::UnclosedStrong,
+            '_' => InlineProblemKind::UnclosedEmphasis,
+            '{' => InlineProblemKind::UnclosedAttributeReference,
+            _ => unreachable!("only supported markers are returned"),
+        };
+        return MarkerRecognition::Unclosed { next, kind };
+    };
+    if marker == '{' && !valid_attribute_name(&value[open + 1..close]) {
+        return MarkerRecognition::Invalid { next };
+    }
+    MarkerRecognition::Complete(MarkerToken {
+        open,
+        close,
+        end: close + marker.len_utf8(),
+        marker,
+    })
+}
+
+fn build_marker(
+    value: &str,
+    range: TextRange,
+    config: InlineParseConfig,
+    depth: usize,
+    token: MarkerToken,
+) -> BuiltMarker {
+    let MarkerToken {
+        open,
+        close,
+        end,
+        marker,
+    } = token;
+    let node_range = subrange(range, open, end);
+    let content_range = subrange(range, open + marker.len_utf8(), close);
+    let mut problems = Vec::new();
+    let inline = match marker {
+        '`' => Inline::Literal {
+            kind: InlineLiteralKind::Monospace,
+            range: node_range,
+            content_range,
+            value: value[open + 1..close].to_owned(),
+        },
+        '*' | '_' if depth >= config.max_depth => {
+            problems.push(InlineProblem {
+                kind: InlineProblemKind::NestingLimitExceeded,
+                range: node_range,
+            });
+            Inline::Text(InlineText {
+                range: node_range,
+                value: value[open..end].to_owned(),
+            })
+        }
+        '*' | '_' => {
+            let inner = parse_segment(&value[open + 1..close], content_range, config, depth + 1);
+            problems.extend(inner.problems);
+            Inline::Styled {
+                style: if marker == '*' {
+                    InlineStyle::Strong
+                } else {
+                    InlineStyle::Emphasis
+                },
+                range: node_range,
+                content_range,
+                children: inner.inlines,
+            }
+        }
+        '{' => Inline::AttributeReference {
+            range: node_range,
+            name_range: content_range,
+            name: value[open + 1..close].to_owned(),
+        },
+        _ => unreachable!("only supported markers are returned"),
+    };
+    BuiltMarker { inline, problems }
+}
+
+fn valid_attribute_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
 fn next_macro_start(value: &str, cursor: usize) -> Option<usize> {
@@ -538,6 +582,23 @@ fn build_macro(
             }),
             end,
         ),
+        MacroToken::ShortReference { .. } | MacroToken::Xref { .. } => {
+            build_reference_macro(value, range, config, depth, token)
+        }
+        MacroToken::ExplicitLink { .. } | MacroToken::Url { .. } => {
+            build_link_macro(value, range, config, depth, token)
+        }
+    }
+}
+
+fn build_reference_macro(
+    value: &str,
+    range: TextRange,
+    config: InlineParseConfig,
+    depth: usize,
+    token: MacroToken,
+) -> (Inline, usize) {
+    match token {
         MacroToken::ShortReference {
             open,
             target_start,
@@ -602,6 +663,18 @@ fn build_macro(
                 end,
             )
         }
+        _ => unreachable!("only reference tokens are passed"),
+    }
+}
+
+fn build_link_macro(
+    value: &str,
+    range: TextRange,
+    config: InlineParseConfig,
+    depth: usize,
+    token: MacroToken,
+) -> (Inline, usize) {
+    match token {
         MacroToken::ExplicitLink {
             open,
             target_start,
@@ -659,6 +732,7 @@ fn build_macro(
                 end,
             )
         }
+        _ => unreachable!("only link tokens are passed"),
     }
 }
 
@@ -672,11 +746,7 @@ fn attribute_uses(value: &str, range: TextRange) -> Vec<AttributeUse> {
         };
         let close = open + 1 + close_relative;
         let name = &value[open + 1..close];
-        if !name.is_empty()
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-        {
+        if valid_attribute_name(name) {
             output.push(AttributeUse {
                 name: name.to_owned(),
                 name_range: subrange(range, open + 1, close),
@@ -886,8 +956,8 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 mod tests {
     use super::{
         Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig, InlineProblemKind,
-        InlineStyle, MacroToken, ReferenceDestination, inline_at, next_candidate, parse,
-        parse_text, recognize_macro,
+        InlineStyle, MacroToken, MarkerRecognition, MarkerToken, ReferenceDestination, inline_at,
+        next_candidate, parse, parse_text, recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -977,6 +1047,30 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn marker_recognizer_distinguishes_complete_invalid_and_unclosed_input() {
+        assert_eq!(
+            recognize_marker("*strong*", 0, '*'),
+            MarkerRecognition::Complete(MarkerToken {
+                open: 0,
+                close: 7,
+                end: 8,
+                marker: '*',
+            })
+        );
+        assert_eq!(
+            recognize_marker("{bad name}", 0, '{'),
+            MarkerRecognition::Invalid { next: 1 }
+        );
+        assert_eq!(
+            recognize_marker("_open", 0, '_'),
+            MarkerRecognition::Unclosed {
+                next: 1,
+                kind: InlineProblemKind::UnclosedEmphasis,
+            }
+        );
     }
 
     #[test]

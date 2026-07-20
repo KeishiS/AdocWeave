@@ -35,3 +35,10 @@ formula、短縮xref、`xref:`、`link:`およびURLの構文範囲を`MacroToke
 `recognize_macro`と、再帰的なlabel解析を含む`build_macro`へ分離した。recognizer単体で
 各rangeを検査し、不完全入力のskipが必ず次のUTF-8境界へ進み、文字数を超える回数にならない
 不変条件を追加した。
+
+通常markerも`MarkerRecognition`と`MarkerToken`でcomplete、invalid、unclosedを分類し、
+`build_marker`へsemantic構築を分離した。macro builderはformula、referenceおよびlinkの
+小さい処理へ分割し、追加Clippy検査でインライン実装の`too_many_lines`警告がなくなった。
+
+既定設定の`cargo make release-check`は2026-07-20に成功した。Core 153 tests、実WASMとの
+9件の適合性比較、3 target各5秒のfuzz smokeを含む。本Issueは完了した。

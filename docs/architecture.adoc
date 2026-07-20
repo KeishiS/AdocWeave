@@ -48,6 +48,11 @@ semantic ASTはHTMLタグ、class、出力設定を持たず、AsciiDoc上の意
 必要とする処理はenumを明示的かつ網羅的に分岐し、新しいブロックを黙って無視する
 wildcard分岐を避ける。
 
+インライン解析は、次候補をsource位置順に選ぶ走査制御、markerまたはmacroの範囲と回復位置を
+返すrecognizer、および認識結果からsemantic `Inline`を作るbuilderを分離する。recognizerは
+ASTを構築せず、builderは開始・終了記号を再探索しない。不完全入力を認識できない場合も、
+再開位置は次のUTF-8境界へ必ず前進しなければならない。
+
 == 標準コアとホスト拡張
 
 標準コアは文書属性を名前、原値、操作および範囲として保持するが、`note-id`、タグ、
