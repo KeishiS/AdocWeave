@@ -10,7 +10,7 @@ use crate::inline::{
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_lines::{LosslessToken, SourceLine, SourceLines};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CstBlockKind {
     DocumentTitle,
     Heading,
@@ -26,7 +26,7 @@ pub enum CstBlockKind {
     MathBlock,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FormattingPolicy {
     NormalizeLineWhitespace,
     PreserveBytes,
@@ -50,7 +50,7 @@ impl CstBlockKind {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CstBlock {
     pub kind: CstBlockKind,
     pub range: TextRange,
@@ -101,7 +101,7 @@ impl CstDocument {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TextNode {
     pub range: TextRange,
     pub value: String,
@@ -109,20 +109,20 @@ pub struct TextNode {
     pub inline_problems: Vec<InlineProblem>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Paragraph {
     pub range: TextRange,
     pub lines: Vec<TextNode>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Unsupported {
     pub range: TextRange,
     pub raw: String,
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExplicitAnchor {
     pub range: TextRange,
     pub id_range: TextRange,
@@ -133,19 +133,19 @@ pub struct ExplicitAnchor {
     pub valid: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BlockProblemKind {
     UnclosedBlock,
     MissingSourceLanguage,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockProblem {
     pub kind: BlockProblemKind,
     pub range: TextRange,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LiteralBlock {
     pub range: TextRange,
     pub delimiter_range: TextRange,
@@ -154,7 +154,7 @@ pub struct LiteralBlock {
     pub problems: Vec<BlockProblem>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceBlock {
     pub range: TextRange,
     pub attribute_range: TextRange,
@@ -166,20 +166,20 @@ pub struct SourceBlock {
     pub problems: Vec<BlockProblem>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathProblemKind {
     Unclosed,
     Empty,
     SizeLimitExceeded,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MathProblem {
     pub kind: MathProblemKind,
     pub range: TextRange,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MathBlock {
     pub range: TextRange,
     pub attribute_range: TextRange,
@@ -190,13 +190,13 @@ pub struct MathBlock {
     pub problems: Vec<MathProblem>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ListKind {
     Unordered,
     Ordered,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ListProblemKind {
     EmptyItem,
     InconsistentMarker,
@@ -205,20 +205,20 @@ pub enum ListProblemKind {
     NonCanonicalSeparator,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ListProblem {
     pub kind: ListProblemKind,
     pub range: TextRange,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListBlock {
     pub kind: ListKind,
     pub range: TextRange,
     pub items: Vec<ListItem>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListItem {
     pub range: TextRange,
     pub marker_range: TextRange,
@@ -233,13 +233,13 @@ pub struct ListItem {
     pub problems: Vec<ListProblem>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HeadingKind {
     DocumentTitle,
     Section { level: u8 },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HeadingProblem {
     MissingSpace,
     EmptyText,
@@ -247,7 +247,7 @@ pub enum HeadingProblem {
     MisplacedDocumentTitle,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Heading {
     pub range: TextRange,
     pub marker_range: TextRange,
@@ -260,7 +260,7 @@ pub struct Heading {
     pub problems: Vec<HeadingProblem>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AstBlock {
     Heading(Heading),
     Paragraph(Paragraph),
@@ -271,7 +271,7 @@ pub enum AstBlock {
     Unsupported(Unsupported),
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AstDocument {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttribute>,

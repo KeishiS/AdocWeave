@@ -16,7 +16,7 @@ use crate::parser::{self, AstBlock, CstDocument, ParsedDocument};
 use crate::source::{LineIndex, PositionError};
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 6;
+pub const CORE_API_VERSION: u16 = 7;
 /// Current host-independent syntax and diagnostic behavior profile.
 pub const CORE_PROFILE_VERSION: u16 = 1;
 

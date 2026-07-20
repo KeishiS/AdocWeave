@@ -103,9 +103,10 @@ LSPおよびnative／WASM適合性を縦断して更新する。
 
 Issue 047は初回検証後の批判的レビューで再開した。候補位置の前進だけでは線形時間を証明
 できず、不正候補が密集した入力ではsuffix再探索が二次時間になり得るためである。不完全macroを
-別走査で推測する構成を廃止し、complete、incompleteおよびinvalidを一つの走査器で分類する。
+別走査で推測する構成を廃止し、complete、incompleteおよびinvalidを一つの走査器で分類した。
 また、適合性schemaを公開ASTの`Serialize`実装からversion付きDTOへ分離し、同一Rustコアを
-共有するnative／WASM比較とは独立したgolden期待値を追加してからIssue 048へ進む。
+共有するnative／WASM比較とは独立した固定goldenを追加した。これらの是正を完了し、Issue 047は
+完了した。
 
 文書corpusの自己検査は構文拡張と独立に進められるが、安定したrecognizerへ移行した後に
 導入する。既存の`docs-check`は`.md`混入検査だけという契約を維持し、自己解析は別の

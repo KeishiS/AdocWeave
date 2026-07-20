@@ -2,13 +2,13 @@
 
 use crate::source::{TextRange, TextSize};
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AttributeOperation {
     Set,
     Unset,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentAttribute {
     pub range: TextRange,
     pub name_range: TextRange,
@@ -18,13 +18,13 @@ pub struct DocumentAttribute {
     pub operation: AttributeOperation,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttributeProblemKind {
     InvalidName,
     InvalidValue,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttributeProblem {
     pub kind: AttributeProblemKind,
     pub range: TextRange,

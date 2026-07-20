@@ -3,7 +3,7 @@
   "packageVersion": "0.1.0",
   "contracts": {
     "coreProfile": 1,
-    "coreApi": 6,
+    "coreApi": 7,
     "html": 2,
     "projection": 1,
     "conformance": 3,

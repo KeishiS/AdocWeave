@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 
 /// A zero-based offset in the original UTF-8 byte sequence.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TextSize(u32);
 
 impl TextSize {
@@ -28,7 +28,7 @@ impl TextSize {
 }
 
 /// A half-open range `[start, end)` in the original UTF-8 byte sequence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TextRange {
     start: TextSize,
     end: TextSize,

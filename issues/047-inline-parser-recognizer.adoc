@@ -83,3 +83,10 @@ conformance ASTを公開ASTのfield構造から分離し、`schemaVersion`、意
 意味値および子nodeからなる専用DTOへ移行した。内部の補助rangeや問題保持fieldの変更はDTO変換を
 明示的に変更しない限り適合性schemaへ波及しない。破壊的schema変更として
 `CONFORMANCE_CONTRACT_VERSION`を3へ更新し、独立goldenをレビュー可能な意味node表現へ更新した。
+
+DTO以外の公開AST、inline、attributeおよびsource型から不要になった`Serialize`実装を削除した。
+適合性上の都合で公開semantic型へserialization contractを持ち込まない境界を確立した。この
+破壊的trait変更に伴い`CORE_API_VERSION`を7へ更新した。
+
+既定設定の`cargo make release-check`は2026-07-20に成功した。全完了条件を再監査し、
+本Issueを完了とする。
