@@ -120,6 +120,23 @@ fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
 }
 
 #[test]
+fn substitution_pipeline_fixture_is_lossless_and_backend_safe() {
+    let source = include_str!("../../../fixtures/substitutions/pipeline.adoc");
+    let parsed = parse(source);
+    assert_eq!(parsed.syntax().reconstruct(), source);
+    let html =
+        adocweave::html::render(parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
+    assert!(html.contains("https://example.test"));
+    assert!(html.contains("<mark>highlight</mark>"));
+    assert!(html.contains("H<sub>2</sub>O E=mc<sup>2</sup>"));
+    assert!(html.contains("© “引用”"));
+    assert!(html.contains("&lt;script&gt;"));
+    assert!(html.contains("&lt;b&gt;置換しない&lt;/b&gt;"));
+    assert!(!html.contains("<script>"));
+    assert!(!html.contains("<b>置換しない</b>"));
+}
+
+#[test]
 fn substitutions_cover_every_supported_semantic_context() {
     let source = concat!(
         "= <Title> *strong _nested_ and `code <&>`*\n",

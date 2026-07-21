@@ -23,6 +23,8 @@ pub struct ProcessingLimits {
     pub max_nodes: u32,
     pub max_references: u32,
     pub max_attributes: u32,
+    pub max_attribute_expansion_depth: u32,
+    pub max_attribute_expansion_bytes: u32,
     pub max_diagnostics: u32,
 }
 
@@ -40,6 +42,8 @@ impl Default for ProcessingLimits {
             max_nodes: 1_000_000,
             max_references: 100_000,
             max_attributes: 1_000,
+            max_attribute_expansion_depth: 32,
+            max_attribute_expansion_bytes: 1024 * 1024,
             max_diagnostics: 1_000,
         }
     }

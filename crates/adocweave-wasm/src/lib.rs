@@ -10,7 +10,7 @@ use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 5;
+pub const WASM_API_VERSION: u16 = 6;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -65,6 +65,8 @@ pub struct WasmLimits {
     pub max_nodes: u32,
     pub max_references: u32,
     pub max_attributes: u32,
+    pub max_attribute_expansion_depth: u32,
+    pub max_attribute_expansion_bytes: u32,
     pub max_diagnostics: u32,
 }
 
@@ -88,6 +90,8 @@ impl From<ProcessingLimits> for WasmLimits {
             max_nodes: value.max_nodes,
             max_references: value.max_references,
             max_attributes: value.max_attributes,
+            max_attribute_expansion_depth: value.max_attribute_expansion_depth,
+            max_attribute_expansion_bytes: value.max_attribute_expansion_bytes,
             max_diagnostics: value.max_diagnostics,
         }
     }
@@ -107,6 +111,8 @@ impl From<WasmLimits> for ProcessingLimits {
             max_nodes: value.max_nodes,
             max_references: value.max_references,
             max_attributes: value.max_attributes,
+            max_attribute_expansion_depth: value.max_attribute_expansion_depth,
+            max_attribute_expansion_bytes: value.max_attribute_expansion_bytes,
             max_diagnostics: value.max_diagnostics,
         }
     }

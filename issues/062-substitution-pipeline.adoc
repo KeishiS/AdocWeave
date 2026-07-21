@@ -1,5 +1,5 @@
 = 置換pipelineと属性評価
-:status: planned
+:status: completed
 :depends-on: 059,060
 
 == 目的

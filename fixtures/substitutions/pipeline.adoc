@@ -1,0 +1,9 @@
+= 置換fixture
+:host: example.test
+:url: https://{host}
+
+link:{url}[再帰属性] #highlight# H~2~O E=mc^2^ (C) "`引用`" pass:[<script>]
+
+++++
+<b>置換しない</b>
+++++

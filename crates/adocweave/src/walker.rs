@@ -110,6 +110,7 @@ fn walk_inlines<'document>(
             | Inline::Literal { .. }
             | Inline::AttributeReference { .. }
             | Inline::HardBreak { .. }
+            | Inline::Passthrough { .. }
             | Inline::Formula(_) => {}
         }
     }

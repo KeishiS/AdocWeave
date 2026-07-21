@@ -26,6 +26,7 @@ pub mod projection;
 pub mod reference;
 pub mod source;
 pub mod source_document;
+pub mod substitution;
 pub mod syntax;
 pub mod url;
 pub mod walker;

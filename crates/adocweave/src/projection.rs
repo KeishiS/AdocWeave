@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 4;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -204,7 +204,7 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                     );
                 }
                 crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Raw(_)
+                | crate::parser::DelimitedContent::Passthrough(_)
                 | crate::parser::DelimitedContent::Table(_) => {}
             },
             AstBlock::Math(_) | AstBlock::Unsupported(_) => {}
@@ -252,6 +252,7 @@ fn inline_text(inlines: &[Inline]) -> String {
             Inline::Styled { children, .. } => output.push_str(&inline_text(children)),
             Inline::AttributeReference { .. } | Inline::Formula(_) => {}
             Inline::HardBreak { .. } => output.push('\n'),
+            Inline::Passthrough { value, .. } => output.push_str(value),
             Inline::Link(link) => {
                 let label = inline_text(&link.label);
                 output.push_str(if label.is_empty() {
@@ -511,13 +512,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_four_json_contract() {
+    fn projections_keep_the_version_five_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":4,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":5,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

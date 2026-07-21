@@ -3,7 +3,7 @@
 この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
 製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-この対応範囲は`CORE_PROFILE_VERSION = 4`として公開する。version、SemVerおよび再構築条件は
+この対応範囲は`CORE_PROFILE_VERSION = 5`として公開する。version、SemVerおよび再構築条件は
 xref:core-profile.adoc[AdocWeave Core Profile 4]で定義する。
 実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
 AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
@@ -234,8 +234,9 @@ compound内で現在解析するのは段落と入れ子containerであり、完
 |block／inline image、icon、audioおよびvideoは未対応
 
 |置換pipeline
-|部分対応
-|完全な置換順序、文字置換、typographic quote、置換group、再帰属性展開、passthroughは未対応
+|対応
+|6段階の順序、型付きcontext、文字置換、typographic quote、再帰属性展開、循環・資源上限、
+安全なinline／block passthroughに対応。任意`subs`属性による段階の編集は未対応
 
 |Preprocessor directive
 |未対応

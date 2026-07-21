@@ -940,6 +940,7 @@ impl LanguageService {
             };
             match inline {
                 Inline::Literal { content_range, .. }
+                | Inline::Passthrough { content_range, .. }
                 | Inline::Formula(adocweave::inline::InlineFormula { content_range, .. }) => {
                     inline_ranges.push((*content_range, 2))
                 }
@@ -1067,6 +1068,9 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
                 )),
                 Inline::AttributeReference { name, .. } => {
                     Some(format!("**attribute reference**  \nName: `{name}`"))
+                }
+                Inline::Passthrough { value, .. } => {
+                    Some(format!("**passthrough**  \nLiteral content: `{value}`"))
                 }
                 Inline::Text(_)
                 | Inline::Literal { .. }

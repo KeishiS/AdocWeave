@@ -223,7 +223,7 @@ pub enum DelimitedBlockKind {
 pub enum DelimitedContent {
     Compound(Vec<AstBlock>),
     Verbatim(String),
-    Raw(String),
+    Passthrough(String),
     Table(String),
 }
 
@@ -818,9 +818,10 @@ pub(crate) fn parse_shared_cancellable(
             .text(line.content_range())
             .expect("line content has valid UTF-8 boundaries");
 
-        if expect_author && !content.trim().is_empty() {
+        if expect_author && !content.trim_matches([' ', '\t']).is_empty() {
             expect_author = false;
-            if !content.starts_with([':', '[', '='])
+            if !content.chars().any(char::is_control)
+                && !content.starts_with([':', '[', '='])
                 && delimiter_spec(content).is_none()
                 && !content.starts_with("//")
             {
@@ -835,9 +836,10 @@ pub(crate) fn parse_shared_cancellable(
                 }
             }
         }
-        if expect_revision && !content.trim().is_empty() {
+        if expect_revision && !content.trim_matches([' ', '\t']).is_empty() {
             expect_revision = false;
-            if !content.starts_with([':', '[', '='])
+            if !content.chars().any(char::is_control)
+                && !content.starts_with([':', '[', '='])
                 && delimiter_spec(content).is_none()
                 && !content.starts_with("//")
             {
@@ -1259,6 +1261,10 @@ pub(crate) fn parse_shared_cancellable(
         attributes,
         anchors,
         header,
+        attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
+            max_depth: config.limits.max_attribute_expansion_depth,
+            max_bytes: config.limits.max_attribute_expansion_bytes,
+        },
     });
 
     Ok(ParsedDocument {
@@ -1293,6 +1299,16 @@ fn collect_syntax_issues(
                 Kind::UnclosedEmphasis => {
                     (SyntaxIssueClass::UnclosedInline, "unclosed emphasis span")
                 }
+                Kind::UnclosedHighlight => {
+                    (SyntaxIssueClass::UnclosedInline, "unclosed highlight span")
+                }
+                Kind::UnclosedSubscript => {
+                    (SyntaxIssueClass::UnclosedInline, "unclosed subscript span")
+                }
+                Kind::UnclosedSuperscript => (
+                    SyntaxIssueClass::UnclosedInline,
+                    "unclosed superscript span",
+                ),
                 Kind::NestingLimitExceeded => (
                     SyntaxIssueClass::NestingLimitExceeded,
                     "inline nesting limit exceeded",
@@ -1302,6 +1318,10 @@ fn collect_syntax_issues(
                     "unclosed attribute reference",
                 ),
                 Kind::IncompleteLink => (SyntaxIssueClass::InvalidUrl, "incomplete link macro"),
+                Kind::UnclosedPassthrough => (
+                    SyntaxIssueClass::UnclosedInline,
+                    "unclosed inline passthrough",
+                ),
                 Kind::IncompleteCrossReference | Kind::InvalidCrossReference => (
                     SyntaxIssueClass::InvalidCrossReference,
                     "incomplete or invalid cross reference",
@@ -1620,6 +1640,11 @@ fn inline_node(inline: &Inline) -> Option<SyntaxNode> {
             &[],
         )),
         Inline::HardBreak { range } => Some(SyntaxNode::leaf(SyntaxKind::HardBreak, *range)),
+        Inline::Passthrough {
+            range,
+            content_range,
+            ..
+        } => Some(span_syntax(*range, *content_range, Vec::new())),
     }
 }
 
@@ -2400,7 +2425,7 @@ fn parse_delimited_block(
             depth,
         )?),
         DelimitedContentModel::Verbatim => DelimitedContent::Verbatim(value),
-        DelimitedContentModel::Raw => DelimitedContent::Raw(value),
+        DelimitedContentModel::Raw => DelimitedContent::Passthrough(value),
         DelimitedContentModel::Table => DelimitedContent::Table(value),
     };
     Ok((
@@ -2928,6 +2953,13 @@ mod tests {
     }
 
     #[test]
+    fn misplaced_document_title_metadata_keeps_control_character_lines_lossless() {
+        let source = "= S]]\n= Seedeed= See2\n\u{c}\n\0[\u{6}\0\0\n[\0\0\0\0\n== S\n[[\u{6}\0\0\0\0\0\0\0\n== Sectioection\n\n*stRtn\n\n";
+        let parsed = parse(source).expect("parse");
+        assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
     fn document_attributes_preserve_cst_and_produce_generic_ast() {
         let source = concat!(
             "= Note\n",
@@ -3159,7 +3191,10 @@ mod tests {
             containers[1].content,
             DelimitedContent::Verbatim(_)
         ));
-        assert!(matches!(containers[2].content, DelimitedContent::Raw(_)));
+        assert!(matches!(
+            containers[2].content,
+            DelimitedContent::Passthrough(_)
+        ));
         assert!(matches!(containers[3].content, DelimitedContent::Table(_)));
         assert!(matches!(
             &containers[4].content,

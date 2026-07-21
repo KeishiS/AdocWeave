@@ -118,17 +118,19 @@ AdocWeaveは対応済みのconstrained書式、属性参照、通常リンク、
 * https://docs.asciidoctor.org/asciidoc/latest/subs/[Substitutions]
 * https://docs.asciidoctor.org/asciidoc/latest/subs/special-characters/[Special character substitutions]
 
-AdocWeaveが現在実装するのは、次の限定的な意味上の対応だけである。
+AdocWeaveは現在、次の意味上の対応を実装する。
 
 * 段落と見出しでconstrained／unconstrainedな強調、斜体、等幅を解析する。
 * 等幅、リテラルブロック、ソース本体を不透明として扱う。
 * 出力バックエンドが出力先で危険な文字をエスケープする。
-* 文書ヘッダー属性の単純参照を一回だけ展開する。
+* 文書属性を再帰展開し、循環・深さ・生成byte数を制限する。
 * URL、`link:`、`xref:`、`<<...>>`およびLaTeX STEMを限定的に解析する。
-* 一般的な文字置換、passthrough、再帰属性展開、設定可能な置換グループには未対応である。
+* 一般的な文字置換、highlight、subscript、superscript、typographic quoteおよび
+  安全なpassthrough意味ノードを扱う。
 
-したがって現在の処理順はAsciiDocの完全な置換パイプラインと等価ではない。実装済み契約は
-xref:substitutions.adoc[Core 0.4置換モデル]で定義する。
+コンテキストごとの置換段階は型で固定している。任意の`subs`属性による段階の追加・削除と、
+未対応macro固有の置換は今後の範囲である。実装済み契約は
+xref:substitutions.adoc[Core 0.5置換モデル]で定義する。
 
 == ブロックと文書の互換性
 

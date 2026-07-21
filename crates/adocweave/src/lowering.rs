@@ -5,12 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::attributes::{AttributeOperation, DocumentAttribute};
 use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
+use crate::substitution::{AttributeEvaluator, AttributeExpansionLimits};
 
 pub(crate) struct ParsedFacts {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttribute>,
     pub anchors: Vec<ExplicitAnchor>,
     pub header: DocumentHeader,
+    pub attribute_expansion_limits: AttributeExpansionLimits,
 }
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
@@ -19,7 +21,7 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     let mut document =
         AstDocument::new(facts.blocks, facts.attributes, facts.anchors, facts.header);
     document.normalize_heading_kinds();
-    resolve_document_attributes(&mut document);
+    resolve_document_attributes(&mut document, facts.attribute_expansion_limits);
     document
 }
 
@@ -60,7 +62,7 @@ fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
     }
 }
 
-fn resolve_document_attributes(document: &mut AstDocument) {
+fn resolve_document_attributes(document: &mut AstDocument, limits: AttributeExpansionLimits) {
     let mut attributes = BTreeMap::new();
     for attribute in document.attributes() {
         match &attribute.operation {
@@ -73,40 +75,49 @@ fn resolve_document_attributes(document: &mut AstDocument) {
         }
     }
 
-    document.visit_inline_sequences_mut(|inlines| resolve_inlines(inlines, &attributes));
+    let evaluator = AttributeEvaluator::new(&attributes, limits);
+    document.visit_inline_sequences_mut(|inlines| resolve_inlines(inlines, &evaluator));
 }
 
-fn resolve_inlines(inlines: &mut [Inline], attributes: &BTreeMap<String, String>) {
+fn resolve_inlines(inlines: &mut [Inline], evaluator: &AttributeEvaluator<'_>) {
     for inline in inlines {
         match inline {
             Inline::Link(link) => {
-                let mut value = String::new();
-                let mut cursor = 0;
-                for attribute in &link.target_attributes {
-                    let name_start = attribute.name_range.start().to_usize()
-                        - link.target_range.start().to_usize();
-                    let name_end = attribute.name_range.end().to_usize()
-                        - link.target_range.start().to_usize();
-                    let open = name_start.saturating_sub(1);
-                    let close_end = (name_end + 1).min(link.target_source.len());
-                    value.push_str(&link.target_source[cursor..open]);
-                    if let Some(replacement) = attributes.get(&attribute.name) {
-                        value.push_str(replacement);
-                    } else {
-                        value.push_str(&link.target_source[open..close_end]);
+                match evaluator.expand_text(&link.target_source) {
+                    Ok(value) => {
+                        link.target = value;
+                        link.target_expansion_error = None;
                     }
-                    cursor = close_end;
+                    Err(error) => {
+                        link.target = link.target_source.clone();
+                        link.target_expansion_error = Some(error);
+                    }
                 }
-                value.push_str(&link.target_source[cursor..]);
-                link.target = value;
-                resolve_inlines(&mut link.label, attributes);
+                resolve_inlines(&mut link.label, evaluator);
             }
-            Inline::Reference(reference) => resolve_inlines(&mut reference.label, attributes),
-            Inline::Styled { children, .. } => resolve_inlines(children, attributes),
-            Inline::Text(_)
-            | Inline::Literal { .. }
-            | Inline::AttributeReference { .. }
+            Inline::Reference(reference) => resolve_inlines(&mut reference.label, evaluator),
+            Inline::Styled { children, .. } => resolve_inlines(children, evaluator),
+            Inline::AttributeReference {
+                name,
+                value,
+                expansion_error,
+                ..
+            } => match evaluator.expand_name(name) {
+                Ok(resolved) => {
+                    *value = Some(resolved);
+                    *expansion_error = None;
+                }
+                Err(error) => {
+                    *value = None;
+                    *expansion_error = Some(error);
+                }
+            },
+            Inline::Text(text) => {
+                text.value = crate::substitution::apply_replacements(&text.value);
+            }
+            Inline::Literal { .. }
             | Inline::HardBreak { .. }
+            | Inline::Passthrough { .. }
             | Inline::Formula(_) => {}
         }
     }

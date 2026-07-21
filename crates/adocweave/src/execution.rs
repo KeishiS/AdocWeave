@@ -87,6 +87,8 @@ impl AnalysisCacheKey {
             max_nodes,
             max_references,
             max_attributes,
+            max_attribute_expansion_depth,
+            max_attribute_expansion_bytes,
             max_diagnostics,
         } = *limits;
         let crate::url::UrlPolicy {
@@ -117,6 +119,8 @@ impl AnalysisCacheKey {
             max_nodes,
             max_references,
             max_attributes,
+            max_attribute_expansion_depth,
+            max_attribute_expansion_bytes,
             max_diagnostics,
         ] {
             hash_u64(&mut hasher, u64::from(value));
@@ -301,7 +305,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "3f15dc226befb514292ead749712836bc1ade2583772013d51dc2ac9cb08d108"
+            "e4bb3f7486e8dc1c682a91372e72bdb0b8af2d2e16ec38af4f372d2347e14e94"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

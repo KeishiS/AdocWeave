@@ -83,6 +83,8 @@ fn malformed_bytes_and_tight_limits_fail_without_partial_output() {
             max_nodes: 4,
             max_references: 1,
             max_attributes: 1,
+            max_attribute_expansion_depth: 1,
+            max_attribute_expansion_bytes: 8,
             max_diagnostics: 1,
         },
         syntax_mode: SyntaxMode::Permissive,

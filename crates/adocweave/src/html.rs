@@ -15,10 +15,10 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 4;
+pub const HTML_CONTRACT_VERSION: u16 = 5;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "a", "body", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html", "li", "ol", "p",
-    "pre", "strong", "ul",
+    "a", "body", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html", "li", "mark",
+    "ol", "p", "pre", "strong", "sub", "sup", "ul",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "href", "id"];
 pub const ALLOWED_CLASSES: &[&str] = &[
@@ -101,7 +101,6 @@ pub fn render_with_resolutions(
     let targets = reference_targets(document);
     let mut diagnostics = Vec::new();
     let mut inline_context = InlineRenderContext {
-        attributes: &document_attributes,
         policy,
         targets: &targets,
         resolutions,
@@ -241,7 +240,7 @@ fn render_delimited(
                 output.push_str("</pre>\n");
             }
         }
-        crate::parser::DelimitedContent::Raw(value)
+        crate::parser::DelimitedContent::Passthrough(value)
         | crate::parser::DelimitedContent::Table(value) => {
             output.push_str("<pre");
             render_optional_id(output, explicit_id);
@@ -453,9 +452,32 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
             Inline::Styled {
                 style, children, ..
             } => {
+                if matches!(
+                    style,
+                    InlineStyle::CurvedDoubleQuote | InlineStyle::CurvedSingleQuote
+                ) {
+                    output.push_str(if *style == InlineStyle::CurvedDoubleQuote {
+                        "“"
+                    } else {
+                        "‘"
+                    });
+                    render_inlines(output, children, context);
+                    output.push_str(if *style == InlineStyle::CurvedDoubleQuote {
+                        "”"
+                    } else {
+                        "’"
+                    });
+                    continue;
+                }
                 let tag = match style {
                     InlineStyle::Strong => "strong",
                     InlineStyle::Emphasis => "em",
+                    InlineStyle::Highlight => "mark",
+                    InlineStyle::Subscript => "sub",
+                    InlineStyle::Superscript => "sup",
+                    InlineStyle::CurvedDoubleQuote | InlineStyle::CurvedSingleQuote => {
+                        unreachable!()
+                    }
                 };
                 output.push('<');
                 output.push_str(tag);
@@ -465,8 +487,8 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
                 output.push_str(tag);
                 output.push('>');
             }
-            Inline::AttributeReference { name, .. } => {
-                if let Some(value) = context.attributes.get(name) {
+            Inline::AttributeReference { name, value, .. } => {
+                if let Some(value) = value {
                     escape_html_into(output, value);
                 } else {
                     output.push('{');
@@ -477,6 +499,7 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
             Inline::Link(link) => render_link(output, link, context),
             Inline::Reference(reference) => render_reference(output, reference, context),
             Inline::HardBreak { .. } => output.push_str("<br>\n"),
+            Inline::Passthrough { value, .. } => escape_inline_text(output, value),
             Inline::Formula(formula) => {
                 output.push_str("<code class=\"");
                 output.push_str(math_class(formula.language));
@@ -496,7 +519,6 @@ const fn math_class(language: crate::inline::MathLanguage) -> &'static str {
 }
 
 struct InlineRenderContext<'a> {
-    attributes: &'a BTreeMap<String, String>,
     policy: &'a RenderPolicy,
     targets: &'a [ReferenceTarget],
     resolutions: &'a [ResolvedReference],
@@ -879,12 +901,12 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 4);
+        assert_eq!(HTML_CONTRACT_VERSION, 5);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
                 "a", "body", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html", "li",
-                "ol", "p", "pre", "strong", "ul"
+                "mark", "ol", "p", "pre", "strong", "sub", "sup", "ul"
             ]
         );
         assert_eq!(ALLOWED_ATTRIBUTES, ["class", "href", "id"]);
@@ -986,7 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn link_target_attributes_expand_exactly_once() {
+    fn link_target_attributes_expand_recursively() {
         let parsed = parse("= Links\n:a: {b}\n:b: expanded\n\nhttps://example.com/{a}[target]\n")
             .expect("parse");
         let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[1] else {
@@ -996,8 +1018,16 @@ mod tests {
             panic!("link");
         };
 
-        assert_eq!(link.target, "https://example.com/{b}");
-        assert_ne!(link.target, "https://example.com/expanded");
+        assert_eq!(link.target, "https://example.com/expanded");
+    }
+
+    #[test]
+    fn ordered_substitutions_render_styles_replacements_and_safe_passthroughs() {
+        let parsed = parse("= Pipeline\n:a: {b}\n:b: value\n\n{a} #mark# H~2~O E=mc^2^ \"`double`\" (C) ... +<b>*raw*</b>+\n\n++++\n<script>alert(1)</script>\n++++\n").expect("parse");
+        let html = render(&parsed.ast, &RenderPolicy::default()).html;
+        assert!(html.contains("<p>value <mark>mark</mark> H<sub>2</sub>O E=mc<sup>2</sup> “double” © … &lt;b&gt;*raw*&lt;/b&gt;</p>"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(!html.contains("<script>"));
     }
 
     #[test]

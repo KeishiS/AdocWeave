@@ -29,6 +29,7 @@ pub enum LintRule {
     InvalidAttribute,
     DuplicateAttribute,
     UndefinedAttribute,
+    AttributeExpansion,
     UnusedAttribute,
     ProtectedAttribute,
     InvalidAnchor,
@@ -41,7 +42,7 @@ pub enum LintRule {
 }
 
 impl LintRule {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -55,6 +56,7 @@ impl LintRule {
         Self::InvalidAttribute,
         Self::DuplicateAttribute,
         Self::UndefinedAttribute,
+        Self::AttributeExpansion,
         Self::UnusedAttribute,
         Self::ProtectedAttribute,
         Self::InvalidAnchor,
@@ -81,6 +83,7 @@ impl LintRule {
             Self::InvalidAttribute => "invalid-attribute",
             Self::DuplicateAttribute => "duplicate-attribute",
             Self::UndefinedAttribute => "undefined-attribute",
+            Self::AttributeExpansion => "attribute-expansion",
             Self::UnusedAttribute => "unused-attribute",
             Self::ProtectedAttribute => "protected-attribute",
             Self::InvalidAnchor => "invalid-anchor",
@@ -361,6 +364,7 @@ fn lint_links_and_references(
             | Inline::Styled { .. }
             | Inline::AttributeReference { .. }
             | Inline::HardBreak { .. }
+            | Inline::Passthrough { .. }
             | Inline::Formula(_) => {}
         }
     }
@@ -500,6 +504,46 @@ fn lint_attributes(
             }
         }
     }
+    crate::walker::walk(document, |node| {
+        let crate::walker::SemanticNode::Inline(inline) = node else {
+            return;
+        };
+        let (error, range) = match inline {
+            crate::inline::Inline::AttributeReference {
+                expansion_error: Some(error),
+                name_range,
+                ..
+            } => (error, *name_range),
+            crate::inline::Inline::Link(link) => match &link.target_expansion_error {
+                Some(error) => (error, link.target_range),
+                None => return,
+            },
+            _ => return,
+        };
+        if *error == crate::substitution::AttributeExpansionError::Undefined {
+            return;
+        }
+        let message = match error {
+            crate::substitution::AttributeExpansionError::Undefined => unreachable!(),
+            crate::substitution::AttributeExpansionError::Cycle => {
+                "document attribute expansion contains a cycle"
+            }
+            crate::substitution::AttributeExpansionError::DepthLimitExceeded => {
+                "document attribute expansion exceeds the depth limit"
+            }
+            crate::substitution::AttributeExpansionError::SizeLimitExceeded => {
+                "document attribute expansion exceeds the size limit"
+            }
+        };
+        push_diagnostic(
+            diagnostics,
+            config,
+            LintRule::AttributeExpansion,
+            range,
+            message,
+            None,
+        );
+    });
     for (name, range) in definitions {
         if !used.contains_key(&name) && !config.protected_attributes.contains_key(&name) {
             push_diagnostic(
@@ -538,6 +582,7 @@ fn collect_attribute_references(
             | crate::inline::Inline::Styled { .. }
             | crate::inline::Inline::Reference(_)
             | crate::inline::Inline::HardBreak { .. }
+            | crate::inline::Inline::Passthrough { .. }
             | crate::inline::Inline::Formula(_) => {}
         }
     });
@@ -917,6 +962,17 @@ mod tests {
             !diagnostics
                 .iter()
                 .any(|diagnostic| { diagnostic.code.as_str() == "invalid-url-scheme" })
+        );
+    }
+
+    #[test]
+    fn recursive_attribute_cycles_and_limits_have_stable_diagnostics() {
+        let diagnostics =
+            lint("= T\n:a: {b}\n:b: {a}\n\n{a}", &LintConfig::default()).expect("lint");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "attribute-expansion")
         );
     }
 

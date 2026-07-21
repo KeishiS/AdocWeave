@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 8;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 9;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -140,7 +140,7 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                     children.iter().map(block_node).collect(),
                 ),
                 crate::parser::DelimitedContent::Verbatim(value)
-                | crate::parser::DelimitedContent::Raw(value)
+                | crate::parser::DelimitedContent::Passthrough(value)
                 | crate::parser::DelimitedContent::Table(value) => {
                     (Some(value.clone()), Vec::new())
                 }
@@ -247,6 +247,11 @@ fn inline_node(inline: &Inline) -> CanonicalNode {
             kind: match style {
                 crate::inline::InlineStyle::Strong => "strong",
                 crate::inline::InlineStyle::Emphasis => "emphasis",
+                crate::inline::InlineStyle::Highlight => "highlight",
+                crate::inline::InlineStyle::Subscript => "subscript",
+                crate::inline::InlineStyle::Superscript => "superscript",
+                crate::inline::InlineStyle::CurvedDoubleQuote => "curved-double-quote",
+                crate::inline::InlineStyle::CurvedSingleQuote => "curved-single-quote",
             },
             range: range(*node_range),
             value: None,
@@ -275,6 +280,7 @@ fn inline_node(inline: &Inline) -> CanonicalNode {
             children: inline_nodes(&node.label),
         },
         Inline::Formula(node) => leaf("inline-math", node.range, &node.value),
+        Inline::Passthrough { range, value, .. } => leaf("passthrough", *range, value),
         Inline::HardBreak { range: node_range } => CanonicalNode {
             kind: "hard-break",
             range: range(*node_range),

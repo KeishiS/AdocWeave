@@ -16,6 +16,7 @@ pub struct Link {
     pub target_source: String,
     pub target: String,
     pub target_attributes: Vec<AttributeUse>,
+    pub target_expansion_error: Option<crate::substitution::AttributeExpansionError>,
     pub label_range: Option<TextRange>,
     pub label: Vec<Inline>,
 }
@@ -93,10 +94,18 @@ pub enum Inline {
         range: TextRange,
         name_range: TextRange,
         name: String,
+        value: Option<String>,
+        expansion_error: Option<crate::substitution::AttributeExpansionError>,
     },
     Link(Link),
     Reference(Reference),
     Formula(InlineFormula),
+    Passthrough {
+        kind: PassthroughKind,
+        range: TextRange,
+        content_range: TextRange,
+        value: String,
+    },
     HardBreak {
         range: TextRange,
     },
@@ -108,9 +117,22 @@ pub enum InlineLiteralKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PassthroughKind {
+    SinglePlus,
+    DoublePlus,
+    TriplePlus,
+    Macro,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InlineStyle {
     Strong,
     Emphasis,
+    Highlight,
+    Subscript,
+    Superscript,
+    CurvedDoubleQuote,
+    CurvedSingleQuote,
 }
 
 impl Inline {
@@ -123,6 +145,7 @@ impl Inline {
             Self::Link(link) => link.range,
             Self::Reference(reference) => reference.range,
             Self::Formula(formula) => formula.range,
+            Self::Passthrough { range, .. } => *range,
             Self::HardBreak { range } => *range,
         }
     }
@@ -133,9 +156,13 @@ pub enum InlineProblemKind {
     UnclosedMonospace,
     UnclosedStrong,
     UnclosedEmphasis,
+    UnclosedHighlight,
+    UnclosedSubscript,
+    UnclosedSuperscript,
     NestingLimitExceeded,
     UnclosedAttributeReference,
     IncompleteLink,
+    UnclosedPassthrough,
     IncompleteCrossReference,
     InvalidCrossReference,
     UnclosedStem,
@@ -348,6 +375,66 @@ fn parse_segment(
                     MarkerRecognition::Invalid { next } => cursor = next,
                 }
             }
+            InlineCandidate::TypographicQuote {
+                open,
+                quote,
+                content_start,
+                content_end,
+                end,
+            } => {
+                push_text(&mut output.inlines, value, range, plain_start, open, budget)?;
+                let content_range = subrange(range, content_start, content_end);
+                let inner = parse_segment(
+                    &value[content_start..content_end],
+                    content_range,
+                    config,
+                    depth.saturating_add(1),
+                    budget,
+                )?;
+                output.problems.extend(inner.problems);
+                push_inline(
+                    &mut output.inlines,
+                    Inline::Styled {
+                        style: if quote == '"' {
+                            InlineStyle::CurvedDoubleQuote
+                        } else {
+                            InlineStyle::CurvedSingleQuote
+                        },
+                        range: subrange(range, open, end),
+                        content_range,
+                        children: inner.inlines,
+                    },
+                    budget,
+                )?;
+                cursor = end;
+                plain_start = end;
+            }
+            InlineCandidate::Passthrough {
+                open,
+                width,
+                content_start,
+                content_end,
+                end,
+            } => {
+                push_text(&mut output.inlines, value, range, plain_start, open, budget)?;
+                push_inline(
+                    &mut output.inlines,
+                    Inline::Passthrough {
+                        kind: match width {
+                            1 => PassthroughKind::SinglePlus,
+                            2 => PassthroughKind::DoublePlus,
+                            3 => PassthroughKind::TriplePlus,
+                            _ => unreachable!(),
+                        },
+                        range: subrange(range, open, end),
+                        content_range: subrange(range, content_start, content_end),
+                        value: value[content_start..content_end].to_owned(),
+                    },
+                    budget,
+                )?;
+                cursor = end;
+                plain_start = end;
+            }
         }
     }
 
@@ -376,6 +463,20 @@ enum InlineCandidate {
         form: MarkerForm,
         close: Option<usize>,
     },
+    TypographicQuote {
+        open: usize,
+        quote: char,
+        content_start: usize,
+        content_end: usize,
+        end: usize,
+    },
+    Passthrough {
+        open: usize,
+        width: usize,
+        content_start: usize,
+        content_end: usize,
+        end: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -402,17 +503,29 @@ struct InlineScanner {
 
 impl InlineScanner {
     fn new(value: &str) -> Self {
-        let mut candidates = Vec::new();
+        let (mut candidates, mut preparsed_markers) = preparsed_candidates(value);
         let mut inspected_positions: usize = 0;
         let unconstrained_pairs = index_unconstrained_pairs(value, &mut inspected_positions);
         for (open, marker) in value.char_indices() {
             inspected_positions += 1;
             let rest = &value[open..];
+            if preparsed_markers[open] {
+                continue;
+            }
             if marker == '\\'
                 && (rest.starts_with("\\[[") || rest.starts_with("\\[#"))
                 && !is_escaped(value, open)
             {
                 candidates.push(InlineCandidate::EscapedAnchor { slash: open });
+                let end = if rest.starts_with("\\[[") {
+                    rest.find("]]")
+                        .map_or(value.len(), |close| open + close + 2)
+                } else {
+                    rest.find(']').map_or(value.len(), |close| open + close + 1)
+                };
+                for protected in preparsed_markers.iter_mut().take(end).skip(open) {
+                    *protected = true;
+                }
                 continue;
             }
             let boundary = is_macro_boundary(value, open);
@@ -421,10 +534,11 @@ impl InlineScanner {
                     && (starts_ascii_case_insensitive(rest, "xref:")
                         || starts_ascii_case_insensitive(rest, "stem:[")
                         || starts_ascii_case_insensitive(rest, "latexmath:[")
+                        || starts_ascii_case_insensitive(rest, "pass:[")
                         || url_scheme_end(rest).is_some());
             if is_macro {
                 candidates.push(InlineCandidate::Macro { open });
-            } else if matches!(marker, '`' | '*' | '_') && unconstrained_pairs[open] {
+            } else if matches!(marker, '`' | '*' | '_' | '#') && unconstrained_pairs[open] {
                 candidates.push(InlineCandidate::Marker {
                     open,
                     marker,
@@ -432,7 +546,12 @@ impl InlineScanner {
                     close: None,
                 });
             } else if marker == '{'
-                || matches!(marker, '`' | '*' | '_') && is_open_boundary(value, open, marker)
+                || matches!(marker, '^' | '~')
+                    && value[open + marker.len_utf8()..]
+                        .chars()
+                        .next()
+                        .is_some_and(|character| !character.is_whitespace())
+                || matches!(marker, '`' | '*' | '_' | '#') && is_open_boundary(value, open, marker)
             {
                 candidates.push(InlineCandidate::Marker {
                     open,
@@ -448,6 +567,7 @@ impl InlineScanner {
             &mut candidates,
             &mut inspected_positions,
         );
+        candidates.sort_by_key(|candidate| candidate.open());
         let delimiters = DelimiterIndex::new_counted(value, &mut inspected_positions);
         Self {
             candidates,
@@ -478,6 +598,72 @@ impl InlineScanner {
     fn inspected_positions(&self) -> usize {
         self._inspected_positions
     }
+}
+
+fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>) {
+    let mut candidates = Vec::new();
+    let mut markers = vec![false; value.len() + 1];
+    let mut cursor = 0;
+    while cursor + 1 < value.len() {
+        let quote = value[cursor..].chars().next().expect("cursor is in range");
+        if quote == '+' {
+            let run = value.as_bytes()[cursor..]
+                .iter()
+                .take_while(|byte| **byte == b'+')
+                .count()
+                .min(3);
+            if run > 0 && (run > 1 || is_open_boundary(value, cursor, '+')) {
+                let delimiter = &value[cursor..cursor + run];
+                let content_start = cursor + run;
+                if let Some(relative_close) = value[content_start..].find(delimiter) {
+                    let content_end = content_start + relative_close;
+                    if content_end > content_start {
+                        let end = content_end + run;
+                        for marker in markers.iter_mut().skip(cursor).take(run) {
+                            *marker = true;
+                        }
+                        for marker in markers.iter_mut().take(end).skip(content_end) {
+                            *marker = true;
+                        }
+                        candidates.push(InlineCandidate::Passthrough {
+                            open: cursor,
+                            width: run,
+                            content_start,
+                            content_end,
+                            end,
+                        });
+                        cursor = end;
+                        continue;
+                    }
+                }
+            }
+        }
+        if !matches!(quote, '\'' | '"') || value.as_bytes().get(cursor + 1) != Some(&b'`') {
+            cursor += quote.len_utf8();
+            continue;
+        }
+        let close_pattern = if quote == '"' { "`\"" } else { "`'" };
+        let content_start = cursor + 2;
+        let Some(relative_close) = value[content_start..].find(close_pattern) else {
+            cursor = content_start;
+            continue;
+        };
+        let content_end = content_start + relative_close;
+        let end = content_end + 2;
+        markers[cursor] = true;
+        markers[cursor + 1] = true;
+        markers[content_end] = true;
+        markers[content_end + 1] = true;
+        candidates.push(InlineCandidate::TypographicQuote {
+            open: cursor,
+            quote,
+            content_start,
+            content_end,
+            end,
+        });
+        cursor = end;
+    }
+    (candidates, markers)
 }
 
 struct DelimiterIndex {
@@ -527,7 +713,10 @@ impl InlineCandidate {
     fn open(self) -> usize {
         match self {
             Self::EscapedAnchor { slash } => slash,
-            Self::Macro { open } | Self::Marker { open, .. } => open,
+            Self::Macro { open }
+            | Self::Marker { open, .. }
+            | Self::TypographicQuote { open, .. }
+            | Self::Passthrough { open, .. } => open,
         }
     }
 }
@@ -548,7 +737,7 @@ fn index_unconstrained_pairs(value: &str, inspected_positions: &mut usize) -> Ve
     while cursor < bytes.len() {
         *inspected_positions = (*inspected_positions).saturating_add(1);
         let marker = bytes[cursor];
-        if !matches!(marker, b'`' | b'*' | b'_') {
+        if !matches!(marker, b'`' | b'*' | b'_' | b'#') {
             cursor += 1;
             continue;
         }
@@ -617,6 +806,9 @@ fn recognize_marker(
             '`' => InlineProblemKind::UnclosedMonospace,
             '*' => InlineProblemKind::UnclosedStrong,
             '_' => InlineProblemKind::UnclosedEmphasis,
+            '#' => InlineProblemKind::UnclosedHighlight,
+            '~' => InlineProblemKind::UnclosedSubscript,
+            '^' => InlineProblemKind::UnclosedSuperscript,
             '{' => InlineProblemKind::UnclosedAttributeReference,
             _ => unreachable!("only supported markers are returned"),
         };
@@ -628,6 +820,9 @@ fn recognize_marker(
         };
     }
     if marker == '{' && !valid_attribute_name(&value[next..close]) {
+        return MarkerRecognition::Invalid { next };
+    }
+    if matches!(marker, '^' | '~') && value[next..close].chars().any(char::is_whitespace) {
         return MarkerRecognition::Invalid { next };
     }
     MarkerRecognition::Complete(MarkerToken {
@@ -660,9 +855,13 @@ fn index_marker_closers(
     let mut last_backtick = None;
     let mut last_strong = None;
     let mut last_emphasis = None;
+    let mut last_highlight = None;
+    let mut last_subscript = None;
+    let mut last_superscript = None;
     let mut last_unconstrained_backtick = None;
     let mut last_unconstrained_strong = None;
     let mut last_unconstrained_emphasis = None;
+    let mut last_unconstrained_highlight = None;
     let mut last_attribute = None;
     for (offset, marker) in value.char_indices().rev() {
         *inspected_positions = (*inspected_positions).saturating_add(1);
@@ -671,9 +870,13 @@ fn index_marker_closers(
                 ('`', MarkerForm::Constrained) => last_backtick,
                 ('*', MarkerForm::Constrained) => last_strong,
                 ('_', MarkerForm::Constrained) => last_emphasis,
+                ('#', MarkerForm::Constrained) => last_highlight,
+                ('~', MarkerForm::Constrained) => last_subscript,
+                ('^', MarkerForm::Constrained) => last_superscript,
                 ('`', MarkerForm::Unconstrained) => last_unconstrained_backtick,
                 ('*', MarkerForm::Unconstrained) => last_unconstrained_strong,
                 ('_', MarkerForm::Unconstrained) => last_unconstrained_emphasis,
+                ('#', MarkerForm::Unconstrained) => last_unconstrained_highlight,
                 ('{', MarkerForm::Constrained) => last_attribute,
                 _ => None,
             };
@@ -683,6 +886,7 @@ fn index_marker_closers(
                 '`' => last_unconstrained_backtick = Some(offset),
                 '*' => last_unconstrained_strong = Some(offset),
                 '_' => last_unconstrained_emphasis = Some(offset),
+                '#' => last_unconstrained_highlight = Some(offset),
                 _ => {}
             }
         }
@@ -690,6 +894,9 @@ fn index_marker_closers(
             '`' if is_close_boundary(value, offset, marker) => last_backtick = Some(offset),
             '*' if is_close_boundary(value, offset, marker) => last_strong = Some(offset),
             '_' if is_close_boundary(value, offset, marker) => last_emphasis = Some(offset),
+            '#' if is_close_boundary(value, offset, marker) => last_highlight = Some(offset),
+            '~' => last_subscript = Some(offset),
+            '^' => last_superscript = Some(offset),
             '}' => last_attribute = Some(offset),
             _ => {}
         }
@@ -729,7 +936,7 @@ fn build_marker(
             content_range,
             value: value[open + marker_width..close].to_owned(),
         },
-        '*' | '_' if depth >= config.max_depth => {
+        '*' | '_' | '#' | '~' | '^' if depth >= config.max_depth => {
             problems.push(InlineProblem {
                 kind: InlineProblemKind::NestingLimitExceeded,
                 range: node_range,
@@ -739,7 +946,7 @@ fn build_marker(
                 value: value[open..end].to_owned(),
             })
         }
-        '*' | '_' => {
+        '*' | '_' | '#' | '~' | '^' => {
             let inner = parse_segment(
                 &value[open + marker_width..close],
                 content_range,
@@ -749,10 +956,13 @@ fn build_marker(
             )?;
             problems.extend(inner.problems);
             Inline::Styled {
-                style: if marker == '*' {
-                    InlineStyle::Strong
-                } else {
-                    InlineStyle::Emphasis
+                style: match marker {
+                    '*' => InlineStyle::Strong,
+                    '_' => InlineStyle::Emphasis,
+                    '#' => InlineStyle::Highlight,
+                    '~' => InlineStyle::Subscript,
+                    '^' => InlineStyle::Superscript,
+                    _ => unreachable!(),
                 },
                 range: node_range,
                 content_range,
@@ -763,6 +973,8 @@ fn build_marker(
             range: node_range,
             name_range: content_range,
             name: value[open + marker_width..close].to_owned(),
+            value: None,
+            expansion_error: None,
         },
         _ => unreachable!("only supported markers are returned"),
     };
@@ -785,6 +997,7 @@ enum MacroToken {
     Formula(FormulaToken),
     Reference(ReferenceToken),
     Link(LinkToken),
+    Passthrough(PassthroughToken),
 }
 
 impl MacroToken {
@@ -795,6 +1008,7 @@ impl MacroToken {
             | Self::Reference(ReferenceToken::Xref { end, .. })
             | Self::Link(LinkToken::Explicit { end, .. })
             | Self::Link(LinkToken::Url { end, .. }) => end,
+            Self::Passthrough(token) => token.end,
         }
     }
 }
@@ -818,6 +1032,14 @@ struct FormulaToken {
     content_end: usize,
     end: usize,
     closed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PassthroughToken {
+    open: usize,
+    content_start: usize,
+    content_end: usize,
+    end: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -875,6 +1097,21 @@ fn recognize_macro_with_index(
             content_end: close.unwrap_or(value.len()),
             end: close.map_or(value.len(), |close| close + 1),
             closed: close.is_some(),
+        }));
+    }
+    if starts_ascii_case_insensitive(rest, "pass:[") {
+        let content_start = open + "pass:[".len();
+        let Some(close) = delimiters.next_close_bracket[content_start] else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::UnclosedPassthrough,
+                next: next_char_boundary(value, open),
+            };
+        };
+        return MacroRecognition::Complete(MacroToken::Passthrough(PassthroughToken {
+            open,
+            content_start,
+            content_end: close,
+            end: close + 1,
         }));
     }
     if rest.starts_with("<<") {
@@ -1011,6 +1248,21 @@ fn build_macro(
     budget: &mut ParseBudget,
 ) -> Result<BuiltInline, BudgetExceeded> {
     match token {
+        MacroToken::Passthrough(PassthroughToken {
+            open,
+            content_start,
+            content_end,
+            end,
+        }) => Ok(BuiltInline {
+            inline: Inline::Passthrough {
+                kind: PassthroughKind::Macro,
+                range: subrange(range, open, end),
+                content_range: subrange(range, content_start, content_end),
+                value: value[content_start..content_end].to_owned(),
+            },
+            end,
+            problems: Vec::new(),
+        }),
         MacroToken::Formula(FormulaToken {
             open,
             content_start,
@@ -1172,6 +1424,7 @@ fn build_link_macro(
                     range: subrange(range, open, end),
                     target_range,
                     target_attributes: attribute_uses(&target, target_range),
+                    target_expansion_error: None,
                     target_source: target.clone(),
                     target,
                     label_range: Some(label_range),
@@ -1209,6 +1462,7 @@ fn build_link_macro(
                     target_source: value[open..target_end].to_owned(),
                     target: value[open..target_end].to_owned(),
                     target_attributes: attribute_uses(&value[open..target_end], target_range),
+                    target_expansion_error: None,
                     label_range,
                     label,
                 }),
@@ -2081,6 +2335,55 @@ mod tests {
                 .problems
                 .iter()
                 .any(|problem| problem.kind == InlineProblemKind::NestingLimitExceeded)
+        );
+    }
+
+    #[test]
+    fn extended_quotes_and_passthroughs_build_typed_nodes() {
+        let value = "#mark# H~2~O E=mc^2^ \"`double`\" '`single`' +*raw*+ pass:[_opaque_]";
+        let parsed = parse(value, range(0, value.len()), InlineParseConfig::default());
+        assert!(parsed.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Styled {
+                style: InlineStyle::Highlight,
+                ..
+            }
+        )));
+        assert!(parsed.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Styled {
+                style: InlineStyle::Subscript,
+                ..
+            }
+        )));
+        assert!(parsed.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Styled {
+                style: InlineStyle::Superscript,
+                ..
+            }
+        )));
+        assert!(parsed.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Styled {
+                style: InlineStyle::CurvedDoubleQuote,
+                ..
+            }
+        )));
+        assert!(parsed.inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Styled {
+                style: InlineStyle::CurvedSingleQuote,
+                ..
+            }
+        )));
+        assert_eq!(
+            parsed
+                .inlines
+                .iter()
+                .filter(|inline| matches!(inline, Inline::Passthrough { .. }))
+                .count(),
+            2
         );
     }
 }
