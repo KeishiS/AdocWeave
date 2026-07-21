@@ -9,11 +9,11 @@
 |===
 |契約 |現在値
 |Core profile |8
-|Rust core API |17
+|Rust core API |18
 |HTML |8
 |Projection |8
 |Conformance snapshot |12
-|WASM API |9
+|WASM API |10
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。
@@ -22,7 +22,8 @@
 
 構文と回復規則はxref:grammar.adoc[規範文法]、置換順序は
 xref:substitutions.adoc[置換モデル]、出力はxref:html-contract.adoc[HTML契約]、
-公開APIと再構築条件はxref:core-profile.adoc[Core Profile]を正本とする。
+公開APIと再構築条件はxref:core-profile.adoc[Core Profile]、include前処理は
+xref:preprocessor.adoc[プリプロセッサとresource snapshot]を正本とする。
 
 == 文書の分類
 

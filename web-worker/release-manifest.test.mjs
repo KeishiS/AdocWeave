@@ -20,5 +20,5 @@ test("worker consumes the public WASM contract registry", async () => {
     "wasmApi",
   ]);
   assert.equal(manifest.schemaVersion, 2);
-  assert.equal(manifest.contracts.wasmApi, 9);
+  assert.equal(manifest.contracts.wasmApi, 10);
 });

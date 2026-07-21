@@ -234,16 +234,18 @@ compound内で現在解析するのは段落と入れ子containerであり、完
 開始番号・番号形式と複雑なlist属性は未対応
 
 |Table
-|未対応
-|PSV／CSV／DSV／TSV、列指定、header／footer、cell span、cell styleおよびAsciiDoc cellは未対応
+|部分対応
+|基本PSV、列指定、header／footer、cell spanおよびcell styleに対応。AsciiDoc cellと
+CSV／DSV／TSVは未対応
 
 |Inline macro
-|部分対応
-|URLとxrefだけに対応。email／mailto、image、footnote、kbd、btn、menu、index termは未対応
+|対応
+|URL、xref、email／mailto、image、footnote、anchor、bibliography anchor、kbd、btn、menuおよび
+index termを意味nodeとして扱う。完全なfootnote一覧とindex catalogは未対応
 
 |Media
-|未対応
-|block／inline image、icon、audioおよびvideoは未対応
+|対応
+|block／inline image、icon、audioおよびvideoをresource参照として公開する。取得と埋め込みはhostの責務
 
 |置換pipeline
 |対応
@@ -251,8 +253,10 @@ compound内で現在解析するのは段落と入れ子containerであり、完
 安全なinline／block passthroughに対応。任意`subs`属性による段階の編集は未対応
 
 |Preprocessor directive
-|未対応
-|include、ifdef、ifndefおよびifevalは未対応。外部I/Oを伴う展開にはホスト境界が必要
+|部分対応
+|純粋なresource snapshot上でinclude、ifdef、ifndef、ifeval、escape、基本include属性およびsource mapに
+対応。optional include、wildcardおよび完全な属性引用文法は未対応。詳細は
+xref:preprocessor.adoc[プリプロセッサとresource snapshot]を参照
 
 |Bibliographyとfootnote
 |未対応

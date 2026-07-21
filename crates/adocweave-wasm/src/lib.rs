@@ -5,12 +5,91 @@ use std::collections::{BTreeMap, BTreeSet};
 use adocweave::conformance::{CONFORMANCE_CONTRACT_VERSION, snapshot};
 use adocweave::html::RenderPolicy;
 use adocweave::limits::{ProcessingLimits, SyntaxMode};
+use adocweave::preprocessor::{
+    PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode, preprocess,
+};
 use adocweave::url::UrlPolicy;
 use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 9;
+pub const WASM_API_VERSION: u16 = 10;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmPreprocessRequest {
+    pub api_version: u16,
+    pub source_id: Option<String>,
+    pub source: String,
+    #[serde(default)]
+    pub resources: BTreeMap<String, WasmResource>,
+    #[serde(default)]
+    pub options: WasmPreprocessOptions,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmResource {
+    pub source_id: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmPreprocessOptions {
+    pub base_uri: Option<String>,
+    pub safe_mode: WasmSafeMode,
+    pub allowed_schemes: BTreeSet<String>,
+    pub attributes: BTreeMap<String, String>,
+    pub max_include_depth: u32,
+    pub max_includes: u32,
+    pub max_total_bytes: u32,
+    pub max_expanded_nodes: u32,
+}
+
+impl Default for WasmPreprocessOptions {
+    fn default() -> Self {
+        let options = PreprocessOptions::default();
+        Self {
+            base_uri: options.base_uri,
+            safe_mode: WasmSafeMode::Secure,
+            allowed_schemes: options.allowed_schemes,
+            attributes: options.attributes,
+            max_include_depth: options.max_include_depth,
+            max_includes: options.max_includes,
+            max_total_bytes: options.max_total_bytes,
+            max_expanded_nodes: options.max_expanded_nodes,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmSafeMode {
+    Unsafe,
+    Server,
+    Safe,
+    #[default]
+    Secure,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmPreprocessResponse {
+    pub api_version: u16,
+    pub source: String,
+    pub source_map: Vec<WasmSourceMapSegment>,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmSourceMapSegment {
+    pub output_start: u32,
+    pub output_end: u32,
+    pub source_id: Option<String>,
+    pub source_start: u32,
+    pub source_end: u32,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -184,6 +263,77 @@ pub struct WasmError {
     pub message: String,
 }
 
+pub fn preprocess_request(
+    request: WasmPreprocessRequest,
+) -> Result<WasmPreprocessResponse, WasmError> {
+    if request.api_version != WASM_API_VERSION {
+        return Err(WasmError {
+            code: "unsupported-api-version".to_owned(),
+            message: format!(
+                "unsupported WASM API version {} (expected {WASM_API_VERSION})",
+                request.api_version
+            ),
+        });
+    }
+    let mut snapshot = ResourceSnapshot::default();
+    for (target, resource) in request.resources {
+        snapshot.insert(
+            target,
+            ResourceDocument {
+                source_id: SourceId::new(resource.source_id),
+                source: resource.source,
+            },
+        );
+    }
+    let options = request.options;
+    let document = preprocess(
+        &request.source,
+        &snapshot,
+        &PreprocessOptions {
+            source_id: request.source_id.map(SourceId::new),
+            base_uri: options.base_uri,
+            safe_mode: match options.safe_mode {
+                WasmSafeMode::Unsafe => SafeMode::Unsafe,
+                WasmSafeMode::Server => SafeMode::Server,
+                WasmSafeMode::Safe => SafeMode::Safe,
+                WasmSafeMode::Secure => SafeMode::Secure,
+            },
+            allowed_schemes: options
+                .allowed_schemes
+                .into_iter()
+                .map(|scheme| scheme.to_ascii_lowercase())
+                .collect(),
+            attributes: options.attributes,
+            max_include_depth: options.max_include_depth,
+            max_includes: options.max_includes,
+            max_total_bytes: options.max_total_bytes,
+            max_expanded_nodes: options.max_expanded_nodes,
+        },
+    )
+    .map_err(|error| WasmError {
+        code: error.kind.as_str().to_owned(),
+        message: error.to_string(),
+    })?;
+    Ok(WasmPreprocessResponse {
+        api_version: WASM_API_VERSION,
+        source: document.source,
+        source_map: document
+            .source_map
+            .into_iter()
+            .map(|segment| WasmSourceMapSegment {
+                output_start: segment.output_range.start().to_u32(),
+                output_end: segment.output_range.end().to_u32(),
+                source_id: segment
+                    .origin
+                    .source_id
+                    .map(|source_id| source_id.as_str().to_owned()),
+                source_start: segment.origin.range.start().to_u32(),
+                source_end: segment.origin.range.end().to_u32(),
+            })
+            .collect(),
+    })
+}
+
 pub fn process_request(
     request: WasmRequest,
     cancellation: &dyn CancellationCheck,
@@ -344,6 +494,21 @@ mod bindings {
             .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
             .map_err(|error| JsValue::from_str(&serialize_error(&serialization_error(error))))
     }
+
+    #[wasm_bindgen(js_name = preprocess)]
+    pub fn preprocess_js(request: JsValue) -> Result<JsValue, JsValue> {
+        let request = serde_wasm_bindgen::from_value(request).map_err(|error| {
+            JsValue::from_str(&serialize_error(&WasmError {
+                code: "invalid-request".to_owned(),
+                message: error.to_string(),
+            }))
+        })?;
+        let response = preprocess_request(request)
+            .map_err(|error| JsValue::from_str(&serialize_error(&error)))?;
+        response
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|error| JsValue::from_str(&serialize_error(&serialization_error(error))))
+    }
 }
 
 #[cfg(test)]
@@ -442,5 +607,29 @@ mod tests {
         assert_eq!(request.options.limits.max_input_bytes, 10 * 1024 * 1024);
         let error = process_request(request, &NeverCancel).expect_err("output limit");
         assert_eq!(error.code, "limit-exceeded");
+    }
+
+    #[test]
+    fn preprocessing_uses_the_same_snapshot_model_as_the_native_core() {
+        let resources = BTreeMap::from([(
+            "parts/intro.adoc".to_owned(),
+            WasmResource {
+                source_id: "intro".to_owned(),
+                source: "== Intro\n".to_owned(),
+            },
+        )]);
+        let response = preprocess_request(WasmPreprocessRequest {
+            api_version: WASM_API_VERSION,
+            source_id: Some("root".to_owned()),
+            source: "include::intro.adoc[leveloffset=+1]\n".to_owned(),
+            resources,
+            options: WasmPreprocessOptions {
+                base_uri: Some("parts".to_owned()),
+                ..WasmPreprocessOptions::default()
+            },
+        })
+        .expect("preprocessed response");
+        assert_eq!(response.source, "=== Intro\n");
+        assert_eq!(response.source_map[0].source_id.as_deref(), Some("intro"));
     }
 }

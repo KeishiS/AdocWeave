@@ -22,6 +22,7 @@ pub mod limits;
 pub mod lint;
 mod lowering;
 pub mod parser;
+pub mod preprocessor;
 pub mod projection;
 pub mod reference;
 pub mod resource;

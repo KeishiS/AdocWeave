@@ -168,8 +168,8 @@ preamble、book part、discrete heading、基本paragraph形式およびbreakま
 
 Issue 062では置換pipeline、Issue 063ではdescription list、checklist、callout listおよび
 任意blockを伴うlist continuationまで拡張した。Issue 064では基本PSV table、Issue 065では
-標準macroと外部資源の意味モデルを実装した。次はI/Oを行わないpreprocessor directiveと
-resource snapshot／source map境界を実装する。
+標準macroと外部資源の意味モデル、Issue 066ではI/Oを行わないpreprocessor directiveと
+resource snapshot／source map境界を実装した。
 
 この段階ではraw passthroughを有効化しない。未知blockは引き続きlosslessに保持し、HTMLへ入力由来の
 要素や属性を通過させない。
@@ -230,9 +230,12 @@ resource解決結果を受け取るrenderer API
 コア方針を維持するため、実装時は次の境界を設ける。
 
 * コアはdirective構文、target、属性およびsource rangeを認識する。
-* ホストがresource resolver、base directory、safe mode、最大深さ、総byte数および循環検出を提供する。
-* 展開後sourceと元sourceの位置対応を保持し、診断とLSP navigationがinclude元へ戻れるようにする。
-* URL includeは明示的に許可された場合だけ取得し、通常の解析APIはI/Oを行わない。
+* ホストがresourceを取得し、不変snapshot、base URI、safe modeおよび許可schemeを指定する。
+* コアが最大深さ、include件数、総byte数、展開nodeおよび循環を制限する。
+* 展開後sourceと元sourceの位置対応を保持し、診断とLSP navigationをinclude元へ投影できる。
+* URL includeはhostが明示的に取得したsnapshotだけを参照し、通常の解析APIはI/Oを行わない。
+
+実装契約はxref:preprocessor.adoc[プリプロセッサとresource snapshot]に記載する。
 
 参照基準はhttps://docs.asciidoctor.org/asciidoc/latest/directives/include/[Includes]および
 https://docs.asciidoctor.org/asciidoc/latest/directives/conditionals/[Conditionals]とする。

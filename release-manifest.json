@@ -3,10 +3,10 @@
   "packageVersion": "0.1.0",
   "contracts": {
     "coreProfile": 8,
-    "coreApi": 17,
+    "coreApi": 18,
     "html": 8,
     "projection": 8,
     "conformance": 12,
-    "wasmApi": 9
+    "wasmApi": 10
   }
 }

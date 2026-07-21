@@ -1,5 +1,5 @@
 = Preprocessor directiveとresource resolver
-:status: planned
+:status: completed
 :depends-on: 062
 
 == 目的
@@ -13,6 +13,20 @@
 * include depth、総byte、展開node、循環およびURL取得を上限管理する。
 * tag、lines、leveloffset、indentおよびencoding属性を段階的に実装する。
 * 展開後sourceと元sourceのsource mapを保持し、診断、DefinitionおよびDocument Linkへ接続する。
+
+== 実装結果
+
+`preprocessor` moduleに、caller提供の不変`ResourceSnapshot`だけを参照する純粋な展開処理を
+実装した。通常の`Engine::analyze`は従来どおり単一sourceを解析し、暗黙I/Oを行わない。
+includeを利用するhostは`preprocess_and_analyze`を明示的に選択する。
+
+includeの深さ、件数、出力byteおよび展開nodeを独立に制限し、循環、path traversal、未許可scheme、
+非UTF-8 encoding指定を解析前に拒否する。`tag`、`tags`、`lines`、`leveloffset`、`indent`、
+`encoding`、属性展開、条件directiveおよびescapeを扱う。
+
+展開結果はbyte range単位のsource mapを持つ。診断、DefinitionおよびDocument Linkを返すhostは、
+解析結果のrangeを`origin_for_range`または`source_map`で元の`SourceId`とrangeへ投影する。
+WASMはversion 10の`preprocess`入口で同じsnapshot契約を公開する。
 
 == 完了条件
 

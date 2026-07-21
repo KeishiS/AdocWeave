@@ -1,0 +1,43 @@
+= プリプロセッサとresource snapshot
+
+== 責務境界
+
+AdocWeaveの通常解析はファイルシステムやネットワークへアクセスしない。hostは必要なresourceを
+取得し、targetをkeyとする`ResourceSnapshot`を構築してから`preprocess`または
+`preprocess_and_analyze`へ渡す。この分離により、nativeとWASMは同じsnapshotに対して同じ結果を
+生成する。
+
+`base_uri`は相対targetへ決定的に前置される論理的なsnapshot keyであり、コアが参照する実在pathを
+意味しない。URLを取得するか、cacheを使うか、認証を付与するかはhostの責務である。
+
+== 対応directive
+
+次を文書構造解析前に処理する。
+
+* `include::target[]`
+* `ifdef::name[]`、`ifndef::name[]`、`ifeval::[expression]`、`endif::[]`
+* 行頭のbackslashによるdirectiveのliteral化
+
+include属性は`tag`／`tags`、`lines`、`leveloffset`、`indent`およびUTF-8の`encoding`に対応する。
+属性値の完全なAsciiDoc引用文法、optional include、wildcardおよびURI転送は未対応である。
+
+== 安全性と上限
+
+`PreprocessOptions`はinclude深さ、include件数、展開後総byteおよび展開nodeの上限を持つ。
+循環、絶対path、path traversal、制御文字、未許可schemeを拒否する。`Secure` modeではscheme付き
+targetを許可しない。他のmodeでも`allowed_schemes`に明示されたschemeだけをsnapshotから参照する。
+
+コアはURLを取得しないため、timeout、redirect、response size、content type、認証情報および
+network addressの制限はresourceをsnapshotへ格納する前にhostが強制する。コア側の総byte、件数、
+深さ制限は取得済みresourceを用いた展開量を制限する第2の防壁である。
+
+== source map
+
+`PreprocessedDocument.source_map`は展開後の半開byte rangeを元の`SourceId`とrangeへ対応付ける。
+変換されたindentや見出しlevelを含むsegmentは元の行全体へ対応する。rangeが複数segmentを横断する
+場合、`origin_for_range`は開始位置を含むoriginを返す。厳密な複数文書rangeが必要なhostはsegmentを
+個別に処理する。
+
+LSP adapterは診断、DefinitionおよびDocument Linkのrangeを返す前にこのmapで元文書へ戻す。
+resource取得とsnapshot更新はLSP adapterまたはその上位hostが担い、コアへResolver traitやasync
+runtimeを持ち込まない。
