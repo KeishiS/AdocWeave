@@ -1,5 +1,5 @@
 = リアルタイムHTML変換用browser library
-:status: planned
+:status: completed
 :depends-on: 082
 
 == 目的
@@ -32,3 +32,20 @@ HTMLと診断等を利用側へ返す。
 browser library archiveだけを新しいdirectoryへ展開し、textareaへの連続入力から最新HTMLだけをpreviewへ
 描画する最小例が動作する。native／WASM conformance、実browserでの高速連続更新、cancel、型定義の
 compile check、CSPおよびbundle size上限が通る。
+
+== 実装状況
+
+`adocweave-browser-{version}.tar.xz`は決定的なlayoutで、WASM、ES module glue、TypeScript宣言、
+公開`worker/index.mjs`、内部Worker実装、契約定数、package metadata、license、third-party noticeおよび
+textarea最小例を含む。WASM buildはworkspaceとCargo homeをremapし、archive検査は機械固有の絶対pathを拒否する。
+
+`AdocWeaveClient`はWorkerの生成と初期化、source update、単調generation、debounce、最新結果だけの通知、
+cancel、disposeおよびerror通知を所有する。結果はHTML、解析・render診断、source version、generation、
+6契約versionおよび完全なWASM応答を所有し、DOMを変更しない。cross-origin isolated環境では
+`SharedArrayBuffer`による協調cancelを使い、それ以外ではWorker終了・再生成へ同じAPI内で縮退する。
+
+`cargo make test-browser-release-package`はlayout、決定性および機械固有path不在を検査する。
+`test-browser-smoke`はarchiveを一時directoryへ展開し、静的HTTP serverとChromiumでCSP下の非isolated／isolated
+両経路、高頻度更新、cancel、最新HTML、WASM応答とrelease manifestの契約一致、2 MiBのarchive上限および
+1 MiBのWASM上限を検査する。`test-browser-bundler`は公開入口をesbuildでbundleした同じ利用例を再検査する。
+TypeScript compileとnative／WASM共通fixtureの意味同値性もrelease gateへ含めた。

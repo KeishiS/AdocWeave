@@ -1,0 +1,65 @@
+= ブラウザライブラリ
+
+`adocweave-browser-{version}.tar.xz`は、ブラウザでAsciiDoc入力をHTMLへ継続的に変換するための
+自己完結した配布物である。npm等のregistryには公開せず、GitHub Releaseのarchiveを展開して利用する。
+libraryはDOMを変更しない。HTMLの挿入、sanitizationおよび表示sandboxはホストの責務である。
+
+== 公開入口
+
+利用側がimportする入口は`worker/index.mjs`だけである。`worker/worker.mjs`、WASM glueおよびWorker messageは
+内部実装であり、直接利用する公開APIではない。TypeScript宣言は`worker/index.d.mts`にある。
+
+[source,javascript]
+----
+import { AdocWeaveClient, defaultAssetUrls } from "./worker/index.mjs";
+
+const client = new AdocWeaveClient({
+  ...defaultAssetUrls(),
+  onResult(result) {
+    console.log(result.html, result.diagnostics);
+  },
+  onError(error) {
+    console.error(error.code, error.message);
+  },
+});
+
+client.update({ version: 1, source: "= Title\n" });
+client.cancel();
+client.dispose();
+----
+
+`update`は単調増加するgenerationを返す。結果は`html`、`diagnostics`、`renderDiagnostics`、
+`sourceVersion`、`generation`、6契約versionおよび完全なWASM応答を所有する。古いgenerationの結果は通知しない。
+`cancel`は現在の処理を無効化し、`dispose`後の`update`と`cancel`は失敗する。
+
+== キャンセルと縮退
+
+cross-origin isolatedな環境では`SharedArrayBuffer`上のgenerationをWASMの検査点から読み、同期処理を
+協調キャンセルする。利用側serverはmain documentとWorker moduleを含む同一contextの全応答へCOOP／COEPを
+設定しなければならない。利用できない環境では、公開APIを変えずにWorkerを終了・再生成する。
+
+== Asset URL
+
+bundlerを使わない場合、`defaultAssetUrls()`は公開入口を基準にWorkerとWASMを解決する。bundler内から使う場合は、
+配布時の`worker/index.mjs`を示す明示base URLを渡す。
+
+[source,javascript]
+----
+defaultAssetUrls(new URL("../worker/index.mjs", import.meta.url))
+----
+
+最小textarea例はarchive内の`example/index.html`にある。この例は受け取ったHTMLを`textContent`で表示し、
+ホストが信頼方針を決める前に`innerHTML`へ渡さない。
+
+== 検証
+
+[source,console]
+----
+cargo make test-browser-release-package
+cargo make test-browser-smoke
+cargo make test-browser-bundler
+----
+
+検証は決定的なlayout、TypeScript compile、2 MiBの圧縮archive上限、1 MiBのWASM上限、機械固有絶対pathの不在、
+CSP、isolated環境の協調cancel、非isolated環境のWorker再生成、高頻度更新時の最新結果およびesbuild後のasset解決を
+実archiveから確認する。native／WASMの意味同値性は`cargo make test-cross-runtime`が担当する。

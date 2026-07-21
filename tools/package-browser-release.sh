@@ -6,6 +6,8 @@ package="adocweave-browser-$version"
 stage="target/distrib/$package"
 archive="target/distrib/$package.tar.xz"
 
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
+
 rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
 
@@ -22,16 +24,22 @@ fi
   target/wasm32-unknown-unknown/release/adocweave_wasm.wasm
 
 rm -rf "$stage"
-mkdir -p "$stage/wasm" "$stage/worker"
+mkdir -p "$stage/wasm" "$stage/worker" "$stage/example"
 cp target/adocweave-wasm/adocweave_wasm.js "$stage/wasm/"
 cp target/adocweave-wasm/adocweave_wasm_bg.wasm "$stage/wasm/"
 if [[ -f target/adocweave-wasm/adocweave_wasm.d.ts ]]; then
   cp target/adocweave-wasm/adocweave_wasm.d.ts "$stage/wasm/"
 fi
-cp web-worker/client.mjs web-worker/contracts.mjs web-worker/controller.mjs web-worker/worker.mjs "$stage/worker/"
+cp web-worker/client.mjs web-worker/contracts.mjs web-worker/controller.mjs web-worker/index.mjs \
+  web-worker/index.d.mts web-worker/worker.mjs "$stage/worker/"
+cp web-worker/example/index.html web-worker/example/app.mjs "$stage/example/"
 cp web-worker/package.json web-worker/README.adoc LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc "$stage/"
 
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
   -cJf "$archive" -C target/distrib "$package"
+if tar -xOf "$archive" | LC_ALL=C grep -a -E '(/workspace/|/home/|/tmp/)' >/dev/null; then
+  echo "browser release artifact contains a machine-local absolute path" >&2
+  exit 1
+fi
 rm -rf "$stage"
 echo "browser release artifact: $archive"

@@ -175,6 +175,7 @@ args = [
 description = "Build wasm-bindgen web artifacts under target/adocweave-wasm"
 script_runner = "@shell"
 script = '''
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
 cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
 wasm-bindgen \
   --target web \
@@ -214,6 +215,9 @@ printf '%s\n' \
   "$package/README.adoc" \
   "$package/THIRD_PARTY_NOTICES.adoc" \
   "$package/package.json" \
+  "$package/example/" \
+  "$package/example/app.mjs" \
+  "$package/example/index.html" \
   "$package/wasm/" \
   "$package/wasm/adocweave_wasm.d.ts" \
   "$package/wasm/adocweave_wasm.js" \
@@ -222,15 +226,52 @@ printf '%s\n' \
   "$package/worker/client.mjs" \
   "$package/worker/contracts.mjs" \
   "$package/worker/controller.mjs" \
+  "$package/worker/index.d.mts" \
+  "$package/worker/index.mjs" \
   "$package/worker/worker.mjs" | LC_ALL=C sort > "$expected"
 diff -u "$expected" "$actual"
 echo "browser release package verified: $second"
+'''
+
+[tasks.test-browser-types]
+description = "Compile-check the public browser TypeScript declarations"
+command = "tsc"
+args = ["--project", "web-worker/tsconfig.json"]
+
+[tasks.test-browser-smoke]
+description = "Run the extracted browser archive in isolated and fallback Chromium contexts"
+dependencies = ["package-browser-release", "test-browser-types"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tar.xz"
+'''
+
+[tasks.test-browser-bundler]
+description = "Bundle the public browser API with esbuild and smoke test its asset URL resolution"
+dependencies = ["package-browser-release", "test-browser-types"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+package="adocweave-browser-$version"
+source_archive="target/distrib/$package.tar.xz"
+root="$(mktemp -d target/browser-bundler.XXXXXX)"
+archive="$root/$package-bundled.tar.xz"
+trap 'rm -rf "$root"' EXIT
+tar -xJf "$source_archive" -C "$root"
+esbuild web-worker/bundler-entry.mjs \
+  --bundle --format=esm --platform=browser \
+  --outfile="$root/$package/example/app.mjs"
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+  -cJf "$archive" -C "$root" "$package"
+node tools/browser-release-smoke.mjs "$archive"
 '''
 
 [tasks.build-wasm-node]
 description = "Build wasm-bindgen Node.js artifacts for cross-runtime conformance"
 script_runner = "@shell"
 script = '''
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
 cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
 wasm-bindgen \
   --target nodejs \
@@ -459,6 +500,8 @@ dependencies = [
   "test-profile-release",
   "wasm-size",
   "test-browser-release-package",
+  "test-browser-smoke",
+  "test-browser-bundler",
   "native-release-smoke-host",
   "dist-plan",
 ]

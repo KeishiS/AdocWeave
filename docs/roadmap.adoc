@@ -292,8 +292,8 @@ GitHub ReleasesをCLI、Language Serverおよびbrowser向けリアルタイムH
 入力に対して最新generationの安全なHTMLと診断を返す。DOM描画とUI stateは利用側が所有し、Zedは
 frontend libraryではなく公開LSP binaryのconsumerとして扱う。
 
-Issue 090から094の構造収束とIssue 082の配布契約を完了した。次はIssue 083から088でLinux x86-64／ARM64の
-native artifact、browser library、checksum／SBOM／provenance、
+Issue 090から094の構造収束、Issue 082の配布契約、Issue 083のnative artifactおよびIssue 084の
+xref:browser-library.adoc[browser library]を完了した。次はIssue 085から088でchecksum／SBOM／provenance、
 原子的なGitHub Actions workflow、ZedによるLSP取得およびclean環境での受け入れを順に実装する。
 最初のrelease candidateでは、開発中に増加した6種類の公開契約versionを一度だけすべて`1`へリセットし、
 以後の公開互換性履歴のbaselineとする。macOS／WindowsはLinux releaseの運用を確認した後のmilestoneへ延期する。

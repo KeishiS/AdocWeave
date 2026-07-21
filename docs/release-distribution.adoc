@@ -40,7 +40,7 @@ CLIとLSPは`dist 0.32.0`が生成する`adocweave-cli-{target}.tar.xz`および
 xref:native-release.adoc[Native CLI・Language Server配布契約]で定義する。
 
 browser packageは`adocweave-browser-{version}.tar.xz`であり、`dist`のextra artifactとして同じreleaseへ
-一度だけ統合する。内容と最小例はxref:../web-worker/README.adoc[`web-worker/README.adoc`]で定義する。
+一度だけ統合する。公開API、内容と最小例はxref:browser-library.adoc[ブラウザライブラリ]で定義する。
 GitHubが自動生成するsource archiveはbinary配布契約に含めない。
 
 == Distribution manifest

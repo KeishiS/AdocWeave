@@ -38,6 +38,7 @@ dry run、release train、target matrix、browser extra artifactおよび公的r
 . SharedArrayBufferを使える環境では解析中キャンセルが働く。
 . SharedArrayBufferを使えない環境ではWorker再生成による縮退経路が働く。
 . CSPとcross-origin isolationがxref:wasm-worker.adoc[WASM統合契約]を満たす。
+. 配布archiveのTypeScript宣言、size上限、機械固有path不在およびesbuild後のasset解決が通る。
 
 == Nativeホスト
 

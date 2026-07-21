@@ -3,7 +3,7 @@ export const WORKER_PROTOCOL_VERSION = 1;
 export function createController({
   process,
   publish,
-  cancellation,
+  isCurrent,
   debounceMs = 40,
   schedule = setTimeout,
   unschedule = clearTimeout,
@@ -39,17 +39,17 @@ export function createController({
       const generation = request.generation;
       if (
         generation !== latestGeneration ||
-        Atomics.load(cancellation, 0) !== generation
+        !isCurrent(generation)
       ) {
         return;
       }
       try {
         const result = process(request.payload, () => {
-          return Atomics.load(cancellation, 0) !== generation;
+          return !isCurrent(generation);
         });
         if (
           generation === latestGeneration &&
-          Atomics.load(cancellation, 0) === generation
+          isCurrent(generation)
         ) {
           publish({
             protocolVersion: WORKER_PROTOCOL_VERSION,
@@ -60,7 +60,7 @@ export function createController({
           });
         }
       } catch (error) {
-        if (Atomics.load(cancellation, 0) === generation) {
+        if (isCurrent(generation)) {
           publish({
             protocolVersion: WORKER_PROTOCOL_VERSION,
             type: "error",

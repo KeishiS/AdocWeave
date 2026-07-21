@@ -38,10 +38,15 @@
               cargo
               cargo-dist
               cargo-make
+              chromium
+              dejavu_fonts
+              esbuild
+              fontconfig
               clippy
               gnutar
               lld
               nodejs
+              typescript
               ripgrep
               rust-analyzer
               rustc

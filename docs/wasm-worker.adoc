@@ -74,7 +74,7 @@ JSへ渡すversionとgenerationは`u32`に制限し、JavaScript numberの整数
 
 == Worker protocol
 
-UIはxref:../web-worker/client.mjs[`AdocWeaveWorkerClient`]を通じて専用Workerへ要求する。
+UIはxref:browser-library.adoc[`AdocWeaveClient`]を通じて専用Workerへ要求する。
 clientはgenerationを単調増加させ、共有された32 bit整数へ最新generationを書いてから
 要求を送る。Workerは短いdebounce後に最新要求だけを実行し、versionとgenerationが
 現在値に一致する結果だけを通知する。
@@ -84,9 +84,9 @@ clientはgenerationを単調増加させ、共有された32 bit整数へ最新g
 `CancellationCheck`へ接続する。main threadはWASM実行中でも`Atomics.store`でき、
 Parserの検査点で協調停止できる。
 
-`SharedArrayBuffer`を利用できない環境では、ホストは古いWorkerを`terminate()`して
-新しいWorkerを生成する。Futureの破棄やmessage送信だけで同期WASMが停止したと仮定しては
-ならない。
+`SharedArrayBuffer`を利用できない環境では、公開clientが古いWorkerを`terminate()`して
+新しいWorkerを生成する。この差は公開APIの内側へ隠す。Futureの破棄やmessage送信だけで同期WASMが
+停止したと仮定してはならない。
 
 == 資源上限と縮退
 
@@ -107,8 +107,8 @@ xref:../fixtures/conformance/cases.json[`fixtures/conformance/cases.json`]であ
 
 == CSPと信頼境界
 
-SharedArrayBufferにはcross-origin isolationが必要であり、通常は次のheaderをホストが
-設定する。
+SharedArrayBufferにはcross-origin isolationが必要であり、通常は次のheaderをmain documentと
+Worker moduleを含む同一contextの全応答へ設定する。
 
 [source,text]
 ----
