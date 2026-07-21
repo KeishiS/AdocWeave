@@ -264,19 +264,19 @@ impl WorkspaceResources {
             .get(root)
             .cloned()
             .ok_or_else(|| format!("workspace resource is missing: {root}"))?;
-        let mut snapshot = ResourceSnapshot::default();
+        let mut snapshot_entries = Vec::new();
         let mut resource_versions = BTreeMap::new();
         for uri in self.dependency_graph.dependencies(&root.uri.to_string()) {
             let Some(resource) = self.resources.get(&uri) else {
                 continue;
             };
-            snapshot.insert(
+            snapshot_entries.push((
                 uri.clone(),
                 ResourceDocument {
                     source_id: SourceId::new(uri.clone()),
                     source: resource.text.to_string(),
                 },
-            );
+            ));
             resource_versions.insert(uri, resource.version);
         }
         let mut allowed_schemes = BTreeSet::new();
@@ -291,7 +291,7 @@ impl WorkspaceResources {
                 ..PreprocessOptions::default()
             },
             root,
-            snapshot,
+            snapshot: snapshot_entries.into_iter().collect(),
             resource_versions,
         })
     }

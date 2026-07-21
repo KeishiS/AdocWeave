@@ -106,7 +106,7 @@ pub fn prepare(
     let policy = LocalResourcePolicy::new(roots, ResourceLimits::default())
         .map_err(LocalIncludeError::Host)?;
 
-    let mut snapshot = ResourceSnapshot::default();
+    let mut snapshot_entries = Vec::new();
     let mut sources = BTreeMap::new();
     if let Some(source_id) = &source_id {
         sources.insert(source_id.clone(), source.to_owned());
@@ -127,14 +127,16 @@ pub fn prepare(
         enqueue(&text, parent, &mut pending)?;
         let source_id = canonical.to_string_lossy().into_owned();
         sources.insert(source_id.clone(), text.clone());
-        snapshot.insert(
+        snapshot_entries.push((
             logical_key(&target),
             ResourceDocument {
                 source_id: SourceId::new(source_id),
                 source: text,
             },
-        );
+        ));
     }
+
+    let snapshot: ResourceSnapshot = snapshot_entries.into_iter().collect();
 
     let document = preprocess(
         source,

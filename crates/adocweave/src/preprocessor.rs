@@ -42,6 +42,14 @@ impl ResourceSnapshot {
     }
 }
 
+impl FromIterator<(String, ResourceDocument)> for ResourceSnapshot {
+    fn from_iter<T: IntoIterator<Item = (String, ResourceDocument)>>(resources: T) -> Self {
+        Self {
+            resources: resources.into_iter().collect(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreprocessOptions {
     pub source_id: Option<SourceId>,
