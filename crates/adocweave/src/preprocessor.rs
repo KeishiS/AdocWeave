@@ -5,6 +5,10 @@ use std::error::Error;
 use std::fmt;
 
 use crate::core::{Analysis, Engine, ParseError, SourceId};
+use crate::diagnostic::{Diagnostic, RelatedInformation, TextEdit};
+use crate::document::DocumentSymbol;
+use crate::inline::Reference;
+use crate::resource::ResourceReference;
 use crate::source::{TextRange, TextSize};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -81,6 +85,8 @@ pub struct Directive {
     pub source_id: Option<SourceId>,
     pub range: TextRange,
     pub target: String,
+    /// Definition target for an include; absent for conditionals.
+    pub resource_source_id: Option<SourceId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +99,13 @@ pub struct SourceOrigin {
 pub struct SourceMapSegment {
     pub output_range: TextRange,
     pub origin: SourceOrigin,
+    pub mapping: SourceMapping,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceMapping {
+    Identity,
+    WholeOrigin,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,6 +144,130 @@ impl PreprocessedDocument {
             .find(|segment| segment.output_range.end() == output_range.start())
             .map(|segment| &segment.origin)
     }
+
+    /// Projects an expanded range into all originating source ranges.
+    ///
+    /// Adjacent pieces in the same source are merged. For an unchanged segment,
+    /// the relative byte range is preserved. A transformed segment (for example
+    /// `indent` or `leveloffset`) conservatively maps to its complete source line.
+    pub fn origins_for_range(&self, output_range: TextRange) -> Vec<SourceOrigin> {
+        if output_range.is_empty() {
+            return self
+                .origin_for_range(output_range)
+                .cloned()
+                .into_iter()
+                .collect();
+        }
+        let mut origins: Vec<SourceOrigin> = Vec::new();
+        for segment in &self.source_map {
+            let start = segment
+                .output_range
+                .start()
+                .to_u32()
+                .max(output_range.start().to_u32());
+            let end = segment
+                .output_range
+                .end()
+                .to_u32()
+                .min(output_range.end().to_u32());
+            if start >= end {
+                continue;
+            }
+
+            let range = if segment.mapping == SourceMapping::Identity {
+                let relative_start = start.saturating_sub(segment.output_range.start().to_u32());
+                let relative_end = end.saturating_sub(segment.output_range.start().to_u32());
+                TextRange::new(
+                    TextSize::new(
+                        segment.origin.range.start().to_usize() + relative_start as usize,
+                    )
+                    .expect("projected source offset is bounded"),
+                    TextSize::new(segment.origin.range.start().to_usize() + relative_end as usize)
+                        .expect("projected source offset is bounded"),
+                )
+                .expect("projected source range is ordered")
+            } else {
+                segment.origin.range
+            };
+            let origin = SourceOrigin {
+                source_id: segment.origin.source_id.clone(),
+                range,
+            };
+            if let Some(previous) = origins.last_mut()
+                && previous.source_id == origin.source_id
+                && previous.range.end() == origin.range.start()
+            {
+                previous.range = TextRange::new(previous.range.start(), origin.range.end())
+                    .expect("merged source range is ordered");
+            } else {
+                origins.push(origin);
+            }
+        }
+        origins
+    }
+
+    fn mapping_is_identity(&self, output_range: TextRange) -> bool {
+        !output_range.is_empty()
+            && self.source_map.iter().any(|segment| {
+                segment.mapping == SourceMapping::Identity
+                    && segment.output_range.start() <= output_range.start()
+                    && output_range.end() <= segment.output_range.end()
+            })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Originated<T> {
+    pub origins: Vec<SourceOrigin>,
+    pub value: T,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedFix {
+    pub title: String,
+    pub applicability: crate::diagnostic::Applicability,
+    pub applicable: bool,
+    pub edits: Vec<Originated<TextEdit>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedDiagnostic {
+    pub diagnostic: Diagnostic,
+    pub origins: Vec<SourceOrigin>,
+    pub related: Vec<Originated<RelatedInformation>>,
+    pub fixes: Vec<ProjectedFix>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedDocumentSymbol {
+    pub symbol: DocumentSymbol,
+    pub origins: Vec<SourceOrigin>,
+    pub selection_origins: Vec<SourceOrigin>,
+    pub children: Vec<ProjectedDocumentSymbol>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedReference {
+    pub value: Reference,
+    pub origins: Vec<SourceOrigin>,
+    pub target_origins: Vec<SourceOrigin>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedResource {
+    pub value: ResourceReference,
+    pub origins: Vec<SourceOrigin>,
+    pub target_origins: Vec<SourceOrigin>,
+}
+
+/// All editor-facing facts from an expanded analysis, projected to original sources.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnalysisProjection {
+    pub directives: Vec<Directive>,
+    pub diagnostics: Vec<ProjectedDiagnostic>,
+    pub references: Vec<ProjectedReference>,
+    pub resources: Vec<ProjectedResource>,
+    pub symbols: Vec<ProjectedDocumentSymbol>,
 }
 
 /// Analysis paired with the source map used to build it.
@@ -138,6 +275,106 @@ impl PreprocessedDocument {
 pub struct PreprocessedAnalysis {
     pub document: PreprocessedDocument,
     pub analysis: Analysis,
+}
+
+impl PreprocessedAnalysis {
+    pub fn project_origins(&self) -> AnalysisProjection {
+        let map = &self.document;
+        let diagnostics = self
+            .analysis
+            .diagnostics()
+            .iter()
+            .cloned()
+            .map(|diagnostic| ProjectedDiagnostic {
+                origins: map.origins_for_range(diagnostic.range),
+                related: diagnostic
+                    .related
+                    .iter()
+                    .cloned()
+                    .map(|value| Originated {
+                        origins: map.origins_for_range(value.range),
+                        value,
+                    })
+                    .collect(),
+                fixes: diagnostic
+                    .fixes
+                    .iter()
+                    .cloned()
+                    .map(|fix| {
+                        let edits: Vec<_> = fix
+                            .edits()
+                            .iter()
+                            .cloned()
+                            .map(|value| Originated {
+                                origins: map.origins_for_range(value.range),
+                                value,
+                            })
+                            .collect();
+                        let applicable = edits.iter().all(|edit| edit.origins.len() == 1)
+                            && edits
+                                .iter()
+                                .all(|edit| map.mapping_is_identity(edit.value.range));
+                        ProjectedFix {
+                            title: fix.title,
+                            applicability: fix.applicability,
+                            applicable,
+                            edits,
+                        }
+                    })
+                    .collect(),
+                diagnostic,
+            })
+            .collect();
+        let references = self
+            .analysis
+            .references()
+            .iter()
+            .cloned()
+            .map(|value| ProjectedReference {
+                origins: map.origins_for_range(value.range),
+                target_origins: map.origins_for_range(value.target_range),
+                value,
+            })
+            .collect();
+        let resources = self
+            .analysis
+            .resources()
+            .iter()
+            .cloned()
+            .map(|value| ProjectedResource {
+                origins: map.origins_for_range(value.range),
+                target_origins: map.origins_for_range(value.target_range),
+                value,
+            })
+            .collect();
+        let symbols = crate::document::document_symbols(self.analysis.ast())
+            .into_iter()
+            .map(|symbol| project_symbol(map, symbol))
+            .collect();
+        AnalysisProjection {
+            directives: self.document.directives.clone(),
+            diagnostics,
+            references,
+            resources,
+            symbols,
+        }
+    }
+}
+
+fn project_symbol(
+    map: &PreprocessedDocument,
+    mut symbol: DocumentSymbol,
+) -> ProjectedDocumentSymbol {
+    let children = std::mem::take(&mut symbol.children)
+        .into_iter()
+        .map(|child| project_symbol(map, child))
+        .collect();
+    ProjectedDocumentSymbol {
+        origins: map.origins_for_range(symbol.range),
+        selection_origins: map.origins_for_range(symbol.selection_range),
+        symbol,
+        children,
+    }
 }
 
 #[derive(Debug)]
@@ -269,6 +506,7 @@ impl Context<'_> {
                 SelectedLine {
                     text: line.to_owned(),
                     range: range(start, offset),
+                    mapping: SourceMapping::Identity,
                 }
             })
             .collect();
@@ -285,7 +523,7 @@ impl Context<'_> {
         if depth >= self.options.max_include_depth {
             return Err(error(
                 PreprocessErrorKind::DepthLimit,
-                source_id,
+                source_id.clone(),
                 range,
                 "include depth limit exceeded",
             ));
@@ -302,12 +540,6 @@ impl Context<'_> {
         self.bump_node(source_id.clone(), range)?;
         let expanded_target = expand_attributes(&include.target, &self.options.attributes);
         let target = resolve_target(&expanded_target, self.options.base_uri.as_deref());
-        self.directives.push(Directive {
-            kind: DirectiveKind::Include,
-            source_id: source_id.clone(),
-            range,
-            target: target.clone(),
-        });
         validate_target(&target, self.options).map_err(|message| {
             error(
                 PreprocessErrorKind::UnsafeTarget,
@@ -327,11 +559,18 @@ impl Context<'_> {
         let document = self.snapshot.get(&target).ok_or_else(|| {
             error(
                 PreprocessErrorKind::MissingResource,
-                source_id,
+                source_id.clone(),
                 range,
                 format!("resource snapshot does not contain {target}"),
             )
         })?;
+        self.directives.push(Directive {
+            kind: DirectiveKind::Include,
+            source_id: source_id.clone(),
+            range,
+            target: target.clone(),
+            resource_source_id: Some(document.source_id.clone()),
+        });
         let attributes = parse_attributes(&include.attributes);
         if let Some(encoding) = attributes.get("encoding")
             && !encoding.eq_ignore_ascii_case("utf-8")
@@ -369,6 +608,7 @@ impl Context<'_> {
                     source_id: source_id.clone(),
                     range: line.range,
                     target: directive.target.clone(),
+                    resource_source_id: None,
                 });
                 match directive.kind {
                     DirectiveKind::Ifdef | DirectiveKind::Ifndef
@@ -387,6 +627,7 @@ impl Context<'_> {
                                 &format!("{}{ending}", directive.attributes),
                                 source_id.clone(),
                                 line.range,
+                                SourceMapping::WholeOrigin,
                             )?;
                         }
                     }
@@ -430,10 +671,15 @@ impl Context<'_> {
                     self.expand_include(include, source_id.clone(), line.range, depth)?;
                 } else if let Some(literal) = escaped_directive(content) {
                     let ending = &line.text[content.len()..];
-                    self.append(&format!("{literal}{ending}"), source_id.clone(), line.range)?;
+                    self.append(
+                        &format!("{literal}{ending}"),
+                        source_id.clone(),
+                        line.range,
+                        SourceMapping::WholeOrigin,
+                    )?;
                 } else {
                     self.bump_node(source_id.clone(), line.range)?;
-                    self.append(&line.text, source_id.clone(), line.range)?;
+                    self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
                 }
             }
         }
@@ -470,6 +716,7 @@ impl Context<'_> {
         value: &str,
         source_id: Option<SourceId>,
         origin_range: TextRange,
+        mapping: SourceMapping,
     ) -> Result<(), PreprocessError> {
         let start = self.output.len();
         let end = start.saturating_add(value.len());
@@ -489,6 +736,7 @@ impl Context<'_> {
                     source_id,
                     range: origin_range,
                 },
+                mapping,
             });
         }
         Ok(())
@@ -609,6 +857,7 @@ fn parse_attributes(value: &str) -> BTreeMap<String, String> {
 struct SelectedLine {
     text: String,
     range: TextRange,
+    mapping: SourceMapping,
 }
 
 fn select_lines(source: &str, attributes: &BTreeMap<String, String>) -> Vec<SelectedLine> {
@@ -652,6 +901,7 @@ fn select_lines(source: &str, attributes: &BTreeMap<String, String>) -> Vec<Sele
             output.push(SelectedLine {
                 text: line.to_owned(),
                 range: range(offset, offset + line.len()),
+                mapping: SourceMapping::Identity,
             });
         }
         offset += line.len();
@@ -694,6 +944,7 @@ fn transform_lines(
     lines
         .into_iter()
         .map(|mut line| {
+            let original = line.text.clone();
             if leveloffset != 0 {
                 line.text = apply_leveloffset(&line.text, leveloffset);
             }
@@ -708,6 +959,9 @@ fn transform_lines(
                     .count()
                     .min(remove);
                 line.text.drain(..leading);
+            }
+            if line.text != original {
+                line.mapping = SourceMapping::WholeOrigin;
             }
             line
         })
@@ -897,5 +1151,88 @@ mod tests {
         };
         let result = preprocess("include::one.adoc[]\n", &snapshot, &options).expect("result");
         assert_eq!(result.source, "chapter\n");
+    }
+
+    #[test]
+    fn range_projection_preserves_identity_and_marks_transforms_conservatively() {
+        let document = PreprocessedDocument {
+            source: "abcXYZ".to_owned(),
+            source_map: vec![
+                SourceMapSegment {
+                    output_range: range(0, 3),
+                    origin: SourceOrigin {
+                        source_id: Some(SourceId::new("root")),
+                        range: range(10, 13),
+                    },
+                    mapping: SourceMapping::Identity,
+                },
+                SourceMapSegment {
+                    output_range: range(3, 6),
+                    origin: SourceOrigin {
+                        source_id: Some(SourceId::new("included")),
+                        range: range(20, 28),
+                    },
+                    mapping: SourceMapping::WholeOrigin,
+                },
+            ],
+            directives: Vec::new(),
+        };
+
+        assert_eq!(
+            document.origins_for_range(range(1, 5)),
+            vec![
+                SourceOrigin {
+                    source_id: Some(SourceId::new("root")),
+                    range: range(11, 13),
+                },
+                SourceOrigin {
+                    source_id: Some(SourceId::new("included")),
+                    range: range(20, 28),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn analysis_projection_maps_reference_resource_and_symbol_targets() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("part"),
+                source: "== Included\nSee xref:other.adoc#target[] and image::cover.png[].\n"
+                    .to_owned(),
+            },
+        );
+        let engine = Engine::new(crate::core::ParseOptions::default());
+        let analysis = preprocess_and_analyze(
+            &engine,
+            "include::part.adoc[]\n",
+            &snapshot,
+            &PreprocessOptions {
+                source_id: Some(SourceId::new("root")),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("analysis");
+        let projection = analysis.project_origins();
+
+        assert_eq!(projection.symbols.len(), 1);
+        assert_eq!(projection.references.len(), 1);
+        assert_eq!(projection.resources.len(), 1);
+        assert_eq!(
+            projection.references[0].target_origins[0]
+                .source_id
+                .as_ref()
+                .map(SourceId::as_str),
+            Some("part")
+        );
+        assert_eq!(
+            projection.resources[0].target_origins[0]
+                .source_id
+                .as_ref()
+                .map(SourceId::as_str),
+            Some("part")
+        );
     }
 }
