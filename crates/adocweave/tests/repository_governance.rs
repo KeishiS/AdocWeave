@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
 
@@ -61,11 +61,6 @@ fn validate_issue_dependencies(
             if !metadata.contains_key(dependency) {
                 return Err(format!("issue {id} depends on missing issue {dependency}"));
             }
-            if dependency >= id {
-                return Err(format!(
-                    "issue {id} has a cyclic or forward dependency {dependency}"
-                ));
-            }
             if status == "completed"
                 && metadata.get(dependency).map(|value| value.0.as_str()) != Some("completed")
             {
@@ -74,6 +69,32 @@ fn validate_issue_dependencies(
                 ));
             }
         }
+    }
+
+    fn visit(
+        id: &str,
+        metadata: &BTreeMap<String, (String, Vec<String>)>,
+        visiting: &mut BTreeSet<String>,
+        visited: &mut BTreeSet<String>,
+    ) -> Result<(), String> {
+        if visited.contains(id) {
+            return Ok(());
+        }
+        if !visiting.insert(id.to_owned()) {
+            return Err(format!("issue dependency cycle contains {id}"));
+        }
+        for dependency in &metadata[id].1 {
+            visit(dependency, metadata, visiting, visited)?;
+        }
+        visiting.remove(id);
+        visited.insert(id.to_owned());
+        Ok(())
+    }
+
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    for id in metadata.keys() {
+        visit(id, metadata, &mut visiting, &mut visited)?;
     }
     Ok(())
 }
@@ -255,21 +276,25 @@ fn every_issue_header_status_dependency_and_roadmap_entry_is_consistent() {
 }
 
 #[test]
-fn issue_governance_validator_rejects_missing_forward_and_unfinished_dependencies() {
+fn issue_governance_validator_accepts_forward_dependencies_and_rejects_invalid_graphs() {
     let mut metadata = BTreeMap::from([
         ("001".to_owned(), ("completed".to_owned(), Vec::new())),
         (
             "002".to_owned(),
-            ("completed".to_owned(), vec!["003".to_owned()]),
+            ("planned".to_owned(), vec!["003".to_owned()]),
         ),
         ("003".to_owned(), ("planned".to_owned(), Vec::new())),
     ]);
+    assert!(validate_issue_dependencies(&metadata).is_ok());
+
+    metadata.get_mut("003").expect("issue").1 = vec!["002".to_owned()];
     assert!(
         validate_issue_dependencies(&metadata)
-            .expect_err("forward dependency")
-            .contains("forward")
+            .expect_err("dependency cycle")
+            .contains("cycle")
     );
 
+    metadata.get_mut("003").expect("issue").1.clear();
     metadata.get_mut("002").expect("issue").1 = vec!["999".to_owned()];
     assert!(
         validate_issue_dependencies(&metadata)
@@ -278,6 +303,7 @@ fn issue_governance_validator_rejects_missing_forward_and_unfinished_dependencie
     );
 
     metadata.get_mut("002").expect("issue").1 = vec!["001".to_owned()];
+    metadata.get_mut("002").expect("issue").0 = "completed".to_owned();
     metadata.get_mut("001").expect("issue").0 = "planned".to_owned();
     assert!(
         validate_issue_dependencies(&metadata)

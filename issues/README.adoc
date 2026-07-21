@@ -1,6 +1,7 @@
 = AdocWeave 実装Issue一覧
 
-各Issueは、単独で動作確認できる最小限の変更単位を表す。原則として番号順に進めるが、依存関係を満たすIssueは並行して実施してよい。
+各Issueは、設計と差分レビューが可能な変更単位を表す。Issue番号は安定した識別子であり、実行順は
+`:depends-on:`とマイルストーンの記述を正本とする。依存関係を満たすIssueは並行して実施してよい。
 
 本計画は標準AsciiDocの部分集合とホスト非依存な解析・出力・エディター基盤を扱う。
 特定ノートアプリの属性スキーマ、DB投影、サーバおよび製品統合は外部リポジトリが所有する。
@@ -23,7 +24,8 @@
 - 文書内、文書間および任意スキーム参照は共通の参照型、診断、投影およびLSP問い合わせを
   利用し、通常の外部URLとは型で区別する。
 - リポジトリの説明文書は原則として日本語で記述し、形式はAsciiDoc（`.adoc`）に統一する。
-- Issue番号は依存順を示す。実装開始前に各Issueの未決事項が解消されていることを確認する。
+- Issue番号だけから実装順を推測せず、`:depends-on:`を確認する。実装開始前に各Issueの未決事項が
+  解消されていることを確認する。
 
 == マイルストーン
 
@@ -117,14 +119,28 @@ Issue 072から075の完了後レビューで、AsciiDoc cellとtop-levelのbloc
 
 * xref:089-unified-block-sequence-parser.adoc[089: Block sequence parserの再帰context統合]（完了）
 
-=== M19: GitHub Releasesによるbinary配布
+=== M19: 公開前のsemantic・parser収束
+
+Issue 089完了後の再監査で、再帰入力の断片複製、nested heading IDのcatalog外生成、区切り付きリテラルの
+二重表現、可変走査の重複およびtable入力規則の分散を確認した。公開契約を固定する前に、互換層を設けず
+source、identifier、semantic tree、table、parser出力の順で不変条件を収束させる。
+
+* xref:090-borrowed-block-input-ranges.adoc[090: 借用source rangeによる再帰block入力]（計画）
+* xref:091-document-wide-identifier-catalog.adoc[091: 文書全体のidentifier catalog統一]（計画）
+* xref:092-semantic-block-model-and-mutable-traversal.adoc[092: Semantic block表現と可変走査の正規化]（計画）
+* xref:093-table-input-specification.adoc[093: Table入力仕様とdelimiter解決の集約]（計画）
+* xref:094-parser-output-and-module-convergence.adoc[094: Parser出力型とmodule境界の最終収束]（計画）
+
+=== M20: GitHub Releasesによるbinary配布
 
 CLI、Language ServerおよびリアルタイムHTML変換用browser libraryを一つのversion付きGitHub Releaseとして
 公開する。初回native対象はLinux x86-64／ARM64に限定する。公開前に開発中の6契約versionを一度だけ`1`へ
 リセットし、native build、browser package、完全性、公開workflow、Zed自動取得および利用者受け入れを分離する。
 一部assetだけを公開しない原子的なreleaseを完了条件とし、macOS／WindowsはLinux公開後に追加する。
 
-* xref:082-release-contract-and-target-matrix.adoc[082: 配布契約とtarget matrix]（計画）
+Issue 082はIssue 094完了後に開始する。番号ではなく明示的な依存関係を実行順の正本とする。
+
+* xref:082-release-contract-and-target-matrix.adoc[082: 配布契約とtarget matrix]（計画、Issue 094完了後）
 * xref:083-native-cli-lsp-release-artifacts.adoc[083: CLIとLSPのnative release artifact]（計画）
 * xref:084-browser-realtime-html-library.adoc[084: リアルタイムHTML変換用browser library]（計画）
 * xref:085-release-integrity-sbom-and-provenance.adoc[085: Release integrity、SBOM、provenance]（計画）

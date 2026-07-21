@@ -1,0 +1,23 @@
+= Table入力仕様とdelimiter解決の集約
+:status: planned
+:depends-on: 090,092
+
+== 目的
+
+table delimiter、`format`属性、`separator`属性およびcell content modelの決定をtable domainへ集約し、parserに
+分散した入力形式の規則を一つの型付き仕様へ置換する。
+
+== 作業
+
+* `TableInputSpec`を導入し、開始delimiterとblock metadataからformat、separator、cell parserを決定する。
+* `custom_table_delimiter`と入力形式推論を`table` moduleへ移し、block parserは認識結果をdispatchするだけにする。
+* 明示`format`／`separator`とdelimiter shorthandの優先順位、競合時の診断および回復を規範化する。
+* custom separatorで許可するUnicode scalarを定義し、制御文字、`=`および不正なdelimiterを拒否する。
+* PSV、CSV、DSV、nested tableおよびAsciiDoc style cellの組合せをtable-driven testにする。
+* grammar、tables、syntax support、compatibilityおよびconformance fixtureを同期する。
+
+== 完了条件
+
+table入力形式を決定する公開された規則が`TableInputSpec`に一つだけあり、parser側にseparatorの暗黙推論を残さない。
+同じdelimiterとmetadataはnative、WASM、HTML、Lintで同じtable意味を生成し、不正なseparatorは決定的な診断へなる。
+

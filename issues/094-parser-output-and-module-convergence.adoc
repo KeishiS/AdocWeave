@@ -1,0 +1,24 @@
+= Parser出力型とmodule境界の最終収束
+:status: planned
+:depends-on: 091,092,093
+
+== 目的
+
+再帰block parserの出力をcontextごとの利用可能なfactへ型付けし、状態と不変条件の整理後に`parser.rs`の責務を
+機能単位へ分割する。公開前に一時的な互換wrapperと暗黙に破棄されるfactを残さない。
+
+== 作業
+
+* rootとnestedで共通するblock／syntax／anchor factと、rootだけのheader／document attribute factを分離する。
+* `BlockSequenceOutput`をcontext別の型、または共通出力とroot集約器へ置換し、未使用fieldの黙示破棄をなくす。
+* parser状態機械、delimiter block、list継続、document headerを責務単位のmoduleへ移す。
+* 型を別moduleへ公開するだけの薄いwrapperや循環依存を作らず、共有budget、cancel、source rangeの所有者を明記する。
+* raw parse factからlowering、identifier catalog、structure、diagnostic確定までの順序を型と文書で固定する。
+* native、WASM、CLI、LSP、Zedおよび全契約fixtureを最終APIへ一斉移行する。
+* architecture、roadmap、Issue 067／080／089の完了記録と実装上の差異を明記する。
+
+== 完了条件
+
+nested parserがroot専用factを生成・破棄せず、各moduleの入力と出力に所有する不変条件が記述されている。
+`parser.rs`がblock種別固有の全実装を抱えず、新構文の追加箇所がrecognition、semantic construction、consumer契約として
+追跡可能である。`cargo make release-gate`が最終構成で成功し、Issue 082以降の公開作業へ進める。

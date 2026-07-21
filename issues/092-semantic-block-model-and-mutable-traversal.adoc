@@ -1,0 +1,31 @@
+= Semantic block表現と可変走査の正規化
+:status: planned
+:depends-on: 091
+
+== 目的
+
+同じAsciiDoc構文を表す重複AST variantを廃止し、子blockの所在を定義する再帰規則を一つの構造APIへ集約する。
+
+== 背景
+
+区切り付きリテラルは`AstBlock::Literal(LiteralBlock)`と
+`AstBlock::Delimited(DelimitedBlockKind::Literal)`の二通りで表現される。通常のline recognizerでは
+`delimiter_spec("....")`が先に一致するため`LineRecognition::Literal`は到達不能である。またimmutable walkerとは
+別に、heading正規化、inline属性解決、table設定およびsyntax diagnosticがそれぞれ子block再帰を実装している。
+
+== 作業
+
+* 区切り付きリテラルを`DelimitedBlock`のverbatim contentへ統一し、`LiteralBlock`、`AstBlock::Literal`および
+  `LineRecognition::Literal`を削除する。
+* リスト継続、syntax tree、Formatter、HTML、Lint、projectionおよびconformanceを単一表現へ移行する。
+* semantic treeに、子blockの構造だけを共有するimmutable／mutable traversal primitiveを定義する。
+* `visit_blocks_mut`、`configure_tables`、`block_issues`等の独自再帰を共通primitiveへ移行する。
+* inline sequenceの可変走査はblock traversal上に構築し、出力backend固有の意味dispatchは各backendに残す。
+* 全container variantの到達集合がimmutable／mutable走査で一致するproperty testを追加する。
+
+== 完了条件
+
+区切り付きリテラルを表す公開semantic variantが一つだけで、到達不能なrecognition分岐がない。新しいcontainer
+variantを追加するとき、子block再帰を複数consumerへ手作業で追加する必要がない。属性解決、table設定、診断回収の
+到達集合が共通walkerと一致する。
+

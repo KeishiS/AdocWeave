@@ -1,0 +1,33 @@
+= 借用source rangeによる再帰block入力
+:status: planned
+:depends-on: 089
+
+== 目的
+
+compound blockとAsciiDoc table cellの再帰解析でsource断片を所有文字列へ複製せず、単一の
+`SourceDocument`と行範囲を共有する。深い入力で入力byte数と再帰深さの積に比例する再索引・複製を防ぎ、
+global source rangeを変換なしに維持する。
+
+== 背景
+
+現在の`parse_nested_blocks`は親文書から部分文字列を取り出し、`Arc<str>`と`SourceDocument`を階層ごとに
+再構築する。`BlockContext`の`start_line`／`end_line`も断片内の`0..line_count`として使われ、入力viewと
+context policyの責務が混在している。Issue 089でline dispatchは統一されたが、入力の所有と索引はまだ
+統一されていない。
+
+== 作業
+
+* `BlockInput`を導入し、借用`SourceDocument`と半開行範囲をblock sequence parserへ渡す。
+* compound blockと元source上のPSV AsciiDoc cellを、rootの行索引を再構築せずに解析する。
+* CSVのquote解除等により元sourceと意味内容が一致しないcellは、変換済み入力とsource mappingを型で区別する。
+* 入力範囲を`BlockContext`から分離し、contextにはheader可否、locationおよび深さpolicyだけを持たせる。
+* fragment作成byte数と行索引構築回数を計測し、深さを増やしてもroot入力を再走査しないproperty testを追加する。
+* source range、cancel、node／block／table budgetおよびnative／WASM一致を維持する。
+
+== 完了条件
+
+元sourceを共有できる再帰contextで`Arc::from(fragment_source)`および
+`SourceDocument::from_fragment_bounded`を呼ばない。深いcompound入力のsource索引構築が一回であり、全子nodeの
+rangeがroot source座標を直接指す。変換済みtable cellだけが明示的な別入力経路を使用し、その座標契約が
+文書化・試験される。
+

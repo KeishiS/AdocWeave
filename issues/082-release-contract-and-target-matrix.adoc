@@ -1,6 +1,6 @@
 = GitHub Releasesの配布契約とtarget matrix
 :status: planned
-:depends-on: 081
+:depends-on: 094
 
 == 目的
 
