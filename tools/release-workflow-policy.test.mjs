@@ -40,4 +40,8 @@ test("publisher cannot omit its protected environment or cleanup", () => {
     () => validateReleaseWorkflowPolicy({ ...inputs, publish: inputs.publish.replace("if: failure()", "if: success()") }),
     /clean up its draft/,
   );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({ ...inputs, publish: `${inputs.publish}\n# gh release view v0.1.0\n` }),
+    /tag-only release API/,
+  );
 });

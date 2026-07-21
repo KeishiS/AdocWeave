@@ -37,16 +37,14 @@ jobs:
           git diff --cached --exit-code
           node tools/release-contract.mjs "--tag=$tag"
           node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
-          error="$(mktemp)"
-          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" >/dev/null 2>"$error"; then
+          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          existing="$(jq --arg tag "$tag" -r '.[][] | select(.tag_name == $tag) | .id' <<<"$releases")"
+          if [ -n "$existing" ]; then
             echo "release already exists: $tag" >&2
             exit 1
           fi
-          if ! grep -q 'HTTP 404' "$error"; then
-            cat "$error" >&2
-            exit 1
-          fi
       - name: Create and verify private draft
+        id: draft
         env:
           GH_TOKEN: ${{ github.token }}
           PLAN: ${{ inputs.plan }}
@@ -58,10 +56,14 @@ jobs:
           printf '%s\n' "$body" > "$RUNNER_TEMP/release-notes.txt"
           args=(--draft --target "$GITHUB_SHA" --title "$title" --notes-file "$RUNNER_TEMP/release-notes.txt")
           if [ "$prerelease" = true ]; then args+=(--prerelease); fi
-          gh release create "$tag" "${args[@]}"
-          gh release upload "$tag" artifacts/*
+          gh release create "$tag" artifacts/* "${args[@]}"
+          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          draft="$(jq --arg tag "$tag" -c '[.[][] | select(.tag_name == $tag and .draft == true)]' <<<"$releases")"
+          test "$(jq 'length' <<<"$draft")" -eq 1
+          release_id="$(jq -r '.[0].id' <<<"$draft")"
+          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
           expected="$(find artifacts -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
-          actual="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[].name' | LC_ALL=C sort)"
+          actual="$(jq -r '.[0].assets[].name' <<<"$draft" | LC_ALL=C sort)"
           test "$actual" = "$expected"
       - name: Attest every public asset
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
@@ -70,10 +72,10 @@ jobs:
       - name: Publish the complete release
         env:
           GH_TOKEN: ${{ github.token }}
-          PLAN: ${{ inputs.plan }}
+          RELEASE_ID: ${{ steps.draft.outputs.release-id }}
         run: |
-          tag="$(jq -r '.announcement_tag' <<<"$PLAN")"
-          gh release edit "$tag" --draft=false
+          result="$(gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false)"
+          test "$(jq -r '.draft' <<<"$result")" = false
       - name: Remove an incomplete draft
         if: failure()
         env:
@@ -81,6 +83,8 @@ jobs:
           PLAN: ${{ inputs.plan }}
         run: |
           tag="$(jq -r '.announcement_tag' <<<"$PLAN")"
-          if gh release view "$tag" --json isDraft --jq '.isDraft' | grep -qx true; then
-            gh release delete "$tag" --yes
-          fi
+          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          jq --arg tag "$tag" -r '.[][] | select(.tag_name == $tag and .draft == true) | .id' <<<"$releases" |
+            while IFS= read -r release_id; do
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
+            done
