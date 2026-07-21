@@ -1,0 +1,32 @@
+= Zed拡張による公開LSP binaryの解決
+:status: planned
+:depends-on: 086
+
+== 目的
+
+Zed拡張が開発時の`PATH`優先動作を維持しつつ、通常導入時にはGitHub Releaseから対応platformの
+`adocweave-lsp`を安全に取得、検証、cacheおよび更新できるようにする。
+
+== 作業
+
+* Zed extension APIのplatform／architectureをRust targetとassetへ写像し、32-bitと未知platformを
+  明示的なerrorにする。
+* user設定またはworktreeの`PATH`にある明示binaryを最優先し、次にextensionが管理するversion一致binaryを
+  使う。暗黙にsystem binaryとdownload binaryを混在させない。
+* GitHub Releaseのdistribution manifestからexact extension versionのLSP assetとSHA-256を選択し、
+  temporary fileへdownload、hash検証、展開、permission設定、atomic renameの順でinstallする。
+* Zed extensionの`work` directoryだけへ保存し、project worktree、`PATH`および任意directoryへ書き込まない。
+* download中断、hash不一致、offline、rate limit、未対応platformおよびread-only filesystemを安定した
+  user-facing errorとlogへ変換する。
+* extension versionとLSP versionを同じrelease trainで固定し、更新失敗時は検証済み旧binaryを保持する。
+* dev extensionでは従来どおりlocal `target/debug/adocweave-lsp`を検証できる手順を残す。
+
+== 完了条件
+
+対応platformでcleanなZed user dataからLSPが自動取得・起動し、hash不一致を実行前に拒否する。PATH override、
+offline cache、更新rollbackおよび全失敗modeをadapter testとZed手動試験で確認する。
+
+== 参照
+
+* https://zed.dev/docs/extensions/installing-extensions[Zed extensionの保存場所]
+* https://zed.dev/docs/extensions/developing-extensions[Zed extension開発]

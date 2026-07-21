@@ -1,0 +1,26 @@
+= TransactionalなGitHub Release workflow
+:status: planned
+:depends-on: 083,084,085
+
+== 目的
+
+検証済みtagの同一commitから全platform assetをbuildし、すべて揃った場合だけGitHub Releaseを公開する。
+一部assetだけのreleaseや、再実行による既存assetの上書きを防ぐ。
+
+== 作業
+
+* PRではrelease plan、設定同期および必要に応じた全target buildを副作用なしで実行する。
+* tag workflowは最初に`cargo make release-gate`、clean tree、tag／version／contract同期を検査する。
+* target別build jobとbrowser library jobはartifactを一時保存し、publish権限を持たない。
+* 集約jobはasset集合、重複名、manifest、checksum、SBOM、smoke結果およびprovenance対象を検査する。
+* publish jobだけがprotected GitHub Environmentを使い、releaseを作成して全assetをuploadする。
+  prerelease tagはGitHub prerelease、stable tagはstable releaseとして扱う。
+* 同じtagへの並行実行をconcurrency groupで直列化し、既存releaseまたはassetがある場合は上書きせず失敗する。
+* workflow failure時は公開前なら外部状態を残さない。公開後の撤回、yank、security incidentおよび
+  attestation削除のrunbookを文書化する。
+* generated workflowは`dist` exact versionから再生成可能にし、手編集との差分をCIで拒否する。
+
+== 完了条件
+
+test repositoryまたはprerelease tagで5 targetのCLI／LSP、browser library、manifest、checksum、SBOMおよび
+attestationが一つのGitHub Releaseに揃う。任意のbuild失敗時にpartial releaseが公開されない。

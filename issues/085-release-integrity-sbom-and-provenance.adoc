@@ -1,0 +1,32 @@
+= Release integrity、SBOMおよびprovenance
+:status: planned
+:depends-on: 083,084
+
+== 目的
+
+利用者がGitHub Release assetの完全性、build元commitおよび依存関係を検証できるようにし、release jobの
+権限とsecret範囲を最小化する。
+
+== 作業
+
+* 全archiveとdistribution manifestにSHA-256を付与し、`SHA256SUMS`自身をprovenance対象にする。
+* native assetとbrowser libraryにmachine-readable SBOMを生成し、source commit、tool versionおよびtargetを
+  記録する。SBOM形式と生成toolをexact versionでpinする。
+* GitHub Artifact Attestationsで公開archive、distribution manifest、checksumおよびSBOMへbuild provenanceを
+  付与し、`gh attestation verify`とchecksumの利用手順を検証する。
+* build jobはread-only、publish jobだけを`contents: write`、`id-token: write`、`attestations: write`とし、
+  repository secretをbuild matrixへ渡さない。
+* third-party actionはcommit SHAへpinし、Dependabot等による更新を差分reviewする。
+* OS code signingを採用する場合はGitHub Environmentの承認と最小権限secretを使い、fork PRや通常CIから
+  参照できない構成にする。
+* attestationは脆弱性がないことの保証ではなく、sourceとbuild手順の来歴証明であると文書化する。
+
+== 完了条件
+
+downloadした各assetについてchecksumとGitHub attestationを別々に検証でき、SBOMがarchive内容・Cargo.lock・
+frontend依存と対応する。権限lintとfork PR相当のsecret非公開testが通る。
+
+== 参照
+
+* https://docs.github.com/en/actions/concepts/security/artifact-attestations[GitHub Artifact Attestations]
+* https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations[GitHub attestationの利用]

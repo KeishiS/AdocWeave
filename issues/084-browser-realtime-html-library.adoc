@@ -1,0 +1,34 @@
+= リアルタイムHTML変換用browser library
+:status: planned
+:depends-on: 082
+
+== 目的
+
+現在別々に存在する`wasm-bindgen`成果物と`web-worker` sourceを、frontendがAsciiDoc入力をリアルタイムで
+HTMLへ変換するためのversion付きbrowser libraryへする。library自身はDOMを変更せず、最新generationの
+HTMLと診断等を利用側へ返す。
+
+== 作業
+
+* `cargo make build-wasm`をrelease packaging用の決定的な出力directoryとfile名へ整理する。
+* `.wasm`、ES module glue、TypeScript declaration、`client.mjs`、`controller.mjs`、`worker.mjs`、契約定数、
+  `package.json`、license、READMEおよび最小HTML例を固定layoutでarchiveする。
+* frontendが直接Worker protocolを組み立てなくてよいES module入口を定義する。初期化、source更新、
+  monotonic generation、最新結果だけの採用、cancel、disposeおよびerrorを型付きAPIとして公開する。
+* 変換結果は少なくとも`html`、診断、source version、generationおよび契約versionを所有する。
+  libraryは`innerHTML`等でDOMへ挿入せず、描画方法と追加sanitizationは利用側が決定する。
+* 高頻度入力ではdebounceと協調cancelを使い、古いHTMLを最新入力として通知しない。Worker再生成による
+  `SharedArrayBuffer`なしの縮退経路も同じ公開APIの内側へ隠す。
+* debug path、timestamp、absolute pathおよび不要なNode向け成果物を公開bundleへ混入させない。
+* `release-manifest.json`、WASM response、Worker runtime定数およびbundle versionを一つの検査で照合する。
+* 実際のarchiveを展開し、静的HTTP serverとheadless browserでWorker初期化、解析、cancel、CSP、
+  cross-origin isolation利用可否の縮退経路をsmoke testする。
+* Node用cross-runtime fixtureは意味同値性、browser testは配布layoutとloaderの検証として役割を分ける。
+* raw `.wasm`やWorker messageを公開入口とせず、bundle内READMEからversion付きbrowser APIを利用する。
+* bundlerなしのES module読込と、代表的なfrontend bundlerの双方でasset URL解決を試験する。
+
+== 完了条件
+
+browser library archiveだけを新しいdirectoryへ展開し、textareaへの連続入力から最新HTMLだけをpreviewへ
+描画する最小例が動作する。native／WASM conformance、実browserでの高速連続更新、cancel、型定義の
+compile check、CSPおよびbundle size上限が通る。

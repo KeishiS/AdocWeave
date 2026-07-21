@@ -1,0 +1,84 @@
+= GitHub Releasesの配布契約とtarget matrix
+:status: planned
+:depends-on: 081
+
+== 目的
+
+GitHub ReleasesからCLI、Language Serverおよびbrowser変換libraryを安全かつ機械的に取得できるよう、
+tag、version、asset名、対応platform、archive内容およびmanifest schemaを先に固定する。
+
+このリポジトリに独立したGUI applicationは存在しない。ここでいうfrontend向けlibraryは、利用側の
+AsciiDoc入力をWeb Workerで継続解析し、最新generationの安全なHTML、診断およびprojectionを返す
+`adocweave-wasm`と`web-worker`のbrowser packageを指す。DOM描画、UI component、editor stateおよび
+ノートアプリ本体は利用側リポジトリの責務とする。Zed拡張はfrontend libraryではなくLSP consumerである。
+
+== 配布単位
+
+一つのGit tag `v{packageVersion}`から、同じversionを持つ次のassetを生成する。
+
+* `adocweave-{version}-{target}`：CLI executableとlicense／README
+* `adocweave-lsp-{version}-{target}`：LSP executableとlicense／README
+* `adocweave-browser-{version}`：browser向けWASM、JavaScript API、TypeScript declaration、Worker module、
+  licenseおよびリアルタイムHTML変換の最小利用例
+* `adocweave-dist-manifest.json`：asset名、target、kind、byte数、SHA-256、executable名、package version、
+  Core／WASM等の契約version
+* `SHA256SUMS`、SBOMおよびprovenance verification手順
+
+GitHubが自動生成するsource archiveは上記binary contractへ含めない。assetはrelease後に上書きせず、
+修正は新しいversionで公開する。
+
+== 初期target
+
+[cols="3,2,3",options="header"]
+|===
+|Rust target |archive |目的
+
+|`x86_64-unknown-linux-musl`
+|`.tar.xz`
+|glibc versionに依存しないLinux x86-64
+
+|`aarch64-unknown-linux-musl`
+|`.tar.xz`
+|Linux ARM64
+
+|`x86_64-apple-darwin`
+|`.tar.xz`
+|Intel macOS
+
+|`aarch64-apple-darwin`
+|`.tar.xz`
+|Apple Silicon
+
+|`x86_64-pc-windows-msvc`
+|`.zip`
+|64-bit Windows
+|===
+
+32-bit targetは扱わない。Windows ARM64とGNU Linux dynamic buildは、native runner、利用要求および
+互換性試験を確認してから追加する。追加・削除は配布契約変更としてmanifestと文書を同時更新する。
+
+== 作業
+
+* workspace crate、`editors/zed/extension.toml`、`release-manifest.json`およびbrowser libraryのversionを
+  一つのrelease trainとして検査する。
+* workspace packageへrepository、homepage、license fileおよびbinary配布に必要なmetadataを追加し、
+  `cargo metadata`と`dist`が同じrepository／versionを解決することを検査する。
+* stable tag `vX.Y.Z`とprerelease tag `vX.Y.Z-rc.N`だけを受理し、tagと全versionの不一致をbuild前に
+  拒否する。
+* native archive生成には`dist`（旧cargo-dist）をexact versionでpinして用いる。生成workflowと設定は
+  repositoryへcommitし、更新時に差分をreviewする。
+* browser libraryは`dist`のextra artifactとして同じreleaseへ統合し、別のversionや手動upload経路を作らない。
+* `adocweave-dist-manifest.json`のschema、sort順、path separator、hash対象およびJSON canonicalizationを
+  fixtureで固定する。
+* crates.io、npm、Homebrew、WinGetおよびZed Extension Registryへの公開は非目標とし、GitHub assetが
+  それらの将来backendからも参照できる命名にする。
+
+== 完了条件
+
+release tagから生成される全asset名と内容がmachine-readable fixtureで決定的に再現され、未対応platform、
+version関係、後方互換性および非目標が文書化される。`dist plan`相当のdry runをPRで検査できる。
+
+== 参照
+
+* https://github.com/axodotdev/cargo-dist[`dist` repository]
+* https://axodotdev.github.io/cargo-dist/book/[`dist` documentation]

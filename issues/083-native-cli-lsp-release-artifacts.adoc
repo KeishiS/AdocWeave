@@ -1,0 +1,28 @@
+= CLIとLSPのnative release artifact
+:status: planned
+:depends-on: 082
+
+== 目的
+
+各対応targetについて、repository checkoutやRust toolchainを要求しないCLIとLanguage Serverのarchiveを
+再現可能な手順でbuildし、展開後に直接実行できる状態にする。
+
+== 作業
+
+* release profileのpanic、LTO、codegen units、stripおよびdebug symbol方針を明示する。
+* CLIとLSPを別assetとしてbuildし、archive root、executable permission、`.exe`、license、READMEおよび
+  completion等の同梱規則を固定する。
+* `MIT OR Apache-2.0`に対応するlicense本文とthird-party noticeをrepositoryの正本として追加し、全archiveへ
+  同じfileを同梱する。Cargo metadata上のlicense表記だけで配布を済ませない。
+* Linuxはmusl static linkを検証し、`ldd`または同等の検査で想定外のdynamic dependencyを拒否する。
+* 各targetを原則native runnerでbuild・実行する。cross compileだけで「対応」と判定しない。
+* archiveを新しいtemporary directoryへ展開し、CLIの`--version`、`check`、`convert`、`format --check`と、
+  LSPのinitialize、fixture診断、shutdown／exitをbinary経由でsmoke testする。
+* executableが報告するpackage version、Core contractおよびLSP server versionをrelease manifestと照合する。
+* macOS／WindowsのOS code signingは鍵をrepositoryへ置かない。署名情報が未準備の間はprerelease artifactに
+  限定し、stable公開の要否とcredential ownerをrelease運用開始前に決定する。
+
+== 完了条件
+
+5 targetのCLI／LSP archiveをlocalまたはPR artifactとして生成でき、同じjob上で展開後smoke testが通る。
+host toolchainや作業tree内binaryを誤って試験していないことをpath検査で証明する。
