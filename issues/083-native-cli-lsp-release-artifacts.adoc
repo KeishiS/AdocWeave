@@ -1,5 +1,5 @@
 = CLIとLSPのnative release artifact
-:status: planned
+:status: in-progress
 :depends-on: 082
 
 == 目的
@@ -26,3 +26,18 @@
 
 Linux 2 targetのCLI／LSP archiveをlocalまたはPR artifactとして生成でき、対応architecture上で展開後smoke testが通る。
 host toolchainや作業tree内binaryを誤って試験していないことをpath検査で証明する。
+
+== 実装状況
+
+`dist` profileへthin LTO、codegen unit 1、panic abort、debug情報なしおよびsymbol stripを明記した。
+両native archiveへlicense、READMEおよびxref:../THIRD_PARTY_NOTICES.adoc[third-party notices]を同梱し、noticeと
+`cargo metadata`の同期検査をrelease gateへ追加した。CLIとLSPは`--version --json`でpackage versionとCore契約を
+報告する。
+
+xref:../tools/native-release-smoke.mjs[native smoke]はarchive layout、安全なpath、executable permission、ELF
+architecture、dynamic dependency不在、CLI各commandおよびLSP lifecycle／診断を、展開後の実binaryだけで検査する。
+ローカルhost binaryを同じlayoutへ梱包する自己検査は成功した。
+
+PRでは`dist`の`upload` modeでLinux 2 targetをbuildし、local artifact完了後のcustom global jobから
+`ubuntu-24.04`と`ubuntu-24.04-arm`上でsmokeを実行する。残る完了条件は、このworkflowをGitHubへpushして
+両native runnerの実archive smokeが成功することの確認である。

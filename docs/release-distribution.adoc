@@ -36,7 +36,8 @@ GitHub Actionsでは、前者をnative ARM64の`ubuntu-24.04-arm`、後者をnat
 
 CLIとLSPは`dist 0.32.0`が生成する`adocweave-cli-{target}.tar.xz`および
 `adocweave-lsp-{target}.tar.xz`を改名せずに公開する。各native archiveは対応する実行ファイル、
-`README.adoc`、`LICENSE-MIT`および`LICENSE-APACHE`を含む。
+`README.adoc`、`LICENSE-MIT`、`LICENSE-APACHE`および`THIRD_PARTY_NOTICES.adoc`を含む。詳細は
+xref:native-release.adoc[Native CLI・Language Server配布契約]で定義する。
 
 browser packageは`adocweave-browser-{version}.tar.xz`であり、`dist`のextra artifactとして同じreleaseへ
 一度だけ統合する。内容と最小例はxref:../web-worker/README.adoc[`web-worker/README.adoc`]で定義する。

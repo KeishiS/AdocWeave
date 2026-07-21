@@ -29,7 +29,7 @@ if [[ -f target/adocweave-wasm/adocweave_wasm.d.ts ]]; then
   cp target/adocweave-wasm/adocweave_wasm.d.ts "$stage/wasm/"
 fi
 cp web-worker/client.mjs web-worker/contracts.mjs web-worker/controller.mjs web-worker/worker.mjs "$stage/worker/"
-cp web-worker/package.json web-worker/README.adoc LICENSE-MIT LICENSE-APACHE "$stage/"
+cp web-worker/package.json web-worker/README.adoc LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc "$stage/"
 
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
   -cJf "$archive" -C target/distrib "$package"

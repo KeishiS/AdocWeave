@@ -109,6 +109,44 @@ node tools/release-contract.mjs $args
 node tools/release-contract.test.mjs
 cargo metadata --no-deps --format-version=1 > "$metadata"
 node tools/verify-cargo-release-metadata.mjs "$metadata"
+node tools/verify-third-party-notices.mjs "$metadata"
+'''
+
+[tasks.native-release-smoke]
+description = "Smoke test extracted CLI and LSP release archives for NATIVE_TARGET"
+script_runner = "@shell"
+script = '''
+if [ -z "${NATIVE_TARGET:-}" ] || [ -z "${NATIVE_ARTIFACT_DIR:-}" ]; then
+  echo "NATIVE_TARGET and NATIVE_ARTIFACT_DIR are required" >&2
+  exit 2
+fi
+node tools/native-release-smoke.mjs "$NATIVE_ARTIFACT_DIR" "$NATIVE_TARGET"
+'''
+
+[tasks.native-release-smoke-host]
+description = "Exercise archive and binary smoke logic with local host binaries"
+dependencies = ["build"]
+script_runner = "@shell"
+script = '''
+root="target/native-smoke-host"
+artifacts="$root/artifacts"
+rm -rf "$root"
+mkdir -p "$artifacts"
+for package in adocweave-cli adocweave-lsp; do
+  case "$package" in
+    adocweave-cli) executable="adocweave" ;;
+    adocweave-lsp) executable="adocweave-lsp" ;;
+  esac
+  archive_root="$package-x86_64-unknown-linux-musl"
+  stage="$root/$archive_root"
+  mkdir -p "$stage"
+  cp "target/debug/$executable" "$stage/$executable"
+  cp README.adoc LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc "$stage/"
+  tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+    -cJf "$artifacts/$archive_root.tar.xz" -C "$root" "$archive_root"
+done
+ADOCWEAVE_SMOKE_ALLOW_DYNAMIC=1 \
+  node tools/native-release-smoke.mjs "$artifacts" x86_64-unknown-linux-musl
 '''
 
 [tasks.dist-plan]
@@ -174,6 +212,7 @@ printf '%s\n' \
   "$package/LICENSE-APACHE" \
   "$package/LICENSE-MIT" \
   "$package/README.adoc" \
+  "$package/THIRD_PARTY_NOTICES.adoc" \
   "$package/package.json" \
   "$package/wasm/" \
   "$package/wasm/adocweave_wasm.d.ts" \
@@ -415,7 +454,14 @@ dependencies = ["verify", "fuzz-check", "fuzz-smoke"]
 
 [tasks.release-check]
 description = "Run the publish gate and report release WASM artifact sizes"
-dependencies = ["ci", "test-profile-release", "wasm-size", "test-browser-release-package", "dist-plan"]
+dependencies = [
+  "ci",
+  "test-profile-release",
+  "wasm-size",
+  "test-browser-release-package",
+  "native-release-smoke-host",
+  "dist-plan",
+]
 
 [tasks.release-gate]
 description = "Canonical alias for the complete publish gate"
