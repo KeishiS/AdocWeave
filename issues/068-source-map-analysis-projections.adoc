@@ -1,5 +1,5 @@
 = Source map付き解析projection
-:status: planned
+:status: completed
 :depends-on: 067
 
 == 目的
@@ -19,3 +19,14 @@ preprocessor展開後の解析結果を、診断、symbol、参照およびresou
 
 hostが展開後offsetを独自に推測せず、公開projectionだけから元文書へ診断とnavigationを返せる。
 
+== 実装結果
+
+`SourceMapping`で恒等写像と行全体への保守的写像を区別し、`origins_for_range`で複数sourceにまたがる
+rangeを順序付きsegmentへ投影する。`PreprocessedAnalysis::project_origins`はdiagnostic、related
+information、fix、reference、resourceおよびdocument symbolを同じsource mapから生成する。
+referenceとresourceのtarget rangeは構文全体と分離し、安全に元sourceへ戻せないfixは適用不可とする。
+
+include directiveは記述元と解決先resourceの`SourceId`を分離した。nested includeはinclude元resource
+keyの親を基準に解決する。source map segment数とprojection origin segment総数には独立した上限が
+あり、超過は明示的なerrorとなる。WASM API 11はmapping種別を公開し、同じsnapshotに対するnative
+coreとの同値性をtestする。

@@ -52,6 +52,7 @@ pub struct PreprocessOptions {
     pub max_includes: u32,
     pub max_total_bytes: u32,
     pub max_expanded_nodes: u32,
+    pub max_source_map_segments: u32,
 }
 
 impl Default for PreprocessOptions {
@@ -66,6 +67,7 @@ impl Default for PreprocessOptions {
             max_includes: 10_000,
             max_total_bytes: 50 * 1024 * 1024,
             max_expanded_nodes: 1_000_000,
+            max_source_map_segments: 1_000_000,
         }
     }
 }
@@ -159,7 +161,13 @@ impl PreprocessedDocument {
                 .collect();
         }
         let mut origins: Vec<SourceOrigin> = Vec::new();
-        for segment in &self.source_map {
+        let first = self
+            .source_map
+            .partition_point(|segment| segment.output_range.end() <= output_range.start());
+        for segment in &self.source_map[first..] {
+            if output_range.end() <= segment.output_range.start() {
+                break;
+            }
             let start = segment
                 .output_range
                 .start()
@@ -270,6 +278,37 @@ pub struct AnalysisProjection {
     pub symbols: Vec<ProjectedDocumentSymbol>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectionLimits {
+    pub max_origin_segments: u32,
+}
+
+impl Default for ProjectionLimits {
+    fn default() -> Self {
+        Self {
+            max_origin_segments: 1_000_000,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectionError {
+    pub limit: u32,
+    pub actual: u64,
+}
+
+impl fmt::Display for ProjectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "projection origin segment limit exceeded (limit {}, actual {})",
+            self.limit, self.actual
+        )
+    }
+}
+
+impl Error for ProjectionError {}
+
 /// Analysis paired with the source map used to build it.
 #[derive(Debug)]
 pub struct PreprocessedAnalysis {
@@ -278,103 +317,132 @@ pub struct PreprocessedAnalysis {
 }
 
 impl PreprocessedAnalysis {
-    pub fn project_origins(&self) -> AnalysisProjection {
+    pub fn project_origins(
+        &self,
+        limits: ProjectionLimits,
+    ) -> Result<AnalysisProjection, ProjectionError> {
         let map = &self.document;
+        let mut projected_segments = 0_u64;
+        let mut project = |range| {
+            let origins = map.origins_for_range(range);
+            projected_segments = projected_segments.saturating_add(origins.len() as u64);
+            if projected_segments > u64::from(limits.max_origin_segments) {
+                Err(ProjectionError {
+                    limit: limits.max_origin_segments,
+                    actual: projected_segments,
+                })
+            } else {
+                Ok(origins)
+            }
+        };
         let diagnostics = self
             .analysis
             .diagnostics()
             .iter()
             .cloned()
-            .map(|diagnostic| ProjectedDiagnostic {
-                origins: map.origins_for_range(diagnostic.range),
-                related: diagnostic
+            .map(|diagnostic| {
+                let origins = project(diagnostic.range)?;
+                let related = diagnostic
                     .related
                     .iter()
                     .cloned()
-                    .map(|value| Originated {
-                        origins: map.origins_for_range(value.range),
-                        value,
+                    .map(|value| {
+                        Ok(Originated {
+                            origins: project(value.range)?,
+                            value,
+                        })
                     })
-                    .collect(),
-                fixes: diagnostic
+                    .collect::<Result<Vec<_>, ProjectionError>>()?;
+                let fixes = diagnostic
                     .fixes
                     .iter()
                     .cloned()
-                    .map(|fix| {
+                    .map(|fix| -> Result<_, ProjectionError> {
                         let edits: Vec<_> = fix
                             .edits()
                             .iter()
                             .cloned()
-                            .map(|value| Originated {
-                                origins: map.origins_for_range(value.range),
-                                value,
+                            .map(|value| {
+                                Ok(Originated {
+                                    origins: project(value.range)?,
+                                    value,
+                                })
                             })
-                            .collect();
+                            .collect::<Result<_, ProjectionError>>()?;
                         let applicable = edits.iter().all(|edit| edit.origins.len() == 1)
                             && edits
                                 .iter()
                                 .all(|edit| map.mapping_is_identity(edit.value.range));
-                        ProjectedFix {
+                        Ok(ProjectedFix {
                             title: fix.title,
                             applicability: fix.applicability,
                             applicable,
                             edits,
-                        }
+                        })
                     })
-                    .collect(),
-                diagnostic,
+                    .collect::<Result<Vec<_>, ProjectionError>>()?;
+                Ok(ProjectedDiagnostic {
+                    diagnostic,
+                    origins,
+                    related,
+                    fixes,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
         let references = self
             .analysis
             .references()
             .iter()
             .cloned()
-            .map(|value| ProjectedReference {
-                origins: map.origins_for_range(value.range),
-                target_origins: map.origins_for_range(value.target_range),
-                value,
+            .map(|value| {
+                Ok(ProjectedReference {
+                    origins: project(value.range)?,
+                    target_origins: project(value.target_range)?,
+                    value,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
         let resources = self
             .analysis
             .resources()
             .iter()
             .cloned()
-            .map(|value| ProjectedResource {
-                origins: map.origins_for_range(value.range),
-                target_origins: map.origins_for_range(value.target_range),
-                value,
+            .map(|value| {
+                Ok(ProjectedResource {
+                    origins: project(value.range)?,
+                    target_origins: project(value.target_range)?,
+                    value,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
         let symbols = crate::document::document_symbols(self.analysis.ast())
             .into_iter()
-            .map(|symbol| project_symbol(map, symbol))
-            .collect();
-        AnalysisProjection {
+            .map(|symbol| project_symbol(symbol, &mut project))
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
+        Ok(AnalysisProjection {
             directives: self.document.directives.clone(),
             diagnostics,
             references,
             resources,
             symbols,
-        }
+        })
     }
 }
 
 fn project_symbol(
-    map: &PreprocessedDocument,
     mut symbol: DocumentSymbol,
-) -> ProjectedDocumentSymbol {
+    project: &mut impl FnMut(TextRange) -> Result<Vec<SourceOrigin>, ProjectionError>,
+) -> Result<ProjectedDocumentSymbol, ProjectionError> {
     let children = std::mem::take(&mut symbol.children)
         .into_iter()
-        .map(|child| project_symbol(map, child))
-        .collect();
-    ProjectedDocumentSymbol {
-        origins: map.origins_for_range(symbol.range),
-        selection_origins: map.origins_for_range(symbol.selection_range),
+        .map(|child| project_symbol(child, project))
+        .collect::<Result<_, _>>()?;
+    Ok(ProjectedDocumentSymbol {
+        origins: project(symbol.range)?,
+        selection_origins: project(symbol.selection_range)?,
         symbol,
         children,
-    }
+    })
 }
 
 #[derive(Debug)]
@@ -417,6 +485,7 @@ pub enum PreprocessErrorKind {
     IncludeLimit,
     ByteLimit,
     NodeLimit,
+    SourceMapLimit,
     UnsafeTarget,
     InvalidDirective,
     UnsupportedEncoding,
@@ -432,6 +501,7 @@ impl PreprocessErrorKind {
             Self::IncludeLimit => "include-limit",
             Self::ByteLimit => "byte-limit",
             Self::NodeLimit => "node-limit",
+            Self::SourceMapLimit => "source-map-limit",
             Self::UnsafeTarget => "unsafe-target",
             Self::InvalidDirective => "invalid-directive",
             Self::UnsupportedEncoding => "unsupported-encoding",
@@ -471,7 +541,12 @@ pub fn preprocess(
         expanded_nodes: 0,
         includes: 0,
     };
-    context.expand(source, options.source_id.clone(), 0)?;
+    context.expand(
+        source,
+        options.source_id.clone(),
+        0,
+        options.base_uri.as_deref(),
+    )?;
     Ok(PreprocessedDocument {
         source: context.output,
         source_map: context.source_map,
@@ -496,6 +571,7 @@ impl Context<'_> {
         source: &str,
         source_id: Option<SourceId>,
         depth: u32,
+        base_uri: Option<&str>,
     ) -> Result<(), PreprocessError> {
         let mut offset = 0;
         let lines = source
@@ -510,7 +586,7 @@ impl Context<'_> {
                 }
             })
             .collect();
-        self.expand_selected(lines, source_id, depth)
+        self.expand_selected(lines, source_id, depth, base_uri)
     }
 
     fn expand_include(
@@ -519,6 +595,7 @@ impl Context<'_> {
         source_id: Option<SourceId>,
         range: TextRange,
         depth: u32,
+        base_uri: Option<&str>,
     ) -> Result<(), PreprocessError> {
         if depth >= self.options.max_include_depth {
             return Err(error(
@@ -539,7 +616,7 @@ impl Context<'_> {
         }
         self.bump_node(source_id.clone(), range)?;
         let expanded_target = expand_attributes(&include.target, &self.options.attributes);
-        let target = resolve_target(&expanded_target, self.options.base_uri.as_deref());
+        let target = resolve_target(&expanded_target, base_uri);
         validate_target(&target, self.options).map_err(|message| {
             error(
                 PreprocessErrorKind::UnsafeTarget,
@@ -585,8 +662,14 @@ impl Context<'_> {
         }
         let selected = select_lines(&document.source, &attributes);
         let transformed = transform_lines(selected, &attributes);
+        let nested_base = target_base(&target);
         self.active.push(target);
-        self.expand_selected(transformed, Some(document.source_id.clone()), depth + 1)?;
+        self.expand_selected(
+            transformed,
+            Some(document.source_id.clone()),
+            depth + 1,
+            nested_base.as_deref(),
+        )?;
         self.active.pop();
         Ok(())
     }
@@ -596,6 +679,7 @@ impl Context<'_> {
         lines: Vec<SelectedLine>,
         source_id: Option<SourceId>,
         depth: u32,
+        base_uri: Option<&str>,
     ) -> Result<(), PreprocessError> {
         let mut conditions = Vec::<bool>::new();
         for line in lines {
@@ -668,7 +752,7 @@ impl Context<'_> {
                 }
             } else if enabled {
                 if let Some(include) = include_directive(content) {
-                    self.expand_include(include, source_id.clone(), line.range, depth)?;
+                    self.expand_include(include, source_id.clone(), line.range, depth, base_uri)?;
                 } else if let Some(literal) = escaped_directive(content) {
                     let ending = &line.text[content.len()..];
                     self.append(
@@ -730,6 +814,14 @@ impl Context<'_> {
         }
         self.output.push_str(value);
         if start < end {
+            if self.source_map.len() >= self.options.max_source_map_segments as usize {
+                return Err(error(
+                    PreprocessErrorKind::SourceMapLimit,
+                    source_id,
+                    origin_range,
+                    "source map segment limit exceeded",
+                ));
+            }
             self.source_map.push(SourceMapSegment {
                 output_range: range(start, end),
                 origin: SourceOrigin {
@@ -1008,6 +1100,13 @@ fn resolve_target(target: &str, base_uri: Option<&str>) -> String {
     format!("{}/{target}", base_uri.trim_end_matches('/'))
 }
 
+fn target_base(target: &str) -> Option<String> {
+    target
+        .rsplit_once('/')
+        .map(|(base, _)| base.to_owned())
+        .filter(|base| !base.is_empty())
+}
+
 fn error(
     kind: PreprocessErrorKind,
     source_id: Option<SourceId>,
@@ -1154,6 +1253,33 @@ mod tests {
     }
 
     #[test]
+    fn nested_includes_resolve_from_the_including_resource() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "book/chapters/one.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("one"),
+                source: "include::section.adoc[]\n".to_owned(),
+            },
+        );
+        snapshot.insert(
+            "book/chapters/section.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("section"),
+                source: "nested\n".to_owned(),
+            },
+        );
+        let options = PreprocessOptions {
+            base_uri: Some("book/chapters".to_owned()),
+            ..PreprocessOptions::default()
+        };
+
+        let result = preprocess("include::one.adoc[]\n", &snapshot, &options).expect("result");
+        assert_eq!(result.source, "nested\n");
+        assert_eq!(result.directives[1].target, "book/chapters/section.adoc");
+    }
+
+    #[test]
     fn range_projection_preserves_identity_and_marks_transforms_conservatively() {
         let document = PreprocessedDocument {
             source: "abcXYZ".to_owned(),
@@ -1215,7 +1341,9 @@ mod tests {
             },
         )
         .expect("analysis");
-        let projection = analysis.project_origins();
+        let projection = analysis
+            .project_origins(ProjectionLimits::default())
+            .expect("projection");
 
         assert_eq!(projection.symbols.len(), 1);
         assert_eq!(projection.references.len(), 1);
@@ -1234,5 +1362,35 @@ mod tests {
                 .map(SourceId::as_str),
             Some("part")
         );
+    }
+
+    #[test]
+    fn source_map_and_projection_limits_fail_explicitly() {
+        let source_map_error = preprocess(
+            "one\ntwo\n",
+            &ResourceSnapshot::default(),
+            &PreprocessOptions {
+                max_source_map_segments: 1,
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect_err("source map limit");
+        assert_eq!(source_map_error.kind, PreprocessErrorKind::SourceMapLimit);
+
+        let engine = Engine::new(crate::core::ParseOptions::default());
+        let analysis = preprocess_and_analyze(
+            &engine,
+            "= Title\n\n== Section\n",
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+        )
+        .expect("analysis");
+        let error = analysis
+            .project_origins(ProjectionLimits {
+                max_origin_segments: 1,
+            })
+            .expect_err("projection limit");
+        assert_eq!(error.limit, 1);
+        assert!(error.actual > 1);
     }
 }

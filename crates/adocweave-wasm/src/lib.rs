@@ -13,7 +13,7 @@ use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 10;
+pub const WASM_API_VERSION: u16 = 11;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -45,6 +45,7 @@ pub struct WasmPreprocessOptions {
     pub max_includes: u32,
     pub max_total_bytes: u32,
     pub max_expanded_nodes: u32,
+    pub max_source_map_segments: u32,
 }
 
 impl Default for WasmPreprocessOptions {
@@ -59,6 +60,7 @@ impl Default for WasmPreprocessOptions {
             max_includes: options.max_includes,
             max_total_bytes: options.max_total_bytes,
             max_expanded_nodes: options.max_expanded_nodes,
+            max_source_map_segments: options.max_source_map_segments,
         }
     }
 }
@@ -89,6 +91,7 @@ pub struct WasmSourceMapSegment {
     pub source_id: Option<String>,
     pub source_start: u32,
     pub source_end: u32,
+    pub mapping: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -308,6 +311,7 @@ pub fn preprocess_request(
             max_includes: options.max_includes,
             max_total_bytes: options.max_total_bytes,
             max_expanded_nodes: options.max_expanded_nodes,
+            max_source_map_segments: options.max_source_map_segments,
         },
     )
     .map_err(|error| WasmError {
@@ -329,6 +333,11 @@ pub fn preprocess_request(
                     .map(|source_id| source_id.as_str().to_owned()),
                 source_start: segment.origin.range.start().to_u32(),
                 source_end: segment.origin.range.end().to_u32(),
+                mapping: match segment.mapping {
+                    adocweave::preprocessor::SourceMapping::Identity => "identity",
+                    adocweave::preprocessor::SourceMapping::WholeOrigin => "whole-origin",
+                }
+                .to_owned(),
             })
             .collect(),
     })
@@ -631,5 +640,34 @@ mod tests {
         .expect("preprocessed response");
         assert_eq!(response.source, "=== Intro\n");
         assert_eq!(response.source_map[0].source_id.as_deref(), Some("intro"));
+        assert_eq!(response.source_map[0].mapping, "whole-origin");
+
+        let mut native_snapshot = ResourceSnapshot::default();
+        native_snapshot.insert(
+            "parts/intro.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("intro"),
+                source: "== Intro\n".to_owned(),
+            },
+        );
+        let native = preprocess(
+            "include::intro.adoc[leveloffset=+1]\n",
+            &native_snapshot,
+            &PreprocessOptions {
+                base_uri: Some("parts".to_owned()),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("native preprocessing");
+        assert_eq!(response.source, native.source);
+        assert_eq!(response.source_map.len(), native.source_map.len());
+        assert_eq!(
+            response.source_map[0].source_start,
+            native.source_map[0].origin.range.start().to_u32()
+        );
+        assert_eq!(
+            response.source_map[0].source_end,
+            native.source_map[0].origin.range.end().to_u32()
+        );
     }
 }
