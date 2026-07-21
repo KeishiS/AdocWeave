@@ -412,6 +412,22 @@ description = "Type-check the excluded Zed extension crate"
 command = "cargo"
 args = ["check", "--manifest-path", "editors/zed/Cargo.toml"]
 
+[tasks.check-zed-wasm]
+description = "Type-check the Zed extension for the host target used by Zed"
+command = "cargo"
+args = [
+  "check",
+  "--manifest-path",
+  "editors/zed/Cargo.toml",
+  "--target",
+  "wasm32-wasip2",
+]
+
+[tasks.test-zed]
+description = "Test release selection, integrity verification, extraction, and cache behavior in the Zed adapter"
+command = "cargo"
+args = ["test", "--manifest-path", "editors/zed/Cargo.toml"]
+
 [tasks.clippy-zed]
 description = "Run Clippy for the excluded Zed extension crate"
 command = "cargo"
@@ -518,10 +534,12 @@ dependencies = [
   "check",
   "check-wasm",
   "check-zed",
+  "check-zed-wasm",
   "clippy",
   "clippy-zed",
   "test",
   "test-web-worker",
+  "test-zed",
   "release-contract",
   "workflow-lint",
   "test-cross-runtime",

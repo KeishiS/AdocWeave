@@ -27,6 +27,17 @@
             overlays = [ (import rust-overlay) ];
           };
           fuzzRust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default);
+          stableRust = pkgs.rust-bin.stable.latest.default.override {
+            extensions = [
+              "clippy"
+              "rust-src"
+              "rustfmt"
+            ];
+            targets = [
+              "wasm32-unknown-unknown"
+              "wasm32-wasip2"
+            ];
+          };
           adocweave-fuzz = pkgs.writeShellScriptBin "adocweave-fuzz" ''
             export PATH=${fuzzRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH
             exec cargo fuzz "$@"
@@ -36,7 +47,6 @@
           default = pkgs.mkShell {
             packages = with pkgs; [
               actionlint
-              cargo
               cargo-dist
               cargo-make
               chromium
@@ -45,7 +55,6 @@
               fontconfig
               gh
               git
-              clippy
               gnutar
               jq
               lld
@@ -53,8 +62,7 @@
               typescript
               ripgrep
               rust-analyzer
-              rustc
-              rustfmt
+              stableRust
               stdenv.cc
               wasm-bindgen-cli
               xz
