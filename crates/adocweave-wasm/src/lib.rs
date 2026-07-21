@@ -318,28 +318,30 @@ pub fn preprocess_request(
         code: error.kind.as_str().to_owned(),
         message: error.to_string(),
     })?;
+    let source_map = document
+        .source_map()
+        .iter()
+        .map(|segment| WasmSourceMapSegment {
+            output_start: segment.output_range.start().to_u32(),
+            output_end: segment.output_range.end().to_u32(),
+            source_id: segment
+                .origin
+                .source_id
+                .as_ref()
+                .map(|source_id| source_id.as_str().to_owned()),
+            source_start: segment.origin.range.start().to_u32(),
+            source_end: segment.origin.range.end().to_u32(),
+            mapping: match segment.mapping {
+                adocweave::preprocessor::SourceMapping::Identity => "identity",
+                adocweave::preprocessor::SourceMapping::WholeOrigin => "whole-origin",
+            }
+            .to_owned(),
+        })
+        .collect();
     Ok(WasmPreprocessResponse {
         api_version: WASM_API_VERSION,
         source: document.source,
-        source_map: document
-            .source_map
-            .into_iter()
-            .map(|segment| WasmSourceMapSegment {
-                output_start: segment.output_range.start().to_u32(),
-                output_end: segment.output_range.end().to_u32(),
-                source_id: segment
-                    .origin
-                    .source_id
-                    .map(|source_id| source_id.as_str().to_owned()),
-                source_start: segment.origin.range.start().to_u32(),
-                source_end: segment.origin.range.end().to_u32(),
-                mapping: match segment.mapping {
-                    adocweave::preprocessor::SourceMapping::Identity => "identity",
-                    adocweave::preprocessor::SourceMapping::WholeOrigin => "whole-origin",
-                }
-                .to_owned(),
-            })
-            .collect(),
+        source_map,
     })
 }
 
@@ -660,14 +662,14 @@ mod tests {
         )
         .expect("native preprocessing");
         assert_eq!(response.source, native.source);
-        assert_eq!(response.source_map.len(), native.source_map.len());
+        assert_eq!(response.source_map.len(), native.source_map().len());
         assert_eq!(
             response.source_map[0].source_start,
-            native.source_map[0].origin.range.start().to_u32()
+            native.source_map()[0].origin.range.start().to_u32()
         );
         assert_eq!(
             response.source_map[0].source_end,
-            native.source_map[0].origin.range.end().to_u32()
+            native.source_map()[0].origin.range.end().to_u32()
         );
     }
 }

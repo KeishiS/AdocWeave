@@ -42,7 +42,10 @@ network addressの制限はresourceをsnapshotへ格納する前にhostが強制
 
 == source map
 
-`PreprocessedDocument.source_map`は展開後の半開byte rangeを元の`SourceId`とrangeへ対応付ける。
+`PreprocessedDocument.source_map()`は展開後の半開byte rangeを元の`SourceId`とrangeへ対応付ける。
+展開後座標は`ExpandedOffset`／`ExpandedRange`、元resource座標は`OriginRange`として型分離し、rawな
+`TextRange`を公開projection APIへ直接渡せない。source mapはprivate constructorでsort、非重複および
+展開後source範囲内という不変条件を検査してから公開され、検索はこの順序を用いたbinary searchを行う。
 `SourceMapping::Identity`は相対byte位置を保存し、indent、見出しlevel、escape解除またはinline
 conditionalで変換された`WholeOrigin`は元の行全体へ保守的に対応する。rangeが複数segmentを横断する
 場合、`origins_for_range`は順序付きの複数originを返す。

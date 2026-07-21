@@ -96,12 +96,71 @@ pub struct Directive {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceOrigin {
     pub source_id: Option<SourceId>,
-    pub range: TextRange,
+    pub range: OriginRange,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpandedRange(TextRange);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpandedOffset(TextSize);
+
+impl ExpandedOffset {
+    pub const fn new(offset: TextSize) -> Self {
+        Self(offset)
+    }
+
+    pub const fn text_size(self) -> TextSize {
+        self.0
+    }
+}
+
+impl ExpandedRange {
+    pub const fn new(range: TextRange) -> Self {
+        Self(range)
+    }
+
+    pub const fn text_range(self) -> TextRange {
+        self.0
+    }
+
+    pub const fn start(self) -> TextSize {
+        self.0.start()
+    }
+
+    pub const fn end(self) -> TextSize {
+        self.0.end()
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OriginRange(TextRange);
+
+impl OriginRange {
+    pub const fn new(range: TextRange) -> Self {
+        Self(range)
+    }
+
+    pub const fn text_range(self) -> TextRange {
+        self.0
+    }
+
+    pub const fn start(self) -> TextSize {
+        self.0.start()
+    }
+
+    pub const fn end(self) -> TextSize {
+        self.0.end()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceMapSegment {
-    pub output_range: TextRange,
+    pub output_range: ExpandedRange,
     pub origin: SourceOrigin,
     pub mapping: SourceMapping,
 }
@@ -115,18 +174,45 @@ pub enum SourceMapping {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreprocessedDocument {
     pub source: String,
-    pub source_map: Vec<SourceMapSegment>,
+    source_map: Vec<SourceMapSegment>,
     pub directives: Vec<Directive>,
 }
 
 impl PreprocessedDocument {
-    pub fn origin_at(&self, output_offset: TextSize) -> Option<&SourceOrigin> {
+    fn from_parts(
+        source: String,
+        source_map: Vec<SourceMapSegment>,
+        directives: Vec<Directive>,
+    ) -> Result<Self, SourceMapInvariantError> {
+        let source_end = TextSize::new(source.len()).map_err(|_| SourceMapInvariantError)?;
+        let mut previous_end = TextSize::ZERO;
+        for segment in &source_map {
+            if segment.output_range.start() < previous_end
+                || segment.output_range.end() > source_end
+            {
+                return Err(SourceMapInvariantError);
+            }
+            previous_end = segment.output_range.end();
+        }
+        Ok(Self {
+            source,
+            source_map,
+            directives,
+        })
+    }
+
+    pub fn source_map(&self) -> &[SourceMapSegment] {
+        &self.source_map
+    }
+
+    pub fn origin_at(&self, output_offset: ExpandedOffset) -> Option<&SourceOrigin> {
+        let output_offset = output_offset.text_size();
+        let index = self
+            .source_map
+            .partition_point(|segment| segment.output_range.end() <= output_offset);
         self.source_map
-            .iter()
-            .find(|segment| {
-                segment.output_range.start() <= output_offset
-                    && output_offset < segment.output_range.end()
-            })
+            .get(index)
+            .filter(|segment| segment.output_range.start() <= output_offset)
             .map(|segment| &segment.origin)
     }
 
@@ -135,8 +221,8 @@ impl PreprocessedDocument {
     /// When a range crosses include boundaries, the origin containing its
     /// start is returned. Consumers that need exact pieces should inspect
     /// `source_map` directly.
-    pub fn origin_for_range(&self, output_range: TextRange) -> Option<&SourceOrigin> {
-        if let Some(origin) = self.origin_at(output_range.start()) {
+    pub fn origin_for_range(&self, output_range: ExpandedRange) -> Option<&SourceOrigin> {
+        if let Some(origin) = self.origin_at(ExpandedOffset::new(output_range.start())) {
             return Some(origin);
         }
         if !output_range.is_empty() {
@@ -154,7 +240,7 @@ impl PreprocessedDocument {
     /// Adjacent pieces in the same source are merged. For an unchanged segment,
     /// the relative byte range is preserved. A transformed segment (for example
     /// `indent` or `leveloffset`) conservatively maps to its complete source line.
-    pub fn origins_for_range(&self, output_range: TextRange) -> Vec<SourceOrigin> {
+    pub fn origins_for_range(&self, output_range: ExpandedRange) -> Vec<SourceOrigin> {
         if output_range.is_empty() {
             let segment = self
                 .source_map
@@ -181,11 +267,11 @@ impl PreprocessedDocument {
                         .expect("projected source offset is bounded");
                 TextRange::new(offset, offset).expect("zero source range is ordered")
             } else {
-                segment.origin.range
+                segment.origin.range.text_range()
             };
             return vec![SourceOrigin {
                 source_id: segment.origin.source_id.clone(),
-                range,
+                range: OriginRange::new(range),
             }];
         }
         let mut origins: Vec<SourceOrigin> = Vec::new();
@@ -223,18 +309,20 @@ impl PreprocessedDocument {
                 )
                 .expect("projected source range is ordered")
             } else {
-                segment.origin.range
+                segment.origin.range.text_range()
             };
             let origin = SourceOrigin {
                 source_id: segment.origin.source_id.clone(),
-                range,
+                range: OriginRange::new(range),
             };
             if let Some(previous) = origins.last_mut()
                 && previous.source_id == origin.source_id
                 && previous.range.end() == origin.range.start()
             {
-                previous.range = TextRange::new(previous.range.start(), origin.range.end())
-                    .expect("merged source range is ordered");
+                previous.range = OriginRange::new(
+                    TextRange::new(previous.range.start(), origin.range.end())
+                        .expect("merged source range is ordered"),
+                );
             } else {
                 origins.push(origin);
             }
@@ -242,15 +330,23 @@ impl PreprocessedDocument {
         origins
     }
 
-    fn mapping_is_identity(&self, output_range: TextRange) -> bool {
-        !output_range.is_empty()
-            && self.source_map.iter().any(|segment| {
-                segment.mapping == SourceMapping::Identity
-                    && segment.output_range.start() <= output_range.start()
-                    && output_range.end() <= segment.output_range.end()
-            })
+    fn mapping_is_identity(&self, output_range: ExpandedRange) -> bool {
+        if output_range.is_empty() {
+            return false;
+        }
+        let index = self
+            .source_map
+            .partition_point(|segment| segment.output_range.end() <= output_range.start());
+        self.source_map.get(index).is_some_and(|segment| {
+            segment.mapping == SourceMapping::Identity
+                && segment.output_range.start() <= output_range.start()
+                && output_range.end() <= segment.output_range.end()
+        })
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SourceMapInvariantError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Originated<T> {
@@ -352,7 +448,7 @@ impl PreprocessedAnalysis {
         let map = &self.document;
         let mut projected_segments = 0_u64;
         let mut project = |range| {
-            let origins = map.origins_for_range(range);
+            let origins = map.origins_for_range(ExpandedRange::new(range));
             projected_segments = projected_segments.saturating_add(origins.len() as u64);
             if projected_segments > u64::from(limits.max_origin_segments) {
                 Err(ProjectionError {
@@ -398,9 +494,9 @@ impl PreprocessedAnalysis {
                             })
                             .collect::<Result<_, ProjectionError>>()?;
                         let applicable = edits.iter().all(|edit| edit.origins.len() == 1)
-                            && edits
-                                .iter()
-                                .all(|edit| map.mapping_is_identity(edit.value.range));
+                            && edits.iter().all(|edit| {
+                                map.mapping_is_identity(ExpandedRange::new(edit.value.range))
+                            });
                         Ok(ProjectedFix {
                             title: fix.title,
                             applicability: fix.applicability,
@@ -518,6 +614,7 @@ pub enum PreprocessErrorKind {
     InvalidDirective,
     UnsupportedEncoding,
     UnclosedConditional,
+    InternalInvariant,
 }
 
 impl PreprocessErrorKind {
@@ -534,6 +631,7 @@ impl PreprocessErrorKind {
             Self::InvalidDirective => "invalid-directive",
             Self::UnsupportedEncoding => "unsupported-encoding",
             Self::UnclosedConditional => "unclosed-conditional",
+            Self::InternalInvariant => "internal-invariant",
         }
     }
 }
@@ -575,11 +673,14 @@ pub fn preprocess(
         0,
         options.base_uri.as_deref(),
     )?;
-    Ok(PreprocessedDocument {
-        source: context.output,
-        source_map: context.source_map,
-        directives: context.directives,
-    })
+    PreprocessedDocument::from_parts(context.output, context.source_map, context.directives)
+        .map_err(|_| PreprocessError {
+            kind: PreprocessErrorKind::InternalInvariant,
+            source_id: options.source_id.clone(),
+            range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
+            message: "source map segments are unsorted, overlapping, or outside expanded source"
+                .to_owned(),
+        })
 }
 
 struct Context<'a> {
@@ -857,10 +958,10 @@ impl Context<'_> {
                 ));
             }
             self.source_map.push(SourceMapSegment {
-                output_range: range(start, end),
+                output_range: ExpandedRange::new(range(start, end)),
                 origin: SourceOrigin {
                     source_id,
-                    range: origin_range,
+                    range: OriginRange::new(origin_range),
                 },
                 mapping,
             });
@@ -1380,54 +1481,55 @@ mod tests {
 
     #[test]
     fn range_projection_preserves_identity_and_marks_transforms_conservatively() {
-        let document = PreprocessedDocument {
-            source: "abcXYZ".to_owned(),
-            source_map: vec![
+        let document = PreprocessedDocument::from_parts(
+            "abcXYZ".to_owned(),
+            vec![
                 SourceMapSegment {
-                    output_range: range(0, 3),
+                    output_range: ExpandedRange::new(range(0, 3)),
                     origin: SourceOrigin {
                         source_id: Some(SourceId::new("root")),
-                        range: range(10, 13),
+                        range: OriginRange::new(range(10, 13)),
                     },
                     mapping: SourceMapping::Identity,
                 },
                 SourceMapSegment {
-                    output_range: range(3, 6),
+                    output_range: ExpandedRange::new(range(3, 6)),
                     origin: SourceOrigin {
                         source_id: Some(SourceId::new("included")),
-                        range: range(20, 28),
+                        range: OriginRange::new(range(20, 28)),
                     },
                     mapping: SourceMapping::WholeOrigin,
                 },
             ],
-            directives: Vec::new(),
-        };
+            Vec::new(),
+        )
+        .expect("valid source map");
 
         assert_eq!(
-            document.origins_for_range(range(1, 5)),
+            document.origins_for_range(ExpandedRange::new(range(1, 5))),
             vec![
                 SourceOrigin {
                     source_id: Some(SourceId::new("root")),
-                    range: range(11, 13),
+                    range: OriginRange::new(range(11, 13)),
                 },
                 SourceOrigin {
                     source_id: Some(SourceId::new("included")),
-                    range: range(20, 28),
+                    range: OriginRange::new(range(20, 28)),
                 },
             ]
         );
         assert_eq!(
-            document.origins_for_range(range(2, 2)),
+            document.origins_for_range(ExpandedRange::new(range(2, 2))),
             vec![SourceOrigin {
                 source_id: Some(SourceId::new("root")),
-                range: range(12, 12),
+                range: OriginRange::new(range(12, 12)),
             }]
         );
         assert_eq!(
-            document.origins_for_range(range(3, 3)),
+            document.origins_for_range(ExpandedRange::new(range(3, 3))),
             vec![SourceOrigin {
                 source_id: Some(SourceId::new("included")),
-                range: range(20, 28),
+                range: OriginRange::new(range(20, 28)),
             }]
         );
     }
@@ -1505,5 +1607,37 @@ mod tests {
             .expect_err("projection limit");
         assert_eq!(error.limit, 1);
         assert!(error.actual > 1);
+    }
+
+    #[test]
+    fn source_map_constructor_rejects_unsorted_overlap_and_out_of_bounds_segments() {
+        let segment = |start, end| SourceMapSegment {
+            output_range: ExpandedRange::new(range(start, end)),
+            origin: SourceOrigin {
+                source_id: None,
+                range: OriginRange::new(range(start, end)),
+            },
+            mapping: SourceMapping::Identity,
+        };
+        assert!(
+            PreprocessedDocument::from_parts(
+                "abcd".to_owned(),
+                vec![segment(2, 4), segment(1, 2)],
+                Vec::new(),
+            )
+            .is_err()
+        );
+        assert!(
+            PreprocessedDocument::from_parts(
+                "abcd".to_owned(),
+                vec![segment(0, 3), segment(2, 4)],
+                Vec::new(),
+            )
+            .is_err()
+        );
+        assert!(
+            PreprocessedDocument::from_parts("abcd".to_owned(), vec![segment(0, 5)], Vec::new(),)
+                .is_err()
+        );
     }
 }

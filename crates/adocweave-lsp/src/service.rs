@@ -463,7 +463,7 @@ impl LanguageService {
             }
             // Reading the map here is intentional: the projection and its source map are one
             // adopted snapshot and must never be mixed with a later workspace generation.
-            let _source_map = &workspace.document.source_map;
+            let _source_map = workspace.document.source_map();
             for projected in &workspace.projection.diagnostics {
                 for origin in &projected.origins {
                     if origin
@@ -475,7 +475,7 @@ impl LanguageService {
                     }
                     diagnostics.push(lsp::Diagnostic {
                         range: range_to_lsp(
-                            origin.range,
+                            origin.range.text_range(),
                             &source_document,
                             self.position_encoding,
                         )?,
@@ -1024,7 +1024,7 @@ impl LanguageService {
                 locations.push(lsp::Location::new(
                     source_uri,
                     range_to_lsp(
-                        target_origin.range,
+                        target_origin.range.text_range(),
                         &source_document,
                         self.position_encoding,
                     )?,

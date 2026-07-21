@@ -17,7 +17,7 @@ use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 22;
+pub const CORE_API_VERSION: u16 = 23;
 /// Current host-independent syntax and diagnostic behavior profile.
 pub const CORE_PROFILE_VERSION: u16 = 8;
 
@@ -119,9 +119,9 @@ impl Analysis {
     pub fn references(&self) -> Vec<&crate::inline::Reference> {
         let mut references = Vec::new();
         crate::walker::walk(&self.ast, |node| {
-            if let crate::walker::SemanticNode::Inline(
-                crate::inline::Inline::Reference(reference),
-            ) = node
+            if let crate::walker::SemanticNode::Inline(crate::inline::Inline::Reference(
+                reference,
+            )) = node
             {
                 references.push(reference);
             }
