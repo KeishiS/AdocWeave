@@ -4,7 +4,7 @@
 //! attributes, authors, and revision metadata out of recursive block output.
 
 use crate::attributes::{AttributeProblem, DocumentAttribute};
-use crate::parser::{Author, DocumentHeader, MetadataValue, Revision};
+use crate::block_model::{Author, DocumentHeader, MetadataValue, Revision};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::SourceLine;
 

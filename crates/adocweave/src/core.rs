@@ -291,14 +291,14 @@ fn analyze_inner(
         &|| cancellation.is_cancelled(),
     )
     .map_err(|failure| match failure {
-        parser::ParseFailure::Position(error) => ParseError::Position(error),
-        parser::ParseFailure::Budget(error) => ParseError::LimitExceeded {
+        crate::parser_support::ParseFailure::Position(error) => ParseError::Position(error),
+        crate::parser_support::ParseFailure::Budget(error) => ParseError::LimitExceeded {
             resource: error.resource,
             limit: error.limit,
             actual: error.actual,
         },
-        parser::ParseFailure::Cancelled => ParseError::Cancelled,
-        parser::ParseFailure::InternalInvariant => ParseError::InternalInvariant,
+        crate::parser_support::ParseFailure::Cancelled => ParseError::Cancelled,
+        crate::parser_support::ParseFailure::InternalInvariant => ParseError::InternalInvariant,
     })?;
     if options.syntax_mode == SyntaxMode::Strict
         && ast

@@ -103,6 +103,8 @@ delimiterの種類・content model・閉じ位置回復は`delimiter`、document
 list continuationは任意のblock sequenceへ再帰するdispatchであるため、list固有moduleへ逆依存させず
 sequence orchestratorに残す。共有`ParseBudget`、cancel checkおよびsource rangeの所有者は
 `parse_block_sequence`であり、各domain moduleはI/Oや独自budgetを持たない。
+共通の`ParseFailure`と可変budget／anchor集約状態だけを`parser_support`に置く。domain moduleは
+`block_model`と`parser_support`へ依存し、`parser` facadeへ逆依存しない。
 
 解析順序は、raw block／syntax factの収集、semantic lowering、文書属性の確定、identifier catalog、
 document structure、syntax diagnostic投影、catalog、lint diagnostic確定の順とする。後段からparserへ

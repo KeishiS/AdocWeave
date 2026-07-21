@@ -1,6 +1,6 @@
 //! Delimited-block registry and body boundary recognition.
 
-use crate::parser::{BlockProblem, BlockProblemKind, DelimitedBlockKind};
+use crate::block_model::{BlockProblem, BlockProblemKind, DelimitedBlockKind};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::SourceDocument;
 

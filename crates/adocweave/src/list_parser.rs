@@ -1,7 +1,8 @@
 //! List marker grammar and flat-to-tree construction.
 
+use crate::block_model::{BlockMetadata, ListBlock, ListItem, ListKind};
 use crate::budget::ParseBudget;
-use crate::parser::{BlockMetadata, ListBlock, ListItem, ListKind, ParseFailure};
+use crate::parser_support::ParseFailure;
 use crate::source::TextRange;
 
 #[derive(Debug)]

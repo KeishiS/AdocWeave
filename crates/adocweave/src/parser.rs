@@ -15,6 +15,7 @@ use crate::document_header::DocumentHeaderState;
 use crate::inline::{Inline, InlineParseConfig, MathLanguage, parse_with_budget as parse_inlines};
 use crate::limits::ProcessingLimits;
 use crate::list_parser::{FlatListItem, ParsedListMarker};
+use crate::parser_support::{ParseFailure, ParseState};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::{SourceDocument, SourceDocumentBuildError, SourceLine};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxTree};
@@ -437,14 +438,6 @@ pub(crate) fn parse_shared(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ParseFailure {
-    Position(PositionError),
-    Budget(BudgetExceeded),
-    Cancelled,
-    InternalInvariant,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LineRecognition {
     Source,
     InvalidSource,
@@ -518,18 +511,6 @@ fn commit_block(
     syntax_blocks.push(syntax);
     ast_blocks.push(block);
     attach_pending_metadata(syntax_blocks, ast_blocks, pending_metadata);
-}
-
-impl From<PositionError> for ParseFailure {
-    fn from(error: PositionError) -> Self {
-        Self::Position(error)
-    }
-}
-
-impl From<BudgetExceeded> for ParseFailure {
-    fn from(error: BudgetExceeded) -> Self {
-        Self::Budget(error)
-    }
 }
 
 pub(crate) fn parse_shared_cancellable(
@@ -1766,11 +1747,6 @@ struct DelimitedParseContext<'source> {
     source: &'source str,
     config: &'source ParseConfig,
     is_cancelled: &'source dyn Fn() -> bool,
-}
-
-struct ParseState<'state> {
-    budget: &'state mut ParseBudget,
-    anchors: &'state mut Vec<ExplicitAnchor>,
 }
 
 pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {

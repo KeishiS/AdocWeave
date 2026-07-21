@@ -3,7 +3,8 @@
 use std::ops::Range;
 
 use crate::attributes::{AttributeProblem, DocumentAttribute};
-use crate::parser::{AstBlock, DocumentHeader, ExplicitAnchor, ParseFailure};
+use crate::block_model::{AstBlock, DocumentHeader, ExplicitAnchor};
+use crate::parser_support::ParseFailure;
 use crate::source_document::SourceDocument;
 use crate::syntax::SyntaxNode;
 

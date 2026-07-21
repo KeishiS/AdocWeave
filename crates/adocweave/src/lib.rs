@@ -29,6 +29,7 @@ pub mod lint;
 mod list_parser;
 mod lowering;
 pub mod parser;
+mod parser_support;
 pub mod preprocessor;
 pub mod projection;
 pub mod reference;
