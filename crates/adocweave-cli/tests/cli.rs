@@ -52,7 +52,10 @@ fn cli_reports_release_name_and_version() {
         .expect("the adocweave binary should run");
 
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"adocweave 0.1.0\n");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("adocweave {}\n", env!("CARGO_PKG_VERSION"))
+    );
     assert!(output.stderr.is_empty());
 }
 
@@ -65,7 +68,7 @@ fn cli_reports_machine_readable_release_contracts() {
 
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("version JSON");
-    assert_eq!(value["packageVersion"], "0.1.0");
+    assert_eq!(value["packageVersion"], env!("CARGO_PKG_VERSION"));
     assert_eq!(value["contracts"]["coreProfile"], 1);
     assert_eq!(value["contracts"]["coreApi"], 1);
 }

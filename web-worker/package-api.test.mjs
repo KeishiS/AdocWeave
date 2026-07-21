@@ -13,7 +13,7 @@ test("public entry owns worker and WASM asset resolution", () => {
   assert.equal(urls.workerUrl.href, "https://example.test/pkg/worker/worker.mjs");
   assert.equal(urls.moduleUrl.href, "https://example.test/pkg/wasm/adocweave_wasm.js");
   assert.equal(typeof AdocWeaveClient, "function");
-  assert.equal(BROWSER_PACKAGE_VERSION, "0.1.0");
+  assert.match(BROWSER_PACKAGE_VERSION, /^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/);
 });
 
 test("package metadata exposes only the typed public entry", async () => {

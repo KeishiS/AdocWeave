@@ -46,7 +46,8 @@ test("actual archives produce canonical manifest, SPDX SBOM, and unified checksu
       .filter((reference) => reference.startsWith("pkg:cargo/"))
       .sort();
     assert.deepEqual(actualCargo, expectedCargo);
-    assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) => reference.referenceLocator === "pkg:npm/%40adocweave/browser@0.1.0")));
+    assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
+      reference.referenceLocator === `pkg:npm/%40adocweave/browser@${plan.packageVersion}`)));
     assert.deepEqual(checksums.map((line) => line.slice(66)), [
       ...plan.assets.map((asset) => asset.name),
       "adocweave-dist-manifest.json",

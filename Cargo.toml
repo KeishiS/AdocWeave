@@ -16,7 +16,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/KeishiS/AdocWeave"
 rust-version = "1.85"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 
 # The profile used by dist 0.32.0 for release artifacts.
 [profile.dist]

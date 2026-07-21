@@ -6,7 +6,7 @@ export const CORE_PROFILE_VERSION = 1;
 export const HTML_CONTRACT_VERSION = 1;
 export const PROJECTION_CONTRACT_VERSION = 1;
 export const CONFORMANCE_CONTRACT_VERSION = 1;
-export const BROWSER_PACKAGE_VERSION = "0.1.0";
+export const BROWSER_PACKAGE_VERSION = "0.1.0-rc.1";
 export const CONTRACT_VERSIONS = Object.freeze({
   conformance: CONFORMANCE_CONTRACT_VERSION,
   coreApi: CORE_API_VERSION,

@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
+import releaseManifest from "../release-manifest.json" with { type: "json" };
+
 const [path] = process.argv.slice(2);
 if (!path) {
   process.stderr.write("usage: node tools/verify-cargo-release-metadata.mjs METADATA_JSON\n");
@@ -13,7 +15,7 @@ try {
   const packages = metadata.packages.filter((pkg) => expectedNames.includes(pkg.name));
   if (packages.length !== expectedNames.length) throw new Error("cargo metadata is missing a workspace package");
   for (const pkg of packages) {
-    if (pkg.version !== "0.1.0") throw new Error(`${pkg.name}: cargo metadata version mismatch`);
+    if (pkg.version !== releaseManifest.packageVersion) throw new Error(`${pkg.name}: cargo metadata version mismatch`);
     if (pkg.repository !== "https://github.com/KeishiS/AdocWeave" || pkg.homepage !== pkg.repository) {
       throw new Error(`${pkg.name}: cargo metadata repository mismatch`);
     }

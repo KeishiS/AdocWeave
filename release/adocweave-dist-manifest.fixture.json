@@ -5,7 +5,7 @@
       "byteSize": 103,
       "executable": null,
       "kind": "browser",
-      "name": "adocweave-browser-0.1.0.tar.xz",
+      "name": "adocweave-browser-0.1.0-rc.1.tar.xz",
       "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
       "target": null
     },
@@ -54,7 +54,7 @@
     "projection": 1,
     "wasmApi": 1
   },
-  "packageVersion": "0.1.0",
+  "packageVersion": "0.1.0-rc.1",
   "schemaVersion": 1,
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567"
 }
