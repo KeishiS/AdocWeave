@@ -323,10 +323,24 @@ impl LanguageService {
     }
 
     pub fn adopt(&mut self, job: &AnalysisJob, result: adocweave::AnalysisResult) -> Adoption {
+        if job
+            .workspace
+            .as_ref()
+            .is_some_and(|input| input.generation != self.workspace.generation())
+        {
+            return Adoption::Stale;
+        }
         self.documents.adopt(job, result)
     }
 
     pub fn adopt_workspace(&mut self, job: &AnalysisJob, analysis: WorkspaceAnalysis) -> Adoption {
+        if job
+            .workspace
+            .as_ref()
+            .is_none_or(|input| input.generation != self.workspace.generation())
+        {
+            return Adoption::Stale;
+        }
         self.documents.adopt_workspace(job, analysis)
     }
 
@@ -335,6 +349,13 @@ impl LanguageService {
         job: &AnalysisJob,
         problem: WorkspaceProblem,
     ) -> Adoption {
+        if job
+            .workspace
+            .as_ref()
+            .is_none_or(|input| input.generation != self.workspace.generation())
+        {
+            return Adoption::Stale;
+        }
         self.documents.adopt_workspace_problem(job, problem)
     }
 
@@ -389,7 +410,7 @@ impl LanguageService {
         let source_document = SourceDocument::new(source).map_err(|error| error.to_string())?;
         let version = document.map(|document| revision_version_i32(&document.request.revision));
         let mut diagnostics = document
-            .and_then(|document| document.analysis.as_deref())
+            .and_then(|document| document.view.as_ref().map(|view| view.root.as_ref()))
             .into_iter()
             .flat_map(|analysis| analysis.diagnostics().iter())
             .map(|diagnostic| {

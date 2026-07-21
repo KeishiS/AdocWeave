@@ -18,6 +18,15 @@ const MAX_WORKSPACE_FILES: usize = 10_000;
 const MAX_WORKSPACE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_RESOURCE_BYTES: u64 = 10 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct WorkspaceGeneration(u64);
+
+impl WorkspaceGeneration {
+    fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceResource {
     pub uri: Url,
@@ -28,6 +37,7 @@ pub struct WorkspaceResource {
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceInput {
+    pub generation: WorkspaceGeneration,
     pub root: WorkspaceResource,
     pub snapshot: ResourceSnapshot,
     pub options: PreprocessOptions,
@@ -36,6 +46,7 @@ pub struct WorkspaceInput {
 
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceResources {
+    generation: WorkspaceGeneration,
     roots: Vec<PathBuf>,
     disk_resources: BTreeMap<String, WorkspaceResource>,
     open_resources: BTreeSet<String>,
@@ -111,6 +122,7 @@ impl WorkspaceResources {
         }
         loaded.roots.sort();
         loaded.roots.dedup();
+        loaded.generation = self.generation.next();
         *self = loaded;
         Ok(())
     }
@@ -241,6 +253,7 @@ impl WorkspaceResources {
                 .insert(uri.to_string());
         }
         self.resources.insert(uri.to_string(), resource);
+        self.generation = self.generation.next();
         Ok(self.affected(uri.as_str()))
     }
 
@@ -270,6 +283,7 @@ impl WorkspaceResources {
                 remove_reverse(&mut self.reverse_dependencies, &dependency, uri.as_str());
             }
         }
+        self.generation = self.generation.next();
         affected
     }
 
@@ -317,6 +331,7 @@ impl WorkspaceResources {
         let mut allowed_schemes = BTreeSet::new();
         allowed_schemes.insert("file".to_owned());
         Ok(WorkspaceInput {
+            generation: self.generation,
             options: PreprocessOptions {
                 source_id: Some(SourceId::new(root.uri.to_string())),
                 base_uri: parent_uri(&root.uri),
@@ -328,6 +343,10 @@ impl WorkspaceResources {
             snapshot,
             resource_versions,
         })
+    }
+
+    pub const fn generation(&self) -> WorkspaceGeneration {
+        self.generation
     }
 }
 
@@ -541,6 +560,36 @@ mod tests {
             Some("open 1\n")
         );
 
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn workspace_inputs_are_bound_to_the_generation_that_built_their_snapshot() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("adocweave-lsp-generation-{unique}"));
+        let root_path = root.join("root.adoc");
+        let part_path = root.join("part.adoc");
+        fs::create_dir_all(&root).expect("workspace");
+        fs::write(&root_path, "include::part.adoc[]\n").expect("root document");
+        fs::write(&part_path, "old\n").expect("part document");
+
+        let root_uri = Url::from_directory_path(&root).expect("root URI");
+        let document_uri = Url::from_file_path(&root_path).expect("document URI");
+        let part_uri = Url::from_file_path(&part_path).expect("part URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        let old = resources.input(&document_uri).expect("old input");
+
+        resources
+            .upsert_open(part_uri, 1, "new\n")
+            .expect("replace dependency");
+        let new = resources.input(&document_uri).expect("new input");
+
+        assert_ne!(old.generation, new.generation);
+        assert_eq!(new.generation, resources.generation());
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

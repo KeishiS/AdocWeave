@@ -24,10 +24,26 @@ pub struct AnalysisJob {
 pub struct DocumentState {
     pub uri: String,
     pub request: AnalysisRequest,
-    pub analysis: Option<Arc<Analysis>>,
-    pub workspace_analysis: Option<Arc<WorkspaceAnalysis>>,
+    pub view: Option<Arc<DocumentView>>,
     pub workspace_problem: Option<WorkspaceProblem>,
     cancellation: Arc<CancellationToken>,
+}
+
+#[derive(Debug)]
+pub struct DocumentView {
+    pub root: Arc<Analysis>,
+    pub expanded: Option<Arc<WorkspaceAnalysis>>,
+}
+
+#[cfg(test)]
+impl DocumentState {
+    pub fn analysis(&self) -> Option<&Analysis> {
+        self.view.as_ref().map(|view| view.root.as_ref())
+    }
+
+    pub fn workspace_analysis(&self) -> Option<&WorkspaceAnalysis> {
+        self.view.as_ref()?.expanded.as_deref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,7 +117,7 @@ impl DocumentStore {
         Some(DocumentSnapshot {
             uri: document.uri.clone(),
             revision: document.request.revision.clone(),
-            analysis: document.analysis.clone()?,
+            analysis: document.view.as_ref()?.root.clone(),
         })
     }
 
@@ -115,7 +131,7 @@ impl DocumentStore {
     pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
         self.documents
             .values()
-            .filter_map(|document| document.workspace_analysis.as_deref())
+            .filter_map(|document| document.view.as_ref()?.expanded.as_deref())
     }
 
     pub fn workspace_problems(&self) -> impl Iterator<Item = &WorkspaceProblem> {
@@ -140,8 +156,7 @@ impl DocumentStore {
             DocumentState {
                 uri,
                 request: job.request.clone(),
-                analysis: None,
-                workspace_analysis: None,
+                view: None,
                 workspace_problem: None,
                 cancellation: job.cancellation.clone(),
             },
@@ -160,8 +175,7 @@ impl DocumentStore {
             .get_mut(uri)
             .expect("document existence checked");
         current.request = job.request.clone();
-        current.analysis = None;
-        current.workspace_analysis = None;
+        current.view = None;
         current.workspace_problem = None;
         current.cancellation = job.cancellation.clone();
         Some(job)
@@ -177,8 +191,7 @@ impl DocumentStore {
             .get_mut(uri)
             .expect("document existence checked");
         current.request = job.request.clone();
-        current.analysis = None;
-        current.workspace_analysis = None;
+        current.view = None;
         current.workspace_problem = None;
         current.cancellation = job.cancellation.clone();
         Some(job)
@@ -194,7 +207,10 @@ impl DocumentStore {
         let document = Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
             .expect("document existence checked");
-        document.analysis = Some(Arc::new(result.analysis));
+        document.view = Some(Arc::new(DocumentView {
+            root: Arc::new(result.analysis),
+            expanded: None,
+        }));
         Adoption::Adopted
     }
 
@@ -205,14 +221,17 @@ impl DocumentStore {
         if document.request.revision != job.request.revision || job.cancellation.is_cancelled() {
             return Adoption::Stale;
         }
-        Arc::make_mut(&mut self.documents)
+        let document = Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
-            .expect("document existence checked")
-            .workspace_analysis = Some(Arc::new(analysis));
-        Arc::make_mut(&mut self.documents)
-            .get_mut(&job.uri)
-            .expect("document existence checked")
-            .workspace_problem = None;
+            .expect("document existence checked");
+        let Some(view) = &document.view else {
+            return Adoption::Stale;
+        };
+        document.view = Some(Arc::new(DocumentView {
+            root: view.root.clone(),
+            expanded: Some(Arc::new(analysis)),
+        }));
+        document.workspace_problem = None;
         Adoption::Adopted
     }
 
@@ -230,7 +249,12 @@ impl DocumentStore {
         let document = Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
             .expect("document existence checked");
-        document.workspace_analysis = None;
+        if let Some(view) = &document.view {
+            document.view = Some(Arc::new(DocumentView {
+                root: view.root.clone(),
+                expanded: None,
+            }));
+        }
         document.workspace_problem = Some(problem);
         Adoption::Adopted
     }

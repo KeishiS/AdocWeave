@@ -1,6 +1,8 @@
 //! Typed Language Server service and transport tests.
 
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{fs, path::PathBuf};
 
 use adocweave::Engine;
 use adocweave::preprocessor::{PreprocessedAnalysis, ProjectionLimits, preprocess};
@@ -142,6 +144,55 @@ fn adopt(service: &mut LanguageService, job: AnalysisJob) {
 }
 
 #[test]
+fn analysis_adoption_rejects_a_stale_workspace_generation() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root: PathBuf = std::env::temp_dir().join(format!("adocweave-stale-workspace-{unique}"));
+    let root_path = root.join("root.adoc");
+    let part_path = root.join("part.adoc");
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(&root_path, "include::part.adoc[]\n").expect("root document");
+    fs::write(&part_path, "old\n").expect("part document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&root_path).expect("document URI");
+    let part_uri = lsp::Url::from_file_path(&part_path).expect("part URI");
+
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    }));
+    service.initialize(&params);
+    let job = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": document_uri,
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "include::part.adoc[]\n"
+            }
+        })))
+        .into_iter()
+        .next()
+        .expect("analysis job");
+    let analysis = job
+        .request
+        .analyze(job.cancellation.as_ref())
+        .expect("analysis");
+
+    fs::write(&part_path, "new\n").expect("changed part");
+    service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": part_uri, "type": 2}]
+    })));
+
+    assert_eq!(service.adopt(&job, analysis), Adoption::Stale);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn initialize_negotiates_encoding_and_advertises_existing_features() {
     let mut service = LanguageService::default();
     let result = initialize(&mut service, &["utf-8", "utf-16"]);
@@ -192,10 +243,7 @@ fn workspace_include_analysis_uses_versioned_resources_and_projects_diagnostics(
         .documents
         .get("file:///book/root.adoc")
         .expect("root");
-    let workspace = root
-        .workspace_analysis
-        .as_ref()
-        .expect("workspace analysis");
+    let workspace = root.workspace_analysis().expect("workspace analysis");
     assert!(workspace.analysis.source().contains("==Part"));
     assert_eq!(
         workspace.resource_versions.get("file:///book/part.adoc"),
@@ -256,7 +304,7 @@ fn workspace_include_analysis_uses_versioned_resources_and_projects_diagnostics(
         .get("file:///book/root.adoc")
         .expect("root");
     assert!(reanalyzed.request.revision.generation > root_generation);
-    assert!(reanalyzed.workspace_analysis.is_some());
+    assert!(reanalyzed.workspace_analysis().is_some());
 }
 
 #[test]
@@ -304,8 +352,7 @@ fn document_updates_are_ordered_and_stale_versions_are_ignored() {
             .documents
             .get("file:///a.adoc")
             .expect("a")
-            .analysis
-            .as_ref()
+            .analysis()
             .expect("analysis")
             .source(),
         "= A"
@@ -315,8 +362,7 @@ fn document_updates_are_ordered_and_stale_versions_are_ignored() {
             .documents
             .get("file:///b.adoc")
             .expect("b")
-            .analysis
-            .as_ref()
+            .analysis()
             .expect("analysis")
             .source(),
         "= B"
@@ -356,8 +402,7 @@ fn incremental_changes_apply_sequentially_with_negotiated_positions() {
             .documents
             .get("file:///a.adoc")
             .expect("document")
-            .analysis
-            .as_ref()
+            .analysis()
             .expect("analysis")
             .source(),
         "abd"
@@ -388,8 +433,7 @@ fn incremental_changes_preserve_crlf_line_boundaries() {
             .documents
             .get("file:///crlf.adoc")
             .expect("document")
-            .analysis
-            .as_ref()
+            .analysis()
             .expect("analysis")
             .source(),
         "one\r\nsecond\r\n"
