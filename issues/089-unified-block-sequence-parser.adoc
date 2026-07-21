@@ -1,5 +1,5 @@
 = Block sequence parserの再帰context統合
-:status: planned
+:status: in-progress
 :depends-on: 075
 
 == 目的
