@@ -1,0 +1,31 @@
+= 現行契約の正本索引
+
+この文書は、現行実装を説明する規範文書の入口である。作業の経緯はIssue、長期的な
+設計判断はADR、将来の機能はロードマップを参照する。
+
+== 契約値
+
+[cols="2,1",options="header"]
+|===
+|契約 |現在値
+|Core profile |2
+|Rust core API |10
+|HTML |2
+|Projection |2
+|Conformance snapshot |5
+|WASM API |4
+|===
+
+機械可読な値の正本はxref:../release-manifest.json[release manifest]である。
+
+== 規範文書
+
+構文と回復規則はxref:grammar.adoc[規範文法]、置換順序は
+xref:substitutions.adoc[置換モデル]、出力はxref:html-contract.adoc[HTML契約]、
+公開APIと再構築条件はxref:core-profile.adoc[Core Profile]を正本とする。
+
+== 文書の分類
+
+このディレクトリは現行仕様を記述する。xref:adr/index.adoc[ADR]は採用済みの長期的な
+設計判断、xref:roadmap.adoc[ロードマップ]は未実装の計画、xref:../issues/README.adoc[Issue]
+は完了履歴と作業単位を記録する。Issue本文を現行仕様の正本として参照してはならない。

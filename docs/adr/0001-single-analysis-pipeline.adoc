@@ -1,0 +1,18 @@
+= ADR 0001: 単一解析pipeline
+:status: accepted
+
+== 文脈
+
+CLI、LSP、WASMおよび出力backendが別々に解析すると、回復、範囲、診断および意味が
+一致しなくなる。
+
+== 決定
+
+一つの入力版から不変なAnalysisを一度だけ構築する。Analysisは共通のSourceDocument、
+losslessなsyntax tree、semantic AST、診断および参照情報を所有する。consumerは同じ
+snapshotを読み、独自に再解析しない。
+
+== 帰結
+
+公開snapshotの一貫性を型で保証できる。一方、構文契約の破壊的変更では全consumerと
+適合性fixtureを同時に更新する必要がある。

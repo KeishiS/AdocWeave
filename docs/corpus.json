@@ -1,0 +1,25 @@
+{
+  "normative": [
+    "docs/current-contract.adoc"
+  ],
+  "abnormal": [
+    {
+      "path": "fixtures/grammar/ambiguous.adoc",
+      "codes": ["unclosed-inline", "unclosed-block"]
+    },
+    {
+      "path": "fixtures/references/incomplete-note.adoc",
+      "codes": ["invalid-cross-reference", "invalid-cross-reference"]
+    },
+    {
+      "path": "fixtures/security/adversarial.adoc",
+      "codes": [
+        "invalid-url-scheme",
+        "invalid-url-scheme",
+        "invalid-url-scheme",
+        "invalid-cross-reference",
+        "inconsistent-list"
+      ]
+    }
+  ]
+}

@@ -252,8 +252,8 @@ command = "cargo"
 args = ["build", "-p", "adocweave", "--bin", "adocweave"]
 
 [tasks.adoc-check]
-description = "Parse every tracked AsciiDoc file with AdocWeave"
-dependencies = ["build-adoc-check"]
+description = "Check every tracked AsciiDoc file for crashes, losslessness, and valid ranges"
+dependencies = ["build-adoc-check", "adoc-invariants"]
 script_runner = "@shell"
 script = '''
 manifest="$(mktemp target/adoc-check.XXXXXX)"
@@ -288,6 +288,23 @@ fi
 echo "adoc-check passed: $documents documents, $diagnostics permissive diagnostics recorded in $diagnostics_log"
 '''
 
+[tasks.adoc-invariants]
+private = true
+command = "cargo"
+args = [
+  "test",
+  "-p",
+  "adocweave",
+  "--test",
+  "repository_governance",
+  "tracked_adoc_corpus_is_lossless_and_has_valid_ranges",
+]
+
+[tasks.docs-lint]
+description = "Reject unexpected diagnostics in normative documents and abnormal fixtures"
+command = "cargo"
+args = ["test", "-p", "adocweave", "--test", "repository_governance"]
+
 [tasks.build]
 description = "Build all workspace targets and features"
 command = "cargo"
@@ -308,6 +325,7 @@ dependencies = [
   "doc-check",
   "docs-check",
   "adoc-check",
+  "docs-lint",
   "build",
 ]
 
@@ -318,3 +336,7 @@ dependencies = ["verify", "fuzz-check", "fuzz-smoke"]
 [tasks.release-check]
 description = "Run the publish gate and report release WASM artifact sizes"
 dependencies = ["ci", "test-profile-release", "wasm-size"]
+
+[tasks.release-gate]
+description = "Canonical alias for the complete publish gate"
+alias = "release-check"

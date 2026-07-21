@@ -98,7 +98,7 @@ AdocWeaveは対応済みのconstrained書式、属性参照、通常リンク、
 
 実装時には単にバックスラッシュを削除するだけでなく、次を満たす必要がある。
 
-* lossless CSTがエスケープ文字とその範囲を保持する。
+* lossless syntax treeがエスケープ文字とその範囲を保持する。
 * semantic textがエスケープ済みマークアップをliteral textとして保持する。
 * 診断とFormatterが著者の意図を保持する。
 * 置換コンテキストごとにエスケープの有効性を定義する。

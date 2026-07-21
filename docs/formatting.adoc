@@ -1,34 +1,24 @@
 = Formatter契約
 
-Formatterは同じ`Analysis`に含まれるlossless CSTを使用し、ソースを再解析しない。
+Formatterは同じ`Analysis`に含まれるlossless syntax treeを使用し、ソースを再解析しない。
 出力はソース全体の置換ではなく、重複しない`TextEdit`の集合として構築する。
 
-== CSTノード別方針
+== Syntax node別方針
 
-`CstBlockKind::formatting_policy()`をノード別方針の単一の定義箇所とする。
+構造化syntax treeから、整形してはならない最小の上位node範囲を導出する。literal、source、
+数式、macro、inline span、error、unknownおよび未対応領域にはEditを生成しない。見出し、属性、
+アンカーおよびリストも、専用の意味保存規則が実装されるまではバイト単位で保持する。
 
-NormalizeLineWhitespace::
-段落と空行に適用する。行末空白、連続空行、改行形式および最終改行を設定に従って
-正規化できる。
-
-PreserveBytes::
-見出し、文書属性、アンカー、リスト、リテラル、ソース、数式、未対応構文等に適用する。
-現在はノード範囲内をバイト単位で保持する。
-
-新しいCSTブロックを追加する場合、同じ変更で方針を明示しなければコンパイルが成功しない
-網羅的matchを維持する。意味を理解していないノードを暗黙に整形してはならない。
+保護範囲外の段落と空行では、行末空白、連続空行、改行形式および最終改行を設定に従って
+正規化できる。意味を理解していないnodeを暗黙に整形してはならない。
 
 == 不変条件
 
 * `format(format(x)) == format(x)`を満たす。
-* PreserveBytes領域の内容を変更しない。
-* Editは範囲の重複や重複範囲を持たない。
+* 保護されたsyntax範囲の内容を変更しない。
+* Editは重複せず、UTF-8境界に一致する。
 * 整形後の文書を再解析でき、対応済み意味構造を保持する。
 
-将来、見出しやリストを整形する場合は、そのCST kindを専用方針へ変更し、token単位の
-Edit、意味同値性fixtureおよび不完全入力の保存テストを同時に追加する。
-
-現行の`CstBlockKind`別方針は、構造を理解しない領域を安全に保存するための暫定契約である。
-Issue 054で構造化syntax treeを導入した後、Issue 056でtoken、trivia、unknown nodeおよび
-error nodeに基づく方針へ移行する。移行後も未知・不完全領域のbyte保存を優先し、意味構造を
-loweringし直さなければ安全性を判断できないEditは生成しない。
+将来、見出しやリストを整形する場合は、そのsyntax kindを専用規則へ変更し、token単位のEdit、
+意味同値性fixtureおよび不完全入力の保存テストを同時に追加する。未知・不完全領域のbyte保存を
+優先し、semantic loweringを再実行しなければ安全性を判断できないEditは生成しない。

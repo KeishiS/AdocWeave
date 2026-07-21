@@ -41,7 +41,7 @@ Zedまたは他のLSP client
 
 `adocweave`コアは次を所有する。
 
-* AsciiDocのCST、AST、診断、Formatterおよびprojection
+* AsciiDocのsyntax tree、AST、診断、Formatterおよびprojection
 * UTF-8ソース範囲とスナップショット固有の`SourceDocument`
 * `ProcessingLimits`と協調的な`CancellationCheck`
 * 外部I/Oを行わない決定的な`Engine::analyze`

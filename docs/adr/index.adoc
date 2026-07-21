@@ -1,0 +1,8 @@
+= Architecture Decision Records
+
+ADRは、複数の機能に影響する長期的な設計判断と、その理由を記録する。現行の詳細仕様は
+親ディレクトリの規範文書を正本とする。
+
+* xref:0001-single-analysis-pipeline.adoc[ADR 0001: 単一解析pipeline]
+* xref:0002-host-extension-boundary.adoc[ADR 0002: ホスト拡張境界]
+* xref:0003-runtime-adapters.adoc[ADR 0003: runtime adapterの分離]
