@@ -1,62 +1,11 @@
 = Zed開発用拡張
 
-== 前提条件
+開発版のbuild、導入、動作確認、問題の切り分けおよび削除手順は
+xref:../../docs/zed-development.adoc[Zedへ開発版を導入する]を正本とする。
 
-Zedを起動する前にLanguage Serverをビルドし、`PATH`から参照できるようにする。
-
-[source,console]
-----
-cargo build -p adocweave-lsp
-export PATH="$PWD/target/debug:$PATH"
-zed --foreground .
-----
-
-`zed: install dev extension`でこのディレクトリをインストールし、
-`fixtures/zed/manual.adoc`を開く。
-
-開発用拡張はサーバーを既定の寛容構文モードで起動する。エディター固有の構文モード設定は
-公開しない。
-
-== 文書アウトライン
-
-Zedは既定ではTree-sitterから文書シンボルを取得する。AdocWeave Language Serverが返す
-文書シンボルをOutlineで使用するには、Zedの `settings.json` へ次を追加する。
-
-[source,json]
-----
-{
-  "languages": {
-    "AsciiDoc": {
-      "document_symbols": "on"
-    }
-  }
-}
-----
-
-既存の `languages` または `AsciiDoc` 設定がある場合は、対応するオブジェクトへ
-`"document_symbols": "on"`だけを追加する。
-
-== 手動チェックリスト
-
-- `.adoc`と`.asciidoc`に対して言語セレクターが`AsciiDoc`を表示する。
-- `adocweave-lsp`が再起動を繰り返さず起動する。
-- 行末空白、見出し後の空白欠落、閉じていない斜体について、絵文字を含む行でも
-  期待範囲に診断が表示される。
-- 文書を編集すると診断が最新versionへ置き換わる。
-- outlineに文書タイトルと入れ子の見出しが表示される。
-- Code Actionで行末空白を削除し、欠けている見出し後の空白を挿入できる。
-- Format Documentが冪等であり、ソースブロック本体を変更しない。
-- 見出しへのhoverでレベルと生成IDが表示される。
-- `[source, ru`の後の補完候補に`rust`が表示される。
-- 文書を閉じると診断が消去される。
-
-起動に失敗した場合は`zed: open log`を確認する。Language Serverの失敗はログへ報告され、
-Zed本体を終了させてはならない。
-
-Code Actionは対象の診断へカーソルを置き、Linuxでは `Ctrl+.`、またはコマンドパレットの
-`editor: toggle code actions`で開く。Formattingは保存時の空白削除と区別するため、
-保存前にコマンドパレットの`editor: format`を明示的に実行する。補完は
-`[source, ru]`の`ru`直後で `Ctrl+Space`を実行する。
+このdirectoryはZedが選択する拡張rootであり、`extension.toml`、Rust製WASM adapterおよび
+AsciiDoc言語設定を保持する。開発用拡張は`adocweave-lsp`をworktreeの`PATH`から探し、既定の
+寛容構文モードで起動する。Language Server binaryのdownloadや配置は行わない。
 
 == 受け入れ確認
 

@@ -1,0 +1,169 @@
+= Zedへ開発版を導入する
+
+この文書は、リポジトリの作業treeからAdocWeaveのZed拡張とLanguage Serverを一時的に試す
+手順を定義する。公開Extension Galleryからの導入手順ではない。
+
+Zedの開発拡張はxref:../editors/zed/extension.toml[`editors/zed/extension.toml`]を入口とする。
+拡張はAsciiDoc用Tree-sitter grammarを提供し、worktreeの`PATH`から`adocweave-lsp`を探して起動する。
+Language Server binaryを拡張内部へコピーまたはdownloadしない。
+
+== 前提条件
+
+次を利用できることを確認する。
+
+* Zedと`zed` CLI
+* `cargo`、`rustc`、`rustfmt`およびClippy
+* `rustup`で管理されたRust toolchainと、Zedが要求するWASM target
+* C compiler。Nix開発環境では`stdenv.cc`を含めている
+* 初回のgrammar、WASI SDKおよびRust依存関係を取得するためのnetwork接続
+
+Zed公式文書は、Rustを含む開発拡張のbuildに`rustup`で導入したRustを要求している。Zedが
+`wasm32-wasip2` targetの導入に失敗する場合は、Zedが参照するtoolchainで次を実行する。
+
+[source,console]
+----
+rustup target add wasm32-wasip2
+----
+
+リポジトリのNix環境を使う場合は、先に次を実行する。
+
+[source,console]
+----
+nix develop
+----
+
+Nix shellのRust toolchainでリポジトリ本体をbuildできても、Zedの開発拡張builderは別processとして
+`rustup`とWASM targetを探す。`nix develop`だけで`wasm32-wasip2`導入エラーが解消するとは限らない。
+
+== 推奨手順：隔離したZed user dataを使う
+
+通常利用しているZedの拡張、設定、DBおよびcacheへ影響させないため、リポジトリ内の無視対象
+`target/zed-dev-data`を一時的なuser data directoryとして使う。
+
+. リポジトリrootでLanguage ServerとZed拡張を検査する。
+
+[source,console]
+----
+cargo build -p adocweave-lsp
+cargo make check-zed
+----
+
+. 同じshellでLanguage Serverを`PATH`へ追加し、隔離したZedをforegroundで起動する。
+
+[source,console]
+----
+export PATH="$PWD/target/debug:$PATH"
+zed --foreground --user-data-dir "$PWD/target/zed-dev-data" .
+----
+
+`--foreground`は必須ではないが、拡張buildとLanguage Server起動のlogをterminalで確認できる。
+Zedを別のlauncherや既存processから開くと、上記shellの`PATH`を継承しないことがある。
+
+. ZedでExtension Galleryを開き、`Install Dev Extension`を選ぶ。コマンドパレットから
+  `zed: install dev extension`を実行してもよい。
+. directory選択画面で、リポジトリrootではなく`editors/zed`を選ぶ。このdirectoryには
+  `extension.toml`がある。
+. `fixtures/zed/manual.adoc`を開く。
+
+初回導入時、ZedはRust拡張をWebAssembly componentへbuildし、`extension.toml`に固定した
+`tree-sitter-asciidoc`を取得してgrammarをbuildする。Tree-sitterのparserはgrammar repositoryが
+提供する`grammar.js`から生成された`parser.c`をC compilerでcompileする。`parser.c`は
+AdocWeave Language ServerのRust parserではなく、Zedのsyntax highlighting用grammarである。
+
+== 通常のZed profileへ導入する場合
+
+隔離しない場合も、Language Serverをbuildして`PATH`を設定した同じshellからZedを起動し、
+`editors/zed`をdev extensionとして選ぶ。Zed公式文書によるuser dataの既定位置は次である。
+
+[cols="1,3",options="header"]
+|===
+|OS |user data directory
+
+|Linux
+|`$XDG_DATA_HOME/zed`。未設定時は通常`~/.local/share/zed`
+
+|macOS
+|`~/Library/Application Support/Zed`
+
+|Windows
+|`%LOCALAPPDATA%\Zed`
+|===
+
+通常profileではextension関連状態もこのuser data配下に置かれる。一方、選択した
+`editors/zed`は開発sourceのままであり、`adocweave-lsp`はリポジトリの`target/debug`にある。
+したがって、リポジトリを移動した場合や別shellからZedを再起動した場合は再導入または`PATH`の
+再設定が必要になる。
+
+== Outline設定
+
+Zedの`settings.json`へ次を追加すると、Tree-sitter由来ではなくAdocWeave Language Serverが返す
+文書シンボルをOutlineで利用できる。
+
+[source,json]
+----
+{
+  "languages": {
+    "AsciiDoc": {
+      "document_symbols": "on"
+    }
+  }
+}
+----
+
+既存の`languages`または`AsciiDoc`設定がある場合は、対応するobjectへ
+`"document_symbols": "on"`だけを追加する。
+
+== 動作確認
+
+`fixtures/zed/manual.adoc`で次を確認する。
+
+* 言語selectorが`AsciiDoc`になる。
+* Project DiagnosticsへAdocWeaveの診断が表示され、編集後に更新される。
+* Outlineへ文書タイトルと入れ子の見出しが表示される。
+* 見出しmarker後の空白診断で、Linuxでは`Ctrl+.`または
+  `editor: toggle code actions`から修正を適用できる。
+* `editor: format`を明示的に実行すると整形され、再実行しても変更が生じない。
+* 見出しへhoverするとlevel、生成IDおよび対象部分が表示される。
+* `[source, ru]`の`ru`直後で`Ctrl+Space`を実行すると`rust`が候補に出る。
+* 明示anchorとxrefでDefinitionおよびFind All Referencesが動作する。
+
+保存時の行末空白削除はZed自身の設定でも発生するため、それだけをFormat Document成功の根拠に
+しない。コマンドパレットから`editor: format`を明示的に実行する。
+
+== 問題の切り分け
+
+`zed: open log`でZed logを開く。foreground起動時は同じ内容の一部をterminalでも確認できる。
+
+`failed to install the wasm32-wasip2 target`::
+Zedが使用するRustが`rustup`管理か確認し、同じtoolchainへ`rustup target add wasm32-wasip2`を実行する。
+
+`grammars/asciidoc/src/parser.c`がない::
+grammar repositoryの取得結果または`extension.toml`のrepository、commit、pathが不整合である。
+AdocWeaveのRust parserをCへ変換する必要はない。取得cacheを消して再導入する前に、Zed logに表示された
+grammar checkoutが固定commitと一致することを確認する。
+
+`adocweave-lsp was not found on PATH`::
+`command -v adocweave-lsp`と`$PWD/target/debug/adocweave-lsp --version`を、Zedを起動するshellで確認する。
+そのshellからZedを再起動する。
+
+== 検証後の削除
+
+隔離手順を使った場合はZedを終了してから、`target/zed-dev-data`を削除すれば、今回作成したZedの
+設定、DB、拡張およびcacheをまとめて除去できる。Language Serverのbuild成果物は通常のCargo
+`target`に残るため、他の開発成果物と同じ扱いにする。Zedが拡張source directoryへ生成する
+`extension.wasm`とgrammar build directoryもリポジトリの無視対象であり、不要なら同時に削除できる。
+
+[source,console]
+----
+rm -rf target/zed-dev-data editors/zed/extension.wasm editors/zed/grammars
+----
+
+通常profileへ導入した場合はExtension GalleryからAdocWeave dev extensionを削除する。Zed全体の
+user data directoryを削除すると他の拡張、設定、DBおよびlogも失われるため、清掃目的でdirectory
+全体を削除してはならない。
+
+== 参照
+
+* https://zed.dev/docs/extensions/developing-extensions[Zed公式：Developing Extensions]
+* https://zed.dev/docs/extensions/installing-extensions[Zed公式：Installing Extensions]
+* https://zed.dev/docs/reference/cli[Zed公式：CLI Reference]

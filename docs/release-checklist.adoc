@@ -18,6 +18,8 @@ Rust、WASMおよびWorkerの契約versionがxref:../release-manifest.json[relea
 
 == Zed
 
+開発版の導入と削除はxref:zed-development.adoc[Zedへの開発版導入]に従う。
+
 . `.adoc`をAsciiDocとして認識する。
 . 診断、Outline、Code Action、Format、Hoverおよび補完が動作する。
 . 文書を編集した直後に診断、Outlineおよびsemantic highlightingが最新内容へ更新される。
