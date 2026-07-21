@@ -1,4 +1,5 @@
 import { WORKER_PROTOCOL_VERSION } from "./controller.mjs";
+import { WASM_API_VERSION } from "./contracts.mjs";
 
 export class AdocWeaveWorkerClient {
   #worker;
@@ -26,7 +27,7 @@ export class AdocWeaveWorkerClient {
       version,
       generation,
       payload: {
-        apiVersion: 5,
+        apiVersion: WASM_API_VERSION,
         sourceId,
         version,
         generation,

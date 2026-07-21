@@ -6,6 +6,7 @@ import {
   createController,
 } from "./controller.mjs";
 import { AdocWeaveWorkerClient } from "./client.mjs";
+import { WASM_API_VERSION } from "./contracts.mjs";
 
 function harness(process = (request) => request) {
   const messages = [];
@@ -44,7 +45,7 @@ function request(version, generation) {
     version,
     generation,
     payload: {
-      apiVersion: 5,
+      apiVersion: WASM_API_VERSION,
       sourceId: null,
       version,
       generation,
@@ -92,7 +93,7 @@ test("protocol mismatch returns a stable error without executing WASM", () => {
   assert.equal(state.messages[0].error.code, "unsupported-worker-protocol");
 });
 
-test("client sends WASM API version 5 with core-owned default options", () => {
+test("client sends the current WASM API version with core-owned default options", () => {
   const messages = [];
   const worker = {
     postMessage(message) {
@@ -106,7 +107,7 @@ test("client sends WASM API version 5 with core-owned default options", () => {
   });
   client.analyze({ version: 1, source: "text" });
 
-  assert.equal(messages[1].payload.apiVersion, 5);
+  assert.equal(messages[1].payload.apiVersion, WASM_API_VERSION);
   assert.deepEqual(messages[1].payload.options, {});
   client.dispose();
 });
