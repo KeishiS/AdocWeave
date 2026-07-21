@@ -166,25 +166,25 @@ preamble、book part、discrete heading、基本paragraph形式およびbreakま
 . インデントされたliteral paragraph、hard line break、thematic breakおよびpage breakを追加する。
 . 文書headerへ著者・改訂情報、preamble、doctypeおよびdiscrete headingを追加する。
 
-次はIssue 062で置換pipelineを明示化し、その後Issue 063でdescription list、checklist、callout list
-および任意blockを伴うlist continuationへ拡張する。
+Issue 062では置換pipeline、Issue 063ではdescription list、checklist、callout listおよび
+任意blockを伴うlist continuationまで拡張した。次は基本PSV tableを構造化する。
 
 この段階ではraw passthroughを有効化しない。未知blockは引き続きlosslessに保持し、HTMLへ入力由来の
 要素や属性を通過させない。
 
-== 次段階: 置換pipelineと属性評価
+== 完了した段階: 置換pipeline、属性評価および標準list
 
 公式言語文書は、特殊文字、quotes、属性参照、文字置換、macroおよびpost replacementsを順序付きの
 置換として定義し、normal、verbatim、header、pass、none等のgroupをblock contextごとに適用する。
-現在の一回属性展開と限定的inline parserを拡張する前に、置換contextと評価結果を明示的な型にする。
+置換contextと評価結果を明示的な型にし、標準listの各inline領域へ接続した。
 
 * https://docs.asciidoctor.org/asciidoc/latest/subs/[Substitutions]
 * https://docs.asciidoctor.org/asciidoc/latest/subs/prevent/[Escape and Prevent Substitutions]
 * https://docs.asciidoctor.org/asciidoc/latest/attributes/element-attributes/[Element Attributes]
 
-実装順は、特殊文字・文字置換、quote系書式、属性の再帰展開と未定義時の動作、置換group、
-passthroughの順とする。passthroughとraw backend出力は別概念として扱い、HTMLのraw出力は安全な
-既定値では禁止する。counter等の状態を持つ属性は、決定性と処理上限を定義してから追加する。
+特殊文字・文字置換、quote系書式、属性の再帰展開、型付き置換group、安全なpassthrough、
+description／checklist／callout listを実装済みである。passthroughとraw backend出力は別概念であり、
+HTMLのraw出力は禁止する。
 
 == その後の標準構文
 

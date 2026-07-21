@@ -203,6 +203,7 @@ pub struct SourceBlock {
     pub delimiter_range: TextRange,
     pub content_range: TextRange,
     pub value: String,
+    pub callouts: Vec<CalloutMarker>,
     problems: Vec<BlockProblem>,
 }
 
@@ -269,6 +270,28 @@ pub struct MathBlock {
 pub enum ListKind {
     Unordered,
     Ordered,
+    Description,
+    Callout,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChecklistState {
+    Unchecked,
+    Checked,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DescriptionTerm {
+    pub range: TextRange,
+    pub text: String,
+    pub inlines: Vec<Inline>,
+    inline_problems: Vec<InlineProblem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CalloutMarker {
+    pub id: u32,
+    pub range: TextRange,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -302,6 +325,9 @@ pub struct ListItem {
     pub text_range: TextRange,
     pub text: String,
     pub inlines: Vec<Inline>,
+    pub terms: Vec<DescriptionTerm>,
+    pub checklist: Option<ChecklistState>,
+    pub callout_id: Option<u32>,
     inline_problems: Vec<InlineProblem>,
     pub children: Vec<ListBlock>,
     pub continuations: Vec<AstBlock>,
@@ -613,6 +639,9 @@ impl AstDocument {
     pub(crate) fn visit_inline_sequences_mut(&mut self, mut visitor: impl FnMut(&mut Vec<Inline>)) {
         fn visit_list(list: &mut ListBlock, visitor: &mut impl FnMut(&mut Vec<Inline>)) {
             for item in &mut list.items {
+                for term in &mut item.terms {
+                    visitor(&mut term.inlines);
+                }
                 visitor(&mut item.inlines);
                 for child in &mut item.children {
                     visit_list(child, visitor);
@@ -1430,6 +1459,9 @@ fn collect_syntax_issues(
 
     fn list_issues(list: &ListBlock, output: &mut Vec<SyntaxIssue>) {
         for item in &list.items {
+            for term in &item.terms {
+                inline_issues(&term.inline_problems, output);
+            }
             inline_issues(&item.inline_problems, output);
             for problem in &item.problems {
                 let (message, fix) = match problem.kind {
@@ -1577,6 +1609,11 @@ fn delimiter_syntax(range: TextRange, is_error: bool) -> SyntaxNode {
 fn list_syntax(range: TextRange, lists: &[ListBlock]) -> SyntaxNode {
     fn item_syntax(item: &ListItem) -> SyntaxNode {
         let mut children = vec![SyntaxNode::leaf(SyntaxKind::ListMarker, item.marker_range)];
+        children.extend(
+            item.terms
+                .iter()
+                .flat_map(|term| inline_syntax(&term.inlines)),
+        );
         children.extend(inline_syntax(&item.inlines));
         children.extend(
             item.children
@@ -2011,16 +2048,80 @@ struct FlatListItem {
     item: ListItem,
 }
 
-fn list_marker(content: &str) -> Option<(ListKind, usize, usize)> {
+#[derive(Clone, Copy, Debug)]
+struct ParsedListMarker {
+    kind: ListKind,
+    depth: usize,
+    marker_start: usize,
+    marker_end: usize,
+    text_start: usize,
+    term_end: Option<usize>,
+    callout_id: Option<u32>,
+}
+
+fn list_marker(content: &str) -> Option<ParsedListMarker> {
     let marker = content.as_bytes().first().copied()?;
-    let kind = match marker {
-        b'*' => ListKind::Unordered,
-        b'.' => ListKind::Ordered,
-        _ => return None,
-    };
-    let depth = content.bytes().take_while(|byte| *byte == marker).count();
-    let separator = *content.as_bytes().get(depth)?;
-    matches!(separator, b' ' | b'\t').then_some((kind, depth, depth + 1))
+    if matches!(marker, b'*' | b'.') {
+        let kind = if marker == b'*' {
+            ListKind::Unordered
+        } else {
+            ListKind::Ordered
+        };
+        let depth = content.bytes().take_while(|byte| *byte == marker).count();
+        let separator = *content.as_bytes().get(depth)?;
+        return matches!(separator, b' ' | b'\t').then_some(ParsedListMarker {
+            kind,
+            depth,
+            marker_start: 0,
+            marker_end: depth,
+            text_start: depth + 1,
+            term_end: None,
+            callout_id: None,
+        });
+    }
+    if marker == b'<' {
+        let close = content.find('>')?;
+        let raw = &content[1..close];
+        let id = (raw == ".").then_some(0).or_else(|| raw.parse().ok())?;
+        let separator = *content.as_bytes().get(close + 1)?;
+        return matches!(separator, b' ' | b'\t').then_some(ParsedListMarker {
+            kind: ListKind::Callout,
+            depth: 1,
+            marker_start: 0,
+            marker_end: close + 1,
+            text_start: close + 2,
+            term_end: None,
+            callout_id: Some(id),
+        });
+    }
+    for (offset, _) in content
+        .match_indices("::")
+        .chain(content.match_indices(";;"))
+    {
+        let delimiter = &content[offset..];
+        let width = if delimiter.starts_with("::::") {
+            4
+        } else if delimiter.starts_with(":::") {
+            3
+        } else {
+            2
+        };
+        let after = offset + width;
+        if offset == 0 || !matches!(content.as_bytes().get(after), None | Some(b' ' | b'\t')) {
+            continue;
+        }
+        return Some(ParsedListMarker {
+            kind: ListKind::Description,
+            depth: width.saturating_sub(1),
+            marker_start: offset,
+            marker_end: after,
+            text_start: after
+                + usize::from(matches!(content.as_bytes().get(after), Some(b' ' | b'\t'))),
+            term_end: Some(offset),
+            callout_id: None,
+        });
+    }
+    None
 }
 
 fn parse_lists(
@@ -2039,18 +2140,53 @@ fn parse_lists(
         let content = source_document
             .text(line.content_range())
             .expect("valid line");
-        let Some((kind, depth, text_start)) = list_marker(content) else {
+        let Some(marker) = list_marker(content) else {
             break;
         };
+        let ParsedListMarker {
+            kind,
+            depth,
+            marker_start,
+            marker_end,
+            mut text_start,
+            term_end,
+            mut callout_id,
+        } = marker;
         let effective_depth = depth.min(config.max_list_depth.max(1));
         let absolute = line.content_range().start().to_usize();
+        let marker_range = text_range(absolute + marker_start, absolute + marker_end)?;
+        let separator_range = text_range(absolute + marker_end, absolute + text_start)?;
+        let mut checklist = None;
+        if kind == ListKind::Unordered {
+            let rest = &content[text_start..];
+            if rest.len() >= 4
+                && rest.as_bytes()[0] == b'['
+                && rest.as_bytes()[2] == b']'
+                && matches!(rest.as_bytes()[3], b' ' | b'\t')
+            {
+                checklist = match rest.as_bytes()[1] {
+                    b' ' => Some(ChecklistState::Unchecked),
+                    b'x' | b'X' | b'*' => Some(ChecklistState::Checked),
+                    _ => None,
+                };
+                if checklist.is_some() {
+                    text_start += 4;
+                }
+            }
+        }
+        if kind == ListKind::Callout && callout_id == Some(0) {
+            callout_id = Some(
+                flat.iter()
+                    .filter(|item: &&FlatListItem| item.kind == ListKind::Callout)
+                    .count() as u32
+                    + 1,
+            );
+        }
         let text = &content[text_start..];
-        let marker_range = text_range(absolute, absolute + depth)?;
-        let separator_range = text_range(absolute + depth, absolute + text_start)?;
-        let text_range = text_range(absolute + text_start, absolute + content.len())?;
+        let item_text_range = text_range(absolute + text_start, absolute + content.len())?;
         let parsed = parse_inlines(
             text,
-            text_range,
+            item_text_range,
             InlineParseConfig {
                 max_depth: config.max_inline_depth,
                 max_formula_bytes: config.max_formula_bytes,
@@ -2061,10 +2197,10 @@ fn parse_lists(
         if text.is_empty() {
             problems.push(ListProblem {
                 kind: ListProblemKind::EmptyItem,
-                range: text_range,
+                range: item_text_range,
             });
         }
-        if content.as_bytes()[depth] == b'\t' {
+        if content.as_bytes().get(marker_end) == Some(&b'\t') {
             problems.push(ListProblem {
                 kind: ListProblemKind::NonCanonicalSeparator,
                 range: separator_range,
@@ -2097,13 +2233,37 @@ fn parse_lists(
         kinds_by_depth.resize(kinds_by_depth.len().max(effective_depth + 1), None);
         kinds_by_depth[effective_depth] = Some(kind);
         budget.consume_node()?;
+        let terms = if let Some(term_end) = term_end {
+            let term_range = text_range(absolute, absolute + term_end)?;
+            let term = &content[..term_end];
+            let parsed_term = parse_inlines(
+                term,
+                term_range,
+                InlineParseConfig {
+                    max_depth: config.max_inline_depth,
+                    max_formula_bytes: config.max_formula_bytes,
+                },
+                budget,
+            )?;
+            vec![DescriptionTerm {
+                range: term_range,
+                text: term.to_owned(),
+                inlines: parsed_term.inlines,
+                inline_problems: parsed_term.problems,
+            }]
+        } else {
+            Vec::new()
+        };
         let mut item = ListItem {
             range: line.full_range(),
             marker_range,
             separator_range,
-            text_range,
+            text_range: item_text_range,
             text: text.to_owned(),
             inlines: parsed.inlines,
+            terms,
+            checklist,
+            callout_id,
             inline_problems: parsed.problems,
             children: Vec::new(),
             continuations: Vec::new(),
@@ -2117,34 +2277,21 @@ fn parse_lists(
             .is_some_and(|next| source_document.text(next.content_range()) == Some("+"))
         {
             let continuation = source_document.lines()[index];
+            budget.consume_list_continuation()?;
             let next = index + 1;
-            let parsed_block = source_document.lines().get(next).and_then(|next_line| {
-                let next_text = source_document.text(next_line.content_range())?;
-                if next_text == "...." {
-                    parse_literal_block(source_document, next, source)
-                        .ok()
-                        .map(|(block, end)| (AstBlock::Literal(block), end))
-                } else if parse_source_attribute(next_text).is_some()
-                    && source_document
-                        .lines()
-                        .get(next + 1)
-                        .and_then(|line| source_document.text(line.content_range()))
-                        == Some("----")
-                {
-                    parse_source_block(source_document, next, source)
-                        .ok()
-                        .map(|(block, end)| (AstBlock::Source(block), end))
-                } else {
-                    None
-                }
-            });
-            let Some((block, end)) = parsed_block else {
+            let Some((attached, end)) =
+                parse_list_continuation(source_document, next, source, config, budget)?
+            else {
                 break;
             };
             item.continuation_ranges.push(continuation.full_range());
-            item.range = TextRange::new(item.range.start(), block.range().end())?;
-            budget.consume_node()?;
-            item.continuations.push(block);
+            let attached_end = attached
+                .last()
+                .expect("a parsed continuation has a block")
+                .range()
+                .end();
+            item.range = TextRange::new(item.range.start(), attached_end)?;
+            item.continuations.extend(attached);
             index = end;
         }
         previous = Some((effective_depth, kind));
@@ -2153,6 +2300,23 @@ fn parse_lists(
             kind,
             item,
         });
+    }
+    let mut item_index = 0;
+    while item_index + 1 < flat.len() {
+        let combines_with_next = flat[item_index].kind == ListKind::Description
+            && flat[item_index].item.text.is_empty()
+            && flat[item_index + 1].kind == ListKind::Description
+            && flat[item_index + 1].depth == flat[item_index].depth;
+        if combines_with_next {
+            let preceding = flat.remove(item_index);
+            let following = &mut flat[item_index].item;
+            let mut terms = preceding.item.terms;
+            terms.append(&mut following.terms);
+            following.terms = terms;
+            following.range = TextRange::new(preceding.item.range.start(), following.range.end())?;
+        } else {
+            item_index += 1;
+        }
     }
     let end = flat
         .last()
@@ -2175,6 +2339,82 @@ fn parse_lists(
         )?);
     }
     Ok((roots, index, range))
+}
+
+fn parse_list_continuation(
+    source_document: &SourceDocument,
+    index: usize,
+    source: &str,
+    config: &ParseConfig,
+    budget: &mut ParseBudget,
+) -> Result<Option<(Vec<AstBlock>, usize)>, ParseFailure> {
+    let Some(line) = source_document.lines().get(index).copied() else {
+        return Ok(None);
+    };
+    let content = source_document
+        .text(line.content_range())
+        .expect("valid continuation line");
+    if content.trim_matches([' ', '\t']).is_empty() {
+        return Ok(None);
+    }
+    budget.consume_block()?;
+    budget.consume_node()?;
+    if content == "...." {
+        let (block, end) = parse_literal_block(source_document, index, source)?;
+        return Ok(Some((vec![AstBlock::Literal(block)], end)));
+    }
+    if parse_source_attribute(content).is_some()
+        && source_document
+            .lines()
+            .get(index + 1)
+            .and_then(|line| source_document.text(line.content_range()))
+            == Some("----")
+    {
+        let (mut block, end) = parse_source_block(source_document, index, source)?;
+        block.metadata = parse_block_attributes(content, line.content_range().start().to_usize())
+            .unwrap_or_default();
+        return Ok(Some((vec![AstBlock::Source(block)], end)));
+    }
+    if let Some(spec) = delimiter_spec(content) {
+        let context = DelimitedParseContext {
+            source_document,
+            source,
+            config,
+        };
+        let (block, end) = parse_delimited_block(
+            &context,
+            index,
+            source_document.lines().len(),
+            spec,
+            budget,
+            1,
+        )?;
+        return Ok(Some((vec![AstBlock::Delimited(block)], end)));
+    }
+    if list_marker(content).is_some() {
+        let (lists, end, _) = parse_lists(source_document, index, source, config, budget)?;
+        return Ok(Some((lists.into_iter().map(AstBlock::List).collect(), end)));
+    }
+    let parsed = parse_inlines(
+        content,
+        line.content_range(),
+        InlineParseConfig {
+            max_depth: config.max_inline_depth,
+            max_formula_bytes: config.max_formula_bytes,
+        },
+        budget,
+    )?;
+    Ok(Some((
+        vec![AstBlock::Paragraph(Paragraph {
+            metadata: BlockMetadata::default(),
+            range: line.full_range(),
+            content_range: line.content_range(),
+            value: content.to_owned(),
+            inlines: parsed.inlines,
+            inline_problems: parsed.problems,
+        })],
+        index + 1,
+    )))
 }
 
 fn build_list_tree(
@@ -2246,6 +2486,38 @@ fn parse_literal_block(
         },
         body.next_line,
     ))
+}
+
+fn scan_callout_markers(
+    value: &str,
+    range: TextRange,
+) -> Result<Vec<CalloutMarker>, PositionError> {
+    let mut output = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = value[cursor..].find('<') {
+        let open = cursor + relative;
+        if open > 0 && value.as_bytes()[open - 1] == b'\\' {
+            cursor = open + 1;
+            continue;
+        }
+        let Some(close_relative) = value[open + 1..].find('>') else {
+            break;
+        };
+        let close = open + 1 + close_relative;
+        if let Ok(id) = value[open + 1..close].parse::<u32>() {
+            if id != 0 {
+                output.push(CalloutMarker {
+                    id,
+                    range: text_range(
+                        range.start().to_usize() + open,
+                        range.start().to_usize() + close + 1,
+                    )?,
+                });
+            }
+        }
+        cursor = close + 1;
+    }
+    Ok(output)
 }
 
 struct DelimitedBody {
@@ -2557,6 +2829,7 @@ fn parse_source_block(
         .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
         .expect("source block content range is valid")
         .to_owned();
+    let callouts = scan_callout_markers(&value, body.content_range)?;
 
     Ok((
         SourceBlock {
@@ -2568,6 +2841,7 @@ fn parse_source_block(
             delimiter_range: delimiter.content_range(),
             content_range: body.content_range,
             value,
+            callouts,
             problems: body.problems,
         },
         body.next_line,
@@ -2936,8 +3210,9 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AstBlock, BlockProblemKind, BreakBlock, BreakKind, DelimitedBlockKind, DelimitedContent,
-        DocumentType, Heading, HeadingKind, HeadingProblem, MathProblemKind, SyntaxKind, parse,
+        AstBlock, BlockProblemKind, BreakBlock, BreakKind, ChecklistState, DelimitedBlockKind,
+        DelimitedContent, DocumentType, Heading, HeadingKind, HeadingProblem, ListKind,
+        MathProblemKind, SyntaxKind, parse,
     };
     use crate::attributes::AttributeOperation;
     use crate::inline::{Inline, MathLanguage};
@@ -3403,6 +3678,52 @@ mod tests {
         assert!(matches!(
             list.items[1].continuations[0],
             AstBlock::Source(_)
+        ));
+    }
+
+    #[test]
+    fn standard_list_forms_have_typed_terms_checklists_callouts_and_mixed_continuations() {
+        let source = "Alias::\nTerm:: *definition*\n* [ ] todo\n* [x] done\n[source,rust]\n----\nlet value = 1; // <1>\n----\n<1> binding\n* compound\n+\nattached paragraph\n+\n====\ninside\n====\n";
+        let parsed = parse(source).expect("parse");
+        assert_eq!(parsed.syntax.reconstruct(), source);
+
+        let AstBlock::List(description) = &parsed.ast.blocks()[0] else {
+            panic!("description list");
+        };
+        assert_eq!(description.kind, ListKind::Description);
+        assert_eq!(description.items[0].terms.len(), 2);
+        assert_eq!(description.items[0].terms[0].text, "Alias");
+        assert_eq!(description.items[0].terms[1].text, "Term");
+
+        let AstBlock::List(checklist) = &parsed.ast.blocks()[1] else {
+            panic!("checklist");
+        };
+        assert_eq!(
+            checklist.items[0].checklist,
+            Some(ChecklistState::Unchecked)
+        );
+        assert_eq!(checklist.items[1].checklist, Some(ChecklistState::Checked));
+
+        let AstBlock::Source(source_block) = &parsed.ast.blocks()[2] else {
+            panic!("source block");
+        };
+        assert_eq!(source_block.callouts[0].id, 1);
+        let AstBlock::List(callouts) = &parsed.ast.blocks()[3] else {
+            panic!("callout list");
+        };
+        assert_eq!(callouts.kind, ListKind::Callout);
+        assert_eq!(callouts.items[0].callout_id, Some(1));
+
+        let AstBlock::List(compound) = &parsed.ast.blocks()[4] else {
+            panic!("compound list");
+        };
+        assert!(matches!(
+            compound.items[0].continuations[0],
+            AstBlock::Paragraph(_)
+        ));
+        assert!(matches!(
+            compound.items[0].continuations[1],
+            AstBlock::Delimited(_)
         ));
     }
 

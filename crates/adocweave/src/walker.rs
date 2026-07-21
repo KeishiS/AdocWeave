@@ -87,6 +87,9 @@ fn walk_list_contents<'document>(
 ) {
     for item in &list.items {
         visitor(SemanticNode::ListItem(item));
+        for term in &item.terms {
+            walk_inlines(&term.inlines, visitor);
+        }
         walk_inlines(&item.inlines, visitor);
         for child in &item.children {
             visitor(SemanticNode::List(child));

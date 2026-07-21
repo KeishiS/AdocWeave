@@ -419,7 +419,15 @@ fn append_list_symbols(
         let index = arena.len();
         arena.push(ArenaSymbol {
             symbol: DocumentSymbol {
-                name: item.text.clone(),
+                name: if item.terms.is_empty() {
+                    item.text.clone()
+                } else {
+                    item.terms
+                        .iter()
+                        .map(|term| term.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
                 kind: SymbolKind::ListItem,
                 range: item.range,
                 selection_range: item.text_range,

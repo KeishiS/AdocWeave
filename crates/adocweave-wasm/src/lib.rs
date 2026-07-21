@@ -10,7 +10,7 @@ use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 6;
+pub const WASM_API_VERSION: u16 = 7;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -58,6 +58,7 @@ pub struct WasmLimits {
     pub max_output_bytes: u32,
     pub max_line_bytes: u32,
     pub max_list_depth: u32,
+    pub max_list_continuations: u32,
     pub max_block_depth: u32,
     pub max_inline_depth: u32,
     pub max_formula_bytes: u32,
@@ -83,6 +84,7 @@ impl From<ProcessingLimits> for WasmLimits {
             max_output_bytes: value.max_output_bytes,
             max_line_bytes: value.max_line_bytes,
             max_list_depth: value.max_list_depth,
+            max_list_continuations: value.max_list_continuations,
             max_block_depth: value.max_block_depth,
             max_inline_depth: value.max_inline_depth,
             max_formula_bytes: value.max_formula_bytes,
@@ -104,6 +106,7 @@ impl From<WasmLimits> for ProcessingLimits {
             max_output_bytes: value.max_output_bytes,
             max_line_bytes: value.max_line_bytes,
             max_list_depth: value.max_list_depth,
+            max_list_continuations: value.max_list_continuations,
             max_block_depth: value.max_block_depth,
             max_inline_depth: value.max_inline_depth,
             max_formula_bytes: value.max_formula_bytes,

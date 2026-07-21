@@ -1,0 +1,19 @@
+Alias::
+Term:: *definition*
+
+* [ ] todo
+* [x] done
+
+[source,rust]
+----
+let value = 1; // <1>
+----
+<1> binding
+
+* compound
++
+attached paragraph
++
+====
+inside
+====

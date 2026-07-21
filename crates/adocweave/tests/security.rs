@@ -76,6 +76,7 @@ fn malformed_bytes_and_tight_limits_fail_without_partial_output() {
             max_output_bytes: 8,
             max_line_bytes: 8,
             max_list_depth: 2,
+            max_list_continuations: 1,
             max_block_depth: 2,
             max_inline_depth: 2,
             max_formula_bytes: 4,
@@ -143,7 +144,7 @@ fn each_structural_resource_limit_rejects_the_corresponding_input() {
 
 #[test]
 fn construction_budgets_accept_exact_boundaries_and_reject_the_next_item() {
-    let cases: [BoundaryCase; 4] = [
+    let cases: [BoundaryCase; 5] = [
         (
             "blocks",
             "one\n\ntwo",
@@ -174,6 +175,14 @@ fn construction_budgets_accept_exact_boundaries_and_reject_the_next_item() {
             2_u32,
             |limits: &mut ProcessingLimits, value| {
                 limits.max_attributes = value;
+            },
+        ),
+        (
+            "list continuations",
+            "* item\n+\nfirst\n+\nsecond\n",
+            2_u32,
+            |limits: &mut ProcessingLimits, value| {
+                limits.max_list_continuations = value;
             },
         ),
     ];

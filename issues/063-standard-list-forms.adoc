@@ -1,5 +1,5 @@
 = 標準list形式の拡張
-:status: planned
+:status: completed
 :depends-on: 060,062
 
 == 目的

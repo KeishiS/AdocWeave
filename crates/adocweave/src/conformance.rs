@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 9;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 10;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -207,6 +207,8 @@ fn list_node(list: &ListBlock) -> CanonicalNode {
         kind: match list.kind {
             crate::parser::ListKind::Unordered => "unordered-list",
             crate::parser::ListKind::Ordered => "ordered-list",
+            crate::parser::ListKind::Description => "description-list",
+            crate::parser::ListKind::Callout => "callout-list",
         },
         range: range(list.range),
         value: None,
@@ -215,13 +217,30 @@ fn list_node(list: &ListBlock) -> CanonicalNode {
 }
 
 fn list_item_node(item: &ListItem) -> CanonicalNode {
-    let mut children = inline_nodes(&item.inlines);
+    let mut children = item
+        .terms
+        .iter()
+        .map(|term| CanonicalNode {
+            kind: "description-term",
+            range: range(term.range),
+            value: Some(term.text.clone()),
+            children: inline_nodes(&term.inlines),
+        })
+        .collect::<Vec<_>>();
+    children.extend(inline_nodes(&item.inlines));
     children.extend(item.children.iter().map(list_node));
     children.extend(item.continuations.iter().map(block_node));
     CanonicalNode {
         kind: "list-item",
         range: range(item.range),
-        value: Some(item.text.clone()),
+        value: Some(match (item.checklist, item.callout_id) {
+            (Some(crate::parser::ChecklistState::Checked), _) => format!("checked:{}", item.text),
+            (Some(crate::parser::ChecklistState::Unchecked), _) => {
+                format!("unchecked:{}", item.text)
+            }
+            (_, Some(id)) => format!("callout-{id}:{}", item.text),
+            _ => item.text.clone(),
+        }),
         children,
     }
 }

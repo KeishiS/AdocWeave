@@ -2,7 +2,7 @@
 
 `adocweave-wasm`は`adocweave`コアの薄いversion付きアダプターである。構文解析、HTML、
 診断、シンボルおよびprojectionは一つの`Analysis`から生成し、WASM側で簡易parserを
-実装しない。現在の`WASM_API_VERSION`は6である。Web Workerのmessage形式はこのリポジトリの
+実装しない。現在の`WASM_API_VERSION`は7である。Web Workerのmessage形式はこのリポジトリの
 公開契約versionとはせず、薄い呼び出しadapterとしてWASM APIの要求と応答をそのまま運ぶ。
 
 == ビルド

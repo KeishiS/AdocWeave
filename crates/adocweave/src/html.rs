@@ -15,14 +15,17 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 5;
+pub const HTML_CONTRACT_VERSION: u16 = 6;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "a", "body", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html", "li", "mark",
-    "ol", "p", "pre", "strong", "sub", "sup", "ul",
+    "a", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html",
+    "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "ul",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "href", "id"];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
+    "callout-list",
+    "callout-number",
+    "checklist-marker",
     "document-title",
     "language-*",
     "lead",
@@ -153,9 +156,13 @@ pub fn render_with_resolutions(
                 escape_html_into(&mut fragment, &source.value);
                 fragment.push_str("</code></pre>\n");
             }
-            AstBlock::List(list) => {
-                render_list(&mut fragment, list, explicit_id, &mut inline_context)
-            }
+            AstBlock::List(list) => render_list(
+                &mut fragment,
+                list,
+                explicit_id,
+                policy,
+                &mut inline_context,
+            ),
             AstBlock::Math(math) => {
                 fragment.push_str("<pre");
                 render_optional_id(&mut fragment, explicit_id);
@@ -274,7 +281,7 @@ fn render_delimited(
                         escape_html_into(output, &source.value);
                         output.push_str("</code></pre>\n");
                     }
-                    AstBlock::List(list) => render_list(output, list, None, context),
+                    AstBlock::List(list) => render_list(output, list, None, policy, context),
                     AstBlock::Math(math) => {
                         output.push_str("<pre><code>");
                         escape_html_into(output, &math.value);
@@ -305,22 +312,51 @@ fn render_list(
     output: &mut String,
     list: &crate::parser::ListBlock,
     explicit_id: Option<&str>,
+    policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_>,
 ) {
     let tag = match list.kind {
         crate::parser::ListKind::Unordered => "ul",
         crate::parser::ListKind::Ordered => "ol",
+        crate::parser::ListKind::Description => "dl",
+        crate::parser::ListKind::Callout => "ol",
     };
     output.push('<');
     output.push_str(tag);
     render_optional_id(output, explicit_id);
+    if list.kind == crate::parser::ListKind::Callout {
+        output.push_str(" class=\"callout-list\"");
+    }
     output.push_str(">\n");
     for item in &list.items {
-        output.push_str("<li>");
+        if list.kind == crate::parser::ListKind::Description {
+            for term in &item.terms {
+                output.push_str("<dt>");
+                render_inlines(output, &term.inlines, context);
+                output.push_str("</dt>\n");
+            }
+            output.push_str("<dd>");
+        } else {
+            output.push_str("<li>");
+        }
+        if let Some(state) = item.checklist {
+            output.push_str("<span class=\"checklist-marker\">");
+            output.push_str(if state == crate::parser::ChecklistState::Checked {
+                "☑"
+            } else {
+                "☐"
+            });
+            output.push_str("</span> ");
+        }
+        if let Some(id) = item.callout_id {
+            output.push_str("<span class=\"callout-number\">");
+            output.push_str(&id.to_string());
+            output.push_str("</span> ");
+        }
         render_inlines(output, &item.inlines, context);
         for child in &item.children {
             output.push('\n');
-            render_list(output, child, None, context);
+            render_list(output, child, None, policy, context);
         }
         for continuation in &item.continuations {
             match continuation {
@@ -340,10 +376,34 @@ fn render_list(
                     escape_html_into(output, &block.value);
                     output.push_str("</code></pre>");
                 }
+                AstBlock::Paragraph(block) => render_paragraph(output, block, None, context),
+                AstBlock::LiteralParagraph(block) => {
+                    output.push_str("\n<pre>");
+                    escape_html_into(output, &block.value);
+                    output.push_str("</pre>");
+                }
+                AstBlock::Break(block) => render_break(output, block.kind, None),
+                AstBlock::List(block) => render_list(output, block, None, policy, context),
+                AstBlock::Delimited(block) => {
+                    render_delimited(output, block, None, policy, context);
+                }
+                AstBlock::Math(block) => {
+                    output.push_str("\n<pre><code>");
+                    escape_html_into(output, &block.value);
+                    output.push_str("</code></pre>");
+                }
+                AstBlock::Heading(block) => {
+                    let id = crate::document::heading_id_base(&block.text);
+                    render_heading(output, block, &id, policy, context);
+                }
                 _ => {}
             }
         }
-        output.push_str("</li>\n");
+        output.push_str(if list.kind == crate::parser::ListKind::Description {
+            "</dd>\n"
+        } else {
+            "</li>\n"
+        });
     }
     output.push_str("</");
     output.push_str(tag);
@@ -901,12 +961,12 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 5);
+        assert_eq!(HTML_CONTRACT_VERSION, 6);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
-                "a", "body", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html", "li",
-                "mark", "ol", "p", "pre", "strong", "sub", "sup", "ul"
+                "a", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5",
+                "hr", "html", "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "ul"
             ]
         );
         assert_eq!(ALLOWED_ATTRIBUTES, ["class", "href", "id"]);
@@ -914,6 +974,9 @@ mod tests {
             ALLOWED_CLASSES,
             [
                 "author",
+                "callout-list",
+                "callout-number",
+                "checklist-marker",
                 "document-title",
                 "language-*",
                 "lead",
@@ -1174,6 +1237,18 @@ mod tests {
         assert_eq!(
             output.html,
             include_str!("../../../fixtures/lists/asciidoctor-compatible.html")
+        );
+    }
+
+    #[test]
+    fn standard_list_forms_render_semantic_html() {
+        let parsed =
+            parse(include_str!("../../../fixtures/lists/standard-forms.adoc")).expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            include_str!("../../../fixtures/lists/standard-forms.html")
         );
     }
 

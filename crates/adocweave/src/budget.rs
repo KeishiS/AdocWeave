@@ -16,6 +16,7 @@ pub(crate) struct ParseBudget {
     nodes: u32,
     references: u32,
     attributes: u32,
+    list_continuations: u32,
 }
 
 impl ParseBudget {
@@ -26,6 +27,7 @@ impl ParseBudget {
             nodes: 0,
             references: 0,
             attributes: 0,
+            list_continuations: 0,
         };
         budget.consume_node()?;
         Ok(budget)
@@ -64,6 +66,14 @@ impl ParseBudget {
             &mut self.attributes,
             self.limits.max_attributes,
             "document attributes",
+        )
+    }
+
+    pub(crate) fn consume_list_continuation(&mut self) -> Result<(), BudgetExceeded> {
+        consume(
+            &mut self.list_continuations,
+            self.limits.max_list_continuations,
+            "list continuations",
         )
     }
 }

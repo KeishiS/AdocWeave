@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 5;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -214,6 +214,14 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
 
 fn collect_search_list(list: &ListBlock, output: &mut Vec<SearchTextSegment>) {
     for item in &list.items {
+        for term in &item.terms {
+            push_search(
+                output,
+                SearchTextKind::Prose,
+                term.range,
+                inline_text(&term.inlines),
+            );
+        }
         push_search(
             output,
             SearchTextKind::Prose,
@@ -512,13 +520,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_five_json_contract() {
+    fn projections_keep_the_version_six_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":5,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":6,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 
