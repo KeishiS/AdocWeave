@@ -44,8 +44,10 @@
               esbuild
               fontconfig
               gh
+              git
               clippy
               gnutar
+              jq
               lld
               nodejs
               typescript
