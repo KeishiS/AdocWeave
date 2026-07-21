@@ -177,4 +177,40 @@ mod tests {
         assert_eq!(items, 2);
         assert!(inlines >= 3);
     }
+
+    #[test]
+    fn every_semantic_query_observes_the_same_nested_reachability() {
+        let source = concat!(
+            "====\n",
+            "xref:top[]\n",
+            "\n",
+            "* image:outer.png[]\n",
+            "+\n",
+            "[cols=\"a\"]\n",
+            "|===\n",
+            "|xref:cell[] image:cell.png[]\n",
+            "|===\n",
+            "====\n",
+        );
+        let analysis = crate::Engine::new(crate::ParseOptions::default())
+            .analyze(source)
+            .expect("source");
+        let mut walked_references = 0;
+        let mut walked_macros = 0;
+        walk(analysis.ast(), |node| {
+            if let SemanticNode::Inline(inline) = node {
+                match inline {
+                    crate::inline::Inline::Reference(_) => walked_references += 1,
+                    crate::inline::Inline::Macro(_) => walked_macros += 1,
+                    _ => {}
+                }
+            }
+        });
+
+        assert_eq!(analysis.references().len(), walked_references);
+        assert_eq!(analysis.macros().len(), walked_macros);
+        assert_eq!(analysis.resources().len(), walked_macros);
+        assert_eq!(walked_references, 2);
+        assert_eq!(walked_macros, 2);
+    }
 }
