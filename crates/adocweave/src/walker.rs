@@ -2,7 +2,10 @@
 
 use crate::attributes::DocumentAttribute;
 use crate::inline::Inline;
-use crate::parser::{AstBlock, AstDocument, ExplicitAnchor, ListBlock, ListItem};
+use crate::parser::{
+    AstBlock, AstDocument, BlockMetadata, ElementAttribute, ExplicitAnchor, ListBlock, ListItem,
+    MetadataValue,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub enum SemanticNode<'document> {
@@ -12,6 +15,12 @@ pub enum SemanticNode<'document> {
     Inline(&'document Inline),
     Attribute(&'document DocumentAttribute),
     Anchor(&'document ExplicitAnchor),
+    Metadata(&'document BlockMetadata),
+    MetadataTitle(&'document MetadataValue),
+    MetadataId(&'document MetadataValue),
+    MetadataRole(&'document MetadataValue),
+    MetadataOption(&'document MetadataValue),
+    ElementAttribute(&'document ElementAttribute),
 }
 
 pub fn walk(document: &AstDocument, mut visitor: impl FnMut(SemanticNode<'_>)) {
@@ -30,6 +39,7 @@ fn walk_blocks<'document>(
 ) {
     for block in blocks {
         visitor(SemanticNode::Block(block));
+        walk_metadata(block.metadata(), visitor);
         match block {
             AstBlock::Heading(heading) => walk_inlines(&heading.inlines, visitor),
             AstBlock::Paragraph(paragraph) => walk_inlines(&paragraph.inlines, visitor),
@@ -39,6 +49,28 @@ fn walk_blocks<'document>(
             | AstBlock::Math(_)
             | AstBlock::Unsupported(_) => {}
         }
+    }
+}
+
+fn walk_metadata<'document>(
+    metadata: &'document BlockMetadata,
+    visitor: &mut impl FnMut(SemanticNode<'document>),
+) {
+    visitor(SemanticNode::Metadata(metadata));
+    if let Some(title) = &metadata.title {
+        visitor(SemanticNode::MetadataTitle(title));
+    }
+    if let Some(id) = &metadata.id {
+        visitor(SemanticNode::MetadataId(id));
+    }
+    for role in &metadata.roles {
+        visitor(SemanticNode::MetadataRole(role));
+    }
+    for option in &metadata.options {
+        visitor(SemanticNode::MetadataOption(option));
+    }
+    for attribute in &metadata.attributes {
+        visitor(SemanticNode::ElementAttribute(attribute));
     }
 }
 
@@ -93,7 +125,14 @@ mod tests {
             SemanticNode::List(_) => lists += 1,
             SemanticNode::ListItem(_) => items += 1,
             SemanticNode::Inline(_) => inlines += 1,
-            SemanticNode::Attribute(_) | SemanticNode::Anchor(_) => {}
+            SemanticNode::Attribute(_)
+            | SemanticNode::Anchor(_)
+            | SemanticNode::Metadata(_)
+            | SemanticNode::MetadataTitle(_)
+            | SemanticNode::MetadataId(_)
+            | SemanticNode::MetadataRole(_)
+            | SemanticNode::MetadataOption(_)
+            | SemanticNode::ElementAttribute(_) => {}
         });
         assert_eq!(blocks, 2);
         assert_eq!(lists, 1);

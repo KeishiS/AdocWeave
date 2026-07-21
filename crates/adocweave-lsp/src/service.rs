@@ -463,12 +463,45 @@ impl LanguageService {
         let Some(element) = document_element_at(document.analysis.ast(), offset) else {
             return Ok(None);
         };
+        let metadata_hover = match element {
+            DocumentElement::MetadataTitle(value) => {
+                Some(("block title", value.value.as_str(), value.range))
+            }
+            DocumentElement::MetadataId(value) => {
+                Some(("block ID", value.value.as_str(), value.range))
+            }
+            DocumentElement::MetadataRole(value) => {
+                Some(("block role", value.value.as_str(), value.range))
+            }
+            DocumentElement::MetadataOption(value) => {
+                Some(("block option", value.value.as_str(), value.range))
+            }
+            DocumentElement::ElementAttribute(attribute) => Some((
+                attribute.name.as_deref().unwrap_or("positional attribute"),
+                attribute.value.as_str(),
+                attribute.range,
+            )),
+            _ => None,
+        };
+        if let Some((kind, value, range)) = metadata_hover {
+            return hover_markup(
+                format!("**{kind}**  \nValue: `{value}`"),
+                range,
+                &document,
+                self.position_encoding,
+            );
+        }
         let (heading, range, part) = match element {
             DocumentElement::HeadingMarker(heading) => (heading, heading.marker_range, "marker"),
             DocumentElement::HeadingText(heading) => (heading, heading.text_range, "text"),
             DocumentElement::SourceLanguage(_) | DocumentElement::SourceAttribute(_) => {
                 return Ok(None);
             }
+            DocumentElement::MetadataTitle(_)
+            | DocumentElement::MetadataId(_)
+            | DocumentElement::MetadataRole(_)
+            | DocumentElement::MetadataOption(_)
+            | DocumentElement::ElementAttribute(_) => unreachable!(),
         };
         let id = generate_heading_ids(document.analysis.ast())
             .into_iter()
@@ -523,6 +556,41 @@ impl LanguageService {
         let Some(element) = document_element_at(document.analysis.ast(), offset) else {
             return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
         };
+        let metadata_candidates: Option<(&[&str], lsp::CompletionItemKind)> = match element {
+            DocumentElement::MetadataRole(_) => {
+                Some((&["lead", "discrete"], lsp::CompletionItemKind::VALUE))
+            }
+            DocumentElement::MetadataOption(_) => Some((
+                &[
+                    "autowidth",
+                    "collapsible",
+                    "footer",
+                    "header",
+                    "interactive",
+                    "nowrap",
+                ],
+                lsp::CompletionItemKind::VALUE,
+            )),
+            DocumentElement::ElementAttribute(_) => Some((
+                &["cols", "id", "options", "role", "subs"],
+                lsp::CompletionItemKind::PROPERTY,
+            )),
+            DocumentElement::MetadataTitle(_) | DocumentElement::MetadataId(_) => {
+                return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
+            }
+            _ => None,
+        };
+        if let Some((candidates, kind)) = metadata_candidates {
+            let items = candidates
+                .iter()
+                .map(|candidate| lsp::CompletionItem {
+                    label: (*candidate).to_owned(),
+                    kind: Some(kind),
+                    ..lsp::CompletionItem::default()
+                })
+                .collect();
+            return Ok(Some(lsp::CompletionResponse::Array(items)));
+        }
         let source = match element {
             DocumentElement::SourceLanguage(source) | DocumentElement::SourceAttribute(source) => {
                 source
@@ -530,6 +598,11 @@ impl LanguageService {
             DocumentElement::HeadingMarker(_) | DocumentElement::HeadingText(_) => {
                 return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
             }
+            DocumentElement::MetadataTitle(_)
+            | DocumentElement::MetadataId(_)
+            | DocumentElement::MetadataRole(_)
+            | DocumentElement::MetadataOption(_)
+            | DocumentElement::ElementAttribute(_) => unreachable!(),
         };
         let offset = offset as usize;
         let text = document.analysis.source();

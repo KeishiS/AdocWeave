@@ -7,11 +7,11 @@ use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, ResolvedReference, render_with_resolutions};
 use crate::inline::{Inline, ReferenceDestination};
-use crate::parser::{AstBlock, AstDocument, ListBlock, ListItem};
+use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 5;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 6;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -65,7 +65,7 @@ struct CanonicalNode {
 
 fn canonical_ast(document: &AstDocument) -> String {
     let dto = CanonicalAst {
-        schema_version: 1,
+        schema_version: 2,
         blocks: document.blocks().iter().map(block_node).collect(),
         attributes: document
             .attributes()
@@ -92,7 +92,7 @@ fn canonical_ast(document: &AstDocument) -> String {
 }
 
 fn block_node(block: &AstBlock) -> CanonicalNode {
-    match block {
+    let mut node = match block {
         AstBlock::Heading(node) => CanonicalNode {
             kind: match node.kind {
                 crate::parser::HeadingKind::DocumentTitle => "document-title",
@@ -122,7 +122,43 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
         AstBlock::List(node) => list_node(node),
         AstBlock::Math(node) => leaf("math-block", node.range, &node.value),
         AstBlock::Unsupported(node) => leaf("unsupported", node.range, &node.raw),
+    };
+    let mut children = metadata_nodes(block.metadata());
+    children.append(&mut node.children);
+    node.children = children;
+    node
+}
+
+fn metadata_nodes(metadata: &BlockMetadata) -> Vec<CanonicalNode> {
+    let mut nodes = Vec::new();
+    if let Some(title) = &metadata.title {
+        nodes.push(leaf("block-title", title.range, &title.value));
     }
+    if let Some(id) = &metadata.id {
+        nodes.push(leaf("block-id", id.range, &id.value));
+    }
+    nodes.extend(
+        metadata
+            .roles
+            .iter()
+            .map(|role| leaf("block-role", role.range, &role.value)),
+    );
+    nodes.extend(
+        metadata
+            .options
+            .iter()
+            .map(|option| leaf("block-option", option.range, &option.value)),
+    );
+    nodes.extend(metadata.attributes.iter().map(|attribute| CanonicalNode {
+        kind: "element-attribute",
+        range: range(attribute.range),
+        value: Some(attribute.name.as_ref().map_or_else(
+            || attribute.value.clone(),
+            |name| format!("{name}={}", attribute.value),
+        )),
+        children: Vec::new(),
+    }));
+    nodes
 }
 
 fn list_node(list: &ListBlock) -> CanonicalNode {
@@ -247,9 +283,25 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.contract_version, CONFORMANCE_CONTRACT_VERSION);
         assert!(first.syntax.contains("Document@"));
-        assert!(first.ast.contains("\"schemaVersion\":1"));
+        assert!(first.ast.contains("\"schemaVersion\":2"));
         assert!(first.ast.contains("local-reference"));
         assert!(first.projection_json.contains("referenceEdges"));
         assert!(first.html.contains("href=\"#target\""));
+    }
+
+    #[test]
+    fn canonical_ast_exposes_backend_neutral_block_metadata() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze(".Title\n[#item.role%collapsible,kind=demo]\nText\n")
+            .expect("analysis");
+        let value: serde_json::Value =
+            serde_json::from_str(&canonical_ast(analysis.ast())).expect("canonical JSON");
+        let children = value["blocks"][0]["children"].as_array().expect("children");
+        assert_eq!(value["schemaVersion"], 2);
+        assert_eq!(children[0]["kind"], "block-title");
+        assert_eq!(children[1]["kind"], "block-id");
+        assert_eq!(children[2]["kind"], "block-role");
+        assert_eq!(children[3]["kind"], "block-option");
+        assert_eq!(children[4]["value"], "kind=demo");
     }
 }

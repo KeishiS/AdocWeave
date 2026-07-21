@@ -457,6 +457,51 @@ fn hover_and_completion_cover_attributes_references_links_and_math() {
     );
 }
 
+#[test]
+fn hover_and_completion_cover_common_block_metadata() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///metadata.adoc",
+        1,
+        ".Visible\n[#item.lead%collapsible,cols=2]\nParagraph\n",
+    );
+    let document_uri = uri("file:///metadata.adoc");
+    for (position, expected) in [
+        (lsp::Position::new(0, 2), "block title"),
+        (lsp::Position::new(1, 3), "reference target"),
+        (lsp::Position::new(1, 8), "block role"),
+        (lsp::Position::new(1, 14), "block option"),
+        (lsp::Position::new(1, 28), "cols"),
+    ] {
+        let hover = service
+            .hover(&document_uri, position)
+            .expect("hover")
+            .expect("value");
+        let value = serde_json::to_value(hover).expect("serialize");
+        assert!(
+            value["contents"]["value"]
+                .as_str()
+                .expect("hover text")
+                .contains(expected),
+            "expected {expected} at {position:?}: {value}"
+        );
+    }
+
+    let completion = service
+        .completion(&document_uri, lsp::Position::new(1, 28))
+        .expect("completion")
+        .expect("response");
+    let value = serde_json::to_value(completion).expect("serialize");
+    assert!(
+        value
+            .as_array()
+            .expect("items")
+            .iter()
+            .any(|item| item["label"] == "subs")
+    );
+}
+
 fn open_reference_workspace(service: &mut LanguageService) {
     open(
         service,

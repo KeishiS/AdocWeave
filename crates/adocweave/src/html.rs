@@ -755,6 +755,15 @@ mod tests {
         assert!(!html.contains("<p style="));
         assert!(html.contains("&lt;script&gt;"));
         assert!(html.contains("&lt;svg onload=&#34;alert(1)&#34;&gt;"));
+
+        let parsed =
+            parse("[#safe.evil%interactive,onclick=\"alert(1)\",style=\"display:none\"]\nText\n")
+                .expect("metadata source");
+        let html = render(&parsed.ast, &RenderPolicy::default()).html;
+        assert_eq!(html, "<p id=\"safe\">Text</p>\n");
+        assert!(!html.contains("onclick"));
+        assert!(!html.contains("display:none"));
+        assert!(!html.contains("evil"));
     }
 
     #[test]

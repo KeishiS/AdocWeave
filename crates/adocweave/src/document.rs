@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, SourceBlock};
+use crate::parser::{
+    AstBlock, AstDocument, ElementAttribute, Heading, HeadingKind, MetadataValue, SourceBlock,
+};
 use crate::source::TextRange;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,27 +191,70 @@ pub enum DocumentElement<'document> {
     HeadingText(&'document Heading),
     SourceLanguage(&'document SourceBlock),
     SourceAttribute(&'document SourceBlock),
+    MetadataTitle(&'document MetadataValue),
+    MetadataId(&'document MetadataValue),
+    MetadataRole(&'document MetadataValue),
+    MetadataOption(&'document MetadataValue),
+    ElementAttribute(&'document ElementAttribute),
 }
 
 pub fn document_element_at(document: &AstDocument, offset: u32) -> Option<DocumentElement<'_>> {
-    document.blocks().iter().find_map(|block| match block {
-        AstBlock::Heading(heading) if contains(heading.marker_range, offset, false) => {
-            Some(DocumentElement::HeadingMarker(heading))
-        }
-        AstBlock::Heading(heading) if contains(heading.text_range, offset, true) => {
-            Some(DocumentElement::HeadingText(heading))
-        }
-        AstBlock::Source(source)
-            if source
-                .language_range
-                .is_some_and(|range| contains(range, offset, true)) =>
-        {
-            Some(DocumentElement::SourceLanguage(source))
-        }
-        AstBlock::Source(source) if contains(source.attribute_range, offset, false) => {
-            Some(DocumentElement::SourceAttribute(source))
-        }
-        _ => None,
+    document.blocks().iter().find_map(|block| {
+        let structural = match block {
+            AstBlock::Heading(heading) if contains(heading.marker_range, offset, false) => {
+                Some(DocumentElement::HeadingMarker(heading))
+            }
+            AstBlock::Heading(heading) if contains(heading.text_range, offset, true) => {
+                Some(DocumentElement::HeadingText(heading))
+            }
+            AstBlock::Source(source)
+                if source
+                    .language_range
+                    .is_some_and(|range| contains(range, offset, true)) =>
+            {
+                Some(DocumentElement::SourceLanguage(source))
+            }
+            AstBlock::Source(source) if contains(source.attribute_range, offset, false) => {
+                Some(DocumentElement::SourceAttribute(source))
+            }
+            _ => None,
+        };
+        structural.or_else(|| {
+            let metadata = block.metadata();
+            metadata
+                .title
+                .as_ref()
+                .filter(|value| contains(value.range, offset, true))
+                .map(DocumentElement::MetadataTitle)
+                .or_else(|| {
+                    metadata
+                        .id
+                        .as_ref()
+                        .filter(|value| contains(value.range, offset, true))
+                        .map(DocumentElement::MetadataId)
+                })
+                .or_else(|| {
+                    metadata
+                        .roles
+                        .iter()
+                        .find(|value| contains(value.range, offset, true))
+                        .map(DocumentElement::MetadataRole)
+                })
+                .or_else(|| {
+                    metadata
+                        .options
+                        .iter()
+                        .find(|value| contains(value.range, offset, true))
+                        .map(DocumentElement::MetadataOption)
+                })
+                .or_else(|| {
+                    metadata
+                        .attributes
+                        .iter()
+                        .find(|value| contains(value.range, offset, true))
+                        .map(DocumentElement::ElementAttribute)
+                })
+        })
     })
 }
 
@@ -398,8 +443,8 @@ fn write_json_string(output: &mut String, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ReferenceTargetKind, document_symbols, generate_heading_ids, reference_targets,
-        render_symbols_json, source_language_candidates,
+        DocumentElement, ReferenceTargetKind, document_element_at, document_symbols,
+        generate_heading_ids, reference_targets, render_symbols_json, source_language_candidates,
     };
     use crate::parser::parse;
 
@@ -431,6 +476,32 @@ mod tests {
             Some(super::DocumentElement::SourceLanguage(_))
         ));
         assert!(super::document_element_at(&parsed.ast, 13).is_none());
+    }
+
+    #[test]
+    fn document_element_at_queries_common_block_metadata() {
+        let source = ".Visible\n[#item.lead%collapsible,cols=2]\nParagraph\n";
+        let parsed = parse(source).expect("valid source");
+
+        for (needle, expected) in [
+            ("Visible", "title"),
+            ("item", "id"),
+            ("lead", "role"),
+            ("collapsible", "option"),
+            ("cols=2", "attribute"),
+        ] {
+            let offset =
+                u32::try_from(source.find(needle).expect("fixture value")).expect("offset");
+            let actual = match document_element_at(&parsed.ast, offset) {
+                Some(DocumentElement::MetadataTitle(_)) => "title",
+                Some(DocumentElement::MetadataId(_)) => "id",
+                Some(DocumentElement::MetadataRole(_)) => "role",
+                Some(DocumentElement::MetadataOption(_)) => "option",
+                Some(DocumentElement::ElementAttribute(_)) => "attribute",
+                other => panic!("unexpected element at {needle}: {other:?}"),
+            };
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]

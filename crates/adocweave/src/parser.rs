@@ -13,8 +13,82 @@ use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::{SourceDocument, SourceDocumentBuildError, SourceLine};
 use crate::syntax::{SyntaxFix, SyntaxIssue, SyntaxIssueClass, SyntaxKind, SyntaxNode, SyntaxTree};
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BlockMetadata {
+    pub range: Option<TextRange>,
+    pub title: Option<MetadataValue>,
+    pub id: Option<MetadataValue>,
+    pub roles: Vec<MetadataValue>,
+    pub options: Vec<MetadataValue>,
+    pub attributes: Vec<ElementAttribute>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetadataValue {
+    pub value: String,
+    pub range: TextRange,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ElementAttribute {
+    pub name: Option<String>,
+    pub value: String,
+    pub range: TextRange,
+}
+
+#[derive(Default)]
+struct PendingBlockMetadata {
+    semantic: BlockMetadata,
+    syntax: Vec<SyntaxNode>,
+}
+
+impl PendingBlockMetadata {
+    fn is_empty(&self) -> bool {
+        self.semantic.range.is_none()
+    }
+
+    fn push_title(&mut self, value: MetadataValue, line_range: TextRange) {
+        self.extend_range(line_range);
+        self.semantic.title = Some(value);
+        self.syntax
+            .push(SyntaxNode::leaf(SyntaxKind::BlockTitle, line_range));
+    }
+
+    fn push_attributes(&mut self, metadata: BlockMetadata, line_range: TextRange) {
+        self.extend_range(line_range);
+        if metadata.id.is_some() {
+            self.semantic.id = metadata.id;
+        }
+        self.semantic.roles.extend(metadata.roles);
+        self.semantic.options.extend(metadata.options);
+        self.semantic.attributes.extend(metadata.attributes);
+        self.syntax
+            .push(SyntaxNode::leaf(SyntaxKind::BlockAttribute, line_range));
+    }
+
+    fn push_anchor(&mut self, anchor: &ExplicitAnchor) {
+        self.extend_range(anchor.range);
+        self.semantic.id = Some(MetadataValue {
+            value: anchor.id.clone(),
+            range: anchor.id_range,
+        });
+        self.syntax
+            .push(SyntaxNode::leaf(SyntaxKind::BlockAnchor, anchor.range));
+    }
+
+    fn extend_range(&mut self, line_range: TextRange) {
+        self.semantic.range = Some(match self.semantic.range {
+            Some(range) => {
+                TextRange::new(range.start(), line_range.end()).expect("ordered metadata")
+            }
+            None => line_range,
+        });
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Paragraph {
+    pub metadata: BlockMetadata,
     pub range: TextRange,
     pub content_range: TextRange,
     pub value: String,
@@ -24,6 +98,7 @@ pub struct Paragraph {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Unsupported {
+    pub metadata: BlockMetadata,
     pub range: TextRange,
     pub raw: String,
     pub reason: String,
@@ -54,6 +129,7 @@ pub struct BlockProblem {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LiteralBlock {
+    pub metadata: BlockMetadata,
     pub range: TextRange,
     pub delimiter_range: TextRange,
     pub content_range: TextRange,
@@ -63,6 +139,7 @@ pub struct LiteralBlock {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceBlock {
+    pub metadata: BlockMetadata,
     pub range: TextRange,
     pub attribute_range: TextRange,
     pub language_range: Option<TextRange>,
@@ -88,6 +165,7 @@ pub struct MathProblem {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MathBlock {
+    pub metadata: BlockMetadata,
     pub range: TextRange,
     pub attribute_range: TextRange,
     pub delimiter_range: TextRange,
@@ -120,6 +198,7 @@ pub struct ListProblem {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListBlock {
+    pub metadata: BlockMetadata,
     pub kind: ListKind,
     pub range: TextRange,
     pub items: Vec<ListItem>,
@@ -156,6 +235,7 @@ pub enum HeadingProblem {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Heading {
+    pub metadata: BlockMetadata,
     pub range: TextRange,
     pub marker_range: TextRange,
     pub separator_range: TextRange,
@@ -350,6 +430,30 @@ impl AstDocument {
 }
 
 impl AstBlock {
+    pub const fn metadata(&self) -> &BlockMetadata {
+        match self {
+            Self::Heading(value) => &value.metadata,
+            Self::Paragraph(value) => &value.metadata,
+            Self::Literal(value) => &value.metadata,
+            Self::Source(value) => &value.metadata,
+            Self::List(value) => &value.metadata,
+            Self::Math(value) => &value.metadata,
+            Self::Unsupported(value) => &value.metadata,
+        }
+    }
+
+    pub(crate) fn metadata_mut(&mut self) -> &mut BlockMetadata {
+        match self {
+            Self::Heading(value) => &mut value.metadata,
+            Self::Paragraph(value) => &mut value.metadata,
+            Self::Literal(value) => &mut value.metadata,
+            Self::Source(value) => &mut value.metadata,
+            Self::List(value) => &mut value.metadata,
+            Self::Math(value) => &mut value.metadata,
+            Self::Unsupported(value) => &mut value.metadata,
+        }
+    }
+
     pub const fn range(&self) -> TextRange {
         match self {
             Self::Heading(value) => value.range,
@@ -473,6 +577,7 @@ pub(crate) fn parse_shared_cancellable(
     let mut attributes = Vec::new();
     let mut attribute_problems = Vec::new();
     let mut anchors = Vec::new();
+    let mut pending_metadata = PendingBlockMetadata::default();
 
     let mut line_index = 0;
     while line_index < source_document.lines().len() {
@@ -497,13 +602,20 @@ pub(crate) fn parse_shared_cancellable(
                 &mut paragraph_lines,
                 config,
                 &mut budget,
+                &mut pending_metadata,
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let (source_block, next_line) =
+            let (mut source_block, next_line) =
                 parse_source_block(&source_document, line_index, source)?;
+            source_block.metadata =
+                parse_block_attributes(content, line.content_range().start().to_usize())
+                    .unwrap_or_default();
+            consume_metadata_budget(&source_block.metadata, &mut budget)?;
+            source_block.metadata.range = Some(line.full_range());
             blocks.push(source_block_syntax(&source_block));
             ast_blocks.push(AstBlock::Source(source_block));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             line_index = next_line;
             continue;
@@ -520,12 +632,20 @@ pub(crate) fn parse_shared_cancellable(
                 &mut paragraph_lines,
                 config,
                 &mut budget,
+                &mut pending_metadata,
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let (math, next_line) = parse_math_block(&source_document, line_index, source, config)?;
+            let (mut math, next_line) =
+                parse_math_block(&source_document, line_index, source, config)?;
+            math.metadata =
+                parse_block_attributes(content, line.content_range().start().to_usize())
+                    .unwrap_or_default();
+            consume_metadata_budget(&math.metadata, &mut budget)?;
+            math.metadata.range = Some(line.full_range());
             blocks.push(math_block_syntax(&math));
             ast_blocks.push(AstBlock::Math(math));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             line_index = next_line;
             continue;
@@ -536,12 +656,14 @@ pub(crate) fn parse_shared_cancellable(
                 &mut paragraph_lines,
                 config,
                 &mut budget,
+                &mut pending_metadata,
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
             let (literal, next_line) = parse_literal_block(&source_document, line_index, source)?;
             blocks.push(literal_syntax(&literal));
             ast_blocks.push(AstBlock::Literal(literal));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             line_index = next_line;
             continue;
@@ -549,18 +671,62 @@ pub(crate) fn parse_shared_cancellable(
             content,
             line.content_range().start().to_usize(),
             line.full_range(),
-        ) {
+        )
+        .filter(|_| content.starts_with("[["))
+        {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
                 &mut budget,
+                &mut pending_metadata,
             )?;
             budget.consume_node()?;
-            blocks.push(SyntaxNode::leaf(SyntaxKind::BlockAnchor, line.full_range()));
+            pending_metadata.push_anchor(&anchor);
             anchors.push(anchor);
             saw_content = true;
+            header_attributes_open = false;
+        } else if let Some(title) =
+            parse_block_title(content, line.content_range().start().to_usize())
+        {
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+                &mut pending_metadata,
+            )?;
+            budget.consume_node()?;
+            budget.consume_attribute()?;
+            pending_metadata.push_title(title, line.full_range());
+            header_attributes_open = false;
+        } else if let Some(metadata) =
+            parse_block_attributes(content, line.content_range().start().to_usize())
+        {
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+                &mut pending_metadata,
+            )?;
+            budget.consume_node()?;
+            consume_metadata_budget(&metadata, &mut budget)?;
+            if let Some(id) = &metadata.id {
+                anchors.push(ExplicitAnchor {
+                    range: line.full_range(),
+                    id_range: id.range,
+                    label_range: None,
+                    id: id.value.clone(),
+                    label: None,
+                    target_range: None,
+                    valid: valid_anchor_id(&id.value),
+                });
+            }
+            pending_metadata.push_attributes(metadata, line.full_range());
             header_attributes_open = false;
         } else if content.trim_matches([' ', '\t']).is_empty() {
             flush_paragraph(
@@ -568,6 +734,14 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
+                &mut budget,
+                &mut pending_metadata,
+            )?;
+            flush_orphan_metadata(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut pending_metadata,
+                source,
                 &mut budget,
             )?;
             blocks.push(SyntaxNode::leaf(SyntaxKind::BlankLine, line.full_range()));
@@ -590,6 +764,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut paragraph_lines,
                 config,
                 &mut budget,
+                &mut pending_metadata,
             )?;
             budget.consume_attribute()?;
             budget.consume_node()?;
@@ -606,6 +781,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut paragraph_lines,
                 config,
                 &mut budget,
+                &mut pending_metadata,
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
@@ -620,6 +796,7 @@ pub(crate) fn parse_shared_cancellable(
             };
             blocks.push(heading_syntax(&heading, syntax_kind));
             ast_blocks.push(AstBlock::Heading(heading));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             header_attributes_open = matches!(
                 ast_blocks.last(),
                 Some(AstBlock::Heading(Heading {
@@ -635,11 +812,13 @@ pub(crate) fn parse_shared_cancellable(
                 &mut paragraph_lines,
                 config,
                 &mut budget,
+                &mut pending_metadata,
             )?;
             let (lists, next_line, range) =
                 parse_lists(&source_document, line_index, source, config, &mut budget)?;
             blocks.push(list_syntax(range, &lists));
             ast_blocks.extend(lists.into_iter().map(AstBlock::List));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             header_attributes_open = false;
             line_index = next_line;
@@ -651,6 +830,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut paragraph_lines,
                 config,
                 &mut budget,
+                &mut pending_metadata,
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
@@ -660,10 +840,12 @@ pub(crate) fn parse_shared_cancellable(
                 vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
             ));
             ast_blocks.push(AstBlock::Unsupported(Unsupported {
+                metadata: BlockMetadata::default(),
                 range: line.full_range(),
                 raw: content.to_owned(),
                 reason: reason.to_owned(),
             }));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
         } else {
             paragraph_lines.push((line, content.to_owned()));
@@ -676,6 +858,14 @@ pub(crate) fn parse_shared_cancellable(
         &mut ast_blocks,
         &mut paragraph_lines,
         config,
+        &mut budget,
+        &mut pending_metadata,
+    )?;
+    flush_orphan_metadata(
+        &mut blocks,
+        &mut ast_blocks,
+        &mut pending_metadata,
+        source,
         &mut budget,
     )?;
     let syntax_issues = collect_syntax_issues(&ast_blocks, &attribute_problems);
@@ -1092,6 +1282,204 @@ fn parse_explicit_anchor(
     })
 }
 
+fn parse_block_title(content: &str, base: usize) -> Option<MetadataValue> {
+    let value = content.strip_prefix('.')?;
+    if value.is_empty() || value.starts_with([' ', '\t', '.']) {
+        return None;
+    }
+    let start = TextSize::new(base + 1).ok()?;
+    let end = TextSize::new(base + content.len()).ok()?;
+    Some(MetadataValue {
+        value: value.to_owned(),
+        range: TextRange::new(start, end).ok()?,
+    })
+}
+
+fn parse_block_attributes(content: &str, base: usize) -> Option<BlockMetadata> {
+    let inner = content.strip_prefix('[')?.strip_suffix(']')?;
+    if inner.starts_with('[') || inner.ends_with(']') {
+        return None;
+    }
+    let mut metadata = BlockMetadata::default();
+    let mut field_start = 0;
+    let mut quoted = false;
+    for field_end in inner
+        .char_indices()
+        .filter_map(|(index, character)| {
+            if character == '"' {
+                quoted = !quoted;
+            }
+            (character == ',' && !quoted).then_some(index)
+        })
+        .chain(std::iter::once(inner.len()))
+    {
+        let raw = &inner[field_start..field_end];
+        let leading = raw.len() - raw.trim_start().len();
+        let value = raw.trim();
+        let absolute_start = base + 1 + field_start + leading;
+        let range = TextRange::new(
+            TextSize::new(absolute_start).ok()?,
+            TextSize::new(absolute_start + value.len()).ok()?,
+        )
+        .ok()?;
+        if !value.is_empty() {
+            parse_element_attribute(value, range, &mut metadata);
+        }
+        field_start = field_end.saturating_add(1);
+    }
+    Some(metadata)
+}
+
+fn parse_element_attribute(value: &str, range: TextRange, metadata: &mut BlockMetadata) {
+    if let Some((name, raw_value)) = value.split_once('=') {
+        let name = name.trim();
+        let raw_value = raw_value.trim();
+        metadata.attributes.push(ElementAttribute {
+            name: (!name.is_empty()).then(|| name.to_owned()),
+            value: unquote(raw_value).to_owned(),
+            range,
+        });
+        return;
+    }
+
+    let mut shorthand = value;
+    let mut consumed_shorthand = false;
+    while let Some(marker) = shorthand
+        .chars()
+        .next()
+        .filter(|value| matches!(value, '#' | '.' | '%'))
+    {
+        let tail = &shorthand[marker.len_utf8()..];
+        let end = tail.find(['#', '.', '%']).unwrap_or(tail.len());
+        let item = &tail[..end];
+        if item.is_empty() {
+            break;
+        }
+        let offset = value.len() - shorthand.len() + marker.len_utf8();
+        let item_range = TextRange::new(
+            TextSize::new(range.start().to_usize() + offset).expect("attribute offset is bounded"),
+            TextSize::new(range.start().to_usize() + offset + item.len())
+                .expect("attribute offset is bounded"),
+        )
+        .expect("ordered shorthand range");
+        let item = MetadataValue {
+            value: item.to_owned(),
+            range: item_range,
+        };
+        match marker {
+            '#' => metadata.id = Some(item),
+            '.' => metadata.roles.push(item),
+            '%' => metadata.options.push(item),
+            _ => unreachable!(),
+        }
+        consumed_shorthand = true;
+        shorthand = &tail[end..];
+    }
+    if !consumed_shorthand || !shorthand.is_empty() {
+        metadata.attributes.push(ElementAttribute {
+            name: None,
+            value: unquote(value).to_owned(),
+            range,
+        });
+    }
+}
+
+fn unquote(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value)
+}
+
+fn consume_metadata_budget(
+    metadata: &BlockMetadata,
+    budget: &mut ParseBudget,
+) -> Result<(), BudgetExceeded> {
+    let count = metadata.attributes.len()
+        + metadata.roles.len()
+        + metadata.options.len()
+        + usize::from(metadata.id.is_some());
+    for _ in 0..count {
+        budget.consume_attribute()?;
+    }
+    Ok(())
+}
+
+fn attach_pending_metadata(
+    syntax_blocks: &mut [SyntaxNode],
+    ast_blocks: &mut [AstBlock],
+    pending: &mut PendingBlockMetadata,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let metadata = std::mem::take(pending);
+    let Some(block) = ast_blocks.last_mut() else {
+        return;
+    };
+    let existing = std::mem::take(block.metadata_mut());
+    *block.metadata_mut() = merge_block_metadata(metadata.semantic, existing);
+    let syntax = syntax_blocks
+        .last_mut()
+        .expect("semantic and syntax blocks are appended together");
+    let start = block.metadata().range.expect("metadata range").start();
+    syntax.prepend_annotations(start, metadata.syntax);
+}
+
+fn flush_orphan_metadata(
+    syntax_blocks: &mut Vec<SyntaxNode>,
+    ast_blocks: &mut Vec<AstBlock>,
+    pending: &mut PendingBlockMetadata,
+    source: &str,
+    budget: &mut ParseBudget,
+) -> Result<(), BudgetExceeded> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    budget.consume_block()?;
+    budget.consume_node()?;
+    let pending = std::mem::take(pending);
+    let range = pending
+        .semantic
+        .range
+        .expect("non-empty metadata has a range");
+    let unknown = SyntaxNode::new(SyntaxKind::Unknown, range, pending.syntax);
+    syntax_blocks.push(SyntaxNode::new(
+        SyntaxKind::Unsupported,
+        range,
+        vec![unknown],
+    ));
+    ast_blocks.push(AstBlock::Unsupported(Unsupported {
+        metadata: BlockMetadata::default(),
+        range,
+        raw: source[range.start().to_usize()..range.end().to_usize()]
+            .trim_end_matches(['\r', '\n'])
+            .to_owned(),
+        reason: "block metadata is not attached to a block".to_owned(),
+    }));
+    Ok(())
+}
+
+fn merge_block_metadata(mut leading: BlockMetadata, trailing: BlockMetadata) -> BlockMetadata {
+    leading.range = match (leading.range, trailing.range) {
+        (Some(first), Some(last)) => {
+            Some(TextRange::new(first.start(), last.end()).expect("metadata ranges are ordered"))
+        }
+        (range @ Some(_), None) | (None, range @ Some(_)) => range,
+        (None, None) => None,
+    };
+    if trailing.title.is_some() {
+        leading.title = trailing.title;
+    }
+    if trailing.id.is_some() {
+        leading.id = trailing.id;
+    }
+    leading.roles.extend(trailing.roles);
+    leading.options.extend(trailing.options);
+    leading.attributes.extend(trailing.attributes);
+    leading
+}
+
 fn valid_anchor_id(id: &str) -> bool {
     !id.is_empty()
         && id.chars().all(|character| {
@@ -1144,6 +1532,7 @@ fn parse_math_block(
     }
     Ok((
         MathBlock {
+            metadata: BlockMetadata::default(),
             range: TextRange::new(attribute.full_range().start(), body.range_end)?,
             attribute_range: attribute.content_range(),
             delimiter_range: delimiter.content_range(),
@@ -1368,7 +1757,12 @@ fn build_list_tree(
         items.last().expect("list has item").range.end(),
     )?;
     budget.consume_node()?;
-    Ok(ListBlock { kind, range, items })
+    Ok(ListBlock {
+        metadata: BlockMetadata::default(),
+        kind,
+        range,
+        items,
+    })
 }
 
 fn parse_literal_block(
@@ -1385,6 +1779,7 @@ fn parse_literal_block(
 
     Ok((
         LiteralBlock {
+            metadata: BlockMetadata::default(),
             range: TextRange::new(opener.full_range().start(), body.range_end)?,
             delimiter_range: opener.content_range(),
             content_range: body.content_range,
@@ -1498,6 +1893,7 @@ fn parse_source_block(
 
     Ok((
         SourceBlock {
+            metadata: BlockMetadata::default(),
             range: TextRange::new(attribute.full_range().start(), body.range_end)?,
             attribute_range: attribute.content_range(),
             language_range,
@@ -1584,6 +1980,7 @@ fn parse_heading(
         budget,
     )?;
     Ok(Heading {
+        metadata: BlockMetadata::default(),
         range: line.full_range(),
         marker_range,
         separator_range,
@@ -1609,6 +2006,7 @@ fn flush_paragraph(
     lines: &mut Vec<(SourceLine, String)>,
     config: &ParseConfig,
     budget: &mut ParseBudget,
+    pending_metadata: &mut PendingBlockMetadata,
 ) -> Result<(), ParseFailure> {
     let (Some((first, _)), Some((last, _))) = (lines.first(), lines.last()) else {
         return Ok(());
@@ -1618,6 +2016,7 @@ fn flush_paragraph(
     let range = TextRange::new(first.full_range().start(), last.full_range().end())
         .expect("ordered source lines form an ordered paragraph");
     let mut paragraph = Paragraph {
+        metadata: BlockMetadata::default(),
         range,
         content_range: {
             TextRange::new(first.content_range().start(), last.content_range().end())
@@ -1650,6 +2049,7 @@ fn flush_paragraph(
     paragraph.inline_problems = inline_output.problems;
     cst_blocks.push(paragraph_syntax(&paragraph));
     ast_blocks.push(AstBlock::Paragraph(paragraph));
+    attach_pending_metadata(cst_blocks, ast_blocks, pending_metadata);
     Ok(())
 }
 
@@ -1796,8 +2196,73 @@ mod tests {
             panic!("expected unsupported node");
         };
         assert_eq!(unsupported.raw, "[role=test]");
-        assert_eq!(unsupported.reason, "block attributes are not implemented");
+        assert_eq!(
+            unsupported.reason,
+            "block metadata is not attached to a block"
+        );
         assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
+    fn common_block_metadata_attaches_to_the_adjacent_block() {
+        let source = ".Visible title\n[#item.role-a.role-b%collapsible,kind=\"demo\",positional]\nParagraph\n";
+        let parsed = parse(source).expect("parse");
+        assert_eq!(parsed.syntax.reconstruct(), source);
+        assert_eq!(parsed.syntax.nodes(SyntaxKind::BlockTitle).count(), 1);
+        assert_eq!(parsed.syntax.nodes(SyntaxKind::BlockAttribute).count(), 1);
+        let block = &parsed.ast.blocks()[0];
+        let metadata = block.metadata();
+        assert_eq!(
+            metadata.range.expect("metadata range").end().to_usize(),
+            source.find("Paragraph").expect("paragraph")
+        );
+        assert_eq!(
+            metadata.title.as_ref().map(|value| value.value.as_str()),
+            Some("Visible title")
+        );
+        assert_eq!(
+            metadata.id.as_ref().map(|value| value.value.as_str()),
+            Some("item")
+        );
+        assert_eq!(
+            metadata
+                .roles
+                .iter()
+                .map(|value| value.value.as_str())
+                .collect::<Vec<_>>(),
+            ["role-a", "role-b"]
+        );
+        assert_eq!(
+            metadata
+                .options
+                .iter()
+                .map(|value| value.value.as_str())
+                .collect::<Vec<_>>(),
+            ["collapsible"]
+        );
+        assert_eq!(metadata.attributes.len(), 2);
+        assert_eq!(metadata.attributes[0].name.as_deref(), Some("kind"));
+        assert_eq!(metadata.attributes[0].value, "demo");
+        assert_eq!(metadata.attributes[1].name, None);
+        assert_eq!(metadata.attributes[1].value, "positional");
+    }
+
+    #[test]
+    fn metadata_is_shared_by_heading_literal_list_source_and_math_blocks() {
+        let parsed = parse(
+            "[.heading]\n== H\n\n.Title\n....\nbody\n....\n\n[#list]\n* item\n\n[source,rust]\n----\nfn main() {}\n----\n\n[stem]\n++++\nx\n++++\n",
+        )
+        .expect("parse");
+        let blocks = parsed.ast.blocks();
+        assert_eq!(blocks[0].metadata().roles[0].value, "heading");
+        assert_eq!(
+            blocks[1].metadata().title.as_ref().expect("title").value,
+            "Title"
+        );
+        assert_eq!(blocks[2].metadata().id.as_ref().expect("id").value, "list");
+        assert_eq!(blocks[3].metadata().attributes[0].value, "source");
+        assert_eq!(blocks[3].metadata().attributes[1].value, "rust");
+        assert_eq!(blocks[4].metadata().attributes[0].value, "stem");
     }
 
     #[test]

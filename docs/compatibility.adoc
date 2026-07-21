@@ -172,7 +172,8 @@ xref:substitutions.adoc[Core 0.2置換モデル]で定義する。
 
 |Block metadata
 |block attribute、anchor、title、ID、role、optionをblock直前に積み重ねる
-|anchorと一部styleだけに対応。共通metadata modelは未実装
+|共通metadata modelでblock title、anchor、ID、role、option、positional／named属性を保持する。
+属性のblock固有意味とcaption生成は対応するblock実装時に追加する
 
 |区切り付きblock
 |comment、example、listing、literal、open、sidebar、table、pass、quoteのcontainerとcontent model

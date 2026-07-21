@@ -45,6 +45,12 @@ hover情報、安定した生成IDを提供する。
 |文書タイトル直後の定義・解除をlosslessに保持する。属性値は汎用文字列であり、
 アプリ固有メタデータの型検証はホストへ委譲する。
 
+|共通ブロックメタデータ
+|対応
+|空行を挟まず直前に置いたblock title、`[[id]]`、`[#id]`、shorthand role／option、
+positional／named element attributeをすべてのsemantic blockで共通表現として保持する。
+未知のstyleや属性は意味を推測せず、HTML属性へ通過させない。
+
 |明示アンカー
 |対応
 |`[[id]]`、`[[id,label]]`および`[#id]`を直後のブロックへ関連付け、共通参照先索引と
@@ -56,8 +62,8 @@ HTML IDに使用する。
 
 |ソースブロック（`[source,LANGUAGE]`と後続する`----`）
 |部分対応
-|言語と不透明な本体を意味表現へ変換する。その他のブロック属性とソース短縮記法には
-対応しない。
+|言語と不透明な本体を意味表現へ変換する。属性listは共通メタデータにも保持する。
+ソース短縮記法には対応しない。
 
 |空行
 |対応
@@ -162,8 +168,9 @@ xref:roadmap.adoc[ロードマップ]を参照する。
 |領域 |状態 |不足している主な機能
 
 |Block metadata
-|部分対応
-|明示anchorとsource／stem styleだけに対応。block title、一般属性、role、option、captionは未対応
+|対応
+|block title、明示anchor、ID、role、option、positional／named属性を共通モデルへ保持する。
+captionの出力意味とblock種別ごとの属性検証は今後のblock実装で追加する
 
 |Delimited block
 |部分対応

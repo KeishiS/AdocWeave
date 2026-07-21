@@ -20,9 +20,10 @@ line-ending = LF | CRLF ;
 
 [source,ebnf]
 ----
-document       = { blank-line | heading | document-attribute | block-anchor
-                 | source-block | literal-block
-                 | unsupported | paragraph } ;
+document       = { blank-line | [ block-metadata ],
+                   (heading | source-block | literal-block | math-block
+                   | list | unsupported | paragraph)
+                 | document-attribute } ;
 blank-line     = { " " | TAB } ;
 paragraph      = paragraph-line, { paragraph-line } ;
 paragraph-line = nonblank content not beginning another recognized block ;
@@ -50,6 +51,13 @@ document-attribute = ":", attribute-name, [ "!" ], ":",
                    | ":!", attribute-name, ":" ;
 block-anchor   = "[[", anchor-id, [ ",", reference-text ], "]]"
                | "[#", anchor-id, "]" ;
+block-metadata = { block-title | block-anchor | element-attribute-list } ;
+block-title    = ".", nonempty text not beginning with space, TAB, or "." ;
+element-attribute-list = "[", [ element-attribute,
+                         { ",", element-attribute } ], "]" ;
+element-attribute = positional-attribute
+                  | attribute-name, "=", attribute-value
+                  | { "#", id | ".", role | "%", option } ;
 ----
 
 文書内容より前に現れる最初の1個マーカーの見出しは文書タイトルである。2個から6個の
@@ -58,6 +66,12 @@ block-anchor   = "[[", anchor-id, [ ",", reference-text ], "]]"
 
 ソース属性の直後には正確な`----`行が必要であり、間に空行を許可しない。インデントした
 属性と区切りは認識しない。文書タイトル直後の連続する文書属性だけを認識する。
+
+ブロックメタデータ行は空行を挟まず直後のブロックへ結合する。複数行のソース順と
+各値のUTF-8バイト範囲はsyntax treeから復元可能でなければならない。二重引用符内のcommaは
+属性区切りとしない。未知のstyle、role、optionおよびnamed属性は文字列として保持し、
+Parserが出力バックエンドの属性へ変換してはならない。対象ブロックのないメタデータ列は
+`Unsupported`としてlosslessに回復する。
 
 リテラルおよびソースの内容は不透明である。開始区切りと等しい行がブロックを閉じる。
 より長い行やインデントした区切り状の行は内容として扱う。

@@ -342,6 +342,19 @@ mod tests {
         assert!(matches!(reparsed.ast.blocks()[1], AstBlock::Math(_)));
     }
 
+    #[test]
+    fn formatter_preserves_block_metadata_byte_for_byte() {
+        let source = ".Visible title  \n[#item.custom%collapsible,kind=\"demo\"]\nParagraph  ";
+        let formatted = format(source, &FormatConfig::default()).expect("format");
+
+        assert!(
+            formatted
+                .formatted
+                .starts_with(".Visible title  \n[#item.custom%collapsible,kind=\"demo\"]\n")
+        );
+        assert!(formatted.formatted.ends_with("Paragraph\n"));
+    }
+
     fn block_inlines(block: &AstBlock) -> Vec<&crate::inline::Inline> {
         match block {
             AstBlock::Heading(heading) => heading.inlines.iter().collect(),

@@ -23,6 +23,7 @@ pub enum SyntaxKind {
     Token(LosslessTokenKind),
     HeadingMarker,
     BlockAttribute,
+    BlockTitle,
     BlockDelimiter,
     ListItem,
     ListMarker,
@@ -79,6 +80,8 @@ impl SyntaxKind {
                 | Self::Unsupported
                 | Self::DocumentAttribute
                 | Self::BlockAnchor
+                | Self::BlockAttribute
+                | Self::BlockTitle
                 | Self::List
                 | Self::MathBlock
         )
@@ -95,6 +98,8 @@ impl SyntaxKind {
                 | Self::Unsupported
                 | Self::DocumentAttribute
                 | Self::BlockAnchor
+                | Self::BlockAttribute
+                | Self::BlockTitle
                 | Self::List
                 | Self::MathBlock
                 | Self::InlineSpan
@@ -135,6 +140,16 @@ impl SyntaxNode {
 
     pub fn children(&self) -> &[Self] {
         &self.children
+    }
+
+    pub(crate) fn prepend_annotations(
+        &mut self,
+        start: crate::source::TextSize,
+        mut annotations: Vec<Self>,
+    ) {
+        self.range = TextRange::new(start, self.range.end()).expect("metadata precedes block");
+        annotations.append(&mut self.children);
+        self.children = annotations;
     }
 
     pub fn descendants(&self) -> SyntaxDescendants<'_> {
