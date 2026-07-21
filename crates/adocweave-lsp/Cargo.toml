@@ -8,6 +8,7 @@ description = "Language Server for AdocWeave"
 
 [dependencies]
 adocweave = { path = "../adocweave" }
+adocweave-host = { path = "../adocweave-host" }
 async-lsp = { version = "0.2.4", default-features = false, features = [
   "omni-trait",
   "stdio",

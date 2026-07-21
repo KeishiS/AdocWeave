@@ -16,7 +16,7 @@ AdocWeaveは標準AsciiDocの解析コア、出力バックエンド、ホスト
             ├─ semantic AST
             ├─ Diagnostics
             ├─ ReferenceTarget
-            └─ Reference
+            └─ ASTから導出するsemantic query
                  ├─ Formatter
                  ├─ HTMLその他の出力バックエンド
                  ├─ 汎用文書projection
@@ -27,8 +27,9 @@ AdocWeaveは標準AsciiDocの解析コア、出力バックエンド、ホスト
 
 == 単一解析スナップショット
 
-`Analysis`は入力テキストと行索引を一元化した`SourceDocument`、syntax tree、AST、診断、参照先および未解決参照を
-所有する。同じ`Analysis`に含まれる値は、すべて同じ文書版と`ParseOptions`から
+`Analysis`は入力テキストと行索引を一元化した`SourceDocument`、syntax tree、AST、診断および参照先を
+所有する。reference、macroおよびresource queryはASTを唯一の正本として導出し、別の深い複製索引を
+保持しない。同じ`Analysis`に含まれる値は、すべて同じ文書版と`ParseOptions`から
 生成される。
 
 CLI、Formatter、HTMLバックエンドおよびLanguage Serverは、既存の`Analysis`を
@@ -39,6 +40,17 @@ CLI、Formatter、HTMLバックエンドおよびLanguage Serverは、既存の`
 `CORE_PROFILE_VERSION`は構文と既定意味、`CORE_API_VERSION`は公開型とAPI、HTML生成物は
 `HTML_CONTRACT_VERSION`で管理する。各versionと再構築条件は
 xref:core-profile.adoc[AdocWeave Core Profile 8]で定義する。
+
+== Native host境界
+
+`adocweave-host` crateはCLIとLanguage Serverが共有するnative filesystem境界である。canonical path、
+許可root、regular file、UTF-8、file数、resource byte数、総byte数および依存graphのforward／reverse closureを
+ここで一度だけ実装する。`adocweave` coreはこのcrateに依存せず、I/Oを行わない。CLI binaryとLSP adapterだけが
+host crateを利用し、検証済みtextからcoreの`ResourceSnapshot`を構築する。
+
+LSPの解析jobはrootの`DocumentRevision`と`WorkspaceGeneration`を同時に取得する。採用時にどちらかが変化して
+いれば、直接解析とinclude展開解析を含むjob全体を破棄する。採用済み結果は一つの`DocumentView`がroot解析と
+任意の展開解析を所有し、機能ごとに異なる世代の結果を合成しない。
 
 == 構文層と意味層
 

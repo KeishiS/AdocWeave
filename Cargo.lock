@@ -6,16 +6,22 @@ version = 4
 name = "adocweave"
 version = "0.1.0"
 dependencies = [
+ "adocweave-host",
  "serde",
  "serde_json",
  "sha2",
 ]
 
 [[package]]
+name = "adocweave-host"
+version = "0.1.0"
+
+[[package]]
 name = "adocweave-lsp"
 version = "0.1.0"
 dependencies = [
  "adocweave",
+ "adocweave-host",
  "async-lsp",
  "futures",
  "serde",

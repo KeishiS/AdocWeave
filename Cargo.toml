@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/adocweave", "crates/adocweave-lsp", "crates/adocweave-wasm"]
+members = [
+  "crates/adocweave",
+  "crates/adocweave-host",
+  "crates/adocweave-lsp",
+  "crates/adocweave-wasm",
+]
 exclude = ["editors/zed"]
 resolver = "2"
 

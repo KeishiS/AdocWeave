@@ -240,7 +240,7 @@ fn stdin_include_requires_a_base_and_rejects_traversal() {
         b"include::../plain/basic.adoc[]\n",
     );
     assert!(!traversal.status.success());
-    assert!(String::from_utf8_lossy(&traversal.stderr).contains("unsafe include target"));
+    assert!(String::from_utf8_lossy(&traversal.stderr).contains("unsafe local resource target"));
 
     let missing = run_with_stdin(
         &["format", "--include", "--base-dir", base, "-"],
@@ -314,7 +314,7 @@ fn include_provider_rejects_a_symlink_escape() {
         .output()
         .expect("conversion");
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("outside allowed roots"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("outside configured roots"));
 
     std::fs::remove_dir_all(root).expect("cleanup root");
     std::fs::remove_file(outside).expect("cleanup outside");

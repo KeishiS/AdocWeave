@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use adocweave::SourceId;
@@ -11,10 +10,9 @@ use adocweave::preprocessor::{
     PreprocessError, PreprocessOptions, PreprocessedDocument, ResourceDocument, ResourceSnapshot,
     discover_includes, preprocess,
 };
-
-const MAX_FILES: usize = 10_000;
-const MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024;
-const MAX_RESOURCE_BYTES: u64 = 10 * 1024 * 1024;
+use adocweave_host::{
+    LocalResourcePolicy, ResourceBudget, ResourceError, ResourceLimits, normalize_relative,
+};
 
 #[derive(Debug)]
 pub enum LocalIncludeError {
@@ -26,19 +24,12 @@ pub enum LocalIncludeError {
         path: PathBuf,
         source: std::io::Error,
     },
-    InvalidTarget(String),
     OutsideRoot(PathBuf),
-    Read {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    ResourceTooLarge(PathBuf),
-    FileLimit,
-    ByteLimit,
     Position(adocweave::source::PositionError),
     Preprocess(PreprocessError),
     Analysis(String),
     MissingSource(String),
+    Host(ResourceError),
 }
 
 pub struct PreparedInput {
@@ -63,7 +54,6 @@ impl fmt::Display for LocalIncludeError {
                     path.display()
                 )
             }
-            Self::InvalidTarget(target) => write!(formatter, "unsafe include target: {target}"),
             Self::OutsideRoot(path) => {
                 write!(
                     formatter,
@@ -71,28 +61,13 @@ impl fmt::Display for LocalIncludeError {
                     path.display()
                 )
             }
-            Self::Read { path, source } => {
-                write!(
-                    formatter,
-                    "could not read include {}: {source}",
-                    path.display()
-                )
-            }
-            Self::ResourceTooLarge(path) => {
-                write!(
-                    formatter,
-                    "include resource is too large: {}",
-                    path.display()
-                )
-            }
-            Self::FileLimit => formatter.write_str("include resource file limit exceeded"),
-            Self::ByteLimit => formatter.write_str("include resource byte limit exceeded"),
             Self::Position(error) => error.fmt(formatter),
             Self::Preprocess(error) => error.fmt(formatter),
             Self::Analysis(error) => formatter.write_str(error),
             Self::MissingSource(source_id) => {
                 write!(formatter, "projected source is missing: {source_id}")
             }
+            Self::Host(error) => error.fmt(formatter),
         }
     }
 }
@@ -128,6 +103,8 @@ pub fn prepare(
     if !roots.iter().any(|root| base_dir.starts_with(root)) {
         return Err(LocalIncludeError::OutsideRoot(base_dir));
     }
+    let policy = LocalResourcePolicy::new(roots, ResourceLimits::default())
+        .map_err(LocalIncludeError::Host)?;
 
     let mut snapshot = ResourceSnapshot::default();
     let mut sources = BTreeMap::new();
@@ -137,39 +114,15 @@ pub fn prepare(
     let mut pending = VecDeque::new();
     enqueue(source, Path::new(""), &mut pending)?;
     let mut visited = BTreeSet::new();
-    let mut total_bytes = 0_u64;
+    let mut budget = ResourceBudget::default();
     while let Some(target) = pending.pop_front() {
         if !visited.insert(target.clone()) {
             continue;
         }
-        if visited.len() > MAX_FILES {
-            return Err(LocalIncludeError::FileLimit);
-        }
         let path = base_dir.join(&target);
-        let canonical = path
-            .canonicalize()
-            .map_err(|source| LocalIncludeError::Read {
-                path: path.clone(),
-                source,
-            })?;
-        if !roots.iter().any(|root| canonical.starts_with(root)) {
-            return Err(LocalIncludeError::OutsideRoot(canonical));
-        }
-        let metadata = fs::metadata(&canonical).map_err(|source| LocalIncludeError::Read {
-            path: canonical.clone(),
-            source,
-        })?;
-        if metadata.len() > MAX_RESOURCE_BYTES {
-            return Err(LocalIncludeError::ResourceTooLarge(canonical));
-        }
-        total_bytes = total_bytes.saturating_add(metadata.len());
-        if total_bytes > MAX_TOTAL_BYTES {
-            return Err(LocalIncludeError::ByteLimit);
-        }
-        let text = fs::read_to_string(&canonical).map_err(|source| LocalIncludeError::Read {
-            path: canonical.clone(),
-            source,
-        })?;
+        let (canonical, text) = policy
+            .read_utf8(&mut budget, &path)
+            .map_err(LocalIncludeError::Host)?;
         let parent = target.parent().unwrap_or_else(|| Path::new(""));
         enqueue(&text, parent, &mut pending)?;
         let source_id = canonical.to_string_lossy().into_owned();
@@ -201,32 +154,10 @@ fn enqueue(
     pending: &mut VecDeque<PathBuf>,
 ) -> Result<(), LocalIncludeError> {
     for include in discover_includes(source).map_err(LocalIncludeError::Position)? {
-        let relative = safe_relative(&include.target)?;
+        let relative = normalize_relative(&include.target).map_err(LocalIncludeError::Host)?;
         pending.push_back(parent.join(relative));
     }
     Ok(())
-}
-
-fn safe_relative(target: &str) -> Result<PathBuf, LocalIncludeError> {
-    if target.is_empty() || target.contains(':') || target.chars().any(char::is_control) {
-        return Err(LocalIncludeError::InvalidTarget(target.to_owned()));
-    }
-    let path = Path::new(target);
-    let mut safe = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(value) => safe.push(value),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(LocalIncludeError::InvalidTarget(target.to_owned()));
-            }
-        }
-    }
-    if safe.as_os_str().is_empty() {
-        Err(LocalIncludeError::InvalidTarget(target.to_owned()))
-    } else {
-        Ok(safe)
-    }
 }
 
 fn logical_key(path: &Path) -> String {

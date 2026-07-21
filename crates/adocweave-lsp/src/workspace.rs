@@ -1,7 +1,6 @@
 //! Versioned, I/O-free workspace resource graph for include analysis.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::Read;
 use std::sync::Arc;
 use std::{
     fs,
@@ -12,11 +11,8 @@ use adocweave::SourceId;
 use adocweave::preprocessor::{
     PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode, discover_includes,
 };
+use adocweave_host::{DependencyGraph, LocalResourcePolicy, ResourceBudget, ResourceLimits};
 use async_lsp::lsp_types::Url;
-
-const MAX_WORKSPACE_FILES: usize = 10_000;
-const MAX_WORKSPACE_BYTES: u64 = 50 * 1024 * 1024;
-const MAX_RESOURCE_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct WorkspaceGeneration(u64);
@@ -48,10 +44,11 @@ pub struct WorkspaceInput {
 pub struct WorkspaceResources {
     generation: WorkspaceGeneration,
     roots: Vec<PathBuf>,
+    policy: Option<LocalResourcePolicy>,
     disk_resources: BTreeMap<String, WorkspaceResource>,
     open_resources: BTreeSet<String>,
     resources: BTreeMap<String, WorkspaceResource>,
-    reverse_dependencies: BTreeMap<String, BTreeSet<String>>,
+    dependency_graph: DependencyGraph<String>,
     next_disk_version: i64,
 }
 
@@ -102,20 +99,24 @@ impl WorkspaceResources {
                     ));
                 }
                 files.push(canonical);
-                if files.len() > MAX_WORKSPACE_FILES {
+                if files.len() > ResourceLimits::default().max_files {
                     return Err("workspace resource file limit exceeded".to_owned());
                 }
             }
         }
         files.sort();
         files.dedup();
+        loaded.policy = (!loaded.roots.is_empty())
+            .then(|| LocalResourcePolicy::new(loaded.roots.clone(), ResourceLimits::default()))
+            .transpose()
+            .map_err(|error| error.to_string())?;
         let mut total_bytes = 0_u64;
         for path in files {
             let uri = Url::from_file_path(&path)
                 .map_err(|()| format!("cannot convert path to URI: {}", path.display()))?;
             let text = loaded.read_workspace_file(&path)?;
             total_bytes = total_bytes.saturating_add(text.len() as u64);
-            if total_bytes > MAX_WORKSPACE_BYTES {
+            if total_bytes > ResourceLimits::default().max_total_bytes {
                 return Err("workspace resource byte limit exceeded".to_owned());
             }
             loaded.set_disk_resource(uri, text)?;
@@ -142,38 +143,15 @@ impl WorkspaceResources {
                 path.display()
             ));
         }
-        let canonical = path
-            .canonicalize()
-            .map_err(|error| format!("cannot canonicalize {}: {error}", path.display()))?;
-        if !self.roots.iter().any(|root| canonical.starts_with(root)) {
-            return Err(format!(
-                "workspace resource escapes configured roots: {}",
-                path.display()
-            ));
-        }
-        let file = fs::File::open(&canonical)
-            .map_err(|error| format!("cannot open {}: {error}", canonical.display()))?;
-        let metadata = file
-            .metadata()
-            .map_err(|error| format!("cannot inspect {}: {error}", canonical.display()))?;
-        if !metadata.is_file() {
-            return Err(format!(
-                "workspace resource is not a regular file: {}",
-                canonical.display()
-            ));
-        }
-        let mut bytes = Vec::new();
-        file.take(MAX_RESOURCE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| format!("cannot read {}: {error}", canonical.display()))?;
-        if bytes.len() as u64 > MAX_RESOURCE_BYTES {
-            return Err(format!(
-                "workspace resource is too large: {}",
-                canonical.display()
-            ));
-        }
-        String::from_utf8(bytes)
-            .map_err(|error| format!("cannot read {} as UTF-8: {error}", canonical.display()))
+        let policy = self
+            .policy
+            .as_ref()
+            .ok_or_else(|| "workspace resource policy is not initialized".to_owned())?;
+        let mut budget = ResourceBudget::default();
+        policy
+            .read_utf8(&mut budget, path)
+            .map(|(_, text)| text)
+            .map_err(|error| error.to_string())
     }
 
     pub fn get(&self, uri: &Url) -> Option<&WorkspaceResource> {
@@ -213,7 +191,9 @@ impl WorkspaceResources {
                 total.checked_add(resource.text.len() as u64)
             })
             .ok_or_else(|| "workspace resource byte limit exceeded".to_owned())?;
-        if retained_bytes.saturating_add(text.len() as u64) > MAX_WORKSPACE_BYTES {
+        if retained_bytes.saturating_add(text.len() as u64)
+            > ResourceLimits::default().max_total_bytes
+        {
             return Err("workspace resource byte limit exceeded".to_owned());
         }
         self.next_disk_version = self.next_disk_version.saturating_add(1);
@@ -241,17 +221,8 @@ impl WorkspaceResources {
         resource: WorkspaceResource,
     ) -> Result<BTreeSet<String>, String> {
         let uri = resource.uri.clone();
-        if let Some(previous) = self.resources.get(uri.as_str()) {
-            for dependency in &previous.dependencies {
-                remove_reverse(&mut self.reverse_dependencies, dependency, uri.as_str());
-            }
-        }
-        for dependency in &resource.dependencies {
-            self.reverse_dependencies
-                .entry(dependency.clone())
-                .or_default()
-                .insert(uri.to_string());
-        }
+        self.dependency_graph
+            .replace(uri.to_string(), resource.dependencies.clone());
         self.resources.insert(uri.to_string(), resource);
         self.generation = self.generation.next();
         Ok(self.affected(uri.as_str()))
@@ -278,28 +249,14 @@ impl WorkspaceResources {
 
     fn remove_effective(&mut self, uri: &Url) -> BTreeSet<String> {
         let affected = self.affected(uri.as_str());
-        if let Some(previous) = self.resources.remove(uri.as_str()) {
-            for dependency in previous.dependencies {
-                remove_reverse(&mut self.reverse_dependencies, &dependency, uri.as_str());
-            }
-        }
+        self.resources.remove(uri.as_str());
+        self.dependency_graph.remove(&uri.to_string());
         self.generation = self.generation.next();
         affected
     }
 
     pub fn affected(&self, uri: &str) -> BTreeSet<String> {
-        let mut affected = BTreeSet::from([uri.to_owned()]);
-        let mut pending = VecDeque::from([uri.to_owned()]);
-        while let Some(resource) = pending.pop_front() {
-            if let Some(dependents) = self.reverse_dependencies.get(&resource) {
-                for dependent in dependents {
-                    if affected.insert(dependent.clone()) {
-                        pending.push_back(dependent.clone());
-                    }
-                }
-            }
-        }
-        affected
+        self.dependency_graph.affected(&uri.to_owned())
     }
 
     pub fn input(&self, root: &Url) -> Result<WorkspaceInput, String> {
@@ -309,12 +266,7 @@ impl WorkspaceResources {
             .ok_or_else(|| format!("workspace resource is missing: {root}"))?;
         let mut snapshot = ResourceSnapshot::default();
         let mut resource_versions = BTreeMap::new();
-        let mut visited = BTreeSet::new();
-        let mut pending = VecDeque::from(root.dependencies.iter().cloned().collect::<Vec<_>>());
-        while let Some(uri) = pending.pop_front() {
-            if !visited.insert(uri.clone()) {
-                continue;
-            }
+        for uri in self.dependency_graph.dependencies(&root.uri.to_string()) {
             let Some(resource) = self.resources.get(&uri) else {
                 continue;
             };
@@ -326,7 +278,6 @@ impl WorkspaceResources {
                 },
             );
             resource_versions.insert(uri, resource.version);
-            pending.extend(resource.dependencies.iter().cloned());
         }
         let mut allowed_schemes = BTreeSet::new();
         allowed_schemes.insert("file".to_owned());
@@ -375,20 +326,6 @@ fn dependencies(uri: &Url, text: &str) -> Result<BTreeSet<String>, String> {
 
 fn parent_uri(uri: &Url) -> Option<String> {
     uri.join(".").ok().map(|uri| uri.to_string())
-}
-
-fn remove_reverse(
-    reverse: &mut BTreeMap<String, BTreeSet<String>>,
-    dependency: &str,
-    dependent: &str,
-) {
-    let remove_entry = reverse.get_mut(dependency).is_some_and(|dependents| {
-        dependents.remove(dependent);
-        dependents.is_empty()
-    });
-    if remove_entry {
-        reverse.remove(dependency);
-    }
 }
 
 #[cfg(test)]
@@ -519,7 +456,7 @@ mod tests {
         let error = resources
             .reload_file(Url::from_file_path(&outside).expect("outside URI"))
             .expect_err("outside resource must be rejected");
-        assert!(error.contains("escapes configured roots"));
+        assert!(error.contains("outside configured roots"));
 
         fs::remove_dir_all(root).expect("cleanup workspace");
         fs::remove_file(outside).expect("cleanup outside");

@@ -1,0 +1,10 @@
+[package]
+name = "adocweave-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shared bounded local-resource policy for AdocWeave hosts"
+
+[lib]
+path = "src/lib.rs"
