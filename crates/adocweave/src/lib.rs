@@ -31,6 +31,7 @@ pub mod reference;
 pub mod resource;
 pub mod source;
 pub mod source_document;
+pub mod structure;
 pub mod substitution;
 pub mod syntax;
 mod syntax_builder;

@@ -41,10 +41,11 @@ pub enum LintRule {
     InvalidStem,
     InvalidTable,
     InvalidCatalog,
+    InvalidDocumentStructure,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -70,6 +71,7 @@ impl LintRule {
         Self::InvalidStem,
         Self::InvalidTable,
         Self::InvalidCatalog,
+        Self::InvalidDocumentStructure,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -99,6 +101,7 @@ impl LintRule {
             Self::InvalidStem => "invalid-stem",
             Self::InvalidTable => "invalid-table",
             Self::InvalidCatalog => "invalid-catalog",
+            Self::InvalidDocumentStructure => "invalid-document-structure",
         }
     }
 }
@@ -266,8 +269,46 @@ pub(crate) fn lint_syntax(
     lint_links_and_references(document, config, &mut diagnostics);
     lint_tables(document, config, &mut diagnostics);
     lint_catalogs(document, config, &mut diagnostics);
+    lint_document_structure(document, config, &mut diagnostics);
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_document_structure(
+    document: &crate::parser::AstDocument,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for problem in document.structure().problems() {
+        let message = match problem.kind {
+            crate::structure::StructureProblemKind::AppendixLevel => {
+                "appendix must be a level-one section"
+            }
+            crate::structure::StructureProblemKind::AppendixDoctype => {
+                "appendix is only valid for article or book documents"
+            }
+            crate::structure::StructureProblemKind::MissingManpageTitle => {
+                "manpage document title is missing"
+            }
+            crate::structure::StructureProblemKind::InvalidManpageTitle => {
+                "manpage title must use name(section)"
+            }
+            crate::structure::StructureProblemKind::MissingManpageNameSection => {
+                "manpage NAME section is missing"
+            }
+            crate::structure::StructureProblemKind::InvalidManpagePurpose => {
+                "manpage NAME paragraph must use name - purpose"
+            }
+        };
+        push_diagnostic(
+            diagnostics,
+            config,
+            LintRule::InvalidDocumentStructure,
+            problem.range,
+            message,
+            None,
+        );
+    }
 }
 
 fn lint_catalogs(
@@ -914,6 +955,22 @@ mod tests {
             .find(|diagnostic| diagnostic.code.as_str() == "heading-marker-space")
             .expect("spacing diagnostic");
         assert_eq!(spacing.fixes[0].edits()[0].replacement, " ");
+    }
+
+    #[test]
+    fn document_structure_lint_reports_doctype_specific_failures() {
+        let source =
+            "= tool(1)\n:doctype: manpage\n\n= Not a book part\n\n[appendix]\n=== Bad appendix\n";
+        let diagnostics = lint(source, &LintConfig::default()).expect("valid source");
+        let messages = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "invalid-document-structure")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(messages.contains(&"appendix must be a level-one section"));
+        assert!(messages.contains(&"appendix is only valid for article or book documents"));
+        assert!(messages.contains(&"manpage NAME section is missing"));
     }
 
     #[test]

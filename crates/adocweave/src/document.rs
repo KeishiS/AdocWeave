@@ -1,6 +1,5 @@
 //! Output-independent document indexes and editor-facing symbols.
 
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use crate::parser::{
@@ -16,47 +15,14 @@ pub struct HeadingId {
 }
 
 pub fn generate_heading_ids(document: &AstDocument) -> Vec<HeadingId> {
-    let mut occurrences = BTreeMap::<String, usize>::new();
-    let mut used = document
-        .anchors()
-        .iter()
-        .filter(|anchor| anchor.valid)
-        .map(|anchor| anchor.id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
     document
-        .blocks()
+        .structure()
+        .headings()
         .iter()
-        .filter_map(|block| match block {
-            AstBlock::Heading(heading) => {
-                let base = heading_id_base(&heading.text);
-                let explicit = document
-                    .anchors()
-                    .iter()
-                    .find(|anchor| anchor.valid && anchor.target_range == Some(heading.range));
-                let id = explicit.map_or_else(
-                    || {
-                        let occurrence = occurrences.entry(base.clone()).or_default();
-                        loop {
-                            *occurrence += 1;
-                            let candidate = if *occurrence == 1 {
-                                base.clone()
-                            } else {
-                                format!("{base}_{}", *occurrence)
-                            };
-                            if used.insert(candidate.clone()) {
-                                break candidate;
-                            }
-                        }
-                    },
-                    |anchor| anchor.id.clone(),
-                );
-                Some(HeadingId {
-                    range: explicit.map_or(heading.text_range, |anchor| anchor.id_range),
-                    base,
-                    id,
-                })
-            }
-            _ => None,
+        .map(|heading| HeadingId {
+            range: heading.id_range,
+            base: heading_id_base(&heading.title),
+            id: heading.id.clone(),
         })
         .collect()
 }
@@ -330,120 +296,67 @@ pub struct DocumentSymbol {
     pub children: Vec<DocumentSymbol>,
 }
 
-#[derive(Debug)]
-struct ArenaSymbol {
-    symbol: DocumentSymbol,
-    parent: Option<usize>,
-}
-
 pub fn document_symbols(document: &AstDocument) -> Vec<DocumentSymbol> {
-    let mut arena = Vec::<ArenaSymbol>::new();
-    let mut section_stack = Vec::<(u8, usize)>::new();
-    let mut title_index = None;
-
+    let mut symbols = document
+        .structure()
+        .roots()
+        .iter()
+        .map(section_symbol)
+        .collect::<Vec<_>>();
+    let mut current_heading = None;
     for block in document.blocks() {
-        let AstBlock::Heading(heading) = block else {
-            if let AstBlock::List(list) = block {
-                let parent = section_stack
-                    .last()
-                    .map(|(_, index)| *index)
-                    .or(title_index);
-                append_list_symbols(&mut arena, list, parent);
+        match block {
+            AstBlock::Heading(heading) if !matches!(heading.kind, HeadingKind::Discrete { .. }) => {
+                current_heading = Some(heading.range);
             }
-            continue;
-        };
-        match heading.kind {
-            HeadingKind::DocumentTitle => {
-                let index = arena.len();
-                arena.push(ArenaSymbol {
-                    symbol: DocumentSymbol {
-                        name: heading.text.clone(),
-                        kind: SymbolKind::DocumentTitle,
-                        range: heading.range,
-                        selection_range: heading.text_range,
-                        children: Vec::new(),
-                    },
-                    parent: None,
-                });
-                title_index = Some(index);
-                section_stack.clear();
-            }
-            HeadingKind::Section { level } => {
-                while section_stack
-                    .last()
-                    .is_some_and(|(ancestor_level, _)| *ancestor_level >= level)
+            AstBlock::List(list) => {
+                let children = list_symbols(list);
+                if let Some(parent) =
+                    current_heading.and_then(|range| find_symbol_mut(&mut symbols, range))
                 {
-                    section_stack.pop();
+                    parent.children.extend(children);
+                } else {
+                    symbols.extend(children);
                 }
-                let parent = section_stack
-                    .last()
-                    .map(|(_, index)| *index)
-                    .or(title_index);
-                let index = arena.len();
-                arena.push(ArenaSymbol {
-                    symbol: DocumentSymbol {
-                        name: heading.text.clone(),
-                        kind: SymbolKind::Section,
-                        range: heading.range,
-                        selection_range: heading.text_range,
-                        children: Vec::new(),
-                    },
-                    parent,
-                });
-                section_stack.push((level, index));
             }
-            HeadingKind::Part => {
-                let index = arena.len();
-                arena.push(ArenaSymbol {
-                    symbol: DocumentSymbol {
-                        name: heading.text.clone(),
-                        kind: SymbolKind::Part,
-                        range: heading.range,
-                        selection_range: heading.text_range,
-                        children: Vec::new(),
-                    },
-                    parent: title_index,
-                });
-                section_stack.clear();
-                section_stack.push((0, index));
-            }
-            HeadingKind::Discrete { .. } => {}
+            _ => {}
         }
     }
-
-    let mut roots = Vec::new();
-    for index in (0..arena.len()).rev() {
-        let parent = arena[index].parent;
-        let range = arena[index].symbol.range;
-        let selection_range = arena[index].symbol.selection_range;
-        let symbol = std::mem::replace(
-            &mut arena[index].symbol,
-            DocumentSymbol {
-                name: String::new(),
-                kind: SymbolKind::Section,
-                range,
-                selection_range,
-                children: Vec::new(),
-            },
-        );
-        if let Some(parent) = parent {
-            arena[parent].symbol.children.insert(0, symbol);
-        } else {
-            roots.insert(0, symbol);
-        }
-    }
-    roots
+    symbols
 }
 
-fn append_list_symbols(
-    arena: &mut Vec<ArenaSymbol>,
-    list: &crate::parser::ListBlock,
-    parent: Option<usize>,
-) {
-    for item in &list.items {
-        let index = arena.len();
-        arena.push(ArenaSymbol {
-            symbol: DocumentSymbol {
+fn section_symbol(section: &crate::structure::Section) -> DocumentSymbol {
+    DocumentSymbol {
+        name: section.heading.title.clone(),
+        kind: match section.heading.kind {
+            crate::structure::SectionKind::DocumentTitle => SymbolKind::DocumentTitle,
+            crate::structure::SectionKind::Part => SymbolKind::Part,
+            crate::structure::SectionKind::Section | crate::structure::SectionKind::Appendix => {
+                SymbolKind::Section
+            }
+            crate::structure::SectionKind::Discrete => SymbolKind::Section,
+        },
+        range: section.heading.range,
+        selection_range: section.heading.title_range,
+        children: section.children.iter().map(section_symbol).collect(),
+    }
+}
+
+fn list_symbols(list: &crate::parser::ListBlock) -> Vec<DocumentSymbol> {
+    list.items
+        .iter()
+        .map(|item| {
+            let mut children = item
+                .children
+                .iter()
+                .flat_map(list_symbols)
+                .collect::<Vec<_>>();
+            for continuation in &item.continuations {
+                if let AstBlock::List(list) = continuation {
+                    children.extend(list_symbols(list));
+                }
+            }
+            DocumentSymbol {
                 name: if item.terms.is_empty() {
                     item.text.clone()
                 } else {
@@ -456,14 +369,25 @@ fn append_list_symbols(
                 kind: SymbolKind::ListItem,
                 range: item.range,
                 selection_range: item.text_range,
-                children: Vec::new(),
-            },
-            parent,
-        });
-        for child in &item.children {
-            append_list_symbols(arena, child, Some(index));
+                children,
+            }
+        })
+        .collect()
+}
+
+fn find_symbol_mut(
+    symbols: &mut [DocumentSymbol],
+    range: TextRange,
+) -> Option<&mut DocumentSymbol> {
+    for symbol in symbols {
+        if symbol.range == range {
+            return Some(symbol);
+        }
+        if let Some(found) = find_symbol_mut(&mut symbol.children, range) {
+            return Some(found);
         }
     }
+    None
 }
 
 pub fn render_symbols_json(symbols: &[DocumentSymbol]) -> String {

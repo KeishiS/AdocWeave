@@ -4,7 +4,7 @@
 ホスト向け情報を抽出する。projection生成時にソースを再解析せず、ファイル、DB、
 ネットワークまたはノートアプリ固有スキーマへアクセスしない。
 
-現在の`PROJECTION_CONTRACT_VERSION`は9である。公開フィールドの意味または安定JSON表現を
+現在の`PROJECTION_CONTRACT_VERSION`は10である。公開フィールドの意味または安定JSON表現を
 破壊的に変更する場合は、このversionを更新する。
 
 == 出力
@@ -17,6 +17,7 @@
 * 文書内、文書間および任意スキームxrefを統一した`ReferenceEdge`
 * 検索用文字列と、prose・codeを区別する元範囲付きsegment
 * footnote、bibliography entry／参照edgeおよび階層index termからなる不変文書catalog
+* section hierarchy、TOC、appendix、book partおよびmanpage headerからなる文書構造
 * 不透明な参照元`SourceId`とprojection契約version
 
 `ReferenceEdge.target`は`ReferenceKey::Local`、`Document`または`Scheme`のいずれかである。
@@ -30,6 +31,9 @@
 
 catalogはsemantic treeの構築時に一度だけ生成された`DocumentCatalogs`の所有snapshotである。
 projection、HTML、LSPは同じ番号、順序、rangeと診断を参照し、consumerごとにmacroを再走査しない。
+
+文書構造は`DocumentStructure`で一度だけ構築する。TOC、HTML見出し、Document Symbolsは同じ
+heading ID、階層、doctype固有kindを参照し、consumer側で見出し階層を再構築しない。
 
 == 検索テキスト
 

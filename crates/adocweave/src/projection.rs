@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 9;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -21,6 +21,7 @@ pub struct DocumentProjection {
     pub reference_edges: Vec<ReferenceEdge>,
     pub searchable_text: SearchableText,
     pub catalogs: crate::catalog::DocumentCatalogs,
+    pub structure: crate::structure::DocumentStructure,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,6 +126,7 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
         reference_edges,
         searchable_text: searchable_text(analysis),
         catalogs: analysis.catalogs().clone(),
+        structure: analysis.structure().clone(),
     }
 }
 
@@ -389,7 +391,9 @@ impl DocumentProjection {
             }
             write_reference_edge(&mut output, edge);
         }
-        output.push_str("],\"catalogs\":");
+        output.push_str("],\"structure\":");
+        write_structure(&mut output, &self.structure);
+        output.push_str(",\"catalogs\":");
         write_catalogs(&mut output, &self.catalogs);
         output.push_str(",\"searchableText\":{\"text\":");
         output.push_str(&json_string(&self.searchable_text.text));
@@ -409,6 +413,95 @@ impl DocumentProjection {
         }
         output.push_str("]}}");
         output
+    }
+}
+
+fn write_structure(output: &mut String, structure: &crate::structure::DocumentStructure) {
+    output.push_str("{\"headings\":[");
+    for (index, heading) in structure.headings().iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        write!(
+            output,
+            "{{\"kind\":\"{}\",\"level\":{},\"id\":{},\"idRange\":{},\"title\":{},\"range\":{},\"titleRange\":{},\"number\":[",
+            structure_kind(heading.kind),
+            heading.level,
+            json_string(&heading.id),
+            json_range(heading.id_range),
+            json_string(&heading.title),
+            json_range(heading.range),
+            json_range(heading.title_range),
+        )
+        .expect("writing to String cannot fail");
+        write_numbers(output, &heading.number);
+        write!(output, "],\"tocIncluded\":{}}}", heading.toc_included)
+            .expect("writing to String cannot fail");
+    }
+    output.push_str("],\"toc\":");
+    write_toc(output, structure.toc());
+    output.push_str(",\"manpage\":");
+    if let Some(manpage) = structure.manpage() {
+        write!(
+            output,
+            "{{\"name\":{},\"section\":{},\"purpose\":{},\"titleRange\":{},\"nameRange\":{},\"purposeRange\":{}}}",
+            json_string(&manpage.name),
+            json_string(&manpage.section),
+            json_string(&manpage.purpose),
+            json_range(manpage.title_range),
+            json_range(manpage.name_range),
+            json_range(manpage.purpose_range),
+        )
+        .expect("writing to String cannot fail");
+    } else {
+        output.push_str("null");
+    }
+    output.push('}');
+}
+
+fn write_toc(output: &mut String, entries: &[crate::structure::TocEntry]) {
+    output.push('[');
+    for (index, entry) in entries.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        write!(
+            output,
+            "{{\"id\":{},\"title\":{},\"level\":{},\"number\":[",
+            json_string(&entry.id),
+            json_string(&entry.title),
+            entry.level,
+        )
+        .expect("writing to String cannot fail");
+        write_numbers(output, &entry.number);
+        write!(
+            output,
+            "],\"range\":{},\"children\":",
+            json_range(entry.range)
+        )
+        .expect("writing to String cannot fail");
+        write_toc(output, &entry.children);
+        output.push('}');
+    }
+    output.push(']');
+}
+
+fn write_numbers(output: &mut String, numbers: &[u32]) {
+    for (index, number) in numbers.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        write!(output, "{number}").expect("writing to String cannot fail");
+    }
+}
+
+const fn structure_kind(kind: crate::structure::SectionKind) -> &'static str {
+    match kind {
+        crate::structure::SectionKind::DocumentTitle => "document-title",
+        crate::structure::SectionKind::Part => "part",
+        crate::structure::SectionKind::Section => "section",
+        crate::structure::SectionKind::Appendix => "appendix",
+        crate::structure::SectionKind::Discrete => "discrete",
     }
 }
 
@@ -641,13 +734,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_nine_json_contract() {
+    fn projections_keep_the_version_ten_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":9,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":10,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

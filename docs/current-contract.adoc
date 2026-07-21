@@ -33,6 +33,7 @@
 * 診断とfix：xref:diagnostics.adoc[診断契約]
 * Formatter：xref:formatting.adoc[Formatting契約]
 * 参照、検索およびresource projection：xref:projections.adoc[Projection契約]
+* section、TOCおよびdoctype固有構造：xref:document-structure.adoc[文書構造契約]
 * cross reference解決：xref:reference-resolution.adoc[参照解決契約]
 * ホスト実行とcache：xref:server-execution.adoc[サーバ実行契約]
 * ホスト拡張：xref:extensions.adoc[拡張境界]

@@ -3,7 +3,7 @@
 この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
 製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-この対応範囲は`CORE_PROFILE_VERSION = 10`として公開する。version、SemVerおよび再構築条件は
+この対応範囲は`CORE_PROFILE_VERSION = 11`として公開する。version、SemVerおよび再構築条件は
 xref:core-profile.adoc[AdocWeave Core Profile 8]で定義する。
 実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
 AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
@@ -219,9 +219,9 @@ captionの出力意味とblock種別ごとの属性検証は今後のblock実装
 compound内で現在解析するのは段落と入れ子containerであり、完全なblock列はIssue 061以降で拡張する
 
 |Document headerとsection
-|部分対応
-|著者、改訂、doctype、preamble、book partおよびdiscrete headingに対応する。
-appendixの意味検証、TOC projectionおよびmanpage固有headerは未対応
+|対応
+|著者、改訂、doctype、preamble、book part、appendix、discrete heading、TOC projectionおよび
+manpageのname／section／purpose構造に対応する。詳細はxref:document-structure.adoc[文書構造契約]を参照する
 
 |Paragraphとbreak
 |対応

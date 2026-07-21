@@ -17,9 +17,9 @@ use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 25;
+pub const CORE_API_VERSION: u16 = 26;
 /// Current host-independent syntax and diagnostic behavior profile.
-pub const CORE_PROFILE_VERSION: u16 = 10;
+pub const CORE_PROFILE_VERSION: u16 = 11;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -118,6 +118,10 @@ impl Analysis {
 
     pub const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {
         self.ast.catalogs()
+    }
+
+    pub const fn structure(&self) -> &crate::structure::DocumentStructure {
+        self.ast.structure()
     }
 
     pub fn references(&self) -> Vec<&crate::inline::Reference> {

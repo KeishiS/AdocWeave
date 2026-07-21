@@ -227,7 +227,7 @@ icon setとresource解決結果を受け取るrenderer API
 
 |中
 |文書機能
-|目次用section projection、bibliography、appendix、partを含むbook構造、manpage doctype
+|文書構造projectionは完了。将来はsectnums／toclevels等の高度な表示属性とbibliography本文生成を追加する
 
 |中
 |media

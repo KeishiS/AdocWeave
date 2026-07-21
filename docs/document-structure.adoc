@@ -1,0 +1,43 @@
+= 文書構造契約
+
+`DocumentStructure`は、見出し列から一度だけ構築するbackend非依存の不変snapshotである。
+HTML、LSP Document Symbolsおよび`DocumentProjection`はこのsnapshotを共有し、見出しID、
+階層またはdoctype固有の意味を再推測してはならない。
+
+== 共通構造
+
+各`StructuredHeading`は、kind、論理level、安定ID、タイトル、source range、節番号列および
+TOC収録可否を保持する。kindは`DocumentTitle`、`Part`、`Section`、`Appendix`、`Discrete`の
+いずれかである。`Part`はbook内のlevel 0見出しだけへparserが付与する。明示IDを優先し、
+自動IDの重複回避もこの構築時に一度だけ行う。
+
+`Section`は親子階層、`TocEntry`はその階層から不可視項目を除いた投影である。文書タイトルと
+discrete headingはTOCへ含めず、`notoc` roleを持つ見出し自身も除く。その子は直近の可視階層へ
+繰り上げる。番号は数値列として保持し、表示文字列への変換はbackendの責務とする。
+
+== doctype固有規則
+
+`article`では通常sectionとlevel 1のappendixを認める。`book`ではlevel 0のpart、その配下の
+chapter相当section、およびlevel 1のappendixを型で区別する。level 1以外のappendix、または
+appendixを認めないdoctypeは`invalid-document-structure`診断となる。book以外のlevel 0見出しは
+partとは解釈せず、通常の見出し構文診断として扱う。
+
+`manpage`は文書タイトルを`name(section)`として解析し、`NAME`節直後の
+`name - purpose`または`name — purpose`からname、section、purposeと各source rangeを構築する。
+タイトル、NAME節またはpurposeが不正な場合は部分値を推測せず、位置付き診断を返す。
+
+[source,asciidoc]
+----
+= adocweave(1)
+:doctype: manpage
+
+== NAME
+
+adocweave - convert AsciiDoc safely
+----
+
+== 境界
+
+この構造はナビゲーションと意味分類を提供するが、TOCそのもののHTML挿入やmanpage backend固有の
+レイアウトは生成しない。ノートアプリ固有の階層、権限、DB IDも含めず、ホスト側projectionで
+後付けする。

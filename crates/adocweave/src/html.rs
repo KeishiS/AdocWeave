@@ -15,7 +15,7 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 10;
+pub const HTML_CONTRACT_VERSION: u16 = 11;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
@@ -27,6 +27,7 @@ pub const ALLOWED_ATTRIBUTES: &[&str] = &[
 ];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
+    "appendix",
     "bibliography-anchor",
     "button",
     "callout-list",
@@ -130,6 +131,7 @@ pub fn render_with_resolutions(
         resolutions,
         diagnostics: &mut diagnostics,
         catalogs: document.catalogs(),
+        structure: document.structure(),
     };
     let mut heading_index = 0;
     for block in document.blocks() {
@@ -589,6 +591,13 @@ fn render_heading_level(
     let level = char::from(b'0' + level);
     output.push_str("<h");
     output.push(level);
+    if context
+        .structure
+        .heading_at(heading.range)
+        .is_some_and(|item| item.kind == crate::structure::SectionKind::Appendix)
+    {
+        output.push_str(" class=\"appendix\"");
+    }
     output.push_str(" id=\"");
     output.push_str(id);
     output.push_str("\">");
@@ -890,6 +899,7 @@ struct InlineRenderContext<'a> {
     resolutions: &'a [ResolvedReference],
     diagnostics: &'a mut Vec<Diagnostic>,
     catalogs: &'a crate::catalog::DocumentCatalogs,
+    structure: &'a crate::structure::DocumentStructure,
 }
 
 fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::DocumentCatalogs) {
@@ -1111,6 +1121,16 @@ mod tests {
     }
 
     #[test]
+    fn appendix_class_comes_from_the_shared_document_structure() {
+        let parsed = parse("= Book\n:doctype: book\n\n[appendix]\n== Reference\n").expect("parse");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<h1 class=\"document-title\" id=\"_book\">Book</h1>\n<h1 class=\"appendix\" id=\"_reference\">Reference</h1>\n"
+        );
+    }
+
+    #[test]
     fn inline_regression_keeps_plain_text_html_output_unchanged() {
         let parsed = parse("plain <text>\nnext").expect("valid source");
 
@@ -1290,7 +1310,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 10);
+        assert_eq!(HTML_CONTRACT_VERSION, 11);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -1311,6 +1331,7 @@ mod tests {
             ALLOWED_CLASSES,
             [
                 "author",
+                "appendix",
                 "bibliography-anchor",
                 "button",
                 "callout-list",

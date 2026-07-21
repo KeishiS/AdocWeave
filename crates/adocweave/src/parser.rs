@@ -75,6 +75,7 @@ impl AstDocument {
             anchors,
             header,
             catalogs: crate::catalog::DocumentCatalogs::default(),
+            structure: crate::structure::DocumentStructure::default(),
         }
     }
 
@@ -96,6 +97,10 @@ impl AstDocument {
 
     pub const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {
         &self.catalogs
+    }
+
+    pub const fn structure(&self) -> &crate::structure::DocumentStructure {
+        &self.structure
     }
 
     pub fn preamble(&self) -> &[AstBlock] {

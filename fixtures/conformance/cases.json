@@ -83,6 +83,20 @@
       "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
     },
     {
+      "name": "document-structure",
+      "source": "= Book\n:doctype: book\n\n= Part\n\n== Chapter\n\n[appendix]\n== Reference\n",
+      "compatibility": "supported-subset",
+      "rationale": "section hierarchy、TOC、book partおよびappendixは全consumerとruntimeで同じ不変構造を共有する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance"
+    },
+    {
+      "name": "manpage-structure",
+      "source": "= adocweave(1)\n:doctype: manpage\n\n== NAME\n\nadocweave - convert AsciiDoc safely\n",
+      "compatibility": "supported-subset",
+      "rationale": "manpageのname、section、purposeとsource rangeを全runtimeで同じ構造へ投影する",
+      "contractImpact": "core-profile,core-api,projection,conformance"
+    },
+    {
       "name": "strict-unsupported",
       "source": "[role=raw]\n",
       "options": { "syntaxMode": "strict" },
