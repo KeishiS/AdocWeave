@@ -1,0 +1,98 @@
+= Zed拡張によるLanguage Serverの解決
+
+この文書は、AdocWeave Zed拡張が起動する`adocweave-lsp`の選択、取得、完全性検証およびcache契約を定義する。
+公開Extension Galleryへの登録は行わず、開発拡張として導入した場合にも同じ解決器を利用する。
+
+== 解決順序
+
+拡張は次の順で最初に利用可能なbinaryを選び、複数の由来を混在させない。
+
+. Zedの`lsp.adocweave.binary.path`で明示したbinary
+. Zed processがworktreeへ公開する`PATH`上の`adocweave-lsp`
+. 拡張のversionと同じGitHub Releaseから取得して検証したmanaged binary
+
+明示binaryでは同じ`binary` objectの`arguments`と`env`も使用する。設定例は次のとおりである。
+
+[source,json]
+----
+{
+  "lsp": {
+    "adocweave": {
+      "binary": {
+        "path": "/absolute/path/to/adocweave-lsp"
+      }
+    }
+  }
+}
+----
+
+開発時は`target/debug`を`PATH`へ加えるため、network取得よりlocal buildが優先される。
+
+== 対応platform
+
+[cols="1,1,2",options="header"]
+|===
+|Zed platform |Rust target |状態
+
+|Linux x86-64
+|`x86_64-unknown-linux-musl`
+|対応
+
+|Linux ARM64
+|`aarch64-unknown-linux-musl`
+|対応
+
+|Linux x86 32-bit
+|なし
+|明示的に拒否
+
+|macOS／Windows
+|なし
+|native assetを公開するまで明示的に拒否
+|===
+
+== 取得と検証
+
+managed binaryのversionは`extension.toml`およびZed adapter crateのpackage versionと一致しなければならない。
+拡張は`v{version}`をexact tagとして取得し、次の順序を実行する。
+
+. GitHub Releaseから`adocweave-dist-manifest.json`を一時fileへdownloadする。
+. manifest schema、package version、target、asset名、archive形式、実行file名、byte数およびSHA-256を検査する。
+. 選択した`.tar.xz`を一時fileへdownloadし、byte数とSHA-256を展開前に照合する。
+. 純RustのXZ decoderで展開量を128 MiB以下に制限し、TARから所定pathの通常fileだけを64 MiB以下で抽出する。
+. 実行permissionを設定し、binary自身のSHA-256を含む検証markerとともにstaging directoryへ置く。
+. 既存cacheを退避してstaging directoryをatomic renameする。commit失敗時は退避したcacheを復元する。
+
+一時fileとcacheはZedが拡張へ割り当てたworking directoryから外へ出ない。project worktree、利用者の`PATH`、
+任意のsystem directoryへ書き込まない。GitHub credentialを保持しないため、公開Releaseだけを取得対象とする。
+
+== Offline動作と更新
+
+cache keyはpackage versionとRust targetを含む。起動時に検証markerとbinaryのSHA-256が一致すれば、networkへ接続せず
+cacheを使用する。marker欠落またはbinary改変時はcacheを受理せず、Releaseから再取得する。拡張更新は新しいversionの
+別cacheを作成するため、download、rate limit、read-only filesystem、展開またはhash検証に失敗しても、検証済みの
+旧versionのdirectoryを変更しない。同一versionのcache置換に失敗した場合も直前のdirectoryを復元する。
+
+ZedのLanguage Server installation statusにはchecking、downloadingまたは失敗理由を通知する。未対応platform、
+manifest不一致、asset欠落、byte数不一致およびhash不一致はbinaryを起動する前に失敗する。
+
+== 検証
+
+repositoryでは次を実行する。
+
+[source,console]
+----
+cargo make test-zed
+cargo make check-zed-wasm
+----
+
+単体testはmanifest契約、hash不一致、XZ/TAR抽出、cache改変および更新rollbackを検査する。cleanなZed user dataを
+使う手動試験では、`PATH` overrideを外して初回自動取得を確認した後、networkを切断して同じcacheから起動する。
+cache内binaryを改変した試験では、offline状態で起動せず、online状態で再取得することを確認する。
+
+== 参照
+
+* https://zed.dev/docs/extensions/developing-extensions[Zed公式：Developing Extensions]
+* https://docs.rs/zed_extension_api/0.7.0/zed_extension_api/[Zed Extension API 0.7.0]
+* xref:release-integrity.adoc[Release assetの完全性、SBOMおよびprovenance]
+* xref:zed-development.adoc[Zedへ開発版を導入する]

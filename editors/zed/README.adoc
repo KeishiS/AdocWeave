@@ -4,8 +4,9 @@
 xref:../../docs/zed-development.adoc[Zedへ開発版を導入する]を正本とする。
 
 このdirectoryはZedが選択する拡張rootであり、`extension.toml`、Rust製WASM adapterおよび
-AsciiDoc言語設定を保持する。開発用拡張は`adocweave-lsp`をworktreeの`PATH`から探し、既定の
-寛容構文モードで起動する。Language Server binaryのdownloadや配置は行わない。
+AsciiDoc言語設定を保持する。binaryの解決、公開Releaseからの安全な取得およびcache契約は
+xref:../../docs/zed-lsp-resolution.adoc[Zed拡張によるLanguage Serverの解決]を参照する。開発時はworktreeの
+`PATH`にある`adocweave-lsp`がmanaged binaryより優先される。
 
 == 受け入れ確認
 
