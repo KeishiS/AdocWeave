@@ -420,13 +420,13 @@ impl PreprocessedAnalysis {
         let references = self
             .analysis
             .references()
-            .iter()
+            .into_iter()
             .cloned()
             .map(|value| {
                 Ok(ProjectedReference {
                     origins: project(value.range)?,
                     target_origins: project(value.target_range)?,
-                    value,
+                    value: value.clone(),
                 })
             })
             .collect::<Result<Vec<_>, ProjectionError>>()?;

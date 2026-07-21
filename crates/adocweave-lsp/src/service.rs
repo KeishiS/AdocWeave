@@ -748,7 +748,7 @@ impl LanguageService {
         if document
             .analysis
             .references()
-            .iter()
+            .into_iter()
             .any(|reference| contains(reference.target_range, offset))
         {
             let items = document
@@ -869,7 +869,7 @@ impl LanguageService {
         let Some(reference) = document
             .analysis
             .references()
-            .iter()
+            .into_iter()
             .find(|reference| contains(reference.range, offset))
         else {
             return Ok(None);
@@ -903,7 +903,7 @@ impl LanguageService {
         let reference_at_position = document
             .analysis
             .references()
-            .iter()
+            .into_iter()
             .find(|reference| contains(reference.range, offset));
         let key = reference_at_position
             .and_then(|reference| ReferenceKey::from_destination(&reference.destination))

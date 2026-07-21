@@ -26,7 +26,10 @@ pub enum SemanticNode<'document> {
     ElementAttribute(&'document ElementAttribute),
 }
 
-pub fn walk(document: &AstDocument, mut visitor: impl FnMut(SemanticNode<'_>)) {
+pub fn walk<'document>(
+    document: &'document AstDocument,
+    mut visitor: impl FnMut(SemanticNode<'document>),
+) {
     for attribute in document.attributes() {
         visitor(SemanticNode::Attribute(attribute));
     }

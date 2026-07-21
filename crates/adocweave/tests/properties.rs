@@ -191,7 +191,7 @@ fn semantic_signature(analysis: &adocweave::Analysis) -> (String, Vec<String>, V
             .collect(),
         analysis
             .references()
-            .iter()
+            .into_iter()
             .filter_map(|reference| ReferenceKey::from_destination(&reference.destination))
             .collect(),
     )

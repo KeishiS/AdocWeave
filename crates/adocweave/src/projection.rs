@@ -99,7 +99,7 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
 
     let reference_edges = analysis
         .references()
-        .iter()
+        .into_iter()
         .filter_map(|reference| {
             let target = ReferenceKey::from_destination(&reference.destination)?;
             let resolution = resolutions
