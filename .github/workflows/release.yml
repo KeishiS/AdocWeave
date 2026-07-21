@@ -92,26 +92,18 @@ jobs:
       plan: ${{ needs.plan.outputs.manifest }}
 
   build-global:
-    needs: [plan, build-native]
+    needs: [plan, release-contract]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: artifacts-build-local-*
-          path: target/distrib
-          merge-multiple: true
-      - name: Install pinned dist
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
       - name: Build browser archive
-        env:
-          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
-          args=()
-          if [ -n "$RELEASE_TAG" ]; then args+=("--tag=$RELEASE_TAG"); fi
-          dist build "${args[@]}" --artifacts=global --output-format=json > dist-manifest.json
+          bash tools/package-browser-release.sh
+          archive="target/distrib/adocweave-browser-$(jq -r .packageVersion release-manifest.json).tar.xz"
+          test -s "$archive"
+          tar -tJf "$archive" >/dev/null
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-global

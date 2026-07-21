@@ -36,3 +36,6 @@ xref:../docs/release-workflow.adoc[release-workflow.adoc]に記載した。
 
 残る完了判定は、GitHubに`github-release` Environmentを設定し、RC tagで2 targetを含む実Releaseと失敗時の
 partial release非公開を確認することである。
+
+browser archiveはcargo-distのglobal artifact後処理を介さず、同じrepository builderを直接実行する。upload前に
+非0 byteとtar.xzとしての妥当性を検査し、集約後にもmetadata生成器が再検査する。
