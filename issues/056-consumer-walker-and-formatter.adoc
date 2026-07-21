@@ -1,4 +1,6 @@
 = Consumer走査とFormatterの構造化syntax移行
+:status: completed
+:depends-on: 055
 
 == 目的
 

@@ -1,0 +1,26 @@
+= ADR 0004: Syntaxとraw factの同時認識
+:status: accepted
+
+== 文脈
+
+lossless syntax treeだけを構築した後、semantic ASTのために同じsource範囲を再走査すると、block、
+inlineおよび回復規則が二重化する。逆に、完成済みsemantic ASTを構文認識の中で確定すると、属性展開や
+アンカー結合がparserへ漏れる。
+
+== 決定
+
+一回の構文認識で、lossless syntax nodeと出力非依存のraw semantic factを同時に生成する。
+Loweringはraw factを一度だけ受け取り、文書属性の評価、リンクtargetの一回展開およびアンカーの
+対象結合を行って不変semantic ASTを完成させる。HTML、LSP、projectionおよびホスト解決はparserにも
+loweringにも持ち込まない。
+
+== 却下した案
+
+Syntax treeからsemantic ASTを作るためにsourceを再解析する案は、認識規則と処理予算を二重化するため
+採用しない。Syntax nodeへ全semantic値を複製する案も、lossless表現と正規化値の正本を曖昧にするため
+採用しない。
+
+== 帰結
+
+Syntax treeはsource表記と回復地点、semantic ASTは確定した意味の正本になる。parserのraw factは
+crate内部だけに置き、公開契約にはしない。

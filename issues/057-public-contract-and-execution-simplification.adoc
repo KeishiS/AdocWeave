@@ -1,4 +1,6 @@
 = 公開契約と実行境界の簡素化
+:status: completed
+:depends-on: 055
 
 == 目的
 

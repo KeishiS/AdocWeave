@@ -1,4 +1,6 @@
 = 不変Analysisと診断pipeline
+:status: completed
+:depends-on: 054
 
 == 目的
 

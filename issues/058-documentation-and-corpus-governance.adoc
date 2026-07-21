@@ -1,4 +1,6 @@
 = 文書・Issue・corpus検査の持続可能な運用
+:status: in-progress
+:depends-on: 055,056,057
 
 == 目的
 

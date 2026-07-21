@@ -212,12 +212,12 @@ impl Engine {
 }
 
 /// Analyzes with a cancellation token that never cancels.
-pub fn analyze(source: &str, options: &ParseOptions) -> Result<Analysis, ParseError> {
+pub(crate) fn analyze(source: &str, options: &ParseOptions) -> Result<Analysis, ParseError> {
     analyze_cancellable(source, options, &NeverCancel)
 }
 
 /// Analyzes caller-provided source without performing I/O or reference resolution.
-pub fn analyze_cancellable(
+pub(crate) fn analyze_cancellable(
     source: &str,
     options: &ParseOptions,
     cancellation: &dyn CancellationCheck,

@@ -1,4 +1,6 @@
 = 構築時の処理予算と計測可能な線形性
+:status: completed
+:depends-on:
 
 == 目的
 

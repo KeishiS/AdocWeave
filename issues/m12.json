@@ -1,0 +1,12 @@
+{
+  "milestone": "M12",
+  "issues": [
+    { "id": "052", "status": "completed", "dependsOn": [] },
+    { "id": "053", "status": "completed", "dependsOn": ["052"] },
+    { "id": "054", "status": "completed", "dependsOn": ["053"] },
+    { "id": "055", "status": "completed", "dependsOn": ["054"] },
+    { "id": "056", "status": "completed", "dependsOn": ["055"] },
+    { "id": "057", "status": "completed", "dependsOn": ["055"] },
+    { "id": "058", "status": "in-progress", "dependsOn": ["055", "056", "057"] }
+  ]
+}
