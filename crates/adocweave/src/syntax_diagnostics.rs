@@ -9,8 +9,8 @@ use crate::parser::{
 use crate::source::TextRange;
 use crate::syntax::{SyntaxFix, SyntaxIssue, SyntaxIssueClass};
 
-pub(crate) fn collect(
-    blocks: &[AstBlock],
+pub(crate) fn collect_and_clear(
+    blocks: &mut [AstBlock],
     attribute_problems: &[AttributeProblem],
 ) -> Vec<SyntaxIssue> {
     let mut output = Vec::new();
@@ -40,8 +40,8 @@ fn issue(class: SyntaxIssueClass, range: TextRange, message: &'static str) -> Sy
     }
 }
 
-fn inline_issues(problems: &[InlineProblem], output: &mut Vec<SyntaxIssue>) {
-    for problem in problems {
+fn inline_issues(problems: &mut Vec<InlineProblem>, output: &mut Vec<SyntaxIssue>) {
+    for problem in std::mem::take(problems) {
         let (class, message) = match problem.kind {
             InlineProblemKind::UnclosedMonospace => {
                 (SyntaxIssueClass::UnclosedInline, "unclosed monospace span")
@@ -95,11 +95,11 @@ fn inline_issues(problems: &[InlineProblem], output: &mut Vec<SyntaxIssue>) {
     }
 }
 
-fn block_issues(block: &AstBlock, output: &mut Vec<SyntaxIssue>) {
+fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
     match block {
         AstBlock::Heading(heading) => {
-            inline_issues(&heading.inline_problems, output);
-            for problem in &heading.problems {
+            inline_issues(&mut heading.inline_problems, output);
+            for problem in std::mem::take(&mut heading.problems) {
                 match problem {
                     HeadingProblem::MissingSpace => {
                         let range =
@@ -127,13 +127,13 @@ fn block_issues(block: &AstBlock, output: &mut Vec<SyntaxIssue>) {
                 }
             }
         }
-        AstBlock::Paragraph(paragraph) => inline_issues(&paragraph.inline_problems, output),
+        AstBlock::Paragraph(paragraph) => inline_issues(&mut paragraph.inline_problems, output),
         AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => {}
-        AstBlock::Literal(block) => block_problem_issues(&block.problems, "literal", output),
-        AstBlock::Source(block) => block_problem_issues(&block.problems, "source", output),
+        AstBlock::Literal(block) => block_problem_issues(&mut block.problems, "literal", output),
+        AstBlock::Source(block) => block_problem_issues(&mut block.problems, "source", output),
         AstBlock::List(list) => list_issues(list, output),
         AstBlock::Math(math) => {
-            for problem in &math.problems {
+            for problem in std::mem::take(&mut math.problems) {
                 let message = match problem.kind {
                     MathProblemKind::Unclosed => "unclosed STEM block",
                     MathProblemKind::Empty => "STEM block is empty",
@@ -148,8 +148,8 @@ fn block_issues(block: &AstBlock, output: &mut Vec<SyntaxIssue>) {
             } else {
                 "delimited"
             };
-            block_problem_issues(&block.problems, block_name, output);
-            if let DelimitedContent::Compound(children) = &block.content {
+            block_problem_issues(&mut block.problems, block_name, output);
+            if let DelimitedContent::Compound(children) = &mut block.content {
                 for child in children {
                     block_issues(child, output);
                 }
@@ -160,11 +160,11 @@ fn block_issues(block: &AstBlock, output: &mut Vec<SyntaxIssue>) {
 }
 
 fn block_problem_issues(
-    problems: &[BlockProblem],
+    problems: &mut Vec<BlockProblem>,
     block_name: &'static str,
     output: &mut Vec<SyntaxIssue>,
 ) {
-    for problem in problems {
+    for problem in std::mem::take(problems) {
         let (class, message) = match (problem.kind, block_name) {
             (BlockProblemKind::UnclosedBlock, "literal") => {
                 (SyntaxIssueClass::UnclosedBlock, "unclosed literal block")
@@ -184,13 +184,13 @@ fn block_problem_issues(
     }
 }
 
-fn list_issues(list: &ListBlock, output: &mut Vec<SyntaxIssue>) {
-    for item in &list.items {
-        for term in &item.terms {
-            inline_issues(&term.inline_problems, output);
+fn list_issues(list: &mut ListBlock, output: &mut Vec<SyntaxIssue>) {
+    for item in &mut list.items {
+        for term in &mut item.terms {
+            inline_issues(&mut term.inline_problems, output);
         }
-        inline_issues(&item.inline_problems, output);
-        for problem in &item.problems {
+        inline_issues(&mut item.inline_problems, output);
+        for problem in std::mem::take(&mut item.problems) {
             let (message, fix) = match problem.kind {
                 ListProblemKind::EmptyItem => ("list item is empty", None),
                 ListProblemKind::InconsistentMarker => {
@@ -216,10 +216,10 @@ fn list_issues(list: &ListBlock, output: &mut Vec<SyntaxIssue>) {
                 fix,
             });
         }
-        for child in &item.children {
+        for child in &mut item.children {
             list_issues(child, output);
         }
-        for continuation in &item.continuations {
+        for continuation in &mut item.continuations {
             block_issues(continuation, output);
         }
     }

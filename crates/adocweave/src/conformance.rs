@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 12;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 13;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///

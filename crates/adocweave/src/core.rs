@@ -291,6 +291,7 @@ fn analyze_inner(
             actual: error.actual,
         },
         parser::ParseFailure::Cancelled => ParseError::Cancelled,
+        parser::ParseFailure::InternalInvariant => ParseError::InternalInvariant,
     })?;
     if options.syntax_mode == SyntaxMode::Strict
         && ast

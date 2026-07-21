@@ -461,7 +461,9 @@ pub(crate) fn parse_shared(
     match parse_shared_cancellable(source, config, &|| false) {
         Ok(document) => Ok(document),
         Err(ParseFailure::Position(error)) => Err(error),
-        Err(ParseFailure::Cancelled | ParseFailure::Budget(_)) => {
+        Err(
+            ParseFailure::Cancelled | ParseFailure::Budget(_) | ParseFailure::InternalInvariant,
+        ) => {
             unreachable!("default test parser cannot be cancelled or exhaust its budget")
         }
     }
@@ -472,6 +474,127 @@ pub(crate) enum ParseFailure {
     Position(PositionError),
     Budget(BudgetExceeded),
     Cancelled,
+    InternalInvariant,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BlockCursor {
+    line: usize,
+    line_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BlockRecognition {
+    OneLine,
+    Through(usize),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LineRecognition {
+    Source,
+    InvalidSource,
+    Math,
+    Delimited,
+    Literal,
+    Anchor,
+    BlockTitle,
+    BlockMetadata,
+    Blank,
+    DocumentAttribute,
+    Break,
+    LiteralParagraph,
+    Heading,
+    List,
+    Unsupported,
+    Paragraph,
+}
+
+fn recognize_line(
+    content: &str,
+    next_content: Option<&str>,
+    content_start: usize,
+    full_range: TextRange,
+    header_attributes_open: bool,
+) -> LineRecognition {
+    if parse_source_attribute(content).is_some() && next_content == Some("----") {
+        LineRecognition::Source
+    } else if content.starts_with("[source") && next_content == Some("----") {
+        LineRecognition::InvalidSource
+    } else if parse_math_attribute(content).is_some() && next_content == Some("++++") {
+        LineRecognition::Math
+    } else if delimiter_spec(content).is_some() {
+        LineRecognition::Delimited
+    } else if content == "...." {
+        LineRecognition::Literal
+    } else if parse_explicit_anchor(content, content_start, full_range)
+        .filter(|_| content.starts_with("[["))
+        .is_some()
+    {
+        LineRecognition::Anchor
+    } else if parse_block_title(content, content_start).is_some() {
+        LineRecognition::BlockTitle
+    } else if parse_block_attributes(content, content_start).is_some() {
+        LineRecognition::BlockMetadata
+    } else if content.trim_matches([' ', '\t']).is_empty() {
+        LineRecognition::Blank
+    } else if header_attributes_open
+        && parse_attribute_line(content, content_start, full_range).is_some()
+    {
+        LineRecognition::DocumentAttribute
+    } else if matches!(content, "'''" | "<<<") {
+        LineRecognition::Break
+    } else if content.starts_with([' ', '\t']) {
+        LineRecognition::LiteralParagraph
+    } else if content.starts_with('=') {
+        LineRecognition::Heading
+    } else if list_marker(content).is_some() {
+        LineRecognition::List
+    } else if unsupported_reason(content).is_some() {
+        LineRecognition::Unsupported
+    } else {
+        LineRecognition::Paragraph
+    }
+}
+
+impl BlockCursor {
+    const fn new(line_count: usize) -> Self {
+        Self {
+            line: 0,
+            line_count,
+        }
+    }
+
+    const fn current(self) -> Option<usize> {
+        if self.line < self.line_count {
+            Some(self.line)
+        } else {
+            None
+        }
+    }
+
+    fn commit(&mut self, recognition: BlockRecognition) -> Result<(), ParseFailure> {
+        let next = match recognition {
+            BlockRecognition::OneLine => self.line.saturating_add(1),
+            BlockRecognition::Through(next) => next,
+        };
+        if next <= self.line || next > self.line_count {
+            return Err(ParseFailure::InternalInvariant);
+        }
+        self.line = next;
+        Ok(())
+    }
+}
+
+fn commit_block(
+    syntax_blocks: &mut Vec<SyntaxNode>,
+    ast_blocks: &mut Vec<AstBlock>,
+    pending_metadata: &mut PendingBlockMetadata,
+    syntax: SyntaxNode,
+    block: AstBlock,
+) {
+    syntax_blocks.push(syntax);
+    ast_blocks.push(block);
+    attach_pending_metadata(syntax_blocks, ast_blocks, pending_metadata);
 }
 
 impl From<PositionError> for ParseFailure {
@@ -522,8 +645,8 @@ pub(crate) fn parse_shared_cancellable(
     let mut anchors = Vec::new();
     let mut pending_metadata = PendingBlockMetadata::default();
 
-    let mut line_index = 0;
-    while line_index < source_document.lines().len() {
+    let mut cursor = BlockCursor::new(source_document.lines().len());
+    while let Some(line_index) = cursor.current() {
         if is_cancelled() {
             return Err(ParseFailure::Cancelled);
         }
@@ -531,6 +654,10 @@ pub(crate) fn parse_shared_cancellable(
         let content = source_document
             .text(line.content_range())
             .expect("line content has valid UTF-8 boundaries");
+        let next_content = source_document
+            .lines()
+            .get(line_index + 1)
+            .and_then(|next| source_document.text(next.content_range()));
 
         if expect_author && !content.trim_matches([' ', '\t']).is_empty() {
             expect_author = false;
@@ -545,7 +672,7 @@ pub(crate) fn parse_shared_cancellable(
                     header.authors.push(author);
                     blocks.push(SyntaxNode::leaf(SyntaxKind::AuthorLine, line.full_range()));
                     expect_revision = true;
-                    line_index += 1;
+                    cursor.commit(BlockRecognition::OneLine)?;
                     continue;
                 }
             }
@@ -565,18 +692,19 @@ pub(crate) fn parse_shared_cancellable(
                     SyntaxKind::RevisionLine,
                     line.full_range(),
                 ));
-                line_index += 1;
+                cursor.commit(BlockRecognition::OneLine)?;
                 continue;
             }
         }
 
-        if parse_source_attribute(content).is_some()
-            && source_document
-                .lines()
-                .get(line_index + 1)
-                .and_then(|next| source_document.text(next.content_range()))
-                == Some("----")
-        {
+        let recognition = recognize_line(
+            content,
+            next_content,
+            line.content_range().start().to_usize(),
+            line.full_range(),
+            header_attributes_open,
+        );
+        if recognition == LineRecognition::Source {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -594,19 +722,18 @@ pub(crate) fn parse_shared_cancellable(
                     .unwrap_or_default();
             consume_metadata_budget(&source_block.metadata, &mut budget)?;
             source_block.metadata.range = Some(line.full_range());
-            blocks.push(crate::syntax_builder::source(&source_block));
-            ast_blocks.push(AstBlock::Source(source_block));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
+            let syntax = crate::syntax_builder::source(&source_block);
+            commit_block(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut pending_metadata,
+                syntax,
+                AstBlock::Source(source_block),
+            );
             saw_content = true;
-            line_index = next_line;
+            cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
-        } else if content.starts_with("[source")
-            && source_document
-                .lines()
-                .get(line_index + 1)
-                .and_then(|next| source_document.text(next.content_range()))
-                == Some("----")
-        {
+        } else if recognition == LineRecognition::InvalidSource {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -631,13 +758,7 @@ pub(crate) fn parse_shared_cancellable(
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             header_attributes_open = false;
-        } else if parse_math_attribute(content).is_some()
-            && source_document
-                .lines()
-                .get(line_index + 1)
-                .and_then(|next| source_document.text(next.content_range()))
-                == Some("++++")
-        {
+        } else if recognition == LineRecognition::Math {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -655,13 +776,19 @@ pub(crate) fn parse_shared_cancellable(
                     .unwrap_or_default();
             consume_metadata_budget(&math.metadata, &mut budget)?;
             math.metadata.range = Some(line.full_range());
-            blocks.push(crate::syntax_builder::math(&math));
-            ast_blocks.push(AstBlock::Math(math));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
+            let syntax = crate::syntax_builder::math(&math);
+            commit_block(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut pending_metadata,
+                syntax,
+                AstBlock::Math(math),
+            );
             saw_content = true;
-            line_index = next_line;
+            cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
-        } else if let Some(spec) = delimiter_spec(content) {
+        } else if recognition == LineRecognition::Delimited {
+            let spec = delimiter_spec(content).expect("recognizer verified delimiter");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -685,14 +812,19 @@ pub(crate) fn parse_shared_cancellable(
                 &mut budget,
                 1,
             )?;
-            blocks.push(crate::syntax_builder::delimited(&block));
-            ast_blocks.push(AstBlock::Delimited(block));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
+            let syntax = crate::syntax_builder::delimited(&block);
+            commit_block(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut pending_metadata,
+                syntax,
+                AstBlock::Delimited(block),
+            );
             saw_content = true;
             header_attributes_open = false;
-            line_index = next_line;
+            cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
-        } else if content == "...." {
+        } else if recognition == LineRecognition::Literal {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -704,19 +836,25 @@ pub(crate) fn parse_shared_cancellable(
             budget.consume_block()?;
             budget.consume_node()?;
             let (literal, next_line) = parse_literal_block(&source_document, line_index, source)?;
-            blocks.push(crate::syntax_builder::literal(&literal));
-            ast_blocks.push(AstBlock::Literal(literal));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
+            let syntax = crate::syntax_builder::literal(&literal);
+            commit_block(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut pending_metadata,
+                syntax,
+                AstBlock::Literal(literal),
+            );
             saw_content = true;
-            line_index = next_line;
+            cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
-        } else if let Some(anchor) = parse_explicit_anchor(
-            content,
-            line.content_range().start().to_usize(),
-            line.full_range(),
-        )
-        .filter(|_| content.starts_with("[["))
-        {
+        } else if recognition == LineRecognition::Anchor {
+            let anchor = parse_explicit_anchor(
+                content,
+                line.content_range().start().to_usize(),
+                line.full_range(),
+            )
+            .filter(|_| content.starts_with("[["))
+            .expect("recognizer verified anchor");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -730,9 +868,9 @@ pub(crate) fn parse_shared_cancellable(
             anchors.push(anchor);
             saw_content = true;
             header_attributes_open = false;
-        } else if let Some(title) =
-            parse_block_title(content, line.content_range().start().to_usize())
-        {
+        } else if recognition == LineRecognition::BlockTitle {
+            let title = parse_block_title(content, line.content_range().start().to_usize())
+                .expect("recognizer verified block title");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -745,9 +883,9 @@ pub(crate) fn parse_shared_cancellable(
             budget.consume_attribute()?;
             pending_metadata.push_title(title, line.full_range());
             header_attributes_open = false;
-        } else if let Some(metadata) =
-            parse_block_attributes(content, line.content_range().start().to_usize())
-        {
+        } else if recognition == LineRecognition::BlockMetadata {
+            let metadata = parse_block_attributes(content, line.content_range().start().to_usize())
+                .expect("recognizer verified block metadata");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -771,7 +909,7 @@ pub(crate) fn parse_shared_cancellable(
             }
             pending_metadata.push_attributes(metadata, line.full_range());
             header_attributes_open = false;
-        } else if content.trim_matches([' ', '\t']).is_empty() {
+        } else if recognition == LineRecognition::Blank {
             expect_author = false;
             expect_revision = false;
             flush_paragraph(
@@ -794,16 +932,13 @@ pub(crate) fn parse_shared_cancellable(
                 header_attributes_open = false;
                 header.end = line.full_range().start();
             }
-        } else if let Some((attribute, problem)) = header_attributes_open
-            .then(|| {
-                parse_attribute_line(
-                    content,
-                    line.content_range().start().to_usize(),
-                    line.full_range(),
-                )
-            })
-            .flatten()
-        {
+        } else if recognition == LineRecognition::DocumentAttribute {
+            let (attribute, problem) = parse_attribute_line(
+                content,
+                line.content_range().start().to_usize(),
+                line.full_range(),
+            )
+            .expect("recognizer verified document attribute");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -821,7 +956,7 @@ pub(crate) fn parse_shared_cancellable(
             attributes.push(attribute);
             attribute_problems.extend(problem);
             extend_header_range(&mut header, line.full_range());
-        } else if matches!(content, "'''" | "<<<") {
+        } else if recognition == LineRecognition::Break {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -851,7 +986,7 @@ pub(crate) fn parse_shared_cancellable(
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             header_attributes_open = false;
-        } else if content.starts_with([' ', '\t']) {
+        } else if recognition == LineRecognition::LiteralParagraph {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -868,9 +1003,9 @@ pub(crate) fn parse_shared_cancellable(
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             header_attributes_open = false;
-            line_index = next_line;
+            cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
-        } else if content.starts_with('=') {
+        } else if recognition == LineRecognition::Heading {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -909,7 +1044,7 @@ pub(crate) fn parse_shared_cancellable(
                 expect_author = true;
             }
             saw_content = true;
-        } else if list_marker(content).is_some() {
+        } else if recognition == LineRecognition::List {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -925,9 +1060,10 @@ pub(crate) fn parse_shared_cancellable(
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             header_attributes_open = false;
-            line_index = next_line;
+            cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
-        } else if let Some(reason) = unsupported_reason(content) {
+        } else if recognition == LineRecognition::Unsupported {
+            let reason = unsupported_reason(content).expect("recognizer verified unsupported line");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -955,7 +1091,7 @@ pub(crate) fn parse_shared_cancellable(
             paragraph_lines.push((line, content.to_owned()));
             saw_content = true;
         }
-        line_index += 1;
+        cursor.commit(BlockRecognition::OneLine)?;
     }
     flush_paragraph(
         &mut blocks,
@@ -972,8 +1108,7 @@ pub(crate) fn parse_shared_cancellable(
         source,
         &mut budget,
     )?;
-    let syntax_issues = crate::syntax_diagnostics::collect(&ast_blocks, &attribute_problems);
-    let ast = crate::lowering::lower(crate::lowering::ParsedFacts {
+    let mut ast = crate::lowering::lower(crate::lowering::ParsedFacts {
         blocks: ast_blocks,
         attributes,
         anchors,
@@ -983,6 +1118,8 @@ pub(crate) fn parse_shared_cancellable(
             max_bytes: config.limits.max_attribute_expansion_bytes,
         },
     });
+    let syntax_issues =
+        crate::syntax_diagnostics::collect_and_clear(&mut ast.blocks, &attribute_problems);
 
     Ok(ParsedDocument {
         syntax: SyntaxTree::from_blocks(source_document, blocks, syntax_issues),
@@ -2604,10 +2741,24 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AstBlock, BlockProblemKind, BreakBlock, BreakKind, ChecklistState, DelimitedBlockKind,
-        DelimitedContent, DocumentType, Heading, HeadingKind, HeadingProblem, ListKind,
-        MathProblemKind, SyntaxKind, parse,
+        AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlockKind, DelimitedContent,
+        DocumentType, Heading, HeadingKind, ListKind, SyntaxKind, parse,
     };
+
+    #[test]
+    fn block_cursor_rejects_non_progress_and_out_of_bounds_commits() {
+        let mut cursor = super::BlockCursor::new(2);
+        assert_eq!(cursor.current(), Some(0));
+        assert!(cursor.commit(super::BlockRecognition::Through(0)).is_err());
+        assert!(cursor.commit(super::BlockRecognition::Through(3)).is_err());
+        cursor
+            .commit(super::BlockRecognition::OneLine)
+            .expect("first line");
+        cursor
+            .commit(super::BlockRecognition::Through(2))
+            .expect("second line");
+        assert_eq!(cursor.current(), None);
+    }
     use crate::attributes::AttributeOperation;
     use crate::inline::{Inline, MathLanguage};
 
@@ -2833,7 +2984,14 @@ mod tests {
             &literal.content,
             DelimitedContent::Verbatim(value) if value == "content\n"
         ));
-        assert_eq!(literal.problems[0].kind, BlockProblemKind::UnclosedBlock);
+        assert!(literal.problems.is_empty());
+        assert!(
+            parsed
+                .syntax
+                .issues()
+                .iter()
+                .any(|issue| issue.class == crate::syntax::SyntaxIssueClass::UnclosedBlock)
+        );
         assert!(matches!(parsed.ast.blocks()[1], AstBlock::Heading(_)));
         assert!(matches!(parsed.ast.blocks()[2], AstBlock::Paragraph(_)));
     }
@@ -2960,17 +3118,16 @@ mod tests {
 
         assert!(block.language.is_none());
         assert_eq!(block.value, "");
+        assert!(block.problems.is_empty());
+        assert!(parsed.syntax.issues().iter().any(|issue| {
+            issue.class == crate::syntax::SyntaxIssueClass::MissingSourceLanguage
+        }));
         assert!(
-            block
-                .problems
+            parsed
+                .syntax
+                .issues()
                 .iter()
-                .any(|problem| { problem.kind == BlockProblemKind::MissingSourceLanguage })
-        );
-        assert!(
-            block
-                .problems
-                .iter()
-                .any(|problem| { problem.kind == BlockProblemKind::UnclosedBlock })
+                .any(|issue| issue.class == crate::syntax::SyntaxIssueClass::UnclosedBlock)
         );
         assert!(matches!(parsed.ast.blocks()[1], AstBlock::Heading(_)));
     }
@@ -3023,11 +3180,21 @@ mod tests {
         let AstBlock::Heading(first) = &parsed.ast.blocks()[0] else {
             panic!("expected malformed heading");
         };
-        assert!(first.problems.contains(&HeadingProblem::MissingSpace));
+        assert!(first.problems.is_empty());
         let AstBlock::Heading(second) = &parsed.ast.blocks()[1] else {
             panic!("expected malformed heading");
         };
-        assert!(second.problems.contains(&HeadingProblem::LevelTooDeep));
+        assert!(second.problems.is_empty());
+        assert!(
+            parsed.syntax.issues().iter().any(|issue| {
+                issue.class == crate::syntax::SyntaxIssueClass::HeadingMarkerSpace
+            })
+        );
+        assert!(
+            parsed.syntax.issues().iter().any(|issue| {
+                issue.class == crate::syntax::SyntaxIssueClass::InvalidHeadingLevel
+            })
+        );
         assert!(matches!(parsed.ast.blocks()[2], AstBlock::Paragraph(_)));
     }
 
@@ -3155,10 +3322,13 @@ mod tests {
         let AstBlock::Math(math) = &parsed.ast.blocks()[1] else {
             panic!("math");
         };
+        assert!(math.problems.is_empty());
         assert!(
-            math.problems
+            parsed
+                .syntax
+                .issues()
                 .iter()
-                .any(|problem| problem.kind == MathProblemKind::Unclosed)
+                .any(|issue| issue.class == crate::syntax::SyntaxIssueClass::InvalidStem)
         );
         assert!(matches!(parsed.ast.blocks()[2], AstBlock::Heading(_)));
     }

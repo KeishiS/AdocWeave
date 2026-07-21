@@ -147,6 +147,7 @@ fn walk_inlines<'document>(
 #[cfg(test)]
 mod tests {
     use super::{SemanticNode, walk};
+    use crate::parser::AstBlock;
 
     #[test]
     fn walk_visits_nested_lists_continuations_and_inline_labels_once() {
@@ -212,5 +213,59 @@ mod tests {
         assert_eq!(analysis.resources().len(), walked_macros);
         assert_eq!(walked_references, 2);
         assert_eq!(walked_macros, 2);
+    }
+
+    #[test]
+    fn final_semantic_tree_contains_no_parser_recovery_state() {
+        for source in [
+            "==Missing\n",
+            "paragraph **open\n",
+            "[source]\n----\n== Next\n",
+            "*  item\n",
+            "[stem]\n++++\nopen\n== Next\n",
+        ] {
+            let analysis = crate::Engine::new(crate::ParseOptions::default())
+                .analyze(source)
+                .expect("recoverable source");
+            walk(analysis.ast(), |node| match node {
+                SemanticNode::Block(block) => match block {
+                    AstBlock::Heading(value) => {
+                        assert!(value.problems.is_empty());
+                        assert!(value.inline_problems.is_empty());
+                    }
+                    AstBlock::Paragraph(value) => assert!(value.inline_problems.is_empty()),
+                    AstBlock::Literal(value) => assert!(value.problems.is_empty()),
+                    AstBlock::Source(value) => assert!(value.problems.is_empty()),
+                    AstBlock::Math(value) => assert!(value.problems.is_empty()),
+                    AstBlock::Delimited(value) => assert!(value.problems.is_empty()),
+                    AstBlock::List(_)
+                    | AstBlock::LiteralParagraph(_)
+                    | AstBlock::Break(_)
+                    | AstBlock::Unsupported(_) => {}
+                },
+                SemanticNode::ListItem(item) => {
+                    assert!(item.problems.is_empty());
+                    assert!(item.inline_problems.is_empty());
+                    assert!(
+                        item.terms
+                            .iter()
+                            .all(|term| term.inline_problems.is_empty())
+                    );
+                }
+                SemanticNode::List(_)
+                | SemanticNode::Table(_)
+                | SemanticNode::TableRow(_)
+                | SemanticNode::TableCell(_)
+                | SemanticNode::Inline(_)
+                | SemanticNode::Attribute(_)
+                | SemanticNode::Anchor(_)
+                | SemanticNode::Metadata(_)
+                | SemanticNode::MetadataTitle(_)
+                | SemanticNode::MetadataId(_)
+                | SemanticNode::MetadataRole(_)
+                | SemanticNode::MetadataOption(_)
+                | SemanticNode::ElementAttribute(_) => {}
+            });
+        }
     }
 }

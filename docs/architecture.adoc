@@ -85,6 +85,12 @@ HTML属性へ直接写像しない。
 ASTを構築せず、builderは開始・終了記号を再探索しない。不完全入力を認識できない場合も、
 再開位置は次のUTF-8境界へ必ず前進しなければならない。
 
+block parserは`recognize_line`の固定優先順位表で行を分類し、`BlockCursor`へ型付きの
+`BlockRecognition`をcommitする。commitは現在位置より後ろかつ文書範囲内への遷移だけを受理する。
+syntax nodeとsemantic blockの追加およびpending metadataの付与は共通commit処理を用いる。
+recognizerが生成した回復factはsyntax issueへ移動した後に破棄し、最終semantic ASTからqueryできない。
+doctype依存のheading正規化はfactの移動前に行い、構文診断と意味判断の順序を固定する。
+
 == 標準コアとホスト拡張
 
 標準コアは文書属性を名前、原値、操作および範囲として保持するが、`note-id`、タグ、

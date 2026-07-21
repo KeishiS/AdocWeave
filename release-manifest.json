@@ -6,7 +6,7 @@
     "coreApi": 23,
     "html": 8,
     "projection": 8,
-    "conformance": 12,
+    "conformance": 13,
     "wasmApi": 11
   }
 }
