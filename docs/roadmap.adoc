@@ -219,7 +219,7 @@ HTMLのraw出力は禁止する。
 |高
 |標準macro
 |基本macro、media resource model、footnote一覧、bibliography edgeおよび階層index catalogは完了。
-icon setとresource解決結果を受け取るrenderer API
+icon setとmedia typeに応じたbackend presentation
 
 |中
 |追加inline

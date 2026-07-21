@@ -1,8 +1,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use adocweave::html::{RenderPolicy, ResolvedReference, render, render_with_resolutions};
+use adocweave::html::{RenderPolicy, render, render_with_inputs};
 use adocweave::limits::{ProcessConfig, ProcessingLimits, SyntaxMode};
+use adocweave::reference::ResolvedReference;
 use adocweave::reference::{ReferenceKey, ResolutionFailureKind};
+use adocweave::render::RenderInputs;
+use adocweave::resource::ResolvedResource;
 use adocweave::{
     CancellationCheck, CheckOutput, Engine, Operation, ParseError, ParseOptions, ProcessError,
     process_check_with_config, process_with_config,
@@ -40,13 +43,46 @@ fn hostile_resolver_href_is_revalidated_by_the_renderer() {
         .analyze(source)
         .expect("analysis");
     let range = analysis.references()[0].range;
-    let output = render_with_resolutions(
+    let output = render_with_inputs(
         analysis.ast(),
         &RenderPolicy::default(),
-        &[ResolvedReference::resolved(range, "javascript:alert(1)")],
+        &RenderInputs::new(
+            vec![ResolvedReference::resolved(range, "javascript:alert(1)")],
+            vec![],
+        ),
     );
 
     assert_eq!(output.html, "<p>unsafe</p>\n");
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme")
+    );
+}
+
+#[test]
+fn hostile_resource_href_is_revalidated_by_the_renderer() {
+    let analysis = Engine::new(ParseOptions::default())
+        .analyze("image:asset.png[safe]")
+        .expect("analysis");
+    let range = analysis.resources()[0].range;
+    let output = render_with_inputs(
+        analysis.ast(),
+        &RenderPolicy::default(),
+        &RenderInputs::new(
+            vec![],
+            vec![ResolvedResource::resolved(
+                range,
+                "javascript:alert(1)",
+                Some("image/png".to_owned()),
+                Some(42),
+            )],
+        ),
+    );
+
+    assert_eq!(output.html, "<p>safe</p>\n");
+    assert!(!output.html.contains("<img"));
     assert!(
         output
             .diagnostics

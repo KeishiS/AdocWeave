@@ -5,13 +5,14 @@ use std::fmt::Write as _;
 use crate::Analysis;
 use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
-use crate::html::{RenderPolicy, ResolvedReference, render_with_resolutions};
+use crate::html::{RenderPolicy, render_with_inputs};
 use crate::inline::{Inline, ReferenceDestination};
 use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
+use crate::render::RenderInputs;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 16;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 17;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -23,6 +24,7 @@ pub struct ConformanceSnapshot {
     pub syntax: String,
     pub ast: String,
     pub diagnostics_json: String,
+    pub render_diagnostics_json: String,
     pub symbols_json: String,
     pub projection_json: String,
     pub html: String,
@@ -31,16 +33,18 @@ pub struct ConformanceSnapshot {
 pub fn snapshot(
     analysis: &Analysis,
     policy: &RenderPolicy,
-    resolutions: &[ResolvedReference],
+    inputs: &RenderInputs,
 ) -> ConformanceSnapshot {
+    let html = render_with_inputs(analysis.ast(), policy, inputs);
     ConformanceSnapshot {
         contract_version: CONFORMANCE_CONTRACT_VERSION,
         syntax: canonical_syntax(analysis),
         ast: canonical_ast(analysis.ast()),
         diagnostics_json: render_diagnostics_json(analysis.diagnostics()),
+        render_diagnostics_json: render_diagnostics_json(&html.diagnostics),
         symbols_json: render_symbols_json(&document_symbols(analysis.ast())),
-        projection_json: project(analysis, resolutions).render_json(),
-        html: render_with_resolutions(analysis.ast(), policy, resolutions).html,
+        projection_json: project(analysis, inputs).render_json(),
+        html: html.html,
     }
 }
 
@@ -387,8 +391,16 @@ mod tests {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= Title\n\n[[target]]\n== Section\n\n<<target,Here>>\n")
             .expect("analysis");
-        let first = snapshot(&analysis, &RenderPolicy::default(), &[]);
-        let second = snapshot(&analysis, &RenderPolicy::default(), &[]);
+        let first = snapshot(
+            &analysis,
+            &RenderPolicy::default(),
+            &RenderInputs::default(),
+        );
+        let second = snapshot(
+            &analysis,
+            &RenderPolicy::default(),
+            &RenderInputs::default(),
+        );
 
         assert_eq!(first, second);
         assert_eq!(first.contract_version, CONFORMANCE_CONTRACT_VERSION);

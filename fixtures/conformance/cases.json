@@ -97,6 +97,27 @@
       "contractImpact": "core-profile,core-api,projection,conformance"
     },
     {
+      "name": "resolved-render-inputs",
+      "source": "image:x[Alt]",
+      "renderInputs": {
+        "resources": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 12,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/image.png",
+              "mediaType": "image/png",
+              "byteLength": 42
+            }
+          }
+        ]
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "host解決済みresource入力とURL再検証はnativeとWASMで同じ安全なHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
       "name": "strict-unsupported",
       "source": "[role=raw]\n",
       "options": { "syntaxMode": "strict" },

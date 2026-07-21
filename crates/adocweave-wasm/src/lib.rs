@@ -13,7 +13,7 @@ use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 12;
+pub const WASM_API_VERSION: u16 = 13;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -103,7 +103,82 @@ pub struct WasmRequest {
     pub generation: u32,
     pub source: String,
     #[serde(default)]
+    pub render_inputs: WasmRenderInputs,
+    #[serde(default)]
     pub options: WasmOptions,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmRenderInputs {
+    #[serde(default)]
+    pub references: Vec<WasmResolvedReference>,
+    #[serde(default)]
+    pub resources: Vec<WasmResolvedResource>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmResolvedReference {
+    pub source_start: u32,
+    pub source_end: u32,
+    pub outcome: WasmReferenceOutcome,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum WasmReferenceOutcome {
+    Resolved {
+        href: String,
+    },
+    Failed {
+        kind: WasmReferenceFailureKind,
+        message: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmReferenceFailureKind {
+    MissingTarget,
+    MissingAnchor,
+    AmbiguousTarget,
+    OutsideRoot,
+    ResolverFailure,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmResolvedResource {
+    pub source_start: u32,
+    pub source_end: u32,
+    pub outcome: WasmResourceOutcome,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum WasmResourceOutcome {
+    Resolved {
+        href: String,
+        #[serde(rename = "mediaType")]
+        media_type: Option<String>,
+        #[serde(rename = "byteLength")]
+        byte_length: Option<u64>,
+    },
+    Failed {
+        kind: WasmResourceFailureKind,
+        message: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmResourceFailureKind {
+    Missing,
+    OutsideRoot,
+    SchemeDenied,
+    PermissionDenied,
+    ResolverFailure,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -252,6 +327,7 @@ pub struct WasmResponse {
     pub ast: String,
     pub html: String,
     pub diagnostics: Value,
+    pub render_diagnostics: Value,
     pub symbols: Value,
     pub projection: Value,
 }
@@ -364,7 +440,9 @@ pub fn process_request(
             ),
         });
     }
+    let render_inputs = request.render_inputs;
     let options = request.options;
+    validate_wasm_render_inputs(&render_inputs, &options.limits)?;
     let max_output_bytes = usize::try_from(options.limits.max_output_bytes)
         .expect("u32 fits usize on supported targets");
     let analysis = Engine::new(ParseOptions {
@@ -392,9 +470,12 @@ pub fn process_request(
         return Err(cancelled_error());
     }
 
-    let products = snapshot(&analysis, &RenderPolicy::default(), &[]);
+    let render_inputs = convert_render_inputs(render_inputs, &analysis)?;
+    let products = snapshot(&analysis, &RenderPolicy::default(), &render_inputs);
     let diagnostics =
         serde_json::from_str(&products.diagnostics_json).map_err(serialization_error)?;
+    let render_diagnostics =
+        serde_json::from_str(&products.render_diagnostics_json).map_err(serialization_error)?;
     let symbols = serde_json::from_str(&products.symbols_json).map_err(serialization_error)?;
     let projection =
         serde_json::from_str(&products.projection_json).map_err(serialization_error)?;
@@ -417,6 +498,7 @@ pub fn process_request(
         ast: products.ast,
         html: products.html,
         diagnostics,
+        render_diagnostics,
         symbols,
         projection,
     };
@@ -432,6 +514,161 @@ pub fn process_request(
         });
     }
     Ok(response)
+}
+
+fn validate_wasm_render_inputs(
+    inputs: &WasmRenderInputs,
+    limits: &WasmLimits,
+) -> Result<(), WasmError> {
+    let count = inputs.references.len() as u64 + inputs.resources.len() as u64;
+    if count > u64::from(limits.max_references) {
+        return Err(render_input_limit_error("render input count"));
+    }
+    let mut bytes = 0_u64;
+    for input in &inputs.references {
+        bytes = bytes.saturating_add(match &input.outcome {
+            WasmReferenceOutcome::Resolved { href } => href.len() as u64,
+            WasmReferenceOutcome::Failed { message, .. } => message.len() as u64,
+        });
+    }
+    for input in &inputs.resources {
+        bytes = bytes.saturating_add(match &input.outcome {
+            WasmResourceOutcome::Resolved {
+                href, media_type, ..
+            } => {
+                href.len() as u64
+                    + media_type
+                        .as_ref()
+                        .map_or(0, |media_type| media_type.len() as u64)
+            }
+            WasmResourceOutcome::Failed { message, .. } => message.len() as u64,
+        });
+    }
+    if bytes > u64::from(limits.max_output_bytes) {
+        return Err(render_input_limit_error("render input bytes"));
+    }
+    Ok(())
+}
+
+fn render_input_limit_error(resource: &str) -> WasmError {
+    WasmError {
+        code: "limit-exceeded".to_owned(),
+        message: format!("{resource} exceeds the configured processing limit"),
+    }
+}
+
+fn convert_render_inputs(
+    inputs: WasmRenderInputs,
+    analysis: &adocweave::Analysis,
+) -> Result<adocweave::render::RenderInputs, WasmError> {
+    let references = inputs
+        .references
+        .into_iter()
+        .map(|resolution| {
+            let range =
+                render_input_range(resolution.source_start, resolution.source_end, analysis)?;
+            Ok(match resolution.outcome {
+                WasmReferenceOutcome::Resolved { href } => {
+                    adocweave::reference::ResolvedReference::resolved(range, href)
+                }
+                WasmReferenceOutcome::Failed { kind, message } => {
+                    adocweave::reference::ResolvedReference::failed(
+                        range,
+                        adocweave::reference::ResolverFailure {
+                            kind: match kind {
+                                WasmReferenceFailureKind::MissingTarget => {
+                                    adocweave::reference::ResolutionFailureKind::MissingTarget
+                                }
+                                WasmReferenceFailureKind::MissingAnchor => {
+                                    adocweave::reference::ResolutionFailureKind::MissingAnchor
+                                }
+                                WasmReferenceFailureKind::AmbiguousTarget => {
+                                    adocweave::reference::ResolutionFailureKind::AmbiguousTarget
+                                }
+                                WasmReferenceFailureKind::OutsideRoot => {
+                                    adocweave::reference::ResolutionFailureKind::OutsideRoot
+                                }
+                                WasmReferenceFailureKind::ResolverFailure => {
+                                    adocweave::reference::ResolutionFailureKind::ResolverFailure
+                                }
+                            },
+                            message,
+                        },
+                    )
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, WasmError>>()?;
+    let resources = inputs
+        .resources
+        .into_iter()
+        .map(|resolution| {
+            let range =
+                render_input_range(resolution.source_start, resolution.source_end, analysis)?;
+            Ok(match resolution.outcome {
+                WasmResourceOutcome::Resolved {
+                    href,
+                    media_type,
+                    byte_length,
+                } => adocweave::resource::ResolvedResource::resolved(
+                    range,
+                    href,
+                    media_type,
+                    byte_length,
+                ),
+                WasmResourceOutcome::Failed { kind, message } => {
+                    adocweave::resource::ResolvedResource::failed(
+                        range,
+                        adocweave::resource::ResourceFailure {
+                            kind: match kind {
+                                WasmResourceFailureKind::Missing => {
+                                    adocweave::resource::ResourceFailureKind::Missing
+                                }
+                                WasmResourceFailureKind::OutsideRoot => {
+                                    adocweave::resource::ResourceFailureKind::OutsideRoot
+                                }
+                                WasmResourceFailureKind::SchemeDenied => {
+                                    adocweave::resource::ResourceFailureKind::SchemeDenied
+                                }
+                                WasmResourceFailureKind::PermissionDenied => {
+                                    adocweave::resource::ResourceFailureKind::PermissionDenied
+                                }
+                                WasmResourceFailureKind::ResolverFailure => {
+                                    adocweave::resource::ResourceFailureKind::ResolverFailure
+                                }
+                            },
+                            message,
+                        },
+                    )
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, WasmError>>()?;
+    Ok(adocweave::render::RenderInputs::new(references, resources))
+}
+
+fn render_input_range(
+    start: u32,
+    end: u32,
+    analysis: &adocweave::Analysis,
+) -> Result<adocweave::source::TextRange, WasmError> {
+    let start =
+        adocweave::source::TextSize::new(start as usize).map_err(|_| invalid_render_input())?;
+    let end = adocweave::source::TextSize::new(end as usize).map_err(|_| invalid_render_input())?;
+    let range =
+        adocweave::source::TextRange::new(start, end).map_err(|_| invalid_render_input())?;
+    analysis
+        .source_document()
+        .text(range)
+        .ok_or_else(invalid_render_input)?;
+    Ok(range)
+}
+
+fn invalid_render_input() -> WasmError {
+    WasmError {
+        code: "invalid-render-input".to_owned(),
+        message: "render input range is not a valid source byte range".to_owned(),
+    }
 }
 
 pub fn process_json(request: &str) -> Result<String, String> {
@@ -542,6 +779,7 @@ mod tests {
             version: 3,
             generation: 7,
             source: source.to_owned(),
+            render_inputs: WasmRenderInputs::default(),
             options: WasmOptions::default(),
         }
     }
@@ -566,6 +804,78 @@ mod tests {
             adocweave::projection::PROJECTION_CONTRACT_VERSION
         );
         assert_eq!(response.parse.reference_count, 0);
+    }
+
+    #[test]
+    fn wasm_api_accepts_the_same_resolved_render_inputs_as_native() {
+        let source = "image:https://source.example/image.png[alt]";
+        let mut resolved_request = request(source);
+        resolved_request
+            .render_inputs
+            .resources
+            .push(WasmResolvedResource {
+                source_start: 0,
+                source_end: source.len() as u32,
+                outcome: WasmResourceOutcome::Resolved {
+                    href: "https://cdn.example/image.png".to_owned(),
+                    media_type: Some("image/png".to_owned()),
+                    byte_length: Some(42),
+                },
+            });
+
+        let response = process_request(resolved_request, &NeverCancel).expect("response");
+        assert_eq!(
+            response.html,
+            "<p><img src=\"https://cdn.example/image.png\" alt=\"alt\"></p>\n"
+        );
+        assert_eq!(response.render_diagnostics, json!([]));
+
+        let mut unsafe_request = request(source);
+        unsafe_request
+            .render_inputs
+            .resources
+            .push(WasmResolvedResource {
+                source_start: 0,
+                source_end: source.len() as u32,
+                outcome: WasmResourceOutcome::Resolved {
+                    href: "javascript:alert(1)".to_owned(),
+                    media_type: None,
+                    byte_length: None,
+                },
+            });
+        let unsafe_response = process_request(unsafe_request, &NeverCancel).expect("response");
+        assert_eq!(unsafe_response.html, "<p>alt</p>\n");
+        assert_eq!(
+            unsafe_response.render_diagnostics[0]["code"],
+            "invalid-url-scheme"
+        );
+
+        let mut limited = request(source);
+        limited.options.limits.max_references = 0;
+        limited.render_inputs.resources.push(WasmResolvedResource {
+            source_start: 0,
+            source_end: source.len() as u32,
+            outcome: WasmResourceOutcome::Resolved {
+                href: "https://cdn.example/image.png".to_owned(),
+                media_type: None,
+                byte_length: None,
+            },
+        });
+        let error = process_request(limited, &NeverCancel).expect_err("render input limit");
+        assert_eq!(error.code, "limit-exceeded");
+
+        let mut invalid = request(source);
+        invalid.render_inputs.resources.push(WasmResolvedResource {
+            source_start: 0,
+            source_end: source.len() as u32 + 1,
+            outcome: WasmResourceOutcome::Resolved {
+                href: "https://cdn.example/image.png".to_owned(),
+                media_type: None,
+                byte_length: None,
+            },
+        });
+        let error = process_request(invalid, &NeverCancel).expect_err("outside source");
+        assert_eq!(error.code, "invalid-render-input");
     }
 
     #[test]

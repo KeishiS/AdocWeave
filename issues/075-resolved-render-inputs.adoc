@@ -1,5 +1,5 @@
 = 解決済みresourceを受け取るrenderer入力
-:status: planned
+:status: completed
 :depends-on: 071
 
 == 目的
@@ -22,3 +22,12 @@
 == 完了条件
 
 rendererがI/Oやresolverを呼ばず、同じ解析と`RenderInputs`から決定的な出力を生成する。
+
+== 実装結果
+
+* range付きreference／resource結果を所有するbackend非依存`RenderInputs`へ入力を統合した。
+* 旧`render_with_resolutions()`を削除し、`render_with_inputs()`へ一本化した。
+* 欠落、型付き失敗、URL拒否、重複および未使用入力の決定的診断と安全なfallbackを実装した。
+* 入力をrange indexへ一度だけ構築し、node数と結果数の積になる照合を避けた。
+* WASM APIにも同じtagged outcomeを追加し、range検証、security試験およびnative／WASM同値fixtureを追加した。
+* 詳細はxref:../docs/render-inputs.adoc[解決済みrenderer入力契約]へ記録した。

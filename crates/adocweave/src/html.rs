@@ -13,9 +13,11 @@ use crate::inline::{
     Inline, InlineLiteralKind, InlineStyle, Link, Reference, ReferenceDestination,
 };
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
+use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, ResolutionMatch};
+use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 11;
+pub const HTML_CONTRACT_VERSION: u16 = 12;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
@@ -100,15 +102,15 @@ pub struct HtmlOutput {
 }
 
 pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
-    render_with_resolutions(document, policy, &[])
+    render_with_inputs(document, policy, &RenderInputs::default())
 }
 
 pub use crate::reference::ResolvedReference;
 
-pub fn render_with_resolutions(
+pub fn render_with_inputs(
     document: &AstDocument,
     policy: &RenderPolicy,
-    resolutions: &[ResolvedReference],
+    inputs: &RenderInputs,
 ) -> HtmlOutput {
     let mut fragment = String::new();
     let mut document_attributes = BTreeMap::new();
@@ -125,48 +127,71 @@ pub fn render_with_resolutions(
     let heading_ids = generate_heading_ids(document);
     let targets = reference_targets(document);
     let mut diagnostics = Vec::new();
-    let mut inline_context = InlineRenderContext {
-        policy,
-        targets: &targets,
-        resolutions,
-        diagnostics: &mut diagnostics,
-        catalogs: document.catalogs(),
-        structure: document.structure(),
-    };
-    let mut heading_index = 0;
-    for block in document.blocks() {
-        let explicit_id = document
-            .anchors()
-            .iter()
-            .find(|anchor| anchor.valid && anchor.target_range == Some(block.range()))
-            .map(|anchor| anchor.id.as_str());
-        let heading_id = if matches!(block, AstBlock::Heading(_)) {
-            let id = heading_ids[heading_index].id.as_str();
-            heading_index += 1;
-            Some(id)
-        } else {
-            None
-        };
-        render_block(
-            &mut fragment,
-            block,
-            explicit_id,
-            heading_id,
+    let mut input_usage = inputs.track_usage();
+    {
+        let mut inline_context = InlineRenderContext {
             policy,
-            &mut inline_context,
-        );
-        if matches!(
-            block,
-            AstBlock::Heading(Heading {
-                kind: HeadingKind::DocumentTitle,
-                ..
-            })
-        ) && policy.render_document_title
-        {
-            render_header_metadata(&mut fragment, document.header());
+            targets: &targets,
+            input_usage: &mut input_usage,
+            diagnostics: &mut diagnostics,
+            catalogs: document.catalogs(),
+            structure: document.structure(),
+        };
+        let mut heading_index = 0;
+        for block in document.blocks() {
+            let explicit_id = document
+                .anchors()
+                .iter()
+                .find(|anchor| anchor.valid && anchor.target_range == Some(block.range()))
+                .map(|anchor| anchor.id.as_str());
+            let heading_id = if matches!(block, AstBlock::Heading(_)) {
+                let id = heading_ids[heading_index].id.as_str();
+                heading_index += 1;
+                Some(id)
+            } else {
+                None
+            };
+            render_block(
+                &mut fragment,
+                block,
+                explicit_id,
+                heading_id,
+                policy,
+                &mut inline_context,
+            );
+            if matches!(
+                block,
+                AstBlock::Heading(Heading {
+                    kind: HeadingKind::DocumentTitle,
+                    ..
+                })
+            ) && policy.render_document_title
+            {
+                render_header_metadata(&mut fragment, document.header());
+            }
         }
     }
     render_footnote_catalog(&mut fragment, document.catalogs());
+    for problem in input_usage.finish() {
+        let domain = problem.domain.as_str();
+        let (code, message) = match problem.kind {
+            RenderInputProblemKind::Duplicate => (
+                "duplicate-render-input",
+                format!("multiple {domain} resolutions have the same source range"),
+            ),
+            RenderInputProblemKind::Unused => (
+                "unused-render-input",
+                format!("{domain} resolution does not match a renderable {domain}"),
+            ),
+        };
+        diagnostics.push(render_input_diagnostic(
+            code,
+            domain,
+            &message,
+            problem.range,
+        ));
+    }
+    crate::diagnostic::sort_diagnostics(&mut diagnostics);
 
     let html = if policy.document_mode == HtmlDocumentMode::Complete {
         format!("<!doctype html>\n<html>\n<body>\n{fragment}</body>\n</html>\n")
@@ -219,7 +244,7 @@ fn render_block(
     explicit_id: Option<&str>,
     heading_id: Option<&str>,
     policy: &RenderPolicy,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     match block {
         AstBlock::Heading(heading) => {
@@ -298,7 +323,7 @@ fn render_delimited(
     block: &crate::parser::DelimitedBlock,
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     match &block.content {
         crate::parser::DelimitedContent::Verbatim(value) => {
@@ -333,7 +358,7 @@ fn render_table(
     table: &crate::table::Table,
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     use crate::table::{HorizontalAlignment, TableCellStyle, TableSection};
     output.push_str("<table");
@@ -426,7 +451,7 @@ fn render_table_cell(
     output: &mut String,
     cell: &crate::table::TableCell,
     policy: &RenderPolicy,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     use crate::table::{TableCellContent, TableCellStyle};
     match &cell.content {
@@ -476,7 +501,7 @@ fn render_list(
     list: &crate::parser::ListBlock,
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     let tag = match list.kind {
         crate::parser::ListKind::Unordered => "ul",
@@ -556,7 +581,7 @@ fn render_heading(
     heading: &Heading,
     id: &str,
     policy: &RenderPolicy,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     if !heading.well_formed {
         output.push_str("<p>");
@@ -586,7 +611,7 @@ fn render_heading_level(
     heading: &Heading,
     id: &str,
     level: u8,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     let level = char::from(b'0' + level);
     output.push_str("<h");
@@ -611,7 +636,7 @@ fn render_paragraph(
     output: &mut String,
     paragraph: &Paragraph,
     id: Option<&str>,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     output.push_str("<p");
     render_optional_id(output, id);
@@ -633,7 +658,11 @@ fn render_paragraph(
     output.push_str("</p>\n");
 }
 
-fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineRenderContext<'_>) {
+fn render_inlines(
+    output: &mut String,
+    inlines: &[Inline],
+    context: &mut InlineRenderContext<'_, '_>,
+) {
     for inline in inlines {
         match inline {
             Inline::Text(text) => escape_inline_text(output, &text.value),
@@ -710,7 +739,7 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
 fn render_standard_macro(
     output: &mut String,
     node: &crate::inline::StandardMacro,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     use crate::inline::StandardMacroKind as Kind;
     let first = node
@@ -796,20 +825,15 @@ fn render_standard_macro(
 fn render_image_macro(
     output: &mut String,
     node: &crate::inline::StandardMacro,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     let alt = macro_attribute(node, "alt", 0).unwrap_or("");
-    if !context.policy.allows_url(&node.target) {
+    let Some(href) = resolved_resource_href(node, context) else {
         escape_inline_text(output, alt);
-        context.diagnostics.push(render_diagnostic(
-            "invalid-url-scheme",
-            "resource URL is rejected by the render policy",
-            node.target_range,
-        ));
         return;
-    }
+    };
     output.push_str("<img src=\"");
-    escape_html_into(output, &node.target);
+    escape_html_into(output, &href);
     output.push_str("\" alt=\"");
     escape_html_into(output, alt);
     output.push('"');
@@ -826,17 +850,12 @@ fn render_image_macro(
 fn render_media_macro(
     output: &mut String,
     node: &crate::inline::StandardMacro,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
-    if !context.policy.allows_url(&node.target) {
+    let Some(href) = resolved_resource_href(node, context) else {
         escape_inline_text(output, &node.target);
-        context.diagnostics.push(render_diagnostic(
-            "invalid-url-scheme",
-            "resource URL is rejected by the render policy",
-            node.target_range,
-        ));
         return;
-    }
+    };
     let tag = if node.kind == crate::inline::StandardMacroKind::Audio {
         "audio"
     } else {
@@ -845,11 +864,55 @@ fn render_media_macro(
     output.push('<');
     output.push_str(tag);
     output.push_str(" src=\"");
-    escape_html_into(output, &node.target);
+    escape_html_into(output, &href);
     output.push_str("\" controls>");
     output.push_str("</");
     output.push_str(tag);
     output.push('>');
+}
+
+fn resolved_resource_href(
+    node: &crate::inline::StandardMacro,
+    context: &mut InlineRenderContext<'_, '_>,
+) -> Option<String> {
+    let resolution = context.input_usage.resource_at(node.range);
+    match resolution {
+        ResolutionMatch::Unique(ResolvedResource {
+            outcome: ResourceOutcome::Resolved(value),
+            ..
+        }) if context.policy.allows_url(&value.href) => Some(value.href.clone()),
+        ResolutionMatch::Unique(ResolvedResource {
+            outcome: ResourceOutcome::Resolved(_),
+            ..
+        }) => {
+            context.diagnostics.push(render_diagnostic(
+                "invalid-url-scheme",
+                "resolved resource URL is rejected by the render policy",
+                node.target_range,
+            ));
+            None
+        }
+        ResolutionMatch::Unique(ResolvedResource {
+            outcome: ResourceOutcome::Failed(failure),
+            ..
+        }) => {
+            context.diagnostics.push(render_diagnostic(
+                failure.kind.diagnostic_code(),
+                "resource resolution failed",
+                node.target_range,
+            ));
+            None
+        }
+        ResolutionMatch::Missing => {
+            context.diagnostics.push(render_diagnostic(
+                "unresolved-resource",
+                "resource requires host resolution",
+                node.target_range,
+            ));
+            None
+        }
+        ResolutionMatch::Duplicate => None,
+    }
 }
 
 fn macro_attribute<'a>(
@@ -893,13 +956,13 @@ const fn math_class(language: crate::inline::MathLanguage) -> &'static str {
     }
 }
 
-struct InlineRenderContext<'a> {
-    policy: &'a RenderPolicy,
-    targets: &'a [ReferenceTarget],
-    resolutions: &'a [ResolvedReference],
-    diagnostics: &'a mut Vec<Diagnostic>,
-    catalogs: &'a crate::catalog::DocumentCatalogs,
-    structure: &'a crate::structure::DocumentStructure,
+struct InlineRenderContext<'inputs, 'render> {
+    policy: &'inputs RenderPolicy,
+    targets: &'inputs [ReferenceTarget],
+    input_usage: &'render mut RenderInputUsage<'inputs>,
+    diagnostics: &'render mut Vec<Diagnostic>,
+    catalogs: &'inputs crate::catalog::DocumentCatalogs,
+    structure: &'inputs crate::structure::DocumentStructure,
 }
 
 fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::DocumentCatalogs) {
@@ -924,7 +987,7 @@ fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::Docum
     output.push_str("</ol>\n</div>\n");
 }
 
-fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_>) {
+fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_, '_>) {
     if context.policy.allows_url(&link.target) {
         output.push_str("<a href=\"");
         escape_html_into(output, &link.target);
@@ -944,7 +1007,7 @@ fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderConte
 fn render_reference(
     output: &mut String,
     reference: &Reference,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     let (href, fallback, diagnostic) = match &reference.destination {
         ReferenceDestination::Local { anchor, .. } => {
@@ -964,11 +1027,8 @@ fn render_reference(
             Some(("invalid-cross-reference", "invalid cross reference target")),
         ),
         ReferenceDestination::Document { .. } | ReferenceDestination::Scheme { .. } => {
-            let resolution = context
-                .resolutions
-                .iter()
-                .find(|resolution| resolution.source_range == reference.range);
-            if let Some(resolution) = resolution {
+            let resolution = context.input_usage.reference_at(reference.range);
+            if let ResolutionMatch::Unique(resolution) = resolution {
                 match &resolution.outcome {
                     crate::reference::ResolutionOutcome::Resolved { href }
                         if context.policy.allows_url(href) =>
@@ -992,6 +1052,8 @@ fn render_reference(
                         )),
                     ),
                 }
+            } else if resolution == ResolutionMatch::Duplicate {
+                (None, reference_text(reference), None)
             } else {
                 (
                     None,
@@ -1024,7 +1086,7 @@ fn render_label_or_text(
     output: &mut String,
     label: &[Inline],
     fallback: &str,
-    context: &mut InlineRenderContext<'_>,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     if label.is_empty() {
         escape_html_into(output, fallback);
@@ -1051,6 +1113,21 @@ fn render_diagnostic(code: &str, message: &str, range: crate::source::TextRange)
         related: Vec::new(),
         fixes: Vec::new(),
     }
+}
+
+fn render_input_diagnostic(
+    code: &str,
+    domain: &str,
+    message: &str,
+    range: crate::source::TextRange,
+) -> Diagnostic {
+    let mut diagnostic = render_diagnostic(code, message, range);
+    diagnostic.id = DiagnosticId::new(format!(
+        "{code}:{domain}@{}:{}",
+        range.start().to_u32(),
+        range.end().to_u32()
+    ));
+    diagnostic
 }
 
 fn render_unsupported(output: &mut String, unsupported: &Unsupported, id: Option<&str>) {
@@ -1103,12 +1180,31 @@ fn escape_inline_text(output: &mut String, text: &str) {
 mod tests {
     use super::{
         ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, HTML_CONTRACT_VERSION,
-        HtmlDocumentMode, RenderPolicy, ResolvedReference, render, render_with_resolutions,
+        HtmlDocumentMode, RenderPolicy, ResolvedReference, render, render_with_inputs,
     };
     use crate::inline::{Inline, ReferenceDestination};
     use crate::parser::AstBlock;
     use crate::parser::parse;
+    use crate::render::RenderInputs;
+    use crate::resource::ResolvedResource;
     use crate::url::UrlDecision;
+
+    fn echo_resource_inputs(document: &crate::parser::AstDocument) -> RenderInputs {
+        let mut resources = Vec::new();
+        crate::walker::walk(document, |node| {
+            if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node
+                && crate::resource::ResourceReference::from_macro(node).is_some()
+            {
+                resources.push(ResolvedResource::resolved(
+                    node.range,
+                    node.target.clone(),
+                    None,
+                    None,
+                ));
+            }
+        });
+        RenderInputs::new(Vec::new(), resources)
+    }
 
     #[test]
     fn html_renderer_renders_paragraphs_and_folds_source_lines() {
@@ -1310,7 +1406,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 11);
+        assert_eq!(HTML_CONTRACT_VERSION, 12);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -1490,13 +1586,16 @@ mod tests {
                 _ => None,
             })
             .expect("external reference");
-        let output = render_with_resolutions(
+        let output = render_with_inputs(
             &parsed.ast,
             &RenderPolicy::default(),
-            &[ResolvedReference::resolved(
-                external,
-                "https://notes.example/part",
-            )],
+            &crate::render::RenderInputs::new(
+                vec![ResolvedReference::resolved(
+                    external,
+                    "https://notes.example/part",
+                )],
+                vec![],
+            ),
         );
 
         assert!(output.html.contains("<a href=\"#local\">Here</a>"));
@@ -1658,7 +1757,11 @@ mod tests {
     #[test]
     fn standard_macros_render_resources_through_the_html_policy() {
         let parsed = parse(include_str!("../../../fixtures/macros/standard.adoc")).expect("parse");
-        let output = render(&parsed.ast, &RenderPolicy::default());
+        let output = render_with_inputs(
+            &parsed.ast,
+            &RenderPolicy::default(),
+            &echo_resource_inputs(&parsed.ast),
+        );
         assert_eq!(
             output.html,
             include_str!("../../../fixtures/macros/standard.html")
@@ -1678,9 +1781,75 @@ mod tests {
         );
 
         let unsafe_resource = parse("image:javascript:alert(1)[safe fallback]").expect("parse");
-        let output = render(&unsafe_resource.ast, &RenderPolicy::default());
+        let output = render_with_inputs(
+            &unsafe_resource.ast,
+            &RenderPolicy::default(),
+            &echo_resource_inputs(&unsafe_resource.ast),
+        );
         assert_eq!(output.html, "<p>safe fallback</p>\n");
         assert!(!output.html.contains("<img"));
+        assert_eq!(output.diagnostics[0].code.as_str(), "invalid-url-scheme");
+    }
+
+    #[test]
+    fn render_inputs_handle_missing_failed_duplicate_and_unused_resources_deterministically() {
+        let parsed = parse("image:https://source.example/image.png[alt]").expect("parse");
+        let resolved = echo_resource_inputs(&parsed.ast).resources()[0].clone();
+
+        let missing = render(&parsed.ast, &RenderPolicy::default());
+        assert_eq!(missing.html, "<p>alt</p>\n");
+        assert_eq!(missing.diagnostics[0].code.as_str(), "unresolved-resource");
+
+        let failed = ResolvedResource::failed(
+            resolved.source_range,
+            crate::resource::ResourceFailure {
+                kind: crate::resource::ResourceFailureKind::PermissionDenied,
+                message: "denied".to_owned(),
+            },
+        );
+        let failed = render_with_inputs(
+            &parsed.ast,
+            &RenderPolicy::default(),
+            &RenderInputs::new(vec![], vec![failed]),
+        );
+        assert_eq!(
+            failed.diagnostics[0].code.as_str(),
+            "resource-permission-denied"
+        );
+
+        let duplicate = render_with_inputs(
+            &parsed.ast,
+            &RenderPolicy::default(),
+            &RenderInputs::new(vec![], vec![resolved.clone(), resolved.clone()]),
+        );
+        assert_eq!(
+            duplicate.diagnostics[0].code.as_str(),
+            "duplicate-render-input"
+        );
+
+        let unused_range = crate::source::TextRange::new(
+            crate::source::TextSize::ZERO,
+            crate::source::TextSize::ZERO,
+        )
+        .expect("range");
+        let unused = render_with_inputs(
+            &parsed.ast,
+            &RenderPolicy::default(),
+            &RenderInputs::new(
+                vec![],
+                vec![
+                    resolved,
+                    ResolvedResource::resolved(
+                        unused_range,
+                        "https://unused.example/image.png",
+                        None,
+                        None,
+                    ),
+                ],
+            ),
+        );
+        assert!(unused.html.contains("<img"));
+        assert_eq!(unused.diagnostics[0].code.as_str(), "unused-render-input");
     }
 
     #[test]

@@ -28,6 +28,7 @@ pub mod parser;
 pub mod preprocessor;
 pub mod projection;
 pub mod reference;
+pub mod render;
 pub mod resource;
 pub mod source;
 pub mod source_document;

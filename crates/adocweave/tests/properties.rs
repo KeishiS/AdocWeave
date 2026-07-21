@@ -122,7 +122,10 @@ fn renderer_and_projections_are_deterministic_for_generated_input() {
         let first_html = render(analysis.ast(), &RenderPolicy::default());
         let second_html = render(analysis.ast(), &RenderPolicy::default());
         assert_eq!(first_html, second_html);
-        assert_eq!(project(&analysis, &[]), project(&analysis, &[]));
+        assert_eq!(
+            project(&analysis, &adocweave::render::RenderInputs::default()),
+            project(&analysis, &adocweave::render::RenderInputs::default())
+        );
         assert_eq!(searchable_text(&analysis), searchable_text(&analysis));
         assert!(first_html.html.len() <= source.len().saturating_mul(32).max(64));
     }

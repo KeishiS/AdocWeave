@@ -1102,7 +1102,12 @@ impl LanguageService {
             return Ok(Some(Vec::new()));
         };
         let mut links = Vec::new();
-        for link in project(&document.analysis, &[]).external_links {
+        for link in project(
+            &document.analysis,
+            &adocweave::render::RenderInputs::default(),
+        )
+        .external_links
+        {
             if !adocweave::url::UrlPolicy::default().allows(&link.target) {
                 continue;
             }
@@ -1234,7 +1239,12 @@ impl LanguageService {
                 )?;
             }
         }
-        for link in project(&document.analysis, &[]).external_links {
+        for link in project(
+            &document.analysis,
+            &adocweave::render::RenderInputs::default(),
+        )
+        .external_links
+        {
             push_semantic_range(
                 &mut raw,
                 link.target_range,

@@ -6,7 +6,8 @@ use crate::core::{Analysis, SourceId};
 use crate::document::{ReferenceTarget, ReferenceTargetKind};
 use crate::inline::{Inline, Link};
 use crate::parser::{AstBlock, ListBlock};
-use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
+use crate::reference::{ReferenceKey, ResolutionOutcome};
+use crate::render::{RenderInputs, ResolutionMatch};
 use crate::source::TextRange;
 
 pub const PROJECTION_CONTRACT_VERSION: u16 = 10;
@@ -74,7 +75,7 @@ pub struct SearchableText {
     pub segments: Vec<SearchTextSegment>,
 }
 
-pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> DocumentProjection {
+pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection {
     let title = analysis
         .ast()
         .blocks()
@@ -104,10 +105,10 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
         .into_iter()
         .filter_map(|reference| {
             let target = ReferenceKey::from_destination(&reference.destination)?;
-            let resolution = resolutions
-                .iter()
-                .find(|resolution| resolution.source_range == reference.range)
-                .map(|resolution| resolution.outcome.clone());
+            let resolution = match inputs.reference_at(reference.range) {
+                ResolutionMatch::Unique(resolution) => Some(resolution.outcome.clone()),
+                ResolutionMatch::Missing | ResolutionMatch::Duplicate => None,
+            };
             Some(ReferenceEdge {
                 source_id: analysis.source_id().cloned(),
                 source_range: reference.range,
@@ -677,6 +678,7 @@ fn json_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::reference::ResolvedReference;
     use crate::{Engine, ParseOptions, SourceId};
 
     use super::*;
@@ -690,7 +692,7 @@ mod tests {
         })
         .analyze(source)
         .expect("analysis");
-        let projected = project(&analysis, &[]);
+        let projected = project(&analysis, &RenderInputs::default());
         let html = crate::html::render(analysis.ast(), &crate::html::RenderPolicy::default());
 
         assert_eq!(projected.contract_version, PROJECTION_CONTRACT_VERSION);
@@ -713,7 +715,7 @@ mod tests {
         assert!(!projected.searchable_text.text.contains("x+y"));
         assert_eq!(
             projected.render_json(),
-            project(&analysis, &[]).render_json()
+            project(&analysis, &RenderInputs::default()).render_json()
         );
     }
 
@@ -724,7 +726,7 @@ mod tests {
             .expect("analysis");
         let resolution =
             ResolvedReference::resolved(analysis.references()[0].range, "https://example/other");
-        let projected = project(&analysis, &[resolution]);
+        let projected = project(&analysis, &RenderInputs::new(vec![resolution], Vec::new()));
 
         assert!(matches!(
             projected.reference_edges[0].resolution,
@@ -734,12 +736,33 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_resolution_ranges_never_depend_on_input_order() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze("xref:other.adoc[Other]")
+            .expect("analysis");
+        let range = analysis.references()[0].range;
+        let first = ResolvedReference::resolved(range, "https://example/first");
+        let second = ResolvedReference::resolved(range, "https://example/second");
+        let forward = project(
+            &analysis,
+            &RenderInputs::new(vec![first.clone(), second.clone()], Vec::new()),
+        );
+        let reverse = project(
+            &analysis,
+            &RenderInputs::new(vec![second, first], Vec::new()),
+        );
+
+        assert_eq!(forward, reverse);
+        assert!(forward.reference_edges[0].resolution.is_none());
+    }
+
+    #[test]
     fn projections_keep_the_version_ten_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
-            project(&analysis, &[]).render_json(),
+            project(&analysis, &RenderInputs::default()).render_json(),
             "{\"contractVersion\":10,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }

@@ -52,7 +52,7 @@ pub struct ResourceQuery {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolvedResource {
+pub struct ResourceValue {
     pub href: String,
     pub media_type: Option<String>,
     pub byte_length: Option<u64>,
@@ -67,14 +67,63 @@ pub enum ResourceFailureKind {
     ResolverFailure,
 }
 
+impl ResourceFailureKind {
+    pub const fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::Missing => "missing-resource",
+            Self::OutsideRoot => "resource-outside-root",
+            Self::SchemeDenied => "resource-scheme-denied",
+            Self::PermissionDenied => "resource-permission-denied",
+            Self::ResolverFailure => "resource-resolver-failure",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceFailure {
     pub kind: ResourceFailureKind,
     pub message: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedResource {
+    pub source_range: TextRange,
+    pub outcome: ResourceOutcome,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceOutcome {
+    Resolved(ResourceValue),
+    Failed(ResourceFailure),
+}
+
+impl ResolvedResource {
+    pub fn resolved(
+        source_range: TextRange,
+        href: impl Into<String>,
+        media_type: Option<String>,
+        byte_length: Option<u64>,
+    ) -> Self {
+        Self {
+            source_range,
+            outcome: ResourceOutcome::Resolved(ResourceValue {
+                href: href.into(),
+                media_type,
+                byte_length,
+            }),
+        }
+    }
+
+    pub fn failed(source_range: TextRange, failure: ResourceFailure) -> Self {
+        Self {
+            source_range,
+            outcome: ResourceOutcome::Failed(failure),
+        }
+    }
+}
+
 pub type ResourceFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<ResolvedResource, ResourceFailure>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<ResourceValue, ResourceFailure>> + Send + 'a>>;
 
 /// Resource I/O is exclusively owned by the host and is never called while parsing.
 pub trait ResourceResolver: Send + Sync {

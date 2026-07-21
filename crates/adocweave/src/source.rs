@@ -29,7 +29,7 @@ impl TextSize {
 }
 
 /// A half-open range `[start, end)` in the original UTF-8 byte sequence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TextRange {
     start: TextSize,
     end: TextSize,

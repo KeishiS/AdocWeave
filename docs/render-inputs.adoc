@@ -1,0 +1,39 @@
+= 解決済みrenderer入力契約
+
+`RenderInputs`は、同じ`Analysis`から得たreference queryおよびresource queryに対するhost解決結果を
+一つにまとめた、backend非依存の所有snapshotである。rendererはこの値を読むだけであり、filesystem、
+network、DBまたはresolverを呼び出してはならない。
+
+== 型と照合
+
+`RenderInputs.references()`は`ResolvedReference`、`resources()`は`ResolvedResource`を返す。各要素は
+元構文node全体のUTF-8 byte rangeと、成功値または型付き失敗を保持する。照合keyはrangeの完全一致である。
+target文字列だけによる照合は、同じtargetの複数出現を混同するため禁止する。
+`RenderInputs`は構築時にdomain別range indexを一度だけ作り、`ResolutionMatch::Missing`、`Unique`、
+`Duplicate`を返す。HTML、projectionおよび将来backendは独自の先頭一致規則を実装しない。
+
+hostは一つのqueryにつき結果を高々一つだけ渡す。同じdomain・同じrangeに複数結果がある場合、rendererは
+どれも採用せず`duplicate-render-input`を返す。解析結果に対応しない入力は
+`unused-render-input`とする。入力順に出力を依存させず、診断は共通の規範順へsortする。
+
+== 成功、失敗およびfallback
+
+reference成功値はhref、resource成功値はhref、任意のmedia typeおよびbyte lengthを持つ。これらは
+hostが生成した非信頼入力であり、HTML backendはhrefを自身の`UrlPolicy`で必ず再検証する。
+不許可URLは`invalid-url-scheme`となり、active linkまたはmedia要素を生成しない。
+
+解決結果の欠落、型付き失敗、重複またはURL拒否では、xrefはlabelまたは元target、画像はalt、音声・動画は
+元targetをHTML escapeした非activeテキストとして出力する。失敗kindは安定診断codeへ写像する。
+resourceの生targetが安全なURLに見えても、host解決結果なしにactive要素へ昇格させない。
+
+== Hostの処理順
+
+. `Analysis.reference_queries()`と`resource_queries()`を一つのrevisionから取得する。
+. I/O、権限検査、実在確認およびURL生成をrenderer外で完了する。
+. queryの元rangeを変更せず、成功・失敗を`RenderInputs`へ格納する。
+. 同じ`Analysis`、`RenderPolicy`および`RenderInputs`をbackendへ渡す。
+. 文書revisionが変わった場合は古い入力を再利用せず、新しいquery snapshotから作り直す。
+
+WASM APIは同じ構造をcamelCase JSONで受け取り、rangeが入力sourceのUTF-8境界内であることを検証する。
+入力件数は`maxReferences`、href、media typeおよび失敗messageの合計byte数は`maxOutputBytes`で制限する。
+nativeとWASMは同じ入力から同じHTMLと診断を生成する。

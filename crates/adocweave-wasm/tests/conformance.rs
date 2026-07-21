@@ -113,12 +113,17 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
         |file| fs::read_to_string(resolve(fixtures, file)).expect("fixture source"),
     );
     let options = entry.get("options").cloned().unwrap_or_else(|| json!({}));
+    let render_inputs = entry
+        .get("renderInputs")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     serde_json::from_value(json!({
         "apiVersion": WASM_API_VERSION,
         "sourceId": format!("conformance:{}", entry["name"].as_str().expect("name")),
         "version": 1,
         "generation": 1,
         "source": source,
+        "renderInputs": render_inputs,
         "options": options,
     }))
     .expect("manifest produces a valid WASM request")

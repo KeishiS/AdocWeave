@@ -70,6 +70,6 @@ cargo test --workspace url_policy
 - 不正URL、不正xref、未解決の文書内xrefおよび不完全入力を位置付きで診断する。
 - HTMLは安全なURLだけをリンクにし、未解決・解決失敗・ポリシー違反をエスケープ済み
   非リンク表現へ回復する。文書間・スキーム付き参照はホストが
-  `render_with_resolutions()` に安全なhrefを渡した場合だけリンクにする。
+  `RenderInputs`を`render_with_inputs()`へ渡した場合だけリンクにする。
 - 不完全マクロをプレーンテキストとして保持し、後続インライン解析を継続する。
 - 規範的な対応範囲を `docs/links-and-cross-references.adoc` に記録した。
