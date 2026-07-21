@@ -33,8 +33,13 @@ span、配置、style、内容modelおよびsource rangeを持つ意味モデル
 PSVはseparator直前の奇数個のbackslashによってcell境界の認識を抑止する。CSV、DSVおよびTSVは
 double quoteで囲んだcellを認識し、quoted cell中の`""`を1個の`"`として意味値へ復号する。
 quoted cell中ではseparatorと改行を内容として保持する。DSVの既定separatorは`:`、TSVはtabである。
-`separator`にはUnicode scalar valueをちょうど1個指定する。未知の`format`、空または複数文字の
-`separator`、閉じていないquoted cellは`invalid-table`診断になる。
+入力形式は`TableInputSpec::resolve`だけが決定する。標準`|===`では明示`format`と`separator`を使用する。
+custom delimiterでは先頭文字がseparatorの正本であり、`,`と`:`は明示`format`がない場合にCSVとDSVを
+推論する。明示`format`はこの推論を上書きするが、custom delimiterと異なる`separator`属性は競合として
+`invalid-table`診断になる。
+
+custom separatorは空白、制御文字、`=`以外のUnicode scalar valueをちょうど1個指定する。未知の`format`、
+空・複数文字・禁止文字の`separator`、閉じていないquoted cellも`invalid-table`診断になる。
 
 == AsciiDoc style cell
 

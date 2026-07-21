@@ -90,7 +90,7 @@ sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===
 
 |表
 |対応
-|PSV／CSV／DSV／TSV、任意の1文字separator、quoted multiline cell、duplication、暗黙／明示列、
+|PSV／CSV／DSV／TSV、空白・制御文字・`=`を除く1文字separator、quoted multiline cell、duplication、暗黙／明示列、
 header／footer、column／row span、配置、cell styleおよびPSVのAsciiDoc block cellを型付きで扱う。
 AsciiDoc cellは文書rootと同じblock sequence状態機械を用い、カスタムseparator delimiterによる入れ子表も扱う。
 詳細はxref:tables.adoc[表の対応仕様]を参照する。

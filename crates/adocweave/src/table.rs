@@ -143,14 +143,45 @@ pub(crate) struct RawTable {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TableInputFormat {
+pub(crate) struct TableInputSpec {
     pub format: TableFormat,
     pub separator: char,
 }
 
-pub(crate) fn input_format(
+impl TableInputSpec {
+    pub(crate) fn resolve(
+        delimiter: &str,
+        delimiter_range: TextRange,
+        metadata: &crate::parser::BlockMetadata,
+    ) -> (Self, Vec<TableProblem>) {
+        resolve_input(delimiter, delimiter_range, metadata)
+    }
+}
+
+pub(crate) fn delimiter_separator(value: &str) -> Option<char> {
+    raw_delimiter_separator(value).filter(|separator| valid_custom_separator(*separator))
+}
+
+pub(crate) fn is_table_delimiter(value: &str) -> bool {
+    raw_delimiter_separator(value).is_some()
+}
+
+fn raw_delimiter_separator(value: &str) -> Option<char> {
+    let prefix = value.strip_suffix("===")?;
+    let mut characters = prefix.chars();
+    let separator = characters.next()?;
+    (separator != '=' && characters.next().is_none()).then_some(separator)
+}
+
+fn valid_custom_separator(separator: char) -> bool {
+    separator != '=' && !separator.is_control() && !separator.is_whitespace()
+}
+
+fn resolve_input(
+    delimiter: &str,
+    delimiter_range: TextRange,
     metadata: &crate::parser::BlockMetadata,
-) -> (TableInputFormat, Vec<TableProblem>) {
+) -> (TableInputSpec, Vec<TableProblem>) {
     let format_attribute = metadata
         .attributes
         .iter()
@@ -170,21 +201,40 @@ pub(crate) fn input_format(
             _ => None,
         }
     });
-    let format = parsed_format.unwrap_or(TableFormat::Psv);
+    let delimiter_separator = (delimiter != "|===")
+        .then(|| delimiter_separator(delimiter))
+        .flatten();
+    let inferred_format = match delimiter_separator {
+        Some(',') => TableFormat::Csv,
+        Some(':') => TableFormat::Dsv,
+        _ => TableFormat::Psv,
+    };
+    let format = if format_attribute.is_some() {
+        parsed_format.unwrap_or(TableFormat::Psv)
+    } else {
+        inferred_format
+    };
     let separator_attribute = metadata
         .attributes
         .iter()
         .rev()
         .find(|attribute| attribute.name.as_deref() == Some("separator"));
     let separator_value = separator_attribute.map(|attribute| attribute.value.trim_matches('"'));
-    let separator = separator_value
-        .and_then(|value| {
-            let mut characters = value.chars();
-            let separator = characters.next()?;
-            characters.next().is_none().then_some(separator)
-        })
+    let attribute_separator = separator_value.and_then(|value| {
+        let mut characters = value.chars();
+        let separator = characters.next()?;
+        (characters.next().is_none() && valid_custom_separator(separator)).then_some(separator)
+    });
+    let separator = delimiter_separator
+        .or(attribute_separator)
         .unwrap_or_else(|| format.default_separator());
     let mut problems = Vec::new();
+    if delimiter != "|===" && delimiter_separator.is_none() {
+        problems.push(TableProblem {
+            kind: TableProblemKind::InvalidSeparator,
+            range: delimiter_range,
+        });
+    }
     if let Some(attribute) = format_attribute.filter(|_| parsed_format.is_none()) {
         problems.push(TableProblem {
             kind: TableProblemKind::InvalidFormat,
@@ -194,7 +244,7 @@ pub(crate) fn input_format(
     if let Some(attribute) = separator_attribute.filter(|_| {
         !separator_value.is_some_and(|value| {
             let mut characters = value.chars();
-            characters.next().is_some() && characters.next().is_none()
+            characters.next().is_some_and(valid_custom_separator) && characters.next().is_none()
         })
     }) {
         problems.push(TableProblem {
@@ -202,10 +252,22 @@ pub(crate) fn input_format(
             range: attribute.range,
         });
     }
-    (TableInputFormat { format, separator }, problems)
+    if let (Some(delimiter_separator), Some(attribute_separator), Some(attribute)) = (
+        delimiter_separator,
+        attribute_separator,
+        separator_attribute,
+    ) {
+        if delimiter_separator != attribute_separator {
+            problems.push(TableProblem {
+                kind: TableProblemKind::InvalidSeparator,
+                range: attribute.range,
+            });
+        }
+    }
+    (TableInputSpec { format, separator }, problems)
 }
 
-pub(crate) fn scan(value: &str, range: TextRange, input: TableInputFormat) -> RawTable {
+pub(crate) fn scan(value: &str, range: TextRange, input: TableInputSpec) -> RawTable {
     match input.format {
         TableFormat::Psv => scan_psv_with_separator(value, range, input.separator),
         TableFormat::Csv | TableFormat::Dsv | TableFormat::Tsv => {
@@ -389,7 +451,7 @@ fn parse_cell_spec(value: &str) -> CellSpec {
     }
 }
 
-fn scan_delimited(value: &str, range: TextRange, input: TableInputFormat) -> RawTable {
+fn scan_delimited(value: &str, range: TextRange, input: TableInputSpec) -> RawTable {
     let mut cells = Vec::new();
     let mut problems = Vec::new();
     let mut field_start = 0;
@@ -737,7 +799,7 @@ mod tests {
         let table = scan(
             source,
             range(source),
-            TableInputFormat {
+            TableInputSpec {
                 format: TableFormat::Csv,
                 separator: ',',
             },
@@ -750,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn table_input_format_uses_typed_defaults_and_separator_override() {
+    fn table_input_spec_resolves_delimiter_format_and_separator_precedence() {
         let range = range("[format=tsv,separator=;]");
         let metadata = crate::parser::BlockMetadata {
             attributes: vec![
@@ -768,15 +830,64 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            input_format(&metadata),
+            TableInputSpec::resolve("|===", range, &metadata),
             (
-                TableInputFormat {
+                TableInputSpec {
                     format: TableFormat::Tsv,
                     separator: ';'
                 },
                 Vec::new()
             )
         );
+
+        for (delimiter, metadata, expected, problem_count) in [
+            (
+                ",===",
+                crate::parser::BlockMetadata::default(),
+                TableInputSpec {
+                    format: TableFormat::Csv,
+                    separator: ',',
+                },
+                0,
+            ),
+            (
+                ":===",
+                crate::parser::BlockMetadata::default(),
+                TableInputSpec {
+                    format: TableFormat::Dsv,
+                    separator: ':',
+                },
+                0,
+            ),
+            (
+                "!===",
+                crate::parser::BlockMetadata::default(),
+                TableInputSpec {
+                    format: TableFormat::Psv,
+                    separator: '!',
+                },
+                0,
+            ),
+            (
+                ",===",
+                metadata.clone(),
+                TableInputSpec {
+                    format: TableFormat::Tsv,
+                    separator: ',',
+                },
+                1,
+            ),
+        ] {
+            let (actual, problems) = TableInputSpec::resolve(delimiter, range, &metadata);
+            assert_eq!(actual, expected, "{delimiter}");
+            assert_eq!(problems.len(), problem_count, "{delimiter}");
+        }
+
+        assert_eq!(delimiter_separator("!==="), Some('!'));
+        assert_eq!(delimiter_separator(" ==="), None);
+        assert_eq!(delimiter_separator("\0==="), None);
+        assert_eq!(delimiter_separator("===="), None);
+        assert!(is_table_delimiter("\0==="));
     }
 
     #[test]

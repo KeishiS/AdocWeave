@@ -373,7 +373,7 @@ fn lint_tables(
             let message = match problem.kind {
                 crate::table::TableProblemKind::InvalidFormat => "unsupported table format",
                 crate::table::TableProblemKind::InvalidSeparator => {
-                    "table separator must contain exactly one character"
+                    "table separator must be one non-control character and match the delimiter"
                 }
                 crate::table::TableProblemKind::UnclosedQuotedCell => "unclosed quoted table cell",
             };
@@ -1235,6 +1235,8 @@ mod tests {
             "[format=unknown]\n|===\n|cell\n|===\n",
             "[format=csv,separator=too-long]\n|===\na,b\n|===\n",
             "[format=csv]\n|===\na,\"open\n|===\n",
+            "[separator=;]\n,===\na,b\n,===\n",
+            "\0===\ncell\n\0===\n",
         ] {
             let diagnostics = lint(source, &LintConfig::default()).expect("lint");
             assert!(

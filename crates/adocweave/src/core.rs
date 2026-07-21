@@ -19,7 +19,7 @@ use crate::syntax::SyntaxTree;
 /// Version of the public parsing contract.
 pub const CORE_API_VERSION: u16 = 29;
 /// Current host-independent syntax and diagnostic behavior profile.
-pub const CORE_PROFILE_VERSION: u16 = 15;
+pub const CORE_PROFILE_VERSION: u16 = 16;
 
 /// A caller-defined, opaque source identity.
 ///

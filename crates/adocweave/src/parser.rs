@@ -2073,7 +2073,7 @@ fn delimiter_spec(delimiter: &str) -> Option<DelimiterSpec> {
     let spec = match delimiter {
         "--" => (DelimitedBlockKind::Open, DelimitedContentModel::Compound),
         "|===" => (DelimitedBlockKind::Table, DelimitedContentModel::Table),
-        value if custom_table_delimiter(value) => {
+        value if crate::table::is_table_delimiter(value) => {
             (DelimitedBlockKind::Table, DelimitedContentModel::Table)
         }
         _ if repeated_delimiter(delimiter, '/') => {
@@ -2103,13 +2103,6 @@ fn delimiter_spec(delimiter: &str) -> Option<DelimiterSpec> {
         kind: spec.0,
         model: spec.1,
     })
-}
-
-fn custom_table_delimiter(value: &str) -> bool {
-    let Some(prefix) = value.strip_suffix("===") else {
-        return false;
-    };
-    prefix != "=" && prefix.chars().count() == 1
 }
 
 pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {
@@ -2167,13 +2160,16 @@ fn parse_delimited_block(
         DelimitedContentModel::Verbatim => DelimitedContent::Verbatim(value),
         DelimitedContentModel::Raw => DelimitedContent::Passthrough(value),
         DelimitedContentModel::Table => DelimitedContent::Table(parse_table(
-            &value,
-            body.content_range,
+            TableSyntaxInput {
+                value: &value,
+                content_range: body.content_range,
+                delimiter,
+                delimiter_range: opener.content_range(),
+                metadata: metadata.unwrap_or(&BlockMetadata::default()),
+            },
             context,
             state,
             depth,
-            delimiter,
-            metadata.unwrap_or(&BlockMetadata::default()),
         )?),
     };
     Ok((
@@ -2192,14 +2188,19 @@ fn parse_delimited_block(
     ))
 }
 
+struct TableSyntaxInput<'source> {
+    value: &'source str,
+    content_range: TextRange,
+    delimiter: &'source str,
+    delimiter_range: TextRange,
+    metadata: &'source BlockMetadata,
+}
+
 fn parse_table(
-    value: &str,
-    range: TextRange,
+    input: TableSyntaxInput<'_>,
     context: &DelimitedParseContext<'_>,
     state: &mut ParseState<'_>,
     depth: ParseDepth,
-    delimiter: &str,
-    metadata: &BlockMetadata,
 ) -> Result<crate::table::Table, ParseFailure> {
     use crate::table::{
         HorizontalAlignment, TableCell, TableCellContent, TableCellStyle, TableColumn, TableRow,
@@ -2214,11 +2215,11 @@ fn parse_table(
             actual,
         })
     };
-    if value.len() as u64 > u64::from(config.limits.max_table_bytes) {
+    if input.value.len() as u64 > u64::from(config.limits.max_table_bytes) {
         return Err(reject(
             "table bytes",
             config.limits.max_table_bytes,
-            value.len() as u64,
+            input.value.len() as u64,
         ));
     }
     if depth.table as u64 > u64::from(config.limits.max_table_depth) {
@@ -2228,31 +2229,12 @@ fn parse_table(
             depth.table as u64,
         ));
     }
-    let (mut input_format, mut table_problems) = crate::table::input_format(metadata);
-    if let Some(separator) = (delimiter != "|===")
-        .then_some(delimiter)
-        .and_then(|value| {
-            value.strip_suffix("===").and_then(|prefix| {
-                let mut characters = prefix.chars();
-                let separator = characters.next()?;
-                characters.next().is_none().then_some(separator)
-            })
-        })
-    {
-        input_format.separator = separator;
-        let has_explicit_format = metadata
-            .attributes
-            .iter()
-            .any(|attribute| attribute.name.as_deref() == Some("format"));
-        if !has_explicit_format {
-            input_format.format = match separator {
-                ',' => crate::table::TableFormat::Csv,
-                ':' => crate::table::TableFormat::Dsv,
-                _ => crate::table::TableFormat::Psv,
-            };
-        }
-    }
-    let raw = crate::table::scan(value, range, input_format);
+    let (input_spec, mut table_problems) = crate::table::TableInputSpec::resolve(
+        input.delimiter,
+        input.delimiter_range,
+        input.metadata,
+    );
+    let raw = crate::table::scan(input.value, input.content_range, input_spec);
     table_problems.extend(raw.problems.iter().copied());
     let cell_count = raw
         .cells
@@ -2344,7 +2326,7 @@ fn parse_table(
         problems: table_problems,
     };
     crate::table::layout_rows(&mut table);
-    crate::table::configure(&mut table, metadata);
+    crate::table::configure(&mut table, input.metadata);
     for row in &mut table.rows {
         for cell in &mut row.cells {
             if cell.style != TableCellStyle::AsciiDoc {
