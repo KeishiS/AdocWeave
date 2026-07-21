@@ -1,0 +1,31 @@
+= Block sequence parserの再帰context統合
+:status: planned
+:depends-on: 075
+
+== 目的
+
+top-level文書、compound blockおよびAsciiDoc table cellが別々に持つline dispatchを、context差を型で表す
+単一のblock sequence状態機械へ統合する。新しいblock種別を一か所へ追加すれば、すべての再帰contextへ
+適用されるか、明示的に拒否されなければならない。
+
+== 背景
+
+Issue 072のcell parserは親budgetと個別recognizer／builderを共有するが、paragraph、listおよび区切り付きblock
+だけを選ぶ独自loopである。このためdocument headerを禁止するという妥当なcontext差と、heading、literal
+paragraph、break等の未接続を区別できず、将来の構文追加漏れを型検査で検出できない。
+
+== 作業
+
+* `BlockContext`へheader metadataの可否、headingの扱い、block／table深さおよび解析範囲を持たせる。
+* top-levelと再帰contextを同じcursor、recognizer、dispatchおよびpending metadata状態機械で解析する。
+* compound blockとAsciiDoc cellから旧`parse_compound_children`を削除する。
+* budget、cancel、source rangeおよびorphan metadataの不変条件を一つの実装で維持する。
+* top-levelで対応する各block variantについて、cell内での許可または明示的な診断をtable-driven testにする。
+* parser moduleの責務境界、表仕様、文法、対応表およびconformance fixtureを同時更新する。
+
+== 完了条件
+
+再帰context専用のline dispatchが存在せず、全block variantのcontext policyを列挙したtestがある。PSVの
+AsciiDoc cellで許可したheading、literal paragraph、break、source／math block、metadata付きblockおよび
+入れ子tableが同じsource rangeと共有budgetで解析される。禁止するdocument header要素は通常paragraphへ
+偶然fallbackせず、規範化した診断または意味へ決定的に回復する。

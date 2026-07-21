@@ -37,9 +37,10 @@ quoted cell中ではseparatorと改行を内容として保持する。DSVの既
 
 == AsciiDoc style cell
 
-`a` style cellはinline列ではなく、独立したblock列として同じparserで解析する。paragraph、list、
-対応済み区切り付きblockおよび入れ子表はHTML、検索projection、lintとsemantic walkerから到達できる。
-cell解析は親解析とnode、block、表深さおよびcell数のbudgetを共有し、別の簡易parserや無制限の再解析を行わない。
+`a` style cellはinline列ではなく、独立したblock列として解析する。現行のcell用block sequenceは
+paragraph、listおよび対応済み区切り付きblockを、top-level parserと同じ個別recognizer／builderで構築する。
+入れ子表を含む子blockはHTML、検索projection、lintとsemantic walkerから到達できる。cell解析は親解析と
+node、block、表深さおよびcell数のbudgetを共有し、無制限の再解析を行わない。
 
 == 現在の制限
 
@@ -47,6 +48,11 @@ cell解析は親解析とnode、block、表深さおよびcell数のbudgetを共
 quoted cellを`a` column styleにした場合、復号後文字列と元sourceが一対一にならないため、現段階では
 block解析を保証する対象をPSVのAsciiDoc style cellに限定する。未知の形式を暗黙に別形式として
 成功扱いにはせず、診断を返した上で安全なPSV fallbackを保持する。
+
+cell用block sequenceは現時点でdocument header、heading、単独のliteral paragraphおよびbreakを
+認識しない。top-levelと再帰contextでline dispatchが二重化しているため、新しいblock種別の追加漏れを
+型検査だけでは検出できない。xref:../issues/089-unified-block-sequence-parser.adoc[Issue 089]で
+context差を明示した単一の状態機械へ統合する。
 
 == 置換と安全性
 

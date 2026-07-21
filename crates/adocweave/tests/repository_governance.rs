@@ -384,6 +384,19 @@ fn release_manifest_is_the_single_contract_version_catalog() {
     ] {
         assert!(documentation.contains(&expected), "missing {expected}");
     }
+
+    let current_contract = fs::read_to_string(root.join("docs/current-contract.adoc"))
+        .expect("current contract index");
+    for expected in [
+        format!("|Core profile |{}", contracts.core_profile),
+        format!("|Rust core API |{}", contracts.core_api),
+        format!("|HTML |{}", contracts.html),
+        format!("|Projection |{}", contracts.projection),
+        format!("|Conformance snapshot |{}", contracts.conformance),
+        format!("|WASM API |{}", contracts.wasm_api),
+    ] {
+        assert!(current_contract.contains(&expected), "missing {expected}");
+    }
 }
 
 #[test]
