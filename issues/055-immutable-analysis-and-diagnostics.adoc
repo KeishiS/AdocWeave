@@ -13,7 +13,8 @@
 * semantic ASTのfieldを原則非公開とし、lowering以外から構築・変更できないようにする。
 * parser／syntax層の問題を`SyntaxDiagnostic`として収集する。
 * lowering診断、semantic lintおよびstyle lintの責務と実行順を定義する。
-* ASTから診断生成専用の`inline_problems`等を除去し、回復に必要な構文状態はsyntax nodeに残す。
+* 公開semantic ASTから診断生成専用の`inline_problems`等を除去し、回復に必要な構文状態は
+  syntax issueに確定する。認識中だけ使うcrate内部raw factは公開queryへ露出しない。
 * 標準診断とホスト診断は従来どおり別結果とし、表示時の安定統合規則を維持する。
 
 == 完了条件
