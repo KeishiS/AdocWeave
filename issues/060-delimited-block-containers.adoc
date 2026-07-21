@@ -1,0 +1,24 @@
+= 区切り付きblock container
+:status: planned
+:depends-on: 059
+
+== 目的
+
+区切り付きblockを個別の文字列判定ではなく、container kindとcompound／verbatim／raw／tableの
+content modelで表現する。
+
+== 作業
+
+* comment、example、listing、literal、open、sidebar、pass、quoteおよびtable delimiterを認識する。
+* delimiterの文字列と長さが一致する閉じ規則、および異なる長さによる同種block入れ子を実装する。
+* compound内容をblock列、verbatim内容を不透明source、raw内容を明示的に危険な値として型付けする。
+* source、verse、admonition等のstyleによるcontainer再利用をmetadata loweringへ接続する。
+* 未閉じblockの同期点、処理深さ上限、Formatter保存およびHTML安全性をfixtureで固定する。
+
+== 完了条件
+
+content modelが型で区別され、compound blockの再帰とverbatim blockのbyte保存が処理上限内で動作する。
+
+== 参照
+
+https://docs.asciidoctor.org/asciidoc/latest/blocks/delimited/[Delimited Blocks]。

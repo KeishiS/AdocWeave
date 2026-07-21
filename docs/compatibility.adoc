@@ -6,7 +6,7 @@ AdocWeaveは次の公式資料を外部仕様の参照基準とする。
 
 * https://asciidoc.org/[AsciiDoc公式サイト]
 * https://docs.asciidoctor.org/asciidoc/latest/[AsciiDoc Language documentation]
-* https://docs.asciidoctor.org/asciidoc/latest/_exports/asciidoc-pre-spec.pdf[AsciiDoc pre-specification]
+* https://docs.asciidoctor.org/asciidoc/latest/_exports/asciidoc-pre-spec.pdf[AsciiDoc pre-specification, 2026-02-03版]
 * https://docs.asciidoctor.org/asciidoc/latest/syntax-quick-reference/[AsciiDoc syntax quick reference]
 
 AsciiDocプロジェクトは言語仕様が現在も策定中であると説明している。そのためAdocWeaveは、
@@ -169,7 +169,31 @@ xref:substitutions.adoc[Core 0.2置換モデル]で定義する。
 |passthroughとraw出力
 |passthrough機構を定義する
 |未対応。raw HTMLを通過させない
+
+|Block metadata
+|block attribute、anchor、title、ID、role、optionをblock直前に積み重ねる
+|anchorと一部styleだけに対応。共通metadata modelは未実装
+
+|区切り付きblock
+|comment、example、listing、literal、open、sidebar、table、pass、quoteのcontainerとcontent model
+|literal、source listingおよびSTEMだけに対応。compound blockと同種delimiterの入れ子は未対応
+
+|表
+|PSVを既定とし、CSV／DSV／TSV、列・cell属性、spanおよびAsciiDoc cellを定義する
+|未対応
+
+|標準inline／block macro
+|image、footnote、anchor、email、keyboard、button、menu、index等
+|URL、xrefおよびSTEMだけに対応
+
+|文書上の補助要素
+|comment、admonition、thematic／page break、bibliography、footnote
+|未対応
 |===
+
+Markdown風見出し、fenced code blockおよびMarkdown blockquoteは公式quick referenceにも掲載されるが、
+AsciiDoc言語のoptionalなAsciidoctor機能と明記されている。AdocWeaveはこれらを標準profileの欠落とは
+数えず、標準構文の実装後に独立した互換optionとして検討する。
 
 == 互換性方針
 

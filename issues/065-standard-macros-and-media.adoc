@@ -1,0 +1,19 @@
+= 標準macroとmedia
+:status: planned
+:depends-on: 062,064
+
+== 目的
+
+共通macro構文と属性listを利用して、標準inline／block macroを個別の再走査なしに追加する。
+
+== 作業
+
+* email／mailto、footnote、inline anchor、bibliography anchorおよびindex termを追加する。
+* kbd、btn、menu macroを機能flag付きで追加する。
+* block／inline image、icon、audioおよびvideoをresource参照として表現する。
+* resource取得、data URI化、存在確認および権限判定をホストresolverへ委譲する。
+* URL policy、代替文字列、寸法属性およびHTML allowlistを更新する。
+
+== 完了条件
+
+macroのtarget、label／attribute list、rangeおよびresource参照が共通queryで取得できる。

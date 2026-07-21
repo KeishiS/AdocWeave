@@ -1,0 +1,19 @@
+= 標準list形式の拡張
+:status: planned
+:depends-on: 060,062
+
+== 目的
+
+既存の順序付き・順序なしlistを、description、checklist、calloutおよび任意block継続へ拡張する。
+
+== 作業
+
+* `::`、`:::`、`::::`および`;;`によるdescription listとterm集合を実装する。
+* checked／unchecked状態を通常list itemのoptionalな意味として追加する。
+* source blockのcallout markerとcallout listを共通IDで関連付ける。
+* list itemへ複数のattached blockと混在listを結合する。
+* depth、nodeおよびcontinuationの処理上限を追加する。
+
+== 完了条件
+
+標準三list形式の混在、checklist、calloutおよび複合itemがHTMLとLSPを含めて一貫する。

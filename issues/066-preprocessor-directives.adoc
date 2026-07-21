@@ -1,0 +1,24 @@
+= Preprocessor directiveとresource resolver
+:status: planned
+:depends-on: 062
+
+== 目的
+
+文書構造解析より前に動作するincludeおよびconditional directiveを、暗黙I/Oなしで実装する。
+
+== 作業
+
+* include、ifdef、ifndefおよびifevalのsyntaxとescapeを認識する。
+* host提供resource resolver、base URI、safe modeおよび許可scheme契約を定義する。
+* include depth、総byte、展開node、循環およびURL取得を上限管理する。
+* tag、lines、leveloffset、indentおよびencoding属性を段階的に実装する。
+* 展開後sourceと元sourceのsource mapを保持し、診断、DefinitionおよびDocument Linkへ接続する。
+
+== 完了条件
+
+コアの通常解析はI/Oを行わず、同じresource snapshotからnativeとWASMで決定的な展開結果を得られる。
+
+== 参照
+
+https://docs.asciidoctor.org/asciidoc/latest/directives/include/[Includes]および
+https://docs.asciidoctor.org/asciidoc/latest/directives/conditionals/[Conditionals]。

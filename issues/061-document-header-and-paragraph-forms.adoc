@@ -1,0 +1,19 @@
+= 文書header・paragraph・break
+:status: planned
+:depends-on: 059,060
+
+== 目的
+
+文書headerと基本的なline-oriented blockを公式の構造規則へ近づける。
+
+== 作業
+
+* 著者行、改訂行、preamble、doctypeおよびheader終端を認識する。
+* discrete headingとbook partを通常sectionから型で区別する。
+* インデントliteral paragraph、hard line breakおよびlead paragraphを追加する。
+* thematic breakとpage breakを専用blockとして追加する。
+* TOCは生成物をASTへ埋め込まず、section projectionとして提供する。
+
+== 完了条件
+
+articleの標準headerと基本paragraph形式がlossless syntax、semantic AST、HTML、診断およびLSPで一致する。

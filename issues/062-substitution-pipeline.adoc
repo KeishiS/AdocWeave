@@ -1,0 +1,23 @@
+= 置換pipelineと属性評価
+:status: planned
+:depends-on: 059,060
+
+== 目的
+
+限定的なinline解析と一回属性展開を、context別の順序付き置換pipelineへ発展させる。
+
+== 作業
+
+* special characters、quotes、attributes、replacements、macros、post replacementsを独立段階にする。
+* normal、header、verbatim、passおよびnone contextを型で表現する。
+* 属性の再帰展開、未定義属性、unset、escape、循環および展開量上限を定義する。
+* highlight、subscript、superscriptおよびtypographic quoteを追加する。
+* passthroughをsemantic nodeとして扱い、raw HTML出力とは分離する。
+
+== 完了条件
+
+規範置換表と実装段階が一対一に対応し、context、順序、循環および資源上限をfixtureで固定する。
+
+== 参照
+
+https://docs.asciidoctor.org/asciidoc/latest/subs/[Substitutions]。

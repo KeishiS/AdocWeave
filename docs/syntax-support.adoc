@@ -151,6 +151,65 @@ HTML IDに使用する。
 
 [cols="2,2,3",options="header"]
 |===
+
+== 公式仕様に対する主な未実装領域
+
+2026-07-21時点のAsciiDoc pre-specificationおよび公式言語文書との比較である。網羅的な実装順は
+xref:roadmap.adoc[ロードマップ]を参照する。
+
+[cols="2,1,4",options="header"]
+|===
+|領域 |状態 |不足している主な機能
+
+|Block metadata
+|部分対応
+|明示anchorとsource／stem styleだけに対応。block title、一般属性、role、option、captionは未対応
+
+|Delimited block
+|部分対応
+|literal、source、STEMだけに対応。listing、example、open、sidebar、quote、verse、admonition、
+comment、passおよびdelimiter長による入れ子は未対応
+
+|Document headerとsection
+|部分対応
+|著者、改訂、doctype、preamble、part、appendix、discrete headingおよびTOC設定は未対応
+
+|Paragraphとbreak
+|部分対応
+|インデントliteral paragraph、hard line break、lead style、thematic break、page breakは未対応
+
+|List
+|部分対応
+|description list、checklist、callout list、複数のattached blockおよびlist固有属性は未対応
+
+|Table
+|未対応
+|PSV／CSV／DSV／TSV、列指定、header／footer、cell span、cell styleおよびAsciiDoc cellは未対応
+
+|Inline macro
+|部分対応
+|URLとxrefだけに対応。email／mailto、image、footnote、kbd、btn、menu、index termは未対応
+
+|Media
+|未対応
+|block／inline image、icon、audioおよびvideoは未対応
+
+|置換pipeline
+|部分対応
+|完全な置換順序、文字置換、typographic quote、置換group、再帰属性展開、passthroughは未対応
+
+|Preprocessor directive
+|未対応
+|include、ifdef、ifndefおよびifevalは未対応。外部I/Oを伴う展開にはホスト境界が必要
+
+|Bibliographyとfootnote
+|未対応
+|bibliography anchor／section、再利用可能footnoteおよびendnote生成は未対応
+
+|Markdown互換構文
+|未対応
+|AsciiDoc標準の必須範囲ではなく、Asciidoctorのoptional機能として後順位にする
+|===
 |領域 |予定Issue |現在の扱い
 
 |リストとブロック継続

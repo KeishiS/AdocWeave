@@ -1,0 +1,25 @@
+= 共通block metadata
+:status: planned
+:depends-on: 058
+
+== 目的
+
+blockごとの個別処理を、公式仕様のblock attribute、anchor、title、ID、roleおよびoptionを表す
+共通metadata modelへ置き換える。
+
+== 作業
+
+* 隣接するmetadata行と対象blockの結合規則をsyntax treeへ追加する。
+* positional／named attribute、shorthand ID／role／optionをlosslessに認識する。
+* semantic blockへ出力非依存なmetadataをloweringする。
+* unknown styleと属性を保持し、HTML属性として無条件に通過させない。
+* Formatter、diagnostic、LSP hover／completionおよびcanonical fixtureを更新する。
+
+== 完了条件
+
+複数metadata行の順序と範囲を復元でき、すべての対応blockが同じquery APIを利用する。
+
+== 参照
+
+https://docs.asciidoctor.org/asciidoc/latest/blocks/[Blocks]および
+https://docs.asciidoctor.org/asciidoc/latest/attributes/element-attributes/[Element Attributes]。

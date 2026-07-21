@@ -143,6 +143,95 @@ unknown・error領域をbyte単位で保存する。
 旧APIを残す互換layer、旧新両方のAST生成および診断の二重pipelineは残していない。最終検証は
 `cargo make release-gate`を正本とする。
 
+== 次の中期ゴール: AsciiDoc文書構造の拡張
+
+2026-07-21にAsciiDoc pre-specificationと公式言語文書を再確認した。AsciiDoc文書はline-orientedな
+blockの木であり、blockには属性、anchor、title、roleおよびoptionからなるmetadataを付与できる。
+また、区切り付きblockはcontainerごとにcompound、verbatim、rawまたはtableというcontent modelを
+持つ。現在のAdocWeaveは、このうち段落、section、限定的なlist、literal、sourceおよびSTEMだけを
+実装している。
+
+参照基準:
+
+* https://docs.asciidoctor.org/asciidoc/latest/document-structure/[Document Structure]
+* https://docs.asciidoctor.org/asciidoc/latest/blocks/[Blocks]
+* https://docs.asciidoctor.org/asciidoc/latest/blocks/delimited/[Delimited Blocks]
+* https://docs.asciidoctor.org/asciidoc/latest/_exports/asciidoc-pre-spec.pdf[AsciiDoc pre-specification]
+
+次の順序で文書構造を拡張する。
+
+. block metadataを共通表現へ統合し、block title、ID、role、optionおよび通常の属性listを扱う。
+. listing、example、open、sidebar、quote、verse、admonitionおよびcomment blockを、content modelを
+  型で区別して実装する。delimiter長が異なる同種blockの入れ子も扱う。
+. インデントされたliteral paragraph、hard line break、thematic breakおよびpage breakを追加する。
+. 文書headerへ著者・改訂情報、preamble、doctypeおよびdiscrete headingを追加する。
+. description list、checklist、callout listおよび任意blockを伴うlist continuationへ拡張する。
+
+この段階ではraw passthroughを有効化しない。未知blockは引き続きlosslessに保持し、HTMLへ入力由来の
+要素や属性を通過させない。
+
+== 次段階: 置換pipelineと属性評価
+
+公式言語文書は、特殊文字、quotes、属性参照、文字置換、macroおよびpost replacementsを順序付きの
+置換として定義し、normal、verbatim、header、pass、none等のgroupをblock contextごとに適用する。
+現在の一回属性展開と限定的inline parserを拡張する前に、置換contextと評価結果を明示的な型にする。
+
+* https://docs.asciidoctor.org/asciidoc/latest/subs/[Substitutions]
+* https://docs.asciidoctor.org/asciidoc/latest/subs/prevent/[Escape and Prevent Substitutions]
+* https://docs.asciidoctor.org/asciidoc/latest/attributes/element-attributes/[Element Attributes]
+
+実装順は、特殊文字・文字置換、quote系書式、属性の再帰展開と未定義時の動作、置換group、
+passthroughの順とする。passthroughとraw backend出力は別概念として扱い、HTMLのraw出力は安全な
+既定値では禁止する。counter等の状態を持つ属性は、決定性と処理上限を定義してから追加する。
+
+== その後の標準構文
+
+文書構造と置換pipelineを前提として、次を実装候補とする。
+
+[cols="2,3,3",options="header"]
+|===
+|優先度 |領域 |主な未実装項目
+
+|高
+|表
+|PSVの基本table、列数、header、cell span、cell style、AsciiDoc cell。CSV／DSV／TSVは基本表の後に扱う
+
+|高
+|標準macro
+|image、email／mailto、footnote、inline anchor、bibliography anchor
+
+|中
+|追加inline
+|highlight、subscript、superscript、typographic quote、index term、kbd、btn、menu
+
+|中
+|文書機能
+|目次用section projection、bibliography、appendix、partを含むbook構造、manpage doctype
+
+|中
+|media
+|block／inline image、icon、audio、video。取得と埋め込みはホスト側resource resolverへ委譲する
+
+|低
+|互換拡張
+|Markdown heading、fenced code、Markdown blockquote等。公式文書でもAsciidoctor固有のoptional機能で
+あるため、標準構文より後に扱う
+|===
+
+== プリプロセッサdirectiveと外部資源
+
+`include::`はblock macroではなく、文書構造を解析する前に動作するpreprocessor directiveである。
+`ifdef`、`ifndef`および`ifeval`も同じ層で入力行を選択する。ファイルやURLへ暗黙にアクセスしない
+コア方針を維持するため、実装時は次の境界を設ける。
+
+* コアはdirective構文、target、属性およびsource rangeを認識する。
+* ホストがresource resolver、base directory、safe mode、最大深さ、総byte数および循環検出を提供する。
+* 展開後sourceと元sourceの位置対応を保持し、診断とLSP navigationがinclude元へ戻れるようにする。
+* URL includeは明示的に許可された場合だけ取得し、通常の解析APIはI/Oを行わない。
+
+参照基準はhttps://docs.asciidoctor.org/asciidoc/latest/directives/include/[Includes]および
+https://docs.asciidoctor.org/asciidoc/latest/directives/conditionals/[Conditionals]とする。
+
 == ドキュメント保守規則
 
 リポジトリのドキュメントはAsciiDoc（`.adoc`）で記述し、`.md`ファイルを受け入れない。

@@ -1,0 +1,19 @@
+= 基本tableとcell model
+:status: planned
+:depends-on: 060,062
+
+== 目的
+
+AsciiDocのtableを文字列分割ではなく、行・列・cell spanとcell content modelを持つ構造として実装する。
+
+== 作業
+
+* PSV table、暗黙／明示列数、header、footerおよび基本列指定を実装する。
+* column／row span、alignmentおよびcell styleを型付けする。
+* literal、verse、header、monospaceおよびAsciiDoc cellの置換contextを接続する。
+* cell数、列数、入れ子深さおよび入力byteの上限を構築時に強制する。
+* CSV／DSV／TSVはPSV契約を完成させた後に追加する。
+
+== 完了条件
+
+基本PSV tableと複数行cellをlosslessに復元でき、HTML table出力がallowlist契約に従う。
