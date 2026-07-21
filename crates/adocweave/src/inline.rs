@@ -432,15 +432,16 @@ impl InlineScanner {
 }
 
 fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>, usize) {
+    assert_compact_offset_capacity(value.len());
     let mut candidates = Vec::new();
     let mut markers = vec![false; value.len() + 1];
     let mut next_plus = [
-        vec![None; value.len() + 1],
-        vec![None; value.len() + 1],
-        vec![None; value.len() + 1],
+        CompactOffsetIndex::new(value.len() + 1),
+        CompactOffsetIndex::new(value.len() + 1),
+        CompactOffsetIndex::new(value.len() + 1),
     ];
-    let mut next_double_quote = vec![None; value.len() + 1];
-    let mut next_single_quote = vec![None; value.len() + 1];
+    let mut next_double_quote = CompactOffsetIndex::new(value.len() + 1);
+    let mut next_single_quote = CompactOffsetIndex::new(value.len() + 1);
     let mut plus = [None; 3];
     let mut double_quote = None;
     let mut single_quote = None;
@@ -452,7 +453,7 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>, usize)
             if bytes[offset..].starts_with(&[b'+'; 3][..width]) {
                 plus[width - 1] = Some(offset);
             }
-            next_plus[width - 1][offset] = plus[width - 1];
+            next_plus[width - 1].set(offset, plus[width - 1]);
         }
         if bytes[offset..].starts_with(b"`\"") {
             double_quote = Some(offset);
@@ -460,8 +461,8 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>, usize)
         if bytes[offset..].starts_with(b"`'") {
             single_quote = Some(offset);
         }
-        next_double_quote[offset] = double_quote;
-        next_single_quote[offset] = single_quote;
+        next_double_quote.set(offset, double_quote);
+        next_single_quote.set(offset, single_quote);
     }
     let mut cursor = 0;
     while cursor + 1 < value.len() {
@@ -475,7 +476,7 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>, usize)
                 .min(3);
             if run > 0 && (run > 1 || is_open_boundary(value, cursor, '+')) {
                 let content_start = cursor + run;
-                if let Some(content_end) = next_plus[run - 1][content_start] {
+                if let Some(content_end) = next_plus[run - 1].get(content_start) {
                     if content_end > content_start {
                         let end = content_end + run;
                         for marker in markers.iter_mut().skip(cursor).take(run) {
@@ -503,9 +504,9 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>, usize)
         }
         let content_start = cursor + 2;
         let close = if quote == '"' {
-            next_double_quote[content_start]
+            next_double_quote.get(content_start)
         } else {
-            next_single_quote[content_start]
+            next_single_quote.get(content_start)
         };
         let Some(content_end) = close else {
             cursor = content_start;
@@ -529,9 +530,9 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>, usize)
 }
 
 struct DelimiterIndex {
-    next_open_bracket: Vec<Option<usize>>,
-    next_close_bracket: Vec<Option<usize>>,
-    next_double_greater: Vec<Option<usize>>,
+    next_open_bracket: CompactOffsetIndex,
+    next_close_bracket: CompactOffsetIndex,
+    next_double_greater: CompactOffsetIndex,
 }
 
 impl DelimiterIndex {
@@ -542,9 +543,10 @@ impl DelimiterIndex {
     }
 
     fn new_counted(value: &str, inspected_positions: &mut usize) -> Self {
-        let mut next_open_bracket = vec![None; value.len() + 1];
-        let mut next_close_bracket = vec![None; value.len() + 1];
-        let mut next_double_greater = vec![None; value.len() + 1];
+        assert_compact_offset_capacity(value.len());
+        let mut next_open_bracket = CompactOffsetIndex::new(value.len() + 1);
+        let mut next_close_bracket = CompactOffsetIndex::new(value.len() + 1);
+        let mut next_double_greater = CompactOffsetIndex::new(value.len() + 1);
         let mut open_bracket = None;
         let mut close_bracket = None;
         let mut double_greater = None;
@@ -559,9 +561,9 @@ impl DelimiterIndex {
             if value.as_bytes()[offset] == b'>' && value.as_bytes().get(offset + 1) == Some(&b'>') {
                 double_greater = Some(offset);
             }
-            next_open_bracket[offset] = open_bracket;
-            next_close_bracket[offset] = close_bracket;
-            next_double_greater[offset] = double_greater;
+            next_open_bracket.set(offset, open_bracket);
+            next_close_bracket.set(offset, close_bracket);
+            next_double_greater.set(offset, double_greater);
         }
         Self {
             next_open_bracket,
@@ -569,6 +571,58 @@ impl DelimiterIndex {
             next_double_greater,
         }
     }
+
+    fn next_open_bracket(&self, offset: usize) -> Option<usize> {
+        self.next_open_bracket.get(offset)
+    }
+
+    fn next_close_bracket(&self, offset: usize) -> Option<usize> {
+        self.next_close_bracket.get(offset)
+    }
+
+    fn next_double_greater(&self, offset: usize) -> Option<usize> {
+        self.next_double_greater.get(offset)
+    }
+
+    #[cfg(test)]
+    fn storage_bytes(&self) -> usize {
+        self.next_open_bracket.storage_bytes()
+            + self.next_close_bracket.storage_bytes()
+            + self.next_double_greater.storage_bytes()
+    }
+}
+
+const MISSING_COMPACT_OFFSET: u32 = u32::MAX;
+
+struct CompactOffsetIndex(Vec<u32>);
+
+impl CompactOffsetIndex {
+    fn new(len: usize) -> Self {
+        Self(vec![MISSING_COMPACT_OFFSET; len])
+    }
+
+    fn set(&mut self, index: usize, value: Option<usize>) {
+        self.0[index] = value.map_or(MISSING_COMPACT_OFFSET, |offset| {
+            u32::try_from(offset).expect("inline input fits compact offset index")
+        });
+    }
+
+    fn get(&self, index: usize) -> Option<usize> {
+        let offset = self.0[index];
+        (offset != MISSING_COMPACT_OFFSET).then_some(offset as usize)
+    }
+
+    #[cfg(test)]
+    fn storage_bytes(&self) -> usize {
+        self.0.capacity() * std::mem::size_of::<u32>()
+    }
+}
+
+fn assert_compact_offset_capacity(len: usize) {
+    assert!(
+        len < MISSING_COMPACT_OFFSET as usize,
+        "inline input exceeds the 32-bit offset domain"
+    );
 }
 
 impl InlineCandidate {
@@ -1061,7 +1115,7 @@ fn recognize_macro_with_index(
         None
     };
     if let Some(prefix_len) = formula_prefix {
-        let close = delimiters.next_close_bracket[open + prefix_len];
+        let close = delimiters.next_close_bracket(open + prefix_len);
         return MacroRecognition::Complete(MacroToken::Formula(FormulaToken {
             open,
             content_start: open + prefix_len,
@@ -1072,7 +1126,7 @@ fn recognize_macro_with_index(
     }
     if starts_ascii_case_insensitive(rest, "pass:[") {
         let content_start = open + "pass:[".len();
-        let Some(close) = delimiters.next_close_bracket[content_start] else {
+        let Some(close) = delimiters.next_close_bracket(content_start) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::UnclosedPassthrough,
                 next: next_char_boundary(value, open),
@@ -1086,7 +1140,7 @@ fn recognize_macro_with_index(
         }));
     }
     if rest.starts_with("<<") {
-        let Some(close) = delimiters.next_double_greater[open + 2] else {
+        let Some(close) = delimiters.next_double_greater(open + 2) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteCrossReference,
                 next: next_char_boundary(value, open),
@@ -1101,7 +1155,7 @@ fn recognize_macro_with_index(
     }
     if starts_ascii_case_insensitive(rest, "xref:") {
         let target_start = open + 5;
-        let Some(bracket) = delimiters.next_open_bracket[target_start] else {
+        let Some(bracket) = delimiters.next_open_bracket(target_start) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteCrossReference,
                 next: next_char_boundary(value, open),
@@ -1115,7 +1169,7 @@ fn recognize_macro_with_index(
                 next: next_char_boundary(value, open),
             };
         }
-        let Some(close) = delimiters.next_close_bracket[bracket + 1] else {
+        let Some(close) = delimiters.next_close_bracket(bracket + 1) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteCrossReference,
                 next: next_char_boundary(value, open),
@@ -1131,7 +1185,7 @@ fn recognize_macro_with_index(
     }
     if starts_ascii_case_insensitive(rest, "link:") {
         let target_start = open + 5;
-        let Some(bracket) = delimiters.next_open_bracket[target_start] else {
+        let Some(bracket) = delimiters.next_open_bracket(target_start) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
                 next: next_char_boundary(value, open),
@@ -1145,7 +1199,7 @@ fn recognize_macro_with_index(
                 next: next_char_boundary(value, open),
             };
         }
-        let Some(close) = delimiters.next_close_bracket[bracket + 1] else {
+        let Some(close) = delimiters.next_close_bracket(bracket + 1) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
                 next: next_char_boundary(value, open),
@@ -1162,7 +1216,7 @@ fn recognize_macro_with_index(
 
     if let Some((kind, form, prefix_len)) = standard_macro_prefix(rest) {
         let target_start = open + prefix_len;
-        let Some(bracket) = delimiters.next_open_bracket[target_start] else {
+        let Some(bracket) = delimiters.next_open_bracket(target_start) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
                 next: next_char_boundary(value, open),
@@ -1176,7 +1230,7 @@ fn recognize_macro_with_index(
                 next: next_char_boundary(value, open),
             };
         }
-        let Some(close) = delimiters.next_close_bracket[bracket + 1] else {
+        let Some(close) = delimiters.next_close_bracket(bracket + 1) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
                 next: next_char_boundary(value, open),
@@ -1227,7 +1281,7 @@ fn recognize_macro_with_index(
         };
     }
     let (label, end) = if value.as_bytes().get(target_end) == Some(&b'[') {
-        let Some(close) = delimiters.next_close_bracket[target_end + 1] else {
+        let Some(close) = delimiters.next_close_bracket(target_end + 1) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
                 next: next_char_boundary(value, open),
@@ -1795,11 +1849,11 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FormulaToken, Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig,
-        InlineProblemKind, InlineScanner, InlineStyle, LinkToken, MacroForm, MacroRecognition,
-        MacroToken, MarkerForm, MarkerRecognition, MarkerToken, ReferenceDestination,
-        ReferenceToken, StandardMacroKind, inline_at, next_candidate, parse, parse_text,
-        recognize_macro, recognize_marker,
+        DelimiterIndex, FormulaToken, Inline, InlineCandidate, InlineLiteralKind,
+        InlineParseConfig, InlineProblemKind, InlineScanner, InlineStyle, LinkToken, MacroForm,
+        MacroRecognition, MacroToken, MarkerForm, MarkerRecognition, MarkerToken,
+        ReferenceDestination, ReferenceToken, StandardMacroKind, inline_at, next_candidate, parse,
+        parse_text, recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -1880,6 +1934,15 @@ mod tests {
                 "preparsed quote indexing must remain linear"
             );
         }
+    }
+
+    #[test]
+    fn scanner_delimiter_indexes_use_compact_offsets() {
+        assert_eq!(std::mem::size_of::<u32>(), 4);
+        let source = "[x] <<target>> ".repeat(1_024);
+        let index = DelimiterIndex::new(&source);
+        assert_eq!(index.storage_bytes(), (source.len() + 1) * 3 * 4);
+        assert!(index.storage_bytes() <= source.len() * 13);
     }
 
     #[test]
