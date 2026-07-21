@@ -15,7 +15,7 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 2;
+pub const HTML_CONTRACT_VERSION: u16 = 3;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "li", "ol", "p", "pre",
     "strong", "ul",
@@ -146,6 +146,13 @@ pub fn render_with_resolutions(
                 escape_html_into(&mut fragment, &math.value);
                 fragment.push_str("</code></pre>\n");
             }
+            AstBlock::Delimited(block) => render_delimited(
+                &mut fragment,
+                block,
+                explicit_id,
+                policy,
+                &mut inline_context,
+            ),
             AstBlock::Unsupported(unsupported) => {
                 render_unsupported(&mut fragment, unsupported, explicit_id)
             }
@@ -164,6 +171,69 @@ pub fn render_with_resolutions(
         diagnostics,
         document_attributes,
         heading_ids,
+    }
+}
+
+fn render_delimited(
+    output: &mut String,
+    block: &crate::parser::DelimitedBlock,
+    explicit_id: Option<&str>,
+    policy: &RenderPolicy,
+    context: &mut InlineRenderContext<'_>,
+) {
+    match &block.content {
+        crate::parser::DelimitedContent::Verbatim(value) => {
+            if !matches!(block.kind, crate::parser::DelimitedBlockKind::Comment) {
+                output.push_str("<pre");
+                render_optional_id(output, explicit_id);
+                output.push('>');
+                escape_html_into(output, value);
+                output.push_str("</pre>\n");
+            }
+        }
+        crate::parser::DelimitedContent::Raw(value)
+        | crate::parser::DelimitedContent::Table(value) => {
+            output.push_str("<pre");
+            render_optional_id(output, explicit_id);
+            output.push('>');
+            escape_html_into(output, value);
+            output.push_str("</pre>\n");
+        }
+        crate::parser::DelimitedContent::Compound(children) => {
+            for child in children {
+                match child {
+                    AstBlock::Heading(heading) => {
+                        let id = crate::document::heading_id_base(&heading.text);
+                        render_heading(output, heading, &id, policy, context);
+                    }
+                    AstBlock::Paragraph(paragraph) => {
+                        render_paragraph(output, paragraph, None, context);
+                    }
+                    AstBlock::Literal(literal) => {
+                        output.push_str("<pre>");
+                        escape_html_into(output, &literal.value);
+                        output.push_str("</pre>\n");
+                    }
+                    AstBlock::Source(source) => {
+                        output.push_str("<pre><code>");
+                        escape_html_into(output, &source.value);
+                        output.push_str("</code></pre>\n");
+                    }
+                    AstBlock::List(list) => render_list(output, list, None, context),
+                    AstBlock::Math(math) => {
+                        output.push_str("<pre><code>");
+                        escape_html_into(output, &math.value);
+                        output.push_str("</code></pre>\n");
+                    }
+                    AstBlock::Delimited(child) => {
+                        render_delimited(output, child, None, policy, context);
+                    }
+                    AstBlock::Unsupported(unsupported) => {
+                        render_unsupported(output, unsupported, None);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -719,7 +789,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 2);
+        assert_eq!(HTML_CONTRACT_VERSION, 3);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -764,6 +834,16 @@ mod tests {
         assert!(!html.contains("onclick"));
         assert!(!html.contains("display:none"));
         assert!(!html.contains("evil"));
+
+        let parsed = parse(
+            "++++\n<script>alert(1)</script>\n++++\n\n////\n<script>hidden</script>\n////\n\n====\ninside *safe*\n====\n",
+        )
+        .expect("delimited source");
+        let html = render(&parsed.ast, &RenderPolicy::default()).html;
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(!html.contains("<script>"));
+        assert!(!html.contains("hidden"));
+        assert!(html.contains("<p>inside <strong>safe</strong></p>"));
     }
 
     #[test]

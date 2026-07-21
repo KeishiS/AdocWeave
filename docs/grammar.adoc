@@ -1,4 +1,4 @@
-= Core 0.2 規範文法
+= Core 0.3 規範文法
 
 この文書はAdocWeave 0.1コアプロファイルが受理する言語を定義する。「〜しなければ
 ならない」という記述は規範的である。バイト範囲はUTF-8、ゼロ始まり、半開区間とする。
@@ -58,6 +58,12 @@ element-attribute-list = "[", [ element-attribute,
 element-attribute = positional-attribute
                   | attribute-name, "=", attribute-value
                   | { "#", id | ".", role | "%", option } ;
+delimited-block = opening-delimiter, line-ending,
+                  (compound-content | verbatim-content | raw-content | table-content),
+                  matching-delimiter, [ line-ending ] ;
+opening-delimiter = "--" | "|==="
+                  | four-or-more of "/", "=", "-", ".", "*", "+", or "_" ;
+matching-delimiter = exactly the same bytes as opening-delimiter ;
 ----
 
 文書内容より前に現れる最初の1個マーカーの見出しは文書タイトルである。2個から6個の
@@ -72,6 +78,13 @@ element-attribute = positional-attribute
 属性区切りとしない。未知のstyle、role、optionおよびnamed属性は文字列として保持し、
 Parserが出力バックエンドの属性へ変換してはならない。対象ブロックのないメタデータ列は
 `Unsupported`としてlosslessに回復する。
+
+delimiterはcomment、example、listing、literal、open、sidebar、pass、quoteまたはtableの
+container kindへ一意に分類する。example、open、sidebarおよびquoteはcompound、comment、listing、
+literalはverbatim、passはraw、tableはtable content modelである。rawは安全であることを意味せず、
+rendererが必ず明示的に扱う危険な入力型である。同じkindの入れ子には異なる長さのdelimiterを使い、
+閉じdelimiterは開始delimiterとbyte単位で一致しなければならない。compoundの深さは
+`max_block_depth`で制限する。
 
 リテラルおよびソースの内容は不透明である。開始区切りと等しい行がブロックを閉じる。
 より長い行やインデントした区切り状の行は内容として扱う。

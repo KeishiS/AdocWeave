@@ -151,6 +151,40 @@ pub struct SourceBlock {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DelimitedBlockKind {
+    Comment,
+    Example,
+    Listing,
+    Literal,
+    Open,
+    Sidebar,
+    Pass,
+    Quote,
+    Table,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DelimitedContent {
+    Compound(Vec<AstBlock>),
+    Verbatim(String),
+    Raw(String),
+    Table(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelimitedBlock {
+    pub metadata: BlockMetadata,
+    pub kind: DelimitedBlockKind,
+    pub range: TextRange,
+    pub opening_delimiter_range: TextRange,
+    pub closing_delimiter_range: Option<TextRange>,
+    pub content_range: TextRange,
+    pub delimiter: String,
+    pub content: DelimitedContent,
+    pub problems: Vec<BlockProblem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathProblemKind {
     Unclosed,
     Empty,
@@ -257,6 +291,7 @@ pub enum AstBlock {
     Source(SourceBlock),
     List(ListBlock),
     Math(MathBlock),
+    Delimited(DelimitedBlock),
     Unsupported(Unsupported),
 }
 
@@ -386,6 +421,21 @@ impl AstDocument {
                     )
                     .expect("writing to a String cannot fail");
                 }
+                AstBlock::Delimited(block) => {
+                    writeln!(
+                        output,
+                        "  {:?}@{}..{} delimiter={:?} content={}..{} {:?} problems={:?}",
+                        block.kind,
+                        block.range.start().to_u32(),
+                        block.range.end().to_u32(),
+                        block.delimiter,
+                        block.content_range.start().to_u32(),
+                        block.content_range.end().to_u32(),
+                        block.content,
+                        block.problems
+                    )
+                    .expect("writing to a String cannot fail");
+                }
                 AstBlock::Unsupported(unsupported) => {
                     writeln!(
                         output,
@@ -418,6 +468,11 @@ impl AstDocument {
                     AstBlock::Heading(heading) => visitor(&mut heading.inlines),
                     AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines),
                     AstBlock::List(list) => visit_list(list, visitor),
+                    AstBlock::Delimited(block) => {
+                        if let DelimitedContent::Compound(children) = &mut block.content {
+                            visit_blocks(children, visitor);
+                        }
+                    }
                     AstBlock::Literal(_)
                     | AstBlock::Source(_)
                     | AstBlock::Math(_)
@@ -438,6 +493,7 @@ impl AstBlock {
             Self::Source(value) => &value.metadata,
             Self::List(value) => &value.metadata,
             Self::Math(value) => &value.metadata,
+            Self::Delimited(value) => &value.metadata,
             Self::Unsupported(value) => &value.metadata,
         }
     }
@@ -450,6 +506,7 @@ impl AstBlock {
             Self::Source(value) => &mut value.metadata,
             Self::List(value) => &mut value.metadata,
             Self::Math(value) => &mut value.metadata,
+            Self::Delimited(value) => &mut value.metadata,
             Self::Unsupported(value) => &mut value.metadata,
         }
     }
@@ -462,6 +519,7 @@ impl AstBlock {
             Self::Source(value) => value.range,
             Self::List(value) => value.range,
             Self::Math(value) => value.range,
+            Self::Delimited(value) => value.range,
             Self::Unsupported(value) => value.range,
         }
     }
@@ -477,6 +535,7 @@ pub(crate) struct ParsedDocument {
 pub(crate) struct ParseConfig {
     pub max_inline_depth: usize,
     pub max_list_depth: usize,
+    pub max_block_depth: usize,
     pub max_formula_bytes: usize,
     pub limits: ProcessingLimits,
 }
@@ -494,6 +553,7 @@ impl Default for ParseConfig {
         Self {
             max_inline_depth: 32,
             max_list_depth: 8,
+            max_block_depth: 32,
             max_formula_bytes: 1024 * 1024,
             limits,
         }
@@ -619,6 +679,36 @@ pub(crate) fn parse_shared_cancellable(
             saw_content = true;
             line_index = next_line;
             continue;
+        } else if content.starts_with("[source")
+            && source_document
+                .lines()
+                .get(line_index + 1)
+                .and_then(|next| source_document.text(next.content_range()))
+                == Some("----")
+        {
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+                &mut pending_metadata,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
+            blocks.push(SyntaxNode::new(
+                SyntaxKind::Unsupported,
+                line.full_range(),
+                vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
+            ));
+            ast_blocks.push(AstBlock::Unsupported(Unsupported {
+                metadata: BlockMetadata::default(),
+                range: line.full_range(),
+                raw: content.to_owned(),
+                reason: "invalid source block attribute".to_owned(),
+            }));
+            saw_content = true;
+            header_attributes_open = false;
         } else if parse_math_attribute(content).is_some()
             && source_document
                 .lines()
@@ -647,6 +737,37 @@ pub(crate) fn parse_shared_cancellable(
             ast_blocks.push(AstBlock::Math(math));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
+            line_index = next_line;
+            continue;
+        } else if let Some(spec) = delimiter_spec(content) {
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+                &mut pending_metadata,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
+            let context = DelimitedParseContext {
+                source_document: &source_document,
+                source,
+                config,
+            };
+            let (block, next_line) = parse_delimited_block(
+                &context,
+                line_index,
+                source_document.lines().len(),
+                spec,
+                &mut budget,
+                1,
+            )?;
+            blocks.push(delimited_block_syntax(&block));
+            ast_blocks.push(AstBlock::Delimited(block));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
+            saw_content = true;
+            header_attributes_open = false;
             line_index = next_line;
             continue;
         } else if content == "...." {
@@ -979,6 +1100,19 @@ fn collect_syntax_issues(
                     output.push(issue(SyntaxIssueClass::InvalidStem, problem.range, message));
                 }
             }
+            AstBlock::Delimited(block) => {
+                let block_name = if block.kind == DelimitedBlockKind::Literal {
+                    "literal"
+                } else {
+                    "delimited"
+                };
+                block_problem_issues(&block.problems, block_name, output);
+                if let DelimitedContent::Compound(children) = &block.content {
+                    for child in children {
+                        block_issues(child, output);
+                    }
+                }
+            }
             AstBlock::Unsupported(_) => {}
         }
     }
@@ -993,8 +1127,11 @@ fn collect_syntax_issues(
                 (BlockProblemKind::UnclosedBlock, "literal") => {
                     (SyntaxIssueClass::UnclosedBlock, "unclosed literal block")
                 }
-                (BlockProblemKind::UnclosedBlock, _) => {
+                (BlockProblemKind::UnclosedBlock, "source") => {
                     (SyntaxIssueClass::UnclosedBlock, "unclosed source block")
+                }
+                (BlockProblemKind::UnclosedBlock, _) => {
+                    (SyntaxIssueClass::UnclosedBlock, "unclosed delimited block")
                 }
                 (BlockProblemKind::MissingSourceLanguage, _) => (
                     SyntaxIssueClass::MissingSourceLanguage,
@@ -1107,6 +1244,23 @@ fn source_block_syntax(source: &SourceBlock) -> SyntaxNode {
             ),
         ],
     )
+}
+
+fn delimited_block_syntax(block: &DelimitedBlock) -> SyntaxNode {
+    let opening = SyntaxNode::leaf(SyntaxKind::BlockDelimiter, block.opening_delimiter_range);
+    let mut children = vec![if block.closing_delimiter_range.is_none() {
+        SyntaxNode::new(
+            SyntaxKind::Error,
+            block.opening_delimiter_range,
+            vec![opening],
+        )
+    } else {
+        opening
+    }];
+    if let Some(range) = block.closing_delimiter_range {
+        children.push(SyntaxNode::leaf(SyntaxKind::BlockDelimiter, range));
+    }
+    SyntaxNode::new(SyntaxKind::DelimitedBlock, block.range, children)
 }
 
 fn math_block_syntax(math: &MathBlock) -> SyntaxNode {
@@ -1502,7 +1656,13 @@ fn parse_math_block(
     let language = parse_math_attribute(attribute_text).expect("recognized math attribute");
     let delimiter_index = attribute_index + 1;
     let delimiter = source_document.lines()[delimiter_index];
-    let body = parse_delimited_body(source_document, delimiter_index, "++++", source)?;
+    let body = parse_delimited_body(
+        source_document,
+        delimiter_index,
+        "++++",
+        source,
+        source_document.lines().len(),
+    )?;
     let value = source
         .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
         .expect("valid math content")
@@ -1771,7 +1931,13 @@ fn parse_literal_block(
     source: &str,
 ) -> Result<(LiteralBlock, usize), PositionError> {
     let opener = source_document.lines()[opener_index];
-    let body = parse_delimited_body(source_document, opener_index, "....", source)?;
+    let body = parse_delimited_body(
+        source_document,
+        opener_index,
+        "....",
+        source,
+        source_document.lines().len(),
+    )?;
     let value = source
         .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
         .expect("literal content range has valid UTF-8 boundaries")
@@ -1793,7 +1959,9 @@ fn parse_literal_block(
 struct DelimitedBody {
     range_end: TextSize,
     content_range: TextRange,
+    closing_delimiter_range: Option<TextRange>,
     next_line: usize,
+    content_end_line: usize,
     problems: Vec<BlockProblem>,
 }
 
@@ -1802,6 +1970,7 @@ fn parse_delimited_body(
     opener_index: usize,
     delimiter: &str,
     source: &str,
+    end_line: usize,
 ) -> Result<DelimitedBody, PositionError> {
     let opener = source_document.lines()[opener_index];
     let content_start = opener.full_range().end();
@@ -1813,6 +1982,7 @@ fn parse_delimited_body(
         .iter()
         .enumerate()
         .skip(opener_index + 1)
+        .take(end_line.saturating_sub(opener_index + 1))
     {
         let content = source_document
             .text(line.content_range())
@@ -1821,40 +1991,239 @@ fn parse_delimited_body(
             closer_index = Some(index);
             break;
         }
-        if content.starts_with('=') {
+        if recovery_index.is_none() && content.starts_with('=') {
             recovery_index = Some(index);
-            break;
         }
     }
 
-    let (range_end, content_end, next_line, problems) = if let Some(index) = closer_index {
-        let closer = source_document.lines()[index];
-        (
-            closer.full_range().end(),
-            closer.full_range().start(),
-            index + 1,
-            Vec::new(),
-        )
-    } else {
-        let end = recovery_index
-            .map(|index| source_document.lines()[index].full_range().start())
-            .unwrap_or_else(|| TextSize::new(source.len()).expect("source size was validated"));
-        (
-            end,
-            end,
-            recovery_index.unwrap_or(source_document.lines().len()),
-            vec![BlockProblem {
-                kind: BlockProblemKind::UnclosedBlock,
-                range: opener.content_range(),
-            }],
-        )
-    };
+    let (range_end, content_end, closing_delimiter_range, next_line, problems) =
+        if let Some(index) = closer_index {
+            let closer = source_document.lines()[index];
+            (
+                closer.full_range().end(),
+                closer.full_range().start(),
+                Some(closer.content_range()),
+                index + 1,
+                Vec::new(),
+            )
+        } else {
+            let end = recovery_index
+                .map(|index| source_document.lines()[index].full_range().start())
+                .unwrap_or_else(|| TextSize::new(source.len()).expect("source size was validated"));
+            (
+                end,
+                end,
+                None,
+                recovery_index.unwrap_or(end_line),
+                vec![BlockProblem {
+                    kind: BlockProblemKind::UnclosedBlock,
+                    range: opener.content_range(),
+                }],
+            )
+        };
     Ok(DelimitedBody {
         range_end,
         content_range: TextRange::new(content_start, content_end)?,
+        closing_delimiter_range,
         next_line,
+        content_end_line: closer_index.or(recovery_index).unwrap_or(end_line),
         problems,
     })
+}
+
+#[derive(Clone, Copy)]
+struct DelimiterSpec {
+    kind: DelimitedBlockKind,
+    model: DelimitedContentModel,
+}
+
+struct DelimitedParseContext<'source> {
+    source_document: &'source SourceDocument,
+    source: &'source str,
+    config: &'source ParseConfig,
+}
+
+#[derive(Clone, Copy)]
+enum DelimitedContentModel {
+    Compound,
+    Verbatim,
+    Raw,
+    Table,
+}
+
+fn delimiter_spec(delimiter: &str) -> Option<DelimiterSpec> {
+    let spec = match delimiter {
+        "--" => (DelimitedBlockKind::Open, DelimitedContentModel::Compound),
+        "|===" => (DelimitedBlockKind::Table, DelimitedContentModel::Table),
+        _ if repeated_delimiter(delimiter, '/') => {
+            (DelimitedBlockKind::Comment, DelimitedContentModel::Verbatim)
+        }
+        _ if repeated_delimiter(delimiter, '=') => {
+            (DelimitedBlockKind::Example, DelimitedContentModel::Compound)
+        }
+        _ if repeated_delimiter(delimiter, '-') => {
+            (DelimitedBlockKind::Listing, DelimitedContentModel::Verbatim)
+        }
+        _ if repeated_delimiter(delimiter, '.') => {
+            (DelimitedBlockKind::Literal, DelimitedContentModel::Verbatim)
+        }
+        _ if repeated_delimiter(delimiter, '*') => {
+            (DelimitedBlockKind::Sidebar, DelimitedContentModel::Compound)
+        }
+        _ if repeated_delimiter(delimiter, '+') => {
+            (DelimitedBlockKind::Pass, DelimitedContentModel::Raw)
+        }
+        _ if repeated_delimiter(delimiter, '_') => {
+            (DelimitedBlockKind::Quote, DelimitedContentModel::Compound)
+        }
+        _ => return None,
+    };
+    Some(DelimiterSpec {
+        kind: spec.0,
+        model: spec.1,
+    })
+}
+
+pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {
+    let trimmed = content.trim_end_matches([' ', '\t']);
+    trimmed.len() != content.len()
+        && (delimiter_spec(trimmed).is_some()
+            || parse_block_attributes(trimmed, 0).is_some()
+            || parse_source_attribute(trimmed).is_some()
+            || parse_math_attribute(trimmed).is_some()
+            || parse_explicit_anchor(
+                trimmed,
+                0,
+                text_range(0, trimmed.len()).expect("trimmed line range is bounded"),
+            )
+            .is_some())
+}
+
+fn repeated_delimiter(value: &str, marker: char) -> bool {
+    value.len() >= 4 && value.chars().all(|character| character == marker)
+}
+
+fn parse_delimited_block(
+    context: &DelimitedParseContext<'_>,
+    opener_index: usize,
+    end_line: usize,
+    spec: DelimiterSpec,
+    budget: &mut ParseBudget,
+    depth: usize,
+) -> Result<(DelimitedBlock, usize), ParseFailure> {
+    let source_document = context.source_document;
+    let source = context.source;
+    let opener = source_document.lines()[opener_index];
+    let delimiter = source_document
+        .text(opener.content_range())
+        .expect("delimiter range is valid");
+    let body = parse_delimited_body(source_document, opener_index, delimiter, source, end_line)?;
+    let value = source
+        .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
+        .expect("delimited content range is valid")
+        .to_owned();
+    let content = match spec.model {
+        DelimitedContentModel::Compound => DelimitedContent::Compound(parse_compound_children(
+            source_document,
+            opener_index + 1,
+            body.content_end_line,
+            source,
+            context.config,
+            budget,
+            depth,
+        )?),
+        DelimitedContentModel::Verbatim => DelimitedContent::Verbatim(value),
+        DelimitedContentModel::Raw => DelimitedContent::Raw(value),
+        DelimitedContentModel::Table => DelimitedContent::Table(value),
+    };
+    Ok((
+        DelimitedBlock {
+            metadata: BlockMetadata::default(),
+            kind: spec.kind,
+            range: TextRange::new(opener.full_range().start(), body.range_end)?,
+            opening_delimiter_range: opener.content_range(),
+            closing_delimiter_range: body.closing_delimiter_range,
+            content_range: body.content_range,
+            delimiter: delimiter.to_owned(),
+            content,
+            problems: body.problems,
+        },
+        body.next_line,
+    ))
+}
+
+fn parse_compound_children(
+    source_document: &SourceDocument,
+    start_line: usize,
+    end_line: usize,
+    source: &str,
+    config: &ParseConfig,
+    budget: &mut ParseBudget,
+    depth: usize,
+) -> Result<Vec<AstBlock>, ParseFailure> {
+    if depth > config.max_block_depth.max(1) {
+        return Err(ParseFailure::Budget(BudgetExceeded {
+            resource: "block nesting depth",
+            limit: u32::try_from(config.max_block_depth).unwrap_or(u32::MAX),
+            actual: u64::try_from(depth).unwrap_or(u64::MAX),
+        }));
+    }
+    let mut syntax = Vec::new();
+    let mut blocks = Vec::new();
+    let mut paragraph_lines = Vec::new();
+    let mut pending = PendingBlockMetadata::default();
+    let mut line_index = start_line;
+    while line_index < end_line {
+        let line = source_document.lines()[line_index];
+        let content = source_document
+            .text(line.content_range())
+            .expect("compound line range is valid");
+        if let Some(spec) = delimiter_spec(content) {
+            flush_paragraph(
+                &mut syntax,
+                &mut blocks,
+                &mut paragraph_lines,
+                config,
+                budget,
+                &mut pending,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
+            let context = DelimitedParseContext {
+                source_document,
+                source,
+                config,
+            };
+            let (block, next_line) =
+                parse_delimited_block(&context, line_index, end_line, spec, budget, depth + 1)?;
+            syntax.push(delimited_block_syntax(&block));
+            blocks.push(AstBlock::Delimited(block));
+            line_index = next_line;
+            continue;
+        }
+        if content.trim_matches([' ', '\t']).is_empty() {
+            flush_paragraph(
+                &mut syntax,
+                &mut blocks,
+                &mut paragraph_lines,
+                config,
+                budget,
+                &mut pending,
+            )?;
+        } else {
+            paragraph_lines.push((line, content.to_owned()));
+        }
+        line_index += 1;
+    }
+    flush_paragraph(
+        &mut syntax,
+        &mut blocks,
+        &mut paragraph_lines,
+        config,
+        budget,
+        &mut pending,
+    )?;
+    Ok(blocks)
 }
 
 fn parse_source_block(
@@ -1879,7 +2248,13 @@ fn parse_source_block(
     let language = language_relative.map(|(start, end)| attribute_text[start..end].to_owned());
     let delimiter_index = attribute_index + 1;
     let delimiter = source_document.lines()[delimiter_index];
-    let mut body = parse_delimited_body(source_document, delimiter_index, "----", source)?;
+    let mut body = parse_delimited_body(
+        source_document,
+        delimiter_index,
+        "----",
+        source,
+        source_document.lines().len(),
+    )?;
     if language.is_none() {
         body.problems.push(BlockProblem {
             kind: BlockProblemKind::MissingSourceLanguage,
@@ -2086,7 +2461,8 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AstBlock, BlockProblemKind, HeadingKind, HeadingProblem, MathProblemKind, SyntaxKind, parse,
+        AstBlock, BlockProblemKind, DelimitedBlockKind, DelimitedContent, HeadingKind,
+        HeadingProblem, MathProblemKind, SyntaxKind, parse,
     };
     use crate::attributes::AttributeOperation;
     use crate::inline::{Inline, MathLanguage};
@@ -2274,14 +2650,22 @@ mod tests {
             .blocks()
             .iter()
             .filter_map(|block| match block {
-                AstBlock::Literal(literal) => Some(literal),
+                AstBlock::Delimited(block) if block.kind == DelimitedBlockKind::Literal => {
+                    Some(block)
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
 
         assert_eq!(literals.len(), 2);
-        assert_eq!(literals[0].value, "<tag>\n*not strong*\n");
-        assert_eq!(literals[1].value, "");
+        assert!(matches!(
+            &literals[0].content,
+            DelimitedContent::Verbatim(value) if value == "<tag>\n*not strong*\n"
+        ));
+        assert!(matches!(
+            &literals[1].content,
+            DelimitedContent::Verbatim(value) if value.is_empty()
+        ));
         assert!(literals.iter().all(|literal| literal.problems.is_empty()));
         assert_eq!(parsed.syntax.reconstruct(), source);
     }
@@ -2290,14 +2674,108 @@ mod tests {
     fn literal_block_recovers_at_heading_when_unclosed() {
         let source = "....\ncontent\n== Next\nparagraph";
         let parsed = parse(source).expect("valid source");
-        let AstBlock::Literal(literal) = &parsed.ast.blocks()[0] else {
+        let AstBlock::Delimited(literal) = &parsed.ast.blocks()[0] else {
             panic!("expected literal");
         };
 
-        assert_eq!(literal.value, "content\n");
+        assert!(matches!(
+            &literal.content,
+            DelimitedContent::Verbatim(value) if value == "content\n"
+        ));
         assert_eq!(literal.problems[0].kind, BlockProblemKind::UnclosedBlock);
         assert!(matches!(parsed.ast.blocks()[1], AstBlock::Heading(_)));
         assert!(matches!(parsed.ast.blocks()[2], AstBlock::Paragraph(_)));
+    }
+
+    #[test]
+    fn delimited_containers_have_typed_content_models() {
+        let source = "////\ncomment\n////\n\n----\nlisting\n----\n\n++++\n<b>raw</b>\n++++\n\n|===\na |b\n|===\n\n====\nparagraph\n====\n";
+        let parsed = parse(source).expect("containers");
+        let containers = parsed
+            .ast
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                AstBlock::Delimited(block) => Some(block),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(containers.len(), 5);
+        assert!(matches!(
+            containers[0].content,
+            DelimitedContent::Verbatim(_)
+        ));
+        assert!(matches!(
+            containers[1].content,
+            DelimitedContent::Verbatim(_)
+        ));
+        assert!(matches!(containers[2].content, DelimitedContent::Raw(_)));
+        assert!(matches!(containers[3].content, DelimitedContent::Table(_)));
+        assert!(matches!(
+            &containers[4].content,
+            DelimitedContent::Compound(children)
+                if matches!(&children[..], [AstBlock::Paragraph(_)])
+        ));
+        assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
+    fn every_standard_container_delimiter_has_one_kind() {
+        for (delimiter, expected) in [
+            ("////", DelimitedBlockKind::Comment),
+            ("====", DelimitedBlockKind::Example),
+            ("----", DelimitedBlockKind::Listing),
+            ("....", DelimitedBlockKind::Literal),
+            ("--", DelimitedBlockKind::Open),
+            ("****", DelimitedBlockKind::Sidebar),
+            ("++++", DelimitedBlockKind::Pass),
+            ("____", DelimitedBlockKind::Quote),
+            ("|===", DelimitedBlockKind::Table),
+        ] {
+            let source = format!("{delimiter}\nbody\n{delimiter}\n");
+            let parsed = parse(&source).expect("container");
+            let AstBlock::Delimited(block) = &parsed.ast.blocks()[0] else {
+                panic!("{delimiter} must create a container");
+            };
+            assert_eq!(block.kind, expected, "{delimiter}");
+        }
+    }
+
+    #[test]
+    fn compound_containers_nest_when_delimiter_lengths_differ() {
+        let source = "=====\nouter\n======\ninner\n======\n=====\n";
+        let parsed = parse(source).expect("nested containers");
+        let AstBlock::Delimited(outer) = &parsed.ast.blocks()[0] else {
+            panic!("outer container");
+        };
+        let DelimitedContent::Compound(children) = &outer.content else {
+            panic!("compound outer");
+        };
+        assert!(matches!(children[0], AstBlock::Paragraph(_)));
+        let AstBlock::Delimited(inner) = &children[1] else {
+            panic!("inner container");
+        };
+        assert_eq!(inner.delimiter, "======");
+        assert!(matches!(
+            &inner.content,
+            DelimitedContent::Compound(inner) if matches!(&inner[..], [AstBlock::Paragraph(_)])
+        ));
+    }
+
+    #[test]
+    fn container_styles_are_preserved_as_metadata_without_host_semantics() {
+        let source = "[verse]\n____\nline\n____\n\n[NOTE]\n====\nwarning\n====\n";
+        let parsed = parse(source).expect("styled containers");
+        let AstBlock::Delimited(verse) = &parsed.ast.blocks()[0] else {
+            panic!("verse container");
+        };
+        let AstBlock::Delimited(admonition) = &parsed.ast.blocks()[1] else {
+            panic!("admonition container");
+        };
+        assert_eq!(verse.kind, DelimitedBlockKind::Quote);
+        assert_eq!(verse.metadata.attributes[0].value, "verse");
+        assert_eq!(admonition.kind, DelimitedBlockKind::Example);
+        assert_eq!(admonition.metadata.attributes[0].value, "NOTE");
     }
 
     #[test]

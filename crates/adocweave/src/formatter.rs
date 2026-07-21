@@ -108,7 +108,9 @@ fn format_syntax(
         }
 
         let trimmed = content.trim_end_matches([' ', '\t']);
-        if trimmed.len() != content.len() {
+        if trimmed.len() != content.len()
+            && !crate::parser::trailing_whitespace_is_structural(content)
+        {
             edits.push(TextEdit {
                 range: text_range(
                     line.content_range().start().to_usize() + trimmed.len(),
@@ -203,6 +205,7 @@ mod tests {
                 AstBlock::Source(_) => None,
                 AstBlock::List(_) => None,
                 AstBlock::Math(_) => None,
+                AstBlock::Delimited(_) => None,
                 AstBlock::Unsupported(_) => None,
             })
             .collect()

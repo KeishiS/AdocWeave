@@ -1,5 +1,5 @@
 use adocweave::inline::{Inline, InlineLiteralKind, InlineStyle};
-use adocweave::parser::AstBlock;
+use adocweave::parser::{AstBlock, DelimitedBlockKind, DelimitedContent};
 use adocweave::syntax::{SyntaxIssueClass, SyntaxKind};
 use adocweave::{Analysis, Engine, ParseOptions};
 
@@ -67,11 +67,14 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         .blocks()
         .iter()
         .filter_map(|block| match block {
-            AstBlock::Literal(literal) => Some(literal),
+            AstBlock::Delimited(block) if block.kind == DelimitedBlockKind::Literal => Some(block),
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(literals[0].value, "*literal* <tag>\n.....\n");
+    assert!(matches!(
+        &literals[0].content,
+        DelimitedContent::Verbatim(value) if value == "*literal* <tag>\n.....\n"
+    ));
     assert_eq!(parsed.syntax().nodes(SyntaxKind::Error).count(), 1);
     assert!(matches!(
         parsed.ast().blocks().last(),
@@ -140,7 +143,10 @@ fn substitutions_cover_every_supported_semantic_context() {
     assert!(matches!(parsed.ast().blocks()[0], AstBlock::Heading(_)));
     assert!(matches!(parsed.ast().blocks()[1], AstBlock::Paragraph(_)));
     assert!(matches!(parsed.ast().blocks()[2], AstBlock::Unsupported(_)));
-    assert!(matches!(parsed.ast().blocks()[3], AstBlock::Literal(_)));
+    assert!(matches!(
+        parsed.ast().blocks()[3],
+        AstBlock::Delimited(ref block) if block.kind == DelimitedBlockKind::Literal
+    ));
     assert!(matches!(parsed.ast().blocks()[4], AstBlock::Source(_)));
     assert!(matches!(parsed.ast().blocks()[5], AstBlock::Paragraph(_)));
 
@@ -214,9 +220,7 @@ fn grammar_source_attribute_requires_an_adjacent_column_zero_delimiter() {
         [
             SyntaxKind::Unsupported,
             SyntaxKind::BlankLine,
-            SyntaxKind::Unsupported,
-            SyntaxKind::Paragraph,
-            SyntaxKind::Unsupported,
+            SyntaxKind::DelimitedBlock,
             SyntaxKind::BlankLine,
             SyntaxKind::Unsupported,
             SyntaxKind::Unsupported,

@@ -17,9 +17,9 @@ use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 11;
+pub const CORE_API_VERSION: u16 = 12;
 /// Current host-independent syntax and diagnostic behavior profile.
-pub const CORE_PROFILE_VERSION: u16 = 2;
+pub const CORE_PROFILE_VERSION: u16 = 3;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -242,6 +242,7 @@ fn analyze_inner(
         &parser::ParseConfig {
             max_inline_depth: limit_to_usize(options.limits.max_inline_depth),
             max_list_depth: limit_to_usize(options.limits.max_list_depth),
+            max_block_depth: limit_to_usize(options.limits.max_block_depth),
             max_formula_bytes: limit_to_usize(options.limits.max_formula_bytes),
             limits: options.limits,
         },

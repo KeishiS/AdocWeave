@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 6;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 7;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -121,6 +121,35 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
         },
         AstBlock::List(node) => list_node(node),
         AstBlock::Math(node) => leaf("math-block", node.range, &node.value),
+        AstBlock::Delimited(node) => {
+            let (value, children) = match &node.content {
+                crate::parser::DelimitedContent::Compound(children) => (
+                    Some(node.delimiter.clone()),
+                    children.iter().map(block_node).collect(),
+                ),
+                crate::parser::DelimitedContent::Verbatim(value)
+                | crate::parser::DelimitedContent::Raw(value)
+                | crate::parser::DelimitedContent::Table(value) => {
+                    (Some(value.clone()), Vec::new())
+                }
+            };
+            CanonicalNode {
+                kind: match node.kind {
+                    crate::parser::DelimitedBlockKind::Comment => "comment-block",
+                    crate::parser::DelimitedBlockKind::Example => "example-block",
+                    crate::parser::DelimitedBlockKind::Listing => "listing-block",
+                    crate::parser::DelimitedBlockKind::Literal => "literal-block",
+                    crate::parser::DelimitedBlockKind::Open => "open-block",
+                    crate::parser::DelimitedBlockKind::Sidebar => "sidebar-block",
+                    crate::parser::DelimitedBlockKind::Pass => "pass-block",
+                    crate::parser::DelimitedBlockKind::Quote => "quote-block",
+                    crate::parser::DelimitedBlockKind::Table => "table-block",
+                },
+                range: range(node.range),
+                value,
+                children,
+            }
+        }
         AstBlock::Unsupported(node) => leaf("unsupported", node.range, &node.raw),
     };
     let mut children = metadata_nodes(block.metadata());
@@ -303,5 +332,18 @@ mod tests {
         assert_eq!(children[2]["kind"], "block-role");
         assert_eq!(children[3]["kind"], "block-option");
         assert_eq!(children[4]["value"], "kind=demo");
+    }
+
+    #[test]
+    fn canonical_ast_distinguishes_delimited_content_models() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze("====\ninside\n====\n\n++++\n<tag>\n++++\n")
+            .expect("analysis");
+        let value: serde_json::Value =
+            serde_json::from_str(&canonical_ast(analysis.ast())).expect("canonical JSON");
+        assert_eq!(value["blocks"][0]["kind"], "example-block");
+        assert_eq!(value["blocks"][0]["children"][0]["kind"], "paragraph");
+        assert_eq!(value["blocks"][1]["kind"], "pass-block");
+        assert_eq!(value["blocks"][1]["value"], "<tag>\n");
     }
 }

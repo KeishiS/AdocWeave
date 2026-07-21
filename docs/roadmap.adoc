@@ -13,7 +13,7 @@
 * HTML変換、Lint、保守的なFormatter、CLIコマンド
 * Language Serverの診断、シンボル、アクション、Formatting、hover、補完
 * 資源上限と、未対応構文に対する厳格・寛容ポリシー
-* 出力形式に依存しないsemantic AST、Core 0.2規範文法、置換モデル
+* 出力形式に依存しないsemantic AST、Core 0.3規範文法、置換モデル
 * Zed開発用拡張
 
 Linux版Zedでの初期受け入れ確認は2026-07-20に完了した。LSP文書シンボルをOutlineへ

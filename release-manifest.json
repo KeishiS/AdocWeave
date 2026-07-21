@@ -2,11 +2,11 @@
   "schemaVersion": 2,
   "packageVersion": "0.1.0",
   "contracts": {
-    "coreProfile": 2,
-    "coreApi": 11,
-    "html": 2,
-    "projection": 2,
-    "conformance": 6,
-    "wasmApi": 4
+    "coreProfile": 3,
+    "coreApi": 12,
+    "html": 3,
+    "projection": 3,
+    "conformance": 7,
+    "wasmApi": 5
   }
 }

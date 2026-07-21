@@ -80,6 +80,7 @@ impl AnalysisCacheKey {
             max_output_bytes,
             max_line_bytes,
             max_list_depth,
+            max_block_depth,
             max_inline_depth,
             max_formula_bytes,
             max_blocks,
@@ -109,6 +110,7 @@ impl AnalysisCacheKey {
             max_output_bytes,
             max_line_bytes,
             max_list_depth,
+            max_block_depth,
             max_inline_depth,
             max_formula_bytes,
             max_blocks,
@@ -299,7 +301,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "ab4981fff7347753eabb7c569203fc5a28d2c5183da64c912795822930c65f70"
+            "4bee8a78c5444d07873df70cd15fd21dbffd69363e53e3556f10a3fe377853e5"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

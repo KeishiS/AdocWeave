@@ -16,14 +16,15 @@ Document@0..237
       InlineDelimiter@112..113
       InlineDelimiter@117..118
   BlankLine@119..120
-  LiteralBlock@120..152
+  DelimitedBlock@120..152
     BlockDelimiter@120..124
+    BlockDelimiter@147..151
   BlankLine@152..153
   SourceBlock@153..193
     BlockAttribute@153..167
     BlockDelimiter@168..172
   BlankLine@193..194
-  LiteralBlock@194..216
+  DelimitedBlock@194..216
     Error@194..198
       BlockDelimiter@194..198
   Heading@216..237

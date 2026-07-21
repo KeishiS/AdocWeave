@@ -1,5 +1,5 @@
 = 区切り付きblock container
-:status: planned
+:status: completed
 :depends-on: 059
 
 == 目的
@@ -22,3 +22,17 @@ content modelが型で区別され、compound blockの再帰とverbatim blockの
 == 参照
 
 https://docs.asciidoctor.org/asciidoc/latest/blocks/delimited/[Delimited Blocks]。
+
+== 実施結果
+
+delimiter判定を一つのregistryへ集約し、comment、example、listing、literal、open、sidebar、pass、
+quoteおよびtableを`DelimitedBlockKind`へ分類した。内容は`DelimitedContent`によりcompound、
+verbatim、rawまたはtableとして区別する。source、STEM、verseおよびadmonition相当styleは
+共通block metadataと同じdelimiter走査へ接続した。
+
+閉じdelimiterは開始文字列との完全一致を要求し、異なる長さの同種compound containerを再帰的に
+解析する。`max_block_depth`を公開処理上限へ追加し、未閉じblockは見出し同期点または親container末尾で
+回復する。Formatterはdelimiterと本体をbyte単位で保護し、raw contentもHTMLへ通過させずescapeする。
+
+公開構文と処理設定の変更に伴いCore Profileを3、Core APIを12、HTMLとprojectionを3、
+conformanceを7、WASM APIを5へ更新した。

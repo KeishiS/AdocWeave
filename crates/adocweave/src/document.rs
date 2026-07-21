@@ -137,6 +137,7 @@ fn block_label(block: &AstBlock) -> String {
             .first()
             .map_or_else(|| "list".to_owned(), |item| item.text.clone()),
         AstBlock::Math(_) => "math block".to_owned(),
+        AstBlock::Delimited(value) => format!("{:?} block", value.kind).to_ascii_lowercase(),
         AstBlock::Unsupported(_) => "unsupported block".to_owned(),
     }
 }

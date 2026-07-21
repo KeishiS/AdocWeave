@@ -44,6 +44,11 @@ fn walk_blocks<'document>(
             AstBlock::Heading(heading) => walk_inlines(&heading.inlines, visitor),
             AstBlock::Paragraph(paragraph) => walk_inlines(&paragraph.inlines, visitor),
             AstBlock::List(list) => walk_list_contents(list, visitor),
+            AstBlock::Delimited(block) => {
+                if let crate::parser::DelimitedContent::Compound(children) = &block.content {
+                    walk_blocks(children, visitor);
+                }
+            }
             AstBlock::Literal(_)
             | AstBlock::Source(_)
             | AstBlock::Math(_)

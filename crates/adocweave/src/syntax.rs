@@ -14,6 +14,7 @@ pub enum SyntaxKind {
     Paragraph,
     LiteralBlock,
     SourceBlock,
+    DelimitedBlock,
     BlankLine,
     Unsupported,
     DocumentAttribute,
@@ -76,6 +77,7 @@ impl SyntaxKind {
                 | Self::Paragraph
                 | Self::LiteralBlock
                 | Self::SourceBlock
+                | Self::DelimitedBlock
                 | Self::BlankLine
                 | Self::Unsupported
                 | Self::DocumentAttribute
@@ -95,6 +97,7 @@ impl SyntaxKind {
                 | Self::MalformedHeading
                 | Self::LiteralBlock
                 | Self::SourceBlock
+                | Self::DelimitedBlock
                 | Self::Unsupported
                 | Self::DocumentAttribute
                 | Self::BlockAnchor

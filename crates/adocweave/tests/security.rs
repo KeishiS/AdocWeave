@@ -76,6 +76,7 @@ fn malformed_bytes_and_tight_limits_fail_without_partial_output() {
             max_output_bytes: 8,
             max_line_bytes: 8,
             max_list_depth: 2,
+            max_block_depth: 2,
             max_inline_depth: 2,
             max_formula_bytes: 4,
             max_blocks: 2,
@@ -241,6 +242,27 @@ fn list_depth_limit_recovers_with_a_diagnostic() {
 
     assert!(html.contains("three"));
     assert!(diagnostics.contains("configured limit"));
+}
+
+#[test]
+fn compound_block_depth_limit_rejects_unbounded_nesting() {
+    let limits = ProcessingLimits {
+        max_block_depth: 1,
+        ..ProcessingLimits::default()
+    };
+    let config = ProcessConfig {
+        limits,
+        syntax_mode: SyntaxMode::Permissive,
+    };
+    let source = b"=====\nouter\n======\ninner\n======\n=====\n";
+
+    assert!(matches!(
+        process_with_config(Operation::Convert, source, &config),
+        Err(ProcessError::LimitExceeded {
+            resource: "block nesting depth",
+            ..
+        })
+    ));
 }
 
 #[test]

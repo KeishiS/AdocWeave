@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 2;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -182,6 +182,24 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                 source.value.clone(),
             ),
             AstBlock::List(list) => collect_search_list(list, output),
+            AstBlock::Delimited(block) => match &block.content {
+                crate::parser::DelimitedContent::Compound(children) => {
+                    collect_search_blocks(children, output);
+                }
+                crate::parser::DelimitedContent::Verbatim(value)
+                    if !matches!(block.kind, crate::parser::DelimitedBlockKind::Comment) =>
+                {
+                    push_search(
+                        output,
+                        SearchTextKind::Code,
+                        block.content_range,
+                        value.clone(),
+                    );
+                }
+                crate::parser::DelimitedContent::Verbatim(_)
+                | crate::parser::DelimitedContent::Raw(_)
+                | crate::parser::DelimitedContent::Table(_) => {}
+            },
             AstBlock::Math(_) | AstBlock::Unsupported(_) => {}
         }
     }
@@ -484,13 +502,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_two_json_contract() {
+    fn projections_keep_the_version_three_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":2,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":3,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 
