@@ -23,6 +23,7 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
         AstDocument::new(facts.blocks, facts.attributes, facts.anchors, facts.header);
     document.normalize_heading_kinds();
     resolve_document_attributes(&mut document, facts.attribute_expansion_limits);
+    document.identifiers = crate::document::build_identifiers(&document);
     document.structure = crate::structure::build(&document);
     document
 }

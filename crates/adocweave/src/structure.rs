@@ -1,7 +1,5 @@
 //! Shared doctype-aware document structure projection.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use crate::parser::{AstBlock, AstDocument, DocumentType, Heading, HeadingKind};
 use crate::source::TextRange;
 
@@ -113,13 +111,6 @@ struct ArenaSection {
 
 pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
     let mut structure = DocumentStructure::default();
-    let mut occurrences = BTreeMap::<String, usize>::new();
-    let mut used = document
-        .anchors()
-        .iter()
-        .filter(|anchor| anchor.valid)
-        .map(|anchor| anchor.id.clone())
-        .collect::<BTreeSet<_>>();
     let mut arena = Vec::<ArenaSection>::new();
     let mut stack = Vec::<(u8, usize)>::new();
     let mut title = None;
@@ -129,16 +120,17 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
         let AstBlock::Heading(heading) = block else {
             continue;
         };
-        let explicit = document
-            .anchors()
+        let identifier = document
+            .identifiers()
+            .heading_at(heading.text_range)
+            .expect("lowering assigns every heading an identifier");
+        let id = identifier.id.clone();
+        let id_range = document
+            .identifiers()
+            .targets()
             .iter()
-            .find(|anchor| anchor.valid && anchor.target_range == Some(heading.range));
-        let base = crate::document::heading_id_base(&heading.text);
-        let id = explicit.map_or_else(
-            || unique_heading_id(&base, &mut occurrences, &mut used),
-            |anchor| anchor.id.clone(),
-        );
-        let id_range = explicit.map_or(heading.text_range, |anchor| anchor.id_range);
+            .find(|target| target.target_range == heading.range && target.id == id)
+            .map_or(heading.text_range, |target| target.id_range);
         let appendix = is_appendix(heading);
         let (kind, level) = match heading.kind {
             HeadingKind::DocumentTitle => (SectionKind::DocumentTitle, 0),
@@ -233,25 +225,6 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
         structure.manpage = build_manpage(document, &mut structure.problems);
     }
     structure
-}
-
-fn unique_heading_id(
-    base: &str,
-    occurrences: &mut BTreeMap<String, usize>,
-    used: &mut BTreeSet<String>,
-) -> String {
-    let occurrence = occurrences.entry(base.to_owned()).or_default();
-    loop {
-        *occurrence += 1;
-        let candidate = if *occurrence == 1 {
-            base.to_owned()
-        } else {
-            format!("{base}_{}", *occurrence)
-        };
-        if used.insert(candidate.clone()) {
-            return candidate;
-        }
-    }
 }
 
 fn is_appendix(heading: &Heading) -> bool {

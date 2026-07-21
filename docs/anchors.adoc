@@ -35,12 +35,13 @@ syntax treeは区切り記号を含む行全体を元のバイト列のまま保
 . 既存の明示IDまたは先行する自動IDと衝突する場合は `_2`、`_3` のように
   最小の連番を付ける。
 
-明示アンカーは自動IDより優先する。HTMLの `id` と参照索引のIDは同じ生成結果を
-使用し、レンダラーが別にIDを生成してはならない。
+明示アンカーは自動IDより優先する。top-level、compound block、list continuationおよびAsciiDoc cellを含む
+全階層の見出しをsource順に一つの`DocumentIdentifiers`へ登録する。HTMLの`id`、xref解決、LSPと参照索引は
+同じ生成結果を使用し、レンダラーが別にIDを生成してはならない。
 
 == 参照先索引
 
-`reference_targets()` は文書タイトル、セクションおよびその他の明示アンカーを共通の
+`reference_targets()` は文書タイトル、全階層の見出し、block／inlineの明示アンカーを共通の
 `ReferenceTarget` として返す。各要素は種別、ID、表示名、ID範囲および対象ブロック
 範囲を持つ。見出しに明示IDが付いても、種別は文書タイトルまたはセクションのまま
 保持する。同一入力からの順序と内容は決定的である。

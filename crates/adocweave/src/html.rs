@@ -17,7 +17,7 @@ use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, Reso
 use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 13;
+pub const HTML_CONTRACT_VERSION: u16 = 14;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
@@ -137,20 +137,17 @@ pub fn render_with_inputs(
             catalogs: document.catalogs(),
             structure: document.structure(),
         };
-        let mut heading_index = 0;
         for block in document.blocks() {
-            let explicit_id = document
-                .anchors()
+            let explicit_id = targets
                 .iter()
-                .find(|anchor| anchor.valid && anchor.target_range == Some(block.range()))
-                .map(|anchor| anchor.id.as_str());
-            let heading_id = if matches!(block, AstBlock::Heading(_)) {
-                let id = heading_ids[heading_index].id.as_str();
-                heading_index += 1;
-                Some(id)
-            } else {
-                None
-            };
+                .find(|target| target.target_range == block.range())
+                .map(|target| target.id.as_str());
+            let heading_id = heading_ids
+                .iter()
+                .find(|heading| {
+                    matches!(block, AstBlock::Heading(value) if value.text_range == heading.range)
+                })
+                .map(|heading| heading.id.as_str());
             render_block(
                 &mut fragment,
                 block,
@@ -255,14 +252,12 @@ fn render_block(
     });
     match block {
         AstBlock::Heading(heading) => {
-            let generated;
             let id = if let Some(id) = heading_id {
                 id
             } else if let Some(id) = explicit_id {
                 id
             } else {
-                generated = crate::document::heading_id_base(&heading.text);
-                &generated
+                unreachable!("lowering assigns every heading an identifier")
             };
             render_heading(output, heading, id, policy, context);
         }
@@ -1415,7 +1410,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 13);
+        assert_eq!(HTML_CONTRACT_VERSION, 14);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [

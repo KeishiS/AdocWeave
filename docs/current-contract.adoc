@@ -8,12 +8,12 @@
 [cols="2,1",options="header"]
 |===
 |契約 |現在値
-|Core profile |13
-|Rust core API |27
-|HTML |13
-|Projection |10
-|Conformance snapshot |18
-|WASM API |13
+|Core profile |14
+|Rust core API |28
+|HTML |14
+|Projection |11
+|Conformance snapshot |19
+|WASM API |14
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。

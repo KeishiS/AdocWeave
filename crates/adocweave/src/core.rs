@@ -17,9 +17,9 @@ use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 27;
+pub const CORE_API_VERSION: u16 = 28;
 /// Current host-independent syntax and diagnostic behavior profile.
-pub const CORE_PROFILE_VERSION: u16 = 13;
+pub const CORE_PROFILE_VERSION: u16 = 14;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -89,7 +89,6 @@ pub struct Analysis {
     syntax: SyntaxTree,
     ast: parser::AstDocument,
     diagnostics: Vec<Diagnostic>,
-    reference_targets: Vec<crate::document::ReferenceTarget>,
 }
 
 impl Analysis {
@@ -113,7 +112,7 @@ impl Analysis {
     }
 
     pub fn reference_targets(&self) -> &[crate::document::ReferenceTarget] {
-        &self.reference_targets
+        self.ast.identifiers().targets()
     }
 
     pub const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {
@@ -326,7 +325,6 @@ fn analyze_inner(
     };
     let diagnostics =
         lint::lint_syntax(&syntax, &ast, &lint_config).map_err(ParseError::Position)?;
-    let reference_targets = crate::document::reference_targets(&ast);
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
     }
@@ -337,7 +335,6 @@ fn analyze_inner(
         syntax,
         ast,
         diagnostics,
-        reference_targets,
     })
 }
 
@@ -544,7 +541,7 @@ mod tests {
         .expect("analyze");
 
         assert_eq!(parsed.references().len(), 3);
-        assert_eq!(parsed.reference_targets.len(), 1);
+        assert_eq!(parsed.reference_targets().len(), 1);
     }
 
     #[test]

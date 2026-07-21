@@ -1,5 +1,5 @@
 = 文書全体のidentifier catalog統一
-:status: planned
+:status: completed
 :depends-on: 090
 
 == 目的
@@ -27,3 +27,12 @@ xref対象集合が一致しない可能性がある。
 描画可能な全見出しに文書内で一意な決定済みIDがあり、rendererやconsumerがIDを再生成しない。HTMLの`id`、
 参照先一覧、xref解決およびLSP navigationが同じIDとrangeを返す。catalog外のfallback生成経路が存在しない。
 
+== 完了結果
+
+`AstDocument`へ不変`DocumentIdentifiers`を追加し、lowering後に全階層のblock／inline anchorと見出しをsource順で
+一度だけ登録するようにした。明示IDとinline anchorを先に予約し、自動見出しIDのsuffixを文書全体で決定する。
+`DocumentStructure`はtop-level見出しの階層だけを投影し、IDを生成しない。
+
+`Analysis`が所有していた重複`reference_targets`を削除し、HTML、xref、LSP、projectionはAST内catalogを参照する。
+HTML rendererの`heading_id_base` fallbackも削除した。top-levelとcompound内で同名の見出しを持つfixtureにより、
+`_same`／`_same_2`、nested xrefおよびHTML `id`の一致を固定した。

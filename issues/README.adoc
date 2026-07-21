@@ -126,7 +126,7 @@ Issue 089完了後の再監査で、再帰入力の断片複製、nested heading
 source、identifier、semantic tree、table、parser出力の順で不変条件を収束させる。
 
 * xref:090-borrowed-block-input-ranges.adoc[090: 借用source rangeによる再帰block入力]（完了）
-* xref:091-document-wide-identifier-catalog.adoc[091: 文書全体のidentifier catalog統一]（計画）
+* xref:091-document-wide-identifier-catalog.adoc[091: 文書全体のidentifier catalog統一]（完了）
 * xref:092-semantic-block-model-and-mutable-traversal.adoc[092: Semantic block表現と可変走査の正規化]（計画）
 * xref:093-table-input-specification.adoc[093: Table入力仕様とdelimiter解決の集約]（計画）
 * xref:094-parser-output-and-module-convergence.adoc[094: Parser出力型とmodule境界の最終収束]（計画）

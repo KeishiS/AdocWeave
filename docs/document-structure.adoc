@@ -1,15 +1,16 @@
 = 文書構造契約
 
-`DocumentStructure`は、見出し列から一度だけ構築するbackend非依存の不変snapshotである。
-HTML、LSP Document Symbolsおよび`DocumentProjection`はこのsnapshotを共有し、見出しID、
-階層またはdoctype固有の意味を再推測してはならない。
+`DocumentStructure`は、`DocumentIdentifiers`でID確定済みのtop-level見出し列から一度だけ構築する
+backend非依存の不変snapshotである。HTMLは全階層のidentifier catalog、LSP Document Symbolsと
+`DocumentProjection`の構造情報はこのsnapshotを共有し、見出しID、階層またはdoctype固有の意味を
+再推測してはならない。
 
 == 共通構造
 
 各`StructuredHeading`は、kind、論理level、安定ID、タイトル、source range、節番号列および
 TOC収録可否を保持する。kindは`DocumentTitle`、`Part`、`Section`、`Appendix`、`Discrete`の
-いずれかである。`Part`はbook内のlevel 0見出しだけへparserが付与する。明示IDを優先し、
-自動IDの重複回避もこの構築時に一度だけ行う。
+いずれかである。`Part`はbook内のlevel 0見出しだけへparserが付与する。明示IDの優先と自動IDの重複回避は
+文書全体のidentifier catalog構築時に一度だけ行い、`DocumentStructure`は決定済みIDを参照する。
 
 `Section`は親子階層、`TocEntry`はその階層から不可視項目を除いた投影である。文書タイトルと
 discrete headingはTOCへ含めず、`notoc` roleを持つ見出し自身も除く。その子は直近の可視階層へ

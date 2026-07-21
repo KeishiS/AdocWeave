@@ -1,5 +1,6 @@
 //! Output-independent document indexes and editor-facing symbols.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use crate::parser::{
@@ -14,17 +15,30 @@ pub struct HeadingId {
     pub id: String,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DocumentIdentifiers {
+    heading_ids: Vec<HeadingId>,
+    targets: Vec<ReferenceTarget>,
+}
+
+impl DocumentIdentifiers {
+    pub fn heading_ids(&self) -> &[HeadingId] {
+        &self.heading_ids
+    }
+
+    pub fn targets(&self) -> &[ReferenceTarget] {
+        &self.targets
+    }
+
+    pub fn heading_at(&self, range: TextRange) -> Option<&HeadingId> {
+        self.heading_ids
+            .iter()
+            .find(|heading| heading.range == range)
+    }
+}
+
 pub fn generate_heading_ids(document: &AstDocument) -> Vec<HeadingId> {
-    document
-        .structure()
-        .headings()
-        .iter()
-        .map(|heading| HeadingId {
-            range: heading.id_range,
-            base: heading_id_base(&heading.title),
-            id: heading.id.clone(),
-        })
-        .collect()
+    document.identifiers().heading_ids.clone()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,10 +60,38 @@ pub struct ReferenceTarget {
 }
 
 pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
-    let heading_ids = generate_heading_ids(document);
-    let mut heading_index = 0;
+    document.identifiers().targets.clone()
+}
+
+pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
+    let mut inline_anchors = Vec::new();
+    crate::walker::walk(document, |node| {
+        let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(anchor)) = node else {
+            return;
+        };
+        if matches!(
+            anchor.kind,
+            crate::inline::StandardMacroKind::Anchor
+                | crate::inline::StandardMacroKind::BibliographyAnchor
+        ) && !anchor.target.is_empty()
+        {
+            inline_anchors.push(anchor);
+        }
+    });
+    let mut used = document
+        .anchors()
+        .iter()
+        .filter(|anchor| anchor.valid)
+        .map(|anchor| anchor.id.clone())
+        .chain(inline_anchors.iter().map(|anchor| anchor.target.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut occurrences = BTreeMap::<String, usize>::new();
+    let mut heading_ids = Vec::new();
     let mut targets = Vec::new();
-    for block in document.blocks() {
+    crate::walker::walk_block_slice(document.blocks(), |node| {
+        let crate::walker::SemanticNode::Block(block) = node else {
+            return;
+        };
         let range = block.range();
         let attached = document
             .anchors()
@@ -75,8 +117,21 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
             });
         }
         if let AstBlock::Heading(heading) = block {
-            let generated = &heading_ids[heading_index];
-            heading_index += 1;
+            let base = heading_id_base(&heading.text);
+            let (id, id_range) = attached.first().map_or_else(
+                || {
+                    (
+                        unique_heading_id(&base, &mut occurrences, &mut used),
+                        heading.text_range,
+                    )
+                },
+                |anchor| (anchor.id.clone(), anchor.id_range),
+            );
+            heading_ids.push(HeadingId {
+                range: heading.text_range,
+                base,
+                id: id.clone(),
+            });
             if attached.is_empty() {
                 targets.push(ReferenceTarget {
                     kind: match heading.kind {
@@ -86,60 +141,15 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
                             ReferenceTargetKind::Section
                         }
                     },
-                    id: generated.id.clone(),
+                    id,
                     label: heading.text.clone(),
-                    id_range: generated.range,
+                    id_range,
                     target_range: heading.range,
                 });
             }
         }
-    }
-    crate::walker::walk_block_slice(document.blocks(), |node| {
-        let crate::walker::SemanticNode::Block(block) = node else {
-            return;
-        };
-        let missing = document
-            .anchors()
-            .iter()
-            .filter(|anchor| {
-                anchor.valid
-                    && anchor.target_range == Some(block.range())
-                    && !targets
-                        .iter()
-                        .any(|target| target.id_range == anchor.id_range)
-            })
-            .collect::<Vec<_>>();
-        for anchor in missing {
-            targets.push(ReferenceTarget {
-                kind: match block {
-                    AstBlock::Heading(heading) => match heading.kind {
-                        HeadingKind::DocumentTitle => ReferenceTargetKind::DocumentTitle,
-                        HeadingKind::Part => ReferenceTargetKind::Part,
-                        HeadingKind::Section { .. } | HeadingKind::Discrete { .. } => {
-                            ReferenceTargetKind::Section
-                        }
-                    },
-                    _ => ReferenceTargetKind::ExplicitAnchor,
-                },
-                id: anchor.id.clone(),
-                label: anchor.label.clone().unwrap_or_else(|| block_label(block)),
-                id_range: anchor.id_range,
-                target_range: block.range(),
-            });
-        }
     });
-    crate::walker::walk(document, |node| {
-        let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(anchor)) = node else {
-            return;
-        };
-        if !matches!(
-            anchor.kind,
-            crate::inline::StandardMacroKind::Anchor
-                | crate::inline::StandardMacroKind::BibliographyAnchor
-        ) || anchor.target.is_empty()
-        {
-            return;
-        }
+    for anchor in inline_anchors {
         targets.push(ReferenceTarget {
             kind: ReferenceTargetKind::InlineAnchor,
             id: anchor.target.clone(),
@@ -150,9 +160,32 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
             id_range: anchor.target_range,
             target_range: anchor.range,
         });
-    });
+    }
     targets.sort_by_key(|target| (target.target_range.start(), target.target_range.end()));
-    targets
+    heading_ids.sort_by_key(|heading| heading.range);
+    DocumentIdentifiers {
+        heading_ids,
+        targets,
+    }
+}
+
+fn unique_heading_id(
+    base: &str,
+    occurrences: &mut BTreeMap<String, usize>,
+    used: &mut BTreeSet<String>,
+) -> String {
+    let occurrence = occurrences.entry(base.to_owned()).or_default();
+    loop {
+        *occurrence += 1;
+        let candidate = if *occurrence == 1 {
+            base.to_owned()
+        } else {
+            format!("{base}_{}", *occurrence)
+        };
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
 }
 
 fn block_label(block: &AstBlock) -> String {
@@ -551,6 +584,25 @@ mod tests {
             render_symbols_json(&document_symbols(&parsed.ast)),
             render_symbols_json(&document_symbols(&parsed.ast))
         );
+    }
+
+    #[test]
+    fn nested_headings_share_document_wide_ids_with_html_and_xrefs() {
+        let parsed = parse("== Same\n\n====\n== Same\n\n<<_same_2,Nested>>\n====\n")
+            .expect("nested headings");
+        let ids = parsed.ast.identifiers().heading_ids();
+
+        assert_eq!(
+            ids.iter()
+                .map(|heading| heading.id.as_str())
+                .collect::<Vec<_>>(),
+            ["_same", "_same_2"]
+        );
+        assert_eq!(parsed.ast.structure().headings().len(), 1);
+        let html = crate::html::render(&parsed.ast, &crate::html::RenderPolicy::default()).html;
+        assert!(html.contains("<h1 id=\"_same\">Same</h1>"));
+        assert!(html.contains("<h1 id=\"_same_2\">Same</h1>"));
+        assert!(html.contains("href=\"#_same_2\""));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 ホスト向け情報を抽出する。projection生成時にソースを再解析せず、ファイル、DB、
 ネットワークまたはノートアプリ固有スキーマへアクセスしない。
 
-現在の`PROJECTION_CONTRACT_VERSION`は10である。公開フィールドの意味または安定JSON表現を
+現在の`PROJECTION_CONTRACT_VERSION`は11である。公開フィールドの意味または安定JSON表現を
 破壊的に変更する場合は、このversionを更新する。
 
 == 出力
@@ -32,8 +32,9 @@
 catalogはsemantic treeの構築時に一度だけ生成された`DocumentCatalogs`の所有snapshotである。
 projection、HTML、LSPは同じ番号、順序、rangeと診断を参照し、consumerごとにmacroを再走査しない。
 
-文書構造は`DocumentStructure`で一度だけ構築する。TOC、HTML見出し、Document Symbolsは同じ
-heading ID、階層、doctype固有kindを参照し、consumer側で見出し階層を再構築しない。
+identifierは`DocumentIdentifiers`で全階層を一度だけ走査して決定する。HTML、xref、LSPおよびprojectionは
+同じ参照先とIDを使用する。文書構造はそのうちtop-level見出しだけを`DocumentStructure`へ投影する。TOCと
+Document Symbolsは階層を独自に再構築せず、rendererもcatalog外で見出しIDを生成しない。
 
 == 検索テキスト
 
