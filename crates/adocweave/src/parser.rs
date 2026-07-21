@@ -134,9 +134,10 @@ impl AstDocument {
     }
 
     pub(crate) fn normalize_heading_kinds(&mut self) {
-        for block in &mut self.blocks {
+        let doctype = self.header.doctype;
+        self.visit_blocks_mut(|block| {
             let AstBlock::Heading(heading) = block else {
-                continue;
+                return;
             };
             let discrete = heading
                 .metadata
@@ -158,7 +159,7 @@ impl AstDocument {
                     .retain(|problem| *problem != HeadingProblem::MisplacedDocumentTitle);
                 heading.well_formed = heading.problems.is_empty();
                 heading.hierarchy_valid = heading.well_formed;
-            } else if self.header.doctype == DocumentType::Book
+            } else if doctype == DocumentType::Book
                 && heading.kind == HeadingKind::DocumentTitle
                 && heading
                     .problems
@@ -171,7 +172,50 @@ impl AstDocument {
                 heading.well_formed = heading.problems.is_empty();
                 heading.hierarchy_valid = heading.well_formed;
             }
+        });
+    }
+
+    pub(crate) fn visit_blocks_mut(&mut self, mut visitor: impl FnMut(&mut AstBlock)) {
+        fn visit_list(list: &mut ListBlock, visitor: &mut impl FnMut(&mut AstBlock)) {
+            for item in &mut list.items {
+                for child in &mut item.children {
+                    visit_list(child, visitor);
+                }
+                visit(&mut item.continuations, visitor);
+            }
         }
+        fn visit(blocks: &mut [AstBlock], visitor: &mut impl FnMut(&mut AstBlock)) {
+            for block in blocks {
+                visitor(block);
+                match block {
+                    AstBlock::List(list) => visit_list(list, visitor),
+                    AstBlock::Delimited(block) => match &mut block.content {
+                        DelimitedContent::Compound(children) => visit(children, visitor),
+                        DelimitedContent::Table(table) => {
+                            for row in &mut table.rows {
+                                for cell in &mut row.cells {
+                                    if let crate::table::TableCellContent::AsciiDoc(children) =
+                                        &mut cell.content
+                                    {
+                                        visit(children, visitor);
+                                    }
+                                }
+                            }
+                        }
+                        DelimitedContent::Verbatim(_) | DelimitedContent::Passthrough(_) => {}
+                    },
+                    AstBlock::Heading(_)
+                    | AstBlock::Paragraph(_)
+                    | AstBlock::LiteralParagraph(_)
+                    | AstBlock::Break(_)
+                    | AstBlock::Literal(_)
+                    | AstBlock::Source(_)
+                    | AstBlock::Math(_)
+                    | AstBlock::Unsupported(_) => {}
+                }
+            }
+        }
+        visit(&mut self.blocks, &mut visitor);
     }
 
     pub fn node_count(&self) -> usize {
@@ -569,6 +613,7 @@ fn recognize_line(
 }
 
 impl BlockCursor {
+    #[cfg(test)]
     const fn new(line_count: usize) -> Self {
         Self {
             line: 0,
@@ -643,7 +688,36 @@ pub(crate) fn parse_shared_cancellable(
         }
         SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
     })?;
-    let source = source.as_ref();
+    let line_count = source_document.lines().len();
+    let sequence = parse_block_sequence(
+        source.as_ref(),
+        source_document,
+        config,
+        is_cancelled,
+        &mut budget,
+        BlockContext::root(line_count),
+    )?;
+    finish_document(sequence, config)
+}
+
+struct BlockSequenceOutput {
+    source_document: SourceDocument,
+    syntax: Vec<SyntaxNode>,
+    blocks: Vec<AstBlock>,
+    attributes: Vec<DocumentAttribute>,
+    attribute_problems: Vec<crate::attributes::AttributeProblem>,
+    anchors: Vec<ExplicitAnchor>,
+    header: DocumentHeader,
+}
+
+fn parse_block_sequence(
+    source: &str,
+    source_document: SourceDocument,
+    config: &ParseConfig,
+    is_cancelled: &dyn Fn() -> bool,
+    budget: &mut ParseBudget,
+    context: BlockContext,
+) -> Result<BlockSequenceOutput, ParseFailure> {
     let mut blocks = Vec::new();
     let mut ast_blocks = Vec::new();
     let mut paragraph_lines = Vec::new();
@@ -657,7 +731,10 @@ pub(crate) fn parse_shared_cancellable(
     let mut anchors = Vec::new();
     let mut pending_metadata = PendingBlockMetadata::default();
 
-    let mut cursor = BlockCursor::new(source_document.lines().len());
+    let mut cursor = BlockCursor {
+        line: context.start_line,
+        line_count: context.end_line,
+    };
     while let Some(line_index) = cursor.current() {
         if is_cancelled() {
             return Err(ParseFailure::Cancelled);
@@ -671,7 +748,10 @@ pub(crate) fn parse_shared_cancellable(
             .get(line_index + 1)
             .and_then(|next| source_document.text(next.content_range()));
 
-        if expect_author && !content.trim_matches([' ', '\t']).is_empty() {
+        if context.allows_document_header()
+            && expect_author
+            && !content.trim_matches([' ', '\t']).is_empty()
+        {
             expect_author = false;
             if !content.chars().any(char::is_control)
                 && !content.starts_with([':', '[', '='])
@@ -689,7 +769,10 @@ pub(crate) fn parse_shared_cancellable(
                 }
             }
         }
-        if expect_revision && !content.trim_matches([' ', '\t']).is_empty() {
+        if context.allows_document_header()
+            && expect_revision
+            && !content.trim_matches([' ', '\t']).is_empty()
+        {
             expect_revision = false;
             if !content.chars().any(char::is_control)
                 && !content.starts_with([':', '[', '='])
@@ -714,7 +797,7 @@ pub(crate) fn parse_shared_cancellable(
             next_content,
             line.content_range().start().to_usize(),
             line.full_range(),
-            header_attributes_open,
+            context.allows_document_header() && header_attributes_open,
         );
         if recognition == LineRecognition::Source {
             flush_paragraph(
@@ -722,7 +805,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
@@ -732,7 +815,7 @@ pub(crate) fn parse_shared_cancellable(
             source_block.metadata =
                 parse_block_attributes(content, line.content_range().start().to_usize())
                     .unwrap_or_default();
-            consume_metadata_budget(&source_block.metadata, &mut budget)?;
+            consume_metadata_budget(&source_block.metadata, budget)?;
             source_block.metadata.range = Some(line.full_range());
             let syntax = crate::syntax_builder::source(&source_block);
             commit_block(
@@ -751,7 +834,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
@@ -776,7 +859,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
@@ -786,7 +869,7 @@ pub(crate) fn parse_shared_cancellable(
             math.metadata =
                 parse_block_attributes(content, line.content_range().start().to_usize())
                     .unwrap_or_default();
-            consume_metadata_budget(&math.metadata, &mut budget)?;
+            consume_metadata_budget(&math.metadata, budget)?;
             math.metadata.range = Some(line.full_range());
             let syntax = crate::syntax_builder::math(&math);
             commit_block(
@@ -806,23 +889,28 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let context = DelimitedParseContext {
+            let delimited_context = DelimitedParseContext {
                 source_document: &source_document,
                 source,
                 config,
+                is_cancelled,
+            };
+            let mut state = ParseState {
+                budget: &mut *budget,
+                anchors: &mut anchors,
             };
             let (block, next_line) = parse_delimited_block(
-                &context,
+                &delimited_context,
                 line_index,
                 source_document.lines().len(),
                 spec,
-                &mut budget,
-                ParseDepth { block: 1, table: 1 },
+                &mut state,
+                context.depth,
                 Some(&pending_metadata.semantic),
             )?;
             let syntax = crate::syntax_builder::delimited(&block);
@@ -843,7 +931,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
@@ -873,7 +961,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_node()?;
@@ -889,7 +977,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_node()?;
@@ -904,11 +992,11 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_node()?;
-            consume_metadata_budget(&metadata, &mut budget)?;
+            consume_metadata_budget(&metadata, budget)?;
             if let Some(id) = &metadata.id {
                 anchors.push(ExplicitAnchor {
                     range: line.full_range(),
@@ -930,7 +1018,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             flush_orphan_metadata(
@@ -938,7 +1026,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut pending_metadata,
                 source,
-                &mut budget,
+                budget,
             )?;
             blocks.push(SyntaxNode::leaf(SyntaxKind::BlankLine, line.full_range()));
             if header_attributes_open {
@@ -957,7 +1045,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_attribute()?;
@@ -975,7 +1063,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
@@ -1005,7 +1093,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
@@ -1024,12 +1112,18 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let heading = parse_heading(content, line, !saw_content, config, &mut budget)?;
+            let heading = parse_heading(
+                content,
+                line,
+                context.document_title_position(saw_content),
+                config,
+                budget,
+            )?;
             let syntax_kind = if heading.problems.is_empty() {
                 match heading.kind {
                     HeadingKind::DocumentTitle => SyntaxKind::DocumentTitle,
@@ -1043,15 +1137,16 @@ pub(crate) fn parse_shared_cancellable(
             blocks.push(crate::syntax_builder::heading(&heading, syntax_kind));
             ast_blocks.push(AstBlock::Heading(heading));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
-            header_attributes_open = matches!(
-                ast_blocks.last(),
-                Some(AstBlock::Heading(Heading {
-                    kind: HeadingKind::DocumentTitle,
-                    well_formed: true,
-                    hierarchy_valid: true,
-                    ..
-                }))
-            );
+            header_attributes_open = context.allows_document_header()
+                && matches!(
+                    ast_blocks.last(),
+                    Some(AstBlock::Heading(Heading {
+                        kind: HeadingKind::DocumentTitle,
+                        well_formed: true,
+                        hierarchy_valid: true,
+                        ..
+                    }))
+                );
             if header_attributes_open {
                 extend_header_range(&mut header, line.full_range());
                 expect_author = true;
@@ -1063,11 +1158,21 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
+            let list_context = DelimitedParseContext {
+                source_document: &source_document,
+                source,
+                config,
+                is_cancelled,
+            };
+            let mut state = ParseState {
+                budget: &mut *budget,
+                anchors: &mut anchors,
+            };
             let (lists, next_line, range) =
-                parse_lists(&source_document, line_index, source, config, &mut budget)?;
+                parse_lists(&list_context, line_index, &mut state, context.depth)?;
             blocks.push(crate::syntax_builder::list(range, &lists));
             ast_blocks.extend(lists.into_iter().map(AstBlock::List));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
@@ -1082,7 +1187,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut ast_blocks,
                 &mut paragraph_lines,
                 config,
-                &mut budget,
+                budget,
                 &mut pending_metadata,
             )?;
             budget.consume_block()?;
@@ -1111,7 +1216,7 @@ pub(crate) fn parse_shared_cancellable(
         &mut ast_blocks,
         &mut paragraph_lines,
         config,
-        &mut budget,
+        budget,
         &mut pending_metadata,
     )?;
     flush_orphan_metadata(
@@ -1119,13 +1224,28 @@ pub(crate) fn parse_shared_cancellable(
         &mut ast_blocks,
         &mut pending_metadata,
         source,
-        &mut budget,
+        budget,
     )?;
-    let mut ast = crate::lowering::lower(crate::lowering::ParsedFacts {
+    Ok(BlockSequenceOutput {
+        source_document,
+        syntax: blocks,
         blocks: ast_blocks,
         attributes,
+        attribute_problems,
         anchors,
         header,
+    })
+}
+
+fn finish_document(
+    sequence: BlockSequenceOutput,
+    config: &ParseConfig,
+) -> Result<ParsedDocument, ParseFailure> {
+    let mut ast = crate::lowering::lower(crate::lowering::ParsedFacts {
+        blocks: sequence.blocks,
+        attributes: sequence.attributes,
+        anchors: sequence.anchors,
+        header: sequence.header,
         attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
             max_depth: config.limits.max_attribute_expansion_depth,
             max_bytes: config.limits.max_attribute_expansion_bytes,
@@ -1139,10 +1259,10 @@ pub(crate) fn parse_shared_cancellable(
         })
     })?;
     let syntax_issues =
-        crate::syntax_diagnostics::collect_and_clear(&mut ast.blocks, &attribute_problems);
+        crate::syntax_diagnostics::collect_and_clear(&mut ast.blocks, &sequence.attribute_problems);
 
     Ok(ParsedDocument {
-        syntax: SyntaxTree::from_blocks(source_document, blocks, syntax_issues),
+        syntax: SyntaxTree::from_blocks(sequence.source_document, sequence.syntax, syntax_issues),
         ast,
     })
 }
@@ -1553,12 +1673,13 @@ fn list_marker(content: &str) -> Option<ParsedListMarker> {
 }
 
 fn parse_lists(
-    source_document: &SourceDocument,
+    context: &DelimitedParseContext<'_>,
     start: usize,
-    source: &str,
-    config: &ParseConfig,
-    budget: &mut ParseBudget,
+    state: &mut ParseState<'_>,
+    parse_depth: ParseDepth,
 ) -> Result<(Vec<ListBlock>, usize, TextRange), ParseFailure> {
+    let source_document = context.source_document;
+    let config = context.config;
     let mut flat = Vec::new();
     let mut index = start;
     let mut previous: Option<(usize, ListKind)> = None;
@@ -1619,7 +1740,7 @@ fn parse_lists(
                 max_depth: config.max_inline_depth,
                 max_formula_bytes: config.max_formula_bytes,
             },
-            budget,
+            state.budget,
         )?;
         let mut problems = Vec::new();
         if text.is_empty() {
@@ -1660,7 +1781,7 @@ fn parse_lists(
         }
         kinds_by_depth.resize(kinds_by_depth.len().max(effective_depth + 1), None);
         kinds_by_depth[effective_depth] = Some(kind);
-        budget.consume_node()?;
+        state.budget.consume_node()?;
         let terms = if let Some(term_end) = term_end {
             let term_range = text_range(absolute, absolute + term_end)?;
             let term = &content[..term_end];
@@ -1671,7 +1792,7 @@ fn parse_lists(
                     max_depth: config.max_inline_depth,
                     max_formula_bytes: config.max_formula_bytes,
                 },
-                budget,
+                state.budget,
             )?;
             vec![DescriptionTerm {
                 range: term_range,
@@ -1705,10 +1826,9 @@ fn parse_lists(
             .is_some_and(|next| source_document.text(next.content_range()) == Some("+"))
         {
             let continuation = source_document.lines()[index];
-            budget.consume_list_continuation()?;
+            state.budget.consume_list_continuation()?;
             let next = index + 1;
-            let Some((attached, end)) =
-                parse_list_continuation(source_document, next, source, config, budget)?
+            let Some((attached, end)) = parse_list_continuation(context, next, state, parse_depth)?
             else {
                 break;
             };
@@ -1757,25 +1877,27 @@ fn parse_lists(
     while cursor < flat.len() {
         let depth = flat[cursor].depth;
         let kind = flat[cursor].kind;
-        budget.consume_block()?;
+        state.budget.consume_block()?;
         roots.push(build_list_tree(
             &mut flat,
             &mut cursor,
             depth,
             kind,
-            budget,
+            state.budget,
         )?);
     }
     Ok((roots, index, range))
 }
 
 fn parse_list_continuation(
-    source_document: &SourceDocument,
+    context: &DelimitedParseContext<'_>,
     index: usize,
-    source: &str,
-    config: &ParseConfig,
-    budget: &mut ParseBudget,
+    state: &mut ParseState<'_>,
+    depth: ParseDepth,
 ) -> Result<Option<(Vec<AstBlock>, usize)>, ParseFailure> {
+    let source_document = context.source_document;
+    let source = context.source;
+    let config = context.config;
     let Some(line) = source_document.lines().get(index).copied() else {
         return Ok(None);
     };
@@ -1785,8 +1907,8 @@ fn parse_list_continuation(
     if content.trim_matches([' ', '\t']).is_empty() {
         return Ok(None);
     }
-    budget.consume_block()?;
-    budget.consume_node()?;
+    state.budget.consume_block()?;
+    state.budget.consume_node()?;
     if content == "...." {
         let (block, end) = parse_literal_block(source_document, index, source)?;
         return Ok(Some((vec![AstBlock::Literal(block)], end)));
@@ -1804,24 +1926,22 @@ fn parse_list_continuation(
         return Ok(Some((vec![AstBlock::Source(block)], end)));
     }
     if let Some(spec) = delimiter_spec(content) {
-        let context = DelimitedParseContext {
-            source_document,
-            source,
-            config,
-        };
         let (block, end) = parse_delimited_block(
-            &context,
+            context,
             index,
             source_document.lines().len(),
             spec,
-            budget,
-            ParseDepth { block: 1, table: 1 },
+            state,
+            ParseDepth {
+                block: depth.block + 1,
+                table: depth.table,
+            },
             None,
         )?;
         return Ok(Some((vec![AstBlock::Delimited(block)], end)));
     }
     if list_marker(content).is_some() {
-        let (lists, end, _) = parse_lists(source_document, index, source, config, budget)?;
+        let (lists, end, _) = parse_lists(context, index, state, depth)?;
         return Ok(Some((lists.into_iter().map(AstBlock::List).collect(), end)));
     }
     let parsed = parse_inlines(
@@ -1831,7 +1951,7 @@ fn parse_list_continuation(
             max_depth: config.max_inline_depth,
             max_formula_bytes: config.max_formula_bytes,
         },
-        budget,
+        state.budget,
     )?;
     Ok(Some((
         vec![AstBlock::Paragraph(Paragraph {
@@ -2034,12 +2154,61 @@ struct DelimitedParseContext<'source> {
     source_document: &'source SourceDocument,
     source: &'source str,
     config: &'source ParseConfig,
+    is_cancelled: &'source dyn Fn() -> bool,
+}
+
+struct ParseState<'state> {
+    budget: &'state mut ParseBudget,
+    anchors: &'state mut Vec<ExplicitAnchor>,
 }
 
 #[derive(Clone, Copy)]
 struct ParseDepth {
     block: usize,
     table: usize,
+}
+
+#[derive(Clone, Copy)]
+enum BlockLocation {
+    DocumentRoot,
+    Compound,
+    AsciiDocCell,
+}
+
+#[derive(Clone, Copy)]
+struct BlockContext {
+    location: BlockLocation,
+    depth: ParseDepth,
+    start_line: usize,
+    end_line: usize,
+}
+
+impl BlockContext {
+    const fn root(end_line: usize) -> Self {
+        Self {
+            location: BlockLocation::DocumentRoot,
+            depth: ParseDepth { block: 1, table: 1 },
+            start_line: 0,
+            end_line,
+        }
+    }
+
+    const fn nested(location: BlockLocation, depth: ParseDepth, end_line: usize) -> Self {
+        Self {
+            location,
+            depth,
+            start_line: 0,
+            end_line,
+        }
+    }
+
+    const fn allows_document_header(self) -> bool {
+        matches!(self.location, BlockLocation::DocumentRoot)
+    }
+
+    const fn document_title_position(self, saw_content: bool) -> bool {
+        self.allows_document_header() && !saw_content
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -2054,6 +2223,9 @@ fn delimiter_spec(delimiter: &str) -> Option<DelimiterSpec> {
     let spec = match delimiter {
         "--" => (DelimitedBlockKind::Open, DelimitedContentModel::Compound),
         "|===" => (DelimitedBlockKind::Table, DelimitedContentModel::Table),
+        value if custom_table_delimiter(value) => {
+            (DelimitedBlockKind::Table, DelimitedContentModel::Table)
+        }
         _ if repeated_delimiter(delimiter, '/') => {
             (DelimitedBlockKind::Comment, DelimitedContentModel::Verbatim)
         }
@@ -2083,6 +2255,13 @@ fn delimiter_spec(delimiter: &str) -> Option<DelimiterSpec> {
     })
 }
 
+fn custom_table_delimiter(value: &str) -> bool {
+    let Some(prefix) = value.strip_suffix("===") else {
+        return false;
+    };
+    prefix != "=" && prefix.chars().count() == 1
+}
+
 pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {
     let trimmed = content.trim_end_matches([' ', '\t']);
     trimmed.len() != content.len()
@@ -2107,7 +2286,7 @@ fn parse_delimited_block(
     opener_index: usize,
     end_line: usize,
     spec: DelimiterSpec,
-    budget: &mut ParseBudget,
+    state: &mut ParseState<'_>,
     depth: ParseDepth,
     metadata: Option<&BlockMetadata>,
 ) -> Result<(DelimitedBlock, usize), ParseFailure> {
@@ -2123,24 +2302,27 @@ fn parse_delimited_block(
         .expect("delimited content range is valid")
         .to_owned();
     let content = match spec.model {
-        DelimitedContentModel::Compound => DelimitedContent::Compound(parse_compound_children(
+        DelimitedContentModel::Compound => DelimitedContent::Compound(parse_nested_blocks(
             source_document,
             opener_index + 1,
             body.content_end_line,
-            source,
-            context.config,
-            budget,
-            depth,
+            context,
+            state,
+            ParseDepth {
+                block: depth.block + 1,
+                table: depth.table,
+            },
+            BlockLocation::Compound,
         )?),
         DelimitedContentModel::Verbatim => DelimitedContent::Verbatim(value),
         DelimitedContentModel::Raw => DelimitedContent::Passthrough(value),
         DelimitedContentModel::Table => DelimitedContent::Table(parse_table(
             &value,
             body.content_range,
-            source,
-            context.config,
-            budget,
-            depth.table,
+            context,
+            state,
+            depth,
+            delimiter,
             metadata.unwrap_or(&BlockMetadata::default()),
         )?),
     };
@@ -2163,10 +2345,10 @@ fn parse_delimited_block(
 fn parse_table(
     value: &str,
     range: TextRange,
-    source: &str,
-    config: &ParseConfig,
-    budget: &mut ParseBudget,
-    table_depth: usize,
+    context: &DelimitedParseContext<'_>,
+    state: &mut ParseState<'_>,
+    depth: ParseDepth,
+    delimiter: &str,
     metadata: &BlockMetadata,
 ) -> Result<crate::table::Table, ParseFailure> {
     use crate::table::{
@@ -2174,6 +2356,7 @@ fn parse_table(
         TableSection, VerticalAlignment,
     };
 
+    let config = context.config;
     let reject = |resource, limit, actual| {
         ParseFailure::Budget(BudgetExceeded {
             resource,
@@ -2188,14 +2371,37 @@ fn parse_table(
             value.len() as u64,
         ));
     }
-    if table_depth as u64 > u64::from(config.limits.max_table_depth) {
+    if depth.table as u64 > u64::from(config.limits.max_table_depth) {
         return Err(reject(
             "table nesting depth",
             config.limits.max_table_depth,
-            table_depth as u64,
+            depth.table as u64,
         ));
     }
-    let (input_format, mut table_problems) = crate::table::input_format(metadata);
+    let (mut input_format, mut table_problems) = crate::table::input_format(metadata);
+    if let Some(separator) = (delimiter != "|===")
+        .then_some(delimiter)
+        .and_then(|value| {
+            value.strip_suffix("===").and_then(|prefix| {
+                let mut characters = prefix.chars();
+                let separator = characters.next()?;
+                characters.next().is_none().then_some(separator)
+            })
+        })
+    {
+        input_format.separator = separator;
+        let has_explicit_format = metadata
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.as_deref() == Some("format"));
+        if !has_explicit_format {
+            input_format.format = match separator {
+                ',' => crate::table::TableFormat::Csv,
+                ':' => crate::table::TableFormat::Dsv,
+                _ => crate::table::TableFormat::Psv,
+            };
+        }
+    }
     let raw = crate::table::scan(value, range, input_format);
     table_problems.extend(raw.problems.iter().copied());
     let cell_count = raw
@@ -2233,7 +2439,7 @@ fn parse_table(
     let mut cells = Vec::with_capacity(raw.cells.len());
     for cell in raw.cells {
         for _ in 0..cell.duplication {
-            budget.consume_node()?;
+            state.budget.consume_node()?;
             let content = match cell.style {
                 TableCellStyle::Literal | TableCellStyle::Verse => {
                     TableCellContent::Verbatim(cell.raw.clone())
@@ -2246,7 +2452,7 @@ fn parse_table(
                             max_depth: config.max_inline_depth,
                             max_formula_bytes: config.max_formula_bytes,
                         },
-                        budget,
+                        state.budget,
                     )?;
                     TableCellContent::Inlines(parsed.inlines)
                 }
@@ -2298,7 +2504,7 @@ fn parse_table(
                 Arc::from(cell.raw.as_str()),
                 cell.content_range.start(),
                 config.limits.max_line_bytes,
-                &|| false,
+                context.is_cancelled,
             )
             .map_err(|error| match error {
                 SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
@@ -2311,17 +2517,17 @@ fn parse_table(
                 }
                 SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
             })?;
-            let blocks = parse_compound_children(
+            let blocks = parse_nested_blocks(
                 &fragment,
                 0,
                 fragment.lines().len(),
-                source,
-                config,
-                budget,
+                context,
+                state,
                 ParseDepth {
-                    block: 1,
-                    table: table_depth + 1,
+                    block: depth.block + 1,
+                    table: depth.table + 1,
                 },
+                BlockLocation::AsciiDocCell,
             )?;
             cell.content = TableCellContent::AsciiDoc(blocks);
         }
@@ -2329,15 +2535,18 @@ fn parse_table(
     Ok(table)
 }
 
-fn parse_compound_children(
+fn parse_nested_blocks(
     source_document: &SourceDocument,
     start_line: usize,
     end_line: usize,
-    source: &str,
-    config: &ParseConfig,
-    budget: &mut ParseBudget,
+    context: &DelimitedParseContext<'_>,
+    state: &mut ParseState<'_>,
     depth: ParseDepth,
+    location: BlockLocation,
 ) -> Result<Vec<AstBlock>, ParseFailure> {
+    let source = context.source;
+    let config = context.config;
+    let is_cancelled = context.is_cancelled;
     if depth.block > config.max_block_depth.max(1) {
         return Err(ParseFailure::Budget(BudgetExceeded {
             resource: "block nesting depth",
@@ -2345,89 +2554,42 @@ fn parse_compound_children(
             actual: u64::try_from(depth.block).unwrap_or(u64::MAX),
         }));
     }
-    let mut syntax = Vec::new();
-    let mut blocks = Vec::new();
-    let mut paragraph_lines = Vec::new();
-    let mut pending = PendingBlockMetadata::default();
-    let mut line_index = start_line;
-    while line_index < end_line {
-        let line = source_document.lines()[line_index];
-        let content = source_document
-            .text(line.content_range())
-            .expect("compound line range is valid");
-        if let Some(spec) = delimiter_spec(content) {
-            flush_paragraph(
-                &mut syntax,
-                &mut blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending,
-            )?;
-            budget.consume_block()?;
-            budget.consume_node()?;
-            let context = DelimitedParseContext {
-                source_document,
-                source,
-                config,
-            };
-            let (block, next_line) = parse_delimited_block(
-                &context,
-                line_index,
-                end_line,
-                spec,
-                budget,
-                ParseDepth {
-                    block: depth.block + 1,
-                    table: depth.table,
-                },
-                Some(&pending.semantic),
-            )?;
-            syntax.push(crate::syntax_builder::delimited(&block));
-            blocks.push(AstBlock::Delimited(block));
-            line_index = next_line;
-            continue;
-        }
-        if list_marker(content).is_some() {
-            flush_paragraph(
-                &mut syntax,
-                &mut blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending,
-            )?;
-            let (lists, next_line, range) =
-                parse_lists(source_document, line_index, source, config, budget)?;
-            syntax.push(crate::syntax_builder::list(range, &lists));
-            blocks.extend(lists.into_iter().map(AstBlock::List));
-            attach_pending_metadata(&mut syntax, &mut blocks, &mut pending);
-            line_index = next_line;
-            continue;
-        }
-        if content.trim_matches([' ', '\t']).is_empty() {
-            flush_paragraph(
-                &mut syntax,
-                &mut blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending,
-            )?;
-        } else {
-            paragraph_lines.push((line, content.to_owned()));
-        }
-        line_index += 1;
+    if start_line == end_line {
+        return Ok(Vec::new());
     }
-    flush_paragraph(
-        &mut syntax,
-        &mut blocks,
-        &mut paragraph_lines,
+    let start = source_document.lines()[start_line].full_range().start();
+    let end = source_document.lines()[end_line - 1].full_range().end();
+    let fragment_source = source
+        .get(start.to_usize()..end.to_usize())
+        .ok_or(ParseFailure::InternalInvariant)?;
+    let fragment = SourceDocument::from_fragment_bounded(
+        Arc::from(fragment_source),
+        start,
+        config.limits.max_line_bytes,
+        is_cancelled,
+    )
+    .map_err(|error| match error {
+        SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
+        SourceDocumentBuildError::LineLimitExceeded { limit, actual } => {
+            ParseFailure::Budget(BudgetExceeded {
+                resource: "line bytes",
+                limit,
+                actual,
+            })
+        }
+        SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
+    })?;
+    let line_count = fragment.lines().len();
+    let sequence = parse_block_sequence(
+        source,
+        fragment,
         config,
-        budget,
-        &mut pending,
+        is_cancelled,
+        state.budget,
+        BlockContext::nested(location, depth, line_count),
     )?;
-    Ok(blocks)
+    state.anchors.extend(sequence.anchors);
+    Ok(sequence.blocks)
 }
 
 fn parse_source_block(
@@ -3589,6 +3751,159 @@ mod tests {
         assert!(matches!(blocks[0], AstBlock::Paragraph(_)));
         assert!(matches!(blocks[1], AstBlock::List(_)));
         assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
+    fn asciidoc_cells_use_the_complete_block_dispatch_and_document_anchor_index() {
+        let source = "[cols=a]\n|===\n|[[cell-target]]\n[discrete]\n== Cell heading\n\n literal\n\n'''\n\n<<<\n\n.Cell source\n[source,rust]\n----\nfn main() {}\n----\n\n[stem]\n++++\nx + y\n++++\n\n!===\n!nested\n!===\n|===\n";
+        let parsed = parse(source).expect("parse");
+        let AstBlock::Delimited(crate::parser::DelimitedBlock {
+            content: DelimitedContent::Table(table),
+            ..
+        }) = &parsed.ast.blocks()[0]
+        else {
+            panic!("table")
+        };
+        let crate::table::TableCellContent::AsciiDoc(blocks) = &table.rows[0].cells[0].content
+        else {
+            panic!("AsciiDoc cell")
+        };
+        assert!(matches!(
+            blocks[0],
+            AstBlock::Heading(Heading {
+                kind: HeadingKind::Discrete { level: 1 },
+                ..
+            })
+        ));
+        assert!(matches!(blocks[1], AstBlock::LiteralParagraph(_)));
+        assert!(matches!(
+            blocks[2],
+            AstBlock::Break(BreakBlock {
+                kind: BreakKind::Thematic,
+                ..
+            })
+        ));
+        assert!(matches!(
+            blocks[3],
+            AstBlock::Break(BreakBlock {
+                kind: BreakKind::Page,
+                ..
+            })
+        ));
+        assert!(matches!(
+            &blocks[4],
+            AstBlock::Source(block)
+                if block.language.as_deref() == Some("rust")
+                    && block.metadata.title.as_ref().map(|title| title.value.as_str())
+                        == Some("Cell source")
+        ));
+        assert!(matches!(blocks[5], AstBlock::Math(_)));
+        let AstBlock::Delimited(crate::parser::DelimitedBlock {
+            content: DelimitedContent::Table(nested),
+            ..
+        }) = &blocks[6]
+        else {
+            panic!("nested table")
+        };
+        assert_eq!(nested.separator, '!');
+        assert_eq!(nested.rows[0].cells[0].raw, "nested");
+        assert!(parsed.ast.anchors().iter().any(|anchor| {
+            anchor.id == "cell-target"
+                && anchor.valid
+                && anchor.target_range == Some(blocks[0].range())
+        }));
+        assert!(
+            crate::document::reference_targets(&parsed.ast)
+                .iter()
+                .any(|target| {
+                    target.id == "cell-target" && target.target_range == blocks[0].range()
+                })
+        );
+        assert!(
+            crate::html::render(&parsed.ast, &crate::html::RenderPolicy::default())
+                .html
+                .contains("<h1 id=\"cell-target\">Cell heading</h1>")
+        );
+        assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
+    fn asciidoc_cell_syntax_problems_join_the_root_diagnostic_stream() {
+        let parsed = parse("[cols=a]\n|===\n|[source]\n----\ncode\n----\n|===\n").expect("parse");
+        assert!(parsed.syntax.issues().iter().any(|issue| {
+            issue.class == crate::syntax::SyntaxIssueClass::MissingSourceLanguage
+        }));
+    }
+
+    #[test]
+    fn asciidoc_cell_context_policy_covers_every_block_variant() {
+        #[derive(Clone, Copy, Debug)]
+        enum Expected {
+            Heading,
+            Paragraph,
+            LiteralParagraph,
+            Break,
+            Literal,
+            Source,
+            List,
+            Math,
+            Delimited,
+            Unsupported,
+        }
+        let cases = [
+            ("== heading\n", Expected::Heading),
+            ("paragraph\n", Expected::Paragraph),
+            ("first\n\n literal\n", Expected::LiteralParagraph),
+            ("'''\n", Expected::Break),
+            ("* item\n+\n....\nliteral\n....\n", Expected::Literal),
+            (
+                "[source,rust]\n----\nfn main() {}\n----\n",
+                Expected::Source,
+            ),
+            ("* item\n", Expected::List),
+            ("[stem]\n++++\nx\n++++\n", Expected::Math),
+            ("====\ninside\n====\n", Expected::Delimited),
+            (
+                "[source,rust,extra]\n----\ninside\n----\n",
+                Expected::Unsupported,
+            ),
+        ];
+        for (cell_source, expected) in cases {
+            let source = format!("[cols=a]\n|===\n|{cell_source}|===\n");
+            let parsed = parse(&source).expect("parse cell case");
+            let AstBlock::Delimited(crate::parser::DelimitedBlock {
+                content: DelimitedContent::Table(table),
+                ..
+            }) = &parsed.ast.blocks()[0]
+            else {
+                panic!("table for {expected:?}")
+            };
+            let crate::table::TableCellContent::AsciiDoc(blocks) = &table.rows[0].cells[0].content
+            else {
+                panic!("AsciiDoc cell for {expected:?}")
+            };
+            let mut found = false;
+            crate::walker::walk_block_slice(blocks, |node| {
+                let crate::walker::SemanticNode::Block(block) = node else {
+                    return;
+                };
+                found |= matches!(
+                    (expected, block),
+                    (Expected::Heading, AstBlock::Heading(_))
+                        | (Expected::Paragraph, AstBlock::Paragraph(_))
+                        | (Expected::LiteralParagraph, AstBlock::LiteralParagraph(_))
+                        | (Expected::Break, AstBlock::Break(_))
+                        | (Expected::Literal, AstBlock::Literal(_))
+                        | (Expected::Source, AstBlock::Source(_))
+                        | (Expected::List, AstBlock::List(_))
+                        | (Expected::Math, AstBlock::Math(_))
+                        | (Expected::Delimited, AstBlock::Delimited(_))
+                        | (Expected::Unsupported, AstBlock::Unsupported(_))
+                );
+            });
+            assert!(found, "missing {expected:?}: {blocks:?}");
+            assert_eq!(parsed.syntax.reconstruct(), source);
+        }
     }
 
     #[test]

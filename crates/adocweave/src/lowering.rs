@@ -85,10 +85,17 @@ fn document_type(attributes: &[DocumentAttribute]) -> DocumentType {
 }
 
 fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
+    let mut ranges = Vec::new();
+    crate::walker::walk_block_slice(blocks, |node| {
+        if let crate::walker::SemanticNode::Block(block) = node {
+            ranges.push(block.range());
+        }
+    });
+    ranges.sort_unstable_by_key(|range| (range.start(), range.end()));
     for anchor in &mut *anchors {
-        anchor.target_range = blocks
+        anchor.target_range = ranges
             .iter()
-            .map(AstBlock::range)
+            .copied()
             .find(|range| range.start() >= anchor.range.end());
     }
     let mut anchored_targets = BTreeSet::new();

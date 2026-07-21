@@ -191,6 +191,7 @@ xref:substitutions.adoc[Core置換モデル]で定義する。
 |PSVを既定とし、CSV／DSV／TSV、列・cell属性、spanおよびAsciiDoc cellを定義する
 |PSV／CSV／DSV／TSV、暗黙／明示列、header／footer、列・cell属性、span、配置、style、
 quoted multiline cell、任意の1文字separator、duplicationおよびPSVのAsciiDoc block cellに対応。
+AsciiDoc cellは対応済みblock sequence全体とカスタムseparator delimiterによる入れ子表を解析する。
 自動header推論と表示属性は未対応
 
 |標準inline／block macro

@@ -217,8 +217,7 @@ Issue 072から075完了後の再監査では、catalog、文書構造projection
 正本へ収束しており、consumerごとの再導出を増やさない構成になった。WASMのrenderer入力wire型、上限検証と
 コア型への変換も専用moduleへ隔離し、request orchestrationからschema変更理由を分離した。
 
-一方、AsciiDoc table cellの再帰block解析は個別recognizerを共有していてもline dispatchを共有していない。
-この状態でblock種別を追加するとtop-levelだけ更新してもcompilerはcell側の欠落を検出できない。物理的な
-関数共有を目的にせず、header可否や再帰深さを`BlockContext`で明示する単一のblock sequence状態機械へ
-xref:../issues/089-unified-block-sequence-parser.adoc[Issue 089]で置き換える。これは公開前の構造是正とし、
-互換用の旧cell parserは残さない。
+Issue 089ではAsciiDoc table cellとcompound containerの独自line dispatchを削除した。文書root、compound、
+AsciiDoc cellを`BlockContext`で区別しながら、すべてを単一のblock sequence状態機械へ通す。状態機械は
+lowering前のblock、syntax、anchorおよびheader factを返し、属性解決、heading正規化、catalog／文書構造構築は
+rootで一度だけ行う。再帰contextも親のbudget、深さ、cancel checkおよびglobal source rangeを共有する。

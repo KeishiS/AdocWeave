@@ -319,6 +319,27 @@ fn compound_block_depth_limit_rejects_unbounded_nesting() {
 }
 
 #[test]
+fn asciidoc_cell_uses_the_parent_table_depth_budget() {
+    let limits = ProcessingLimits {
+        max_table_depth: 1,
+        ..ProcessingLimits::default()
+    };
+    let config = ProcessConfig {
+        limits,
+        syntax_mode: SyntaxMode::Permissive,
+    };
+    let source = b"[cols=a]\n|===\n|!===\n!nested\n!===\n|===\n";
+
+    assert!(matches!(
+        process_with_config(Operation::Convert, source, &config),
+        Err(ProcessError::LimitExceeded {
+            resource: "table nesting depth",
+            ..
+        })
+    ));
+}
+
+#[test]
 fn table_resources_are_rejected_at_the_construction_boundary() {
     let cases = [
         (

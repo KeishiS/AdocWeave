@@ -39,6 +39,13 @@ pub fn walk<'document>(
     walk_blocks(document.blocks(), &mut visitor);
 }
 
+pub(crate) fn walk_block_slice<'document>(
+    blocks: &'document [AstBlock],
+    mut visitor: impl FnMut(SemanticNode<'document>),
+) {
+    walk_blocks(blocks, &mut visitor);
+}
+
 fn walk_blocks<'document>(
     blocks: &'document [AstBlock],
     visitor: &mut impl FnMut(SemanticNode<'document>),

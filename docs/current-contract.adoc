@@ -8,11 +8,11 @@
 [cols="2,1",options="header"]
 |===
 |契約 |現在値
-|Core profile |12
+|Core profile |13
 |Rust core API |27
-|HTML |12
+|HTML |13
 |Projection |10
-|Conformance snapshot |17
+|Conformance snapshot |18
 |WASM API |13
 |===
 

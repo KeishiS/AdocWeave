@@ -94,6 +94,40 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
             }
         }
     }
+    crate::walker::walk_block_slice(document.blocks(), |node| {
+        let crate::walker::SemanticNode::Block(block) = node else {
+            return;
+        };
+        let missing = document
+            .anchors()
+            .iter()
+            .filter(|anchor| {
+                anchor.valid
+                    && anchor.target_range == Some(block.range())
+                    && !targets
+                        .iter()
+                        .any(|target| target.id_range == anchor.id_range)
+            })
+            .collect::<Vec<_>>();
+        for anchor in missing {
+            targets.push(ReferenceTarget {
+                kind: match block {
+                    AstBlock::Heading(heading) => match heading.kind {
+                        HeadingKind::DocumentTitle => ReferenceTargetKind::DocumentTitle,
+                        HeadingKind::Part => ReferenceTargetKind::Part,
+                        HeadingKind::Section { .. } | HeadingKind::Discrete { .. } => {
+                            ReferenceTargetKind::Section
+                        }
+                    },
+                    _ => ReferenceTargetKind::ExplicitAnchor,
+                },
+                id: anchor.id.clone(),
+                label: anchor.label.clone().unwrap_or_else(|| block_label(block)),
+                id_range: anchor.id_range,
+                target_range: block.range(),
+            });
+        }
+    });
     crate::walker::walk(document, |node| {
         let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(anchor)) = node else {
             return;

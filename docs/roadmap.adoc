@@ -256,12 +256,11 @@ icon setとmedia typeに応じたbackend presentation
 参照基準はhttps://docs.asciidoctor.org/asciidoc/latest/directives/include/[Includes]および
 https://docs.asciidoctor.org/asciidoc/latest/directives/conditionals/[Conditionals]とする。
 
-== 次の構造是正: Block sequence parserの再帰context統合
+== 完了した構造是正: Block sequence parserの再帰context統合
 
-Issue 072から075の完了後レビューにより、AsciiDoc table cellとtop-level parserが個別のline dispatchを
-持つことを確認した。個別recognizerとbudgetは共有しているが、このままでは新しいblock種別の接続漏れを
-型検査で検出できない。Issue 089では、header可否等のcontext差を型付けした単一状態機械へ破壊的に統合し、
-公開前に旧cell parserを削除する。
+Issue 072から075の完了後レビューで確認したAsciiDoc table cellとtop-level parserのline dispatch二重化は、
+Issue 089で解消した。header可否等のcontext差を型付けした単一状態機械へ破壊的に統合し、旧cell parserを
+削除した。再帰contextのanchor、diagnostic、budget、cancelおよびsource rangeも文書rootの正本へ合流する。
 
 * xref:../issues/089-unified-block-sequence-parser.adoc[Issue 089: Block sequence parserの再帰context統合]
 

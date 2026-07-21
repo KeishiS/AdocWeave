@@ -149,10 +149,26 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
                 "delimited"
             };
             block_problem_issues(&mut block.problems, block_name, output);
-            if let DelimitedContent::Compound(children) = &mut block.content {
-                for child in children {
-                    block_issues(child, output);
+            match &mut block.content {
+                DelimitedContent::Compound(children) => {
+                    for child in children {
+                        block_issues(child, output);
+                    }
                 }
+                DelimitedContent::Table(table) => {
+                    for row in &mut table.rows {
+                        for cell in &mut row.cells {
+                            if let crate::table::TableCellContent::AsciiDoc(children) =
+                                &mut cell.content
+                            {
+                                for child in children {
+                                    block_issues(child, output);
+                                }
+                            }
+                        }
+                    }
+                }
+                DelimitedContent::Verbatim(_) | DelimitedContent::Passthrough(_) => {}
             }
         }
         AstBlock::Unsupported(_) => {}

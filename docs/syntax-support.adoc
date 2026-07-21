@@ -85,13 +85,14 @@ HTML IDに使用する。
 |汎用区切り付きblock
 |対応
 |comment（`////`）、example（`====`）、listing（`----`）、literal（`....`）、open（`--`）、
-sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===`）を認識する。
+sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===`、カスタムseparatorの`!===`等）を認識する。
 内容はcompound／verbatim／raw／tableの型で区別し、同種blockは異なるdelimiter長で入れ子にできる。
 
 |表
 |対応
 |PSV／CSV／DSV／TSV、任意の1文字separator、quoted multiline cell、duplication、暗黙／明示列、
 header／footer、column／row span、配置、cell styleおよびPSVのAsciiDoc block cellを型付きで扱う。
+AsciiDoc cellは文書rootと同じblock sequence状態機械を用い、カスタムseparator delimiterによる入れ子表も扱う。
 詳細はxref:tables.adoc[表の対応仕様]を参照する。
 
 |ソースブロック（`[source,LANGUAGE]`と後続する`----`）
@@ -216,7 +217,7 @@ captionの出力意味とblock種別ごとの属性検証は今後のblock実装
 |Delimited block
 |部分対応
 |標準delimiterとcontent model、異なるdelimiter長によるcompound入れ子に対応する。
-compound内で現在解析するのは段落と入れ子containerであり、完全なblock列はIssue 061以降で拡張する
+compoundとAsciiDoc cellは文書rootと同じblock sequence状態機械で完全な対応済みblock列を解析する
 
 |Document headerとsection
 |対応

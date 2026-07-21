@@ -1,5 +1,5 @@
 = Block sequence parserの再帰context統合
-:status: in-progress
+:status: completed
 :depends-on: 075
 
 == 目的
@@ -44,3 +44,16 @@ fragment専用dispatchは持たず、親の`ParseBudget`とcancel checkを状態
 AsciiDoc cellで許可したheading、literal paragraph、break、source／math block、metadata付きblockおよび
 入れ子tableが同じsource rangeと共有budgetで解析される。禁止するdocument header要素は通常paragraphへ
 偶然fallbackせず、規範化した診断または意味へ決定的に回復する。
+
+== 完了結果
+
+文書root、compound containerおよびAsciiDoc cellを型付き`BlockContext`で区別し、単一の
+`parse_block_sequence`へ統合した。状態機械は`BlockSequenceOutput`としてlowering前のsyntax、block、anchor、
+attributeおよびheader factを返す。属性展開、heading正規化、catalog／文書構造構築とsyntax diagnostic投影は
+rootで一度だけ実行し、旧`parse_compound_children`は削除した。
+
+再帰contextは親のnode／block／table budget、block／table深さ、cancel checkおよびglobal UTF-8 byte rangeを
+共有する。cell内の見出し、literal paragraph、break、source／STEM、metadata、明示anchor、syntax diagnosticと
+入れ子表をtestおよびnative／WASM conformance caseで固定した。明示anchorのtarget探索とHTML ID生成も共通walkerで
+全階層へ拡張した。カスタムseparatorの表delimiterを規範文法へ追加し、Core Profile、HTMLおよびconformance契約を
+更新した。

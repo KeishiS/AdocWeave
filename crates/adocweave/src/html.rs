@@ -17,7 +17,7 @@ use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, Reso
 use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 12;
+pub const HTML_CONTRACT_VERSION: u16 = 13;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
@@ -246,10 +246,19 @@ fn render_block(
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
+    let explicit_id = explicit_id.or_else(|| {
+        context
+            .targets
+            .iter()
+            .find(|target| target.target_range == block.range())
+            .map(|target| target.id.as_str())
+    });
     match block {
         AstBlock::Heading(heading) => {
             let generated;
             let id = if let Some(id) = heading_id {
+                id
+            } else if let Some(id) = explicit_id {
                 id
             } else {
                 generated = crate::document::heading_id_base(&heading.text);
@@ -1406,7 +1415,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 12);
+        assert_eq!(HTML_CONTRACT_VERSION, 13);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
