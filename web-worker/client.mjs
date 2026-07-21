@@ -26,7 +26,7 @@ export class AdocWeaveWorkerClient {
       version,
       generation,
       payload: {
-        apiVersion: 2,
+        apiVersion: 4,
         sourceId,
         version,
         generation,

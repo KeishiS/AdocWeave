@@ -36,11 +36,11 @@ pub fn snapshot(
     ConformanceSnapshot {
         contract_version: CONFORMANCE_CONTRACT_VERSION,
         syntax: canonical_syntax(analysis),
-        ast: canonical_ast(&analysis.ast()),
-        diagnostics_json: render_diagnostics_json(&analysis.diagnostics()),
-        symbols_json: render_symbols_json(&document_symbols(&analysis.ast())),
+        ast: canonical_ast(analysis.ast()),
+        diagnostics_json: render_diagnostics_json(analysis.diagnostics()),
+        symbols_json: render_symbols_json(&document_symbols(analysis.ast())),
         projection_json: project(analysis, resolutions).render_json(),
-        html: render_with_resolutions(&analysis.ast(), policy, resolutions).html,
+        html: render_with_resolutions(analysis.ast(), policy, resolutions).html,
     }
 }
 

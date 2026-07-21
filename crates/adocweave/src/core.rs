@@ -485,8 +485,10 @@ mod tests {
 
     #[test]
     fn protected_attribute_is_an_error_in_strict_mode() {
-        let mut options = ParseOptions::default();
-        options.syntax_mode = crate::limits::SyntaxMode::Strict;
+        let mut options = ParseOptions {
+            syntax_mode: crate::limits::SyntaxMode::Strict,
+            ..ParseOptions::default()
+        };
         options.protected_attributes.insert(
             "note-id".to_owned(),
             "123e4567-e89b-12d3-a456-426614174000".to_owned(),

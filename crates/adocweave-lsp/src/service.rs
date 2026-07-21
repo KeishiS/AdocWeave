@@ -330,7 +330,7 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())));
         };
-        let symbols = document_symbols(&document.analysis.ast())
+        let symbols = document_symbols(document.analysis.ast())
             .iter()
             .map(|symbol| {
                 symbol_to_lsp(
@@ -457,10 +457,10 @@ impl LanguageService {
                 self.position_encoding,
             );
         }
-        if let Some((value, range)) = inline_hover(&document.analysis.ast(), offset) {
+        if let Some((value, range)) = inline_hover(document.analysis.ast(), offset) {
             return hover_markup(value, range, &document, self.position_encoding);
         }
-        let Some(element) = document_element_at(&document.analysis.ast(), offset) else {
+        let Some(element) = document_element_at(document.analysis.ast(), offset) else {
             return Ok(None);
         };
         let (heading, range, part) = match element {
@@ -470,7 +470,7 @@ impl LanguageService {
                 return Ok(None);
             }
         };
-        let id = generate_heading_ids(&document.analysis.ast())
+        let id = generate_heading_ids(document.analysis.ast())
             .into_iter()
             .find(|candidate| candidate.range == heading.text_range)
             .map(|candidate| candidate.id)
@@ -520,7 +520,7 @@ impl LanguageService {
                 .collect();
             return Ok(Some(lsp::CompletionResponse::Array(items)));
         }
-        let Some(element) = document_element_at(&document.analysis.ast(), offset) else {
+        let Some(element) = document_element_at(document.analysis.ast(), offset) else {
             return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
         };
         let source = match element {

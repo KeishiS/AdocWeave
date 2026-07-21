@@ -141,7 +141,7 @@ fn process_inner(
     let output = match operation {
         Operation::Convert => {
             let analysis = analyze_with_policy(source, config)?;
-            Ok(html::render(&analysis.ast(), &html::RenderPolicy::default()).html)
+            Ok(html::render(analysis.ast(), &html::RenderPolicy::default()).html)
         }
         Operation::Format => {
             let analysis = analyze_with_policy(source, config)?;

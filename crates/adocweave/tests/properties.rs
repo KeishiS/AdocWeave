@@ -119,8 +119,8 @@ fn renderer_and_projections_are_deterministic_for_generated_input() {
     let engine = Engine::new(ParseOptions::default());
     for source in corpus() {
         let analysis = engine.analyze(&source).expect("analysis");
-        let first_html = render(&analysis.ast(), &RenderPolicy::default());
-        let second_html = render(&analysis.ast(), &RenderPolicy::default());
+        let first_html = render(analysis.ast(), &RenderPolicy::default());
+        let second_html = render(analysis.ast(), &RenderPolicy::default());
         assert_eq!(first_html, second_html);
         assert_eq!(project(&analysis, &[]), project(&analysis, &[]));
         assert_eq!(searchable_text(&analysis), searchable_text(&analysis));
@@ -134,11 +134,11 @@ fn generated_reference_keys_and_targets_are_stable_and_bounded() {
     for source in corpus() {
         let analysis = engine.analyze(&source).expect("analysis");
         assert_eq!(
-            generate_heading_ids(&analysis.ast()),
-            generate_heading_ids(&analysis.ast())
+            generate_heading_ids(analysis.ast()),
+            generate_heading_ids(analysis.ast())
         );
         assert_eq!(
-            reference_targets(&analysis.ast()),
+            reference_targets(analysis.ast()),
             analysis.reference_targets()
         );
         for reference in analysis.references() {
@@ -185,7 +185,7 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
 fn semantic_signature(analysis: &adocweave::Analysis) -> (String, Vec<String>, Vec<ReferenceKey>) {
     (
         searchable_text(analysis).text,
-        reference_targets(&analysis.ast())
+        reference_targets(analysis.ast())
             .into_iter()
             .map(|target| format!("{:?}:{}:{}", target.kind, target.id, target.label))
             .collect(),

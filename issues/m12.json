@@ -7,6 +7,6 @@
     { "id": "055", "status": "completed", "dependsOn": ["054"] },
     { "id": "056", "status": "completed", "dependsOn": ["055"] },
     { "id": "057", "status": "completed", "dependsOn": ["055"] },
-    { "id": "058", "status": "in-progress", "dependsOn": ["055", "056", "057"] }
+    { "id": "058", "status": "completed", "dependsOn": ["055", "056", "057"] }
   ]
 }

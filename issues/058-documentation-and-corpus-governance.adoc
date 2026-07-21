@@ -1,5 +1,5 @@
 = 文書・Issue・corpus検査の持続可能な運用
-:status: in-progress
+:status: completed
 :depends-on: 055,056,057
 
 == 目的
@@ -28,3 +28,14 @@
 == 依存関係
 
 Issue 055の診断pipeline確定後に完了する。分類と文書整理は先行可能。
+
+== 完了確認
+
+`docs/corpus.json`を通常文書と異常fixtureの機械可読な分類正本とし、repository governance testで
+lossless復元、UTF-8 range、規範文書の無診断および異常fixtureの診断code列を検査する。
+`issues/m12.json`と各Issue属性の一致・依存順を同じgateで検査する。長期判断はADR、現行仕様は
+`docs/current-contract.adoc`から参照する規範文書、完了履歴はIssue、未実装機能はroadmapへ分離した。
+
+2026-07-20に`cargo make release-gate`が成功した。workspace、Clippy、Zed extension、native／WASM
+12件の適合性、Worker、Rustdoc、116件のAsciiDoc corpus、契約version、fuzz target compile、
+3 target各5秒のfuzz smoke、release fixtureおよびWASM buildを確認した。

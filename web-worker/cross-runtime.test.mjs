@@ -13,13 +13,14 @@ const manifest = JSON.parse(readFileSync(resolve(fixtures, "cases.json"), "utf8"
 const require = createRequire(import.meta.url);
 const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js"));
 const native = resolve(root, "target/debug/adocweave-conformance-native");
+const release = JSON.parse(readFileSync(resolve(root, "release-manifest.json"), "utf8"));
 
 function requestFor(entry) {
   const source = entry.sourceFile
     ? readFileSync(resolve(fixtures, entry.sourceFile), "utf8")
     : entry.source;
   return {
-    apiVersion: 2,
+    apiVersion: release.contracts.wasmApi,
     sourceId: `conformance:${entry.name}`,
     version: 1,
     generation: 1,

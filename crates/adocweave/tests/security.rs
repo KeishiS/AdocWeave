@@ -22,7 +22,7 @@ fn adversarial_fixture_never_emits_active_input_or_unsafe_urls() {
     let analysis = Engine::new(ParseOptions::default())
         .analyze(source)
         .expect("adversarial fixture remains bounded");
-    let output = render(&analysis.ast(), &RenderPolicy::default());
+    let output = render(analysis.ast(), &RenderPolicy::default());
     let lower = output.html.to_ascii_lowercase();
 
     assert!(!lower.contains("<script"));
@@ -41,7 +41,7 @@ fn hostile_resolver_href_is_revalidated_by_the_renderer() {
         .expect("analysis");
     let range = analysis.references()[0].range;
     let output = render_with_resolutions(
-        &analysis.ast(),
+        analysis.ast(),
         &RenderPolicy::default(),
         &[ResolvedReference::resolved(range, "javascript:alert(1)")],
     );

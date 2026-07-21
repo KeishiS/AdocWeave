@@ -128,7 +128,7 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
 
 pub fn searchable_text(analysis: &Analysis) -> SearchableText {
     let mut segments = Vec::new();
-    collect_search_blocks(&analysis.ast().blocks(), &mut segments);
+    collect_search_blocks(analysis.ast().blocks(), &mut segments);
     let text = segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -441,7 +441,7 @@ mod tests {
         .analyze(source)
         .expect("analysis");
         let projected = project(&analysis, &[]);
-        let html = crate::html::render(&analysis.ast(), &crate::html::RenderPolicy::default());
+        let html = crate::html::render(analysis.ast(), &crate::html::RenderPolicy::default());
 
         assert_eq!(projected.contract_version, PROJECTION_CONTRACT_VERSION);
         assert!(html.html.contains("<h1"));

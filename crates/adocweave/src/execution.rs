@@ -305,8 +305,10 @@ mod tests {
         assert_ne!(baseline, request("other").cache_key());
 
         let mut variants = Vec::new();
-        let mut options = ParseOptions::default();
-        options.syntax_mode = crate::limits::SyntaxMode::Strict;
+        let options = ParseOptions {
+            syntax_mode: crate::limits::SyntaxMode::Strict,
+            ..ParseOptions::default()
+        };
         variants.push(options);
         let mut options = ParseOptions::default();
         options.limits.max_nodes += 1;

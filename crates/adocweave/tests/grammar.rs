@@ -107,7 +107,7 @@ fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
     assert_eq!(source_block.value, "_source_ <tag>\n");
 
     let html =
-        adocweave::html::render(&parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
+        adocweave::html::render(parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
     assert!(html.contains("<pre>*literal* &lt;tag&gt;\n.....\n</pre>"));
     assert!(
         html.contains("<pre><code class=\"language-rust\">_source_ &lt;tag&gt;\n</code></pre>")
@@ -145,7 +145,7 @@ fn substitutions_cover_every_supported_semantic_context() {
     assert!(matches!(parsed.ast().blocks()[5], AstBlock::Paragraph(_)));
 
     let html =
-        adocweave::html::render(&parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
+        adocweave::html::render(parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
     assert!(html.contains(
         "&lt;Title&gt; <strong>strong <em>nested</em> and <code>code &lt;&amp;&gt;</code></strong>"
     ));

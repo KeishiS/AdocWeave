@@ -44,7 +44,7 @@ function request(version, generation) {
     version,
     generation,
     payload: {
-      apiVersion: 2,
+      apiVersion: 4,
       sourceId: null,
       version,
       generation,
@@ -92,7 +92,7 @@ test("protocol mismatch returns a stable error without executing WASM", () => {
   assert.equal(state.messages[0].error.code, "unsupported-worker-protocol");
 });
 
-test("client sends WASM API version 2 with core-owned default options", () => {
+test("client sends WASM API version 4 with core-owned default options", () => {
   const messages = [];
   const worker = {
     postMessage(message) {
@@ -106,7 +106,7 @@ test("client sends WASM API version 2 with core-owned default options", () => {
   });
   client.analyze({ version: 1, source: "text" });
 
-  assert.equal(messages[1].payload.apiVersion, 2);
+  assert.equal(messages[1].payload.apiVersion, 4);
   assert.deepEqual(messages[1].payload.options, {});
   client.dispose();
 });
