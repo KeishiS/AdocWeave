@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "0.1.0",
+  "distVersion": "0.32.0",
+  "repository": "https://github.com/KeishiS/AdocWeave",
+  "targets": [
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-musl"
+  ],
+  "assets": [
+    {
+      "name": "adocweave-cli-aarch64-unknown-linux-musl.tar.xz",
+      "kind": "cli",
+      "target": "aarch64-unknown-linux-musl",
+      "archive": "tar.xz",
+      "executable": "adocweave"
+    },
+    {
+      "name": "adocweave-cli-x86_64-unknown-linux-musl.tar.xz",
+      "kind": "cli",
+      "target": "x86_64-unknown-linux-musl",
+      "archive": "tar.xz",
+      "executable": "adocweave"
+    },
+    {
+      "name": "adocweave-lsp-aarch64-unknown-linux-musl.tar.xz",
+      "kind": "lsp",
+      "target": "aarch64-unknown-linux-musl",
+      "archive": "tar.xz",
+      "executable": "adocweave-lsp"
+    },
+    {
+      "name": "adocweave-lsp-x86_64-unknown-linux-musl.tar.xz",
+      "kind": "lsp",
+      "target": "x86_64-unknown-linux-musl",
+      "archive": "tar.xz",
+      "executable": "adocweave-lsp"
+    },
+    {
+      "name": "adocweave-browser-0.1.0.tar.xz",
+      "kind": "browser",
+      "target": null,
+      "archive": "tar.xz",
+      "executable": null
+    }
+  ],
+  "releaseMetadata": [
+    {
+      "name": "adocweave-dist-manifest.json",
+      "kind": "distribution-manifest",
+      "format": "canonical-json"
+    },
+    {
+      "name": "adocweave.spdx.json",
+      "kind": "sbom",
+      "format": "spdx-json"
+    },
+    {
+      "name": "sha256.sum",
+      "kind": "checksums",
+      "format": "sha256"
+    }
+  ]
+}

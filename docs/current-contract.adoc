@@ -3,17 +3,21 @@
 この文書は、現行実装を説明する規範文書の入口である。作業の経緯はIssue、長期的な
 設計判断はADR、将来の機能はロードマップを参照する。
 
+初回公開に先立ち、開発中に増加していた6種類の契約versionを一度だけすべて`1`へresetした。これは公開前の
+履歴整理であり、公開baseline確定後は番号を再利用または巻き戻さない。配布時の対応関係は
+xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
+
 == 契約値
 
 [cols="2,1",options="header"]
 |===
 |契約 |現在値
-|Core profile |17
-|Rust core API |29
-|HTML |15
-|Projection |11
-|Conformance snapshot |20
-|WASM API |16
+|Core profile |1
+|Rust core API |1
+|HTML |1
+|Projection |1
+|Conformance snapshot |1
+|WASM API |1
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。

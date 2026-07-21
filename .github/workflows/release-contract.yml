@@ -1,0 +1,25 @@
+name: Release contract
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify tag and release train
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            node tools/release-contract.mjs "--tag=$RELEASE_TAG"
+          else
+            node tools/release-contract.mjs
+          fi
+          node tools/release-contract.test.mjs

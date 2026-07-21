@@ -36,8 +36,10 @@
           default = pkgs.mkShell {
             packages = with pkgs; [
               cargo
+              cargo-dist
               cargo-make
               clippy
+              gnutar
               lld
               nodejs
               ripgrep
@@ -46,6 +48,7 @@
               rustfmt
               stdenv.cc
               wasm-bindgen-cli
+              xz
               adocweave-fuzz
             ];
 

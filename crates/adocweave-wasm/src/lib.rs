@@ -19,7 +19,7 @@ pub use render_inputs::{
     WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
 
-pub const WASM_API_VERSION: u16 = 16;
+pub const WASM_API_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

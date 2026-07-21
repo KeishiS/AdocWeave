@@ -3,6 +3,9 @@ name = "adocweave-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 description = "Command-line adapter for AdocWeave"
 
@@ -15,3 +18,6 @@ serde_json = "1.0"
 name = "adocweave"
 path = "src/main.rs"
 doc = false
+
+[package.metadata.dist]
+dist = true

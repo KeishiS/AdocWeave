@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KeishiS/AdocWeave/blob/main/release/adocweave-dist-manifest.schema.json",
+  "title": "AdocWeave distribution manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageVersion",
+    "sourceCommit",
+    "contracts",
+    "assets"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "packageVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-rc\\.[1-9][0-9]*)?$" },
+    "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coreProfile", "coreApi", "html", "projection", "conformance", "wasmApi"],
+      "properties": {
+        "coreProfile": { "type": "integer", "minimum": 1 },
+        "coreApi": { "type": "integer", "minimum": 1 },
+        "html": { "type": "integer", "minimum": 1 },
+        "projection": { "type": "integer", "minimum": 1 },
+        "conformance": { "type": "integer", "minimum": 1 },
+        "wasmApi": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "target", "archive", "byteSize", "sha256", "executable"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+          "kind": { "enum": ["cli", "lsp", "browser"] },
+          "target": { "type": ["string", "null"] },
+          "archive": { "const": "tar.xz" },
+          "byteSize": { "type": "integer", "minimum": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "executable": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+= AdocWeave browser package
+
+このarchiveは、AdocWeaveのWebAssembly moduleとWeb Worker adapterを同じversionで提供する。
+公的なpackage registryへは登録せず、リポジトリ所有者のGitHub Releasesから取得して展開する。
+
+== 内容
+
+* `wasm/adocweave_wasm.js`と`wasm/adocweave_wasm_bg.wasm`：`wasm-bindgen`のweb向け成果物
+* `wasm/adocweave_wasm.d.ts`：生成された場合のTypeScript declaration
+* `worker/client.mjs`：frontendから利用する入口
+* `worker/controller.mjs`と`worker/worker.mjs`：最新generationだけを採用するWorker実装
+* `worker/contracts.mjs`：WASM API契約version
+
+== 最小例
+
+[source,javascript]
+----
+import { AdocWeaveWorkerClient } from "./worker/client.mjs";
+
+const worker = new Worker(new URL("./worker/worker.mjs", import.meta.url), {
+  type: "module",
+});
+const client = new AdocWeaveWorkerClient(worker, {
+  moduleUrl: new URL("./wasm/adocweave_wasm.js", import.meta.url).href,
+  wasmUrl: new URL("./wasm/adocweave_wasm_bg.wasm", import.meta.url).href,
+});
+
+worker.addEventListener("message", ({ data }) => {
+  if (data.type === "result") {
+    preview.innerHTML = data.result.html;
+  }
+});
+client.analyze({ version: 1, source: "= Title\n\nAsciiDoc text" });
+----
+
+DOMへの反映、UI stateおよび入力のdebounceは利用側が所有する。APIと返却値の詳細は
+リポジトリの`docs/wasm-worker.adoc`を参照する。

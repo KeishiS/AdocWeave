@@ -11,6 +11,14 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
+homepage = "https://github.com/KeishiS/AdocWeave"
 license = "MIT OR Apache-2.0"
+publish = false
+repository = "https://github.com/KeishiS/AdocWeave"
 rust-version = "1.85"
 version = "0.1.0"
+
+# The profile used by dist 0.32.0 for release artifacts.
+[profile.dist]
+inherits = "release"
+lto = "thin"
