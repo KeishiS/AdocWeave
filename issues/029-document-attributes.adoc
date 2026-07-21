@@ -1,4 +1,6 @@
 = 文書属性と保護メタデータ
+:status: completed
+:depends-on:
 
 == 目的
 

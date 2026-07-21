@@ -1,5 +1,5 @@
 = 契約文書とIssueの機械的governance
-:status: planned
+:status: completed
 :depends-on: 076
 
 == 目的
@@ -20,3 +20,8 @@
 全Issueと規範契約が一つのgateで検査され、壊れたtable、古い公開version例およびstatus／依存矛盾を
 意図的な失敗testで確認できる。
 
+== 完了結果
+
+Issue 001以降の全ファイルへstatus／depends-on属性を統一し、連番、状態、依存先、DAG、完了依存および
+roadmap表記を一つのrepository governance testで検査する。`release-manifest.json`を6契約versionのcatalogとし、
+Rust／WASM定数および文書との同期を検査する。tableとIssue依存の破損入力を拒否するnegative testも追加した。

@@ -1,4 +1,6 @@
 = 共通診断モデル
+:status: completed
+:depends-on:
 
 == 目的
 

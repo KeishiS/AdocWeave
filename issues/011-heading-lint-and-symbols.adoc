@@ -1,4 +1,6 @@
 = 見出しLintと文書シンボル
+:status: completed
+:depends-on:
 
 == 目的
 

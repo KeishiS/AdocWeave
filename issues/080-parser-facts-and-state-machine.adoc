@@ -1,5 +1,5 @@
 = 構文factとblock parser状態機械
-:status: planned
+:status: completed
 :depends-on: 078
 
 == 目的
@@ -18,3 +18,8 @@
 
 block branchごとのcommit処理が重複せず、最終ASTが構文回復の一時状態を公開しない。
 
+== 完了結果
+
+行認識の優先順位を`recognize_line`へ集約し、`BlockCursor`と`BlockRecognition`が必ず前進するcommitを
+検査する。syntax／semantic blockとpending metadataのcommitを共通化した。回復factはheadingの意味正規化後に
+syntax issueへ移して破棄し、最終ASTでは空であることをnested walker testで保証した。

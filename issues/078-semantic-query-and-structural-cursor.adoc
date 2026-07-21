@@ -1,5 +1,5 @@
 = Semantic queryと構造cursorの一本化
-:status: planned
+:status: completed
 :depends-on: 076
 
 == 目的
@@ -19,3 +19,8 @@ projection間に重複する再帰規則を廃止する。
 semantic値の深い複製索引がなく、新しいblock variant追加時に木の再帰規則を複数consumerへ追加する
 必要がない。nativeとWASMのconformanceが一致する。
 
+== 完了結果
+
+`Analysis`からreference、macroおよびresourceの所有複製索引を除去し、ASTを正本とするsemantic walker
+queryへ移行した。nested compound、list continuation、AsciiDoc table cellおよびinline labelの到達集合を
+同一testで固定し、native／WASM共通conformanceを維持した。

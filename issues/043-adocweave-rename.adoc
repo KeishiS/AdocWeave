@@ -1,4 +1,6 @@
 = AdocWeaveへの全面改名
+:status: completed
+:depends-on:
 
 == 目的
 

@@ -1,4 +1,6 @@
 = インライン認識とsemantic node構築の分離
+:status: completed
+:depends-on:
 
 == 目的
 

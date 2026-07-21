@@ -1,4 +1,6 @@
 = リンク・cross reference構文とURLポリシー
+:status: completed
+:depends-on:
 
 == 目的
 

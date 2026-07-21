@@ -1,4 +1,6 @@
 = 複数行インラインspan
+:status: completed
+:depends-on:
 
 == 目的
 

@@ -1,4 +1,6 @@
 = 一般的なバックスラッシュエスケープ
+:status: completed
+:depends-on:
 
 == 目的
 

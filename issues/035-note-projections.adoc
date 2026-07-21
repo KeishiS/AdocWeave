@@ -1,4 +1,6 @@
 = 汎用文書projection
+:status: completed
+:depends-on:
 
 == 目的
 

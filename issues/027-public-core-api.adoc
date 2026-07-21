@@ -1,4 +1,6 @@
 = 構文プロファイルとキャンセル可能な公開API
+:status: completed
+:depends-on:
 
 == 目的
 

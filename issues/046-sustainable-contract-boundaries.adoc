@@ -1,4 +1,6 @@
 = 契約境界の持続可能性改善
+:status: completed
+:depends-on:
 
 == 目的
 

@@ -1,4 +1,6 @@
 = 最小Formatter
+:status: completed
+:depends-on:
 
 == 目的
 

@@ -1,4 +1,6 @@
 = async-lspとTokioへのLSP基盤移行
+:status: completed
+:depends-on:
 
 == 目的
 

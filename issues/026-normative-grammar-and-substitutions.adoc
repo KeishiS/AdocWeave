@@ -1,4 +1,6 @@
 = 規範的文法と置換モデル
+:status: completed
+:depends-on:
 
 == 目的
 

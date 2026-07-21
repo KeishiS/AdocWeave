@@ -1,4 +1,6 @@
 = cross reference解決とnote参照Resolver
+:status: completed
+:depends-on:
 
 == 目的
 

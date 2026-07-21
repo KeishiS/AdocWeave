@@ -1,4 +1,6 @@
 = LaTeX STEMと数式拡張境界
+:status: completed
+:depends-on:
 
 == 目的
 

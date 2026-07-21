@@ -1,4 +1,6 @@
 = 明示アンカーと安定ID
+:status: completed
+:depends-on:
 
 == 目的
 

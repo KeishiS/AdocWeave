@@ -1,4 +1,6 @@
 = 所有型Analysisとホスト拡張境界の再設計
+:status: completed
+:depends-on:
 
 == 目的
 

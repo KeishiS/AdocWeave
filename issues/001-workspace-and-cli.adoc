@@ -1,4 +1,6 @@
 = Cargo workspaceとCLIの初期化
+:status: completed
+:depends-on:
 
 == 目的
 

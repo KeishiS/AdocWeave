@@ -1,5 +1,5 @@
 = 原子的なhost resource pipeline
-:status: planned
+:status: completed
 :depends-on: 076
 
 == 目的
@@ -21,3 +21,8 @@ document computationとして採用する。
 CLIとLSPにpath安全性、byte課金、依存graphおよびsnapshot構築の重複実装がなく、解析結果が
 root revisionとworkspace generationの組として原子的に採用される。
 
+== 完了結果
+
+`adocweave-host`へcanonical path、bounded UTF-8 read、byte課金および依存graphを集約した。LSPは
+`DocumentRevision`と`WorkspaceGeneration`の両方を採用時に照合し、root解析と展開解析を一つの
+`DocumentView`として保持する。CLIとLSPのpath・上限定数の重複を除去した。

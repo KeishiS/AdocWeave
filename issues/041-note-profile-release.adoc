@@ -1,4 +1,6 @@
 = ホスト非依存コアプロファイルのリリース検証
+:status: completed
+:depends-on:
 
 == 目的
 

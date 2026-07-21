@@ -1,4 +1,6 @@
 = ホバーと補完
+:status: completed
+:depends-on:
 
 == 目的
 
