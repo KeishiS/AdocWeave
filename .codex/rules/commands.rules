@@ -1,0 +1,100 @@
+# AdocWeaveで日常的に使うコマンドの実行policy。
+#
+# rulesはsandbox外での実行可否を制御する。filesystemやnetworkの範囲は
+# .codex/config.tomlのsandbox設定で別に管理する。
+
+# Rustの読み取り・構築・検証コマンド。
+prefix_rule(
+    pattern = [
+        "cargo",
+        ["build", "check", "clippy", "doc", "fmt", "metadata", "test", "tree"],
+    ],
+    decision = "allow",
+    justification = "Rust workspaceの構築と検証を許可する",
+    match = [
+        "cargo check --workspace --all-targets --all-features",
+        "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+        "cargo test --workspace --all-features",
+        "cargo fmt --all -- --check",
+    ],
+)
+
+# Makefile.tomlに定義したproject task。
+prefix_rule(
+    pattern = ["cargo", "make"],
+    decision = "allow",
+    justification = "リポジトリで管理されたcargo-make taskの実行を許可する",
+    match = [
+        "cargo make verify",
+        "cargo make release-gate",
+    ],
+)
+
+# リポジトリで管理しているWeb Worker testとfuzz設定検査。
+prefix_rule(
+    pattern = ["npm", "test"],
+    decision = "allow",
+    justification = "Web Workerの通常testを許可する",
+    match = ["npm test --prefix web-worker"],
+)
+
+prefix_rule(
+    pattern = ["npm", "run", "test:cross-runtime"],
+    decision = "allow",
+    justification = "Web Workerのcross-runtime testを許可する",
+    match = ["npm run test:cross-runtime --prefix web-worker"],
+)
+
+prefix_rule(
+    pattern = ["adocweave-fuzz", "check"],
+    decision = "allow",
+    justification = "fuzz targetの構成検査を許可する",
+    match = ["adocweave-fuzz check --fuzz-dir fuzz"],
+)
+
+# Gitの参照操作。
+prefix_rule(
+    pattern = ["git", ["diff", "log", "show", "status"]],
+    decision = "allow",
+    justification = "Git repositoryの読み取り操作を許可する",
+    match = [
+        "git status --short",
+        "git diff --check",
+        "git log -3 --oneline",
+    ],
+)
+
+# index、履歴、branch、worktreeまたはremoteを変更する操作は毎回確認する。
+prefix_rule(
+    pattern = [
+        "git",
+        ["add", "branch", "commit", "merge", "push", "rebase", "tag", "worktree"],
+    ],
+    decision = "prompt",
+    justification = "Gitの状態または外部remoteへ影響するため実行前に確認する",
+)
+
+# 破壊的操作は、より限定的な代替手段を選ぶ。
+prefix_rule(
+    pattern = ["git", "reset", "--hard"],
+    decision = "forbidden",
+    justification = "作業内容を失うため禁止する。必要な変更は個別のpatchで行う",
+)
+
+prefix_rule(
+    pattern = ["git", "clean"],
+    decision = "forbidden",
+    justification = "未追跡ファイルを失う可能性があるため禁止する。対象を確認して個別に処理する",
+)
+
+prefix_rule(
+    pattern = ["git", "checkout", "--"],
+    decision = "forbidden",
+    justification = "未commit変更を失う可能性があるため禁止する。個別のpatchで復元する",
+)
+
+prefix_rule(
+    pattern = ["rm", ["-rf", "-fr"]],
+    decision = "forbidden",
+    justification = "再帰的な強制削除は禁止する。対象を確認して個別に削除する",
+)
