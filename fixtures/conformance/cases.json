@@ -69,6 +69,13 @@
       "contractImpact": "none"
     },
     {
+      "name": "advanced-tables-and-asciidoc-cell",
+      "source": "[format=csv,options=header]\n|===\nname,value\nalpha,\"one, two\"\n|===\n\n[cols=a]\n|===\n|Paragraph.\n\n* one\n* two\n|===\n",
+      "compatibility": "supported-subset",
+      "rationale": "format別scannerとAsciiDoc cellのblock解析はnativeとWASMで同じsemantic treeとHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance"
+    },
+    {
       "name": "strict-unsupported",
       "source": "[role=raw]\n",
       "options": { "syntaxMode": "strict" },

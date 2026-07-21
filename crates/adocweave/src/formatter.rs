@@ -347,6 +347,13 @@ mod tests {
     }
 
     #[test]
+    fn formatter_preserves_quoted_and_asciidoc_table_cells_byte_for_byte() {
+        let source = "[format=csv]\n|===\na,\"one,  two\"\n|===\n\n[cols=a]\n|===\n|paragraph  \n\n* item\n|===\n";
+        let formatted = format(source, &FormatConfig::default()).expect("format");
+        assert_eq!(formatted.formatted, source);
+    }
+
+    #[test]
     fn formatter_preserves_block_metadata_byte_for_byte() {
         let source = ".Visible title  \n[#item.custom%collapsible,kind=\"demo\"]\nParagraph  ";
         let formatted = format(source, &FormatConfig::default()).expect("format");

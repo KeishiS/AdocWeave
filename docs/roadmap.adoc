@@ -213,7 +213,8 @@ HTMLのraw出力は禁止する。
 
 |高
 |表
-|基本PSVは完了。AsciiDoc cellのblock文書、CSV／DSV／TSV、任意separatorおよびduplication
+|PSV／CSV／DSV／TSV、任意separator、duplicationおよびPSVのAsciiDoc block cellまで完了。
+自動header推論と表示属性は将来対応
 
 |高
 |標準macro

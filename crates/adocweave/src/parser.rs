@@ -334,9 +334,11 @@ impl AstDocument {
                             for row in &mut table.rows {
                                 for cell in &mut row.cells {
                                     match &mut cell.content {
-                                        crate::table::TableCellContent::Inlines(inlines)
-                                        | crate::table::TableCellContent::AsciiDoc(inlines) => {
+                                        crate::table::TableCellContent::Inlines(inlines) => {
                                             visitor(inlines)
+                                        }
+                                        crate::table::TableCellContent::AsciiDoc(blocks) => {
+                                            visit_blocks(blocks, visitor)
                                         }
                                         crate::table::TableCellContent::Verbatim(_) => {}
                                     }
@@ -810,7 +812,8 @@ pub(crate) fn parse_shared_cancellable(
                 source_document.lines().len(),
                 spec,
                 &mut budget,
-                1,
+                ParseDepth { block: 1, table: 1 },
+                Some(&pending_metadata.semantic),
             )?;
             let syntax = crate::syntax_builder::delimited(&block);
             commit_block(
@@ -1795,7 +1798,8 @@ fn parse_list_continuation(
             source_document.lines().len(),
             spec,
             budget,
-            1,
+            ParseDepth { block: 1, table: 1 },
+            None,
         )?;
         return Ok(Some((vec![AstBlock::Delimited(block)], end)));
     }
@@ -2016,6 +2020,12 @@ struct DelimitedParseContext<'source> {
 }
 
 #[derive(Clone, Copy)]
+struct ParseDepth {
+    block: usize,
+    table: usize,
+}
+
+#[derive(Clone, Copy)]
 enum DelimitedContentModel {
     Compound,
     Verbatim,
@@ -2081,7 +2091,8 @@ fn parse_delimited_block(
     end_line: usize,
     spec: DelimiterSpec,
     budget: &mut ParseBudget,
-    depth: usize,
+    depth: ParseDepth,
+    metadata: Option<&BlockMetadata>,
 ) -> Result<(DelimitedBlock, usize), ParseFailure> {
     let source_document = context.source_document;
     let source = context.source;
@@ -2109,8 +2120,11 @@ fn parse_delimited_block(
         DelimitedContentModel::Table => DelimitedContent::Table(parse_table(
             &value,
             body.content_range,
+            source,
             context.config,
             budget,
+            depth.table,
+            metadata.unwrap_or(&BlockMetadata::default()),
         )?),
     };
     Ok((
@@ -2132,12 +2146,15 @@ fn parse_delimited_block(
 fn parse_table(
     value: &str,
     range: TextRange,
+    source: &str,
     config: &ParseConfig,
     budget: &mut ParseBudget,
+    table_depth: usize,
+    metadata: &BlockMetadata,
 ) -> Result<crate::table::Table, ParseFailure> {
     use crate::table::{
-        HorizontalAlignment, TableCell, TableCellContent, TableCellStyle, TableColumn, TableFormat,
-        TableRow, TableSection, VerticalAlignment,
+        HorizontalAlignment, TableCell, TableCellContent, TableCellStyle, TableColumn, TableRow,
+        TableSection, VerticalAlignment,
     };
 
     let reject = |resource, limit, actual| {
@@ -2154,11 +2171,21 @@ fn parse_table(
             value.len() as u64,
         ));
     }
-    if config.limits.max_table_depth == 0 {
-        return Err(reject("table nesting depth", 0, 1));
+    if table_depth as u64 > u64::from(config.limits.max_table_depth) {
+        return Err(reject(
+            "table nesting depth",
+            config.limits.max_table_depth,
+            table_depth as u64,
+        ));
     }
-    let raw = crate::table::scan_psv(value, range);
-    let cell_count = raw.cells.len() as u64;
+    let (input_format, mut table_problems) = crate::table::input_format(metadata);
+    let raw = crate::table::scan(value, range, input_format);
+    table_problems.extend(raw.problems.iter().copied());
+    let cell_count = raw
+        .cells
+        .iter()
+        .map(|cell| u64::from(cell.duplication))
+        .sum::<u64>();
     if cell_count > u64::from(config.limits.max_table_cells) {
         return Err(reject(
             "table cells",
@@ -2188,45 +2215,44 @@ fn parse_table(
         .collect();
     let mut cells = Vec::with_capacity(raw.cells.len());
     for cell in raw.cells {
-        budget.consume_node()?;
-        let content = match cell.style {
-            TableCellStyle::Literal | TableCellStyle::Verse => {
-                TableCellContent::Verbatim(cell.raw.clone())
-            }
-            style => {
-                let parsed = parse_inlines(
-                    &cell.raw,
-                    cell.content_range,
-                    InlineParseConfig {
-                        max_depth: config.max_inline_depth,
-                        max_formula_bytes: config.max_formula_bytes,
-                    },
-                    budget,
-                )?;
-                if style == TableCellStyle::AsciiDoc {
-                    TableCellContent::AsciiDoc(parsed.inlines)
-                } else {
+        for _ in 0..cell.duplication {
+            budget.consume_node()?;
+            let content = match cell.style {
+                TableCellStyle::Literal | TableCellStyle::Verse => {
+                    TableCellContent::Verbatim(cell.raw.clone())
+                }
+                _ => {
+                    let parsed = parse_inlines(
+                        &cell.raw,
+                        cell.content_range,
+                        InlineParseConfig {
+                            max_depth: config.max_inline_depth,
+                            max_formula_bytes: config.max_formula_bytes,
+                        },
+                        budget,
+                    )?;
                     TableCellContent::Inlines(parsed.inlines)
                 }
-            }
-        };
-        cells.push(TableCell {
-            range: cell.range,
-            marker_range: cell.marker_range,
-            content_range: cell.content_range,
-            raw: cell.raw,
-            column_index: 0,
-            column_span: cell.column_span,
-            row_span: cell.row_span,
-            horizontal_alignment: cell.horizontal_alignment,
-            vertical_alignment: cell.vertical_alignment,
-            style: cell.style,
-            style_is_explicit: cell.style_is_explicit,
-            content,
-        });
+            };
+            cells.push(TableCell {
+                range: cell.range,
+                marker_range: cell.marker_range,
+                content_range: cell.content_range,
+                raw: cell.raw.clone(),
+                column_index: 0,
+                column_span: cell.column_span,
+                row_span: cell.row_span,
+                horizontal_alignment: cell.horizontal_alignment,
+                vertical_alignment: cell.vertical_alignment,
+                style: cell.style,
+                style_is_explicit: cell.style_is_explicit,
+                content,
+            });
+        }
     }
     let mut table = crate::table::Table {
-        format: TableFormat::Psv,
+        format: raw.format,
+        separator: raw.separator,
         content_range: raw.content_range,
         columns,
         rows: if cells.is_empty() {
@@ -2242,8 +2268,47 @@ fn parse_table(
                 cells,
             }]
         },
+        problems: table_problems,
     };
     crate::table::layout_rows(&mut table);
+    crate::table::configure(&mut table, metadata);
+    for row in &mut table.rows {
+        for cell in &mut row.cells {
+            if cell.style != TableCellStyle::AsciiDoc {
+                continue;
+            }
+            let fragment = SourceDocument::from_fragment_bounded(
+                Arc::from(cell.raw.as_str()),
+                cell.content_range.start(),
+                config.limits.max_line_bytes,
+                &|| false,
+            )
+            .map_err(|error| match error {
+                SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
+                SourceDocumentBuildError::LineLimitExceeded { limit, actual } => {
+                    ParseFailure::Budget(BudgetExceeded {
+                        resource: "line bytes",
+                        limit,
+                        actual,
+                    })
+                }
+                SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
+            })?;
+            let blocks = parse_compound_children(
+                &fragment,
+                0,
+                fragment.lines().len(),
+                source,
+                config,
+                budget,
+                ParseDepth {
+                    block: 1,
+                    table: table_depth + 1,
+                },
+            )?;
+            cell.content = TableCellContent::AsciiDoc(blocks);
+        }
+    }
     Ok(table)
 }
 
@@ -2254,13 +2319,13 @@ fn parse_compound_children(
     source: &str,
     config: &ParseConfig,
     budget: &mut ParseBudget,
-    depth: usize,
+    depth: ParseDepth,
 ) -> Result<Vec<AstBlock>, ParseFailure> {
-    if depth > config.max_block_depth.max(1) {
+    if depth.block > config.max_block_depth.max(1) {
         return Err(ParseFailure::Budget(BudgetExceeded {
             resource: "block nesting depth",
             limit: u32::try_from(config.max_block_depth).unwrap_or(u32::MAX),
-            actual: u64::try_from(depth).unwrap_or(u64::MAX),
+            actual: u64::try_from(depth.block).unwrap_or(u64::MAX),
         }));
     }
     let mut syntax = Vec::new();
@@ -2289,10 +2354,37 @@ fn parse_compound_children(
                 source,
                 config,
             };
-            let (block, next_line) =
-                parse_delimited_block(&context, line_index, end_line, spec, budget, depth + 1)?;
+            let (block, next_line) = parse_delimited_block(
+                &context,
+                line_index,
+                end_line,
+                spec,
+                budget,
+                ParseDepth {
+                    block: depth.block + 1,
+                    table: depth.table,
+                },
+                Some(&pending.semantic),
+            )?;
             syntax.push(crate::syntax_builder::delimited(&block));
             blocks.push(AstBlock::Delimited(block));
+            line_index = next_line;
+            continue;
+        }
+        if list_marker(content).is_some() {
+            flush_paragraph(
+                &mut syntax,
+                &mut blocks,
+                &mut paragraph_lines,
+                config,
+                budget,
+                &mut pending,
+            )?;
+            let (lists, next_line, range) =
+                parse_lists(source_document, line_index, source, config, budget)?;
+            syntax.push(crate::syntax_builder::list(range, &lists));
+            blocks.extend(lists.into_iter().map(AstBlock::List));
+            attach_pending_metadata(&mut syntax, &mut blocks, &mut pending);
             line_index = next_line;
             continue;
         }
@@ -3433,6 +3525,52 @@ mod tests {
         assert_eq!(table.rows[1].cells[0].raw, "first\ncontinued");
         assert_eq!(table.rows[2].cells[0].column_span, 2);
         assert_eq!(table.rows[2].cells[0].column_index, 0);
+        assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
+    fn separated_table_formats_and_duplication_share_the_table_model() {
+        let source = "[format=csv,options=header]\n|===\nname,description\nalpha,\"one, two\"\nbeta,\"line one\nline two\"\n|===\n\n[format=tsv]\n|===\na\tb\n|===\n\n|===\n3*|same\n|===\n";
+        let parsed = parse(source).expect("parse");
+        let tables = parsed
+            .ast
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                AstBlock::Delimited(crate::parser::DelimitedBlock {
+                    content: DelimitedContent::Table(table),
+                    ..
+                }) => Some(table),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tables.len(), 3);
+        assert_eq!(tables[0].format, crate::table::TableFormat::Csv);
+        assert_eq!(tables[0].rows.len(), 3);
+        assert_eq!(tables[0].rows[1].cells[1].raw, "one, two");
+        assert_eq!(tables[0].rows[2].cells[1].raw, "line one\nline two");
+        assert_eq!(tables[1].format, crate::table::TableFormat::Tsv);
+        assert_eq!(tables[1].separator, '\t');
+        assert_eq!(tables[2].rows[0].cells.len(), 3);
+    }
+
+    #[test]
+    fn asciidoc_table_cells_are_parsed_as_nested_blocks() {
+        let source = "[cols=a]\n|===\n|A paragraph.\n\n* one\n* two\n|===\n";
+        let parsed = parse(source).expect("parse");
+        let AstBlock::Delimited(crate::parser::DelimitedBlock {
+            content: DelimitedContent::Table(table),
+            ..
+        }) = &parsed.ast.blocks()[0]
+        else {
+            panic!("table")
+        };
+        let crate::table::TableCellContent::AsciiDoc(blocks) = &table.rows[0].cells[0].content
+        else {
+            panic!("AsciiDoc cell")
+        };
+        assert!(matches!(blocks[0], AstBlock::Paragraph(_)));
+        assert!(matches!(blocks[1], AstBlock::List(_)));
         assert_eq!(parsed.syntax.reconstruct(), source);
     }
 

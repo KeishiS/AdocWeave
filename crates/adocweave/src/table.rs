@@ -1,4 +1,4 @@
-//! Typed PSV table model and a lossless, I/O-free cell scanner.
+//! Typed table model and lossless, I/O-free format scanners.
 
 use crate::inline::Inline;
 use crate::source::{TextRange, TextSize};
@@ -6,6 +6,20 @@ use crate::source::{TextRange, TextSize};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TableFormat {
     Psv,
+    Csv,
+    Dsv,
+    Tsv,
+}
+
+impl TableFormat {
+    pub const fn default_separator(self) -> char {
+        match self {
+            Self::Psv => '|',
+            Self::Csv => ',',
+            Self::Dsv => ':',
+            Self::Tsv => '\t',
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,7 +59,7 @@ pub enum TableCellStyle {
 pub enum TableCellContent {
     Inlines(Vec<Inline>),
     Verbatim(String),
-    AsciiDoc(Vec<Inline>),
+    AsciiDoc(Vec<crate::parser::AstBlock>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,9 +97,24 @@ pub struct TableRow {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Table {
     pub format: TableFormat,
+    pub separator: char,
     pub content_range: TextRange,
     pub columns: Vec<TableColumn>,
     pub rows: Vec<TableRow>,
+    pub problems: Vec<TableProblem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableProblemKind {
+    InvalidFormat,
+    InvalidSeparator,
+    UnclosedQuotedCell,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TableProblem {
+    pub kind: TableProblemKind,
+    pub range: TextRange,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,16 +129,97 @@ pub(crate) struct RawCell {
     pub vertical_alignment: Option<VerticalAlignment>,
     pub style: TableCellStyle,
     pub style_is_explicit: bool,
+    pub duplication: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RawTable {
+    pub format: TableFormat,
+    pub separator: char,
     pub content_range: TextRange,
     pub inferred_columns: usize,
     pub cells: Vec<RawCell>,
+    pub problems: Vec<TableProblem>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TableInputFormat {
+    pub format: TableFormat,
+    pub separator: char,
+}
+
+pub(crate) fn input_format(
+    metadata: &crate::parser::BlockMetadata,
+) -> (TableInputFormat, Vec<TableProblem>) {
+    let format_attribute = metadata
+        .attributes
+        .iter()
+        .rev()
+        .find(|attribute| attribute.name.as_deref() == Some("format"));
+    let parsed_format = format_attribute.and_then(|attribute| {
+        match attribute
+            .value
+            .trim_matches('"')
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "psv" => Some(TableFormat::Psv),
+            "csv" => Some(TableFormat::Csv),
+            "dsv" => Some(TableFormat::Dsv),
+            "tsv" => Some(TableFormat::Tsv),
+            _ => None,
+        }
+    });
+    let format = parsed_format.unwrap_or(TableFormat::Psv);
+    let separator_attribute = metadata
+        .attributes
+        .iter()
+        .rev()
+        .find(|attribute| attribute.name.as_deref() == Some("separator"));
+    let separator_value = separator_attribute.map(|attribute| attribute.value.trim_matches('"'));
+    let separator = separator_value
+        .and_then(|value| {
+            let mut characters = value.chars();
+            let separator = characters.next()?;
+            characters.next().is_none().then_some(separator)
+        })
+        .unwrap_or_else(|| format.default_separator());
+    let mut problems = Vec::new();
+    if let Some(attribute) = format_attribute.filter(|_| parsed_format.is_none()) {
+        problems.push(TableProblem {
+            kind: TableProblemKind::InvalidFormat,
+            range: attribute.range,
+        });
+    }
+    if let Some(attribute) = separator_attribute.filter(|_| {
+        !separator_value.is_some_and(|value| {
+            let mut characters = value.chars();
+            characters.next().is_some() && characters.next().is_none()
+        })
+    }) {
+        problems.push(TableProblem {
+            kind: TableProblemKind::InvalidSeparator,
+            range: attribute.range,
+        });
+    }
+    (TableInputFormat { format, separator }, problems)
+}
+
+pub(crate) fn scan(value: &str, range: TextRange, input: TableInputFormat) -> RawTable {
+    match input.format {
+        TableFormat::Psv => scan_psv_with_separator(value, range, input.separator),
+        TableFormat::Csv | TableFormat::Dsv | TableFormat::Tsv => {
+            scan_delimited(value, range, input)
+        }
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn scan_psv(value: &str, range: TextRange) -> RawTable {
+    scan_psv_with_separator(value, range, '|')
+}
+
+fn scan_psv_with_separator(value: &str, range: TextRange, separator: char) -> RawTable {
     let mut cells = Vec::<RawCell>::new();
     let mut offset = 0;
     let mut inferred_columns = 0;
@@ -118,8 +228,13 @@ pub(crate) fn scan_psv(value: &str, range: TextRange) -> RawTable {
             .strip_suffix('\n')
             .unwrap_or(line_with_ending);
         let line = line.strip_suffix('\r').unwrap_or(line);
-        let markers = marker_positions(line);
-        inferred_columns = inferred_columns.max(markers.len());
+        let markers = marker_positions(line, separator);
+        inferred_columns = inferred_columns.max(
+            markers
+                .iter()
+                .map(|(start, separator)| parse_cell_spec(&line[*start..*separator]).duplication)
+                .sum::<u32>() as usize,
+        );
         if markers.is_empty() {
             if let Some(previous) = cells.last_mut() {
                 previous.raw.push('\n');
@@ -156,6 +271,7 @@ pub(crate) fn scan_psv(value: &str, range: TextRange) -> RawTable {
                 vertical_alignment: spec.vertical_alignment,
                 style: spec.style,
                 style_is_explicit: spec.style_is_explicit,
+                duplication: spec.duplication,
             });
         }
         offset += line_with_ending.len();
@@ -175,16 +291,19 @@ pub(crate) fn scan_psv(value: &str, range: TextRange) -> RawTable {
         cell.raw = cell.raw.trim_matches([' ', '\t', '\r', '\n']).to_owned();
     }
     RawTable {
+        format: TableFormat::Psv,
+        separator,
         content_range: range,
         inferred_columns: inferred_columns.max(1),
         cells,
+        problems: Vec::new(),
     }
 }
 
-fn marker_positions(line: &str) -> Vec<(usize, usize)> {
+fn marker_positions(line: &str, separator: char) -> Vec<(usize, usize)> {
     line.char_indices()
         .filter_map(|(pipe, character)| {
-            if character != '|' {
+            if character != separator {
                 return None;
             }
             if line[..pipe]
@@ -211,7 +330,7 @@ fn cell_spec_start(prefix: &str) -> usize {
         if character.is_ascii_digit()
             || matches!(
                 character,
-                '.' | '+' | '<' | '>' | '^' | 'a' | 'd' | 'e' | 'h' | 'l' | 'm' | 's' | 'v'
+                '.' | '+' | '*' | '<' | '>' | '^' | 'a' | 'd' | 'e' | 'h' | 'l' | 'm' | 's' | 'v'
             )
         {
             start = offset;
@@ -230,6 +349,7 @@ struct CellSpec {
     vertical_alignment: Option<VerticalAlignment>,
     style: TableCellStyle,
     style_is_explicit: bool,
+    duplication: u32,
 }
 
 fn parse_cell_spec(value: &str) -> CellSpec {
@@ -261,7 +381,117 @@ fn parse_cell_spec(value: &str) -> CellSpec {
         vertical_alignment,
         style,
         style_is_explicit: explicit_style.is_some(),
+        duplication: value
+            .split_once('*')
+            .and_then(|(count, _)| count.parse().ok())
+            .unwrap_or(1)
+            .max(1),
     }
+}
+
+fn scan_delimited(value: &str, range: TextRange, input: TableInputFormat) -> RawTable {
+    let mut cells = Vec::new();
+    let mut problems = Vec::new();
+    let mut field_start = 0;
+    let mut content_start = 0;
+    let mut raw = String::new();
+    let mut quoted = false;
+    let mut quote_closed = false;
+    let mut columns = 0_usize;
+    let mut row_columns = 0_usize;
+    let mut chars = value.char_indices().peekable();
+    while let Some((offset, character)) = chars.next() {
+        if quoted {
+            if character == '"' {
+                if chars.peek().is_some_and(|(_, next)| *next == '"') {
+                    raw.push('"');
+                    chars.next();
+                } else {
+                    quoted = false;
+                    quote_closed = true;
+                }
+            } else {
+                raw.push(character);
+            }
+            continue;
+        }
+        if character == '"' && raw.is_empty() && !quote_closed {
+            quoted = true;
+            content_start = offset + character.len_utf8();
+            continue;
+        }
+        let row_end = character == '\n';
+        if character == input.separator || row_end {
+            push_delimited_cell(
+                &mut cells,
+                range,
+                field_start,
+                content_start,
+                offset,
+                std::mem::take(&mut raw),
+            );
+            row_columns += 1;
+            if row_end {
+                columns = columns.max(row_columns);
+                row_columns = 0;
+            }
+            field_start = offset + character.len_utf8();
+            content_start = field_start;
+            quote_closed = false;
+        } else if !quote_closed || !character.is_ascii_whitespace() {
+            raw.push(character);
+        }
+    }
+    if field_start < value.len() || (!value.is_empty() && value.ends_with(input.separator)) {
+        push_delimited_cell(
+            &mut cells,
+            range,
+            field_start,
+            content_start,
+            value.len(),
+            raw,
+        );
+        row_columns += 1;
+    }
+    if quoted {
+        let start = absolute_range(range, field_start, field_start).start();
+        let end = absolute_range(range, value.len(), value.len()).end();
+        problems.push(TableProblem {
+            kind: TableProblemKind::UnclosedQuotedCell,
+            range: TextRange::new(start, end).expect("quoted cell range is ordered"),
+        });
+    }
+    RawTable {
+        format: input.format,
+        separator: input.separator,
+        content_range: range,
+        inferred_columns: columns.max(row_columns).max(1),
+        cells,
+        problems,
+    }
+}
+
+fn push_delimited_cell(
+    cells: &mut Vec<RawCell>,
+    parent: TextRange,
+    field_start: usize,
+    content_start: usize,
+    field_end: usize,
+    raw: String,
+) {
+    cells.push(RawCell {
+        range: absolute_range(parent, field_start, field_end),
+        marker_range: absolute_range(parent, field_start, content_start),
+        content_range: absolute_range(parent, content_start, field_end),
+        raw: raw.trim_end_matches('\r').to_owned(),
+        column_span: 1,
+        row_span: 1,
+        horizontal_alignment: None,
+        vertical_alignment: None,
+        style: TableCellStyle::Default,
+        style_is_explicit: false,
+        duplication: 1,
+    });
 }
 
 pub(crate) fn style(character: char) -> Option<TableCellStyle> {
@@ -390,16 +620,9 @@ fn apply_column_defaults(table: &mut Table) {
                     TableCellStyle::Literal | TableCellStyle::Verse => {
                         TableCellContent::Verbatim(cell.raw.clone())
                     }
-                    TableCellStyle::AsciiDoc => match std::mem::replace(
-                        &mut cell.content,
-                        TableCellContent::Inlines(Vec::new()),
-                    ) {
-                        TableCellContent::Inlines(inlines)
-                        | TableCellContent::AsciiDoc(inlines) => {
-                            TableCellContent::AsciiDoc(inlines)
-                        }
-                        content @ TableCellContent::Verbatim(_) => content,
-                    },
+                    TableCellStyle::AsciiDoc => {
+                        std::mem::replace(&mut cell.content, TableCellContent::Inlines(Vec::new()))
+                    }
                     _ => {
                         std::mem::replace(&mut cell.content, TableCellContent::Inlines(Vec::new()))
                     }
@@ -506,5 +729,61 @@ mod tests {
         let raw = scan_psv(source, range(source));
         assert_eq!(raw.cells.len(), 5);
         assert_eq!(raw.cells[1].row_span, 2);
+    }
+
+    #[test]
+    fn separated_scanner_handles_quotes_escaped_quotes_and_multiline_cells() {
+        let source = "name,description\nalpha,\"one, two\"\nbeta,\"line one\nline \"\"two\"\"\"";
+        let table = scan(
+            source,
+            range(source),
+            TableInputFormat {
+                format: TableFormat::Csv,
+                separator: ',',
+            },
+        );
+        assert_eq!(table.format, TableFormat::Csv);
+        assert_eq!(table.inferred_columns, 2);
+        assert_eq!(table.cells.len(), 6);
+        assert_eq!(table.cells[3].raw, "one, two");
+        assert_eq!(table.cells[5].raw, "line one\nline \"two\"");
+    }
+
+    #[test]
+    fn table_input_format_uses_typed_defaults_and_separator_override() {
+        let range = range("[format=tsv,separator=;]");
+        let metadata = crate::parser::BlockMetadata {
+            attributes: vec![
+                crate::parser::ElementAttribute {
+                    name: Some("format".to_owned()),
+                    value: "tsv".to_owned(),
+                    range,
+                },
+                crate::parser::ElementAttribute {
+                    name: Some("separator".to_owned()),
+                    value: ";".to_owned(),
+                    range,
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            input_format(&metadata),
+            (
+                TableInputFormat {
+                    format: TableFormat::Tsv,
+                    separator: ';'
+                },
+                Vec::new()
+            )
+        );
+    }
+
+    #[test]
+    fn psv_scanner_records_cell_duplication() {
+        let source = "3*|same |last";
+        let table = scan_psv(source, range(source));
+        assert_eq!(table.cells[0].duplication, 3);
+        assert_eq!(table.cells[1].duplication, 1);
     }
 }

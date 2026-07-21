@@ -61,9 +61,11 @@ fn walk_blocks<'document>(
                         for cell in &row.cells {
                             visitor(SemanticNode::TableCell(cell));
                             match &cell.content {
-                                crate::table::TableCellContent::Inlines(inlines)
-                                | crate::table::TableCellContent::AsciiDoc(inlines) => {
+                                crate::table::TableCellContent::Inlines(inlines) => {
                                     walk_inlines(inlines, visitor)
+                                }
+                                crate::table::TableCellContent::AsciiDoc(blocks) => {
+                                    walk_blocks(blocks, visitor)
                                 }
                                 crate::table::TableCellContent::Verbatim(_) => {}
                             }

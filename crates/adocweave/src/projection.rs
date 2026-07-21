@@ -209,13 +209,15 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                     for row in &table.rows {
                         for cell in &row.cells {
                             match &cell.content {
-                                crate::table::TableCellContent::Inlines(inlines)
-                                | crate::table::TableCellContent::AsciiDoc(inlines) => push_search(
+                                crate::table::TableCellContent::Inlines(inlines) => push_search(
                                     output,
                                     SearchTextKind::Prose,
                                     cell.content_range,
                                     inline_text(inlines),
                                 ),
+                                crate::table::TableCellContent::AsciiDoc(blocks) => {
+                                    collect_search_blocks(blocks, output)
+                                }
                                 crate::table::TableCellContent::Verbatim(value) => push_search(
                                     output,
                                     SearchTextKind::Code,

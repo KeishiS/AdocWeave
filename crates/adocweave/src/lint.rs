@@ -39,10 +39,11 @@ pub enum LintRule {
     UnresolvedCrossReference,
     InconsistentList,
     InvalidStem,
+    InvalidTable,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -66,6 +67,7 @@ impl LintRule {
         Self::UnresolvedCrossReference,
         Self::InconsistentList,
         Self::InvalidStem,
+        Self::InvalidTable,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -93,6 +95,7 @@ impl LintRule {
             Self::UnresolvedCrossReference => "unresolved-cross-reference",
             Self::InconsistentList => "inconsistent-list",
             Self::InvalidStem => "invalid-stem",
+            Self::InvalidTable => "invalid-table",
         }
     }
 }
@@ -258,8 +261,38 @@ pub(crate) fn lint_syntax(
     lint_attributes(document, config, &mut diagnostics);
     lint_anchors(document, config, &mut diagnostics);
     lint_links_and_references(document, config, &mut diagnostics);
+    lint_tables(document, config, &mut diagnostics);
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_tables(
+    document: &crate::parser::AstDocument,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    crate::walker::walk(document, |node| {
+        let crate::walker::SemanticNode::Table(table) = node else {
+            return;
+        };
+        for problem in &table.problems {
+            let message = match problem.kind {
+                crate::table::TableProblemKind::InvalidFormat => "unsupported table format",
+                crate::table::TableProblemKind::InvalidSeparator => {
+                    "table separator must contain exactly one character"
+                }
+                crate::table::TableProblemKind::UnclosedQuotedCell => "unclosed quoted table cell",
+            };
+            push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InvalidTable,
+                problem.range,
+                message,
+                None,
+            );
+        }
+    });
 }
 
 fn lint_syntax_issues(syntax: &SyntaxTree, config: &LintConfig, diagnostics: &mut Vec<Diagnostic>) {
@@ -1084,5 +1117,21 @@ mod tests {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_str() == "invalid-stem" && diagnostic.message.contains("size limit")
         }));
+    }
+
+    #[test]
+    fn invalid_table_format_separator_and_quote_have_stable_diagnostics() {
+        for source in [
+            "[format=unknown]\n|===\n|cell\n|===\n",
+            "[format=csv,separator=too-long]\n|===\na,b\n|===\n",
+            "[format=csv]\n|===\na,\"open\n|===\n",
+        ] {
+            let diagnostics = lint(source, &LintConfig::default()).expect("lint");
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| { diagnostic.code.as_str() == "invalid-table" })
+            );
+        }
     }
 }

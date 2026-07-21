@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 13;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 14;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -144,7 +144,7 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                     (Some(value.clone()), Vec::new())
                 }
                 crate::parser::DelimitedContent::Table(table) => (
-                    Some("psv".to_owned()),
+                    Some(format!("{:?}", table.format).to_ascii_lowercase()),
                     table
                         .rows
                         .iter()
@@ -155,11 +155,22 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                             children: row
                                 .cells
                                 .iter()
-                                .map(|cell| CanonicalNode {
-                                    kind: "table-cell",
-                                    range: range(cell.range),
-                                    value: Some(cell.raw.clone()),
-                                    children: Vec::new(),
+                                .map(|cell| {
+                                    let children = match &cell.content {
+                                        crate::table::TableCellContent::Inlines(inlines) => {
+                                            inline_nodes(inlines)
+                                        }
+                                        crate::table::TableCellContent::AsciiDoc(blocks) => {
+                                            blocks.iter().map(block_node).collect()
+                                        }
+                                        crate::table::TableCellContent::Verbatim(_) => Vec::new(),
+                                    };
+                                    CanonicalNode {
+                                        kind: "table-cell",
+                                        range: range(cell.range),
+                                        value: Some(cell.raw.clone()),
+                                        children,
+                                    }
                                 })
                                 .collect(),
                         })

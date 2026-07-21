@@ -15,7 +15,7 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 8;
+pub const HTML_CONTRACT_VERSION: u16 = 9;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5", "hr",
     "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "table",
@@ -311,7 +311,7 @@ fn render_delimited(
             output.push_str("</pre>\n");
         }
         crate::parser::DelimitedContent::Table(table) => {
-            render_table(output, table, explicit_id, context);
+            render_table(output, table, explicit_id, policy, context);
         }
         crate::parser::DelimitedContent::Compound(children) => {
             for child in children {
@@ -325,6 +325,7 @@ fn render_table(
     output: &mut String,
     table: &crate::table::Table,
     explicit_id: Option<&str>,
+    policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_>,
 ) {
     use crate::table::{HorizontalAlignment, TableCellStyle, TableSection};
@@ -393,7 +394,7 @@ fn render_table(
                 crate::table::VerticalAlignment::Bottom => "table-valign-bottom",
             });
             output.push_str("\">");
-            render_table_cell(output, cell, context);
+            render_table_cell(output, cell, policy, context);
             output.push_str("</");
             output.push_str(tag);
             output.push_str(">\n");
@@ -417,6 +418,7 @@ fn table_section_close(section: crate::table::TableSection) -> &'static str {
 fn render_table_cell(
     output: &mut String,
     cell: &crate::table::TableCell,
+    policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_>,
 ) {
     use crate::table::{TableCellContent, TableCellStyle};
@@ -426,7 +428,7 @@ fn render_table_cell(
             escape_html_into(output, value);
             output.push_str("</pre>");
         }
-        TableCellContent::Inlines(inlines) | TableCellContent::AsciiDoc(inlines) => {
+        TableCellContent::Inlines(inlines) => {
             let wrapper = match cell.style {
                 TableCellStyle::Emphasis => Some("em"),
                 TableCellStyle::Monospace => Some("code"),
@@ -443,6 +445,11 @@ fn render_table_cell(
                 output.push_str("</");
                 output.push_str(wrapper);
                 output.push('>');
+            }
+        }
+        TableCellContent::AsciiDoc(blocks) => {
+            for block in blocks {
+                render_block(output, block, None, None, policy, context);
             }
         }
     }
@@ -1244,7 +1251,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 8);
+        assert_eq!(HTML_CONTRACT_VERSION, 9);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -1563,6 +1570,25 @@ mod tests {
             output.html,
             include_str!("../../../fixtures/tables/standard-forms.html")
         );
+    }
+
+    #[test]
+    fn advanced_table_formats_and_asciidoc_cells_render_from_typed_content() {
+        let source = "[format=csv,options=header]\n|===\nname,value\nalpha,\"one, two\"\n|===\n\n[cols=a]\n|===\n|Paragraph.\n\n* one\n* two\n|===\n";
+        let parsed = parse(source).expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+        assert!(output.html.contains("<thead>"));
+        assert!(
+            output
+                .html
+                .contains("<td class=\"table-align-left table-valign-top\">one, two</td>")
+        );
+        assert!(
+            output.html.contains(
+                "<td class=\"table-align-left table-valign-top\"><p>Paragraph.</p>\n<ul>"
+            )
+        );
+        assert!(output.html.contains("<li>one</li>"));
     }
 
     #[test]

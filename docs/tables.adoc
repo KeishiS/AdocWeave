@@ -1,7 +1,7 @@
 = 表の対応仕様
 
-AdocWeaveはAsciiDocのPSV表を、区切り付きblockの文字列ではなく、列、行、cell、span、配置、
-styleおよびsource rangeを持つ意味モデルとして扱う。sourceの正本はlossless syntax treeであり、
+AdocWeaveはAsciiDocの表を、区切り付きblockの文字列ではなく、入力形式、separator、列、行、cell、
+span、配置、style、内容modelおよびsource rangeを持つ意味モデルとして扱う。sourceの正本はlossless syntax treeであり、
 意味モデルからsourceを再生成しない。
 
 == 対応範囲
@@ -9,6 +9,9 @@ styleおよびsource rangeを持つ意味モデルとして扱う。sourceの正
 次を対応する。
 
 * `|===`によるPSV表
+* `format="csv"`、`format="dsv"`、`format="tsv"`による区切り形式
+* `separator`による1文字separatorの上書き
+* CSV／DSV／TSVのquoted cell、二重quote escapeおよび複数行cell
 * 先頭行のcell数による暗黙列数と、`cols`による明示列数
 * `cols`の幅、`n*` multiplier、水平・垂直配置およびcell style
 * `options="header,footer"`による先頭・末尾行の区分
@@ -16,27 +19,39 @@ styleおよびsource rangeを持つ意味モデルとして扱う。sourceの正
 * cell固有の水平・垂直配置と、default、emphasis、header、literal、monospace、strong、
   verse、AsciiDocのstyle
 * 通常cell内のinline置換と複数行内容
+* `n*|value`によるPSV cell duplication
+* AsciiDoc style cell内のparagraph、listおよび対応済み区切り付きblockの再帰解析
 * 表本体byte数、cell数、列数および表深さの構築時上限
 
 列指定よりcell指定を優先する。header行は列またはcellのstyleにかかわらずheader要素として
 出力する。HTML backendは`table`、section、row、cell要素と、契約で許可した属性・classだけを
 生成し、入力由来のHTMLを通過させない。
 
+== 形式とescape
+
+PSVはseparator直前の奇数個のbackslashによってcell境界の認識を抑止する。CSV、DSVおよびTSVは
+double quoteで囲んだcellを認識し、quoted cell中の`""`を1個の`"`として意味値へ復号する。
+quoted cell中ではseparatorと改行を内容として保持する。DSVの既定separatorは`:`、TSVはtabである。
+`separator`にはUnicode scalar valueをちょうど1個指定する。未知の`format`、空または複数文字の
+`separator`、閉じていないquoted cellは`invalid-table`診断になる。
+
+== AsciiDoc style cell
+
+`a` style cellはinline列ではなく、独立したblock列として同じparserで解析する。paragraph、list、
+対応済み区切り付きblockおよび入れ子表はHTML、検索projection、lintとsemantic walkerから到達できる。
+cell解析は親解析とnode、block、表深さおよびcell数のbudgetを共有し、別の簡易parserや無制限の再解析を行わない。
+
 == 現在の制限
 
-AsciiDoc style（`a`）cellは専用の型と通常のinline置換contextを持つが、現時点ではcell内容を
-独立したblock文書として再帰解析しない。このため、同cell内のlist、区切り付きblock、block macro、
-入れ子表は未対応である。`max_table_depth`は現在のtop-level表にも適用し、将来の再帰解析でも同じ
-上限契約を使用する。
-
-CSV、DSV、TSV、任意separator、cell duplication、自動header推論、caption、frame、grid、stripes、
-widthおよびautowidthも未対応である。未対応機能を暗黙にPSVとして誤解釈せず、今後のIssueで
-format別scannerと共通table modelの間を接続する。
+自動header推論、caption、frame、grid、stripes、widthおよびautowidthは未対応である。CSV系の
+quoted cellを`a` column styleにした場合、復号後文字列と元sourceが一対一にならないため、現段階では
+block解析を保証する対象をPSVのAsciiDoc style cellに限定する。未知の形式を暗黙に別形式として
+成功扱いにはせず、診断を返した上で安全なPSV fallbackを保持する。
 
 == 置換と安全性
 
-通常cellは`Normal`、literalとverseは`Verbatim`、AsciiDoc style cellは現在の対応範囲では
-`Normal` inline置換を適用する。HTMLへの変換時には文字列と属性値を出力文脈ごとにescapeする。
+通常cellは`Normal`、literalとverseは`Verbatim`、AsciiDoc style cellは子blockごとの置換contextを
+適用する。HTMLへの変換時には文字列と属性値を出力文脈ごとにescapeする。
 PSV separatorのbackslash escapeはcell境界の走査時に認識し、inline置換へsource rangeを保ったまま
 渡す。
 

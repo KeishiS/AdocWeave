@@ -1,5 +1,5 @@
 = 高度なtable形式とAsciiDoc cell
-:status: planned
+:status: completed
 :depends-on: 071
 
 == 目的
@@ -23,3 +23,14 @@ duplicationおよびblockを含むAsciiDoc cellは未対応である。`a` style
 
 各形式の正常、曖昧、上限超過fixtureがあり、対応範囲と公式AsciiDocとの差異が`docs/tables.adoc`に
 明記される。
+
+== 完了結果
+
+`TableFormat`とseparatorをsemantic modelへ持たせ、PSV／CSV／DSV／TSV、1文字separator、quoted
+multiline cell、二重quote escapeおよびPSV cell duplicationをformat別scannerで実装した。block metadataを
+scannerより先に渡す構成へ変更し、未知format、不正separatorおよび未閉じquoteを`invalid-table`として診断する。
+
+AsciiDoc style cellは同じblock parserと親budgetを用いるblock列になり、paragraph、listおよび対応済み
+区切り付きblockをHTML、projection、lint、LSP共通walkerから到達できる。native／WASM conformance case、
+Formatterのbyte保持、HTML安全出力、cell duplicationを含む形式別testを追加し、公開Core／HTML／conformance
+契約versionを更新した。対応範囲と残る表示属性はxref:../docs/tables.adoc[表の対応仕様]へ記録した。

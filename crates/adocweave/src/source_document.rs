@@ -63,6 +63,7 @@ pub struct LosslessToken {
 #[derive(Debug)]
 pub struct SourceDocument {
     source: Arc<str>,
+    base: TextSize,
     lines: Vec<SourceLine>,
     tokens: Vec<LosslessToken>,
 }
@@ -101,8 +102,22 @@ impl SourceDocument {
         max_line_bytes: u32,
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, SourceDocumentBuildError> {
+        Self::from_fragment_bounded(source, TextSize::ZERO, max_line_bytes, is_cancelled)
+    }
+
+    pub(crate) fn from_fragment_bounded(
+        source: Arc<str>,
+        base: TextSize,
+        max_line_bytes: u32,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, SourceDocumentBuildError> {
         let source_text = source.as_ref();
         TextSize::new(source_text.len())?;
+        TextSize::new(
+            base.to_usize()
+                .checked_add(source_text.len())
+                .ok_or(PositionError::SourceTooLarge { length: usize::MAX })?,
+        )?;
 
         let mut lines = Vec::new();
         let mut tokens = Vec::new();
@@ -131,10 +146,9 @@ impl SourceDocument {
                 source_text,
                 &mut lines,
                 &mut tokens,
-                line_start,
-                content_end,
-                full_end,
+                (line_start, content_end, full_end),
                 ending,
+                base.to_usize(),
             )?;
             cursor = full_end;
             line_start = full_end;
@@ -149,14 +163,14 @@ impl SourceDocument {
             source_text,
             &mut lines,
             &mut tokens,
-            line_start,
-            source_text.len(),
-            source_text.len(),
+            (line_start, source_text.len(), source_text.len()),
             LineEnding::None,
+            base.to_usize(),
         )?;
 
         Ok(Self {
             source,
+            base,
             lines,
             tokens,
         })
@@ -274,8 +288,9 @@ impl SourceDocument {
     }
 
     pub fn text(&self, range: TextRange) -> Option<&str> {
-        self.source
-            .get(range.start().to_usize()..range.end().to_usize())
+        let start = range.start().to_usize().checked_sub(self.base.to_usize())?;
+        let end = range.end().to_usize().checked_sub(self.base.to_usize())?;
+        self.source.get(start..end)
     }
 
     /// Reconstructs the original source solely from the token ranges.
@@ -304,14 +319,14 @@ fn push_line(
     source: &str,
     lines: &mut Vec<SourceLine>,
     tokens: &mut Vec<LosslessToken>,
-    start: usize,
-    content_end: usize,
-    full_end: usize,
+    bounds: (usize, usize, usize),
     ending: LineEnding,
+    base: usize,
 ) -> Result<(), PositionError> {
-    let content = text_range(start, content_end)?;
-    let ending_range = text_range(content_end, full_end)?;
-    let full = text_range(start, full_end)?;
+    let (start, content_end, full_end) = bounds;
+    let content = text_range(base + start, base + content_end)?;
+    let ending_range = text_range(base + content_end, base + full_end)?;
+    let full = text_range(base + start, base + full_end)?;
     lines.push(SourceLine {
         content,
         ending: ending_range,
@@ -319,7 +334,7 @@ fn push_line(
         ending_kind: ending,
     });
 
-    push_content_tokens(source, tokens, start, content_end)?;
+    push_content_tokens(source, tokens, start, content_end, base)?;
     if ending != LineEnding::None {
         tokens.push(LosslessToken {
             kind: LosslessTokenKind::LineEnding(ending),
@@ -334,6 +349,7 @@ fn push_content_tokens(
     tokens: &mut Vec<LosslessToken>,
     start: usize,
     end: usize,
+    base: usize,
 ) -> Result<(), PositionError> {
     let content = &source[start..end];
     let leading_whitespace = content
@@ -345,12 +361,12 @@ fn push_content_tokens(
         if leading_whitespace != 0 {
             tokens.push(LosslessToken {
                 kind: LosslessTokenKind::Whitespace,
-                range: text_range(start, start + leading_whitespace)?,
+                range: text_range(base + start, base + start + leading_whitespace)?,
             });
         }
         tokens.push(LosslessToken {
             kind: LosslessTokenKind::Comment,
-            range: text_range(start + leading_whitespace, end)?,
+            range: text_range(base + start + leading_whitespace, base + end)?,
         });
         return Ok(());
     }
@@ -367,7 +383,7 @@ fn push_content_tokens(
         if run_kind.is_some_and(|current| current != kind) {
             tokens.push(LosslessToken {
                 kind: run_kind.expect("a changed run has a previous kind"),
-                range: text_range(start + run_start, start + offset)?,
+                range: text_range(base + start + run_start, base + start + offset)?,
             });
             run_start = offset;
         }
@@ -377,7 +393,7 @@ fn push_content_tokens(
     if let Some(kind) = run_kind {
         tokens.push(LosslessToken {
             kind,
-            range: text_range(start + run_start, end)?,
+            range: text_range(base + start + run_start, base + end)?,
         });
     }
     Ok(())

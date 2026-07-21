@@ -41,6 +41,15 @@ fn configure_tables(blocks: &mut [AstBlock]) {
             AstBlock::Delimited(block) => match &mut block.content {
                 crate::parser::DelimitedContent::Table(table) => {
                     crate::table::configure(table, &block.metadata);
+                    for row in &mut table.rows {
+                        for cell in &mut row.cells {
+                            if let crate::table::TableCellContent::AsciiDoc(blocks) =
+                                &mut cell.content
+                            {
+                                configure_tables(blocks);
+                            }
+                        }
+                    }
                 }
                 crate::parser::DelimitedContent::Compound(children) => configure_tables(children),
                 crate::parser::DelimitedContent::Verbatim(_)
