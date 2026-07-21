@@ -175,7 +175,7 @@ resource snapshot／source map境界を実装した。
 公開semantic model、recognizer、builder、syntax diagnostic投影および文書構成を責務別に分離し、
 互換layerや二重pipelineを残さず全consumerを同時に移行した。
 
-Issue 068ではsource map付き解析projectionを実装した。次にIssue 069でLSPのworkspace include、
+Issue 068ではsource map付き解析projection、Issue 069ではLSPのworkspace includeを実装した。次に
 Issue 070でCLIの明示的local includeを実装する。Issue 071では標準構文の残件を高度なtable、文書
 catalog、文書構造projectionおよび解決済みrenderer入力のIssue 072から075へ分解した。network
 resource取得はコア、LSPおよび標準CLIの責務に含めない。

@@ -35,7 +35,8 @@ Zedまたは他のLSP client
 
 * LSPのinitialize、shutdown、exitおよびstdio transport
 * URI、position encodingおよびLSP型とコア型の変換
-* 開いている文書のtext、version、generationおよび解析スナップショット
+* 開いている文書とworkspace resourceのtext、version、generationおよび解析スナップショット
+* file URIに限定したinclude依存graph、逆依存索引および上限付きlocal resource読込
 * 通知順序、要求並行数、CPU解析数、debounceおよび結果採用判定
 * clientへの診断、応答、通知および進捗報告
 
@@ -150,7 +151,8 @@ client process監視、network transportその他の不要なfeatureは、利用
 
 == 診断
 
-Language Serverは`Analysis.diagnostics`をLSP診断へ変換し、同じ入力を独自にLintしない。
+Language Serverは直接解析の`Analysis.diagnostics`と、include展開解析の型付きorigin projectionを
+LSP診断へ変換し、同じ入力を独自にLintしない。
 push diagnosticsを送る場合、文書URI、versionまたはgenerationおよびposition encodingを
 同じスナップショットから得る。
 
@@ -166,8 +168,18 @@ pull diagnosticsは現段階では広告しない。
 `debounceMs`を受け付け、0から1,000 msへ制限する。不正設定は現在値を維持し、サーバを
 終了させない。既定は30 msである。
 
-既定サーバはopen文書の所有`Analysis`だけから文書内・文書間xrefを索引する。任意スキーム、
-未open文書および製品DBを扱うホストは`run_with_host_index`へ`HostReferenceIndex`を注入する。
+既定サーバはinitialize時のworkspace folderから`.adoc` fileを上限付きで読み、open文書を優先する
+version付きsnapshotを構築する。`include::`の依存graphと逆依存索引を保持し、open文書変更または
+`workspace/didChangeWatchedFiles`で変更resourceに依存するrootだけを新generationとして再解析する。
+symlinkは追跡せず、workspace外、network URI、1 resource 10 MiB超、合計50 MiB超または10,000 file超を
+拒否する。LSP自身はnetwork resourceを取得しない。
+
+include展開結果は直接解析と別のimmutable snapshotとして採用し、diagnostic、include Definition、
+Document Link、ReferencesおよびRenameを元`SourceId`とrangeへ投影する。欠落resource、循環、safe
+mode違反および上限超過は`adocweave-project`診断となる。古いresource versionを含むjobはroot文書の
+generation gateで破棄する。
+
+任意スキームおよび製品DBを扱うホストは`run_with_host_index`へ`HostReferenceIndex`を注入する。
 このtraitは事前構築済みのメモリ索引を問い合わせる境界であり、実装内で同期I/Oを行っては
 ならない。
 
@@ -176,9 +188,8 @@ encodingを所有する。ホストは要求generationより古い索引からLo
 曖昧・索引更新中は`None`、ホスト障害は`Err`として区別する。障害を受けた要求は失敗しても、
 コア診断、Outline、Formatその他の機能とサーバプロセスは継続する。
 
-Renameは`HostReferenceIndex::is_complete()`が真で、宣言を含む全参照Locationが得られた
-場合だけ`WorkspaceEdit`を返す。既定のopen文書索引や更新中・部分索引では破壊的編集を
-返さない。
+Renameはhost indexが結果を返す場合はそれを優先し、それ以外は採用済みworkspace snapshot内の宣言と
+参照だけを編集する。対象がworkspace外へ解決される場合や参照集合を構築できない場合は編集を返さない。
 
 == エディター投影
 

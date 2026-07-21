@@ -3,6 +3,7 @@
 mod backend;
 mod service;
 mod state;
+mod workspace;
 
 pub use service::{
     HostReferenceIndex, HostReferenceRequest, NoHostReferenceIndex, PositionEncoding,

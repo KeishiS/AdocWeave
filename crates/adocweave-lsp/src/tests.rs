@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use adocweave::Engine;
+use adocweave::preprocessor::{PreprocessedAnalysis, ProjectionLimits, preprocess};
 use adocweave::reference::ReferenceKey;
 use async_lsp::lsp_types as lsp;
 use serde::de::DeserializeOwned;
@@ -10,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use super::{HostReferenceIndex, HostReferenceRequest, PositionEncoding, run};
 use crate::service::LanguageService;
-use crate::state::{Adoption, AnalysisJob};
+use crate::state::{Adoption, AnalysisJob, WorkspaceAnalysis, WorkspaceProblem};
 
 fn typed<T: DeserializeOwned>(value: Value) -> T {
     serde_json::from_value(value).expect("valid LSP value")
@@ -57,7 +59,7 @@ fn initialize(service: &mut LanguageService, encodings: &[&str]) -> lsp::Initial
 }
 
 fn open(service: &mut LanguageService, uri: &str, version: i32, text: &str) {
-    let job = service.begin_open(typed(json!({
+    let jobs = service.begin_open(typed(json!({
         "textDocument": {
             "uri": uri,
             "languageId": "asciidoc",
@@ -65,7 +67,9 @@ fn open(service: &mut LanguageService, uri: &str, version: i32, text: &str) {
             "text": text
         }
     })));
-    adopt(service, job);
+    for job in jobs {
+        adopt(service, job);
+    }
 }
 
 fn change(
@@ -74,14 +78,16 @@ fn change(
     version: i32,
     changes: Value,
 ) -> Result<bool, String> {
-    let job = service.begin_change(typed(json!({
+    let jobs = service.begin_change(typed(json!({
         "textDocument": {"uri": uri, "version": version},
         "contentChanges": changes
     })))?;
-    let Some(job) = job else {
+    if jobs.is_empty() {
         return Ok(false);
-    };
-    adopt(service, job);
+    }
+    for job in jobs {
+        adopt(service, job);
+    }
     Ok(true)
 }
 
@@ -91,6 +97,48 @@ fn adopt(service: &mut LanguageService, job: AnalysisJob) {
         .analyze(job.cancellation.as_ref())
         .expect("analysis");
     assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
+    if let Some(input) = &job.workspace {
+        let document = match preprocess(&input.root.text, &input.snapshot, &input.options) {
+            Ok(document) => document,
+            Err(error) => {
+                assert_eq!(
+                    service.adopt_workspace_problem(
+                        &job,
+                        WorkspaceProblem {
+                            source_id: error
+                                .source_id
+                                .as_ref()
+                                .map(|source_id| source_id.as_str().to_owned()),
+                            range: error.range,
+                            code: error.kind.as_str().to_owned(),
+                            message: error.to_string(),
+                        }
+                    ),
+                    Adoption::Adopted
+                );
+                return;
+            }
+        };
+        let analysis = Engine::new(job.request.options.clone())
+            .analyze(&document.source)
+            .expect("workspace analysis");
+        let preprocessed = PreprocessedAnalysis { document, analysis };
+        let projection = preprocessed
+            .project_origins(ProjectionLimits::default())
+            .expect("workspace projection");
+        assert_eq!(
+            service.adopt_workspace(
+                &job,
+                WorkspaceAnalysis {
+                    document: Arc::new(preprocessed.document),
+                    analysis: Arc::new(preprocessed.analysis),
+                    projection: Arc::new(projection),
+                    resource_versions: input.resource_versions.clone(),
+                }
+            ),
+            Adoption::Adopted
+        );
+    }
 }
 
 #[test]
@@ -127,6 +175,113 @@ fn workspace_configuration_updates_and_caps_debounce() {
             .update_configuration(json!({"unknown": true}))
             .is_err()
     );
+}
+
+#[test]
+fn workspace_include_analysis_uses_versioned_resources_and_projects_diagnostics() {
+    let mut service = LanguageService::default();
+    open(&mut service, "file:///book/part.adoc", 3, "==Part\n");
+    open(
+        &mut service,
+        "file:///book/root.adoc",
+        1,
+        "= Root\n\ninclude::part.adoc[]\n",
+    );
+
+    let root = service
+        .documents
+        .get("file:///book/root.adoc")
+        .expect("root");
+    let workspace = root
+        .workspace_analysis
+        .as_ref()
+        .expect("workspace analysis");
+    assert!(workspace.analysis.source().contains("==Part"));
+    assert_eq!(
+        workspace.resource_versions.get("file:///book/part.adoc"),
+        Some(&3)
+    );
+    let links = service
+        .document_links(&uri("file:///book/root.adoc"))
+        .expect("document links")
+        .expect("links");
+    assert!(links.iter().any(|link| {
+        link.target.as_ref().map(lsp::Url::as_str) == Some("file:///book/part.adoc")
+            && link.range.start == lsp::Position::new(2, 9)
+    }));
+    let definition = service
+        .definition(&uri("file:///book/root.adoc"), lsp::Position::new(2, 10))
+        .expect("definition")
+        .expect("include definition");
+    let lsp::GotoDefinitionResponse::Scalar(definition) = definition else {
+        panic!("scalar include definition");
+    };
+    assert_eq!(definition.uri.as_str(), "file:///book/part.adoc");
+
+    let diagnostics = service
+        .diagnostics(&uri("file:///book/part.adoc"))
+        .expect("diagnostics");
+    assert_eq!(
+        diagnostics
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "heading-marker-space".to_owned()
+                )))
+            .count(),
+        1,
+        "direct and projected diagnostics are deduplicated: {:#?}",
+        diagnostics.diagnostics
+    );
+
+    let root_generation = service
+        .documents
+        .get("file:///book/root.adoc")
+        .expect("root")
+        .request
+        .revision
+        .generation;
+    assert!(
+        change(
+            &mut service,
+            "file:///book/part.adoc",
+            4,
+            json!([{"text": "== Part\n"}]),
+        )
+        .expect("change")
+    );
+    let reanalyzed = service
+        .documents
+        .get("file:///book/root.adoc")
+        .expect("root");
+    assert!(reanalyzed.request.revision.generation > root_generation);
+    assert!(reanalyzed.workspace_analysis.is_some());
+}
+
+#[test]
+fn missing_include_is_reported_as_a_project_diagnostic_at_the_directive() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///book/root.adoc",
+        1,
+        "= Root\n\ninclude::missing.adoc[]\n",
+    );
+
+    let diagnostics = service
+        .diagnostics(&uri("file:///book/root.adoc"))
+        .expect("diagnostics");
+    let problem = diagnostics
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.source.as_deref() == Some("adocweave-project"))
+        .expect("project diagnostic");
+    assert_eq!(
+        problem.code,
+        Some(lsp::NumberOrString::String("missing-resource".to_owned()))
+    );
+    assert_eq!(problem.range.start.line, 2);
 }
 
 #[test]
@@ -720,15 +875,14 @@ fn definition_uses_injected_host_index_for_scheme_references() {
 }
 
 #[test]
-fn rename_requires_a_complete_host_index() {
+fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
     let mut incomplete = LanguageService::default();
     open(&mut incomplete, "file:///a.adoc", 1, "[[target]]\n== A\n");
-    assert!(
-        incomplete
-            .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
-            .expect("rename")
-            .is_none()
-    );
+    let local_edit = incomplete
+        .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+        .expect("rename")
+        .expect("workspace edit");
+    assert_eq!(local_edit.changes.expect("changes").len(), 1);
 
     let mut complete = LanguageService::with_host_index(Arc::new(TestHostIndex {
         complete: true,

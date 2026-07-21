@@ -88,6 +88,7 @@ pub struct Directive {
     pub source_id: Option<SourceId>,
     pub range: TextRange,
     pub target: String,
+    pub target_range: TextRange,
     /// Definition target for an include; absent for conditionals.
     pub resource_source_id: Option<SourceId>,
 }
@@ -155,11 +156,37 @@ impl PreprocessedDocument {
     /// `indent` or `leveloffset`) conservatively maps to its complete source line.
     pub fn origins_for_range(&self, output_range: TextRange) -> Vec<SourceOrigin> {
         if output_range.is_empty() {
-            return self
-                .origin_for_range(output_range)
-                .cloned()
-                .into_iter()
-                .collect();
+            let segment = self
+                .source_map
+                .iter()
+                .find(|segment| {
+                    segment.output_range.start() <= output_range.start()
+                        && output_range.start() < segment.output_range.end()
+                })
+                .or_else(|| {
+                    self.source_map
+                        .last()
+                        .filter(|segment| segment.output_range.end() == output_range.start())
+                });
+            let Some(segment) = segment else {
+                return Vec::new();
+            };
+            let range = if segment.mapping == SourceMapping::Identity {
+                let relative = output_range
+                    .start()
+                    .to_u32()
+                    .saturating_sub(segment.output_range.start().to_u32());
+                let offset =
+                    TextSize::new(segment.origin.range.start().to_usize() + relative as usize)
+                        .expect("projected source offset is bounded");
+                TextRange::new(offset, offset).expect("zero source range is ordered")
+            } else {
+                segment.origin.range
+            };
+            return vec![SourceOrigin {
+                source_id: segment.origin.source_id.clone(),
+                range,
+            }];
         }
         let mut origins: Vec<SourceOrigin> = Vec::new();
         let first = self
@@ -647,6 +674,7 @@ impl Context<'_> {
             source_id: source_id.clone(),
             range,
             target: target.clone(),
+            target_range: relative_range(range, include.target_start, include.target_end),
             resource_source_id: Some(document.source_id.clone()),
         });
         let attributes = parse_attributes(&include.attributes);
@@ -693,6 +721,11 @@ impl Context<'_> {
                     source_id: source_id.clone(),
                     range: line.range,
                     target: directive.target.clone(),
+                    target_range: relative_range(
+                        line.range,
+                        directive.target_start,
+                        directive.target_end,
+                    ),
                     resource_source_id: None,
                 });
                 match directive.kind {
@@ -841,11 +874,14 @@ struct ParsedDirective {
     kind: DirectiveKind,
     target: String,
     attributes: String,
+    target_start: usize,
+    target_end: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncludeRequest {
     pub range: TextRange,
+    pub target_range: TextRange,
     pub target: String,
     pub attributes: String,
 }
@@ -866,6 +902,10 @@ pub fn discover_includes(source: &str) -> Result<Vec<IncludeRequest>, PositionEr
         {
             requests.push(IncludeRequest {
                 range: TextRange::new(TextSize::new(offset)?, TextSize::new(end)?)?,
+                target_range: TextRange::new(
+                    TextSize::new(offset + include.target_start)?,
+                    TextSize::new(offset + include.target_end)?,
+                )?,
                 target: include.target,
                 attributes: include.attributes,
             });
@@ -898,6 +938,8 @@ fn parse_directive(value: &str, prefix: &str, kind: DirectiveKind) -> Option<Par
         kind,
         target: rest[..bracket].to_owned(),
         attributes: rest[bracket + 1..close].to_owned(),
+        target_start: prefix.len(),
+        target_end: prefix.len() + bracket,
     })
 }
 
@@ -1154,6 +1196,14 @@ fn error(
     }
 }
 
+fn relative_range(line: TextRange, start: usize, end: usize) -> TextRange {
+    TextRange::new(
+        TextSize::new(line.start().to_usize() + start).expect("directive input is bounded"),
+        TextSize::new(line.start().to_usize() + end).expect("directive input is bounded"),
+    )
+    .expect("directive target range is ordered")
+}
+
 fn range(start: usize, end: usize) -> TextRange {
     TextRange::new(
         TextSize::new(start).expect("preprocessor input is bounded"),
@@ -1365,6 +1415,20 @@ mod tests {
                     range: range(20, 28),
                 },
             ]
+        );
+        assert_eq!(
+            document.origins_for_range(range(2, 2)),
+            vec![SourceOrigin {
+                source_id: Some(SourceId::new("root")),
+                range: range(12, 12),
+            }]
+        );
+        assert_eq!(
+            document.origins_for_range(range(3, 3)),
+            vec![SourceOrigin {
+                source_id: Some(SourceId::new("included")),
+                range: range(20, 28),
+            }]
         );
     }
 

@@ -48,7 +48,8 @@ document symbolを型付きoriginへ変換する。referenceとresourceは構文
 複数originまたは変換segmentにかかるfixは`applicable = false`となり、hostは適用してはならない。
 `ProjectionLimits`は1回のprojectionが生成できるorigin segment総数を制限する。include directiveには
 記述位置の`source_id`とinclude先の`resource_source_id`を別々に保持するため、Document Linkと
-Definitionを展開後offsetの推測なしに構築できる。
+Definitionを展開後offsetの推測なしに構築できる。`Directive.target_range`はdirective全体とは別に
+target文字列の元source rangeを保持する。
 
 WASM adapterもmapping種別を含む同じsource mapを公開する。resource取得とsnapshot更新はLSP adapter
 またはその上位hostが担い、コアへI/Oやasync runtimeを持ち込まない。

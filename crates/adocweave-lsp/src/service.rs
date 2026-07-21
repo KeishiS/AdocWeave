@@ -19,7 +19,8 @@ use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
 use crate::state::DocumentStore;
-use crate::state::{Adoption, AnalysisJob, DocumentSnapshot};
+use crate::state::{Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis, WorkspaceProblem};
+use crate::workspace::WorkspaceResources;
 use crate::{SERVER_NAME, VERSION};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,6 +93,8 @@ pub(crate) struct LanguageService {
     pub position_encoding: PositionEncoding,
     settings: ServerSettings,
     host_index: Arc<dyn HostReferenceIndex>,
+    workspace: WorkspaceResources,
+    workspace_error: Option<String>,
 }
 
 impl fmt::Debug for LanguageService {
@@ -113,6 +116,8 @@ impl Default for LanguageService {
             position_encoding: PositionEncoding::Utf16,
             settings: ServerSettings::default(),
             host_index: Arc::new(NoHostReferenceIndex),
+            workspace: WorkspaceResources::default(),
+            workspace_error: None,
         }
     }
 }
@@ -139,6 +144,13 @@ impl LanguageService {
 
     pub fn initialize(&mut self, params: &lsp::InitializeParams) -> lsp::InitializeResult {
         self.position_encoding = negotiate_encoding(params);
+        let roots: Vec<lsp::Url> = if let Some(folders) = &params.workspace_folders {
+            folders.iter().map(|folder| folder.uri.clone()).collect()
+        } else {
+            #[allow(deprecated)]
+            params.root_uri.clone().into_iter().collect()
+        };
+        self.workspace_error = self.workspace.load_roots(&roots).err();
         lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
                 position_encoding: Some(self.position_encoding.lsp()),
@@ -196,21 +208,34 @@ impl LanguageService {
         }
     }
 
-    pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> AnalysisJob {
+    pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Vec<AnalysisJob> {
         let document = params.text_document;
-        self.documents
-            .begin_open(document.uri.to_string(), document.version, document.text)
+        let affected = self
+            .workspace
+            .upsert(
+                document.uri.clone(),
+                i64::from(document.version),
+                document.text.clone(),
+            )
+            .unwrap_or_else(|_| std::collections::BTreeSet::from([document.uri.to_string()]));
+        let mut job =
+            self.documents
+                .begin_open(document.uri.to_string(), document.version, document.text);
+        job.workspace = self.workspace.input(&document.uri).ok();
+        let mut jobs = vec![job];
+        self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
+        jobs
     }
 
     pub fn begin_change(
         &mut self,
         params: lsp::DidChangeTextDocumentParams,
-    ) -> Result<Option<AnalysisJob>, String> {
+    ) -> Result<Vec<AnalysisJob>, String> {
         let Some(current) = self.documents.get(params.text_document.uri.as_str()) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         if i64::from(params.text_document.version) <= current.request.revision.version {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let mut source = current.request.source.to_string();
         for change in params.content_changes {
@@ -237,18 +262,84 @@ impl LanguageService {
                 }
             }
         }
-        Ok(self.documents.begin_change(
+        let affected = self.workspace.upsert(
+            params.text_document.uri.clone(),
+            i64::from(params.text_document.version),
+            source.clone(),
+        )?;
+        let Some(mut job) = self.documents.begin_change(
             params.text_document.uri.as_str(),
             params.text_document.version,
             source,
-        ))
+        ) else {
+            return Ok(Vec::new());
+        };
+        job.workspace = self.workspace.input(&params.text_document.uri).ok();
+        let mut jobs = vec![job];
+        self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
+        Ok(jobs)
+    }
+
+    fn append_dependent_jobs(
+        &mut self,
+        affected: &std::collections::BTreeSet<String>,
+        changed: &str,
+        jobs: &mut Vec<AnalysisJob>,
+    ) {
+        for uri in affected.iter().filter(|uri| uri.as_str() != changed) {
+            let Ok(parsed) = uri.parse() else {
+                continue;
+            };
+            let Some(mut job) = self.documents.begin_reanalysis(uri) else {
+                continue;
+            };
+            job.workspace = self.workspace.input(&parsed).ok();
+            jobs.push(job);
+        }
+    }
+
+    pub fn workspace_files_changed(
+        &mut self,
+        params: lsp::DidChangeWatchedFilesParams,
+    ) -> Vec<AnalysisJob> {
+        let mut affected = std::collections::BTreeSet::new();
+        for change in params.changes {
+            if self.documents.get(change.uri.as_str()).is_some() {
+                continue;
+            }
+            let changed = if change.typ == lsp::FileChangeType::DELETED {
+                Ok(self.workspace.remove(&change.uri))
+            } else {
+                self.workspace.reload_file(change.uri)
+            };
+            match changed {
+                Ok(changed) => affected.extend(changed),
+                Err(error) => self.workspace_error = Some(error),
+            }
+        }
+        let mut jobs = Vec::new();
+        self.append_dependent_jobs(&affected, "", &mut jobs);
+        jobs
     }
 
     pub fn adopt(&mut self, job: &AnalysisJob, result: adocweave::AnalysisResult) -> Adoption {
         self.documents.adopt(job, result)
     }
 
+    pub fn adopt_workspace(&mut self, job: &AnalysisJob, analysis: WorkspaceAnalysis) -> Adoption {
+        self.documents.adopt_workspace(job, analysis)
+    }
+
+    pub fn adopt_workspace_problem(
+        &mut self,
+        job: &AnalysisJob,
+        problem: WorkspaceProblem,
+    ) -> Adoption {
+        self.documents.adopt_workspace_problem(job, problem)
+    }
+
     pub fn close(&mut self, uri: &lsp::Url) -> bool {
+        self.workspace.remove(uri);
         self.documents.close(uri.as_str())
     }
 
@@ -277,28 +368,29 @@ impl LanguageService {
     }
 
     pub fn diagnostics(&self, uri: &lsp::Url) -> Result<lsp::PublishDiagnosticsParams, String> {
-        let Some(document) = self.documents.get(uri.as_str()) else {
+        let document = self.documents.get(uri.as_str());
+        let resource = self.workspace.get(uri);
+        let source = document
+            .map(|document| document.request.source.as_ref())
+            .or_else(|| resource.map(|resource| resource.text.as_ref()));
+        let Some(source) = source else {
             return Ok(lsp::PublishDiagnosticsParams::new(
                 uri.clone(),
                 Vec::new(),
                 None,
             ));
         };
-        let Some(analysis) = document.analysis.as_ref() else {
-            return Ok(lsp::PublishDiagnosticsParams::new(
-                uri.clone(),
-                Vec::new(),
-                Some(revision_version_i32(&document.request.revision)),
-            ));
-        };
-        let diagnostics = analysis
-            .diagnostics()
-            .iter()
+        let source_document = SourceDocument::new(source).map_err(|error| error.to_string())?;
+        let version = document.map(|document| revision_version_i32(&document.request.revision));
+        let mut diagnostics = document
+            .and_then(|document| document.analysis.as_deref())
+            .into_iter()
+            .flat_map(|analysis| analysis.diagnostics().iter())
             .map(|diagnostic| {
                 Ok(lsp::Diagnostic {
                     range: range_to_lsp(
                         diagnostic.range,
-                        analysis.source_document(),
+                        &source_document,
                         self.position_encoding,
                     )?,
                     severity: Some(match diagnostic.severity {
@@ -316,10 +408,102 @@ impl LanguageService {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
+        if let Some(error) = &self.workspace_error {
+            diagnostics.push(lsp::Diagnostic {
+                range: lsp::Range::default(),
+                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                code: Some(lsp::NumberOrString::String(
+                    "workspace-resource-error".to_owned(),
+                )),
+                source: Some("adocweave-project".to_owned()),
+                message: error.clone(),
+                ..lsp::Diagnostic::default()
+            });
+        }
+        for workspace in self.documents.workspace_analyses() {
+            let current_version = workspace.resource_versions.get(uri.as_str()).copied();
+            let is_root = workspace
+                .analysis
+                .source_id()
+                .is_some_and(|source_id| source_id.as_str() == uri.as_str());
+            if !is_root
+                && current_version
+                    != document
+                        .map(|document| document.request.revision.version)
+                        .or_else(|| resource.map(|resource| resource.version))
+            {
+                continue;
+            }
+            // Reading the map here is intentional: the projection and its source map are one
+            // adopted snapshot and must never be mixed with a later workspace generation.
+            let _source_map = &workspace.document.source_map;
+            for projected in &workspace.projection.diagnostics {
+                for origin in &projected.origins {
+                    if origin
+                        .source_id
+                        .as_ref()
+                        .is_none_or(|source_id| source_id.as_str() != uri.as_str())
+                    {
+                        continue;
+                    }
+                    diagnostics.push(lsp::Diagnostic {
+                        range: range_to_lsp(
+                            origin.range,
+                            &source_document,
+                            self.position_encoding,
+                        )?,
+                        severity: Some(match projected.diagnostic.severity {
+                            Severity::Error => lsp::DiagnosticSeverity::ERROR,
+                            Severity::Warning => lsp::DiagnosticSeverity::WARNING,
+                            Severity::Information => lsp::DiagnosticSeverity::INFORMATION,
+                            Severity::Hint => lsp::DiagnosticSeverity::HINT,
+                        }),
+                        code: Some(lsp::NumberOrString::String(
+                            projected.diagnostic.code.as_str().to_owned(),
+                        )),
+                        source: Some("adocweave".to_owned()),
+                        message: projected.diagnostic.message.clone(),
+                        ..lsp::Diagnostic::default()
+                    });
+                }
+            }
+        }
+        for problem in self.documents.workspace_problems() {
+            if problem.source_id.as_deref() != Some(uri.as_str()) {
+                continue;
+            }
+            diagnostics.push(lsp::Diagnostic {
+                range: range_to_lsp(problem.range, &source_document, self.position_encoding)?,
+                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                code: Some(lsp::NumberOrString::String(problem.code.clone())),
+                source: Some("adocweave-project".to_owned()),
+                message: problem.message.clone(),
+                ..lsp::Diagnostic::default()
+            });
+        }
+        diagnostics.sort_by(|left, right| {
+            (
+                left.range.start.line,
+                left.range.start.character,
+                left.range.end.line,
+                left.range.end.character,
+                &left.message,
+            )
+                .cmp(&(
+                    right.range.start.line,
+                    right.range.start.character,
+                    right.range.end.line,
+                    right.range.end.character,
+                    &right.message,
+                ))
+        });
+        diagnostics.dedup_by(|left, right| {
+            left.range == right.range && left.code == right.code && left.message == right.message
+        });
         Ok(lsp::PublishDiagnosticsParams::new(
             uri.clone(),
             diagnostics,
-            Some(revision_version_i32(&document.request.revision)),
+            version,
         ))
     }
 
@@ -658,6 +842,24 @@ impl LanguageService {
             return Ok(None);
         };
         let offset = request_offset(&document, position, self.position_encoding)?;
+        for workspace in self.documents.workspace_analyses() {
+            if let Some(directive) = workspace.projection.directives.iter().find(|directive| {
+                directive
+                    .source_id
+                    .as_ref()
+                    .is_some_and(|source_id| source_id.as_str() == uri.as_str())
+                    && contains(directive.target_range, offset)
+            }) && let Some(target) = directive.resource_source_id.as_ref()
+            {
+                let target: lsp::Url = target
+                    .as_str()
+                    .parse()
+                    .map_err(|error| format!("invalid include resource URI: {error}"))?;
+                return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                    lsp::Location::new(target, lsp::Range::default()),
+                )));
+            }
+        }
         let Some(reference) = document
             .analysis
             .references()
@@ -767,6 +969,58 @@ impl LanguageService {
                 }
             }
         }
+        for workspace in self.documents.workspace_analyses() {
+            for reference in &workspace.projection.references {
+                let Some(source_origin) = reference.origins.first() else {
+                    continue;
+                };
+                let Some(source_id) = &source_origin.source_id else {
+                    continue;
+                };
+                let source_uri: lsp::Url = source_id
+                    .as_str()
+                    .parse()
+                    .map_err(|error| format!("invalid projected reference URI: {error}"))?;
+                if reference_identity(&source_uri, &reference.value.destination).as_ref()
+                    != Some(&identity)
+                {
+                    continue;
+                }
+                let Some(target_origin) = reference
+                    .target_origins
+                    .iter()
+                    .find(|origin| origin.source_id.as_ref() == Some(source_id))
+                else {
+                    continue;
+                };
+                let source_document = self.source_document(&source_uri)?;
+                locations.push(lsp::Location::new(
+                    source_uri,
+                    range_to_lsp(
+                        target_origin.range,
+                        &source_document,
+                        self.position_encoding,
+                    )?,
+                ));
+            }
+        }
+        locations.sort_by(|left, right| {
+            (
+                left.uri.as_str(),
+                left.range.start.line,
+                left.range.start.character,
+                left.range.end.line,
+                left.range.end.character,
+            )
+                .cmp(&(
+                    right.uri.as_str(),
+                    right.range.start.line,
+                    right.range.start.character,
+                    right.range.end.line,
+                    right.range.end.character,
+                ))
+        });
+        locations.dedup();
         Ok(Some(locations))
     }
 
@@ -776,7 +1030,7 @@ impl LanguageService {
         position: lsp::Position,
         new_name: &str,
     ) -> Result<Option<lsp::WorkspaceEdit>, String> {
-        if !self.host_index.is_complete() || !valid_anchor_name(new_name) {
+        if !valid_anchor_name(new_name) {
             return Ok(None);
         }
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
@@ -795,9 +1049,14 @@ impl LanguageService {
             anchor: target.id.clone(),
         };
         let host_request = host_reference_request(&document, uri, key, self.position_encoding);
-        let Some(locations) = self.host_index.references(&host_request, true)? else {
-            return Ok(None);
+        let locations = if let Some(locations) = self.host_index.references(&host_request, true)? {
+            locations
+        } else {
+            self.references(uri, position, true)?.unwrap_or_default()
         };
+        if locations.is_empty() {
+            return Ok(None);
+        }
         let mut changes = std::collections::HashMap::<lsp::Url, Vec<lsp::TextEdit>>::new();
         for location in locations {
             changes
@@ -864,6 +1123,33 @@ impl LanguageService {
                 data: None,
             });
         }
+        for workspace in self.documents.workspace_analyses() {
+            for directive in &workspace.projection.directives {
+                if directive
+                    .source_id
+                    .as_ref()
+                    .is_none_or(|source_id| source_id.as_str() != uri.as_str())
+                {
+                    continue;
+                }
+                let Some(target) = directive.resource_source_id.as_ref() else {
+                    continue;
+                };
+                let Ok(target) = target.as_str().parse() else {
+                    continue;
+                };
+                links.push(lsp::DocumentLink {
+                    range: range_to_lsp(
+                        directive.target_range,
+                        document.analysis.source_document(),
+                        self.position_encoding,
+                    )?,
+                    target: Some(target),
+                    tooltip: Some("include先を開く".to_owned()),
+                    data: None,
+                });
+            }
+        }
         links.sort_by_key(|link| {
             (
                 link.range.start.line,
@@ -872,7 +1158,22 @@ impl LanguageService {
                 link.range.end.character,
             )
         });
+        links.dedup_by(|left, right| left.range == right.range && left.target == right.target);
         Ok(Some(links))
+    }
+
+    fn source_document(&self, uri: &lsp::Url) -> Result<SourceDocument, String> {
+        let source = self
+            .documents
+            .get(uri.as_str())
+            .map(|document| document.request.source.as_ref())
+            .or_else(|| {
+                self.workspace
+                    .get(uri)
+                    .map(|resource| resource.text.as_ref())
+            })
+            .ok_or_else(|| format!("projected source is missing: {uri}"))?;
+        SourceDocument::new(source).map_err(|error| error.to_string())
     }
 
     pub fn semantic_tokens(

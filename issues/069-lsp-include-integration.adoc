@@ -1,5 +1,5 @@
 = LSPのinclude統合
-:status: planned
+:status: completed
 :depends-on: 068
 
 == 目的
@@ -20,3 +20,17 @@ Language Serverがworkspace内resourceからsnapshotを構築し、includeを含
 Zed上でworkspace内includeの診断とnavigationが動作し、古いresource snapshotの結果を採用しない。
 LSP自身はnetwork resourceを取得しない。
 
+== 実装結果
+
+`WorkspaceResources`がworkspace folder内の`.adoc` fileとopen文書をversion付きで保持し、
+`discover_includes`から依存graphと逆依存索引を構築する。workspace走査はsymlinkを追跡せず、file数、
+個別byte数および合計byte数を制限する。network resourceは読み込まない。
+
+文書jobは直接解析に加えて同じgenerationの`ResourceSnapshot`を展開・解析し、source origin projectionを
+一括採用する。resource変更時は逆依存rootだけを再解析し、旧jobをcancelしてgeneration不一致の結果を
+破棄する。診断、include Definition、Document Link、ReferencesおよびRenameは元文書rangeを使用する。
+欠落resource、循環、安全性違反および上限超過は`adocweave-project`診断として公開する。
+
+自動試験はnested snapshot、逆依存再解析、resource version、欠落resource、診断projection、include
+Definition／Document Link、workspace References／Renameおよびnative LSP lifecycleを覆う。Zedは標準の
+file URIとLSP機能を使い、追加network権限を必要としない。

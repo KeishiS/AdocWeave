@@ -5,6 +5,8 @@ use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
+use adocweave::Engine;
+use adocweave::preprocessor::{PreprocessedAnalysis, ProjectionLimits, preprocess};
 use adocweave::{CancellationCheck, CancellationToken};
 use async_lsp::concurrency::ConcurrencyLayer;
 use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
@@ -18,7 +20,7 @@ use tokio::sync::Semaphore;
 use tower::ServiceBuilder;
 
 use crate::service::LanguageService;
-use crate::state::{Adoption, AnalysisJob};
+use crate::state::{Adoption, AnalysisJob, WorkspaceAnalysis, WorkspaceProblem};
 use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
 const MAX_CONCURRENT_REQUESTS: usize = 16;
@@ -39,6 +41,7 @@ struct AnalysisTask {
 struct AnalysisCompleted {
     job: AnalysisJob,
     result: Result<adocweave::AnalysisResult, String>,
+    workspace_result: Option<Result<WorkspaceAnalysis, WorkspaceProblem>>,
 }
 
 impl Backend {
@@ -74,17 +77,19 @@ impl Backend {
                 ControlFlow::Break(Ok(()))
             })
             .notification::<notification::DidOpenTextDocument>(|state, params| {
-                let job = state.service.begin_open(params);
-                state.schedule_analysis(job);
+                for job in state.service.begin_open(params) {
+                    state.schedule_analysis(job);
+                }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeTextDocument>(|state, params| {
                 match state.service.begin_change(params) {
-                    Ok(Some(job)) => {
-                        state.schedule_analysis(job);
+                    Ok(jobs) => {
+                        for job in jobs {
+                            state.schedule_analysis(job);
+                        }
                         ControlFlow::Continue(())
                     }
-                    Ok(None) => ControlFlow::Continue(()),
                     Err(error) => ControlFlow::Break(Err(async_lsp::Error::Routing(error))),
                 }
             })
@@ -93,6 +98,12 @@ impl Backend {
             })
             .notification::<notification::DidChangeConfiguration>(|state, params| {
                 let _ = state.service.update_configuration(params.settings);
+                ControlFlow::Continue(())
+            })
+            .notification::<notification::DidChangeWatchedFiles>(|state, params| {
+                for job in state.service.workspace_files_changed(params) {
+                    state.schedule_analysis(job);
+                }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidCloseTextDocument>(|state, params| {
@@ -273,14 +284,59 @@ impl Backend {
             }
             let worker_job = job.clone();
             let result = tokio::task::spawn_blocking(move || {
-                worker_job
+                let result = worker_job
                     .request
                     .analyze(worker_job.cancellation.as_ref())
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| error.to_string());
+                let workspace_result = worker_job.workspace.as_ref().map(|input| {
+                    let document = preprocess(&input.root.text, &input.snapshot, &input.options)
+                        .map_err(|error| WorkspaceProblem {
+                            source_id: error
+                                .source_id
+                                .as_ref()
+                                .map(|source_id| source_id.as_str().to_owned()),
+                            range: error.range,
+                            code: error.kind.as_str().to_owned(),
+                            message: error.to_string(),
+                        })?;
+                    if worker_job.cancellation.is_cancelled() {
+                        return Err(workspace_problem(
+                            &worker_job,
+                            "cancelled",
+                            "workspace analysis was cancelled",
+                        ));
+                    }
+                    let analysis = Engine::new(worker_job.request.options.clone())
+                        .analyze_cancellable(&document.source, worker_job.cancellation.as_ref())
+                        .map_err(|error| {
+                            workspace_problem(
+                                &worker_job,
+                                error.code().as_str(),
+                                &error.to_string(),
+                            )
+                        })?;
+                    let preprocessed = PreprocessedAnalysis { document, analysis };
+                    let projection = preprocessed
+                        .project_origins(ProjectionLimits::default())
+                        .map_err(|error| {
+                            workspace_problem(&worker_job, "projection-limit", &error.to_string())
+                        })?;
+                    Ok(WorkspaceAnalysis {
+                        document: Arc::new(preprocessed.document),
+                        analysis: Arc::new(preprocessed.analysis),
+                        projection: Arc::new(projection),
+                        resource_versions: input.resource_versions.clone(),
+                    })
+                });
+                (result, workspace_result)
             })
             .await
-            .unwrap_or_else(|error| Err(format!("analysis worker failed: {error}")));
-            let _ = client.emit(AnalysisCompleted { job, result });
+            .unwrap_or_else(|error| (Err(format!("analysis worker failed: {error}")), None));
+            let _ = client.emit(AnalysisCompleted {
+                job,
+                result: result.0,
+                workspace_result: result.1,
+            });
         });
         self.analysis_tasks
             .insert(uri, AnalysisTask { generation, handle });
@@ -303,10 +359,31 @@ impl Backend {
         if self.service.adopt(&completed.job, analysis) != Adoption::Adopted {
             return ControlFlow::Continue(());
         }
-        match completed.job.uri.parse() {
-            Ok(uri) => self.publish_current_diagnostics(uri),
-            Err(error) => ControlFlow::Break(Err(async_lsp::Error::Routing(error.to_string()))),
+        let mut publish_uris = std::collections::BTreeSet::from([completed.job.uri.clone()]);
+        if let Some(workspace) = completed.workspace_result {
+            match workspace {
+                Ok(workspace) => {
+                    publish_uris.extend(workspace.source_uris());
+                    let _ = self.service.adopt_workspace(&completed.job, workspace);
+                }
+                Err(problem) => {
+                    let _ = self
+                        .service
+                        .adopt_workspace_problem(&completed.job, problem);
+                }
+            }
         }
+        for uri in publish_uris {
+            let Ok(uri) = uri.parse() else {
+                return ControlFlow::Break(Err(async_lsp::Error::Routing(format!(
+                    "invalid projected source URI: {uri}"
+                ))));
+            };
+            if let ControlFlow::Break(error) = self.publish_current_diagnostics(uri) {
+                return ControlFlow::Break(error);
+            }
+        }
+        ControlFlow::Continue(())
     }
 
     fn cancel_analysis(&mut self, uri: &str) {
@@ -336,6 +413,19 @@ impl Backend {
             Ok(()) => ControlFlow::Continue(()),
             Err(error) => ControlFlow::Break(Err(error)),
         }
+    }
+}
+
+fn workspace_problem(job: &AnalysisJob, code: &str, message: &str) -> WorkspaceProblem {
+    WorkspaceProblem {
+        source_id: Some(job.uri.clone()),
+        range: adocweave::source::TextRange::new(
+            adocweave::source::TextSize::ZERO,
+            adocweave::source::TextSize::ZERO,
+        )
+        .expect("zero range is ordered"),
+        code: code.to_owned(),
+        message: message.to_owned(),
     }
 }
 

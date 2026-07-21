@@ -3,16 +3,21 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use adocweave::preprocessor::{AnalysisProjection, PreprocessedDocument};
+use adocweave::source::TextRange;
 use adocweave::{
-    Analysis, AnalysisRequest, AnalysisResult, CancellationToken, DocumentRevision, ParseOptions,
-    SourceId,
+    Analysis, AnalysisRequest, AnalysisResult, CancellationCheck, CancellationToken,
+    DocumentRevision, ParseOptions, SourceId,
 };
+
+use crate::workspace::WorkspaceInput;
 
 #[derive(Clone, Debug)]
 pub struct AnalysisJob {
     pub uri: String,
     pub request: AnalysisRequest,
     pub cancellation: Arc<CancellationToken>,
+    pub workspace: Option<WorkspaceInput>,
 }
 
 #[derive(Clone, Debug)]
@@ -20,7 +25,50 @@ pub struct DocumentState {
     pub uri: String,
     pub request: AnalysisRequest,
     pub analysis: Option<Arc<Analysis>>,
+    pub workspace_analysis: Option<Arc<WorkspaceAnalysis>>,
+    pub workspace_problem: Option<WorkspaceProblem>,
     cancellation: Arc<CancellationToken>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceProblem {
+    pub source_id: Option<String>,
+    pub range: TextRange,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug)]
+pub struct WorkspaceAnalysis {
+    pub document: Arc<PreprocessedDocument>,
+    pub analysis: Arc<Analysis>,
+    pub projection: Arc<AnalysisProjection>,
+    pub resource_versions: BTreeMap<String, i64>,
+}
+
+impl WorkspaceAnalysis {
+    pub fn source_uris(&self) -> std::collections::BTreeSet<String> {
+        let mut uris = std::collections::BTreeSet::new();
+        for directive in &self.projection.directives {
+            uris.extend(
+                directive
+                    .source_id
+                    .iter()
+                    .chain(directive.resource_source_id.iter())
+                    .map(|source_id| source_id.as_str().to_owned()),
+            );
+        }
+        for diagnostic in &self.projection.diagnostics {
+            uris.extend(
+                diagnostic
+                    .origins
+                    .iter()
+                    .filter_map(|origin| origin.source_id.as_ref())
+                    .map(|source_id| source_id.as_str().to_owned()),
+            );
+        }
+        uris
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +112,18 @@ impl DocumentStore {
             .collect()
     }
 
+    pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
+        self.documents
+            .values()
+            .filter_map(|document| document.workspace_analysis.as_deref())
+    }
+
+    pub fn workspace_problems(&self) -> impl Iterator<Item = &WorkspaceProblem> {
+        self.documents
+            .values()
+            .filter_map(|document| document.workspace_problem.as_ref())
+    }
+
     pub fn cancellation(&self, uri: &str) -> Option<Arc<CancellationToken>> {
         self.documents
             .get(uri)
@@ -81,6 +141,8 @@ impl DocumentStore {
                 uri,
                 request: job.request.clone(),
                 analysis: None,
+                workspace_analysis: None,
+                workspace_problem: None,
                 cancellation: job.cancellation.clone(),
             },
         );
@@ -99,6 +161,25 @@ impl DocumentStore {
             .expect("document existence checked");
         current.request = job.request.clone();
         current.analysis = None;
+        current.workspace_analysis = None;
+        current.workspace_problem = None;
+        current.cancellation = job.cancellation.clone();
+        Some(job)
+    }
+
+    pub fn begin_reanalysis(&mut self, uri: &str) -> Option<AnalysisJob> {
+        let current = self.documents.get(uri)?;
+        current.cancellation.cancel();
+        let version = i32::try_from(current.request.revision.version).ok()?;
+        let text = current.request.source.to_string();
+        let job = self.new_job(uri.to_owned(), version, text);
+        let current = Arc::make_mut(&mut self.documents)
+            .get_mut(uri)
+            .expect("document existence checked");
+        current.request = job.request.clone();
+        current.analysis = None;
+        current.workspace_analysis = None;
+        current.workspace_problem = None;
         current.cancellation = job.cancellation.clone();
         Some(job)
     }
@@ -114,6 +195,43 @@ impl DocumentStore {
             .get_mut(&job.uri)
             .expect("document existence checked");
         document.analysis = Some(Arc::new(result.analysis));
+        Adoption::Adopted
+    }
+
+    pub fn adopt_workspace(&mut self, job: &AnalysisJob, analysis: WorkspaceAnalysis) -> Adoption {
+        let Some(document) = self.documents.get(&job.uri) else {
+            return Adoption::Closed;
+        };
+        if document.request.revision != job.request.revision || job.cancellation.is_cancelled() {
+            return Adoption::Stale;
+        }
+        Arc::make_mut(&mut self.documents)
+            .get_mut(&job.uri)
+            .expect("document existence checked")
+            .workspace_analysis = Some(Arc::new(analysis));
+        Arc::make_mut(&mut self.documents)
+            .get_mut(&job.uri)
+            .expect("document existence checked")
+            .workspace_problem = None;
+        Adoption::Adopted
+    }
+
+    pub fn adopt_workspace_problem(
+        &mut self,
+        job: &AnalysisJob,
+        problem: WorkspaceProblem,
+    ) -> Adoption {
+        let Some(document) = self.documents.get(&job.uri) else {
+            return Adoption::Closed;
+        };
+        if document.request.revision != job.request.revision || job.cancellation.is_cancelled() {
+            return Adoption::Stale;
+        }
+        let document = Arc::make_mut(&mut self.documents)
+            .get_mut(&job.uri)
+            .expect("document existence checked");
+        document.workspace_analysis = None;
+        document.workspace_problem = Some(problem);
         Adoption::Adopted
     }
 
@@ -147,6 +265,7 @@ impl DocumentStore {
             uri,
             request,
             cancellation: Arc::new(CancellationToken::new()),
+            workspace: None,
         }
     }
 }
