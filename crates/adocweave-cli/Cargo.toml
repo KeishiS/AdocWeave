@@ -1,0 +1,16 @@
+[package]
+name = "adocweave-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Command-line adapter for AdocWeave"
+
+[dependencies]
+adocweave = { path = "../adocweave" }
+adocweave-host = { path = "../adocweave-host" }
+serde_json = "1.0"
+
+[[bin]]
+name = "adocweave"
+path = "src/main.rs"

@@ -43,9 +43,9 @@ xref:core-profile.adoc[AdocWeave Core Profile 8]で定義する。
 
 == Native host境界
 
-`adocweave-host` crateはCLIとLanguage Serverが共有するnative filesystem境界である。canonical path、
+`adocweave-host` crateは`adocweave-cli`とLanguage Serverが共有するnative filesystem境界である。canonical path、
 許可root、regular file、UTF-8、file数、resource byte数、総byte数および依存graphのforward／reverse closureを
-ここで一度だけ実装する。`adocweave` coreはこのcrateに依存せず、I/Oを行わない。CLI binaryとLSP adapterだけが
+ここで一度だけ実装する。`adocweave` core packageはこのcrateに依存せず、I/Oを行わない。CLI packageとLSP adapterだけが
 host crateを利用し、検証済みtextからcoreの`ResourceSnapshot`を構築する。
 
 LSPの解析jobはrootの`DocumentRevision`と`WorkspaceGeneration`を同時に取得する。採用時にどちらかが変化して

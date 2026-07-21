@@ -71,9 +71,14 @@ command = "cargo"
 args = ["test", "--workspace", "--all-features"]
 
 [tasks.test-core]
-description = "Run parser, renderer, lint, formatter, and CLI tests"
+description = "Run parser, renderer, lint, and formatter tests"
 command = "cargo"
 args = ["test", "-p", "adocweave", "--all-features"]
+
+[tasks.test-cli]
+description = "Run command-line adapter tests"
+command = "cargo"
+args = ["test", "-p", "adocweave-cli", "--all-features"]
 
 [tasks.test-lsp]
 description = "Run Language Server tests"
@@ -192,7 +197,7 @@ done
 [tasks.test-release-core]
 private = true
 command = "cargo"
-args = ["test", "-p", "adocweave", "--test", "cli", "release_fixture"]
+args = ["test", "-p", "adocweave-cli", "--test", "cli", "release_fixture"]
 
 [tasks.test-release-lsp]
 private = true
@@ -252,7 +257,7 @@ fi
 [tasks.build-adoc-check]
 private = true
 command = "cargo"
-args = ["build", "-p", "adocweave", "--bin", "adocweave"]
+args = ["build", "-p", "adocweave-cli", "--bin", "adocweave"]
 
 [tasks.adoc-check]
 description = "Check every tracked AsciiDoc file for crashes, losslessness, and valid ranges"

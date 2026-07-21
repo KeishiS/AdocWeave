@@ -385,3 +385,15 @@ fn release_manifest_is_the_single_contract_version_catalog() {
         assert!(documentation.contains(&expected), "missing {expected}");
     }
 }
+
+#[test]
+fn core_package_has_no_native_host_or_runtime_dependency() {
+    let root = repository_root();
+    let core = fs::read_to_string(root.join("crates/adocweave/Cargo.toml")).expect("core manifest");
+    let cli =
+        fs::read_to_string(root.join("crates/adocweave-cli/Cargo.toml")).expect("CLI manifest");
+    assert!(!core.contains("adocweave-host"));
+    assert!(!core.contains("tokio"));
+    assert!(cli.contains("adocweave = { path = \"../adocweave\" }"));
+    assert!(cli.contains("adocweave-host = { path = \"../adocweave-host\" }"));
+}
