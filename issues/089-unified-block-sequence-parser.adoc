@@ -57,3 +57,6 @@ rootで一度だけ実行し、旧`parse_compound_children`は削除した。
 入れ子表をtestおよびnative／WASM conformance caseで固定した。明示anchorのtarget探索とHTML ID生成も共通walkerで
 全階層へ拡張した。カスタムseparatorの表delimiterを規範文法へ追加し、Core Profile、HTMLおよびconformance契約を
 更新した。
+
+Issue 094では単一loopを維持したまま出力をroot／nestedへ型分離した。nested syntaxはcompound blockとAsciiDoc
+table cellの親syntax nodeへ接続し、document headerと属性factはroot stateだけが生成する。

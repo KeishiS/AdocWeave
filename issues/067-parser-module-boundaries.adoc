@@ -66,3 +66,7 @@ inline engine内のscanner、delimiter index、marker recognizer、macro recogni
 同様にblock固有parserは共通の`SourceDocument`、`ParseBudget`および再帰container contextを共有する。
 tableとpreprocessorのように独立した不変条件を持つ処理は専用moduleに置き、共有状態を転送するだけの
 wrapper分割は行わない。
+
+Issue 094ではこの基準を再適用し、再帰sequence不変条件、delimiter、document header、list marker／木構築を
+独立moduleへ移した。一方、任意blockへ再帰するlist continuation dispatchは共有状態機械に残し、循環callbackを
+導入しなかった。

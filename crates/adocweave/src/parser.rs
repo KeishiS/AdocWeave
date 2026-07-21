@@ -1,14 +1,20 @@
 //! Lossless concrete syntax and HTML-independent semantic syntax.
 
 use std::fmt::Write as _;
-use std::ops::Range;
 use std::sync::Arc;
 
 use crate::attributes::{DocumentAttribute, parse_line as parse_attribute_line};
 pub use crate::block_model::*;
+use crate::block_sequence::{
+    BlockContext, BlockCursor, BlockFacts, BlockInput, BlockLocation, BlockRecognition,
+    BlockSequenceOutput, ParseDepth, RootBlockSequenceOutput,
+};
 use crate::budget::{BudgetExceeded, ParseBudget};
+use crate::delimiter::{DelimitedContentModel, DelimiterSpec};
+use crate::document_header::DocumentHeaderState;
 use crate::inline::{Inline, InlineParseConfig, MathLanguage, parse_with_budget as parse_inlines};
 use crate::limits::ProcessingLimits;
+use crate::list_parser::{FlatListItem, ParsedListMarker};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::{SourceDocument, SourceDocumentBuildError, SourceLine};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxTree};
@@ -439,18 +445,6 @@ pub(crate) enum ParseFailure {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BlockCursor {
-    line: usize,
-    line_count: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BlockRecognition {
-    OneLine,
-    Through(usize),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LineRecognition {
     Source,
     InvalidSource,
@@ -482,7 +476,7 @@ fn recognize_line(
         LineRecognition::InvalidSource
     } else if parse_math_attribute(content).is_some() && next_content == Some("++++") {
         LineRecognition::Math
-    } else if delimiter_spec(content).is_some() {
+    } else if crate::delimiter::spec(content).is_some() {
         LineRecognition::Delimited
     } else if parse_explicit_anchor(content, content_start, full_range)
         .filter(|_| content.starts_with("[["))
@@ -505,42 +499,12 @@ fn recognize_line(
         LineRecognition::LiteralParagraph
     } else if content.starts_with('=') {
         LineRecognition::Heading
-    } else if list_marker(content).is_some() {
+    } else if crate::list_parser::marker(content).is_some() {
         LineRecognition::List
     } else if unsupported_reason(content).is_some() {
         LineRecognition::Unsupported
     } else {
         LineRecognition::Paragraph
-    }
-}
-
-impl BlockCursor {
-    #[cfg(test)]
-    const fn new(line_count: usize) -> Self {
-        Self {
-            line: 0,
-            line_count,
-        }
-    }
-
-    const fn current(self) -> Option<usize> {
-        if self.line < self.line_count {
-            Some(self.line)
-        } else {
-            None
-        }
-    }
-
-    fn commit(&mut self, recognition: BlockRecognition) -> Result<(), ParseFailure> {
-        let next = match recognition {
-            BlockRecognition::OneLine => self.line.saturating_add(1),
-            BlockRecognition::Through(next) => next,
-        };
-        if next <= self.line || next > self.line_count {
-            return Err(ParseFailure::InternalInvariant);
-        }
-        self.line = next;
-        Ok(())
     }
 }
 
@@ -602,30 +566,6 @@ pub(crate) fn parse_shared_cancellable(
     finish_document(sequence, source_document, config)
 }
 
-struct BlockSequenceOutput {
-    syntax: Vec<SyntaxNode>,
-    blocks: Vec<AstBlock>,
-    attributes: Vec<DocumentAttribute>,
-    attribute_problems: Vec<crate::attributes::AttributeProblem>,
-    anchors: Vec<ExplicitAnchor>,
-    header: DocumentHeader,
-}
-
-#[derive(Clone)]
-struct BlockInput<'source> {
-    document: &'source SourceDocument,
-    lines: Range<usize>,
-}
-
-impl<'source> BlockInput<'source> {
-    fn new(document: &'source SourceDocument, lines: Range<usize>) -> Result<Self, ParseFailure> {
-        if lines.start > lines.end || lines.end > document.lines().len() {
-            return Err(ParseFailure::InternalInvariant);
-        }
-        Ok(Self { document, lines })
-    }
-}
-
 fn parse_block_sequence(
     source: &str,
     input: BlockInput<'_>,
@@ -639,19 +579,13 @@ fn parse_block_sequence(
     let mut ast_blocks = Vec::new();
     let mut paragraph_lines = Vec::new();
     let mut saw_content = false;
-    let mut header_attributes_open = false;
-    let mut expect_author = false;
-    let mut expect_revision = false;
-    let mut header = DocumentHeader::default();
-    let mut attributes = Vec::new();
-    let mut attribute_problems = Vec::new();
+    let mut root = context
+        .allows_document_header()
+        .then(DocumentHeaderState::default);
     let mut anchors = Vec::new();
     let mut pending_metadata = PendingBlockMetadata::default();
 
-    let mut cursor = BlockCursor {
-        line: input.lines.start,
-        line_count: input.lines.end,
-    };
+    let mut cursor = BlockCursor::for_range(&input.lines);
     while let Some(line_index) = cursor.current() {
         if is_cancelled() {
             return Err(ParseFailure::Cancelled);
@@ -665,41 +599,41 @@ fn parse_block_sequence(
             .get(line_index + 1)
             .and_then(|next| source_document.text(next.content_range()));
 
-        if context.allows_document_header()
-            && expect_author
+        if root.as_ref().is_some_and(|state| state.expect_author)
             && !content.trim_matches([' ', '\t']).is_empty()
         {
-            expect_author = false;
+            root.as_mut().expect("root state exists").expect_author = false;
             if !content.chars().any(char::is_control)
                 && !content.starts_with([':', '[', '='])
-                && delimiter_spec(content).is_none()
+                && crate::delimiter::spec(content).is_none()
                 && !content.starts_with("//")
             {
-                if let Some(author) = parse_author_line(content, line)? {
+                if let Some(author) = crate::document_header::parse_author(content, line)? {
                     budget.consume_node()?;
-                    extend_header_range(&mut header, line.full_range());
-                    header.authors.push(author);
+                    let root = root.as_mut().expect("root state exists");
+                    root.extend_range(line.full_range());
+                    root.header.authors.push(author);
                     blocks.push(SyntaxNode::leaf(SyntaxKind::AuthorLine, line.full_range()));
-                    expect_revision = true;
+                    root.expect_revision = true;
                     cursor.commit(BlockRecognition::OneLine)?;
                     continue;
                 }
             }
         }
-        if context.allows_document_header()
-            && expect_revision
+        if root.as_ref().is_some_and(|state| state.expect_revision)
             && !content.trim_matches([' ', '\t']).is_empty()
         {
-            expect_revision = false;
+            root.as_mut().expect("root state exists").expect_revision = false;
             if !content.chars().any(char::is_control)
                 && !content.starts_with([':', '[', '='])
-                && delimiter_spec(content).is_none()
+                && crate::delimiter::spec(content).is_none()
                 && !content.starts_with("//")
             {
-                let revision = parse_revision_line(content, line)?;
+                let revision = crate::document_header::parse_revision(content, line)?;
                 budget.consume_node()?;
-                extend_header_range(&mut header, line.full_range());
-                header.revision = Some(revision);
+                let root = root.as_mut().expect("root state exists");
+                root.extend_range(line.full_range());
+                root.header.revision = Some(revision);
                 blocks.push(SyntaxNode::leaf(
                     SyntaxKind::RevisionLine,
                     line.full_range(),
@@ -714,7 +648,7 @@ fn parse_block_sequence(
             next_content,
             line.content_range().start().to_usize(),
             line.full_range(),
-            context.allows_document_header() && header_attributes_open,
+            root.as_ref().is_some_and(|state| state.attributes_open),
         );
         if recognition == LineRecognition::Source {
             flush_paragraph(
@@ -769,7 +703,8 @@ fn parse_block_sequence(
             }));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
-            header_attributes_open = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         } else if recognition == LineRecognition::Math {
             flush_paragraph(
                 &mut blocks,
@@ -800,7 +735,7 @@ fn parse_block_sequence(
             cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Delimited {
-            let spec = delimiter_spec(content).expect("recognizer verified delimiter");
+            let spec = crate::delimiter::spec(content).expect("recognizer verified delimiter");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -821,7 +756,7 @@ fn parse_block_sequence(
                 budget: &mut *budget,
                 anchors: &mut anchors,
             };
-            let (block, next_line) = parse_delimited_block(
+            let (block, nested_syntax, next_line) = parse_delimited_block(
                 &delimited_context,
                 line_index,
                 source_document.lines().len(),
@@ -830,7 +765,7 @@ fn parse_block_sequence(
                 context.depth,
                 Some(&pending_metadata.semantic),
             )?;
-            let syntax = crate::syntax_builder::delimited(&block);
+            let syntax = crate::syntax_builder::delimited(&block, nested_syntax);
             commit_block(
                 &mut blocks,
                 &mut ast_blocks,
@@ -839,7 +774,8 @@ fn parse_block_sequence(
                 AstBlock::Delimited(block),
             );
             saw_content = true;
-            header_attributes_open = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
             cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Anchor {
@@ -862,7 +798,8 @@ fn parse_block_sequence(
             pending_metadata.push_anchor(&anchor);
             anchors.push(anchor);
             saw_content = true;
-            header_attributes_open = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         } else if recognition == LineRecognition::BlockTitle {
             let title = parse_block_title(content, line.content_range().start().to_usize())
                 .expect("recognizer verified block title");
@@ -877,7 +814,8 @@ fn parse_block_sequence(
             budget.consume_node()?;
             budget.consume_attribute()?;
             pending_metadata.push_title(title, line.full_range());
-            header_attributes_open = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         } else if recognition == LineRecognition::BlockMetadata {
             let metadata = parse_block_attributes(content, line.content_range().start().to_usize())
                 .expect("recognizer verified block metadata");
@@ -903,10 +841,11 @@ fn parse_block_sequence(
                 });
             }
             pending_metadata.push_attributes(metadata, line.full_range());
-            header_attributes_open = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         } else if recognition == LineRecognition::Blank {
-            expect_author = false;
-            expect_revision = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::stop_author_revision);
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -923,9 +862,10 @@ fn parse_block_sequence(
                 budget,
             )?;
             blocks.push(SyntaxNode::leaf(SyntaxKind::BlankLine, line.full_range()));
-            if header_attributes_open {
-                header_attributes_open = false;
-                header.end = line.full_range().start();
+            if root.as_ref().is_some_and(|state| state.attributes_open) {
+                let root = root.as_mut().expect("root state exists");
+                root.attributes_open = false;
+                root.header.end = line.full_range().start();
             }
         } else if recognition == LineRecognition::DocumentAttribute {
             let (attribute, problem) = parse_attribute_line(
@@ -948,9 +888,12 @@ fn parse_block_sequence(
                 SyntaxKind::DocumentAttribute,
                 line.full_range(),
             ));
-            attributes.push(attribute);
-            attribute_problems.extend(problem);
-            extend_header_range(&mut header, line.full_range());
+            let root = root
+                .as_mut()
+                .expect("attribute recognition requires root state");
+            root.attributes.push(attribute);
+            root.attribute_problems.extend(problem);
+            root.extend_range(line.full_range());
         } else if recognition == LineRecognition::Break {
             flush_paragraph(
                 &mut blocks,
@@ -980,7 +923,8 @@ fn parse_block_sequence(
             }));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
-            header_attributes_open = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         } else if recognition == LineRecognition::LiteralParagraph {
             flush_paragraph(
                 &mut blocks,
@@ -997,7 +941,8 @@ fn parse_block_sequence(
             ast_blocks.push(AstBlock::LiteralParagraph(literal));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
-            header_attributes_open = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
             cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Heading {
@@ -1031,7 +976,7 @@ fn parse_block_sequence(
             blocks.push(crate::syntax_builder::heading(&heading, syntax_kind));
             ast_blocks.push(AstBlock::Heading(heading));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
-            header_attributes_open = context.allows_document_header()
+            let opens_header = context.allows_document_header()
                 && matches!(
                     ast_blocks.last(),
                     Some(AstBlock::Heading(Heading {
@@ -1041,9 +986,11 @@ fn parse_block_sequence(
                         ..
                     }))
                 );
-            if header_attributes_open {
-                extend_header_range(&mut header, line.full_range());
-                expect_author = true;
+            if opens_header {
+                let root = root.as_mut().expect("document title requires root state");
+                root.attributes_open = true;
+                root.extend_range(line.full_range());
+                root.expect_author = true;
             }
             saw_content = true;
         } else if recognition == LineRecognition::List {
@@ -1071,7 +1018,8 @@ fn parse_block_sequence(
             ast_blocks.extend(lists.into_iter().map(AstBlock::List));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
-            header_attributes_open = false;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
             cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Unsupported {
@@ -1120,13 +1068,19 @@ fn parse_block_sequence(
         source,
         budget,
     )?;
-    Ok(BlockSequenceOutput {
+    let common = BlockFacts {
         syntax: blocks,
         blocks: ast_blocks,
-        attributes,
-        attribute_problems,
         anchors,
-        header,
+    };
+    Ok(match root {
+        Some(root) => BlockSequenceOutput::Root(RootBlockSequenceOutput {
+            common,
+            attributes: root.attributes,
+            attribute_problems: root.attribute_problems,
+            header: root.header,
+        }),
+        None => BlockSequenceOutput::Nested(common),
     })
 }
 
@@ -1135,10 +1089,13 @@ fn finish_document(
     source_document: SourceDocument,
     config: &ParseConfig,
 ) -> Result<ParsedDocument, ParseFailure> {
+    let BlockSequenceOutput::Root(sequence) = sequence else {
+        return Err(ParseFailure::InternalInvariant);
+    };
     let mut ast = crate::lowering::lower(crate::lowering::ParsedFacts {
-        blocks: sequence.blocks,
+        blocks: sequence.common.blocks,
         attributes: sequence.attributes,
-        anchors: sequence.anchors,
+        anchors: sequence.common.anchors,
         header: sequence.header,
         attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
             max_depth: config.limits.max_attribute_expansion_depth,
@@ -1156,7 +1113,7 @@ fn finish_document(
         crate::syntax_diagnostics::collect_and_clear(&mut ast.blocks, &sequence.attribute_problems);
 
     Ok(ParsedDocument {
-        syntax: SyntaxTree::from_blocks(source_document, sequence.syntax, syntax_issues),
+        syntax: SyntaxTree::from_blocks(source_document, sequence.common.syntax, syntax_issues),
         ast,
     })
 }
@@ -1425,7 +1382,7 @@ fn parse_math_block(
     let language = parse_math_attribute(attribute_text).expect("recognized math attribute");
     let delimiter_index = attribute_index + 1;
     let delimiter = source_document.lines()[delimiter_index];
-    let body = parse_delimited_body(
+    let body = crate::delimiter::body(
         source_document,
         delimiter_index,
         "++++",
@@ -1481,91 +1438,6 @@ fn parse_math_attribute(text: &str) -> Option<MathLanguage> {
     }
 }
 
-#[derive(Debug)]
-struct FlatListItem {
-    depth: usize,
-    kind: ListKind,
-    item: ListItem,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ParsedListMarker {
-    kind: ListKind,
-    depth: usize,
-    marker_start: usize,
-    marker_end: usize,
-    text_start: usize,
-    term_end: Option<usize>,
-    callout_id: Option<u32>,
-}
-
-fn list_marker(content: &str) -> Option<ParsedListMarker> {
-    let marker = content.as_bytes().first().copied()?;
-    if matches!(marker, b'*' | b'.') {
-        let kind = if marker == b'*' {
-            ListKind::Unordered
-        } else {
-            ListKind::Ordered
-        };
-        let depth = content.bytes().take_while(|byte| *byte == marker).count();
-        let separator = *content.as_bytes().get(depth)?;
-        return matches!(separator, b' ' | b'\t').then_some(ParsedListMarker {
-            kind,
-            depth,
-            marker_start: 0,
-            marker_end: depth,
-            text_start: depth + 1,
-            term_end: None,
-            callout_id: None,
-        });
-    }
-    if marker == b'<' {
-        let close = content.find('>')?;
-        let raw = &content[1..close];
-        let id = (raw == ".").then_some(0).or_else(|| raw.parse().ok())?;
-        let separator = *content.as_bytes().get(close + 1)?;
-        return matches!(separator, b' ' | b'\t').then_some(ParsedListMarker {
-            kind: ListKind::Callout,
-            depth: 1,
-            marker_start: 0,
-            marker_end: close + 1,
-            text_start: close + 2,
-            term_end: None,
-            callout_id: Some(id),
-        });
-    }
-    for (offset, character) in content.char_indices() {
-        if !matches!(character, ':' | ';')
-            || !content[offset..].starts_with(if character == ':' { "::" } else { ";;" })
-        {
-            continue;
-        }
-        let delimiter = &content[offset..];
-        let width = if character == ':' && delimiter.starts_with("::::") {
-            4
-        } else if character == ':' && delimiter.starts_with(":::") {
-            3
-        } else {
-            2
-        };
-        let after = offset + width;
-        if offset == 0 || !matches!(content.as_bytes().get(after), None | Some(b' ' | b'\t')) {
-            continue;
-        }
-        return Some(ParsedListMarker {
-            kind: ListKind::Description,
-            depth: width.saturating_sub(1),
-            marker_start: offset,
-            marker_end: after,
-            text_start: after
-                + usize::from(matches!(content.as_bytes().get(after), Some(b' ' | b'\t'))),
-            term_end: Some(offset),
-            callout_id: None,
-        });
-    }
-    None
-}
-
 fn parse_lists(
     context: &DelimitedParseContext<'_>,
     start: usize,
@@ -1583,7 +1455,7 @@ fn parse_lists(
         let content = source_document
             .text(line.content_range())
             .expect("valid line");
-        let Some(marker) = list_marker(content) else {
+        let Some(marker) = crate::list_parser::marker(content) else {
             break;
         };
         let ParsedListMarker {
@@ -1772,7 +1644,7 @@ fn parse_lists(
         let depth = flat[cursor].depth;
         let kind = flat[cursor].kind;
         state.budget.consume_block()?;
-        roots.push(build_list_tree(
+        roots.push(crate::list_parser::build_tree(
             &mut flat,
             &mut cursor,
             depth,
@@ -1815,8 +1687,8 @@ fn parse_list_continuation(
             .unwrap_or_default();
         return Ok(Some((vec![AstBlock::Source(block)], end)));
     }
-    if let Some(spec) = delimiter_spec(content) {
-        let (block, end) = parse_delimited_block(
+    if let Some(spec) = crate::delimiter::spec(content) {
+        let (block, nested_syntax, end) = parse_delimited_block(
             context,
             index,
             source_document.lines().len(),
@@ -1828,9 +1700,10 @@ fn parse_list_continuation(
             },
             None,
         )?;
+        let _ = nested_syntax;
         return Ok(Some((vec![AstBlock::Delimited(block)], end)));
     }
-    if list_marker(content).is_some() {
+    if crate::list_parser::marker(content).is_some() {
         let (lists, end, _) = parse_lists(context, index, state, depth)?;
         return Ok(Some((lists.into_iter().map(AstBlock::List).collect(), end)));
     }
@@ -1854,46 +1727,6 @@ fn parse_list_continuation(
         })],
         index + 1,
     )))
-}
-
-fn build_list_tree(
-    flat: &mut [FlatListItem],
-    cursor: &mut usize,
-    depth: usize,
-    kind: ListKind,
-    budget: &mut ParseBudget,
-) -> Result<ListBlock, ParseFailure> {
-    let mut items = Vec::new();
-    while *cursor < flat.len() && flat[*cursor].depth == depth && flat[*cursor].kind == kind {
-        let mut item = flat[*cursor].item.clone();
-        *cursor += 1;
-        while *cursor < flat.len() && flat[*cursor].depth > depth {
-            let child_depth = flat[*cursor].depth;
-            let child_kind = flat[*cursor].kind;
-            item.children.push(build_list_tree(
-                flat,
-                cursor,
-                child_depth,
-                child_kind,
-                budget,
-            )?);
-        }
-        if let Some(child) = item.children.last() {
-            item.range = TextRange::new(item.range.start(), child.range.end())?;
-        }
-        items.push(item);
-    }
-    let range = TextRange::new(
-        items.first().expect("list has item").range.start(),
-        items.last().expect("list has item").range.end(),
-    )?;
-    budget.consume_node()?;
-    Ok(ListBlock {
-        metadata: BlockMetadata::default(),
-        kind,
-        range,
-        items,
-    })
 }
 
 fn scan_callout_markers(
@@ -1928,87 +1761,6 @@ fn scan_callout_markers(
     Ok(output)
 }
 
-struct DelimitedBody {
-    range_end: TextSize,
-    content_range: TextRange,
-    closing_delimiter_range: Option<TextRange>,
-    next_line: usize,
-    content_end_line: usize,
-    problems: Vec<BlockProblem>,
-}
-
-fn parse_delimited_body(
-    source_document: &SourceDocument,
-    opener_index: usize,
-    delimiter: &str,
-    source: &str,
-    end_line: usize,
-) -> Result<DelimitedBody, PositionError> {
-    let opener = source_document.lines()[opener_index];
-    let content_start = opener.full_range().end();
-    let mut closer_index = None;
-    let mut recovery_index = None;
-
-    for (index, line) in source_document
-        .lines()
-        .iter()
-        .enumerate()
-        .skip(opener_index + 1)
-        .take(end_line.saturating_sub(opener_index + 1))
-    {
-        let content = source_document
-            .text(line.content_range())
-            .expect("line content has valid UTF-8 boundaries");
-        if content == delimiter {
-            closer_index = Some(index);
-            break;
-        }
-        if recovery_index.is_none() && content.starts_with('=') {
-            recovery_index = Some(index);
-        }
-    }
-
-    let (range_end, content_end, closing_delimiter_range, next_line, problems) =
-        if let Some(index) = closer_index {
-            let closer = source_document.lines()[index];
-            (
-                closer.full_range().end(),
-                closer.full_range().start(),
-                Some(closer.content_range()),
-                index + 1,
-                Vec::new(),
-            )
-        } else {
-            let end = recovery_index
-                .map(|index| source_document.lines()[index].full_range().start())
-                .unwrap_or_else(|| TextSize::new(source.len()).expect("source size was validated"));
-            (
-                end,
-                end,
-                None,
-                recovery_index.unwrap_or(end_line),
-                vec![BlockProblem {
-                    kind: BlockProblemKind::UnclosedBlock,
-                    range: opener.content_range(),
-                }],
-            )
-        };
-    Ok(DelimitedBody {
-        range_end,
-        content_range: TextRange::new(content_start, content_end)?,
-        closing_delimiter_range,
-        next_line,
-        content_end_line: closer_index.or(recovery_index).unwrap_or(end_line),
-        problems,
-    })
-}
-
-#[derive(Clone, Copy)]
-struct DelimiterSpec {
-    kind: DelimitedBlockKind,
-    model: DelimitedContentModel,
-}
-
 struct DelimitedParseContext<'source> {
     source_document: &'source SourceDocument,
     source: &'source str,
@@ -2021,94 +1773,10 @@ struct ParseState<'state> {
     anchors: &'state mut Vec<ExplicitAnchor>,
 }
 
-#[derive(Clone, Copy)]
-struct ParseDepth {
-    block: usize,
-    table: usize,
-}
-
-#[derive(Clone, Copy)]
-enum BlockLocation {
-    DocumentRoot,
-    Compound,
-    AsciiDocCell,
-}
-
-#[derive(Clone, Copy)]
-struct BlockContext {
-    location: BlockLocation,
-    depth: ParseDepth,
-}
-
-impl BlockContext {
-    const fn root() -> Self {
-        Self {
-            location: BlockLocation::DocumentRoot,
-            depth: ParseDepth { block: 1, table: 1 },
-        }
-    }
-
-    const fn nested(location: BlockLocation, depth: ParseDepth) -> Self {
-        Self { location, depth }
-    }
-
-    const fn allows_document_header(self) -> bool {
-        matches!(self.location, BlockLocation::DocumentRoot)
-    }
-
-    const fn document_title_position(self, saw_content: bool) -> bool {
-        self.allows_document_header() && !saw_content
-    }
-}
-
-#[derive(Clone, Copy)]
-enum DelimitedContentModel {
-    Compound,
-    Verbatim,
-    Raw,
-    Table,
-}
-
-fn delimiter_spec(delimiter: &str) -> Option<DelimiterSpec> {
-    let spec = match delimiter {
-        "--" => (DelimitedBlockKind::Open, DelimitedContentModel::Compound),
-        "|===" => (DelimitedBlockKind::Table, DelimitedContentModel::Table),
-        value if crate::table::is_table_delimiter(value) => {
-            (DelimitedBlockKind::Table, DelimitedContentModel::Table)
-        }
-        _ if repeated_delimiter(delimiter, '/') => {
-            (DelimitedBlockKind::Comment, DelimitedContentModel::Verbatim)
-        }
-        _ if repeated_delimiter(delimiter, '=') => {
-            (DelimitedBlockKind::Example, DelimitedContentModel::Compound)
-        }
-        _ if repeated_delimiter(delimiter, '-') => {
-            (DelimitedBlockKind::Listing, DelimitedContentModel::Verbatim)
-        }
-        _ if repeated_delimiter(delimiter, '.') => {
-            (DelimitedBlockKind::Literal, DelimitedContentModel::Verbatim)
-        }
-        _ if repeated_delimiter(delimiter, '*') => {
-            (DelimitedBlockKind::Sidebar, DelimitedContentModel::Compound)
-        }
-        _ if repeated_delimiter(delimiter, '+') => {
-            (DelimitedBlockKind::Pass, DelimitedContentModel::Raw)
-        }
-        _ if repeated_delimiter(delimiter, '_') => {
-            (DelimitedBlockKind::Quote, DelimitedContentModel::Compound)
-        }
-        _ => return None,
-    };
-    Some(DelimiterSpec {
-        kind: spec.0,
-        model: spec.1,
-    })
-}
-
 pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {
     let trimmed = content.trim_end_matches([' ', '\t']);
     trimmed.len() != content.len()
-        && (delimiter_spec(trimmed).is_some()
+        && (crate::delimiter::spec(trimmed).is_some()
             || parse_block_attributes(trimmed, 0).is_some()
             || parse_source_attribute(trimmed).is_some()
             || parse_math_attribute(trimmed).is_some()
@@ -2120,10 +1788,6 @@ pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {
             .is_some())
 }
 
-fn repeated_delimiter(value: &str, marker: char) -> bool {
-    value.len() >= 4 && value.chars().all(|character| character == marker)
-}
-
 fn parse_delimited_block(
     context: &DelimitedParseContext<'_>,
     opener_index: usize,
@@ -2132,45 +1796,54 @@ fn parse_delimited_block(
     state: &mut ParseState<'_>,
     depth: ParseDepth,
     metadata: Option<&BlockMetadata>,
-) -> Result<(DelimitedBlock, usize), ParseFailure> {
+) -> Result<(DelimitedBlock, Vec<SyntaxNode>, usize), ParseFailure> {
     let source_document = context.source_document;
     let source = context.source;
     let opener = source_document.lines()[opener_index];
     let delimiter = source_document
         .text(opener.content_range())
         .expect("delimiter range is valid");
-    let body = parse_delimited_body(source_document, opener_index, delimiter, source, end_line)?;
+    let body = crate::delimiter::body(source_document, opener_index, delimiter, source, end_line)?;
     let value = source
         .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
         .expect("delimited content range is valid")
         .to_owned();
+    let mut nested_syntax = Vec::new();
     let content = match spec.model {
-        DelimitedContentModel::Compound => DelimitedContent::Compound(parse_nested_blocks(
-            source_document,
-            opener_index + 1,
-            body.content_end_line,
-            context,
-            state,
-            ParseDepth {
-                block: depth.block + 1,
-                table: depth.table,
-            },
-            BlockLocation::Compound,
-        )?),
+        DelimitedContentModel::Compound => {
+            let nested = parse_nested_blocks(
+                source_document,
+                opener_index + 1,
+                body.content_end_line,
+                context,
+                state,
+                ParseDepth {
+                    block: depth.block + 1,
+                    table: depth.table,
+                },
+                BlockLocation::Compound,
+            )?;
+            nested_syntax = nested.syntax;
+            DelimitedContent::Compound(nested.blocks)
+        }
         DelimitedContentModel::Verbatim => DelimitedContent::Verbatim(value),
         DelimitedContentModel::Raw => DelimitedContent::Passthrough(value),
-        DelimitedContentModel::Table => DelimitedContent::Table(parse_table(
-            TableSyntaxInput {
-                value: &value,
-                content_range: body.content_range,
-                delimiter,
-                delimiter_range: opener.content_range(),
-                metadata: metadata.unwrap_or(&BlockMetadata::default()),
-            },
-            context,
-            state,
-            depth,
-        )?),
+        DelimitedContentModel::Table => {
+            let (table, syntax) = parse_table(
+                TableSyntaxInput {
+                    value: &value,
+                    content_range: body.content_range,
+                    delimiter,
+                    delimiter_range: opener.content_range(),
+                    metadata: metadata.unwrap_or(&BlockMetadata::default()),
+                },
+                context,
+                state,
+                depth,
+            )?;
+            nested_syntax = syntax;
+            DelimitedContent::Table(table)
+        }
     };
     Ok((
         DelimitedBlock {
@@ -2184,6 +1857,7 @@ fn parse_delimited_block(
             content,
             problems: body.problems,
         },
+        nested_syntax,
         body.next_line,
     ))
 }
@@ -2201,7 +1875,7 @@ fn parse_table(
     context: &DelimitedParseContext<'_>,
     state: &mut ParseState<'_>,
     depth: ParseDepth,
-) -> Result<crate::table::Table, ParseFailure> {
+) -> Result<(crate::table::Table, Vec<SyntaxNode>), ParseFailure> {
     use crate::table::{
         HorizontalAlignment, TableCell, TableCellContent, TableCellStyle, TableColumn, TableRow,
         TableSection, VerticalAlignment,
@@ -2327,6 +2001,7 @@ fn parse_table(
     };
     crate::table::layout_rows(&mut table);
     crate::table::configure(&mut table, input.metadata);
+    let mut nested_syntax = Vec::new();
     for row in &mut table.rows {
         for cell in &mut row.cells {
             if cell.style != TableCellStyle::AsciiDoc {
@@ -2354,7 +2029,7 @@ fn parse_table(
                         SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
                     })?
                 };
-            let blocks = parse_nested_blocks(
+            let nested = parse_nested_blocks(
                 &fragment,
                 0,
                 fragment.lines().len(),
@@ -2366,10 +2041,16 @@ fn parse_table(
                 },
                 BlockLocation::AsciiDocCell,
             )?;
-            cell.content = TableCellContent::AsciiDoc(blocks);
+            nested_syntax.extend(nested.syntax);
+            cell.content = TableCellContent::AsciiDoc(nested.blocks);
         }
     }
-    Ok(table)
+    Ok((table, nested_syntax))
+}
+
+struct NestedBlocks {
+    blocks: Vec<AstBlock>,
+    syntax: Vec<SyntaxNode>,
 }
 
 fn parse_nested_blocks(
@@ -2380,7 +2061,7 @@ fn parse_nested_blocks(
     state: &mut ParseState<'_>,
     depth: ParseDepth,
     location: BlockLocation,
-) -> Result<Vec<AstBlock>, ParseFailure> {
+) -> Result<NestedBlocks, ParseFailure> {
     let config = context.config;
     let is_cancelled = context.is_cancelled;
     if depth.block > config.max_block_depth.max(1) {
@@ -2391,7 +2072,10 @@ fn parse_nested_blocks(
         }));
     }
     if start_line == end_line {
-        return Ok(Vec::new());
+        return Ok(NestedBlocks {
+            blocks: Vec::new(),
+            syntax: Vec::new(),
+        });
     }
     let sequence = parse_block_sequence(
         context.source,
@@ -2401,8 +2085,14 @@ fn parse_nested_blocks(
         state.budget,
         BlockContext::nested(location, depth),
     )?;
+    let BlockSequenceOutput::Nested(sequence) = sequence else {
+        return Err(ParseFailure::InternalInvariant);
+    };
     state.anchors.extend(sequence.anchors);
-    Ok(sequence.blocks)
+    Ok(NestedBlocks {
+        blocks: sequence.blocks,
+        syntax: sequence.syntax,
+    })
 }
 
 fn parse_source_block(
@@ -2427,7 +2117,7 @@ fn parse_source_block(
     let language = language_relative.map(|(start, end)| attribute_text[start..end].to_owned());
     let delimiter_index = attribute_index + 1;
     let delimiter = source_document.lines()[delimiter_index];
-    let mut body = parse_delimited_body(
+    let mut body = crate::delimiter::body(
         source_document,
         delimiter_index,
         "----",
@@ -2587,85 +2277,6 @@ fn parse_literal_paragraph(
         },
         end_line,
     ))
-}
-
-fn extend_header_range(header: &mut DocumentHeader, line: TextRange) {
-    header.range = Some(match header.range {
-        Some(range) => TextRange::new(range.start(), line.end()).expect("ordered header lines"),
-        None => line,
-    });
-    header.end = line.end();
-}
-
-fn parse_author_line(content: &str, line: SourceLine) -> Result<Option<Author>, PositionError> {
-    let trimmed = content.trim_matches([' ', '\t']);
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    let leading = content.len() - content.trim_start_matches([' ', '\t']).len();
-    let base = line.content_range().start().to_usize() + leading;
-    let (name, email, email_offset) = match trimmed
-        .strip_suffix('>')
-        .and_then(|value| value.rsplit_once('<'))
-    {
-        Some((name, email)) if !email.trim().is_empty() => {
-            let normalized_name = name.trim_end();
-            (
-                normalized_name,
-                Some(email.trim()),
-                Some(trimmed.len() - email.len() - 1),
-            )
-        }
-        _ => (trimmed, None, None),
-    };
-    if name.is_empty() {
-        return Ok(None);
-    }
-    let name_range = text_range(base, base + name.len())?;
-    let email_range = email_offset
-        .map(|offset| text_range(base + offset, base + offset + email.expect("email").len()))
-        .transpose()?;
-    Ok(Some(Author {
-        range: line.full_range(),
-        name_range,
-        email_range,
-        name: name.to_owned(),
-        email: email.map(str::to_owned),
-    }))
-}
-
-fn parse_revision_line(content: &str, line: SourceLine) -> Result<Revision, PositionError> {
-    let trimmed = content.trim_matches([' ', '\t']);
-    let leading = content.len() - content.trim_start_matches([' ', '\t']).len();
-    let base = line.content_range().start().to_usize() + leading;
-    let (prefix, remark) = trimmed
-        .split_once(':')
-        .map_or((trimmed, None), |(left, right)| {
-            (left.trim_end(), Some(right.trim_start()))
-        });
-    let (number, date) = prefix
-        .split_once(',')
-        .map_or((Some(prefix.trim()), None), |(left, right)| {
-            (Some(left.trim()), Some(right.trim()))
-        });
-    let value = |part: Option<&str>| -> Result<Option<MetadataValue>, PositionError> {
-        let Some(part) = part.filter(|part| !part.is_empty()) else {
-            return Ok(None);
-        };
-        let offset = trimmed
-            .find(part)
-            .expect("revision component is a source slice");
-        Ok(Some(MetadataValue {
-            value: part.to_owned(),
-            range: text_range(base + offset, base + offset + part.len())?,
-        }))
-    };
-    Ok(Revision {
-        range: line.full_range(),
-        number: value(number)?,
-        date: value(date)?,
-        remark: value(remark)?,
-    })
 }
 
 fn flush_paragraph(
@@ -3141,6 +2752,7 @@ mod tests {
             DelimitedContent::Compound(children)
                 if matches!(&children[..], [AstBlock::Paragraph(_)])
         ));
+        assert_eq!(parsed.syntax.nodes(SyntaxKind::Paragraph).count(), 1);
         assert_eq!(parsed.syntax.reconstruct(), source);
     }
 

@@ -95,6 +95,19 @@ syntax nodeとsemantic blockの追加およびpending metadataの付与は共通
 recognizerが生成した回復factはsyntax issueへ移動した後に破棄し、最終semantic ASTからqueryできない。
 doctype依存のheading正規化はfactの移動前に行い、構文診断と意味判断の順序を固定する。
 
+再帰sequenceの入力範囲、context、cursorおよび出力型は`block_sequence`が所有する。root出力だけが
+document header、文書属性と属性問題を持ち、nested出力はblock、syntax、anchorだけを返す。
+したがってnested parserがroot専用factを既定値として生成して捨てることは型としてできない。
+delimiterの種類・content model・閉じ位置回復は`delimiter`、document header状態と著者・改訂行は
+`document_header`、list marker文法とflat-to-tree変換は`list_parser`を正本とする。
+list continuationは任意のblock sequenceへ再帰するdispatchであるため、list固有moduleへ逆依存させず
+sequence orchestratorに残す。共有`ParseBudget`、cancel checkおよびsource rangeの所有者は
+`parse_block_sequence`であり、各domain moduleはI/Oや独自budgetを持たない。
+
+解析順序は、raw block／syntax factの収集、semantic lowering、文書属性の確定、identifier catalog、
+document structure、syntax diagnostic投影、catalog、lint diagnostic確定の順とする。後段からparserへ
+情報を戻して再解釈せず、CLI、LSP、WASMおよびZed adapterは完成した一つの`Analysis`だけを利用する。
+
 == 標準コアとホスト拡張
 
 標準コアは文書属性を名前、原値、操作および範囲として保持するが、`note-id`、タグ、

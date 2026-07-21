@@ -42,7 +42,7 @@ pub(crate) fn source(source: &SourceBlock) -> SyntaxNode {
     )
 }
 
-pub(crate) fn delimited(block: &DelimitedBlock) -> SyntaxNode {
+pub(crate) fn delimited(block: &DelimitedBlock, nested: Vec<SyntaxNode>) -> SyntaxNode {
     let opening = SyntaxNode::leaf(SyntaxKind::BlockDelimiter, block.opening_delimiter_range);
     let mut children = vec![if block.closing_delimiter_range.is_none() {
         SyntaxNode::new(
@@ -53,6 +53,7 @@ pub(crate) fn delimited(block: &DelimitedBlock) -> SyntaxNode {
     } else {
         opening
     }];
+    children.extend(nested);
     if let Some(range) = block.closing_delimiter_range {
         children.push(SyntaxNode::leaf(SyntaxKind::BlockDelimiter, range));
     }

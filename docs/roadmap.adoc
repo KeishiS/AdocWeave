@@ -279,7 +279,7 @@ GitHub Releaseの契約を固定する前に、次の順序で破壊的に収束
 . xref:../issues/093-table-input-specification.adoc[Issue 093]で、delimiterとmetadataからtable入力形式を
   決定する規則をtable domainへ集約する。
 . xref:../issues/094-parser-output-and-module-convergence.adoc[Issue 094]で、root／nested出力型とparser
-  module境界を最終化し、全consumerと検証gateを一斉移行する。
+  module境界を最終化し、全consumerと検証gateを一斉移行した。
 
 Issue 090の完了前にID catalogやAST variantを変更すると、旧fragment座標を前提に再実装する必要が生じる。
 Issue 092の完了前にtableとparser moduleを分割すると、削除予定variantと再帰分岐を新moduleへ複製する。
@@ -292,7 +292,7 @@ GitHub ReleasesをCLI、Language Serverおよびbrowser向けリアルタイムH
 入力に対して最新generationの安全なHTMLと診断を返す。DOM描画とUI stateは利用側が所有し、Zedは
 frontend libraryではなく公開LSP binaryのconsumerとして扱う。
 
-Issue 090から094の構造収束を完了した後、Issue 082から088でLinux x86-64／ARM64のnative target、
+Issue 090から094の構造収束を完了した。次はIssue 082から088でLinux x86-64／ARM64のnative target、
 browser library、checksum／SBOM／provenance、
 原子的なGitHub Actions workflow、ZedによるLSP取得およびclean環境での受け入れを順に実装する。
 最初のrelease candidateでは、開発中に増加した6種類の公開契約versionを一度だけすべて`1`へリセットし、

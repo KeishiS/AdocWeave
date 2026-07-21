@@ -1,5 +1,5 @@
 = Parser出力型とmodule境界の最終収束
-:status: planned
+:status: completed
 :depends-on: 091,092,093
 
 == 目的
@@ -22,3 +22,19 @@
 nested parserがroot専用factを生成・破棄せず、各moduleの入力と出力に所有する不変条件が記述されている。
 `parser.rs`がblock種別固有の全実装を抱えず、新構文の追加箇所がrecognition、semantic construction、consumer契約として
 追跡可能である。`cargo make release-gate`が最終構成で成功し、Issue 082以降の公開作業へ進める。
+
+== 実装結果
+
+`BlockSequenceOutput`を`RootBlockSequenceOutput`とnested `BlockFacts`へ分離した。document header、文書属性および
+属性問題はroot stateが存在する場合だけ生成され、root／nestedの取り違えは内部不変条件違反として失敗する。
+compound blockとAsciiDoc table cellのnested syntax factは親delimiter nodeへ接続し、黙示的な破棄を解消した。
+
+再帰入力・context・cursor・出力不変条件を`block_sequence.rs`、delimiter registryと閉じ位置回復を
+`delimiter.rs`、root header状態を`document_header.rs`、list markerと木構築を`list_parser.rs`へ分離した。
+list continuation自体は全block種別へ再帰するsequence dispatchであり、専用moduleへ移すとparserへの循環した
+callback APIが必要になるためorchestratorへ残した。この境界は行数削減ではなく、共有budget、cancelおよびrangeを
+一つの状態機械が所有するという不変条件を優先した結果である。
+
+raw fact、lowering、属性確定、identifier、structure、syntax diagnostic、catalog、lintの順序を
+architectureへ規範化した。公開semantic APIは変更せず、nested syntax treeの階層化をCore Profile 17として
+native、CLI、LSP、WASMおよびZedが共有する単一`Analysis`へ反映した。

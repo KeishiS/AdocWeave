@@ -8,7 +8,7 @@
 [cols="2,1",options="header"]
 |===
 |契約 |現在値
-|Core profile |16
+|Core profile |17
 |Rust core API |29
 |HTML |15
 |Projection |11
