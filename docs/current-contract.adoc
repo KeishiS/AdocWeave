@@ -9,7 +9,7 @@
 |===
 |契約 |現在値
 |Core profile |8
-|Rust core API |19
+|Rust core API |20
 |HTML |8
 |Projection |8
 |Conformance snapshot |12

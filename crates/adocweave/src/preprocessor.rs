@@ -9,6 +9,7 @@ use crate::diagnostic::{Diagnostic, RelatedInformation, TextEdit};
 use crate::document::DocumentSymbol;
 use crate::inline::Reference;
 use crate::resource::ResourceReference;
+use crate::source::PositionError;
 use crate::source::{TextRange, TextSize};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -842,6 +843,38 @@ struct ParsedDirective {
     attributes: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncludeRequest {
+    pub range: TextRange,
+    pub target: String,
+    pub attributes: String,
+}
+
+/// Finds syntactically complete, unescaped include directives without performing I/O.
+///
+/// Hosts may load a superset of resources from these requests. Conditional evaluation and
+/// authoritative target validation remain the responsibility of [`preprocess`].
+pub fn discover_includes(source: &str) -> Result<Vec<IncludeRequest>, PositionError> {
+    TextSize::new(source.len())?;
+    let mut requests = Vec::new();
+    let mut offset = 0;
+    for line in source.split_inclusive('\n') {
+        let end = offset + line.len();
+        let content = line.trim_end_matches(['\r', '\n']);
+        if !content.starts_with('\\')
+            && let Some(include) = include_directive(content)
+        {
+            requests.push(IncludeRequest {
+                range: TextRange::new(TextSize::new(offset)?, TextSize::new(end)?)?,
+                target: include.target,
+                attributes: include.attributes,
+            });
+        }
+        offset = end;
+    }
+    Ok(requests)
+}
+
 fn include_directive(value: &str) -> Option<ParsedDirective> {
     parse_directive(value, "include::", DirectiveKind::Include)
 }
@@ -1277,6 +1310,22 @@ mod tests {
         let result = preprocess("include::one.adoc[]\n", &snapshot, &options).expect("result");
         assert_eq!(result.source, "nested\n");
         assert_eq!(result.directives[1].target, "book/chapters/section.adoc");
+    }
+
+    #[test]
+    fn include_discovery_is_io_free_and_ignores_escaped_or_incomplete_directives() {
+        let requests = discover_includes(concat!(
+            "include::one.adoc[tag=a]\n",
+            "\\include::literal.adoc[]\n",
+            "include::incomplete.adoc[\n",
+            "ifdef::web[]\ninclude::conditional.adoc[]\nendif::[]\n",
+        ))
+        .expect("bounded source");
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].target, "one.adoc");
+        assert_eq!(requests[0].attributes, "tag=a");
+        assert_eq!(requests[1].target, "conditional.adoc");
     }
 
     #[test]
