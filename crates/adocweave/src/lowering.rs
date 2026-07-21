@@ -16,6 +16,7 @@ pub(crate) struct ParsedFacts {
 }
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
+    configure_tables(&mut facts.blocks);
     attach_anchors(&mut facts.anchors, &facts.blocks);
     facts.header.doctype = document_type(&facts.attributes);
     let mut document =
@@ -23,6 +24,38 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     document.normalize_heading_kinds();
     resolve_document_attributes(&mut document, facts.attribute_expansion_limits);
     document
+}
+
+fn configure_tables(blocks: &mut [AstBlock]) {
+    fn configure_list(list: &mut crate::parser::ListBlock) {
+        for item in &mut list.items {
+            for child in &mut item.children {
+                configure_list(child);
+            }
+            configure_tables(&mut item.continuations);
+        }
+    }
+    for block in blocks {
+        match block {
+            AstBlock::List(list) => configure_list(list),
+            AstBlock::Delimited(block) => match &mut block.content {
+                crate::parser::DelimitedContent::Table(table) => {
+                    crate::table::configure(table, &block.metadata);
+                }
+                crate::parser::DelimitedContent::Compound(children) => configure_tables(children),
+                crate::parser::DelimitedContent::Verbatim(_)
+                | crate::parser::DelimitedContent::Passthrough(_) => {}
+            },
+            AstBlock::Heading(_)
+            | AstBlock::Paragraph(_)
+            | AstBlock::LiteralParagraph(_)
+            | AstBlock::Break(_)
+            | AstBlock::Literal(_)
+            | AstBlock::Source(_)
+            | AstBlock::Math(_)
+            | AstBlock::Unsupported(_) => {}
+        }
+    }
 }
 
 fn document_type(attributes: &[DocumentAttribute]) -> DocumentType {

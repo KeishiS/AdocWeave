@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 6;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 7;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -204,8 +204,28 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                     );
                 }
                 crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Passthrough(_)
-                | crate::parser::DelimitedContent::Table(_) => {}
+                | crate::parser::DelimitedContent::Passthrough(_) => {}
+                crate::parser::DelimitedContent::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            match &cell.content {
+                                crate::table::TableCellContent::Inlines(inlines)
+                                | crate::table::TableCellContent::AsciiDoc(inlines) => push_search(
+                                    output,
+                                    SearchTextKind::Prose,
+                                    cell.content_range,
+                                    inline_text(inlines),
+                                ),
+                                crate::table::TableCellContent::Verbatim(value) => push_search(
+                                    output,
+                                    SearchTextKind::Code,
+                                    cell.content_range,
+                                    value.clone(),
+                                ),
+                            }
+                        }
+                    }
+                }
             },
             AstBlock::Math(_) | AstBlock::Unsupported(_) => {}
         }
@@ -520,13 +540,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_six_json_contract() {
+    fn projections_keep_the_version_seven_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":6,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":7,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

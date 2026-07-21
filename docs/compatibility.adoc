@@ -130,7 +130,7 @@ AdocWeaveは現在、次の意味上の対応を実装する。
 
 コンテキストごとの置換段階は型で固定している。任意の`subs`属性による段階の追加・削除と、
 未対応macro固有の置換は今後の範囲である。実装済み契約は
-xref:substitutions.adoc[Core 0.5置換モデル]で定義する。
+xref:substitutions.adoc[Core置換モデル]で定義する。
 
 == ブロックと文書の互換性
 
@@ -188,7 +188,8 @@ xref:substitutions.adoc[Core 0.5置換モデル]で定義する。
 
 |表
 |PSVを既定とし、CSV／DSV／TSV、列・cell属性、spanおよびAsciiDoc cellを定義する
-|未対応
+|基本PSV、暗黙／明示列、header／footer、列・cell属性、span、配置、styleおよび複数行cellに対応。
+AsciiDoc cellのblock文書、CSV／DSV／TSV、任意separatorおよびduplicationは未対応
 
 |標準inline／block macro
 |image、footnote、anchor、email、keyboard、button、menu、index等

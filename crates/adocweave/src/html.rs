@@ -15,12 +15,13 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 6;
+pub const HTML_CONTRACT_VERSION: u16 = 7;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html",
-    "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "ul",
+    "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "table", "tbody", "td",
+    "tfoot", "th", "thead", "tr", "ul",
 ];
-pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "href", "id"];
+pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "colspan", "href", "id", "rowspan"];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
     "callout-list",
@@ -33,6 +34,12 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "math-typst",
     "page-break",
     "revision",
+    "table-align-center",
+    "table-align-left",
+    "table-align-right",
+    "table-valign-bottom",
+    "table-valign-middle",
+    "table-valign-top",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -285,17 +292,146 @@ fn render_delimited(
                 output.push_str("</pre>\n");
             }
         }
-        crate::parser::DelimitedContent::Passthrough(value)
-        | crate::parser::DelimitedContent::Table(value) => {
+        crate::parser::DelimitedContent::Passthrough(value) => {
             output.push_str("<pre");
             render_optional_id(output, explicit_id);
             output.push('>');
             escape_html_into(output, value);
             output.push_str("</pre>\n");
         }
+        crate::parser::DelimitedContent::Table(table) => {
+            render_table(output, table, explicit_id, context);
+        }
         crate::parser::DelimitedContent::Compound(children) => {
             for child in children {
                 render_block(output, child, None, None, policy, context);
+            }
+        }
+    }
+}
+
+fn render_table(
+    output: &mut String,
+    table: &crate::table::Table,
+    explicit_id: Option<&str>,
+    context: &mut InlineRenderContext<'_>,
+) {
+    use crate::table::{HorizontalAlignment, TableCellStyle, TableSection};
+    output.push_str("<table");
+    render_optional_id(output, explicit_id);
+    output.push_str(">\n");
+    let mut section = None;
+    for row in &table.rows {
+        if section != Some(row.section) {
+            if let Some(previous) = section {
+                output.push_str(table_section_close(previous));
+            }
+            output.push_str(match row.section {
+                TableSection::Header => "<thead>\n",
+                TableSection::Body => "<tbody>\n",
+                TableSection::Footer => "<tfoot>\n",
+            });
+            section = Some(row.section);
+        }
+        output.push_str("<tr>\n");
+        for cell in &row.cells {
+            let tag = if row.section == TableSection::Header || cell.style == TableCellStyle::Header
+            {
+                "th"
+            } else {
+                "td"
+            };
+            output.push('<');
+            output.push_str(tag);
+            if cell.column_span > 1 {
+                output.push_str(" colspan=\"");
+                output.push_str(&cell.column_span.to_string());
+                output.push('"');
+            }
+            if cell.row_span > 1 {
+                output.push_str(" rowspan=\"");
+                output.push_str(&cell.row_span.to_string());
+                output.push('"');
+            }
+            let alignment = cell.horizontal_alignment.unwrap_or_else(|| {
+                table
+                    .columns
+                    .get(cell.column_index as usize)
+                    .map_or(HorizontalAlignment::Left, |column| {
+                        column.horizontal_alignment
+                    })
+            });
+            let vertical_alignment = cell.vertical_alignment.unwrap_or_else(|| {
+                table
+                    .columns
+                    .get(cell.column_index as usize)
+                    .map_or(crate::table::VerticalAlignment::Top, |column| {
+                        column.vertical_alignment
+                    })
+            });
+            output.push_str(" class=\"");
+            output.push_str(match alignment {
+                HorizontalAlignment::Left => "table-align-left",
+                HorizontalAlignment::Center => "table-align-center",
+                HorizontalAlignment::Right => "table-align-right",
+            });
+            output.push(' ');
+            output.push_str(match vertical_alignment {
+                crate::table::VerticalAlignment::Top => "table-valign-top",
+                crate::table::VerticalAlignment::Middle => "table-valign-middle",
+                crate::table::VerticalAlignment::Bottom => "table-valign-bottom",
+            });
+            output.push_str("\">");
+            render_table_cell(output, cell, context);
+            output.push_str("</");
+            output.push_str(tag);
+            output.push_str(">\n");
+        }
+        output.push_str("</tr>\n");
+    }
+    if let Some(section) = section {
+        output.push_str(table_section_close(section));
+    }
+    output.push_str("</table>\n");
+}
+
+fn table_section_close(section: crate::table::TableSection) -> &'static str {
+    match section {
+        crate::table::TableSection::Header => "</thead>\n",
+        crate::table::TableSection::Body => "</tbody>\n",
+        crate::table::TableSection::Footer => "</tfoot>\n",
+    }
+}
+
+fn render_table_cell(
+    output: &mut String,
+    cell: &crate::table::TableCell,
+    context: &mut InlineRenderContext<'_>,
+) {
+    use crate::table::{TableCellContent, TableCellStyle};
+    match &cell.content {
+        TableCellContent::Verbatim(value) => {
+            output.push_str("<pre>");
+            escape_html_into(output, value);
+            output.push_str("</pre>");
+        }
+        TableCellContent::Inlines(inlines) | TableCellContent::AsciiDoc(inlines) => {
+            let wrapper = match cell.style {
+                TableCellStyle::Emphasis => Some("em"),
+                TableCellStyle::Monospace => Some("code"),
+                TableCellStyle::Strong => Some("strong"),
+                _ => None,
+            };
+            if let Some(wrapper) = wrapper {
+                output.push('<');
+                output.push_str(wrapper);
+                output.push('>');
+            }
+            render_inlines(output, inlines, context);
+            if let Some(wrapper) = wrapper {
+                output.push_str("</");
+                output.push_str(wrapper);
+                output.push('>');
             }
         }
     }
@@ -928,15 +1064,19 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 6);
+        assert_eq!(HTML_CONTRACT_VERSION, 7);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
                 "a", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5",
-                "hr", "html", "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "ul"
+                "hr", "html", "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup",
+                "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul"
             ]
         );
-        assert_eq!(ALLOWED_ATTRIBUTES, ["class", "href", "id"]);
+        assert_eq!(
+            ALLOWED_ATTRIBUTES,
+            ["class", "colspan", "href", "id", "rowspan"]
+        );
         assert_eq!(
             ALLOWED_CLASSES,
             [
@@ -950,7 +1090,13 @@ mod tests {
                 "math-latex",
                 "math-typst",
                 "page-break",
-                "revision"
+                "revision",
+                "table-align-center",
+                "table-align-left",
+                "table-align-right",
+                "table-valign-bottom",
+                "table-valign-middle",
+                "table-valign-top"
             ]
         );
         let parsed = parse("paragraph").expect("parse");
@@ -1216,6 +1362,18 @@ mod tests {
         assert_eq!(
             output.html,
             include_str!("../../../fixtures/lists/standard-forms.html")
+        );
+    }
+
+    #[test]
+    fn standard_table_forms_render_allowlisted_semantic_html() {
+        let parsed =
+            parse(include_str!("../../../fixtures/tables/standard-forms.adoc")).expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            include_str!("../../../fixtures/tables/standard-forms.html")
         );
     }
 

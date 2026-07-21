@@ -1,0 +1,49 @@
+= 表の対応仕様
+
+AdocWeaveはAsciiDocのPSV表を、区切り付きblockの文字列ではなく、列、行、cell、span、配置、
+styleおよびsource rangeを持つ意味モデルとして扱う。sourceの正本はlossless syntax treeであり、
+意味モデルからsourceを再生成しない。
+
+== 対応範囲
+
+次を対応する。
+
+* `|===`によるPSV表
+* 先頭行のcell数による暗黙列数と、`cols`による明示列数
+* `cols`の幅、`n*` multiplier、水平・垂直配置およびcell style
+* `options="header,footer"`による先頭・末尾行の区分
+* `2+|`、`.2+|`、`2.3+|`によるcolumn span、row spanおよび両方のspan
+* cell固有の水平・垂直配置と、default、emphasis、header、literal、monospace、strong、
+  verse、AsciiDocのstyle
+* 通常cell内のinline置換と複数行内容
+* 表本体byte数、cell数、列数および表深さの構築時上限
+
+列指定よりcell指定を優先する。header行は列またはcellのstyleにかかわらずheader要素として
+出力する。HTML backendは`table`、section、row、cell要素と、契約で許可した属性・classだけを
+生成し、入力由来のHTMLを通過させない。
+
+== 現在の制限
+
+AsciiDoc style（`a`）cellは専用の型と通常のinline置換contextを持つが、現時点ではcell内容を
+独立したblock文書として再帰解析しない。このため、同cell内のlist、区切り付きblock、block macro、
+入れ子表は未対応である。`max_table_depth`は現在のtop-level表にも適用し、将来の再帰解析でも同じ
+上限契約を使用する。
+
+CSV、DSV、TSV、任意separator、cell duplication、自動header推論、caption、frame、grid、stripes、
+widthおよびautowidthも未対応である。未対応機能を暗黙にPSVとして誤解釈せず、今後のIssueで
+format別scannerと共通table modelの間を接続する。
+
+== 置換と安全性
+
+通常cellは`Normal`、literalとverseは`Verbatim`、AsciiDoc style cellは現在の対応範囲では
+`Normal` inline置換を適用する。HTMLへの変換時には文字列と属性値を出力文脈ごとにescapeする。
+PSV separatorのbackslash escapeはcell境界の走査時に認識し、inline置換へsource rangeを保ったまま
+渡す。
+
+== 参照仕様
+
+* https://docs.asciidoctor.org/asciidoc/latest/tables/table-ref/[Table Syntax and Attribute Reference]
+* https://docs.asciidoctor.org/asciidoc/latest/tables/add-cells-and-rows/[Add Cells and Rows]
+* https://docs.asciidoctor.org/asciidoc/latest/tables/span-cells/[Span Columns and Rows]
+* https://docs.asciidoctor.org/asciidoc/latest/tables/format-cell-content/[Format Content by Cell]
+* https://docs.asciidoctor.org/asciidoc/latest/tables/data-format/[Table Data Formats]

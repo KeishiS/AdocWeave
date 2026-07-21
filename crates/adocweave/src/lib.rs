@@ -28,6 +28,7 @@ pub mod source;
 pub mod source_document;
 pub mod substitution;
 pub mod syntax;
+pub mod table;
 pub mod url;
 pub mod walker;
 

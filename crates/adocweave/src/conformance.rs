@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 10;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 11;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -140,10 +140,31 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                     children.iter().map(block_node).collect(),
                 ),
                 crate::parser::DelimitedContent::Verbatim(value)
-                | crate::parser::DelimitedContent::Passthrough(value)
-                | crate::parser::DelimitedContent::Table(value) => {
+                | crate::parser::DelimitedContent::Passthrough(value) => {
                     (Some(value.clone()), Vec::new())
                 }
+                crate::parser::DelimitedContent::Table(table) => (
+                    Some("psv".to_owned()),
+                    table
+                        .rows
+                        .iter()
+                        .map(|row| CanonicalNode {
+                            kind: "table-row",
+                            range: range(row.range),
+                            value: Some(format!("{:?}", row.section).to_ascii_lowercase()),
+                            children: row
+                                .cells
+                                .iter()
+                                .map(|cell| CanonicalNode {
+                                    kind: "table-cell",
+                                    range: range(cell.range),
+                                    value: Some(cell.raw.clone()),
+                                    children: Vec::new(),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                ),
             };
             CanonicalNode {
                 kind: match node.kind {

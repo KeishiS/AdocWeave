@@ -1,0 +1,12 @@
+[cols="1,^2s",options="header,footer"]
+|===
+|Name |Value
+
+|first line
+continued line
+|*formatted*
+
+2+|wide cell
+
+|Footer |Done
+|===

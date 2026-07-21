@@ -3,8 +3,8 @@
 この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
 製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-この対応範囲は`CORE_PROFILE_VERSION = 6`として公開する。version、SemVerおよび再構築条件は
-xref:core-profile.adoc[AdocWeave Core Profile 4]で定義する。
+この対応範囲は`CORE_PROFILE_VERSION = 7`として公開する。version、SemVerおよび再構築条件は
+xref:core-profile.adoc[AdocWeave Core Profile 7]で定義する。
 実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
 AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
 
@@ -87,6 +87,11 @@ HTML IDに使用する。
 |comment（`////`）、example（`====`）、listing（`----`）、literal（`....`）、open（`--`）、
 sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===`）を認識する。
 内容はcompound／verbatim／raw／tableの型で区別し、同種blockは異なるdelimiter長で入れ子にできる。
+
+|PSV表
+|部分対応
+|暗黙／明示列、header／footer、column／row span、配置、cell styleおよび複数行cellを型付きで扱う。
+AsciiDoc style cellのblock文書とCSV／DSV／TSVは未対応。詳細はxref:tables.adoc[表の対応仕様]を参照する。
 
 |ソースブロック（`[source,LANGUAGE]`と後続する`----`）
 |部分対応

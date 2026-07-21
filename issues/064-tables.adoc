@@ -1,5 +1,5 @@
 = 基本tableとcell model
-:status: planned
+:status: completed
 :depends-on: 060,062
 
 == 目的
@@ -17,3 +17,11 @@ AsciiDocのtableを文字列分割ではなく、行・列・cell spanとcell co
 == 完了条件
 
 基本PSV tableと複数行cellをlosslessに復元でき、HTML table出力がallowlist契約に従う。
+
+== 完了内容
+
+PSVを列、行、cell、span、配置、styleおよびsource rangeからなる公開型へ変換した。暗黙列数、
+`cols`、multiplier、header／footer、column／row span、複数行cellおよび列・cell styleを
+実装し、HTML allowlistとfixtureで固定した。表のbyte数、cell数、列数および深さは構築時に
+検査する。完全なblock文書としてのAsciiDoc cellとCSV／DSV／TSVは後続Issueへ残し、
+xref:../docs/tables.adoc[表の対応仕様]に境界を明記した。

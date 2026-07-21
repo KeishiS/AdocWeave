@@ -12,6 +12,9 @@ pub enum SemanticNode<'document> {
     Block(&'document AstBlock),
     List(&'document ListBlock),
     ListItem(&'document ListItem),
+    Table(&'document crate::table::Table),
+    TableRow(&'document crate::table::TableRow),
+    TableCell(&'document crate::table::TableCell),
     Inline(&'document Inline),
     Attribute(&'document DocumentAttribute),
     Anchor(&'document ExplicitAnchor),
@@ -44,11 +47,29 @@ fn walk_blocks<'document>(
             AstBlock::Heading(heading) => walk_inlines(&heading.inlines, visitor),
             AstBlock::Paragraph(paragraph) => walk_inlines(&paragraph.inlines, visitor),
             AstBlock::List(list) => walk_list_contents(list, visitor),
-            AstBlock::Delimited(block) => {
-                if let crate::parser::DelimitedContent::Compound(children) = &block.content {
-                    walk_blocks(children, visitor);
+            AstBlock::Delimited(block) => match &block.content {
+                crate::parser::DelimitedContent::Compound(children) => {
+                    walk_blocks(children, visitor)
                 }
-            }
+                crate::parser::DelimitedContent::Table(table) => {
+                    visitor(SemanticNode::Table(table));
+                    for row in &table.rows {
+                        visitor(SemanticNode::TableRow(row));
+                        for cell in &row.cells {
+                            visitor(SemanticNode::TableCell(cell));
+                            match &cell.content {
+                                crate::table::TableCellContent::Inlines(inlines)
+                                | crate::table::TableCellContent::AsciiDoc(inlines) => {
+                                    walk_inlines(inlines, visitor)
+                                }
+                                crate::table::TableCellContent::Verbatim(_) => {}
+                            }
+                        }
+                    }
+                }
+                crate::parser::DelimitedContent::Verbatim(_)
+                | crate::parser::DelimitedContent::Passthrough(_) => {}
+            },
             AstBlock::Literal(_)
             | AstBlock::LiteralParagraph(_)
             | AstBlock::Break(_)
@@ -136,6 +157,7 @@ mod tests {
             SemanticNode::Block(_) => blocks += 1,
             SemanticNode::List(_) => lists += 1,
             SemanticNode::ListItem(_) => items += 1,
+            SemanticNode::Table(_) | SemanticNode::TableRow(_) | SemanticNode::TableCell(_) => {}
             SemanticNode::Inline(_) => inlines += 1,
             SemanticNode::Attribute(_)
             | SemanticNode::Anchor(_)

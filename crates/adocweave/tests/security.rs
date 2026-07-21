@@ -80,6 +80,10 @@ fn malformed_bytes_and_tight_limits_fail_without_partial_output() {
             max_block_depth: 2,
             max_inline_depth: 2,
             max_formula_bytes: 4,
+            max_table_bytes: 8,
+            max_table_cells: 2,
+            max_table_columns: 2,
+            max_table_depth: 1,
             max_blocks: 2,
             max_nodes: 4,
             max_references: 1,
@@ -274,6 +278,50 @@ fn compound_block_depth_limit_rejects_unbounded_nesting() {
             ..
         })
     ));
+}
+
+#[test]
+fn table_resources_are_rejected_at_the_construction_boundary() {
+    let cases = [
+        (
+            "table bytes",
+            ProcessingLimits {
+                max_table_bytes: 3,
+                ..ProcessingLimits::default()
+            },
+        ),
+        (
+            "table cells",
+            ProcessingLimits {
+                max_table_cells: 1,
+                ..ProcessingLimits::default()
+            },
+        ),
+        (
+            "table columns",
+            ProcessingLimits {
+                max_table_columns: 1,
+                ..ProcessingLimits::default()
+            },
+        ),
+        (
+            "table nesting depth",
+            ProcessingLimits {
+                max_table_depth: 0,
+                ..ProcessingLimits::default()
+            },
+        ),
+    ];
+    for (resource, limits) in cases {
+        let config = ProcessConfig {
+            limits,
+            syntax_mode: SyntaxMode::Permissive,
+        };
+        assert!(matches!(
+            process_with_config(Operation::Convert, b"|===\n|a |b\n|===\n", &config),
+            Err(ProcessError::LimitExceeded { resource: actual, .. }) if actual == resource
+        ));
+    }
 }
 
 #[test]

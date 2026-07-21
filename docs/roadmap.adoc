@@ -167,7 +167,8 @@ preamble、book part、discrete heading、基本paragraph形式およびbreakま
 . 文書headerへ著者・改訂情報、preamble、doctypeおよびdiscrete headingを追加する。
 
 Issue 062では置換pipeline、Issue 063ではdescription list、checklist、callout listおよび
-任意blockを伴うlist continuationまで拡張した。次は基本PSV tableを構造化する。
+任意blockを伴うlist continuationまで拡張した。Issue 064では基本PSV tableを構造化した。
+次は標準macroと外部資源の意味モデルを実装する。
 
 この段階ではraw passthroughを有効化しない。未知blockは引き続きlosslessに保持し、HTMLへ入力由来の
 要素や属性を通過させない。
@@ -196,7 +197,7 @@ HTMLのraw出力は禁止する。
 
 |高
 |表
-|PSVの基本table、列数、header、cell span、cell style、AsciiDoc cell。CSV／DSV／TSVは基本表の後に扱う
+|基本PSVは完了。AsciiDoc cellのblock文書、CSV／DSV／TSV、任意separatorおよびduplication
 
 |高
 |標準macro

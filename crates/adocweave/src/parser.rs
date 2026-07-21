@@ -225,7 +225,7 @@ pub enum DelimitedContent {
     Compound(Vec<AstBlock>),
     Verbatim(String),
     Passthrough(String),
-    Table(String),
+    Table(crate::table::Table),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -655,11 +655,23 @@ impl AstDocument {
                     AstBlock::Heading(heading) => visitor(&mut heading.inlines),
                     AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines),
                     AstBlock::List(list) => visit_list(list, visitor),
-                    AstBlock::Delimited(block) => {
-                        if let DelimitedContent::Compound(children) = &mut block.content {
-                            visit_blocks(children, visitor);
+                    AstBlock::Delimited(block) => match &mut block.content {
+                        DelimitedContent::Compound(children) => visit_blocks(children, visitor),
+                        DelimitedContent::Table(table) => {
+                            for row in &mut table.rows {
+                                for cell in &mut row.cells {
+                                    match &mut cell.content {
+                                        crate::table::TableCellContent::Inlines(inlines)
+                                        | crate::table::TableCellContent::AsciiDoc(inlines) => {
+                                            visitor(inlines)
+                                        }
+                                        crate::table::TableCellContent::Verbatim(_) => {}
+                                    }
+                                }
+                            }
                         }
-                    }
+                        DelimitedContent::Verbatim(_) | DelimitedContent::Passthrough(_) => {}
+                    },
                     AstBlock::Literal(_)
                     | AstBlock::LiteralParagraph(_)
                     | AstBlock::Break(_)
@@ -2702,7 +2714,12 @@ fn parse_delimited_block(
         )?),
         DelimitedContentModel::Verbatim => DelimitedContent::Verbatim(value),
         DelimitedContentModel::Raw => DelimitedContent::Passthrough(value),
-        DelimitedContentModel::Table => DelimitedContent::Table(value),
+        DelimitedContentModel::Table => DelimitedContent::Table(parse_table(
+            &value,
+            body.content_range,
+            context.config,
+            budget,
+        )?),
     };
     Ok((
         DelimitedBlock {
@@ -2718,6 +2735,124 @@ fn parse_delimited_block(
         },
         body.next_line,
     ))
+}
+
+fn parse_table(
+    value: &str,
+    range: TextRange,
+    config: &ParseConfig,
+    budget: &mut ParseBudget,
+) -> Result<crate::table::Table, ParseFailure> {
+    use crate::table::{
+        HorizontalAlignment, TableCell, TableCellContent, TableCellStyle, TableColumn, TableFormat,
+        TableRow, TableSection, VerticalAlignment,
+    };
+
+    let reject = |resource, limit, actual| {
+        ParseFailure::Budget(BudgetExceeded {
+            resource,
+            limit,
+            actual,
+        })
+    };
+    if value.len() as u64 > u64::from(config.limits.max_table_bytes) {
+        return Err(reject(
+            "table bytes",
+            config.limits.max_table_bytes,
+            value.len() as u64,
+        ));
+    }
+    if config.limits.max_table_depth == 0 {
+        return Err(reject("table nesting depth", 0, 1));
+    }
+    let raw = crate::table::scan_psv(value, range);
+    let cell_count = raw.cells.len() as u64;
+    if cell_count > u64::from(config.limits.max_table_cells) {
+        return Err(reject(
+            "table cells",
+            config.limits.max_table_cells,
+            cell_count,
+        ));
+    }
+    let widest = raw.inferred_columns as u64;
+    if widest > u64::from(config.limits.max_table_columns) {
+        return Err(reject(
+            "table columns",
+            config.limits.max_table_columns,
+            widest,
+        ));
+    }
+    let column_count = raw
+        .inferred_columns
+        .min(config.limits.max_table_columns as usize);
+    let columns = (0..column_count)
+        .map(|index| TableColumn {
+            index: index as u32,
+            width: None,
+            horizontal_alignment: HorizontalAlignment::Left,
+            vertical_alignment: VerticalAlignment::Top,
+            style: TableCellStyle::Default,
+        })
+        .collect();
+    let mut cells = Vec::with_capacity(raw.cells.len());
+    for cell in raw.cells {
+        budget.consume_node()?;
+        let content = match cell.style {
+            TableCellStyle::Literal | TableCellStyle::Verse => {
+                TableCellContent::Verbatim(cell.raw.clone())
+            }
+            style => {
+                let parsed = parse_inlines(
+                    &cell.raw,
+                    cell.content_range,
+                    InlineParseConfig {
+                        max_depth: config.max_inline_depth,
+                        max_formula_bytes: config.max_formula_bytes,
+                    },
+                    budget,
+                )?;
+                if style == TableCellStyle::AsciiDoc {
+                    TableCellContent::AsciiDoc(parsed.inlines)
+                } else {
+                    TableCellContent::Inlines(parsed.inlines)
+                }
+            }
+        };
+        cells.push(TableCell {
+            range: cell.range,
+            marker_range: cell.marker_range,
+            content_range: cell.content_range,
+            raw: cell.raw,
+            column_index: 0,
+            column_span: cell.column_span,
+            row_span: cell.row_span,
+            horizontal_alignment: cell.horizontal_alignment,
+            vertical_alignment: cell.vertical_alignment,
+            style: cell.style,
+            style_is_explicit: cell.style_is_explicit,
+            content,
+        });
+    }
+    let mut table = crate::table::Table {
+        format: TableFormat::Psv,
+        content_range: raw.content_range,
+        columns,
+        rows: if cells.is_empty() {
+            Vec::new()
+        } else {
+            vec![TableRow {
+                range: TextRange::new(
+                    cells.first().expect("non-empty cells").range.start(),
+                    cells.last().expect("non-empty cells").range.end(),
+                )
+                .expect("table cell range is ordered"),
+                section: TableSection::Body,
+                cells,
+            }]
+        },
+    };
+    crate::table::layout_rows(&mut table);
+    Ok(table)
 }
 
 fn parse_compound_children(
@@ -3854,5 +3989,25 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn psv_tables_build_typed_rows_cells_spans_and_multiline_content() {
+        let source = "[cols=\"1,^2s\",options=\"header,footer\"]\n|===\n|Name |Value\n\n|first\ncontinued\n|second\n\n2+|wide\n\n|Foot |Done\n|===\n";
+        let parsed = parse(source).expect("parse");
+        let AstBlock::Delimited(block) = &parsed.ast.blocks()[0] else {
+            panic!("table block")
+        };
+        let DelimitedContent::Table(table) = &block.content else {
+            panic!("typed table")
+        };
+        assert_eq!(table.columns.len(), 2);
+        assert_eq!(table.rows.len(), 4);
+        assert_eq!(table.rows[0].section, crate::table::TableSection::Header);
+        assert_eq!(table.rows[3].section, crate::table::TableSection::Footer);
+        assert_eq!(table.rows[1].cells[0].raw, "first\ncontinued");
+        assert_eq!(table.rows[2].cells[0].column_span, 2);
+        assert_eq!(table.rows[2].cells[0].column_index, 0);
+        assert_eq!(parsed.syntax.reconstruct(), source);
     }
 }
