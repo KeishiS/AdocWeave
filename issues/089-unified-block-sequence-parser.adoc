@@ -23,6 +23,21 @@ paragraph、break等の未接続を区別できず、将来の構文追加漏れ
 * top-levelで対応する各block variantについて、cell内での許可または明示的な診断をtable-driven testにする。
 * parser moduleの責務境界、表仕様、文法、対応表およびconformance fixtureを同時更新する。
 
+== 実装方針
+
+`BlockContext`は少なくとも文書root、compound containerおよびAsciiDoc cellを区別し、document header、
+document attribute、heading、再帰深さと解析終端のpolicyを値として持つ。認識優先順位そのものをcontextごとに
+複製せず、認識後の許可・回復だけをpolicyで決める。
+
+状態機械は`BlockSequenceOutput`としてlossless syntax node、lowering前のblock fact、明示anchorおよび
+syntax issueを返す。再帰contextを一時的な`AstDocument`へloweringしてはならない。そうすると属性展開、
+heading正規化、catalog／文書構造構築およびbudget計上が子ごとに再実行され、文書全体の正本が分断されるためである。
+rootだけが全出力を集約した後にloweringとcatalog構築を一度実行する。
+
+`SourceDocument::from_fragment_bounded`はglobal byte offsetを維持する入力viewとして引き続き利用する。ただし
+fragment専用dispatchは持たず、親の`ParseBudget`とcancel checkを状態機械へ渡す。旧関数を互換wrapperとして
+残さず、移行時にすべての呼び出し元を同時変更する。
+
 == 完了条件
 
 再帰context専用のline dispatchが存在せず、全block variantのcontext policyを列挙したtestがある。PSVの
