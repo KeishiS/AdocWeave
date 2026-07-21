@@ -1,0 +1,60 @@
+= Release assetの完全性、SBOMおよびprovenance
+
+この文書は、GitHub Releaseから取得したAdocWeaveの成果物を検証する方法と、生成側の契約を定義する。
+公開asset集合の正本はxref:../release/distribution-plan.json[`release/distribution-plan.json`]であり、5個のarchiveと
+次の3個のmetadataだけを公開する。
+
+* `adocweave-dist-manifest.json`
+* `adocweave.spdx.json`
+* `sha256.sum`
+
+== 生成契約
+
+`tools/release-metadata.mjs` version 1をSBOMとchecksumの唯一の生成器とする。生成器は実際に公開する5 archiveを
+読み、次を決定的に生成する。
+
+* distribution manifestにはarchive byte列のSHA-256、byte数、source commitおよび公開契約versionを記録する。
+* SPDX 2.3 JSON SBOMにはarchive内の各file、`cargo metadata --locked`が返すCargo packageおよび
+  `web-worker/package.json`のfrontend packageを記録する。
+* `sha256.sum`には5 archive、distribution manifestおよびSBOMの7 fileを名前順で記録する。
+
+frontendにruntime dependencyを追加する場合、lockfileに基づくSBOM生成を実装するまでrelease gateは失敗する。
+SBOMに推測したdownload URLを記録してはならない。stable tagとRC tagをpackage versionだけから区別できないため、
+archive packageの`downloadLocation`は`NOASSERTION`とする。
+
+`node tools/release-metadata.mjs verify DIRECTORY COMMIT`はmetadataを同じ入力から再生成し、byte単位の一致と
+directory内の公開asset集合の完全一致を検査する。未知file、subdirectory、欠落fileまたは改変fileを受理しない。
+
+== 利用者による検証
+
+release assetを同じdirectoryへdownloadし、最初にchecksumを検証する。
+
+[source,console]
+----
+sha256sum --check sha256.sum
+----
+
+`sha256.sum`自身を含む全8 assetにはGitHub Artifact Attestationsによるbuild provenanceを付与する。各fileを
+GitHub CLIでも独立に検証する。
+
+[source,console]
+----
+gh attestation verify adocweave-cli-x86_64-unknown-linux-musl.tar.xz \
+  --repo KeishiS/AdocWeave
+gh attestation verify sha256.sum --repo KeishiS/AdocWeave
+----
+
+private repositoryでは、読み取り権限を持つGitHub credentialを利用者側で設定する。credentialをarchive、設定例、
+manifestまたはlogへ保存してはならない。
+
+checksumは取得したbyte列がmanifestと一致することを示す。attestationは、そのbyte列が対象repositoryのGitHub
+Actions workflowから生成された来歴を示す。いずれも、成果物に脆弱性や悪意ある処理が存在しないことは保証しない。
+
+== 生成側の権限境界
+
+plan、build、smoke testおよびaggregate jobは`contents: read`だけで動作し、repository secretを参照しない。
+`contents: write`、`id-token: write`および`attestations: write`はprotected `github-release` Environmentを使う
+publish jobだけへ付与する。外部actionはtagでなく完全なcommit SHAへ固定する。
+
+`cargo make workflow-lint`はaction pin、権限境界、fork PR相当のsecret非参照およびpublish分離を検査する。
+
