@@ -171,9 +171,9 @@ Issue 062では置換pipeline、Issue 063ではdescription list、checklist、ca
 標準macroと外部資源の意味モデル、Issue 066ではI/Oを行わないpreprocessor directiveと
 resource snapshot／source map境界を実装した。
 
-次の構文追加に先立ち、Issue 067で`parser.rs`と`inline.rs`に残る変更集中点を解消する。
+次の構文追加に先立ち、Issue 067で`parser.rs`と`inline.rs`に残る変更集中点を解消した。
 公開semantic model、recognizer、builder、syntax diagnostic投影および文書構成を責務別に分離し、
-互換layerや二重pipelineを残さず全consumerを同時に移行する。
+互換layerや二重pipelineを残さず全consumerを同時に移行した。
 
 Issue 067後は、Issue 068でsource map付き解析projection、Issue 069でLSPのworkspace include、
 Issue 070でCLIの明示的local includeを実装する。これらと並行可能な標準構文の残件はIssue 071で
