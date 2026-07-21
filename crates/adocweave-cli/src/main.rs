@@ -91,7 +91,7 @@ struct Arguments {
 enum Action {
     Run(Arguments),
     Help,
-    Version,
+    Version { json: bool },
 }
 
 fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action, CliError> {
@@ -103,7 +103,16 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         return Ok(Action::Help);
     }
     if matches!(command.as_str(), "-V" | "--version") {
-        return Ok(Action::Version);
+        let json = match arguments.next().as_deref() {
+            None => false,
+            Some("--json") if arguments.next().is_none() => true,
+            Some(argument) => {
+                return Err(CliError::Usage(format!(
+                    "unexpected version argument: {argument}"
+                )));
+            }
+        };
+        return Ok(Action::Version { json });
     }
 
     let operation = match command.as_str() {
@@ -190,8 +199,25 @@ fn run() -> Result<(), CliError> {
             print!("{HELP}");
             Ok(())
         }
-        Action::Version => {
-            println!("adocweave {}", adocweave::VERSION);
+        Action::Version { json } => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "name": "adocweave",
+                        "packageVersion": adocweave::VERSION,
+                        "contracts": {
+                            "coreProfile": adocweave::CORE_PROFILE_VERSION,
+                            "coreApi": adocweave::CORE_API_VERSION,
+                            "html": adocweave::html::HTML_CONTRACT_VERSION,
+                            "projection": adocweave::projection::PROJECTION_CONTRACT_VERSION,
+                            "conformance": adocweave::conformance::CONFORMANCE_CONTRACT_VERSION,
+                        }
+                    })
+                );
+            } else {
+                println!("adocweave {}", adocweave::VERSION);
+            }
             Ok(())
         }
         Action::Run(arguments) => {

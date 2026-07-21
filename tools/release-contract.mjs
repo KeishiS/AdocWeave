@@ -100,7 +100,7 @@ export function validateDistPlan(distPlan, plan, tag) {
       fail(`native archive executable mismatch: ${name}`);
     }
     const misc = actual.assets.filter((entry) => entry.kind !== "executable").map((entry) => entry.name).sort();
-    if (JSON.stringify(misc) !== JSON.stringify(["LICENSE-APACHE", "LICENSE-MIT", "README.adoc"])) {
+    if (JSON.stringify(misc) !== JSON.stringify(["LICENSE-APACHE", "LICENSE-MIT", "README.adoc", "THIRD_PARTY_NOTICES.adoc"])) {
       fail(`native archive documentation mismatch: ${name}`);
     }
   }
@@ -169,8 +169,14 @@ function verifyRepository() {
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
   const dist = read("dist-workspace.toml");
+  const releaseWorkflow = read(".github/workflows/release.yml");
+  const nativeSmokeWorkflow = read(".github/workflows/native-artifact-smoke.yml");
   const version = tomlValue(cargo, "version");
   const repository = tomlValue(cargo, "repository");
+
+  for (const profileSetting of ['lto = "thin"', "codegen-units = 1", "debug = 0", 'panic = "abort"', 'strip = "symbols"']) {
+    if (!cargo.includes(profileSetting)) fail(`dist profile is missing: ${profileSetting}`);
+  }
 
   const planKeys = ["assets", "distVersion", "packageVersion", "releaseMetadata", "repository", "schemaVersion", "targets"];
   if (JSON.stringify(Object.keys(plan).sort()) !== JSON.stringify(planKeys) || plan.schemaVersion !== 1) {
@@ -197,6 +203,16 @@ function verifyRepository() {
     fail("browser package must be connected as the versioned dist extra artifact");
   }
   if (!dist.includes('plan-jobs = ["./release-contract"]')) fail("release contract must run in the dist plan phase");
+  if (!dist.includes('pr-run-mode = "upload"') || !dist.includes('global-artifacts-jobs = ["./native-artifact-smoke"]')) {
+    fail("PR native artifacts must be smoke tested after local builds");
+  }
+  if (!releaseWorkflow.includes("needs:\n      - plan\n      - build-local-artifacts") ||
+      !releaseWorkflow.includes("uses: ./.github/workflows/native-artifact-smoke.yml")) {
+    fail("generated release workflow does not gate on native archive smoke tests");
+  }
+  for (const runner of ["ubuntu-24.04", "ubuntu-24.04-arm"]) {
+    if (!nativeSmokeWorkflow.includes(`runner: ${runner}`)) fail(`native smoke workflow is missing ${runner}`);
+  }
   for (const runner of [
     'global = "ubuntu-24.04"',
     'aarch64-unknown-linux-musl = "ubuntu-24.04-arm"',

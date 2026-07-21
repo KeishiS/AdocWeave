@@ -1,0 +1,54 @@
+= Third-party notices
+
+AdocWeaveの配布binaryは、次のthird-party Rust crateを含む。表は`Cargo.lock`と`cargo metadata`から検査される。
+各項目にはSPDX license expressionとrelease時点のcrate versionを記載する。各licenseの全文と著作権表示は、
+crate packageおよび記載されたSPDX licenseを参照する。この表はAdocWeave自身の
+`MIT OR Apache-2.0` licenseを置き換えない。
+
+[cols="2,5",options="header"]
+|===
+|SPDX license expression |Crateとversion
+
+|(MIT OR Apache-2.0) AND Unicode-3.0
+|unicode-ident 1.0.24
+
+|Apache-2.0 OR MIT
+|idna_adapter 1.2.2, pin-project-lite 0.2.17, utf8_iter 1.0.4
+
+|Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+|linux-raw-sys 0.12.1, rustix 1.1.4, wasi 0.11.1+wasi-snapshot-preview1
+
+|MIT OR Apache-2.0
+|async-lsp 0.2.4, bitflags 2.13.1, block-buffer 0.10.4, bumpalo 3.20.3, cfg-if 1.0.4,
+cpufeatures 0.2.17, crypto-common 0.1.7, digest 0.10.7, displaydoc 0.2.6, errno 0.3.14,
+form_urlencoded 1.2.2, futures 0.3.33, futures-channel 0.3.33, futures-core 0.3.33,
+futures-io 0.3.33, futures-macro 0.3.33, futures-sink 0.3.33, futures-task 0.3.33,
+futures-util 0.3.33, idna 1.1.0, itoa 1.0.18, js-sys 0.3.98, libc 0.2.186,
+once_cell 1.21.4, percent-encoding 2.3.2, proc-macro2 1.0.107, quote 1.0.47,
+rustversion 1.0.23, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229,
+serde_json 1.0.151, serde_repr 0.1.21, sha2 0.10.9, smallvec 1.15.2, socket2 0.6.5,
+stable_deref_trait 1.2.1, syn 2.0.119, syn 3.0.2, thiserror 2.0.19, thiserror-impl 2.0.19,
+typenum 1.20.1, url 2.5.8, wasm-bindgen 0.2.121, wasm-bindgen-macro 0.2.121,
+wasm-bindgen-macro-support 0.2.121, wasm-bindgen-shared 0.2.121, windows-link 0.2.1,
+windows-sys 0.61.2
+
+|MIT
+|bytes 1.12.1, generic-array 0.14.7, lsp-types 0.95.1, mio 1.2.2,
+serde-wasm-bindgen 0.6.5, slab 0.4.12, synstructure 0.13.2, tokio 1.53.1,
+tokio-macros 2.7.1, tokio-util 0.7.18, tower 0.5.3, tower-layer 0.3.3,
+tower-service 0.3.3, tracing 0.1.44, tracing-attributes 0.1.31, tracing-core 0.1.36,
+zmij 1.0.23
+
+|MIT/Apache-2.0
+|bitflags 1.3.2, version_check 0.9.5
+
+|Unicode-3.0
+|icu_collections 2.2.0, icu_locale_core 2.2.0, icu_normalizer 2.2.0,
+icu_normalizer_data 2.2.0, icu_properties 2.2.0, icu_properties_data 2.2.0,
+icu_provider 2.2.0, litemap 0.8.2, potential_utf 0.1.5, tinystr 0.8.3, writeable 0.6.3,
+yoke 0.8.3, yoke-derive 0.8.2, zerofrom 0.1.8, zerofrom-derive 0.1.7, zerotrie 0.2.4,
+zerovec 0.11.6, zerovec-derive 0.11.3
+
+|Unlicense OR MIT
+|memchr 2.8.3
+|===

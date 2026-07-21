@@ -15,11 +15,14 @@ targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
 hosting = "github"
 packages = ["adocweave-cli", "adocweave-lsp"]
 # Which actions to run on pull requests
-pr-run-mode = "plan"
+pr-run-mode = "upload"
 # Plan jobs to run in CI
 plan-jobs = ["./release-contract"]
+# Run native archive smoke tests after target builds
+global-artifacts-jobs = ["./native-artifact-smoke"]
 # Generate and dist a source tarball
 source-tarball = false
+include = ["THIRD_PARTY_NOTICES.adoc"]
 
 [[dist.extra-artifacts]]
 artifacts = ["target/distrib/adocweave-browser-0.1.0.tar.xz"]

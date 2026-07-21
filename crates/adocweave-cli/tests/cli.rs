@@ -57,6 +57,20 @@ fn cli_reports_release_name_and_version() {
 }
 
 #[test]
+fn cli_reports_machine_readable_release_contracts() {
+    let output = adocweave()
+        .args(["--version", "--json"])
+        .output()
+        .expect("the adocweave binary should run");
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("version JSON");
+    assert_eq!(value["packageVersion"], "0.1.0");
+    assert_eq!(value["contracts"]["coreProfile"], 1);
+    assert_eq!(value["contracts"]["coreApi"], 1);
+}
+
+#[test]
 fn convert_reads_a_file() {
     let fixture = concat!(
         env!("CARGO_MANIFEST_DIR"),

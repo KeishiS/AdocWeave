@@ -1,0 +1,86 @@
+= Native CLI・Language Server配布契約
+
+この文書は、Linux向けCLIおよびLanguage Server archiveのbuild・内容・検証規則を定義する。
+共通のrelease train、target、asset名および配布先はxref:release-distribution.adoc[GitHub Releases配布契約]に従う。
+
+== Build profile
+
+native binaryはCargoの`dist` profileでbuildする。公開方針は次のとおりである。
+
+[cols="2,2,4",options="header"]
+|===
+|項目 |値 |理由
+
+|optimization
+|release既定
+|debug buildを配布しない。
+
+|LTO
+|thin
+|build時間を過度に増やさずcrate間最適化を行う。
+
+|codegen units
+|1
+|release binaryの最適化とbuild条件を固定する。
+
+|panic
+|abort
+|配布binaryへunwind経路を含めない。LSP request境界で回復可能な失敗は`Result`として処理する。
+
+|debug information
+|0
+|初回releaseでは別debug symbol assetを提供しない。
+
+|strip
+|symbols
+|実行に不要なsymbolをarchiveへ含めない。
+|===
+
+将来debug symbolを公開する場合は、binaryと対応する独立asset、source commitおよび保持期間を別Issueで定義する。
+
+== Archive layout
+
+CLIとLSPは別archiveとし、`.tar.xz`の全内容をarchive名と同じroot directoryの下へ置く。
+
+[source,text]
+----
+adocweave-cli-{target}/
+├── adocweave
+├── README.adoc
+├── LICENSE-MIT
+├── LICENSE-APACHE
+└── THIRD_PARTY_NOTICES.adoc
+
+adocweave-lsp-{target}/
+├── adocweave-lsp
+├── README.adoc
+├── LICENSE-MIT
+├── LICENSE-APACHE
+└── THIRD_PARTY_NOTICES.adoc
+----
+
+実行ファイルにはUnix executable permissionを付与する。初回targetはLinuxだけなので`.exe`は含めない。
+shell completionは現行CLIが生成機能を提供していないため同梱しない。将来追加する場合は、対応shell、生成元version、
+install先および更新規則をCLIと同じreleaseで固定する。
+
+xref:../THIRD_PARTY_NOTICES.adoc[third-party notices]は`Cargo.lock`に含まれる全third-party crateのname、version、
+SPDX license expressionを列挙する。`cargo make release-contract`は`cargo metadata`との不一致を拒否する。
+
+== Static linkとarchitecture
+
+`x86_64-unknown-linux-musl`は`ubuntu-24.04`、`aarch64-unknown-linux-musl`は`ubuntu-24.04-arm`でnative buildする。
+検査は展開後binaryのELF headerがtarget architectureと一致することを確認し、dynamic sectionに`NEEDED` entryが
+一つでもあれば失敗する。archiveを別architectureで実行せず、cross compileだけを対応証明にしない。
+
+== 展開後smoke test
+
+xref:../tools/native-release-smoke.mjs[`native-release-smoke.mjs`]は、新しいtemporary directoryへarchiveを展開し、
+選択した実行ファイルのreal pathがそのdirectory内にあることを確認する。これによりworkspaceの`target`にある
+binaryを誤って試験しない。
+
+CLIでは`--version --json`とrelease manifestのpackage／Core契約versionを照合し、`check`、`convert`、
+`format --check`を実行する。LSPでは`--version --json`に加え、stdio上でinitialize、文書open、fixture診断、
+shutdownおよびexitを実行し、`serverInfo.version`を照合する。
+
+GitHub ActionsのPR buildは2 targetのarchiveを一時artifactへ保存し、それぞれ対応するnative runnerでこのsmokeを
+実行する。smoke jobはread-onlyであり、GitHub Releaseを作成しない。
