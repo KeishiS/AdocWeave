@@ -1,5 +1,5 @@
 = Release integrity、SBOMおよびprovenance
-:status: in-progress
+:status: completed
 :depends-on: 083,084
 
 == 目的
@@ -34,7 +34,12 @@ metadata testはarchive内容、Cargo metadata、frontend package、改変、欠
 `tools/release-workflow-policy.mjs`は外部actionの完全SHA pin、publish権限の分離およびfork PR相当のsecret非参照を
 検査する。利用者向け契約はxref:../docs/release-integrity.adoc[release-integrity.adoc]に記載した。
 
-残る完了判定は、RC tagで生成した実assetをdownloadし、checksumとGitHub attestationを検証することである。
+`v0.1.0-rc.1`の公開asset 8件をdownloadし、`sha256sum --check`と
+`tools/release-metadata.mjs verify`が成功することを確認した。各assetについて公開Attestations APIから取得した
+Sigstore bundleを用い、`gh attestation verify`でrepository、signer workflowおよびsource commit
+`72ad5a677e179448b4de7f524710f4e455aa163d`を固定した検証にも成功した。SBOMは実archive、Cargo metadataおよび
+frontend packageとの再生成比較に一致した。受け入れ記録は
+xref:../docs/release-workflow.adoc[release-workflow.adoc]に記載する。
 
 == 参照
 

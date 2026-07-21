@@ -44,6 +44,20 @@ read-only経路だけを通り、Environmentとpublish jobへ到達しない。
 
 この受け入れ結果にはtag、commit、workflow run URL、検証環境および不一致を記録する。
 
+=== `v0.1.0-rc.1`の受け入れ結果
+
+2026-07-21に最初のrelease candidateを次の条件で受け入れた。
+
+* Release: https://github.com/KeishiS/AdocWeave/releases/tag/v0.1.0-rc.1[`v0.1.0-rc.1`]
+* source commit: `72ad5a677e179448b4de7f524710f4e455aa163d`
+* workflow run: https://github.com/KeishiS/AdocWeave/actions/runs/29860007614[Release run 29860007614]
+* 検証環境: Linux x86-64上のrepository development shell
+
+公開Releaseがprereleaseであり、配布計画どおりの8 assetだけを含み、すべて`uploaded`かつ非0 byteであることを
+確認した。downloadしたassetに対する`sha256sum --check`、source commitを指定したmetadata／SBOM再生成比較、
+および各assetのSigstore bundleに対する`gh attestation verify`はすべて成功した。不一致はなかった。
+公開準備中の失敗runは公開Releaseを作成せず、成功したrunだけが最後にdraftを公開した。
+
 == 障害対応runbook
 
 publish前に失敗した場合、workflowはprivate draftを削除する。attestationはGitHub側のappend-onlyな来歴としてdraftとは

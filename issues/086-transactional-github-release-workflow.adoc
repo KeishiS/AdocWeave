@@ -1,5 +1,5 @@
 = TransactionalなGitHub Release workflow
-:status: in-progress
+:status: completed
 :depends-on: 083,084,085
 
 == 目的
@@ -34,8 +34,10 @@ attestationが一つのGitHub Releaseに揃う。任意のbuild失敗時にparti
 同一refのrunは直列化し、既存releaseを拒否する。失敗時のdraft cleanupと公開後のrunbookは
 xref:../docs/release-workflow.adoc[release-workflow.adoc]に記載した。
 
-残る完了判定は、GitHubに`github-release` Environmentを設定し、RC tagで2 targetを含む実Releaseと失敗時の
-partial release非公開を確認することである。
+`github-release` Environmentを経由した`v0.1.0-rc.1`の公開に成功した。ReleaseはLinux 2 targetのCLI／LSP、
+browser library、manifest、checksumおよびSBOMからなる計画どおりの8 assetだけを含み、全assetのattestationも
+検証できた。公開準備中に生じたbuild／検証／publish失敗では公開Releaseを作らず、修正後のcandidateだけが
+prereleaseとして公開された。受け入れ記録はxref:../docs/release-workflow.adoc[release-workflow.adoc]に記載する。
 
 browser archiveはcargo-distのglobal artifact後処理を介さず、同じrepository builderを直接実行する。upload前に
 非0 byteとtar.xzとしての妥当性を検査し、集約後にもmetadata生成器が再検査する。
