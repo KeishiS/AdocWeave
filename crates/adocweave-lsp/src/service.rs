@@ -212,7 +212,7 @@ impl LanguageService {
         let document = params.text_document;
         let affected = self
             .workspace
-            .upsert(
+            .upsert_open(
                 document.uri.clone(),
                 i64::from(document.version),
                 document.text.clone(),
@@ -262,7 +262,7 @@ impl LanguageService {
                 }
             }
         }
-        let affected = self.workspace.upsert(
+        let affected = self.workspace.upsert_open(
             params.text_document.uri.clone(),
             i64::from(params.text_document.version),
             source.clone(),
@@ -308,7 +308,7 @@ impl LanguageService {
                 continue;
             }
             let changed = if change.typ == lsp::FileChangeType::DELETED {
-                Ok(self.workspace.remove(&change.uri))
+                Ok(self.workspace.remove_disk(&change.uri))
             } else {
                 self.workspace.reload_file(change.uri)
             };
@@ -338,9 +338,15 @@ impl LanguageService {
         self.documents.adopt_workspace_problem(job, problem)
     }
 
-    pub fn close(&mut self, uri: &lsp::Url) -> bool {
-        self.workspace.remove(uri);
-        self.documents.close(uri.as_str())
+    pub fn close(&mut self, uri: &lsp::Url) -> (bool, Vec<AnalysisJob>) {
+        let closed = self.documents.close(uri.as_str());
+        let affected = self.workspace.close_open(uri).unwrap_or_else(|error| {
+            self.workspace_error = Some(error);
+            std::collections::BTreeSet::new()
+        });
+        let mut jobs = Vec::new();
+        self.append_dependent_jobs(&affected, uri.as_str(), &mut jobs);
+        (closed, jobs)
     }
 
     pub fn cancel_all(&mut self) {

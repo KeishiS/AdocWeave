@@ -1,8 +1,12 @@
 //! Versioned, I/O-free workspace resource graph for include analysis.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::Read;
 use std::sync::Arc;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use adocweave::SourceId;
 use adocweave::preprocessor::{
@@ -32,14 +36,18 @@ pub struct WorkspaceInput {
 
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceResources {
+    roots: Vec<PathBuf>,
+    disk_resources: BTreeMap<String, WorkspaceResource>,
+    open_resources: BTreeSet<String>,
     resources: BTreeMap<String, WorkspaceResource>,
     reverse_dependencies: BTreeMap<String, BTreeSet<String>>,
+    next_disk_version: i64,
 }
 
 impl WorkspaceResources {
     pub fn load_roots(&mut self, roots: &[Url]) -> Result<(), String> {
+        let mut loaded = Self::default();
         let mut files = Vec::new();
-        let mut total_bytes = 0_u64;
         for root in roots {
             let root_path = root
                 .to_file_path()
@@ -47,6 +55,13 @@ impl WorkspaceResources {
             let canonical_root = root_path
                 .canonicalize()
                 .map_err(|error| format!("cannot canonicalize workspace root: {error}"))?;
+            if !canonical_root.is_dir() {
+                return Err(format!(
+                    "workspace root is not a directory: {}",
+                    canonical_root.display()
+                ));
+            }
+            loaded.roots.push(canonical_root.clone());
             let mut pending = VecDeque::from([canonical_root.clone()]);
             while let Some(path) = pending.pop_front() {
                 let metadata = fs::symlink_metadata(&path)
@@ -75,16 +90,6 @@ impl WorkspaceResources {
                         path.display()
                     ));
                 }
-                if metadata.len() > MAX_RESOURCE_BYTES {
-                    return Err(format!(
-                        "workspace resource is too large: {}",
-                        path.display()
-                    ));
-                }
-                total_bytes = total_bytes.saturating_add(metadata.len());
-                if total_bytes > MAX_WORKSPACE_BYTES {
-                    return Err("workspace resource byte limit exceeded".to_owned());
-                }
                 files.push(canonical);
                 if files.len() > MAX_WORKSPACE_FILES {
                     return Err("workspace resource file limit exceeded".to_owned());
@@ -93,11 +98,20 @@ impl WorkspaceResources {
         }
         files.sort();
         files.dedup();
+        let mut total_bytes = 0_u64;
         for path in files {
             let uri = Url::from_file_path(&path)
                 .map_err(|()| format!("cannot convert path to URI: {}", path.display()))?;
-            self.load_file_with_version(uri, path, 0)?;
+            let text = loaded.read_workspace_file(&path)?;
+            total_bytes = total_bytes.saturating_add(text.len() as u64);
+            if total_bytes > MAX_WORKSPACE_BYTES {
+                return Err("workspace resource byte limit exceeded".to_owned());
+            }
+            loaded.set_disk_resource(uri, text)?;
         }
+        loaded.roots.sort();
+        loaded.roots.dedup();
+        *self = loaded;
         Ok(())
     }
 
@@ -105,76 +119,151 @@ impl WorkspaceResources {
         let path = uri
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        let version = self
-            .resources
-            .get(uri.as_str())
-            .map_or(0, |resource| resource.version.saturating_add(1));
-        self.load_file_with_version(uri, path, version)
+        let text = self.read_workspace_file(&path)?;
+        self.set_disk_resource(uri, text)
     }
 
-    fn load_file_with_version(
-        &mut self,
-        uri: Url,
-        path: PathBuf,
-        version: i64,
-    ) -> Result<BTreeSet<String>, String> {
-        let metadata = fs::metadata(&path)
-            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-        if metadata.len() > MAX_RESOURCE_BYTES {
+    fn read_workspace_file(&self, path: &Path) -> Result<String, String> {
+        if path.extension().and_then(|value| value.to_str()) != Some("adoc") {
             return Err(format!(
-                "workspace resource is too large: {}",
+                "workspace resource is not an .adoc file: {}",
                 path.display()
             ));
         }
-        let text = fs::read_to_string(&path)
-            .map_err(|error| format!("cannot read {} as UTF-8: {error}", path.display()))?;
-        self.upsert(uri, version, text)
+        let canonical = path
+            .canonicalize()
+            .map_err(|error| format!("cannot canonicalize {}: {error}", path.display()))?;
+        if !self.roots.iter().any(|root| canonical.starts_with(root)) {
+            return Err(format!(
+                "workspace resource escapes configured roots: {}",
+                path.display()
+            ));
+        }
+        let file = fs::File::open(&canonical)
+            .map_err(|error| format!("cannot open {}: {error}", canonical.display()))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("cannot inspect {}: {error}", canonical.display()))?;
+        if !metadata.is_file() {
+            return Err(format!(
+                "workspace resource is not a regular file: {}",
+                canonical.display()
+            ));
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_RESOURCE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("cannot read {}: {error}", canonical.display()))?;
+        if bytes.len() as u64 > MAX_RESOURCE_BYTES {
+            return Err(format!(
+                "workspace resource is too large: {}",
+                canonical.display()
+            ));
+        }
+        String::from_utf8(bytes)
+            .map_err(|error| format!("cannot read {} as UTF-8: {error}", canonical.display()))
     }
 
     pub fn get(&self, uri: &Url) -> Option<&WorkspaceResource> {
         self.resources.get(uri.as_str())
     }
 
-    /// Inserts a newer immutable resource and returns every transitively affected root URI.
-    pub fn upsert(
+    /// Installs an open-buffer overlay and returns every transitively affected root URI.
+    pub fn upsert_open(
         &mut self,
         uri: Url,
         version: i64,
         text: impl Into<Arc<str>>,
     ) -> Result<BTreeSet<String>, String> {
-        if self
-            .resources
-            .get(uri.as_str())
-            .is_some_and(|current| version <= current.version)
+        if self.open_resources.contains(uri.as_str())
+            && self
+                .resources
+                .get(uri.as_str())
+                .is_some_and(|current| version <= current.version)
         {
             return Ok(BTreeSet::new());
         }
+        self.open_resources.insert(uri.to_string());
+        self.replace_effective(uri, version, text.into())
+    }
+
+    fn set_disk_resource(
+        &mut self,
+        uri: Url,
+        text: impl Into<Arc<str>>,
+    ) -> Result<BTreeSet<String>, String> {
         let text = text.into();
-        let dependencies = dependencies(&uri, &text)?;
+        let retained_bytes = self
+            .disk_resources
+            .iter()
+            .filter(|(key, _)| key.as_str() != uri.as_str())
+            .try_fold(0_u64, |total, (_, resource)| {
+                total.checked_add(resource.text.len() as u64)
+            })
+            .ok_or_else(|| "workspace resource byte limit exceeded".to_owned())?;
+        if retained_bytes.saturating_add(text.len() as u64) > MAX_WORKSPACE_BYTES {
+            return Err("workspace resource byte limit exceeded".to_owned());
+        }
+        self.next_disk_version = self.next_disk_version.saturating_add(1);
+        let resource = make_resource(uri.clone(), self.next_disk_version, text)?;
+        self.disk_resources
+            .insert(uri.to_string(), resource.clone());
+        if self.open_resources.contains(uri.as_str()) {
+            return Ok(BTreeSet::new());
+        }
+        self.replace_effective_resource(resource)
+    }
+
+    fn replace_effective(
+        &mut self,
+        uri: Url,
+        version: i64,
+        text: Arc<str>,
+    ) -> Result<BTreeSet<String>, String> {
+        let resource = make_resource(uri, version, text)?;
+        self.replace_effective_resource(resource)
+    }
+
+    fn replace_effective_resource(
+        &mut self,
+        resource: WorkspaceResource,
+    ) -> Result<BTreeSet<String>, String> {
+        let uri = resource.uri.clone();
         if let Some(previous) = self.resources.get(uri.as_str()) {
             for dependency in &previous.dependencies {
                 remove_reverse(&mut self.reverse_dependencies, dependency, uri.as_str());
             }
         }
-        for dependency in &dependencies {
+        for dependency in &resource.dependencies {
             self.reverse_dependencies
                 .entry(dependency.clone())
                 .or_default()
                 .insert(uri.to_string());
         }
-        self.resources.insert(
-            uri.to_string(),
-            WorkspaceResource {
-                uri: uri.clone(),
-                version,
-                text,
-                dependencies,
-            },
-        );
+        self.resources.insert(uri.to_string(), resource);
         Ok(self.affected(uri.as_str()))
     }
 
-    pub fn remove(&mut self, uri: &Url) -> BTreeSet<String> {
+    pub fn remove_disk(&mut self, uri: &Url) -> BTreeSet<String> {
+        self.disk_resources.remove(uri.as_str());
+        if self.open_resources.contains(uri.as_str()) {
+            return BTreeSet::new();
+        }
+        self.remove_effective(uri)
+    }
+
+    pub fn close_open(&mut self, uri: &Url) -> Result<BTreeSet<String>, String> {
+        if !self.open_resources.remove(uri.as_str()) {
+            return Ok(BTreeSet::new());
+        }
+        if let Some(disk) = self.disk_resources.get(uri.as_str()).cloned() {
+            self.replace_effective_resource(disk)
+        } else {
+            Ok(self.remove_effective(uri))
+        }
+    }
+
+    fn remove_effective(&mut self, uri: &Url) -> BTreeSet<String> {
         let affected = self.affected(uri.as_str());
         if let Some(previous) = self.resources.remove(uri.as_str()) {
             for dependency in previous.dependencies {
@@ -242,6 +331,16 @@ impl WorkspaceResources {
     }
 }
 
+fn make_resource(uri: Url, version: i64, text: Arc<str>) -> Result<WorkspaceResource, String> {
+    let dependencies = dependencies(&uri, &text)?;
+    Ok(WorkspaceResource {
+        uri,
+        version,
+        text,
+        dependencies,
+    })
+}
+
 fn dependencies(uri: &Url, text: &str) -> Result<BTreeSet<String>, String> {
     let mut dependencies = BTreeSet::new();
     for request in discover_includes(text).map_err(|error| error.to_string())? {
@@ -287,13 +386,13 @@ mod tests {
     fn versions_and_reverse_dependencies_select_only_affected_roots() {
         let mut resources = WorkspaceResources::default();
         resources
-            .upsert(uri("file:///book/root.adoc"), 1, "include::part.adoc[]\n")
+            .upsert_open(uri("file:///book/root.adoc"), 1, "include::part.adoc[]\n")
             .expect("root");
         resources
-            .upsert(uri("file:///book/other.adoc"), 1, "other\n")
+            .upsert_open(uri("file:///book/other.adoc"), 1, "other\n")
             .expect("other");
         let affected = resources
-            .upsert(uri("file:///book/part.adoc"), 1, "part\n")
+            .upsert_open(uri("file:///book/part.adoc"), 1, "part\n")
             .expect("part");
         assert_eq!(
             affected,
@@ -304,7 +403,7 @@ mod tests {
         );
         assert!(
             resources
-                .upsert(uri("file:///book/part.adoc"), 1, "stale\n")
+                .upsert_open(uri("file:///book/part.adoc"), 1, "stale\n")
                 .expect("stale")
                 .is_empty()
         );
@@ -314,24 +413,24 @@ mod tests {
     fn snapshot_contains_only_transitive_file_dependencies_and_versions() {
         let mut resources = WorkspaceResources::default();
         resources
-            .upsert(
+            .upsert_open(
                 uri("file:///book/root.adoc"),
                 4,
                 "include::parts/a.adoc[]\n",
             )
             .expect("root");
         resources
-            .upsert(
+            .upsert_open(
                 uri("file:///book/parts/a.adoc"),
                 2,
                 "include::b.adoc[]\nA\n",
             )
             .expect("a");
         resources
-            .upsert(uri("file:///book/parts/b.adoc"), 7, "B\n")
+            .upsert_open(uri("file:///book/parts/b.adoc"), 7, "B\n")
             .expect("b");
         resources
-            .upsert(uri("file:///unrelated.adoc"), 1, "no\n")
+            .upsert_open(uri("file:///unrelated.adoc"), 1, "no\n")
             .expect("unrelated");
 
         let input = resources
@@ -377,6 +476,69 @@ mod tests {
                         .as_str()
                 )
                 .is_some()
+        );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn watched_files_cannot_escape_configured_workspace_roots() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("adocweave-lsp-root-{unique}"));
+        let outside = std::env::temp_dir().join(format!("adocweave-lsp-outside-{unique}.adoc"));
+        fs::create_dir_all(&root).expect("workspace");
+        fs::write(root.join("root.adoc"), "root\n").expect("root document");
+        fs::write(&outside, "outside\n").expect("outside document");
+
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(&[Url::from_directory_path(&root).expect("root URI")])
+            .expect("load workspace");
+        let error = resources
+            .reload_file(Url::from_file_path(&outside).expect("outside URI"))
+            .expect_err("outside resource must be rejected");
+        assert!(error.contains("escapes configured roots"));
+
+        fs::remove_dir_all(root).expect("cleanup workspace");
+        fs::remove_file(outside).expect("cleanup outside");
+    }
+
+    #[test]
+    fn closing_an_open_overlay_restores_disk_and_allows_version_restart() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("adocweave-lsp-overlay-{unique}"));
+        let path = root.join("root.adoc");
+        fs::create_dir_all(&root).expect("workspace");
+        fs::write(&path, "disk\n").expect("disk document");
+        let root_uri = Url::from_directory_path(&root).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        resources
+            .upsert_open(document_uri.clone(), 50, "open 50\n")
+            .expect("open overlay");
+        assert_eq!(
+            resources.get(&document_uri).map(|item| item.text.as_ref()),
+            Some("open 50\n")
+        );
+        resources.close_open(&document_uri).expect("close overlay");
+        assert_eq!(
+            resources.get(&document_uri).map(|item| item.text.as_ref()),
+            Some("disk\n")
+        );
+        resources
+            .upsert_open(document_uri.clone(), 1, "open 1\n")
+            .expect("reopened overlay");
+        assert_eq!(
+            resources.get(&document_uri).map(|item| item.text.as_ref()),
+            Some("open 1\n")
         );
 
         fs::remove_dir_all(root).expect("cleanup");

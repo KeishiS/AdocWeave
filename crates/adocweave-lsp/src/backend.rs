@@ -109,7 +109,10 @@ impl Backend {
             .notification::<notification::DidCloseTextDocument>(|state, params| {
                 let uri = params.text_document.uri;
                 state.cancel_analysis(uri.as_str());
-                state.service.close(&uri);
+                let (_, jobs) = state.service.close(&uri);
+                for job in jobs {
+                    state.schedule_analysis(job);
+                }
                 state.publish_current_diagnostics(uri)
             })
             .request::<request::DocumentSymbolRequest, _>(|state, params| {
