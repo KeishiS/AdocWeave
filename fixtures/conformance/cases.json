@@ -76,6 +76,13 @@
       "contractImpact": "core-profile,core-api,html,conformance"
     },
     {
+      "name": "document-catalogs",
+      "source": "footnote:n[] footnote:[anonymous] footnote:n[named] footnote:n[]\n\n<<ref>> bibanchor:ref[] indexterm:[Rust,Ownership] indexterm:[Rust,Ownership]",
+      "compatibility": "supported-subset",
+      "rationale": "footnote番号・再利用・back reference、bibliography edgeおよび階層index catalogを全runtimeで一致させる",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
       "name": "strict-unsupported",
       "source": "[role=raw]\n",
       "options": { "syntaxMode": "strict" },

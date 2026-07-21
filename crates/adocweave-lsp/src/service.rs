@@ -1401,10 +1401,43 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
                 Inline::Passthrough { value, .. } => {
                     Some(format!("**passthrough**  \nLiteral content: `{value}`"))
                 }
-                Inline::Macro(node) => Some(format!(
-                    "**{:?} macro**  \nTarget: `{}`",
-                    node.kind, node.target
-                )),
+                Inline::Macro(node) => match node.kind {
+                    adocweave::inline::StandardMacroKind::Footnote => document
+                        .catalogs()
+                        .footnote_occurrence(node.range)
+                        .map(|(footnote, _)| {
+                            format!(
+                                "**footnote {}**  \nID: `{}`  \nText: `{}`",
+                                footnote.number,
+                                footnote.id.as_deref().unwrap_or("anonymous"),
+                                footnote.text
+                            )
+                        }),
+                    adocweave::inline::StandardMacroKind::BibliographyAnchor => document
+                        .catalogs()
+                        .bibliography()
+                        .iter()
+                        .find(|entry| entry.definition_range == node.range)
+                        .map(|entry| {
+                            format!(
+                                "**bibliography entry**  \nID: `{}`  \nReferences: {}",
+                                entry.id,
+                                entry.references.len()
+                            )
+                        }),
+                    adocweave::inline::StandardMacroKind::IndexTerm => document
+                        .catalogs()
+                        .index()
+                        .iter()
+                        .find(|entry| entry.occurrences.contains(&node.range))
+                        .map(|entry| {
+                            format!("**index term**  \nPath: `{}`", entry.terms.join(" > "))
+                        }),
+                    _ => Some(format!(
+                        "**{:?} macro**  \nTarget: `{}`",
+                        node.kind, node.target
+                    )),
+                },
                 Inline::Text(_)
                 | Inline::Literal { .. }
                 | Inline::Styled { .. }

@@ -701,6 +701,33 @@ fn hover_and_completion_cover_common_block_metadata() {
     );
 }
 
+#[test]
+fn hover_uses_document_catalogs_for_footnotes_bibliography_and_index() {
+    let mut service = LanguageService::default();
+    let source = "footnote:n[note] footnote:n[] bibanchor:ref[] indexterm:[Rust,Ownership]";
+    open(&mut service, "file:///catalogs.adoc", 1, source);
+    let document_uri = uri("file:///catalogs.adoc");
+    for (character, expected) in [
+        (2, "footnote 1"),
+        (23, "footnote 1"),
+        (37, "bibliography entry"),
+        (55, "Rust > Ownership"),
+    ] {
+        let hover = service
+            .hover(&document_uri, lsp::Position::new(0, character))
+            .expect("hover")
+            .expect("value");
+        let value = serde_json::to_value(hover).expect("serialize");
+        assert!(
+            value["contents"]["value"]
+                .as_str()
+                .expect("hover text")
+                .contains(expected),
+            "expected {expected}: {value}"
+        );
+    }
+}
+
 fn open_reference_workspace(service: &mut LanguageService) {
     open(
         service,

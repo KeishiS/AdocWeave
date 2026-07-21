@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 8;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 9;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -20,6 +20,7 @@ pub struct DocumentProjection {
     pub external_links: Vec<ExternalLink>,
     pub reference_edges: Vec<ReferenceEdge>,
     pub searchable_text: SearchableText,
+    pub catalogs: crate::catalog::DocumentCatalogs,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,6 +124,7 @@ pub fn project(analysis: &Analysis, resolutions: &[ResolvedReference]) -> Docume
         external_links,
         reference_edges,
         searchable_text: searchable_text(analysis),
+        catalogs: analysis.catalogs().clone(),
     }
 }
 
@@ -387,7 +389,9 @@ impl DocumentProjection {
             }
             write_reference_edge(&mut output, edge);
         }
-        output.push_str("],\"searchableText\":{\"text\":");
+        output.push_str("],\"catalogs\":");
+        write_catalogs(&mut output, &self.catalogs);
+        output.push_str(",\"searchableText\":{\"text\":");
         output.push_str(&json_string(&self.searchable_text.text));
         output.push_str(",\"segments\":[");
         for (index, segment) in self.searchable_text.segments.iter().enumerate() {
@@ -406,6 +410,79 @@ impl DocumentProjection {
         output.push_str("]}}");
         output
     }
+}
+
+fn write_catalogs(output: &mut String, catalogs: &crate::catalog::DocumentCatalogs) {
+    output.push_str("{\"footnotes\":[");
+    for (index, footnote) in catalogs.footnotes().iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        write!(
+            output,
+            "{{\"number\":{},\"id\":{},\"definitionRange\":{},\"contentRange\":{},\"text\":{},\"occurrences\":[",
+            footnote.number,
+            footnote.id.as_ref().map_or_else(|| "null".to_owned(), |id| json_string(id)),
+            json_range(footnote.definition_range),
+            json_range(footnote.content_range),
+            json_string(&footnote.text),
+        )
+        .expect("writing to String cannot fail");
+        for (occurrence_index, occurrence) in footnote.occurrences.iter().enumerate() {
+            if occurrence_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&json_range(occurrence.range));
+        }
+        output.push_str("]}");
+    }
+    output.push_str("],\"bibliography\":[");
+    for (index, entry) in catalogs.bibliography().iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        write!(
+            output,
+            "{{\"id\":{},\"definitionRange\":{},\"references\":[",
+            json_string(&entry.id),
+            json_range(entry.definition_range),
+        )
+        .expect("writing to String cannot fail");
+        for (reference_index, range) in entry.references.iter().enumerate() {
+            if reference_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&json_range(*range));
+        }
+        output.push_str("]}");
+    }
+    output.push_str("],\"index\":[");
+    for (index, entry) in catalogs.index().iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        output.push_str("{\"terms\":[");
+        for (term_index, term) in entry.terms.iter().enumerate() {
+            if term_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&json_string(term));
+        }
+        write!(
+            output,
+            "],\"display\":{},\"occurrences\":[",
+            json_string(&entry.display)
+        )
+        .expect("writing to String cannot fail");
+        for (occurrence_index, range) in entry.occurrences.iter().enumerate() {
+            if occurrence_index > 0 {
+                output.push(',');
+            }
+            output.push_str(&json_range(*range));
+        }
+        output.push_str("]}");
+    }
+    output.push_str("]}");
 }
 
 fn write_projected_text(output: &mut String, text: &ProjectedText) {
@@ -564,13 +641,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_eight_json_contract() {
+    fn projections_keep_the_version_nine_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":8,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":9,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

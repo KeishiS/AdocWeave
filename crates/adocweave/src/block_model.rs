@@ -328,4 +328,5 @@ pub struct AstDocument {
     pub(crate) attributes: Vec<DocumentAttribute>,
     pub(crate) anchors: Vec<ExplicitAnchor>,
     pub(crate) header: DocumentHeader,
+    pub(crate) catalogs: crate::catalog::DocumentCatalogs,
 }

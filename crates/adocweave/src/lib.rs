@@ -10,6 +10,7 @@ use std::fmt;
 pub mod attributes;
 mod block_model;
 mod budget;
+pub mod catalog;
 pub mod conformance;
 pub mod core;
 pub mod diagnostic;

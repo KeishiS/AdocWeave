@@ -196,12 +196,12 @@ quoted multiline cell、任意の1文字separator、duplicationおよびPSVのAs
 |標準inline／block macro
 |image、footnote、anchor、email、keyboard、button、menu、index等
 |email／mailto、footnote、inline／bibliography anchor、index term、feature flag付きUI macro、
-inline／block image、icon、audioおよびvideoに対応。完全なfootnote一覧とindex catalogは未対応
+inline／block image、icon、audioおよびvideo、footnote一覧、bibliography参照edgeおよび階層index catalogに対応
 
 |文書上の補助要素
 |comment、admonition、thematic／page break、bibliography、footnote
-|comment、admonition、thematic／page break、bibliography anchorおよびfootnote macro構文に対応。
-bibliography／footnote catalog、番号付け、back referenceおよびendnote生成は未対応
+|comment、admonition、thematic／page break、bibliography anchor、footnote macro、文書catalog、番号付け、
+再利用およびback referenceに対応。完全なbibliography section表示とindex rangeは未対応
 |===
 
 Markdown風見出し、fenced code blockおよびMarkdown blockquoteは公式quick referenceにも掲載されるが、

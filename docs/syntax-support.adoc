@@ -3,7 +3,7 @@
 この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
 製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-この対応範囲は`CORE_PROFILE_VERSION = 9`として公開する。version、SemVerおよび再構築条件は
+この対応範囲は`CORE_PROFILE_VERSION = 10`として公開する。version、SemVerおよび再構築条件は
 xref:core-profile.adoc[AdocWeave Core Profile 8]で定義する。
 実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
 AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
@@ -176,8 +176,9 @@ header／footer、column／row span、配置、cell styleおよびPSVのAsciiDoc
 |標準macroとmedia
 |部分対応
 |email／mailto、footnote、inline／bibliography anchor、index term、feature flag付きUI macro、
-inline／block image、icon、audioおよびvideoを共通macro modelで扱う。完全なfootnote一覧と
-index catalogは未対応。詳細はxref:macros-and-resources.adoc[標準macroとresource境界]を参照する。
+inline／block image、icon、audioおよびvideoを共通macro modelで扱う。footnoteの番号・再利用・back reference、
+bibliography entry／参照edgeおよび階層index catalogに対応する。詳細は
+xref:macros-and-resources.adoc[標準macroとresource境界]を参照する。
 
 |Unconstrained書式（`**text**`、`__text__`、二重バッククォート）
 |対応
@@ -239,7 +240,7 @@ cell span、cell styleおよびPSVのAsciiDoc block cellに対応
 |Inline macro
 |対応
 |URL、xref、email／mailto、image、footnote、anchor、bibliography anchor、kbd、btn、menuおよび
-index termを意味nodeとして扱う。完全なfootnote一覧とindex catalogは未対応
+index termを意味nodeとして扱い、文書catalogへfootnote、bibliography、階層indexを投影する
 
 |Media
 |対応
@@ -258,8 +259,8 @@ xref:preprocessor.adoc[プリプロセッサとresource snapshot]を参照
 
 |Bibliographyとfootnote
 |部分対応
-|bibliography anchorとfootnote macroの構文nodeに対応する。
-bibliography sectionの意味、再利用可能footnote、番号付けおよびendnote生成は未対応
+|bibliography anchorとfootnote macroの構文node、名前付きfootnote再利用、出現順番号、back reference、
+bibliography参照edgeおよび階層index catalogに対応する。完全なbibliography section表示は未対応
 
 |Markdown互換構文
 |未対応

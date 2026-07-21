@@ -40,10 +40,11 @@ pub enum LintRule {
     InconsistentList,
     InvalidStem,
     InvalidTable,
+    InvalidCatalog,
 }
 
 impl LintRule {
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -68,6 +69,7 @@ impl LintRule {
         Self::InconsistentList,
         Self::InvalidStem,
         Self::InvalidTable,
+        Self::InvalidCatalog,
     ];
 
     pub const fn code(self) -> &'static str {
@@ -96,6 +98,7 @@ impl LintRule {
             Self::InconsistentList => "inconsistent-list",
             Self::InvalidStem => "invalid-stem",
             Self::InvalidTable => "invalid-table",
+            Self::InvalidCatalog => "invalid-catalog",
         }
     }
 }
@@ -262,8 +265,58 @@ pub(crate) fn lint_syntax(
     lint_anchors(document, config, &mut diagnostics);
     lint_links_and_references(document, config, &mut diagnostics);
     lint_tables(document, config, &mut diagnostics);
+    lint_catalogs(document, config, &mut diagnostics);
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_catalogs(
+    document: &crate::parser::AstDocument,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let settings = config.rule(LintRule::InvalidCatalog);
+    if !settings.enabled {
+        return;
+    }
+    for problem in document.catalogs().problems() {
+        if diagnostics.len() >= config.max_diagnostics {
+            break;
+        }
+        let message = match problem.kind {
+            crate::catalog::CatalogProblemKind::MissingFootnoteDefinition => {
+                "named footnote definition does not exist"
+            }
+            crate::catalog::CatalogProblemKind::DuplicateFootnoteDefinition => {
+                "duplicate named footnote definition"
+            }
+            crate::catalog::CatalogProblemKind::DuplicateBibliographyEntry => {
+                "duplicate bibliography entry"
+            }
+            crate::catalog::CatalogProblemKind::EmptyIndexTerm => "index term is empty",
+        };
+        diagnostics.push(Diagnostic {
+            id: DiagnosticId::new(format!(
+                "{}@{}:{}",
+                LintRule::InvalidCatalog.code(),
+                problem.range.start().to_u32(),
+                problem.range.end().to_u32()
+            )),
+            code: DiagnosticCode::new(LintRule::InvalidCatalog.code()),
+            severity: settings.severity,
+            message: message.to_owned(),
+            range: problem.range,
+            related: problem
+                .related_range
+                .map(|range| RelatedInformation {
+                    message: "first definition is here".to_owned(),
+                    range,
+                })
+                .into_iter()
+                .collect(),
+            fixes: Vec::new(),
+        });
+    }
 }
 
 fn lint_tables(
@@ -1133,5 +1186,24 @@ mod tests {
                     .any(|diagnostic| { diagnostic.code.as_str() == "invalid-table" })
             );
         }
+    }
+
+    #[test]
+    fn catalog_diagnostics_preserve_duplicate_and_missing_ranges() {
+        let diagnostics = lint(
+            "footnote:missing[] footnote:n[one] footnote:n[two] bibanchor:b[] bibanchor:b[] indexterm:[]",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+        let catalogs = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "invalid-catalog")
+            .collect::<Vec<_>>();
+        assert_eq!(catalogs.len(), 4);
+        assert!(
+            catalogs
+                .iter()
+                .any(|diagnostic| !diagnostic.related.is_empty())
+        );
     }
 }

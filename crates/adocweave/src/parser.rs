@@ -74,6 +74,7 @@ impl AstDocument {
             attributes,
             anchors,
             header,
+            catalogs: crate::catalog::DocumentCatalogs::default(),
         }
     }
 
@@ -91,6 +92,10 @@ impl AstDocument {
 
     pub const fn header(&self) -> &DocumentHeader {
         &self.header
+    }
+
+    pub const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {
+        &self.catalogs
     }
 
     pub fn preamble(&self) -> &[AstBlock] {
@@ -1121,6 +1126,13 @@ pub(crate) fn parse_shared_cancellable(
             max_bytes: config.limits.max_attribute_expansion_bytes,
         },
     });
+    ast.catalogs = crate::catalog::build(&ast, config.limits).map_err(|error| {
+        ParseFailure::Budget(BudgetExceeded {
+            resource: error.resource,
+            limit: error.limit,
+            actual: error.actual,
+        })
+    })?;
     let syntax_issues =
         crate::syntax_diagnostics::collect_and_clear(&mut ast.blocks, &attribute_problems);
 

@@ -84,6 +84,8 @@ fn malformed_bytes_and_tight_limits_fail_without_partial_output() {
             max_table_cells: 2,
             max_table_columns: 2,
             max_table_depth: 1,
+            max_catalog_entries: 2,
+            max_catalog_bytes: 8,
             max_blocks: 2,
             max_nodes: 4,
             max_references: 1,

@@ -15,11 +15,11 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 9;
+pub const HTML_CONTRACT_VERSION: u16 = 10;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "a", "audio", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5", "hr",
-    "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "table",
-    "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video",
+    "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
+    "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
+    "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &[
     "alt", "class", "colspan", "controls", "height", "href", "id", "rowspan", "src", "title",
@@ -34,6 +34,9 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "checklist-marker",
     "document-title",
     "footnote",
+    "footnote-backref",
+    "footnote-ref",
+    "footnotes",
     "index-term",
     "language-*",
     "lead",
@@ -126,6 +129,7 @@ pub fn render_with_resolutions(
         targets: &targets,
         resolutions,
         diagnostics: &mut diagnostics,
+        catalogs: document.catalogs(),
     };
     let mut heading_index = 0;
     for block in document.blocks() {
@@ -160,6 +164,7 @@ pub fn render_with_resolutions(
             render_header_metadata(&mut fragment, document.header());
         }
     }
+    render_footnote_catalog(&mut fragment, document.catalogs());
 
     let html = if policy.document_mode == HtmlDocumentMode::Complete {
         format!("<!doctype html>\n<html>\n<body>\n{fragment}</body>\n</html>\n")
@@ -717,9 +722,20 @@ fn render_standard_macro(
             output.push_str("</a>");
         }
         Kind::Footnote => {
-            output.push_str("<sup class=\"footnote\">");
-            escape_inline_text(output, first.unwrap_or(&node.target));
-            output.push_str("</sup>");
+            let Some((footnote, occurrence)) = context.catalogs.footnote_occurrence(node.range)
+            else {
+                escape_inline_text(output, first.unwrap_or(&node.target));
+                return;
+            };
+            output.push_str("<sup class=\"footnote\"><a class=\"footnote-ref\" id=\"_footnoteref_");
+            output.push_str(&footnote.number.to_string());
+            output.push('_');
+            output.push_str(&(occurrence + 1).to_string());
+            output.push_str("\" href=\"#_footnote_");
+            output.push_str(&footnote.number.to_string());
+            output.push_str("\">");
+            output.push_str(&footnote.number.to_string());
+            output.push_str("</a></sup>");
         }
         Kind::Anchor | Kind::BibliographyAnchor => {
             output.push_str("<span id=\"");
@@ -873,6 +889,29 @@ struct InlineRenderContext<'a> {
     targets: &'a [ReferenceTarget],
     resolutions: &'a [ResolvedReference],
     diagnostics: &'a mut Vec<Diagnostic>,
+    catalogs: &'a crate::catalog::DocumentCatalogs,
+}
+
+fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::DocumentCatalogs) {
+    if catalogs.footnotes().is_empty() {
+        return;
+    }
+    output.push_str("<div class=\"footnotes\">\n<ol>\n");
+    for footnote in catalogs.footnotes() {
+        output.push_str("<li id=\"_footnote_");
+        output.push_str(&footnote.number.to_string());
+        output.push_str("\">");
+        escape_inline_text(output, &footnote.text);
+        for (index, _) in footnote.occurrences.iter().enumerate() {
+            output.push_str(" <a class=\"footnote-backref\" href=\"#_footnoteref_");
+            output.push_str(&footnote.number.to_string());
+            output.push('_');
+            output.push_str(&(index + 1).to_string());
+            output.push_str("\">↩</a>");
+        }
+        output.push_str("</li>\n");
+    }
+    output.push_str("</ol>\n</div>\n");
 }
 
 fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_>) {
@@ -1251,13 +1290,14 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 9);
+        assert_eq!(HTML_CONTRACT_VERSION, 10);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
-                "a", "audio", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4",
-                "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong",
-                "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video"
+                "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2",
+                "h3", "h4", "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre",
+                "span", "strong", "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead",
+                "tr", "ul", "video"
             ]
         );
         assert_eq!(
@@ -1278,6 +1318,9 @@ mod tests {
                 "checklist-marker",
                 "document-title",
                 "footnote",
+                "footnote-backref",
+                "footnote-ref",
+                "footnotes",
                 "index-term",
                 "language-*",
                 "lead",

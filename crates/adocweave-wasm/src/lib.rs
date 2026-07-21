@@ -13,7 +13,7 @@ use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 11;
+pub const WASM_API_VERSION: u16 = 12;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -148,6 +148,8 @@ pub struct WasmLimits {
     pub max_table_cells: u32,
     pub max_table_columns: u32,
     pub max_table_depth: u32,
+    pub max_catalog_entries: u32,
+    pub max_catalog_bytes: u32,
     pub max_blocks: u32,
     pub max_nodes: u32,
     pub max_references: u32,
@@ -178,6 +180,8 @@ impl From<ProcessingLimits> for WasmLimits {
             max_table_cells: value.max_table_cells,
             max_table_columns: value.max_table_columns,
             max_table_depth: value.max_table_depth,
+            max_catalog_entries: value.max_catalog_entries,
+            max_catalog_bytes: value.max_catalog_bytes,
             max_blocks: value.max_blocks,
             max_nodes: value.max_nodes,
             max_references: value.max_references,
@@ -204,6 +208,8 @@ impl From<WasmLimits> for ProcessingLimits {
             max_table_cells: value.max_table_cells,
             max_table_columns: value.max_table_columns,
             max_table_depth: value.max_table_depth,
+            max_catalog_entries: value.max_catalog_entries,
+            max_catalog_bytes: value.max_catalog_bytes,
             max_blocks: value.max_blocks,
             max_nodes: value.max_nodes,
             max_references: value.max_references,

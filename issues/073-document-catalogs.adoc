@@ -1,5 +1,5 @@
 = Footnote、bibliographyおよびindex catalog
-:status: planned
+:status: completed
 :depends-on: 071
 
 == 目的
@@ -21,5 +21,17 @@ footnote、bibliography anchorおよびindex termの構文認識と局所HTML出
 
 == 完了条件
 
-rendererがASTを再走査せずcatalogから一覧を生成でき、欠落・重複・循環的再利用の診断が元rangeへ
-対応する。
+rendererがASTを再走査せずcatalogから一覧を生成でき、欠落・重複の診断が元rangeへ対応する。
+名前付きfootnoteは定義または参照の二状態とし、別IDへのaliasを構文として導入しないため、循環的再利用を
+表現不能な型にする。将来aliasを追加する場合はedgeとcycle診断を同時に契約化する。
+
+== 完了結果
+
+semantic tree構築時に一度だけ生成する`DocumentCatalogs`を追加し、`AstDocument`、`Analysis`および
+JSON projectionから公開した。footnoteは匿名／名前付き定義、前方参照、最初の出現順の番号、複数back
+referenceを保持し、HTML backendはcatalog lookupから参照と文書末尾一覧を生成する。
+
+bibliography anchorはentryとなり、local xrefをrange付きedgeとして接続する。index termは階層path、表示語、
+重複occurrenceを決定的に集約する。欠落footnote、重複定義、重複bibliographyおよび空index termは
+`invalid-catalog`診断となり、重複には最初の定義rangeを関連情報として付ける。重複occurrenceを含む件数と
+投影byte数を構築時limitで制限し、LSP hover、native／WASM conformanceおよびHTML fixtureで同一snapshotを検証した。
