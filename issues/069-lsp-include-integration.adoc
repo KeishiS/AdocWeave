@@ -1,0 +1,22 @@
+= LSPのinclude統合
+:status: planned
+:depends-on: 068
+
+== 目的
+
+Language Serverがworkspace内resourceからsnapshotを構築し、includeを含む文書を複数文書snapshotとして
+解析する。
+
+== 作業
+
+* 開いている文書とworkspace resourceのversion付きsnapshotを構築する。
+* include依存graphを保持し、resource変更時に依存文書だけを再解析する。
+* 診断、Definition、Document Link、ReferencesおよびRenameを元文書rangeへ投影する。
+* 欠落resource、循環、safe mode違反および上限超過をProject Diagnosticsへ返す。
+* cancellationとgeneration gateを複数文書jobへ適用する。
+
+== 完了条件
+
+Zed上でworkspace内includeの診断とnavigationが動作し、古いresource snapshotの結果を採用しない。
+LSP自身はnetwork resourceを取得しない。
+

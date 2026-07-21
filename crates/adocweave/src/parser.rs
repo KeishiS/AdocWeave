@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use crate::attributes::{AttributeProblem, DocumentAttribute, parse_line as parse_attribute_line};
+use crate::attributes::{DocumentAttribute, parse_line as parse_attribute_line};
 use crate::budget::{BudgetExceeded, ParseBudget};
 use crate::inline::{
     Inline, InlineParseConfig, InlineProblem, MathLanguage, parse_with_budget as parse_inlines,
@@ -11,7 +11,7 @@ use crate::inline::{
 use crate::limits::ProcessingLimits;
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::{SourceDocument, SourceDocumentBuildError, SourceLine};
-use crate::syntax::{SyntaxFix, SyntaxIssue, SyntaxIssueClass, SyntaxKind, SyntaxNode, SyntaxTree};
+use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxTree};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BlockMetadata {
@@ -128,7 +128,7 @@ pub struct Paragraph {
     pub content_range: TextRange,
     pub value: String,
     pub inlines: Vec<Inline>,
-    inline_problems: Vec<InlineProblem>,
+    pub(crate) inline_problems: Vec<InlineProblem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -190,7 +190,7 @@ pub struct LiteralBlock {
     pub delimiter_range: TextRange,
     pub content_range: TextRange,
     pub value: String,
-    problems: Vec<BlockProblem>,
+    pub(crate) problems: Vec<BlockProblem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -204,7 +204,7 @@ pub struct SourceBlock {
     pub content_range: TextRange,
     pub value: String,
     pub callouts: Vec<CalloutMarker>,
-    problems: Vec<BlockProblem>,
+    pub(crate) problems: Vec<BlockProblem>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -263,7 +263,7 @@ pub struct MathBlock {
     pub content_range: TextRange,
     pub language: MathLanguage,
     pub value: String,
-    problems: Vec<MathProblem>,
+    pub(crate) problems: Vec<MathProblem>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -285,7 +285,7 @@ pub struct DescriptionTerm {
     pub range: TextRange,
     pub text: String,
     pub inlines: Vec<Inline>,
-    inline_problems: Vec<InlineProblem>,
+    pub(crate) inline_problems: Vec<InlineProblem>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -328,11 +328,11 @@ pub struct ListItem {
     pub terms: Vec<DescriptionTerm>,
     pub checklist: Option<ChecklistState>,
     pub callout_id: Option<u32>,
-    inline_problems: Vec<InlineProblem>,
+    pub(crate) inline_problems: Vec<InlineProblem>,
     pub children: Vec<ListBlock>,
     pub continuations: Vec<AstBlock>,
     pub continuation_ranges: Vec<TextRange>,
-    problems: Vec<ListProblem>,
+    pub(crate) problems: Vec<ListProblem>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -363,8 +363,8 @@ pub struct Heading {
     pub hierarchy_valid: bool,
     pub text: String,
     pub inlines: Vec<Inline>,
-    inline_problems: Vec<InlineProblem>,
-    problems: Vec<HeadingProblem>,
+    pub(crate) inline_problems: Vec<InlineProblem>,
+    pub(crate) problems: Vec<HeadingProblem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -921,7 +921,7 @@ pub(crate) fn parse_shared_cancellable(
                     .unwrap_or_default();
             consume_metadata_budget(&source_block.metadata, &mut budget)?;
             source_block.metadata.range = Some(line.full_range());
-            blocks.push(source_block_syntax(&source_block));
+            blocks.push(crate::syntax_builder::source(&source_block));
             ast_blocks.push(AstBlock::Source(source_block));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
@@ -982,7 +982,7 @@ pub(crate) fn parse_shared_cancellable(
                     .unwrap_or_default();
             consume_metadata_budget(&math.metadata, &mut budget)?;
             math.metadata.range = Some(line.full_range());
-            blocks.push(math_block_syntax(&math));
+            blocks.push(crate::syntax_builder::math(&math));
             ast_blocks.push(AstBlock::Math(math));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
@@ -1012,7 +1012,7 @@ pub(crate) fn parse_shared_cancellable(
                 &mut budget,
                 1,
             )?;
-            blocks.push(delimited_block_syntax(&block));
+            blocks.push(crate::syntax_builder::delimited(&block));
             ast_blocks.push(AstBlock::Delimited(block));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
@@ -1031,7 +1031,7 @@ pub(crate) fn parse_shared_cancellable(
             budget.consume_block()?;
             budget.consume_node()?;
             let (literal, next_line) = parse_literal_block(&source_document, line_index, source)?;
-            blocks.push(literal_syntax(&literal));
+            blocks.push(crate::syntax_builder::literal(&literal));
             ast_blocks.push(AstBlock::Literal(literal));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
@@ -1219,7 +1219,7 @@ pub(crate) fn parse_shared_cancellable(
             } else {
                 SyntaxKind::MalformedHeading
             };
-            blocks.push(heading_syntax(&heading, syntax_kind));
+            blocks.push(crate::syntax_builder::heading(&heading, syntax_kind));
             ast_blocks.push(AstBlock::Heading(heading));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             header_attributes_open = matches!(
@@ -1247,7 +1247,7 @@ pub(crate) fn parse_shared_cancellable(
             )?;
             let (lists, next_line, range) =
                 parse_lists(&source_document, line_index, source, config, &mut budget)?;
-            blocks.push(list_syntax(range, &lists));
+            blocks.push(crate::syntax_builder::list(range, &lists));
             ast_blocks.extend(lists.into_iter().map(AstBlock::List));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
@@ -1299,7 +1299,7 @@ pub(crate) fn parse_shared_cancellable(
         source,
         &mut budget,
     )?;
-    let syntax_issues = collect_syntax_issues(&ast_blocks, &attribute_problems);
+    let syntax_issues = crate::syntax_diagnostics::collect(&ast_blocks, &attribute_problems);
     let ast = crate::lowering::lower(crate::lowering::ParsedFacts {
         blocks: ast_blocks,
         attributes,
@@ -1315,430 +1315,6 @@ pub(crate) fn parse_shared_cancellable(
         syntax: SyntaxTree::from_blocks(source_document, blocks, syntax_issues),
         ast,
     })
-}
-
-fn collect_syntax_issues(
-    blocks: &[AstBlock],
-    attribute_problems: &[AttributeProblem],
-) -> Vec<SyntaxIssue> {
-    use crate::attributes::AttributeProblemKind;
-
-    fn issue(class: SyntaxIssueClass, range: TextRange, message: &'static str) -> SyntaxIssue {
-        SyntaxIssue {
-            class,
-            range,
-            message,
-            fix: None,
-        }
-    }
-
-    fn inline_issues(problems: &[InlineProblem], output: &mut Vec<SyntaxIssue>) {
-        use crate::inline::InlineProblemKind as Kind;
-        for problem in problems {
-            let (class, message) = match problem.kind {
-                Kind::UnclosedMonospace => {
-                    (SyntaxIssueClass::UnclosedInline, "unclosed monospace span")
-                }
-                Kind::UnclosedStrong => (SyntaxIssueClass::UnclosedInline, "unclosed strong span"),
-                Kind::UnclosedEmphasis => {
-                    (SyntaxIssueClass::UnclosedInline, "unclosed emphasis span")
-                }
-                Kind::UnclosedHighlight => {
-                    (SyntaxIssueClass::UnclosedInline, "unclosed highlight span")
-                }
-                Kind::UnclosedSubscript => {
-                    (SyntaxIssueClass::UnclosedInline, "unclosed subscript span")
-                }
-                Kind::UnclosedSuperscript => (
-                    SyntaxIssueClass::UnclosedInline,
-                    "unclosed superscript span",
-                ),
-                Kind::NestingLimitExceeded => (
-                    SyntaxIssueClass::NestingLimitExceeded,
-                    "inline nesting limit exceeded",
-                ),
-                Kind::UnclosedAttributeReference => (
-                    SyntaxIssueClass::UnclosedInline,
-                    "unclosed attribute reference",
-                ),
-                Kind::IncompleteLink => (SyntaxIssueClass::InvalidUrl, "incomplete link macro"),
-                Kind::UnclosedPassthrough => (
-                    SyntaxIssueClass::UnclosedInline,
-                    "unclosed inline passthrough",
-                ),
-                Kind::IncompleteCrossReference | Kind::InvalidCrossReference => (
-                    SyntaxIssueClass::InvalidCrossReference,
-                    "incomplete or invalid cross reference",
-                ),
-                Kind::UnclosedStem => (SyntaxIssueClass::InvalidStem, "unclosed inline STEM"),
-                Kind::EmptyStem => (SyntaxIssueClass::InvalidStem, "inline STEM is empty"),
-                Kind::StemSizeLimitExceeded => (
-                    SyntaxIssueClass::InvalidStem,
-                    "inline STEM exceeds the size limit",
-                ),
-            };
-            output.push(issue(class, problem.range, message));
-        }
-    }
-
-    fn block_issues(block: &AstBlock, output: &mut Vec<SyntaxIssue>) {
-        match block {
-            AstBlock::Heading(heading) => {
-                inline_issues(&heading.inline_problems, output);
-                for problem in &heading.problems {
-                    match problem {
-                        HeadingProblem::MissingSpace => {
-                            let range = TextRange::new(
-                                heading.marker_range.end(),
-                                heading.marker_range.end(),
-                            )
-                            .expect("empty insertion range is ordered");
-                            output.push(SyntaxIssue {
-                                class: SyntaxIssueClass::HeadingMarkerSpace,
-                                range,
-                                message: "heading marker must be followed by a space",
-                                fix: Some(SyntaxFix {
-                                    label: "insert a space after heading marker",
-                                    range,
-                                    replacement: " ",
-                                }),
-                            });
-                        }
-                        HeadingProblem::LevelTooDeep | HeadingProblem::MisplacedDocumentTitle => {
-                            output.push(issue(
-                                SyntaxIssueClass::InvalidHeadingLevel,
-                                heading.marker_range,
-                                "invalid heading level or document title position",
-                            ));
-                        }
-                        HeadingProblem::EmptyText => {}
-                    }
-                }
-            }
-            AstBlock::Paragraph(paragraph) => inline_issues(&paragraph.inline_problems, output),
-            AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => {}
-            AstBlock::Literal(block) => block_problem_issues(&block.problems, "literal", output),
-            AstBlock::Source(block) => block_problem_issues(&block.problems, "source", output),
-            AstBlock::List(list) => list_issues(list, output),
-            AstBlock::Math(math) => {
-                for problem in &math.problems {
-                    let message = match problem.kind {
-                        MathProblemKind::Unclosed => "unclosed STEM block",
-                        MathProblemKind::Empty => "STEM block is empty",
-                        MathProblemKind::SizeLimitExceeded => "STEM block exceeds the size limit",
-                    };
-                    output.push(issue(SyntaxIssueClass::InvalidStem, problem.range, message));
-                }
-            }
-            AstBlock::Delimited(block) => {
-                let block_name = if block.kind == DelimitedBlockKind::Literal {
-                    "literal"
-                } else {
-                    "delimited"
-                };
-                block_problem_issues(&block.problems, block_name, output);
-                if let DelimitedContent::Compound(children) = &block.content {
-                    for child in children {
-                        block_issues(child, output);
-                    }
-                }
-            }
-            AstBlock::Unsupported(_) => {}
-        }
-    }
-
-    fn block_problem_issues(
-        problems: &[BlockProblem],
-        block_name: &'static str,
-        output: &mut Vec<SyntaxIssue>,
-    ) {
-        for problem in problems {
-            let (class, message) = match (problem.kind, block_name) {
-                (BlockProblemKind::UnclosedBlock, "literal") => {
-                    (SyntaxIssueClass::UnclosedBlock, "unclosed literal block")
-                }
-                (BlockProblemKind::UnclosedBlock, "source") => {
-                    (SyntaxIssueClass::UnclosedBlock, "unclosed source block")
-                }
-                (BlockProblemKind::UnclosedBlock, _) => {
-                    (SyntaxIssueClass::UnclosedBlock, "unclosed delimited block")
-                }
-                (BlockProblemKind::MissingSourceLanguage, _) => (
-                    SyntaxIssueClass::MissingSourceLanguage,
-                    "source block requires a language",
-                ),
-            };
-            output.push(issue(class, problem.range, message));
-        }
-    }
-
-    fn list_issues(list: &ListBlock, output: &mut Vec<SyntaxIssue>) {
-        for item in &list.items {
-            for term in &item.terms {
-                inline_issues(&term.inline_problems, output);
-            }
-            inline_issues(&item.inline_problems, output);
-            for problem in &item.problems {
-                let (message, fix) = match problem.kind {
-                    ListProblemKind::EmptyItem => ("list item is empty", None),
-                    ListProblemKind::InconsistentMarker => {
-                        ("list marker kind changes at the same depth", None)
-                    }
-                    ListProblemKind::InvalidNesting => ("list nesting skips a depth", None),
-                    ListProblemKind::DepthLimitExceeded => {
-                        ("list nesting exceeds the configured limit", None)
-                    }
-                    ListProblemKind::NonCanonicalSeparator => (
-                        "list marker must be followed by one space",
-                        Some(SyntaxFix {
-                            label: "replace the separator with a space",
-                            range: problem.range,
-                            replacement: " ",
-                        }),
-                    ),
-                };
-                output.push(SyntaxIssue {
-                    class: SyntaxIssueClass::InconsistentList,
-                    range: problem.range,
-                    message,
-                    fix,
-                });
-            }
-            for child in &item.children {
-                list_issues(child, output);
-            }
-            for continuation in &item.continuations {
-                block_issues(continuation, output);
-            }
-        }
-    }
-
-    let mut output = Vec::new();
-    for problem in attribute_problems {
-        let message = match problem.kind {
-            AttributeProblemKind::InvalidName => "invalid document attribute name",
-            AttributeProblemKind::InvalidValue => "invalid document attribute value",
-        };
-        output.push(issue(
-            SyntaxIssueClass::InvalidAttribute,
-            problem.range,
-            message,
-        ));
-    }
-    for block in blocks {
-        block_issues(block, &mut output);
-    }
-    output
-}
-
-fn heading_syntax(heading: &Heading, kind: SyntaxKind) -> SyntaxNode {
-    let mut children = vec![SyntaxNode::leaf(
-        SyntaxKind::HeadingMarker,
-        heading.marker_range,
-    )];
-    children.extend(inline_syntax(&heading.inlines));
-    SyntaxNode::new(kind, heading.range, children)
-}
-
-fn paragraph_syntax(paragraph: &Paragraph) -> SyntaxNode {
-    SyntaxNode::new(
-        SyntaxKind::Paragraph,
-        paragraph.range,
-        inline_syntax(&paragraph.inlines),
-    )
-}
-
-fn literal_syntax(literal: &LiteralBlock) -> SyntaxNode {
-    SyntaxNode::new(
-        SyntaxKind::LiteralBlock,
-        literal.range,
-        vec![delimiter_syntax(
-            literal.delimiter_range,
-            literal
-                .problems
-                .iter()
-                .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock),
-        )],
-    )
-}
-
-fn source_block_syntax(source: &SourceBlock) -> SyntaxNode {
-    SyntaxNode::new(
-        SyntaxKind::SourceBlock,
-        source.range,
-        vec![
-            SyntaxNode::leaf(SyntaxKind::BlockAttribute, source.attribute_range),
-            delimiter_syntax(
-                source.delimiter_range,
-                source
-                    .problems
-                    .iter()
-                    .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock),
-            ),
-        ],
-    )
-}
-
-fn delimited_block_syntax(block: &DelimitedBlock) -> SyntaxNode {
-    let opening = SyntaxNode::leaf(SyntaxKind::BlockDelimiter, block.opening_delimiter_range);
-    let mut children = vec![if block.closing_delimiter_range.is_none() {
-        SyntaxNode::new(
-            SyntaxKind::Error,
-            block.opening_delimiter_range,
-            vec![opening],
-        )
-    } else {
-        opening
-    }];
-    if let Some(range) = block.closing_delimiter_range {
-        children.push(SyntaxNode::leaf(SyntaxKind::BlockDelimiter, range));
-    }
-    SyntaxNode::new(SyntaxKind::DelimitedBlock, block.range, children)
-}
-
-fn math_block_syntax(math: &MathBlock) -> SyntaxNode {
-    SyntaxNode::new(
-        SyntaxKind::MathBlock,
-        math.range,
-        vec![
-            SyntaxNode::leaf(SyntaxKind::BlockAttribute, math.attribute_range),
-            delimiter_syntax(
-                math.delimiter_range,
-                math.problems
-                    .iter()
-                    .any(|problem| problem.kind == MathProblemKind::Unclosed),
-            ),
-        ],
-    )
-}
-
-fn delimiter_syntax(range: TextRange, is_error: bool) -> SyntaxNode {
-    let delimiter = SyntaxNode::leaf(SyntaxKind::BlockDelimiter, range);
-    if is_error {
-        SyntaxNode::new(SyntaxKind::Error, range, vec![delimiter])
-    } else {
-        delimiter
-    }
-}
-
-fn list_syntax(range: TextRange, lists: &[ListBlock]) -> SyntaxNode {
-    fn item_syntax(item: &ListItem) -> SyntaxNode {
-        let mut children = vec![SyntaxNode::leaf(SyntaxKind::ListMarker, item.marker_range)];
-        children.extend(
-            item.terms
-                .iter()
-                .flat_map(|term| inline_syntax(&term.inlines)),
-        );
-        children.extend(inline_syntax(&item.inlines));
-        children.extend(
-            item.children
-                .iter()
-                .flat_map(|list| list.items.iter().map(item_syntax)),
-        );
-        SyntaxNode::new(SyntaxKind::ListItem, item.range, children)
-    }
-
-    SyntaxNode::new(
-        SyntaxKind::List,
-        range,
-        lists
-            .iter()
-            .flat_map(|list| list.items.iter().map(item_syntax))
-            .collect(),
-    )
-}
-
-fn inline_syntax(inlines: &[Inline]) -> Vec<SyntaxNode> {
-    inlines.iter().filter_map(inline_node).collect()
-}
-
-fn inline_node(inline: &Inline) -> Option<SyntaxNode> {
-    match inline {
-        Inline::Text(_) => None,
-        Inline::Literal {
-            range,
-            content_range,
-            ..
-        } => Some(span_syntax(*range, *content_range, Vec::new())),
-        Inline::Styled {
-            range,
-            content_range,
-            children,
-            ..
-        } => Some(span_syntax(*range, *content_range, inline_syntax(children))),
-        Inline::AttributeReference {
-            range, name_range, ..
-        } => Some(SyntaxNode::new(
-            SyntaxKind::Macro,
-            *range,
-            vec![SyntaxNode::leaf(SyntaxKind::Target, *name_range)],
-        )),
-        Inline::Link(link) => Some(macro_syntax(
-            link.range,
-            link.target_range,
-            link.label_range,
-            &link.label,
-        )),
-        Inline::Reference(reference) => Some(macro_syntax(
-            reference.range,
-            reference.target_range,
-            reference.label_range,
-            &reference.label,
-        )),
-        Inline::Formula(formula) => Some(macro_syntax(
-            formula.range,
-            formula.content_range,
-            None,
-            &[],
-        )),
-        Inline::Macro(node) => Some(SyntaxNode::new(
-            SyntaxKind::Macro,
-            node.range,
-            vec![SyntaxNode::leaf(SyntaxKind::Target, node.target_range)],
-        )),
-        Inline::HardBreak { range } => Some(SyntaxNode::leaf(SyntaxKind::HardBreak, *range)),
-        Inline::Passthrough {
-            range,
-            content_range,
-            ..
-        } => Some(span_syntax(*range, *content_range, Vec::new())),
-    }
-}
-
-fn span_syntax(
-    range: TextRange,
-    content_range: TextRange,
-    mut content: Vec<SyntaxNode>,
-) -> SyntaxNode {
-    let mut children = vec![SyntaxNode::leaf(
-        SyntaxKind::InlineDelimiter,
-        TextRange::new(range.start(), content_range.start()).expect("ordered inline range"),
-    )];
-    children.append(&mut content);
-    if content_range.end() < range.end() {
-        children.push(SyntaxNode::leaf(
-            SyntaxKind::InlineDelimiter,
-            TextRange::new(content_range.end(), range.end()).expect("ordered inline range"),
-        ));
-    }
-    SyntaxNode::new(SyntaxKind::InlineSpan, range, children)
-}
-
-fn macro_syntax(
-    range: TextRange,
-    target_range: TextRange,
-    label_range: Option<TextRange>,
-    label: &[Inline],
-) -> SyntaxNode {
-    let mut children = vec![SyntaxNode::leaf(SyntaxKind::Target, target_range)];
-    if let Some(label_range) = label_range {
-        children.push(SyntaxNode::new(
-            SyntaxKind::Label,
-            label_range,
-            inline_syntax(label),
-        ));
-    }
-    SyntaxNode::new(SyntaxKind::Macro, range, children)
 }
 
 fn parse_explicit_anchor(
@@ -2905,7 +2481,7 @@ fn parse_compound_children(
             };
             let (block, next_line) =
                 parse_delimited_block(&context, line_index, end_line, spec, budget, depth + 1)?;
-            syntax.push(delimited_block_syntax(&block));
+            syntax.push(crate::syntax_builder::delimited(&block));
             blocks.push(AstBlock::Delimited(block));
             line_index = next_line;
             continue;
@@ -3245,7 +2821,7 @@ fn flush_paragraph(
     )?;
     paragraph.inlines = split_hard_breaks(inline_output.inlines);
     paragraph.inline_problems = inline_output.problems;
-    cst_blocks.push(paragraph_syntax(&paragraph));
+    cst_blocks.push(crate::syntax_builder::paragraph(&paragraph));
     ast_blocks.push(AstBlock::Paragraph(paragraph));
     attach_pending_metadata(cst_blocks, ast_blocks, pending_metadata);
     Ok(())

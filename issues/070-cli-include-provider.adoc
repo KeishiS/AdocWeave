@@ -1,0 +1,20 @@
+= CLIの明示的include provider
+:status: planned
+:depends-on: 068
+
+== 目的
+
+CLI hostが明示的に許可されたlocal resourceをsnapshotへ読み込み、preprocessor付き変換と検査を提供する。
+
+== 作業
+
+* includeを有効化する明示option、base directoryおよび許可rootを定義する。
+* path traversal、symlink逸脱、循環、ファイル数、読込byteおよび個別resource sizeを制限する。
+* `convert`、`check`および必要な場合の`format`に同じsnapshot構築規則を適用する。
+* 標準入力と匿名sourceに対するbase URI規則を明文化する。
+
+== 完了条件
+
+includeは明示的に有効化した場合だけlocal I/Oを行い、同じ入力treeから決定的な結果を生成する。
+network取得は対象外とする。
+

@@ -1,0 +1,20 @@
+= 残りの標準文書構造
+:status: planned
+:depends-on: 067
+
+== 目的
+
+AsciiDoc仕様との互換性を、利用頻度と構造的依存関係に従って拡張する。
+
+== 作業
+
+* AsciiDoc table cell、CSV／DSV／TSV、任意separatorおよびcell duplicationを実装する。
+* footnote一覧、bibliographyおよびindex catalogを文書projectionとして実装する。
+* TOC用section projection、appendix、book partおよびmanpage構造を実装する。
+* resource解決結果を受け取るbackend非依存renderer入力を定義する。
+* 各構文でgrammar、置換context、HTML、Formatter、Lint、LSPおよびconformanceを同時更新する。
+
+== 完了条件
+
+各機能を個別の子Issueへ分割し、公式AsciiDoc文書との差異と未対応範囲をfixtureと文書で明示する。
+

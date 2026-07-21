@@ -1,0 +1,21 @@
+= Source map付き解析projection
+:status: planned
+:depends-on: 067
+
+== 目的
+
+preprocessor展開後の解析結果を、診断、symbol、参照およびresourceごとに元の`SourceId`とrangeへ
+決定的に投影する。
+
+== 作業
+
+* source mapを用いる単一rangeと複数segment rangeの規則を定義する。
+* diagnostic、reference、resource、document symbolおよびfixのoriginを型付きで公開する。
+* include directive自身とinclude先のDefinition／Document Link情報を区別する。
+* nativeとWASMで同一snapshotから同一projectionを生成する。
+* source map segment数と投影処理量へ上限を設定する。
+
+== 完了条件
+
+hostが展開後offsetを独自に推測せず、公開projectionだけから元文書へ診断とnavigationを返せる。
+

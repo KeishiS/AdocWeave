@@ -1,0 +1,50 @@
+= Parser責務境界と変更集中点の解消
+:status: in-progress
+:depends-on: 066
+
+== 背景
+
+Issue 001から066までの横断レビューでは、`parser.rs`と`inline.rs`が最大の変更集中点として
+残った。行数そのものではなく、公開意味型、recognizer、状態遷移、semantic builder、syntax tree、
+診断変換および処理予算が同じmoduleで相互に参照していることが問題である。
+
+新しいblockやmacroを追加するたびに巨大なdispatchを変更する構成は、回復規則の競合、consumerの
+更新漏れおよび局所テストの困難さを増やす。
+
+== 目的
+
+構文上の責務に沿ってparserを再構成し、新しい構文を局所的に追加・検証できる形にする。旧型を残す
+互換module、旧新両方の解析pipelineおよび一時的な二重ASTは作らない。module facadeから所有moduleの
+単一型を公開することは、同じ型を複製しないため許容する。
+
+== 作業
+
+* blockおよびinlineの公開semantic modelを認識処理から分離する。
+* block parserの文書状態、line dispatchおよびblock固有builderを区別する。
+* inline scanner、delimiter認識、macro認識およびsemantic builderを責務別moduleへ分離する。
+* syntax node構築とsyntax diagnostic投影を構文認識から分離する。
+* table、list、container、macroおよびpreprocessorの既存専用moduleとの依存方向を統一する。
+* wildcard matchや互換wrapperで移行漏れを隠さず、全consumerを新しい型へ同時に移行する。
+* 分割後も線形走査予算、lossless source rangeおよびnative／WASM決定性を維持する。
+
+== 設計原則
+
+依存方向は、source／syntax rangeからrecognizer、semantic builder、immutable analysis、consumerの
+順とする。HTML、LSP、WASMおよびCLIの型をparserへ持ち込まない。
+
+moduleの行数を減らすだけの転送関数は作らない。独立した不変条件とtestを持てない処理は、別moduleへ
+移動しない。
+
+== 完了条件
+
+* `parser.rs`は文書全体の構成とblock dispatchを主責務とし、block固有文法、syntax diagnostic変換
+  および公開semantic型の定義を抱え込まない。
+* `inline`の公開model、scanner、delimiter、macroおよびbuilderの責務がsource上で識別できる。
+* 同一構文を認識または構築する実装が複数moduleに重複しない。
+* 公開契約、規範文書、fixtureおよび全consumerが新構成へ移行する。
+* `cargo make release-gate`が通過する。
+
+== 非目標
+
+Issue 067では新しいAsciiDoc記法を追加しない。性能改善を推測で主張せず、既存の走査予算とproperty
+testで退行がないことを確認する。

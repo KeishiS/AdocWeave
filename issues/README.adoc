@@ -80,6 +80,19 @@ content modelおよび置換順序を実装する。
 * xref:065-standard-macros-and-media.adoc[065: 標準macroとmedia]
 * xref:066-preprocessor-directives.adoc[066: preprocessor directiveとresource resolver]
 
+=== M15: Parser責務境界の再構成
+
+Issue 001から066までの横断レビューで残った変更集中点を、次の構文拡張より先に解消する。
+
+* xref:067-parser-module-boundaries.adoc[067: Parser責務境界と変更集中点の解消]
+
+=== M16: 複数文書解析と残りの標準構造
+
+* xref:068-source-map-analysis-projections.adoc[068: Source map付き解析projection]
+* xref:069-lsp-include-integration.adoc[069: LSPのinclude統合]
+* xref:070-cli-include-provider.adoc[070: CLIの明示的include provider]
+* xref:071-remaining-standard-structures.adoc[071: 残りの標準文書構造]
+
 === M1: プレーンテキスト変換
 
 * xref:001-workspace-and-cli.adoc[001: Cargo workspaceとCLIの初期化]
