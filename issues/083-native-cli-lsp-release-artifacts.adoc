@@ -1,5 +1,5 @@
 = CLIとLSPのnative release artifact
-:status: in-progress
+:status: completed
 :depends-on: 082
 
 == 目的
@@ -39,5 +39,6 @@ architecture、dynamic dependency不在、CLI各commandおよびLSP lifecycle／
 ローカルhost binaryを同じlayoutへ梱包する自己検査は成功した。
 
 PRでは`dist`の`upload` modeでLinux 2 targetをbuildし、local artifact完了後のcustom global jobから
-`ubuntu-24.04`と`ubuntu-24.04-arm`上でsmokeを実行する。残る完了条件は、このworkflowをGitHubへpushして
-両native runnerの実archive smokeが成功することの確認である。
+`ubuntu-24.04`と`ubuntu-24.04-arm`上でsmokeを実行する。Pull RequestのGitHub Actionsで、
+`x86_64-unknown-linux-musl`と`aarch64-unknown-linux-musl`のbuildおよび展開後smokeがともに成功した。
+これにより、実archiveを対応architecture上で検証する完了条件を満たした。
