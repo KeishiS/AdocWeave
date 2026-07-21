@@ -16,7 +16,7 @@ function harness(process = (request) => request) {
   const controller = createController({
     process,
     publish: (message) => messages.push(message),
-    cancellation,
+    isCurrent: (generation) => Atomics.load(cancellation, 0) === generation,
     schedule(callback) {
       const id = ++nextId;
       scheduled.set(id, callback);
@@ -93,19 +93,27 @@ test("protocol mismatch returns a stable error without executing WASM", () => {
   assert.equal(state.messages[0].error.code, "unsupported-worker-protocol");
 });
 
-test("client sends the current WASM API version with core-owned default options", () => {
+test("client sends the current WASM API version with core-owned default options", async () => {
   const messages = [];
-  const worker = {
+  class FakeWorker {
+    listeners = new Map();
     postMessage(message) {
       messages.push(message);
-    },
-    terminate() {},
-  };
-  const client = new AdocWeaveWorkerClient(worker, {
-    moduleUrl: "module.js",
-    wasmUrl: "module.wasm",
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({ data: { type: "ready" } }));
+      }
+    }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    terminate() {}
+  }
+  const client = new AdocWeaveWorkerClient({
+    workerUrl: "worker.js",
+    moduleUrl: "module.js", wasmUrl: "module.wasm", Worker: FakeWorker,
+    sharedCancellation: true,
   });
-  client.analyze({ version: 1, source: "text" });
+  client.update({ version: 1, source: "text" });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(messages[1].payload.apiVersion, WASM_API_VERSION);
   assert.deepEqual(messages[1].payload.options, {});

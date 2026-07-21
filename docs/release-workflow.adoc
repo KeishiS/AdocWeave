@@ -1,0 +1,57 @@
+= Transactional GitHub Release workflow
+
+この文書は、`.github/workflows/release.yml`と`release-publish.yml`による公開手順および障害対応を定義する。
+repository所有のworkflowを正本とし、`dist 0.32.0`はrelease planとnative archive build engineとして固定する。
+`allow-dirty = ["ci"]`は、この意図的なworkflow所有権の宣言であり、生成漏れの黙認には使用しない。
+
+== 実行経路
+
+pull requestではplan、release contract、Linux 2 targetのbuild、native smoke test、browser build、SBOM・checksum生成、
+完全なcandidateの検査まで実行する。GitHub Releaseへの書き込みとattestation作成は行わない。
+
+stableの`vX.Y.Z`またはRCの`vX.Y.Z-rc.N` tagでは、同じ検査に加えてpublish jobを実行する。処理順は次のとおりである。
+
+. `cargo make release-gate`、tag／version、clean treeおよび配布契約を検査する。
+. `ubuntu-24.04`と`ubuntu-24.04-arm`でtarget別archiveをbuildし、一時artifactへ保存する。
+. native binaryを展開して実行する。browser archiveはcargo-distのglobal後処理を介さず、release contractで固定した
+  repository builderを実行し、非0 byteかつ妥当なtar.xzであることをupload前に検査する。
+. 5 archiveを一つのdirectoryへ集約して3 metadataを生成し、8個の公開asset集合、manifest、SBOMおよび
+  checksumを再検証して`release-candidate`とする。
+. protected `github-release` Environmentの承認後、既存releaseがないことを確認してprivate draftを作る。
+. 全assetをuploadして集合を再検証し、各assetへprovenanceを付与する。
+. 最後の操作としてdraftを公開する。RCはprerelease、通常tagはstable releaseにする。
+
+同じrefのrunはconcurrency groupで直列化し、進行中の公開をcancelしない。既存releaseやassetの置換は行わない。
+build jobはGitHub Releaseへの書き込み権限を持たないため、途中失敗からpartial releaseは生じない。
+
+== 初期設定
+
+repositoryのSettingsから`github-release` Environmentを一度作成し、必要なreviewerとmain branchまたはrelease tagの
+deployment ruleを設定する。OS code signingを導入するまでは追加secretを登録しない。forkからのpull requestは
+read-only経路だけを通り、Environmentとpublish jobへ到達しない。
+
+== Release candidateの確認
+
+. release対象versionを全componentで一致させ、mainへmergeする。
+. mainの全checkが成功したcommitへ`vX.Y.Z-rc.N` tagを作成してpushする。
+. Environmentの画面でsource commitとcandidateを確認し、publishを承認する。
+. GitHub Releaseがprereleaseであり、計画された8 assetだけを含むことを確認する。
+. xref:release-integrity.adoc[完全性検証]に従い、download後のchecksumとattestationを別々に検証する。
+. CLI／LSPの2 targetとbrowser packageについてxref:release-checklist.adoc[リリース確認]を実行する。
+
+この受け入れ結果にはtag、commit、workflow run URL、検証環境および不一致を記録する。
+
+== 障害対応runbook
+
+publish前に失敗した場合、workflowはprivate draftを削除する。attestationはGitHub側のappend-onlyな来歴としてdraftとは
+別に作成されるため、attestation作成後の失敗では孤立したattestationが残る場合がある。これは公開Releaseやpartial
+assetではない。再実行前にrepositoryのActionsにあるAttestations画面で対象digestを確認し、誤った来歴であれば削除する。
+
+公開後に欠陥を発見した場合、既存release assetを上書きしない。次の順に対応する。
+
+. Releaseをdraftへ戻すか削除し、影響、対象digestおよび理由をsecurity incident記録へ残す。
+. 必要ならActionsのAttestations画面から対象attestationを削除する。
+. tagを再利用せず、修正版versionまたは次のRC tagで全workflowを最初から実行する。
+. 利用者へchecksum、source commit、影響範囲および置換releaseを通知する。
+
+tag、asset、attestationの手動削除は監査可能な破壊的操作であるため、実行前にrepository所有者の確認を必要とする。

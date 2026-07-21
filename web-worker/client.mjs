@@ -1,49 +1,158 @@
 import { WORKER_PROTOCOL_VERSION } from "./controller.mjs";
-import { WASM_API_VERSION } from "./contracts.mjs";
+import { CONTRACT_VERSIONS, WASM_API_VERSION } from "./contracts.mjs";
 
-export class AdocWeaveWorkerClient {
-  #worker;
-  #cancellation = new Int32Array(new SharedArrayBuffer(4));
+export class AdocWeaveClient {
+  #options;
+  #worker = null;
+  #cancellation = null;
   #generation = 0;
+  #disposed = false;
+  #ready = null;
 
-  constructor(worker, { moduleUrl, wasmUrl, debounceMs = 40 }) {
-    this.#worker = worker;
-    worker.postMessage({
-      protocolVersion: WORKER_PROTOCOL_VERSION,
-      type: "initialize",
-      moduleUrl,
-      wasmUrl,
+  constructor({
+    workerUrl,
+    moduleUrl,
+    wasmUrl,
+    debounceMs = 40,
+    onResult = () => {},
+    onError = () => {},
+    Worker: WorkerConstructor = globalThis.Worker,
+    sharedCancellation = globalThis.crossOriginIsolated === true &&
+      typeof globalThis.SharedArrayBuffer === "function",
+  }) {
+    if (typeof WorkerConstructor !== "function") {
+      throw new TypeError("a Worker constructor is required");
+    }
+    this.#options = {
+      workerUrl: String(workerUrl),
+      moduleUrl: String(moduleUrl),
+      wasmUrl: String(wasmUrl),
       debounceMs,
-      cancellationBuffer: this.#cancellation.buffer,
-    });
+      onResult,
+      onError,
+      WorkerConstructor,
+      sharedCancellation,
+    };
+    if (sharedCancellation) {
+      this.#cancellation = new Int32Array(new SharedArrayBuffer(4));
+      this.#spawnWorker();
+    }
   }
 
-  analyze({ sourceId = null, version, source, options = {} }) {
+  update({ sourceId = null, version, source, renderInputs, options = {} }) {
+    this.#assertActive();
     const generation = ++this.#generation;
-    Atomics.store(this.#cancellation, 0, generation);
-    this.#worker.postMessage({
-      protocolVersion: WORKER_PROTOCOL_VERSION,
-      type: "analyze",
+    if (this.#options.sharedCancellation) {
+      Atomics.store(this.#cancellation, 0, generation);
+    } else {
+      // Without SharedArrayBuffer, terminating the previous synchronous WASM
+      // execution is the only reliable cancellation mechanism.
+      this.#terminateWorker();
+      this.#spawnWorker();
+    }
+    const payload = {
+      apiVersion: WASM_API_VERSION,
+      sourceId,
       version,
       generation,
-      payload: {
-        apiVersion: WASM_API_VERSION,
-        sourceId,
-        version,
-        generation,
-        source,
-        options,
-      },
-    });
+      source,
+      options,
+    };
+    if (renderInputs !== undefined) payload.renderInputs = renderInputs;
+    this.#ready.then(() => {
+      if (!this.#disposed && generation === this.#generation) {
+        this.#worker.postMessage({
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          type: "analyze",
+          version,
+          generation,
+          payload,
+        });
+      }
+    }).catch(() => {});
     return generation;
   }
 
   cancel() {
-    Atomics.store(this.#cancellation, 0, ++this.#generation);
+    this.#assertActive();
+    ++this.#generation;
+    if (this.#options.sharedCancellation) {
+      Atomics.store(this.#cancellation, 0, this.#generation);
+    } else {
+      this.#terminateWorker();
+    }
   }
 
   dispose() {
-    this.cancel();
-    this.#worker.terminate();
+    if (this.#disposed) return;
+    this.#disposed = true;
+    ++this.#generation;
+    if (this.#cancellation) Atomics.store(this.#cancellation, 0, this.#generation);
+    this.#terminateWorker();
+  }
+
+  #spawnWorker() {
+    const worker = new this.#options.WorkerConstructor(this.#options.workerUrl, {
+      type: "module",
+    });
+    this.#worker = worker;
+    this.#ready = new Promise((resolve, reject) => {
+      const onMessage = ({ data }) => {
+        if (worker !== this.#worker || this.#disposed) return;
+        if (data?.type === "ready") {
+          resolve();
+        } else if (data?.type === "result" && data.generation === this.#generation) {
+          this.#options.onResult({
+            html: data.result.html,
+            diagnostics: data.result.diagnostics,
+            renderDiagnostics: data.result.renderDiagnostics,
+            sourceVersion: data.version,
+            generation: data.generation,
+            contracts: CONTRACT_VERSIONS,
+            result: data.result,
+          });
+        } else if (data?.type === "error" && data.generation === this.#generation) {
+          this.#options.onError({ ...data.error, sourceVersion: data.version, generation: data.generation });
+        }
+      };
+      worker.addEventListener("message", onMessage);
+      worker.addEventListener("error", (event) => {
+        if (worker !== this.#worker || this.#disposed) return;
+        const error = new Error(event.message || "AdocWeave worker failed");
+        reject(error);
+        this.#publishError(error, null, this.#generation);
+      }, { once: true });
+    });
+    this.#ready.catch(() => {});
+    worker.postMessage({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type: "initialize",
+      moduleUrl: this.#options.moduleUrl,
+      wasmUrl: this.#options.wasmUrl,
+      debounceMs: this.#options.debounceMs,
+      cancellationBuffer: this.#cancellation?.buffer ?? null,
+    });
+  }
+
+  #terminateWorker() {
+    this.#worker?.terminate();
+    this.#worker = null;
+    this.#ready = null;
+  }
+
+  #publishError(error, sourceVersion, generation) {
+    if (generation !== this.#generation || this.#disposed) return;
+    this.#options.onError({
+      code: "worker-failed",
+      message: error instanceof Error ? error.message : String(error),
+      sourceVersion,
+      generation,
+    });
+  }
+
+  #assertActive() {
+    if (this.#disposed) throw new Error("AdocWeaveClient is disposed");
   }
 }
+
+export { AdocWeaveClient as AdocWeaveWorkerClient };

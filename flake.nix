@@ -35,13 +35,22 @@
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
+              actionlint
               cargo
               cargo-dist
               cargo-make
+              chromium
+              dejavu_fonts
+              esbuild
+              fontconfig
+              gh
+              git
               clippy
               gnutar
+              jq
               lld
               nodejs
+              typescript
               ripgrep
               rust-analyzer
               rustc

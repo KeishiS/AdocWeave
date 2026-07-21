@@ -1,5 +1,5 @@
 = TransactionalなGitHub Release workflow
-:status: planned
+:status: in-progress
 :depends-on: 083,084,085
 
 == 目的
@@ -16,11 +16,26 @@
 * publish jobだけがprotected GitHub Environmentを使い、releaseを作成して全assetをuploadする。
   prerelease tagはGitHub prerelease、stable tagはstable releaseとして扱う。
 * 同じtagへの並行実行をconcurrency groupで直列化し、既存releaseまたはassetがある場合は上書きせず失敗する。
-* workflow failure時は公開前なら外部状態を残さない。公開後の撤回、yank、security incidentおよび
-  attestation削除のrunbookを文書化する。
-* generated workflowは`dist` exact versionから再生成可能にし、手編集との差分をCIで拒否する。
+* workflow failure時は公開Releaseとpartial assetを残さない。GitHubがReleaseとは独立に保存するattestationを含む、
+  公開後の撤回、yank、security incidentおよび削除のrunbookを文書化する。
+* repository所有のworkflowをpolicy testで固定する。`dist`はexact versionのplan／build engineとして用い、
+  意図的なCI override以外の設定差異をrelease contractで拒否する。
 
 == 完了条件
 
 test repositoryまたはprerelease tagでLinux 2 targetのCLI／LSP、browser library、manifest、checksum、SBOMおよび
 attestationが一つのGitHub Releaseに揃う。任意のbuild失敗時にpartial releaseが公開されない。
+
+== 実装状況
+
+`.github/workflows/release.yml`はPRとtagでread-onlyのplan、2 target build、native smoke、browser／metadata build、
+5 archiveからのmetadata生成と完全candidate検証までを実行する。tagだけがprotected `github-release` Environmentの
+`release-publish.yml`を呼び、private draftへの一括upload、asset集合検査、attestationおよび最後の公開を行う。
+同一refのrunは直列化し、既存releaseを拒否する。失敗時のdraft cleanupと公開後のrunbookは
+xref:../docs/release-workflow.adoc[release-workflow.adoc]に記載した。
+
+残る完了判定は、GitHubに`github-release` Environmentを設定し、RC tagで2 targetを含む実Releaseと失敗時の
+partial release非公開を確認することである。
+
+browser archiveはcargo-distのglobal artifact後処理を介さず、同じrepository builderを直接実行する。upload前に
+非0 byteとtar.xzとしての妥当性を検査し、集約後にもmetadata生成器が再検査する。

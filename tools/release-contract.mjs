@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
+import { loadWorkflowPolicyInputs, validateReleaseWorkflowPolicy } from "./release-workflow-policy.mjs";
+
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const json = (path) => JSON.parse(read(path));
@@ -110,7 +112,7 @@ export function validateDistPlan(distPlan, plan, tag) {
     .map((artifact) => artifact.name)
     .sort();
   if (JSON.stringify(publicArchives) !== JSON.stringify([...planned.keys()].sort())) {
-    fail("dist plan contains an unplanned public archive");
+    fail("dist plan contains a missing or unplanned public archive");
   }
 
   const runnerByTarget = Object.fromEntries(
@@ -169,10 +171,15 @@ function verifyRepository() {
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
   const dist = read("dist-workspace.toml");
+  const makefile = read("Makefile.toml");
   const releaseWorkflow = read(".github/workflows/release.yml");
   const nativeSmokeWorkflow = read(".github/workflows/native-artifact-smoke.yml");
   const version = tomlValue(cargo, "version");
   const repository = tomlValue(cargo, "repository");
+
+  if (/mktemp(?:\s+-d)?\s+(?:["'])?target\//.test(makefile)) {
+    fail("cargo-make tasks must not require target to exist before creating temporary files");
+  }
 
   for (const profileSetting of ['lto = "thin"', "codegen-units = 1", "debug = 0", 'panic = "abort"', 'strip = "symbols"']) {
     if (!cargo.includes(profileSetting)) fail(`dist profile is missing: ${profileSetting}`);
@@ -198,17 +205,21 @@ function verifyRepository() {
   if (plan.distVersion !== "0.32.0" || !dist.includes('cargo-dist-version = "0.32.0"')) {
     fail("dist must be pinned to 0.32.0");
   }
+  if (!dist.includes('checksum = "false"')) {
+    fail("dist per-archive checksums must be disabled in favor of the canonical checksum list");
+  }
   const browserArchive = `target/distrib/adocweave-browser-${version}.tar.xz`;
-  if (!dist.includes(`artifacts = ["${browserArchive}"]`) || !dist.includes('build = ["bash", "tools/package-browser-release.sh"]')) {
+  if (!dist.includes(`artifacts = ["${browserArchive}"]`) ||
+      !dist.includes('build = ["bash", "tools/package-browser-release.sh"]')) {
     fail("browser package must be connected as the versioned dist extra artifact");
   }
   if (!dist.includes('plan-jobs = ["./release-contract"]')) fail("release contract must run in the dist plan phase");
   if (!dist.includes('pr-run-mode = "upload"') || !dist.includes('global-artifacts-jobs = ["./native-artifact-smoke"]')) {
     fail("PR native artifacts must be smoke tested after local builds");
   }
-  if (!releaseWorkflow.includes("needs:\n      - plan\n      - build-local-artifacts") ||
+  if (!releaseWorkflow.includes("needs: [plan, build-native]") ||
       !releaseWorkflow.includes("uses: ./.github/workflows/native-artifact-smoke.yml")) {
-    fail("generated release workflow does not gate on native archive smoke tests");
+    fail("release workflow does not gate on native archive smoke tests");
   }
   for (const runner of ["ubuntu-24.04", "ubuntu-24.04-arm"]) {
     if (!nativeSmokeWorkflow.includes(`runner: ${runner}`)) fail(`native smoke workflow is missing ${runner}`);
@@ -241,6 +252,7 @@ function verifyRepository() {
   const fixture = JSON.parse(fixtureText);
   validateDistributionManifest(fixture, plan);
   if (fixtureText !== canonicalJson(fixture)) fail("distribution manifest fixture is not canonical JSON");
+  validateReleaseWorkflowPolicy(loadWorkflowPolicyInputs());
   return { version, manifest };
 }
 

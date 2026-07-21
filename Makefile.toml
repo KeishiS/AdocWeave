@@ -97,10 +97,11 @@ args = ["test", "--prefix", "web-worker"]
 
 [tasks.release-contract]
 description = "Verify release train versions, targets, tags, and distribution manifest schema"
+dependencies = ["release-metadata-test", "release-workflow-policy"]
 script_runner = "@shell"
 script = '''
 args=""
-metadata="$(mktemp target/release-metadata.XXXXXX.json)"
+metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 trap 'rm -f "$metadata"' EXIT
 if [ -n "${RELEASE_TAG:-}" ]; then
   args="--tag=$RELEASE_TAG"
@@ -111,6 +112,47 @@ cargo metadata --no-deps --format-version=1 > "$metadata"
 node tools/verify-cargo-release-metadata.mjs "$metadata"
 node tools/verify-third-party-notices.mjs "$metadata"
 '''
+
+[tasks.release-metadata-test]
+description = "Test canonical release manifest, SPDX SBOM, and checksum generation"
+command = "node"
+args = ["--test", "tools/release-metadata.test.mjs"]
+
+[tasks.release-workflow-policy]
+description = "Test action pins, release permissions, fork isolation, and transactional publication policy"
+script_runner = "@shell"
+script = '''
+node tools/release-workflow-policy.mjs
+node --test tools/release-workflow-policy.test.mjs
+'''
+
+[tasks.workflow-lint]
+description = "Lint GitHub Actions syntax and enforce the release security policy"
+dependencies = ["release-workflow-policy"]
+command = "actionlint"
+
+[tasks.release-ci-contract]
+description = "Run the release contract, workflow lint, and cargo-dist plan used by pull requests"
+dependencies = ["release-contract", "workflow-lint", "dist-plan"]
+
+[tasks.dev-tools-check]
+description = "Verify that the flake development shell exposes every repository tool entry point"
+script_runner = "@shell"
+script = '''
+missing=0
+for tool in actionlint adocweave-fuzz cargo cargo-make cargo-clippy chromium dist esbuild fc-list gh git jq node npm rg rustc rustfmt sha256sum tar tsc wasm-bindgen xz; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "missing development tool: $tool" >&2
+    missing=1
+  fi
+done
+exit "$missing"
+'''
+
+[tasks.flake-check]
+description = "Evaluate the Nix flake without building every output"
+command = "nix"
+args = ["flake", "check", "--no-build"]
 
 [tasks.native-release-smoke]
 description = "Smoke test extracted CLI and LSP release archives for NATIVE_TARGET"
@@ -154,7 +196,7 @@ description = "Run the pinned dist release plan without publishing"
 script_runner = "@shell"
 script = '''
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
-plan="$(mktemp target/dist-plan.XXXXXX.json)"
+plan="$(mktemp "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX.json")"
 trap 'rm -f "$plan"' EXIT
 dist plan --tag="v$version" --output-format=json > "$plan"
 node tools/verify-dist-plan.mjs "$plan" "v$version"
@@ -175,6 +217,7 @@ args = [
 description = "Build wasm-bindgen web artifacts under target/adocweave-wasm"
 script_runner = "@shell"
 script = '''
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
 cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
 wasm-bindgen \
   --target web \
@@ -203,8 +246,8 @@ if [ "$first" != "$second" ]; then
   exit 1
 fi
 
-actual="$(mktemp target/browser-archive.XXXXXX.list)"
-expected="$(mktemp target/browser-archive-expected.XXXXXX.list)"
+actual="$(mktemp "${TMPDIR:-/tmp}/adocweave-browser-archive.XXXXXX.list")"
+expected="$(mktemp "${TMPDIR:-/tmp}/adocweave-browser-archive-expected.XXXXXX.list")"
 trap 'rm -f "$actual" "$expected"' EXIT
 tar -tJf "$archive" | LC_ALL=C sort > "$actual"
 printf '%s\n' \
@@ -214,6 +257,9 @@ printf '%s\n' \
   "$package/README.adoc" \
   "$package/THIRD_PARTY_NOTICES.adoc" \
   "$package/package.json" \
+  "$package/example/" \
+  "$package/example/app.mjs" \
+  "$package/example/index.html" \
   "$package/wasm/" \
   "$package/wasm/adocweave_wasm.d.ts" \
   "$package/wasm/adocweave_wasm.js" \
@@ -222,15 +268,52 @@ printf '%s\n' \
   "$package/worker/client.mjs" \
   "$package/worker/contracts.mjs" \
   "$package/worker/controller.mjs" \
+  "$package/worker/index.d.mts" \
+  "$package/worker/index.mjs" \
   "$package/worker/worker.mjs" | LC_ALL=C sort > "$expected"
 diff -u "$expected" "$actual"
 echo "browser release package verified: $second"
+'''
+
+[tasks.test-browser-types]
+description = "Compile-check the public browser TypeScript declarations"
+command = "tsc"
+args = ["--project", "web-worker/tsconfig.json"]
+
+[tasks.test-browser-smoke]
+description = "Run the extracted browser archive in isolated and fallback Chromium contexts"
+dependencies = ["package-browser-release", "test-browser-types"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tar.xz"
+'''
+
+[tasks.test-browser-bundler]
+description = "Bundle the public browser API with esbuild and smoke test its asset URL resolution"
+dependencies = ["package-browser-release", "test-browser-types"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+package="adocweave-browser-$version"
+source_archive="target/distrib/$package.tar.xz"
+root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser-bundler.XXXXXX")"
+archive="$root/$package-bundled.tar.xz"
+trap 'rm -rf "$root"' EXIT
+tar -xJf "$source_archive" -C "$root"
+esbuild web-worker/bundler-entry.mjs \
+  --bundle --format=esm --platform=browser \
+  --outfile="$root/$package/example/app.mjs"
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+  -cJf "$archive" -C "$root" "$package"
+node tools/browser-release-smoke.mjs "$archive"
 '''
 
 [tasks.build-wasm-node]
 description = "Build wasm-bindgen Node.js artifacts for cross-runtime conformance"
 script_runner = "@shell"
 script = '''
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
 cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
 wasm-bindgen \
   --target nodejs \
@@ -285,7 +368,7 @@ description = "Run deterministic short fuzz smoke tests (set FUZZ_SECONDS to ove
 script_runner = "@shell"
 script = '''
 seconds="${FUZZ_SECONDS:-5}"
-smoke_root="$(mktemp -d target/adocweave-fuzz-smoke.XXXXXX)"
+smoke_root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-fuzz-smoke.XXXXXX")"
 trap 'rm -rf "$smoke_root"' EXIT
 for target in analyze process render; do
   corpus="$smoke_root/$target"
@@ -374,7 +457,7 @@ description = "Check every tracked AsciiDoc file for crashes, losslessness, and 
 dependencies = ["build-adoc-check", "adoc-invariants"]
 script_runner = "@shell"
 script = '''
-manifest="$(mktemp target/adoc-check.XXXXXX)"
+manifest="$(mktemp "${TMPDIR:-/tmp}/adocweave-adoc-check.XXXXXX")"
 trap 'rm -f "$manifest"' EXIT
 git ls-files '*.adoc' | LC_ALL=C sort > "$manifest"
 diagnostics_log="target/adoc-check-diagnostics.log"
@@ -440,6 +523,7 @@ dependencies = [
   "test",
   "test-web-worker",
   "release-contract",
+  "workflow-lint",
   "test-cross-runtime",
   "doc-check",
   "docs-check",
@@ -459,6 +543,8 @@ dependencies = [
   "test-profile-release",
   "wasm-size",
   "test-browser-release-package",
+  "test-browser-smoke",
+  "test-browser-bundler",
   "native-release-smoke-host",
   "dist-plan",
 ]

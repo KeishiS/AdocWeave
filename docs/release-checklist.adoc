@@ -18,6 +18,8 @@ Rust、WASMおよびWorkerの契約versionがxref:../release-manifest.json[relea
 
 配布releaseでは、さらにxref:release-distribution.adoc[GitHub Releases配布契約]に従い、固定した`dist`の
 dry run、release train、target matrix、browser extra artifactおよび公的registryが無効であることを確認する。
+RC tagではxref:release-workflow.adoc[Transactional workflow]の8 asset集合を確認し、
+xref:release-integrity.adoc[完全性検証]に従ってchecksumとattestationをそれぞれ検証する。
 
 == Zed
 
@@ -38,6 +40,7 @@ dry run、release train、target matrix、browser extra artifactおよび公的r
 . SharedArrayBufferを使える環境では解析中キャンセルが働く。
 . SharedArrayBufferを使えない環境ではWorker再生成による縮退経路が働く。
 . CSPとcross-origin isolationがxref:wasm-worker.adoc[WASM統合契約]を満たす。
+. 配布archiveのTypeScript宣言、size上限、機械固有path不在およびesbuild後のasset解決が通る。
 
 == Nativeホスト
 

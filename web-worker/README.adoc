@@ -7,31 +7,30 @@
 
 * `wasm/adocweave_wasm.js`と`wasm/adocweave_wasm_bg.wasm`：`wasm-bindgen`のweb向け成果物
 * `wasm/adocweave_wasm.d.ts`：生成された場合のTypeScript declaration
-* `worker/client.mjs`：frontendから利用する入口
-* `worker/controller.mjs`と`worker/worker.mjs`：最新generationだけを採用するWorker実装
+* `worker/index.mjs`と`worker/index.d.mts`：frontend向けの公開ES module入口と型定義
+* `worker/client.mjs`、`worker/controller.mjs`、`worker/worker.mjs`：最新generationだけを採用する内部実装
 * `worker/contracts.mjs`：WASM API契約version
 
 == 最小例
 
 [source,javascript]
 ----
-import { AdocWeaveWorkerClient } from "./worker/client.mjs";
+import { AdocWeaveClient, defaultAssetUrls } from "./worker/index.mjs";
 
-const worker = new Worker(new URL("./worker/worker.mjs", import.meta.url), {
-  type: "module",
+const client = new AdocWeaveClient({
+  ...defaultAssetUrls(),
+  onResult(result) {
+    // HTMLの信頼方針はホストが決める。この例では文字列として表示する。
+    preview.textContent = result.html;
+  },
+  onError(error) {
+    console.error(error.code, error.message);
+  },
 });
-const client = new AdocWeaveWorkerClient(worker, {
-  moduleUrl: new URL("./wasm/adocweave_wasm.js", import.meta.url).href,
-  wasmUrl: new URL("./wasm/adocweave_wasm_bg.wasm", import.meta.url).href,
-});
-
-worker.addEventListener("message", ({ data }) => {
-  if (data.type === "result") {
-    preview.innerHTML = data.result.html;
-  }
-});
-client.analyze({ version: 1, source: "= Title\n\nAsciiDoc text" });
+client.update({ version: 1, source: "= Title\n\nAsciiDoc text" });
 ----
 
-DOMへの反映、UI stateおよび入力のdebounceは利用側が所有する。APIと返却値の詳細は
+公開入口がWorkerの生成、初期化、debounce、generation、cancelおよびdisposeを所有する。
+`SharedArrayBuffer`を利用できない場合はWorker再生成へ自動的に縮退する。DOMへの反映とUI stateは
+利用側が所有する。動作するtextarea例は`example/index.html`に含む。APIと返却値の詳細は
 リポジトリの`docs/wasm-worker.adoc`を参照する。
