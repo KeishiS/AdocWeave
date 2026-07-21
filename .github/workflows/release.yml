@@ -105,9 +105,8 @@ jobs:
           merge-multiple: true
       - name: Install pinned dist
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
-      - name: Build browser and integrity metadata
+      - name: Build browser archive
         env:
-          GITHUB_SHA: ${{ github.sha }}
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           args=()
@@ -117,11 +116,7 @@ jobs:
         with:
           name: artifacts-build-global
           if-no-files-found: error
-          path: |
-            target/distrib/adocweave-browser-*.tar.xz
-            target/distrib/adocweave-dist-manifest.json
-            target/distrib/adocweave.spdx.json
-            target/distrib/sha256.sum
+          path: target/distrib/adocweave-browser-*.tar.xz
 
   verify-candidate:
     needs: [plan, native-smoke, build-global]
@@ -135,8 +130,10 @@ jobs:
           pattern: artifacts-build-*
           path: artifacts
           merge-multiple: true
-      - name: Verify the complete candidate
-        run: node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
+      - name: Generate and verify metadata for the complete candidate
+        run: |
+          node tools/release-metadata.mjs generate artifacts "$GITHUB_SHA"
+          node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-candidate

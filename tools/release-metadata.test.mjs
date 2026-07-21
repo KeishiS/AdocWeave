@@ -71,6 +71,17 @@ test("verification rejects modified metadata and incomplete asset sets", () => {
   }
 });
 
+test("generation rejects an empty archive before manifest validation", () => {
+  const { root, artifacts } = fixture();
+  try {
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    writeFileSync(join(artifacts, plan.assets[0].name), "");
+    assert.throws(() => writeMetadata(artifacts, commit), /empty release archive/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("verification rejects every unplanned file regardless of its extension", () => {
   const { root, artifacts } = fixture();
   try {

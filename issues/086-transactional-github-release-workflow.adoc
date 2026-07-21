@@ -29,7 +29,7 @@ attestationが一つのGitHub Releaseに揃う。任意のbuild失敗時にparti
 == 実装状況
 
 `.github/workflows/release.yml`はPRとtagでread-onlyのplan、2 target build、native smoke、browser／metadata build、
-完全candidate検証までを実行する。tagだけがprotected `github-release` Environmentの
+5 archiveからのmetadata生成と完全candidate検証までを実行する。tagだけがprotected `github-release` Environmentの
 `release-publish.yml`を呼び、private draftへの一括upload、asset集合検査、attestationおよび最後の公開を行う。
 同一refのrunは直列化し、既存releaseを拒否する。失敗時のdraft cleanupと公開後のrunbookは
 xref:../docs/release-workflow.adoc[release-workflow.adoc]に記載した。

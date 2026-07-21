@@ -111,14 +111,8 @@ export function validateDistPlan(distPlan, plan, tag) {
     .filter((artifact) => artifact.kind === "executable-zip" || artifact.kind === "extra-artifact")
     .map((artifact) => artifact.name)
     .sort();
-  const publicAssets = [...planned.keys(), ...plan.releaseMetadata.map((entry) => entry.name)].sort();
-  if (JSON.stringify(publicArchives) !== JSON.stringify(publicAssets)) {
-    fail("dist plan contains a missing or unplanned public asset");
-  }
-  for (const metadata of plan.releaseMetadata) {
-    if (distPlan.artifacts[metadata.name]?.kind !== "extra-artifact") {
-      fail(`release metadata must be a dist extra artifact: ${metadata.name}`);
-    }
+  if (JSON.stringify(publicArchives) !== JSON.stringify([...planned.keys()].sort())) {
+    fail("dist plan contains a missing or unplanned public archive");
   }
 
   const runnerByTarget = Object.fromEntries(
@@ -214,16 +208,10 @@ function verifyRepository() {
   if (!dist.includes('checksum = "false"')) {
     fail("dist per-archive checksums must be disabled in favor of the canonical checksum list");
   }
-  for (const artifact of [
-    `target/distrib/adocweave-browser-${version}.tar.xz`,
-    "target/distrib/adocweave-dist-manifest.json",
-    "target/distrib/adocweave.spdx.json",
-    "target/distrib/sha256.sum",
-  ]) {
-    if (!dist.includes(`"${artifact}"`)) fail(`dist extra artifact is missing: ${artifact}`);
-  }
-  if (!dist.includes('build = ["bash", "tools/package-release-artifacts.sh"]')) {
-    fail("release archive and integrity metadata must use the single aggregate builder");
+  const browserArchive = `target/distrib/adocweave-browser-${version}.tar.xz`;
+  if (!dist.includes(`artifacts = ["${browserArchive}"]`) ||
+      !dist.includes('build = ["bash", "tools/package-browser-release.sh"]')) {
+    fail("browser package must be connected as the versioned dist extra artifact");
   }
   if (!dist.includes('plan-jobs = ["./release-contract"]')) fail("release contract must run in the dist plan phase");
   if (!dist.includes('pr-run-mode = "upload"') || !dist.includes('global-artifacts-jobs = ["./native-artifact-smoke"]')) {

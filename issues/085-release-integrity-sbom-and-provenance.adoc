@@ -28,7 +28,8 @@ frontend依存と対応する。権限lintとfork PR相当のsecret非公開test
 
 == 実装状況
 
-`tools/release-metadata.mjs` version 1が5 archiveからcanonical manifest、SPDX 2.3 SBOMおよび統合checksumを生成する。
+`tools/release-metadata.mjs` version 1が集約済みの5 archiveからcanonical manifest、SPDX 2.3 SBOMおよび
+統合checksumを生成する。
 metadata testはarchive内容、Cargo metadata、frontend package、改変、欠落および未知assetを検査する。
 `tools/release-workflow-policy.mjs`は外部actionの完全SHA pin、publish権限の分離およびfork PR相当のsecret非参照を
 検査する。利用者向け契約はxref:../docs/release-integrity.adoc[release-integrity.adoc]に記載した。

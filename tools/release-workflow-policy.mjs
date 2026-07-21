@@ -34,6 +34,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireText(release, "needs: [plan, verify-candidate]", "publication must depend on the verified complete candidate");
   requireText(release, "if: needs.plan.outputs.publishing == 'true'", "pull requests must not invoke publication");
   requireText(release, "uses: ./.github/workflows/release-publish.yml", "publication must be isolated in its reusable workflow");
+  requireText(release, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");
   requireText(release, "node tools/release-metadata.mjs verify artifacts", "the aggregate job must verify exact release metadata");
   requireText(release, "name: release-candidate", "only a verified candidate may cross the publish boundary");
   if (release.includes("secrets:") || release.includes("secrets.")) {

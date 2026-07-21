@@ -123,6 +123,7 @@ export function buildMetadata(directory, sourceCommit) {
     } catch {
       fail(`missing release archive: ${planned.name}`);
     }
+    if (bytes.length === 0) fail(`empty release archive: ${planned.name}`);
     return {
       ...planned,
       byteSize: bytes.length,
