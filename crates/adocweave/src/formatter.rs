@@ -201,6 +201,7 @@ mod tests {
                         .collect(),
                 ),
                 AstBlock::Heading(_) => None,
+                AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => None,
                 AstBlock::Literal(_) => None,
                 AstBlock::Source(_) => None,
                 AstBlock::List(_) => None,

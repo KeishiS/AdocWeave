@@ -4,19 +4,39 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::attributes::{AttributeOperation, DocumentAttribute};
 use crate::inline::Inline;
-use crate::parser::{AstBlock, AstDocument, ExplicitAnchor};
+use crate::parser::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
 
 pub(crate) struct ParsedFacts {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttribute>,
     pub anchors: Vec<ExplicitAnchor>,
+    pub header: DocumentHeader,
 }
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     attach_anchors(&mut facts.anchors, &facts.blocks);
-    let mut document = AstDocument::new(facts.blocks, facts.attributes, facts.anchors);
+    facts.header.doctype = document_type(&facts.attributes);
+    let mut document =
+        AstDocument::new(facts.blocks, facts.attributes, facts.anchors, facts.header);
+    document.normalize_heading_kinds();
     resolve_document_attributes(&mut document);
     document
+}
+
+fn document_type(attributes: &[DocumentAttribute]) -> DocumentType {
+    let mut doctype = DocumentType::Article;
+    for attribute in attributes
+        .iter()
+        .filter(|attribute| attribute.name == "doctype")
+    {
+        doctype = match attribute.raw_value.trim() {
+            "book" => DocumentType::Book,
+            "manpage" => DocumentType::Manpage,
+            "inline" => DocumentType::Inline,
+            _ => DocumentType::Article,
+        };
+    }
+    doctype
 }
 
 fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
@@ -86,6 +106,7 @@ fn resolve_inlines(inlines: &mut [Inline], attributes: &BTreeMap<String, String>
             Inline::Text(_)
             | Inline::Literal { .. }
             | Inline::AttributeReference { .. }
+            | Inline::HardBreak { .. }
             | Inline::Formula(_) => {}
         }
     }

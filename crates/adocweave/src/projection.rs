@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 3;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 4;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -175,6 +175,13 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                 literal.content_range,
                 literal.value.clone(),
             ),
+            AstBlock::LiteralParagraph(literal) => push_search(
+                output,
+                SearchTextKind::Code,
+                literal.content_range,
+                literal.value.clone(),
+            ),
+            AstBlock::Break(_) => {}
             AstBlock::Source(source) => push_search(
                 output,
                 SearchTextKind::Code,
@@ -244,6 +251,7 @@ fn inline_text(inlines: &[Inline]) -> String {
             Inline::Literal { value, .. } => output.push_str(value),
             Inline::Styled { children, .. } => output.push_str(&inline_text(children)),
             Inline::AttributeReference { .. } | Inline::Formula(_) => {}
+            Inline::HardBreak { .. } => output.push('\n'),
             Inline::Link(link) => {
                 let label = inline_text(&link.label);
                 output.push_str(if label.is_empty() {
@@ -418,6 +426,7 @@ fn reference_key_json(key: &ReferenceKey) -> String {
 const fn reference_target_kind(kind: ReferenceTargetKind) -> &'static str {
     match kind {
         ReferenceTargetKind::DocumentTitle => "document-title",
+        ReferenceTargetKind::Part => "part",
         ReferenceTargetKind::Section => "section",
         ReferenceTargetKind::ExplicitAnchor => "explicit-anchor",
     }
@@ -502,13 +511,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_three_json_contract() {
+    fn projections_keep_the_version_four_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":3,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":4,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

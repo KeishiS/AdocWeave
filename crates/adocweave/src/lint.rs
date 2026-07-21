@@ -360,6 +360,7 @@ fn lint_links_and_references(
             | Inline::Literal { .. }
             | Inline::Styled { .. }
             | Inline::AttributeReference { .. }
+            | Inline::HardBreak { .. }
             | Inline::Formula(_) => {}
         }
     }
@@ -536,6 +537,7 @@ fn collect_attribute_references(
             | crate::inline::Inline::Literal { .. }
             | crate::inline::Inline::Styled { .. }
             | crate::inline::Inline::Reference(_)
+            | crate::inline::Inline::HardBreak { .. }
             | crate::inline::Inline::Formula(_) => {}
         }
     });
@@ -559,6 +561,8 @@ fn lint_headings(
             HeadingKind::DocumentTitle => {
                 previous_level = None;
             }
+            HeadingKind::Part => previous_level = None,
+            HeadingKind::Discrete { .. } => {}
             HeadingKind::Section { level } => {
                 let hierarchy_invalid =
                     previous_level.map_or(level > 1, |previous| level > previous + 1);

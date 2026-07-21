@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 7;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 8;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -96,7 +96,9 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
         AstBlock::Heading(node) => CanonicalNode {
             kind: match node.kind {
                 crate::parser::HeadingKind::DocumentTitle => "document-title",
+                crate::parser::HeadingKind::Part => "part",
                 crate::parser::HeadingKind::Section { .. } => "section",
+                crate::parser::HeadingKind::Discrete { .. } => "discrete-heading",
             },
             range: range(node.range),
             value: Some(node.text.clone()),
@@ -107,6 +109,16 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
             range: range(node.range),
             value: Some(node.value.clone()),
             children: inline_nodes(&node.inlines),
+        },
+        AstBlock::LiteralParagraph(node) => leaf("literal-paragraph", node.range, &node.value),
+        AstBlock::Break(node) => CanonicalNode {
+            kind: match node.kind {
+                crate::parser::BreakKind::Thematic => "thematic-break",
+                crate::parser::BreakKind::Page => "page-break",
+            },
+            range: range(node.range),
+            value: None,
+            children: Vec::new(),
         },
         AstBlock::Literal(node) => leaf("literal-block", node.range, &node.value),
         AstBlock::Source(node) => CanonicalNode {
@@ -263,6 +275,12 @@ fn inline_node(inline: &Inline) -> CanonicalNode {
             children: inline_nodes(&node.label),
         },
         Inline::Formula(node) => leaf("inline-math", node.range, &node.value),
+        Inline::HardBreak { range: node_range } => CanonicalNode {
+            kind: "hard-break",
+            range: range(*node_range),
+            value: None,
+            children: Vec::new(),
+        },
     }
 }
 

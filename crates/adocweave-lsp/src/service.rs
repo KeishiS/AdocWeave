@@ -460,6 +460,25 @@ impl LanguageService {
         if let Some((value, range)) = inline_hover(document.analysis.ast(), offset) {
             return hover_markup(value, range, &document, self.position_encoding);
         }
+        for author in &document.analysis.ast().header().authors {
+            if contains(author.range, offset) {
+                let value = author.email.as_ref().map_or_else(
+                    || format!("**author**  \nName: `{}`", author.name),
+                    |email| format!("**author**  \nName: `{}`  \nEmail: `{email}`", author.name),
+                );
+                return hover_markup(value, author.range, &document, self.position_encoding);
+            }
+        }
+        if let Some(revision) = &document.analysis.ast().header().revision {
+            if contains(revision.range, offset) {
+                return hover_markup(
+                    "**document revision**".to_owned(),
+                    revision.range,
+                    &document,
+                    self.position_encoding,
+                );
+            }
+        }
         let Some(element) = document_element_at(document.analysis.ast(), offset) else {
             return Ok(None);
         };
@@ -510,7 +529,9 @@ impl LanguageService {
             .unwrap_or_else(|| "_section".to_owned());
         let level = match heading.kind {
             parser::HeadingKind::DocumentTitle => "document title".to_owned(),
+            parser::HeadingKind::Part => "book part".to_owned(),
             parser::HeadingKind::Section { level } => format!("section level {level}"),
+            parser::HeadingKind::Discrete { level } => format!("discrete heading level {level}"),
         };
         Ok(Some(lsp::Hover {
             contents: lsp::HoverContents::Markup(lsp::MarkupContent {
@@ -926,6 +947,7 @@ impl LanguageService {
                 | Inline::Styled { .. }
                 | Inline::AttributeReference { .. }
                 | Inline::Link(_)
+                | Inline::HardBreak { .. }
                 | Inline::Reference(_) => {}
             }
         });
@@ -1046,7 +1068,10 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
                 Inline::AttributeReference { name, .. } => {
                     Some(format!("**attribute reference**  \nName: `{name}`"))
                 }
-                Inline::Text(_) | Inline::Literal { .. } | Inline::Styled { .. } => None,
+                Inline::Text(_)
+                | Inline::Literal { .. }
+                | Inline::Styled { .. }
+                | Inline::HardBreak { .. } => None,
             };
             if let Some(value) = value {
                 found = Some((value, inline.range()));
@@ -1174,6 +1199,7 @@ fn symbol_to_lsp(
         detail: None,
         kind: match symbol.kind {
             CoreSymbolKind::DocumentTitle => lsp::SymbolKind::FILE,
+            CoreSymbolKind::Part => lsp::SymbolKind::MODULE,
             CoreSymbolKind::Section => lsp::SymbolKind::NAMESPACE,
             CoreSymbolKind::ListItem => lsp::SymbolKind::STRING,
         },

@@ -9,9 +9,13 @@ use crate::source_document::{LosslessToken, LosslessTokenKind, SourceDocument};
 pub enum SyntaxKind {
     Document,
     DocumentTitle,
+    AuthorLine,
+    RevisionLine,
     Heading,
     MalformedHeading,
     Paragraph,
+    ThematicBreak,
+    PageBreak,
     LiteralBlock,
     SourceBlock,
     DelimitedBlock,
@@ -29,6 +33,7 @@ pub enum SyntaxKind {
     ListItem,
     ListMarker,
     InlineSpan,
+    HardBreak,
     InlineDelimiter,
     Macro,
     Target,
@@ -72,9 +77,13 @@ impl SyntaxKind {
         matches!(
             self,
             Self::DocumentTitle
+                | Self::AuthorLine
+                | Self::RevisionLine
                 | Self::Heading
                 | Self::MalformedHeading
                 | Self::Paragraph
+                | Self::ThematicBreak
+                | Self::PageBreak
                 | Self::LiteralBlock
                 | Self::SourceBlock
                 | Self::DelimitedBlock

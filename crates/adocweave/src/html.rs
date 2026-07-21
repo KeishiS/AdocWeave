@@ -15,13 +15,22 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 3;
+pub const HTML_CONTRACT_VERSION: u16 = 4;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "li", "ol", "p", "pre",
-    "strong", "ul",
+    "a", "body", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html", "li", "ol", "p",
+    "pre", "strong", "ul",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "href", "id"];
-pub const ALLOWED_CLASSES: &[&str] = &["document-title", "language-*", "math-latex", "math-typst"];
+pub const ALLOWED_CLASSES: &[&str] = &[
+    "author",
+    "document-title",
+    "language-*",
+    "lead",
+    "math-latex",
+    "math-typst",
+    "page-break",
+    "revision",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HtmlDocumentMode {
@@ -110,10 +119,21 @@ pub fn render_with_resolutions(
                 let id = &heading_ids[heading_index].id;
                 heading_index += 1;
                 render_heading(&mut fragment, heading, id, policy, &mut inline_context);
+                if heading.kind == HeadingKind::DocumentTitle && policy.render_document_title {
+                    render_header_metadata(&mut fragment, document.header());
+                }
             }
             AstBlock::Paragraph(paragraph) => {
                 render_paragraph(&mut fragment, paragraph, explicit_id, &mut inline_context)
             }
+            AstBlock::LiteralParagraph(paragraph) => {
+                fragment.push_str("<pre");
+                render_optional_id(&mut fragment, explicit_id);
+                fragment.push('>');
+                escape_html_into(&mut fragment, &paragraph.value);
+                fragment.push_str("</pre>\n");
+            }
+            AstBlock::Break(block) => render_break(&mut fragment, block.kind, explicit_id),
             AstBlock::Literal(literal) => {
                 fragment.push_str("<pre");
                 render_optional_id(&mut fragment, explicit_id);
@@ -174,6 +194,36 @@ pub fn render_with_resolutions(
     }
 }
 
+fn render_header_metadata(output: &mut String, header: &crate::parser::DocumentHeader) {
+    for author in &header.authors {
+        output.push_str("<p class=\"author\">");
+        escape_html_into(output, &author.name);
+        if let Some(email) = &author.email {
+            output.push_str(" &lt;");
+            escape_html_into(output, email);
+            output.push_str("&gt;");
+        }
+        output.push_str("</p>\n");
+    }
+    if let Some(revision) = &header.revision {
+        output.push_str("<p class=\"revision\">");
+        let mut separator = "";
+        for value in [
+            revision.number.as_ref(),
+            revision.date.as_ref(),
+            revision.remark.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            output.push_str(separator);
+            escape_html_into(output, &value.value);
+            separator = " — ";
+        }
+        output.push_str("</p>\n");
+    }
+}
+
 fn render_delimited(
     output: &mut String,
     block: &crate::parser::DelimitedBlock,
@@ -209,6 +259,12 @@ fn render_delimited(
                     AstBlock::Paragraph(paragraph) => {
                         render_paragraph(output, paragraph, None, context);
                     }
+                    AstBlock::LiteralParagraph(paragraph) => {
+                        output.push_str("<pre>");
+                        escape_html_into(output, &paragraph.value);
+                        output.push_str("</pre>\n");
+                    }
+                    AstBlock::Break(block) => render_break(output, block.kind, None),
                     AstBlock::Literal(literal) => {
                         output.push_str("<pre>");
                         escape_html_into(output, &literal.value);
@@ -235,6 +291,15 @@ fn render_delimited(
             }
         }
     }
+}
+
+fn render_break(output: &mut String, kind: crate::parser::BreakKind, id: Option<&str>) {
+    output.push_str("<hr");
+    render_optional_id(output, id);
+    if kind == crate::parser::BreakKind::Page {
+        output.push_str(" class=\"page-break\"");
+    }
+    output.push_str(">\n");
 }
 
 fn render_list(
@@ -322,19 +387,30 @@ fn render_heading(
             output.push_str("</h1>\n");
         }
         HeadingKind::DocumentTitle => {}
-        HeadingKind::Section { level } => {
-            let level = char::from(b'0' + level);
-            output.push_str("<h");
-            output.push(level);
-            output.push_str(" id=\"");
-            output.push_str(id);
-            output.push_str("\">");
-            render_inlines(output, &heading.inlines, context);
-            output.push_str("</h");
-            output.push(level);
-            output.push_str(">\n");
+        HeadingKind::Part => render_heading_level(output, heading, id, 1, context),
+        HeadingKind::Section { level } | HeadingKind::Discrete { level } => {
+            render_heading_level(output, heading, id, level, context);
         }
     }
+}
+
+fn render_heading_level(
+    output: &mut String,
+    heading: &Heading,
+    id: &str,
+    level: u8,
+    context: &mut InlineRenderContext<'_>,
+) {
+    let level = char::from(b'0' + level);
+    output.push_str("<h");
+    output.push(level);
+    output.push_str(" id=\"");
+    output.push_str(id);
+    output.push_str("\">");
+    render_inlines(output, &heading.inlines, context);
+    output.push_str("</h");
+    output.push(level);
+    output.push_str(">\n");
 }
 
 fn render_paragraph(
@@ -345,6 +421,19 @@ fn render_paragraph(
 ) {
     output.push_str("<p");
     render_optional_id(output, id);
+    if paragraph
+        .metadata
+        .roles
+        .iter()
+        .any(|role| role.value == "lead")
+        || paragraph
+            .metadata
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.is_none() && attribute.value == "lead")
+    {
+        output.push_str(" class=\"lead\"");
+    }
     output.push('>');
     render_inlines(output, &paragraph.inlines, context);
     output.push_str("</p>\n");
@@ -387,6 +476,7 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
             }
             Inline::Link(link) => render_link(output, link, context),
             Inline::Reference(reference) => render_reference(output, reference, context),
+            Inline::HardBreak { .. } => output.push_str("<br>\n"),
             Inline::Formula(formula) => {
                 output.push_str("<code class=\"");
                 output.push_str(math_class(formula.language));
@@ -789,18 +879,27 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 3);
+        assert_eq!(HTML_CONTRACT_VERSION, 4);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
-                "a", "body", "code", "em", "h1", "h2", "h3", "h4", "h5", "html", "li", "ol", "p",
-                "pre", "strong", "ul"
+                "a", "body", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html", "li",
+                "ol", "p", "pre", "strong", "ul"
             ]
         );
         assert_eq!(ALLOWED_ATTRIBUTES, ["class", "href", "id"]);
         assert_eq!(
             ALLOWED_CLASSES,
-            ["document-title", "language-*", "math-latex", "math-typst"]
+            [
+                "author",
+                "document-title",
+                "language-*",
+                "lead",
+                "math-latex",
+                "math-typst",
+                "page-break",
+                "revision"
+            ]
         );
         let parsed = parse("paragraph").expect("parse");
         assert_eq!(

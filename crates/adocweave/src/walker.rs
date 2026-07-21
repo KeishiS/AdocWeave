@@ -50,6 +50,8 @@ fn walk_blocks<'document>(
                 }
             }
             AstBlock::Literal(_)
+            | AstBlock::LiteralParagraph(_)
+            | AstBlock::Break(_)
             | AstBlock::Source(_)
             | AstBlock::Math(_)
             | AstBlock::Unsupported(_) => {}
@@ -107,6 +109,7 @@ fn walk_inlines<'document>(
             Inline::Text(_)
             | Inline::Literal { .. }
             | Inline::AttributeReference { .. }
+            | Inline::HardBreak { .. }
             | Inline::Formula(_) => {}
         }
     }

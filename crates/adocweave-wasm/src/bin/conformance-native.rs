@@ -1,10 +1,10 @@
-use std::io::{self, Read as _};
+use std::io::{self, BufRead as _};
 
 use serde_json::{Value, json};
 
 fn main() {
     let mut request = String::new();
-    if let Err(error) = io::stdin().read_to_string(&mut request) {
+    if let Err(error) = io::stdin().lock().read_line(&mut request) {
         println!("{}", json!({ "ok": false, "error": error.to_string() }));
         return;
     }

@@ -177,7 +177,10 @@ for target in analyze process render; do
   log="$smoke_root/$target.log"
   mkdir -p "$corpus"
   cp -R "fuzz/corpus/$target/." "$corpus/"
-  if ! adocweave-fuzz run --fuzz-dir fuzz "$target" "$corpus" -- \
+  # LeakSanitizer cannot enumerate threads under some sandbox/ptrace hosts.
+  # Address/undefined-behavior instrumentation remains enabled.
+  if ! ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}" \
+    adocweave-fuzz run --fuzz-dir fuzz "$target" "$corpus" -- \
     -seed=1 -max_total_time="$seconds" -timeout=2 -verbosity=0 >"$log" 2>&1; then
     cat "$log" >&2
     exit 1

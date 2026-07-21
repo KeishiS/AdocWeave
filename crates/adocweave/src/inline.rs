@@ -97,6 +97,9 @@ pub enum Inline {
     Link(Link),
     Reference(Reference),
     Formula(InlineFormula),
+    HardBreak {
+        range: TextRange,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,6 +123,7 @@ impl Inline {
             Self::Link(link) => link.range,
             Self::Reference(reference) => reference.range,
             Self::Formula(formula) => formula.range,
+            Self::HardBreak { range } => *range,
         }
     }
 }

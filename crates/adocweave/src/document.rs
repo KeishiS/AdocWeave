@@ -64,6 +64,7 @@ pub fn generate_heading_ids(document: &AstDocument) -> Vec<HeadingId> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReferenceTargetKind {
     DocumentTitle,
+    Part,
     Section,
     ExplicitAnchor,
 }
@@ -93,7 +94,10 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
                 kind: match block {
                     AstBlock::Heading(heading) => match heading.kind {
                         HeadingKind::DocumentTitle => ReferenceTargetKind::DocumentTitle,
-                        HeadingKind::Section { .. } => ReferenceTargetKind::Section,
+                        HeadingKind::Part => ReferenceTargetKind::Part,
+                        HeadingKind::Section { .. } | HeadingKind::Discrete { .. } => {
+                            ReferenceTargetKind::Section
+                        }
                     },
                     _ => ReferenceTargetKind::ExplicitAnchor,
                 },
@@ -110,7 +114,10 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
                 targets.push(ReferenceTarget {
                     kind: match heading.kind {
                         HeadingKind::DocumentTitle => ReferenceTargetKind::DocumentTitle,
-                        HeadingKind::Section { .. } => ReferenceTargetKind::Section,
+                        HeadingKind::Part => ReferenceTargetKind::Part,
+                        HeadingKind::Section { .. } | HeadingKind::Discrete { .. } => {
+                            ReferenceTargetKind::Section
+                        }
                     },
                     id: generated.id.clone(),
                     label: heading.text.clone(),
@@ -127,6 +134,8 @@ fn block_label(block: &AstBlock) -> String {
     match block {
         AstBlock::Heading(value) => value.text.clone(),
         AstBlock::Paragraph(value) => value.value.lines().next().unwrap_or_default().to_owned(),
+        AstBlock::LiteralParagraph(_) => "literal paragraph".to_owned(),
+        AstBlock::Break(_) => "break".to_owned(),
         AstBlock::Literal(_) => "literal block".to_owned(),
         AstBlock::Source(value) => value.language.as_ref().map_or_else(
             || "source block".to_owned(),
@@ -271,6 +280,7 @@ fn contains(range: TextRange, offset: u32, include_end: bool) -> bool {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SymbolKind {
     DocumentTitle,
+    Part,
     Section,
     ListItem,
 }
@@ -279,6 +289,7 @@ impl SymbolKind {
     const fn as_str(self) -> &'static str {
         match self {
             Self::DocumentTitle => "document-title",
+            Self::Part => "part",
             Self::Section => "section",
             Self::ListItem => "list-item",
         }
@@ -356,6 +367,22 @@ pub fn document_symbols(document: &AstDocument) -> Vec<DocumentSymbol> {
                 });
                 section_stack.push((level, index));
             }
+            HeadingKind::Part => {
+                let index = arena.len();
+                arena.push(ArenaSymbol {
+                    symbol: DocumentSymbol {
+                        name: heading.text.clone(),
+                        kind: SymbolKind::Part,
+                        range: heading.range,
+                        selection_range: heading.text_range,
+                        children: Vec::new(),
+                    },
+                    parent: title_index,
+                });
+                section_stack.clear();
+                section_stack.push((0, index));
+            }
+            HeadingKind::Discrete { .. } => {}
         }
     }
 

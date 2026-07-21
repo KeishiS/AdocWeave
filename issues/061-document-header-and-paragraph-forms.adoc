@@ -1,5 +1,5 @@
 = 文書header・paragraph・break
-:status: planned
+:status: completed
 :depends-on: 059,060
 
 == 目的
@@ -17,3 +17,10 @@
 == 完了条件
 
 articleの標準headerと基本paragraph形式がlossless syntax、semantic AST、HTML、診断およびLSPで一致する。
+
+== 実装結果
+
+2026-07-21に完了した。文書header、著者・改訂、doctype、preamble projection、book part、
+discrete heading、indented literal paragraph、hard line break、lead role、thematic breakおよびpage breakを
+型付きASTへ追加した。HTML allowlist、canonical snapshot、検索・section projection、参照対象、Formatter、
+診断走査およびLSP hover／Outlineを同じ解析結果へ同期した。

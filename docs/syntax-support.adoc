@@ -3,9 +3,9 @@
 この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
 製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-この対応範囲は`CORE_PROFILE_VERSION = 3`として公開する。version、SemVerおよび再構築条件は
-xref:core-profile.adoc[AdocWeave Core Profile 3]で定義する。
-実装済み構文の規範的規則はxref:grammar.adoc[Core 0.3規範文法]で定義する。
+この対応範囲は`CORE_PROFILE_VERSION = 4`として公開する。version、SemVerおよび再構築条件は
+xref:core-profile.adoc[AdocWeave Core Profile 4]で定義する。
+実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
 AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
 
 == 状態の定義
@@ -31,6 +31,15 @@ HTML出力では保持したテキストをエスケープする。
 |対応
 |連続する非空行を段落にする。syntax treeでは元のソース範囲を利用できる。
 
+|文書header
+|対応
+|連続した文書タイトル、著者行、改訂行および文書属性を認識する。最初の空行をheader終端とし、
+著者名・email、改訂番号・日付・備考および`article`、`book`、`manpage`、`inline` doctypeを型付きで公開する。
+
+|Preamble
+|対応
+|header終端から最初のsectionまたはbook partまでのblock列を、人工的なAST nodeを加えずprojectionとして公開する。
+
 |文書タイトル
 |対応
 |文書内容より前にある最初の1個マーカーの見出しを文書タイトルとし、既定で出力する。
@@ -39,6 +48,19 @@ HTML出力では保持したテキストをエスケープする。
 |対応
 |2個から6個の`=`マーカーをセクションレベル1から5とする。階層診断、文書シンボル、
 hover情報、安定した生成IDを提供する。
+
+|Book partとdiscrete heading
+|対応
+|`book` doctypeにおける本文中のlevel-0見出しをpartとする。`[discrete]`または`[float]`付き見出しは
+参照対象に含めるがsection階層およびOutlineから除外する。
+
+|Indented literal paragraph
+|対応
+|空白またはtabで開始する連続行を専用literal paragraphとして保持し、inline置換を適用せず`pre`へ安全に出力する。
+
+|Thematic breakとpage break
+|対応
+|単独行の`'''`と`<<<`を専用blockとして認識する。HTMLでは`hr`と`hr.page-break`へ変換する。
 
 |文書属性
 |対応
@@ -115,6 +137,10 @@ sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===
 |連続行をまたぐ書式とmacro label
 |対応
 |段落内のLF／CRLFを保持した一つのinline列として解析する。空行またはblock境界は越えない。
+
+|Hard line break
+|対応
+|行末の空白と`+`を`HardBreak`として保持し、HTMLでは`br`へ変換する。通常の段落改行は従来どおり折り畳む。
 
 |閉じていない書式
 |回復対応

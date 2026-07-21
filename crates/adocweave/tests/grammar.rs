@@ -222,8 +222,7 @@ fn grammar_source_attribute_requires_an_adjacent_column_zero_delimiter() {
             SyntaxKind::BlankLine,
             SyntaxKind::DelimitedBlock,
             SyntaxKind::BlankLine,
-            SyntaxKind::Unsupported,
-            SyntaxKind::Unsupported,
+            SyntaxKind::LiteralBlock,
             SyntaxKind::BlankLine,
         ]
     );

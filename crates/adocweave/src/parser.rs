@@ -36,6 +36,41 @@ pub struct ElementAttribute {
     pub range: TextRange,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DocumentType {
+    #[default]
+    Article,
+    Book,
+    Manpage,
+    Inline,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Author {
+    pub range: TextRange,
+    pub name_range: TextRange,
+    pub email_range: Option<TextRange>,
+    pub name: String,
+    pub email: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Revision {
+    pub range: TextRange,
+    pub number: Option<MetadataValue>,
+    pub date: Option<MetadataValue>,
+    pub remark: Option<MetadataValue>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DocumentHeader {
+    pub range: Option<TextRange>,
+    pub authors: Vec<Author>,
+    pub revision: Option<Revision>,
+    pub doctype: DocumentType,
+    pub end: TextSize,
+}
+
 #[derive(Default)]
 struct PendingBlockMetadata {
     semantic: BlockMetadata,
@@ -94,6 +129,27 @@ pub struct Paragraph {
     pub value: String,
     pub inlines: Vec<Inline>,
     inline_problems: Vec<InlineProblem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiteralParagraph {
+    pub metadata: BlockMetadata,
+    pub range: TextRange,
+    pub content_range: TextRange,
+    pub value: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BreakKind {
+    Thematic,
+    Page,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BreakBlock {
+    pub metadata: BlockMetadata,
+    pub range: TextRange,
+    pub kind: BreakKind,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,7 +312,9 @@ pub struct ListItem {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HeadingKind {
     DocumentTitle,
+    Part,
     Section { level: u8 },
+    Discrete { level: u8 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -287,6 +345,8 @@ pub struct Heading {
 pub enum AstBlock {
     Heading(Heading),
     Paragraph(Paragraph),
+    LiteralParagraph(LiteralParagraph),
+    Break(BreakBlock),
     Literal(LiteralBlock),
     Source(SourceBlock),
     List(ListBlock),
@@ -300,6 +360,7 @@ pub struct AstDocument {
     blocks: Vec<AstBlock>,
     attributes: Vec<DocumentAttribute>,
     anchors: Vec<ExplicitAnchor>,
+    header: DocumentHeader,
 }
 
 impl AstDocument {
@@ -307,11 +368,13 @@ impl AstDocument {
         blocks: Vec<AstBlock>,
         attributes: Vec<DocumentAttribute>,
         anchors: Vec<ExplicitAnchor>,
+        header: DocumentHeader,
     ) -> Self {
         Self {
             blocks,
             attributes,
             anchors,
+            header,
         }
     }
 
@@ -325,6 +388,81 @@ impl AstDocument {
 
     pub fn anchors(&self) -> &[ExplicitAnchor] {
         &self.anchors
+    }
+
+    pub const fn header(&self) -> &DocumentHeader {
+        &self.header
+    }
+
+    pub fn preamble(&self) -> &[AstBlock] {
+        let end = self
+            .blocks
+            .iter()
+            .position(|block| {
+                matches!(
+                    block,
+                    AstBlock::Heading(Heading {
+                        kind: HeadingKind::Section { .. } | HeadingKind::Part,
+                        ..
+                    })
+                )
+            })
+            .unwrap_or(self.blocks.len());
+        let start = self
+            .blocks
+            .iter()
+            .position(|block| {
+                !matches!(
+                    block,
+                    AstBlock::Heading(Heading {
+                        kind: HeadingKind::DocumentTitle,
+                        ..
+                    })
+                )
+            })
+            .unwrap_or(end);
+        &self.blocks[start.min(end)..end]
+    }
+
+    pub(crate) fn normalize_heading_kinds(&mut self) {
+        for block in &mut self.blocks {
+            let AstBlock::Heading(heading) = block else {
+                continue;
+            };
+            let discrete = heading
+                .metadata
+                .roles
+                .iter()
+                .any(|value| value.value == "discrete")
+                || heading.metadata.attributes.iter().any(|attribute| {
+                    attribute.name.is_none()
+                        && matches!(attribute.value.as_str(), "discrete" | "float")
+                });
+            if discrete {
+                let level = match heading.kind {
+                    HeadingKind::DocumentTitle | HeadingKind::Part => 1,
+                    HeadingKind::Section { level } | HeadingKind::Discrete { level } => level,
+                };
+                heading.kind = HeadingKind::Discrete { level };
+                heading
+                    .problems
+                    .retain(|problem| *problem != HeadingProblem::MisplacedDocumentTitle);
+                heading.well_formed = heading.problems.is_empty();
+                heading.hierarchy_valid = heading.well_formed;
+            } else if self.header.doctype == DocumentType::Book
+                && heading.kind == HeadingKind::DocumentTitle
+                && heading
+                    .problems
+                    .contains(&HeadingProblem::MisplacedDocumentTitle)
+            {
+                heading.kind = HeadingKind::Part;
+                heading
+                    .problems
+                    .retain(|problem| *problem != HeadingProblem::MisplacedDocumentTitle);
+                heading.well_formed = heading.problems.is_empty();
+                heading.hierarchy_valid = heading.well_formed;
+            }
+        }
     }
 
     pub fn node_count(&self) -> usize {
@@ -367,6 +505,26 @@ impl AstDocument {
                         paragraph.content_range.start().to_u32(),
                         paragraph.content_range.end().to_u32(),
                         paragraph.value
+                    )
+                    .expect("writing to a String cannot fail");
+                }
+                AstBlock::LiteralParagraph(paragraph) => {
+                    writeln!(
+                        output,
+                        "  LiteralParagraph@{}..{} {:?}",
+                        paragraph.range.start().to_u32(),
+                        paragraph.range.end().to_u32(),
+                        paragraph.value
+                    )
+                    .expect("writing to a String cannot fail");
+                }
+                AstBlock::Break(block) => {
+                    writeln!(
+                        output,
+                        "  {:?}Break@{}..{}",
+                        block.kind,
+                        block.range.start().to_u32(),
+                        block.range.end().to_u32()
                     )
                     .expect("writing to a String cannot fail");
                 }
@@ -474,6 +632,8 @@ impl AstDocument {
                         }
                     }
                     AstBlock::Literal(_)
+                    | AstBlock::LiteralParagraph(_)
+                    | AstBlock::Break(_)
                     | AstBlock::Source(_)
                     | AstBlock::Math(_)
                     | AstBlock::Unsupported(_) => {}
@@ -489,6 +649,8 @@ impl AstBlock {
         match self {
             Self::Heading(value) => &value.metadata,
             Self::Paragraph(value) => &value.metadata,
+            Self::LiteralParagraph(value) => &value.metadata,
+            Self::Break(value) => &value.metadata,
             Self::Literal(value) => &value.metadata,
             Self::Source(value) => &value.metadata,
             Self::List(value) => &value.metadata,
@@ -502,6 +664,8 @@ impl AstBlock {
         match self {
             Self::Heading(value) => &mut value.metadata,
             Self::Paragraph(value) => &mut value.metadata,
+            Self::LiteralParagraph(value) => &mut value.metadata,
+            Self::Break(value) => &mut value.metadata,
             Self::Literal(value) => &mut value.metadata,
             Self::Source(value) => &mut value.metadata,
             Self::List(value) => &mut value.metadata,
@@ -515,6 +679,8 @@ impl AstBlock {
         match self {
             Self::Heading(value) => value.range,
             Self::Paragraph(value) => value.range,
+            Self::LiteralParagraph(value) => value.range,
+            Self::Break(value) => value.range,
             Self::Literal(value) => value.range,
             Self::Source(value) => value.range,
             Self::List(value) => value.range,
@@ -634,6 +800,9 @@ pub(crate) fn parse_shared_cancellable(
     let mut paragraph_lines = Vec::new();
     let mut saw_content = false;
     let mut header_attributes_open = false;
+    let mut expect_author = false;
+    let mut expect_revision = false;
+    let mut header = DocumentHeader::default();
     let mut attributes = Vec::new();
     let mut attribute_problems = Vec::new();
     let mut anchors = Vec::new();
@@ -648,6 +817,42 @@ pub(crate) fn parse_shared_cancellable(
         let content = source_document
             .text(line.content_range())
             .expect("line content has valid UTF-8 boundaries");
+
+        if expect_author && !content.trim().is_empty() {
+            expect_author = false;
+            if !content.starts_with([':', '[', '='])
+                && delimiter_spec(content).is_none()
+                && !content.starts_with("//")
+            {
+                if let Some(author) = parse_author_line(content, line)? {
+                    budget.consume_node()?;
+                    extend_header_range(&mut header, line.full_range());
+                    header.authors.push(author);
+                    blocks.push(SyntaxNode::leaf(SyntaxKind::AuthorLine, line.full_range()));
+                    expect_revision = true;
+                    line_index += 1;
+                    continue;
+                }
+            }
+        }
+        if expect_revision && !content.trim().is_empty() {
+            expect_revision = false;
+            if !content.starts_with([':', '[', '='])
+                && delimiter_spec(content).is_none()
+                && !content.starts_with("//")
+            {
+                let revision = parse_revision_line(content, line)?;
+                budget.consume_node()?;
+                extend_header_range(&mut header, line.full_range());
+                header.revision = Some(revision);
+                blocks.push(SyntaxNode::leaf(
+                    SyntaxKind::RevisionLine,
+                    line.full_range(),
+                ));
+                line_index += 1;
+                continue;
+            }
+        }
 
         if parse_source_attribute(content).is_some()
             && source_document
@@ -850,6 +1055,8 @@ pub(crate) fn parse_shared_cancellable(
             pending_metadata.push_attributes(metadata, line.full_range());
             header_attributes_open = false;
         } else if content.trim_matches([' ', '\t']).is_empty() {
+            expect_author = false;
+            expect_revision = false;
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -868,6 +1075,7 @@ pub(crate) fn parse_shared_cancellable(
             blocks.push(SyntaxNode::leaf(SyntaxKind::BlankLine, line.full_range()));
             if header_attributes_open {
                 header_attributes_open = false;
+                header.end = line.full_range().start();
             }
         } else if let Some((attribute, problem)) = header_attributes_open
             .then(|| {
@@ -895,6 +1103,56 @@ pub(crate) fn parse_shared_cancellable(
             ));
             attributes.push(attribute);
             attribute_problems.extend(problem);
+            extend_header_range(&mut header, line.full_range());
+        } else if matches!(content, "'''" | "<<<") {
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+                &mut pending_metadata,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
+            let kind = if content == "'''" {
+                BreakKind::Thematic
+            } else {
+                BreakKind::Page
+            };
+            let syntax_kind = if kind == BreakKind::Thematic {
+                SyntaxKind::ThematicBreak
+            } else {
+                SyntaxKind::PageBreak
+            };
+            blocks.push(SyntaxNode::leaf(syntax_kind, line.full_range()));
+            ast_blocks.push(AstBlock::Break(BreakBlock {
+                metadata: BlockMetadata::default(),
+                range: line.full_range(),
+                kind,
+            }));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
+            saw_content = true;
+            header_attributes_open = false;
+        } else if content.starts_with([' ', '\t']) {
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                &mut budget,
+                &mut pending_metadata,
+            )?;
+            budget.consume_block()?;
+            budget.consume_node()?;
+            let (literal, next_line) = parse_literal_paragraph(&source_document, line_index)?;
+            blocks.push(SyntaxNode::leaf(SyntaxKind::LiteralBlock, literal.range));
+            ast_blocks.push(AstBlock::LiteralParagraph(literal));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
+            saw_content = true;
+            header_attributes_open = false;
+            line_index = next_line;
+            continue;
         } else if content.starts_with('=') {
             flush_paragraph(
                 &mut blocks,
@@ -910,7 +1168,9 @@ pub(crate) fn parse_shared_cancellable(
             let syntax_kind = if heading.problems.is_empty() {
                 match heading.kind {
                     HeadingKind::DocumentTitle => SyntaxKind::DocumentTitle,
-                    HeadingKind::Section { .. } => SyntaxKind::Heading,
+                    HeadingKind::Part
+                    | HeadingKind::Section { .. }
+                    | HeadingKind::Discrete { .. } => SyntaxKind::Heading,
                 }
             } else {
                 SyntaxKind::MalformedHeading
@@ -925,6 +1185,10 @@ pub(crate) fn parse_shared_cancellable(
                     ..
                 }))
             );
+            if header_attributes_open {
+                extend_header_range(&mut header, line.full_range());
+                expect_author = true;
+            }
             saw_content = true;
         } else if list_marker(content).is_some() {
             flush_paragraph(
@@ -994,6 +1258,7 @@ pub(crate) fn parse_shared_cancellable(
         blocks: ast_blocks,
         attributes,
         anchors,
+        header,
     });
 
     Ok(ParsedDocument {
@@ -1087,6 +1352,7 @@ fn collect_syntax_issues(
                 }
             }
             AstBlock::Paragraph(paragraph) => inline_issues(&paragraph.inline_problems, output),
+            AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => {}
             AstBlock::Literal(block) => block_problem_issues(&block.problems, "literal", output),
             AstBlock::Source(block) => block_problem_issues(&block.problems, "source", output),
             AstBlock::List(list) => list_issues(list, output),
@@ -1353,6 +1619,7 @@ fn inline_node(inline: &Inline) -> Option<SyntaxNode> {
             None,
             &[],
         )),
+        Inline::HardBreak { range } => Some(SyntaxNode::leaf(SyntaxKind::HardBreak, *range)),
     }
 }
 
@@ -2375,6 +2642,118 @@ fn parse_heading(
     })
 }
 
+fn parse_literal_paragraph(
+    source: &SourceDocument,
+    start_line: usize,
+) -> Result<(LiteralParagraph, usize), PositionError> {
+    let first = source.lines()[start_line];
+    let mut end_line = start_line;
+    let mut value = String::new();
+    while let Some(line) = source.lines().get(end_line).copied() {
+        let content = source
+            .text(line.content_range())
+            .expect("line content is valid UTF-8");
+        if !content.starts_with([' ', '\t']) {
+            break;
+        }
+        if end_line > start_line {
+            value.push('\n');
+        }
+        value.push_str(&content[1..]);
+        end_line += 1;
+    }
+    let last = source.lines()[end_line - 1];
+    let content_start = first.content_range().start().to_usize() + 1;
+    Ok((
+        LiteralParagraph {
+            metadata: BlockMetadata::default(),
+            range: TextRange::new(first.full_range().start(), last.full_range().end())?,
+            content_range: text_range(content_start, last.content_range().end().to_usize())?,
+            value,
+        },
+        end_line,
+    ))
+}
+
+fn extend_header_range(header: &mut DocumentHeader, line: TextRange) {
+    header.range = Some(match header.range {
+        Some(range) => TextRange::new(range.start(), line.end()).expect("ordered header lines"),
+        None => line,
+    });
+    header.end = line.end();
+}
+
+fn parse_author_line(content: &str, line: SourceLine) -> Result<Option<Author>, PositionError> {
+    let trimmed = content.trim_matches([' ', '\t']);
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let leading = content.len() - content.trim_start_matches([' ', '\t']).len();
+    let base = line.content_range().start().to_usize() + leading;
+    let (name, email, email_offset) = match trimmed
+        .strip_suffix('>')
+        .and_then(|value| value.rsplit_once('<'))
+    {
+        Some((name, email)) if !email.trim().is_empty() => {
+            let normalized_name = name.trim_end();
+            (
+                normalized_name,
+                Some(email.trim()),
+                Some(trimmed.len() - email.len() - 1),
+            )
+        }
+        _ => (trimmed, None, None),
+    };
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let name_range = text_range(base, base + name.len())?;
+    let email_range = email_offset
+        .map(|offset| text_range(base + offset, base + offset + email.expect("email").len()))
+        .transpose()?;
+    Ok(Some(Author {
+        range: line.full_range(),
+        name_range,
+        email_range,
+        name: name.to_owned(),
+        email: email.map(str::to_owned),
+    }))
+}
+
+fn parse_revision_line(content: &str, line: SourceLine) -> Result<Revision, PositionError> {
+    let trimmed = content.trim_matches([' ', '\t']);
+    let leading = content.len() - content.trim_start_matches([' ', '\t']).len();
+    let base = line.content_range().start().to_usize() + leading;
+    let (prefix, remark) = trimmed
+        .split_once(':')
+        .map_or((trimmed, None), |(left, right)| {
+            (left.trim_end(), Some(right.trim_start()))
+        });
+    let (number, date) = prefix
+        .split_once(',')
+        .map_or((Some(prefix.trim()), None), |(left, right)| {
+            (Some(left.trim()), Some(right.trim()))
+        });
+    let value = |part: Option<&str>| -> Result<Option<MetadataValue>, PositionError> {
+        let Some(part) = part.filter(|part| !part.is_empty()) else {
+            return Ok(None);
+        };
+        let offset = trimmed
+            .find(part)
+            .expect("revision component is a source slice");
+        Ok(Some(MetadataValue {
+            value: part.to_owned(),
+            range: text_range(base + offset, base + offset + part.len())?,
+        }))
+    };
+    Ok(Revision {
+        range: line.full_range(),
+        number: value(number)?,
+        date: value(date)?,
+        remark: value(remark)?,
+    })
+}
+
 fn flush_paragraph(
     cst_blocks: &mut Vec<SyntaxNode>,
     ast_blocks: &mut Vec<AstBlock>,
@@ -2420,12 +2799,83 @@ fn flush_paragraph(
         },
         budget,
     )?;
-    paragraph.inlines = inline_output.inlines;
+    paragraph.inlines = split_hard_breaks(inline_output.inlines);
     paragraph.inline_problems = inline_output.problems;
     cst_blocks.push(paragraph_syntax(&paragraph));
     ast_blocks.push(AstBlock::Paragraph(paragraph));
     attach_pending_metadata(cst_blocks, ast_blocks, pending_metadata);
     Ok(())
+}
+
+fn split_hard_breaks(inlines: Vec<Inline>) -> Vec<Inline> {
+    let mut output = Vec::new();
+    for inline in inlines {
+        match inline {
+            Inline::Text(text) => split_hard_break_text(text, &mut output),
+            Inline::Styled {
+                style,
+                range,
+                content_range,
+                children,
+            } => output.push(Inline::Styled {
+                style,
+                range,
+                content_range,
+                children: split_hard_breaks(children),
+            }),
+            Inline::Link(mut link) => {
+                link.label = split_hard_breaks(link.label);
+                output.push(Inline::Link(link));
+            }
+            Inline::Reference(mut reference) => {
+                reference.label = split_hard_breaks(reference.label);
+                output.push(Inline::Reference(reference));
+            }
+            other => output.push(other),
+        }
+    }
+    output
+}
+
+fn split_hard_break_text(text: crate::inline::InlineText, output: &mut Vec<Inline>) {
+    let bytes = text.value.as_bytes();
+    let mut cursor = 0;
+    for (newline, _) in text.value.match_indices('\n') {
+        let marker_end = if newline > 0 && bytes[newline - 1] == b'\r' {
+            newline - 1
+        } else {
+            newline
+        };
+        if marker_end < 2 || &bytes[marker_end - 2..marker_end] != b" +" {
+            continue;
+        }
+        let marker_start = marker_end - 2;
+        if cursor < marker_start {
+            output.push(Inline::Text(crate::inline::InlineText {
+                range: relative_range(text.range, cursor, marker_start),
+                value: text.value[cursor..marker_start].to_owned(),
+            }));
+        }
+        let newline_end = newline + 1;
+        output.push(Inline::HardBreak {
+            range: relative_range(text.range, marker_start, newline_end),
+        });
+        cursor = newline_end;
+    }
+    if cursor < text.value.len() {
+        output.push(Inline::Text(crate::inline::InlineText {
+            range: relative_range(text.range, cursor, text.value.len()),
+            value: text.value[cursor..].to_owned(),
+        }));
+    }
+}
+
+fn relative_range(parent: TextRange, start: usize, end: usize) -> TextRange {
+    TextRange::new(
+        TextSize::new(parent.start().to_usize() + start).expect("inline offset is bounded"),
+        TextSize::new(parent.start().to_usize() + end).expect("inline offset is bounded"),
+    )
+    .expect("relative inline range is ordered")
 }
 
 fn unsupported_reason(content: &str) -> Option<&'static str> {
@@ -2461,8 +2911,8 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AstBlock, BlockProblemKind, DelimitedBlockKind, DelimitedContent, HeadingKind,
-        HeadingProblem, MathProblemKind, SyntaxKind, parse,
+        AstBlock, BlockProblemKind, BreakBlock, BreakKind, DelimitedBlockKind, DelimitedContent,
+        DocumentType, Heading, HeadingKind, HeadingProblem, MathProblemKind, SyntaxKind, parse,
     };
     use crate::attributes::AttributeOperation;
     use crate::inline::{Inline, MathLanguage};
@@ -2973,6 +3423,76 @@ mod tests {
         assert!(matches!(
             paragraph.inlines[0],
             Inline::Formula(ref formula) if formula.language == MathLanguage::Latex
+        ));
+    }
+
+    #[test]
+    fn document_header_preserves_author_revision_doctype_and_preamble() {
+        let parsed = parse("= Title\nJane Doe <jane@example.org>\nv2.1, 2026-07-21: Stable\n:doctype: book\n\nIntro.\n\n= Part One\n\n== Chapter\n").expect("parse");
+        let header = parsed.ast.header();
+        assert_eq!(header.doctype, DocumentType::Book);
+        assert_eq!(header.authors[0].name, "Jane Doe");
+        assert_eq!(header.authors[0].email.as_deref(), Some("jane@example.org"));
+        assert_eq!(
+            header
+                .revision
+                .as_ref()
+                .and_then(|revision| revision.number.as_ref())
+                .map(|value| value.value.as_str()),
+            Some("v2.1")
+        );
+        assert!(matches!(
+            parsed.ast.blocks()[2],
+            AstBlock::Heading(Heading {
+                kind: HeadingKind::Part,
+                ..
+            })
+        ));
+        assert_eq!(parsed.ast.preamble().len(), 1);
+    }
+
+    #[test]
+    fn discrete_headings_do_not_become_sections() {
+        let parsed = parse("= Title\n\n[discrete]\n== Aside\n").expect("parse");
+        assert!(matches!(
+            parsed.ast.blocks()[1],
+            AstBlock::Heading(Heading {
+                kind: HeadingKind::Discrete { level: 1 },
+                ..
+            })
+        ));
+        assert_eq!(crate::document::document_symbols(&parsed.ast).len(), 1);
+    }
+
+    #[test]
+    fn paragraph_forms_and_breaks_have_typed_nodes() {
+        let parsed =
+            parse("line one +\nline two\n\n literal <text>\n next\n\n'''\n\n<<<\n").expect("parse");
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[0] else {
+            panic!("paragraph")
+        };
+        assert!(
+            paragraph
+                .inlines
+                .iter()
+                .any(|inline| matches!(inline, Inline::HardBreak { .. }))
+        );
+        assert!(
+            matches!(&parsed.ast.blocks()[1], AstBlock::LiteralParagraph(node) if node.value == "literal <text>\nnext")
+        );
+        assert!(matches!(
+            &parsed.ast.blocks()[2],
+            AstBlock::Break(BreakBlock {
+                kind: BreakKind::Thematic,
+                ..
+            })
+        ));
+        assert!(matches!(
+            &parsed.ast.blocks()[3],
+            AstBlock::Break(BreakBlock {
+                kind: BreakKind::Page,
+                ..
+            })
         ));
     }
 }
