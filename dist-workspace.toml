@@ -5,6 +5,9 @@ members = ["cargo:."]
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
+allow-dirty = ["ci"]
+# A single repository-owned checksum list is the public contract.
+checksum = "false"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
@@ -25,8 +28,13 @@ source-tarball = false
 include = ["THIRD_PARTY_NOTICES.adoc"]
 
 [[dist.extra-artifacts]]
-artifacts = ["target/distrib/adocweave-browser-0.1.0.tar.xz"]
-build = ["bash", "tools/package-browser-release.sh"]
+artifacts = [
+  "target/distrib/adocweave-browser-0.1.0.tar.xz",
+  "target/distrib/adocweave-dist-manifest.json",
+  "target/distrib/adocweave.spdx.json",
+  "target/distrib/sha256.sum",
+]
+build = ["bash", "tools/package-release-artifacts.sh"]
 
 [dist.github-custom-runners]
 global = "ubuntu-24.04"

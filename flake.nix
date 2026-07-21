@@ -35,6 +35,7 @@
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
+              actionlint
               cargo
               cargo-dist
               cargo-make
@@ -42,6 +43,7 @@
               dejavu_fonts
               esbuild
               fontconfig
+              gh
               clippy
               gnutar
               lld
