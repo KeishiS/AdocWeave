@@ -1,5 +1,5 @@
 = Semantic block表現と可変走査の正規化
-:status: planned
+:status: completed
 :depends-on: 091
 
 == 目的
@@ -29,3 +29,12 @@
 variantを追加するとき、子block再帰を複数consumerへ手作業で追加する必要がない。属性解決、table設定、診断回収の
 到達集合が共通walkerと一致する。
 
+== 完了結果
+
+`LiteralBlock`、`AstBlock::Literal`、`LineRecognition::Literal`および専用parser／syntax builderを削除した。
+通常文書とlist continuationの`....`は、どちらも`DelimitedBlockKind::Literal`とverbatim contentへ統一した。
+lossless syntaxは単一semantic nodeから`SyntaxKind::LiteralBlock`を投影する。
+
+`walker`へ`BlockVisitorMut`、`walk_blocks_mut`および`walk_inline_sequences_mut`を追加した。heading正規化、table設定、
+syntax diagnosticと属性解決は共通の子block再帰へ移行し、consumer固有処理だけをvisitorに残した。root／nested
+list、continuation、compound blockおよびAsciiDoc cellについてimmutable／mutable walkerの到達数一致を試験した。

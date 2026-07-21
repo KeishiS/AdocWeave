@@ -3,8 +3,8 @@
 use crate::attributes::{AttributeProblem, AttributeProblemKind};
 use crate::inline::{InlineProblem, InlineProblemKind};
 use crate::parser::{
-    AstBlock, BlockProblem, BlockProblemKind, DelimitedBlockKind, DelimitedContent, HeadingProblem,
-    ListBlock, ListProblemKind, MathProblemKind,
+    AstBlock, BlockProblem, BlockProblemKind, DelimitedBlockKind, HeadingProblem, ListBlock,
+    ListProblemKind, MathProblemKind,
 };
 use crate::source::TextRange;
 use crate::syntax::{SyntaxFix, SyntaxIssue, SyntaxIssueClass};
@@ -25,9 +25,17 @@ pub(crate) fn collect_and_clear(
             message,
         ));
     }
-    for block in blocks {
-        block_issues(block, &mut output);
+    struct IssueCollector<'output>(&'output mut Vec<SyntaxIssue>);
+    impl crate::walker::BlockVisitorMut for IssueCollector<'_> {
+        fn visit_block(&mut self, block: &mut AstBlock) {
+            block_issues(block, self.0);
+        }
+
+        fn visit_list(&mut self, list: &mut ListBlock) {
+            list_issues(list, self.0);
+        }
     }
+    crate::walker::walk_blocks_mut(blocks, &mut IssueCollector(&mut output));
     output
 }
 
@@ -129,9 +137,8 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
         }
         AstBlock::Paragraph(paragraph) => inline_issues(&mut paragraph.inline_problems, output),
         AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => {}
-        AstBlock::Literal(block) => block_problem_issues(&mut block.problems, "literal", output),
         AstBlock::Source(block) => block_problem_issues(&mut block.problems, "source", output),
-        AstBlock::List(list) => list_issues(list, output),
+        AstBlock::List(_) => {}
         AstBlock::Math(math) => {
             for problem in std::mem::take(&mut math.problems) {
                 let message = match problem.kind {
@@ -149,27 +156,6 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
                 "delimited"
             };
             block_problem_issues(&mut block.problems, block_name, output);
-            match &mut block.content {
-                DelimitedContent::Compound(children) => {
-                    for child in children {
-                        block_issues(child, output);
-                    }
-                }
-                DelimitedContent::Table(table) => {
-                    for row in &mut table.rows {
-                        for cell in &mut row.cells {
-                            if let crate::table::TableCellContent::AsciiDoc(children) =
-                                &mut cell.content
-                            {
-                                for child in children {
-                                    block_issues(child, output);
-                                }
-                            }
-                        }
-                    }
-                }
-                DelimitedContent::Verbatim(_) | DelimitedContent::Passthrough(_) => {}
-            }
         }
         AstBlock::Unsupported(_) => {}
     }
@@ -231,12 +217,6 @@ fn list_issues(list: &mut ListBlock, output: &mut Vec<SyntaxIssue>) {
                 message,
                 fix,
             });
-        }
-        for child in &mut item.children {
-            list_issues(child, output);
-        }
-        for continuation in &mut item.continuations {
-            block_issues(continuation, output);
         }
     }
 }

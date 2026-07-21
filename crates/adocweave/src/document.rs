@@ -194,7 +194,6 @@ fn block_label(block: &AstBlock) -> String {
         AstBlock::Paragraph(value) => value.value.lines().next().unwrap_or_default().to_owned(),
         AstBlock::LiteralParagraph(_) => "literal paragraph".to_owned(),
         AstBlock::Break(_) => "break".to_owned(),
-        AstBlock::Literal(_) => "literal block".to_owned(),
         AstBlock::Source(value) => value.language.as_ref().map_or_else(
             || "source block".to_owned(),
             |name| format!("{name} source block"),

@@ -174,12 +174,6 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                     fold_line_endings(&inline_text(&paragraph.inlines)),
                 );
             }
-            AstBlock::Literal(literal) => push_search(
-                output,
-                SearchTextKind::Code,
-                literal.content_range,
-                literal.value.clone(),
-            ),
             AstBlock::LiteralParagraph(literal) => push_search(
                 output,
                 SearchTextKind::Code,

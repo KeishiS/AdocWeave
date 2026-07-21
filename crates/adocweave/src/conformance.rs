@@ -12,7 +12,7 @@ use crate::projection::project;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 19;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 20;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -124,7 +124,6 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
             value: None,
             children: Vec::new(),
         },
-        AstBlock::Literal(node) => leaf("literal-block", node.range, &node.value),
         AstBlock::Source(node) => CanonicalNode {
             kind: "source-block",
             range: range(node.range),

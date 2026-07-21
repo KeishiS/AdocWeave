@@ -46,6 +46,118 @@ pub(crate) fn walk_block_slice<'document>(
     walk_blocks(blocks, &mut visitor);
 }
 
+pub(crate) trait BlockVisitorMut {
+    fn visit_block(&mut self, block: &mut AstBlock);
+
+    fn visit_list(&mut self, _list: &mut ListBlock) {}
+}
+
+impl<F> BlockVisitorMut for F
+where
+    F: FnMut(&mut AstBlock),
+{
+    fn visit_block(&mut self, block: &mut AstBlock) {
+        self(block);
+    }
+}
+
+pub(crate) fn walk_blocks_mut(blocks: &mut [AstBlock], visitor: &mut impl BlockVisitorMut) {
+    fn walk_list_mut(list: &mut ListBlock, visitor: &mut impl BlockVisitorMut) {
+        visitor.visit_list(list);
+        for item in &mut list.items {
+            for child in &mut item.children {
+                walk_list_mut(child, visitor);
+            }
+            walk_blocks_mut(&mut item.continuations, visitor);
+        }
+    }
+
+    for block in blocks {
+        visitor.visit_block(block);
+        match block {
+            AstBlock::List(list) => walk_list_mut(list, visitor),
+            AstBlock::Delimited(block) => match &mut block.content {
+                crate::parser::DelimitedContent::Compound(children) => {
+                    walk_blocks_mut(children, visitor);
+                }
+                crate::parser::DelimitedContent::Table(table) => {
+                    for row in &mut table.rows {
+                        for cell in &mut row.cells {
+                            if let crate::table::TableCellContent::AsciiDoc(children) =
+                                &mut cell.content
+                            {
+                                walk_blocks_mut(children, visitor);
+                            }
+                        }
+                    }
+                }
+                crate::parser::DelimitedContent::Verbatim(_)
+                | crate::parser::DelimitedContent::Passthrough(_) => {}
+            },
+            AstBlock::Heading(_)
+            | AstBlock::Paragraph(_)
+            | AstBlock::LiteralParagraph(_)
+            | AstBlock::Break(_)
+            | AstBlock::Source(_)
+            | AstBlock::Math(_)
+            | AstBlock::Unsupported(_) => {}
+        }
+    }
+}
+
+pub(crate) fn walk_inline_sequences_mut(
+    blocks: &mut [AstBlock],
+    visitor: &mut impl FnMut(&mut Vec<Inline>),
+) {
+    fn visit_list(list: &mut ListBlock, visitor: &mut impl FnMut(&mut Vec<Inline>)) {
+        for item in &mut list.items {
+            for term in &mut item.terms {
+                visitor(&mut term.inlines);
+            }
+            visitor(&mut item.inlines);
+            for child in &mut item.children {
+                visit_list(child, visitor);
+            }
+            walk_inline_sequences_mut(&mut item.continuations, visitor);
+        }
+    }
+
+    for block in blocks {
+        match block {
+            AstBlock::Heading(heading) => visitor(&mut heading.inlines),
+            AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines),
+            AstBlock::List(list) => visit_list(list, visitor),
+            AstBlock::Delimited(block) => match &mut block.content {
+                crate::parser::DelimitedContent::Compound(children) => {
+                    walk_inline_sequences_mut(children, visitor);
+                }
+                crate::parser::DelimitedContent::Table(table) => {
+                    for row in &mut table.rows {
+                        for cell in &mut row.cells {
+                            match &mut cell.content {
+                                crate::table::TableCellContent::Inlines(inlines) => {
+                                    visitor(inlines)
+                                }
+                                crate::table::TableCellContent::AsciiDoc(children) => {
+                                    walk_inline_sequences_mut(children, visitor);
+                                }
+                                crate::table::TableCellContent::Verbatim(_) => {}
+                            }
+                        }
+                    }
+                }
+                crate::parser::DelimitedContent::Verbatim(_)
+                | crate::parser::DelimitedContent::Passthrough(_) => {}
+            },
+            AstBlock::LiteralParagraph(_)
+            | AstBlock::Break(_)
+            | AstBlock::Source(_)
+            | AstBlock::Math(_)
+            | AstBlock::Unsupported(_) => {}
+        }
+    }
+}
+
 fn walk_blocks<'document>(
     blocks: &'document [AstBlock],
     visitor: &mut impl FnMut(SemanticNode<'document>),
@@ -56,7 +168,10 @@ fn walk_blocks<'document>(
         match block {
             AstBlock::Heading(heading) => walk_inlines(&heading.inlines, visitor),
             AstBlock::Paragraph(paragraph) => walk_inlines(&paragraph.inlines, visitor),
-            AstBlock::List(list) => walk_list_contents(list, visitor),
+            AstBlock::List(list) => {
+                visitor(SemanticNode::List(list));
+                walk_list_contents(list, visitor);
+            }
             AstBlock::Delimited(block) => match &block.content {
                 crate::parser::DelimitedContent::Compound(children) => {
                     walk_blocks(children, visitor)
@@ -82,8 +197,7 @@ fn walk_blocks<'document>(
                 crate::parser::DelimitedContent::Verbatim(_)
                 | crate::parser::DelimitedContent::Passthrough(_) => {}
             },
-            AstBlock::Literal(_)
-            | AstBlock::LiteralParagraph(_)
+            AstBlock::LiteralParagraph(_)
             | AstBlock::Break(_)
             | AstBlock::Source(_)
             | AstBlock::Math(_)
@@ -155,7 +269,7 @@ fn walk_inlines<'document>(
 
 #[cfg(test)]
 mod tests {
-    use super::{SemanticNode, walk};
+    use super::{BlockVisitorMut, SemanticNode, walk, walk_blocks_mut};
     use crate::parser::AstBlock;
 
     #[test]
@@ -183,7 +297,7 @@ mod tests {
             | SemanticNode::ElementAttribute(_) => {}
         });
         assert_eq!(blocks, 2);
-        assert_eq!(lists, 1);
+        assert_eq!(lists, 2);
         assert_eq!(items, 2);
         assert!(inlines >= 3);
     }
@@ -225,6 +339,48 @@ mod tests {
     }
 
     #[test]
+    fn immutable_and_mutable_walkers_reach_the_same_blocks_and_lists() {
+        let source = concat!(
+            "====\n",
+            "* outer\n",
+            "** nested\n",
+            "+\n",
+            "....\n",
+            "literal\n",
+            "....\n",
+            "\n",
+            "[cols=a]\n",
+            "|===\n",
+            "|== Cell\n",
+            "|===\n",
+            "====\n",
+        );
+        let mut parsed = crate::parser::parse(source).expect("nested source");
+        let mut immutable = (0, 0);
+        walk(&parsed.ast, |node| match node {
+            SemanticNode::Block(_) => immutable.0 += 1,
+            SemanticNode::List(_) => immutable.1 += 1,
+            _ => {}
+        });
+
+        #[derive(Default)]
+        struct Counts(usize, usize);
+        impl BlockVisitorMut for Counts {
+            fn visit_block(&mut self, _block: &mut AstBlock) {
+                self.0 += 1;
+            }
+
+            fn visit_list(&mut self, _list: &mut crate::parser::ListBlock) {
+                self.1 += 1;
+            }
+        }
+        let mut mutable = Counts::default();
+        walk_blocks_mut(&mut parsed.ast.blocks, &mut mutable);
+
+        assert_eq!(immutable, (mutable.0, mutable.1));
+    }
+
+    #[test]
     fn final_semantic_tree_contains_no_parser_recovery_state() {
         for source in [
             "==Missing\n",
@@ -243,7 +399,6 @@ mod tests {
                         assert!(value.inline_problems.is_empty());
                     }
                     AstBlock::Paragraph(value) => assert!(value.inline_problems.is_empty()),
-                    AstBlock::Literal(value) => assert!(value.problems.is_empty()),
                     AstBlock::Source(value) => assert!(value.problems.is_empty()),
                     AstBlock::Math(value) => assert!(value.problems.is_empty()),
                     AstBlock::Delimited(value) => assert!(value.problems.is_empty()),

@@ -29,44 +29,13 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
 }
 
 fn configure_tables(blocks: &mut [AstBlock]) {
-    fn configure_list(list: &mut crate::parser::ListBlock) {
-        for item in &mut list.items {
-            for child in &mut item.children {
-                configure_list(child);
-            }
-            configure_tables(&mut item.continuations);
+    crate::walker::walk_blocks_mut(blocks, &mut |block: &mut AstBlock| {
+        if let AstBlock::Delimited(block) = block
+            && let crate::parser::DelimitedContent::Table(table) = &mut block.content
+        {
+            crate::table::configure(table, &block.metadata);
         }
-    }
-    for block in blocks {
-        match block {
-            AstBlock::List(list) => configure_list(list),
-            AstBlock::Delimited(block) => match &mut block.content {
-                crate::parser::DelimitedContent::Table(table) => {
-                    crate::table::configure(table, &block.metadata);
-                    for row in &mut table.rows {
-                        for cell in &mut row.cells {
-                            if let crate::table::TableCellContent::AsciiDoc(blocks) =
-                                &mut cell.content
-                            {
-                                configure_tables(blocks);
-                            }
-                        }
-                    }
-                }
-                crate::parser::DelimitedContent::Compound(children) => configure_tables(children),
-                crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Passthrough(_) => {}
-            },
-            AstBlock::Heading(_)
-            | AstBlock::Paragraph(_)
-            | AstBlock::LiteralParagraph(_)
-            | AstBlock::Break(_)
-            | AstBlock::Literal(_)
-            | AstBlock::Source(_)
-            | AstBlock::Math(_)
-            | AstBlock::Unsupported(_) => {}
-        }
-    }
+    });
 }
 
 fn document_type(attributes: &[DocumentAttribute]) -> DocumentType {

@@ -268,7 +268,6 @@ fn render_block(
             render_preformatted(output, explicit_id, None, &paragraph.value);
         }
         AstBlock::Break(block) => render_break(output, block.kind, explicit_id),
-        AstBlock::Literal(block) => render_preformatted(output, explicit_id, None, &block.value),
         AstBlock::Source(block) => {
             output.push_str("<pre");
             render_optional_id(output, explicit_id);

@@ -2,7 +2,7 @@
 
 use crate::inline::Inline;
 use crate::parser::{
-    BlockProblemKind, DelimitedBlock, Heading, ListBlock, ListItem, LiteralBlock, MathBlock,
+    BlockProblemKind, DelimitedBlock, DelimitedBlockKind, Heading, ListBlock, ListItem, MathBlock,
     MathProblemKind, Paragraph, SourceBlock,
 };
 use crate::source::TextRange;
@@ -22,20 +22,6 @@ pub(crate) fn paragraph(paragraph: &Paragraph) -> SyntaxNode {
         SyntaxKind::Paragraph,
         paragraph.range,
         inlines(&paragraph.inlines),
-    )
-}
-
-pub(crate) fn literal(literal: &LiteralBlock) -> SyntaxNode {
-    SyntaxNode::new(
-        SyntaxKind::LiteralBlock,
-        literal.range,
-        vec![delimiter(
-            literal.delimiter_range,
-            literal
-                .problems
-                .iter()
-                .any(|problem| problem.kind == BlockProblemKind::UnclosedBlock),
-        )],
     )
 }
 
@@ -70,7 +56,12 @@ pub(crate) fn delimited(block: &DelimitedBlock) -> SyntaxNode {
     if let Some(range) = block.closing_delimiter_range {
         children.push(SyntaxNode::leaf(SyntaxKind::BlockDelimiter, range));
     }
-    SyntaxNode::new(SyntaxKind::DelimitedBlock, block.range, children)
+    let kind = if block.kind == DelimitedBlockKind::Literal {
+        SyntaxKind::LiteralBlock
+    } else {
+        SyntaxKind::DelimitedBlock
+    };
+    SyntaxNode::new(kind, block.range, children)
 }
 
 pub(crate) fn math(math: &MathBlock) -> SyntaxNode {

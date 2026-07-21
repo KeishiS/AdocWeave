@@ -125,16 +125,6 @@ pub struct BlockProblem {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LiteralBlock {
-    pub metadata: BlockMetadata,
-    pub range: TextRange,
-    pub delimiter_range: TextRange,
-    pub content_range: TextRange,
-    pub value: String,
-    pub(crate) problems: Vec<BlockProblem>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceBlock {
     pub metadata: BlockMetadata,
     pub range: TextRange,
@@ -314,7 +304,6 @@ pub enum AstBlock {
     Paragraph(Paragraph),
     LiteralParagraph(LiteralParagraph),
     Break(BreakBlock),
-    Literal(LiteralBlock),
     Source(SourceBlock),
     List(ListBlock),
     Math(MathBlock),

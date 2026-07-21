@@ -182,46 +182,7 @@ impl AstDocument {
     }
 
     pub(crate) fn visit_blocks_mut(&mut self, mut visitor: impl FnMut(&mut AstBlock)) {
-        fn visit_list(list: &mut ListBlock, visitor: &mut impl FnMut(&mut AstBlock)) {
-            for item in &mut list.items {
-                for child in &mut item.children {
-                    visit_list(child, visitor);
-                }
-                visit(&mut item.continuations, visitor);
-            }
-        }
-        fn visit(blocks: &mut [AstBlock], visitor: &mut impl FnMut(&mut AstBlock)) {
-            for block in blocks {
-                visitor(block);
-                match block {
-                    AstBlock::List(list) => visit_list(list, visitor),
-                    AstBlock::Delimited(block) => match &mut block.content {
-                        DelimitedContent::Compound(children) => visit(children, visitor),
-                        DelimitedContent::Table(table) => {
-                            for row in &mut table.rows {
-                                for cell in &mut row.cells {
-                                    if let crate::table::TableCellContent::AsciiDoc(children) =
-                                        &mut cell.content
-                                    {
-                                        visit(children, visitor);
-                                    }
-                                }
-                            }
-                        }
-                        DelimitedContent::Verbatim(_) | DelimitedContent::Passthrough(_) => {}
-                    },
-                    AstBlock::Heading(_)
-                    | AstBlock::Paragraph(_)
-                    | AstBlock::LiteralParagraph(_)
-                    | AstBlock::Break(_)
-                    | AstBlock::Literal(_)
-                    | AstBlock::Source(_)
-                    | AstBlock::Math(_)
-                    | AstBlock::Unsupported(_) => {}
-                }
-            }
-        }
-        visit(&mut self.blocks, &mut visitor);
+        crate::walker::walk_blocks_mut(&mut self.blocks, &mut visitor);
     }
 
     pub fn node_count(&self) -> usize {
@@ -284,19 +245,6 @@ impl AstDocument {
                         block.kind,
                         block.range.start().to_u32(),
                         block.range.end().to_u32()
-                    )
-                    .expect("writing to a String cannot fail");
-                }
-                AstBlock::Literal(literal) => {
-                    writeln!(
-                        output,
-                        "  Literal@{}..{} content={}..{} {:?} problems={:?}",
-                        literal.range.start().to_u32(),
-                        literal.range.end().to_u32(),
-                        literal.content_range.start().to_u32(),
-                        literal.content_range.end().to_u32(),
-                        literal.value,
-                        literal.problems
                     )
                     .expect("writing to a String cannot fail");
                 }
@@ -370,53 +318,7 @@ impl AstDocument {
     }
 
     pub(crate) fn visit_inline_sequences_mut(&mut self, mut visitor: impl FnMut(&mut Vec<Inline>)) {
-        fn visit_list(list: &mut ListBlock, visitor: &mut impl FnMut(&mut Vec<Inline>)) {
-            for item in &mut list.items {
-                for term in &mut item.terms {
-                    visitor(&mut term.inlines);
-                }
-                visitor(&mut item.inlines);
-                for child in &mut item.children {
-                    visit_list(child, visitor);
-                }
-                visit_blocks(&mut item.continuations, visitor);
-            }
-        }
-        fn visit_blocks(blocks: &mut [AstBlock], visitor: &mut impl FnMut(&mut Vec<Inline>)) {
-            for block in blocks {
-                match block {
-                    AstBlock::Heading(heading) => visitor(&mut heading.inlines),
-                    AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines),
-                    AstBlock::List(list) => visit_list(list, visitor),
-                    AstBlock::Delimited(block) => match &mut block.content {
-                        DelimitedContent::Compound(children) => visit_blocks(children, visitor),
-                        DelimitedContent::Table(table) => {
-                            for row in &mut table.rows {
-                                for cell in &mut row.cells {
-                                    match &mut cell.content {
-                                        crate::table::TableCellContent::Inlines(inlines) => {
-                                            visitor(inlines)
-                                        }
-                                        crate::table::TableCellContent::AsciiDoc(blocks) => {
-                                            visit_blocks(blocks, visitor)
-                                        }
-                                        crate::table::TableCellContent::Verbatim(_) => {}
-                                    }
-                                }
-                            }
-                        }
-                        DelimitedContent::Verbatim(_) | DelimitedContent::Passthrough(_) => {}
-                    },
-                    AstBlock::Literal(_)
-                    | AstBlock::LiteralParagraph(_)
-                    | AstBlock::Break(_)
-                    | AstBlock::Source(_)
-                    | AstBlock::Math(_)
-                    | AstBlock::Unsupported(_) => {}
-                }
-            }
-        }
-        visit_blocks(&mut self.blocks, &mut visitor);
+        crate::walker::walk_inline_sequences_mut(&mut self.blocks, &mut visitor);
     }
 }
 
@@ -427,7 +329,6 @@ impl AstBlock {
             Self::Paragraph(value) => &value.metadata,
             Self::LiteralParagraph(value) => &value.metadata,
             Self::Break(value) => &value.metadata,
-            Self::Literal(value) => &value.metadata,
             Self::Source(value) => &value.metadata,
             Self::List(value) => &value.metadata,
             Self::Math(value) => &value.metadata,
@@ -442,7 +343,6 @@ impl AstBlock {
             Self::Paragraph(value) => &mut value.metadata,
             Self::LiteralParagraph(value) => &mut value.metadata,
             Self::Break(value) => &mut value.metadata,
-            Self::Literal(value) => &mut value.metadata,
             Self::Source(value) => &mut value.metadata,
             Self::List(value) => &mut value.metadata,
             Self::Math(value) => &mut value.metadata,
@@ -457,7 +357,6 @@ impl AstBlock {
             Self::Paragraph(value) => value.range,
             Self::LiteralParagraph(value) => value.range,
             Self::Break(value) => value.range,
-            Self::Literal(value) => value.range,
             Self::Source(value) => value.range,
             Self::List(value) => value.range,
             Self::Math(value) => value.range,
@@ -557,7 +456,6 @@ enum LineRecognition {
     InvalidSource,
     Math,
     Delimited,
-    Literal,
     Anchor,
     BlockTitle,
     BlockMetadata,
@@ -586,8 +484,6 @@ fn recognize_line(
         LineRecognition::Math
     } else if delimiter_spec(content).is_some() {
         LineRecognition::Delimited
-    } else if content == "...." {
-        LineRecognition::Literal
     } else if parse_explicit_anchor(content, content_start, full_range)
         .filter(|_| content.starts_with("[["))
         .is_some()
@@ -944,29 +840,6 @@ fn parse_block_sequence(
             );
             saw_content = true;
             header_attributes_open = false;
-            cursor.commit(BlockRecognition::Through(next_line))?;
-            continue;
-        } else if recognition == LineRecognition::Literal {
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
-            budget.consume_block()?;
-            budget.consume_node()?;
-            let (literal, next_line) = parse_literal_block(source_document, line_index, source)?;
-            let syntax = crate::syntax_builder::literal(&literal);
-            commit_block(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut pending_metadata,
-                syntax,
-                AstBlock::Literal(literal),
-            );
-            saw_content = true;
             cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Anchor {
@@ -1930,10 +1803,6 @@ fn parse_list_continuation(
     }
     state.budget.consume_block()?;
     state.budget.consume_node()?;
-    if content == "...." {
-        let (block, end) = parse_literal_block(source_document, index, source)?;
-        return Ok(Some((vec![AstBlock::Literal(block)], end)));
-    }
     if parse_source_attribute(content).is_some()
         && source_document
             .lines()
@@ -2025,37 +1894,6 @@ fn build_list_tree(
         range,
         items,
     })
-}
-
-fn parse_literal_block(
-    source_document: &SourceDocument,
-    opener_index: usize,
-    source: &str,
-) -> Result<(LiteralBlock, usize), PositionError> {
-    let opener = source_document.lines()[opener_index];
-    let body = parse_delimited_body(
-        source_document,
-        opener_index,
-        "....",
-        source,
-        source_document.lines().len(),
-    )?;
-    let value = source
-        .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
-        .expect("literal content range has valid UTF-8 boundaries")
-        .to_owned();
-
-    Ok((
-        LiteralBlock {
-            metadata: BlockMetadata::default(),
-            range: TextRange::new(opener.full_range().start(), body.range_end)?,
-            delimiter_range: opener.content_range(),
-            content_range: body.content_range,
-            value,
-            problems: body.problems,
-        },
-        body.next_line,
-    ))
 }
 
 fn scan_callout_markers(
@@ -3005,8 +2843,8 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlockKind, DelimitedContent,
-        DocumentType, Heading, HeadingKind, ListKind, SyntaxKind, parse,
+        AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlock, DelimitedBlockKind,
+        DelimitedContent, DocumentType, Heading, HeadingKind, ListKind, SyntaxKind, parse,
     };
 
     #[test]
@@ -3527,7 +3365,10 @@ mod tests {
         };
         assert!(matches!(
             list.items[0].continuations[0],
-            AstBlock::Literal(_)
+            AstBlock::Delimited(DelimitedBlock {
+                kind: DelimitedBlockKind::Literal,
+                ..
+            })
         ));
         assert!(matches!(
             list.items[1].continuations[0],
@@ -3925,7 +3766,13 @@ mod tests {
                         | (Expected::Paragraph, AstBlock::Paragraph(_))
                         | (Expected::LiteralParagraph, AstBlock::LiteralParagraph(_))
                         | (Expected::Break, AstBlock::Break(_))
-                        | (Expected::Literal, AstBlock::Literal(_))
+                        | (
+                            Expected::Literal,
+                            AstBlock::Delimited(DelimitedBlock {
+                                kind: DelimitedBlockKind::Literal,
+                                ..
+                            })
+                        )
                         | (Expected::Source, AstBlock::Source(_))
                         | (Expected::List, AstBlock::List(_))
                         | (Expected::Math, AstBlock::Math(_))
