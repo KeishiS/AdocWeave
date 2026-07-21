@@ -1,9 +1,3 @@
-# AdocWeaveリポジトリ専用のCodex設定。
-#
-# このlayerは、リポジトリをCodexで信頼した場合だけ読み込まれる。
-# machine固有のprovider、認証情報、通知先はここへ記載しない。
-
-# 必要になった場合だけ、次の設定を有効化する。
 # approval_policy = "on-request"
 # sandbox_mode = "workspace-write"
 

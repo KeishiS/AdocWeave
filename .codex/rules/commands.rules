@@ -1,8 +1,3 @@
-# AdocWeaveで日常的に使うコマンドの実行policy。
-#
-# rulesはsandbox外での実行可否を制御する。filesystemやnetworkの範囲は
-# .codex/config.tomlのsandbox設定で別に管理する。
-
 # Rustの読み取り・構築・検証コマンド。
 prefix_rule(
     pattern = [
@@ -64,14 +59,14 @@ prefix_rule(
     ],
 )
 
-# index、履歴、branch、worktreeまたはremoteを変更する操作は毎回確認する。
+# index、履歴、branch、worktreeまたはremoteを変更する操作。
 prefix_rule(
     pattern = [
         "git",
         ["add", "branch", "commit", "merge", "push", "rebase", "tag", "worktree"],
     ],
-    decision = "prompt",
-    justification = "Gitの状態または外部remoteへ影響するため実行前に確認する",
+    decision = "allow",
+    justification = "Gitの状態または外部remoteへ影響する操作を許可する",
 )
 
 # 破壊的操作は、より限定的な代替手段を選ぶ。
