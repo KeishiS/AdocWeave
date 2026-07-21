@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -8,7 +9,7 @@ import plan from "../release/distribution-plan.json" with { type: "json" };
 import { verifyMetadata, writeMetadata } from "./release-metadata.mjs";
 
 function fixture() {
-  const root = mkdtempSync(join("target", "adocweave-release-metadata-"));
+  const root = mkdtempSync(join(tmpdir(), "adocweave-release-metadata-"));
   const artifacts = join(root, "artifacts");
   mkdirSync(artifacts);
   for (const asset of plan.assets) {
