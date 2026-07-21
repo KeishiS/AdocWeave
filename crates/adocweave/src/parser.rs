@@ -955,6 +955,7 @@ pub(crate) fn parse_shared_cancellable(
                 raw: content.to_owned(),
                 reason: "invalid source block attribute".to_owned(),
             }));
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
             header_attributes_open = false;
         } else if parse_math_attribute(content).is_some()
@@ -1689,6 +1690,11 @@ fn inline_node(inline: &Inline) -> Option<SyntaxNode> {
             formula.content_range,
             None,
             &[],
+        )),
+        Inline::Macro(node) => Some(SyntaxNode::new(
+            SyntaxKind::Macro,
+            node.range,
+            vec![SyntaxNode::leaf(SyntaxKind::Target, node.target_range)],
         )),
         Inline::HardBreak { range } => Some(SyntaxNode::leaf(SyntaxKind::HardBreak, *range)),
         Inline::Passthrough {
@@ -4008,6 +4014,13 @@ mod tests {
         assert_eq!(table.rows[1].cells[0].raw, "first\ncontinued");
         assert_eq!(table.rows[2].cells[0].column_span, 2);
         assert_eq!(table.rows[2].cells[0].column_index, 0);
+        assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
+    fn shorthand_anchor_never_overlaps_recovered_block_metadata() {
+        let source = "= Seed\n\n[[target]]\n[source,r(TM)\n----\nfn,rut]\n-------reference>>\n\n* item\n+\n[source,rust]\n--.-\nfn main() {}\n----\n";
+        let parsed = parse(source).expect("parse");
         assert_eq!(parsed.syntax.reconstruct(), source);
     }
 }

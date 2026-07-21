@@ -39,7 +39,7 @@ Rust、WASMおよびWorkerの契約versionがxref:../release-manifest.json[relea
 . `CORE_PROFILE_VERSION`と必要な各契約versionを起動時またはbuild時に照合する。
 . `ParseOptions`、`SourceId`、文書versionおよびgenerationを明示的に渡す。
 . DB、ネットワーク、ファイル、権限および任意スキームResolverをコアの外に置く。
-. cache keyと再構築範囲がxref:core-profile.adoc[Core Profile 7]に一致する。
+. cache keyと再構築範囲がxref:core-profile.adoc[Core Profile 8]に一致する。
 . Resolverが返したURLをHTML生成前に`UrlPolicy`で再検証する。
 
 手動確認の実施日、対象commit、OS・ブラウザ・Zed versionおよび不一致をリリース記録へ残す。

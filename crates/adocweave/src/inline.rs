@@ -27,6 +27,49 @@ pub struct AttributeUse {
     pub name_range: TextRange,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum StandardMacroKind {
+    Email,
+    Footnote,
+    Anchor,
+    BibliographyAnchor,
+    IndexTerm,
+    Keyboard,
+    Button,
+    Menu,
+    Image,
+    Icon,
+    Audio,
+    Video,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MacroForm {
+    Inline,
+    Block,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MacroAttribute {
+    pub range: TextRange,
+    pub name: Option<String>,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StandardMacro {
+    pub kind: StandardMacroKind,
+    pub form: MacroForm,
+    pub range: TextRange,
+    pub target_range: TextRange,
+    pub target_source: String,
+    pub target: String,
+    pub target_attributes: Vec<AttributeUse>,
+    pub target_expansion_error: Option<crate::substitution::AttributeExpansionError>,
+    pub attributes_range: TextRange,
+    pub attributes: Vec<MacroAttribute>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MathLanguage {
     Latex,
@@ -100,6 +143,7 @@ pub enum Inline {
     Link(Link),
     Reference(Reference),
     Formula(InlineFormula),
+    Macro(StandardMacro),
     Passthrough {
         kind: PassthroughKind,
         range: TextRange,
@@ -145,6 +189,7 @@ impl Inline {
             Self::Link(link) => link.range,
             Self::Reference(reference) => reference.range,
             Self::Formula(formula) => formula.range,
+            Self::Macro(node) => node.range,
             Self::Passthrough { range, .. } => *range,
             Self::HardBreak { range } => *range,
         }
@@ -530,11 +575,14 @@ impl InlineScanner {
             }
             let boundary = is_macro_boundary(value, open);
             let is_macro = rest.starts_with("<<")
+                || rest.starts_with("[[")
                 || boundary
                     && (starts_ascii_case_insensitive(rest, "xref:")
                         || starts_ascii_case_insensitive(rest, "stem:[")
                         || starts_ascii_case_insensitive(rest, "latexmath:[")
                         || starts_ascii_case_insensitive(rest, "pass:[")
+                        || standard_macro_prefix(rest).is_some()
+                        || email_address_end(rest).is_some()
                         || url_scheme_end(rest).is_some());
             if is_macro {
                 candidates.push(InlineCandidate::Macro { open });
@@ -1029,6 +1077,9 @@ enum MacroToken {
     Reference(ReferenceToken),
     Link(LinkToken),
     Passthrough(PassthroughToken),
+    Standard(StandardMacroToken),
+    ShorthandAnchor(ShorthandAnchorToken),
+    Email(EmailToken),
 }
 
 impl MacroToken {
@@ -1040,6 +1091,9 @@ impl MacroToken {
             | Self::Link(LinkToken::Explicit { end, .. })
             | Self::Link(LinkToken::Url { end, .. }) => end,
             Self::Passthrough(token) => token.end,
+            Self::Standard(token) => token.end,
+            Self::ShorthandAnchor(token) => token.end,
+            Self::Email(token) => token.end,
         }
     }
 }
@@ -1070,6 +1124,32 @@ struct PassthroughToken {
     open: usize,
     content_start: usize,
     content_end: usize,
+    end: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StandardMacroToken {
+    kind: StandardMacroKind,
+    form: MacroForm,
+    open: usize,
+    target_start: usize,
+    bracket: usize,
+    close: usize,
+    end: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ShorthandAnchorToken {
+    kind: StandardMacroKind,
+    open: usize,
+    target_start: usize,
+    target_end: usize,
+    end: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EmailToken {
+    open: usize,
     end: usize,
 }
 
@@ -1107,12 +1187,89 @@ enum LinkToken {
     },
 }
 
+fn standard_macro_prefix(value: &str) -> Option<(StandardMacroKind, MacroForm, usize)> {
+    use StandardMacroKind as Kind;
+    const PREFIXES: &[(&str, Kind, MacroForm)] = &[
+        ("image::", Kind::Image, MacroForm::Block),
+        ("icon::", Kind::Icon, MacroForm::Block),
+        ("audio::", Kind::Audio, MacroForm::Block),
+        ("video::", Kind::Video, MacroForm::Block),
+        ("footnote:", Kind::Footnote, MacroForm::Inline),
+        ("anchor:", Kind::Anchor, MacroForm::Inline),
+        ("bibanchor:", Kind::BibliographyAnchor, MacroForm::Inline),
+        ("indexterm:", Kind::IndexTerm, MacroForm::Inline),
+        ("kbd:", Kind::Keyboard, MacroForm::Inline),
+        ("btn:", Kind::Button, MacroForm::Inline),
+        ("menu:", Kind::Menu, MacroForm::Inline),
+        ("image:", Kind::Image, MacroForm::Inline),
+        ("icon:", Kind::Icon, MacroForm::Inline),
+        ("audio:", Kind::Audio, MacroForm::Inline),
+        ("video:", Kind::Video, MacroForm::Inline),
+    ];
+    PREFIXES.iter().find_map(|(prefix, kind, form)| {
+        starts_ascii_case_insensitive(value, prefix).then_some((*kind, *form, prefix.len()))
+    })
+}
+
+fn email_address_end(value: &str) -> Option<usize> {
+    let token_end = value
+        .char_indices()
+        .find_map(|(offset, character)| character.is_whitespace().then_some(offset))
+        .unwrap_or(value.len());
+    let candidate = value[..token_end].trim_end_matches(['.', ',', ';', ':']);
+    let at = candidate.find('@')?;
+    if at == 0
+        || !candidate[..at]
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-'))
+    {
+        return None;
+    }
+    let domain_end = candidate[at + 1..]
+        .char_indices()
+        .find_map(|(offset, character)| {
+            (!character.is_ascii_alphanumeric() && !matches!(character, '.' | '-'))
+                .then_some(at + 1 + offset)
+        })
+        .unwrap_or(candidate.len());
+    let domain = &candidate[at + 1..domain_end];
+    (domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !domain.ends_with('-'))
+    .then_some(domain_end)
+}
+
 fn recognize_macro_with_index(
     value: &str,
     open: usize,
     delimiters: &DelimiterIndex,
 ) -> MacroRecognition {
     let rest = &value[open..];
+    if let Some(content) = rest.strip_prefix("[[[") {
+        if let Some(relative_end) = content.find("]]]") {
+            let target_end = open + 3 + relative_end;
+            return MacroRecognition::Complete(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
+                kind: StandardMacroKind::BibliographyAnchor,
+                open,
+                target_start: open + 3,
+                target_end,
+                end: target_end + 3,
+            }));
+        }
+    }
+    if let Some(content) = rest.strip_prefix("[[") {
+        if let Some(relative_end) = content.find("]]") {
+            let target_end = open + 2 + relative_end;
+            return MacroRecognition::Complete(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
+                kind: StandardMacroKind::Anchor,
+                open,
+                target_start: open + 2,
+                target_end,
+                end: target_end + 2,
+            }));
+        }
+    }
     let formula_prefix = if starts_ascii_case_insensitive(rest, "stem:[") {
         Some("stem:[".len())
     } else if starts_ascii_case_insensitive(rest, "latexmath:[") {
@@ -1217,6 +1374,46 @@ fn recognize_macro_with_index(
             bracket,
             close,
             end: close + 1,
+        }));
+    }
+
+    if let Some((kind, form, prefix_len)) = standard_macro_prefix(rest) {
+        let target_start = open + prefix_len;
+        let Some(bracket) = delimiters.next_open_bracket[target_start] else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteLink,
+                next: next_char_boundary(value, open),
+            };
+        };
+        if value[target_start..bracket]
+            .chars()
+            .any(char::is_whitespace)
+        {
+            return MacroRecognition::Invalid {
+                next: next_char_boundary(value, open),
+            };
+        }
+        let Some(close) = delimiters.next_close_bracket[bracket + 1] else {
+            return MacroRecognition::Incomplete {
+                kind: InlineProblemKind::IncompleteLink,
+                next: next_char_boundary(value, open),
+            };
+        };
+        return MacroRecognition::Complete(MacroToken::Standard(StandardMacroToken {
+            kind,
+            form,
+            open,
+            target_start,
+            bracket,
+            close,
+            end: close + 1,
+        }));
+    }
+
+    if let Some(relative_end) = email_address_end(rest) {
+        return MacroRecognition::Complete(MacroToken::Email(EmailToken {
+            open,
+            end: open + relative_end,
         }));
     }
 
@@ -1337,7 +1534,122 @@ fn build_macro(
             build_reference_macro(value, range, config, depth, token, budget)
         }
         MacroToken::Link(token) => build_link_macro(value, range, config, depth, token, budget),
+        MacroToken::Standard(token) => Ok(build_standard_macro(value, range, token)),
+        MacroToken::ShorthandAnchor(token) => Ok(build_shorthand_anchor(value, range, token)),
+        MacroToken::Email(token) => Ok(build_email(value, range, token)),
     }
+}
+
+fn build_shorthand_anchor(
+    value: &str,
+    range: TextRange,
+    token: ShorthandAnchorToken,
+) -> BuiltInline {
+    let empty = subrange(range, token.target_end, token.target_end);
+    BuiltInline {
+        inline: Inline::Macro(StandardMacro {
+            kind: token.kind,
+            form: MacroForm::Inline,
+            range: subrange(range, token.open, token.end),
+            target_range: subrange(range, token.target_start, token.target_end),
+            target_source: value[token.target_start..token.target_end].to_owned(),
+            target: value[token.target_start..token.target_end].to_owned(),
+            target_attributes: Vec::new(),
+            target_expansion_error: None,
+            attributes_range: empty,
+            attributes: Vec::new(),
+        }),
+        end: token.end,
+        problems: Vec::new(),
+    }
+}
+
+fn build_email(value: &str, range: TextRange, token: EmailToken) -> BuiltInline {
+    let target = &value[token.open..token.end];
+    let empty = subrange(range, token.end, token.end);
+    BuiltInline {
+        inline: Inline::Macro(StandardMacro {
+            kind: StandardMacroKind::Email,
+            form: MacroForm::Inline,
+            range: subrange(range, token.open, token.end),
+            target_range: subrange(range, token.open, token.end),
+            target_source: target.to_owned(),
+            target: target.to_owned(),
+            target_attributes: Vec::new(),
+            target_expansion_error: None,
+            attributes_range: empty,
+            attributes: Vec::new(),
+        }),
+        end: token.end,
+        problems: Vec::new(),
+    }
+}
+
+fn build_standard_macro(value: &str, range: TextRange, token: StandardMacroToken) -> BuiltInline {
+    let attributes_range = subrange(range, token.bracket + 1, token.close);
+    BuiltInline {
+        inline: Inline::Macro(StandardMacro {
+            kind: token.kind,
+            form: token.form,
+            range: subrange(range, token.open, token.end),
+            target_range: subrange(range, token.target_start, token.bracket),
+            target_source: value[token.target_start..token.bracket].to_owned(),
+            target: value[token.target_start..token.bracket].to_owned(),
+            target_attributes: attribute_uses(
+                &value[token.target_start..token.bracket],
+                subrange(range, token.target_start, token.bracket),
+            ),
+            target_expansion_error: None,
+            attributes_range,
+            attributes: parse_macro_attributes(
+                &value[token.bracket + 1..token.close],
+                attributes_range,
+            ),
+        }),
+        end: token.end,
+        problems: Vec::new(),
+    }
+}
+
+fn parse_macro_attributes(value: &str, range: TextRange) -> Vec<MacroAttribute> {
+    let mut attributes = Vec::new();
+    let mut start = 0;
+    let mut quote = None;
+    for (offset, character) in value
+        .char_indices()
+        .chain(std::iter::once((value.len(), ',')))
+    {
+        if matches!(character, '\'' | '"') {
+            quote = if quote == Some(character) {
+                None
+            } else if quote.is_none() {
+                Some(character)
+            } else {
+                quote
+            };
+        }
+        if character != ',' || quote.is_some() {
+            continue;
+        }
+        let raw = &value[start..offset];
+        let leading = raw.len() - raw.trim_start().len();
+        let trailing = raw.len() - raw.trim_end().len();
+        let item_start = start + leading;
+        let item_end = offset.saturating_sub(trailing);
+        if item_start < item_end {
+            let item = &value[item_start..item_end];
+            let (name, item_value) = item.split_once('=').map_or((None, item), |(name, value)| {
+                (Some(name.trim().to_owned()), value.trim())
+            });
+            attributes.push(MacroAttribute {
+                range: subrange(range, item_start, item_end),
+                name,
+                value: item_value.trim_matches(['\'', '"']).to_owned(),
+            });
+        }
+        start = offset + 1;
+    }
+    attributes
 }
 
 fn build_reference_macro(
@@ -1701,9 +2013,10 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 mod tests {
     use super::{
         FormulaToken, Inline, InlineCandidate, InlineLiteralKind, InlineParseConfig,
-        InlineProblemKind, InlineScanner, InlineStyle, LinkToken, MacroRecognition, MacroToken,
-        MarkerForm, MarkerRecognition, MarkerToken, ReferenceDestination, ReferenceToken,
-        inline_at, next_candidate, parse, parse_text, recognize_macro, recognize_marker,
+        InlineProblemKind, InlineScanner, InlineStyle, LinkToken, MacroForm, MacroRecognition,
+        MacroToken, MarkerForm, MarkerRecognition, MarkerToken, ReferenceDestination,
+        ReferenceToken, StandardMacroKind, inline_at, next_candidate, parse, parse_text,
+        recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -2060,6 +2373,28 @@ mod tests {
             ReferenceDestination::Scheme { ref scheme, ref locator, .. }
                 if scheme == "note" && locator == "123"
         ));
+    }
+
+    #[test]
+    fn standard_macros_share_target_attribute_and_range_model() {
+        let source =
+            "image::https://example.org/a.png[Alt,320,height=200] footnote:[note] user@example.org";
+        let parsed = parse(source, range(0, source.len()), InlineParseConfig::default());
+        let macros = parsed
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Macro(node) => Some(node),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(macros.len(), 3);
+        assert_eq!(macros[0].kind, StandardMacroKind::Image);
+        assert_eq!(macros[0].form, MacroForm::Block);
+        assert_eq!(macros[0].attributes[0].value, "Alt");
+        assert_eq!(macros[0].attributes[2].name.as_deref(), Some("height"));
+        assert_eq!(macros[1].kind, StandardMacroKind::Footnote);
+        assert_eq!(macros[2].kind, StandardMacroKind::Email);
     }
 
     #[test]

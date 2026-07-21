@@ -129,6 +129,16 @@ fn resolve_inlines(inlines: &mut [Inline], evaluator: &AttributeEvaluator<'_>) {
                 resolve_inlines(&mut link.label, evaluator);
             }
             Inline::Reference(reference) => resolve_inlines(&mut reference.label, evaluator),
+            Inline::Macro(node) => match evaluator.expand_text(&node.target_source) {
+                Ok(value) => {
+                    node.target = value;
+                    node.target_expansion_error = None;
+                }
+                Err(error) => {
+                    node.target = node.target_source.clone();
+                    node.target_expansion_error = Some(error);
+                }
+            },
             Inline::Styled { children, .. } => resolve_inlines(children, evaluator),
             Inline::AttributeReference {
                 name,

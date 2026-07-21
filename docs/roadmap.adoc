@@ -167,8 +167,9 @@ preamble、book part、discrete heading、基本paragraph形式およびbreakま
 . 文書headerへ著者・改訂情報、preamble、doctypeおよびdiscrete headingを追加する。
 
 Issue 062では置換pipeline、Issue 063ではdescription list、checklist、callout listおよび
-任意blockを伴うlist continuationまで拡張した。Issue 064では基本PSV tableを構造化した。
-次は標準macroと外部資源の意味モデルを実装する。
+任意blockを伴うlist continuationまで拡張した。Issue 064では基本PSV table、Issue 065では
+標準macroと外部資源の意味モデルを実装した。次はI/Oを行わないpreprocessor directiveと
+resource snapshot／source map境界を実装する。
 
 この段階ではraw passthroughを有効化しない。未知blockは引き続きlosslessに保持し、HTMLへ入力由来の
 要素や属性を通過させない。
@@ -201,11 +202,12 @@ HTMLのraw出力は禁止する。
 
 |高
 |標準macro
-|image、email／mailto、footnote、inline anchor、bibliography anchor
+|基本macroとmedia resource modelは完了。完全なfootnote一覧、index catalog、icon setおよび
+resource解決結果を受け取るrenderer API
 
 |中
 |追加inline
-|highlight、subscript、superscript、typographic quote、index term、kbd、btn、menu
+|基本書式は完了。macro属性の高度な引用・置換とUI presentation拡張
 
 |中
 |文書機能

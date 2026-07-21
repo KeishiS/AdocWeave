@@ -67,6 +67,7 @@ pub enum ReferenceTargetKind {
     Part,
     Section,
     ExplicitAnchor,
+    InlineAnchor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,6 +128,30 @@ pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
             }
         }
     }
+    crate::walker::walk(document, |node| {
+        let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(anchor)) = node else {
+            return;
+        };
+        if !matches!(
+            anchor.kind,
+            crate::inline::StandardMacroKind::Anchor
+                | crate::inline::StandardMacroKind::BibliographyAnchor
+        ) || anchor.target.is_empty()
+        {
+            return;
+        }
+        targets.push(ReferenceTarget {
+            kind: ReferenceTargetKind::InlineAnchor,
+            id: anchor.target.clone(),
+            label: anchor.attributes.first().map_or_else(
+                || anchor.target.clone(),
+                |attribute| attribute.value.clone(),
+            ),
+            id_range: anchor.target_range,
+            target_range: anchor.range,
+        });
+    });
+    targets.sort_by_key(|target| (target.target_range.start(), target.target_range.end()));
     targets
 }
 

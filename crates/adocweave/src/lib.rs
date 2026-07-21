@@ -24,6 +24,7 @@ mod lowering;
 pub mod parser;
 pub mod projection;
 pub mod reference;
+pub mod resource;
 pub mod source;
 pub mod source_document;
 pub mod substitution;

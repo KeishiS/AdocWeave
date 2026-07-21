@@ -11,7 +11,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 11;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 12;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -320,6 +320,12 @@ fn inline_node(inline: &Inline) -> CanonicalNode {
             children: inline_nodes(&node.label),
         },
         Inline::Formula(node) => leaf("inline-math", node.range, &node.value),
+        Inline::Macro(node) => CanonicalNode {
+            kind: "standard-macro",
+            range: range(node.range),
+            value: Some(format!("{:?}:{}", node.kind, node.target)),
+            children: Vec::new(),
+        },
         Inline::Passthrough { range, value, .. } => leaf("passthrough", *range, value),
         Inline::HardBreak { range: node_range } => CanonicalNode {
             kind: "hard-break",

@@ -308,6 +308,24 @@ fn lint_links_and_references(
                     );
                 }
             }
+            Inline::Macro(node)
+                if matches!(
+                    node.kind,
+                    crate::inline::StandardMacroKind::Image
+                        | crate::inline::StandardMacroKind::Icon
+                        | crate::inline::StandardMacroKind::Audio
+                        | crate::inline::StandardMacroKind::Video
+                ) && !config.url_policy.allows(&node.target) =>
+            {
+                push_diagnostic(
+                    diagnostics,
+                    config,
+                    LintRule::InvalidUrlScheme,
+                    node.target_range,
+                    "resource URL is rejected by the configured policy",
+                    None,
+                );
+            }
             Inline::Reference(reference) => match &reference.destination {
                 ReferenceDestination::Local { anchor, .. } => {
                     if !targets.iter().any(|target| target.id == *anchor) {
@@ -365,6 +383,7 @@ fn lint_links_and_references(
             | Inline::AttributeReference { .. }
             | Inline::HardBreak { .. }
             | Inline::Passthrough { .. }
+            | Inline::Macro(_)
             | Inline::Formula(_) => {}
         }
     }
@@ -572,6 +591,13 @@ fn collect_attribute_references(
             } => used.entry(name.clone()).or_default().push(*name_range),
             crate::inline::Inline::Link(link) => {
                 for attribute in &link.target_attributes {
+                    used.entry(attribute.name.clone())
+                        .or_default()
+                        .push(attribute.name_range);
+                }
+            }
+            crate::inline::Inline::Macro(node) => {
+                for attribute in &node.target_attributes {
                     used.entry(attribute.name.clone())
                         .or_default()
                         .push(attribute.name_range);

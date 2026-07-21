@@ -1,5 +1,5 @@
 = 標準macroとmedia
-:status: planned
+:status: completed
 :depends-on: 062,064
 
 == 目的
@@ -17,3 +17,11 @@
 == 完了条件
 
 macroのtarget、label／attribute list、rangeおよびresource参照が共通queryで取得できる。
+
+== 完了内容
+
+標準macroを`StandardMacro`へ統合し、bare email／mailto、footnote、inline／bibliography anchor、
+index term、feature flag付きUI macroおよびinline／block mediaを実装した。mediaは
+`ResourceReference`とI/Oを持たない`ResourceResolver`境界へ射影し、URL policy、代替文字列、整数寸法、
+HTML allowlist、walker、projection、LSP Hoverおよびconformance表現を同期した。詳細と未対応範囲は
+xref:../docs/macros-and-resources.adoc[標準macroとresource境界]を正本とする。

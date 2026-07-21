@@ -17,9 +17,9 @@ use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 16;
+pub const CORE_API_VERSION: u16 = 17;
 /// Current host-independent syntax and diagnostic behavior profile.
-pub const CORE_PROFILE_VERSION: u16 = 7;
+pub const CORE_PROFILE_VERSION: u16 = 8;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -91,6 +91,8 @@ pub struct Analysis {
     diagnostics: Vec<Diagnostic>,
     reference_targets: Vec<crate::document::ReferenceTarget>,
     references: Vec<crate::inline::Reference>,
+    macros: Vec<crate::inline::StandardMacro>,
+    resources: Vec<crate::resource::ResourceReference>,
 }
 
 impl Analysis {
@@ -134,6 +136,25 @@ impl Analysis {
             .iter()
             .filter_map(|reference| {
                 crate::reference::query_from_reference(self.source_id.clone(), reference)
+            })
+            .collect()
+    }
+
+    pub fn resources(&self) -> &[crate::resource::ResourceReference] {
+        &self.resources
+    }
+
+    pub fn macros(&self) -> &[crate::inline::StandardMacro] {
+        &self.macros
+    }
+
+    pub fn resource_queries(&self) -> Vec<crate::resource::ResourceQuery> {
+        self.resources
+            .iter()
+            .cloned()
+            .map(|reference| crate::resource::ResourceQuery {
+                source_id: self.source_id.clone(),
+                reference,
             })
             .collect()
     }
@@ -284,6 +305,11 @@ fn analyze_inner(
         lint::lint_syntax(&syntax, &ast, &lint_config).map_err(ParseError::Position)?;
     let reference_targets = crate::document::reference_targets(&ast);
     let references = collect_references(&ast);
+    let macros = collect_macros(&ast);
+    let resources = macros
+        .iter()
+        .filter_map(crate::resource::ResourceReference::from_macro)
+        .collect();
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
     }
@@ -296,7 +322,19 @@ fn analyze_inner(
         diagnostics,
         reference_targets,
         references,
+        macros,
+        resources,
     })
+}
+
+fn collect_macros(document: &parser::AstDocument) -> Vec<crate::inline::StandardMacro> {
+    let mut output = Vec::new();
+    crate::walker::walk(document, |node| {
+        if let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(node)) = node {
+            output.push(node.clone());
+        }
+    });
+    output
 }
 
 fn collect_references(document: &parser::AstDocument) -> Vec<crate::inline::Reference> {
@@ -515,6 +553,40 @@ mod tests {
 
         assert_eq!(parsed.references.len(), 3);
         assert_eq!(parsed.reference_targets.len(), 1);
+    }
+
+    #[test]
+    fn public_api_exposes_resource_queries_without_performing_io() {
+        let analysis = analyze(
+            "image:https://example.org/a.png[Alt]",
+            &ParseOptions::default(),
+        )
+        .expect("analysis");
+        assert_eq!(analysis.resources().len(), 1);
+        let queries = analysis.resource_queries();
+        assert_eq!(
+            queries[0].reference.kind,
+            crate::resource::ResourceKind::Image
+        );
+        assert_eq!(queries[0].reference.target, "https://example.org/a.png");
+    }
+
+    #[test]
+    fn inline_anchor_macros_join_the_common_reference_target_index() {
+        let analysis = analyze(
+            "See <<spot>> and anchor:spot[]target.",
+            &ParseOptions::default(),
+        )
+        .expect("analysis");
+        assert!(analysis.reference_targets().iter().any(|target| {
+            target.kind == crate::document::ReferenceTargetKind::InlineAnchor && target.id == "spot"
+        }));
+        assert!(
+            !analysis
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "unresolved-cross-reference")
+        );
     }
 
     #[test]

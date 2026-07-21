@@ -4,7 +4,7 @@
 ホスト向け情報を抽出する。projection生成時にソースを再解析せず、ファイル、DB、
 ネットワークまたはノートアプリ固有スキーマへアクセスしない。
 
-現在の`PROJECTION_CONTRACT_VERSION`は7である。公開フィールドの意味または安定JSON表現を
+現在の`PROJECTION_CONTRACT_VERSION`は8である。公開フィールドの意味または安定JSON表現を
 破壊的に変更する場合は、このversionを更新する。
 
 == 出力

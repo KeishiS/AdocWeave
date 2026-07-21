@@ -1,0 +1,39 @@
+= 標準macroとresource境界
+
+AdocWeaveは標準macroを、macroごとの文字列再走査ではなく、共通の`StandardMacro`として表現する。
+各nodeはkind、inline／block form、全体range、targetとtarget range、属性listとrange、および属性展開結果を
+持つ。`Analysis.macros()`が全macroを、`Analysis.resources()`と`resource_queries()`がmedia参照だけを返す。
+
+== 対応するmacro
+
+次を認識する。
+
+* bare email addressと`mailto:` link
+* `footnote:[text]`および`footnote:id[text]`
+* `anchor:id[]`、inlineの`[[id]]`、`bibanchor:id[]`および`[[[id]]]`
+* `indexterm:[primary,secondary]`
+* `kbd:[keys]`、`btn:[label]`および`menu:Menu[Item,Subitem]`
+* inline／blockの`image`、`icon`、`audio`および`video`
+
+inline anchorとbibliography anchorは共通の参照先索引へ追加する。index termは表示テキストおよび
+検索テキストへ混在させない。footnoteは現段階では型付き内容と安全なinline HTML表現までを提供し、
+文書末尾の番号付きfootnote一覧生成は未対応である。
+
+UI macroは`RenderPolicy.render_ui_macros`を明示的に有効化した場合だけ専用HTMLを生成する。無効時も
+表示文字列を失わない。これは構文認識を切り替えるflagではなく、backend presentationのfeature flagである。
+
+== resource resolver
+
+画像、icon、音声および動画は`ResourceReference`へ射影する。コア解析は存在確認、file／network取得、
+data URI化、MIME判定または権限判定を行わない。ホストは`ResourceResolver`へ同じsnapshot由来の
+`ResourceQuery`を渡し、`ResolvedResource`または型付き失敗を返す。
+
+resolverが返したhrefも信頼済みではない。HTMLへ渡す前に`UrlPolicy`で再検査する。現在の直接HTML変換は
+解析済みtargetを同じpolicyで検査し、不許可の場合はactive resource要素を生成しない。widthとheightは
+10進整数だけを許可し、入力由来の任意属性、event handler、raw HTMLを通過させない。
+
+== 今後の拡張
+
+完全なfootnote配置、index catalog、icon set解決、poster／start属性、YouTube／Vimeo video target、
+resource解決結果を受け取るrenderer APIは後続Issueで扱う。新しいmacroは`StandardMacroKind`、共通scanner、
+walker、projection、HTML allowlist、resource queryおよびconformance表現を同じ変更で更新する。

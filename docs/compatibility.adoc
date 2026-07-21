@@ -193,7 +193,8 @@ AsciiDoc cellのblock文書、CSV／DSV／TSV、任意separatorおよびduplicat
 
 |標準inline／block macro
 |image、footnote、anchor、email、keyboard、button、menu、index等
-|URL、xrefおよびSTEMだけに対応
+|email／mailto、footnote、inline／bibliography anchor、index term、feature flag付きUI macro、
+inline／block image、icon、audioおよびvideoに対応。完全なfootnote一覧とindex catalogは未対応
 
 |文書上の補助要素
 |comment、admonition、thematic／page break、bibliography、footnote

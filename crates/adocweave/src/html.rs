@@ -15,23 +15,31 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::url::UrlPolicy;
 
-pub const HTML_CONTRACT_VERSION: u16 = 7;
+pub const HTML_CONTRACT_VERSION: u16 = 8;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "a", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5", "hr", "html",
-    "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "table", "tbody", "td",
-    "tfoot", "th", "thead", "tr", "ul",
+    "a", "audio", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5", "hr",
+    "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup", "table",
+    "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video",
 ];
-pub const ALLOWED_ATTRIBUTES: &[&str] = &["class", "colspan", "href", "id", "rowspan"];
+pub const ALLOWED_ATTRIBUTES: &[&str] = &[
+    "alt", "class", "colspan", "controls", "height", "href", "id", "rowspan", "src", "title",
+    "width",
+];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
+    "bibliography-anchor",
+    "button",
     "callout-list",
     "callout-number",
     "checklist-marker",
     "document-title",
+    "footnote",
+    "index-term",
     "language-*",
     "lead",
     "math-latex",
     "math-typst",
+    "menu",
     "page-break",
     "revision",
     "table-align-center",
@@ -52,6 +60,8 @@ pub enum HtmlDocumentMode {
 pub struct RenderPolicy {
     pub document_mode: HtmlDocumentMode,
     pub render_document_title: bool,
+    /// Enables the optional `kbd`, `btn`, and `menu` presentation macros.
+    pub render_ui_macros: bool,
     pub url_policy: UrlPolicy,
 }
 
@@ -60,6 +70,7 @@ impl Default for RenderPolicy {
         Self {
             document_mode: HtmlDocumentMode::Fragment,
             render_document_title: true,
+            render_ui_macros: false,
             url_policy: UrlPolicy::default(),
         }
     }
@@ -661,6 +672,7 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
             }
             Inline::Link(link) => render_link(output, link, context),
             Inline::Reference(reference) => render_reference(output, reference, context),
+            Inline::Macro(node) => render_standard_macro(output, node, context),
             Inline::HardBreak { .. } => output.push_str("<br>\n"),
             Inline::Passthrough { value, .. } => escape_inline_text(output, value),
             Inline::Formula(formula) => {
@@ -671,6 +683,174 @@ fn render_inlines(output: &mut String, inlines: &[Inline], context: &mut InlineR
                 output.push_str("</code>");
             }
         }
+    }
+}
+
+fn render_standard_macro(
+    output: &mut String,
+    node: &crate::inline::StandardMacro,
+    context: &mut InlineRenderContext<'_>,
+) {
+    use crate::inline::StandardMacroKind as Kind;
+    let first = node
+        .attributes
+        .first()
+        .map(|attribute| attribute.value.as_str());
+    match node.kind {
+        Kind::Email => {
+            let href = format!("mailto:{}", node.target);
+            if !context.policy.allows_url(&href) {
+                escape_inline_text(output, &node.target);
+                return;
+            }
+            output.push_str("<a href=\"");
+            escape_html_into(output, &href);
+            output.push_str("\">");
+            escape_inline_text(output, &node.target);
+            output.push_str("</a>");
+        }
+        Kind::Footnote => {
+            output.push_str("<sup class=\"footnote\">");
+            escape_inline_text(output, first.unwrap_or(&node.target));
+            output.push_str("</sup>");
+        }
+        Kind::Anchor | Kind::BibliographyAnchor => {
+            output.push_str("<span id=\"");
+            escape_html_into(output, &node.target);
+            if node.kind == Kind::BibliographyAnchor {
+                output.push_str("\" class=\"bibliography-anchor");
+            }
+            output.push_str("\"></span>");
+        }
+        Kind::IndexTerm => {
+            output.push_str("<span class=\"index-term\"></span>");
+        }
+        Kind::Keyboard => {
+            if !context.policy.render_ui_macros {
+                escape_inline_text(output, first.unwrap_or(&node.target));
+                return;
+            }
+            output.push_str("<kbd>");
+            escape_inline_text(output, first.unwrap_or(&node.target));
+            output.push_str("</kbd>");
+        }
+        Kind::Button => {
+            if !context.policy.render_ui_macros {
+                escape_inline_text(output, first.unwrap_or(&node.target));
+                return;
+            }
+            output.push_str("<span class=\"button\">");
+            escape_inline_text(output, first.unwrap_or(&node.target));
+            output.push_str("</span>");
+        }
+        Kind::Menu => {
+            if !context.policy.render_ui_macros {
+                escape_inline_text(output, first.unwrap_or(&node.target));
+                return;
+            }
+            output.push_str("<span class=\"menu\">");
+            escape_inline_text(output, &node.target);
+            for attribute in &node.attributes {
+                output.push_str(" › ");
+                escape_inline_text(output, &attribute.value);
+            }
+            output.push_str("</span>");
+        }
+        Kind::Image | Kind::Icon => render_image_macro(output, node, context),
+        Kind::Audio | Kind::Video => render_media_macro(output, node, context),
+    }
+}
+
+fn render_image_macro(
+    output: &mut String,
+    node: &crate::inline::StandardMacro,
+    context: &mut InlineRenderContext<'_>,
+) {
+    let alt = macro_attribute(node, "alt", 0).unwrap_or("");
+    if !context.policy.allows_url(&node.target) {
+        escape_inline_text(output, alt);
+        context.diagnostics.push(render_diagnostic(
+            "invalid-url-scheme",
+            "resource URL is rejected by the render policy",
+            node.target_range,
+        ));
+        return;
+    }
+    output.push_str("<img src=\"");
+    escape_html_into(output, &node.target);
+    output.push_str("\" alt=\"");
+    escape_html_into(output, alt);
+    output.push('"');
+    render_dimension(output, node, "width", 1);
+    render_dimension(output, node, "height", 2);
+    if let Some(title) = macro_attribute(node, "title", usize::MAX) {
+        output.push_str(" title=\"");
+        escape_html_into(output, title);
+        output.push('"');
+    }
+    output.push('>');
+}
+
+fn render_media_macro(
+    output: &mut String,
+    node: &crate::inline::StandardMacro,
+    context: &mut InlineRenderContext<'_>,
+) {
+    if !context.policy.allows_url(&node.target) {
+        escape_inline_text(output, &node.target);
+        context.diagnostics.push(render_diagnostic(
+            "invalid-url-scheme",
+            "resource URL is rejected by the render policy",
+            node.target_range,
+        ));
+        return;
+    }
+    let tag = if node.kind == crate::inline::StandardMacroKind::Audio {
+        "audio"
+    } else {
+        "video"
+    };
+    output.push('<');
+    output.push_str(tag);
+    output.push_str(" src=\"");
+    escape_html_into(output, &node.target);
+    output.push_str("\" controls>");
+    output.push_str("</");
+    output.push_str(tag);
+    output.push('>');
+}
+
+fn macro_attribute<'a>(
+    node: &'a crate::inline::StandardMacro,
+    name: &str,
+    position: usize,
+) -> Option<&'a str> {
+    node.attributes
+        .iter()
+        .find(|attribute| attribute.name.as_deref() == Some(name))
+        .or_else(|| {
+            node.attributes
+                .get(position)
+                .filter(|attribute| attribute.name.is_none())
+        })
+        .map(|attribute| attribute.value.as_str())
+}
+
+fn render_dimension(
+    output: &mut String,
+    node: &crate::inline::StandardMacro,
+    name: &str,
+    position: usize,
+) {
+    if let Some(value) = macro_attribute(node, name, position)
+        && !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        output.push(' ');
+        output.push_str(name);
+        output.push_str("=\"");
+        output.push_str(value);
+        output.push('"');
     }
 }
 
@@ -1064,31 +1244,39 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 7);
+        assert_eq!(HTML_CONTRACT_VERSION, 8);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
-                "a", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4", "h5",
-                "hr", "html", "li", "mark", "ol", "p", "pre", "span", "strong", "sub", "sup",
-                "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul"
+                "a", "audio", "body", "br", "code", "dd", "dl", "dt", "em", "h1", "h2", "h3", "h4",
+                "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong",
+                "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video"
             ]
         );
         assert_eq!(
             ALLOWED_ATTRIBUTES,
-            ["class", "colspan", "href", "id", "rowspan"]
+            [
+                "alt", "class", "colspan", "controls", "height", "href", "id", "rowspan", "src",
+                "title", "width"
+            ]
         );
         assert_eq!(
             ALLOWED_CLASSES,
             [
                 "author",
+                "bibliography-anchor",
+                "button",
                 "callout-list",
                 "callout-number",
                 "checklist-marker",
                 "document-title",
+                "footnote",
+                "index-term",
                 "language-*",
                 "lead",
                 "math-latex",
                 "math-typst",
+                "menu",
                 "page-break",
                 "revision",
                 "table-align-center",
@@ -1375,6 +1563,34 @@ mod tests {
             output.html,
             include_str!("../../../fixtures/tables/standard-forms.html")
         );
+    }
+
+    #[test]
+    fn standard_macros_render_resources_through_the_html_policy() {
+        let parsed = parse(include_str!("../../../fixtures/macros/standard.adoc")).expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+        assert_eq!(
+            output.html,
+            include_str!("../../../fixtures/macros/standard.html")
+        );
+
+        let parsed = parse("kbd:[Ctrl+C] btn:[Save] menu:File[Open]").expect("parse");
+        let output = render(
+            &parsed.ast,
+            &RenderPolicy {
+                render_ui_macros: true,
+                ..RenderPolicy::default()
+            },
+        );
+        assert_eq!(
+            output.html,
+            "<p><kbd>Ctrl+C</kbd> <span class=\"button\">Save</span> <span class=\"menu\">File › Open</span></p>\n"
+        );
+
+        let unsafe_resource = parse("image:javascript:alert(1)[safe fallback]").expect("parse");
+        let output = render(&unsafe_resource.ast, &RenderPolicy::default());
+        assert_eq!(output.html, "<p>safe fallback</p>\n");
+        assert!(!output.html.contains("<img"));
     }
 
     #[test]

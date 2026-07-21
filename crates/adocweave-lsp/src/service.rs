@@ -949,6 +949,7 @@ impl LanguageService {
                 | Inline::AttributeReference { .. }
                 | Inline::Link(_)
                 | Inline::HardBreak { .. }
+                | Inline::Macro(_)
                 | Inline::Reference(_) => {}
             }
         });
@@ -1072,6 +1073,10 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
                 Inline::Passthrough { value, .. } => {
                     Some(format!("**passthrough**  \nLiteral content: `{value}`"))
                 }
+                Inline::Macro(node) => Some(format!(
+                    "**{:?} macro**  \nTarget: `{}`",
+                    node.kind, node.target
+                )),
                 Inline::Text(_)
                 | Inline::Literal { .. }
                 | Inline::Styled { .. }

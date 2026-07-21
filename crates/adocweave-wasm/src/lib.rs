@@ -10,7 +10,7 @@ use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const WASM_API_VERSION: u16 = 8;
+pub const WASM_API_VERSION: u16 = 9;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -9,7 +9,7 @@ use crate::parser::{AstBlock, ListBlock};
 use crate::reference::{ReferenceKey, ResolutionOutcome, ResolvedReference};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 7;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -279,6 +279,27 @@ fn inline_text(inlines: &[Inline]) -> String {
             Inline::Literal { value, .. } => output.push_str(value),
             Inline::Styled { children, .. } => output.push_str(&inline_text(children)),
             Inline::AttributeReference { .. } | Inline::Formula(_) => {}
+            Inline::Macro(node) => {
+                use crate::inline::StandardMacroKind as Kind;
+                match node.kind {
+                    Kind::Anchor | Kind::BibliographyAnchor | Kind::IndexTerm => {}
+                    Kind::Email => output.push_str(&node.target),
+                    Kind::Footnote
+                    | Kind::Keyboard
+                    | Kind::Button
+                    | Kind::Menu
+                    | Kind::Image
+                    | Kind::Icon
+                    | Kind::Audio
+                    | Kind::Video => {
+                        if let Some(label) = node.attributes.first() {
+                            output.push_str(&label.value);
+                        } else {
+                            output.push_str(&node.target);
+                        }
+                    }
+                }
+            }
             Inline::HardBreak { .. } => output.push('\n'),
             Inline::Passthrough { value, .. } => output.push_str(value),
             Inline::Link(link) => {
@@ -458,6 +479,7 @@ const fn reference_target_kind(kind: ReferenceTargetKind) -> &'static str {
         ReferenceTargetKind::Part => "part",
         ReferenceTargetKind::Section => "section",
         ReferenceTargetKind::ExplicitAnchor => "explicit-anchor",
+        ReferenceTargetKind::InlineAnchor => "inline-anchor",
     }
 }
 
@@ -540,13 +562,13 @@ mod tests {
     }
 
     #[test]
-    fn projections_keep_the_version_seven_json_contract() {
+    fn projections_keep_the_version_eight_json_contract() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &[]).render_json(),
-            "{\"contractVersion\":7,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":8,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

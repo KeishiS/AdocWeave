@@ -1,0 +1,11 @@
+Contact user@example.org and footnote:[a note].
+
+anchor:spot[]Target bibanchor:reference[] indexterm:[term].
+
+kbd:[Ctrl+C] btn:[Save] menu:File[Open,Recent]
+
+image:https://example.org/image.png[Alternative,320,200]
+
+image::https://example.org/block.png[Block image]
+
+audio:https://example.org/sound.ogg[] video:https://example.org/movie.mp4[]

@@ -130,6 +130,7 @@ fn walk_inlines<'document>(
             Inline::Styled { children, .. } => walk_inlines(children, visitor),
             Inline::Link(link) => walk_inlines(&link.label, visitor),
             Inline::Reference(reference) => walk_inlines(&reference.label, visitor),
+            Inline::Macro(_) => {}
             Inline::Text(_)
             | Inline::Literal { .. }
             | Inline::AttributeReference { .. }
