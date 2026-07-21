@@ -1,0 +1,25 @@
+= 高度なtable形式とAsciiDoc cell
+:status: planned
+:depends-on: 071
+
+== 目的
+
+PSVだけを前提とする現在のtable scannerを、入力形式とcell内容modelを分離した構成へ改める。
+
+== 現在との差異
+
+現在はPSV、column／row spanおよび基本cell styleに対応する。CSV、DSV、TSV、`separator`、cell
+duplicationおよびblockを含むAsciiDoc cellは未対応である。`a` style cellは現状inline列として保持する。
+
+== 作業
+
+* PSV／CSV／DSV／TSVと任意separatorを入力形式として型付けする。
+* quoting、escape、multiline cellおよびcell duplicationを形式ごとに実装する。
+* AsciiDoc cellを独立したblock documentとして解析し、再帰深さとcell数の上限を共有する。
+* scannerとsemantic assemblyを`table` moduleへ集約する。
+* grammar、置換context、HTML、Formatter、Lint、LSPおよびconformance fixtureを同時更新する。
+
+== 完了条件
+
+各形式の正常、曖昧、上限超過fixtureがあり、対応範囲と公式AsciiDocとの差異が`docs/tables.adoc`に
+明記される。

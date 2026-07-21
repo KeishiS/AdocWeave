@@ -1,0 +1,24 @@
+= TOC、appendix、bookおよびmanpage構造projection
+:status: planned
+:depends-on: 071
+
+== 目的
+
+doctype固有の文書構造をparserのheading判定から分離し、consumer共通のprojectionとして公開する。
+
+== 現在との差異
+
+doctype、book part、section hierarchyおよびdocument symbolは存在する。TOC専用projection、appendixの
+意味型、book構造制約、manpageのname／section／purpose構造と検証は未対応である。
+
+== 作業
+
+* section treeからTOC entry、level、番号および除外規則を投影する。
+* appendixとbook partをdoctype固有の意味型として検証する。
+* manpage header、name、sectionおよびpurposeを構造化する。
+* document symbol、TOCおよびHTMLが同じsection projectionを共有する。
+* article／book／manpageごとの正常・異常fixtureと文書を追加する。
+
+== 完了条件
+
+section hierarchyを構築する実装が一つだけとなり、各consumerがdoctype固有構造を再推測しない。

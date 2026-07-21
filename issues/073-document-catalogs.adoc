@@ -1,0 +1,25 @@
+= Footnote、bibliographyおよびindex catalog
+:status: planned
+:depends-on: 071
+
+== 目的
+
+局所的なmacro nodeから、文書全体で利用できるbackend非依存catalogを構築する。
+
+== 現在との差異
+
+footnote、bibliography anchorおよびindex termの構文認識と局所HTML出力は存在する。footnoteの番号、
+再利用、back reference、bibliography一覧および階層的index catalogは未対応である。
+
+== 作業
+
+* footnote定義、参照、番号およびback referenceをimmutable projectionとして公開する。
+* bibliography entryと参照edgeを共通reference modelへ接続する。
+* index termの階層、表示語および範囲をcatalog化する。
+* catalog構築の重複、件数および出力量へ上限を設定する。
+* HTML、LSP、conformance fixtureと対応状況文書を更新する。
+
+== 完了条件
+
+rendererがASTを再走査せずcatalogから一覧を生成でき、欠落・重複・循環的再利用の診断が元rangeへ
+対応する。

@@ -1,5 +1,5 @@
 = 残りの標準文書構造
-:status: planned
+:status: completed
 :depends-on: 067
 
 == 目的
@@ -18,3 +18,15 @@ AsciiDoc仕様との互換性を、利用頻度と構造的依存関係に従っ
 
 各機能を個別の子Issueへ分割し、公式AsciiDoc文書との差異と未対応範囲をfixtureと文書で明示する。
 
+== 実装結果
+
+残件を次の独立Issueへ分割した。
+
+* xref:072-advanced-table-formats.adoc[Issue 072: 高度なtable形式とAsciiDoc cell]
+* xref:073-document-catalogs.adoc[Issue 073: Footnote、bibliographyおよびindex catalog]
+* xref:074-document-structure-projections.adoc[Issue 074: 文書構造projection]
+* xref:075-resolved-render-inputs.adoc[Issue 075: 解決済みresourceを受け取るrenderer入力]
+
+各Issueは現行実装との差異、未対応範囲、必要なfixtureと文書更新を完了条件に含む。実装順は相互に
+独立だが、Issue 072はtable parser責務、Issue 074はsection hierarchy、Issue 075はrenderer入力の
+重複を同時に解消する設計課題として扱う。

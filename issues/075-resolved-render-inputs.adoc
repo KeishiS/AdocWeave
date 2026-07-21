@@ -1,0 +1,24 @@
+= 解決済みresourceを受け取るrenderer入力
+:status: planned
+:depends-on: 071
+
+== 目的
+
+参照とmedia resourceのhost解決結果を、backend非依存の一つのrenderer入力snapshotへ統合する。
+
+== 現在との差異
+
+`ResourceQuery`、`ResolvedResource`および`ResourceResolver`は存在するが、HTML rendererはmedia macroの
+生targetを直接URL policyへ渡す。参照解決結果だけが別引数で渡され、resource解決結果は利用しない。
+
+== 作業
+
+* referenceとresourceの解決結果をrange付き`RenderInputs`へ統合する。
+* 欠落、拒否、失敗および安全なfallbackのbackend非依存規則を定義する。
+* renderer側でもhost提供URLを再検証し、未使用または重複する結果を決定的に扱う。
+* HTMLと将来backendが同じ入力契約を利用できるようにする。
+* security、snapshot、native／WASM同値fixtureと文書を更新する。
+
+== 完了条件
+
+rendererがI/Oやresolverを呼ばず、同じ解析と`RenderInputs`から決定的な出力を生成する。
