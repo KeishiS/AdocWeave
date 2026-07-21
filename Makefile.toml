@@ -101,7 +101,7 @@ dependencies = ["release-metadata-test", "release-workflow-policy"]
 script_runner = "@shell"
 script = '''
 args=""
-metadata="$(mktemp target/release-metadata.XXXXXX.json)"
+metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 trap 'rm -f "$metadata"' EXIT
 if [ -n "${RELEASE_TAG:-}" ]; then
   args="--tag=$RELEASE_TAG"
@@ -196,7 +196,7 @@ description = "Run the pinned dist release plan without publishing"
 script_runner = "@shell"
 script = '''
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
-plan="$(mktemp target/dist-plan.XXXXXX.json)"
+plan="$(mktemp "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX.json")"
 trap 'rm -f "$plan"' EXIT
 dist plan --tag="v$version" --output-format=json > "$plan"
 node tools/verify-dist-plan.mjs "$plan" "v$version"
@@ -246,8 +246,8 @@ if [ "$first" != "$second" ]; then
   exit 1
 fi
 
-actual="$(mktemp target/browser-archive.XXXXXX.list)"
-expected="$(mktemp target/browser-archive-expected.XXXXXX.list)"
+actual="$(mktemp "${TMPDIR:-/tmp}/adocweave-browser-archive.XXXXXX.list")"
+expected="$(mktemp "${TMPDIR:-/tmp}/adocweave-browser-archive-expected.XXXXXX.list")"
 trap 'rm -f "$actual" "$expected"' EXIT
 tar -tJf "$archive" | LC_ALL=C sort > "$actual"
 printf '%s\n' \
@@ -297,7 +297,7 @@ script = '''
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
 package="adocweave-browser-$version"
 source_archive="target/distrib/$package.tar.xz"
-root="$(mktemp -d target/browser-bundler.XXXXXX)"
+root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser-bundler.XXXXXX")"
 archive="$root/$package-bundled.tar.xz"
 trap 'rm -rf "$root"' EXIT
 tar -xJf "$source_archive" -C "$root"
@@ -368,7 +368,7 @@ description = "Run deterministic short fuzz smoke tests (set FUZZ_SECONDS to ove
 script_runner = "@shell"
 script = '''
 seconds="${FUZZ_SECONDS:-5}"
-smoke_root="$(mktemp -d target/adocweave-fuzz-smoke.XXXXXX)"
+smoke_root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-fuzz-smoke.XXXXXX")"
 trap 'rm -rf "$smoke_root"' EXIT
 for target in analyze process render; do
   corpus="$smoke_root/$target"
@@ -457,7 +457,7 @@ description = "Check every tracked AsciiDoc file for crashes, losslessness, and 
 dependencies = ["build-adoc-check", "adoc-invariants"]
 script_runner = "@shell"
 script = '''
-manifest="$(mktemp target/adoc-check.XXXXXX)"
+manifest="$(mktemp "${TMPDIR:-/tmp}/adocweave-adoc-check.XXXXXX")"
 trap 'rm -f "$manifest"' EXIT
 git ls-files '*.adoc' | LC_ALL=C sort > "$manifest"
 diagnostics_log="target/adoc-check-diagnostics.log"

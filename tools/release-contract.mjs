@@ -177,10 +177,15 @@ function verifyRepository() {
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
   const dist = read("dist-workspace.toml");
+  const makefile = read("Makefile.toml");
   const releaseWorkflow = read(".github/workflows/release.yml");
   const nativeSmokeWorkflow = read(".github/workflows/native-artifact-smoke.yml");
   const version = tomlValue(cargo, "version");
   const repository = tomlValue(cargo, "repository");
+
+  if (/mktemp(?:\s+-d)?\s+(?:["'])?target\//.test(makefile)) {
+    fail("cargo-make tasks must not require target to exist before creating temporary files");
+  }
 
   for (const profileSetting of ['lto = "thin"', "codegen-units = 1", "debug = 0", 'panic = "abort"', 'strip = "symbols"']) {
     if (!cargo.includes(profileSetting)) fail(`dist profile is missing: ${profileSetting}`);
