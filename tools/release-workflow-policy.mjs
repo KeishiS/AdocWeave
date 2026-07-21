@@ -56,9 +56,13 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireText(publish, "--draft", "publisher must stage assets in a private draft");
   requireText(publish, "actions/attest@", "every release must receive GitHub provenance attestations");
   requireText(publish, "subject-path: artifacts/*", "the complete public asset set must be attested");
-  requireText(publish, "gh release edit \"$tag\" --draft=false", "publication must be the final mutation");
+  requireText(publish, "gh api --method PATCH", "publication must address the verified draft by release ID");
+  requireText(publish, "-F draft=false", "publication must be the final mutation");
   requireText(publish, "if: failure()", "failed publication must clean up its draft");
-  requireText(publish, "gh release delete \"$tag\" --yes", "failed publication must delete an incomplete draft");
+  requireText(publish, "gh api --method DELETE", "failed publication must delete an incomplete draft by release ID");
+  if (publish.includes("/releases/tags/") || /gh release\s+(upload|view|edit)/.test(publish)) {
+    fail("private drafts must never be looked up through the tag-only release API");
+  }
   if (publish.includes("secrets:") || publish.includes("secrets.")) {
     fail("publisher must use the scoped GitHub token rather than repository secrets");
   }
