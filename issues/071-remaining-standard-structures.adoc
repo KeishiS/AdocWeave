@@ -4,19 +4,19 @@
 
 == 目的
 
-AsciiDoc仕様との互換性を、利用頻度と構造的依存関係に従って拡張する。
+Issue 068から070の複数文書基盤を踏まえ、残る標準構造を変更境界と依存関係が明確な
+実装Issueへ分解する。このIssue自身はumbrellaの実装を代替しない。
 
 == 作業
 
-* AsciiDoc table cell、CSV／DSV／TSV、任意separatorおよびcell duplicationを実装する。
-* footnote一覧、bibliographyおよびindex catalogを文書projectionとして実装する。
-* TOC用section projection、appendix、book partおよびmanpage構造を実装する。
-* resource解決結果を受け取るbackend非依存renderer入力を定義する。
-* 各構文でgrammar、置換context、HTML、Formatter、Lint、LSPおよびconformanceを同時更新する。
+* AsciiDoc仕様との差分をtable、catalog、文書構造およびrenderer入力へ分類する。
+* parser、projectionおよびbackendの変更集中点を同じIssueで解消できる単位へ分ける。
+* 各子Issueに依存関係、未対応範囲、fixture、文書更新および完了条件を記載する。
 
 == 完了条件
 
-各機能を個別の子Issueへ分割し、公式AsciiDoc文書との差異と未対応範囲をfixtureと文書で明示する。
+残る標準構造が個別の子Issueへ分割され、公式AsciiDoc文書との差異、実装責務および未対応範囲を
+各Issueで追跡できる。
 
 == 実装結果
 

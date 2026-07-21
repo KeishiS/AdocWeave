@@ -1,0 +1,20 @@
+= 型付きsource座標とprojection
+:status: planned
+:depends-on: 076
+
+== 目的
+
+include展開後rangeと元resource rangeを同じ型で扱える公開APIを廃止し、誤った座標系をconsumerが
+選択できないようにする。
+
+== 作業
+
+* expanded座標とorigin座標をnewtypeまたは`Located<T, Space>`で型分離する。
+* diagnostic、reference、resource、symbolおよびfixを共通range mapperから投影する。
+* source map segmentのsort・非重複条件をconstructorで保証し、検索をbinary search化する。
+* LSP、CLIおよびWASMがorigin DTO以外から元文書rangeを生成できないAPIへ移行する。
+
+== 完了条件
+
+座標系の混在が型検査で拒否され、cross-segment、空rangeおよびwhole-originのproperty testが通る。
+

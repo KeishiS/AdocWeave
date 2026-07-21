@@ -152,3 +152,121 @@ fn m12_issue_status_and_dependencies_are_consistent() {
         assert!(source.contains(&dependencies), "{} dependencies", issue.id);
     }
 }
+
+#[test]
+fn maintained_issue_headers_have_valid_status_and_dependencies() {
+    let issue_dir = repository_root().join("issues");
+    let mut issues = std::collections::BTreeMap::new();
+    for path in fs::read_dir(&issue_dir)
+        .expect("issues directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("adoc"))
+    {
+        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some((id, _)) = file_name.split_once('-') else {
+            continue;
+        };
+        if id.parse::<u16>().is_ok_and(|id| id >= 52) {
+            let id = id.to_owned();
+            assert!(
+                issues.insert(id.clone(), path).is_none(),
+                "duplicate issue {id}"
+            );
+        }
+    }
+    for (id, path) in &issues {
+        let source = fs::read_to_string(path).expect("issue source");
+        let status = source
+            .lines()
+            .find_map(|line| line.strip_prefix(":status: "))
+            .unwrap_or_else(|| panic!("issue {id} has no status"));
+        assert!(
+            matches!(status, "planned" | "in-progress" | "completed"),
+            "issue {id} has invalid status {status}"
+        );
+        let dependencies = source
+            .lines()
+            .find_map(|line| line.strip_prefix(":depends-on:"))
+            .unwrap_or_else(|| panic!("issue {id} has no dependencies"));
+        for dependency in dependencies
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            assert!(
+                issue_dir
+                    .read_dir()
+                    .expect("issues directory")
+                    .filter_map(Result::ok)
+                    .any(|entry| entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(&format!("{dependency}-"))),
+                "issue {id} depends on missing issue {dependency}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contract_tables_are_not_nested_or_unclosed() {
+    for path in [
+        "docs/current-contract.adoc",
+        "docs/syntax-support.adoc",
+        "docs/compatibility.adoc",
+        "docs/substitutions.adoc",
+        "docs/html-contract.adoc",
+    ] {
+        let source = fs::read_to_string(repository_root().join(path)).expect("contract document");
+        let mut open = false;
+        let mut previous_nonempty = "";
+        for (line, text) in source.lines().enumerate() {
+            if text.trim() != "|===" {
+                if !text.trim().is_empty() {
+                    previous_nonempty = text.trim();
+                }
+                continue;
+            }
+            let starts_table = previous_nonempty.starts_with("[cols=")
+                || previous_nonempty.starts_with("[options=");
+            if starts_table {
+                assert!(!open, "{path}: nested table at line {}", line + 1);
+                open = true;
+            } else {
+                assert!(open, "{path}: stray table close at line {}", line + 1);
+                open = false;
+            }
+            previous_nonempty = text.trim();
+        }
+        assert!(!open, "{path}: unclosed table");
+    }
+}
+
+#[test]
+fn wasm_documentation_uses_the_release_manifest_version() {
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(repository_root().join("release-manifest.json"))
+            .expect("release manifest"),
+    )
+    .expect("valid release manifest");
+    let version = manifest["contracts"]["wasmApi"]
+        .as_u64()
+        .expect("WASM API version");
+    let documentation =
+        fs::read_to_string(repository_root().join("docs/wasm-worker.adoc")).expect("WASM docs");
+    assert!(
+        documentation.contains(&format!("`WASM_API_VERSION`は{version}")),
+        "WASM version prose"
+    );
+    assert!(
+        documentation.contains(&format!("\"apiVersion\": {version}")),
+        "WASM request example"
+    );
+    assert!(
+        documentation.contains(&format!("expected {version}")),
+        "WASM error example"
+    );
+}

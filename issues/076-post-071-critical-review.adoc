@@ -1,0 +1,33 @@
+= Issue 001から071の批判的レビューと即時是正
+:status: completed
+:depends-on: 071
+
+== 目的
+
+Issue 001から071で成立した機能を、行数ではなく資源増幅、状態の正本、座標系、木構造走査、
+ホスト境界および文書契約の重複という観点で再監査する。後方互換性は要求せず、実害のある問題は
+将来Issueへ先送りしない。
+
+== 作業
+
+* core、CLI／LSP／WASM host、文書契約を横断して変更拡散点を調べる。
+* security、resource lifecycleおよび入力比例memoryの重大な問題を即時修正する。
+* 一度に安全に変更できない構造問題を、単なるfile分割ではなく不変条件単位の子Issueへ分解する。
+* 対応表、互換性文書、ロードマップおよび公開API例の矛盾を同期する。
+
+== 完了条件
+
+重大な境界違反と資源増幅に回帰testがあり、残る構造問題が依存関係付きIssueとして追跡され、
+`cargo make release-gate`が通過する。
+
+== 実装結果
+
+LSP workspace resourceをdisk正本とopen-buffer overlayへ分けた。watch通知にもcanonical root、`.adoc`、
+regular fileおよび実読込byte上限を適用し、任意file URIの読込を拒否する。close時はdisk正本へ戻して
+依存rootを再解析し、再open時のLSP versionを以前のopen期間と比較しない。
+
+inline scannerの8 byteまたは16 byte幅になり得る`Option<usize>`索引を、欠落sentinel付き`u32`索引へ
+置換した。線形時間を維持しながら、永続delimiter索引を入力1 byte当たり12 byteに固定した。
+
+残る変更はIssue 077から081へ分解した。
+

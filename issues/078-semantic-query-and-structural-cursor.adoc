@@ -1,0 +1,21 @@
+= Semantic queryと構造cursorの一本化
+:status: planned
+:depends-on: 076
+
+== 目的
+
+`Analysis`がAST中のreference、macroおよびresourceを深く複製する構成と、walker、lowering、diagnostic、
+projection間に重複する再帰規則を廃止する。
+
+== 作業
+
+* 重いsemantic値の正本をASTだけにし、公開索引をiterator queryまたはnode handleへ置換する。
+* child blockとinline sequenceを列挙する構造cursorをsemantic model側で一度だけ定義する。
+* walker、attribute lowering、syntax diagnostic、searchおよびprojectionを同じcursorへ移行する。
+* nested compound、list continuationおよび将来のAsciiDoc table cellで到達集合が一致するpropertyを追加する。
+
+== 完了条件
+
+semantic値の深い複製索引がなく、新しいblock variant追加時に木の再帰規則を複数consumerへ追加する
+必要がない。nativeとWASMのconformanceが一致する。
+

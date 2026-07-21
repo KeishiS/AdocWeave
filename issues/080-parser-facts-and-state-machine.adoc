@@ -1,0 +1,20 @@
+= 構文factとblock parser状態機械
+:status: planned
+:depends-on: 078
+
+== 目的
+
+最終semantic ASTが診断専用の`*_problems`状態を保持する構成と、`parse_shared_cancellable`の巨大な
+優先順位付き分岐を、構文factと型付きblock認識結果へ再構成する。
+
+== 作業
+
+* recognizerがlossless syntax、raw semantic factおよびsyntax issueを同時に生成する。
+* semantic ASTから診断専用状態を除き、doctype依存判断をsemantic diagnosticへ分ける。
+* `BlockCursor`と`BlockRecognition`でcursor前進、budget消費、pending metadataおよびcommitを型付けする。
+* branch table、必ず前進するproperty、lossless再構築およびstrict／permissive差分を固定する。
+
+== 完了条件
+
+block branchごとのcommit処理が重複せず、最終ASTが構文回復の一時状態を公開しない。
+

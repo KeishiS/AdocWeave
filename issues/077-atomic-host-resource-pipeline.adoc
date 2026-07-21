@@ -1,0 +1,23 @@
+= 原子的なhost resource pipeline
+:status: planned
+:depends-on: 076
+
+== 目的
+
+CLIとLSPに重複するlocal resource探索、path検証、上限、revisionおよびsnapshot構築を、コアの
+I/O非依存性を保った共有host層へ統合する。LSPの直接解析とinclude展開解析を一つの原子的な
+document computationとして採用する。
+
+== 作業
+
+* `LocalResourcePolicy`、bounded reader、resource store、revisionおよびsnapshot builderを共有する。
+* open buffer、disk generationおよびLSP versionを型で区別する。
+* workspace generationを解析jobへ含め、root revisionと同時にstale判定する。
+* LSP機能を単一`DocumentView`から問い合わせ、機能ごとの直接／展開解析合成を廃止する。
+* CLIの診断、symbolおよびsource origin出力も同じprojected productsから生成する。
+
+== 完了条件
+
+CLIとLSPにpath安全性、byte課金、依存graphおよびsnapshot構築の重複実装がなく、解析結果が
+root revisionとworkspace generationの組として原子的に採用される。
+

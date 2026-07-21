@@ -20,10 +20,29 @@
 
 == 規範文書
 
-構文と回復規則はxref:grammar.adoc[規範文法]、置換順序は
-xref:substitutions.adoc[置換モデル]、出力はxref:html-contract.adoc[HTML契約]、
-公開APIと再構築条件はxref:core-profile.adoc[Core Profile]、include前処理は
-xref:preprocessor.adoc[プリプロセッサとresource snapshot]を正本とする。
+言語と出力の正本は次である。
+
+* 構文と回復規則：xref:grammar.adoc[規範文法]
+* 置換順序とcontext：xref:substitutions.adoc[置換モデル]
+* HTML出力：xref:html-contract.adoc[HTML契約]
+* 公開APIと再構築条件：xref:core-profile.adoc[Core Profile]
+* include前処理とsource map：xref:preprocessor.adoc[プリプロセッサとresource snapshot]
+
+公開projectionと実行境界の正本は次である。
+
+* 診断とfix：xref:diagnostics.adoc[診断契約]
+* Formatter：xref:formatting.adoc[Formatting契約]
+* 参照、検索およびresource projection：xref:projections.adoc[Projection契約]
+* cross reference解決：xref:reference-resolution.adoc[参照解決契約]
+* ホスト実行とcache：xref:server-execution.adoc[サーバ実行契約]
+* ホスト拡張：xref:extensions.adoc[拡張境界]
+* Language Server：xref:language-server.adoc[Language Server設計]
+* WASM adapter：xref:wasm-worker.adoc[WASM API]
+* 検証gate：xref:testing.adoc[品質保証]
+
+xref:syntax-support.adoc[対応構文]とxref:compatibility.adoc[互換性評価]は規範文書から導出する
+現行対応表である。実装済みと記載する項目は上記正本とfixtureに一致しなければならない。
+機械可読catalogへの統合はxref:../issues/081-contract-and-issue-governance.adoc[Issue 081]で行う。
 
 == 文書の分類
 

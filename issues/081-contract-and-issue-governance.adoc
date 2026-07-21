@@ -1,0 +1,22 @@
+= 契約文書とIssueの機械的governance
+:status: planned
+:depends-on: 076
+
+== 目的
+
+規範文書、対応表、互換性表、roadmapおよびIssue statusの重複正本を減らし、表破損、version例の陳腐化、
+実装状態の矛盾をrelease gateで検出する。
+
+== 作業
+
+* 規範契約のcatalogをmachine-readableな一つのmanifestへ集約する。
+* 全IssueのID、status、依存DAGおよび完了結果を一つの検査へ移行する。
+* 対応表は現行事実、roadmapは未実装計画、Issueは履歴という役割を強制する。
+* AsciiDoc table delimiter、xref、契約versionおよびWASM schema例をfixtureから検査する。
+* parserが正しく診断できる規範文書は段階的に診断ゼロcorpusへ追加する。
+
+== 完了条件
+
+全Issueと規範契約が一つのgateで検査され、壊れたtable、古い公開version例およびstatus／依存矛盾を
+意図的な失敗testで確認できる。
+
