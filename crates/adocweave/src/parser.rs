@@ -1109,13 +1109,11 @@ fn parse_explicit_anchor(
         .and_then(|value| value.strip_suffix("]]"))
     {
         (inner, 2)
-    } else if let Some(inner) = content
-        .strip_prefix("[#")
-        .and_then(|value| value.strip_suffix(']'))
-    {
-        (inner, 2)
     } else {
-        return None;
+        let inner = content
+            .strip_prefix("[#")
+            .and_then(|value| value.strip_suffix(']'))?;
+        (inner, 2)
     };
     let (id, label) = inner
         .split_once(',')
