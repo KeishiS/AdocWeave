@@ -6,7 +6,11 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use adocweave::preprocessor::{PreprocessedAnalysis, ProjectionLimits};
+use adocweave::source::{PositionEncoding, SourceDocument};
 use adocweave::{CheckOutput, Operation, process, process_check};
+
+mod local_include;
 
 const HELP: &str = "\
 AdocWeave command-line interface
@@ -27,6 +31,9 @@ Arguments:
 Options:
   --json      Emit check diagnostics as JSON
   --check     Check formatting without writing formatted text
+  --include   Enable bounded local include processing
+  --base-dir DIR    Resolve root document includes from DIR
+  --allow-root DIR  Permit include resources below DIR; repeatable
   -V, --version  Print version
   -h, --help  Print help
 ";
@@ -40,6 +47,7 @@ enum CliError {
     },
     Write(io::Error),
     Process(adocweave::ProcessError),
+    Include(local_include::LocalIncludeError),
     FormattingRequired,
 }
 
@@ -53,6 +61,7 @@ impl fmt::Display for CliError {
             } => write!(formatter, "could not read {source_name}: {source}"),
             Self::Write(source) => write!(formatter, "could not write output: {source}"),
             Self::Process(source) => source.fmt(formatter),
+            Self::Include(source) => source.fmt(formatter),
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
         }
     }
@@ -63,6 +72,7 @@ impl Error for CliError {
         match self {
             Self::Read { source, .. } | Self::Write(source) => Some(source),
             Self::Process(source) => Some(source),
+            Self::Include(source) => Some(source),
             Self::Usage(_) | Self::FormattingRequired => None,
         }
     }
@@ -73,6 +83,9 @@ struct Arguments {
     input: Option<PathBuf>,
     json: bool,
     format_check: bool,
+    include: bool,
+    base_dir: Option<PathBuf>,
+    allowed_roots: Vec<PathBuf>,
 }
 
 enum Action {
@@ -105,11 +118,27 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut stdin_selected = false;
     let mut json = false;
     let mut format_check = false;
-    for argument in arguments {
+    let mut include = false;
+    let mut base_dir = None;
+    let mut allowed_roots = Vec::new();
+    while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
             "--json" if operation == Operation::Check => json = true,
             "--check" if operation == Operation::Format => format_check = true,
+            "--include" => include = true,
+            "--base-dir" => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--base-dir requires a directory".to_owned()))?;
+                base_dir = Some(PathBuf::from(value));
+            }
+            "--allow-root" => {
+                let value = arguments.next().ok_or_else(|| {
+                    CliError::Usage("--allow-root requires a directory".to_owned())
+                })?;
+                allowed_roots.push(PathBuf::from(value));
+            }
             "-" if input.is_none() && !stdin_selected => stdin_selected = true,
             _ if input.is_none() && !stdin_selected => input = Some(PathBuf::from(argument)),
             _ => {
@@ -119,12 +148,20 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             }
         }
     }
+    if !include && (base_dir.is_some() || !allowed_roots.is_empty()) {
+        return Err(CliError::Usage(
+            "--base-dir and --allow-root require --include".to_owned(),
+        ));
+    }
 
     Ok(Action::Run(Arguments {
         operation,
         input,
         json,
         format_check,
+        include,
+        base_dir,
+        allowed_roots,
     }))
 }
 
@@ -158,16 +195,68 @@ fn run() -> Result<(), CliError> {
             Ok(())
         }
         Action::Run(arguments) => {
+            let input_path = arguments.input.clone();
             let input = read_input(arguments.input)?;
-            let output = if arguments.operation == Operation::Check {
+            let mut prepared = None;
+            let processed = if arguments.include {
+                let source = std::str::from_utf8(&input).map_err(|error| {
+                    CliError::Process(adocweave::ProcessError::InvalidUtf8 {
+                        valid_up_to: error.valid_up_to(),
+                    })
+                })?;
+                let base_dir = match arguments.base_dir {
+                    Some(base_dir) => base_dir,
+                    None => input_path
+                        .as_deref()
+                        .and_then(std::path::Path::parent)
+                        .filter(|path| !path.as_os_str().is_empty())
+                        .map(PathBuf::from)
+                        .ok_or_else(|| {
+                            CliError::Usage(
+                                "--include with standard input requires --base-dir".to_owned(),
+                            )
+                        })?,
+                };
+                let source_id = input_path.as_ref().map_or_else(
+                    || "<stdin>".to_owned(),
+                    |path| {
+                        path.canonicalize()
+                            .unwrap_or_else(|_| path.clone())
+                            .to_string_lossy()
+                            .into_owned()
+                    },
+                );
+                let include_input = local_include::prepare(
+                    source,
+                    Some(source_id),
+                    &base_dir,
+                    &arguments.allowed_roots,
+                )
+                .map_err(CliError::Include)?;
+                let processed = if arguments.operation == Operation::Format {
+                    input.clone()
+                } else {
+                    include_input.document.source.as_bytes().to_vec()
+                };
+                prepared = Some(include_input);
+                processed
+            } else {
+                input.clone()
+            };
+            let output = if arguments.operation == Operation::Check
+                && let Some(prepared) = prepared.as_ref()
+            {
+                check_preprocessed(prepared, arguments.json).map_err(CliError::Include)
+            } else if arguments.operation == Operation::Check {
                 process_check(
-                    &input,
+                    &processed,
                     if arguments.json {
                         CheckOutput::Json
                     } else {
                         CheckOutput::Human
                     },
                 )
+                .map_err(CliError::Process)
             } else if arguments.operation == Operation::Format && arguments.format_check {
                 let source = std::str::from_utf8(&input).map_err(|error| {
                     CliError::Process(adocweave::ProcessError::InvalidUtf8 {
@@ -180,14 +269,83 @@ fn run() -> Result<(), CliError> {
                 }
                 Ok(String::new())
             } else {
-                process(arguments.operation, &input)
-            }
-            .map_err(CliError::Process)?;
+                process(arguments.operation, &processed).map_err(CliError::Process)
+            }?;
             io::stdout()
                 .write_all(output.as_bytes())
                 .map_err(CliError::Write)
         }
     }
+}
+
+fn check_preprocessed(
+    prepared: &local_include::PreparedInput,
+    json: bool,
+) -> Result<String, local_include::LocalIncludeError> {
+    let engine = adocweave::Engine::new(adocweave::ParseOptions::default());
+    let analysis = engine
+        .analyze(&prepared.document.source)
+        .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
+    let projected = PreprocessedAnalysis {
+        document: prepared.document.clone(),
+        analysis,
+    }
+    .project_origins(ProjectionLimits::default())
+    .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
+    if json {
+        let values = projected
+            .diagnostics
+            .iter()
+            .flat_map(|diagnostic| {
+                diagnostic.origins.iter().map(move |origin| {
+                    serde_json::json!({
+                        "id": diagnostic.diagnostic.id.as_str(),
+                        "code": diagnostic.diagnostic.code.as_str(),
+                        "severity": diagnostic.diagnostic.severity.as_str(),
+                        "message": diagnostic.diagnostic.message,
+                        "sourceId": origin.source_id.as_ref().map(adocweave::SourceId::as_str),
+                        "range": {
+                            "start": origin.range.start().to_u32(),
+                            "end": origin.range.end().to_u32()
+                        }
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        return serde_json::to_string(&values)
+            .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()));
+    }
+
+    let mut output = String::new();
+    for diagnostic in &projected.diagnostics {
+        for origin in &diagnostic.origins {
+            let source_id = origin
+                .source_id
+                .as_ref()
+                .map_or("<unknown>", adocweave::SourceId::as_str);
+            let source = prepared.sources.get(source_id).ok_or_else(|| {
+                local_include::LocalIncludeError::MissingSource(source_id.to_owned())
+            })?;
+            let index =
+                SourceDocument::new(source).map_err(local_include::LocalIncludeError::Position)?;
+            let position = index
+                .offset_to_position(origin.range.start(), PositionEncoding::Utf8)
+                .map_err(local_include::LocalIncludeError::Position)?;
+            use std::fmt::Write as _;
+            writeln!(
+                output,
+                "{}:{}:{}: {}[{}]: {}",
+                source_id,
+                position.line + 1,
+                position.character + 1,
+                diagnostic.diagnostic.severity.as_str(),
+                diagnostic.diagnostic.code.as_str(),
+                diagnostic.diagnostic.message,
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
+    Ok(output)
 }
 
 fn main() -> ExitCode {
@@ -273,5 +431,29 @@ mod tests {
             panic!("expected run action");
         };
         assert!(parsed.format_check);
+    }
+
+    #[test]
+    fn include_options_are_explicit_and_repeatable() {
+        let Action::Run(parsed) = parse_arguments(arguments(&[
+            "convert",
+            "--include",
+            "--base-dir",
+            "docs",
+            "--allow-root",
+            ".",
+            "--allow-root",
+            "vendor",
+            "manual.adoc",
+        ]))
+        .expect("valid arguments") else {
+            panic!("expected run action");
+        };
+        assert!(parsed.include);
+        assert_eq!(
+            parsed.base_dir.as_deref(),
+            Some(std::path::Path::new("docs"))
+        );
+        assert_eq!(parsed.allowed_roots.len(), 2);
     }
 }

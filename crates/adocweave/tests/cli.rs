@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn adocweave() -> Command {
     Command::new(env!("CARGO_BIN_EXE_adocweave"))
@@ -183,4 +184,138 @@ fn core_profile_fixture_is_shared_by_cli_conversion_and_symbols() {
     assert!(converted.stderr.is_empty());
     assert!(symbols.status.success());
     assert!(String::from_utf8_lossy(&symbols.stdout).contains("統合文書"));
+}
+
+#[test]
+fn local_includes_require_an_explicit_option_and_are_deterministic() {
+    let root = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/includes/root.adoc"
+    );
+    let expected = include_bytes!("../../../fixtures/includes/root.html");
+
+    let disabled = adocweave()
+        .args(["convert", root])
+        .output()
+        .expect("disabled conversion");
+    assert!(disabled.status.success());
+    assert!(
+        !disabled
+            .stdout
+            .windows("After.".len())
+            .any(|value| value == b"After.")
+    );
+
+    let first = adocweave()
+        .args(["convert", "--include", root])
+        .output()
+        .expect("included conversion");
+    let second = adocweave()
+        .args(["convert", "--include", root])
+        .output()
+        .expect("repeated conversion");
+    let symbols = adocweave()
+        .args(["symbols", "--include", root])
+        .output()
+        .expect("included symbols");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(first.stdout, expected);
+    assert_eq!(second.stdout, first.stdout);
+    assert!(String::from_utf8_lossy(&symbols.stdout).contains("Included section"));
+}
+
+#[test]
+fn stdin_include_requires_a_base_and_rejects_traversal() {
+    let missing_base = run_with_stdin(&["convert", "--include", "-"], b"text\n");
+    assert!(!missing_base.status.success());
+    assert!(String::from_utf8_lossy(&missing_base.stderr).contains("requires --base-dir"));
+
+    let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/includes");
+    let traversal = run_with_stdin(
+        &["convert", "--include", "--base-dir", base, "-"],
+        b"include::../plain/basic.adoc[]\n",
+    );
+    assert!(!traversal.status.success());
+    assert!(String::from_utf8_lossy(&traversal.stderr).contains("unsafe include target"));
+
+    let missing = run_with_stdin(
+        &["format", "--include", "--base-dir", base, "-"],
+        b"include::missing.adoc[]\n",
+    );
+    assert!(
+        !missing.status.success(),
+        "format validates the include tree"
+    );
+}
+
+#[test]
+fn include_check_projects_diagnostics_to_the_resource_file() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-cli-{unique}"));
+    std::fs::create_dir_all(&root).expect("directory");
+    let document = root.join("root.adoc");
+    let part = root.join("part.adoc");
+    std::fs::write(&document, "include::part.adoc[]\n").expect("root source");
+    std::fs::write(&part, "bad \n").expect("part source");
+
+    let human = adocweave()
+        .args(["check", "--include", document.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("human check");
+    let json = adocweave()
+        .args([
+            "check",
+            "--include",
+            "--json",
+            document.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("JSON check");
+    assert!(human.status.success());
+    assert!(String::from_utf8_lossy(&human.stdout).contains(&format!(
+        "{}:1:4: warning[trailing-whitespace]",
+        part.display()
+    )));
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("JSON diagnostics");
+    assert_eq!(value[0]["sourceId"], part.to_string_lossy().as_ref());
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn include_provider_rejects_a_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-cli-root-{unique}"));
+    let outside = std::env::temp_dir().join(format!("adocweave-cli-outside-{unique}.adoc"));
+    std::fs::create_dir_all(&root).expect("directory");
+    std::fs::write(&outside, "outside\n").expect("outside source");
+    std::fs::write(root.join("root.adoc"), "include::escape.adoc[]\n").expect("root source");
+    symlink(&outside, root.join("escape.adoc")).expect("symlink");
+
+    let output = adocweave()
+        .args([
+            "convert",
+            "--include",
+            root.join("root.adoc").to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("conversion");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("outside allowed roots"));
+
+    std::fs::remove_dir_all(root).expect("cleanup root");
+    std::fs::remove_file(outside).expect("cleanup outside");
 }

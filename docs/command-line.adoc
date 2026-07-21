@@ -1,0 +1,41 @@
+= Command Line Interface
+
+== 通常動作
+
+`convert`、`check`、`format`および`symbols`はfileまたは標準入力を受け取る。既定では入力file以外を
+読み込まず、`include::`を展開しない。
+
+[source,console]
+----
+adocweave convert manual.adoc
+adocweave check --json manual.adoc
+adocweave format --check manual.adoc
+----
+
+== local include
+
+local includeは`--include`を指定した場合だけ有効になる。
+
+[source,console]
+----
+adocweave convert --include docs/manual.adoc
+adocweave check --include docs/manual.adoc
+----
+
+file入力では、`--base-dir`を省略するとroot文書の親directoryを基準にする。標準入力は位置を持たない
+ため、`--include`と同時に`--base-dir DIR`が必須である。`--allow-root DIR`は複数指定でき、省略時は
+base directoryだけを許可する。
+
+[source,console]
+----
+adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
+----
+
+targetはbase directoryからの相対pathに限定する。絶対path、`..`、scheme付きtarget、制御文字および
+許可root外へ解決されるsymlinkを拒否する。個別resourceは10 MiB、resource tree全体は50 MiB、file数は
+10,000件を上限とする。循環、include深さ、展開nodeおよび展開後byte数にはコアpreprocessorの上限も
+適用する。network resourceは取得しない。
+
+`convert`、`check`および`symbols`は同じ展開snapshotを使用する。`check`の診断は元resourceのpath、行、
+columnへ投影する。`format`はinclude treeを安全性検査するが、展開結果をroot fileへ書き戻さずroot入力
+だけを整形する。

@@ -1,0 +1,5 @@
+= Included manual
+
+Before.
+
+include::parts/section.adoc[]
