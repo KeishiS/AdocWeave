@@ -503,8 +503,8 @@ struct InlineScanner {
 
 impl InlineScanner {
     fn new(value: &str) -> Self {
-        let (mut candidates, mut preparsed_markers) = preparsed_candidates(value);
-        let mut inspected_positions: usize = 0;
+        let (mut candidates, mut preparsed_markers, mut inspected_positions) =
+            preparsed_candidates(value);
         let unconstrained_pairs = index_unconstrained_pairs(value, &mut inspected_positions);
         for (open, marker) in value.char_indices() {
             inspected_positions += 1;
@@ -600,11 +600,41 @@ impl InlineScanner {
     }
 }
 
-fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>) {
+fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>, usize) {
     let mut candidates = Vec::new();
     let mut markers = vec![false; value.len() + 1];
+    let mut next_plus = [
+        vec![None; value.len() + 1],
+        vec![None; value.len() + 1],
+        vec![None; value.len() + 1],
+    ];
+    let mut next_double_quote = vec![None; value.len() + 1];
+    let mut next_single_quote = vec![None; value.len() + 1];
+    let mut plus = [None; 3];
+    let mut double_quote = None;
+    let mut single_quote = None;
+    let bytes = value.as_bytes();
+    let mut inspected_positions = 0;
+    for offset in (0..value.len()).rev() {
+        inspected_positions += 1;
+        for width in 1..=3 {
+            if bytes[offset..].starts_with(&[b'+'; 3][..width]) {
+                plus[width - 1] = Some(offset);
+            }
+            next_plus[width - 1][offset] = plus[width - 1];
+        }
+        if bytes[offset..].starts_with(b"`\"") {
+            double_quote = Some(offset);
+        }
+        if bytes[offset..].starts_with(b"`'") {
+            single_quote = Some(offset);
+        }
+        next_double_quote[offset] = double_quote;
+        next_single_quote[offset] = single_quote;
+    }
     let mut cursor = 0;
     while cursor + 1 < value.len() {
+        inspected_positions += 1;
         let quote = value[cursor..].chars().next().expect("cursor is in range");
         if quote == '+' {
             let run = value.as_bytes()[cursor..]
@@ -613,10 +643,8 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>) {
                 .count()
                 .min(3);
             if run > 0 && (run > 1 || is_open_boundary(value, cursor, '+')) {
-                let delimiter = &value[cursor..cursor + run];
                 let content_start = cursor + run;
-                if let Some(relative_close) = value[content_start..].find(delimiter) {
-                    let content_end = content_start + relative_close;
+                if let Some(content_end) = next_plus[run - 1][content_start] {
                     if content_end > content_start {
                         let end = content_end + run;
                         for marker in markers.iter_mut().skip(cursor).take(run) {
@@ -642,13 +670,16 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>) {
             cursor += quote.len_utf8();
             continue;
         }
-        let close_pattern = if quote == '"' { "`\"" } else { "`'" };
         let content_start = cursor + 2;
-        let Some(relative_close) = value[content_start..].find(close_pattern) else {
+        let close = if quote == '"' {
+            next_double_quote[content_start]
+        } else {
+            next_single_quote[content_start]
+        };
+        let Some(content_end) = close else {
             cursor = content_start;
             continue;
         };
-        let content_end = content_start + relative_close;
         let end = content_end + 2;
         markers[cursor] = true;
         markers[cursor + 1] = true;
@@ -663,7 +694,7 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>) {
         });
         cursor = end;
     }
-    (candidates, markers)
+    (candidates, markers, inspected_positions)
 }
 
 struct DelimiterIndex {
@@ -1726,7 +1757,7 @@ mod tests {
 
     #[test]
     fn scanner_has_a_fixed_linear_inspection_budget() {
-        assert_eq!(InlineScanner::new("abc").inspected_positions(), 12);
+        assert_eq!(InlineScanner::new("abc").inspected_positions(), 17);
 
         let source = "日本語 *open xref:broken[ https://example.org[label] _tail";
         let scanner = InlineScanner::new(source);
@@ -1744,6 +1775,14 @@ mod tests {
                 InlineParseConfig::default(),
             );
             assert!(output.problems.len() <= 1);
+        }
+        for repetitions in 1..128 {
+            let hostile = "\"`x ".repeat(repetitions);
+            let scanner = InlineScanner::new(&hostile);
+            assert!(
+                scanner.inspected_positions() <= hostile.len() * 8,
+                "preparsed quote indexing must remain linear"
+            );
         }
     }
 

@@ -116,72 +116,30 @@ pub fn render_with_resolutions(
             .iter()
             .find(|anchor| anchor.valid && anchor.target_range == Some(block.range()))
             .map(|anchor| anchor.id.as_str());
-        match block {
-            AstBlock::Heading(heading) => {
-                let id = &heading_ids[heading_index].id;
-                heading_index += 1;
-                render_heading(&mut fragment, heading, id, policy, &mut inline_context);
-                if heading.kind == HeadingKind::DocumentTitle && policy.render_document_title {
-                    render_header_metadata(&mut fragment, document.header());
-                }
-            }
-            AstBlock::Paragraph(paragraph) => {
-                render_paragraph(&mut fragment, paragraph, explicit_id, &mut inline_context)
-            }
-            AstBlock::LiteralParagraph(paragraph) => {
-                fragment.push_str("<pre");
-                render_optional_id(&mut fragment, explicit_id);
-                fragment.push('>');
-                escape_html_into(&mut fragment, &paragraph.value);
-                fragment.push_str("</pre>\n");
-            }
-            AstBlock::Break(block) => render_break(&mut fragment, block.kind, explicit_id),
-            AstBlock::Literal(literal) => {
-                fragment.push_str("<pre");
-                render_optional_id(&mut fragment, explicit_id);
-                fragment.push('>');
-                escape_html_into(&mut fragment, &literal.value);
-                fragment.push_str("</pre>\n");
-            }
-            AstBlock::Source(source) => {
-                fragment.push_str("<pre");
-                render_optional_id(&mut fragment, explicit_id);
-                fragment.push_str("><code");
-                if let Some(language) = &source.language {
-                    fragment.push_str(" class=\"language-");
-                    escape_html_into(&mut fragment, &safe_language_class(language));
-                    fragment.push('"');
-                }
-                fragment.push('>');
-                escape_html_into(&mut fragment, &source.value);
-                fragment.push_str("</code></pre>\n");
-            }
-            AstBlock::List(list) => render_list(
-                &mut fragment,
-                list,
-                explicit_id,
-                policy,
-                &mut inline_context,
-            ),
-            AstBlock::Math(math) => {
-                fragment.push_str("<pre");
-                render_optional_id(&mut fragment, explicit_id);
-                fragment.push_str(" class=\"");
-                fragment.push_str(math_class(math.language));
-                fragment.push_str("\"><code>");
-                escape_html_into(&mut fragment, &math.value);
-                fragment.push_str("</code></pre>\n");
-            }
-            AstBlock::Delimited(block) => render_delimited(
-                &mut fragment,
-                block,
-                explicit_id,
-                policy,
-                &mut inline_context,
-            ),
-            AstBlock::Unsupported(unsupported) => {
-                render_unsupported(&mut fragment, unsupported, explicit_id)
-            }
+        let heading_id = if matches!(block, AstBlock::Heading(_)) {
+            let id = heading_ids[heading_index].id.as_str();
+            heading_index += 1;
+            Some(id)
+        } else {
+            None
+        };
+        render_block(
+            &mut fragment,
+            block,
+            explicit_id,
+            heading_id,
+            policy,
+            &mut inline_context,
+        );
+        if matches!(
+            block,
+            AstBlock::Heading(Heading {
+                kind: HeadingKind::DocumentTitle,
+                ..
+            })
+        ) && policy.render_document_title
+        {
+            render_header_metadata(&mut fragment, document.header());
         }
     }
 
@@ -230,6 +188,86 @@ fn render_header_metadata(output: &mut String, header: &crate::parser::DocumentH
     }
 }
 
+fn render_block(
+    output: &mut String,
+    block: &AstBlock,
+    explicit_id: Option<&str>,
+    heading_id: Option<&str>,
+    policy: &RenderPolicy,
+    context: &mut InlineRenderContext<'_>,
+) {
+    match block {
+        AstBlock::Heading(heading) => {
+            let generated;
+            let id = if let Some(id) = heading_id {
+                id
+            } else {
+                generated = crate::document::heading_id_base(&heading.text);
+                &generated
+            };
+            render_heading(output, heading, id, policy, context);
+        }
+        AstBlock::Paragraph(paragraph) => {
+            render_paragraph(output, paragraph, explicit_id, context);
+        }
+        AstBlock::LiteralParagraph(paragraph) => {
+            render_preformatted(output, explicit_id, None, &paragraph.value);
+        }
+        AstBlock::Break(block) => render_break(output, block.kind, explicit_id),
+        AstBlock::Literal(block) => render_preformatted(output, explicit_id, None, &block.value),
+        AstBlock::Source(block) => {
+            output.push_str("<pre");
+            render_optional_id(output, explicit_id);
+            output.push_str("><code");
+            if let Some(language) = &block.language {
+                output.push_str(" class=\"language-");
+                escape_html_into(output, &safe_language_class(language));
+                output.push('"');
+            }
+            output.push('>');
+            escape_html_into(output, &block.value);
+            output.push_str("</code></pre>\n");
+        }
+        AstBlock::List(list) => render_list(output, list, explicit_id, policy, context),
+        AstBlock::Math(block) => {
+            render_preformatted(
+                output,
+                explicit_id,
+                Some(math_class(block.language)),
+                &block.value,
+            );
+        }
+        AstBlock::Delimited(block) => {
+            render_delimited(output, block, explicit_id, policy, context);
+        }
+        AstBlock::Unsupported(block) => render_unsupported(output, block, explicit_id),
+    }
+}
+
+fn render_preformatted(
+    output: &mut String,
+    explicit_id: Option<&str>,
+    class: Option<&str>,
+    value: &str,
+) {
+    output.push_str("<pre");
+    render_optional_id(output, explicit_id);
+    if let Some(class) = class {
+        output.push_str(" class=\"");
+        escape_html_into(output, class);
+        output.push('"');
+    }
+    output.push('>');
+    if class.is_some() {
+        output.push_str("<code>");
+    }
+    escape_html_into(output, value);
+    if class.is_some() {
+        output.push_str("</code>");
+    }
+    output.push_str("</pre>\n");
+}
+
 fn render_delimited(
     output: &mut String,
     block: &crate::parser::DelimitedBlock,
@@ -257,43 +295,7 @@ fn render_delimited(
         }
         crate::parser::DelimitedContent::Compound(children) => {
             for child in children {
-                match child {
-                    AstBlock::Heading(heading) => {
-                        let id = crate::document::heading_id_base(&heading.text);
-                        render_heading(output, heading, &id, policy, context);
-                    }
-                    AstBlock::Paragraph(paragraph) => {
-                        render_paragraph(output, paragraph, None, context);
-                    }
-                    AstBlock::LiteralParagraph(paragraph) => {
-                        output.push_str("<pre>");
-                        escape_html_into(output, &paragraph.value);
-                        output.push_str("</pre>\n");
-                    }
-                    AstBlock::Break(block) => render_break(output, block.kind, None),
-                    AstBlock::Literal(literal) => {
-                        output.push_str("<pre>");
-                        escape_html_into(output, &literal.value);
-                        output.push_str("</pre>\n");
-                    }
-                    AstBlock::Source(source) => {
-                        output.push_str("<pre><code>");
-                        escape_html_into(output, &source.value);
-                        output.push_str("</code></pre>\n");
-                    }
-                    AstBlock::List(list) => render_list(output, list, None, policy, context),
-                    AstBlock::Math(math) => {
-                        output.push_str("<pre><code>");
-                        escape_html_into(output, &math.value);
-                        output.push_str("</code></pre>\n");
-                    }
-                    AstBlock::Delimited(child) => {
-                        render_delimited(output, child, None, policy, context);
-                    }
-                    AstBlock::Unsupported(unsupported) => {
-                        render_unsupported(output, unsupported, None);
-                    }
-                }
+                render_block(output, child, None, None, policy, context);
             }
         }
     }
@@ -359,45 +361,10 @@ fn render_list(
             render_list(output, child, None, policy, context);
         }
         for continuation in &item.continuations {
-            match continuation {
-                AstBlock::Literal(block) => {
-                    output.push_str("\n<pre>");
-                    escape_html_into(output, &block.value);
-                    output.push_str("</pre>");
-                }
-                AstBlock::Source(block) => {
-                    output.push_str("\n<pre><code");
-                    if let Some(language) = &block.language {
-                        output.push_str(" class=\"language-");
-                        escape_html_into(output, &safe_language_class(language));
-                        output.push('"');
-                    }
-                    output.push('>');
-                    escape_html_into(output, &block.value);
-                    output.push_str("</code></pre>");
-                }
-                AstBlock::Paragraph(block) => render_paragraph(output, block, None, context),
-                AstBlock::LiteralParagraph(block) => {
-                    output.push_str("\n<pre>");
-                    escape_html_into(output, &block.value);
-                    output.push_str("</pre>");
-                }
-                AstBlock::Break(block) => render_break(output, block.kind, None),
-                AstBlock::List(block) => render_list(output, block, None, policy, context),
-                AstBlock::Delimited(block) => {
-                    render_delimited(output, block, None, policy, context);
-                }
-                AstBlock::Math(block) => {
-                    output.push_str("\n<pre><code>");
-                    escape_html_into(output, &block.value);
-                    output.push_str("</code></pre>");
-                }
-                AstBlock::Heading(block) => {
-                    let id = crate::document::heading_id_base(&block.text);
-                    render_heading(output, block, &id, policy, context);
-                }
-                _ => {}
+            if !output.ends_with('\n') {
+                output.push('\n');
             }
+            render_block(output, continuation, None, None, policy, context);
         }
         output.push_str(if list.kind == crate::parser::ListKind::Description {
             "</dd>\n"

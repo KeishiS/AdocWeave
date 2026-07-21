@@ -1213,6 +1213,8 @@ pub(crate) fn parse_shared_cancellable(
                 ast_blocks.last(),
                 Some(AstBlock::Heading(Heading {
                     kind: HeadingKind::DocumentTitle,
+                    well_formed: true,
+                    hierarchy_valid: true,
                     ..
                 }))
             );
@@ -2094,14 +2096,16 @@ fn list_marker(content: &str) -> Option<ParsedListMarker> {
             callout_id: Some(id),
         });
     }
-    for (offset, _) in content
-        .match_indices("::")
-        .chain(content.match_indices(";;"))
-    {
+    for (offset, character) in content.char_indices() {
+        if !matches!(character, ':' | ';')
+            || !content[offset..].starts_with(if character == ':' { "::" } else { ";;" })
+        {
+            continue;
+        }
         let delimiter = &content[offset..];
-        let width = if delimiter.starts_with("::::") {
+        let width = if character == ':' && delimiter.starts_with("::::") {
             4
-        } else if delimiter.starts_with(":::") {
+        } else if character == ':' && delimiter.starts_with(":::") {
             3
         } else {
             2
