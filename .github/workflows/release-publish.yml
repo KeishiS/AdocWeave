@@ -53,18 +53,34 @@ jobs:
           title="$(jq -r '.announcement_title' <<<"$PLAN")"
           body="$(jq -r '.announcement_github_body' <<<"$PLAN")"
           prerelease="$(jq -r '.announcement_is_prerelease' <<<"$PLAN")"
-          printf '%s\n' "$body" > "$RUNNER_TEMP/release-notes.txt"
-          args=(--draft --target "$GITHUB_SHA" --title "$title" --notes-file "$RUNNER_TEMP/release-notes.txt")
-          if [ "$prerelease" = true ]; then args+=(--prerelease); fi
-          gh release create "$tag" artifacts/* "${args[@]}"
-          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-          draft="$(jq --arg tag "$tag" -c '[.[][] | select(.tag_name == $tag and .draft == true)]' <<<"$releases")"
-          test "$(jq 'length' <<<"$draft")" -eq 1
-          release_id="$(jq -r '.[0].id' <<<"$draft")"
+          draft="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$tag" \
+            -f target_commitish="$GITHUB_SHA" \
+            -f name="$title" \
+            -f body="$body" \
+            -F draft=true \
+            -F prerelease="$prerelease")"
+          release_id="$(jq -r '.id' <<<"$draft")"
+          upload_url="$(jq -r '.upload_url' <<<"$draft")"
+          upload_url="${upload_url%%\{*}"
+          test "$release_id" != null
+          test -n "$upload_url"
           echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
+          for file in artifacts/*; do
+            name="${file##*/}"
+            gh api --method POST \
+              --header 'Content-Type: application/octet-stream' \
+              --input "$file" \
+              "$upload_url?name=$name" >/dev/null
+          done
+          draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id")"
           expected="$(find artifacts -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
-          actual="$(jq -r '.[0].assets[].name' <<<"$draft" | LC_ALL=C sort)"
-          test "$actual" = "$expected"
+          actual="$(jq -r '.assets[].name' <<<"$draft" | LC_ALL=C sort)"
+          if [ "$actual" != "$expected" ]; then
+            echo "draft release asset set mismatch" >&2
+            diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual")
+            exit 1
+          fi
       - name: Attest every public asset
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
         with:
@@ -81,10 +97,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PLAN: ${{ inputs.plan }}
+          RELEASE_ID: ${{ steps.draft.outputs.release-id }}
         run: |
           tag="$(jq -r '.announcement_tag' <<<"$PLAN")"
-          releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-          jq --arg tag "$tag" -r '.[][] | select(.tag_name == $tag and .draft == true) | .id' <<<"$releases" |
-            while IFS= read -r release_id; do
-              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
-            done
+          if [ -n "$RELEASE_ID" ]; then
+            draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" 2>/dev/null || true)"
+            if [ "$(jq -r '.draft // false' <<<"${draft:-{}}")" = true ]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+            fi
+          else
+            releases="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+            jq --arg tag "$tag" -r '.[][] | select(.tag_name == $tag and .draft == true) | .id' <<<"$releases" |
+              while IFS= read -r release_id; do
+                gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
+              done
+          fi

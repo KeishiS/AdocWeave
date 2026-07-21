@@ -52,8 +52,9 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   }
   requireText(publish, "environment: github-release", "publisher must use the protected github-release environment");
   requireText(publish, "release already exists", "publisher must reject release replacement");
-  requireText(publish, "gh release create \"$tag\"", "publisher must create a draft only after verification");
-  requireText(publish, "--draft", "publisher must stage assets in a private draft");
+  requireText(publish, 'gh api --method POST "repos/$GITHUB_REPOSITORY/releases"', "publisher must create a draft only after verification");
+  requireText(publish, "-F draft=true", "publisher must stage assets in a private draft");
+  requireText(publish, 'upload_url="$(jq -r', "publisher must use the upload URL returned with the private draft");
   requireText(publish, "actions/attest@", "every release must receive GitHub provenance attestations");
   requireText(publish, "subject-path: artifacts/*", "the complete public asset set must be attested");
   requireText(publish, "gh api --method PATCH", "publication must address the verified draft by release ID");
