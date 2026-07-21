@@ -1,6 +1,7 @@
 //! Lossless concrete syntax and HTML-independent semantic syntax.
 
 use std::fmt::Write as _;
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::attributes::{DocumentAttribute, parse_line as parse_attribute_line};
@@ -691,17 +692,16 @@ pub(crate) fn parse_shared_cancellable(
     let line_count = source_document.lines().len();
     let sequence = parse_block_sequence(
         source.as_ref(),
-        source_document,
+        BlockInput::new(&source_document, 0..line_count)?,
         config,
         is_cancelled,
         &mut budget,
-        BlockContext::root(line_count),
+        BlockContext::root(),
     )?;
-    finish_document(sequence, config)
+    finish_document(sequence, source_document, config)
 }
 
 struct BlockSequenceOutput {
-    source_document: SourceDocument,
     syntax: Vec<SyntaxNode>,
     blocks: Vec<AstBlock>,
     attributes: Vec<DocumentAttribute>,
@@ -710,14 +710,30 @@ struct BlockSequenceOutput {
     header: DocumentHeader,
 }
 
+#[derive(Clone)]
+struct BlockInput<'source> {
+    document: &'source SourceDocument,
+    lines: Range<usize>,
+}
+
+impl<'source> BlockInput<'source> {
+    fn new(document: &'source SourceDocument, lines: Range<usize>) -> Result<Self, ParseFailure> {
+        if lines.start > lines.end || lines.end > document.lines().len() {
+            return Err(ParseFailure::InternalInvariant);
+        }
+        Ok(Self { document, lines })
+    }
+}
+
 fn parse_block_sequence(
     source: &str,
-    source_document: SourceDocument,
+    input: BlockInput<'_>,
     config: &ParseConfig,
     is_cancelled: &dyn Fn() -> bool,
     budget: &mut ParseBudget,
     context: BlockContext,
 ) -> Result<BlockSequenceOutput, ParseFailure> {
+    let source_document = input.document;
     let mut blocks = Vec::new();
     let mut ast_blocks = Vec::new();
     let mut paragraph_lines = Vec::new();
@@ -732,8 +748,8 @@ fn parse_block_sequence(
     let mut pending_metadata = PendingBlockMetadata::default();
 
     let mut cursor = BlockCursor {
-        line: context.start_line,
-        line_count: context.end_line,
+        line: input.lines.start,
+        line_count: input.lines.end,
     };
     while let Some(line_index) = cursor.current() {
         if is_cancelled() {
@@ -811,7 +827,7 @@ fn parse_block_sequence(
             budget.consume_block()?;
             budget.consume_node()?;
             let (mut source_block, next_line) =
-                parse_source_block(&source_document, line_index, source)?;
+                parse_source_block(source_document, line_index, source)?;
             source_block.metadata =
                 parse_block_attributes(content, line.content_range().start().to_usize())
                     .unwrap_or_default();
@@ -865,7 +881,7 @@ fn parse_block_sequence(
             budget.consume_block()?;
             budget.consume_node()?;
             let (mut math, next_line) =
-                parse_math_block(&source_document, line_index, source, config)?;
+                parse_math_block(source_document, line_index, source, config)?;
             math.metadata =
                 parse_block_attributes(content, line.content_range().start().to_usize())
                     .unwrap_or_default();
@@ -895,7 +911,7 @@ fn parse_block_sequence(
             budget.consume_block()?;
             budget.consume_node()?;
             let delimited_context = DelimitedParseContext {
-                source_document: &source_document,
+                source_document,
                 source,
                 config,
                 is_cancelled,
@@ -936,7 +952,7 @@ fn parse_block_sequence(
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let (literal, next_line) = parse_literal_block(&source_document, line_index, source)?;
+            let (literal, next_line) = parse_literal_block(source_document, line_index, source)?;
             let syntax = crate::syntax_builder::literal(&literal);
             commit_block(
                 &mut blocks,
@@ -1098,7 +1114,7 @@ fn parse_block_sequence(
             )?;
             budget.consume_block()?;
             budget.consume_node()?;
-            let (literal, next_line) = parse_literal_paragraph(&source_document, line_index)?;
+            let (literal, next_line) = parse_literal_paragraph(source_document, line_index)?;
             blocks.push(SyntaxNode::leaf(SyntaxKind::LiteralBlock, literal.range));
             ast_blocks.push(AstBlock::LiteralParagraph(literal));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
@@ -1162,7 +1178,7 @@ fn parse_block_sequence(
                 &mut pending_metadata,
             )?;
             let list_context = DelimitedParseContext {
-                source_document: &source_document,
+                source_document,
                 source,
                 config,
                 is_cancelled,
@@ -1227,7 +1243,6 @@ fn parse_block_sequence(
         budget,
     )?;
     Ok(BlockSequenceOutput {
-        source_document,
         syntax: blocks,
         blocks: ast_blocks,
         attributes,
@@ -1239,6 +1254,7 @@ fn parse_block_sequence(
 
 fn finish_document(
     sequence: BlockSequenceOutput,
+    source_document: SourceDocument,
     config: &ParseConfig,
 ) -> Result<ParsedDocument, ParseFailure> {
     let mut ast = crate::lowering::lower(crate::lowering::ParsedFacts {
@@ -1262,7 +1278,7 @@ fn finish_document(
         crate::syntax_diagnostics::collect_and_clear(&mut ast.blocks, &sequence.attribute_problems);
 
     Ok(ParsedDocument {
-        syntax: SyntaxTree::from_blocks(sequence.source_document, sequence.syntax, syntax_issues),
+        syntax: SyntaxTree::from_blocks(source_document, sequence.syntax, syntax_issues),
         ast,
     })
 }
@@ -2179,27 +2195,18 @@ enum BlockLocation {
 struct BlockContext {
     location: BlockLocation,
     depth: ParseDepth,
-    start_line: usize,
-    end_line: usize,
 }
 
 impl BlockContext {
-    const fn root(end_line: usize) -> Self {
+    const fn root() -> Self {
         Self {
             location: BlockLocation::DocumentRoot,
             depth: ParseDepth { block: 1, table: 1 },
-            start_line: 0,
-            end_line,
         }
     }
 
-    const fn nested(location: BlockLocation, depth: ParseDepth, end_line: usize) -> Self {
-        Self {
-            location,
-            depth,
-            start_line: 0,
-            end_line,
-        }
+    const fn nested(location: BlockLocation, depth: ParseDepth) -> Self {
+        Self { location, depth }
     }
 
     const fn allows_document_header(self) -> bool {
@@ -2500,23 +2507,28 @@ fn parse_table(
             if cell.style != TableCellStyle::AsciiDoc {
                 continue;
             }
-            let fragment = SourceDocument::from_fragment_bounded(
-                Arc::from(cell.raw.as_str()),
-                cell.content_range.start(),
-                config.limits.max_line_bytes,
-                context.is_cancelled,
-            )
-            .map_err(|error| match error {
-                SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
-                SourceDocumentBuildError::LineLimitExceeded { limit, actual } => {
-                    ParseFailure::Budget(BudgetExceeded {
-                        resource: "line bytes",
-                        limit,
-                        actual,
-                    })
-                }
-                SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
-            })?;
+            let fragment =
+                if context.source_document.text(cell.content_range) == Some(cell.raw.as_str()) {
+                    SourceDocument::indexed_view(context.source_document, cell.content_range)?
+                } else {
+                    SourceDocument::from_fragment_bounded(
+                        Arc::from(cell.raw.as_str()),
+                        cell.content_range.start(),
+                        config.limits.max_line_bytes,
+                        context.is_cancelled,
+                    )
+                    .map_err(|error| match error {
+                        SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
+                        SourceDocumentBuildError::LineLimitExceeded { limit, actual } => {
+                            ParseFailure::Budget(BudgetExceeded {
+                                resource: "line bytes",
+                                limit,
+                                actual,
+                            })
+                        }
+                        SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
+                    })?
+                };
             let blocks = parse_nested_blocks(
                 &fragment,
                 0,
@@ -2544,7 +2556,6 @@ fn parse_nested_blocks(
     depth: ParseDepth,
     location: BlockLocation,
 ) -> Result<Vec<AstBlock>, ParseFailure> {
-    let source = context.source;
     let config = context.config;
     let is_cancelled = context.is_cancelled;
     if depth.block > config.max_block_depth.max(1) {
@@ -2557,36 +2568,13 @@ fn parse_nested_blocks(
     if start_line == end_line {
         return Ok(Vec::new());
     }
-    let start = source_document.lines()[start_line].full_range().start();
-    let end = source_document.lines()[end_line - 1].full_range().end();
-    let fragment_source = source
-        .get(start.to_usize()..end.to_usize())
-        .ok_or(ParseFailure::InternalInvariant)?;
-    let fragment = SourceDocument::from_fragment_bounded(
-        Arc::from(fragment_source),
-        start,
-        config.limits.max_line_bytes,
-        is_cancelled,
-    )
-    .map_err(|error| match error {
-        SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
-        SourceDocumentBuildError::LineLimitExceeded { limit, actual } => {
-            ParseFailure::Budget(BudgetExceeded {
-                resource: "line bytes",
-                limit,
-                actual,
-            })
-        }
-        SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
-    })?;
-    let line_count = fragment.lines().len();
     let sequence = parse_block_sequence(
-        source,
-        fragment,
+        context.source,
+        BlockInput::new(source_document, start_line..end_line)?,
         config,
         is_cancelled,
         state.budget,
-        BlockContext::nested(location, depth, line_count),
+        BlockContext::nested(location, depth),
     )?;
     state.anchors.extend(sequence.anchors);
     Ok(sequence.blocks)
@@ -3029,6 +3017,35 @@ mod tests {
             .commit(super::BlockRecognition::Through(2))
             .expect("second line");
         assert_eq!(cursor.current(), None);
+    }
+
+    #[test]
+    fn nested_compound_blocks_share_the_root_source_index() {
+        crate::source_document::SourceDocument::reset_construction_count();
+        let source = "====\n.Outer\n--\n.Sidebar\n****\nparagraph\n****\n--\n====\n";
+
+        let parsed = parse(source).expect("nested compound blocks");
+
+        assert_eq!(
+            crate::source_document::SourceDocument::construction_count(),
+            1,
+            "compound recursion must not rebuild SourceDocument"
+        );
+        assert_eq!(parsed.syntax.reconstruct(), source);
+        let AstBlock::Delimited(outer) = &parsed.ast.blocks()[0] else {
+            panic!("outer example")
+        };
+        let DelimitedContent::Compound(outer_children) = &outer.content else {
+            panic!("outer compound content")
+        };
+        assert_eq!(outer_children[0].range().start().to_usize(), 12);
+        let AstBlock::Delimited(open) = &outer_children[0] else {
+            panic!("open block")
+        };
+        let DelimitedContent::Compound(open_children) = &open.content else {
+            panic!("open content")
+        };
+        assert_eq!(open_children[0].range().start().to_usize(), 24);
     }
     use crate::attributes::AttributeOperation;
     use crate::inline::{Inline, MathLanguage};
@@ -3735,8 +3752,18 @@ mod tests {
 
     #[test]
     fn asciidoc_table_cells_are_parsed_as_nested_blocks() {
+        crate::source_document::SourceDocument::reset_construction_count();
         let source = "[cols=a]\n|===\n|A paragraph.\n\n* one\n* two\n|===\n";
         let parsed = parse(source).expect("parse");
+        assert_eq!(
+            crate::source_document::SourceDocument::construction_count(),
+            1,
+            "source-backed PSV cells must not rebuild the line index"
+        );
+        assert_eq!(
+            crate::source_document::SourceDocument::indexed_view_count(),
+            1
+        );
         let AstBlock::Delimited(crate::parser::DelimitedBlock {
             content: DelimitedContent::Table(table),
             ..

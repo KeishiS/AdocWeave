@@ -221,3 +221,9 @@ Issue 089ではAsciiDoc table cellとcompound containerの独自line dispatchを
 AsciiDoc cellを`BlockContext`で区別しながら、すべてを単一のblock sequence状態機械へ通す。状態機械は
 lowering前のblock、syntax、anchorおよびheader factを返し、属性解決、heading正規化、catalog／文書構造構築は
 rootで一度だけ行う。再帰contextも親のbudget、深さ、cancel checkおよびglobal source rangeを共有する。
+
+Issue 090では入力範囲をcontext policyから`BlockInput`へ分離した。compound blockはrootの
+`SourceDocument`と行索引を借用し、再帰階層ごとの文字列複製と改行再走査を行わない。PSV AsciiDoc cellは、
+元sourceとcell内容が一致する場合に同じsource storageと既存行境界から作る軽量indexed viewを使用する。
+CSV quote解除等で意味内容が元sourceと一致しない場合だけ、変換済み入力を別`SourceDocument`として構築する。
+この例外はsource-backed viewと型・生成経路を共有せず、global rangeの対応を明示する。

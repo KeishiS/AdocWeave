@@ -43,6 +43,9 @@ AsciiDoc cellは、context policyだけを切り替える単一のblock sequence
 list、literal paragraph、break、source／STEM、metadata付きblock、区切り付きblockおよび入れ子表を
 同じrecognizer／builderで構築する。子blockはHTML、検索projection、lintとsemantic walkerから到達できる。
 cell解析は親解析とnode、block、表深さ、cell数およびcancel checkを共有する。
+PSVでcell内容が元source範囲と一致する場合は、root source storageと既存行境界から作るindexed viewを使用し、
+cellごとの文字列複製と改行再走査を行わない。quote解除等により内容が変換されたcellだけが明示的な変換済み入力を
+構築する。
 
 == 現在の制限
 

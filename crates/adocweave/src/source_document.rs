@@ -2,6 +2,12 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! {
+    static CONSTRUCTION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static INDEXED_VIEW_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 use crate::source::{
     Position, PositionEncoding, PositionError, TextRange, TextSize, utf16_character_to_byte,
 };
@@ -111,6 +117,8 @@ impl SourceDocument {
         max_line_bytes: u32,
         is_cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, SourceDocumentBuildError> {
+        #[cfg(test)]
+        CONSTRUCTION_COUNT.with(|count| count.set(count.get() + 1));
         let source_text = source.as_ref();
         TextSize::new(source_text.len())?;
         TextSize::new(
@@ -174,6 +182,88 @@ impl SourceDocument {
             lines,
             tokens,
         })
+    }
+
+    pub(crate) fn indexed_view(parent: &Self, range: TextRange) -> Result<Self, PositionError> {
+        parent.text(range).ok_or(PositionError::OffsetOutOfBounds {
+            offset: range.end(),
+            source_len: TextSize::new(parent.source.len())?,
+        })?;
+        #[cfg(test)]
+        INDEXED_VIEW_COUNT.with(|count| count.set(count.get() + 1));
+
+        let start = range.start().to_usize();
+        let end = range.end().to_usize();
+        let mut lines = Vec::new();
+        for line in &parent.lines {
+            let line_start = line.full.start().to_usize().max(start);
+            let line_end = line.full.end().to_usize().min(end);
+            if line_start >= line_end && !(range.is_empty() && line_start == start) {
+                continue;
+            }
+            let content_start = line.content.start().to_usize().max(line_start);
+            let content_end = line
+                .content
+                .end()
+                .to_usize()
+                .min(line_end)
+                .max(content_start);
+            let ending_start = line.ending.start().to_usize().max(line_start);
+            let ending_end = line.ending.end().to_usize().min(line_end).max(ending_start);
+            lines.push(SourceLine {
+                content: text_range(content_start, content_end)?,
+                ending: text_range(ending_start, ending_end)?,
+                full: text_range(line_start, line_end)?,
+                ending_kind: if ending_end > ending_start {
+                    line.ending_kind
+                } else {
+                    LineEnding::None
+                },
+            });
+        }
+        if lines.is_empty() {
+            lines.push(SourceLine {
+                content: range,
+                ending: TextRange::new(range.end(), range.end())?,
+                full: range,
+                ending_kind: LineEnding::None,
+            });
+        }
+        let tokens = parent
+            .tokens
+            .iter()
+            .filter_map(|token| {
+                let token_start = token.range.start().to_usize().max(start);
+                let token_end = token.range.end().to_usize().min(end);
+                (token_start < token_end).then(|| LosslessToken {
+                    kind: token.kind,
+                    range: text_range(token_start, token_end)
+                        .expect("clipped token range remains ordered"),
+                })
+            })
+            .collect();
+        Ok(Self {
+            source: Arc::clone(&parent.source),
+            base: parent.base,
+            lines,
+            tokens,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_construction_count() {
+        CONSTRUCTION_COUNT.with(|count| count.set(0));
+        INDEXED_VIEW_COUNT.with(|count| count.set(0));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn construction_count() -> usize {
+        CONSTRUCTION_COUNT.with(std::cell::Cell::get)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn indexed_view_count() -> usize {
+        INDEXED_VIEW_COUNT.with(std::cell::Cell::get)
     }
 
     pub fn source(&self) -> &str {
