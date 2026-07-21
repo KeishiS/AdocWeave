@@ -15,8 +15,8 @@ install、更新および削除できることを最終的に確認する。
 * browser libraryの静的hosting、ES module／WASM MIME type、CSP、cross-origin isolation、cache busting、
   integrity確認およびリアルタイムHTML previewの利用例をfrontend向け文書へ追加する。
 * Zed Gallery導入、binary cache、PATH override、offline動作および完全削除を開発版手順と分離する。
-* GitHub prereleaseをclean Linux、macOS、Windows、browser frontendおよびZed profileへ導入するE2E
-  checklistを実行する。
+* GitHub prereleaseをclean Linux x86-64、Linux ARM64、browser frontendおよびLinux版Zed profileへ導入する
+  E2E checklistを実行する。macOS／Windowsは将来targetの受け入れIssueへ分離する。
 * release noteに対応target、契約version、breaking change、既知の制約、asset verificationおよびupgrade手順を
   必須化する。
 * package manager、container image、crates.io、npmおよびZed Registry公開は個別Issueへ分離し、GitHub

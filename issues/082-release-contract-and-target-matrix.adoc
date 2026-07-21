@@ -41,6 +41,20 @@ GitHubが自動生成するsource archiveは上記binary contractへ含めない
 |`.tar.xz`
 |Linux ARM64
 
+|===
+
+初回公開は上記2種類のLinux targetだけを対応対象とする。32-bit targetとGNU Linux dynamic buildは扱わない。
+targetの追加・削除は配布契約変更としてmanifestと文書を同時更新する。
+
+== 将来target
+
+次のtargetは初回公開の完了条件へ含めない。Linux releaseの運用、利用要求、native runner、署名credentialおよび
+OS固有試験を確認した後に、独立したmilestoneで追加する。
+
+[cols="3,2,3",options="header"]
+|===
+|Rust target |archive |目的
+
 |`x86_64-apple-darwin`
 |`.tar.xz`
 |Intel macOS
@@ -54,8 +68,19 @@ GitHubが自動生成するsource archiveは上記binary contractへ含めない
 |64-bit Windows
 |===
 
-32-bit targetは扱わない。Windows ARM64とGNU Linux dynamic buildは、native runner、利用要求および
-互換性試験を確認してから追加する。追加・削除は配布契約変更としてmanifestと文書を同時更新する。
+Windows ARM64はWindows x86-64の公開後に利用要求を確認して判断する。
+
+== 初回公開時の契約version baseline
+
+開発中に蓄積した番号を、初回の公開互換性履歴として外部へ持ち出さない。最初のrelease candidateを作る変更で、
+`CORE_PROFILE_VERSION`、`CORE_API_VERSION`、`HTML_CONTRACT_VERSION`、
+`PROJECTION_CONTRACT_VERSION`、`CONFORMANCE_CONTRACT_VERSION`および`WASM_API_VERSION`を
+すべて`1`へ一度だけリセットする。これはworkspace packageのSemVerとは別の操作である。
+
+同じ変更でRust定数、`release-manifest.json`、fixture、Worker、テストおよび現在値を記載する文書を更新し、
+release gateで不一致を拒否する。リセット後は各契約を再び独立に単調増加させ、公開済み番号の再利用や巻き戻しを
+行わない。完了済みIssueに記録された開発中の履歴は書き換えず、公開前の履歴であることをこのbaseline定義により
+区別する。
 
 == 作業
 
@@ -68,6 +93,7 @@ GitHubが自動生成するsource archiveは上記binary contractへ含めない
 * native archive生成には`dist`（旧cargo-dist）をexact versionでpinして用いる。生成workflowと設定は
   repositoryへcommitし、更新時に差分をreviewする。
 * browser libraryは`dist`のextra artifactとして同じreleaseへ統合し、別のversionや手動upload経路を作らない。
+* 初回release candidateの作成前に、上記6契約を一括で`1`へリセットする原子的な変更を適用する。
 * `adocweave-dist-manifest.json`のschema、sort順、path separator、hash対象およびJSON canonicalizationを
   fixtureで固定する。
 * crates.io、npm、Homebrew、WinGetおよびZed Extension Registryへの公開は非目標とし、GitHub assetが
@@ -76,7 +102,8 @@ GitHubが自動生成するsource archiveは上記binary contractへ含めない
 == 完了条件
 
 release tagから生成される全asset名と内容がmachine-readable fixtureで決定的に再現され、未対応platform、
-version関係、後方互換性および非目標が文書化される。`dist plan`相当のdry runをPRで検査できる。
+version関係、初回契約version baseline、後方互換性および非目標が文書化される。初回公開対象がLinux 2 target
+だけであることをmanifest fixtureで検査し、`dist plan`相当のdry runをPRで実行できる。
 
 == 参照
 

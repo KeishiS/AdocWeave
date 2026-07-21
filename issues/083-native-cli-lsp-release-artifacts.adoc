@@ -15,14 +15,14 @@
 * `MIT OR Apache-2.0`に対応するlicense本文とthird-party noticeをrepositoryの正本として追加し、全archiveへ
   同じfileを同梱する。Cargo metadata上のlicense表記だけで配布を済ませない。
 * Linuxはmusl static linkを検証し、`ldd`または同等の検査で想定外のdynamic dependencyを拒否する。
-* 各targetを原則native runnerでbuild・実行する。cross compileだけで「対応」と判定しない。
+* Linux 2 targetをbuildし、各architectureの実行環境で検証する。cross compileだけで「対応」と判定しない。
 * archiveを新しいtemporary directoryへ展開し、CLIの`--version`、`check`、`convert`、`format --check`と、
   LSPのinitialize、fixture診断、shutdown／exitをbinary経由でsmoke testする。
 * executableが報告するpackage version、Core contractおよびLSP server versionをrelease manifestと照合する。
-* macOS／WindowsのOS code signingは鍵をrepositoryへ置かない。署名情報が未準備の間はprerelease artifactに
-  限定し、stable公開の要否とcredential ownerをrelease運用開始前に決定する。
+* macOS／WindowsのbuildおよびOS code signingは初回公開の対象外とし、Linux公開後の独立milestoneで
+  credential ownerと運用を決定する。将来も鍵をrepositoryへ置かない。
 
 == 完了条件
 
-5 targetのCLI／LSP archiveをlocalまたはPR artifactとして生成でき、同じjob上で展開後smoke testが通る。
+Linux 2 targetのCLI／LSP archiveをlocalまたはPR artifactとして生成でき、対応architecture上で展開後smoke testが通る。
 host toolchainや作業tree内binaryを誤って試験していないことをpath検査で証明する。
