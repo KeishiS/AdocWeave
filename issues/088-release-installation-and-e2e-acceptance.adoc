@@ -73,8 +73,9 @@ Linux x86-64／ARM64 native build・smoke、candidate検証、Nix package／NixO
 公開後に次を再検証した。
 
 * 公開9 assetを新しい一時directoryへ取得し、`sha256.sum`と配布metadataがsource commitに一致した。
+* 公開GitHub APIで9 assetすべてに同じrepository由来のArtifact Attestation bundleが存在することを確認した。
 * `nix run github:KeishiS/AdocWeave/v0.1.0-rc.5 -- --version --json`がRC.5と契約versionを返した。
 * 隔離したx86-64 Linux profileで公開flakeをinstallし、CLI／LSPのversionを確認してから完全にremoveできた。
 
-残る手動受け入れは、公開attestation、ARM64 clean hostのprofile lifecycle、実配備browser header、Zedの
-managed LSP初回取得・offline再起動・削除である。これらが完了するまでIssue 088は進行中のままとする。
+残る手動受け入れは、ARM64 clean hostのprofile lifecycle、実配備browser header、Zedのmanaged LSP初回取得・
+offline再起動・削除である。これらが完了するまでIssue 088は進行中のままとする。
