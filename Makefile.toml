@@ -347,6 +347,7 @@ description = "Run the extracted browser archive in isolated and fallback Chromi
 dependencies = ["package-browser-release", "test-browser-types"]
 script_runner = "@shell"
 script = '''
+node --test tools/process-lifecycle.test.mjs
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
 node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tar.xz" "${ADOCWEAVE_BROWSER:-chromium}"
 '''

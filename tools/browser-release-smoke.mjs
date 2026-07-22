@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
 const [archive, chromium = "chromium"] = process.argv.slice(2);
@@ -161,10 +162,9 @@ async function inspectPage(chromium, url, temporaryRoot) {
     return evaluated.result.value;
   } finally {
     browser.kill("SIGTERM");
-    await waitForExit(browser, 2000);
-    if (browser.exitCode === null) {
+    if (!await waitForExit(browser, 2000)) {
       browser.kill("SIGKILL");
-      await withTimeout(once(browser, "exit"), 5000, "Chromium did not exit after SIGKILL");
+      if (!await waitForExit(browser, 5000)) throw new Error("browser did not exit after SIGKILL");
     }
   }
 }
@@ -203,19 +203,4 @@ async function withTimeout(promise, milliseconds, message) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-function waitForExit(child, milliseconds) {
-  if (child.exitCode !== null) return Promise.resolve(true);
-  return new Promise((resolveWait) => {
-    const exited = () => {
-      clearTimeout(timer);
-      resolveWait(true);
-    };
-    const timer = setTimeout(() => {
-      child.off("exit", exited);
-      resolveWait(false);
-    }, milliseconds);
-    child.once("exit", exited);
-  });
 }
