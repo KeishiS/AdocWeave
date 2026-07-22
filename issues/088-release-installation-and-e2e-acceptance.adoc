@@ -1,5 +1,5 @@
 = Release導入文書とend-to-end受け入れ
-:status: in-progress
+:status: completed
 :depends-on: 086,087,109
 
 == 目的
@@ -79,5 +79,17 @@ Linux x86-64／ARM64 native build・smoke、candidate検証、Nix package／NixO
 * 2026-07-22に隔離したZed profileへRC.5公開拡張を導入し、managed LSP取得、editor機能、offline再起動および
   削除を確認した。再現手順はxref:../docs/release-installation.adoc[Release導入文書]へ記録した。
 
-残る手動受け入れは、ARM64 clean hostのprofile lifecycleと実配備browser headerである。これらが完了するまで
-Issue 088は進行中のままとする。
+== 実機確認の代替判断
+
+2026-07-22、repository所有者はARM64実機とbrowser実配備環境を利用できないため、次の自動証拠をもって当該項目を
+受け入れると判断した。
+
+* GitHub ActionsのARM64 native runnerで、archive起動、Nix package build、NixOS評価および導入・完全削除E2Eが成功した。
+* browser archiveについて、native／WASM conformance、型検査、package構造、size、bundler、fallbackおよび
+  Release archive内WASMの実行が必須gateで成功した。
+* 実Chromiumと配備先固有のMIME、CSP、COOP／COEPはIssue 106の方針どおり任意gateであり、stable公開の必須条件としない。
+
+これは未実施の実機確認を実施済みと偽るものではなく、利用可能な自動証拠に基づく明示的なrisk acceptanceである。
+将来ARM64実機またはbrowser配備環境を利用できる時点で追加確認し、不一致があれば新しいIssueとして扱う。
+RC.5の公開asset、checksum、metadata、attestation、Linux両architectureの自動E2E、公開Nix flake、x86-64 profile lifecycle
+およびZed実機確認が完了したため、Issue 088を完了とする。

@@ -339,7 +339,7 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 * xref:../issues/105-ci-browser-runtime-separation.adoc[Issue 105: CI browser runtimeとNix toolchainの分離]
 * xref:../issues/106-optional-browser-runtime-gate.adoc[Issue 106: 実browser受け入れgateの任意化]
 
-== RC.5までの実行順
+== RC.5完了とstable公開までの実行順
 
 . xref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で空xref labelへ解決済み表示テキストを渡す汎用契約を実装し、
   公開契約versionとconformance fixtureをRC.4へ更新する。（完了）
@@ -348,11 +348,16 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 . xref:../issues/109-nix-flake-package-and-app.adoc[Issue 109]で`nix run github:KeishiS/adocweave`、
   Nix profileおよびNixOS `environment.systemPackages`から利用できるflake package／app／overlayをRC.5候補へ追加する。（完了）
 . Issue 109を含むmainをpushし、必須quality、Linux x86-64／ARM64 candidate、Nix package build・実行および
-  installation E2Eの成功を確認する。
-. `v0.1.0-rc.5`を作成・公開する。過去のRC tagは付け替えない。
+  installation E2Eの成功を確認する。（完了）
+. `v0.1.0-rc.5`を作成・公開する。過去のRC tagは付け替えない。（完了）
 . xref:../issues/088-release-installation-and-e2e-acceptance.adoc[Issue 088]でRC.5の公開asset、Nix flake、
-  CLI／LSPおよびZedの実Release受け入れを完了する。実browser E2EはIssue 106の方針に従い任意gateへ分離する。
+  CLI／LSPおよびZedの実Release受け入れを完了する。実browser E2EはIssue 106の方針に従い任意gateへ分離する。（完了）
 . RC.5で見つかった不具合を収束させ、v0.1.0 stableの公開可否と互換性方針を決定する。
+. xref:../issues/110-zed-tree-sitter-highlighting.adoc[Issue 110]で、RC.5受け入れで判明したZedの基本構文色付けを
+  Tree-sitter queryとして追加し、LSP Semantic Tokensを意味的補足へ整理する。
+. xref:../issues/111-stable-readiness-and-contract-freeze.adoc[Issue 111]でRC.5の公開契約、既知制約、配布経路および
+  互換性方針を監査し、新機能を追加せずstable baselineを凍結する。
+. xref:../issues/112-v0-1-0-stable-release.adoc[Issue 112]で承認済みbaselineを`v0.1.0`として公開し、公開物を再受け入れする。
 . stable公開後に、source短縮記法、追加inline書式、list属性、`subs`属性およびbibliography表示等の標準AsciiDoc未対応領域を
   依存関係付きIssueへ分解する。
 

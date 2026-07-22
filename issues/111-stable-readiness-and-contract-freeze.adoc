@@ -1,0 +1,52 @@
+= Stable公開可否監査と契約凍結
+:status: planned
+:depends-on: 088,109,110
+
+== 目的
+
+公開済み`v0.1.0-rc.5`を基準に、既知の重大不具合、配布経路、公開API、契約versionおよび互換性方針を横断監査し、
+`v0.1.0` stableを公開できるかを明示的に判断する。新しいAsciiDoc構文やhost固有機能は追加せず、現在の能力を
+安定した公開baselineとして凍結できるかだけを扱う。
+
+== 監査対象
+
+* RC.5以降に報告された不具合、GitHub Actions、公開asset、Nix flakeおよびZed受け入れ記録
+* Core Profile、Core API、HTML、projection、conformanceおよびWASM APIの公開契約
+* CLI、LSP、browser、ZedおよびNix packageのversionと同一source revision
+* security fixture、URL policy、host解決値、kind-only failureおよび機密情報非漏洩
+* 対応AsciiDoc部分集合、未対応構文、permissive／strict modeおよび既知制約の文書化
+* stable公開後のbreaking change、契約version更新、patch／minor releaseおよびdeprecation方針
+
+== 実装方針
+
+* 重大度をblocker、stable後対応、仕様上の制約に分類し、blockerだけをIssue 112より前に修正する。
+* RC.5で公開済みの契約versionをstable baselineとし、理由のない再resetや一括incrementを行わない。
+* package versionと個別契約versionを分離する。package patch releaseだけを理由に互換な契約versionを変更しない。
+* stable公開後の破壊的変更は、影響する契約version、migration、fixtureおよびRelease noteを同じ変更で更新する。
+* `0.1.x`であっても、このrepositoryが互換と宣言した公開境界を暗黙に破壊しない。
+* 未対応AsciiDoc記法をstable blockerとせず、対応表と回復規則が正確で安全であることを条件とする。
+
+== 検証
+
+* `cargo make release-gate`
+* `cargo make dependency-governance`
+* `cargo make nix-package-check`
+* `node tools/release-contract.mjs --tag=v0.1.0-rc.5`
+* RC.5 Releaseの9 asset、checksum、metadata、attestationおよびsource commitの再照合
+* 公開Nix flakeとZed受け入れ記録の再確認
+
+== 文書
+
+`docs/current-contract.adoc`、`docs/compatibility.adoc`、`docs/syntax-support.adoc`、`docs/roadmap.adoc`、
+Release導入文書およびRelease checklistを横断し、stable時点の保証と既知制約を一致させる。
+
+== 完了条件
+
+stableを阻害する未解決事項が0件であり、公開契約version、互換性方針、対応範囲、既知制約、配布targetおよび
+rollback手順が文書とfixtureで一致する。監査結果として`v0.1.0`を公開可能または公開延期のいずれかへ明示的に判断し、
+公開可能な場合だけIssue 112へ進む。
+
+== 範囲外
+
+新しいAsciiDoc構文、macOS／Windows target、公的package registry、Zed Extension Gallery、browser UI、
+ノートアプリ固有adapterおよび性能改善だけを目的とする再設計は対象外とする。

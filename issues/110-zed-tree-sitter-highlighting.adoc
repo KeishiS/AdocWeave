@@ -1,0 +1,73 @@
+= ZedのTree-sitter構文色付け
+:status: planned
+:depends-on: 088
+
+== 背景
+
+RC.5のZed実機受け入れで、AsciiDocとして認識され、LSP機能も動作する一方、見出し等の基本構文が色付けされないことを
+確認した。拡張は`tree-sitter-asciidoc` grammarを固定しているが、`editors/zed/languages/asciidoc`には
+`config.toml`しかなく、Zedへ渡す`highlights.scm`が存在しない。
+
+`adocweave-lsp`はSemantic Tokensを公開しているが、見出しmarker、属性、強調、comment等の構文上自明な色付けを
+Language Serverだけへ依存させない。基本色付けはZed拡張のTree-sitter query、解析結果に固有の意味的な補足はLSPという
+責務境界にする。
+
+== 目的
+
+固定済みgrammarのnode schemaに対応するZed highlight queryを追加し、少なくともAdocWeaveが対応する主要構文を
+テーマ非依存の標準captureへ写像する。同時にLSP Semantic Tokensとの重複と不自然なtoken typeを監査し、同じsource範囲へ
+競合する意味を二重付与しない。
+
+== 実装方針
+
+=== Grammar契約
+
+* `extension.toml`に固定した`tree-sitter-asciidoc` commitの`node-types.json`と既存queryを正本としてnode名を列挙する。
+* queryは固定commitに存在するnodeだけを参照し、推測したnode名やwildcardで誤検出を隠さない。
+* grammar commit更新とquery更新を同じ変更単位にし、片方だけを更新できない検証を追加する。
+
+=== 基本highlight
+
+`editors/zed/languages/asciidoc/highlights.scm`を追加し、Zedが対応する標準capture名で次を表現する。
+
+* 文書タイトル、section heading、見出しmarker
+* block title、anchor、attribute entry／reference
+* strong、emphasis、monospaceおよびpassthroughのdelimiterと内容
+* 通常link、xref、macro名、targetおよびlabel
+* source／literal／listing block、言語名、delimiterおよびcode本文
+* comment、admonition、list marker、description term、table delimiterおよびSTEM
+
+色は拡張が直接指定せず、captureを利用者のZed themeへ委譲する。未知またはerror nodeへ広いcaptureを適用して、通常本文まで
+一色にする規則は追加しない。
+
+=== Semantic Tokens境界
+
+* 現在の`keyword`、`namespace`、`string`、`variable`の割当を意味ごとに監査する。
+* 見出し本文を`namespace`とする等、LSP標準token typeと意味が一致しない割当は削除または再分類する。
+* Tree-sitterだけで決まる装飾をLSPの必須経路にせず、LSP停止中も基本色付けを維持する。
+* LSPが保持するtokenは、Zed以外のclientでも有用な解析上の意味とsource rangeをfixtureで固定する。
+
+== 検証
+
+* queryが固定grammarに対してcompileでき、未知nodeまたは不正captureを含まない。
+* 代表fixtureで期待するcapture名とbyte rangeをsnapshot化する。
+* CRLF、Unicode、未閉じ構文、未知構文および大きな文書でもqueryが失敗しない。
+* `cargo make check-zed`と`cargo make test-zed`でqueryの存在とRelease archiveへの同梱を確認する。
+* 隔離Zed profileでLSP起動前から見出し等が色付けされ、LSP起動後も不自然に色が上書きされない。
+* light／darkの少なくとも二つの標準themeで可読性を確認するが、特定色値をfixtureにしない。
+
+== 文書
+
+`docs/zed-development.adoc`と`docs/release-checklist.adoc`へ、基本highlight、LSP Semantic Tokens、確認fixtureおよび
+問題切り分けを記載する。Zed拡張archiveの導入文書にも、色付けを受け入れ項目として追加する。
+
+== 完了条件
+
+Zedで見出しを含む主要AsciiDoc構文がthemeに応じて区別され、LSPを停止しても基本色付けが残る。queryは固定grammar
+commitと機械的に検証され、Release archiveへ同梱される。LSP Semantic Tokensは構文色付けの代替ではなく、意味的補足として
+文書化・試験される。
+
+== 範囲外
+
+独自theme、固定RGB値、grammar fork、AdocWeave Rust parserによるZed grammarの置換、全AsciiDoc構文の同時対応および
+Zed Extension Galleryへの公開は対象外とする。
