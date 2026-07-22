@@ -28,6 +28,8 @@ pull request、main pushおよびrelease tagで必要な検証を明示し、eve
 * workflow policy testで上記event model、最小権限、action SHA pinおよびpublish分離を固定した。
 * workspace package metadataから単一のMSRVを導出し、独立jobの`cargo +<MSRV> check --locked`で固定する。これにより
   versionの二重管理を避け、最新stableだけで通る依存更新をmerge前に拒否する。
+* 初回の実CIでは、ICU 2.2.0系がRust 1.86を要求することをMSRV jobが検出した。推移依存を個別固定せず、workspaceの
+  宣言MSRVをRust 1.86へ更新した。
 
 == 意図的な重複
 

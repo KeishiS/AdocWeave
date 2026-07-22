@@ -15,7 +15,7 @@ homepage = "https://github.com/KeishiS/AdocWeave"
 license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/KeishiS/AdocWeave"
-rust-version = "1.85"
+rust-version = "1.86"
 version = "0.1.0-rc.2"
 
 # The profile used by dist 0.32.0 for release artifacts.

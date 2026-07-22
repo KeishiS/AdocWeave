@@ -7,7 +7,7 @@ repository所有のworkflowを正本とし、`dist 0.32.0`はrelease planとnati
 
 == 実行経路
 
-pull requestではRust 1.85のMSRV check、完全なlocal quality gateおよび`dist plan`を実行するが、target別candidateは
+pull requestではRust 1.86のMSRV check、完全なlocal quality gateおよび`dist plan`を実行するが、target別candidateは
 buildしない。新しいcommitで更新されたpull requestの古いrunだけをcancelする。
 
 `main`へのpushでは同じquality gateに加え、Linux 2 targetのbuild、native smoke test、browser／Zed build、
