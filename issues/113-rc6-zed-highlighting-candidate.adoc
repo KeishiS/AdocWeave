@@ -24,6 +24,26 @@ RC.6受け入れ後は、そのtag commitをstable baselineとして記録する
 受け入れ記録に必要な変更だけを許可し、新しい構文、API、editor機能または依存更新を追加しない。不具合修正が必要なら
 RC番号を進め、このIssueと同じ受け入れを繰り返す。
 
+== 受け入れ記録
+
+2026-07-22に、tag `v0.1.0-rc.6`がsource commit
+`6b5686f530ad0cf1c6cbafb658a258bf4f939c0d`を指すことを確認した。tag起点の
+https://github.com/KeishiS/AdocWeave/actions/runs/29950271606[CI and Release run 29950271606]は成功し、
+prereleaseには予定した9 assetだけが公開された。
+
+公開assetを改めて取得し、次を確認した。
+
+* `sha256sum --check sha256.sum`がarchive 6個、distribution manifestおよびSBOMのすべてで成功した。
+* `release-metadata.mjs verify`により、9 asset集合、package version `0.1.0-rc.6`、source commitおよび
+  Core Profile 1、Core API 4、HTML 3、Projection 4、Conformance 4、WASM API 4を再照合した。
+* 公開API上で9 assetそれぞれにGitHub artifact attestationが1件存在した。
+* x86_64 Linuxのclean導入E2EでCLI、LSP、browserおよびZed archiveの導入、version照合と削除が成功した。
+  aarch64 Linuxのcandidate・Nix検証は同じtag workflowのmatrixで成功した。
+* source commitを固定した公開Nix flakeの`--version --json`がpackage versionと凍結済み契約versionを返した。
+
+残作業は、公開Zed archiveを隔離profileへ導入し、managed LSP、基本色付け、Semantic Tokens、light／dark themeおよび
+既存LSP機能を実機で受け入れることだけである。
+
 == 完了条件
 
 `v0.1.0-rc.6`がprereleaseとして公開され、9 assetと公開flakeが同じsource commit、package versionおよび
