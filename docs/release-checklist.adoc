@@ -76,6 +76,18 @@ node tools/release-installation-e2e.mjs /path/to/candidate <target>
 . Zed、browserおよびnativeの各機能checklistを実行する。
 . 全管理対象を削除し、導入前後のfile一覧が一致することを確認する。
 
+== Nix flake
+
+RC.5のtag commitを明示的に固定し、Linux x86-64／ARM64のclean環境で次を確認する。詳細な利用方法は
+xref:nix-installation.adoc[Nix flakeからの導入]を正本とする。
+
+. `nix run github:KeishiS/AdocWeave/<commit> -- --version --json`がRC.5を返す。
+. `nix profile install github:KeishiS/AdocWeave/<commit>`でCLIとLSPを導入できる。
+. profileのrollbackとremove後に管理対象が残らない。
+. 利用側flakeへinputを固定し、`environment.systemPackages`からCLIとLSPを解決できる。
+. `overlays.default`を適用した`pkgs.adocweave`が既定packageと同じ二つのbinaryを提供する。
+. runtime closureにChromium、Node.js、Rust compiler、Cargoまたはfuzz toolが含まれない。
+
 == 受け入れ記録
 
 [cols="2,4",options="header"]
@@ -102,6 +114,9 @@ node tools/release-installation-e2e.mjs /path/to/candidate <target>
 
 |Zed
 |managed LSP初回取得、offline cache、機能一覧、再起動、削除結果
+
+|Nix
+|固定flake revision、run、profile install／rollback／remove、NixOS評価、x86-64／ARM64結果
 
 |不一致
 |なし、または再現手順と追跡Issue

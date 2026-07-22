@@ -19,13 +19,16 @@ export function appendRequiredReleaseNotes(body, tag) {
     .map(([name, version]) => `- ${name}: ${version}`)
     .join("\n");
   const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
-  const notes = `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
+  const notes = "## Highlights\n\n" +
+    "- Render resolution failures are kind-only; host error messages cannot cross the HTML or projection boundary.\n" +
+    "- The repository flake now provides AdocWeave CLI and LSP packages for Linux x86-64 and ARM64. Run `nix run github:KeishiS/AdocWeave`.\n\n" +
+    `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${contracts}\n\n` +
     "This release requires consumers to match the listed contract versions. Release candidates may contain breaking API changes; do not mix CLI, LSP, browser, or Zed assets from different versions.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n` +
     "- Native binaries are available only for Linux x86-64 and ARM64.\n" +
     "- The Zed extension is installed as a development extension; it is not published to the Zed Extension Gallery.\n" +
-    "- Packages are not published to crates.io, npm, or OS package registries.\n\n" +
+    "- Packages are not published to crates.io, npm, or OS package registries. The Nix package is built directly from this repository flake.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n` +
     "Download all release assets, run `sha256sum --check sha256.sum`, then verify required assets with `gh attestation verify <asset> --repo KeishiS/AdocWeave`.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
