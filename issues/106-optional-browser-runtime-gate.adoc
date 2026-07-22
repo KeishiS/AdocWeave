@@ -1,0 +1,31 @@
+= 実browser受け入れgateの任意化
+:status: completed
+:depends-on: 105
+
+== 目的
+
+優先度の低いbrowser runtime E2EがCLI、LSP、Zed、文書および配布契約の必須CIを繰り返し停止する状態を解消し、
+静的に保証できるbrowser artifact契約とrunner依存の実browser受け入れを分離する。
+
+== 判断
+
+browser archiveのbuild、TypeScript宣言、WASM size、layout、checksumおよびnative／WASM conformanceはbrowserを起動せず
+決定的に検査できる。一方、headless browserの起動はrunner image、sandbox、process modelおよびDevTools transportへ
+依存する。現段階では後者を公開全体の必須条件にせず、browser機能を優先する時点の明示的な受け入れとする。
+
+== 実装
+
+* `release-gate`と`release-global-artifacts`から`test-browser-smoke`と`test-browser-bundler`を外した。
+* browser package生成、TypeScript、archive構造、sizeおよび配布metadata検査はCIの必須条件として維持した。
+* 実Chromiumのisolated／fallback contextとbundler経路を`cargo make browser-runtime-check`へ集約した。
+* 任意実行時の起動診断はbrowser自身が選んだDevTools port、早期終了、spawn errorおよびstderrを報告する。
+
+== 再導入条件
+
+browser runtimeを必須CIへ戻す場合は、固定browser imageまたは専用containerを用意し、同一環境で継続的に安定することを
+確認する。GitHub runnerへ偶然導入されているbrowser binaryを必須公開gateの前提にしない。
+
+== 完了条件
+
+browser runtimeを起動せず`cargo make release-gate`と`cargo make release-global-artifacts`が完結し、実browser試験は
+明示的な単一taskから引き続き実行できる。

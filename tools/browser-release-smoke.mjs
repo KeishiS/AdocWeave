@@ -107,11 +107,18 @@ async function inspectPage(chromium, url, temporaryRoot) {
   browser.stderr.setEncoding("utf8");
   browser.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-8192); });
   try {
-    const port = await poll(async () => {
-      const contents = await readFile(join(profile, "DevToolsActivePort"), "utf8");
-      const candidate = Number.parseInt(contents.split("\n", 1)[0], 10);
-      return Number.isInteger(candidate) && candidate > 0 ? candidate : undefined;
-    }, () => browserFailure(browser, spawnError, stderr));
+    let port;
+    try {
+      port = await poll(async () => {
+        const contents = await readFile(join(profile, "DevToolsActivePort"), "utf8");
+        const candidate = Number.parseInt(contents.split("\n", 1)[0], 10);
+        return Number.isInteger(candidate) && candidate > 0 ? candidate : undefined;
+      }, () => browserFailure(browser, spawnError, stderr));
+    } catch (error) {
+      throw browserFailure(browser, spawnError, stderr) ?? new Error(
+        `browser did not create DevToolsActivePort: ${error.message}${stderr ? `\n${stderr}` : ""}`,
+      );
+    }
     const target = await poll(async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
       return (await response.json()).find((candidate) => candidate.type === "page");

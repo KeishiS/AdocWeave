@@ -167,12 +167,13 @@ UUID、DB、ACL、Base URL、数式描画およびsyntax highlighterを所有し
 
 Issue 102でevent modelとquality／candidate／publish laneを収束し、Issue 103でCI bootstrapの完全性とworkflowの構造検証を
 固定した。Issue 104で依存更新、advisory、licenseおよびSBOMを継続運用へ移し、Issue 105でbrowser runtimeをNixの
-toolchain固定から分離した。
+toolchain固定から分離した。Issue 106でrunner依存の実browser受け入れを任意gateへ分離した。
 
 * xref:102-ci-responsibility-and-release-event-model.adoc[102: CI責務境界とRelease event modelの収束]（完了）
 * xref:103-ci-bootstrap-and-structural-policy.adoc[103: CI bootstrap固定とworkflow構造検証]（完了）
 * xref:104-dependency-and-advisory-governance.adoc[104: 依存更新、licenseおよびadvisory governance]（完了）
 * xref:105-ci-browser-runtime-separation.adoc[105: CI browser runtimeとNix toolchainの分離]（完了）
+* xref:106-optional-browser-runtime-gate.adoc[106: 実browser受け入れgateの任意化]（完了）
 
 === M1: プレーンテキスト変換
 

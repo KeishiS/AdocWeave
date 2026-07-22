@@ -119,13 +119,6 @@ test("quality cannot omit dependency governance or the Zed MSRV", () => {
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      contract: inputs.contract.replace("ADOCWEAVE_BROWSER: chromium", "ADOCWEAVE_BROWSER: google-chrome"),
-    }),
-    /quality browser must come from the GitHub runner image/,
-  );
-  assert.throws(
-    () => validateReleaseWorkflowPolicy({
-      ...inputs,
       contract: inputs.contract.replace('test "$zed_msrv" = "$msrv"', 'true # test "$zed_msrv" = "$msrv"'),
     }),
     /MSRV declarations must match/,
