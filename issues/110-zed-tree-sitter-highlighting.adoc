@@ -62,8 +62,14 @@ Language Serverだけへ依存させない。基本色付けはZed拡張のTree-
 機械検査を`cargo make check-zed`へ、両grammarとqueryの同梱検査をZed Release package試験へ組み込んだ。
 LSPからは見出しの構文色付けを除き、リンク、参照、明示anchor、literalおよびformulaだけをSemantic Tokensとして残した。
 
-自動試験は完了している。残作業は隔離Zed profileでSemantic Tokensを`off`にした基本色付けと、`combined`にした際の
-重なりをlight／dark themeで目視確認することである。
+Zed実機導入で、injection queryに`@content`と`@injection.content`を混在できないこと、Zed themeが解決するcapture名は
+`title`、`emphasis.strong`、`emphasis`等のZed公開集合であること、固定injectionはgrammar IDではなく登録済みlanguage名を
+参照することを確認した。これらをquery契約検査へ追加し、inline言語を非表示の埋め込み専用languageとして登録した。
+
+2026-07-23にLinux版Zedへ開発拡張を再導入し、文書がAsciiDocとして読み込まれ、見出し、source block、strongおよび
+emphasisへTree-sitter highlightが適用されることを確認した。自動試験も完了している。残作業は
+`semantic_tokens = combined`での重なりと、light／dark themeでの
+可読性を目視確認することである。
 
 == 文書
 
