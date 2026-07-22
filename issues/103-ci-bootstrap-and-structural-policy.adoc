@@ -1,0 +1,31 @@
+= CI bootstrap固定とworkflow構造検証
+:status: planned
+:depends-on: 102
+
+== 目的
+
+CIが実行前に取得するtool自体の完全性を固定し、GitHub Actions policyをコメントや無関係な文字列では満たせない
+構造検証へ移行する。
+
+== 背景
+
+現在はcargo-dist 0.32.0のversion付き公式installerをTLS経由で実行するが、installer byte列のdigestはrepository契約に
+含まれない。actionはcommit SHAへ固定しているため、bootstrap scriptだけが異なる信頼モデルになっている。
+
+`release-workflow-policy.mjs`はfull-line commentを除外した文字列検査、actionlintはschema／式検査を担当する。現在の
+workflowには十分な回帰防止だが、required fieldが正しいjob、permission scope、dependency edgeに属することをASTとして
+証明していない。
+
+== 作業
+
+* cargo-dist installerとbinaryの公式checksum／provenance提供状況を確認し、download、検証、実行を分離する。
+* 公式に検証可能なbyte列がない場合は、Nix closureまたはrepository管理bootstrap artifactを比較し、採用理由を記録する。
+* planと2 native jobのbootstrapを共通するversion／検証関数または再利用workflowへ集約する。
+* YAMLを構造化してjob、`if`、`needs`、permission、environment、timeoutおよびretentionを検査するtoolを採用する。
+* 悪意あるcomment、同名step、別jobへのfield移動およびdependency edge削除をnegative fixtureで拒否する。
+* parser自体を追加する場合、そのlockfile、license、SBOMおよび更新規則をRelease契約へ含める。
+
+== 完了条件
+
+CI bootstrapの実行byte列またはNix closureがversion以外の完全性情報でも固定され、workflow policyがYAML構造に対して
+検証される。既存の最小権限、event model、tag-main一致およびtransactional publishのnegative testを維持する。

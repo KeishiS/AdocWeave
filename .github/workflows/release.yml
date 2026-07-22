@@ -1,4 +1,4 @@
-name: Release
+name: CI and Release
 
 on:
   pull_request:
@@ -13,12 +13,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  group: ci-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       manifest: ${{ steps.plan.outputs.manifest }}
       tag: ${{ steps.plan.outputs.tag }}
@@ -26,7 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify publication tag is the current main commit
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
       - name: Install pinned dist
         shell: bash
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
@@ -48,11 +56,14 @@ jobs:
             echo "publishing=$publishing"
           } >> "$GITHUB_OUTPUT"
 
-  release-contract:
-    uses: ./.github/workflows/release-contract.yml
+  quality:
+    uses: ./.github/workflows/quality.yml
+    with:
+      release_tag: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
 
   build-native:
-    needs: [plan, release-contract]
+    if: github.event_name == 'push'
+    needs: [plan, quality]
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +73,7 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -83,45 +95,46 @@ jobs:
         with:
           name: artifacts-build-local-${{ matrix.target }}
           if-no-files-found: error
+          retention-days: 7
           path: |
             target/distrib/adocweave-cli-${{ matrix.target }}.tar.xz
             target/distrib/adocweave-lsp-${{ matrix.target }}.tar.xz
 
   native-smoke:
+    if: github.event_name == 'push'
     needs: [plan, build-native]
     uses: ./.github/workflows/native-artifact-smoke.yml
     with:
       plan: ${{ needs.plan.outputs.manifest }}
 
   build-global:
-    needs: [plan, release-contract]
+    if: github.event_name == 'push'
+    needs: [plan, quality]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Build browser and Zed archives
-        run: |
-          bash tools/package-browser-release.sh
-          bash tools/package-zed-release.sh
-          version="$(jq -r .packageVersion release-manifest.json)"
-          for archive in \
-            "target/distrib/adocweave-browser-$version.tar.xz" \
-            "target/distrib/adocweave-zed-$version.tar.xz"; do
-            test -s "$archive"
-            tar -tJf "$archive" >/dev/null
-          done
+      - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
+        with:
+          determinate: false
+      - name: Build and verify browser and Zed archives
+        run: nix develop -c cargo make release-global-artifacts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-global
           if-no-files-found: error
+          retention-days: 7
           path: |
             target/distrib/adocweave-browser-*.tar.xz
             target/distrib/adocweave-zed-*.tar.xz
 
   verify-candidate:
+    if: github.event_name == 'push'
     needs: [plan, native-smoke, build-global]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -139,9 +152,11 @@ jobs:
         with:
           name: release-candidate
           if-no-files-found: error
+          retention-days: 14
           path: artifacts/*
 
   installation-e2e:
+    if: github.event_name == 'push'
     needs: [verify-candidate]
     strategy:
       fail-fast: false
@@ -152,6 +167,7 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

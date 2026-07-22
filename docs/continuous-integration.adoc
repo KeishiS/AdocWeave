@@ -1,0 +1,80 @@
+= 継続的インテグレーション
+
+この文書は、repositoryの変更検証とGitHub Release候補の受け入れを分離するCI契約を定義する。実行内容の正本は
+`.github/workflows`と`Makefile.toml`であり、この文書はeventごとの保証と運用境界を説明する。
+
+== Event model
+
+[cols="2,3,3,2",options="header"]
+|===
+|Event |常に実行する検証 |追加する配布検証 |外部変更
+
+|pull request
+|MSRV、`release-gate`、`dist plan`
+|なし。target別archiveは生成しない
+|なし
+
+|`main` push
+|MSRV、`release-gate`、`dist plan`
+|Linux 2 target、global archive、metadata、導入E2E
+|一時Actions artifactだけ
+
+|version tag
+|MSRV、`release-gate`、tag／version
+|mainと同じcandidateに加えてprovenance
+|承認後にGitHub Releaseを原子的に公開
+|===
+
+pull requestの更新では同じrefの古いrunをcancelする。mainとtagはcandidate byte列および公開処理を途中で置き換えないため
+cancelしない。全jobには用途に応じたtimeoutを設け、中間build artifactは7日、集約candidateは14日で期限切れにする。
+
+== Quality lane
+
+`quality.yml`はcallerのeventを参照しない。callerはpublication tagだけを明示入力し、空の場合はtag検証を行わない。
+qualityは次の独立jobを持つ。
+
+MSRV::
+workspace packageの`rust_version`が一種類であることを確認し、そのtoolchainで`cargo check --locked`を実行する。
+
+Complete gate::
+Nix開発環境で`cargo make release-gate`を実行する。format、Clippy、全test、WASM、Zed、TypeScript、browser、
+cross-runtime、docs、fuzz、release契約およびlocal install E2Eを含む。
+
+MSRVとlatest stableを同じjobへ混在させない。toolchain固有の失敗を識別でき、MSRV jobが失敗しても完全gateの診断を
+独立して取得できるためである。
+
+== Candidate lane
+
+mainとtagだけがcandidate laneへ入る。native archiveは対応architectureのrunnerでbuildし、別jobへ渡したbyte列を同じ
+architectureで起動する。browserとZed archiveは`release-global-artifacts`で、実際にuploadするarchiveへ決定性、型、size、
+Chromium、bundlerおよびlayout試験を適用する。集約後はmanifest、SBOM、checksumとasset集合を再生成比較し、さらに
+Linux 2 architectureでclean HOMEへの導入・完全削除E2Eを実行する。
+
+qualityのlocal archive試験とcandidate laneは重複ではあるが統合しない。前者はmerge前のsource contract、後者はrunnerと
+job境界を通過した公開予定byte列を証明し、検証対象が異なる。
+
+== Publish lane
+
+publishはversion tag、全quality jobおよびcandidate laneの成功を必要とする。tag commitは現在の`origin/main`と完全一致
+しなければならない。write permissionとOIDCはprotected `github-release` Environment内の再利用workflowだけへ与える。
+private draftのasset集合とattestationを確認し、最後にdraftを解除する。失敗時は同じrelease IDのdraftだけを削除する。
+
+== Repository設定
+
+branch protectionまたはrulesetでは、少なくともqualityのMSRV／complete gateとplanをpull requestの必須checkにする。
+workflow名やjob名を変更するとGitHub上のcheck名も変わるため、CI再構成をmergeした直後にrequired checksを確認する。
+`github-release` Environmentはversion tagだけを許可し、必要なreviewerを設定する。
+
+== 失敗の切り分け
+
+plan:: release train、cargo-dist設定、tag選択またはtarget matrixを確認する。
+MSRV:: `Cargo.toml`の`rust-version`と新規依存のMSRVを確認する。
+quality:: 同名の`cargo make` taskをlocal Nix shellで再実行する。
+native smoke:: archive名、ELF architecture、static linkまたはLSP handshakeを確認する。
+global artifacts:: browser size／Chromium／TypeScriptまたはZed archive layoutを確認する。
+candidate verification:: 6 archiveの欠落、未知file、digest、SBOMまたはsource commitを確認する。
+installation E2E:: runner architecture、version選択、PATHまたはuninstall後の残存fileを確認する。
+publish:: Environment承認、既存release、asset集合、attestationまたはdraft cleanupを確認する。
+
+失敗したtag runのassetを手動で既存Releaseへ追加してはならない。修正はmainでqualityとcandidateを通し、新しいRC tagで
+最初から実行する。

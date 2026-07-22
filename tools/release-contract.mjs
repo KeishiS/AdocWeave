@@ -226,12 +226,15 @@ function verifyRepository() {
     fail("Zed package must be connected as the versioned dist extra artifact");
   }
   if (!dist.includes('plan-jobs = ["./release-contract"]')) fail("release contract must run in the dist plan phase");
-  if (!dist.includes('pr-run-mode = "upload"') || !dist.includes('global-artifacts-jobs = ["./native-artifact-smoke"]')) {
-    fail("PR native artifacts must be smoke tested after local builds");
+  if (!dist.includes('pr-run-mode = "plan"') || !dist.includes('global-artifacts-jobs = ["./native-artifact-smoke"]')) {
+    fail("PRs must stop after planning while pushed candidates use the native smoke workflow");
   }
   if (!releaseWorkflow.includes("needs: [plan, build-native]") ||
       !releaseWorkflow.includes("uses: ./.github/workflows/native-artifact-smoke.yml")) {
     fail("release workflow does not gate on native archive smoke tests");
+  }
+  if (!releaseWorkflow.includes("nix develop -c cargo make release-global-artifacts")) {
+    fail("release workflow must verify the exact global archives before upload");
   }
   for (const runner of ["ubuntu-24.04", "ubuntu-24.04-arm"]) {
     if (!nativeSmokeWorkflow.includes(`runner: ${runner}`)) fail(`native smoke workflow is missing ${runner}`);

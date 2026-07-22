@@ -45,3 +45,21 @@ test("publisher cannot omit its protected environment or cleanup", () => {
     /tag-only release API/,
   );
 });
+
+test("quality and candidate jobs cannot infer or broaden their event scope", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      contract: `${inputs.contract}\n# if: inputs.release_tag != ''\nCALLER_EVENT: github.event_name\n`,
+    }),
+    /must not infer/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replaceAll("    if: github.event_name == 'push'\n", ""),
+    }),
+    /candidate artifacts must be limited|exactly five/,
+  );
+});

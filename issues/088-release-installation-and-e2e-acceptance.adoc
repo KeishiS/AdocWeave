@@ -45,8 +45,8 @@ filesystem差分からuninstall後に管理対象fileが残らないことを確
 * local x86-64成果物では、Zed archiveの決定性検査と導入・完全削除E2Eが成功した。
 * Release workflowは集約candidateをx86-64／ARM64のnative runnerへ戻し、両architectureの導入・完全削除E2Eが
   成功するまでpublish jobへ進まない。
-* pull requestだけでなく`main`へのpushでも同じ非公開candidate検証を起動し、tag作成前にmain commitの成功結果を
-  確認できるようにした。通常のmain pushではpublish jobを起動しない。
+* pull requestは完全local quality gateとplan、`main`へのpushはさらに非公開candidate検証を起動し、tag作成前にmain
+  commitの成功結果を確認できるようにした。通常のmain pushではpublish jobを起動しない。
 
 == 残る受け入れ
 

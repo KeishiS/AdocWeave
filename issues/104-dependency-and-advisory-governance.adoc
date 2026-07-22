@@ -1,0 +1,22 @@
+= 依存更新、licenseおよびadvisory governance
+:status: planned
+:depends-on: 103
+
+== 目的
+
+root workspace、独立Zed crate、browser packageおよびCI toolの依存更新を一つの監査手順で扱い、既知脆弱性、MSRV、
+license、重複versionおよびrelease SBOMの差異を継続的に検出する。
+
+== 作業
+
+* `Cargo.lock`、`editors/zed/Cargo.lock`およびfrontend lockの対象範囲をmachine-readableに列挙する。
+* RustSec等のadvisory databaseについて、取得元、revision固定、network failure、例外理由および期限を定義する。
+* license allowlistをSPDX expressionで検査し、`THIRD_PARTY_NOTICES.adoc`とSPDX SBOMを同じdependency集合から生成する。
+* duplicate crateは単純に禁止せず、binary size、MSRVまたは上流API制約を理由付きで記録する。
+* dependency更新PRではMSRV、quality gate、browser sizeおよび2 lockfileのnotice／SBOM差分を必須にする。
+* 自動更新serviceを採用する場合、同時PR数、grouping、major updateおよび自動merge禁止を設定する。
+
+== 完了条件
+
+全配布境界の依存集合が一つの監査結果へ統合され、advisory、license、MSRV、noticeおよびSBOMの不一致がCIで失敗する。
+例外はowner、理由、期限および追跡Issueを持ち、無期限の包括ignoreを認めない。

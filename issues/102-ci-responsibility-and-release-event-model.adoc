@@ -1,0 +1,41 @@
+= CI責務境界とRelease event modelの収束
+:status: completed
+:depends-on: 086,087
+
+== 目的
+
+pull request、main pushおよびrelease tagで必要な検証を明示し、event種別の推測、merge後にしか見つからない失敗、
+不要なcross-architecture buildおよび公開経路への偶発的な到達を防ぐ。
+
+== 監査結果
+
+* 再利用workflowが`github.event_name == 'push'`だけでmainとtagを区別し、main branch名をrelease tagとして検証していた。
+* pull requestではrelease contractしか実行されず、Rust test、Clippy、WASM、Zed、fuzzおよびbrowser smokeがmerge前の
+  必須checkになっていなかった。
+* pull requestでもLinux 2 architectureのcandidate buildを実行し、source変更の品質検査と配布物受け入れの責務が
+  混在していた。
+* superseded pull requestと、公開につながるmain／tag runが同じcancel policyを共有していた。
+* mainの非tag runでcargo-distへrelease trainを明示せず、公開対象を選択できなかった。
+
+== 実装
+
+* `quality.yml`を全event共通の再利用workflowとし、`cargo make release-gate`をPR、mainおよびtagで同じ条件にした。
+* publication tagはcallerが明示入力し、空でない場合だけtag／release trainを検証する。calleeはevent名からtagを推測しない。
+* pull requestはquality gate内のdist planまでとし、計画JSONを後続へ渡すplan job、native target matrix、global archive、
+  candidate集約および導入E2Eはmain／tagのpushだけで実行する。
+* pull requestの古いrunだけをcancelし、main／tagのcandidateまたは公開runはcancelしない。
+* main／PRの非tag planにもrelease manifestから得たcandidate tagを必ず渡し、publish flagとは分離した。
+* workflow policy testで上記event model、最小権限、action SHA pinおよびpublish分離を固定した。
+* workspace package metadataから単一のMSRVを導出し、独立jobの`cargo +<MSRV> check --locked`で固定する。これにより
+  versionの二重管理を避け、最新stableだけで通る依存更新をmerge前に拒否する。
+
+== 意図的な重複
+
+quality gateのhost-local archive試験と、main／tag candidateのnative target試験は統合しない。前者はsource treeから
+再現できる全機能・package契約をmerge前に検査し、後者はGitHub runnerが生成してjob境界を通過した実公開byte列を
+対応architecture上で検査する。入力と保証が異なるため、この重複は削除対象ではない。
+
+== 完了条件
+
+PRは公開権限とcandidate matrixを持たずに完全quality gateを通り、main／tagだけが実candidateを生成する。tagだけが
+protected Environmentへ到達し、mainをtagとして扱う分岐が存在しない。全workflow構文とpolicy testが成功する。

@@ -353,6 +353,15 @@ tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
 node tools/browser-release-smoke.mjs "$archive"
 '''
 
+[tasks.release-global-artifacts]
+description = "Build and verify the exact browser and Zed archives uploaded by release CI"
+dependencies = [
+  "test-browser-release-package",
+  "test-browser-smoke",
+  "test-browser-bundler",
+  "test-zed-release-package",
+]
+
 [tasks.build-wasm-node]
 description = "Build wasm-bindgen Node.js artifacts for cross-runtime conformance"
 script_runner = "@shell"

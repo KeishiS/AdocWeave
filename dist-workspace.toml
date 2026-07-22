@@ -18,7 +18,7 @@ targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
 hosting = "github"
 packages = ["adocweave-cli", "adocweave-lsp"]
 # Which actions to run on pull requests
-pr-run-mode = "upload"
+pr-run-mode = "plan"
 # Plan jobs to run in CI
 plan-jobs = ["./release-contract"]
 # Run native archive smoke tests after target builds

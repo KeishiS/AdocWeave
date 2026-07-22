@@ -8,7 +8,8 @@ function fail(message) {
 }
 
 function requireText(source, text, message) {
-  if (!source.includes(text)) fail(message);
+  const executable = source.split("\n").filter((line) => !line.trimStart().startsWith("#")).join("\n");
+  if (!executable.includes(text)) fail(message);
 }
 
 export function validatePinnedActions(workflows) {
@@ -30,22 +31,36 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireText(release, "branches:\n      - main", "release workflow must validate every main push before tagging");
   requireText(release, 'candidate_tag="v$(jq -r .packageVersion release-manifest.json)"', "non-tag candidate plans must use the release train version");
   requireText(release, 'dist plan --tag="$candidate_tag"', "every dist plan must select the complete release train explicitly");
+  requireText(release, 'test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"', "publication tags must identify the current main commit");
   requireText(release, "contents: read", "release build workflow must be read-only");
   requireText(release, "persist-credentials: false", "checkout credentials must not persist");
-  requireText(release, "group: release-${{ github.ref }}", "release runs must be serialized per ref");
-  requireText(release, "cancel-in-progress: false", "release runs must not cancel an active publication");
+  requireText(release, "group: ci-release-${{ github.ref }}", "CI and release runs must be serialized per ref");
+  requireText(release, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "only superseded pull request runs may be cancelled");
+  requireText(release, "uses: ./.github/workflows/quality.yml", "every event must pass the reusable quality gate");
+  requireText(release, "if: github.event_name == 'push'", "candidate artifacts must be limited to main and tag pushes");
+  const pushOnlyJobs = [...release.matchAll(/^    if: github\.event_name == 'push'$/gm)].length;
+  if (pushOnlyJobs !== 6) fail("the plan and exactly five candidate jobs must be limited to main and tag pushes");
   requireText(release, "needs: [plan, verify-candidate, installation-e2e]", "publication must depend on candidate installation acceptance");
   requireText(release, "if: needs.plan.outputs.publishing == 'true'", "pull requests must not invoke publication");
   requireText(release, "uses: ./.github/workflows/release-publish.yml", "publication must be isolated in its reusable workflow");
   requireText(release, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");
   requireText(release, "node tools/release-metadata.mjs verify artifacts", "the aggregate job must verify exact release metadata");
-  requireText(release, "bash tools/package-browser-release.sh", "the browser archive must use the tested repository builder directly");
-  requireText(release, "bash tools/package-zed-release.sh", "the Zed archive must use the tested repository builder directly");
+  requireText(release, "nix develop -c cargo make release-global-artifacts", "uploaded browser and Zed archives must pass their complete artifact gate");
   requireText(publish, "node tools/release-notes.mjs", "publication must append and validate the required release notes");
-  requireText(release, "test -s \"$archive\"", "the browser archive must be non-empty before upload");
-  requireText(release, "tar -tJf \"$archive\"", "the browser archive must be validated before upload");
   requireText(release, "name: release-candidate", "only a verified candidate may cross the publish boundary");
+  requireText(release, "retention-days: 7", "intermediate build artifacts must have short retention");
+  requireText(release, "retention-days: 14", "verified candidates must have bounded retention");
+  requireText(contract, "timeout-minutes: 30", "the complete quality gate must have a timeout");
+  requireText(smoke, "timeout-minutes: 10", "native smoke tests must have a timeout");
+  requireText(publish, "timeout-minutes: 20", "publication must have a timeout and cleanup path");
   requireText(release, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
+  requireText(contract, "nix develop -c cargo make release-gate", "the reusable quality workflow must run the canonical local gate");
+  requireText(contract, ".rust_version] | unique", "CI must derive one MSRV from workspace package metadata");
+  requireText(contract, 'cargo "+$msrv" check --locked --workspace --all-targets --all-features', "CI must enforce the declared workspace MSRV");
+  requireText(contract, "if: inputs.release_tag != ''", "only explicit publication tags may receive tag validation");
+  if (contract.includes("github.event_name") || contract.includes("github.ref")) {
+    fail("the reusable quality workflow must not infer its caller event or publication tag");
+  }
   if (release.includes("secrets:") || release.includes("secrets.")) {
     fail("build and aggregate jobs must not receive repository secrets");
   }
@@ -88,7 +103,7 @@ export function loadWorkflowPolicyInputs() {
     workflows,
     release: workflows["release.yml"],
     publish: workflows["release-publish.yml"],
-    contract: workflows["release-contract.yml"],
+    contract: workflows["quality.yml"],
     smoke: workflows["native-artifact-smoke.yml"],
     dist: read("dist-workspace.toml"),
   };
