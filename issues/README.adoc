@@ -194,11 +194,12 @@ Issue 109はRC.5候補へ含める最優先作業とし、Issue 088の実Release
 === M25: v0.1.0 stable公開
 
 RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先に修正する。その後は新機能を追加せず、公開契約と
-互換性方針を監査してstable baselineを凍結する。監査でblockerがなければ、RC.5と同じ原子的な配布workflowで
-`v0.1.0`を公開する。
+互換性方針を監査する。色付けとSemantic Tokens境界はRC.5以後の利用者可視変更であるためRC.6として受け入れ、
+その内容をstable baselineとして凍結してから`v0.1.0`を公開する。
 
 * xref:110-zed-tree-sitter-highlighting.adoc[110: ZedのTree-sitter構文色付け]（進行中：実機確認待ち）
-* xref:111-stable-readiness-and-contract-freeze.adoc[111: Stable公開可否監査と契約凍結]
+* xref:111-stable-readiness-and-contract-freeze.adoc[111: Stable公開可否監査と契約凍結]（進行中）
+* xref:113-rc6-zed-highlighting-candidate.adoc[113: RC.6 Zed構文色付け候補の公開と受け入れ]
 * xref:112-v0-1-0-stable-release.adoc[112: v0.1.0 stable公開]
 
 === M1: プレーンテキスト変換

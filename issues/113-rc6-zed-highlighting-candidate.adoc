@@ -1,0 +1,34 @@
+= RC.6 Zed構文色付け候補の公開と受け入れ
+:status: planned
+:depends-on: 111
+
+== 目的
+
+RC.5以後に追加したZed Tree-sitter構文色付けとLSP Semantic Tokens責務境界を、stableへ直送せず
+`v0.1.0-rc.6`として公開し、実際の配布archiveとmanaged LSPを受け入れる。RC.6をstableの機能baselineとする。
+
+== 作業
+
+* workspace、Zed、browser、Release manifestおよび配布設定を`0.1.0-rc.6`へ同期する。
+* 6種類のコア公開契約versionはIssue 111で凍結した値を維持する。
+* `cargo make release-gate`、MSRV、依存監査、Linux両architectureのcandidateおよび導入E2Eを完了する。
+* mainのcandidate成功後にannotated tag `v0.1.0-rc.6`を作り、protected Environmentを経てprereleaseを公開する。
+* 公開9 asset、checksum、metadata、SBOM、attestation、source commitおよびNix flakeを再照合する。
+* 公開Zed archiveを隔離profileへ導入し、Semantic Tokensを`off`にしても基本色付けが残ること、`combined`で
+  LSPの意味的補足と競合しないことをlight／dark themeで確認する。
+* managed LSPの診断、Outline、Code Action、Format、Hover、補完、DefinitionおよびReferencesに回帰がないことを確認する。
+
+== Stableへの凍結
+
+RC.6受け入れ後は、そのtag commitをstable baselineとして記録する。Issue 112ではversion、Release noteおよび
+受け入れ記録に必要な変更だけを許可し、新しい構文、API、editor機能または依存更新を追加しない。不具合修正が必要なら
+RC番号を進め、このIssueと同じ受け入れを繰り返す。
+
+== 完了条件
+
+`v0.1.0-rc.6`がprereleaseとして公開され、9 assetと公開flakeが同じsource commit、package versionおよび
+凍結済み契約versionを持つ。公開Zed archiveでIssue 110の色付けと既存LSP機能を確認し、stableを阻害する不一致がない。
+
+== 範囲外
+
+新しいAsciiDoc構文、macOS／Windows、registry公開、Zed Extension GalleryおよびRC.5以前のRelease変更は対象外とする。
