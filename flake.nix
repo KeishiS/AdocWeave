@@ -164,6 +164,7 @@
             cargo-audit
             cargo-deny
             cargo-make
+            curl
             dejavu_fonts
             esbuild
             fontconfig
