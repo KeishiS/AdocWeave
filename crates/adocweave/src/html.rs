@@ -1081,15 +1081,14 @@ fn render_dimension(
     name: &str,
     position: usize,
 ) {
-    if let Some(value) = macro_attribute(node, name, position)
-        && !value.is_empty()
-        && value.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        output.push(' ');
-        output.push_str(name);
-        output.push_str("=\"");
-        output.push_str(value);
-        output.push('"');
+    if let Some(value) = macro_attribute(node, name, position) {
+        if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+            output.push(' ');
+            output.push_str(name);
+            output.push_str("=\"");
+            output.push_str(value);
+            output.push('"');
+        }
     }
 }
 
@@ -1379,15 +1378,15 @@ mod tests {
     fn echo_resource_inputs(document: &crate::parser::AstDocument) -> RenderInputs {
         let mut resources = Vec::new();
         crate::walker::walk(document, |node| {
-            if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node
-                && crate::resource::ResourceReference::from_macro(node).is_some()
-            {
-                resources.push(ResolvedResource::resolved(
-                    node.range,
-                    node.target.clone(),
-                    None,
-                    None,
-                ));
+            if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node {
+                if crate::resource::ResourceReference::from_macro(node).is_some() {
+                    resources.push(ResolvedResource::resolved(
+                        node.range,
+                        node.target.clone(),
+                        None,
+                        None,
+                    ));
+                }
             }
         });
         RenderInputs::new(Vec::new(), resources)

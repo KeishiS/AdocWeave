@@ -876,15 +876,16 @@ impl LanguageService {
                     .as_ref()
                     .is_some_and(|source_id| source_id.as_str() == uri.as_str())
                     && contains(directive.target_range, offset)
-            }) && let Some(target) = directive.resource_source_id.as_ref()
-            {
-                let target: lsp::Url = target
-                    .as_str()
-                    .parse()
-                    .map_err(|error| format!("invalid include resource URI: {error}"))?;
-                return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-                    lsp::Location::new(target, lsp::Range::default()),
-                )));
+            }) {
+                if let Some(target) = directive.resource_source_id.as_ref() {
+                    let target: lsp::Url = target
+                        .as_str()
+                        .parse()
+                        .map_err(|error| format!("invalid include resource URI: {error}"))?;
+                    return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                        lsp::Location::new(target, lsp::Range::default()),
+                    )));
+                }
             }
         }
         let Some(reference) = document

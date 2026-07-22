@@ -269,20 +269,20 @@ fn run() -> Result<(), CliError> {
             } else {
                 input.clone()
             };
-            let output = if arguments.operation == Operation::Check
-                && let Some(prepared) = prepared.as_ref()
-            {
-                check_preprocessed(prepared, arguments.json).map_err(CliError::Include)
-            } else if arguments.operation == Operation::Check {
-                process_check(
-                    &processed,
-                    if arguments.json {
-                        CheckOutput::Json
-                    } else {
-                        CheckOutput::Human
-                    },
-                )
-                .map_err(CliError::Process)
+            let output = if arguments.operation == Operation::Check {
+                if let Some(prepared) = prepared.as_ref() {
+                    check_preprocessed(prepared, arguments.json).map_err(CliError::Include)
+                } else {
+                    process_check(
+                        &processed,
+                        if arguments.json {
+                            CheckOutput::Json
+                        } else {
+                            CheckOutput::Human
+                        },
+                    )
+                    .map_err(CliError::Process)
+                }
             } else if arguments.operation == Operation::Format && arguments.format_check {
                 let source = std::str::from_utf8(&input).map_err(|error| {
                     CliError::Process(adocweave::ProcessError::InvalidUtf8 {

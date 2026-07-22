@@ -326,15 +326,22 @@ impl PreprocessedDocument {
                 source_id: segment.origin.source_id.clone(),
                 range: OriginRange::new(range),
             };
-            if let Some(previous) = origins.last_mut()
-                && previous.source_id == origin.source_id
-                && previous.range.end() == origin.range.start()
-            {
-                previous.range = OriginRange::new(
-                    TextRange::new(previous.range.start(), origin.range.end())
-                        .expect("merged source range is ordered"),
-                );
+            let merged = if let Some(previous) = origins.last_mut() {
+                if previous.source_id == origin.source_id
+                    && previous.range.end() == origin.range.start()
+                {
+                    previous.range = OriginRange::new(
+                        TextRange::new(previous.range.start(), origin.range.end())
+                            .expect("merged source range is ordered"),
+                    );
+                    true
+                } else {
+                    false
+                }
             } else {
+                false
+            };
+            if !merged {
                 origins.push(origin);
             }
         }
@@ -788,16 +795,15 @@ impl Context<'_> {
             resource_source_id: Some(document.source_id.clone()),
         });
         let attributes = parse_attributes(&include.attributes);
-        if let Some(encoding) = attributes.get("encoding")
-            && !encoding.eq_ignore_ascii_case("utf-8")
-            && !encoding.eq_ignore_ascii_case("utf8")
-        {
-            return Err(error(
-                PreprocessErrorKind::UnsupportedEncoding,
-                Some(document.source_id.clone()),
-                zero_range(),
-                "resource snapshots contain UTF-8 text only",
-            ));
+        if let Some(encoding) = attributes.get("encoding") {
+            if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
+                return Err(error(
+                    PreprocessErrorKind::UnsupportedEncoding,
+                    Some(document.source_id.clone()),
+                    zero_range(),
+                    "resource snapshots contain UTF-8 text only",
+                ));
+            }
         }
         let selected = select_lines(&document.source, &attributes);
         let transformed = transform_lines(selected, &attributes);
@@ -1030,18 +1036,18 @@ pub fn discover_includes(source: &str) -> Result<Vec<IncludeRequest>, PositionEr
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let content = line.trim_end_matches(['\r', '\n']);
-        if !content.starts_with('\\')
-            && let Some(include) = include_directive(content)
-        {
-            requests.push(IncludeRequest {
-                range: TextRange::new(TextSize::new(offset)?, TextSize::new(end)?)?,
-                target_range: TextRange::new(
-                    TextSize::new(offset + include.target_start)?,
-                    TextSize::new(offset + include.target_end)?,
-                )?,
-                target: include.target,
-                attributes: include.attributes,
-            });
+        if !content.starts_with('\\') {
+            if let Some(include) = include_directive(content) {
+                requests.push(IncludeRequest {
+                    range: TextRange::new(TextSize::new(offset)?, TextSize::new(end)?)?,
+                    target_range: TextRange::new(
+                        TextSize::new(offset + include.target_start)?,
+                        TextSize::new(offset + include.target_end)?,
+                    )?,
+                    target: include.target,
+                    attributes: include.attributes,
+                });
+            }
         }
         offset = end;
     }

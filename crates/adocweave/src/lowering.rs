@@ -30,10 +30,10 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
 
 fn configure_tables(blocks: &mut [AstBlock]) {
     crate::walker::walk_blocks_mut(blocks, &mut |block: &mut AstBlock| {
-        if let AstBlock::Delimited(block) = block
-            && let crate::parser::DelimitedContent::Table(table) = &mut block.content
-        {
-            crate::table::configure(table, &block.metadata);
+        if let AstBlock::Delimited(block) = block {
+            if let crate::parser::DelimitedContent::Table(table) = &mut block.content {
+                crate::table::configure(table, &block.metadata);
+            }
         }
     });
 }
