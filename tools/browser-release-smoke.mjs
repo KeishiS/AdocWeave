@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { waitForExit } from "./process-lifecycle.mjs";
+import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
 const [archive, chromium = "chromium"] = process.argv.slice(2);
@@ -94,17 +94,28 @@ try {
 }
 
 async function inspectPage(chromium, url, temporaryRoot) {
-  const port = await availablePort();
+  const profile = join(temporaryRoot, `profile-${crypto.randomUUID()}`);
   const browser = spawn(chromium, [
     "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
-    `--remote-debugging-port=${port}`, `--user-data-dir=${join(temporaryRoot, `profile-${port}`)}`,
+    "--disable-background-networking", "--no-first-run", "--no-default-browser-check",
+    "--remote-debugging-port=0", `--user-data-dir=${profile}`,
     "about:blank",
-  ], { stdio: "ignore" });
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  let spawnError;
+  let stderr = "";
+  browser.once("error", (error) => { spawnError = error; });
+  browser.stderr.setEncoding("utf8");
+  browser.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-8192); });
   try {
+    const port = await poll(async () => {
+      const contents = await readFile(join(profile, "DevToolsActivePort"), "utf8");
+      const candidate = Number.parseInt(contents.split("\n", 1)[0], 10);
+      return Number.isInteger(candidate) && candidate > 0 ? candidate : undefined;
+    }, () => browserFailure(browser, spawnError, stderr));
     const target = await poll(async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
       return (await response.json()).find((candidate) => candidate.type === "page");
-    });
+    }, () => browserFailure(browser, spawnError, stderr));
     const socket = new WebSocket(target.webSocketDebuggerUrl);
     await withTimeout(once(socket, "open"), 5000, "DevTools WebSocket connection timeout");
     let id = 0;
@@ -169,17 +180,11 @@ async function inspectPage(chromium, url, temporaryRoot) {
   }
 }
 
-async function availablePort() {
-  const server = createServer();
-  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-  const { port } = server.address();
-  await new Promise((resolveClose) => server.close(resolveClose));
-  return port;
-}
-
-async function poll(operation) {
+async function poll(operation, failure) {
   let error;
   for (let attempt = 0; attempt < 200; attempt += 1) {
+    const fatal = failure?.();
+    if (fatal) throw fatal;
     try {
       const value = await operation();
       if (value) return value;
@@ -189,6 +194,13 @@ async function poll(operation) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
   }
   throw error ?? new Error("Chromium did not start");
+}
+
+function browserFailure(browser, spawnError, stderr) {
+  if (spawnError) return new Error(`browser failed to start: ${spawnError.message}`);
+  if (!hasExited(browser)) return undefined;
+  const status = browser.signalCode ?? browser.exitCode;
+  return new Error(`browser exited before DevTools became ready (${status})${stderr ? `:\n${stderr}` : ""}`);
 }
 
 async function withTimeout(promise, milliseconds, message) {

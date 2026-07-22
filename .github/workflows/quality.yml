@@ -55,7 +55,7 @@ jobs:
           determinate: false
       - name: Run the complete quality gate
         env:
-          ADOCWEAVE_BROWSER: google-chrome
+          ADOCWEAVE_BROWSER: chromium
         run: nix develop .#ci -c cargo make release-gate
       - name: Verify an optional publication tag
         if: inputs.release_tag != ''
