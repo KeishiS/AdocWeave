@@ -200,7 +200,7 @@ RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先
 * xref:110-zed-tree-sitter-highlighting.adoc[110: ZedのTree-sitter構文色付け]（完了）
 * xref:111-stable-readiness-and-contract-freeze.adoc[111: Stable公開可否監査と契約凍結]（完了）
 * xref:113-rc6-zed-highlighting-candidate.adoc[113: RC.6 Zed構文色付け候補の公開と受け入れ]（完了）
-* xref:112-v0-1-0-stable-release.adoc[112: v0.1.0 stable公開]（進行中）
+* xref:112-v0-1-0-stable-release.adoc[112: v0.1.0 stable公開]（完了）
 
 === M1: プレーンテキスト変換
 

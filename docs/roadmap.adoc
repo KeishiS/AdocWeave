@@ -359,7 +359,7 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 . xref:../issues/113-rc6-zed-highlighting-candidate.adoc[Issue 113]で色付け済みZed archiveと整理後のLSPを
   `v0.1.0-rc.6`として公開・受け入れし、そのsource commitをstable baselineとして凍結した。（完了）
 . xref:../issues/112-v0-1-0-stable-release.adoc[Issue 112]でRC.6と機能的に同じbaselineを`v0.1.0`として公開し、
-  公開物を再受け入れする。（進行中）
+  公開物を再受け入れした。（完了）
 . stable公開後に、source短縮記法、追加inline書式、list属性、`subs`属性およびbibliography表示等の標準AsciiDoc未対応領域を
   依存関係付きIssueへ分解する。
 

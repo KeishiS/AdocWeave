@@ -1,5 +1,5 @@
 = v0.1.0 stable公開
-:status: in-progress
+:status: completed
 :depends-on: 113
 
 == 目的
@@ -31,6 +31,24 @@ source commitとversionへ一致させる。
 * 公開Release asset集合と`sha256.sum`
 * GitHub Artifact Attestationとsource commit
 * `nix run github:KeishiS/AdocWeave/v0.1.0 -- --version --json`
+
+== 受け入れ記録
+
+2026-07-22に、tag `v0.1.0`がsource commit
+`c7a0ea6413ad4ace0c7f56ef12b716fe538def01`を指すことを確認した。tag起点の
+https://github.com/KeishiS/AdocWeave/actions/runs/29961860395[CI and Release run 29961860395]は成功し、
+stable Releaseはdraftでもprereleaseでもなく、予定した9 assetだけを公開した。
+
+公開assetを新しい一時directoryへ取得し、`sha256sum --check sha256.sum`と
+`release-metadata.mjs verify`が成功した。distribution manifest、SBOM、package version `0.1.0`、source commitおよび
+Core Profile 1、Core API 4、HTML 3、Projection 4、Conformance 4、WASM API 4は一致した。9 assetそれぞれについて
+GitHub Artifact Attestationが1件存在し、対象repositoryと同じsource commitを示した。
+
+x86_64 Linuxのclean導入E2EでCLI、LSP、browserおよびZed archiveの導入、version照合と削除が成功した。公開Nix flakeの
+`nix run github:KeishiS/AdocWeave/v0.1.0 -- --version --json`はpackage versionと凍結済み契約versionを返した。
+NixOS 26.05（x86_64）、Zed 1.10.0の隔離profileで公開Zed archiveとmanaged LSPを確認し、基本色付け、Semantic Tokens、
+診断、Outline、Code Action、Format、Hover、補完、DefinitionおよびFind All ReferencesにRC.6からの回帰はなかった。
+不一致はない。
 
 == 完了条件
 
