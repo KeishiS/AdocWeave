@@ -34,17 +34,17 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: |
-          args=()
-          if [ -n "$RELEASE_TAG" ]; then
-            args+=("--tag=$RELEASE_TAG")
+          if [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            candidate_tag="$RELEASE_TAG"
             publishing=true
           else
+            candidate_tag="v$(jq -r .packageVersion release-manifest.json)"
             publishing=false
           fi
-          dist plan "${args[@]}" --output-format=json > plan.json
+          dist plan --tag="$candidate_tag" --output-format=json > plan.json
           {
             echo "manifest=$(jq -c . plan.json)"
-            echo "tag=$RELEASE_TAG"
+            echo "tag=$candidate_tag"
             echo "publishing=$publishing"
           } >> "$GITHUB_OUTPUT"
 

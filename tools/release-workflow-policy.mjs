@@ -28,6 +28,8 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
 
   requireText(release, "pull_request:", "release workflow must exercise the plan on pull requests");
   requireText(release, "branches:\n      - main", "release workflow must validate every main push before tagging");
+  requireText(release, 'candidate_tag="v$(jq -r .packageVersion release-manifest.json)"', "non-tag candidate plans must use the release train version");
+  requireText(release, 'dist plan --tag="$candidate_tag"', "every dist plan must select the complete release train explicitly");
   requireText(release, "contents: read", "release build workflow must be read-only");
   requireText(release, "persist-credentials: false", "checkout credentials must not persist");
   requireText(release, "group: release-${{ github.ref }}", "release runs must be serialized per ref");
