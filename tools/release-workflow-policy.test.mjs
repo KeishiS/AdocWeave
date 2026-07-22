@@ -112,9 +112,16 @@ test("quality cannot omit dependency governance or the Zed MSRV", () => {
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      contract: inputs.contract.replace("nix develop -c cargo make dependency-governance", "true # dependency-governance"),
+      contract: inputs.contract.replace("nix develop .#ci -c cargo make dependency-governance", "true # dependency-governance"),
     }),
     /audit every dependency boundary/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      contract: inputs.contract.replace("ADOCWEAVE_BROWSER: google-chrome", "ADOCWEAVE_BROWSER: chromium"),
+    }),
+    /quality browser must come from the GitHub runner image/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({

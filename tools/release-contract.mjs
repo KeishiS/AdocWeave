@@ -233,7 +233,7 @@ function verifyRepository() {
       !releaseWorkflow.includes("uses: ./.github/workflows/native-artifact-smoke.yml")) {
     fail("release workflow does not gate on native archive smoke tests");
   }
-  if (!releaseWorkflow.includes("nix develop -c cargo make release-global-artifacts")) {
+  if (!releaseWorkflow.includes("nix develop .#ci -c cargo make release-global-artifacts")) {
     fail("release workflow must verify the exact global archives before upload");
   }
   for (const runner of ["ubuntu-24.04", "ubuntu-24.04-arm"]) {

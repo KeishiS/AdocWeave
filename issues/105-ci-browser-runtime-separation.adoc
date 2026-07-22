@@ -1,0 +1,26 @@
+= CI browser runtimeとNix toolchainの分離
+:status: completed
+:depends-on: 103
+
+== 目的
+
+GitHub Actionsのquality検証がNix Chromiumの巨大なclosure取得に失敗しただけで全面停止する構成を改め、開発環境の
+再現性とCI runnerが提供するbrowserの利用を明示的に分離する。
+
+== 判断
+
+NixをCIから全面撤去すると、Rust toolchain、cargo-dist、WASM toolおよび検査toolの固定まで失われる。一方、GitHubの
+Ubuntu 24.04 runnerはGoogle Chromeを提供しており、browser smokeのためだけにNix Chromiumを取得する必要はない。
+したがってdefault開発shellはChromiumを保持し、CI shellだけbrowserを外す。
+
+== 実装
+
+* `flake.nix`のpackage集合を共通部分へ集約し、Chromiumを含む`default`と、含まない`ci` shellを定義した。
+* browser実行ファイルを`ADOCWEAVE_BROWSER`で明示できるようにし、ローカル既定値は`chromium`のまま維持した。
+* GitHub Actionsのqualityとglobal artifact検証は`nix develop .#ci`と`google-chrome`を使用する。
+* workflow policy、release contractおよびCI文書を新しい責務境界へ同期した。
+
+== 完了条件
+
+CIがNix Chromium closureへ依存せず、Rust、cargo-distおよび検査toolは引き続き`flake.lock`へ固定される。ローカルの
+default shellとCI shellの双方で同じbrowser smoke contractを実行でき、workflowの構造検査がこの選択を固定する。

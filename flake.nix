@@ -42,39 +42,40 @@
             export PATH=${fuzzRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH
             exec cargo fuzz "$@"
           '';
-        in
-        {
-          default = pkgs.mkShell {
-            packages = with pkgs; [
-              actionlint
-              cargo-dist
-              cargo-audit
-              cargo-deny
-              cargo-make
-              chromium
-              dejavu_fonts
-              esbuild
-              fontconfig
-              gh
-              git
-              gnutar
-              jq
-              lld
-              nodejs
-              typescript
-              ripgrep
-              rust-analyzer
-              stableRust
-              stdenv.cc
-              wasm-bindgen-cli
-              xz
-              yq-go
-              adocweave-fuzz
-            ];
-
+          commonPackages = with pkgs; [
+            actionlint
+            cargo-dist
+            cargo-audit
+            cargo-deny
+            cargo-make
+            dejavu_fonts
+            esbuild
+            fontconfig
+            gh
+            git
+            gnutar
+            jq
+            lld
+            nodejs
+            typescript
+            ripgrep
+            rust-analyzer
+            stableRust
+            stdenv.cc
+            wasm-bindgen-cli
+            xz
+            yq-go
+            adocweave-fuzz
+          ];
+          shell = packages: pkgs.mkShell {
+            inherit packages;
             ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           };
+        in
+        {
+          default = shell (commonPackages ++ [ pkgs.chromium ]);
+          ci = shell commonPackages;
         }
       );
     };

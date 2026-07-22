@@ -23,7 +23,7 @@ jobs:
         with:
           determinate: false
       - name: Audit dependency boundaries
-        run: nix develop -c cargo make dependency-governance
+        run: nix develop .#ci -c cargo make dependency-governance
 
   msrv:
     runs-on: ubuntu-24.04
@@ -54,7 +54,9 @@ jobs:
         with:
           determinate: false
       - name: Run the complete quality gate
-        run: nix develop -c cargo make release-gate
+        env:
+          ADOCWEAVE_BROWSER: google-chrome
+        run: nix develop .#ci -c cargo make release-gate
       - name: Verify an optional publication tag
         if: inputs.release_tag != ''
         env:

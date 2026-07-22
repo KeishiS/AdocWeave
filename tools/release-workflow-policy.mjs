@@ -161,8 +161,10 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   const aggregateRun = step(releaseJobs["verify-candidate"], (item) => item.name === "Generate and verify metadata for the complete candidate", "candidate metadata step is missing").run;
   requireCommand(aggregateRun, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");
   requireCommand(aggregateRun, "node tools/release-metadata.mjs verify artifacts", "the aggregate job must verify exact release metadata");
-  const globalRun = step(releaseJobs["build-global"], (item) => item.name === "Build and verify browser and Zed archives", "global artifact step is missing").run;
-  requireCommand(globalRun, "nix develop -c cargo make release-global-artifacts", "uploaded browser and Zed archives must pass their complete artifact gate");
+  const globalStep = step(releaseJobs["build-global"], (item) => item.name === "Build and verify browser and Zed archives", "global artifact step is missing");
+  const globalRun = globalStep.run;
+  requireCommand(globalRun, "nix develop .#ci -c cargo make release-global-artifacts", "uploaded browser and Zed archives must pass their complete artifact gate");
+  if (globalStep.env?.ADOCWEAVE_BROWSER !== "google-chrome") fail("global artifact browser must come from the GitHub runner image");
   const installRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Install and completely remove the candidate", "installation E2E step is missing").run;
   requireCommand(installRun, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
 
@@ -179,10 +181,12 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireTimeout(contractJobs.dependencies, 15, "dependency governance must have a timeout");
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke tests must have a timeout");
   requireTimeout(publishJob, 20, "publication must have a timeout and cleanup path");
-  const qualityRun = step(contractJobs.verify, (item) => item.name === "Run the complete quality gate", "complete quality step is missing").run;
-  requireCommand(qualityRun, "nix develop -c cargo make release-gate", "the reusable quality workflow must run the canonical local gate");
+  const qualityStep = step(contractJobs.verify, (item) => item.name === "Run the complete quality gate", "complete quality step is missing");
+  const qualityRun = qualityStep.run;
+  requireCommand(qualityRun, "nix develop .#ci -c cargo make release-gate", "the reusable quality workflow must run the canonical local gate");
+  if (qualityStep.env?.ADOCWEAVE_BROWSER !== "google-chrome") fail("quality browser must come from the GitHub runner image");
   const dependencyRun = step(contractJobs.dependencies, (item) => item.name === "Audit dependency boundaries", "dependency governance step is missing").run;
-  requireCommand(dependencyRun, "nix develop -c cargo make dependency-governance", "quality must audit every dependency boundary");
+  requireCommand(dependencyRun, "nix develop .#ci -c cargo make dependency-governance", "quality must audit every dependency boundary");
   const msrvRun = step(contractJobs.msrv, (item) => item.name === "Install and verify the declared minimum Rust version", "MSRV step is missing").run;
   requireCommand(msrvRun, ".rust_version] | unique", "CI must derive one MSRV from workspace package metadata");
   requireCommand(msrvRun, 'cargo "+$msrv" check --locked --workspace --all-targets --all-features', "CI must enforce the declared workspace MSRV");

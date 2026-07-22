@@ -160,12 +160,17 @@ description = "Verify that the flake development shell exposes every repository 
 script_runner = "@shell"
 script = '''
 missing=0
-for tool in actionlint adocweave-fuzz cargo cargo-audit cargo-deny cargo-make cargo-clippy chromium dist esbuild fc-list gh git jq node npm rg rustc rustfmt sha256sum tar tsc wasm-bindgen xz yq; do
+for tool in actionlint adocweave-fuzz cargo cargo-audit cargo-deny cargo-make cargo-clippy dist esbuild fc-list gh git jq node npm rg rustc rustfmt sha256sum tar tsc wasm-bindgen xz yq; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "missing development tool: $tool" >&2
     missing=1
   fi
 done
+browser="${ADOCWEAVE_BROWSER:-chromium}"
+if ! command -v "$browser" >/dev/null 2>&1; then
+  echo "missing browser: $browser" >&2
+  missing=1
+fi
 exit "$missing"
 '''
 
@@ -343,7 +348,7 @@ dependencies = ["package-browser-release", "test-browser-types"]
 script_runner = "@shell"
 script = '''
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
-node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tar.xz"
+node tools/browser-release-smoke.mjs "target/distrib/adocweave-browser-$version.tar.xz" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
 [tasks.test-browser-bundler]
@@ -363,7 +368,7 @@ esbuild web-worker/bundler-entry.mjs \
   --outfile="$root/$package/example/app.mjs"
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
   -cJf "$archive" -C "$root" "$package"
-node tools/browser-release-smoke.mjs "$archive"
+node tools/browser-release-smoke.mjs "$archive" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
 [tasks.release-global-artifacts]
