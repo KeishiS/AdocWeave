@@ -13,11 +13,11 @@ xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 |===
 |契約 |現在値
 |Core profile |1
-|Rust core API |1
-|HTML |1
-|Projection |1
-|Conformance snapshot |1
-|WASM API |1
+|Rust core API |2
+|HTML |2
+|Projection |2
+|Conformance snapshot |2
+|WASM API |2
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。
@@ -42,6 +42,7 @@ xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 * cross reference解決：xref:reference-resolution.adoc[参照解決契約]
 * ホスト実行とcache：xref:server-execution.adoc[サーバ実行契約]
 * ホスト拡張：xref:extensions.adoc[拡張境界]
+* Webホストadapter：xref:web-host-adapter.adoc[Webホストadapter契約]
 * Language Server：xref:language-server.adoc[Language Server設計]
 * WASM adapter：xref:wasm-worker.adoc[WASM API]
 * 検証gate：xref:testing.adoc[品質保証]

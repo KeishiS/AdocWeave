@@ -295,12 +295,26 @@ frontend libraryではなく公開LSP binaryのconsumerとして扱う。
 Issue 090から094の構造収束、Issue 082の配布契約、Issue 083のnative artifactおよびIssue 084の
 xref:browser-library.adoc[browser library]を完了した。Issue 085と086ではchecksum／SBOM／provenanceおよび
 原子的なGitHub Actions workflowを実装し、`v0.1.0-rc.1`による受け入れ確認まで完了した。次にIssue 087と088で
-ZedによるLSP取得およびclean環境での受け入れを順に実装する。
+ZedによるLSP取得を完了した。Issue 088でclean環境での配布物全体の受け入れを行う。
 最初のrelease candidateでは、開発中に増加した6種類の公開契約versionを一度だけすべて`1`へリセットし、
 以後の公開互換性履歴のbaselineとする。macOS／WindowsはLinux releaseの運用を確認した後のmilestoneへ延期する。
 配布先はリポジトリ所有者自身のGitHubリポジトリにあるGitHub Release assetだけに限定する。
 crates.io、npm、Homebrew、WinGet、Zed Extension Registryその他の公的registryへの登録は予定しない。
 private repositoryを使用する場合、取得側のGitHub認証は各consumerの責務とする。
+
+== Webホスト向けの安全な適用境界
+
+Issue 095から101では、任意schemeのxref、通常リンク、source block、STEMおよびresourceへ利用側profileを
+適用するための汎用境界を整備した。URLは文書入力、解決済み参照および解決済みresourceの由来を型で区別し、
+Resolver由来だけroot-relative URLを許可できる。WASMはnativeと同じRenderPolicyをHTMLへ適用する。
+
+外部HTTP(S)リンクの固定`target`／`rel`、source言語allowlist、数式言語policy、source block・数式projection、
+未解決参照の表示policy、fallback notice、画像・media・include capabilityを公開設定として追加した。
+共通conformance fixtureは同一source revision、profileおよびRenderInputsからnativeとWASMが同じAST、診断、HTML、
+projectionを生成することを確認する。
+
+AdocWeaveは`note`、UUID、DB、ACL、Base URL、KaTeX、syntax highlighterおよびDOMを解釈しない。これらは
+xref:web-host-adapter.adoc[Webホストadapter契約]に従う利用側adapterが所有する。
 
 == ドキュメント保守規則
 

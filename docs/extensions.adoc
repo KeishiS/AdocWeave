@@ -84,6 +84,11 @@ Resolverが返すhrefは信頼済みHTMLではない。HTML出力前にAdocWeave
 必ず通過させる。拡張はraw HTML、イベント属性、`javascript:`または許可されていない
 `data:` URIを許可する経路を提供してはならない。
 
+URL検査では文書入力とResolver出力のcontextを混同しない。たとえばhostは文書入力の
+`/notes/id`を拒否したまま、Resolverが生成した同じroot-relative URLだけを許可できる。外部リンク属性、
+source言語、数式言語、未解決参照表示およびresource capabilityは`RenderPolicy`へ設定し、HTML文字列の
+置換で実装しない。
+
 == 互換性
 
 ホストは起動時またはビルド時に`CORE_API_VERSION`を照合する。公開型またはResolver契約の

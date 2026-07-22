@@ -4,7 +4,7 @@
 //! do not depend on this module, so additional output backends can consume the
 //! same document without changing parsing behavior.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::attributes::AttributeOperation;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
@@ -15,17 +15,17 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, ResolutionMatch};
 use crate::resource::{ResolvedResource, ResourceOutcome};
-use crate::url::UrlPolicy;
+use crate::url::{UrlContext, UrlPolicy};
 
-pub const HTML_CONTRACT_VERSION: u16 = 1;
+pub const HTML_CONTRACT_VERSION: u16 = 2;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
     "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &[
-    "alt", "class", "colspan", "controls", "height", "href", "id", "rowspan", "src", "title",
-    "width",
+    "alt", "class", "colspan", "controls", "height", "href", "id", "rel", "rowspan", "src",
+    "target", "title", "width",
 ];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
@@ -62,6 +62,82 @@ pub enum HtmlDocumentMode {
     Complete,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ExternalLinkPresentation {
+    #[default]
+    SameContext,
+    NewContext {
+        noreferrer: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UnknownSourceLanguage {
+    #[default]
+    PreserveSanitized,
+    OmitClass,
+    Diagnostic,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SourceLanguagePolicy {
+    /// `None` accepts every safely normalized language. `Some` is an allowlist.
+    pub allowed: Option<BTreeSet<String>>,
+    pub unknown: UnknownSourceLanguage,
+}
+
+impl SourceLanguagePolicy {
+    pub fn allows(&self, language: &str) -> bool {
+        self.allowed.as_ref().is_none_or(|allowed| {
+            allowed
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(language))
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MathLanguagePolicy {
+    /// An empty set disables every math language.
+    pub allowed: BTreeSet<crate::inline::MathLanguage>,
+}
+
+impl Default for MathLanguagePolicy {
+    fn default() -> Self {
+        Self {
+            allowed: [
+                crate::inline::MathLanguage::Latex,
+                crate::inline::MathLanguage::Typst,
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UnresolvedReferencePresentation {
+    #[default]
+    Target,
+    LabelOnly,
+    Hidden,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResourceCapabilities {
+    pub images: bool,
+    pub media: bool,
+}
+
+impl Default for ResourceCapabilities {
+    fn default() -> Self {
+        Self {
+            images: true,
+            media: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderPolicy {
     pub document_mode: HtmlDocumentMode,
@@ -69,6 +145,11 @@ pub struct RenderPolicy {
     /// Enables the optional `kbd`, `btn`, and `menu` presentation macros.
     pub render_ui_macros: bool,
     pub url_policy: UrlPolicy,
+    pub external_links: ExternalLinkPresentation,
+    pub source_languages: SourceLanguagePolicy,
+    pub math_languages: MathLanguagePolicy,
+    pub unresolved_references: UnresolvedReferencePresentation,
+    pub resources: ResourceCapabilities,
 }
 
 impl Default for RenderPolicy {
@@ -78,17 +159,22 @@ impl Default for RenderPolicy {
             render_document_title: true,
             render_ui_macros: false,
             url_policy: UrlPolicy::default(),
+            external_links: ExternalLinkPresentation::default(),
+            source_languages: SourceLanguagePolicy::default(),
+            math_languages: MathLanguagePolicy::default(),
+            unresolved_references: UnresolvedReferencePresentation::default(),
+            resources: ResourceCapabilities::default(),
         }
     }
 }
 
 impl RenderPolicy {
-    pub fn allows_url(&self, value: &str) -> bool {
-        self.url_policy.allows(value)
+    pub fn allows_url(&self, value: &str, context: UrlContext) -> bool {
+        self.url_policy.allows(value, context)
     }
 
-    pub fn classify_url(&self, value: &str) -> crate::url::UrlDecision {
-        self.url_policy.classify(value)
+    pub fn classify_url(&self, value: &str, context: UrlContext) -> crate::url::UrlDecision {
+        self.url_policy.classify(value, context)
     }
 }
 
@@ -273,9 +359,17 @@ fn render_block(
             render_optional_id(output, explicit_id);
             output.push_str("><code");
             if let Some(language) = &block.language {
-                output.push_str(" class=\"language-");
-                escape_html_into(output, &safe_language_class(language));
-                output.push('"');
+                if policy.source_languages.allows(language) {
+                    output.push_str(" class=\"language-");
+                    escape_html_into(output, &safe_language_class(language));
+                    output.push('"');
+                } else if policy.source_languages.unknown == UnknownSourceLanguage::Diagnostic {
+                    context.diagnostics.push(render_diagnostic(
+                        "source-language-not-allowed",
+                        "source language is rejected by the render policy",
+                        block.language_range.unwrap_or(block.attribute_range),
+                    ));
+                }
             }
             output.push('>');
             escape_html_into(output, &block.value);
@@ -283,12 +377,21 @@ fn render_block(
         }
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context),
         AstBlock::Math(block) => {
-            render_preformatted(
-                output,
-                explicit_id,
-                Some(math_class(block.language)),
-                &block.value,
-            );
+            if policy.math_languages.allowed.contains(&block.language) {
+                render_preformatted(
+                    output,
+                    explicit_id,
+                    Some(math_class(block.language)),
+                    &block.value,
+                );
+            } else {
+                render_preformatted(output, explicit_id, None, &block.value);
+                context.diagnostics.push(render_diagnostic(
+                    "math-language-not-allowed",
+                    "math language is rejected by the render policy",
+                    block.attribute_range,
+                ));
+            }
         }
         AstBlock::Delimited(block) => {
             render_delimited(output, block, explicit_id, policy, context);
@@ -729,9 +832,24 @@ fn render_inlines(
             Inline::HardBreak { .. } => output.push_str("<br>\n"),
             Inline::Passthrough { value, .. } => escape_inline_text(output, value),
             Inline::Formula(formula) => {
-                output.push_str("<code class=\"");
-                output.push_str(math_class(formula.language));
-                output.push_str("\">");
+                output.push_str("<code");
+                if context
+                    .policy
+                    .math_languages
+                    .allowed
+                    .contains(&formula.language)
+                {
+                    output.push_str(" class=\"");
+                    output.push_str(math_class(formula.language));
+                    output.push('"');
+                } else {
+                    context.diagnostics.push(render_diagnostic(
+                        "math-language-not-allowed",
+                        "math language is rejected by the render policy",
+                        formula.range,
+                    ));
+                }
+                output.push('>');
                 escape_inline_text(output, &formula.value);
                 output.push_str("</code>");
             }
@@ -752,7 +870,7 @@ fn render_standard_macro(
     match node.kind {
         Kind::Email => {
             let href = format!("mailto:{}", node.target);
-            if !context.policy.allows_url(&href) {
+            if !context.policy.allows_url(&href, UrlContext::AuthoredLink) {
                 escape_inline_text(output, &node.target);
                 return;
             }
@@ -831,6 +949,15 @@ fn render_image_macro(
     context: &mut InlineRenderContext<'_, '_>,
 ) {
     let alt = macro_attribute(node, "alt", 0).unwrap_or("");
+    if !context.policy.resources.images {
+        escape_inline_text(output, alt);
+        context.diagnostics.push(render_diagnostic(
+            "resource-capability-disabled",
+            "image rendering is disabled by the host capability profile",
+            node.range,
+        ));
+        return;
+    }
     let Some(href) = resolved_resource_href(node, context) else {
         escape_inline_text(output, alt);
         return;
@@ -855,6 +982,15 @@ fn render_media_macro(
     node: &crate::inline::StandardMacro,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
+    if !context.policy.resources.media {
+        escape_inline_text(output, &node.target);
+        context.diagnostics.push(render_diagnostic(
+            "resource-capability-disabled",
+            "media rendering is disabled by the host capability profile",
+            node.range,
+        ));
+        return;
+    }
     let Some(href) = resolved_resource_href(node, context) else {
         escape_inline_text(output, &node.target);
         return;
@@ -883,7 +1019,12 @@ fn resolved_resource_href(
         ResolutionMatch::Unique(ResolvedResource {
             outcome: ResourceOutcome::Resolved(value),
             ..
-        }) if context.policy.allows_url(&value.href) => Some(value.href.clone()),
+        }) if context
+            .policy
+            .allows_url(&value.href, UrlContext::ResolvedResource) =>
+        {
+            Some(value.href.clone())
+        }
         ResolutionMatch::Unique(ResolvedResource {
             outcome: ResourceOutcome::Resolved(_),
             ..
@@ -991,10 +1132,34 @@ fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::Docum
 }
 
 fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_, '_>) {
-    if context.policy.allows_url(&link.target) {
+    if context
+        .policy
+        .allows_url(&link.target, UrlContext::AuthoredLink)
+    {
         output.push_str("<a href=\"");
         escape_html_into(output, &link.target);
-        output.push_str("\">");
+        output.push('"');
+        if matches!(
+            context.policy.external_links,
+            ExternalLinkPresentation::NewContext { .. }
+        ) && matches!(
+            context
+                .policy
+                .classify_url(&link.target, UrlContext::AuthoredLink),
+            crate::url::UrlDecision::Allowed
+        ) && link.target.split_once(':').is_some_and(|(scheme, _)| {
+            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+        }) {
+            output.push_str(" target=\"_blank\" rel=\"noopener");
+            if matches!(
+                context.policy.external_links,
+                ExternalLinkPresentation::NewContext { noreferrer: true }
+            ) {
+                output.push_str(" noreferrer");
+            }
+            output.push('"');
+        }
+        output.push('>');
         render_label_or_text(output, &link.label, &link.target_source, context);
         output.push_str("</a>");
     } else {
@@ -1033,9 +1198,18 @@ fn render_reference(
             let resolution = context.input_usage.reference_at(reference.range);
             if let ResolutionMatch::Unique(resolution) = resolution {
                 match &resolution.outcome {
-                    crate::reference::ResolutionOutcome::Resolved { href }
-                        if context.policy.allows_url(href) =>
+                    crate::reference::ResolutionOutcome::Resolved { href, notices }
+                        if context
+                            .policy
+                            .allows_url(href, UrlContext::ResolvedReference) =>
                     {
+                        for notice in notices {
+                            context.diagnostics.push(render_diagnostic(
+                                notice.kind.diagnostic_code(),
+                                "reference resolution used a fallback",
+                                reference.target_range,
+                            ));
+                        }
                         (Some(href.clone()), reference_text(reference), None)
                     }
                     crate::reference::ResolutionOutcome::Resolved { .. } => (
@@ -1076,7 +1250,15 @@ fn render_reference(
         render_label_or_text(output, &reference.label, &fallback, context);
         output.push_str("</a>");
     } else {
-        render_label_or_text(output, &reference.label, &fallback, context);
+        match context.policy.unresolved_references {
+            UnresolvedReferencePresentation::Target => {
+                render_label_or_text(output, &reference.label, &fallback, context);
+            }
+            UnresolvedReferencePresentation::LabelOnly => {
+                render_inlines(output, &reference.label, context);
+            }
+            UnresolvedReferencePresentation::Hidden => {}
+        }
     }
     if let Some((code, message)) = diagnostic {
         context
@@ -1182,15 +1364,17 @@ fn escape_inline_text(output: &mut String, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, HTML_CONTRACT_VERSION,
-        HtmlDocumentMode, RenderPolicy, ResolvedReference, render, render_with_inputs,
+        ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
+        HTML_CONTRACT_VERSION, HtmlDocumentMode, MathLanguagePolicy, RenderPolicy,
+        ResolvedReference, ResourceCapabilities, SourceLanguagePolicy, UnknownSourceLanguage,
+        UnresolvedReferencePresentation, render, render_with_inputs,
     };
     use crate::inline::{Inline, ReferenceDestination};
     use crate::parser::AstBlock;
     use crate::parser::parse;
     use crate::render::RenderInputs;
     use crate::resource::ResolvedResource;
-    use crate::url::UrlDecision;
+    use crate::url::{UrlContext, UrlDecision};
 
     fn echo_resource_inputs(document: &crate::parser::AstDocument) -> RenderInputs {
         let mut resources = Vec::new();
@@ -1369,25 +1553,31 @@ mod tests {
     fn render_policy_allows_only_configured_safe_schemes() {
         let mut policy = RenderPolicy::default();
         assert_eq!(
-            policy.classify_url("https://example.com"),
+            policy.classify_url("https://example.com", UrlContext::AuthoredLink),
             UrlDecision::Allowed
         );
         assert_eq!(
-            policy.classify_url("HTTP://example.com"),
+            policy.classify_url("HTTP://example.com", UrlContext::AuthoredLink),
             UrlDecision::Allowed
         );
         assert_eq!(
-            policy.classify_url("javascript:alert(1)"),
+            policy.classify_url("javascript:alert(1)", UrlContext::AuthoredLink),
             UrlDecision::Rejected
         );
         assert_eq!(
-            policy.classify_url("java%0ascript:alert(1)"),
+            policy.classify_url("java%0ascript:alert(1)", UrlContext::AuthoredLink),
             UrlDecision::Rejected
         );
-        assert_eq!(policy.classify_url("relative.adoc"), UrlDecision::Rejected);
-        assert_eq!(policy.classify_url("/absolute"), UrlDecision::Rejected);
         assert_eq!(
-            policy.classify_url("data:text/html,x"),
+            policy.classify_url("relative.adoc", UrlContext::AuthoredLink),
+            UrlDecision::Rejected
+        );
+        assert_eq!(
+            policy.classify_url("/absolute", UrlContext::AuthoredLink),
+            UrlDecision::Rejected
+        );
+        assert_eq!(
+            policy.classify_url("data:text/html,x", UrlContext::AuthoredLink),
             UrlDecision::Rejected
         );
 
@@ -1396,9 +1586,9 @@ mod tests {
             .allowed_schemes
             .insert("mailto".to_owned());
         policy.url_policy.allow_relative = true;
-        assert!(policy.allows_url("mailto:user@example.com"));
-        assert!(policy.allows_url("relative.adoc"));
-        assert!(!policy.allows_url("../outside.adoc"));
+        assert!(policy.allows_url("mailto:user@example.com", UrlContext::AuthoredLink));
+        assert!(policy.allows_url("relative.adoc", UrlContext::AuthoredLink));
+        assert!(!policy.allows_url("../outside.adoc", UrlContext::AuthoredLink));
 
         let parsed = parse("link:relative.adoc[relative]").expect("parse");
         assert_eq!(
@@ -1408,8 +1598,140 @@ mod tests {
     }
 
     #[test]
+    fn external_link_attributes_are_fixed_and_do_not_apply_to_xrefs() {
+        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+            .analyze("https://example.com/[External] xref:note:123[Internal]")
+            .expect("analysis");
+        let policy = RenderPolicy {
+            external_links: ExternalLinkPresentation::NewContext { noreferrer: true },
+            ..RenderPolicy::default()
+        };
+        let output = render_with_inputs(
+            analysis.ast(),
+            &policy,
+            &RenderInputs::new(
+                vec![ResolvedReference::resolved(
+                    analysis.references()[0].range,
+                    "https://app.example/notes/123",
+                )],
+                Vec::new(),
+            ),
+        );
+
+        assert!(output.html.contains(
+            "href=\"https://example.com/\" target=\"_blank\" rel=\"noopener noreferrer\""
+        ));
+        assert!(
+            output
+                .html
+                .contains("<a href=\"https://app.example/notes/123\">Internal</a>")
+        );
+    }
+
+    #[test]
+    fn source_math_reference_and_resource_policies_fail_closed() {
+        let source = "[source,python]\n----\nprint(1)\n----\n\nstem:[x] xref:note:secret[] image:https://example/x.png[alt]";
+        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+            .analyze(source)
+            .expect("analysis");
+        let image = analysis.resource_queries()[0].reference.range;
+        let policy = RenderPolicy {
+            source_languages: SourceLanguagePolicy {
+                allowed: Some(["rust".to_owned()].into_iter().collect()),
+                unknown: UnknownSourceLanguage::Diagnostic,
+            },
+            math_languages: MathLanguagePolicy {
+                allowed: std::collections::BTreeSet::new(),
+            },
+            unresolved_references: UnresolvedReferencePresentation::LabelOnly,
+            resources: ResourceCapabilities {
+                images: false,
+                media: false,
+            },
+            ..RenderPolicy::default()
+        };
+        let output = render_with_inputs(
+            analysis.ast(),
+            &policy,
+            &RenderInputs::new(
+                Vec::new(),
+                vec![ResolvedResource::resolved(
+                    image,
+                    "https://cdn.example/x.png",
+                    None,
+                    None,
+                )],
+            ),
+        );
+
+        assert!(!output.html.contains("language-python"));
+        assert!(!output.html.contains("math-latex"));
+        assert!(!output.html.contains("note:secret"));
+        assert!(!output.html.contains("<img"));
+        let codes = output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"source-language-not-allowed"));
+        assert!(codes.contains(&"math-language-not-allowed"));
+        assert!(codes.contains(&"resource-capability-disabled"));
+    }
+
+    #[test]
+    fn resolved_reference_notices_are_projected_as_render_diagnostics() {
+        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+            .analyze("xref:note:123#missing[Note]")
+            .expect("analysis");
+        let output = render_with_inputs(
+            analysis.ast(),
+            &RenderPolicy::default(),
+            &RenderInputs::new(
+                vec![ResolvedReference::resolved_with_notices(
+                    analysis.references()[0].range,
+                    "https://app.example/notes/123",
+                    vec![crate::reference::ResolutionNotice {
+                        kind: crate::reference::ResolutionNoticeKind::Fallback,
+                    }],
+                )],
+                Vec::new(),
+            ),
+        );
+
+        assert_eq!(
+            output.diagnostics[0].code.as_str(),
+            "reference-resolution-fallback"
+        );
+    }
+
+    #[test]
+    fn failed_reference_details_never_become_html() {
+        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+            .analyze("xref:record:private[Public label]")
+            .expect("analysis");
+        let output = render_with_inputs(
+            analysis.ast(),
+            &RenderPolicy::default(),
+            &RenderInputs::new(
+                vec![ResolvedReference::failed(
+                    analysis.references()[0].range,
+                    crate::reference::ResolverFailure {
+                        kind: crate::reference::ResolutionFailureKind::MissingTarget,
+                        message: "ACL denied: secret database title".to_owned(),
+                    },
+                )],
+                Vec::new(),
+            ),
+        );
+
+        assert_eq!(output.html, "<p>Public label</p>\n");
+        assert!(!output.html.contains("ACL"));
+        assert!(!output.html.contains("secret"));
+    }
+
+    #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 1);
+        assert_eq!(HTML_CONTRACT_VERSION, 2);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -1422,8 +1744,8 @@ mod tests {
         assert_eq!(
             ALLOWED_ATTRIBUTES,
             [
-                "alt", "class", "colspan", "controls", "height", "href", "id", "rowspan", "src",
-                "title", "width"
+                "alt", "class", "colspan", "controls", "height", "href", "id", "rel", "rowspan",
+                "src", "target", "title", "width"
             ]
         );
         assert_eq!(

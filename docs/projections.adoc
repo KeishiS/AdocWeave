@@ -4,7 +4,7 @@
 ホスト向け情報を抽出する。projection生成時にソースを再解析せず、ファイル、DB、
 ネットワークまたはノートアプリ固有スキーマへアクセスしない。
 
-現在の`PROJECTION_CONTRACT_VERSION`は1である。公開フィールドの意味または安定JSON表現を
+現在の`PROJECTION_CONTRACT_VERSION`は2である。公開フィールドの意味または安定JSON表現を
 破壊的に変更する場合は、このversionを更新する。
 
 == 出力
@@ -15,6 +15,8 @@
 * 文書タイトル、見出しおよび明示アンカーからなる参照先
 * 通常の外部リンクと、表示文字列・URLそれぞれの元範囲
 * 文書内、文書間および任意スキームxrefを統一した`ReferenceEdge`
+* 言語、内容および範囲を分離したsource block
+* inline／block種別、数式言語、内容および範囲を持つ数式
 * 検索用文字列と、prose・codeを区別する元範囲付きsegment
 * footnote、bibliography entry／参照edgeおよび階層index termからなる不変文書catalog
 * section hierarchy、TOC、appendix、book partおよびmanpage headerからなる文書構造
@@ -23,7 +25,7 @@
 `ReferenceEdge.target`は`ReferenceKey::Local`、`Document`または`Scheme`のいずれかである。
 通常リンクはxref edgeへ混在させず、`ExternalLink`として型で区別する。Resolver結果を
 `RenderInputs`を渡した場合は、参照元範囲が完全に一致するedgeだけへ解決結果を付加する。projection自身は
-解決を実行しない。
+解決を実行しない。成功結果にfallback noticeがある場合もedgeへ保持する。
 
 同じ`Analysis`と同じ解決結果列からは、同じ順序と同じ`render_json()`結果を得なければ
 ならない。出現順を基本とし、外部リンクは元範囲順、参照先は`Analysis`の規範順を維持する。
@@ -57,7 +59,7 @@ segmentとし、LF／CRLFは表示上の空白へ正規化する。
 
 |インライン・ブロック数式
 |含めない
-|数式言語固有の検索・索引はホスト拡張へ委譲する。
+|検索文字列には混在させない。数式専用projectionから言語、内容および範囲を取得し、索引はhostへ委譲する。
 
 |文書属性行、アンカー記号
 |含めない

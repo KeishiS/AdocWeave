@@ -33,6 +33,8 @@ include属性は`tag`／`tags`、`lines`、`leveloffset`、`indent`およびUTF-
 
 `PreprocessOptions`はinclude深さ、include件数、展開後総byte、展開nodeおよびsource map segment数の
 上限を持つ。
+`enable_includes = false`ではinclude構文とdirective位置を保持したまま展開せず、snapshotを参照しない。
+Webホスト等でincludeを使用しない場合は、このcapabilityを明示的に無効化する。
 循環、絶対path、path traversal、制御文字、未許可schemeを拒否する。`Secure` modeではscheme付き
 targetを許可しない。他のmodeでも`allowed_schemes`に明示されたschemeだけをsnapshotから参照する。
 

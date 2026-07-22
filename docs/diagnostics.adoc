@@ -21,6 +21,13 @@
 ノートID、DB、権限、外部文書の存在等は解析後のホスト診断である。ホスト診断は
 `Analysis`を書き換えず別の結果として生成し、表示時に安定順序で統合する。
 
+== Render診断
+
+`RenderPolicy`と`RenderInputs`に依存する診断は不変`Analysis`へ混在させず、backendの出力診断として返す。
+Webホスト向けpolicyは`source-language-not-allowed`、`math-language-not-allowed`、
+`resource-capability-disabled`および`reference-resolution-fallback`を使用する。同じAnalysisでもhost profileが
+異なればrender診断は異なり得るため、cache keyにはprofileとRenderInputsのrevisionを含める。
+
 == Fix
 
 Fixは重複しない`TextEdit`だけを保持する。`Always`は構文上安全に適用できる変更、

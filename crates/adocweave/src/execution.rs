@@ -101,6 +101,8 @@ impl AnalysisCacheKey {
         let crate::url::UrlPolicy {
             allowed_schemes,
             allow_relative,
+            allow_resolved_relative,
+            allow_resolved_root_relative,
             allow_data_uris,
         } = url_policy;
         let mut hasher = Sha256::new();
@@ -148,6 +150,8 @@ impl AnalysisCacheKey {
             hash_bytes(&mut hasher, value.as_bytes());
         }
         hash_bool(&mut hasher, *allow_relative);
+        hash_bool(&mut hasher, *allow_resolved_relative);
+        hash_bool(&mut hasher, *allow_resolved_root_relative);
         hash_bool(&mut hasher, *allow_data_uris);
         hash_u64(
             &mut hasher,
@@ -319,7 +323,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "f41b821178253a5f596c3e02a32aac8918f8c2fe6c2e74e6538c09799b72158d"
+            "d4cf49b217788a61410c10716f0edaef9513ba8b13ab70743cb26c7dde2b70ea"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

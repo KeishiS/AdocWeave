@@ -1108,7 +1108,9 @@ impl LanguageService {
         )
         .external_links
         {
-            if !adocweave::url::UrlPolicy::default().allows(&link.target) {
+            if !adocweave::url::UrlPolicy::default()
+                .allows(&link.target, adocweave::url::UrlContext::AuthoredLink)
+            {
                 continue;
             }
             let Ok(target) = lsp::Url::parse(&link.target) else {

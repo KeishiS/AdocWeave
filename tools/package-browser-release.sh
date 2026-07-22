@@ -9,7 +9,7 @@ archive="target/distrib/$package.tar.xz"
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
 
 rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
-cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
+cargo build -p adocweave-wasm --profile browser --target wasm32-unknown-unknown
 
 if command -v wasm-bindgen >/dev/null 2>&1; then
   wasm_bindgen="$(command -v wasm-bindgen)"
@@ -21,7 +21,7 @@ fi
 "$wasm_bindgen" \
   --target web \
   --out-dir target/adocweave-wasm \
-  target/wasm32-unknown-unknown/release/adocweave_wasm.wasm
+  target/wasm32-unknown-unknown/browser/adocweave_wasm.wasm
 
 rm -rf "$stage"
 mkdir -p "$stage/wasm" "$stage/worker" "$stage/example"

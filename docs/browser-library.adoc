@@ -23,7 +23,18 @@ const client = new AdocWeaveClient({
   },
 });
 
-client.update({ version: 1, source: "= Title\n" });
+client.update({
+  version: 1,
+  source: "= Title\n\nhttps://example.com/[外部]\n",
+  options: {
+    urlPolicy: { allowResolvedRootRelative: true },
+    externalLinks: { openInNewContext: true, noreferrer: true },
+    sourceLanguages: { allowed: ["rust"], unknown: "diagnostic" },
+    mathLanguages: ["latex"],
+    unresolvedReferences: "label-only",
+    resources: { images: false, media: false },
+  },
+});
 client.cancel();
 client.dispose();
 ----
@@ -31,6 +42,9 @@ client.dispose();
 `update`は単調増加するgenerationを返す。結果は`html`、`diagnostics`、`renderDiagnostics`、
 `sourceVersion`、`generation`、6契約versionおよび完全なWASM応答を所有する。古いgenerationの結果は通知しない。
 `cancel`は現在の処理を無効化し、`dispose`後の`update`と`cancel`は失敗する。
+
+`renderInputs`と`options`は`index.d.mts`で型付けされる。任意schemeのxrefは利用側が同じsource revisionの
+range付き解決結果へ変換する。`note`、UUID、ACL、DBまたはrouteの意味をbrowser libraryは解釈しない。
 
 == キャンセルと縮退
 
@@ -62,4 +76,5 @@ cargo make test-browser-bundler
 
 検証は決定的なlayout、TypeScript compile、2 MiBの圧縮archive上限、1 MiBのWASM上限、機械固有絶対pathの不在、
 CSP、isolated環境の協調cancel、非isolated環境のWorker再生成、高頻度更新時の最新結果およびesbuild後のasset解決を
-実archiveから確認する。native／WASMの意味同値性は`cargo make test-cross-runtime`が担当する。
+実archiveから確認する。browser archiveはnative配布用profileと分離したsize-orientedな`browser` profileで構築する。
+native／WASMの意味同値性は`cargo make test-cross-runtime`が担当する。

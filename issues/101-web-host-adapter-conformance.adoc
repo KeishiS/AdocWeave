@@ -1,5 +1,5 @@
 = Webホストadapter適合性
-:status: planned
+:status: completed
 :depends-on: 096,097,098,099,100
 
 == 目的
@@ -28,3 +28,9 @@ Webホストが公開APIだけを用いて標準AsciiDoc構文へ安全な利用
 
 特定アプリ名、`note`専用型、UUID、DB、ACL、route、KaTeX、highlighterおよびDOM更新をfixtureの公開契約へ
 組み込まない。
+
+== 実装結果
+
+任意scheme xrefのroot-relative解決、fallback notice、外部link属性、source・数式policy、formula／source projection、
+resource無効化を一つの共通fixtureへ統合した。native testと実WASM cross-runtime testは同じrequest全体を比較する。
+browser TypeScript宣言へprofileとRenderInputsを型付けし、公開契約と利用文書をversion 2へ同期した。

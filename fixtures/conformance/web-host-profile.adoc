@@ -1,0 +1,12 @@
+https://example.com/[External]
+
+[source,python]
+----
+print(1)
+----
+
+stem:[x]
+
+xref:note:123#missing[Note]
+
+image:https://source.example/x.png[alt]

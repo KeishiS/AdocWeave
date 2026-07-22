@@ -424,7 +424,10 @@ fn lint_links_and_references(
         use crate::inline::{Inline, ReferenceDestination};
         match inline {
             Inline::Link(link) => {
-                if !config.url_policy.allows(&link.target) {
+                if !config
+                    .url_policy
+                    .allows(&link.target, crate::url::UrlContext::AuthoredLink)
+                {
                     push_diagnostic(
                         diagnostics,
                         config,
@@ -442,7 +445,9 @@ fn lint_links_and_references(
                         | crate::inline::StandardMacroKind::Icon
                         | crate::inline::StandardMacroKind::Audio
                         | crate::inline::StandardMacroKind::Video
-                ) && !config.url_policy.allows(&node.target) =>
+                ) && !config
+                    .url_policy
+                    .allows(&node.target, crate::url::UrlContext::AuthoredLink) =>
             {
                 push_diagnostic(
                     diagnostics,

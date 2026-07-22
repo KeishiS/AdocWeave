@@ -1,0 +1,110 @@
+= Webホストadapter契約
+
+この文書は、Webアプリが標準AsciiDoc入力へ利用側profileを適用するための公開API対応を定義する。
+AdocWeaveはアプリ固有parser、DB、ACL、HTTP client、DOMまたはHTML後処理を要求しない。
+
+== 処理順
+
+. 一つのsource revisionを`Engine::analyze`またはWASM `process`へ渡す。
+. `reference_queries()`と`resource_queries()`を取得し、hostがI/Oと権限検査を行う。
+. queryの完全一致rangeを保持した`RenderInputs`を構築する。
+. 同じrevision、`RenderPolicy`および`RenderInputs`からHTMLとprojectionを生成する。
+. sourceが変わった場合は、古いquery、解決結果および描画結果を破棄する。
+
+== API対応表
+
+[cols="2,3,3",options="header"]
+|===
+|要求 |AdocWeave公開境界 |Host責務
+
+|標準構文と位置
+|`Analysis`、semantic AST、診断、UTF-8 byte range
+|保存時・編集中profileの選択、host固有診断
+
+|任意scheme xref
+|`ReferenceKey::Scheme`、`reference_queries()`、`ResolvedReference`
+|scheme、locator、anchorの検証、DB・ACL、最終href
+
+|由来別URL
+|`UrlContext`、`UrlPolicy`、`allow_resolved_root_relative`
+|文書入力とhost生成URLに必要な最小許可を設定
+
+|外部link表示
+|`ExternalLinkPresentation`
+|new contextと`noreferrer`の選択
+
+|source block
+|AST、`SourceBlockProjection`、`SourceLanguagePolicy`
+|言語allowlist、highlighter、theme。コードを実行しない
+
+|数式
+|AST、`FormulaProjection`、`MathLanguagePolicy`
+|言語allowlist、KaTeX等の安全な別描画境界
+
+|参照fallback
+|`ResolutionNotice`、`UnresolvedReferencePresentation`
+|fallback判断、公開可能なlabel、失敗情報の秘匿
+
+|resource
+|`ResourceCapabilities`、`enable_includes`、`ResourceSnapshot`
+|取得、認証、size・timeout・redirect制限。不要能力を無効化
+
+|native／WASM
+|version付きconformance snapshotと共通fixture
+|同じprofile、revisionおよびRenderInputsを渡す
+|===
+
+== 任意scheme参照の例
+
+[source,asciidoc]
+----
+xref:record:01800000-0000-7000-8000-000000000001#definition[定義]
+----
+
+Parserは`record`を業務上解釈しない。hostはqueryを検証し、許可された場合だけ次のような結果を渡す。
+
+[source,text]
+----
+ResolvedReference {
+  href: "/records/01800000-0000-7000-8000-000000000001#definition",
+  notices: [],
+}
+----
+
+アンカー不在時に文書本体へfallbackするhostは、本文hrefと`Fallback` noticeを渡す。権限拒否と不在を
+区別して公開しない場合、同じfailure kindと同じ一般messageへ畳み込む。
+
+== Web向けprofile例
+
+[source,javascript]
+----
+const options = {
+  urlPolicy: {
+    allowedSchemes: ["http", "https"],
+    allowResolvedRootRelative: true,
+  },
+  externalLinks: { openInNewContext: true, noreferrer: true },
+  sourceLanguages: { allowed: ["rust"], unknown: "diagnostic" },
+  mathLanguages: ["latex"],
+  unresolvedReferences: "label-only",
+  resources: { images: false, media: false },
+};
+----
+
+この設定でも文書に直接書かれた`/records/id`は許可されない。root-relative URLは解決済み参照・resourceの
+contextだけで許可される。`javascript:`、control文字、protocol-relative URL、traversalおよび難読化された
+path separatorは拒否する。
+
+== 信頼境界
+
+* Resolver結果をHTMLとして扱わず、rendererでURLを再検査する。
+* `target`、`rel`、language classを入力文字列から組み立てない。
+* raw HTML、style、event handlerおよびSVGを有効にしない。
+* failure messageへタイトル、ACL状態、DB key、credentialまたは内部例外を含めない。
+* libraryはDOMを変更しない。利用側はCSPと表示sandboxを別途設定する。
+
+== 適合性
+
+`fixtures/conformance/web-host-profile.adoc`は、任意scheme、root-relative解決、fallback notice、外部link、
+source言語、STEMおよびresource無効化を一つのprofileで検証する。Rust native adapterと実WASM runtimeは
+request全体に対する応答を比較し、TypeScript宣言はbrowser packageのcompile testで検証する。

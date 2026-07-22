@@ -10,7 +10,7 @@ use crate::reference::{ReferenceKey, ResolutionOutcome};
 use crate::render::{RenderInputs, ResolutionMatch};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 1;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -20,9 +20,44 @@ pub struct DocumentProjection {
     pub targets: Vec<ReferenceTarget>,
     pub external_links: Vec<ExternalLink>,
     pub reference_edges: Vec<ReferenceEdge>,
+    pub source_blocks: Vec<SourceBlockProjection>,
+    pub formulas: Vec<FormulaProjection>,
     pub searchable_text: SearchableText,
     pub catalogs: crate::catalog::DocumentCatalogs,
     pub structure: crate::structure::DocumentStructure,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceBlockProjection {
+    pub source_range: TextRange,
+    pub content_range: TextRange,
+    pub language_range: Option<TextRange>,
+    pub language: Option<String>,
+    pub source: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FormulaKind {
+    Inline,
+    Block,
+}
+
+impl FormulaKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Block => "block",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FormulaProjection {
+    pub kind: FormulaKind,
+    pub language: crate::inline::MathLanguage,
+    pub source_range: TextRange,
+    pub content_range: TextRange,
+    pub source: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -118,6 +153,41 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         })
         .collect();
 
+    let mut source_blocks = Vec::new();
+    let mut formulas = Vec::new();
+    crate::walker::walk(analysis.ast(), |node| match node {
+        crate::walker::SemanticNode::Block(AstBlock::Source(source)) => {
+            source_blocks.push(SourceBlockProjection {
+                source_range: source.range,
+                content_range: source.content_range,
+                language_range: source.language_range,
+                language: source.language.clone(),
+                source: source.value.clone(),
+            });
+        }
+        crate::walker::SemanticNode::Inline(Inline::Formula(formula)) => {
+            formulas.push(FormulaProjection {
+                kind: FormulaKind::Inline,
+                language: formula.language,
+                source_range: formula.range,
+                content_range: formula.content_range,
+                source: formula.value.clone(),
+            });
+        }
+        crate::walker::SemanticNode::Block(AstBlock::Math(formula)) => {
+            formulas.push(FormulaProjection {
+                kind: FormulaKind::Block,
+                language: formula.language,
+                source_range: formula.range,
+                content_range: formula.content_range,
+                source: formula.value.clone(),
+            });
+        }
+        _ => {}
+    });
+    source_blocks.sort_by_key(|source| (source.source_range.start(), source.source_range.end()));
+    formulas.sort_by_key(|formula| (formula.source_range.start(), formula.source_range.end()));
+
     DocumentProjection {
         contract_version: PROJECTION_CONTRACT_VERSION,
         source_id: analysis.source_id().cloned(),
@@ -125,6 +195,8 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         targets: analysis.reference_targets().to_vec(),
         external_links,
         reference_edges,
+        source_blocks,
+        formulas,
         searchable_text: searchable_text(analysis),
         catalogs: analysis.catalogs().clone(),
         structure: analysis.structure().clone(),
@@ -386,6 +458,43 @@ impl DocumentProjection {
             }
             write_reference_edge(&mut output, edge);
         }
+        output.push_str("],\"sourceBlocks\":[");
+        for (index, source) in self.source_blocks.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            write!(
+                output,
+                "{{\"sourceRange\":{},\"contentRange\":{},\"languageRange\":{},\"language\":{},\"source\":{}}}",
+                json_range(source.source_range),
+                json_range(source.content_range),
+                source
+                    .language_range
+                    .map_or_else(|| "null".to_owned(), json_range),
+                source
+                    .language
+                    .as_deref()
+                    .map_or_else(|| "null".to_owned(), json_string),
+                json_string(&source.source),
+            )
+            .expect("writing to String cannot fail");
+        }
+        output.push_str("],\"formulas\":[");
+        for (index, formula) in self.formulas.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            write!(
+                output,
+                "{{\"kind\":\"{}\",\"language\":\"{}\",\"sourceRange\":{},\"contentRange\":{},\"source\":{}}}",
+                formula.kind.as_str(),
+                math_language(formula.language),
+                json_range(formula.source_range),
+                json_range(formula.content_range),
+                json_string(&formula.source),
+            )
+            .expect("writing to String cannot fail");
+        }
         output.push_str("],\"structure\":");
         write_structure(&mut output, &self.structure);
         output.push_str(",\"catalogs\":");
@@ -408,6 +517,13 @@ impl DocumentProjection {
         }
         output.push_str("]}}");
         output
+    }
+}
+
+const fn math_language(language: crate::inline::MathLanguage) -> &'static str {
+    match language {
+        crate::inline::MathLanguage::Latex => "latex",
+        crate::inline::MathLanguage::Typst => "typst",
     }
 }
 
@@ -595,13 +711,20 @@ fn write_reference_edge(output: &mut String, edge: &ReferenceEdge) {
     .expect("writing to String cannot fail");
     output.push_str(",\"resolution\":");
     match &edge.resolution {
-        Some(ResolutionOutcome::Resolved { href }) => {
+        Some(ResolutionOutcome::Resolved { href, notices }) => {
             write!(
                 output,
-                "{{\"status\":\"resolved\",\"href\":{}}}",
+                "{{\"status\":\"resolved\",\"href\":{},\"notices\":[",
                 json_string(href)
             )
             .expect("writing to String cannot fail");
+            for (index, notice) in notices.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                output.push_str(&json_string(notice.kind.diagnostic_code()));
+            }
+            output.push_str("]}");
         }
         Some(ResolutionOutcome::Failed(failure)) => {
             write!(
@@ -724,9 +847,42 @@ mod tests {
 
         assert!(matches!(
             projected.reference_edges[0].resolution,
-            Some(ResolutionOutcome::Resolved { ref href })
+            Some(ResolutionOutcome::Resolved { ref href, .. })
                 if href == "https://example/other"
         ));
+    }
+
+    #[test]
+    fn formula_projection_preserves_inline_and_block_sources() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze("stem:[x + y]\n\n[stem]\n++++\na^2\n++++\n")
+            .expect("analysis");
+        let projected = project(&analysis, &RenderInputs::default());
+
+        assert_eq!(projected.formulas.len(), 2);
+        assert_eq!(projected.formulas[0].kind, FormulaKind::Inline);
+        assert_eq!(projected.formulas[0].source, "x + y");
+        assert_eq!(projected.formulas[1].kind, FormulaKind::Block);
+        assert_eq!(projected.formulas[1].source, "a^2\n");
+        let json = projected.render_json();
+        assert!(json.contains("\"formulas\":["));
+        assert!(json.contains("\"language\":\"latex\""));
+    }
+
+    #[test]
+    fn source_block_projection_separates_language_content_and_ranges() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze("[source,rust]\n----\nlet x = 1;\n----\n")
+            .expect("analysis");
+        let projected = project(&analysis, &RenderInputs::default());
+
+        assert_eq!(projected.source_blocks.len(), 1);
+        let source = &projected.source_blocks[0];
+        assert_eq!(source.language.as_deref(), Some("rust"));
+        assert_eq!(source.source, "let x = 1;\n");
+        assert!(source.language_range.is_some());
+        assert!(source.source_range.start() <= source.content_range.start());
+        assert!(source.content_range.end() <= source.source_range.end());
     }
 
     #[test]
@@ -757,7 +913,7 @@ mod tests {
             .expect("analysis");
         assert_eq!(
             project(&analysis, &RenderInputs::default()).render_json(),
-            "{\"contractVersion\":1,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":2,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

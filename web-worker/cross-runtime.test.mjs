@@ -25,6 +25,7 @@ function requestFor(entry) {
     version: 1,
     generation: 1,
     source,
+    renderInputs: entry.renderInputs ?? {},
     options: entry.options ?? {},
   };
 }

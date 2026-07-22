@@ -1,5 +1,5 @@
 = Host resource capability profile
-:status: planned
+:status: completed
 :depends-on: 077,095
 
 == 目的
@@ -31,3 +31,8 @@ losslessに取得できる。
 == 範囲外
 
 HTTP client、filesystem provider、添付DB、代理取得およびcache実装はhostが所有する。
+
+== 実装結果
+
+画像とaudio／videoを独立に無効化する`ResourceCapabilities`をrender policyへ追加した。`enable_includes = false`では
+include directive、targetおよびsource mapを保持したままsnapshotを参照せず、I/Oやresolverへfallbackしない。

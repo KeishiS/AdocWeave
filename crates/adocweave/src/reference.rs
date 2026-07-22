@@ -106,15 +106,53 @@ pub struct ResolvedReference {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolutionOutcome {
-    Resolved { href: String },
+    Resolved {
+        href: String,
+        notices: Vec<ResolutionNotice>,
+    },
     Failed(ResolverFailure),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResolutionNoticeKind {
+    Fallback,
+}
+
+impl ResolutionNoticeKind {
+    pub const fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::Fallback => "reference-resolution-fallback",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionNotice {
+    pub kind: ResolutionNoticeKind,
 }
 
 impl ResolvedReference {
     pub fn resolved(source_range: TextRange, href: impl Into<String>) -> Self {
         Self {
             source_range,
-            outcome: ResolutionOutcome::Resolved { href: href.into() },
+            outcome: ResolutionOutcome::Resolved {
+                href: href.into(),
+                notices: Vec::new(),
+            },
+        }
+    }
+
+    pub fn resolved_with_notices(
+        source_range: TextRange,
+        href: impl Into<String>,
+        notices: Vec<ResolutionNotice>,
+    ) -> Self {
+        Self {
+            source_range,
+            outcome: ResolutionOutcome::Resolved {
+                href: href.into(),
+                notices,
+            },
         }
     }
 

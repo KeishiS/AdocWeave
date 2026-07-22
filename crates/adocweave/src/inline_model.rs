@@ -69,7 +69,7 @@ pub struct StandardMacro {
     pub attributes: Vec<MacroAttribute>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MathLanguage {
     Latex,
     Typst,

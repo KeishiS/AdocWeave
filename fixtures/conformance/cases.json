@@ -118,6 +118,34 @@
       "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {
+      "name": "web-host-profile",
+      "sourceFile": "web-host-profile.adoc",
+      "renderInputs": {
+        "references": [
+          {
+            "sourceStart": 78,
+            "sourceEnd": 105,
+            "outcome": {
+              "status": "resolved",
+              "href": "/notes/123",
+              "notices": ["fallback"]
+            }
+          }
+        ]
+      },
+      "options": {
+        "urlPolicy": { "allowResolvedRootRelative": true },
+        "externalLinks": { "openInNewContext": true, "noreferrer": true },
+        "sourceLanguages": { "allowed": ["rust"], "unknown": "diagnostic" },
+        "mathLanguages": ["latex"],
+        "unresolvedReferences": "label-only",
+        "resources": { "images": false, "media": false }
+      },
+      "compatibility": "host-extension-contract",
+      "rationale": "任意scheme参照、由来別URL、固定link属性、source・数式policyおよびresource無効化をアプリ固有parserなしで全runtimeへ適用する",
+      "contractImpact": "core-api,html,projection,conformance,wasm-api"
+    },
+    {
       "name": "strict-unsupported",
       "source": "[role=raw]\n",
       "options": { "syntaxMode": "strict" },

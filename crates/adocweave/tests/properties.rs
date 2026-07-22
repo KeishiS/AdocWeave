@@ -4,7 +4,7 @@ use adocweave::html::{RenderPolicy, render};
 use adocweave::projection::{project, searchable_text};
 use adocweave::reference::ReferenceKey;
 use adocweave::source::{PositionEncoding, SourceDocument, TextSize};
-use adocweave::url::{UrlDecision, UrlPolicy};
+use adocweave::url::{UrlContext, UrlDecision, UrlPolicy};
 use adocweave::{Engine, ParseOptions};
 
 fn corpus() -> Vec<String> {
@@ -165,8 +165,14 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
         "https://例.example/道",
     ];
     for value in safe {
-        assert_eq!(policy.classify(value), UrlDecision::Allowed);
-        assert_eq!(policy.classify(value), policy.classify(value));
+        assert_eq!(
+            policy.classify(value, UrlContext::AuthoredLink),
+            UrlDecision::Allowed
+        );
+        assert_eq!(
+            policy.classify(value, UrlContext::AuthoredLink),
+            policy.classify(value, UrlContext::AuthoredLink)
+        );
     }
 
     let unsafe_values = [
@@ -181,7 +187,11 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
         "\\\\server\\share",
     ];
     for value in unsafe_values {
-        assert_eq!(policy.classify(value), UrlDecision::Rejected, "{value}");
+        assert_eq!(
+            policy.classify(value, UrlContext::AuthoredLink),
+            UrlDecision::Rejected,
+            "{value}"
+        );
     }
 }
 

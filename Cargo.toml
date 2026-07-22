@@ -26,3 +26,14 @@ codegen-units = 1
 debug = 0
 panic = "abort"
 strip = "symbols"
+
+# Size-oriented profile for the browser WASM artifact. Native release assets use
+# `dist`, which remains tuned independently.
+[profile.browser]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+debug = 0
+panic = "abort"
+strip = "symbols"

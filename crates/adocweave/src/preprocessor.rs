@@ -57,6 +57,8 @@ pub struct PreprocessOptions {
     pub safe_mode: SafeMode,
     pub allowed_schemes: BTreeSet<String>,
     pub attributes: BTreeMap<String, String>,
+    /// Expands include directives only from the caller-provided snapshot.
+    pub enable_includes: bool,
     pub max_include_depth: u32,
     pub max_includes: u32,
     pub max_total_bytes: u32,
@@ -72,6 +74,7 @@ impl Default for PreprocessOptions {
             safe_mode: SafeMode::Secure,
             allowed_schemes: BTreeSet::new(),
             attributes: BTreeMap::new(),
+            enable_includes: true,
             max_include_depth: 16,
             max_includes: 10_000,
             max_total_bytes: 50 * 1024 * 1024,
@@ -893,7 +896,30 @@ impl Context<'_> {
                 }
             } else if enabled {
                 if let Some(include) = include_directive(content) {
-                    self.expand_include(include, source_id.clone(), line.range, depth, base_uri)?;
+                    if self.options.enable_includes {
+                        self.expand_include(
+                            include,
+                            source_id.clone(),
+                            line.range,
+                            depth,
+                            base_uri,
+                        )?;
+                    } else {
+                        self.bump_node(source_id.clone(), line.range)?;
+                        self.directives.push(Directive {
+                            kind: DirectiveKind::Include,
+                            source_id: source_id.clone(),
+                            range: line.range,
+                            target: include.target,
+                            target_range: relative_range(
+                                line.range,
+                                include.target_start,
+                                include.target_end,
+                            ),
+                            resource_source_id: None,
+                        });
+                        self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                    }
                 } else if let Some(literal) = escaped_directive(content) {
                     let ending = &line.text[content.len()..];
                     self.append(
@@ -1645,5 +1671,24 @@ mod tests {
             PreprocessedDocument::from_parts("abcd".to_owned(), vec![segment(0, 5)], Vec::new(),)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn disabled_include_capability_preserves_syntax_without_resolving() {
+        let source = "include::missing.adoc[]\n";
+        let document = preprocess(
+            source,
+            &ResourceSnapshot::default(),
+            &PreprocessOptions {
+                enable_includes: false,
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("disabled include does not require a resource");
+
+        assert_eq!(document.source, source);
+        assert_eq!(document.directives.len(), 1);
+        assert_eq!(document.directives[0].kind, DirectiveKind::Include);
+        assert!(document.directives[0].resource_source_id.is_none());
     }
 }

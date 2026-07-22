@@ -1,5 +1,5 @@
 = 構造化link presentation policy
-:status: planned
+:status: completed
 :depends-on: 095
 
 == 目的
@@ -31,3 +31,8 @@
 == 範囲外
 
 特定ドメインやアプリrouteの分類規則をAdocWeaveへ固定しない。
+
+== 実装結果
+
+`ExternalLinkPresentation`を追加し、通常の外部HTTP(S)リンクだけへ固定`target="_blank"`と`noopener`、
+任意の`noreferrer`を生成する。xrefには適用せず、入力由来の`target`／`rel`を通過させないHTML fixtureを追加した。

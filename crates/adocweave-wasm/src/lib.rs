@@ -15,11 +15,11 @@ use serde_json::Value;
 
 mod render_inputs;
 pub use render_inputs::{
-    WasmReferenceFailureKind, WasmReferenceOutcome, WasmRenderInputs, WasmResolvedReference,
-    WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
+    WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
+    WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
 
-pub const WASM_API_VERSION: u16 = 1;
+pub const WASM_API_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -47,6 +47,7 @@ pub struct WasmPreprocessOptions {
     pub safe_mode: WasmSafeMode,
     pub allowed_schemes: BTreeSet<String>,
     pub attributes: BTreeMap<String, String>,
+    pub enable_includes: bool,
     pub max_include_depth: u32,
     pub max_includes: u32,
     pub max_total_bytes: u32,
@@ -62,6 +63,7 @@ impl Default for WasmPreprocessOptions {
             safe_mode: WasmSafeMode::Secure,
             allowed_schemes: options.allowed_schemes,
             attributes: options.attributes,
+            enable_includes: options.enable_includes,
             max_include_depth: options.max_include_depth,
             max_includes: options.max_includes,
             max_total_bytes: options.max_total_bytes,
@@ -121,6 +123,11 @@ pub struct WasmOptions {
     pub limits: WasmLimits,
     pub protected_attributes: BTreeMap<String, String>,
     pub url_policy: WasmUrlPolicy,
+    pub external_links: WasmExternalLinkPolicy,
+    pub source_languages: WasmSourceLanguagePolicy,
+    pub math_languages: Vec<WasmMathLanguage>,
+    pub unresolved_references: WasmUnresolvedReferencePresentation,
+    pub resources: WasmResourceCapabilities,
 }
 
 impl Default for WasmOptions {
@@ -130,6 +137,75 @@ impl Default for WasmOptions {
             limits: WasmLimits::default(),
             protected_attributes: BTreeMap::new(),
             url_policy: WasmUrlPolicy::default(),
+            external_links: WasmExternalLinkPolicy::default(),
+            source_languages: WasmSourceLanguagePolicy::default(),
+            math_languages: vec![WasmMathLanguage::Latex, WasmMathLanguage::Typst],
+            unresolved_references: WasmUnresolvedReferencePresentation::Target,
+            resources: WasmResourceCapabilities::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmExternalLinkPolicy {
+    pub open_in_new_context: bool,
+    pub noreferrer: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmSourceLanguagePolicy {
+    pub allowed: Option<Vec<String>>,
+    pub unknown: WasmUnknownSourceLanguage,
+}
+
+impl Default for WasmSourceLanguagePolicy {
+    fn default() -> Self {
+        Self {
+            allowed: None,
+            unknown: WasmUnknownSourceLanguage::PreserveSanitized,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmUnknownSourceLanguage {
+    #[default]
+    PreserveSanitized,
+    OmitClass,
+    Diagnostic,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmMathLanguage {
+    Latex,
+    Typst,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmUnresolvedReferencePresentation {
+    #[default]
+    Target,
+    LabelOnly,
+    Hidden,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmResourceCapabilities {
+    pub images: bool,
+    pub media: bool,
+}
+
+impl Default for WasmResourceCapabilities {
+    fn default() -> Self {
+        Self {
+            images: true,
+            media: true,
         }
     }
 }
@@ -234,6 +310,8 @@ impl From<WasmLimits> for ProcessingLimits {
 pub struct WasmUrlPolicy {
     pub allowed_schemes: Vec<String>,
     pub allow_relative: bool,
+    pub allow_resolved_relative: bool,
+    pub allow_resolved_root_relative: bool,
     pub allow_data_uris: bool,
 }
 
@@ -243,6 +321,8 @@ impl Default for WasmUrlPolicy {
         Self {
             allowed_schemes: policy.allowed_schemes.into_iter().collect(),
             allow_relative: policy.allow_relative,
+            allow_resolved_relative: policy.allow_resolved_relative,
+            allow_resolved_root_relative: policy.allow_resolved_root_relative,
             allow_data_uris: policy.allow_data_uris,
         }
     }
@@ -322,6 +402,7 @@ pub fn preprocess_request(
                 .map(|scheme| scheme.to_ascii_lowercase())
                 .collect(),
             attributes: options.attributes,
+            enable_includes: options.enable_includes,
             max_include_depth: options.max_include_depth,
             max_includes: options.max_includes,
             max_total_bytes: options.max_total_bytes,
@@ -378,6 +459,18 @@ pub fn process_request(
     render_inputs::validate(&render_inputs, &options.limits)?;
     let max_output_bytes = usize::try_from(options.limits.max_output_bytes)
         .expect("u32 fits usize on supported targets");
+    let url_policy = UrlPolicy {
+        allowed_schemes: options
+            .url_policy
+            .allowed_schemes
+            .into_iter()
+            .map(|scheme| scheme.to_ascii_lowercase())
+            .collect::<BTreeSet<_>>(),
+        allow_relative: options.url_policy.allow_relative,
+        allow_resolved_relative: options.url_policy.allow_resolved_relative,
+        allow_resolved_root_relative: options.url_policy.allow_resolved_root_relative,
+        allow_data_uris: options.url_policy.allow_data_uris,
+    };
     let analysis = Engine::new(ParseOptions {
         source_id: request.source_id.map(SourceId::new),
         syntax_mode: match options.syntax_mode {
@@ -386,16 +479,7 @@ pub fn process_request(
         },
         limits: options.limits.into(),
         protected_attributes: options.protected_attributes,
-        url_policy: UrlPolicy {
-            allowed_schemes: options
-                .url_policy
-                .allowed_schemes
-                .into_iter()
-                .map(|scheme| scheme.to_ascii_lowercase())
-                .collect::<BTreeSet<_>>(),
-            allow_relative: options.url_policy.allow_relative,
-            allow_data_uris: options.url_policy.allow_data_uris,
-        },
+        url_policy: url_policy.clone(),
     })
     .analyze_cancellable(&request.source, cancellation)
     .map_err(wasm_error)?;
@@ -404,7 +488,62 @@ pub fn process_request(
     }
 
     let render_inputs = render_inputs::convert(render_inputs, &analysis)?;
-    let products = snapshot(&analysis, &RenderPolicy::default(), &render_inputs);
+    let render_policy = RenderPolicy {
+        url_policy,
+        external_links: if options.external_links.open_in_new_context {
+            adocweave::html::ExternalLinkPresentation::NewContext {
+                noreferrer: options.external_links.noreferrer,
+            }
+        } else {
+            adocweave::html::ExternalLinkPresentation::SameContext
+        },
+        source_languages: adocweave::html::SourceLanguagePolicy {
+            allowed: options.source_languages.allowed.map(|languages| {
+                languages
+                    .into_iter()
+                    .map(|language| language.to_ascii_lowercase())
+                    .collect()
+            }),
+            unknown: match options.source_languages.unknown {
+                WasmUnknownSourceLanguage::PreserveSanitized => {
+                    adocweave::html::UnknownSourceLanguage::PreserveSanitized
+                }
+                WasmUnknownSourceLanguage::OmitClass => {
+                    adocweave::html::UnknownSourceLanguage::OmitClass
+                }
+                WasmUnknownSourceLanguage::Diagnostic => {
+                    adocweave::html::UnknownSourceLanguage::Diagnostic
+                }
+            },
+        },
+        math_languages: adocweave::html::MathLanguagePolicy {
+            allowed: options
+                .math_languages
+                .into_iter()
+                .map(|language| match language {
+                    WasmMathLanguage::Latex => adocweave::inline::MathLanguage::Latex,
+                    WasmMathLanguage::Typst => adocweave::inline::MathLanguage::Typst,
+                })
+                .collect(),
+        },
+        unresolved_references: match options.unresolved_references {
+            WasmUnresolvedReferencePresentation::Target => {
+                adocweave::html::UnresolvedReferencePresentation::Target
+            }
+            WasmUnresolvedReferencePresentation::LabelOnly => {
+                adocweave::html::UnresolvedReferencePresentation::LabelOnly
+            }
+            WasmUnresolvedReferencePresentation::Hidden => {
+                adocweave::html::UnresolvedReferencePresentation::Hidden
+            }
+        },
+        resources: adocweave::html::ResourceCapabilities {
+            images: options.resources.images,
+            media: options.resources.media,
+        },
+        ..RenderPolicy::default()
+    };
+    let products = snapshot(&analysis, &render_policy, &render_inputs);
     let diagnostics =
         serde_json::from_str(&products.diagnostics_json).map_err(serialization_error)?;
     let render_diagnostics =
@@ -628,6 +767,30 @@ mod tests {
             "invalid-url-scheme"
         );
 
+        let mut root_relative_request = request(source);
+        root_relative_request
+            .options
+            .url_policy
+            .allow_resolved_root_relative = true;
+        root_relative_request
+            .render_inputs
+            .resources
+            .push(WasmResolvedResource {
+                source_start: 0,
+                source_end: source.len() as u32,
+                outcome: WasmResourceOutcome::Resolved {
+                    href: "/assets/image.png".to_owned(),
+                    media_type: Some("image/png".to_owned()),
+                    byte_length: None,
+                },
+            });
+        let root_relative = process_request(root_relative_request, &NeverCancel).expect("response");
+        assert_eq!(
+            root_relative.html,
+            "<p><img src=\"/assets/image.png\" alt=\"alt\"></p>\n"
+        );
+        assert_eq!(root_relative.render_diagnostics, json!([]));
+
         let mut limited = request(source);
         limited.options.limits.max_references = 0;
         limited.render_inputs.resources.push(WasmResolvedResource {
@@ -654,6 +817,48 @@ mod tests {
         });
         let error = process_request(invalid, &NeverCancel).expect_err("outside source");
         assert_eq!(error.code, "invalid-render-input");
+    }
+
+    #[test]
+    fn wasm_applies_the_complete_host_render_profile() {
+        let source = "https://example.com/[External]\n\n[source,python]\n----\nprint(1)\n----\n\nstem:[x] xref:note:secret[] image:https://example/x.png[alt]";
+        let mut request = request(source);
+        request.options.external_links = WasmExternalLinkPolicy {
+            open_in_new_context: true,
+            noreferrer: true,
+        };
+        request.options.source_languages = WasmSourceLanguagePolicy {
+            allowed: Some(vec!["rust".to_owned()]),
+            unknown: WasmUnknownSourceLanguage::Diagnostic,
+        };
+        request.options.math_languages.clear();
+        request.options.unresolved_references = WasmUnresolvedReferencePresentation::LabelOnly;
+        request.options.resources = WasmResourceCapabilities {
+            images: false,
+            media: false,
+        };
+
+        let response = process_request(request, &NeverCancel).expect("response");
+        assert!(
+            response
+                .html
+                .contains("target=\"_blank\" rel=\"noopener noreferrer\"")
+        );
+        assert!(!response.html.contains("language-python"));
+        assert!(!response.html.contains("math-latex"));
+        assert!(!response.html.contains("note:secret"));
+        assert!(!response.html.contains("<img"));
+        assert_eq!(response.projection["formulas"][0]["source"], "x");
+        let codes = response
+            .render_diagnostics
+            .as_array()
+            .expect("render diagnostics")
+            .iter()
+            .filter_map(|diagnostic| diagnostic["code"].as_str())
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"source-language-not-allowed"));
+        assert!(codes.contains(&"math-language-not-allowed"));
+        assert!(codes.contains(&"resource-capability-disabled"));
     }
 
     #[test]

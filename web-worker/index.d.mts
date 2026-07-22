@@ -14,7 +14,62 @@ export interface AdocWeaveResult {
   sourceVersion: number;
   generation: number;
   contracts: AdocWeaveContracts;
-  result: unknown;
+  result: AdocWeaveWasmResponse;
+}
+
+export interface TextRange {
+  start: number;
+  end: number;
+}
+
+export interface SourceBlockProjection {
+  sourceRange: TextRange;
+  contentRange: TextRange;
+  languageRange: TextRange | null;
+  language: string | null;
+  source: string;
+}
+
+export interface FormulaProjection {
+  kind: "inline" | "block";
+  language: "latex" | "typst";
+  sourceRange: TextRange;
+  contentRange: TextRange;
+  source: string;
+}
+
+export interface DocumentProjection {
+  contractVersion: number;
+  sourceId: string | null;
+  sourceBlocks: SourceBlockProjection[];
+  formulas: FormulaProjection[];
+  referenceEdges: unknown[];
+  externalLinks: unknown[];
+  searchableText: unknown;
+  structure: unknown;
+  catalogs: unknown;
+  targets: unknown[];
+  title: unknown;
+}
+
+export interface AdocWeaveWasmResponse {
+  apiVersion: number;
+  version: number;
+  generation: number;
+  conformanceContractVersion: number;
+  parse: {
+    profileVersion: number;
+    blockCount: number;
+    nodeCount: number;
+    referenceCount: number;
+  };
+  syntax: string;
+  ast: string;
+  html: string;
+  diagnostics: unknown[];
+  renderDiagnostics: unknown[];
+  symbols: unknown[];
+  projection: DocumentProjection;
 }
 
 export interface AdocWeaveError {
@@ -28,8 +83,79 @@ export interface UpdateRequest {
   sourceId?: string | null;
   version: number;
   source: string;
-  renderInputs?: unknown;
-  options?: Record<string, unknown>;
+  renderInputs?: RenderInputs;
+  options?: AdocWeaveOptions;
+}
+
+export interface RenderInputs {
+  references?: ResolvedReference[];
+  resources?: ResolvedResource[];
+}
+
+export interface ResolvedReference {
+  sourceStart: number;
+  sourceEnd: number;
+  outcome:
+    | { status: "resolved"; href: string; notices?: ("fallback")[] }
+    | {
+        status: "failed";
+        kind:
+          | "missing-target"
+          | "missing-anchor"
+          | "ambiguous-target"
+          | "outside-root"
+          | "resolver-failure";
+        message: string;
+      };
+}
+
+export interface ResolvedResource {
+  sourceStart: number;
+  sourceEnd: number;
+  outcome:
+    | {
+        status: "resolved";
+        href: string;
+        mediaType: string | null;
+        byteLength: number | null;
+      }
+    | {
+        status: "failed";
+        kind:
+          | "missing"
+          | "outside-root"
+          | "scheme-denied"
+          | "permission-denied"
+          | "resolver-failure";
+        message: string;
+      };
+}
+
+export interface AdocWeaveOptions {
+  syntaxMode?: "permissive" | "strict";
+  protectedAttributes?: Record<string, string>;
+  urlPolicy?: {
+    allowedSchemes?: string[];
+    allowRelative?: boolean;
+    allowResolvedRelative?: boolean;
+    allowResolvedRootRelative?: boolean;
+    allowDataUris?: boolean;
+  };
+  externalLinks?: {
+    openInNewContext?: boolean;
+    noreferrer?: boolean;
+  };
+  sourceLanguages?: {
+    allowed?: string[] | null;
+    unknown?: "preserve-sanitized" | "omit-class" | "diagnostic";
+  };
+  mathLanguages?: ("latex" | "typst")[];
+  unresolvedReferences?: "target" | "label-only" | "hidden";
+  resources?: {
+    images?: boolean;
+    media?: boolean;
+  };
+  limits?: Record<string, number>;
 }
 
 export interface AdocWeaveClientOptions {

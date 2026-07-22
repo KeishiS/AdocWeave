@@ -1,5 +1,5 @@
 = URL由来別policyとWASM描画契約
-:status: planned
+:status: completed
 :depends-on: 075,084,094
 
 == 目的
@@ -33,3 +33,9 @@ policyおよびRenderInputsからnativeとWASMが同じ診断とHTMLを生成す
 == 範囲外
 
 `note` scheme、UUID、ACL、DB、Base URLおよび特定routeの意味はhostが所有する。
+
+== 実装結果
+
+`UrlContext`で文書入力、解決済み参照および解決済みresourceを分離し、host解決値だけに適用する
+relative／root-relative設定を追加した。WASM optionから構築した同じURL policyを解析とHTMLへ渡し、
+single-slash、protocol-relative、traversal、control文字および危険schemeのsecurity testを固定した。
