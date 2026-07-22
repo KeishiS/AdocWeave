@@ -63,6 +63,13 @@ export function expectedAssets(version, targets) {
     archive: "tar.xz",
     executable: null,
   });
+  assets.push({
+    name: `adocweave-zed-${version}.tar.xz`,
+    kind: "zed",
+    target: null,
+    archive: "tar.xz",
+    executable: null,
+  });
   return assets;
 }
 
@@ -89,8 +96,8 @@ export function validateDistPlan(distPlan, plan, tag) {
   for (const [name, asset] of planned) {
     const actual = distPlan.artifacts[name];
     if (!actual) fail(`dist plan is missing public artifact: ${name}`);
-    if (asset.kind === "browser") {
-      if (actual.kind !== "extra-artifact") fail("browser archive must be a dist extra artifact");
+    if (asset.kind === "browser" || asset.kind === "zed") {
+      if (actual.kind !== "extra-artifact") fail(`${asset.kind} archive must be a dist extra artifact`);
       continue;
     }
     if (actual.kind !== "executable-zip") fail(`native archive has unexpected dist kind: ${name}`);
@@ -212,6 +219,11 @@ function verifyRepository() {
   if (!dist.includes(`artifacts = ["${browserArchive}"]`) ||
       !dist.includes('build = ["bash", "tools/package-browser-release.sh"]')) {
     fail("browser package must be connected as the versioned dist extra artifact");
+  }
+  const zedArchive = `target/distrib/adocweave-zed-${version}.tar.xz`;
+  if (!dist.includes(`artifacts = ["${zedArchive}"]`) ||
+      !dist.includes('build = ["bash", "tools/package-zed-release.sh"]')) {
+    fail("Zed package must be connected as the versioned dist extra artifact");
   }
   if (!dist.includes('plan-jobs = ["./release-contract"]')) fail("release contract must run in the dist plan phase");
   if (!dist.includes('pr-run-mode = "upload"') || !dist.includes('global-artifacts-jobs = ["./native-artifact-smoke"]')) {

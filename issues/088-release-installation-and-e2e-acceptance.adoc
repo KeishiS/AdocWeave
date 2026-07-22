@@ -1,5 +1,5 @@
 = Release導入文書とend-to-end受け入れ
-:status: planned
+:status: in-progress
 :depends-on: 086,087
 
 == 目的
@@ -29,3 +29,25 @@ install、更新および削除できることを最終的に確認する。
 source checkoutとRust toolchainのないclean環境でCLI、LSP、browser libraryおよびZed連携を確認し、install前後の
 filesystem差分からuninstall後に管理対象fileが残らないことを確認する。最終手順を
 `docs/release-checklist.adoc`と利用者向け導入文書へ反映する。
+
+== 実装状況
+
+* xref:../docs/release-installation.adoc[利用者向け導入文書]へasset選択、checksum／attestation、user-local／
+  system-wide配置、PATH、version固定、rollback、browser hosting、Zed、更新および削除手順を集約した。
+* `release-installation-e2e.mjs`は隔離HOMEへCLI、LSP、browser libraryおよびZed拡張を導入し、clean PATH、
+  version symlink、公開入口およびuninstall後のfile集合一致を検査する。
+* Galleryへ公開しない方針とsource checkout不要の完了条件を両立するため、version付き
+  `adocweave-zed-<version>.tar.xz`を6番目のarchiveとして配布契約へ追加した。
+* 公開済み`v0.1.0-rc.1`を変更せず、新しいasset契約と公開契約version 2を`v0.1.0-rc.2` release trainへ
+  分離した。
+* GitHub Release noteへ対応target、公開契約とbreaking change、既知制約、asset検証および
+  upgrade／rollbackを必ず追加する生成・検証処理をpublish境界へ追加した。
+* local x86-64成果物では、Zed archiveの決定性検査と導入・完全削除E2Eが成功した。
+* Release workflowは集約candidateをx86-64／ARM64のnative runnerへ戻し、両architectureの導入・完全削除E2Eが
+  成功するまでpublish jobへ進まない。
+
+== 残る受け入れ
+
+`v0.1.0-rc.2`を公開した後、source checkoutとRust toolchainを持たないclean Linux x86-64／ARM64で実Release assetを
+使うE2Eを実行する。browserは実配備header、Zedは初回managed LSP取得、offline再起動およびUIからの削除までを
+確認する。この公開と実機操作はrepository所有者のtag作成、Environment承認および対応環境を必要とする。

@@ -98,17 +98,24 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Build browser archive
+      - name: Build browser and Zed archives
         run: |
           bash tools/package-browser-release.sh
-          archive="target/distrib/adocweave-browser-$(jq -r .packageVersion release-manifest.json).tar.xz"
-          test -s "$archive"
-          tar -tJf "$archive" >/dev/null
+          bash tools/package-zed-release.sh
+          version="$(jq -r .packageVersion release-manifest.json)"
+          for archive in \
+            "target/distrib/adocweave-browser-$version.tar.xz" \
+            "target/distrib/adocweave-zed-$version.tar.xz"; do
+            test -s "$archive"
+            tar -tJf "$archive" >/dev/null
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-global
           if-no-files-found: error
-          path: target/distrib/adocweave-browser-*.tar.xz
+          path: |
+            target/distrib/adocweave-browser-*.tar.xz
+            target/distrib/adocweave-zed-*.tar.xz
 
   verify-candidate:
     needs: [plan, native-smoke, build-global]
@@ -132,9 +139,31 @@ jobs:
           if-no-files-found: error
           path: artifacts/*
 
+  installation-e2e:
+    needs: [verify-candidate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-candidate
+          path: artifacts
+      - name: Install and completely remove the candidate
+        run: node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}"
+
   publish:
     if: needs.plan.outputs.publishing == 'true'
-    needs: [plan, verify-candidate]
+    needs: [plan, verify-candidate, installation-e2e]
     uses: ./.github/workflows/release-publish.yml
     with:
       plan: ${{ needs.plan.outputs.manifest }}

@@ -39,13 +39,14 @@ CLIとLSPは`dist 0.32.0`が生成する`adocweave-cli-{target}.tar.xz`および
 `README.adoc`、`LICENSE-MIT`、`LICENSE-APACHE`および`THIRD_PARTY_NOTICES.adoc`を含む。詳細は
 xref:native-release.adoc[Native CLI・Language Server配布契約]で定義する。
 
-browser packageは`adocweave-browser-{version}.tar.xz`であり、`dist`のextra artifactとして同じreleaseへ
-一度だけ統合する。公開API、内容と最小例はxref:browser-library.adoc[ブラウザライブラリ]で定義する。
+browser packageは`adocweave-browser-{version}.tar.xz`、Zed開発拡張は`adocweave-zed-{version}.tar.xz`であり、
+`dist`のextra artifactとして同じreleaseへ一度だけ統合する。公開API、内容と最小例は
+xref:browser-library.adoc[ブラウザライブラリ]およびxref:release-installation.adoc[Releaseからの導入]で定義する。
 GitHubが自動生成するsource archiveはbinary配布契約に含めない。
 
 == Distribution manifest
 
-`adocweave-dist-manifest.json`はpackage version、source commit、6契約versionおよび5 archiveのmetadataを
+`adocweave-dist-manifest.json`はpackage version、source commit、6契約versionおよび6 archiveのmetadataを
 保持する。各asset entryは名前、kind、target、archive形式、byte数、SHA-256および実行ファイル名を持つ。
 path separatorは`/`、hash対象はuploadするarchiveのbyte列そのものとする。assetは名前の昇順、JSON objectの
 keyは再帰的な辞書順とし、UTF-8、LF、末尾改行1個のpretty JSONとしてcanonicalizeする。

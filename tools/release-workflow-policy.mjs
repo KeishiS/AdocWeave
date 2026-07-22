@@ -31,15 +31,18 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireText(release, "persist-credentials: false", "checkout credentials must not persist");
   requireText(release, "group: release-${{ github.ref }}", "release runs must be serialized per ref");
   requireText(release, "cancel-in-progress: false", "release runs must not cancel an active publication");
-  requireText(release, "needs: [plan, verify-candidate]", "publication must depend on the verified complete candidate");
+  requireText(release, "needs: [plan, verify-candidate, installation-e2e]", "publication must depend on candidate installation acceptance");
   requireText(release, "if: needs.plan.outputs.publishing == 'true'", "pull requests must not invoke publication");
   requireText(release, "uses: ./.github/workflows/release-publish.yml", "publication must be isolated in its reusable workflow");
   requireText(release, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");
   requireText(release, "node tools/release-metadata.mjs verify artifacts", "the aggregate job must verify exact release metadata");
   requireText(release, "bash tools/package-browser-release.sh", "the browser archive must use the tested repository builder directly");
+  requireText(release, "bash tools/package-zed-release.sh", "the Zed archive must use the tested repository builder directly");
+  requireText(publish, "node tools/release-notes.mjs", "publication must append and validate the required release notes");
   requireText(release, "test -s \"$archive\"", "the browser archive must be non-empty before upload");
   requireText(release, "tar -tJf \"$archive\"", "the browser archive must be validated before upload");
   requireText(release, "name: release-candidate", "only a verified candidate may cross the publish boundary");
+  requireText(release, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
   if (release.includes("secrets:") || release.includes("secrets.")) {
     fail("build and aggregate jobs must not receive repository secrets");
   }

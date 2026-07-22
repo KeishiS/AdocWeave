@@ -52,3 +52,49 @@ zerovec 0.11.6, zerovec-derive 0.11.3
 |Unlicense OR MIT
 |memchr 2.8.3
 |===
+
+== Zed開発拡張archiveの追加依存
+
+Zed開発拡張はsource archiveとして配布され、初回導入時にZedが次の追加crateをbuildする。root workspaceと
+同名でversionが異なるcrateは、再現可能な`editors/zed/Cargo.lock`のversionを別に記載する。
+
+[cols="2,5",options="header"]
+|===
+|SPDX license expression |Crateとversion
+
+|0BSD OR MIT OR Apache-2.0
+|adler2 2.0.1
+
+|Apache-2.0
+|zed_extension_api 0.7.0
+
+|Apache-2.0 OR MIT
+|equivalent 1.0.2, indexmap 2.14.0
+
+|Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+|wasm-encoder 0.227.1, wasm-metadata 0.227.1, wasmparser 0.227.1, wit-bindgen 0.41.0,
+wit-bindgen-core 0.41.0, wit-bindgen-rt 0.41.0, wit-bindgen-rust 0.41.0,
+wit-bindgen-rust-macro 0.41.0, wit-component 0.227.1, wit-parser 0.227.1
+
+|MIT
+|lzma-rs 0.3.0, simd-adler32 0.3.10
+
+|MIT OR Apache-2.0
+|anyhow 1.0.104, auditable-serde 0.8.0, crc 3.4.0, crc-catalog 2.5.0,
+crc32fast 1.5.0, flate2 1.1.9, futures-executor 0.3.33, hashbrown 0.15.5,
+hashbrown 0.17.1, heck 0.5.0, leb128fmt 0.1.0, libc 0.2.188, log 0.4.33,
+prettyplease 0.2.37, semver 1.0.28, spdx 0.10.9, tar 0.4.46,
+topological-sort 0.2.2, unicode-xid 0.2.6
+
+|MIT OR Zlib OR Apache-2.0
+|miniz_oxide 0.8.9
+
+|MIT/Apache-2.0
+|filetime 0.2.29, id-arena 2.3.0
+
+|Unlicense OR MIT
+|byteorder 1.5.0
+
+|Zlib
+|foldhash 0.1.5
+|===

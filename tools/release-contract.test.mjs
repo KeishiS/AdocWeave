@@ -13,7 +13,7 @@ test("stable and rc tags are exact and versioned", () => {
   }
 });
 
-test("initial asset matrix contains only Linux native and one browser archive", () => {
+test("initial asset matrix contains Linux native, browser, and Zed archives", () => {
   assert.deepEqual(expectedAssets(plan.packageVersion, plan.targets), plan.assets);
   assert.deepEqual(plan.targets, ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]);
   assert.deepEqual(plan.releaseMetadata, EXPECTED_RELEASE_METADATA);

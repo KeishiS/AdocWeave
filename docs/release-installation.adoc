@@ -1,0 +1,203 @@
+= GitHub Releaseからの導入・更新・削除
+
+この文書は、Rust toolchainおよびAdocWeaveのsource checkoutを持たないLinux利用者が、GitHub Releaseだけから
+CLI、Language Server、browser libraryおよびZed開発拡張を導入する手順を定義する。配布先は
+`KeishiS/AdocWeave`のGitHub Releasesだけであり、package registryは使用しない。
+
+== Assetの選択
+
+[cols="2,2,3",options="header"]
+|===
+|用途 |x86-64 |ARM64
+
+|CLI
+|`adocweave-cli-x86_64-unknown-linux-musl.tar.xz`
+|`adocweave-cli-aarch64-unknown-linux-musl.tar.xz`
+
+|Language Server
+|`adocweave-lsp-x86_64-unknown-linux-musl.tar.xz`
+|`adocweave-lsp-aarch64-unknown-linux-musl.tar.xz`
+
+|browser library
+2+|`adocweave-browser-<version>.tar.xz`
+
+|Zed開発拡張
+2+|`adocweave-zed-<version>.tar.xz`
+|===
+
+`uname -m`が`x86_64`ならx86-64、`aarch64`または`arm64`ならARM64を選ぶ。Linux musl binaryは静的リンクされ、
+対応architectureのglibc／musl distributionで利用できる。macOS、Windowsおよび32-bit Linuxのassetはまだない。
+
+== Downloadと完全性検証
+
+versionを固定し、同じReleaseのarchive 6個とmetadata 3個を空のdirectoryへdownloadする。GitHub CLIを使う例は
+次のとおりである。`VERSION`を実際のversionへ置き換える。
+
+[source,console]
+----
+VERSION=0.1.0-rc.2
+mkdir "adocweave-$VERSION"
+gh release download "v$VERSION" \
+  --repo KeishiS/AdocWeave \
+  --dir "adocweave-$VERSION"
+cd "adocweave-$VERSION"
+sha256sum --check sha256.sum
+----
+
+GitHub CLIを使わない場合は、Release画面から各assetを個別に保存する。HTMLをarchive名で保存する事故を避けるため、
+download後に`tar -tJf <archive>`も成功することを確認する。`curl | sh`形式のinstallerは提供しない。
+
+checksumとは別に、必要なassetのGitHub Artifact Attestationを検証する。
+
+[source,console]
+----
+gh attestation verify adocweave-cli-x86_64-unknown-linux-musl.tar.xz \
+  --repo KeishiS/AdocWeave
+gh attestation verify sha256.sum --repo KeishiS/AdocWeave
+----
+
+private repositoryへ移行した場合は、read権限だけを持つ`gh auth`または短命tokenを利用する。tokenをshell historyへ
+直接記述せず、展開directory、設定file、logまたはfrontend bundleへコピーしない。
+
+== User-local導入
+
+以下ではversion別directoryを正本とし、`current` symlinkで選択versionを固定する。この構成なら、更新中に旧versionを
+壊さずrollbackできる。
+
+[source,console]
+----
+VERSION=0.1.0-rc.2
+TARGET=x86_64-unknown-linux-musl
+PREFIX="$HOME/.local"
+ROOT="$PREFIX/lib/adocweave/$VERSION"
+
+mkdir -p "$ROOT/bin" "$PREFIX/bin" "$PREFIX/share/adocweave/$VERSION"
+tar -xJf "adocweave-cli-$TARGET.tar.xz"
+tar -xJf "adocweave-lsp-$TARGET.tar.xz"
+install -m 0755 "adocweave-cli-$TARGET/adocweave" "$ROOT/bin/adocweave"
+install -m 0755 "adocweave-lsp-$TARGET/adocweave-lsp" "$ROOT/bin/adocweave-lsp"
+tar -xJf "adocweave-browser-$VERSION.tar.xz" -C "$PREFIX/share/adocweave/$VERSION"
+mv "$PREFIX/share/adocweave/$VERSION/adocweave-browser-$VERSION" \
+  "$PREFIX/share/adocweave/$VERSION/browser"
+tar -xJf "adocweave-zed-$VERSION.tar.xz" -C "$PREFIX/share/adocweave/$VERSION"
+mv "$PREFIX/share/adocweave/$VERSION/adocweave-zed-$VERSION" \
+  "$PREFIX/share/adocweave/$VERSION/zed"
+
+ln -sfn "$ROOT" "$PREFIX/lib/adocweave/current.new"
+mv -Tf "$PREFIX/lib/adocweave/current.new" "$PREFIX/lib/adocweave/current"
+ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave" "$PREFIX/bin/adocweave"
+ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave-lsp" "$PREFIX/bin/adocweave-lsp"
+----
+
+`$HOME/.local/bin`が`PATH`にない場合だけshellのstartup fileへ追加し、新しいshellで確認する。
+
+[source,console]
+----
+command -v adocweave
+command -v adocweave-lsp
+adocweave --version --json
+adocweave-lsp --version --json
+----
+
+現行CLIはshell completion生成機能を持たないため、completion fileはインストールしない。
+
+== System-wide導入
+
+複数利用者向けにはversion別rootを`/opt/adocweave/<version>`へ置き、`/usr/local/bin`からsymlinkする。archiveの
+検証と展開は通常利用者で行い、検証済みfileの配置だけを管理者権限で実行する。既存fileを上書きする前に、symlinkの
+参照先がAdocWeave管理下であることを確認する。
+
+[source,console]
+----
+sudo install -d /opt/adocweave/0.1.0-rc.2/bin
+sudo install -m 0755 adocweave /opt/adocweave/0.1.0-rc.2/bin/adocweave
+sudo install -m 0755 adocweave-lsp /opt/adocweave/0.1.0-rc.2/bin/adocweave-lsp
+sudo ln -sfn /opt/adocweave/0.1.0-rc.2 /opt/adocweave/current
+sudo ln -sfn /opt/adocweave/current/bin/adocweave /usr/local/bin/adocweave
+sudo ln -sfn /opt/adocweave/current/bin/adocweave-lsp /usr/local/bin/adocweave-lsp
+----
+
+browser libraryとZed拡張は利用者ごとの設定を伴うため、原則としてuser-local配置を使用する。
+
+== 更新、version固定およびrollback
+
+新versionは既存directoryへ上書きせず、別のversion directoryへ展開・検証する。`current`を切り替えた後に
+`--version --json`を確認する。rollbackは`current`を以前のversion directoryへ戻すだけであり、動作確認が終わるまで
+旧directoryを削除しない。CLI、LSP、browser、Zed拡張は同じRelease versionを組み合わせ、異なるrelease trainを
+混在させない。
+
+== Browser libraryの配備
+
+`$HOME/.local/share/adocweave/<version>/browser`をそのまま静的hostingへ配置する。公開入口は
+`worker/index.mjs`だけである。serverは少なくとも次を設定する。
+
+[cols="2,3",options="header"]
+|===
+|対象 |Content-Type
+
+|`.mjs`、`.js`
+|`text/javascript`
+
+|`.wasm`
+|`application/wasm`
+
+|`.html`
+|`text/html; charset=utf-8`
+|===
+
+協調cancelに`SharedArrayBuffer`を使う場合、main document、WorkerおよびWASMを含む同一contextへ
+`Cross-Origin-Opener-Policy: same-origin`と`Cross-Origin-Embedder-Policy: require-corp`を設定する。使えない環境では
+Worker再生成へ縮退する。CSPは`script-src 'self'`、`worker-src 'self'`を基本とし、inline scriptや`unsafe-eval`を
+要求しない。HTML結果はDOMへ無検証で挿入せず、ホストの表示sandboxとpolicyを適用する。
+
+URLにはversionまたはarchive digestを含め、WASMとJavaScriptへ同じcache keyを使う。更新時に既存URLの内容を
+置換せず、新URLへ切り替える。配備前のarchiveは`sha256.sum`で検証し、配備後はserverから取得したfileのdigestを
+deploy記録へ残す。展開物の`example/index.html`と`example/app.mjs`はリアルタイム変換の最小例であり、同じserverから
+配信して入力更新、最新generationだけの表示およびfallback動作を確認できる。
+
+== Zedへの導入
+
+Zed Extension Galleryへ公開しないため、展開済み`$HOME/.local/share/adocweave/<version>/zed`をdev extensionとして
+導入する。Extension Galleryの`Install Dev Extension`またはコマンドパレットの`zed: install dev extension`から、この
+directoryを選ぶ。source repositoryのcheckoutは不要である。
+
+初回buildではZedがRust extension用toolchainと、固定commitの`tree-sitter-asciidoc` grammarを取得する。初回build後は
+拡張のworking directoryにある検証済みLSP cacheをofflineでも利用できる。初回から完全offlineで導入できるという意味では
+ない。Zed設定で明示したbinaryや`PATH`上のbinaryはmanaged binaryより優先されるため、公開LSPの受け入れ時はoverrideを
+外す。動作確認はxref:release-checklist.adoc[Release受け入れchecklist]に従う。
+
+更新時は新versionのZed directoryを別に展開し、dev extensionをそのdirectoryへ再設定する。旧directoryは、新versionの
+managed LSP取得とeditor機能を確認するまで保持する。
+
+== Uninstall
+
+Zedでは最初にExtension GalleryからAdocWeave dev extensionを削除し、Zedを終了する。続いて、導入したversionを指定して
+AdocWeave管理対象だけを削除する。
+
+[source,console]
+----
+VERSION=0.1.0-rc.2
+PREFIX="$HOME/.local"
+rm "$PREFIX/bin/adocweave" "$PREFIX/bin/adocweave-lsp"
+rm "$PREFIX/lib/adocweave/current"
+rm -rf "$PREFIX/lib/adocweave/$VERSION"
+rm -rf "$PREFIX/share/adocweave/$VERSION"
+rmdir --ignore-fail-on-non-empty "$PREFIX/lib/adocweave" "$PREFIX/share/adocweave"
+----
+
+`$PREFIX/bin`、Zed user data全体または共有親directoryを再帰削除してはならない。別versionを保持する場合は`current`を
+先にそのversionへ切り替え、該当versionだけを削除する。通常profileに残るZedの一般cacheはZedが所有するため、場所を
+推測して削除せず、ZedのUIから拡張を削除する。完全に隔離したprofileで試験した場合だけprofile directory全体を削除する。
+
+== 自動E2E
+
+release candidateを同一directoryへ集めた状態で、対応architectureのLinux hostから次を実行する。
+
+[source,console]
+----
+node release-installation-e2e.mjs /path/to/candidate x86_64-unknown-linux-musl
+----
+
+この試験は一時的なclean HOMEへCLI、LSP、browserおよびZed archiveを導入し、clean PATHからversionを確認し、version
+symlinkを検査した後、uninstall前後のfile集合が一致することを確認する。repository内で同じライフサイクルをlocal buildへ
+適用するtaskは`cargo make release-installation-e2e-host`である。

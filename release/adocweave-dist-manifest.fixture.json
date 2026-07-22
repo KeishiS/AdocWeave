@@ -5,7 +5,7 @@
       "byteSize": 103,
       "executable": null,
       "kind": "browser",
-      "name": "adocweave-browser-0.1.0-rc.1.tar.xz",
+      "name": "adocweave-browser-0.1.0-rc.2.tar.xz",
       "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
       "target": null
     },
@@ -44,6 +44,15 @@
       "name": "adocweave-lsp-x86_64-unknown-linux-musl.tar.xz",
       "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "target": "x86_64-unknown-linux-musl"
+    },
+    {
+      "archive": "tar.xz",
+      "byteSize": 106,
+      "executable": null,
+      "kind": "zed",
+      "name": "adocweave-zed-0.1.0-rc.2.tar.xz",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "target": null
     }
   ],
   "contracts": {
@@ -54,7 +63,7 @@
     "projection": 1,
     "wasmApi": 1
   },
-  "packageVersion": "0.1.0-rc.1",
+  "packageVersion": "0.1.0-rc.2",
   "schemaVersion": 1,
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567"
 }

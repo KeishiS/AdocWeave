@@ -52,6 +52,7 @@ jobs:
           tag="$(jq -r '.announcement_tag' <<<"$PLAN")"
           title="$(jq -r '.announcement_title' <<<"$PLAN")"
           body="$(jq -r '.announcement_github_body' <<<"$PLAN")"
+          body="$(node tools/release-notes.mjs "$tag" <<<"$body")"
           prerelease="$(jq -r '.announcement_is_prerelease' <<<"$PLAN")"
           draft="$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
             -f tag_name="$tag" \

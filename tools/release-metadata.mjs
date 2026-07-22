@@ -53,8 +53,10 @@ function archiveFiles(path, archiveName) {
   return files.sort((left, right) => compareText(left.fileName, right.fileName));
 }
 
-function cargoPackages() {
-  const metadata = JSON.parse(execFileSync("cargo", ["metadata", "--format-version=1", "--locked"], {
+function cargoPackages(manifestPath) {
+  const args = ["metadata", "--format-version=1", "--locked"];
+  if (manifestPath) args.push("--manifest-path", manifestPath);
+  const metadata = JSON.parse(execFileSync("cargo", args, {
     cwd: ROOT,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
@@ -142,6 +144,8 @@ export function buildMetadata(directory, sourceCommit) {
   validateDistributionManifest(distributionManifest, plan);
 
   const cargo = cargoPackages();
+  const zedCargo = cargoPackages("editors/zed/Cargo.toml");
+  const allCargo = [...new Map([...cargo, ...zedCargo].map((entry) => [entry.SPDXID, entry])).values()];
   const frontend = frontendPackage();
   const archivePackages = [];
   const files = [];
@@ -174,12 +178,14 @@ export function buildMetadata(directory, sourceCommit) {
     for (const file of archiveEntries) {
       relationships.push({ spdxElementId: packageId, relationshipType: "CONTAINS", relatedSpdxElement: file.SPDXID });
     }
-    const dependencies = asset.kind === "browser" ? [...cargo, frontend] : cargo;
+    const dependencies = asset.kind === "browser"
+      ? [...cargo, frontend]
+      : asset.kind === "zed" ? zedCargo : cargo;
     for (const dependency of dependencies) {
       relationships.push({ spdxElementId: packageId, relationshipType: "DEPENDS_ON", relatedSpdxElement: dependency.SPDXID });
     }
   }
-  const packages = [...archivePackages, ...cargo, frontend]
+  const packages = [...archivePackages, ...allCargo, frontend]
     .sort((left, right) => compareText(left.SPDXID, right.SPDXID));
   relationships.sort((left, right) =>
     compareText(

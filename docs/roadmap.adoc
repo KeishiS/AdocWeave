@@ -294,8 +294,9 @@ frontend libraryではなく公開LSP binaryのconsumerとして扱う。
 
 Issue 090から094の構造収束、Issue 082の配布契約、Issue 083のnative artifactおよびIssue 084の
 xref:browser-library.adoc[browser library]を完了した。Issue 085と086ではchecksum／SBOM／provenanceおよび
-原子的なGitHub Actions workflowを実装し、`v0.1.0-rc.1`による受け入れ確認まで完了した。次にIssue 087と088で
-ZedによるLSP取得を完了した。Issue 088でclean環境での配布物全体の受け入れを行う。
+原子的なGitHub Actions workflowを実装し、`v0.1.0-rc.1`による受け入れ確認まで完了した。Issue 087では
+Zedによる公開LSP取得を完了した。Issue 088ではsource checkoutなしのZed導入を可能にする拡張archiveを追加し、
+`v0.1.0-rc.2`を使ってclean環境で配布物全体の受け入れを行う。
 最初のrelease candidateでは、開発中に増加した6種類の公開契約versionを一度だけすべて`1`へリセットし、
 以後の公開互換性履歴のbaselineとする。macOS／WindowsはLinux releaseの運用を確認した後のmilestoneへ延期する。
 配布先はリポジトリ所有者自身のGitHubリポジトリにあるGitHub Release assetだけに限定する。

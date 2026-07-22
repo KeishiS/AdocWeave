@@ -39,8 +39,12 @@ test("actual archives produce canonical manifest, SPDX SBOM, and unified checksu
     const archivePackages = sbom.packages.filter((entry) => entry.packageFileName);
     assert.equal(archivePackages.length, plan.assets.length);
     assert.ok(archivePackages.every((entry) => /^[0-9a-f]{40}$/.test(entry.packageVerificationCode.packageVerificationCodeValue)));
-    const cargoMetadata = JSON.parse(execFileSync("cargo", ["metadata", "--format-version=1", "--locked"], { encoding: "utf8" }));
-    const expectedCargo = cargoMetadata.packages.map((entry) => `pkg:cargo/${encodeURIComponent(entry.name)}@${entry.version}`).sort();
+    const cargoMetadata = [
+      JSON.parse(execFileSync("cargo", ["metadata", "--format-version=1", "--locked"], { encoding: "utf8" })),
+      JSON.parse(execFileSync("cargo", ["metadata", "--manifest-path", "editors/zed/Cargo.toml", "--format-version=1", "--locked"], { encoding: "utf8" })),
+    ];
+    const expectedCargo = [...new Set(cargoMetadata.flatMap((metadata) => metadata.packages)
+      .map((entry) => `pkg:cargo/${encodeURIComponent(entry.name)}@${entry.version}`))].sort();
     const actualCargo = sbom.packages.flatMap((entry) => entry.externalRefs ?? [])
       .map((reference) => reference.referenceLocator)
       .filter((reference) => reference.startsWith("pkg:cargo/"))

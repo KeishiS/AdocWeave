@@ -30,7 +30,7 @@
     },
     "assets": {
       "type": "array",
-      "minItems": 5,
+      "minItems": 6,
       "uniqueItems": true,
       "items": {
         "type": "object",
@@ -38,7 +38,7 @@
         "required": ["name", "kind", "target", "archive", "byteSize", "sha256", "executable"],
         "properties": {
           "name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
-          "kind": { "enum": ["cli", "lsp", "browser"] },
+          "kind": { "enum": ["cli", "lsp", "browser", "zed"] },
           "target": { "type": ["string", "null"] },
           "archive": { "const": "tar.xz" },
           "byteSize": { "type": "integer", "minimum": 1 },
