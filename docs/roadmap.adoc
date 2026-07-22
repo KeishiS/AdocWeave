@@ -295,8 +295,9 @@ frontend libraryではなく公開LSP binaryのconsumerとして扱う。
 Issue 090から094の構造収束、Issue 082の配布契約、Issue 083のnative artifactおよびIssue 084の
 xref:browser-library.adoc[browser library]を完了した。Issue 085と086ではchecksum／SBOM／provenanceおよび
 原子的なGitHub Actions workflowを実装し、`v0.1.0-rc.1`による受け入れ確認まで完了した。Issue 087では
-Zedによる公開LSP取得を完了した。Issue 088ではsource checkoutなしのZed導入を可能にする拡張archiveを追加し、
-失敗したtagを付け替えず、修正を含む`v0.1.0-rc.3`を使ってclean環境で配布物全体の受け入れを行う。
+Zedによる公開LSP取得を完了した。Issue 088ではsource checkoutなしのZed導入を可能にする拡張archiveを追加した。
+`v0.1.0-rc.3`で配布経路の成立を確認し、Issue 107の公開API変更を含む`v0.1.0-rc.4`を使って
+clean環境で現行成果物全体の最終受け入れを行う。過去のtagは付け替えない。
 Issue 102ではCIを再監査し、全event共通quality gate、main／tag限定candidate buildおよびtag限定publishへ責務を
 分離した。再利用workflowはevent種別を推測せず、publication tagを明示入力として受け取る。
 最初のrelease candidateでは、開発中に増加した6種類の公開契約versionを一度だけすべて`1`へリセットし、
@@ -339,7 +340,7 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 
 == RC.4までの実行順
 
-. xref:../issues/088-release-installation-and-e2e-acceptance.adoc[Issue 088]で公開asset、CLI／LSPおよびZedの実Release受け入れを
+. xref:../issues/088-release-installation-and-e2e-acceptance.adoc[Issue 088]でRC.4の公開asset、CLI／LSPおよびZedの実Release受け入れを
   完了する。実browser E2EはIssue 106の方針に従い任意gateへ分離する。
 . xref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で空xref labelへ解決済み表示テキストを渡す汎用契約を実装し、
   公開契約versionとconformance fixtureをRC.4へ更新する。（完了）
