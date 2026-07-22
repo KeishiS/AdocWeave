@@ -1,0 +1,52 @@
+= 解決済み参照の表示テキスト契約
+:status: planned
+:depends-on: 099,101
+
+== 目的
+
+明示labelのない標準xrefについて、hostが解決時に取得した公開可能な文書名やタイトルを、アプリ固有schemeや
+parser拡張なしで安全に表示できる汎用契約を追加する。
+
+[source,asciidoc]
+----
+xref:note:01800000-0000-7000-8000-000000000001[]
+----
+
+`note`は例にすぎず、コアはscheme、UUID、DB、ACLまたはタイトル取得方法を解釈しない。
+
+== 現状
+
+RC.3の`ResolutionOutcome::Resolved`とWASM DTOは`href`と`notices`だけを受け取る。空labelの表示は原文targetへ
+fallbackするため、Resolverが得たタイトルをHTMLへ渡す公開APIはない。補完用`DocumentCandidate::label`は描画入力ではなく、
+この用途へ流用しない。
+
+== 設計方針
+
+* 解決成功へ`display_text: Option<String>`または同等のbackend非依存な値を追加する。
+* AsciiDocに明示labelがある場合は常に原文labelを優先し、Resolverの表示テキストで上書きしない。
+* 空labelかつ解決成功の場合だけ`display_text`を使用し、値がなければ現在のtarget fallbackを使用する。
+* `display_text`は公開可能なプレーンテキストとし、AsciiDoc inline、属性参照またはHTMLとして再解析しない。
+  各backendが自身のcontextでescapeする。
+* failure結果へ表示テキストを持たせず、missing target、ACL拒否およびresolver failureからタイトルを漏らさない。
+* 表示テキストの取得、localization、鮮度、cache無効化およびACL判定はhostが所有する。
+
+== 作業
+
+* nativeの`ResolvedReference`、constructor、RenderInputsおよびsize budgetへ表示テキストを追加する。
+* WASMの`WasmResolvedReference`、TypeScript公開型、worker境界および入力検証へ同じoptional fieldを追加する。
+* HTMLで明示label、解決済み表示テキスト、target fallbackの優先順位を一箇所へ集約する。
+* reference graph／projectionへ表示テキストを含める必要性を決定し、含める場合は解決revisionとsource rangeを保持する。
+* native／WASM共通fixtureへ空label、明示label、Unicode、HTML特殊文字、oversize、failureおよびACL非漏洩を追加する。
+* core API、WASM API、HTML、conformanceおよび必要なprojectionの契約versionを同一変更で更新する。
+* xref:../docs/web-host-adapter.adoc[Webホストadapter契約]、HTML契約、WASM文書および対応表を更新する。
+
+== 完了条件
+
+hostは公開APIだけを使い、`xref:<scheme>:<locator>[]`の空labelを、解決済みhrefと同じrevisionに属する安全な
+表示テキストへ変換できる。明示labelは変更されず、表示テキストはescapeされ、解決失敗や権限拒否から機密タイトルが
+HTML、診断またはprojectionへ漏れない。nativeとWASMは同じ入力から同じHTMLと診断を生成する。
+
+== 範囲外
+
+`note`専用macro、UUID検証、DB問い合わせ、ACL規則、タイトルの保存、HTML後処理およびResolverによるAST書き換えは
+このリポジトリでは実装しない。

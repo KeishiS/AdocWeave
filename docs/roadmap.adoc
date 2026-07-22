@@ -319,6 +319,11 @@ projectionを生成することを確認する。
 AdocWeaveは`note`、UUID、DB、ACL、Base URL、KaTeX、syntax highlighterおよびDOMを解釈しない。これらは
 xref:web-host-adapter.adoc[Webホストadapter契約]に従う利用側adapterが所有する。
 
+RC.3の受け入れ後、v0.1.0 stableの公開前に
+xref:../issues/107-resolved-reference-display-text.adoc[Issue 107]を実施する。明示labelのないxrefへ、hostが解決した
+公開可能なタイトルをRenderInputsとして渡せるようにする。明示label優先、プレーンテキストescape、failure時の非漏洩を
+native／WASM共通契約として固定し、`note`等のscheme固有意味はhostに残す。
+
 == CI・依存供給網の持続可能性
 
 Issue 102ではpull request、mainおよびtagのevent modelを破壊的に再構成し、全event共通quality、main／tag限定candidate、
@@ -332,6 +337,16 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 * xref:../issues/104-dependency-and-advisory-governance.adoc[Issue 104: 依存更新、licenseおよびadvisory governance]
 * xref:../issues/105-ci-browser-runtime-separation.adoc[Issue 105: CI browser runtimeとNix toolchainの分離]
 * xref:../issues/106-optional-browser-runtime-gate.adoc[Issue 106: 実browser受け入れgateの任意化]
+
+== RC.3後の実行順
+
+. xref:../issues/088-release-installation-and-e2e-acceptance.adoc[Issue 088]で公開asset、CLI／LSPおよびZedの実Release受け入れを
+  完了する。実browser E2EはIssue 106の方針に従い任意gateへ分離する。
+. xref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で空xref labelへ解決済み表示テキストを渡す汎用契約を実装し、
+  公開契約versionとconformance fixtureを更新する。
+. RCで見つかった不具合を収束させ、v0.1.0 stableの公開可否と互換性方針を決定する。
+. stable公開後に、source短縮記法、追加inline書式、list属性、`subs`属性およびbibliography表示等の標準AsciiDoc未対応領域を
+  依存関係付きIssueへ分解する。
 
 == ドキュメント保守規則
 

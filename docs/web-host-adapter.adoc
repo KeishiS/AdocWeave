@@ -74,6 +74,13 @@ ResolvedReference {
 アンカー不在時に文書本体へfallbackするhostは、本文hrefと`Fallback` noticeを渡す。権限拒否と不在を
 区別して公開しない場合、同じfailure kindと同じ一般messageへ畳み込む。
 
+=== 空labelと解決済みタイトル
+
+RC.3の解決成功入力は`href`と`notices`だけであり、Resolverが得たタイトルを空labelの表示へ渡すAPIはない。
+`DocumentCandidate::label`は補完候補用であり、描画契約ではない。現状の`xref:<scheme>:<locator>[]`はtarget文字列へ
+fallbackする。この不足はxref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で、scheme非依存な
+プレーンテキストの解決結果として対応する。
+
 == Web向けprofile例
 
 [source,javascript]
