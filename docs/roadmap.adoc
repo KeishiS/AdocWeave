@@ -296,7 +296,7 @@ Issue 090から094の構造収束、Issue 082の配布契約、Issue 083のnativ
 xref:browser-library.adoc[browser library]を完了した。Issue 085と086ではchecksum／SBOM／provenanceおよび
 原子的なGitHub Actions workflowを実装し、`v0.1.0-rc.1`による受け入れ確認まで完了した。Issue 087では
 Zedによる公開LSP取得を完了した。Issue 088ではsource checkoutなしのZed導入を可能にする拡張archiveを追加し、
-`v0.1.0-rc.2`を使ってclean環境で配布物全体の受け入れを行う。
+失敗したtagを付け替えず、修正を含む`v0.1.0-rc.3`を使ってclean環境で配布物全体の受け入れを行う。
 Issue 102ではCIを再監査し、全event共通quality gate、main／tag限定candidate buildおよびtag限定publishへ責務を
 分離した。再利用workflowはevent種別を推測せず、publication tagを明示入力として受け取る。
 最初のrelease candidateでは、開発中に増加した6種類の公開契約versionを一度だけすべて`1`へリセットし、
