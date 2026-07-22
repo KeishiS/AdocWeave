@@ -17,7 +17,7 @@ use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, Reso
 use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::{UrlContext, UrlPolicy};
 
-pub const HTML_CONTRACT_VERSION: u16 = 2;
+pub const HTML_CONTRACT_VERSION: u16 = 3;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
@@ -1197,10 +1197,13 @@ fn render_reference(
             let resolution = context.input_usage.reference_at(reference.range);
             if let ResolutionMatch::Unique(resolution) = resolution {
                 match &resolution.outcome {
-                    crate::reference::ResolutionOutcome::Resolved { href, notices }
-                        if context
-                            .policy
-                            .allows_url(href, UrlContext::ResolvedReference) =>
+                    crate::reference::ResolutionOutcome::Resolved {
+                        href,
+                        display_text,
+                        notices,
+                    } if context
+                        .policy
+                        .allows_url(href, UrlContext::ResolvedReference) =>
                     {
                         for notice in notices {
                             context.diagnostics.push(render_diagnostic(
@@ -1209,7 +1212,13 @@ fn render_reference(
                                 reference.target_range,
                             ));
                         }
-                        (Some(href.clone()), reference_text(reference), None)
+                        (
+                            Some(href.clone()),
+                            display_text
+                                .clone()
+                                .unwrap_or_else(|| reference_text(reference)),
+                            None,
+                        )
                     }
                     crate::reference::ResolutionOutcome::Resolved { .. } => (
                         None,
@@ -1686,13 +1695,15 @@ mod tests {
             analysis.ast(),
             &RenderPolicy::default(),
             &RenderInputs::new(
-                vec![ResolvedReference::resolved_with_notices(
-                    analysis.references()[0].range,
-                    "https://app.example/notes/123",
-                    vec![crate::reference::ResolutionNotice {
+                vec![
+                    ResolvedReference::resolved(
+                        analysis.references()[0].range,
+                        "https://app.example/notes/123",
+                    )
+                    .with_notices(vec![crate::reference::ResolutionNotice {
                         kind: crate::reference::ResolutionNoticeKind::Fallback,
-                    }],
-                )],
+                    }]),
+                ],
                 Vec::new(),
             ),
         );
@@ -1729,8 +1740,82 @@ mod tests {
     }
 
     #[test]
+    fn resolved_display_text_is_plain_text_and_only_fills_an_empty_label() {
+        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+            .analyze(
+                "xref:note:01800000-0000-7000-8000-000000000001[]\n\n\
+                 xref:note:01800000-0000-7000-8000-000000000002[Authored *label*]",
+            )
+            .expect("analysis");
+        let inputs = RenderInputs::new(
+            vec![
+                ResolvedReference::resolved(
+                    analysis.references()[0].range,
+                    "/notes/01800000-0000-7000-8000-000000000001",
+                )
+                .with_display_text("公開 <タイトル> & *not markup*"),
+                ResolvedReference::resolved(
+                    analysis.references()[1].range,
+                    "/notes/01800000-0000-7000-8000-000000000002",
+                )
+                .with_display_text("Resolver title must not replace the authored label"),
+            ],
+            Vec::new(),
+        );
+
+        let output = render_with_inputs(
+            analysis.ast(),
+            &RenderPolicy {
+                url_policy: crate::url::UrlPolicy {
+                    allow_resolved_root_relative: true,
+                    ..crate::url::UrlPolicy::default()
+                },
+                ..RenderPolicy::default()
+            },
+            &inputs,
+        );
+
+        assert_eq!(
+            output.html,
+            "<p><a href=\"/notes/01800000-0000-7000-8000-000000000001\">公開 &lt;タイトル&gt; &amp; *not markup*</a></p>\n\
+             <p><a href=\"/notes/01800000-0000-7000-8000-000000000002\">Authored <strong>label</strong></a></p>\n"
+        );
+    }
+
+    #[test]
+    fn failed_empty_label_never_exposes_target_or_failure_details_in_label_only_mode() {
+        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+            .analyze("xref:note:private[]")
+            .expect("analysis");
+        let inputs = RenderInputs::new(
+            vec![ResolvedReference::failed(
+                analysis.references()[0].range,
+                crate::reference::ResolverFailure {
+                    kind: crate::reference::ResolutionFailureKind::MissingTarget,
+                    message: "ACL denied: secret database title".to_owned(),
+                },
+            )],
+            Vec::new(),
+        );
+
+        let output = render_with_inputs(
+            analysis.ast(),
+            &RenderPolicy {
+                unresolved_references: UnresolvedReferencePresentation::LabelOnly,
+                ..RenderPolicy::default()
+            },
+            &inputs,
+        );
+
+        assert_eq!(output.html, "<p></p>\n");
+        assert!(!output.html.contains("ACL"));
+        assert!(!output.html.contains("private"));
+        assert!(!output.html.contains("secret"));
+    }
+
+    #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 2);
+        assert_eq!(HTML_CONTRACT_VERSION, 3);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [

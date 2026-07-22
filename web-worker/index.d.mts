@@ -96,7 +96,7 @@ export interface ResolvedReference {
   sourceStart: number;
   sourceEnd: number;
   outcome:
-    | { status: "resolved"; href: string; notices?: ("fallback")[] }
+    | { status: "resolved"; href: string; displayText?: string; notices?: ("fallback")[] }
     | {
         status: "failed";
         kind:

@@ -124,10 +124,11 @@
         "references": [
           {
             "sourceStart": 78,
-            "sourceEnd": 105,
+            "sourceEnd": 101,
             "outcome": {
               "status": "resolved",
               "href": "/notes/123",
+              "displayText": "Resolved note title",
               "notices": ["fallback"]
             }
           }
@@ -142,7 +143,7 @@
         "resources": { "images": false, "media": false }
       },
       "compatibility": "host-extension-contract",
-      "rationale": "任意scheme参照、由来別URL、固定link属性、source・数式policyおよびresource無効化をアプリ固有parserなしで全runtimeへ適用する",
+      "rationale": "任意scheme参照、解決済み表示テキスト、由来別URL、固定link属性、source・数式policyおよびresource無効化をアプリ固有parserなしで全runtimeへ適用する",
       "contractImpact": "core-api,html,projection,conformance,wasm-api"
     },
     {

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 2,
-  "packageVersion": "0.1.0-rc.3",
+  "packageVersion": "0.1.0-rc.4",
   "contracts": {
     "coreProfile": 1,
-    "coreApi": 2,
-    "html": 2,
-    "projection": 2,
-    "conformance": 2,
-    "wasmApi": 2
+    "coreApi": 3,
+    "html": 3,
+    "projection": 3,
+    "conformance": 3,
+    "wasmApi": 3
   }
 }

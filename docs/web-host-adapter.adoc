@@ -45,6 +45,10 @@ AdocWeaveはアプリ固有parser、DB、ACL、HTTP client、DOMまたはHTML後
 |`ResolutionNotice`、`UnresolvedReferencePresentation`
 |fallback判断、公開可能なlabel、失敗情報の秘匿
 
+|空xref label
+|`ResolvedReference::with_display_text`、WASM `displayText`
+|解決済みhrefと同じrevisionの公開可能なプレーンテキストを渡す
+
 |resource
 |`ResourceCapabilities`、`enable_includes`、`ResourceSnapshot`
 |取得、認証、size・timeout・redirect制限。不要能力を無効化
@@ -67,6 +71,7 @@ Parserは`record`を業務上解釈しない。hostはqueryを検証し、許可
 ----
 ResolvedReference {
   href: "/records/01800000-0000-7000-8000-000000000001#definition",
+  display_text: None,
   notices: [],
 }
 ----
@@ -76,10 +81,15 @@ ResolvedReference {
 
 === 空labelと解決済みタイトル
 
-RC.3の解決成功入力は`href`と`notices`だけであり、Resolverが得たタイトルを空labelの表示へ渡すAPIはない。
-`DocumentCandidate::label`は補完候補用であり、描画契約ではない。現状の`xref:<scheme>:<locator>[]`はtarget文字列へ
-fallbackする。この不足はxref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で、scheme非依存な
-プレーンテキストの解決結果として対応する。
+RC.4では、Resolverが得た公開可能なタイトルを解決成功の`display_text`（WASMでは`displayText`）として渡せる。
+空labelだけがこの値を使用し、明示labelは常に原文を優先する。値はプレーンテキストとしてescapeされ、
+AsciiDoc inlineやHTMLとして再解析されない。失敗結果は表示テキストを保持できない。
+
+[source,text]
+----
+ResolvedReference::resolved(range, "/records/01800000-0000-7000-8000-000000000001")
+    .with_display_text("公開タイトル")
+----
 
 == Web向けprofile例
 

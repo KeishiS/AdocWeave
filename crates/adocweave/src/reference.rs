@@ -108,6 +108,7 @@ pub struct ResolvedReference {
 pub enum ResolutionOutcome {
     Resolved {
         href: String,
+        display_text: Option<String>,
         notices: Vec<ResolutionNotice>,
     },
     Failed(ResolverFailure),
@@ -137,23 +138,31 @@ impl ResolvedReference {
             source_range,
             outcome: ResolutionOutcome::Resolved {
                 href: href.into(),
+                display_text: None,
                 notices: Vec::new(),
             },
         }
     }
 
-    pub fn resolved_with_notices(
-        source_range: TextRange,
-        href: impl Into<String>,
-        notices: Vec<ResolutionNotice>,
-    ) -> Self {
-        Self {
-            source_range,
-            outcome: ResolutionOutcome::Resolved {
-                href: href.into(),
-                notices,
-            },
+    pub fn with_display_text(mut self, display_text: impl Into<String>) -> Self {
+        if let ResolutionOutcome::Resolved {
+            display_text: current,
+            ..
+        } = &mut self.outcome
+        {
+            *current = Some(display_text.into());
         }
+        self
+    }
+
+    pub fn with_notices(mut self, notices: Vec<ResolutionNotice>) -> Self {
+        if let ResolutionOutcome::Resolved {
+            notices: current, ..
+        } = &mut self.outcome
+        {
+            *current = notices;
+        }
+        self
     }
 
     pub fn failed(source_range: TextRange, failure: ResolverFailure) -> Self {

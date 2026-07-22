@@ -13,11 +13,11 @@ xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 |===
 |契約 |現在値
 |Core profile |1
-|Rust core API |2
-|HTML |2
-|Projection |2
-|Conformance snapshot |2
-|WASM API |2
+|Rust core API |3
+|HTML |3
+|Projection |3
+|Conformance snapshot |3
+|WASM API |3
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。

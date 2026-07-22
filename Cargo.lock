@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adocweave"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-cli"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 dependencies = [
  "adocweave",
  "adocweave-host",
@@ -22,11 +22,11 @@ dependencies = [
 
 [[package]]
 name = "adocweave-host"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 
 [[package]]
 name = "adocweave-lsp"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 dependencies = [
  "adocweave",
  "adocweave-host",
@@ -41,7 +41,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-wasm"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 dependencies = [
  "adocweave",
  "js-sys",

@@ -7,6 +7,6 @@ print(1)
 
 stem:[x]
 
-xref:note:123#missing[Note]
+xref:note:123#missing[]
 
 image:https://source.example/x.png[alt]

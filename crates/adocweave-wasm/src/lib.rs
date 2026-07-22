@@ -19,7 +19,7 @@ pub use render_inputs::{
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
 
-pub const WASM_API_VERSION: u16 = 2;
+pub const WASM_API_VERSION: u16 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -817,6 +817,56 @@ mod tests {
         });
         let error = process_request(invalid, &NeverCancel).expect_err("outside source");
         assert_eq!(error.code, "invalid-render-input");
+    }
+
+    #[test]
+    fn wasm_resolved_reference_display_text_is_escaped_plain_text() {
+        let source = "xref:note:01800000-0000-7000-8000-000000000001[]";
+        let mut resolved_request = request(source);
+        resolved_request
+            .options
+            .url_policy
+            .allow_resolved_root_relative = true;
+        resolved_request
+            .render_inputs
+            .references
+            .push(WasmResolvedReference {
+                source_start: 0,
+                source_end: source.len() as u32,
+                outcome: WasmReferenceOutcome::Resolved {
+                    href: "/notes/01800000-0000-7000-8000-000000000001".to_owned(),
+                    display_text: Some("公開 <タイトル> & *not markup*".to_owned()),
+                    notices: Vec::new(),
+                },
+            });
+
+        let response = process_request(resolved_request, &NeverCancel).expect("response");
+
+        assert_eq!(
+            response.html,
+            "<p><a href=\"/notes/01800000-0000-7000-8000-000000000001\">公開 &lt;タイトル&gt; &amp; *not markup*</a></p>\n"
+        );
+        assert_eq!(
+            response.projection["referenceEdges"][0]["resolution"]["displayText"],
+            "公開 <タイトル> & *not markup*"
+        );
+
+        let mut oversized = request(source);
+        oversized.options.limits.max_output_bytes = 4;
+        oversized
+            .render_inputs
+            .references
+            .push(WasmResolvedReference {
+                source_start: 0,
+                source_end: source.len() as u32,
+                outcome: WasmReferenceOutcome::Resolved {
+                    href: "x".to_owned(),
+                    display_text: Some("title".to_owned()),
+                    notices: Vec::new(),
+                },
+            });
+        let error = process_request(oversized, &NeverCancel).expect_err("display text limit");
+        assert_eq!(error.code, "limit-exceeded");
     }
 
     #[test]

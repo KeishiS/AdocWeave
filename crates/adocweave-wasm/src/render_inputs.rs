@@ -25,6 +25,8 @@ pub struct WasmResolvedReference {
 pub enum WasmReferenceOutcome {
     Resolved {
         href: String,
+        #[serde(default, rename = "displayText")]
+        display_text: Option<String>,
         #[serde(default)]
         notices: Vec<WasmReferenceNotice>,
     },
@@ -90,7 +92,9 @@ pub(crate) fn validate(inputs: &WasmRenderInputs, limits: &WasmLimits) -> Result
         return Err(limit_error("render input count"));
     }
     let reference_bytes = inputs.references.iter().map(|input| match &input.outcome {
-        WasmReferenceOutcome::Resolved { href, .. } => href.len() as u64,
+        WasmReferenceOutcome::Resolved {
+            href, display_text, ..
+        } => href.len() as u64 + display_text.as_ref().map_or(0, |text| text.len()) as u64,
         WasmReferenceOutcome::Failed { message, .. } => message.len() as u64,
     });
     let resource_bytes = inputs.resources.iter().map(|input| match &input.outcome {
@@ -118,21 +122,29 @@ pub(crate) fn convert(
         .map(|resolution| {
             let range = source_range(resolution.source_start, resolution.source_end, analysis)?;
             Ok(match resolution.outcome {
-                WasmReferenceOutcome::Resolved { href, notices } => {
-                    adocweave::reference::ResolvedReference::resolved_with_notices(
-                        range,
-                        href,
-                        notices
-                            .into_iter()
-                            .map(|notice| adocweave::reference::ResolutionNotice {
-                                kind: match notice {
-                                    WasmReferenceNotice::Fallback => {
-                                        adocweave::reference::ResolutionNoticeKind::Fallback
-                                    }
-                                },
-                            })
-                            .collect(),
-                    )
+                WasmReferenceOutcome::Resolved {
+                    href,
+                    display_text,
+                    notices,
+                } => {
+                    let mut resolved =
+                        adocweave::reference::ResolvedReference::resolved(range, href)
+                            .with_notices(
+                                notices
+                                    .into_iter()
+                                    .map(|notice| adocweave::reference::ResolutionNotice {
+                                        kind: match notice {
+                                            WasmReferenceNotice::Fallback => {
+                                                adocweave::reference::ResolutionNoticeKind::Fallback
+                                            }
+                                        },
+                                    })
+                                    .collect(),
+                            );
+                    if let Some(display_text) = display_text {
+                        resolved = resolved.with_display_text(display_text);
+                    }
+                    resolved
                 }
                 WasmReferenceOutcome::Failed { kind, message } => {
                     adocweave::reference::ResolvedReference::failed(

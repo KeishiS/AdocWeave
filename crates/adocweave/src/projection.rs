@@ -10,7 +10,7 @@ use crate::reference::{ReferenceKey, ResolutionOutcome};
 use crate::render::{RenderInputs, ResolutionMatch};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 2;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -711,11 +711,18 @@ fn write_reference_edge(output: &mut String, edge: &ReferenceEdge) {
     .expect("writing to String cannot fail");
     output.push_str(",\"resolution\":");
     match &edge.resolution {
-        Some(ResolutionOutcome::Resolved { href, notices }) => {
+        Some(ResolutionOutcome::Resolved {
+            href,
+            display_text,
+            notices,
+        }) => {
             write!(
                 output,
-                "{{\"status\":\"resolved\",\"href\":{},\"notices\":[",
-                json_string(href)
+                "{{\"status\":\"resolved\",\"href\":{},\"displayText\":{},\"notices\":[",
+                json_string(href),
+                display_text
+                    .as_ref()
+                    .map_or_else(|| "null".to_owned(), |text| json_string(text))
             )
             .expect("writing to String cannot fail");
             for (index, notice) in notices.iter().enumerate() {
@@ -842,14 +849,24 @@ mod tests {
             .analyze("xref:other.adoc[Other]")
             .expect("analysis");
         let resolution =
-            ResolvedReference::resolved(analysis.references()[0].range, "https://example/other");
+            ResolvedReference::resolved(analysis.references()[0].range, "https://example/other")
+                .with_display_text("Resolved document title");
         let projected = project(&analysis, &RenderInputs::new(vec![resolution], Vec::new()));
 
         assert!(matches!(
             projected.reference_edges[0].resolution,
-            Some(ResolutionOutcome::Resolved { ref href, .. })
-                if href == "https://example/other"
+            Some(ResolutionOutcome::Resolved {
+                ref href,
+                ref display_text,
+                ..
+            }) if href == "https://example/other"
+                && display_text.as_deref() == Some("Resolved document title")
         ));
+        assert!(
+            projected
+                .render_json()
+                .contains("\"displayText\":\"Resolved document title\"")
+        );
     }
 
     #[test]
@@ -913,7 +930,7 @@ mod tests {
             .expect("analysis");
         assert_eq!(
             project(&analysis, &RenderInputs::default()).render_json(),
-            "{\"contractVersion\":2,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":3,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 
