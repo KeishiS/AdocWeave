@@ -22,13 +22,10 @@ function queryNodes(source) {
 }
 
 const highlightCaptures = new Set([
-  "attribute", "comment", "comment.error", "comment.note", "comment.warning", "constant", "keyword",
-  "label", "markup.heading.1", "markup.heading.2", "markup.heading.3", "markup.heading.4",
-  "markup.heading.5", "markup.heading.6", "markup.italic", "markup.link.label", "markup.link.url",
-  "markup.list", "markup.list.checked", "markup.list.unchecked", "markup.raw", "markup.raw.block",
-  "markup.strong", "markup.subscript", "markup.superscript", "number", "property",
-  "punctuation.bracket", "punctuation.delimiter", "punctuation.special", "string", "string.escape",
-  "string.special", "type", "variable.parameter",
+  "attribute", "comment", "constant", "emphasis", "emphasis.strong", "keyword", "label",
+  "link_text", "link_uri", "number", "property", "punctuation.bracket",
+  "punctuation.delimiter", "punctuation.list_marker", "punctuation.special", "string",
+  "string.escape", "string.special", "text.literal", "title", "type", "variable.parameter",
 ]);
 
 for (const [grammar, nodes] of Object.entries(snapshot.grammars)) {

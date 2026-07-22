@@ -1,20 +1,20 @@
 [
   (monospace)
   (passthrough)
-] @markup.raw
+] @text.literal
 
-(emphasis) @markup.strong
-(italic) @markup.italic
-(highlight) @markup.italic
-(superscript) @markup.superscript
-(subscript) @markup.subscript
+(emphasis) @emphasis.strong
+(italic) @emphasis
+(highlight) @emphasis
+(superscript) @emphasis
+(subscript) @emphasis
 
 [
   (link_url)
   (email)
-] @markup.link.url
+] @link_uri
 
-(uri_label) @markup.link.label
+(uri_label) @link_text
 
 [
   "["
@@ -30,11 +30,11 @@
 (roled_text (role) @attribute)
 (attribute_reference (attribute_name) @constant)
 
-(xref (reftext) @markup.link.url)
-(xref (id) @markup.link.url .)
+(xref (reftext) @link_uri)
+(xref (id) @link_uri .)
 (xref
-  (id) @markup.link.label
-  (reftext) @markup.link.url)
+  (id) @link_text
+  (reftext) @link_uri)
 
 [
   (macro_name)
@@ -49,12 +49,12 @@
 (escaped_sequence) @string.escape
 
 (inline_macro
-  (target)? @markup.link.url
+  (target)? @link_uri
   (attr)? @label)
 
 (stem_macro
   (target)? @label
-  (attr)? @markup.raw)
+  (attr)? @text.literal)
 
 (footnote
   (target)? @label

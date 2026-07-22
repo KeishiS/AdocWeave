@@ -1,11 +1,11 @@
-(document_title) @markup.heading.1
-(title1) @markup.heading.2
-(title2) @markup.heading.3
-(title3) @markup.heading.4
-(title4) @markup.heading.5
-(title5) @markup.heading.6
+(document_title) @title
+(title1) @title
+(title2) @title
+(title3) @title
+(title4) @title
+(title5) @title
 
-(email) @markup.link.url
+(email) @link_uri
 
 (author_line
   ";" @punctuation.delimiter)
@@ -55,8 +55,8 @@
 ] @punctuation.special
 
 (ntable_cell "!" @punctuation.special)
-(checked_list_marker_unchecked) @markup.list.unchecked
-(checked_list_marker_checked) @markup.list.checked
+(checked_list_marker_unchecked) @punctuation.list_marker
+(checked_list_marker_checked) @punctuation.list_marker
 
 [
   (list_marker_star)
@@ -65,10 +65,10 @@
   (list_marker_digit)
   (list_marker_geek)
   (list_marker_alpha)
-] @markup.list
+] @punctuation.list_marker
 
-(description_marker) @markup.list
-(description_list_item (term) @markup.strong)
+(description_marker) @punctuation.list_marker
+(description_list_item (term) @emphasis.strong)
 
 [
   (line_comment)
@@ -90,13 +90,13 @@
 (block_title
   (block_title_marker) @punctuation.special) @attribute
 
-(ident_block) @markup.raw.block
+(ident_block) @text.literal
 (callout_list_marker) @punctuation.special
 
 (block_macro
   (block_macro_name) @keyword
   "::" @punctuation.delimiter
-  (target)? @markup.link.url
+  (target)? @link_uri
   "[" @punctuation.bracket
   "]" @punctuation.bracket)
 
@@ -104,30 +104,30 @@
 (attribute_value) @variable.parameter
 
 (admonition
-  (admonition_important) @comment.error
-  ":" @comment.error)
+  (admonition_important) @comment
+  ":" @comment)
 
 (admonition
-  (admonition_warning) @comment.warning
-  ":" @comment.warning)
+  (admonition_warning) @comment
+  ":" @comment)
 
 (admonition
-  (admonition_caution) @comment.warning
-  ":" @comment.warning)
+  (admonition_caution) @comment
+  ":" @comment)
 
 (admonition
-  (admonition_note) @comment.note
-  ":" @comment.note)
+  (admonition_note) @comment
+  ":" @comment)
 
 (admonition
-  (admonition_tip) @comment.note
-  ":" @comment.note)
+  (admonition_tip) @comment
+  ":" @comment)
 
 ((section_block
   (element_attr
     (positional_attr (block_style) @_style))
   (listing_block
-    (listing_block_body) @markup.raw.block))
+    (listing_block_body) @text.literal))
   (#not-any-of? @_style
     "a2s" "barcode" "blockdiag" "bpmn" "bytefield" "d2" "dbml" "diagrams" "ditaa" "dpic" "erd"
     "gnuplot" "graphviz" "lilypond" "meme" "mermaid" "msc" "nomnoml" "pikchr" "plantuml" "shaape"
