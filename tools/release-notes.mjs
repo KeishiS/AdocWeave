@@ -20,12 +20,11 @@ export function appendRequiredReleaseNotes(body, tag) {
     .join("\n");
   const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
   const notes = "## Highlights\n\n" +
-    "- The Zed development extension now provides Tree-sitter highlighting for AsciiDoc structure and inline formatting, including source-language injections.\n" +
-    "- AdocWeave LSP Semantic Tokens now supplement rather than replace Zed's syntax highlighting.\n" +
-    "- The repository flake now provides AdocWeave CLI and LSP packages for Linux x86-64 and ARM64. Run `nix run github:KeishiS/AdocWeave`.\n\n" +
+    "- v0.1.0 is functionally identical to the accepted v0.1.0-rc.6 baseline; it contains no intentional API or feature changes.\n" +
+    "- The repository flake provides AdocWeave CLI and LSP packages for Linux x86-64 and ARM64. Run `nix run github:KeishiS/AdocWeave`.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${contracts}\n\n` +
-    "This release requires consumers to match the listed contract versions. Release candidates may contain breaking API changes; do not mix CLI, LSP, browser, or Zed assets from different versions.\n\n" +
+    "This release requires consumers to match the listed contract versions. Do not mix CLI, LSP, browser, or Zed assets from different versions.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n` +
     "- Native binaries are available only for Linux x86-64 and ARM64.\n" +
     "- The Zed extension is installed as a development extension; it is not published to the Zed Extension Gallery.\n" +
