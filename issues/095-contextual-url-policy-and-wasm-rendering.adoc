@@ -1,0 +1,35 @@
+= URL由来別policyとWASM描画契約
+:status: planned
+:depends-on: 075,084,094
+
+== 目的
+
+文書入力に書かれたURLとhostが解決したURLを異なる信頼境界として扱い、同じURL policyをnativeと
+WASMの診断および描画へ適用する。
+
+== 設計方針
+
+* URL検査へ`AuthoredLink`、`ResolvedReference`、`ResolvedResource`等の由来contextを渡す。
+* 文書入力のroot-relative URLを拒否したまま、hostが生成したroot-relative URLだけを設定により許可する。
+* 単一の`allow_root_relative`で全由来を一括許可しない。
+* host提供URLもrendererで再検査し、検査済みという主張だけを信用しない。
+* WASM optionから構築したrender policyを実際のHTML描画へ渡し、解析時policyとの不一致をなくす。
+* URL分類と拒否理由をbackend非依存にし、HTML固有の型をsemantic ASTへ持ち込まない。
+
+== 作業
+
+* URL policy APIを由来context付きの判定へ破壊的に再設計する。
+* link、referenceおよびresourceの全判定箇所を共通APIへ移行する。
+* WASM requestからparse／lint／renderへ同一policy snapshotを伝播する。
+* native、WASM、CLIおよびbrowser libraryの公開DTOと契約versionを更新する。
+* `http`／`https`、control文字、難読化、relative、root-relative、host解決結果のsecurity fixtureを追加する。
+* URL policy、RenderInputs、WASMおよびHTML契約文書を更新する。
+
+== 完了条件
+
+文書中の`/notes/id`は拒否しつつ、設定で許可されたhost解決結果の`/notes/id`は描画できる。同一入力、
+policyおよびRenderInputsからnativeとWASMが同じ診断とHTMLを生成する。
+
+== 範囲外
+
+`note` scheme、UUID、ACL、DB、Base URLおよび特定routeの意味はhostが所有する。

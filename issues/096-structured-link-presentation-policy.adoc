@@ -1,0 +1,33 @@
+= 構造化link presentation policy
+:status: planned
+:depends-on: 095
+
+== 目的
+
+外部リンクと内部リンクの表示規則を、任意HTML hookや文字列後処理ではなく、型付きrender policyとして
+設定できるようにする。
+
+== 設計方針
+
+* URL分類結果に基づき、外部HTTP(S)リンクと内部・解決済み参照を区別する。
+* `target`と`rel`は列挙型または固定集合として生成し、文書入力由来の任意属性を通過させない。
+* `target="_blank"`を選ぶ場合は`noopener`を必須とし、必要に応じて`noreferrer`を追加できるようにする。
+* HTML以外のbackendは同じ意味policyを自身の出力へ写像するか、適用不能として明示する。
+
+== 作業
+
+* 外部・内部link presentationを表すbackend非依存policyを設計する。
+* HTML allowlistへ生成専用の`target`／`rel`を追加し、値を固定してescapeする。
+* 通常リンクと解決済みxrefで分類規則が分岐しないよう共通化する。
+* 空、重複または矛盾するpolicyをconstructorで拒否する。
+* raw HTML、event handler、source-controlled属性が混入しないsecurity fixtureを追加する。
+* HTML契約、linkおよびbrowser利用文書を更新する。
+
+== 完了条件
+
+設定された場合だけ外部HTTP(S)リンクへ`target="_blank" rel="noopener noreferrer"`が決定的に付与され、
+内部参照には付与されない。利用側によるHTML文字列後処理を必要としない。
+
+== 範囲外
+
+特定ドメインやアプリrouteの分類規則をAdocWeaveへ固定しない。

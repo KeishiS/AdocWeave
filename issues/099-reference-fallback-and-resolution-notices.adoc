@@ -1,0 +1,33 @@
+= 参照fallback表示と解決notice
+:status: planned
+:depends-on: 075,095
+
+== 目的
+
+未解決参照で機密性のあるtargetを意図せず表示せず、解決成功時の安全なfallbackを構造化して表現できる
+汎用的な参照描画契約を追加する。
+
+== 設計方針
+
+* 未解決時の表示を、原文target、明示label、固定代替文字列または非表示からpolicyで選べるようにする。
+* 解決結果へbackend非依存のnoticeを付与できるようにし、成功URLと警告状態を二者択一にしない。
+* noticeはsource rangeと安定したkindを持ち、任意の機密messageを既定で公開しない。
+* ACL拒否と対象不在を同一に見せる判断、および空labelを禁止する判断はhost profileに残す。
+
+== 作業
+
+* `ResolvedReference`とRenderInputsの成功結果へ型付きnoticeを追加するか、同等のsidecar契約を設計する。
+* 未解決・拒否・missing anchor・fallback成功の表示policyを追加する。
+* HTML、diagnostic、projection、WASM DTOおよびbrowser型へ必要最小限の状態を投影する。
+* target、title、ACL状態およびresolver内部messageが意図せずHTMLへ現れないsecurity fixtureを追加する。
+* labelあり／なし、anchor fallback、重複入力およびnative／WASM同値testを追加する。
+* 参照解決、RenderInputs、projectionおよびHTML契約文書を更新する。
+
+== 完了条件
+
+hostはアプリ固有型をコアへ追加せず、解決成功、fallback付き成功および未解決を表現できる。設定により、
+空labelの未解決参照からtarget文字列をHTMLへ露出させない。
+
+== 範囲外
+
+UUID検証、ACLの判定方法、missing anchor時の製品動作および表示文言はhostが所有する。

@@ -1,0 +1,30 @@
+= Webホストadapter適合性
+:status: planned
+:depends-on: 096,097,098,099,100
+
+== 目的
+
+Webホストが公開APIだけを用いて標準AsciiDoc構文へ安全な利用側profileを適用できることを、nativeとWASMに
+共通する適合性fixtureで証明する。
+
+== 作業
+
+* 解析、参照query、host解決、RenderInputs、HTMLおよびprojectionのAPI対応表を作成する。
+* 任意schemeのxrefをhostが絶対HTTPS URLおよび許可されたroot-relative URLへ解決するfixtureを追加する。
+* 通常リンク、外部link属性、source言語allowlist、STEM、数式projectionおよびresource無効化を一つの
+  host profileで検証する。
+* ACL等の詳細を模した拒否結果が、対象不在と同じ公開結果へ畳み込めることを一般fixtureで確認する。
+* 同じsource revision、profileおよびRenderInputsからnativeとWASMが同じAST snapshot、診断、HTMLおよび
+  projectionを生成することを確認する。
+* browser libraryの型定義、Worker経路、CSPおよび高速更新時の世代管理を回帰試験する。
+* 公開extension契約、browser利用手順、security境界およびroadmapを更新する。
+
+== 完了条件
+
+アプリ固有parser拡張、AdocWeave forkおよびHTML文字列後処理を使わず、任意scheme参照、安全なリンク、
+数式、source blockおよびresource無効化を公開APIだけで実装できる。nativeとWASMの結果が共通fixtureで一致する。
+
+== 範囲外
+
+特定アプリ名、`note`専用型、UUID、DB、ACL、route、KaTeX、highlighterおよびDOM更新をfixtureの公開契約へ
+組み込まない。

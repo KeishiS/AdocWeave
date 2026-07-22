@@ -1,0 +1,31 @@
+= Source言語の描画policy
+:status: planned
+:depends-on: 095
+
+== 目的
+
+source blockの言語と本文を分離したまま、許可した言語だけをHTML classやhost highlighter入力として
+公開できる汎用policyを追加する。
+
+== 設計方針
+
+* 言語allowlistはhostが指定し、AdocWeaveへ製品固有の固定listを持たせない。
+* 未知言語の動作を、class省略、診断または安全に正規化した保持から明示的に選ぶ。
+* コード本文を実行せず、言語名をHTML属性へ直接連結しない。
+* ASTのsource block表現とrender presentation policyを分離する。
+
+== 作業
+
+* source言語の正規化、allowlistおよび未知言語動作を型付きpolicyとして追加する。
+* HTML renderer、projection、WASM DTOおよびbrowser libraryへ同じ判定結果を伝播する。
+* 空文字、Unicode、空白、quote、control文字および長大な言語名をfixture化する。
+* 許可言語、拒否言語および言語指定なしのnative／WASM同値testを追加する。
+* source block、HTML契約およびextension境界の文書を更新する。
+
+== 完了条件
+
+allowlist外の言語がHTML classやhighlighter向け投影へ誤って現れず、コード本文は変更も実行もされない。
+
+== 範囲外
+
+syntax highlighterの選択、実行、themeおよびDOM反映はhostが所有する。

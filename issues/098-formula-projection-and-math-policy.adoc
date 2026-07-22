@@ -1,0 +1,33 @@
+= 数式projectionとmath policy
+:status: planned
+:depends-on: 079,095
+
+== 目的
+
+hostがAST全体を再解釈せずにinline／block数式を列挙し、許可する数式言語をnativeとWASMで同じ規則により
+検証できるようにする。
+
+== 設計方針
+
+* projectionは数式種別、言語、source、expanded rangeおよびorigin位置を保持する。
+* 数式言語allowlistはhost設定とし、LaTeXや特定rendererへコアを固定しない。
+* AsciiDocの`stem`属性、明示macroおよびblock styleから確定した意味をprojectionへ渡す。
+* 数式内容は実行せず、raw HTMLとして出力しない。
+
+== 作業
+
+* `DocumentProjection`へ型付きformula項目を追加する。
+* inline／block数式を共通queryから一度だけ収集する。
+* 許可言語と未対応言語の診断policyを追加し、parse profileとrender policyの責務を明記する。
+* WASM、browser TypeScript型、canonical snapshotおよび契約versionを更新する。
+* include由来位置、空数式、複数言語およびnative／WASM同値fixtureを追加する。
+* STEM、projectionおよびbrowser integration文書を更新する。
+
+== 完了条件
+
+同一Analysisから数式の言語、内容、種別および位置を再解析なしで取得でき、hostが許可しない言語を
+一貫して診断できる。
+
+== 範囲外
+
+KaTeX、MathJax等による描画、DOM挿入および数式renderer固有設定はhostが所有する。

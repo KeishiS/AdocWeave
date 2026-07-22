@@ -1,0 +1,33 @@
+= Host resource capability profile
+:status: planned
+:depends-on: 077,095
+
+== 目的
+
+include、画像、添付、外部resource等について、構文認識とhost解決能力を分離し、Webホストが利用しない能力を
+明示的かつfail-closedに無効化できるようにする。
+
+== 設計方針
+
+* 構文nodeは保持し、無効化を「構文が存在しないこと」として実装しない。
+* parse、preprocess、resolveおよびrenderの各段階で使用可能なhost capabilityをsnapshotとして渡す。
+* capabilityがない場合、コアはfile、network、時刻、環境変数またはDOMへfallbackアクセスしない。
+* URL includeや外部resourceは、hostが明示的に提供した不変snapshotだけを処理対象とする。
+
+== 作業
+
+* include、local resource、external resourceおよびresolved renderingの能力を表す型付きprofileを設計する。
+* profile未指定時の安全な既定値を定義し、暗黙のresolver呼び出しを検査する。
+* preprocess、ResourceQuery、RenderInputs、WASMおよびbrowser APIの責務を整合させる。
+* 全無効、構文のみ、host snapshotのみ、および許可されない解決結果のfixtureを追加する。
+* resource上限、循環、source mapおよびURL由来policyとの組合せをtestする。
+* preprocessor、macro/resource、architectureおよびbrowser文書を更新する。
+
+== 完了条件
+
+全resource capabilityを無効にした解析・描画でI/Oやresolver呼び出しが発生せず、resource構文と範囲は
+losslessに取得できる。
+
+== 範囲外
+
+HTTP client、filesystem provider、添付DB、代理取得およびcache実装はhostが所有する。
