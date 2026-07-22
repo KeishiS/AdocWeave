@@ -4,7 +4,7 @@
 ホスト向け情報を抽出する。projection生成時にソースを再解析せず、ファイル、DB、
 ネットワークまたはノートアプリ固有スキーマへアクセスしない。
 
-現在の`PROJECTION_CONTRACT_VERSION`は3である。公開フィールドの意味または安定JSON表現を
+現在の`PROJECTION_CONTRACT_VERSION`は4である。公開フィールドの意味または安定JSON表現を
 破壊的に変更する場合は、このversionを更新する。
 
 == 出力
@@ -26,7 +26,8 @@
 通常リンクはxref edgeへ混在させず、`ExternalLink`として型で区別する。Resolver結果を
 `RenderInputs`を渡した場合は、参照元範囲が完全に一致するedgeだけへ解決結果を付加する。projection自身は
 解決を実行しない。成功結果のhref、任意の`displayText`およびfallback noticeをedgeへ保持する。
-失敗結果には表示テキストを格納できないため、権限拒否や不在からタイトルをprojectionへ漏らさない。
+失敗結果は安定したkindだけを保持し、表示テキストや自由形式messageを格納できないため、権限拒否や不在から
+タイトル、ACL状態または内部例外をprojectionへ漏らさない。
 
 同じ`Analysis`と同じ解決結果列からは、同じ順序と同じ`render_json()`結果を得なければ
 ならない。出現順を基本とし、外部リンクは元範囲順、参照先は`Analysis`の規範順を維持する。

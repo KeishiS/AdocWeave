@@ -32,7 +32,6 @@ pub enum WasmReferenceOutcome {
     },
     Failed {
         kind: WasmReferenceFailureKind,
-        message: String,
     },
 }
 
@@ -72,7 +71,6 @@ pub enum WasmResourceOutcome {
     },
     Failed {
         kind: WasmResourceFailureKind,
-        message: String,
     },
 }
 
@@ -95,13 +93,13 @@ pub(crate) fn validate(inputs: &WasmRenderInputs, limits: &WasmLimits) -> Result
         WasmReferenceOutcome::Resolved {
             href, display_text, ..
         } => href.len() as u64 + display_text.as_ref().map_or(0, |text| text.len()) as u64,
-        WasmReferenceOutcome::Failed { message, .. } => message.len() as u64,
+        WasmReferenceOutcome::Failed { .. } => 0,
     });
     let resource_bytes = inputs.resources.iter().map(|input| match &input.outcome {
         WasmResourceOutcome::Resolved {
             href, media_type, ..
         } => href.len() as u64 + media_type.as_ref().map_or(0, |value| value.len() as u64),
-        WasmResourceOutcome::Failed { message, .. } => message.len() as u64,
+        WasmResourceOutcome::Failed { .. } => 0,
     });
     let bytes = reference_bytes
         .chain(resource_bytes)
@@ -146,7 +144,7 @@ pub(crate) fn convert(
                     }
                     resolved
                 }
-                WasmReferenceOutcome::Failed { kind, message } => {
+                WasmReferenceOutcome::Failed { kind } => {
                     adocweave::reference::ResolvedReference::failed(
                         range,
                         adocweave::reference::ResolverFailure {
@@ -167,7 +165,6 @@ pub(crate) fn convert(
                                     adocweave::reference::ResolutionFailureKind::ResolverFailure
                                 }
                             },
-                            message,
                         },
                     )
                 }
@@ -190,7 +187,7 @@ pub(crate) fn convert(
                     media_type,
                     byte_length,
                 ),
-                WasmResourceOutcome::Failed { kind, message } => {
+                WasmResourceOutcome::Failed { kind } => {
                     adocweave::resource::ResolvedResource::failed(
                         range,
                         adocweave::resource::ResourceFailure {
@@ -211,7 +208,6 @@ pub(crate) fn convert(
                                     adocweave::resource::ResourceFailureKind::ResolverFailure
                                 }
                             },
-                            message,
                         },
                     )
                 }

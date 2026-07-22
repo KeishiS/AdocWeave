@@ -1,0 +1,53 @@
+= 型付き描画失敗と機密情報非漏洩
+:status: completed
+:depends-on: 075,099,107
+
+== 目的
+
+hostから渡す参照・resource解決失敗を安定したkindだけで表現し、ACL、DB key、非公開タイトル、
+内部例外その他の自由形式詳細がHTML、診断、projectionまたはWASM応答へ流れる経路を型で閉じる。
+
+== 問題
+
+RC.4の`ResolverFailure`と`ResourceFailure`、および対応するWASM DTOは`message: String`を持つ。
+HTML診断は固定文言を使う一方、reference projectionはこのmessageをそのままJSONへ含める。
+hostがログ用の詳細を誤って渡すとbrowser境界へ漏れるため、「失敗結果は公開タイトルを保持しない」という
+Issue 107の不変条件を公開型だけでは保証できない。
+
+== 設計
+
+* 描画入力の失敗値は安定したfailure kindだけを保持する。任意messageを受け取らない。
+* HTML診断はfailure kindから固定codeと固定messageを生成する。
+* projectionの失敗JSONは`status`と`kind`だけを出力する。
+* resolver実装の内部例外、監査情報およびlocalized UI messageはhostが別の非公開log／状態として所有する。
+* referenceとresourceで同じ規則を適用し、一方だけに自由形式の迂回路を残さない。
+* WASM入力予算からfailure messageを除き、未知の`message`フィールドは拒否する。
+
+== 作業
+
+* nativeの`ResolverFailure`、`ResourceFailure`とconstructorをkind-onlyへ変更する。
+* WASM DTO、TypeScript宣言、fixtureおよびprojection JSONを同期する。
+* 任意messageを含むWASM入力が拒否され、kind-only失敗から機密文字列が全出力へ現れないことを検証する。
+* 実browser archiveを使うinstallation E2Eで、`displayText`、明示label優先およびfailure非漏洩を実行する。
+* core API、projection、conformanceおよびWASM APIの契約versionを同一変更で更新する。
+
+== 完了条件
+
+公開描画入力へ自由形式の失敗詳細を格納するAPIが存在せず、nativeとWASMの同じkind-only入力から同じHTML、
+固定診断およびprojectionを生成する。実配布browser archiveでも空xref labelの解決済み表示テキストが動作し、
+失敗入力からhost固有情報が応答へ現れない。
+
+== 範囲外
+
+host内部のlogging、telemetry、localized UI、ACL規則、DB問い合わせおよび対象不存在と権限拒否の監査上の区別は
+利用側リポジトリが所有する。
+
+== 実装結果
+
+RC.5でreference／resource失敗をkind-onlyへ変更し、WASMとTypeScriptから自由形式`message`を削除した。
+reference projectionは`status`と`kind`だけを出力し、旧messageを含むWASM入力は未知フィールドとして拒否する。
+共有conformanceへkind-only失敗を追加し、実browser archiveを展開するinstallation E2Eで`displayText`、
+明示label優先、プレーンテキストescapeおよび失敗projectionのフィールド集合を実行確認する。
+
+Core API、Projection、ConformanceおよびWASM APIの契約versionは4へ更新した。HTML出力の要素・属性・
+表示規則は変わらないため、HTML契約versionは3を維持した。

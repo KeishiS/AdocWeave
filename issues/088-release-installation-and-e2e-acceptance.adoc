@@ -42,6 +42,8 @@ filesystem差分からuninstall後に管理対象fileが残らないことを確
   失敗した`v0.1.0-rc.2` tagも付け替えず、Chromium終了競合の修正を含む`v0.1.0-rc.3`を受け入れ対象とする。
 * `v0.1.0-rc.3`の公開と必須Actionsは完了した。その後Issue 107で公開APIをversion 3へ変更したため、
   現行成果物の最終受け入れ対象は`v0.1.0-rc.4`へ進める。RC.3のtagとReleaseは変更しない。
+* `v0.1.0-rc.4`の公開後、Issue 108で失敗詳細の非漏洩境界を破壊的に修正したため、最終受け入れ対象を
+  `v0.1.0-rc.5`へ進める。RC.4以前のtagとReleaseは変更しない。
 * GitHub Release noteへ対応target、公開契約とbreaking change、既知制約、asset検証および
   upgrade／rollbackを必ず追加する生成・検証処理をpublish境界へ追加した。
 * local x86-64成果物では、Zed archiveの決定性検査と導入・完全削除E2Eが成功した。
@@ -52,7 +54,7 @@ filesystem差分からuninstall後に管理対象fileが残らないことを確
 
 == 残る受け入れ
 
-`v0.1.0-rc.4`を公開した後、source checkoutとRust toolchainを持たないclean Linux x86-64／ARM64で実Release assetを
+`v0.1.0-rc.5`を公開した後、source checkoutとRust toolchainを持たないclean Linux x86-64／ARM64で実Release assetを
 使うE2Eを実行する。CLIとLSPに加え、空labelのxrefへResolverの`displayText`を渡すnative／WASM契約を確認する。
 browserは実配備header、Zedは初回managed LSP取得、offline再起動およびUIからの削除までを確認する。
 この公開と実機操作はrepository所有者のpush、tag作成、Environment承認および対応環境を必要とする。

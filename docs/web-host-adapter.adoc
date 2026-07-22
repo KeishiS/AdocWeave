@@ -77,7 +77,7 @@ ResolvedReference {
 ----
 
 アンカー不在時に文書本体へfallbackするhostは、本文hrefと`Fallback` noticeを渡す。権限拒否と不在を
-区別して公開しない場合、同じfailure kindと同じ一般messageへ畳み込む。
+区別して公開しない場合、同じfailure kindへ畳み込む。描画入力は自由形式の失敗messageを受理しない。
 
 === 空labelと解決済みタイトル
 
@@ -117,7 +117,8 @@ path separatorは拒否する。
 * Resolver結果をHTMLとして扱わず、rendererでURLを再検査する。
 * `target`、`rel`、language classを入力文字列から組み立てない。
 * raw HTML、style、event handlerおよびSVGを有効にしない。
-* failure messageへタイトル、ACL状態、DB key、credentialまたは内部例外を含めない。
+* failureは安定kindだけをrendererへ渡し、タイトル、ACL状態、DB key、credentialまたは内部例外はhost内の
+  非公開logへ分離する。
 * libraryはDOMを変更しない。利用側はCSPと表示sandboxを別途設定する。
 
 == 適合性

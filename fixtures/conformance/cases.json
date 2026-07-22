@@ -147,6 +147,26 @@
       "contractImpact": "core-api,html,projection,conformance,wasm-api"
     },
     {
+      "name": "typed-reference-failure",
+      "source": "xref:note:private[]",
+      "renderInputs": {
+        "references": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 19,
+            "outcome": {
+              "status": "failed",
+              "kind": "missing-target"
+            }
+          }
+        ]
+      },
+      "options": { "unresolvedReferences": "label-only" },
+      "compatibility": "host-safety-contract",
+      "rationale": "解決失敗は安定kindだけを保持し、自由形式のACL・DB・非公開タイトル情報をruntime境界へ渡さない",
+      "contractImpact": "core-api,projection,conformance,wasm-api"
+    },
+    {
       "name": "strict-unsupported",
       "source": "[role=raw]\n",
       "options": { "syntaxMode": "strict" },

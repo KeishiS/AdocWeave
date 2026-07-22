@@ -105,7 +105,6 @@ export interface ResolvedReference {
           | "ambiguous-target"
           | "outside-root"
           | "resolver-failure";
-        message: string;
       };
 }
 
@@ -127,7 +126,6 @@ export interface ResolvedResource {
           | "scheme-denied"
           | "permission-denied"
           | "resolver-failure";
-        message: string;
       };
 }
 

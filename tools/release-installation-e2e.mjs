@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 const [candidateArgument, target, manifestArgument] = process.argv.slice(2);
 if (!candidateArgument || !target) {
@@ -154,6 +155,76 @@ function installZed() {
   renameSync(extracted, zedRoot);
 }
 
+async function verifyBrowserContract() {
+  const modulePath = join(browserRoot, "wasm", "adocweave_wasm.js");
+  const wasmPath = join(browserRoot, "wasm", "adocweave_wasm_bg.wasm");
+  const contracts = await import(pathToFileURL(join(browserRoot, "worker", "contracts.mjs")));
+  const wasm = await import(pathToFileURL(modulePath));
+  await wasm.default({ module_or_path: readFileSync(wasmPath) });
+
+  const empty = "xref:record:item[]";
+  const authored = "xref:record:explicit[Authored *label*]";
+  const failed = "xref:record:private[]";
+  const source = `${empty}\n\n${authored}\n\n${failed}`;
+  const ranges = [empty, authored, failed].map((text) => {
+    const sourceStart = source.indexOf(text);
+    return { sourceStart, sourceEnd: sourceStart + Buffer.byteLength(text) };
+  });
+  const response = wasm.process({
+    apiVersion: contracts.WASM_API_VERSION,
+    sourceId: "acceptance:resolved-display-text",
+    version: 1,
+    generation: 1,
+    source,
+    renderInputs: {
+      references: [
+        {
+          ...ranges[0],
+          outcome: {
+            status: "resolved",
+            href: "/records/item",
+            displayText: "<Public & *plain*>",
+          },
+        },
+        {
+          ...ranges[1],
+          outcome: {
+            status: "resolved",
+            href: "/records/explicit",
+            displayText: "must not replace authored label",
+          },
+        },
+        {
+          ...ranges[2],
+          outcome: { status: "failed", kind: "missing-target" },
+        },
+      ],
+    },
+    options: {
+      urlPolicy: { allowResolvedRootRelative: true },
+      unresolvedReferences: "label-only",
+    },
+  });
+
+  const expected =
+    '<p><a href="/records/item">&lt;Public &amp; *plain*&gt;</a></p>\n' +
+    '<p><a href="/records/explicit">Authored <strong>label</strong></a></p>\n' +
+    "<p></p>\n";
+  if (response.html !== expected) throw new Error(`browser resolved text mismatch: ${response.html}`);
+  const edges = response.projection.referenceEdges;
+  if (edges[0].resolution.displayText !== "<Public & *plain*>") {
+    throw new Error("browser projection omitted resolved display text");
+  }
+  const failure = edges[2].resolution;
+  if (
+    failure.status !== "failed" ||
+    failure.kind !== "missing-reference-target" ||
+    Object.keys(failure).sort().join(",") !== "kind,status"
+  ) {
+    throw new Error(`browser failure projection is not kind-only: ${JSON.stringify(failure)}`);
+  }
+}
+
 try {
   mkdirSync(home);
   const before = files(home).map((path) => path.slice(home.length + 1));
@@ -176,6 +247,7 @@ try {
   if (!existsSync(join(browserRoot, "worker", "index.mjs"))) throw new Error("browser public entry point is missing");
   if (!existsSync(join(browserRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("browser WASM is missing");
   if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
+  await verifyBrowserContract();
 
   rmSync(join(binDirectory, "adocweave"));
   rmSync(join(binDirectory, "adocweave-lsp"));

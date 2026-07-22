@@ -1715,7 +1715,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_reference_details_never_become_html() {
+    fn kind_only_reference_failure_uses_a_fixed_diagnostic() {
         let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
             .analyze("xref:record:private[Public label]")
             .expect("analysis");
@@ -1727,7 +1727,6 @@ mod tests {
                     analysis.references()[0].range,
                     crate::reference::ResolverFailure {
                         kind: crate::reference::ResolutionFailureKind::MissingTarget,
-                        message: "ACL denied: secret database title".to_owned(),
                     },
                 )],
                 Vec::new(),
@@ -1735,8 +1734,11 @@ mod tests {
         );
 
         assert_eq!(output.html, "<p>Public label</p>\n");
-        assert!(!output.html.contains("ACL"));
-        assert!(!output.html.contains("secret"));
+        assert_eq!(
+            output.diagnostics[0].code.as_str(),
+            "missing-reference-target"
+        );
+        assert_eq!(output.diagnostics[0].message, "reference resolution failed");
     }
 
     #[test]
@@ -1783,7 +1785,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_empty_label_never_exposes_target_or_failure_details_in_label_only_mode() {
+    fn failed_empty_label_hides_the_target_in_label_only_mode() {
         let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
             .analyze("xref:note:private[]")
             .expect("analysis");
@@ -1792,7 +1794,6 @@ mod tests {
                 analysis.references()[0].range,
                 crate::reference::ResolverFailure {
                     kind: crate::reference::ResolutionFailureKind::MissingTarget,
-                    message: "ACL denied: secret database title".to_owned(),
                 },
             )],
             Vec::new(),
@@ -1808,9 +1809,7 @@ mod tests {
         );
 
         assert_eq!(output.html, "<p></p>\n");
-        assert!(!output.html.contains("ACL"));
         assert!(!output.html.contains("private"));
-        assert!(!output.html.contains("secret"));
     }
 
     #[test]
@@ -2213,7 +2212,6 @@ mod tests {
             resolved.source_range,
             crate::resource::ResourceFailure {
                 kind: crate::resource::ResourceFailureKind::PermissionDenied,
-                message: "denied".to_owned(),
             },
         );
         let failed = render_with_inputs(

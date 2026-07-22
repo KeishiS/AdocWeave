@@ -48,6 +48,7 @@ browserへ漏らさない。
 . 文書revisionが変わった場合は古い入力を再利用せず、新しいquery snapshotから作り直す。
 
 WASM APIは同じ構造をcamelCase JSONで受け取り、rangeが入力sourceのUTF-8境界内であることを検証する。
-入力件数は`maxReferences`、href、表示テキスト、media typeおよび失敗messageの合計byte数は`maxOutputBytes`で制限する。
+入力件数は`maxReferences`、href、表示テキストおよびmedia typeの合計byte数は`maxOutputBytes`で制限する。
+referenceとresourceの失敗値は安定kindだけを持ち、自由形式messageを受理しない。
 nativeとWASMは同じ入力から同じHTML、診断、noticeおよびprojectionを生成する。URLは入力由来ではなく
 `ResolvedReference`または`ResolvedResource`のcontextで再検査する。

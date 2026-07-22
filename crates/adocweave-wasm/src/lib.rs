@@ -19,7 +19,7 @@ pub use render_inputs::{
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
 
-pub const WASM_API_VERSION: u16 = 3;
+pub const WASM_API_VERSION: u16 = 4;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -923,6 +923,28 @@ mod tests {
         })
         .to_string();
         let error = process_json(&invalid).expect_err("invalid request");
+        assert!(error.contains("invalid-request"));
+
+        let leaked_failure = json!({
+            "apiVersion": WASM_API_VERSION,
+            "sourceId": null,
+            "version": 1,
+            "generation": 1,
+            "source": "xref:note:private[]",
+            "renderInputs": {
+                "references": [{
+                    "sourceStart": 0,
+                    "sourceEnd": 19,
+                    "outcome": {
+                        "status": "failed",
+                        "kind": "missing-target",
+                        "message": "ACL denied: private title"
+                    }
+                }]
+            }
+        })
+        .to_string();
+        let error = process_json(&leaked_failure).expect_err("failure detail is forbidden");
         assert!(error.contains("invalid-request"));
 
         let error = process_request(

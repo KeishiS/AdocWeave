@@ -10,7 +10,7 @@ use crate::reference::{ReferenceKey, ResolutionOutcome};
 use crate::render::{RenderInputs, ResolutionMatch};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 3;
+pub const PROJECTION_CONTRACT_VERSION: u16 = 4;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
@@ -736,9 +736,8 @@ fn write_reference_edge(output: &mut String, edge: &ReferenceEdge) {
         Some(ResolutionOutcome::Failed(failure)) => {
             write!(
                 output,
-                "{{\"status\":\"failed\",\"kind\":\"{}\",\"message\":{}}}",
-                failure.kind.diagnostic_code(),
-                json_string(&failure.message)
+                "{{\"status\":\"failed\",\"kind\":\"{}\"}}",
+                failure.kind.diagnostic_code()
             )
             .expect("writing to String cannot fail");
         }
@@ -930,7 +929,7 @@ mod tests {
             .expect("analysis");
         assert_eq!(
             project(&analysis, &RenderInputs::default()).render_json(),
-            "{\"contractVersion\":3,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":4,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

@@ -296,7 +296,8 @@ Issue 090から094の構造収束、Issue 082の配布契約、Issue 083のnativ
 xref:browser-library.adoc[browser library]を完了した。Issue 085と086ではchecksum／SBOM／provenanceおよび
 原子的なGitHub Actions workflowを実装し、`v0.1.0-rc.1`による受け入れ確認まで完了した。Issue 087では
 Zedによる公開LSP取得を完了した。Issue 088ではsource checkoutなしのZed導入を可能にする拡張archiveを追加した。
-`v0.1.0-rc.3`で配布経路の成立を確認し、Issue 107の公開API変更を含む`v0.1.0-rc.4`を使って
+`v0.1.0-rc.3`で配布経路の成立を確認し、Issue 107の公開API変更を`v0.1.0-rc.4`へ含めた。
+その後の監査で見つかった自由形式failure messageをIssue 108で廃止し、`v0.1.0-rc.5`を使って
 clean環境で現行成果物全体の最終受け入れを行う。過去のtagは付け替えない。
 Issue 102ではCIを再監査し、全event共通quality gate、main／tag限定candidate buildおよびtag限定publishへ責務を
 分離した。再利用workflowはevent種別を推測せず、publication tagを明示入力として受け取る。
@@ -338,13 +339,15 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 * xref:../issues/105-ci-browser-runtime-separation.adoc[Issue 105: CI browser runtimeとNix toolchainの分離]
 * xref:../issues/106-optional-browser-runtime-gate.adoc[Issue 106: 実browser受け入れgateの任意化]
 
-== RC.4までの実行順
+== RC.5までの実行順
 
-. xref:../issues/088-release-installation-and-e2e-acceptance.adoc[Issue 088]でRC.4の公開asset、CLI／LSPおよびZedの実Release受け入れを
+. xref:../issues/088-release-installation-and-e2e-acceptance.adoc[Issue 088]でRC.5の公開asset、CLI／LSPおよびZedの実Release受け入れを
   完了する。実browser E2EはIssue 106の方針に従い任意gateへ分離する。
 . xref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で空xref labelへ解決済み表示テキストを渡す汎用契約を実装し、
   公開契約versionとconformance fixtureをRC.4へ更新する。（完了）
-. RC.4で見つかった不具合を収束させ、v0.1.0 stableの公開可否と互換性方針を決定する。
+. xref:../issues/108-typed-render-failures.adoc[Issue 108]で描画入力の自由形式failure messageを廃止し、
+  reference／resource／WASM／projectionの非漏洩を型で保証する。（完了）
+. RC.4後に見つかった不具合を収束させ、v0.1.0 stableの公開可否と互換性方針を決定する。
 . stable公開後に、source短縮記法、追加inline書式、list属性、`subs`属性およびbibliography表示等の標準AsciiDoc未対応領域を
   依存関係付きIssueへ分解する。
 

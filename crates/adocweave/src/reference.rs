@@ -95,7 +95,6 @@ impl ResolutionFailureKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolverFailure {
     pub kind: ResolutionFailureKind,
-    pub message: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -56,7 +56,8 @@ MSRVとlatest stableを同じjobへ混在させない。toolchain固有の失敗
 mainとtagだけがcandidate laneへ入る。native archiveは対応architectureのrunnerでbuildし、別jobへ渡したbyte列を同じ
 architectureで起動する。browserとZed archiveは`release-global-artifacts`で、実際にuploadするarchiveへ決定性、型、size
 およびlayout試験を適用する。集約後はmanifest、SBOM、checksumとasset集合を再生成比較し、さらに
-Linux 2 architectureでclean HOMEへの導入・完全削除E2Eを実行する。
+Linux 2 architectureでclean HOMEへの導入・完全削除E2Eを実行する。このE2Eは抽出したbrowser archive内の
+WASMを直接実行し、解決済み表示テキストとkind-only failure projectionも検査する。
 
 実Chromiumによるisolated／fallback contextとbundler経路は`cargo make browser-runtime-check`へ分離する。この任意gateは
 browser機能を優先する時点または公開後の手動受け入れで実行し、現行のquality／candidate／publishを阻害しない。

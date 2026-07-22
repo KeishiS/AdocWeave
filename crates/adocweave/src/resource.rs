@@ -82,7 +82,6 @@ impl ResourceFailureKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceFailure {
     pub kind: ResourceFailureKind,
-    pub message: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
