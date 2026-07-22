@@ -66,9 +66,11 @@
               stdenv.cc
               wasm-bindgen-cli
               xz
+              yq-go
               adocweave-fuzz
             ];
 
+            ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           };
         }

@@ -35,9 +35,9 @@ jobs:
         run: |
           git fetch origin main:refs/remotes/origin/main
           test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
-      - name: Install pinned dist
-        shell: bash
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+      - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
+        with:
+          determinate: false
       - id: plan
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
@@ -49,7 +49,7 @@ jobs:
             candidate_tag="v$(jq -r .packageVersion release-manifest.json)"
             publishing=false
           fi
-          dist plan --tag="$candidate_tag" --output-format=json > plan.json
+          tools/run-pinned-dist.sh plan --tag="$candidate_tag" --output-format=json > plan.json
           {
             echo "manifest=$(jq -c . plan.json)"
             echo "tag=$candidate_tag"
@@ -78,19 +78,21 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
+        with:
+          determinate: false
       - name: Install native build tools and pinned dist
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
           rustup target add "${{ matrix.target }}"
-          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
       - name: Build target archives
         env:
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           args=()
           if [ -n "$RELEASE_TAG" ]; then args+=("--tag=$RELEASE_TAG"); fi
-          dist build "${args[@]}" --artifacts=local --target="${{ matrix.target }}" --output-format=json > dist-manifest.json
+          tools/run-pinned-dist.sh build "${args[@]}" --artifacts=local --target="${{ matrix.target }}" --output-format=json > dist-manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-local-${{ matrix.target }}

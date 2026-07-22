@@ -1,5 +1,5 @@
 = CI bootstrap固定とworkflow構造検証
-:status: planned
+:status: completed
 :depends-on: 102
 
 == 目的
@@ -7,23 +7,28 @@
 CIが実行前に取得するtool自体の完全性を固定し、GitHub Actions policyをコメントや無関係な文字列では満たせない
 構造検証へ移行する。
 
-== 背景
+== 監査結果
 
-現在はcargo-dist 0.32.0のversion付き公式installerをTLS経由で実行するが、installer byte列のdigestはrepository契約に
-含まれない。actionはcommit SHAへ固定しているため、bootstrap scriptだけが異なる信頼モデルになっている。
+従来はcargo-dist 0.32.0のversion付き公式installerをTLS経由で直接実行し、installer byte列のdigestをrepository契約へ
+含めていなかった。公式Releaseはarchive checksumとGitHub Artifact Attestationを提供するが、installerと取得binaryの
+検証を各jobで再実装するとversion、platformおよびdigestの管理点が増える。
 
-`release-workflow-policy.mjs`はfull-line commentを除外した文字列検査、actionlintはschema／式検査を担当する。現在の
-workflowには十分な回帰防止だが、required fieldが正しいjob、permission scope、dependency edgeに属することをASTとして
-証明していない。
+repositoryの`flake.lock`はcargo-distを含むNix closureを固定済みであるため、CIも同じclosureを使う方がlocal gateとの
+同一性を強くできる。従来の`release-workflow-policy.mjs`は文字列検査であり、required fieldが正しいjob、permission scope、
+dependency edgeに属することを証明していなかった。
 
-== 作業
+== 実装
 
-* cargo-dist installerとbinaryの公式checksum／provenance提供状況を確認し、download、検証、実行を分離する。
-* 公式に検証可能なbyte列がない場合は、Nix closureまたはrepository管理bootstrap artifactを比較し、採用理由を記録する。
-* planと2 native jobのbootstrapを共通するversion／検証関数または再利用workflowへ集約する。
-* YAMLを構造化してjob、`if`、`needs`、permission、environment、timeoutおよびretentionを検査するtoolを採用する。
-* 悪意あるcomment、同名step、別jobへのfield移動およびdependency edge削除をnegative fixtureで拒否する。
-* parser自体を追加する場合、そのlockfile、license、SBOMおよび更新規則をRelease契約へ含める。
+* `run-pinned-dist.sh`は`dist-workspace.toml`から期待versionを読み、`flake.lock`で固定されたNix storeの`dist`だけを実行する。
+  planとnative buildは同じentry pointを使い、networkから取得したinstallerをshellへ直接渡さない。
+* workflowを実行する前にfull commit SHAへ固定したDeterminate Nix actionを使う。native Rust toolchainとmusl toolはrunner側を
+  維持し、配布engineだけをlocked closureから解決する。
+* `yq`を開発shellへ追加し、policy checkerはYAMLをJSON objectへ変換してjob、`if`、`needs`、permission、environment、
+  timeout、retention、action pinおよびstep所属を検証する。`actionlint`はschemaと式検査を引き続き担当する。
+* comment、同名文字列、dependency edge削除、unprotected environmentおよびnetwork installerへの逆戻りをnegative testで
+  拒否する。
+* `yq`は`flake.lock`のNix closureで固定するCI専用toolであり、公開archiveへ同梱しない。このため配布物SBOMと
+  `THIRD_PARTY_NOTICES.adoc`のdependency集合には加えず、Issue 104のCI tool監査対象に含める。
 
 == 完了条件
 
