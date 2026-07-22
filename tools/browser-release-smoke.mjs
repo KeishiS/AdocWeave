@@ -87,7 +87,7 @@ try {
   }
   console.log(`browser release smoke passed: archive=${archiveBytes} wasm=${wasmBytes}`);
 } finally {
-  await rm(root, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 async function inspectPage(chromium, url, temporaryRoot) {
@@ -160,7 +160,10 @@ async function inspectPage(chromium, url, temporaryRoot) {
   } finally {
     browser.kill("SIGTERM");
     await Promise.race([once(browser, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 2000))]);
-    if (browser.exitCode === null) browser.kill("SIGKILL");
+    if (browser.exitCode === null) {
+      browser.kill("SIGKILL");
+      await once(browser, "exit");
+    }
   }
 }
 
