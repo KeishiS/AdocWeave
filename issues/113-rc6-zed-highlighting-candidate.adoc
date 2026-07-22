@@ -1,5 +1,5 @@
 = RC.6 Zed構文色付け候補の公開と受け入れ
-:status: in-progress
+:status: completed
 :depends-on: 111
 
 == 目的
@@ -43,6 +43,12 @@ prereleaseには予定した9 assetだけが公開された。
 
 残作業は、公開Zed archiveを隔離profileへ導入し、managed LSP、基本色付け、Semantic Tokens、light／dark themeおよび
 既存LSP機能を実機で受け入れることだけである。
+
+2026-07-22にNixOS 26.05（x86_64）、Zed 1.10.0で公開Zed archiveを隔離profileへ導入して受け入れた。
+managed LSPがRC.6から取得・起動されることを確認した。Semantic Tokensを`off`にしても基本色付けが残り、
+`combined`では意味的補足と競合しなかった。One Light／One Darkの双方で構文を判別でき、診断、Outline、
+Code Action、Format、Hover、補完、DefinitionおよびFind All Referencesにも回帰はなかった。不一致はない。
+この結果により、tag commit `6b5686f530ad0cf1c6cbafb658a258bf4f939c0d`をstable baselineとして凍結する。
 
 == 完了条件
 
