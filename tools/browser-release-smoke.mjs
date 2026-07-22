@@ -66,6 +66,7 @@ try {
     for (const isolated of [false, true]) {
       const context = isolated ? "isolated" : "fallback";
       const url = `http://127.0.0.1:${port}/${context}/example/index.html?smoke=1`;
+      console.log(`browser release smoke: starting ${context} context with ${chromium}`);
       const state = await inspectPage(chromium, url, root);
       if (state.status !== "ready:4:5" || !state.html.includes("Latest browser result") || state.isolated !== isolated) {
         throw new Error(`browser smoke failed (${isolated ? "isolated" : "fallback"}); requests=${requests.join(",")}: ${JSON.stringify(state)}`);
@@ -81,6 +82,7 @@ try {
           state.projection !== releaseManifest.contracts.projection) {
         throw new Error(`browser contract mismatch: ${JSON.stringify(state)}`);
       }
+      console.log(`browser release smoke: passed ${context} context`);
     }
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
@@ -99,11 +101,11 @@ async function inspectPage(chromium, url, temporaryRoot) {
   ], { stdio: "ignore" });
   try {
     const target = await poll(async () => {
-      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
       return (await response.json()).find((candidate) => candidate.type === "page");
     });
     const socket = new WebSocket(target.webSocketDebuggerUrl);
-    await once(socket, "open");
+    await withTimeout(once(socket, "open"), 5000, "DevTools WebSocket connection timeout");
     let id = 0;
     const replies = new Map();
     const eventWaiters = new Map();
@@ -124,11 +126,11 @@ async function inspectPage(chromium, url, temporaryRoot) {
       socket.send(JSON.stringify({ id: callId, method, params }));
     });
     const event = (method) => new Promise((resolveEvent) => eventWaiters.set(method, resolveEvent));
-    await call("Page.enable");
+    await withTimeout(call("Page.enable"), 5000, "Page.enable timeout");
     const loaded = event("Page.loadEventFired");
-    await call("Page.navigate", { url });
-    await Promise.race([loaded, rejectAfter(20000, "page load timeout")]);
-    const evaluated = await call("Runtime.evaluate", {
+    await withTimeout(call("Page.navigate", { url }), 5000, "Page.navigate timeout");
+    await withTimeout(loaded, 20000, "page load timeout");
+    const evaluated = await withTimeout(call("Runtime.evaluate", {
       expression: `new Promise((resolve, reject) => {
         const deadline = Date.now() + 15000;
         const wait = () => {
@@ -154,15 +156,15 @@ async function inspectPage(chromium, url, temporaryRoot) {
       })`,
       awaitPromise: true,
       returnByValue: true,
-    });
+    }), 20000, "Runtime.evaluate timeout");
     socket.close();
     return evaluated.result.value;
   } finally {
     browser.kill("SIGTERM");
-    await Promise.race([once(browser, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 2000))]);
+    await waitForExit(browser, 2000);
     if (browser.exitCode === null) {
       browser.kill("SIGKILL");
-      await once(browser, "exit");
+      await withTimeout(once(browser, "exit"), 5000, "Chromium did not exit after SIGKILL");
     }
   }
 }
@@ -189,6 +191,31 @@ async function poll(operation) {
   throw error ?? new Error("Chromium did not start");
 }
 
-function rejectAfter(milliseconds, message) {
-  return new Promise((_, reject) => setTimeout(() => reject(new Error(message)), milliseconds));
+async function withTimeout(promise, milliseconds, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function waitForExit(child, milliseconds) {
+  if (child.exitCode !== null) return Promise.resolve(true);
+  return new Promise((resolveWait) => {
+    const exited = () => {
+      clearTimeout(timer);
+      resolveWait(true);
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", exited);
+      resolveWait(false);
+    }, milliseconds);
+    child.once("exit", exited);
+  });
 }
