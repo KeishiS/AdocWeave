@@ -1,0 +1,87 @@
+= Nix flake package・appとNixOS導入契約
+:status: planned
+:depends-on: 083,088
+
+== 目的
+
+このGitHubリポジトリのflakeを直接参照し、source checkoutや手動Cargo buildなしでAdocWeave CLIとLSPを
+再現可能にbuild・実行・NixOSへ導入できるようにする。nixpkgsへの登録は要求せず、配布元は
+`github:KeishiS/adocweave`のままとする。
+
+== 利用契約
+
+[source,console]
+----
+nix run github:KeishiS/adocweave -- --help
+nix profile install github:KeishiS/adocweave
+----
+
+NixOS flakeでは、入力を固定したうえで次の形で導入できることを保証する。
+
+[source,nix]
+----
+{
+  inputs.adocweave.url = "github:KeishiS/adocweave";
+
+  outputs = { self, nixpkgs, adocweave, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [{
+        environment.systemPackages = [
+          adocweave.packages.x86_64-linux.default
+        ];
+      }];
+    };
+  };
+}
+----
+
+利用側は再現性のため`flake.lock`へcommit SHAを固定する。branch先端をproduction構成で暗黙追従しない。
+
+== 公開output
+
+* `packages.<system>.default`は`adocweave`と`adocweave-lsp`の両binaryを含む一つのpackageとする。
+* 必要なら個別の`packages.<system>.adocweave-cli`と`packages.<system>.adocweave-lsp`も公開するが、
+  source buildとCargo依存を重複させない。
+* `apps.<system>.default`は既定packageの`adocweave` CLIを起動し、引数をそのまま渡す。
+* `apps.<system>.adocweave-lsp`は明示的にLSPを起動できるようにする。
+* `overlays.default`を公開し、利用側が望む場合は`pkgs.adocweave`を`environment.systemPackages`へ追加できるようにする。
+* daemon、socket、DBまたはhost固有設定を所有しないため、専用NixOS moduleは追加しない。
+
+== 実装方針
+
+* 現在devShellだけを公開する`flake.nix`へpackage、app、overlayおよびcheckを追加する。
+* Cargo workspaceを一度だけbuildし、CLIとLSPを同じoutputへinstallする。browser、Zed拡張、fuzz targetおよび
+  開発toolchainはruntime closureへ含めない。
+* `Cargo.lock`を依存の正本とし、network accessなしでNix sandbox buildできるようにする。
+* package versionはworkspaceと`release-manifest.json`に一致させ、`--version --json`で検証する。
+* Linux x86-64／ARM64を必須対象とする。Darwin outputを公開する場合も同じsource package定義を再利用し、
+  未検証platformをLinuxの公開受け入れ済みtargetとして扱わない。
+* GitHub Releaseのmusl archiveを再包装せず、Nix derivationは固定sourceからbuildする。
+* binary cacheやCachixは必須にしない。未設定時は利用側machineでbuildされることを文書化する。
+
+== 検証
+
+* `nix flake check`で全公開packageとapp metadataを評価する。
+* Linuxで`nix build .#default`を実行し、result内のCLI／LSPが同じpackage versionと契約versionを返す。
+* `nix run . -- --version --json`がCLIを起動し、引数を保持する。
+* 最小NixOS testまたは評価fixtureで`environment.systemPackages`から両binaryを解決できることを確認する。
+* `nix flake show`の公開outputと利用例をfixtureまたは構造検査で固定する。
+
+== 文書
+
+`docs/nix-installation.adoc`へ`nix run`、profile導入、NixOS flake、overlay、更新、version固定、削除、
+local buildおよびbinary cache未提供時の挙動を記載する。GitHub Release archiveによる導入とは
+xref:../docs/release-installation.adoc[既存の導入文書]から相互参照し、両方式を混同しない。
+
+== 完了条件
+
+cleanなNix環境で`nix run github:KeishiS/adocweave -- --version --json`が成功し、同じflake inputを
+NixOSの`environment.systemPackages`へ追加すると`adocweave`と`adocweave-lsp`を利用できる。
+package closureにbrowser、Chromium、Node.js、開発用Rust toolchainまたはfuzz toolが混入せず、
+flake lockで固定した同一revisionから再現可能にbuildできる。
+
+== 範囲外
+
+nixpkgs本体へのpackage登録、NixOS moduleによる常駐service、Cachix等のbinary cache運用、Home Manager専用module、
+crates.io／npm／Zed Registryへの公開、およびGitHub Release archiveのNix derivationへの再包装は対象外とする。

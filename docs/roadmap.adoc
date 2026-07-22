@@ -348,6 +348,8 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 . xref:../issues/108-typed-render-failures.adoc[Issue 108]で描画入力の自由形式failure messageを廃止し、
   reference／resource／WASM／projectionの非漏洩を型で保証する。（完了）
 . RC.4後に見つかった不具合を収束させ、v0.1.0 stableの公開可否と互換性方針を決定する。
+. xref:../issues/109-nix-flake-package-and-app.adoc[Issue 109]で`nix run github:KeishiS/adocweave`、
+  Nix profileおよびNixOS `environment.systemPackages`から利用できるflake package／app／overlayを追加する。
 . stable公開後に、source短縮記法、追加inline書式、list属性、`subs`属性およびbibliography表示等の標準AsciiDoc未対応領域を
   依存関係付きIssueへ分解する。
 
