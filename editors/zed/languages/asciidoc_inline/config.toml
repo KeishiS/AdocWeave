@@ -1,0 +1,4 @@
+name = "AsciiDoc Inline"
+grammar = "asciidoc_inline"
+tab_size = 2
+hard_tabs = false

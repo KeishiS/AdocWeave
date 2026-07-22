@@ -207,8 +207,9 @@ Extension Galleryの`Install Dev Extension`または`zed: install dev extension`
 `$TEST_ROOT/adocweave-zed-$VERSION`を選ぶ。`extension.toml`を直接含むdirectoryが選択対象である。初回buildと
 managed LSP取得にはnetwork、`rustup`、`wasm32-wasip2` target、GitおよびC compilerが必要である。
 
-AsciiDoc文書を開き、xref:release-checklist.adoc[Release受け入れchecklist]の診断、Outline、Code Action、Format、
-Hover、補完、DefinitionおよびFind All Referencesを確認する。`zed: open log`では、対象Releaseと同じversionの
+AsciiDoc文書を開き、xref:release-checklist.adoc[Release受け入れchecklist]の基本構文色付け、診断、Outline、Code Action、Format、
+Hover、補完、DefinitionおよびFind All Referencesを確認する。基本色付けはSemantic Tokensを`off`にしても残り、
+light／darkの標準themeで構文を判別できることを確認する。`zed: open log`では、対象Releaseと同じversionの
 managed LSP取得・起動に失敗がないことを確認する。Outlineが表示されない場合は隔離profileの設定へ次を追加する。
 
 [source,json]

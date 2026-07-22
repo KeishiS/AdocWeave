@@ -1,5 +1,5 @@
 = ZedのTree-sitter構文色付け
-:status: planned
+:status: in-progress
 :depends-on: 088
 
 == 背景
@@ -55,6 +55,15 @@ Language Serverだけへ依存させない。基本色付けはZed拡張のTree-
 * `cargo make check-zed`と`cargo make test-zed`でqueryの存在とRelease archiveへの同梱を確認する。
 * 隔離Zed profileでLSP起動前から見出し等が色付けされ、LSP起動後も不自然に色が上書きされない。
 * light／darkの少なくとも二つの標準themeで可読性を確認するが、特定色値をfixtureにしない。
+
+== 実装状況
+
+固定commitのmain／inline grammarに対応するhighlight／injection queryを追加した。node schemaと許可captureの
+機械検査を`cargo make check-zed`へ、両grammarとqueryの同梱検査をZed Release package試験へ組み込んだ。
+LSPからは見出しの構文色付けを除き、リンク、参照、明示anchor、literalおよびformulaだけをSemantic Tokensとして残した。
+
+自動試験は完了している。残作業は隔離Zed profileでSemantic Tokensを`off`にした基本色付けと、`combined`にした際の
+重なりをlight／dark themeで目視確認することである。
 
 == 文書
 

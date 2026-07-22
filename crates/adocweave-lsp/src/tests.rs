@@ -862,9 +862,30 @@ fn semantic_tokens_split_multiline_inline_ranges_at_crlf_boundaries() {
 
         assert_eq!(
             value["data"],
-            json!([0, 2, first_length, 2, 0, 1, 0, 1, 2, 0])
+            json!([0, 2, first_length, 0, 0, 1, 0, 1, 0, 0])
         );
     }
+}
+
+#[test]
+fn semantic_tokens_leave_syntactic_headings_to_editor_grammars() {
+    let mut service = LanguageService::default();
+    initialize(&mut service, &["utf-8"]);
+    let document_uri = uri("file:///heading.adoc");
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "= Document\n\n== Section\n",
+    );
+
+    let tokens = service
+        .semantic_tokens(&document_uri)
+        .expect("semantic tokens")
+        .expect("tokens");
+    let value = serde_json::to_value(tokens).expect("serialize");
+
+    assert_eq!(value["data"], json!([]));
 }
 
 #[derive(Debug)]

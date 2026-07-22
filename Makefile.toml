@@ -272,6 +272,7 @@ args = ["tools/package-browser-release.sh"]
 
 [tasks.package-zed-release]
 description = "Build the deterministic source-checkout-free Zed development extension archive"
+dependencies = ["zed-query-contract"]
 command = "bash"
 args = ["tools/package-zed-release.sh"]
 
@@ -484,8 +485,14 @@ args = ["test", "-p", "adocweave-wasm", "--test", "conformance"]
 
 [tasks.check-zed]
 description = "Type-check the excluded Zed extension crate"
+dependencies = ["zed-query-contract"]
 command = "cargo"
 args = ["check", "--manifest-path", "editors/zed/Cargo.toml"]
+
+[tasks.zed-query-contract]
+description = "Verify Zed highlight and injection queries against the pinned grammar node schema"
+command = "node"
+args = ["tools/zed-query-contract.mjs"]
 
 [tasks.check-zed-wasm]
 description = "Type-check the Zed extension for the host target used by Zed"

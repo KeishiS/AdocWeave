@@ -4,7 +4,7 @@
 手順を定義する。公開Extension Galleryからの導入手順ではない。
 
 Zedの開発拡張はxref:../editors/zed/extension.toml[`editors/zed/extension.toml`]を入口とする。
-拡張はAsciiDoc用Tree-sitter grammarを提供する。開発手順ではworktreeの`PATH`から`adocweave-lsp`を探して起動するため、
+拡張はAsciiDoc用Tree-sitter grammar、inline grammarおよびhighlight／injection queryを提供する。開発手順ではworktreeの`PATH`から`adocweave-lsp`を探して起動するため、
 xref:zed-lsp-resolution.adoc[公開Releaseからのmanaged binary]をdownloadしない。
 
 == 前提条件
@@ -71,6 +71,10 @@ Zedを別のlauncherや既存processから開くと、上記shellの`PATH`を継
 提供する`grammar.js`から生成された`parser.c`をC compilerでcompileする。`parser.c`は
 AdocWeave Language ServerのRust parserではなく、Zedのsyntax highlighting用grammarである。
 
+基本的な構文色付けはTree-sitter queryが担当する。段落、見出し等のinline内容はinline grammarへ、source block本文は
+指定された言語のgrammarへinjectionする。リンク、参照、anchor等の解析上の意味を補足するSemantic TokensはLSPが担当し、
+基本色付けの成立条件にはしない。
+
 == 通常のZed profileへ導入する場合
 
 隔離しない場合も、Language Serverをbuildして`PATH`を設定した同じshellからZedを起動し、
@@ -119,6 +123,7 @@ Zedの`settings.json`へ次を追加すると、Tree-sitter由来ではなくAdo
 `fixtures/zed/manual.adoc`で次を確認する。
 
 * 言語selectorが`AsciiDoc`になる。
+* 見出し、属性、強調、link、xref、list marker、block delimiter、comment等がthemeに応じて区別される。
 * Project DiagnosticsへAdocWeaveの診断が表示され、編集後に更新される。
 * Outlineへ文書タイトルと入れ子の見出しが表示される。
 * 見出しmarker後の空白診断で、Linuxでは`Ctrl+.`または
@@ -127,6 +132,23 @@ Zedの`settings.json`へ次を追加すると、Tree-sitter由来ではなくAdo
 * 見出しへhoverするとlevel、生成IDおよび対象部分が表示される。
 * `[source, ru]`の`ru`直後で`Ctrl+Space`を実行すると`rust`が候補に出る。
 * 明示anchorとxrefでDefinitionおよびFind All Referencesが動作する。
+
+基本色付けをLSPから分離して確認する場合は、Zedの`settings.json`へ一時的に次を設定する。
+
+[source,json]
+----
+{
+  "languages": {
+    "AsciiDoc": {
+      "semantic_tokens": "off"
+    }
+  }
+}
+----
+
+この状態でも基本色付けが残ることを確認する。続いて`"semantic_tokens": "combined"`へ変更し、LSP起動後に
+リンク、参照、anchor、literalおよびformulaの意味的補足を重ねても、見出し等が不自然に上書きされないことを確認する。
+light／darkの標準themeを一つずつ使うが、特定のRGB値ではなく構文同士を判別できることを確認対象とする。
 
 保存時の行末空白削除はZed自身の設定でも発生するため、それだけをFormat Document成功の根拠に
 しない。コマンドパレットから`editor: format`を明示的に実行する。
@@ -147,6 +169,11 @@ grammar checkoutが固定commitと一致することを確認する。
 local buildを使う場合は`command -v adocweave-lsp`と`$PWD/target/debug/adocweave-lsp --version`を、Zedを起動する
 shellで確認する。managed binaryを使う場合はZed logにあるinstallation statusを確認し、versionと同じGitHub Releaseに
 manifestと対象platformのLSP assetがあることを確認する。
+
+AsciiDocとして認識されるが色付けされない::
+dev extensionを再導入して、Zed logに`asciidoc`と`asciidoc_inline`のgrammar build失敗がないことを確認する。
+`cargo make check-zed`は固定grammarとqueryのnode／capture契約を、`cargo make test-zed-release-package`はqueryのarchive同梱を検査する。
+Semantic Tokensを`off`にしても色付けされない場合はLSPではなくgrammarまたはquery側の問題である。
 
 == 検証後の削除
 

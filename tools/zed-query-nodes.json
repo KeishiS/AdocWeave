@@ -1,0 +1,51 @@
+{
+  "commit": "e0710115e7b060ce6681b5182a49a792813006f1",
+  "grammars": {
+    "asciidoc": [
+      "admonition", "admonition_caution", "admonition_important", "admonition_note",
+      "admonition_tip", "admonition_warning", "attr_name", "attribute_name", "attribute_value",
+      "author", "author_line", "block_comment", "block_comment_end_marker",
+      "block_comment_start_marker", "block_element", "block_macro", "block_macro_attr",
+      "block_macro_name", "block_style", "block_title", "block_title_marker", "body", "breaks",
+      "breaks_marker", "callout_list", "callout_list_item", "callout_list_marker", "callout_marker",
+      "checked_list", "checked_list_item", "checked_list_marker", "checked_list_marker_checked",
+      "checked_list_marker_unchecked", "csv_record", "csv_table_block", "csv_table_block_marker",
+      "delimited_block", "delimited_block_end_marker", "delimited_block_start_marker",
+      "description_list", "description_list_item", "description_marker", "document", "document_attr",
+      "document_attr_marker", "document_title", "dsv_record", "dsv_table_block",
+      "dsv_table_block_marker", "element_attr", "element_attr_marker", "email", "firstname",
+      "hard_wrap", "id", "ident_block", "ident_block_line", "ident_marker", "lastname", "line",
+      "line_comment", "line_comment_marker", "list", "list_continuation", "list_marker_alpha",
+      "list_marker_digit", "list_marker_dot", "list_marker_geek", "list_marker_hyphen",
+      "list_marker_star", "listing_block", "listing_block_body", "listing_block_end_marker",
+      "listing_block_start_marker", "literal_block", "literal_block_body", "literal_block_marker",
+      "middlename", "named_attr", "ntable_block", "ntable_block_marker", "ntable_cell", "open_block",
+      "open_block_marker", "option", "ordered_list", "ordered_list_item", "ordered_list_marker",
+      "paragraph", "passthrough_block", "passthrough_block_marker", "positional_attr", "quoted_block",
+      "quoted_block_end_marker", "quoted_block_md_marker", "quoted_block_start_marker", "quoted_line",
+      "quoted_md_block", "quoted_paragraph_marker", "revdate", "revision_line", "revnumber",
+      "revremark", "role", "section", "section_block", "sidebar_block", "sidebar_block_end_marker",
+      "sidebar_block_start_marker", "table_block", "table_block_marker", "table_cell",
+      "table_cell_attr", "table_cell_content", "target", "term", "title1", "title2", "title3",
+      "title4", "title5", "title_h0_marker", "title_h1_marker", "title_h2_marker", "title_h3_marker",
+      "title_h4_marker", "title_h5_marker", "unordered_list", "unordered_list_item",
+      "unordered_list_marker", "value"
+    ],
+    "asciidoc_inline": [
+      "a2s", "anchor", "asciimath", "attr", "attribute_name", "attribute_reference",
+      "attribute_value", "audio", "autolink", "barcode", "blockdiag", "bpmn", "btn", "bytefield",
+      "counter", "counter_function", "d2", "dbml", "diagrams", "ditaa", "dpic", "email",
+      "emphasis", "endif", "erd", "escaped_sequence", "f", "footnote", "footnoteref", "gnuplot",
+      "graphviz", "hard_wrap", "highlight", "icon", "id", "id_assignment", "ifdef", "ifeval",
+      "ifndef", "image", "index_term", "index_term2", "indexterm", "indexterm2", "initial_value",
+      "inline", "inline_element", "inline_macro", "intrinsic_attributes",
+      "intrinsic_attributes_pair", "italic", "kbd", "labled_uri", "latexmath", "lilypond", "link",
+      "link_url", "macro_name", "macro_passthrough", "mailto", "meme", "menu", "mermaid",
+      "monospace", "msc", "named_attr", "nomnoml", "passthrough", "pikchr", "plantuml",
+      "positional_attr", "reftext", "replacement", "role", "roled_text", "shaape", "smcat", "stem",
+      "stem_macro", "structurizr", "subscript", "super_escape", "superscript", "svgbob",
+      "symbolator", "syntrax", "target", "term", "tikz", "typographic_quote", "umlet", "uri",
+      "uri_label", "vega", "video", "wavedrom", "word", "xref"
+    ]
+  }
+}

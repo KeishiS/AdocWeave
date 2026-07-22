@@ -7,10 +7,10 @@ stage="target/zed-release/$package"
 archive="target/distrib/$package.tar.xz"
 
 rm -rf "target/zed-release"
-mkdir -p "$stage/src" "$stage/languages/asciidoc" "target/distrib"
+mkdir -p "$stage/src" "$stage/languages" "target/distrib"
 cp editors/zed/Cargo.toml editors/zed/Cargo.lock editors/zed/extension.toml "$stage/"
 cp editors/zed/src/*.rs "$stage/src/"
-cp editors/zed/languages/asciidoc/config.toml "$stage/languages/asciidoc/"
+cp -R editors/zed/languages/. "$stage/languages/"
 cp editors/zed/README.adoc "$stage/"
 cp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc "$stage/"
 

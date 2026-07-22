@@ -22,6 +22,12 @@ const expected = [
   `${packageName}/languages/`,
   `${packageName}/languages/asciidoc/`,
   `${packageName}/languages/asciidoc/config.toml`,
+  `${packageName}/languages/asciidoc/highlights.scm`,
+  `${packageName}/languages/asciidoc/injections.scm`,
+  `${packageName}/languages/asciidoc_inline/`,
+  `${packageName}/languages/asciidoc_inline/config.toml`,
+  `${packageName}/languages/asciidoc_inline/highlights.scm`,
+  `${packageName}/languages/asciidoc_inline/injections.scm`,
   `${packageName}/src/`,
   `${packageName}/src/install.rs`,
   `${packageName}/src/lib.rs`,
@@ -39,6 +45,15 @@ try {
   const cargo = readFileSync(join(root, packageName, "Cargo.toml"), "utf8");
   if (!extension.includes(`version = "${version}"`) || !cargo.includes(`version = "${version}"`)) {
     throw new Error("Zed archive version mismatch");
+  }
+  if (!extension.includes("[grammars.asciidoc_inline]")) {
+    throw new Error("Zed archive is missing the inline grammar declaration");
+  }
+  for (const grammar of ["asciidoc", "asciidoc_inline"]) {
+    for (const query of ["highlights.scm", "injections.scm"]) {
+      const source = readFileSync(join(root, packageName, "languages", grammar, query), "utf8");
+      if (!source.trim()) throw new Error(`empty Zed query: ${grammar}/${query}`);
+    }
   }
 } finally {
   rmSync(root, { recursive: true, force: true });

@@ -197,7 +197,7 @@ RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先
 互換性方針を監査してstable baselineを凍結する。監査でblockerがなければ、RC.5と同じ原子的な配布workflowで
 `v0.1.0`を公開する。
 
-* xref:110-zed-tree-sitter-highlighting.adoc[110: ZedのTree-sitter構文色付け]
+* xref:110-zed-tree-sitter-highlighting.adoc[110: ZedのTree-sitter構文色付け]（進行中：実機確認待ち）
 * xref:111-stable-readiness-and-contract-freeze.adoc[111: Stable公開可否監査と契約凍結]
 * xref:112-v0-1-0-stable-release.adoc[112: v0.1.0 stable公開]
 

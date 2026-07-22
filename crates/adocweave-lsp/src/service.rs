@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use adocweave::diagnostic::{Applicability, Severity};
 use adocweave::document::{
-    DocumentElement, DocumentSymbol as CoreDocumentSymbol, SymbolKind as CoreSymbolKind,
-    document_element_at, document_symbols, generate_heading_ids, source_language_candidates,
+    DocumentElement, DocumentSymbol as CoreDocumentSymbol, ReferenceTargetKind,
+    SymbolKind as CoreSymbolKind, document_element_at, document_symbols, generate_heading_ids,
+    source_language_candidates,
 };
 use adocweave::inline::{Inline, MathLanguage, ReferenceDestination};
 use adocweave::projection::project;
@@ -183,8 +184,6 @@ impl LanguageService {
                         work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
                         legend: lsp::SemanticTokensLegend {
                             token_types: vec![
-                                lsp::SemanticTokenType::KEYWORD,
-                                lsp::SemanticTokenType::NAMESPACE,
                                 lsp::SemanticTokenType::STRING,
                                 lsp::SemanticTokenType::VARIABLE,
                             ],
@@ -1224,24 +1223,6 @@ impl LanguageService {
             )));
         };
         let mut raw = Vec::<(lsp::Position, u32, u32)>::new();
-        for block in document.analysis.ast().blocks() {
-            if let parser::AstBlock::Heading(heading) = block {
-                push_semantic_range(
-                    &mut raw,
-                    heading.marker_range,
-                    0,
-                    document.analysis.source_document(),
-                    self.position_encoding,
-                )?;
-                push_semantic_range(
-                    &mut raw,
-                    heading.text_range,
-                    1,
-                    document.analysis.source_document(),
-                    self.position_encoding,
-                )?;
-            }
-        }
         for link in project(
             &document.analysis,
             &adocweave::render::RenderInputs::default(),
@@ -1251,7 +1232,7 @@ impl LanguageService {
             push_semantic_range(
                 &mut raw,
                 link.target_range,
-                2,
+                0,
                 document.analysis.source_document(),
                 self.position_encoding,
             )?;
@@ -1260,16 +1241,36 @@ impl LanguageService {
             push_semantic_range(
                 &mut raw,
                 reference.target_range,
-                2,
+                0,
                 document.analysis.source_document(),
                 self.position_encoding,
             )?;
         }
-        for target in document.analysis.reference_targets() {
+        for anchor in document
+            .analysis
+            .ast()
+            .anchors()
+            .iter()
+            .filter(|anchor| anchor.valid)
+        {
+            push_semantic_range(
+                &mut raw,
+                anchor.id_range,
+                1,
+                document.analysis.source_document(),
+                self.position_encoding,
+            )?;
+        }
+        for target in document
+            .analysis
+            .reference_targets()
+            .iter()
+            .filter(|target| target.kind == ReferenceTargetKind::InlineAnchor)
+        {
             push_semantic_range(
                 &mut raw,
                 target.id_range,
-                3,
+                1,
                 document.analysis.source_document(),
                 self.position_encoding,
             )?;
@@ -1283,7 +1284,7 @@ impl LanguageService {
                 Inline::Literal { content_range, .. }
                 | Inline::Passthrough { content_range, .. }
                 | Inline::Formula(adocweave::inline::InlineFormula { content_range, .. }) => {
-                    inline_ranges.push((*content_range, 2))
+                    inline_ranges.push((*content_range, 0))
                 }
                 Inline::Text(_)
                 | Inline::Styled { .. }
