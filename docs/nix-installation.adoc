@@ -38,14 +38,15 @@ adocweave --version --json
 adocweave-lsp --version --json
 ----
 
-導入項目名は`nix profile list`で確認する。入力の更新、直前のgenerationへのrollbackおよび削除は
-次のように行う。
+導入項目名は`nix profile list`で確認する。GitHub flake URLから既定packageを導入した場合、現行Nixが
+割り当てる項目名はrepository名と同じ`AdocWeave`であり、大文字・小文字を区別する。入力の更新、直前の
+generationへのrollbackおよび削除は次のように行う。
 
 [source,console]
 ----
-nix profile upgrade adocweave
+nix profile upgrade AdocWeave
 nix profile rollback
-nix profile remove adocweave
+nix profile remove AdocWeave
 ----
 
 production用途では、profileへの直接導入より、利用側flakeの`flake.lock`へ入力revisionを記録する方法を推奨する。
