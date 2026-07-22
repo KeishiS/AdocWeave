@@ -20,7 +20,8 @@ export function appendRequiredReleaseNotes(body, tag) {
     .join("\n");
   const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
   const notes = "## Highlights\n\n" +
-    "- Render resolution failures are kind-only; host error messages cannot cross the HTML or projection boundary.\n" +
+    "- The Zed development extension now provides Tree-sitter highlighting for AsciiDoc structure and inline formatting, including source-language injections.\n" +
+    "- AdocWeave LSP Semantic Tokens now supplement rather than replace Zed's syntax highlighting.\n" +
     "- The repository flake now provides AdocWeave CLI and LSP packages for Linux x86-64 and ARM64. Run `nix run github:KeishiS/AdocWeave`.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${contracts}\n\n` +

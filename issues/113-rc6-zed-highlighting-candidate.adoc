@@ -1,5 +1,5 @@
 = RC.6 Zed構文色付け候補の公開と受け入れ
-:status: planned
+:status: in-progress
 :depends-on: 111
 
 == 目的

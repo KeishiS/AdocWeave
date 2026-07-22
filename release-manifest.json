@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "packageVersion": "0.1.0-rc.5",
+  "packageVersion": "0.1.0-rc.6",
   "contracts": {
     "coreProfile": 1,
     "coreApi": 4,

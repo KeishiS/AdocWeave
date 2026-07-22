@@ -135,6 +135,8 @@ Zedの`settings.json`へ次を追加すると、Tree-sitter由来ではなくAdo
 * 見出しへhoverするとlevel、生成IDおよび対象部分が表示される。
 * `[source, ru]`の`ru`直後で`Ctrl+Space`を実行すると`rust`が候補に出る。
 * 明示anchorとxrefでDefinitionおよびFind All Referencesが動作する。
+* xref targetはLinux／Windowsでは`Ctrl+クリック`、macOSでは`Cmd+クリック`で開ける。通常クリックは
+  Document Linkを開く操作ではない。
 
 基本色付けをLSPから分離して確認する場合は、Zedの`settings.json`へ一時的に次を設定する。
 

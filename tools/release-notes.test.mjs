@@ -11,7 +11,8 @@ test("release notes always contain the acceptance contract", () => {
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /breaking API changes/);
   assert.match(notes, /nix run github:KeishiS\/AdocWeave/);
-  assert.match(notes, /kind-only/);
+  assert.match(notes, /Tree-sitter highlighting/);
+  assert.match(notes, /Semantic Tokens/);
 });
 
 test("release notes reject a tag from another release train", () => {
