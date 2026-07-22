@@ -5,6 +5,7 @@ const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const snapshot = JSON.parse(read("tools/zed-query-nodes.json"));
 const manifest = read("editors/zed/extension.toml");
+const inlineConfig = read("editors/zed/languages/asciidoc_inline/config.toml");
 
 function fail(message) {
   throw new Error(message);
@@ -19,6 +20,16 @@ function grammarSection(name) {
 
 function queryNodes(source) {
   return [...source.matchAll(/\(([a-z][a-z0-9_]*)\b/g)].map((match) => match[1]);
+}
+
+if (!/^name = "AsciiDoc Inline"$/m.test(inlineConfig) || !/^hidden = true$/m.test(inlineConfig)) {
+  fail("AsciiDoc inline language must be registered by its injection name and hidden from users");
+}
+
+const mainInjections = read("editors/zed/languages/asciidoc/injections.scm");
+if (!mainInjections.includes('(#set! injection.language "AsciiDoc Inline")') ||
+    mainInjections.includes('(#set! injection.language "asciidoc_inline")')) {
+  fail("AsciiDoc inline injections must use the registered language name, not the grammar id");
 }
 
 const highlightCaptures = new Set([

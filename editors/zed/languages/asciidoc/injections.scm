@@ -1,19 +1,19 @@
 ((block_macro
   (block_macro_name)
   (target) @injection.content)
-  (#set! injection.language "asciidoc_inline"))
+  (#set! injection.language "AsciiDoc Inline"))
 
 ((table_cell
   (table_cell_content) @injection.content)
-  (#set! injection.language "asciidoc_inline"))
+  (#set! injection.language "AsciiDoc Inline"))
 
 ((paragraph) @injection.content
   (#set! injection.include-children)
-  (#set! injection.language "asciidoc_inline"))
+  (#set! injection.language "AsciiDoc Inline"))
 
 ((line) @injection.content
   (#set! injection.include-children)
-  (#set! injection.language "asciidoc_inline"))
+  (#set! injection.language "AsciiDoc Inline"))
 
 ((section_block
   (element_attr
