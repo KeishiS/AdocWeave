@@ -27,6 +27,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   validatePinnedActions({ release, publish, contract, smoke });
 
   requireText(release, "pull_request:", "release workflow must exercise the plan on pull requests");
+  requireText(release, "branches:\n      - main", "release workflow must validate every main push before tagging");
   requireText(release, "contents: read", "release build workflow must be read-only");
   requireText(release, "persist-credentials: false", "checkout credentials must not persist");
   requireText(release, "group: release-${{ github.ref }}", "release runs must be serialized per ref");

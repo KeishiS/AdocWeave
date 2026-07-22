@@ -6,8 +6,9 @@ repository所有のworkflowを正本とし、`dist 0.32.0`はrelease planとnati
 
 == 実行経路
 
-pull requestではplan、release contract、Linux 2 targetのbuild、native smoke test、browser build、SBOM・checksum生成、
-完全なcandidateの検査まで実行する。GitHub Releaseへの書き込みとattestation作成は行わない。
+pull requestと`main`へのpushではplan、release contract、Linux 2 targetのbuild、native smoke test、browser／Zed build、
+SBOM・checksum生成、完全なcandidateおよび導入・完全削除E2Eまで実行する。GitHub Releaseへの書き込みと
+attestation作成は行わない。これにより、tagは同じcommitのmain検証が成功した後にだけ作成できる。
 
 stableの`vX.Y.Z`またはRCの`vX.Y.Z-rc.N` tagでは、同じ検査に加えてpublish jobを実行する。処理順は次のとおりである。
 
