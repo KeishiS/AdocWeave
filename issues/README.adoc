@@ -166,11 +166,11 @@ UUID、DB、ACL、Base URL、数式描画およびsyntax highlighterを所有し
 === M22: CI・依存供給網の持続可能性
 
 Issue 102でevent modelとquality／candidate／publish laneを収束し、Issue 103でCI bootstrapの完全性とworkflowの構造検証を
-固定した。次に依存更新、advisory、licenseおよびSBOMを継続運用へ移す。
+固定した。Issue 104で依存更新、advisory、licenseおよびSBOMを継続運用へ移した。
 
 * xref:102-ci-responsibility-and-release-event-model.adoc[102: CI責務境界とRelease event modelの収束]（完了）
 * xref:103-ci-bootstrap-and-structural-policy.adoc[103: CI bootstrap固定とworkflow構造検証]（完了）
-* xref:104-dependency-and-advisory-governance.adoc[104: 依存更新、licenseおよびadvisory governance]（計画）
+* xref:104-dependency-and-advisory-governance.adoc[104: 依存更新、licenseおよびadvisory governance]（完了）
 
 === M1: プレーンテキスト変換
 

@@ -15,6 +15,7 @@ function requireText(source, text, message) {
 }
 
 function requireCommand(source, text, message) {
+  if (typeof source !== "string") fail(message);
   const executable = source.split("\n")
     .map((line) => line.replace(/\s+#.*$/, ""))
     .join("\n");
@@ -175,13 +176,18 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   }
 
   requireTimeout(contractJobs.verify, 30, "the complete quality gate must have a timeout");
+  requireTimeout(contractJobs.dependencies, 15, "dependency governance must have a timeout");
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke tests must have a timeout");
   requireTimeout(publishJob, 20, "publication must have a timeout and cleanup path");
   const qualityRun = step(contractJobs.verify, (item) => item.name === "Run the complete quality gate", "complete quality step is missing").run;
   requireCommand(qualityRun, "nix develop -c cargo make release-gate", "the reusable quality workflow must run the canonical local gate");
+  const dependencyRun = step(contractJobs.dependencies, (item) => item.name === "Audit dependency boundaries", "dependency governance step is missing").run;
+  requireCommand(dependencyRun, "nix develop -c cargo make dependency-governance", "quality must audit every dependency boundary");
   const msrvRun = step(contractJobs.msrv, (item) => item.name === "Install and verify the declared minimum Rust version", "MSRV step is missing").run;
   requireCommand(msrvRun, ".rust_version] | unique", "CI must derive one MSRV from workspace package metadata");
   requireCommand(msrvRun, 'cargo "+$msrv" check --locked --workspace --all-targets --all-features', "CI must enforce the declared workspace MSRV");
+  requireCommand(msrvRun, 'test "$zed_msrv" = "$msrv"', "Zed and workspace MSRV declarations must match");
+  requireCommand(msrvRun, 'cargo "+$msrv" check --manifest-path editors/zed/Cargo.toml --locked --all-targets', "CI must enforce the declared Zed MSRV");
   const tagStep = step(contractJobs.verify, (item) => item.name === "Verify an optional publication tag", "optional publication tag step is missing");
   if (tagStep.if !== "inputs.release_tag != ''") fail("only explicit publication tags may receive tag validation");
   if (contract.includes("github.event_name") || contract.includes("github.ref")) {

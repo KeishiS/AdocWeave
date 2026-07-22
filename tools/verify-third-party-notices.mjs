@@ -24,6 +24,11 @@ try {
       throw new Error(`third-party notice is missing license expression: ${pkg.license}`);
     }
   }
+  const expected = new Set([...packages.values()].map((pkg) => `${pkg.name} ${pkg.version}`));
+  const listed = new Set([...notices.matchAll(/\b([A-Za-z][A-Za-z0-9_-]*) ([0-9]+(?:\.[0-9A-Za-z+_.-]+)+)/g)]
+    .map((match) => `${match[1]} ${match[2]}`));
+  const extra = [...listed].filter((entry) => !expected.has(entry)).sort();
+  if (extra.length !== 0) throw new Error(`third-party notice contains packages outside the release dependency set: ${extra.join(", ")}`);
   process.stdout.write("third-party notices verified\n");
 } catch (error) {
   process.stderr.write(`${error.message}\n`);

@@ -106,3 +106,21 @@ test("network installer cannot replace the locked cargo-dist closure", () => {
     /locked cargo-dist closure|network-fetched/,
   );
 });
+
+test("quality cannot omit dependency governance or the Zed MSRV", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      contract: inputs.contract.replace("nix develop -c cargo make dependency-governance", "true # dependency-governance"),
+    }),
+    /audit every dependency boundary/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      contract: inputs.contract.replace('test "$zed_msrv" = "$msrv"', 'true # test "$zed_msrv" = "$msrv"'),
+    }),
+    /MSRV declarations must match/,
+  );
+});

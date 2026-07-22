@@ -1,5 +1,5 @@
 = 依存更新、licenseおよびadvisory governance
-:status: planned
+:status: completed
 :depends-on: 103
 
 == 目的
@@ -7,14 +7,18 @@
 root workspace、独立Zed crate、browser packageおよびCI toolの依存更新を一つの監査手順で扱い、既知脆弱性、MSRV、
 license、重複versionおよびrelease SBOMの差異を継続的に検出する。
 
-== 作業
+== 実装
 
-* `Cargo.lock`、`editors/zed/Cargo.lock`およびfrontend lockの対象範囲をmachine-readableに列挙する。
-* RustSec等のadvisory databaseについて、取得元、revision固定、network failure、例外理由および期限を定義する。
-* license allowlistをSPDX expressionで検査し、`THIRD_PARTY_NOTICES.adoc`とSPDX SBOMを同じdependency集合から生成する。
-* duplicate crateは単純に禁止せず、binary size、MSRVまたは上流API制約を理由付きで記録する。
-* dependency更新PRではMSRV、quality gate、browser sizeおよび2 lockfileのnotice／SBOM差分を必須にする。
-* 自動更新serviceを採用する場合、同時PR数、grouping、major updateおよび自動merge禁止を設定する。
+* `dependency-boundaries.json`でroot、Zed、browser、Nixおよびfuzzのmanifest／lockfileと配布境界を列挙した。
+* Nixで固定したcargo-audit 0.22.2とcargo-deny 0.20.2を採用した。RustSec DBは40桁revisionへ固定し、取得失敗とHEAD不一致を
+  hard failureにする。
+* SPDX licenseとcrates.io source allowlistを両Cargo graphへ適用し、noticeの不足だけでなく余分な旧packageも拒否する。
+  release SBOMは同じCargo metadata集合とfrontend manifestから生成する。
+* 実在する複数versionだけを理由付きbaselineへ固定し、増加と解消の両方をreview対象にした。
+* rootとZedのMSRVをRust 1.86へ統一し、qualityの独立jobでadvisory、license、source、重複、noticeおよび境界を検査する。
+* 例外registryはowner、理由、期限およびrepository Issueを必須とし、期限切れと包括ignoreを拒否する。
+* 自動更新serviceはRC安定化中には採用せず、月次のDB／依存review手順を
+  xref:../docs/dependency-governance.adoc[依存関係governance]へ定義した。
 
 == 完了条件
 

@@ -1,0 +1,16 @@
+[advisories]
+ignore = []
+
+[database]
+fetch = false
+stale = false
+
+[output]
+deny = ["unmaintained", "unsound"]
+format = "terminal"
+quiet = false
+show_tree = true
+
+[yanked]
+enabled = false
+update_index = false

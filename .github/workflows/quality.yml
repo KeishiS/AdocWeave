@@ -12,6 +12,19 @@ permissions:
   contents: read
 
 jobs:
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
+        with:
+          determinate: false
+      - name: Audit dependency boundaries
+        run: nix develop -c cargo make dependency-governance
+
   msrv:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -25,6 +38,10 @@ jobs:
             jq -er '[.packages[] | select(.source == null) | .rust_version] | unique | if length == 1 then .[0] else error("workspace MSRV mismatch") end')"
           rustup toolchain install "$msrv" --profile minimal
           cargo "+$msrv" check --locked --workspace --all-targets --all-features
+          zed_msrv="$(cargo metadata --manifest-path editors/zed/Cargo.toml --no-deps --format-version=1 | \
+            jq -er '[.packages[] | .rust_version] | unique | if length == 1 then .[0] else error("Zed MSRV mismatch") end')"
+          test "$zed_msrv" = "$msrv"
+          cargo "+$msrv" check --manifest-path editors/zed/Cargo.toml --locked --all-targets
 
   verify:
     runs-on: ubuntu-24.04

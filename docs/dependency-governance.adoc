@@ -1,0 +1,91 @@
+= 依存関係governance
+
+この文書は、配布物、開発toolおよび検査harnessの依存境界、更新手順、license、既知脆弱性および例外の規範を定義する。
+machine-readableな正本は`security/dependency-boundaries.json`である。
+
+== 境界
+
+[cols="2,2,3,2",options="header"]
+|===
+|境界 |lockfile |用途 |配布物SBOM
+
+|native／WASM workspace
+|`Cargo.lock`
+|core、CLI、LSP、hostおよびbrowser WASM
+|含む
+
+|Zed拡張
+|`editors/zed/Cargo.lock`
+|Zedがbuildする拡張source
+|含む
+
+|browser worker
+|runtime dependencyなし
+|JavaScript adapter
+|package自身を含む。runtime dependency追加時はlockfileが必須
+
+|CI／開発tool
+|`flake.lock`
+|cargo、Nix、cargo-dist、cargo-audit、cargo-deny、yq等
+|含まない
+
+|fuzz harness
+|`fuzz/Cargo.lock`
+|非配布のnightly検査
+|含まない
+|===
+
+`cargo make dependency-governance`は配布対象の2つのCargo graph、browser境界、CI／fuzz境界の存在および例外registryを
+一つの入口から検査する。quality workflowはこれを独立jobとして実行し、network障害を成功として扱わない。
+
+== Licenseとsource
+
+`cargo-deny`をNix closureで固定し、`deny.toml`のSPDX allowlistとsource allowlistをroot、Zedの両graphへ適用する。
+registryはcrates.ioだけを許可し、未知のregistryとgit dependencyを拒否する。workspace内path dependencyは全packageが
+`publish = false`でregistryへ公開されないため許可する。
+
+`THIRD_PARTY_NOTICES.adoc`は両Cargo metadataに現れるthird-party packageのname、versionおよびlicense expressionを
+過不足なく列挙する。余分な旧versionもrelease gateを失敗させる。SPDX SBOMは同じ2つのCargo metadataと
+`web-worker/package.json`から生成する。frontendへruntime dependencyを追加する場合、lockfileに基づくSBOM生成を実装する
+までcandidateを生成しない。
+
+== Advisory database
+
+RustSec Advisory Databaseのrevisionは`security/rustsec-advisory-db-revision.txt`へ40桁commit IDとして固定する。
+通常の検査はそのcommitを公式repositoryから取得し、checkout結果のHEADを比較してから`cargo-audit --no-fetch`を実行する。
+したがって検査中にDBの意味が変化せず、取得失敗、未知revisionまたは不一致はhard failureになる。
+
+既に同じrevisionを取得済みの隔離環境に限り、`ADOCWEAVE_ADVISORY_DB_OFFLINE=1`でnetwork取得を省略できる。この場合も
+HEAD一致を必須とし、別revisionへのfallbackは行わない。DB revisionは依存更新時または少なくとも月1回更新し、差分と
+新規advisoryをreviewする。
+
+== 重複version
+
+重複を一律禁止すると、異なるmajor versionを要求する上流graphの更新不能につながる。実際の重複集合は
+`security/duplicate-dependencies.json`へ理由付きで固定し、Cargo metadataとの完全一致を検査する。重複が増減した場合は
+自動受理せず、解消可能性、binary size、MSRVおよび上流制約を確認してbaselineを更新する。
+
+== 例外
+
+advisoryを一時的に除外する場合は`security/dependency-exceptions.json`へ次をすべて記録する。
+
+* 一意なIDとRustSec advisory ID
+* owner
+* 影響しないと判断した具体的理由
+* 将来の日付である期限
+* このrepositoryの追跡Issue URL
+
+期限切れ、空のowner、未対応kind、形式不正なadvisoryまたは外部Issueは検査を失敗させる。包括ignoreと無期限例外は認めない。
+licenseまたはsourceの例外が必要になった場合は、同等のowner・期限検査を実装してから新しい例外kindを追加する。
+
+== 更新手順
+
+. `Cargo.toml`、Zed manifest、frontend manifestまたは`flake.lock`を更新する。
+. 必要なlockfileだけを更新し、意図しない境界のlockfile変更を分離する。
+. RustSec DB revisionを更新し、advisory差分を確認する。
+. `cargo make dependency-governance`を実行する。
+. notice、SBOM、重複baselineおよびbrowser sizeの差分を確認する。
+. MSRV、完全quality gateおよびcandidate gateを通す。
+
+自動更新serviceは現時点では有効化しない。release candidate安定化中に複数境界を独立更新するとreview単位が崩れるためである。
+安定版公開後に導入する場合も、自動mergeを禁止し、root／Zed／Nixを別groupにし、同時PR数を制限する。

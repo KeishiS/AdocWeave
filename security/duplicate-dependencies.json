@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "boundaries": {
+    "native-and-wasm": [
+      {
+        "crate": "bitflags",
+        "versions": ["1.3.2", "2.13.1"],
+        "reason": "async-lsp経由のlsp-typesとrustixが異なるmajor versionを要求するため"
+      },
+      {
+        "crate": "syn",
+        "versions": ["2.0.119", "3.0.2"],
+        "reason": "ICU・WASM macro群とserde 1.0.229が異なるmajor versionを要求するため"
+      }
+    ],
+    "zed-extension": [
+      {
+        "crate": "hashbrown",
+        "versions": ["0.15.5", "0.17.1"],
+        "reason": "zed_extension_apiのWIT toolchain内でwasmparserとindexmapが異なるversionを要求するため"
+      },
+      {
+        "crate": "syn",
+        "versions": ["2.0.119", "3.0.2"],
+        "reason": "WIT・ICU macro群とserde 1.0.229が異なるmajor versionを要求するため"
+      }
+    ]
+  }
+}

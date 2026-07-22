@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 publish = false
 repository = "https://github.com/KeishiS/AdocWeave"
+rust-version = "1.86"
 
 [lib]
 crate-type = ["cdylib"]

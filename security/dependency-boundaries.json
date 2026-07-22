@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "boundaries": [
+    {
+      "id": "native-and-wasm",
+      "kind": "cargo",
+      "manifest": "Cargo.toml",
+      "lockfile": "Cargo.lock",
+      "distributed": true
+    },
+    {
+      "id": "zed-extension",
+      "kind": "cargo",
+      "manifest": "editors/zed/Cargo.toml",
+      "lockfile": "editors/zed/Cargo.lock",
+      "distributed": true
+    },
+    {
+      "id": "browser-worker",
+      "kind": "npm",
+      "manifest": "web-worker/package.json",
+      "lockfile": null,
+      "distributed": true,
+      "runtimeDependenciesAllowed": false
+    },
+    {
+      "id": "ci-and-development-tools",
+      "kind": "nix",
+      "manifest": "flake.nix",
+      "lockfile": "flake.lock",
+      "distributed": false
+    },
+    {
+      "id": "fuzz-harness",
+      "kind": "cargo",
+      "manifest": "fuzz/Cargo.toml",
+      "lockfile": "fuzz/Cargo.lock",
+      "distributed": false
+    }
+  ]
+}
