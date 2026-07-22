@@ -1,11 +1,11 @@
 = Release導入文書とend-to-end受け入れ
 :status: in-progress
-:depends-on: 086,087
+:depends-on: 086,087,109
 
 == 目的
 
-GitHub Releaseから初めて導入する利用者とfrontend integratorが、source checkoutなしでassetを選択、検証、
-install、更新および削除できることを最終的に確認する。
+GitHub Releaseまたは公開Nix flakeから初めて導入する利用者とfrontend integratorが、手動Cargo buildなしで
+asset／flake revisionを選択、検証、install、更新および削除できることを最終的に確認する。
 
 == 作業
 
@@ -17,6 +17,8 @@ install、更新および削除できることを最終的に確認する。
 * Zed Gallery導入、binary cache、PATH override、offline動作および完全削除を開発版手順と分離する。
 * GitHub prereleaseをclean Linux x86-64、Linux ARM64、browser frontendおよびLinux版Zed profileへ導入する
   E2E checklistを実行する。macOS／Windowsは将来targetの受け入れIssueへ分離する。
+* Issue 109のflakeをcommitへ固定し、Linux x86-64／ARM64で`nix run`、profile導入およびNixOS
+  `environment.systemPackages`評価を確認する。
 * release noteに対応target、契約version、breaking change、既知の制約、asset verificationおよびupgrade手順を
   必須化する。
 * 配布元はリポジトリ所有者自身のGitHub Releasesだけとする。package manager、container registry、
@@ -26,8 +28,8 @@ install、更新および削除できることを最終的に確認する。
 
 == 完了条件
 
-source checkoutとRust toolchainのないclean環境でCLI、LSP、browser libraryおよびZed連携を確認し、install前後の
-filesystem差分からuninstall後に管理対象fileが残らないことを確認する。最終手順を
+source checkoutと手動Rust toolchainのないclean環境でCLI、LSP、browser library、Zed連携およびNix flake導入を確認し、
+install前後のfilesystem差分からuninstall後に管理対象fileが残らないことを確認する。最終手順を
 `docs/release-checklist.adoc`と利用者向け導入文書へ反映する。
 
 == 実装状況
@@ -57,4 +59,5 @@ filesystem差分からuninstall後に管理対象fileが残らないことを確
 `v0.1.0-rc.5`を公開した後、source checkoutとRust toolchainを持たないclean Linux x86-64／ARM64で実Release assetを
 使うE2Eを実行する。CLIとLSPに加え、空labelのxrefへResolverの`displayText`を渡すnative／WASM契約を確認する。
 browserは実配備header、Zedは初回managed LSP取得、offline再起動およびUIからの削除までを確認する。
-この公開と実機操作はrepository所有者のpush、tag作成、Environment承認および対応環境を必要とする。
+Nixは公開flake URLをRC.5 commitへ固定し、`nix run`、profile install／removeおよびNixOS評価をLinux両architectureで
+確認する。この公開と実機操作はrepository所有者のpush、tag作成、Environment承認および対応環境を必要とする。

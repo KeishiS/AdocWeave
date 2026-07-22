@@ -1,6 +1,13 @@
 = Nix flake package・appとNixOS導入契約
 :status: planned
-:depends-on: 083,088
+:depends-on: 083,108
+
+== 優先度と実行位置
+
+優先度は最優先とする。Issue 108を含むRC.5候補をGitHubへpushする前に実装し、Nix packageを同じ
+source commitと品質gateで検証する。その後にmain candidate Actions、RC.5 tag・公開、Issue 088の
+実Release受け入れを順に行う。Issue 088へ依存させると「RC.5へ何を含めるか」と「RC.5受け入れ」が
+循環するため、依存先はnative配布基盤のIssue 083と直前の公開契約Issue 108に限定する。
 
 == 目的
 
@@ -60,6 +67,35 @@ NixOS flakeでは、入力を固定したうえで次の形で導入できるこ
 * GitHub Releaseのmusl archiveを再包装せず、Nix derivationは固定sourceからbuildする。
 * binary cacheやCachixは必須にしない。未設定時は利用側machineでbuildされることを文書化する。
 
+== 実装段階
+
+=== 1. derivation境界
+
+* devShell用tool群とruntime package定義を分離する。
+* Linux x86-64／ARM64をpackageの必須system集合として明示する。既存Darwin devShellは維持するが、
+  packageを未検証のまま公開しない。
+* 一つのCargo derivationから`adocweave`と`adocweave-lsp`だけをinstallし、runtime closureを検査する。
+
+=== 2. flake output
+
+* `packages.<system>.default`と名前付きpackageを同じderivationへ結び付ける。
+* `apps.<system>.default`と`apps.<system>.adocweave-lsp`を`lib.getExe`／`lib.getExe'`相当で構築する。
+* `overlays.default`をpackage定義の唯一の入口にし、flake内部と利用側overlayで別実装を持たない。
+
+=== 3. 機械検証
+
+* `checks.<system>`へpackage build、CLI／LSP version照合、app構造およびruntime closure検査を追加する。
+* x86-64の必須quality gateで`nix flake check`と`nix run . -- --version --json`を実行する。
+* ARM64 candidate runnerでもnative Nix packageをbuild・起動し、Linux両architectureの実行証拠を残す。
+* flake output名、package versionおよび不要runtime依存を構造テストで固定する。
+
+=== 4. 利用文書と受け入れ
+
+* `docs/nix-installation.adoc`と既存Release導入文書を相互参照する。
+* clean Nix store相当の環境でGitHub flake URLをcommitへ固定し、run、profile導入、NixOS評価、更新、
+  rollbackおよび削除を確認する。
+* Issue 088のRC.5受け入れ記録へNix flake source commitとLinux両architectureの結果を追加する。
+
 == 検証
 
 * `nix flake check`で全公開packageとapp metadataを評価する。
@@ -67,6 +103,33 @@ NixOS flakeでは、入力を固定したうえで次の形で導入できるこ
 * `nix run . -- --version --json`がCLIを起動し、引数を保持する。
 * 最小NixOS testまたは評価fixtureで`environment.systemPackages`から両binaryを解決できることを確認する。
 * `nix flake show`の公開outputと利用例をfixtureまたは構造検査で固定する。
+
+== 実行順とgate
+
+[cols="1,3,2",options="header"]
+|===
+|段階 |成果物 |次へ進む条件
+
+|A
+|共通derivation、package、app、overlay
+|`nix build .#default`とCLI／LSP version検査が成功
+
+|B
+|flake checks、closure検査、NixOS評価fixture
+|`nix flake check`とrepositoryの`cargo make verify`が成功
+
+|C
+|Nix導入文書とRC.5候補
+|`cargo make release-check`、x86-64 local Nix E2Eが成功
+
+|D
+|main candidateと公開RC.5
+|GitHub Actionsでx86-64／ARM64 package build・実行が成功
+
+|E
+|Issue 088の実Release受け入れ
+|GitHub flake URLをcommit固定したclean環境でrun／NixOS導入を確認
+|===
 
 == 文書
 
