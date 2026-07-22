@@ -173,6 +173,67 @@ directoryを選ぶ。source repositoryのcheckoutは不要である。
 更新時は新versionのZed directoryを別に展開し、dev extensionをそのdirectoryへ再設定する。旧directoryは、新versionの
 managed LSP取得とeditor機能を確認するまで保持する。
 
+=== 隔離profileでのRelease受け入れ
+
+通常利用するZedの設定、DB、拡張およびcacheへ影響させず、公開archiveとmanaged LSPを検証する場合は、同じshellで
+次を実行する。`VERSION`は対象Releaseへ固定する。
+
+[source,console]
+----
+VERSION=0.1.0-rc.5
+TEST_ROOT="$(mktemp -d "/tmp/adocweave-zed-$VERSION.XXXXXX")"
+cd "$TEST_ROOT"
+
+curl --fail --location --remote-name \
+  "https://github.com/KeishiS/AdocWeave/releases/download/v$VERSION/adocweave-zed-$VERSION.tar.xz"
+curl --fail --location --remote-name \
+  "https://github.com/KeishiS/AdocWeave/releases/download/v$VERSION/sha256.sum"
+grep "adocweave-zed-$VERSION.tar.xz" sha256.sum | sha256sum --check -
+tar -xJf "adocweave-zed-$VERSION.tar.xz"
+----
+
+`command -v adocweave-lsp`が何も返すことを確認する。pathが表示される場合は`nix develop`の外にある通常のshellから
+Zedを起動する。新しい隔離profileには既存のLSP binary overrideはないが、通常profileを使う場合は
+`lsp.adocweave.binary.path`も外す。
+
+[source,console]
+----
+zed --foreground \
+  --user-data-dir "$TEST_ROOT/zed-data" \
+  /path/to/workspace
+----
+
+Extension Galleryの`Install Dev Extension`または`zed: install dev extension`から
+`$TEST_ROOT/adocweave-zed-$VERSION`を選ぶ。`extension.toml`を直接含むdirectoryが選択対象である。初回buildと
+managed LSP取得にはnetwork、`rustup`、`wasm32-wasip2` target、GitおよびC compilerが必要である。
+
+AsciiDoc文書を開き、xref:release-checklist.adoc[Release受け入れchecklist]の診断、Outline、Code Action、Format、
+Hover、補完、DefinitionおよびFind All Referencesを確認する。`zed: open log`では、対象Releaseと同じversionの
+managed LSP取得・起動に失敗がないことを確認する。Outlineが表示されない場合は隔離profileの設定へ次を追加する。
+
+[source,json]
+----
+{
+  "languages": {
+    "AsciiDoc": {
+      "document_symbols": "on"
+    }
+  }
+}
+----
+
+online確認後にZedを完全に終了し、networkを切断して同じ`--user-data-dir`で再起動する。診断とHover等が動作すれば、
+検証済みmanaged LSP cacheからのoffline起動が成立している。確認後はExtension Galleryからdev extensionを削除し、
+Zedを終了する。`printf '%s\n' "$TEST_ROOT"`で隔離先を確認してから、その`TEST_ROOT`だけを削除する。通常のZed user
+data directory全体を削除してはならない。
+
+[source,console]
+----
+printf '%s\n' "$TEST_ROOT"
+test -n "$TEST_ROOT"
+rm -rf -- "$TEST_ROOT"
+----
+
 == Uninstall
 
 Zedでは最初にExtension GalleryからAdocWeave dev extensionを削除し、Zedを終了する。続いて、導入したversionを指定して
