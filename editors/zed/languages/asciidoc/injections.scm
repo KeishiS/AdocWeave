@@ -1,17 +1,17 @@
 ((block_macro
   (block_macro_name)
-  (target) @content)
+  (target) @injection.content)
   (#set! injection.language "asciidoc_inline"))
 
 ((table_cell
-  (table_cell_content) @content)
+  (table_cell_content) @injection.content)
   (#set! injection.language "asciidoc_inline"))
 
-((paragraph) @content
+((paragraph) @injection.content
   (#set! injection.include-children)
   (#set! injection.language "asciidoc_inline"))
 
-((line) @content
+((line) @injection.content
   (#set! injection.include-children)
   (#set! injection.language "asciidoc_inline"))
 

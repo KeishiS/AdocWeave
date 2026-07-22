@@ -48,6 +48,9 @@ for (const [grammar, nodes] of Object.entries(snapshot.grammars)) {
       if (!known.has(node)) fail(`${path} references unknown ${grammar} node: ${node}`);
     }
     const captures = [...source.matchAll(/@([A-Za-z_][A-Za-z0-9_.-]*)/g)].map((match) => match[1]);
+    if (query === "injections.scm" && captures.includes("content") && captures.includes("injection.content")) {
+      fail(`${path} mixes @content and @injection.content`);
+    }
     for (const capture of captures) {
       if (capture.startsWith("_")) continue;
       if (query === "injections.scm") {
