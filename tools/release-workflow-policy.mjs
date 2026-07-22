@@ -166,6 +166,11 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireCommand(globalRun, "nix develop .#ci -c cargo make release-global-artifacts", "uploaded browser and Zed archives must pass their complete artifact gate");
   const installRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Install and completely remove the candidate", "installation E2E step is missing").run;
   requireCommand(installRun, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
+  step(releaseJobs["installation-e2e"], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), "installation E2E must install the locked Nix environment");
+  const nixInstallRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Build and run the Nix package", "Nix package acceptance step is missing").run;
+  requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.public-contract"', "candidate runners must verify the public flake output contract");
+  requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.package-smoke"', "both Linux architectures must build and run the Nix package");
+  requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.nixos-package-evaluation"', "both Linux architectures must evaluate the NixOS installation contract");
 
   const uploads = (releaseJobs["verify-candidate"]?.steps ?? []).filter((item) => item.uses?.startsWith("actions/upload-artifact@"));
   if (!uploads.some((item) => item.with?.name === "release-candidate" && item.with?.["retention-days"] === 14)) {
@@ -179,6 +184,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireTimeout(contractJobs.verify, 30, "the complete quality gate must have a timeout");
   requireTimeout(contractJobs.dependencies, 15, "dependency governance must have a timeout");
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke tests must have a timeout");
+  requireTimeout(releaseJobs["installation-e2e"], 15, "candidate installation and Nix package acceptance must have a timeout");
   requireTimeout(publishJob, 20, "publication must have a timeout and cleanup path");
   const qualityStep = step(contractJobs.verify, (item) => item.name === "Run the complete quality gate", "complete quality step is missing");
   const qualityRun = qualityStep.run;

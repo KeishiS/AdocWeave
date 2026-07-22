@@ -189,7 +189,7 @@ GitHubリポジトリをflake inputとして固定し、CLI／LSPをsourceから
 nixpkgsへの登録や専用NixOS service moduleは行わず、このリポジトリの公開flakeを配布境界とする。
 Issue 109はRC.5候補へ含める最優先作業とし、Issue 088の実Release受け入れより前に実施する。
 
-* xref:109-nix-flake-package-and-app.adoc[109: Nix flake package・appとNixOS導入契約]
+* xref:109-nix-flake-package-and-app.adoc[109: Nix flake package・appとNixOS導入契約]（完了）
 
 === M1: プレーンテキスト変換
 

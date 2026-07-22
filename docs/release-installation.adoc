@@ -4,6 +4,10 @@
 CLI、Language Server、browser libraryおよびZed開発拡張を導入する手順を定義する。配布先は
 `KeishiS/AdocWeave`のGitHub Releasesだけであり、package registryは使用しない。
 
+Nixを利用できる環境では、CLIとLanguage Serverをsourceからbuildする
+xref:nix-installation.adoc[Nix flakeからの導入]も選択できる。GitHub Release archiveとNix packageは
+別の配布経路であり、archiveの再包装をNix packageとして扱わない。
+
 == Assetの選択
 
 [cols="2,2,3",options="header"]

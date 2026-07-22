@@ -1,0 +1,119 @@
+= Nix flakeからの導入
+
+この文書は、AdocWeaveのGitHubリポジトリをNix flakeとして参照し、CLIとLanguage Serverを
+sourceから再現可能にbuild・導入する手順を示す。対応対象は`x86_64-linux`と`aarch64-linux`である。
+GitHub Releaseのmusl archiveを使う手順はxref:release-installation.adoc[GitHub Releaseからの導入]を参照する。
+
+== 一時実行
+
+既定appは`adocweave` CLIである。
+
+[source,console]
+----
+nix run github:KeishiS/AdocWeave -- --version --json
+nix run github:KeishiS/AdocWeave -- convert document.adoc
+----
+
+Language Serverを明示的に起動する場合は名前付きappを使う。
+
+[source,console]
+----
+nix run github:KeishiS/AdocWeave#adocweave-lsp
+----
+
+branch先端は更新されるため、再現性が必要な環境ではcommitまたはtagを固定する。
+
+[source,console]
+----
+nix run github:KeishiS/AdocWeave/<commit-sha> -- --version --json
+nix run 'github:KeishiS/AdocWeave?ref=v0.1.0-rc.5' -- --version --json
+----
+
+== Nix profileへの導入
+
+[source,console]
+----
+nix profile install github:KeishiS/AdocWeave
+adocweave --version --json
+adocweave-lsp --version --json
+----
+
+導入項目名は`nix profile list`で確認する。入力の更新、直前のgenerationへのrollbackおよび削除は
+次のように行う。
+
+[source,console]
+----
+nix profile upgrade adocweave
+nix profile rollback
+nix profile remove adocweave
+----
+
+production用途では、profileへの直接導入より、利用側flakeの`flake.lock`へ入力revisionを記録する方法を推奨する。
+
+== NixOSへの導入
+
+利用側flakeのinputを`flake.lock`へcommitし、既定packageを`environment.systemPackages`へ追加する。
+一つのpackageに`adocweave`と`adocweave-lsp`の両binaryが含まれる。
+
+[source,nix]
+----
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    adocweave.url = "github:KeishiS/AdocWeave";
+    adocweave.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { nixpkgs, adocweave, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [{
+        environment.systemPackages = [
+          adocweave.packages.x86_64-linux.default
+        ];
+      }];
+    };
+  };
+}
+----
+
+overlayを使う構成では、同じpackageを`pkgs.adocweave`として参照できる。
+
+[source,nix]
+----
+{
+  nixpkgs.overlays = [ adocweave.overlays.default ];
+  environment.systemPackages = [ pkgs.adocweave ];
+}
+----
+
+専用NixOS service moduleは提供しない。AdocWeaveはdaemon、socket、DBまたはhost固有設定を所有しないためである。
+
+== 更新と固定
+
+利用側flakeで入力だけを更新する場合は次を実行し、変更された`flake.lock`を確認してcommitする。
+
+[source,console]
+----
+nix flake lock --update-input adocweave
+nixos-rebuild build --flake .#host
+----
+
+問題がある場合は`flake.lock`の変更を戻し、以前のrevisionから再buildする。Git tagは便利な名前であるが、
+最終的な再現性はlock fileに記録されたcommitとcontent hashによって得られる。
+
+== Buildとruntime依存
+
+このflakeはGitHub Release archiveを再包装せず、`Cargo.lock`に固定されたsourceからCLIとLSPをbuildする。
+公式binary cacheは提供していないため、対応するsubstituteがない場合は利用側machineでRust buildが行われる。
+Rust compiler、Cargo、Node.js、Chromiumおよびfuzz toolは完成packageのruntime closureへ含まれない。
+
+repository checkoutで公開outputを検査するtaskは次のとおりである。
+
+[source,console]
+----
+cargo make nix-package-check
+----
+
+このtaskはflake評価、native packageのbuild、CLI／LSPのversion、runtime closure、NixOS package設定および
+既定appの起動を検査する。

@@ -124,3 +124,17 @@ test("quality cannot omit dependency governance or the Zed MSRV", () => {
     /MSRV declarations must match/,
   );
 });
+
+test("candidate acceptance cannot omit the Nix package contract", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        '".#checks.${{ matrix.nix-system }}.package-smoke"',
+        '".#checks.${{ matrix.nix-system }}.package"',
+      ),
+    }),
+    /both Linux architectures must build and run the Nix package/,
+  );
+});

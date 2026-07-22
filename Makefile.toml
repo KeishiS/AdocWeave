@@ -602,6 +602,22 @@ description = "Build all workspace targets and features"
 command = "cargo"
 args = ["build", "--workspace", "--all-targets", "--all-features"]
 
+[tasks.nix-package-check]
+description = "Build and run the native Nix package and NixOS installation check"
+script_runner = "@shell"
+script = '''
+set -euo pipefail
+system="$(nix eval --raw --impure --expr builtins.currentSystem)"
+version="$(jq -er .packageVersion release-manifest.json)"
+nix flake check --no-build
+nix build \
+  ".#checks.${system}.public-contract" \
+  ".#checks.${system}.package-smoke" \
+  ".#checks.${system}.nixos-package-evaluation" \
+  --no-link
+nix run . -- --version --json | jq -e --arg version "$version" '.packageVersion == $version' >/dev/null
+'''
+
 [tasks.verify]
 description = "Run every non-mutating validation task"
 dependencies = [
@@ -622,6 +638,7 @@ dependencies = [
   "docs-check",
   "adoc-check",
   "docs-lint",
+  "nix-package-check",
   "build",
 ]
 

@@ -1,5 +1,5 @@
 = Nix flake package・appとNixOS導入契約
-:status: planned
+:status: completed
 :depends-on: 083,108
 
 == 優先度と実行位置
@@ -143,6 +143,19 @@ cleanなNix環境で`nix run github:KeishiS/adocweave -- --version --json`が成
 NixOSの`environment.systemPackages`へ追加すると`adocweave`と`adocweave-lsp`を利用できる。
 package closureにbrowser、Chromium、Node.js、開発用Rust toolchainまたはfuzz toolが混入せず、
 flake lockで固定した同一revisionから再現可能にbuildできる。
+
+== 実装結果
+
+* `flake.nix`はLinux x86-64／ARM64へ共通derivation、既定・名前付きpackage、CLI／LSP app、overlayおよび
+  NixOS評価checkを公開する。
+* `package-smoke`はCLI／LSPのpackage versionを`release-manifest.json`と照合し、runtime closureへ
+  Chromium、Node.js、Rust compilerまたはCargoが混入していないことを検査する。
+* `cargo make nix-package-check`を必須quality gateへ追加し、x86-64 local buildと`nix run`を確認した。
+* release candidateの導入E2Eはx86-64／ARM64の各native runnerでflake packageもsource buildする。
+* 利用、version固定、profile、NixOS、overlay、更新、rollbackおよび削除は
+  xref:../docs/nix-installation.adoc[Nix flakeからの導入]へ集約した。
+
+公開GitHub URLからのclean環境受け入れは、RC.5のtagとReleaseを必要とするためIssue 088で記録する。
 
 == 範囲外
 
