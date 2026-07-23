@@ -189,6 +189,11 @@ xref:substitutions.adoc[Core置換モデル]で定義する。
 同種compound block入れ子に対応し、raw contentもHTMLへ無条件に通過させない。`[quote,Author,Source]`と
 `[verse,Author,Source]`は引用種別、attribution、citationを保持し、入力由来HTMLやclassを通過させない
 
+|styleなしのquoteとverse置換
+|`____`はquote block、`[verse]`はverse blockとして扱い、通常のinline置換を適用する
+|styleなしの`____`はcompound blockとして出力し、`[quote]`だけを`blockquote`として出力する。
+`[verse]`は改行を保持するverbatim内容であり、inline書式を解釈しない
+
 |表
 |PSVを既定とし、CSV／DSV／TSV、列・cell属性、spanおよびAsciiDoc cellを定義する
 |PSV／CSV／DSV／TSV、暗黙／明示列、header／footer、列・cell属性、span、配置、style、

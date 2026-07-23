@@ -366,7 +366,7 @@ impl InlineScanner {
                         || starts_ascii_case_insensitive(rest, "pass:[")
                         || standard_macro_prefix(rest).is_some()
                         || email_address_end(rest).is_some()
-                        || url_scheme_end(rest).is_some());
+                        || url_link_candidate(rest));
             if is_macro {
                 candidates.push(InlineCandidate::Macro { open });
             } else if matches!(marker, '`' | '*' | '_' | '#') && unconstrained_pairs[open] {
@@ -1748,6 +1748,22 @@ fn url_scheme_end(value: &str) -> Option<usize> {
     } else {
         Some(colon + 1)
     }
+}
+
+fn url_link_candidate(value: &str) -> bool {
+    let Some(scheme_end) = url_scheme_end(value) else {
+        return false;
+    };
+    let remainder = &value[scheme_end..];
+    remainder.starts_with("//")
+        || starts_ascii_case_insensitive(value, "mailto:")
+        // An explicit label marks an intentional link even for an opaque scheme.
+        // The scan ends at this token's first whitespace, so every input byte is
+        // inspected only within its own candidate token.
+        || remainder
+            .chars()
+            .take_while(|character| !character.is_whitespace())
+            .any(|character| character == '[')
 }
 
 fn is_macro_boundary(value: &str, offset: usize) -> bool {

@@ -31,3 +31,16 @@ RC tag、prerelease分岐および二段階のversion同期は廃止する。公
 版数、lockfile、配布計画およびfixtureを`0.4.0`へ同期し、RC専用のtag、schemaおよびpublish分岐を削除した。
 `cargo make release-gate`および`node tools/release-contract.mjs --tag=v0.4.0`は2026-07-23に成功した。
 残る作業は、このcommitをmainへpushしたcandidateの受け入れとstable tagの公開だけである。
+
+== 公開前review是正
+
+公開準備後のsemantic block reviewで、AsciiDoc cell内のblock presentation、list continuation内の
+paragraph admonition、および散文中の`TODO:`形式のURL誤認が見つかった。release前に次を是正する。
+
+* `walk_blocks_mut`を使い、table cell、compound blockおよびlist continuationを含む全block到達経路で
+  delimited presentationを解決する。
+* continuation paragraphをroot paragraphと同じ意味構築関数へ通し、admonitionとinline診断を一致させる。
+* 自動URL認識を`//`を持つURL、`mailto:`、または同一tokenの明示label付きlinkへ限定する。
+* admonition label rangeから後続空白を除外し、styleなしquoteとverseのAsciidoctorとの差異を互換性表へ記録する。
+
+これらはtable cell内のadmonition・quote・verse、continuation admonition、散文colonおよびrangeの回帰テストで固定する。

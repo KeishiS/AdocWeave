@@ -43,82 +43,71 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
 }
 
 fn resolve_delimited_presentations(blocks: &mut [AstBlock]) {
-    for block in blocks {
-        match block {
-            AstBlock::Delimited(block) => {
-                if let crate::parser::DelimitedContent::Compound(children) = &mut block.content {
-                    resolve_delimited_presentations(children);
-                }
-                let positional: Vec<_> = block
-                    .metadata
-                    .attributes
-                    .iter()
-                    .filter(|attribute| attribute.name.is_none())
-                    .collect();
-                let style = positional.first().map(|attribute| attribute.value.as_str());
-                block.presentation = match (block.kind, style) {
-                    (crate::parser::DelimitedBlockKind::Example, Some(style))
-                    | (crate::parser::DelimitedBlockKind::Open, Some(style))
-                        if crate::parser::AdmonitionKind::parse(style).is_some() =>
-                    {
-                        let attribute = positional[0];
-                        Some(crate::parser::DelimitedPresentation::Admonition(
-                            crate::parser::AdmonitionPresentation {
-                                kind: crate::parser::AdmonitionKind::parse(&attribute.value)
-                                    .expect("guarded admonition style"),
-                                label_range: attribute.range,
-                            },
-                        ))
-                    }
-                    (crate::parser::DelimitedBlockKind::Quote, Some("quote")) => {
-                        Some(crate::parser::DelimitedPresentation::Quote(
-                            crate::parser::QuotePresentation {
-                                kind: crate::parser::QuoteKind::Quote,
-                                attribution: positional.get(1).map(|attribute| {
-                                    crate::parser::MetadataValue {
-                                        value: attribute.value.clone(),
-                                        range: attribute.range,
-                                    }
-                                }),
-                                citation: positional.get(2).map(|attribute| {
-                                    crate::parser::MetadataValue {
-                                        value: attribute.value.clone(),
-                                        range: attribute.range,
-                                    }
-                                }),
-                            },
-                        ))
-                    }
-                    (crate::parser::DelimitedBlockKind::Quote, Some("verse")) => {
-                        Some(crate::parser::DelimitedPresentation::Quote(
-                            crate::parser::QuotePresentation {
-                                kind: crate::parser::QuoteKind::Verse,
-                                attribution: positional.get(1).map(|attribute| {
-                                    crate::parser::MetadataValue {
-                                        value: attribute.value.clone(),
-                                        range: attribute.range,
-                                    }
-                                }),
-                                citation: positional.get(2).map(|attribute| {
-                                    crate::parser::MetadataValue {
-                                        value: attribute.value.clone(),
-                                        range: attribute.range,
-                                    }
-                                }),
-                            },
-                        ))
-                    }
-                    _ => None,
-                };
-            }
-            AstBlock::List(list) => {
-                for item in &mut list.items {
-                    resolve_delimited_presentations(&mut item.continuations);
-                }
-            }
-            _ => {}
+    crate::walker::walk_blocks_mut(blocks, &mut |block: &mut AstBlock| {
+        if let AstBlock::Delimited(block) = block {
+            resolve_delimited_presentation(block);
         }
-    }
+    });
+}
+
+fn resolve_delimited_presentation(block: &mut crate::parser::DelimitedBlock) {
+    let positional: Vec<_> = block
+        .metadata
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.name.is_none())
+        .collect();
+    let style = positional.first().map(|attribute| attribute.value.as_str());
+    block.presentation = match (block.kind, style) {
+        (crate::parser::DelimitedBlockKind::Example, Some(style))
+        | (crate::parser::DelimitedBlockKind::Open, Some(style))
+            if crate::parser::AdmonitionKind::parse(style).is_some() =>
+        {
+            let attribute = positional[0];
+            Some(crate::parser::DelimitedPresentation::Admonition(
+                crate::parser::AdmonitionPresentation {
+                    kind: crate::parser::AdmonitionKind::parse(&attribute.value)
+                        .expect("guarded admonition style"),
+                    label_range: attribute.range,
+                },
+            ))
+        }
+        (crate::parser::DelimitedBlockKind::Quote, Some("quote")) => Some(
+            crate::parser::DelimitedPresentation::Quote(crate::parser::QuotePresentation {
+                kind: crate::parser::QuoteKind::Quote,
+                attribution: positional
+                    .get(1)
+                    .map(|attribute| crate::parser::MetadataValue {
+                        value: attribute.value.clone(),
+                        range: attribute.range,
+                    }),
+                citation: positional
+                    .get(2)
+                    .map(|attribute| crate::parser::MetadataValue {
+                        value: attribute.value.clone(),
+                        range: attribute.range,
+                    }),
+            }),
+        ),
+        (crate::parser::DelimitedBlockKind::Quote, Some("verse")) => Some(
+            crate::parser::DelimitedPresentation::Quote(crate::parser::QuotePresentation {
+                kind: crate::parser::QuoteKind::Verse,
+                attribution: positional
+                    .get(1)
+                    .map(|attribute| crate::parser::MetadataValue {
+                        value: attribute.value.clone(),
+                        range: attribute.range,
+                    }),
+                citation: positional
+                    .get(2)
+                    .map(|attribute| crate::parser::MetadataValue {
+                        value: attribute.value.clone(),
+                        range: attribute.range,
+                    }),
+            }),
+        ),
+        _ => None,
+    };
 }
 
 fn normalize_verbatim_blocks(

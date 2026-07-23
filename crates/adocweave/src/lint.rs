@@ -1481,6 +1481,17 @@ mod tests {
     }
 
     #[test]
+    fn prose_colons_are_not_automatic_urls() {
+        let diagnostics =
+            lint("TODO: text\nResult: value\n", &LintConfig::default()).expect("lint");
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.code.as_str() == "invalid-url-scheme" })
+        );
+    }
+
+    #[test]
     fn catalog_diagnostics_preserve_duplicate_and_missing_ranges() {
         let diagnostics = lint(
             "footnote:missing[] footnote:n[one] footnote:n[two] bibanchor:b[] bibanchor:b[] indexterm:[]",

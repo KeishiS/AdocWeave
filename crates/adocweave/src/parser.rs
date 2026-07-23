@@ -1726,27 +1726,17 @@ fn parse_list_continuation(
         let (lists, end, _) = parse_lists(context, index, state, depth)?;
         return Ok(Some((lists.into_iter().map(AstBlock::List).collect(), end)));
     }
-    let parsed = parse_inlines(
-        content,
-        line.content_range(),
-        InlineParseConfig {
-            max_depth: config.max_inline_depth,
-            max_formula_bytes: config.max_formula_bytes,
-        },
-        state.budget,
-    )?;
-    Ok(Some((
-        vec![AstBlock::Paragraph(Paragraph {
-            metadata: BlockMetadata::default(),
-            range: line.full_range(),
-            content_range: line.content_range(),
-            value: content.to_owned(),
-            inlines: parsed.inlines,
-            admonition: None,
-            inline_problems: parsed.problems,
-        })],
-        index + 1,
-    )))
+    let mut paragraph = Paragraph {
+        metadata: BlockMetadata::default(),
+        range: line.full_range(),
+        content_range: line.content_range(),
+        value: content.to_owned(),
+        inlines: Vec::new(),
+        admonition: None,
+        inline_problems: Vec::new(),
+    };
+    resolve_paragraph_inlines(&mut paragraph, config, state.budget)?;
+    Ok(Some((vec![AstBlock::Paragraph(paragraph)], index + 1)))
 }
 
 fn scan_callout_markers(
@@ -2338,15 +2328,26 @@ fn flush_paragraph(
             });
         }
     }
-    let body_offset = admonition_paragraph(&paragraph.value)
-        .map(|(_, offset)| offset)
-        .unwrap_or(0);
-    if let Some((kind, offset)) = admonition_paragraph(&paragraph.value) {
+    resolve_paragraph_inlines(&mut paragraph, config, budget)?;
+    cst_blocks.push(crate::syntax_builder::paragraph(&paragraph));
+    ast_blocks.push(AstBlock::Paragraph(paragraph));
+    attach_pending_metadata(cst_blocks, ast_blocks, pending_metadata);
+    Ok(())
+}
+
+fn resolve_paragraph_inlines(
+    paragraph: &mut Paragraph,
+    config: &ParseConfig,
+    budget: &mut ParseBudget,
+) -> Result<(), ParseFailure> {
+    let admonition = admonition_paragraph(&paragraph.value);
+    let body_offset = admonition.map_or(0, |(_, offset)| offset);
+    if let Some((kind, _)) = admonition {
         paragraph.admonition = Some(AdmonitionPresentation {
             kind,
             label_range: TextRange::new(
                 paragraph.content_range.start(),
-                TextSize::new(paragraph.content_range.start().to_usize() + offset - 1)
+                TextSize::new(paragraph.content_range.start().to_usize() + kind.label().len() + 1)
                     .expect("admonition label is in range"),
             )
             .expect("admonition label range is ordered"),
@@ -2368,9 +2369,6 @@ fn flush_paragraph(
     )?;
     paragraph.inlines = split_hard_breaks(inline_output.inlines);
     paragraph.inline_problems = inline_output.problems;
-    cst_blocks.push(crate::syntax_builder::paragraph(&paragraph));
-    ast_blocks.push(AstBlock::Paragraph(paragraph));
-    attach_pending_metadata(cst_blocks, ast_blocks, pending_metadata);
     Ok(())
 }
 
@@ -2486,9 +2484,9 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlock, DelimitedBlockKind,
-        DelimitedContent, DocumentType, Heading, HeadingKind, ListKind, SyntaxKind, VerbatimKind,
-        parse,
+        AdmonitionKind, AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlock,
+        DelimitedBlockKind, DelimitedContent, DocumentType, Heading, HeadingKind, ListKind,
+        SyntaxKind, VerbatimKind, parse,
     };
 
     #[test]
@@ -3117,6 +3115,26 @@ mod tests {
             list.items[1].continuations[0],
             AstBlock::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Source(_))
         ));
+    }
+
+    #[test]
+    fn list_continuation_uses_the_same_admonition_paragraph_model() {
+        let source = "* item\n+\nWARNING:  text\n";
+        let parsed = parse(source).expect("parse");
+        let AstBlock::List(list) = &parsed.ast.blocks()[0] else {
+            panic!("list");
+        };
+        let AstBlock::Paragraph(paragraph) = &list.items[0].continuations[0] else {
+            panic!("continuation paragraph");
+        };
+        let admonition = paragraph.admonition.as_ref().expect("warning presentation");
+        assert_eq!(admonition.kind, AdmonitionKind::Warning);
+        assert_eq!(
+            &source[admonition.label_range.start().to_usize()
+                ..admonition.label_range.end().to_usize()],
+            "WARNING:"
+        );
+        assert_eq!(paragraph.inlines.len(), 1);
     }
 
     #[test]

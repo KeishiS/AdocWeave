@@ -2742,6 +2742,23 @@ mod tests {
     }
 
     #[test]
+    fn asciidoc_cells_lower_block_presentations_like_root_blocks() {
+        let source = "[cols=a]\n|===\na|[TIP]\n====\ncell *tip*.\n====\n|===\n\n[cols=a]\n|===\na|[quote,Author,Work]\n____\ncell *quote*.\n____\n|===\n\n[cols=a]\n|===\na|[verse,Poet,Poem]\n____\nline one\nline two\n____\n|===\n";
+        let parsed = parse(source).expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert!(
+            output
+                .html
+                .contains("<div class=\"admonition admonition-tip\">")
+        );
+        assert!(output.html.contains("<div class=\"quote\">"));
+        assert!(output.html.contains("<div class=\"verse\">"));
+        assert!(output.html.contains("<cite>Work</cite>"));
+        assert!(output.html.contains("<cite>Poem</cite>"));
+    }
+
+    #[test]
     fn standard_macros_render_resources_through_the_html_policy() {
         let parsed = parse(include_str!("../../../fixtures/macros/standard.adoc")).expect("parse");
         let output = render_with_inputs(
