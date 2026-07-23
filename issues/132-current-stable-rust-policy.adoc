@@ -1,0 +1,21 @@
+= Current stable Rust方針への移行
+:status: planned
+:depends-on: 129
+
+== 目的
+
+古いRust compilerへの互換性維持を終了し、各release時点のRust stableを最低対応toolchainとする。
+MSRV専用jobを廃止して、CIと開発手順をcurrent stableの単一toolchainへ収束する。
+
+== 作業
+
+* root workspaceとZed crateの`rust-version`を、release時点のRust stableへ揃える。
+* `quality.yml`からMSRV専用jobと二重のCargo graph検査を除去し、complete gateを唯一のRust検証とする。
+* CI契約、release手順および依存governanceのMSRV記述をcurrent stable方針へ更新する。
+* supported Rust versionをrelease noteと利用者向け文書へ明記する。
+
+== 完了条件
+
+* CIがcurrent stableだけを使い、MSRV専用toolchainのinstall・検証を行わない。
+* root、Zedおよび公開文書の対応Rust versionがrelease時点のstableと一致する。
+* Rust stable更新時に必要な確認と更新箇所がrelease checklistで追跡できる。

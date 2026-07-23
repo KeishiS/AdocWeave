@@ -235,11 +235,12 @@ RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先
 === M30: 次期標準AsciiDoc互換性
 
 `v0.2.0` stable後はtable表示属性を優先する。追加inline書式、高度なinclude属性、`subs`属性および
-Markdown互換は個別の設計Issueで扱う。CIの性能改善とZed LSPのrepository境界は、機能実装と独立して
-先に評価する。
+Markdown互換は個別の設計Issueで扱う。CIの性能改善、current stable Rust方針およびZed LSPのrepository境界は、
+機能実装と独立して先に評価する。
 
 * xref:130-ci-throughput-optimization.adoc[130: CI実行時間の最適化]
 * xref:131-zed-lsp-repository-separation-evaluation.adoc[131: Zed LSPのリポジトリ独立化評価]
+* xref:132-current-stable-rust-policy.adoc[132: Current stable Rust方針への移行]
 
 === M1: プレーンテキスト変換
 
