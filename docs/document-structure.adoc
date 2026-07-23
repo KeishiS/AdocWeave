@@ -39,6 +39,7 @@ adocweave - convert AsciiDoc safely
 
 == 境界
 
-この構造はナビゲーションと意味分類を提供するが、TOCそのもののHTML挿入やmanpage backend固有の
-レイアウトは生成しない。ノートアプリ固有の階層、権限、DB IDも含めず、ホスト側projectionで
-後付けする。
+この構造はナビゲーションと意味分類を提供する。TOCの有効化・深さ・section番号は
+`DocumentPresentation`が型付き属性として解決し、backend非依存の`DocumentLayout`がTOCを文書タイトル直後へ
+配置する。HTMLはこのlayoutとpresentationを描画するだけである。manpage backend固有のレイアウト、
+ノートアプリ固有の階層、権限およびDB IDは含めない。

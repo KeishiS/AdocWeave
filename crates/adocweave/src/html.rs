@@ -16,7 +16,7 @@ use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, Reso
 use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::{UrlContext, UrlPolicy};
 
-pub const HTML_CONTRACT_VERSION: u16 = 5;
+pub const HTML_CONTRACT_VERSION: u16 = 6;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
@@ -53,6 +53,7 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "table-valign-bottom",
     "table-valign-middle",
     "table-valign-top",
+    "toc",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -211,9 +212,19 @@ pub fn render_with_inputs(
             diagnostics: &mut diagnostics,
             catalogs: document.catalogs(),
             structure: document.structure(),
+            presentation: document.presentation(),
         };
         for node in document.layout().nodes() {
             let crate::presentation::LayoutNode::Block(block_id) = node else {
+                match node {
+                    crate::presentation::LayoutNode::Generated(
+                        crate::presentation::GeneratedLayoutNode::TableOfContents,
+                    ) => render_toc(&mut fragment, document.presentation()),
+                    crate::presentation::LayoutNode::Generated(
+                        crate::presentation::GeneratedLayoutNode::FootnoteCatalog,
+                    ) => render_footnote_catalog(&mut fragment, document.catalogs()),
+                    crate::presentation::LayoutNode::Block(_) => unreachable!(),
+                }
                 continue;
             };
             let range = document
@@ -253,16 +264,6 @@ pub fn render_with_inputs(
             {
                 render_header_metadata(&mut fragment, document.header());
             }
-        }
-    }
-    for node in document.layout().nodes() {
-        if matches!(
-            node,
-            crate::presentation::LayoutNode::Generated(
-                crate::presentation::GeneratedLayoutNode::FootnoteCatalog
-            )
-        ) {
-            render_footnote_catalog(&mut fragment, document.catalogs());
         }
     }
     for problem in input_usage.finish() {
@@ -788,10 +789,28 @@ fn render_heading_level(
     output.push_str(" id=\"");
     output.push_str(id);
     output.push_str("\">");
+    if context.presentation.section_numbers_enabled() {
+        if let Some(presentation) = context.presentation.heading_at(heading.range) {
+            render_section_number(output, &presentation.number);
+        }
+    }
     render_inlines(output, &heading.inlines, context);
     output.push_str("</h");
     output.push(level);
     output.push_str(">\n");
+}
+
+fn render_section_number(output: &mut String, number: &[u32]) {
+    if number.is_empty() {
+        return;
+    }
+    for (index, value) in number.iter().enumerate() {
+        if index > 0 {
+            output.push('.');
+        }
+        output.push_str(&value.to_string());
+    }
+    output.push_str(". ");
 }
 
 fn render_paragraph(
@@ -1162,6 +1181,44 @@ struct InlineRenderContext<'inputs, 'render> {
     diagnostics: &'render mut Vec<Diagnostic>,
     catalogs: &'inputs crate::catalog::DocumentCatalogs,
     structure: &'inputs crate::structure::DocumentStructure,
+    presentation: &'inputs crate::presentation::DocumentPresentation,
+}
+
+fn render_toc(output: &mut String, presentation: &crate::presentation::DocumentPresentation) {
+    fn render_entries(
+        output: &mut String,
+        entries: &[crate::structure::TocEntry],
+        section_numbers: bool,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        output.push_str("<ul>\n");
+        for entry in entries {
+            output.push_str("<li><a href=\"#");
+            escape_html_into(output, &entry.id);
+            output.push_str("\">");
+            if section_numbers {
+                render_section_number(output, &entry.number);
+            }
+            escape_html_into(output, &entry.title);
+            output.push_str("</a>");
+            render_entries(output, &entry.children, section_numbers);
+            output.push_str("</li>\n");
+        }
+        output.push_str("</ul>\n");
+    }
+
+    if presentation.toc().is_empty() {
+        return;
+    }
+    output.push_str("<div class=\"toc\">\n");
+    render_entries(
+        output,
+        presentation.toc(),
+        presentation.section_numbers_enabled(),
+    );
+    output.push_str("</div>\n");
 }
 
 fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::DocumentCatalogs) {
@@ -1474,6 +1531,32 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &RenderPolicy::default()).html,
             "<h1 class=\"document-title\" id=\"_book\">Book</h1>\n<h1 class=\"appendix\" id=\"_reference\">Reference</h1>\n"
+        );
+    }
+
+    #[test]
+    fn toc_and_section_numbers_render_from_document_presentation_layout() {
+        let parsed = parse(
+            "= Book\n:toc:\n:toclevels: 1\n:sectnums:\n\n== First\n=== Hidden child\n\n== Second\n",
+        )
+        .expect("parse");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<h1 class=\"document-title\" id=\"_book\">Book</h1>\n<div class=\"toc\">\n<ul>\n<li><a href=\"#_first\">1. First</a></li>\n<li><a href=\"#_second\">2. Second</a></li>\n</ul>\n</div>\n<h1 id=\"_first\">1. First</h1>\n<h2 id=\"_hidden_child\">1.1. Hidden child</h2>\n<h1 id=\"_second\">2. Second</h1>\n"
+        );
+    }
+
+    #[test]
+    fn book_parts_and_appendices_keep_presentation_numbers_without_changing_ids() {
+        let parsed = parse(
+            "= Book\n:doctype: book\n:toc:\n:sectnums:\n\n= Part\n\n== Chapter\n\n[appendix]\n== Reference\n",
+        )
+        .expect("parse");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<h1 class=\"document-title\" id=\"_book\">Book</h1>\n<div class=\"toc\">\n<ul>\n<li><a href=\"#_part\">1. Part</a><ul>\n<li><a href=\"#_chapter\">1.1. Chapter</a></li>\n<li><a href=\"#_reference\">1.2. Reference</a></li>\n</ul>\n</li>\n</ul>\n</div>\n<h1 id=\"_part\">1. Part</h1>\n<h1 id=\"_chapter\">1.1. Chapter</h1>\n<h1 class=\"appendix\" id=\"_reference\">1.2. Reference</h1>\n"
         );
     }
 
@@ -1870,7 +1953,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 5);
+        assert_eq!(HTML_CONTRACT_VERSION, 6);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -1915,7 +1998,8 @@ mod tests {
                 "table-align-right",
                 "table-valign-bottom",
                 "table-valign-middle",
-                "table-valign-top"
+                "table-valign-top",
+                "toc"
             ]
         );
         let parsed = parse("paragraph").expect("parse");

@@ -83,6 +83,13 @@
       "contractImpact": "core-api,html,projection,conformance,wasm-api"
     },
     {
+      "name": "document-presentation-toc-and-sectnums",
+      "source": "= Book\n:toc:\n:toclevels: 1\n:sectnums:\n\n== First\n=== Hidden child\n\n== Second\n",
+      "compatibility": "supported-subset",
+      "rationale": "TOC配置、深さ制限およびsection番号は構造を変更せず、一つのpresentationとlayoutからnative/WASMで同じHTMLとprojectionを生成する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
       "name": "advanced-tables-and-asciidoc-cell",
       "source": "[format=csv,options=header]\n|===\nname,value\nalpha,\"one, two\"\n|===\n\n[cols=a]\n|===\n|[[cell-section]]\n== Cell section\n\n literal\n\n'''\n\n[source,rust]\n----\nfn main() {}\n----\n\n!===\n!nested\n!===\n|===\n",
       "compatibility": "supported-subset",

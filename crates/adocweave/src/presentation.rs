@@ -180,6 +180,7 @@ impl Default for TocPolicy {
 /// A generated document-level item. It is not a source AST node.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GeneratedLayoutNode {
+    TableOfContents,
     FootnoteCatalog,
 }
 
@@ -302,7 +303,7 @@ pub(crate) fn build_presentation(
             } else {
                 counters[index] += 1;
                 counters[index + 1..].fill(0);
-                counters[1..=index]
+                counters[..=index]
                     .iter()
                     .copied()
                     .filter(|number| *number != 0)
@@ -324,7 +325,11 @@ pub(crate) fn build_presentation(
             }
         })
         .collect::<Vec<_>>();
-    let toc = toc_entries(document.structure().roots(), &headings);
+    let toc = toc_entries(
+        document.structure().roots(),
+        &headings,
+        toc_policy.max_level,
+    );
     DocumentPresentation {
         attributes,
         source_language,
@@ -345,10 +350,14 @@ fn heading_has_role(document: &AstDocument, range: TextRange, role: &str) -> boo
 fn toc_entries(
     sections: &[crate::structure::Section],
     headings: &[HeadingPresentation],
+    max_level: Option<u8>,
 ) -> Vec<crate::structure::TocEntry> {
     let mut entries = Vec::new();
     for section in sections {
-        let children = toc_entries(&section.children, headings);
+        if max_level.is_some_and(|max_level| section.heading.level > max_level) {
+            continue;
+        }
+        let children = toc_entries(&section.children, headings, max_level);
         let presentation = headings
             .iter()
             .find(|item| item.range == section.heading.range)
@@ -377,6 +386,26 @@ pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
         .copied()
         .map(LayoutNode::Block)
         .collect::<Vec<_>>();
+    if document.presentation().toc_policy().enabled {
+        let insertion = nodes
+            .iter()
+            .position(|node| {
+                let LayoutNode::Block(id) = node else {
+                    return false;
+                };
+                document.index().block_range(*id).is_some_and(|range| {
+                    document.blocks().iter().any(|block| {
+                        matches!(block, crate::parser::AstBlock::Heading(heading) if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle))
+                            && block.range() == range
+                    })
+                })
+            })
+            .map_or(0, |index| index + 1);
+        nodes.insert(
+            insertion,
+            LayoutNode::Generated(GeneratedLayoutNode::TableOfContents),
+        );
+    }
     nodes.push(LayoutNode::Generated(GeneratedLayoutNode::FootnoteCatalog));
     DocumentLayout { nodes }
 }
@@ -408,8 +437,16 @@ mod tests {
         );
         assert!(document.presentation().section_numbers_enabled());
         assert!(document.index().len() >= document.blocks().len());
-        assert_eq!(document.layout().nodes().len(), document.blocks().len() + 1);
-        for (node, block) in document.layout().nodes().iter().zip(document.blocks()) {
+        assert_eq!(document.layout().nodes().len(), document.blocks().len() + 2);
+        assert_eq!(
+            document.layout().nodes()[1],
+            LayoutNode::Generated(GeneratedLayoutNode::TableOfContents)
+        );
+        for (node, block) in document.layout().nodes()[..1]
+            .iter()
+            .chain(document.layout().nodes()[2..document.blocks().len() + 1].iter())
+            .zip(document.blocks())
+        {
             assert_eq!(
                 *node,
                 LayoutNode::Block(
