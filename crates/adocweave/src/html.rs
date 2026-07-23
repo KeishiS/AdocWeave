@@ -225,6 +225,12 @@ pub fn render_with_inputs(
                     crate::presentation::LayoutNode::Generated(
                         crate::presentation::GeneratedLayoutNode::FootnoteCatalog,
                     ) => render_footnote_catalog(&mut fragment, document.catalogs()),
+                    crate::presentation::LayoutNode::Generated(
+                        crate::presentation::GeneratedLayoutNode::BibliographySectionStart(_),
+                    ) => inline_context.bibliography_section = true,
+                    crate::presentation::LayoutNode::Generated(
+                        crate::presentation::GeneratedLayoutNode::BibliographySectionEnd,
+                    ) => inline_context.bibliography_section = false,
                     crate::presentation::LayoutNode::Block(_) => unreachable!(),
                 }
                 continue;
@@ -248,12 +254,6 @@ pub fn render_with_inputs(
                     matches!(block, AstBlock::Heading(value) if value.text_range == heading.range)
                 })
                 .map(|heading| heading.id.as_str());
-            if matches!(block, AstBlock::Heading(_)) {
-                inline_context.bibliography_section = document
-                    .presentation()
-                    .bibliography_section_at(block.range())
-                    .is_some();
-            }
             render_block(
                 &mut fragment,
                 block,

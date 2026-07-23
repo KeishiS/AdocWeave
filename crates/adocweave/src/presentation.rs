@@ -191,6 +191,8 @@ pub struct TocPolicy {
 pub enum GeneratedLayoutNode {
     TableOfContents,
     FootnoteCatalog,
+    BibliographySectionStart(BlockId),
+    BibliographySectionEnd,
 }
 
 /// One item in a backend-independent document layout.
@@ -410,13 +412,31 @@ fn toc_entries(
 }
 
 pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
-    let mut nodes = document
-        .index()
-        .top_level_blocks()
-        .iter()
-        .copied()
-        .map(LayoutNode::Block)
-        .collect::<Vec<_>>();
+    let mut nodes = Vec::new();
+    for id in document.index().top_level_blocks().iter().copied() {
+        let range = document.index().block_range(id).expect("indexed block");
+        let heading = document.blocks().iter().find_map(|block| {
+            matches!(block, crate::parser::AstBlock::Heading(_))
+                .then_some(block)
+                .filter(|block| block.range() == range)
+        });
+        if heading.is_some() {
+            if document
+                .presentation()
+                .bibliography_section_at(range)
+                .is_some()
+            {
+                nodes.push(LayoutNode::Generated(
+                    GeneratedLayoutNode::BibliographySectionStart(id),
+                ));
+            } else {
+                nodes.push(LayoutNode::Generated(
+                    GeneratedLayoutNode::BibliographySectionEnd,
+                ));
+            }
+        }
+        nodes.push(LayoutNode::Block(id));
+    }
     if document.presentation().toc_policy().enabled {
         let insertion = nodes
             .iter()
@@ -504,5 +524,25 @@ mod tests {
             document.presentation().bibliography_sections()[0].range,
             document.blocks()[1].range()
         );
+    }
+
+    #[test]
+    fn bibliography_sections_are_explicit_layout_boundaries() {
+        let parsed =
+            parse("= Title\n\n[bibliography]\n== Sources\n\n* entry\n\n== After\n").expect("parse");
+        let nodes = parsed.ast.layout().nodes();
+
+        assert!(nodes.iter().any(|node| {
+            matches!(
+                node,
+                LayoutNode::Generated(GeneratedLayoutNode::BibliographySectionStart(_))
+            )
+        }));
+        assert!(nodes.iter().any(|node| {
+            matches!(
+                node,
+                LayoutNode::Generated(GeneratedLayoutNode::BibliographySectionEnd)
+            )
+        }));
     }
 }
