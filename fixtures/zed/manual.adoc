@@ -13,4 +13,11 @@ fn main() {
 }
 ----
 
+[,rust]
+----
+fn shorthand() {
+    println!("short source attribute");
+}
+----
+
 _unfinished emphasis
