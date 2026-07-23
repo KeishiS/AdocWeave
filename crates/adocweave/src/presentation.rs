@@ -23,53 +23,43 @@ impl BlockId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct IndexedBlock {
-    id: BlockId,
-    range: TextRange,
-}
-
 /// Immutable lookup table between semantic block identities and their source
 /// locations. Catalogs and layouts use this table instead of treating a range
 /// as an identity.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DocumentIndex {
-    blocks: Vec<IndexedBlock>,
+    block_ranges: Vec<TextRange>,
+    block_ids_by_range: BTreeMap<TextRange, BlockId>,
     top_level_blocks: Vec<BlockId>,
     top_level_ordinals: Vec<Option<usize>>,
 }
 
 impl DocumentIndex {
     pub fn block_id_at(&self, range: TextRange) -> Option<BlockId> {
-        self.blocks
-            .iter()
-            .find(|block| block.range == range)
-            .map(|block| block.id)
+        self.block_ids_by_range.get(&range).copied()
     }
 
     pub fn block_range(&self, id: BlockId) -> Option<TextRange> {
-        self.blocks
-            .iter()
-            .find(|block| block.id == id)
-            .map(|block| block.range)
+        self.block_ranges.get(id.get() as usize).copied()
     }
 
     pub fn block_containing(&self, range: TextRange) -> Option<BlockId> {
-        self.blocks
+        self.block_ranges
             .iter()
-            .filter(|block| {
-                block.range.start() <= range.start() && range.end() <= block.range.end()
+            .enumerate()
+            .filter(|(_, block_range)| {
+                block_range.start() <= range.start() && range.end() <= block_range.end()
             })
-            .min_by_key(|block| block.range.end().to_u32() - block.range.start().to_u32())
-            .map(|block| block.id)
+            .min_by_key(|(_, block_range)| block_range.len())
+            .map(|(index, _)| BlockId(u32::try_from(index).expect("block count fits u32")))
     }
 
     pub fn len(&self) -> usize {
-        self.blocks.len()
+        self.block_ranges.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.blocks.len() == 0
+        self.block_ranges.is_empty()
     }
 
     pub fn top_level_blocks(&self) -> &[BlockId] {
@@ -233,29 +223,26 @@ impl DocumentLayout {
 }
 
 pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
-    fn index_list(list: &crate::parser::ListBlock, blocks: &mut Vec<IndexedBlock>) {
+    fn index_list(list: &crate::parser::ListBlock, block_ranges: &mut Vec<TextRange>) {
         for item in &list.items {
             for child in &item.children {
-                index_list(child, blocks);
+                index_list(child, block_ranges);
             }
             for continuation in &item.continuations {
-                index_block(continuation, blocks);
+                index_block(continuation, block_ranges);
             }
         }
     }
 
-    fn index_block(block: &crate::parser::AstBlock, blocks: &mut Vec<IndexedBlock>) -> BlockId {
-        let id = BlockId(u32::try_from(blocks.len()).expect("block count fits u32"));
-        blocks.push(IndexedBlock {
-            id,
-            range: block.range(),
-        });
+    fn index_block(block: &crate::parser::AstBlock, block_ranges: &mut Vec<TextRange>) -> BlockId {
+        let id = BlockId(u32::try_from(block_ranges.len()).expect("block count fits u32"));
+        block_ranges.push(block.range());
         match block {
-            crate::parser::AstBlock::List(list) => index_list(list, blocks),
+            crate::parser::AstBlock::List(list) => index_list(list, block_ranges),
             crate::parser::AstBlock::Delimited(block) => match &block.content {
                 crate::parser::DelimitedContent::Compound(children) => {
                     for child in children {
-                        index_block(child, blocks);
+                        index_block(child, block_ranges);
                     }
                 }
                 crate::parser::DelimitedContent::Table(table) => {
@@ -265,7 +252,7 @@ pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
                                 &cell.content
                             {
                                 for child in children {
-                                    index_block(child, blocks);
+                                    index_block(child, block_ranges);
                                 }
                             }
                         }
@@ -286,18 +273,25 @@ pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
         id
     }
 
-    let mut blocks = Vec::new();
+    let mut block_ranges = Vec::new();
     let top_level_blocks = document
         .blocks()
         .iter()
-        .map(|block| index_block(block, &mut blocks))
+        .map(|block| index_block(block, &mut block_ranges))
         .collect::<Vec<_>>();
-    let mut top_level_ordinals = vec![None; blocks.len()];
+    let mut top_level_ordinals = vec![None; block_ranges.len()];
     for (ordinal, id) in top_level_blocks.iter().copied().enumerate() {
         top_level_ordinals[id.get() as usize] = Some(ordinal);
     }
+    let mut block_ids_by_range = BTreeMap::new();
+    for (index, range) in block_ranges.iter().copied().enumerate() {
+        block_ids_by_range
+            .entry(range)
+            .or_insert_with(|| BlockId(u32::try_from(index).expect("block count fits u32")));
+    }
     DocumentIndex {
-        blocks,
+        block_ranges,
+        block_ids_by_range,
         top_level_blocks,
         top_level_ordinals,
     }
@@ -455,57 +449,47 @@ pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
         }
     }
 
-    fn layout_nodes(
-        document: &AstDocument,
-        ids: &[BlockId],
-        recognize_scopes: bool,
-    ) -> Vec<LayoutNode> {
-        let mut nodes = Vec::new();
-        let mut index = 0;
-        while index < ids.len() {
-            let id = ids[index];
-            let block = document
-                .top_level_block(id)
-                .expect("indexed top-level block");
-            let bibliography_level = if recognize_scopes {
-                match block {
-                    crate::parser::AstBlock::Heading(heading)
-                        if document
-                            .presentation()
-                            .bibliography_section_at(heading.range)
-                            .is_some() =>
-                    {
-                        structural_heading_level(block)
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            if let Some(level) = bibliography_level {
-                let end = ids[index + 1..]
-                    .iter()
-                    .position(|next_id| {
-                        document
-                            .top_level_block(*next_id)
-                            .and_then(structural_heading_level)
-                            .is_some_and(|next_level| next_level <= level)
-                    })
-                    .map_or(ids.len(), |offset| index + offset + 1);
-                nodes.push(LayoutNode::Section {
-                    scope: LayoutScope::Bibliography,
-                    nodes: layout_nodes(document, &ids[index..end], false),
-                });
-                index = end;
-            } else {
-                nodes.push(LayoutNode::Block(id));
-                index += 1;
-            }
+    let mut nodes = Vec::new();
+    let mut bibliography_scope: Option<(u8, Vec<LayoutNode>)> = None;
+    for id in document.index().top_level_blocks().iter().copied() {
+        let block = document
+            .top_level_block(id)
+            .expect("indexed top-level block");
+        let heading_level = structural_heading_level(block);
+        if bibliography_scope
+            .as_ref()
+            .is_some_and(|(level, _)| heading_level.is_some_and(|next_level| next_level <= *level))
+        {
+            let (_, scoped_nodes) = bibliography_scope
+                .take()
+                .expect("scope existence was checked above");
+            nodes.push(LayoutNode::Section {
+                scope: LayoutScope::Bibliography,
+                nodes: scoped_nodes,
+            });
         }
-        nodes
-    }
 
-    let mut nodes = layout_nodes(document, document.index().top_level_blocks(), true);
+        if let Some((_, scoped_nodes)) = &mut bibliography_scope {
+            scoped_nodes.push(LayoutNode::Block(id));
+            continue;
+        }
+
+        let bibliography_level = matches!(block, crate::parser::AstBlock::Heading(heading)
+            if document.presentation().bibliography_section_at(heading.range).is_some())
+        .then_some(heading_level)
+        .flatten();
+        if let Some(level) = bibliography_level {
+            bibliography_scope = Some((level, vec![LayoutNode::Block(id)]));
+        } else {
+            nodes.push(LayoutNode::Block(id));
+        }
+    }
+    if let Some((_, scoped_nodes)) = bibliography_scope {
+        nodes.push(LayoutNode::Section {
+            scope: LayoutScope::Bibliography,
+            nodes: scoped_nodes,
+        });
+    }
     if document.presentation().toc_policy().enabled {
         let insertion = nodes
             .iter()

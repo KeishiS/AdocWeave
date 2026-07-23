@@ -1,5 +1,5 @@
 = Document indexとlayout構築の線形化
-:status: planned
+:status: completed
 :depends-on: 119
 
 == 目的
@@ -16,4 +16,3 @@
 == 検証
 
 * layout、TOC、bibliographyの既存fixtureを実行し、block境界と出力の互換性を確認する。
-
