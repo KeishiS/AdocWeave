@@ -3,3 +3,6 @@
 
 # [sandbox_workspace_write]
 # network_access = false
+
+[shell_environment_policy.set]
+GH_REPO = "KeishiS/AdocWeave"
