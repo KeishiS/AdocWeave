@@ -1,0 +1,37 @@
+= Table表示属性とcaptionの型付きprojection
+:status: in-progress
+:depends-on:
+
+== 目的
+
+標準AsciiDoc tableの表示属性を、parser内の文字列判定やHTML固有の`style`属性ではなく、backend非依存の
+型付きpresentationとして解決する。入力由来の任意CSSを通過させず、native、WASM、HTML、formatterおよびLSPで
+同じ意味と診断を共有する。
+
+== 対応範囲
+
+* block titleをtable captionとして型付きに保持し、HTMLでは`caption`要素へ安全に投影する。
+* `frame`（`all`、`ends`、`none`、`sides`）、`grid`（`all`、`cols`、`rows`、`none`）、`stripes`
+  （`none`、`even`、`odd`、`hover`、`all`）を解決する。
+* `width`の0から100までの百分率と`options="autowidth"`を解決し、矛盾と不正値を位置付き診断にする。
+* semantic table modelへ不変の`TablePresentation`を追加し、rendererは固定allowlist class、`width`属性および
+  `caption`だけを生成する。
+* 構文、semantic snapshot、HTML、CLI、WASM、LSP completion／diagnosticおよびformatterのfixtureを追加する。
+
+== 非目標
+
+`align`、`halign`、`valign`、`float`、`orientation`、PDF／DocBook専用の`rotate`・`breakable`は扱わない。
+列・cellの配置は既存の`cols`とcell specifierを正本とし、任意のCSS、色、長さ単位およびinline `style`は
+受け入れない。
+
+== 完了条件
+
+* table presentationがsemantic modelに一度だけ解決され、HTML backendがmetadataを再解析しない。
+* 不正値、重複、`autowidth`と`width`の競合が安全な既定値と決定的な診断になる。
+* 既存table形式、span、AsciiDoc cell、HTML allowlistおよび公開snapshotの検証が通る。
+* xref:../docs/tables.adoc[表の対応仕様]、xref:../docs/html-contract.adoc[HTML出力契約]、
+  xref:../docs/compatibility.adoc[互換性評価]を実装範囲と一致させる。
+
+== 参照
+
+* https://docs.asciidoctor.org/asciidoc/latest/tables/table-ref/[Asciidoctor Table Syntax and Attribute Reference]
