@@ -31,6 +31,7 @@ mod lowering;
 pub mod parser;
 mod parser_support;
 pub mod preprocessor;
+pub mod presentation;
 pub mod projection;
 pub mod reference;
 pub mod render;

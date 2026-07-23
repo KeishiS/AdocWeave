@@ -6,7 +6,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::attributes::AttributeOperation;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
 use crate::document::{HeadingId, ReferenceTarget, generate_heading_ids, reference_targets};
 use crate::inline::{
@@ -199,17 +198,7 @@ pub fn render_with_inputs(
     inputs: &RenderInputs,
 ) -> HtmlOutput {
     let mut fragment = String::new();
-    let mut document_attributes = BTreeMap::new();
-    for attribute in document.attributes() {
-        match &attribute.operation {
-            AttributeOperation::Set => {
-                document_attributes.insert(attribute.name.clone(), attribute.raw_value.clone());
-            }
-            AttributeOperation::Unset => {
-                document_attributes.remove(&attribute.name);
-            }
-        }
-    }
+    let document_attributes = document.presentation().attributes().values().clone();
     let heading_ids = generate_heading_ids(document);
     let targets = reference_targets(document);
     let mut diagnostics = Vec::new();
@@ -223,7 +212,19 @@ pub fn render_with_inputs(
             catalogs: document.catalogs(),
             structure: document.structure(),
         };
-        for block in document.blocks() {
+        for node in document.layout().nodes() {
+            let crate::presentation::LayoutNode::Block(block_id) = node else {
+                continue;
+            };
+            let range = document
+                .index()
+                .block_range(*block_id)
+                .expect("layout only contains indexed blocks");
+            let block = document
+                .blocks()
+                .iter()
+                .find(|block| block.range() == range)
+                .expect("layout only contains top-level blocks");
             let explicit_id = targets
                 .iter()
                 .find(|target| target.target_range == block.range())
@@ -254,7 +255,16 @@ pub fn render_with_inputs(
             }
         }
     }
-    render_footnote_catalog(&mut fragment, document.catalogs());
+    for node in document.layout().nodes() {
+        if matches!(
+            node,
+            crate::presentation::LayoutNode::Generated(
+                crate::presentation::GeneratedLayoutNode::FootnoteCatalog
+            )
+        ) {
+            render_footnote_catalog(&mut fragment, document.catalogs());
+        }
+    }
     for problem in input_usage.finish() {
         let domain = problem.domain.as_str();
         let (code, message) = match problem.kind {

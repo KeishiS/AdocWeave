@@ -25,6 +25,9 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     resolve_document_attributes(&mut document, facts.attribute_expansion_limits);
     document.identifiers = crate::document::build_identifiers(&document);
     document.structure = crate::structure::build(&document);
+    document.index = crate::presentation::build_index(&document);
+    document.presentation = crate::presentation::build_presentation(&document);
+    document.layout = crate::presentation::build_layout(&document);
     document
 }
 

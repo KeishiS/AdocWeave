@@ -123,6 +123,14 @@ impl Analysis {
         self.ast.structure()
     }
 
+    pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {
+        self.ast.presentation()
+    }
+
+    pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
+        self.ast.layout()
+    }
+
     pub fn references(&self) -> Vec<&crate::inline::Reference> {
         let mut references = Vec::new();
         crate::walker::walk(&self.ast, |node| {

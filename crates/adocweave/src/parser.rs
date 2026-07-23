@@ -85,6 +85,9 @@ impl AstDocument {
             catalogs: crate::catalog::DocumentCatalogs::default(),
             identifiers: crate::document::DocumentIdentifiers::default(),
             structure: crate::structure::DocumentStructure::default(),
+            index: crate::presentation::DocumentIndex::default(),
+            presentation: crate::presentation::DocumentPresentation::default(),
+            layout: crate::presentation::DocumentLayout::default(),
         }
     }
 
@@ -114,6 +117,18 @@ impl AstDocument {
 
     pub const fn structure(&self) -> &crate::structure::DocumentStructure {
         &self.structure
+    }
+
+    pub const fn index(&self) -> &crate::presentation::DocumentIndex {
+        &self.index
+    }
+
+    pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {
+        &self.presentation
+    }
+
+    pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
+        &self.layout
     }
 
     pub fn preamble(&self) -> &[AstBlock] {
