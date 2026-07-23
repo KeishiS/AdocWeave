@@ -7,6 +7,10 @@ on:
         required: false
         type: string
         default: ''
+      run_nix_package:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -35,10 +39,37 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
         with:
           determinate: false
-      - name: Run the complete quality gate
-        run: nix develop .#ci -c cargo make release-gate
+      - name: Run the source quality gate
+        run: nix develop .#ci -c cargo make quality
       - name: Verify an optional publication tag
         if: inputs.release_tag != ''
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: node tools/release-contract.mjs "--tag=$RELEASE_TAG"
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
+        with:
+          determinate: false
+      - name: Compile and explore fuzz targets
+        run: nix develop .#ci -c cargo make fuzz-check fuzz-smoke
+
+  nix-package:
+    if: inputs.run_nix_package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
+        with:
+          determinate: false
+      - name: Build and run the Nix package
+        run: nix develop .#ci -c cargo make nix-package-check

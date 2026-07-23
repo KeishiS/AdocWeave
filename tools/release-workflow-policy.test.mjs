@@ -75,8 +75,8 @@ test("required fields cannot move to another job or a same-name step", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        "needs: [plan, verify-candidate, installation-e2e]",
-        "needs: [plan, verify-candidate] # installation-e2e",
+        "needs: [plan, quality, verify-candidate, installation-e2e]",
+        "needs: [plan, quality, verify-candidate] # installation-e2e",
       ),
     }),
     /installation acceptance/,
@@ -107,7 +107,7 @@ test("network installer cannot replace the locked cargo-dist closure", () => {
   );
 });
 
-test("quality cannot omit dependency governance or the complete gate", () => {
+test("quality cannot omit dependency governance or the source gate", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({
@@ -119,9 +119,9 @@ test("quality cannot omit dependency governance or the complete gate", () => {
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      contract: inputs.contract.replace("nix develop .#ci -c cargo make release-gate", "true # release-gate"),
+      contract: inputs.contract.replace("nix develop .#ci -c cargo make quality", "true # quality"),
     }),
-    /canonical local gate/,
+    /source quality gate/,
   );
 });
 

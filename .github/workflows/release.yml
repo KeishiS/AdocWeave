@@ -60,10 +60,11 @@ jobs:
     uses: ./.github/workflows/quality.yml
     with:
       release_tag: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+      run_nix_package: ${{ github.event_name == 'pull_request' }}
 
   build-native:
     if: github.event_name == 'push'
-    needs: [plan, quality]
+    needs: [plan]
     strategy:
       fail-fast: false
       matrix:
@@ -111,7 +112,7 @@ jobs:
 
   build-global:
     if: github.event_name == 'push'
-    needs: [plan, quality]
+    needs: [plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -195,7 +196,7 @@ jobs:
 
   publish:
     if: needs.plan.outputs.publishing == 'true'
-    needs: [plan, verify-candidate, installation-e2e]
+    needs: [plan, quality, verify-candidate, installation-e2e]
     uses: ./.github/workflows/release-publish.yml
     with:
       plan: ${{ needs.plan.outputs.manifest }}

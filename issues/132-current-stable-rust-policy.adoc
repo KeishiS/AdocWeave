@@ -1,6 +1,6 @@
 = Current stable Rust方針への移行
 :status: completed
-:depends-on: 129
+:depends-on:
 
 == 目的
 

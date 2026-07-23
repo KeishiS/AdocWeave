@@ -28,7 +28,8 @@
         inherit system;
         overlays = [ (import rust-overlay) ];
       };
-      stableRust = pkgs: pkgs.rust-bin.stable.latest.default.override {
+      stableRust = pkgs: pkgs.rust-bin.stable.latest.default;
+      developmentRust = pkgs: (stableRust pkgs).override {
         extensions = [
           "clippy"
           "rust-src"
@@ -183,7 +184,7 @@
             typescript
             ripgrep
             rust-analyzer
-            (stableRust pkgs)
+            (developmentRust pkgs)
             stdenv.cc
             wasm-bindgen-cli
             xz
@@ -193,7 +194,7 @@
           shell = packages: pkgs.mkShell {
             inherit packages;
             ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
-            RUST_SRC_PATH = "${stableRust pkgs}/lib/rustlib/src/rust/library";
+            RUST_SRC_PATH = "${developmentRust pkgs}/lib/rustlib/src/rust/library";
           };
         in
         {

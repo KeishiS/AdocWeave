@@ -1,5 +1,5 @@
 = CI実行時間の最適化
-:status: planned
+:status: in-progress
 :depends-on: 132
 
 == 目的

@@ -131,11 +131,11 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
     fail("the plan and exactly five candidate jobs must be limited to main and tag pushes");
   }
 
-  requireNeeds(releaseJobs["build-native"], ["plan", "quality"], "native builds must depend on plan and quality");
-  requireNeeds(releaseJobs["build-global"], ["plan", "quality"], "global builds must depend on plan and quality");
+  requireNeeds(releaseJobs["build-native"], ["plan"], "native builds must start as soon as the release plan is available");
+  requireNeeds(releaseJobs["build-global"], ["plan"], "global artifacts must start as soon as the release plan is available");
   requireNeeds(releaseJobs["verify-candidate"], ["plan", "native-smoke", "build-global"], "candidate verification dependency edge is incomplete");
   requireNeeds(releaseJobs["installation-e2e"], ["verify-candidate"], "installation E2E must consume only a verified candidate");
-  requireNeeds(releaseJobs.publish, ["plan", "verify-candidate", "installation-e2e"], "publication must depend on candidate installation acceptance");
+  requireNeeds(releaseJobs.publish, ["plan", "quality", "verify-candidate", "installation-e2e"], "publication must depend on quality and candidate installation acceptance");
   if (releaseJobs.publish?.if !== "needs.plan.outputs.publishing == 'true'") {
     fail("pull requests must not invoke publication");
   }
@@ -183,14 +183,21 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
 
   requireTimeout(contractJobs.verify, 30, "the complete quality gate must have a timeout");
   requireTimeout(contractJobs.dependencies, 15, "dependency governance must have a timeout");
+  requireTimeout(contractJobs.fuzz, 15, "fuzz quality must have a timeout");
+  requireTimeout(contractJobs["nix-package"], 20, "Nix package quality must have a timeout");
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke tests must have a timeout");
   requireTimeout(releaseJobs["installation-e2e"], 15, "candidate installation and Nix package acceptance must have a timeout");
   requireTimeout(publishJob, 20, "publication must have a timeout and cleanup path");
-  const qualityStep = step(contractJobs.verify, (item) => item.name === "Run the complete quality gate", "complete quality step is missing");
+  const qualityStep = step(contractJobs.verify, (item) => item.name === "Run the source quality gate", "source quality step is missing");
   const qualityRun = qualityStep.run;
-  requireCommand(qualityRun, "nix develop .#ci -c cargo make release-gate", "the reusable quality workflow must run the canonical local gate");
+  requireCommand(qualityRun, "nix develop .#ci -c cargo make quality", "the reusable quality workflow must run the source quality gate");
   const dependencyRun = step(contractJobs.dependencies, (item) => item.name === "Audit dependency boundaries", "dependency governance step is missing").run;
   requireCommand(dependencyRun, "nix develop .#ci -c cargo make dependency-governance", "quality must audit every dependency boundary");
+  const fuzzRun = step(contractJobs.fuzz, (item) => item.name === "Compile and explore fuzz targets", "fuzz quality step is missing").run;
+  requireCommand(fuzzRun, "nix develop .#ci -c cargo make fuzz-check fuzz-smoke", "quality must compile and explore fuzz targets");
+  const nixRun = step(contractJobs["nix-package"], (item) => item.name === "Build and run the Nix package", "Nix package quality step is missing").run;
+  requireCommand(nixRun, "nix develop .#ci -c cargo make nix-package-check", "quality must verify the Nix package on pull requests");
+  if (contractJobs["nix-package"].if !== "inputs.run_nix_package") fail("Nix package quality must be controlled by an explicit caller input");
   if (contractJobs.msrv) fail("quality must not retain an MSRV-only job");
   const tagStep = step(contractJobs.verify, (item) => item.name === "Verify an optional publication tag", "optional publication tag step is missing");
   if (tagStep.if !== "inputs.release_tag != ''") fail("only explicit publication tags may receive tag validation");

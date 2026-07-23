@@ -625,6 +625,28 @@ nix build \
 nix run . -- --version --json | jq -e --arg version "$version" '.packageVersion == $version' >/dev/null
 '''
 
+[tasks.quality]
+description = "Run the merge-time source quality gate without release-candidate work"
+dependencies = [
+  "fmt-check",
+  "check",
+  "check-wasm",
+  "check-zed",
+  "check-zed-wasm",
+  "clippy",
+  "clippy-zed",
+  "test",
+  "test-web-worker",
+  "test-zed",
+  "release-contract",
+  "workflow-lint",
+  "test-cross-runtime",
+  "doc-check",
+  "docs-check",
+  "adoc-check",
+  "docs-lint",
+]
+
 [tasks.verify]
 description = "Run every non-mutating validation task"
 dependencies = [
