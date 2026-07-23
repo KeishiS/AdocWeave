@@ -1,5 +1,5 @@
 = 文書表示属性とbibliography構造の検証完全化
-:status: planned
+:status: in-progress
 :depends-on: 119
 
 == 目的
@@ -15,4 +15,3 @@
 == 検証
 
 * doctype、part、appendix、discrete heading、無効属性値をnative/WASM/LSP fixture化する。
-
