@@ -211,7 +211,7 @@ RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先
 
 * xref:118-semantic-presentation-boundary.adoc[118: 意味解析と表示計画の境界再設計]（計画）
 * xref:114-source-block-shorthand-and-default-language.adoc[114: Source block短縮記法と既定言語]（完了）
-* xref:115-list-presentation-attributes.adoc[115: List表示属性と順序付き番号形式]（完了）
+* xref:115-list-presentation-attributes.adoc[115: List表示属性と順序付き番号形式]（進行中）
 * xref:116-bibliography-section-rendering.adoc[116: Bibliography sectionのHTML出力]（進行中）
 * xref:117-document-presentation-attributes.adoc[117: 文書表示属性：TOCとsection番号]（進行中）
 
