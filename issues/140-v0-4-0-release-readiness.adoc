@@ -1,5 +1,5 @@
 = v0.4.0 release readinessとstable直送
-:status: in-progress
+:status: completed
 :depends-on: 136, 137, 138
 
 == 目的
@@ -30,7 +30,10 @@ RC tag、prerelease分岐および二段階のversion同期は廃止する。公
 
 版数、lockfile、配布計画およびfixtureを`0.4.0`へ同期し、RC専用のtag、schemaおよびpublish分岐を削除した。
 `cargo make release-gate`および`node tools/release-contract.mjs --tag=v0.4.0`は2026-07-23に成功した。
-残る作業は、このcommitをmainへpushしたcandidateの受け入れとstable tagの公開だけである。
+同日、commit `5a7c5dbbeb2fc98b8f7f273e86596fa26cc268f8` に`v0.4.0`を付け、
+https://github.com/KeishiS/AdocWeave/releases/tag/v0.4.0[stable Release]を公開した。
+公開asset 9件は`sha256.sum`で検証し、release metadataのsource commit・版数・契約versionも一致した。
+Artifact AttestationのCLI検証は、受け入れ環境にGitHub認証情報がないため実行していない。
 
 == 公開前review是正
 

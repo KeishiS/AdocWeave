@@ -453,7 +453,7 @@ metadataだけを保持して子blockへ退化させず、backend非依存の型
 M32で追加したblock意味と公開契約version 3を`v0.4.0`として公開する。個人開発の運用に合わせ、RCの
 二段階公開を廃止し、mainの完全candidateが成功したcommitをstable tagへ直接公開する。
 
-. xref:../issues/140-v0-4-0-release-readiness.adoc[Issue 140]で版数、配布計画、移行文書およびstable直送workflowを同期する。
+. xref:../issues/140-v0-4-0-release-readiness.adoc[Issue 140]（完了）で版数、配布計画、移行文書およびstable直送workflowを同期した。
 
 == ドキュメント保守規則
 
