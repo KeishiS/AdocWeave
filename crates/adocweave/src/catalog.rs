@@ -61,7 +61,14 @@ pub struct FootnoteOccurrence {
 pub struct BibliographyEntry {
     pub id: String,
     pub definition_range: TextRange,
-    pub references: Vec<TextRange>,
+    pub definition_block: crate::presentation::BlockId,
+    pub references: Vec<BibliographyReference>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BibliographyReference {
+    pub range: TextRange,
+    pub block: crate::presentation::BlockId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,7 +107,8 @@ pub(crate) fn build(
     let mut catalogs = DocumentCatalogs::default();
     let mut named_footnotes = BTreeMap::<String, usize>::new();
     let mut pending_references = Vec::<(String, TextRange)>::new();
-    let mut bibliography_references = Vec::<(String, TextRange)>::new();
+    let mut bibliography_references =
+        Vec::<(String, TextRange, crate::presentation::BlockId)>::new();
     let mut bibliography = BTreeMap::<String, usize>::new();
     let mut index = BTreeMap::<Vec<String>, usize>::new();
     let mut catalog_bytes = 0_u64;
@@ -161,6 +169,10 @@ pub(crate) fn build(
                     catalogs.bibliography.push(BibliographyEntry {
                         id: node.target.clone(),
                         definition_range: node.range,
+                        definition_block: document
+                            .index()
+                            .block_containing(node.range)
+                            .expect("bibliography anchor belongs to a semantic block"),
                         references: Vec::new(),
                     });
                 }
@@ -195,7 +207,14 @@ pub(crate) fn build(
                 let ReferenceDestination::Local { anchor, .. } = &reference.destination else {
                     return;
                 };
-                bibliography_references.push((anchor.clone(), reference.range));
+                bibliography_references.push((
+                    anchor.clone(),
+                    reference.range,
+                    document
+                        .index()
+                        .block_containing(reference.range)
+                        .expect("bibliography reference belongs to a semantic block"),
+                ));
             }
             _ => {}
         }
@@ -214,12 +233,14 @@ pub(crate) fn build(
             });
         }
     }
-    for (id, range) in bibliography_references {
+    for (id, range, block) in bibliography_references {
         if let Some(entry) = bibliography
             .get(&id)
             .and_then(|index| catalogs.bibliography.get_mut(*index))
         {
-            entry.references.push(range);
+            entry
+                .references
+                .push(BibliographyReference { range, block });
         }
     }
     for footnote in &mut catalogs.footnotes {
@@ -235,7 +256,9 @@ pub(crate) fn build(
         footnote.number = index as u32 + 1;
     }
     for entry in &mut catalogs.bibliography {
-        entry.references.sort_by_key(|range| range.start());
+        entry
+            .references
+            .sort_by_key(|reference| reference.range.start());
     }
     catalogs
         .index
@@ -321,6 +344,10 @@ mod tests {
         assert_eq!(catalogs.footnotes()[1].text, "anonymous");
         assert_eq!(catalogs.bibliography()[0].id, "ref");
         assert_eq!(catalogs.bibliography()[0].references.len(), 1);
+        assert_eq!(
+            catalogs.bibliography()[0].definition_block,
+            catalogs.bibliography()[0].references[0].block
+        );
         assert_eq!(catalogs.index()[0].terms, ["Rust", "Ownership"]);
         assert_eq!(catalogs.index()[0].occurrences.len(), 2);
     }

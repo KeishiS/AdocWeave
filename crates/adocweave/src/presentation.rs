@@ -53,6 +53,16 @@ impl DocumentIndex {
             .map(|block| block.range)
     }
 
+    pub fn block_containing(&self, range: TextRange) -> Option<BlockId> {
+        self.blocks
+            .iter()
+            .filter(|block| {
+                block.range.start() <= range.start() && range.end() <= block.range.end()
+            })
+            .min_by_key(|block| block.range.end().to_u32() - block.range.start().to_u32())
+            .map(|block| block.id)
+    }
+
     pub fn len(&self) -> usize {
         self.blocks.len()
     }

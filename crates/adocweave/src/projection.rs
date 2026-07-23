@@ -681,11 +681,11 @@ fn write_catalogs(output: &mut String, catalogs: &crate::catalog::DocumentCatalo
             json_range(entry.definition_range),
         )
         .expect("writing to String cannot fail");
-        for (reference_index, range) in entry.references.iter().enumerate() {
+        for (reference_index, reference) in entry.references.iter().enumerate() {
             if reference_index > 0 {
                 output.push(',');
             }
-            output.push_str(&json_range(*range));
+            output.push_str(&json_range(reference.range));
         }
         output.push_str("]}");
     }
