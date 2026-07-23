@@ -18,11 +18,29 @@ pub(super) struct ParsedListMarker {
     pub(super) depth: usize,
     pub(super) marker_start: usize,
     pub(super) marker_end: usize,
-    pub(super) explicit_number: Option<u32>,
-    pub(super) invalid_explicit_number: bool,
+    pub(super) explicit_number: ExplicitNumber,
     pub(super) text_start: usize,
     pub(super) term_end: Option<usize>,
     pub(super) callout_id: Option<u32>,
+}
+
+/// Recovery state for an ordered-list marker before lowering it into the
+/// stable public `ListItem` fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ExplicitNumber {
+    Absent,
+    Valid(u32),
+    Invalid,
+}
+
+impl ExplicitNumber {
+    pub(super) const fn public_fields(self) -> (Option<u32>, bool) {
+        match self {
+            Self::Absent => (None, false),
+            Self::Valid(number) => (Some(number), false),
+            Self::Invalid => (None, true),
+        }
+    }
 }
 
 pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
@@ -40,8 +58,7 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
             depth,
             marker_start: 0,
             marker_end: depth,
-            explicit_number: None,
-            invalid_explicit_number: false,
+            explicit_number: ExplicitNumber::Absent,
             text_start: depth + 1,
             term_end: None,
             callout_id: None,
@@ -54,7 +71,8 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
         let explicit_number = content[..digits]
             .parse::<u32>()
             .ok()
-            .filter(|number| *number > 0);
+            .filter(|number| *number > 0)
+            .map_or(ExplicitNumber::Invalid, ExplicitNumber::Valid);
         return (content.as_bytes().get(digits) == Some(&b'.')
             && matches!(separator, b' ' | b'\t'))
         .then_some(ParsedListMarker {
@@ -63,7 +81,6 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
             marker_start: 0,
             marker_end,
             explicit_number,
-            invalid_explicit_number: explicit_number.is_none(),
             text_start: marker_end + 1,
             term_end: None,
             callout_id: None,
@@ -79,8 +96,7 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
             depth: 1,
             marker_start: 0,
             marker_end: close + 1,
-            explicit_number: None,
-            invalid_explicit_number: false,
+            explicit_number: ExplicitNumber::Absent,
             text_start: close + 2,
             term_end: None,
             callout_id: Some(id),
@@ -109,8 +125,7 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
             depth: width.saturating_sub(1),
             marker_start: offset,
             marker_end: after,
-            explicit_number: None,
-            invalid_explicit_number: false,
+            explicit_number: ExplicitNumber::Absent,
             text_start: after
                 + usize::from(matches!(content.as_bytes().get(after), Some(b' ' | b'\t'))),
             term_end: Some(offset),

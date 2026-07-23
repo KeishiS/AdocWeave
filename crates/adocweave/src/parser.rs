@@ -1480,11 +1480,11 @@ fn parse_lists(
             marker_start,
             marker_end,
             explicit_number,
-            invalid_explicit_number,
             mut text_start,
             term_end,
             mut callout_id,
         } = marker;
+        let (explicit_number, invalid_explicit_number) = explicit_number.public_fields();
         let effective_depth = depth.min(config.max_list_depth.max(1));
         let absolute = line.content_range().start().to_usize();
         let marker_range = text_range(absolute + marker_start, absolute + marker_end)?;

@@ -1,5 +1,5 @@
 = 明示番号list回復状態の不変条件
-:status: planned
+:status: completed
 :depends-on: 122
 
 == 目的
@@ -16,4 +16,3 @@
 == 検証
 
 * parser、lint、formatter、CLIおよびLSPの明示番号fixtureを実行する。
-
