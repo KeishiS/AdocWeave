@@ -1,5 +1,5 @@
 = 意味解析と表示計画の境界再設計
-:status: planned
+:status: completed
 :depends-on: 112
 
 == 目的

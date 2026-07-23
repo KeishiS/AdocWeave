@@ -1,5 +1,5 @@
 = 文書表示属性：TOCとsection番号
-:status: in-progress
+:status: completed
 :depends-on: 074,112,118
 
 == 目的
