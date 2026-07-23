@@ -1,5 +1,5 @@
 = Zed LSPのリポジトリ独立化評価
-:status: planned
+:status: completed
 :depends-on: 129
 
 == 目的
@@ -19,3 +19,8 @@ Zed extensionとLanguage ServerをAdocWeave本体から別repositoryへ分離す
 * ADRまたは同等の判断記録に、採否、根拠、移行が必要な場合の段階、採用しない場合の再評価条件を記す。
 * 分離を採用する場合でも、CoreとZed利用者のversion不一致を検出する契約を先に設計する。
 
+== 結論
+
+分離しない。根拠、非採用案および定量的な再評価条件はxref:../docs/adr/0005-zed-lsp-monorepo.adoc[ADR 0005]を
+正本とする。現行の単一release manifest、artifact provenance、conformance fixtureおよびrollback境界を維持し、
+Zed固有の責務はmonorepo内のadapter境界へ局所化する。

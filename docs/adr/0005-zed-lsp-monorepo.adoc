@@ -1,0 +1,43 @@
+= ADR 0005: Zed LSPはmonorepoで維持する
+:status: accepted
+
+== 文脈
+
+Zed extensionは、同じReleaseのmanifest、checksumおよびattestationを検証してLanguage Server binaryを取得する。
+Core、LSP、Zed extension、browser artifactおよびNix packageは一つのrelease manifestとconformance fixtureを共有し、
+現在は同じrelease trainで公開している。
+
+Zed extensionとLanguage Serverを別repositoryへ分離すると、Zed固有のreviewと公開を独立できる可能性がある。一方で、
+release version、binary provenance、LSP protocol、Tree-sitter queryおよびrollbackの整合性をrepository間で新たに
+保証しなければならない。
+
+== 決定
+
+Zed extensionとLanguage ServerはAdocWeave monorepoに維持し、独立repositoryおよび独立release trainは導入しない。
+Zed固有の責務は`editors/zed`、query contract、release artifactおよびadapter testへ局所化する。Core、LSP、Zedの
+利用者可視契約を変更する場合は、同じchangeでmanifest、conformance fixture、release verificationおよび利用者文書を
+更新する。
+
+== 非採用案
+
+Zed extensionだけを別repositoryで公開し、LSP binaryを本体Releaseから取得する案は採用しない。この案ではextensionと
+binaryのversion不一致、artifact provenance、offline cacheおよびrollbackの障害を二つのrelease履歴にまたがって
+調査する必要があり、現在の開発規模に対して運用コストが大きい。
+
+== 再評価条件
+
+次のいずれかを満たしたときだけ、この決定を再評価する。
+
+* 連続する3 release trainで、CoreまたはLSP binaryを変更しないZed固有の公開要求が各trainに1件以上ある。
+* Zed固有jobが、連続する10回のmain runでCI critical pathの中央値の50%超を占め、monorepo内のjob分離だけでは
+  解消できない。
+* Zed extensionを本体と異なる所有者、権限境界またはsecurity response期限で運用する明確な要件が生じる。
+
+再評価では、repository分離前にCore/LSP/Zedの互換性範囲、artifact digest、source revisionおよびrollback対象を
+自動検出するcontractを設計・検証する。
+
+== 帰結
+
+一つのcommit、release manifestおよびGitHub Releaseで利用者が必要とする成果物を追跡できる。横断変更のCIは残るが、
+Issue 130の並列化により待ち時間を抑え、CI時間だけを理由に分離しない。Zed固有の変更はmonorepo内で独立したtestと
+artifact jobへ局所化して保守する。
