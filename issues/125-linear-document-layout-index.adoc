@@ -1,0 +1,19 @@
+= Document indexとlayout構築の線形化
+:status: planned
+:depends-on: 119
+
+== 目的
+
+`DocumentIndex`のblock ID探索とbibliography sectionのlayout構築を、文書サイズに対して
+線形に保つ。大きい文書での繰り返し探索を除き、表示属性の保守コストを下げる。
+
+== 作業
+
+* block IDからrangeおよびordinalへの索引を直接参照できる内部表現へ置き換える。
+* section scopeをstackで一回走査してlayoutを組み立て、後続blockの再走査を廃止する。
+* block順序、生成nodeおよびHTML出力を変更しない。
+
+== 検証
+
+* layout、TOC、bibliographyの既存fixtureを実行し、block境界と出力の互換性を確認する。
+

@@ -1,0 +1,19 @@
+= 明示番号list回復状態の不変条件
+:status: planned
+:depends-on: 122
+
+== 目的
+
+明示番号markerの有無・妥当性・期待番号を混同しない内部不変条件を導入し、回復ロジックの保守を
+容易にする。既存の構文受理、formatter出力および診断契約は変更しない。
+
+== 作業
+
+* parserからloweringへ渡す明示番号の回復状態を型で表す。
+* 不正markerを含むlistの既存診断順序をfixtureで固定する。
+* 公開ASTの既存fieldと外部出力を維持する。
+
+== 検証
+
+* parser、lint、formatter、CLIおよびLSPの明示番号fixtureを実行する。
+

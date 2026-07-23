@@ -1,0 +1,19 @@
+= 不変renderer scopeへの移行
+:status: completed
+:depends-on: 119
+
+== 目的
+
+`DocumentLayout`が持つsection scopeをrendererへ不変値として渡す。`InlineRenderContext`に
+一時的なsection状態を保持しないことで、再帰描画時の状態漏れを防ぎ、scope追加時の変更箇所を
+局所化する。
+
+== 作業
+
+* layout scopeから`RenderScope`を構築し、block、list、tableおよびcontainerの再帰描画へ明示的に渡す。
+* `InlineRenderContext`から可変のbibliography section状態を削除する。
+* 既存のHTML、診断および公開APIの通常系出力を変更しない。
+
+== 検証
+
+* bibliography sectionを含むHTML fixtureとrenderer unit testを実行する。

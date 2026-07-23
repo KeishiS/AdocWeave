@@ -1,0 +1,19 @@
+= Contract version応答検証の共通化
+:status: planned
+:depends-on: 123
+
+== 目的
+
+単一化済みの`CONTRACT_VERSION`について、Web WorkerがWASM応答のversionを一箇所で検証し、
+consumerがローカル定数を重複して信頼する運用をなくす。既存のwire field名は互換性のため維持する。
+
+== 作業
+
+* WASM応答versionの検証と公開resultへの転記を共通helperへ集約する。
+* version不一致を明確なprotocol errorとして扱う。
+* 通常系のwire schema、version値およびclient resultを変更しない。
+
+== 検証
+
+* Web Worker unit testで正常応答とversion不一致を検証する。
+

@@ -219,6 +219,11 @@ RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先
 * xref:121-bibliography-conformance-coverage.adoc[121: Bibliography sectionのconsumer横断適合性]（完了）
 * xref:122-lossless-explicit-list-numbering.adoc[122: 明示番号listのlossless回復と診断]（完了）
 * xref:123-unify-public-contract-version.adoc[123: 公開契約versionの単一化]（完了）
+* xref:124-immutable-render-scope.adoc[124: 不変renderer scopeへの移行]（進行中）
+* xref:125-linear-document-layout-index.adoc[125: Document indexとlayout構築の線形化]
+* xref:126-shared-consumer-fixture-harness.adoc[126: Consumer共通fixture harness]
+* xref:127-contract-version-response-verification.adoc[127: Contract version応答検証の共通化]
+* xref:128-list-recovery-state-invariants.adoc[128: 明示番号list回復状態の不変条件]
 
 === M1: プレーンテキスト変換
 

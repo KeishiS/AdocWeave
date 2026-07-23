@@ -1,0 +1,19 @@
+= Consumer共通fixture harness
+:status: planned
+:depends-on: 121
+
+== 目的
+
+CLI、LSP、native/WASM conformanceが同じ入力fixtureを利用するようにし、consumerごとの手作業での
+期待値複製を減らす。
+
+== 作業
+
+* 共通fixture manifestを読み込むtest helperを用意する。
+* bibliographyと文書表示属性のconsumer testをhelperへ移す。
+* 実行対象と期待する診断・HTML・projectionを変更しない。
+
+== 検証
+
+* CLI、LSP、native/WASM conformanceおよびWeb Worker testを実行する。
+
