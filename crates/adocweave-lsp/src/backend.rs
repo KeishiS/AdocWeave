@@ -116,145 +116,66 @@ impl Backend {
                 state.publish_current_diagnostics(uri)
             })
             .request::<request::DocumentSymbolRequest, _>(|state, params| {
-                let cancellation = state
-                    .service
-                    .document_cancellation(&params.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.document_symbols(&params.text_document.uri)
-                    })
-                    .await
-                }
+                state.cpu_request(params.text_document.uri, move |service, uri| {
+                    service.document_symbols(uri)
+                })
             })
             .request::<request::CodeActionRequest, _>(|state, params| {
-                let cancellation = state
-                    .service
-                    .document_cancellation(&params.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.code_actions(&params.text_document.uri)
-                    })
-                    .await
-                }
+                state.cpu_request(params.text_document.uri, move |service, uri| {
+                    service.code_actions(uri)
+                })
             })
             .request::<request::Formatting, _>(|state, params| {
-                let cancellation = state
-                    .service
-                    .document_cancellation(&params.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.formatting(&params.text_document.uri)
-                    })
-                    .await
-                }
+                state.cpu_request(params.text_document.uri, move |service, uri| {
+                    service.formatting(uri)
+                })
             })
             .request::<request::HoverRequest, _>(|state, params| {
                 let request = params.text_document_position_params;
-                let cancellation = state
-                    .service
-                    .document_cancellation(&request.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.hover(&request.text_document.uri, request.position)
-                    })
-                    .await
-                }
+                let position = request.position;
+                state.cpu_request(request.text_document.uri, move |service, uri| {
+                    service.hover(uri, position)
+                })
             })
             .request::<request::Completion, _>(|state, params| {
                 let request = params.text_document_position;
-                let cancellation = state
-                    .service
-                    .document_cancellation(&request.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.completion(&request.text_document.uri, request.position)
-                    })
-                    .await
-                }
+                let position = request.position;
+                state.cpu_request(request.text_document.uri, move |service, uri| {
+                    service.completion(uri, position)
+                })
             })
             .request::<request::GotoDefinition, _>(|state, params| {
                 let request = params.text_document_position_params;
-                let cancellation = state
-                    .service
-                    .document_cancellation(&request.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.definition(&request.text_document.uri, request.position)
-                    })
-                    .await
-                }
+                let position = request.position;
+                state.cpu_request(request.text_document.uri, move |service, uri| {
+                    service.definition(uri, position)
+                })
             })
             .request::<request::References, _>(|state, params| {
                 let request = params.text_document_position;
+                let position = request.position;
                 let include_declaration = params.context.include_declaration;
-                let cancellation = state
-                    .service
-                    .document_cancellation(&request.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.references(
-                            &request.text_document.uri,
-                            request.position,
-                            include_declaration,
-                        )
-                    })
-                    .await
-                }
+                state.cpu_request(request.text_document.uri, move |service, uri| {
+                    service.references(uri, position, include_declaration)
+                })
             })
             .request::<request::DocumentLinkRequest, _>(|state, params| {
-                let cancellation = state
-                    .service
-                    .document_cancellation(&params.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.document_links(&params.text_document.uri)
-                    })
-                    .await
-                }
+                state.cpu_request(params.text_document.uri, move |service, uri| {
+                    service.document_links(uri)
+                })
             })
             .request::<request::SemanticTokensFullRequest, _>(|state, params| {
-                let cancellation = state
-                    .service
-                    .document_cancellation(&params.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.semantic_tokens(&params.text_document.uri)
-                    })
-                    .await
-                }
+                state.cpu_request(params.text_document.uri, move |service, uri| {
+                    service.semantic_tokens(uri)
+                })
             })
             .request::<request::Rename, _>(|state, params| {
                 let request = params.text_document_position;
+                let position = request.position;
                 let new_name = params.new_name;
-                let cancellation = state
-                    .service
-                    .document_cancellation(&request.text_document.uri);
-                let service = state.service.clone();
-                let limit = state.cpu_limit.clone();
-                async move {
-                    run_cpu_request(limit, cancellation, move |_| {
-                        service.rename(&request.text_document.uri, request.position, &new_name)
-                    })
-                    .await
-                }
+                state.cpu_request(request.text_document.uri, move |service, uri| {
+                    service.rename(uri, position, &new_name)
+                })
             })
             .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed));
 
@@ -266,6 +187,24 @@ impl Backend {
                 NonZeroUsize::new(MAX_CONCURRENT_REQUESTS).expect("non-zero request limit"),
             ))
             .service(router)
+    }
+
+    /// Runs a read-only language request on the CPU pool with the shared
+    /// cancellation and concurrency policy, resolving the document cancellation
+    /// token before the request is scheduled.
+    fn cpu_request<T, F>(
+        &self,
+        uri: Url,
+        operation: F,
+    ) -> impl std::future::Future<Output = Result<T, ResponseError>> + Send + use<T, F>
+    where
+        T: Send + 'static,
+        F: FnOnce(&LanguageService, &Url) -> Result<T, String> + Send + 'static,
+    {
+        let cancellation = self.service.document_cancellation(&uri);
+        let service = self.service.clone();
+        let limit = self.cpu_limit.clone();
+        async move { run_cpu_request(limit, cancellation, move |_| operation(&service, &uri)).await }
     }
 
     fn schedule_analysis(&mut self, job: AnalysisJob) {

@@ -654,23 +654,7 @@ dependencies = [
 [tasks.verify]
 description = "Run every non-mutating validation task"
 dependencies = [
-  "fmt-check",
-  "check",
-  "check-wasm",
-  "check-zed",
-  "check-zed-wasm",
-  "clippy",
-  "clippy-zed",
-  "test",
-  "test-web-worker",
-  "test-zed",
-  "release-contract",
-  "workflow-lint",
-  "test-cross-runtime",
-  "doc-check",
-  "docs-check",
-  "adoc-check",
-  "docs-lint",
+  "quality",
   "nix-package-check",
   "build",
 ]

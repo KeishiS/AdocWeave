@@ -83,6 +83,12 @@ modeでも未知構文をraw HTMLとして通過させない。
 公開上限値はruntimeのword sizeに依存しない`u32`で表す。入力長やnode数を扱う内部の
 `usize`との比較では、`u32`から損失なく変換し、切り詰めるcastを行わない。
 
+入力および構造上限（1行、深さ、node数、参照、属性等）はcoreの構築経路で強制する。
+一方で出力上限は例外であり、coreのHTML renderは失敗しない全域関数として出力byte列を返すため、
+構築時には強制しない。出力上限は各出力frontendが生成後のbyte列に対して出力境界で強制する。
+CLI（`adocweave-cli`）とWASM（`adocweave-wasm`）はrender後に`max_output_bytes`を検査し、
+超過時は出力を拒否する。renderした HTML を直接発行する組み込みホストは、同じ上限を自ら適用する。
+
 == crateのSemVer
 
 すべてのworkspace crateは同じSemVerを使用する。`0.y.z`期間は次を適用する。

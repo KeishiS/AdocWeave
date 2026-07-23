@@ -97,6 +97,29 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
 }
 
 #[test]
+fn heading_anchor_cannot_break_out_of_the_id_attribute() {
+    let source = "[[x\"onclick=\"alert(1)]]\n== Target\n";
+    let analysis = Engine::new(ParseOptions::default())
+        .analyze(source)
+        .expect("analysis");
+    let output = render(analysis.ast(), &RenderPolicy::default());
+
+    // The dangerous anchor never reaches the output as raw attribute syntax:
+    // neither an attribute breakout nor an unescaped quote survives.
+    assert!(!output.html.contains("onclick="));
+    assert!(!output.html.contains("\"onclick"));
+    // A heading is still emitted, using a safe generated id.
+    assert!(output.html.contains("<h1 id=\"_target\">Target</h1>"));
+    // The unsafe anchor is rejected with a diagnostic rather than trusted.
+    assert!(
+        analysis
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-anchor")
+    );
+}
+
+#[test]
 fn tight_limits_fail_without_partial_analysis() {
     let limits = ProcessingLimits {
         max_input_bytes: 32,

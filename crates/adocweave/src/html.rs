@@ -1068,7 +1068,7 @@ fn render_heading(
     match heading.kind {
         HeadingKind::DocumentTitle if policy.render_document_title => {
             output.push_str("<h1 class=\"document-title\" id=\"");
-            output.push_str(id);
+            escape_html_into(output, id);
             output.push_str("\">");
             render_inlines(output, &heading.inlines, context);
             output.push_str("</h1>\n");
@@ -1099,7 +1099,7 @@ fn render_heading_level(
         output.push_str(" class=\"appendix\"");
     }
     output.push_str(" id=\"");
-    output.push_str(id);
+    escape_html_into(output, id);
     output.push_str("\">");
     if context.presentation.section_numbers_enabled()
         && let Some(presentation) = context.presentation.heading_at(heading.range)

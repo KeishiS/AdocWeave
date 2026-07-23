@@ -171,13 +171,7 @@ impl DocumentStore {
         }
         current.cancellation.cancel();
         let job = self.new_job(uri.to_owned(), version, text);
-        let current = Arc::make_mut(&mut self.documents)
-            .get_mut(uri)
-            .expect("document existence checked");
-        current.request = job.request.clone();
-        current.view = None;
-        current.workspace_problem = None;
-        current.cancellation = job.cancellation.clone();
+        self.install_job(uri, &job);
         Some(job)
     }
 
@@ -187,6 +181,13 @@ impl DocumentStore {
         let version = i32::try_from(current.request.revision.version).ok()?;
         let text = current.request.source.to_string();
         let job = self.new_job(uri.to_owned(), version, text);
+        self.install_job(uri, &job);
+        Some(job)
+    }
+
+    /// Replaces an existing document's pending request with `job`, clearing the
+    /// prior analysis view and workspace problem.
+    fn install_job(&mut self, uri: &str, job: &AnalysisJob) {
         let current = Arc::make_mut(&mut self.documents)
             .get_mut(uri)
             .expect("document existence checked");
@@ -194,7 +195,6 @@ impl DocumentStore {
         current.view = None;
         current.workspace_problem = None;
         current.cancellation = job.cancellation.clone();
-        Some(job)
     }
 
     pub fn adopt(&mut self, job: &AnalysisJob, result: AnalysisResult) -> Adoption {
@@ -214,12 +214,22 @@ impl DocumentStore {
         Adoption::Adopted
     }
 
-    pub fn adopt_workspace(&mut self, job: &AnalysisJob, analysis: WorkspaceAnalysis) -> Adoption {
+    /// Confirms the document for `job` still exists and its revision has not
+    /// been superseded or cancelled, returning the terminal [`Adoption`] on
+    /// failure.
+    fn ensure_current(&self, job: &AnalysisJob) -> Result<(), Adoption> {
         let Some(document) = self.documents.get(&job.uri) else {
-            return Adoption::Closed;
+            return Err(Adoption::Closed);
         };
         if document.request.revision != job.request.revision || job.cancellation.is_cancelled() {
-            return Adoption::Stale;
+            return Err(Adoption::Stale);
+        }
+        Ok(())
+    }
+
+    pub fn adopt_workspace(&mut self, job: &AnalysisJob, analysis: WorkspaceAnalysis) -> Adoption {
+        if let Err(adoption) = self.ensure_current(job) {
+            return adoption;
         }
         let document = Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)
@@ -240,11 +250,8 @@ impl DocumentStore {
         job: &AnalysisJob,
         problem: WorkspaceProblem,
     ) -> Adoption {
-        let Some(document) = self.documents.get(&job.uri) else {
-            return Adoption::Closed;
-        };
-        if document.request.revision != job.request.revision || job.cancellation.is_cancelled() {
-            return Adoption::Stale;
+        if let Err(adoption) = self.ensure_current(job) {
+            return adoption;
         }
         let document = Arc::make_mut(&mut self.documents)
             .get_mut(&job.uri)

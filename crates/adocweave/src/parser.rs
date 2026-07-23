@@ -1405,7 +1405,10 @@ fn valid_anchor_id(id: &str) -> bool {
         && id.chars().all(|character| {
             !character.is_control()
                 && !character.is_whitespace()
-                && !matches!(character, '[' | ']' | '<' | '>' | ',' | '#')
+                && !matches!(
+                    character,
+                    '[' | ']' | '<' | '>' | ',' | '#' | '"' | '\'' | '&' | '=' | '(' | ')'
+                )
         })
 }
 
@@ -2513,6 +2516,15 @@ mod tests {
         DelimitedBlockKind, DelimitedContent, DocumentType, Heading, HeadingKind, ListKind,
         SyntaxKind, VerbatimKind, parse,
     };
+
+    #[test]
+    fn valid_anchor_id_rejects_html_attribute_metacharacters() {
+        assert!(super::valid_anchor_id("section-1"));
+        assert!(super::valid_anchor_id("item.lead"));
+        for id in ["a\"b", "a'b", "a&b", "a=b", "a(b)", "a b", "a\tb", ""] {
+            assert!(!super::valid_anchor_id(id), "expected {id:?} to be invalid");
+        }
+    }
 
     #[test]
     fn block_cursor_rejects_non_progress_and_out_of_bounds_commits() {
