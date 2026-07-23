@@ -9,9 +9,9 @@ test("release notes always contain the acceptance contract", () => {
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /sha256sum --check/);
-  assert.match(notes, /functionally identical to the accepted v0\.1\.0-rc\.6 baseline/);
+  assert.match(notes, /approved AsciiDoc compatibility changes/);
   assert.match(notes, /nix run github:KeishiS\/AdocWeave/);
-  assert.match(notes, /no intentional API or feature changes/);
+  assert.match(notes, /unified public contract: 2/);
 });
 
 test("release notes reject a tag from another release train", () => {

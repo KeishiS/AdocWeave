@@ -72,15 +72,12 @@ try {
       if (state.status !== "ready:4:5" || !state.html.includes("Latest browser result") || state.isolated !== isolated) {
         throw new Error(`browser smoke failed (${isolated ? "isolated" : "fallback"}); requests=${requests.join(",")}: ${JSON.stringify(state)}`);
       }
-      const contractsMatch = Object.keys(releaseManifest.contracts).every(
-        (key) => state.contracts[key] === releaseManifest.contracts[key],
-      ) && Object.keys(state.contracts).length === Object.keys(releaseManifest.contracts).length;
       if (state.packageVersion !== releaseManifest.packageVersion ||
-          !contractsMatch ||
-          state.wasmApi !== releaseManifest.contracts.wasmApi ||
-          state.conformance !== releaseManifest.contracts.conformance ||
-          state.coreProfile !== releaseManifest.contracts.coreProfile ||
-          state.projection !== releaseManifest.contracts.projection) {
+          state.contractVersion !== releaseManifest.contractVersion ||
+          state.wasmApi !== releaseManifest.contractVersion ||
+          state.conformance !== releaseManifest.contractVersion ||
+          state.coreProfile !== releaseManifest.contractVersion ||
+          state.projection !== releaseManifest.contractVersion) {
         throw new Error(`browser contract mismatch: ${JSON.stringify(state)}`);
       }
       console.log(`browser release smoke: passed ${context} context`);
@@ -161,7 +158,7 @@ async function inspectPage(chromium, url, temporaryRoot) {
               html: document.querySelector('#preview').textContent,
               isolated: crossOriginIsolated,
               packageVersion: globalThis.adocweavePackageVersion,
-              contracts: globalThis.adocweaveLastResult.contracts,
+              contractVersion: globalThis.adocweaveLastResult.contractVersion,
               wasmApi: response.apiVersion,
               conformance: response.conformanceContractVersion,
               coreProfile: response.parse.profileVersion,

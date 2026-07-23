@@ -20,7 +20,7 @@ use crate::syntax::SyntaxTree;
 ///
 /// A change invalidates analysis caches, rendered products, projections,
 /// conformance snapshots, and WASM requests together.
-pub const CONTRACT_VERSION: u16 = 1;
+pub const CONTRACT_VERSION: u16 = 2;
 
 /// A caller-defined, opaque source identity.
 ///

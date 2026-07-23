@@ -230,7 +230,7 @@ RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先
 `v0.1.0`以後の利用者可視の機能追加をminor releaseとして受け入れる。RCで公開assetを確認した後、
 機能追加を止めて同一source commitをstableへ昇格する。
 
-* xref:129-v0-2-0-release-readiness.adoc[129: v0.2.0 release readinessと契約凍結]
+* xref:129-v0-2-0-release-readiness.adoc[129: v0.2.0 release readinessと契約凍結]（進行中）
 
 === M30: 次期標準AsciiDoc互換性
 

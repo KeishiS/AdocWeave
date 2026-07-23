@@ -21,7 +21,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
         &fs::read_to_string(fixtures.join("cases.json")).expect("conformance manifest"),
     )
     .expect("valid conformance manifest");
-    assert_eq!(manifest["contractVersion"], 1);
+    assert_eq!(manifest["contractVersion"], 2);
 
     for entry in manifest["cases"].as_array().expect("cases") {
         let name = entry["name"].as_str().expect("case name");

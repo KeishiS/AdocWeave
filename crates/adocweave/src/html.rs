@@ -2084,7 +2084,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(crate::CONTRACT_VERSION, 1);
+        assert_eq!(crate::CONTRACT_VERSION, 2);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [

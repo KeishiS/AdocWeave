@@ -9,7 +9,7 @@ export const RELEASE_METADATA_TOOL_VERSION = 1;
 const ROOT = new URL("../", import.meta.url);
 const readJson = (path) => JSON.parse(readFileSync(new URL(path, ROOT), "utf8"));
 const plan = readJson("release/distribution-plan.json");
-const contracts = readJson("release-manifest.json").contracts;
+const contractVersion = readJson("release-manifest.json").contractVersion;
 const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 
 function fail(message) {
@@ -136,7 +136,7 @@ export function buildMetadata(directory, sourceCommit) {
 
   const distributionManifest = {
     assets: assets.map(({ path: _path, ...asset }) => asset),
-    contracts,
+    contractVersion,
     packageVersion: plan.packageVersion,
     schemaVersion: 1,
     sourceCommit,

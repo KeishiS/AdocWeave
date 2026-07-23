@@ -15,12 +15,10 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 
 export function appendRequiredReleaseNotes(body, tag) {
   if (tag !== `v${manifest.packageVersion}`) throw new Error("release note tag does not match package version");
-  const contracts = Object.entries(manifest.contracts)
-    .map(([name, version]) => `- ${name}: ${version}`)
-    .join("\n");
+  const contracts = `- unified public contract: ${manifest.contractVersion}`;
   const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
   const notes = "## Highlights\n\n" +
-    "- v0.1.0 is functionally identical to the accepted v0.1.0-rc.6 baseline; it contains no intentional API or feature changes.\n" +
+    "- This release adds the approved AsciiDoc compatibility changes and updates the unified public contract when required. See docs/roadmap.adoc for the release train scope.\n" +
     "- The repository flake provides AdocWeave CLI and LSP packages for Linux x86-64 and ARM64. Run `nix run github:KeishiS/AdocWeave`.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${contracts}\n\n` +

@@ -1,0 +1,28 @@
+= v0.2.0への移行
+
+v0.2.0は初回stable版以後に追加した標準AsciiDoc互換性拡張を含むminor releaseである。
+公開契約versionは2へ更新された。初回stable版の解析cache、HTML、projection、
+conformance snapshotおよびWASM adapterをv0.2.0の成果物と混在させてはならない。
+
+== 利用者可視の変更
+
+* 属性行によるsource block短縮記法とsource-language既定値を利用できる。
+* 順序付きlistの開始番号、逆順、番号形式および明示番号をHTMLとprojectionへ反映する。
+* bibliography sectionのentryとcitation back referenceをHTMLへ出力する。
+* toc、toclevelsおよびsectnumsを文書表示へ反映する。
+
+上記は既存文書の意味を置換するものではないが、対応していた入力ではHTML、projection、診断または
+WASM応答が初回stable版と異なることがある。hostは契約versionを照合し、値が異なる場合に保存済み成果物を
+再利用してはならない。
+
+== 更新手順
+
+. 同じreleaseのCLI、LSP、browser archiveおよびZed archiveを取得する。
+. sha256.sumとartifact attestationを検証する。
+. version別directoryへ導入し、CLIとLSPのversion JSONがpackage versionとcontract version 2を
+  返すことを確認する。
+. hostのcache、HTML、projectionおよびconformance snapshotを再構築する。
+. 問題があれば以前のversion別directoryへcurrentを戻す。異なるcontract versionの成果物を混在させない。
+
+導入、rollbackおよび完全削除の詳細はxref:release-installation.adoc[GitHub Releaseからの導入・更新・削除]を
+参照する。
