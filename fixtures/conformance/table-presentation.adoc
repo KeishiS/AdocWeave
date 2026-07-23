@@ -1,0 +1,5 @@
+.Caption
+[frame=ends,frame=sides,grid=rows,stripes=odd,width=75,options=autowidth]
+|===
+|value
+|===

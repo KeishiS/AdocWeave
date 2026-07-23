@@ -1,5 +1,5 @@
 = Table表示属性のRC前是正
-:status: in-progress
+:status: completed
 :depends-on: 133
 
 == 目的
@@ -31,6 +31,16 @@ DocBook専用属性はこのIssueで追加しない。
 * unitlessと`%`付きの正当なwidth、拒否値、重複および`autowidth`競合がnative、WASM、CLI、LSPで一致する。
 * HTML契約、表対応仕様、互換性評価、移行文書およびIssue 133の完了記録が実装と一致する。
 * `cargo make release-gate`と`node tools/release-contract.mjs --tag=v0.3.0-rc.1`が通る。
+
+== 結果
+
+最初の属性だけをeffective presentationへ採用し、後続属性はその値を再評価せず一つの
+`invalid-table`診断として扱うようにした。`width`は1から100のunitlessまたは`%`付き整数だけを
+受け入れ、符号、0、範囲外および単位付きの値を拒否する。
+
+table presentation fixtureはCLI、native adapterおよびbrowser WASMが共有し、重複、autowidth競合、
+captionおよび固定classを同じHTMLとdiagnosticへ固定した。HTML契約と表対応文書には百分率widthと
+literal captionの制限を記録した。
 
 == 参照
 

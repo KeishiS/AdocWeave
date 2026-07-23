@@ -1453,6 +1453,34 @@ mod tests {
     }
 
     #[test]
+    fn table_presentation_width_rejects_signs_zero_and_out_of_range_values() {
+        for width in ["+75%", "0", "101", "75px", "%"] {
+            let diagnostics = lint(
+                &format!("[width={width}]\n|===\n|cell\n|===\n"),
+                &LintConfig::default(),
+            )
+            .expect("lint");
+            assert!(diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "invalid-table"
+                    && diagnostic.message == "invalid or conflicting table presentation attribute"
+            }));
+        }
+
+        for width in ["1", "75", "100", "75%"] {
+            let diagnostics = lint(
+                &format!("[width={width}]\n|===\n|cell\n|===\n"),
+                &LintConfig::default(),
+            )
+            .expect("lint");
+            assert!(
+                !diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code.as_str() == "invalid-table")
+            );
+        }
+    }
+
+    #[test]
     fn catalog_diagnostics_preserve_duplicate_and_missing_ranges() {
         let diagnostics = lint(
             "footnote:missing[] footnote:n[one] footnote:n[two] bibanchor:b[] bibanchor:b[] indexterm:[]",

@@ -2,21 +2,14 @@
 
 == 契約バージョン
 
-HTML出力契約の現在のバージョンは `1` であり、`HtmlOutput.contract_version` に
-記録する。契約バージョンを変更する場合は、
+HTML出力契約の現在のバージョンは `2` であり、`HtmlOutput.contract_version` と
+xref:../release-manifest.json[release manifest]に記録する。契約バージョンを変更する場合は、
 golden fixture、許可集合および見出しID規則の差分を確認する。
 
-バージョン7ではPSV表のため、`table`、`thead`、`tbody`、`tfoot`、`tr`、`th`、`td`、
-`colspan`、`rowspan`および固定の配置classを許可集合へ追加した。
-バージョン8では標準macroとmediaのため、`img`、`audio`、`video`、`kbd`、固定のmacro class、
-`src`、`alt`、整数寸法および`controls`を追加した。resource URLは`UrlPolicy`を通過した値だけを出力する。
-バージョン9ではCSV／DSV／TSVとAsciiDoc block cellを同じ安全なtable要素へ写像した。
-バージョン12ではtable表示属性のため、`caption`要素と固定のframe、grid、stripes classを許可集合へ追加した。
-バージョン10ではfootnoteを番号付き参照と文書末尾のback reference付き一覧へ変更し、
-`footnotes`、`footnote-ref`および`footnote-backref`の固定classを追加した。
-バージョン11ではdoctype構造projectionがappendixと判定した見出しに固定`appendix` classを付ける。
-公開baseline 1ではmedia resourceの生targetを直接active要素へ変換せず、`RenderInputs`に含まれる
-host解決済みURLだけを再検証して出力する。
+契約version 2は、PSV／CSV／DSV／TSV table、AsciiDoc block cell、`caption`、固定のframe・grid・stripes class、
+百分率`width`値、footnote、appendix、標準macroおよびmediaを許可集合へ含める。`width`はimage等の整数寸法だけでなく、
+tableに対しては`75%`のような百分率値を出力する。resource URLは`UrlPolicy`を通過した値だけを出力し、
+生targetを直接active要素へ変換しない。
 
 互換性はDOM構造と意味について保証する。属性順、改行および空白もgolden fixtureで
 固定するが、将来の契約バージョンでは変更できる。異なる契約バージョン間の

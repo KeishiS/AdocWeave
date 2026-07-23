@@ -146,6 +146,14 @@
       "contractImpact": "core-profile,core-api,html,conformance"
     },
     {
+      "name": "table-presentation-attributes",
+      "sourceFile": "table-presentation.adoc",
+      "expectedHtmlFile": "table-presentation.html",
+      "compatibility": "supported-subset",
+      "rationale": "重複属性はfirst-winsで解決し、unitless widthとautowidthの競合、captionおよび固定table classはnativeとWASMで同じHTMLとdiagnosticを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
       "name": "document-catalogs",
       "source": "footnote:n[] footnote:[anonymous] footnote:n[named] footnote:n[]\n\n<<ref>> bibanchor:ref[] indexterm:[Rust,Ownership] indexterm:[Rust,Ownership]",
       "compatibility": "supported-subset",

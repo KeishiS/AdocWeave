@@ -2503,6 +2503,18 @@ mod tests {
     }
 
     #[test]
+    fn table_presentation_uses_the_first_attribute_and_accepts_unitless_width() {
+        let parsed =
+            parse("[frame=ends,frame=sides,width=75]\n|===\n|value\n|===\n").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            "<table class=\"table-frame-ends table-grid-all table-stripes-none\" width=\"75%\">\n<tbody>\n<tr>\n<td class=\"table-align-left table-valign-top\">value</td>\n</tr>\n</tbody>\n</table>\n"
+        );
+    }
+
+    #[test]
     fn advanced_table_formats_and_asciidoc_cells_render_from_typed_content() {
         let source = "[format=csv,options=header]\n|===\nname,value\nalpha,\"one, two\"\n|===\n\n[cols=a]\n|===\n|Paragraph.\n\n* one\n* two\n|===\n";
         let parsed = parse(source).expect("parse");

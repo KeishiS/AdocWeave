@@ -688,11 +688,12 @@ fn resolve_presentation(
         caption: metadata.title.as_ref().map(|title| title.value.clone()),
         ..TablePresentation::default()
     };
+    // The first occurrence is authoritative. Later occurrences are diagnosed
+    // as duplicates and never influence the effective presentation.
     let attribute = |name| {
         metadata
             .attributes
             .iter()
-            .rev()
             .find(|attribute| attribute.name.as_deref() == Some(name))
     };
     let invalid = |attribute: &crate::parser::ElementAttribute,
@@ -752,11 +753,7 @@ fn resolve_presentation(
         };
     }
     if let Some(attribute) = attribute("width") {
-        presentation.width = attribute
-            .value
-            .strip_suffix('%')
-            .and_then(|value| value.parse::<u8>().ok())
-            .filter(|value| *value <= 100);
+        presentation.width = percentage_width(&attribute.value);
         if presentation.width.is_none() {
             invalid(attribute, problems);
         }
@@ -779,6 +776,14 @@ fn resolve_presentation(
         presentation.width = None;
     }
     presentation
+}
+
+fn percentage_width(value: &str) -> Option<u8> {
+    let value = value.strip_suffix('%').unwrap_or(value);
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| value.parse::<u8>().ok())
+        .flatten()
+        .filter(|value| (1..=100).contains(value))
 }
 
 fn expand_column(value: &str) -> Vec<TableColumn> {

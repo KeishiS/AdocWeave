@@ -231,6 +231,26 @@ fn bibliography_consumer_fixture_is_shared_by_cli() {
 }
 
 #[test]
+fn table_presentation_fixture_is_shared_by_cli() {
+    let source = include_bytes!("../../../fixtures/conformance/table-presentation.adoc");
+    let expected_html = include_bytes!("../../../fixtures/conformance/table-presentation.html");
+
+    let converted = run_with_stdin(&["convert", "-"], source);
+    let checked = run_with_stdin(&["check", "--json", "-"], source);
+
+    assert!(converted.status.success());
+    assert_eq!(converted.stdout, expected_html);
+    assert!(converted.stderr.is_empty());
+    assert!(checked.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&checked.stdout)
+            .matches("\"code\":\"invalid-table\"")
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn source_block_shorthand_default_and_listing_are_consistent_on_crlf_input() {
     let source = b"= Source\xf0\x9f\x98\x80\r\n:source-language: rust\r\n\r\n[,python]\r\n----\r\nprint(\"\xf0\x9f\x98\x80\")\r\n----\r\n\r\n----\r\nfn main() {}\r\n----\r\n\r\n[listing]\r\n----\r\nplain\r\n----\r\n";
     let expected = b"<h1 class=\"document-title\" id=\"_source\">Source\xf0\x9f\x98\x80</h1>\n<pre><code class=\"language-python\">print(&#34;\xf0\x9f\x98\x80&#34;)\r\n</code></pre>\n<pre><code class=\"language-rust\">fn main() {}\r\n</code></pre>\n<pre>plain\r\n</pre>\n";
