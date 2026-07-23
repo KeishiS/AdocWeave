@@ -1,0 +1,32 @@
+= v0.2.0 release readinessと契約凍結
+:status: planned
+:depends-on: 128
+
+== 目的
+
+`v0.1.0`以後にmainへ統合した標準AsciiDoc互換性拡張と公開成果物の差分を監査し、
+`v0.2.0-rc.N`から`v0.2.0` stableまでを同一のrelease trainとして受け入れる。
+
+== 判断
+
+source block短縮記法、list表示属性、bibliography section、TOCおよびsection番号は利用者可視の
+機能追加である。`0.y.z`期間の方針に従い、次版はpatchではなくminorの`0.2.0`とする。
+
+公開HTML、projection、conformance、WASM応答または公開Rust APIに互換性のない変更が含まれる場合は、
+`CONTRACT_VERSION`を一度だけ更新し、manifest、fixture、互換性文書およびmigration noteを同じ変更で同期する。
+
+== 作業
+
+* `v0.1.0`からの利用者可視差分と契約version更新の要否を監査する。
+* workspace、Zed、browser、release manifestおよび配布設定を`0.2.0-rc.1`へ同期する。
+* mainのcandidate成功後に`v0.2.0-rc.1`を公開し、9 asset、checksum、attestation、CLI、LSP、browser、ZedおよびNixを受け入れる。
+* RC公開後は機能追加を停止し、少なくとも一週間かつ二回の独立した受け入れ確認を完了する。
+* blocker修正が公開契約を変更する場合は新しいRCを公開する。RCと同一source commitだけを`v0.2.0` stableへ昇格する。
+
+== 検証
+
+* `cargo make release-gate`
+* `node tools/release-contract.mjs --tag=v0.2.0-rc.1`
+* tag workflowの必須job、公開assetの完全性検証およびclean環境の導入E2E
+* Linux x86-64／ARM64、browser Worker、NixOSおよびZedの受け入れ記録
+

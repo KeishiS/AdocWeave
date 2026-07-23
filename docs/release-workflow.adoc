@@ -47,6 +47,19 @@ read-only経路だけを通り、Environmentとpublish jobへ到達しない。
 
 == Release candidateの確認
 
+=== Release trainの開始判断
+
+`0.y.z`期間は、利用者可視の不具合修正だけをpatch releaseに含める。新しい構文、HTML・projection・
+WASM応答の意味変更、公開API変更または破壊的変更を含む場合はminor releaseを開始する。
+
+minor releaseのRCを作る前に、前stableからの利用者可視差分と`CONTRACT_VERSION`更新の要否を監査する。
+契約versionを更新する場合は、release manifest、fixture、互換性文書およびmigration noteを同じcommitで
+同期する。package versionだけを理由に契約versionを更新してはならない。
+
+RC公開後は機能追加を停止する。stableへ昇格するには、少なくとも一週間の受け入れ期間と、異なる環境または
+担当者による二回の独立した受け入れ確認を必要とする。blocker修正で公開契約が変わる場合は、既存RCを
+置換せず新しいRC tagを公開し、受け入れ期間をやり直す。
+
 . release対象versionを全componentで一致させ、mainへmergeする。
 . mainの全checkが成功したcommitへ`vX.Y.Z-rc.N` tagを作成してpushする。
 . Environmentの画面でsource commitとcandidateを確認し、publishを承認する。
