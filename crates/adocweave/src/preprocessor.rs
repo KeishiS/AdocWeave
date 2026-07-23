@@ -104,6 +104,28 @@ pub struct Directive {
     pub resource_source_id: Option<SourceId>,
 }
 
+/// A non-fatal preprocessing event with a stable source range.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreprocessNotice {
+    pub kind: PreprocessNoticeKind,
+    pub source_id: Option<SourceId>,
+    pub range: TextRange,
+    pub target: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreprocessNoticeKind {
+    OptionalResourceMissing,
+}
+
+impl PreprocessNoticeKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OptionalResourceMissing => "optional-resource-missing",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceOrigin {
     pub source_id: Option<SourceId>,
@@ -187,6 +209,7 @@ pub struct PreprocessedDocument {
     pub source: String,
     source_map: Vec<SourceMapSegment>,
     pub directives: Vec<Directive>,
+    pub notices: Vec<PreprocessNotice>,
 }
 
 impl PreprocessedDocument {
@@ -194,6 +217,7 @@ impl PreprocessedDocument {
         source: String,
         source_map: Vec<SourceMapSegment>,
         directives: Vec<Directive>,
+        notices: Vec<PreprocessNotice>,
     ) -> Result<Self, SourceMapInvariantError> {
         let source_end = TextSize::new(source.len()).map_err(|_| SourceMapInvariantError)?;
         let mut previous_end = TextSize::ZERO;
@@ -209,6 +233,7 @@ impl PreprocessedDocument {
             source,
             source_map,
             directives,
+            notices,
         })
     }
 
@@ -679,6 +704,7 @@ pub fn preprocess(
         output: String::new(),
         source_map: Vec::new(),
         directives: Vec::new(),
+        notices: Vec::new(),
         active: Vec::new(),
         expanded_nodes: 0,
         includes: 0,
@@ -689,14 +715,19 @@ pub fn preprocess(
         0,
         options.base_uri.as_deref(),
     )?;
-    PreprocessedDocument::from_parts(context.output, context.source_map, context.directives)
-        .map_err(|_| PreprocessError {
-            kind: PreprocessErrorKind::InternalInvariant,
-            source_id: options.source_id.clone(),
-            range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
-            message: "source map segments are unsorted, overlapping, or outside expanded source"
-                .to_owned(),
-        })
+    PreprocessedDocument::from_parts(
+        context.output,
+        context.source_map,
+        context.directives,
+        context.notices,
+    )
+    .map_err(|_| PreprocessError {
+        kind: PreprocessErrorKind::InternalInvariant,
+        source_id: options.source_id.clone(),
+        range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
+        message: "source map segments are unsorted, overlapping, or outside expanded source"
+            .to_owned(),
+    })
 }
 
 struct Context<'a> {
@@ -705,6 +736,7 @@ struct Context<'a> {
     output: String,
     source_map: Vec<SourceMapSegment>,
     directives: Vec<Directive>,
+    notices: Vec<PreprocessNotice>,
     active: Vec<String>,
     expanded_nodes: u64,
     includes: u64,
@@ -778,34 +810,52 @@ impl Context<'_> {
                 "include cycle detected",
             ));
         }
-        let document = self.snapshot.get(&target).ok_or_else(|| {
+        let attributes = parse_attributes(&include.attributes).map_err(|message| {
             error(
-                PreprocessErrorKind::MissingResource,
+                PreprocessErrorKind::InvalidDirective,
                 source_id.clone(),
                 range,
-                format!("resource snapshot does not contain {target}"),
+                message,
             )
         })?;
-        self.directives.push(Directive {
-            kind: DirectiveKind::Include,
-            source_id: source_id.clone(),
-            range,
-            target: target.clone(),
-            target_range: relative_range(range, include.target_start, include.target_end),
-            resource_source_id: Some(document.source_id.clone()),
-        });
-        let attributes = parse_attributes(&include.attributes);
+        let optional = attributes.contains_key("optional");
         if let Some(encoding) = attributes.get("encoding")
             && !encoding.eq_ignore_ascii_case("utf-8")
             && !encoding.eq_ignore_ascii_case("utf8")
         {
             return Err(error(
                 PreprocessErrorKind::UnsupportedEncoding,
-                Some(document.source_id.clone()),
-                zero_range(),
+                source_id,
+                range,
                 "resource snapshots contain UTF-8 text only",
             ));
         }
+        let document = self.snapshot.get(&target);
+        self.directives.push(Directive {
+            kind: DirectiveKind::Include,
+            source_id: source_id.clone(),
+            range,
+            target: target.clone(),
+            target_range: relative_range(range, include.target_start, include.target_end),
+            resource_source_id: document.map(|document| document.source_id.clone()),
+        });
+        let Some(document) = document else {
+            if optional {
+                self.notices.push(PreprocessNotice {
+                    kind: PreprocessNoticeKind::OptionalResourceMissing,
+                    source_id,
+                    range,
+                    target,
+                });
+                return Ok(());
+            }
+            return Err(error(
+                PreprocessErrorKind::MissingResource,
+                source_id,
+                range,
+                format!("resource snapshot does not contain {target}"),
+            ));
+        };
         let selected = select_lines(&document.source, &attributes);
         let transformed = transform_lines(selected, &attributes);
         let nested_base = target_base(&target);
@@ -1147,17 +1197,56 @@ fn expand_attributes(value: &str, attributes: &BTreeMap<String, String>) -> Stri
     output
 }
 
-fn parse_attributes(value: &str) -> BTreeMap<String, String> {
-    value
-        .split(',')
-        .filter_map(|item| item.trim().split_once('='))
-        .map(|(name, value)| {
-            (
-                name.trim().to_owned(),
-                value.trim().trim_matches(['\'', '"']).to_owned(),
-            )
-        })
-        .collect()
+fn parse_attributes(value: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut fields = Vec::new();
+    let mut start = 0;
+    let mut quote = None;
+    for (index, character) in value.char_indices() {
+        match quote {
+            Some(active) if character == active => quote = None,
+            Some(_) => {}
+            None if matches!(character, '\'' | '"') => quote = Some(character),
+            None if character == ',' => {
+                fields.push(&value[start..index]);
+                start = index + 1;
+            }
+            None => {}
+        }
+    }
+    if quote.is_some() {
+        return Err("include attribute list has an unclosed quote".to_owned());
+    }
+    fields.push(&value[start..]);
+    let mut attributes = BTreeMap::new();
+    for field in fields {
+        let field = field.trim();
+        if field.is_empty() {
+            continue;
+        }
+        if let Some((name, value)) = field.split_once('=') {
+            let name = name.trim();
+            let value = value.trim();
+            if name.is_empty() {
+                return Err("include attribute name is empty".to_owned());
+            }
+            let quoted = value
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+                .or_else(|| {
+                    value
+                        .strip_prefix('"')
+                        .and_then(|value| value.strip_suffix('"'))
+                });
+            if (value.starts_with(['\'', '"']) || value.ends_with(['\'', '"'])) && quoted.is_none()
+            {
+                return Err("include attribute quote is malformed".to_owned());
+            }
+            attributes.insert(name.to_owned(), quoted.unwrap_or(value).to_owned());
+        } else {
+            attributes.insert(field.to_owned(), String::new());
+        }
+    }
+    Ok(attributes)
 }
 
 #[derive(Clone)]
@@ -1393,6 +1482,57 @@ mod tests {
     }
 
     #[test]
+    fn include_attributes_are_quote_aware_and_optional_missing_resources_are_notices() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("part"),
+                source: "// tag::one[]\none\n// end::one[]\n// tag::two[]\ntwo\n// end::two[]\n"
+                    .to_owned(),
+            },
+        );
+
+        let document = preprocess(
+            "include::part.adoc[tags=\"one,two\"]\ninclude::missing.adoc[optional]\n",
+            &snapshot,
+            &PreprocessOptions::default(),
+        )
+        .expect("preprocess");
+
+        assert_eq!(document.source, "one\ntwo\n");
+        assert_eq!(document.directives.len(), 2);
+        assert_eq!(document.directives[1].resource_source_id, None);
+        assert_eq!(document.notices.len(), 1);
+        assert_eq!(
+            document.notices[0].kind,
+            PreprocessNoticeKind::OptionalResourceMissing
+        );
+        assert_eq!(document.notices[0].target, "missing.adoc");
+
+        assert_eq!(
+            preprocess(
+                "include::missing.adoc[optional,encoding=shift_jis]\n",
+                &ResourceSnapshot::default(),
+                &PreprocessOptions::default(),
+            )
+            .expect_err("optional must not suppress encoding failures")
+            .kind,
+            PreprocessErrorKind::UnsupportedEncoding
+        );
+        assert_eq!(
+            preprocess(
+                "include::../missing.adoc[optional]\n",
+                &ResourceSnapshot::default(),
+                &PreprocessOptions::default(),
+            )
+            .expect_err("optional must not suppress unsafe target failures")
+            .kind,
+            PreprocessErrorKind::UnsafeTarget
+        );
+    }
+
+    #[test]
     fn cycles_limits_unsafe_targets_and_encoding_fail_before_parsing() {
         let mut snapshot = ResourceSnapshot::default();
         snapshot.insert(
@@ -1540,6 +1680,7 @@ mod tests {
                 },
             ],
             Vec::new(),
+            Vec::new(),
         )
         .expect("valid source map");
 
@@ -1662,6 +1803,7 @@ mod tests {
                 "abcd".to_owned(),
                 vec![segment(2, 4), segment(1, 2)],
                 Vec::new(),
+                Vec::new(),
             )
             .is_err()
         );
@@ -1670,12 +1812,18 @@ mod tests {
                 "abcd".to_owned(),
                 vec![segment(0, 3), segment(2, 4)],
                 Vec::new(),
+                Vec::new(),
             )
             .is_err()
         );
         assert!(
-            PreprocessedDocument::from_parts("abcd".to_owned(), vec![segment(0, 5)], Vec::new(),)
-                .is_err()
+            PreprocessedDocument::from_parts(
+                "abcd".to_owned(),
+                vec![segment(0, 5)],
+                Vec::new(),
+                Vec::new(),
+            )
+            .is_err()
         );
     }
 

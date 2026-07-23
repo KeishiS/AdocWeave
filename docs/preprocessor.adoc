@@ -27,7 +27,9 @@ native CLIとLanguage Serverは、取得前のpath検証、bounded UTF-8 read、
 * 行頭のbackslashによるdirectiveのliteral化
 
 include属性は`tag`／`tags`、`lines`、`leveloffset`、`indent`およびUTF-8の`encoding`に対応する。
-属性値の完全なAsciiDoc引用文法、optional include、wildcardおよびURI転送は未対応である。
+属性listはsingle／double quote内のcommaを区切りとせず、`tags="one,two"`等を一度だけ解析する。
+`optional`はsnapshotにtargetがない場合だけ空展開し、`optional-resource-missing` noticeとresource source IDを持たない
+directiveを返す。unsafe target、cycle、encoding、構文エラーおよび各上限は`optional`でも失敗する。wildcardとURI転送は未対応である。
 
 == 安全性と上限
 

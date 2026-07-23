@@ -1,0 +1,19 @@
+= v0.5.0への移行
+
+v0.5.0はblock title／table captionを解決済みinline presentationへ移行し、quote-aware include属性と
+明示`optional` includeを追加する。公開契約は3から4へ更新する。
+
+== 破壊的変更
+
+* `BlockMetadata.title`はraw metadata valueではなく、source値、range、解決済みinline列を持つ`BlockTitle`である。
+* table captionとadmonition titleはliteral textではなく、属性展開・inline書式・安全なmacro出力を適用する。
+* `PreprocessedDocument`はnon-fatalな`notices`を公開し、missing resourceの`optional` includeを
+  `optional-resource-missing`として報告する。
+* WASM、browser、CLI、LSPおよびhost adapterはcontract version 4だけを受理する。
+
+== 更新手順
+
+. hostの`CONTRACT_VERSION`照合値を4へ更新する。
+. block titleをraw HTMLとして扱う後処理を削除し、AdocWeaveのHTMLまたはprojectionをそのまま利用する。
+. includeの不在を許容する必要がある箇所だけ`optional`を明示し、noticeを利用者へ表示するか記録する。
+. 同じ`v0.5.0` ReleaseのCLI、LSP、browser archiveおよびZed archiveを同時に導入する。

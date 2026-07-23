@@ -3,8 +3,8 @@
 use crate::attributes::DocumentAttribute;
 use crate::inline::Inline;
 use crate::parser::{
-    AstBlock, AstDocument, BlockMetadata, ElementAttribute, ExplicitAnchor, ListBlock, ListItem,
-    BlockTitle, MetadataValue,
+    AstBlock, AstDocument, BlockMetadata, BlockTitle, ElementAttribute, ExplicitAnchor, ListBlock,
+    ListItem, MetadataValue,
 };
 
 #[derive(Clone, Copy, Debug)]

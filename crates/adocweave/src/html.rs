@@ -463,7 +463,13 @@ fn render_block(
         }
         AstBlock::Paragraph(paragraph) => {
             if let Some(admonition) = &paragraph.admonition {
-                render_admonition_start(output, admonition, explicit_id, &paragraph.metadata, context);
+                render_admonition_start(
+                    output,
+                    admonition,
+                    explicit_id,
+                    &paragraph.metadata,
+                    context,
+                );
                 render_paragraph(output, paragraph, None, context);
                 output.push_str("</div>\n");
             } else {
@@ -2310,7 +2316,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(crate::CONTRACT_VERSION, 3);
+        assert_eq!(crate::CONTRACT_VERSION, 4);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [

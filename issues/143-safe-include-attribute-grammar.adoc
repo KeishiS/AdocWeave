@@ -1,5 +1,5 @@
 = 安全なinclude属性文法とoptional include
-:status: planned
+:status: completed
 :depends-on: 141
 
 == 目的
@@ -19,3 +19,9 @@ host I/Oは本Issueの範囲外とする。
 * optional includeはmissing snapshot resourceだけを安定したnotice付きの空展開にする。
 * native、WASM、LSPが同じsnapshot入力で同じ展開結果・source map・diagnosticを得る。
 * wildcard、暗黙filesystemアクセスおよびnetwork取得を導入しない。
+
+== 実施結果
+
+include属性はquote-awareなparserで一度だけ解析する。`optional`はmissing snapshot resourceだけを
+`optional-resource-missing` notice付きの空展開にし、directiveとsource mapの位置情報を保持する。
+unsafe target、cycle、encoding、構文エラーおよび上限は従来どおり失敗し、wildcardとhost I/Oは追加していない。

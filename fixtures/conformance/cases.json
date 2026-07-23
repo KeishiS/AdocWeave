@@ -1,5 +1,5 @@
 {
-  "contractVersion": 3,
+  "contractVersion": 4,
   "cases": [
     {
       "name": "release-lf",

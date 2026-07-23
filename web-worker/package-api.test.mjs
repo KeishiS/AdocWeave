@@ -56,7 +56,7 @@ test("fallback mode recreates workers and never publishes stale results", async 
   assert.equal(oldWorker.terminated, true);
   oldWorker.publish({ type: "result", version: 1, generation: 1, result: { html: "old" } });
   currentWorker.publish({ type: "result", version: 2, generation: 2, result: {
-    apiVersion: 3, html: "new", diagnostics: [], renderDiagnostics: [], contractVersion: 3,
+    apiVersion: 4, html: "new", diagnostics: [], renderDiagnostics: [], contractVersion: 4,
   } });
   assert.equal(results.length, 1);
   assert.equal(results[0].html, "new");
@@ -95,7 +95,7 @@ test("client rejects a WASM result with a different contract version", async () 
   });
   assert.deepEqual(errors, [{
     code: "unsupported-contract-version",
-    message: "expected contract version 3",
+    message: "expected contract version 4",
     sourceVersion: 1,
     generation: 1,
   }]);

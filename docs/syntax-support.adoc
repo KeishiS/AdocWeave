@@ -3,7 +3,7 @@
 この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
 製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-この対応範囲は`CONTRACT_VERSION = 3`として公開する。version、SemVerおよび再構築条件は
+この対応範囲は`CONTRACT_VERSION = 4`として公開する。version、SemVerおよび再構築条件は
 xref:core-profile.adoc[AdocWeave Core Profile]で定義する。
 実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
 AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
@@ -270,7 +270,8 @@ index termを意味nodeとして扱い、文書catalogへfootnote、bibliography
 |Preprocessor directive
 |部分対応
 |純粋なresource snapshot上でinclude、ifdef、ifndef、ifeval、escape、基本include属性およびsource mapに
-対応。optional include、wildcardおよび完全な属性引用文法は未対応。詳細は
+対応。quote-awareなinclude属性値とmissing resourceだけを空展開する明示`optional` includeに対応。
+wildcardおよびURI転送は未対応。詳細は
 xref:preprocessor.adoc[プリプロセッサとresource snapshot]を参照
 
 |Bibliographyとfootnote

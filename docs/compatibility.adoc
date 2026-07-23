@@ -172,7 +172,8 @@ xref:substitutions.adoc[Core置換モデル]で定義する。
 |includeと条件分岐
 |プリプロセッサディレクティブ
 |不変resource snapshot上のinclude、ifdef、ifndef、ifeval、基本include属性およびsource mapに対応。
-コアはファイルへアクセスせず、optional include、wildcardおよび完全な属性引用文法は未対応
+コアはファイルへアクセスせず、quote-awareな属性値とmissing snapshot resourceだけを空展開する明示`optional` includeに対応。
+wildcardおよびURI転送は未対応
 
 |passthroughとraw出力
 |passthrough機構を定義する

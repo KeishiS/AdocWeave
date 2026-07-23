@@ -11,11 +11,11 @@ xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 [cols="2,1",options="header"]
 |===
 |契約 |現在値
-|公開契約 |3
+|公開契約 |4
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。
-最新版への更新手順はxref:upgrade-0-4.adoc[v0.4.0への移行]を参照する。
+最新版への更新手順はxref:upgrade-0-5.adoc[v0.5.0への移行]を参照する。
 
 == 規範文書
 
