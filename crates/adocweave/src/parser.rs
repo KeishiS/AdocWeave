@@ -95,6 +95,12 @@ impl AstDocument {
         &self.blocks
     }
 
+    pub fn top_level_block(&self, id: crate::presentation::BlockId) -> Option<&AstBlock> {
+        self.index
+            .top_level_ordinal(id)
+            .and_then(|ordinal| self.blocks.get(ordinal))
+    }
+
     pub fn attributes(&self) -> &[DocumentAttribute] {
         &self.attributes
     }

@@ -36,6 +36,7 @@ struct IndexedBlock {
 pub struct DocumentIndex {
     blocks: Vec<IndexedBlock>,
     top_level_blocks: Vec<BlockId>,
+    top_level_ordinals: Vec<Option<usize>>,
 }
 
 impl DocumentIndex {
@@ -73,6 +74,13 @@ impl DocumentIndex {
 
     pub fn top_level_blocks(&self) -> &[BlockId] {
         &self.top_level_blocks
+    }
+
+    pub fn top_level_ordinal(&self, id: BlockId) -> Option<usize> {
+        self.top_level_ordinals
+            .get(id.get() as usize)
+            .copied()
+            .flatten()
     }
 }
 
@@ -274,10 +282,15 @@ pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
         .blocks()
         .iter()
         .map(|block| index_block(block, &mut blocks))
-        .collect();
+        .collect::<Vec<_>>();
+    let mut top_level_ordinals = vec![None; blocks.len()];
+    for (ordinal, id) in top_level_blocks.iter().copied().enumerate() {
+        top_level_ordinals[id.get() as usize] = Some(ordinal);
+    }
     DocumentIndex {
         blocks,
         top_level_blocks,
+        top_level_ordinals,
     }
 }
 
@@ -413,26 +426,31 @@ fn toc_entries(
 
 pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
     let mut nodes = Vec::new();
+    let mut bibliography_level = None;
     for id in document.index().top_level_blocks().iter().copied() {
-        let range = document.index().block_range(id).expect("indexed block");
-        let heading = document.blocks().iter().find_map(|block| {
-            matches!(block, crate::parser::AstBlock::Heading(_))
-                .then_some(block)
-                .filter(|block| block.range() == range)
-        });
-        if heading.is_some() {
-            if document
+        let block = document
+            .top_level_block(id)
+            .expect("indexed top-level block");
+        if let crate::parser::AstBlock::Heading(heading) = block {
+            let level = match heading.kind {
+                crate::parser::HeadingKind::DocumentTitle | crate::parser::HeadingKind::Part => 0,
+                crate::parser::HeadingKind::Section { level }
+                | crate::parser::HeadingKind::Discrete { level } => level,
+            };
+            let bibliography = document
                 .presentation()
-                .bibliography_section_at(range)
-                .is_some()
-            {
+                .bibliography_section_at(heading.range)
+                .is_some();
+            if bibliography {
                 nodes.push(LayoutNode::Generated(
                     GeneratedLayoutNode::BibliographySectionStart(id),
                 ));
-            } else {
+                bibliography_level = Some(level);
+            } else if bibliography_level.is_some_and(|active| level <= active) {
                 nodes.push(LayoutNode::Generated(
                     GeneratedLayoutNode::BibliographySectionEnd,
                 ));
+                bibliography_level = None;
             }
         }
         nodes.push(LayoutNode::Block(id));

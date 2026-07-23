@@ -17,9 +17,9 @@ use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
 /// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 12;
+pub const CORE_API_VERSION: u16 = 13;
 /// Current host-independent syntax and diagnostic behavior profile.
-pub const CORE_PROFILE_VERSION: u16 = 8;
+pub const CORE_PROFILE_VERSION: u16 = 9;
 
 /// A caller-defined, opaque source identity.
 ///

@@ -235,14 +235,8 @@ pub fn render_with_inputs(
                 }
                 continue;
             };
-            let range = document
-                .index()
-                .block_range(*block_id)
-                .expect("layout only contains indexed blocks");
             let block = document
-                .blocks()
-                .iter()
-                .find(|block| block.range() == range)
+                .top_level_block(*block_id)
                 .expect("layout only contains top-level blocks");
             let explicit_id = targets
                 .iter()
@@ -1640,6 +1634,17 @@ mod tests {
 
         assert_eq!(output.matches("class=\"bibliography-backref\"").count(), 1);
         assert!(output.contains("href=\"#_bibliography_ref_"));
+    }
+
+    #[test]
+    fn bibliography_scope_survives_child_sections() {
+        let parsed = parse(
+            "= References\n\n[bibliography]\n== Sources\n\n=== Primary\n\n* bibanchor:ref[] Entry\n\nSee <<ref>>.\n\n== After\n",
+        )
+        .expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default()).html;
+
+        assert_eq!(output.matches("class=\"bibliography-backref\"").count(), 1);
     }
 
     #[test]
