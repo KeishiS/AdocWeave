@@ -24,6 +24,7 @@ export function appendRequiredReleaseNotes(body, tag) {
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${contracts}\n\n` +
     "This release requires consumers to match the listed contract versions. Do not mix CLI, LSP, browser, or Zed assets from different versions.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n` +
+    `- Supported Rust toolchain: ${manifest.rustVersion}, fixed by this release's flake.lock.\n` +
     "- Native binaries are available only for Linux x86-64 and ARM64.\n" +
     "- The Zed extension is installed as a development extension; it is not published to the Zed Extension Gallery.\n" +
     "- Packages are not published to crates.io, npm, or OS package registries. The Nix package is built directly from this repository flake.\n\n" +
