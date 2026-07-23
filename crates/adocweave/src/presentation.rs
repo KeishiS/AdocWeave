@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::attributes::AttributeOperation;
+use crate::attributes::{AttributeOperation, DocumentAttribute};
 use crate::parser::AstDocument;
 use crate::source::TextRange;
 
@@ -90,6 +90,24 @@ impl ResolvedDocumentAttributes {
     pub fn values(&self) -> &BTreeMap<String, String> {
         &self.values
     }
+}
+
+/// Resolve document attribute set/unset operations once in source order.
+pub(crate) fn resolve_document_attributes(
+    attributes: &[DocumentAttribute],
+) -> ResolvedDocumentAttributes {
+    let mut values = BTreeMap::new();
+    for attribute in attributes {
+        match attribute.operation {
+            AttributeOperation::Set => {
+                values.insert(attribute.name.clone(), attribute.raw_value.clone());
+            }
+            AttributeOperation::Unset => {
+                values.remove(&attribute.name);
+            }
+        }
+    }
+    ResolvedDocumentAttributes { values }
 }
 
 /// Document-wide facts that affect presentation but are not backend policy.
@@ -251,32 +269,23 @@ pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
     }
 }
 
-pub(crate) fn build_presentation(document: &AstDocument) -> DocumentPresentation {
-    let mut values = BTreeMap::new();
-    for attribute in document.attributes() {
-        match attribute.operation {
-            AttributeOperation::Set => {
-                values.insert(attribute.name.clone(), attribute.raw_value.clone());
-            }
-            AttributeOperation::Unset => {
-                values.remove(&attribute.name);
-            }
-        }
-    }
-    let source_language = values
+pub(crate) fn build_presentation(
+    document: &AstDocument,
+    attributes: ResolvedDocumentAttributes,
+) -> DocumentPresentation {
+    let source_language = attributes
         .get("source-language")
-        .map(String::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
     let toc_policy = TocPolicy {
-        enabled: values.contains_key("toc"),
-        max_level: values
+        enabled: attributes.get("toc").is_some(),
+        max_level: attributes
             .get("toclevels")
             .and_then(|value| value.trim().parse::<u8>().ok())
             .filter(|level| (1..=5).contains(level)),
     };
-    let section_numbers = values.contains_key("sectnums");
+    let section_numbers = attributes.get("sectnums").is_some();
     let mut counters = [0_u32; 6];
     let headings = document
         .structure()
@@ -317,7 +326,7 @@ pub(crate) fn build_presentation(document: &AstDocument) -> DocumentPresentation
         .collect::<Vec<_>>();
     let toc = toc_entries(document.structure().roots(), &headings);
     DocumentPresentation {
-        attributes: ResolvedDocumentAttributes { values },
+        attributes,
         source_language,
         toc_policy,
         section_numbers,

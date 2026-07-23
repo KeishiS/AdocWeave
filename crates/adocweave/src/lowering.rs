@@ -1,8 +1,8 @@
 //! Semantic lowering from parser facts into the output-independent document model.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-use crate::attributes::{AttributeOperation, DocumentAttribute};
+use crate::attributes::DocumentAttribute;
 use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
 use crate::substitution::{AttributeEvaluator, AttributeExpansionLimits};
@@ -17,36 +17,28 @@ pub(crate) struct ParsedFacts {
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     configure_tables(&mut facts.blocks);
-    let source_language = source_language(&facts.attributes);
+    let resolved_attributes = crate::presentation::resolve_document_attributes(&facts.attributes);
+    let source_language = resolved_attributes
+        .get("source-language")
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     facts.blocks = normalize_verbatim_blocks(facts.blocks, source_language.as_deref());
     attach_anchors(&mut facts.anchors, &facts.blocks);
     facts.header.doctype = document_type(&facts.attributes);
     let mut document =
         AstDocument::new(facts.blocks, facts.attributes, facts.anchors, facts.header);
     document.normalize_heading_kinds();
-    resolve_document_attributes(&mut document, facts.attribute_expansion_limits);
+    resolve_inline_attributes(
+        &mut document,
+        &resolved_attributes,
+        facts.attribute_expansion_limits,
+    );
     document.identifiers = crate::document::build_identifiers(&document);
     document.structure = crate::structure::build(&document);
     document.index = crate::presentation::build_index(&document);
-    document.presentation = crate::presentation::build_presentation(&document);
+    document.presentation = crate::presentation::build_presentation(&document, resolved_attributes);
     document.layout = crate::presentation::build_layout(&document);
     document
-}
-
-fn source_language(attributes: &[DocumentAttribute]) -> Option<String> {
-    let mut language = None;
-    for attribute in attributes {
-        if attribute.name != "source-language" {
-            continue;
-        }
-        match attribute.operation {
-            AttributeOperation::Set if !attribute.raw_value.trim().is_empty() => {
-                language = Some(attribute.raw_value.trim().to_owned());
-            }
-            AttributeOperation::Set | AttributeOperation::Unset => language = None,
-        }
-    }
-    language
 }
 
 fn normalize_verbatim_blocks(
@@ -294,20 +286,12 @@ fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
     }
 }
 
-fn resolve_document_attributes(document: &mut AstDocument, limits: AttributeExpansionLimits) {
-    let mut attributes = BTreeMap::new();
-    for attribute in document.attributes() {
-        match &attribute.operation {
-            AttributeOperation::Set => {
-                attributes.insert(attribute.name.clone(), attribute.raw_value.clone());
-            }
-            AttributeOperation::Unset => {
-                attributes.remove(&attribute.name);
-            }
-        }
-    }
-
-    let evaluator = AttributeEvaluator::new(&attributes, limits);
+fn resolve_inline_attributes(
+    document: &mut AstDocument,
+    attributes: &crate::presentation::ResolvedDocumentAttributes,
+    limits: AttributeExpansionLimits,
+) {
+    let evaluator = AttributeEvaluator::new(attributes.values(), limits);
     document.visit_inline_sequences_mut(|inlines| resolve_inlines(inlines, &evaluator));
 }
 
