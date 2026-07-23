@@ -12,6 +12,37 @@ use crate::render::RenderInputs;
 use crate::source::TextRange;
 use crate::{Analysis, CONTRACT_VERSION};
 
+/// Returns an inline source fixture from the shared cross-runtime manifest.
+/// File-backed fixtures deliberately return `None`: consumers should retain
+/// compile-time inclusion for those files, while inline cases can be reused
+/// without duplicating source text in every test suite.
+#[doc(hidden)]
+pub fn fixture_source(name: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FixtureCase {
+        name: String,
+        source: Option<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FixtureManifest {
+        contract_version: u16,
+        cases: Vec<FixtureCase>,
+    }
+
+    let manifest: FixtureManifest =
+        serde_json::from_str(include_str!("../../../fixtures/conformance/cases.json"))
+            .expect("repository conformance fixture manifest is valid");
+    assert_eq!(manifest.contract_version, CONTRACT_VERSION);
+    manifest
+        .cases
+        .into_iter()
+        .find(|case| case.name == name)
+        .and_then(|case| case.source)
+}
+
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
 /// Strings are used at this boundary so native, WASM, and non-Rust hosts compare

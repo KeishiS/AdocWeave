@@ -217,6 +217,20 @@ fn core_profile_fixture_is_shared_by_cli_conversion_and_symbols() {
 }
 
 #[test]
+fn bibliography_consumer_fixture_is_shared_by_cli() {
+    let source = adocweave::conformance::fixture_source("bibliography-consumer-coverage")
+        .expect("shared inline conformance fixture");
+
+    let checked = run_with_stdin(&["check", "--json", "-"], source.as_bytes());
+    let symbols = run_with_stdin(&["symbols", "-"], source.as_bytes());
+
+    assert!(checked.status.success());
+    assert!(checked.stderr.is_empty());
+    assert!(symbols.status.success());
+    assert!(String::from_utf8_lossy(&symbols.stdout).contains("References"));
+}
+
+#[test]
 fn source_block_shorthand_default_and_listing_are_consistent_on_crlf_input() {
     let source = b"= Source\xf0\x9f\x98\x80\r\n:source-language: rust\r\n\r\n[,python]\r\n----\r\nprint(\"\xf0\x9f\x98\x80\")\r\n----\r\n\r\n----\r\nfn main() {}\r\n----\r\n\r\n[listing]\r\n----\r\nplain\r\n----\r\n";
     let expected = b"<h1 class=\"document-title\" id=\"_source\">Source\xf0\x9f\x98\x80</h1>\n<pre><code class=\"language-python\">print(&#34;\xf0\x9f\x98\x80&#34;)\r\n</code></pre>\n<pre><code class=\"language-rust\">fn main() {}\r\n</code></pre>\n<pre>plain\r\n</pre>\n";

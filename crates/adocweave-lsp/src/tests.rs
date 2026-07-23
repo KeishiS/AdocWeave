@@ -1099,10 +1099,11 @@ fn release_fixture_is_accepted_by_all_existing_features() {
 
 #[test]
 fn conformance_fixture_is_reused_by_editor_projections() {
-    let source = include_str!("../../../fixtures/conformance/full.adoc");
+    let source = adocweave::conformance::fixture_source("bibliography-consumer-coverage")
+        .expect("shared inline conformance fixture");
     let mut service = LanguageService::default();
     let document_uri = uri("file:///conformance.adoc");
-    open(&mut service, document_uri.as_str(), 1, source);
+    open(&mut service, document_uri.as_str(), 1, &source);
 
     let symbols = service
         .document_symbols(&document_uri)
@@ -1110,17 +1111,12 @@ fn conformance_fixture_is_reused_by_editor_projections() {
         .expect("response");
     let symbols = serde_json::to_value(symbols).expect("serialize symbols");
     assert_eq!(symbols.as_array().expect("symbol array").len(), 1);
-    assert_eq!(symbols[0]["name"], "統合文書");
+    assert_eq!(symbols[0]["name"], "References");
 
     let links = service
         .document_links(&document_uri)
         .expect("document links")
         .expect("response");
-    assert!(links.iter().any(|link| {
-        link.target
-            .as_ref()
-            .is_some_and(|target| target.as_str() == "https://example.com/doc")
-    }));
     assert_eq!(links.len(), 3);
 
     let tokens = service
