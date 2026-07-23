@@ -56,10 +56,48 @@ test("fallback mode recreates workers and never publishes stale results", async 
   assert.equal(oldWorker.terminated, true);
   oldWorker.publish({ type: "result", version: 1, generation: 1, result: { html: "old" } });
   currentWorker.publish({ type: "result", version: 2, generation: 2, result: {
-    html: "new", diagnostics: [], renderDiagnostics: [], contractVersion: 1,
+    apiVersion: 1, html: "new", diagnostics: [], renderDiagnostics: [], contractVersion: 1,
   } });
   assert.equal(results.length, 1);
   assert.equal(results[0].html, "new");
   assert.equal(results[0].sourceVersion, 2);
+  client.dispose();
+});
+
+test("client rejects a WASM result with a different contract version", async () => {
+  const errors = [];
+  const workers = [];
+  class FakeWorker {
+    listeners = new Map();
+    constructor() { workers.push(this); }
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({ data: { type: "ready" } }));
+      }
+      this.lastMessage = message;
+    }
+    terminate() {}
+    publish(data) { this.listeners.get("message")?.({ data }); }
+  }
+  const client = new AdocWeaveClient({
+    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+    Worker: FakeWorker, sharedCancellation: false,
+    onError: (error) => errors.push(error),
+  });
+  client.update({ version: 1, source: "text" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  workers.at(-1).publish({
+    type: "result",
+    version: 1,
+    generation: 1,
+    result: { apiVersion: 2 },
+  });
+  assert.deepEqual(errors, [{
+    code: "unsupported-contract-version",
+    message: "expected contract version 1",
+    sourceVersion: 1,
+    generation: 1,
+  }]);
   client.dispose();
 });

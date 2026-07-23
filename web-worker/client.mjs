@@ -102,13 +102,23 @@ export class AdocWeaveClient {
         if (data?.type === "ready") {
           resolve();
         } else if (data?.type === "result" && data.generation === this.#generation) {
+          const contractVersion = verifiedContractVersion(data.result);
+          if (contractVersion === null) {
+            this.#options.onError({
+              code: "unsupported-contract-version",
+              message: `expected contract version ${CONTRACT_VERSION}`,
+              sourceVersion: data.version,
+              generation: data.generation,
+            });
+            return;
+          }
           this.#options.onResult({
             html: data.result.html,
             diagnostics: data.result.diagnostics,
             renderDiagnostics: data.result.renderDiagnostics,
             sourceVersion: data.version,
             generation: data.generation,
-            contractVersion: CONTRACT_VERSION,
+            contractVersion,
             result: data.result,
           });
         } else if (data?.type === "error" && data.generation === this.#generation) {
@@ -153,6 +163,10 @@ export class AdocWeaveClient {
   #assertActive() {
     if (this.#disposed) throw new Error("AdocWeaveClient is disposed");
   }
+}
+
+function verifiedContractVersion(result) {
+  return result?.apiVersion === CONTRACT_VERSION ? result.apiVersion : null;
 }
 
 export { AdocWeaveClient as AdocWeaveWorkerClient };
