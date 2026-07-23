@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use adocweave::preprocessor::{AnalysisProjection, PreprocessedDocument};
-use adocweave::source::TextRange;
+use adocweave::preprocess::{AnalysisProjection, PreprocessedDocument};
+use adocweave::text::TextRange;
 use adocweave::{
     Analysis, AnalysisRequest, AnalysisResult, CancellationCheck, CancellationToken,
     DocumentRevision, ParseOptions, SourceId,

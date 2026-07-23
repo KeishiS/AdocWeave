@@ -14,6 +14,10 @@ AdocWeaveは標準AsciiDocの解析コア、出力バックエンド、ホスト
             │    └─ UTF-8／UTF-16位置変換
             ├─ lossless syntax tree
             ├─ semantic AST
+            │    └─ 単一のResolvedDocument
+            │         ├─ identifier・block index
+            │         ├─ section structure・presentation・layout
+            │         └─ footnote・bibliography・index catalog
             ├─ Diagnostics
             ├─ ReferenceTarget
             └─ ASTから導出するsemantic query
@@ -31,6 +35,11 @@ AdocWeaveは標準AsciiDocの解析コア、出力バックエンド、ホスト
 所有する。reference、macroおよびresource queryはASTを唯一の正本として導出し、別の深い複製索引を
 保持しない。同じ`Analysis`に含まれる値は、すべて同じ文書版と`ParseOptions`から
 生成される。
+
+`AstDocument`の文書全体にわたる派生情報は、一つのimmutableな`ResolvedDocument`が所有する。
+構築器はraw semantic blockが完成した後にidentifier、section structure、block index、
+presentation、layoutおよびcatalogを依存順に構築する。各段階の依存値は明示引数で渡し、
+既定値を入れた部分完成済み`AstDocument`のgetterから次段階を構築してはならない。
 
 CLI、Formatter、HTMLバックエンドおよびLanguage Serverは、既存の`Analysis`を
 再利用しなければならない。各機能がソースを再解析したり、独自の行索引を構築したり
@@ -184,6 +193,10 @@ M9完了時の設計レビューにより、今後の変更では次を維持す
 
 大きなmoduleの行数だけを理由に層を増やさない。分割時は、構文意味、出力、protocol変換、
 実行制御またはホストI/Oという責務境界に沿い、同じASTを別表現へ複製しない。
+
+公開Rust APIはcrate rootの解析入口と、`semantic`、`output`、`preprocess`、`resolution`、
+`text`の用途別facadeに限定する。CLI command dispatch、byte decoding、標準出力形式の選択および
+出力byte上限の適用はhost責務であり、coreに一括`process` APIを持たない。
 
 Issue 052から058の再設計では、追加で次を目標不変条件とする。
 

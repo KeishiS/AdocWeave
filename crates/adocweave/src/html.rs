@@ -648,7 +648,15 @@ fn render_delimited(
             output.push_str("</pre>\n");
         }
         crate::parser::DelimitedContent::Table(table) => {
-            render_table(output, table, explicit_id, policy, context, scope);
+            render_table(
+                output,
+                table,
+                &block.metadata,
+                explicit_id,
+                policy,
+                context,
+                scope,
+            );
         }
         crate::parser::DelimitedContent::Compound(_) => {
             render_delimited_children(output, block, policy, context, scope);
@@ -725,6 +733,7 @@ fn render_admonition_start(
 fn render_table(
     output: &mut String,
     table: &crate::table::Table,
+    metadata: &crate::parser::BlockMetadata,
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
@@ -764,7 +773,7 @@ fn render_table(
         output.push_str("%\"");
     }
     output.push_str(">\n");
-    if let Some(caption) = &table.presentation.caption {
+    if let Some(caption) = &metadata.title {
         output.push_str("<caption>");
         render_inlines(output, &caption.inlines, context);
         output.push_str("</caption>\n");
@@ -2316,7 +2325,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(crate::CONTRACT_VERSION, 4);
+        assert_eq!(crate::CONTRACT_VERSION, 5);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [

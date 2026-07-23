@@ -1,10 +1,10 @@
-use adocweave::document::{generate_heading_ids, reference_targets};
-use adocweave::formatter::{FormatConfig, format_analysis};
-use adocweave::html::{RenderPolicy, render};
-use adocweave::projection::{project, searchable_text};
-use adocweave::reference::ReferenceKey;
-use adocweave::source::{PositionEncoding, SourceDocument, TextSize};
-use adocweave::url::{UrlContext, UrlDecision, UrlPolicy};
+use adocweave::output::formatter::{FormatConfig, format_analysis};
+use adocweave::output::html::{RenderPolicy, render};
+use adocweave::output::projection::{project, searchable_text};
+use adocweave::resolution::ReferenceKey;
+use adocweave::resolution::{UrlContext, UrlDecision, UrlPolicy};
+use adocweave::semantic::{generate_heading_ids, reference_targets};
+use adocweave::text::{PositionEncoding, SourceDocument, TextSize};
 use adocweave::{Engine, ParseOptions};
 
 fn corpus() -> Vec<String> {
@@ -123,8 +123,8 @@ fn renderer_and_projections_are_deterministic_for_generated_input() {
         let second_html = render(analysis.ast(), &RenderPolicy::default());
         assert_eq!(first_html, second_html);
         assert_eq!(
-            project(&analysis, &adocweave::render::RenderInputs::default()),
-            project(&analysis, &adocweave::render::RenderInputs::default())
+            project(&analysis, &adocweave::resolution::RenderInputs::default()),
+            project(&analysis, &adocweave::resolution::RenderInputs::default())
         );
         assert_eq!(searchable_text(&analysis), searchable_text(&analysis));
         assert!(first_html.html.len() <= source.len().saturating_mul(32).max(64));

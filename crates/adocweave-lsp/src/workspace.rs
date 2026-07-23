@@ -8,7 +8,7 @@ use std::{
 };
 
 use adocweave::SourceId;
-use adocweave::preprocessor::{
+use adocweave::preprocess::{
     PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode, discover_includes,
 };
 use adocweave_host::{DependencyGraph, LocalResourcePolicy, ResourceBudget, ResourceLimits};

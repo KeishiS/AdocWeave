@@ -1,0 +1,35 @@
+= Core facadeと派生文書モデルの単一化
+:status: completed
+:depends-on: 143
+
+== 目的
+
+後方互換layerを維持せず、coreに残るCLI用一括処理API、文書派生状態の分散所有、
+table captionの複製および過大なroot module公開面を削除する。
+
+== 設計判断
+
+解析の正規入口は`Engine::analyze`と所有型`Analysis`だけにする。CLIはbyte decoding、command dispatch、
+output選択およびoutput byte上限を所有する。文書全体にわたるidentifier、structure、block index、
+presentation、layoutおよびcatalogは一つのimmutableな`ResolvedDocument`が所有し、構築時の依存値を
+明示引数で受け取る。table titleは`BlockMetadata.title`だけを正本とする。
+
+Rustの公開面はcrate rootの解析入口と、`semantic`、`output`、`preprocess`、`resolution`および`text`の
+用途別facadeに限定する。旧module pathや変換adapterは残さない。
+
+== 完了条件
+
+* `Operation`、`ProcessError`、`ProcessConfig`、`process`および`process_check`がcoreから削除される。
+* CLI、fuzz targetおよびsecurity testが`Engine`と個別backendを直接利用する。
+* `AstDocument`が個別の派生fieldを持たず、一つの`ResolvedDocument`だけを所有する。
+* 派生モデル構築中に部分完成したdocument getterを参照しない。
+* `TablePresentation`がcaptionを複製せず、rendererが親block metadataを参照する。
+* workspace consumerが用途別facadeへ移行し、旧root moduleを公開しない。
+* `CONTRACT_VERSION`、conformance fixtureおよびv0.5.0移行文書を同期する。
+
+== 実施結果
+
+coreの一括処理APIと未使用のexecution observation型を削除し、CLIへ処理構成を移した。
+`ResolvedDocument`が全派生viewを依存順に一度だけ構築・所有し、catalogも同じ構築境界へ統合した。
+caption cloneを廃止してblock metadataを正本とし、workspace内の全consumerを用途別facadeへ移行した。
+公開契約versionは5へ更新した。

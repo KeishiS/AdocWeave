@@ -471,10 +471,5 @@ pub struct AstDocument {
     pub(crate) attributes: Vec<DocumentAttribute>,
     pub(crate) anchors: Vec<ExplicitAnchor>,
     pub(crate) header: DocumentHeader,
-    pub(crate) catalogs: crate::catalog::DocumentCatalogs,
-    pub(crate) identifiers: crate::document::DocumentIdentifiers,
-    pub(crate) structure: crate::structure::DocumentStructure,
-    pub(crate) index: crate::presentation::DocumentIndex,
-    pub(crate) presentation: crate::presentation::DocumentPresentation,
-    pub(crate) layout: crate::presentation::DocumentLayout,
+    pub(crate) resolved: crate::resolved::ResolvedDocument,
 }

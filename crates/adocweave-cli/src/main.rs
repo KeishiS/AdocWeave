@@ -6,9 +6,12 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use adocweave::preprocessor::{PreprocessedAnalysis, ProjectionLimits};
-use adocweave::source::{PositionEncoding, SourceDocument};
-use adocweave::{CheckOutput, Operation, process, process_check};
+use adocweave::output::diagnostics as diagnostic;
+use adocweave::output::formatter::{FormatConfig, format_analysis};
+use adocweave::output::html::{RenderPolicy, render};
+use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits};
+use adocweave::text::{PositionEncoding, SourceDocument};
+use adocweave::{Engine, ParseError, ParseOptions};
 
 mod local_include;
 
@@ -46,7 +49,15 @@ enum CliError {
         source: io::Error,
     },
     Write(io::Error),
-    Process(adocweave::ProcessError),
+    InvalidUtf8 {
+        valid_up_to: usize,
+    },
+    Analysis(ParseError),
+    Position(adocweave::text::PositionError),
+    OutputLimit {
+        limit: u32,
+        actual: u64,
+    },
     Include(local_include::LocalIncludeError),
     FormattingRequired,
 }
@@ -60,7 +71,18 @@ impl fmt::Display for CliError {
                 source,
             } => write!(formatter, "could not read {source_name}: {source}"),
             Self::Write(source) => write!(formatter, "could not write output: {source}"),
-            Self::Process(source) => source.fmt(formatter),
+            Self::InvalidUtf8 { valid_up_to } => write!(
+                formatter,
+                "input is not valid UTF-8 (invalid byte starts at offset {valid_up_to})"
+            ),
+            Self::Analysis(source) => source.fmt(formatter),
+            Self::Position(source) => source.fmt(formatter),
+            Self::OutputLimit { limit, actual } => {
+                write!(
+                    formatter,
+                    "output bytes limit exceeded (limit {limit}, actual {actual})"
+                )
+            }
             Self::Include(source) => source.fmt(formatter),
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
         }
@@ -71,11 +93,23 @@ impl Error for CliError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Read { source, .. } | Self::Write(source) => Some(source),
-            Self::Process(source) => Some(source),
+            Self::Analysis(source) => Some(source),
+            Self::Position(source) => Some(source),
             Self::Include(source) => Some(source),
-            Self::Usage(_) | Self::FormattingRequired => None,
+            Self::Usage(_)
+            | Self::InvalidUtf8 { .. }
+            | Self::OutputLimit { .. }
+            | Self::FormattingRequired => None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Operation {
+    Convert,
+    Check,
+    Format,
+    Symbols,
 }
 
 struct Arguments {
@@ -193,6 +227,53 @@ fn read_input(path: Option<PathBuf>) -> Result<Vec<u8>, CliError> {
     }
 }
 
+fn decode_input(input: &[u8]) -> Result<&str, CliError> {
+    std::str::from_utf8(input).map_err(|error| CliError::InvalidUtf8 {
+        valid_up_to: error.valid_up_to(),
+    })
+}
+
+fn analyze(source: &str) -> Result<adocweave::Analysis, CliError> {
+    Engine::new(ParseOptions::default())
+        .analyze(source)
+        .map_err(CliError::Analysis)
+}
+
+fn finish_output(output: String) -> Result<String, CliError> {
+    let limit = ParseOptions::default().limits.max_output_bytes;
+    if output.len() > usize::try_from(limit).expect("u32 fits usize on supported targets") {
+        return Err(CliError::OutputLimit {
+            limit,
+            actual: u64::try_from(output.len()).expect("usize fits u64"),
+        });
+    }
+    Ok(output)
+}
+
+fn process(operation: Operation, input: &[u8], json: bool) -> Result<String, CliError> {
+    let source = decode_input(input)?;
+    let analysis = analyze(source)?;
+    let output = match operation {
+        Operation::Convert => render(analysis.ast(), &RenderPolicy::default()).html,
+        Operation::Check if json => diagnostic::render_json(analysis.diagnostics()),
+        Operation::Check => diagnostic::render_human(
+            analysis.diagnostics(),
+            analysis.source_document(),
+            PositionEncoding::Utf16,
+        )
+        .map_err(CliError::Position)?,
+        Operation::Format => {
+            format_analysis(&analysis, &FormatConfig::default())
+                .map_err(CliError::Position)?
+                .formatted
+        }
+        Operation::Symbols => adocweave::semantic::render_symbols_json(
+            &adocweave::semantic::document_symbols(analysis.ast()),
+        ),
+    };
+    Ok(output)
+}
+
 fn run() -> Result<(), CliError> {
     match parse_arguments(env::args().skip(1))? {
         Action::Help => {
@@ -219,11 +300,7 @@ fn run() -> Result<(), CliError> {
             let input = read_input(arguments.input)?;
             let mut prepared = None;
             let processed = if arguments.include {
-                let source = std::str::from_utf8(&input).map_err(|error| {
-                    CliError::Process(adocweave::ProcessError::InvalidUtf8 {
-                        valid_up_to: error.valid_up_to(),
-                    })
-                })?;
+                let source = decode_input(&input)?;
                 let base_dir = match arguments.base_dir {
                     Some(base_dir) => base_dir,
                     None => input_path
@@ -267,30 +344,19 @@ fn run() -> Result<(), CliError> {
                 if let Some(prepared) = prepared.as_ref() {
                     check_preprocessed(prepared, arguments.json).map_err(CliError::Include)
                 } else {
-                    process_check(
-                        &processed,
-                        if arguments.json {
-                            CheckOutput::Json
-                        } else {
-                            CheckOutput::Human
-                        },
-                    )
-                    .map_err(CliError::Process)
+                    process(Operation::Check, &processed, arguments.json)
                 }
             } else if arguments.operation == Operation::Format && arguments.format_check {
-                let source = std::str::from_utf8(&input).map_err(|error| {
-                    CliError::Process(adocweave::ProcessError::InvalidUtf8 {
-                        valid_up_to: error.valid_up_to(),
-                    })
-                })?;
-                let output = process(Operation::Format, &input).map_err(CliError::Process)?;
+                let source = decode_input(&input)?;
+                let output = process(Operation::Format, &input, false)?;
                 if output != source {
                     return Err(CliError::FormattingRequired);
                 }
                 Ok(String::new())
             } else {
-                process(arguments.operation, &processed).map_err(CliError::Process)
+                process(arguments.operation, &processed, false)
             }?;
+            let output = finish_output(output)?;
             io::stdout()
                 .write_all(output.as_bytes())
                 .map_err(CliError::Write)

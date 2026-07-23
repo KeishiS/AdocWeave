@@ -2,7 +2,6 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -204,68 +203,6 @@ impl AnalysisResult {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExecutionResultClass {
-    Success,
-    Cancelled,
-    InvalidInput,
-    LimitExceeded,
-    Failed,
-    Panicked,
-    Stale,
-}
-
-impl From<&ParseError> for ExecutionResultClass {
-    fn from(error: &ParseError) -> Self {
-        match error {
-            ParseError::Cancelled => Self::Cancelled,
-            ParseError::UnsupportedSyntax => Self::InvalidInput,
-            ParseError::LimitExceeded { .. } => Self::LimitExceeded,
-            ParseError::Position(_) | ParseError::InternalInvariant => Self::Failed,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExecutionObservation {
-    pub result: ExecutionResultClass,
-    pub elapsed: Duration,
-    pub input_bytes: usize,
-    pub output_bytes: usize,
-    pub diagnostic_count: usize,
-}
-
-impl ExecutionObservation {
-    pub fn success(
-        request: &AnalysisRequest,
-        result: &AnalysisResult,
-        elapsed: Duration,
-        output_bytes: usize,
-    ) -> Self {
-        Self {
-            result: ExecutionResultClass::Success,
-            elapsed,
-            input_bytes: request.source.len(),
-            output_bytes,
-            diagnostic_count: result.analysis.diagnostics().len(),
-        }
-    }
-
-    pub const fn failure(
-        input_bytes: usize,
-        elapsed: Duration,
-        result: ExecutionResultClass,
-    ) -> Self {
-        Self {
-            result,
-            elapsed,
-            input_bytes,
-            output_bytes: 0,
-            diagnostic_count: 0,
-        }
-    }
-}
-
 fn hash_optional_string(hasher: &mut Sha256, value: Option<&str>) {
     match value {
         Some(value) => {
@@ -323,7 +260,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "024caa24c5fab31b9d4ff4b1384865f81455c5b92b9509b90e3af265d3228f93"
+            "38199245f5320c268fb20548bff1dfd4bf1a95aba05bc10ac9c7b3e43c63c134"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());
@@ -380,18 +317,5 @@ mod tests {
         let cancelled = CancellationToken::new();
         cancelled.cancel();
         assert!(!result.is_current(&request.revision, &cancelled));
-    }
-
-    #[test]
-    fn observations_contain_sizes_and_counts_but_never_source_text() {
-        let request = request("secret body ");
-        let result = request.analyze(&NeverCancel).expect("analysis");
-        let observation =
-            ExecutionObservation::success(&request, &result, Duration::from_millis(2), 10);
-        let debug = format!("{observation:?}");
-
-        assert_eq!(observation.input_bytes, request.source.len());
-        assert_eq!(observation.diagnostic_count, 1);
-        assert!(!debug.contains("secret body"));
     }
 }

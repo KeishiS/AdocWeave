@@ -2,16 +2,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use adocweave::conformance::snapshot;
-use adocweave::html::RenderPolicy;
-use adocweave::limits::{ProcessingLimits, SyntaxMode};
-use adocweave::preprocessor::{
+use adocweave::output::conformance::snapshot;
+use adocweave::output::html::RenderPolicy;
+use adocweave::preprocess::{
     PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode, preprocess,
 };
-use adocweave::url::UrlPolicy;
+use adocweave::resolution::UrlPolicy;
 use adocweave::{
     CONTRACT_VERSION, CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId,
 };
+use adocweave::{ProcessingLimits, SyntaxMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -428,8 +428,8 @@ pub fn preprocess_request(
             source_start: segment.origin.range.start().to_u32(),
             source_end: segment.origin.range.end().to_u32(),
             mapping: match segment.mapping {
-                adocweave::preprocessor::SourceMapping::Identity => "identity",
-                adocweave::preprocessor::SourceMapping::WholeOrigin => "whole-origin",
+                adocweave::preprocess::SourceMapping::Identity => "identity",
+                adocweave::preprocess::SourceMapping::WholeOrigin => "whole-origin",
             }
             .to_owned(),
         })
@@ -491,13 +491,13 @@ pub fn process_request(
     let render_policy = RenderPolicy {
         url_policy,
         external_links: if options.external_links.open_in_new_context {
-            adocweave::html::ExternalLinkPresentation::NewContext {
+            adocweave::output::html::ExternalLinkPresentation::NewContext {
                 noreferrer: options.external_links.noreferrer,
             }
         } else {
-            adocweave::html::ExternalLinkPresentation::SameContext
+            adocweave::output::html::ExternalLinkPresentation::SameContext
         },
-        source_languages: adocweave::html::SourceLanguagePolicy {
+        source_languages: adocweave::output::html::SourceLanguagePolicy {
             allowed: options.source_languages.allowed.map(|languages| {
                 languages
                     .into_iter()
@@ -506,38 +506,38 @@ pub fn process_request(
             }),
             unknown: match options.source_languages.unknown {
                 WasmUnknownSourceLanguage::PreserveSanitized => {
-                    adocweave::html::UnknownSourceLanguage::PreserveSanitized
+                    adocweave::output::html::UnknownSourceLanguage::PreserveSanitized
                 }
                 WasmUnknownSourceLanguage::OmitClass => {
-                    adocweave::html::UnknownSourceLanguage::OmitClass
+                    adocweave::output::html::UnknownSourceLanguage::OmitClass
                 }
                 WasmUnknownSourceLanguage::Diagnostic => {
-                    adocweave::html::UnknownSourceLanguage::Diagnostic
+                    adocweave::output::html::UnknownSourceLanguage::Diagnostic
                 }
             },
         },
-        math_languages: adocweave::html::MathLanguagePolicy {
+        math_languages: adocweave::output::html::MathLanguagePolicy {
             allowed: options
                 .math_languages
                 .into_iter()
                 .map(|language| match language {
-                    WasmMathLanguage::Latex => adocweave::inline::MathLanguage::Latex,
-                    WasmMathLanguage::Typst => adocweave::inline::MathLanguage::Typst,
+                    WasmMathLanguage::Latex => adocweave::semantic::MathLanguage::Latex,
+                    WasmMathLanguage::Typst => adocweave::semantic::MathLanguage::Typst,
                 })
                 .collect(),
         },
         unresolved_references: match options.unresolved_references {
             WasmUnresolvedReferencePresentation::Target => {
-                adocweave::html::UnresolvedReferencePresentation::Target
+                adocweave::output::html::UnresolvedReferencePresentation::Target
             }
             WasmUnresolvedReferencePresentation::LabelOnly => {
-                adocweave::html::UnresolvedReferencePresentation::LabelOnly
+                adocweave::output::html::UnresolvedReferencePresentation::LabelOnly
             }
             WasmUnresolvedReferencePresentation::Hidden => {
-                adocweave::html::UnresolvedReferencePresentation::Hidden
+                adocweave::output::html::UnresolvedReferencePresentation::Hidden
             }
         },
-        resources: adocweave::html::ResourceCapabilities {
+        resources: adocweave::output::html::ResourceCapabilities {
             images: options.resources.images,
             media: options.resources.media,
         },

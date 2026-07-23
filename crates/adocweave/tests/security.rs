@@ -1,15 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use adocweave::html::{RenderPolicy, render, render_with_inputs};
-use adocweave::limits::{ProcessConfig, ProcessingLimits, SyntaxMode};
-use adocweave::reference::ResolvedReference;
-use adocweave::reference::{ReferenceKey, ResolutionFailureKind};
-use adocweave::render::RenderInputs;
-use adocweave::resource::ResolvedResource;
-use adocweave::{
-    CancellationCheck, CheckOutput, Engine, Operation, ParseError, ParseOptions, ProcessError,
-    process_check_with_config, process_with_config,
-};
+use adocweave::ProcessingLimits;
+use adocweave::output::html::{RenderPolicy, render, render_with_inputs};
+use adocweave::resolution::RenderInputs;
+use adocweave::resolution::ResolvedReference;
+use adocweave::resolution::ResolvedResource;
+use adocweave::resolution::{ReferenceKey, ResolutionFailureKind};
+use adocweave::{Analysis, CancellationCheck, Engine, ParseError, ParseOptions};
 
 type LimitCase = (&'static str, fn(&mut ProcessingLimits));
 type BoundaryCase = (
@@ -18,6 +15,14 @@ type BoundaryCase = (
     u32,
     fn(&mut ProcessingLimits, u32),
 );
+
+fn analyze_with_limits(source: &str, limits: ProcessingLimits) -> Result<Analysis, ParseError> {
+    Engine::new(ParseOptions {
+        limits,
+        ..ParseOptions::default()
+    })
+    .analyze(source)
+}
 
 #[test]
 fn adversarial_fixture_never_emits_active_input_or_unsafe_urls() {
@@ -92,58 +97,38 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
 }
 
 #[test]
-fn malformed_bytes_and_tight_limits_fail_without_partial_output() {
-    let invalid_utf8 = [0xf0, 0x28, 0x8c, 0x28];
-    for operation in [
-        Operation::Convert,
-        Operation::Check,
-        Operation::Format,
-        Operation::Symbols,
-    ] {
-        assert!(matches!(
-            process_with_config(operation, &invalid_utf8, &ProcessConfig::default()),
-            Err(ProcessError::InvalidUtf8 { .. })
-        ));
-    }
-
-    let config = ProcessConfig {
-        limits: ProcessingLimits {
-            max_input_bytes: 32,
-            max_output_bytes: 8,
-            max_line_bytes: 8,
-            max_list_depth: 2,
-            max_list_continuations: 1,
-            max_block_depth: 2,
-            max_inline_depth: 2,
-            max_formula_bytes: 4,
-            max_table_bytes: 8,
-            max_table_cells: 2,
-            max_table_columns: 2,
-            max_table_depth: 1,
-            max_catalog_entries: 2,
-            max_catalog_bytes: 8,
-            max_blocks: 2,
-            max_nodes: 4,
-            max_references: 1,
-            max_attributes: 1,
-            max_attribute_expansion_depth: 1,
-            max_attribute_expansion_bytes: 8,
-            max_diagnostics: 1,
-        },
-        syntax_mode: SyntaxMode::Permissive,
+fn tight_limits_fail_without_partial_analysis() {
+    let limits = ProcessingLimits {
+        max_input_bytes: 32,
+        max_output_bytes: 8,
+        max_line_bytes: 8,
+        max_list_depth: 2,
+        max_list_continuations: 1,
+        max_block_depth: 2,
+        max_inline_depth: 2,
+        max_formula_bytes: 4,
+        max_table_bytes: 8,
+        max_table_cells: 2,
+        max_table_columns: 2,
+        max_table_depth: 1,
+        max_catalog_entries: 2,
+        max_catalog_bytes: 8,
+        max_blocks: 2,
+        max_nodes: 4,
+        max_references: 1,
+        max_attributes: 1,
+        max_attribute_expansion_depth: 1,
+        max_attribute_expansion_bytes: 8,
+        max_diagnostics: 1,
     };
-    for input in [
-        b"a very long line".as_slice(),
-        b"one\n\ntwo\n\nthree".as_slice(),
-        b"https://example.com[x] https://example.com[y]".as_slice(),
+    for source in [
+        "a very long line",
+        "one\n\ntwo\n\nthree",
+        "https://example.com[x] https://example.com[y]",
     ] {
         assert!(matches!(
-            process_with_config(Operation::Convert, input, &config),
-            Err(ProcessError::LimitExceeded { .. })
-        ));
-        assert!(matches!(
-            process_check_with_config(input, CheckOutput::Json, &config),
-            Err(ProcessError::LimitExceeded { .. })
+            analyze_with_limits(source, limits),
+            Err(ParseError::LimitExceeded { .. })
         ));
     }
 }
@@ -169,16 +154,9 @@ fn each_structural_resource_limit_rejects_the_corresponding_input() {
     for (source, restrict) in cases {
         let mut limits = ProcessingLimits::default();
         restrict(&mut limits);
-        let result = process_with_config(
-            Operation::Convert,
-            source.as_bytes(),
-            &ProcessConfig {
-                limits,
-                syntax_mode: SyntaxMode::Permissive,
-            },
-        );
+        let result = analyze_with_limits(source, limits);
         assert!(
-            matches!(result, Err(ProcessError::LimitExceeded { .. })),
+            matches!(result, Err(ParseError::LimitExceeded { .. })),
             "{source:?}"
         );
     }
@@ -259,16 +237,10 @@ fn formula_limit_recovers_as_text_and_reports_a_diagnostic() {
         max_formula_bytes: 4,
         ..ProcessingLimits::default()
     };
-    let config = ProcessConfig {
-        limits,
-        syntax_mode: SyntaxMode::Permissive,
-    };
-    let source = b"stem:[12345<script>]";
-
-    let html = process_with_config(Operation::Convert, source, &config)
-        .expect("formula overflow is recoverable");
-    let diagnostics = process_check_with_config(source, CheckOutput::Json, &config)
-        .expect("formula overflow diagnostics");
+    let source = "stem:[12345<script>]";
+    let analysis = analyze_with_limits(source, limits).expect("formula overflow is recoverable");
+    let html = render(analysis.ast(), &RenderPolicy::default()).html;
+    let diagnostics = adocweave::output::diagnostics::render_json(analysis.diagnostics());
 
     assert!(!html.contains("<script>"));
     assert!(html.contains("&lt;script&gt;"));
@@ -282,16 +254,10 @@ fn list_depth_limit_recovers_with_a_diagnostic() {
         max_list_depth: 2,
         ..ProcessingLimits::default()
     };
-    let config = ProcessConfig {
-        limits,
-        syntax_mode: SyntaxMode::Permissive,
-    };
-    let source = b"* one\n** two\n*** three\n";
-
-    let html = process_with_config(Operation::Convert, source, &config)
-        .expect("list depth overflow is recoverable");
-    let diagnostics = process_check_with_config(source, CheckOutput::Json, &config)
-        .expect("list depth diagnostics");
+    let source = "* one\n** two\n*** three\n";
+    let analysis = analyze_with_limits(source, limits).expect("list depth overflow is recoverable");
+    let html = render(analysis.ast(), &RenderPolicy::default()).html;
+    let diagnostics = adocweave::output::diagnostics::render_json(analysis.diagnostics());
 
     assert!(html.contains("three"));
     assert!(diagnostics.contains("configured limit"));
@@ -303,15 +269,11 @@ fn compound_block_depth_limit_rejects_unbounded_nesting() {
         max_block_depth: 1,
         ..ProcessingLimits::default()
     };
-    let config = ProcessConfig {
-        limits,
-        syntax_mode: SyntaxMode::Permissive,
-    };
-    let source = b"=====\nouter\n======\ninner\n======\n=====\n";
+    let source = "=====\nouter\n======\ninner\n======\n=====\n";
 
     assert!(matches!(
-        process_with_config(Operation::Convert, source, &config),
-        Err(ProcessError::LimitExceeded {
+        analyze_with_limits(source, limits),
+        Err(ParseError::LimitExceeded {
             resource: "block nesting depth",
             ..
         })
@@ -324,15 +286,11 @@ fn asciidoc_cell_uses_the_parent_table_depth_budget() {
         max_table_depth: 1,
         ..ProcessingLimits::default()
     };
-    let config = ProcessConfig {
-        limits,
-        syntax_mode: SyntaxMode::Permissive,
-    };
-    let source = b"[cols=a]\n|===\n|!===\n!nested\n!===\n|===\n";
+    let source = "[cols=a]\n|===\n|!===\n!nested\n!===\n|===\n";
 
     assert!(matches!(
-        process_with_config(Operation::Convert, source, &config),
-        Err(ProcessError::LimitExceeded {
+        analyze_with_limits(source, limits),
+        Err(ParseError::LimitExceeded {
             resource: "table nesting depth",
             ..
         })
@@ -372,13 +330,9 @@ fn table_resources_are_rejected_at_the_construction_boundary() {
         ),
     ];
     for (resource, limits) in cases {
-        let config = ProcessConfig {
-            limits,
-            syntax_mode: SyntaxMode::Permissive,
-        };
         assert!(matches!(
-            process_with_config(Operation::Convert, b"|===\n|a |b\n|===\n", &config),
-            Err(ProcessError::LimitExceeded { resource: actual, .. }) if actual == resource
+            analyze_with_limits("|===\n|a |b\n|===\n", limits),
+            Err(ParseError::LimitExceeded { resource: actual, .. }) if actual == resource
         ));
     }
 }

@@ -1,7 +1,7 @@
 #![no_main]
 
-use adocweave::html::{RenderPolicy, render};
-use adocweave::url::UrlContext;
+use adocweave::output::html::{RenderPolicy, render};
+use adocweave::resolution::UrlContext;
 use adocweave::{Engine, ParseOptions};
 use libfuzzer_sys::fuzz_target;
 

@@ -299,6 +299,8 @@ pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
 
 pub(crate) fn build_presentation(
     document: &AstDocument,
+    structure: &crate::structure::DocumentStructure,
+    index: &DocumentIndex,
     attributes: ResolvedDocumentAttributes,
 ) -> DocumentPresentation {
     let source_language = attributes
@@ -325,12 +327,11 @@ pub(crate) fn build_presentation(
     };
     let section_numbers = attributes.get("sectnums").is_some();
     let mut counters = [0_u32; 6];
-    let headings = document
-        .structure()
+    let headings = structure
         .headings()
         .iter()
         .map(|heading| {
-            let index = usize::from(heading.level.min(5));
+            let level_index = usize::from(heading.level.min(5));
             let number = if matches!(
                 heading.kind,
                 crate::structure::SectionKind::DocumentTitle
@@ -338,9 +339,9 @@ pub(crate) fn build_presentation(
             ) {
                 Vec::new()
             } else {
-                counters[index] += 1;
-                counters[index + 1..].fill(0);
-                counters[..=index]
+                counters[level_index] += 1;
+                counters[level_index + 1..].fill(0);
+                counters[..=level_index]
                     .iter()
                     .copied()
                     .filter(|number| *number != 0)
@@ -352,8 +353,7 @@ pub(crate) fn build_presentation(
                     | crate::structure::SectionKind::Discrete
             ) && !heading_has_role(document, heading.range, "notoc");
             HeadingPresentation {
-                block: document
-                    .index()
+                block: index
                     .block_id_at(heading.range)
                     .expect("every structured heading is indexed"),
                 range: heading.range,
@@ -362,11 +362,7 @@ pub(crate) fn build_presentation(
             }
         })
         .collect::<Vec<_>>();
-    let toc = toc_entries(
-        document.structure().roots(),
-        &headings,
-        toc_policy.max_level,
-    );
+    let toc = toc_entries(structure.roots(), &headings, toc_policy.max_level);
     let bibliography_sections = document
         .blocks()
         .iter()
@@ -380,8 +376,7 @@ pub(crate) fn build_presentation(
                 .iter()
                 .any(|attribute| attribute.name.is_none() && attribute.value == "bibliography")
                 .then(|| BibliographySection {
-                    block: document
-                        .index()
+                    block: index
                         .block_id_at(heading.range)
                         .expect("every heading is indexed"),
                     range: heading.range,
@@ -437,7 +432,11 @@ fn toc_entries(
     entries
 }
 
-pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
+pub(crate) fn build_layout(
+    document: &AstDocument,
+    index: &DocumentIndex,
+    presentation: &DocumentPresentation,
+) -> DocumentLayout {
     fn structural_heading_level(block: &crate::parser::AstBlock) -> Option<u8> {
         let crate::parser::AstBlock::Heading(heading) = block else {
             return None;
@@ -451,9 +450,10 @@ pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
 
     let mut nodes = Vec::new();
     let mut bibliography_scope: Option<(u8, Vec<LayoutNode>)> = None;
-    for id in document.index().top_level_blocks().iter().copied() {
-        let block = document
-            .top_level_block(id)
+    for id in index.top_level_blocks().iter().copied() {
+        let block = index
+            .top_level_ordinal(id)
+            .and_then(|ordinal| document.blocks().get(ordinal))
             .expect("indexed top-level block");
         let heading_level = structural_heading_level(block);
         if bibliography_scope
@@ -475,7 +475,7 @@ pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
         }
 
         let bibliography_level = matches!(block, crate::parser::AstBlock::Heading(heading)
-            if document.presentation().bibliography_section_at(heading.range).is_some())
+            if presentation.bibliography_section_at(heading.range).is_some())
         .then_some(heading_level)
         .flatten();
         if let Some(level) = bibliography_level {
@@ -490,7 +490,7 @@ pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
             nodes: scoped_nodes,
         });
     }
-    if document.presentation().toc_policy().enabled {
+    if presentation.toc_policy().enabled {
         let insertion = nodes
             .iter()
             .position(|node| {
@@ -498,7 +498,9 @@ pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
                     return false;
                 };
                 matches!(
-                    document.top_level_block(*id),
+                    index
+                        .top_level_ordinal(*id)
+                        .and_then(|ordinal| document.blocks().get(ordinal)),
                     Some(crate::parser::AstBlock::Heading(heading))
                         if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle)
                 )

@@ -102,6 +102,7 @@ pub(crate) struct CatalogLimitExceeded {
 
 pub(crate) fn build(
     document: &crate::parser::AstDocument,
+    document_index: &crate::presentation::DocumentIndex,
     limits: ProcessingLimits,
 ) -> Result<DocumentCatalogs, CatalogLimitExceeded> {
     let mut catalogs = DocumentCatalogs::default();
@@ -169,8 +170,7 @@ pub(crate) fn build(
                     catalogs.bibliography.push(BibliographyEntry {
                         id: node.target.clone(),
                         definition_range: node.range,
-                        definition_block: document
-                            .index()
+                        definition_block: document_index
                             .block_containing(node.range)
                             .expect("bibliography anchor belongs to a semantic block"),
                         references: Vec::new(),
@@ -210,8 +210,7 @@ pub(crate) fn build(
                 bibliography_references.push((
                     anchor.clone(),
                     reference.range,
-                    document
-                        .index()
+                    document_index
                         .block_containing(reference.range)
                         .expect("bibliography reference belongs to a semantic block"),
                 ));

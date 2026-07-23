@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf};
 
 use adocweave::Engine;
-use adocweave::preprocessor::{PreprocessedAnalysis, ProjectionLimits, preprocess};
-use adocweave::reference::ReferenceKey;
+use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits, preprocess};
+use adocweave::resolution::ReferenceKey;
 use async_lsp::lsp_types as lsp;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -565,7 +565,7 @@ fn code_actions_use_typed_versioned_workspace_edits() {
 }
 
 fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {
-    use adocweave::source::{Position, PositionEncoding as CorePositionEncoding, SourceDocument};
+    use adocweave::text::{Position, PositionEncoding as CorePositionEncoding, SourceDocument};
 
     let index = SourceDocument::new(source).expect("line index");
     let mut byte_edits = edits
@@ -1170,7 +1170,7 @@ fn release_fixture_is_accepted_by_all_existing_features() {
 
 #[test]
 fn conformance_fixture_is_reused_by_editor_projections() {
-    let source = adocweave::conformance::fixture_source("bibliography-consumer-coverage")
+    let source = adocweave::output::conformance::fixture_source("bibliography-consumer-coverage")
         .expect("shared inline conformance fixture");
     let mut service = LanguageService::default();
     let document_uri = uri("file:///conformance.adoc");

@@ -64,7 +64,7 @@ adocweave-fuzz run --fuzz-dir fuzz render -- -max_total_time=3600
 |panicしない、syntax treeが入力を復元する、すべてのtoken範囲が正しいUTF-8境界にある
 
 |`process`
-|`process`、`process_check`へ渡す任意バイト列
+|UTF-8変換後に`Engine`と各output backendへ渡す任意入力
 |全operationがpanicせず、UTF-8・上限違反を型付きエラーとして返す
 
 |`render`

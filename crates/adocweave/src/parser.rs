@@ -82,12 +82,7 @@ impl AstDocument {
             attributes,
             anchors,
             header,
-            catalogs: crate::catalog::DocumentCatalogs::default(),
-            identifiers: crate::document::DocumentIdentifiers::default(),
-            structure: crate::structure::DocumentStructure::default(),
-            index: crate::presentation::DocumentIndex::default(),
-            presentation: crate::presentation::DocumentPresentation::default(),
-            layout: crate::presentation::DocumentLayout::default(),
+            resolved: crate::resolved::ResolvedDocument::default(),
         }
     }
 
@@ -96,7 +91,8 @@ impl AstDocument {
     }
 
     pub fn top_level_block(&self, id: crate::presentation::BlockId) -> Option<&AstBlock> {
-        self.index
+        self.resolved
+            .index()
             .top_level_ordinal(id)
             .and_then(|ordinal| self.blocks.get(ordinal))
     }
@@ -114,27 +110,27 @@ impl AstDocument {
     }
 
     pub const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {
-        &self.catalogs
+        self.resolved.catalogs()
     }
 
     pub const fn identifiers(&self) -> &crate::document::DocumentIdentifiers {
-        &self.identifiers
+        self.resolved.identifiers()
     }
 
     pub const fn structure(&self) -> &crate::structure::DocumentStructure {
-        &self.structure
+        self.resolved.structure()
     }
 
     pub const fn index(&self) -> &crate::presentation::DocumentIndex {
-        &self.index
+        self.resolved.index()
     }
 
     pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {
-        &self.presentation
+        self.resolved.presentation()
     }
 
     pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
-        &self.layout
+        self.resolved.layout()
     }
 
     pub fn preamble(&self) -> &[AstBlock] {
@@ -1123,8 +1119,9 @@ fn finish_document(
             max_depth: config.limits.max_attribute_expansion_depth,
             max_bytes: config.limits.max_attribute_expansion_bytes,
         },
-    });
-    ast.catalogs = crate::catalog::build(&ast, config.limits).map_err(|error| {
+        processing_limits: config.limits,
+    })
+    .map_err(|error| {
         ParseFailure::Budget(BudgetExceeded {
             resource: error.resource,
             limit: error.limit,

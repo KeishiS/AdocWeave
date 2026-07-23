@@ -82,7 +82,6 @@ pub enum TableStripes {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TablePresentation {
-    pub caption: Option<crate::parser::BlockTitle>,
     pub frame: TableFrame,
     pub grid: TableGrid,
     pub stripes: TableStripes,
@@ -93,7 +92,6 @@ pub struct TablePresentation {
 impl Default for TablePresentation {
     fn default() -> Self {
         Self {
-            caption: None,
             frame: TableFrame::All,
             grid: TableGrid::All,
             stripes: TableStripes::None,
@@ -684,10 +682,7 @@ fn resolve_presentation(
     metadata: &crate::parser::BlockMetadata,
     problems: &mut Vec<TableProblem>,
 ) -> TablePresentation {
-    let mut presentation = TablePresentation {
-        caption: metadata.title.clone(),
-        ..TablePresentation::default()
-    };
+    let mut presentation = TablePresentation::default();
     // The first occurrence is authoritative. Later occurrences are diagnosed
     // as duplicates and never influence the effective presentation.
     let attribute = |name| {

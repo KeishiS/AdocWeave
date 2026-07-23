@@ -6,7 +6,7 @@ use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 use adocweave::SourceId;
-use adocweave::preprocessor::{
+use adocweave::preprocess::{
     PreprocessError, PreprocessOptions, PreprocessedDocument, ResourceDocument, ResourceSnapshot,
     discover_includes, preprocess,
 };
@@ -25,7 +25,7 @@ pub enum LocalIncludeError {
         source: std::io::Error,
     },
     OutsideRoot(PathBuf),
-    Position(adocweave::source::PositionError),
+    Position(adocweave::text::PositionError),
     Preprocess(PreprocessError),
     Analysis(String),
     MissingSource(String),

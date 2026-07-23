@@ -299,8 +299,7 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
 
 fn table_presentation_value(presentation: &crate::table::TablePresentation) -> String {
     format!(
-        "caption={:?};frame={};grid={};stripes={};width={};autowidth={}",
-        presentation.caption.as_ref().map(|caption| &caption.value),
+        "frame={};grid={};stripes={};width={};autowidth={}",
         match presentation.frame {
             crate::table::TableFrame::All => "all",
             crate::table::TableFrame::Ends => "ends",
@@ -582,7 +581,7 @@ mod tests {
             .expect("table presentation");
         assert_eq!(
             presentation["value"],
-            "caption=Some(\"Caption\");frame=ends;grid=rows;stripes=odd;width=75%;autowidth=false"
+            "frame=ends;grid=rows;stripes=odd;width=75%;autowidth=false"
         );
     }
 }

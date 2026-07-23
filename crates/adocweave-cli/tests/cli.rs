@@ -218,7 +218,7 @@ fn core_profile_fixture_is_shared_by_cli_conversion_and_symbols() {
 
 #[test]
 fn bibliography_consumer_fixture_is_shared_by_cli() {
-    let source = adocweave::conformance::fixture_source("bibliography-consumer-coverage")
+    let source = adocweave::output::conformance::fixture_source("bibliography-consumer-coverage")
         .expect("shared inline conformance fixture");
 
     let checked = run_with_stdin(&["check", "--json", "-"], source.as_bytes());

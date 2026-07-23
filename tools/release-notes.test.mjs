@@ -11,7 +11,7 @@ test("release notes always contain the acceptance contract", () => {
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /approved AsciiDoc compatibility changes/);
   assert.match(notes, /nix run github:KeishiS\/AdocWeave/);
-  assert.match(notes, /unified public contract: 4/);
+  assert.match(notes, new RegExp(`unified public contract: ${manifest.contractVersion}`));
   assert.match(notes, new RegExp(`Supported Rust toolchain: ${manifest.rustVersion}`));
 });
 

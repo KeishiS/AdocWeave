@@ -13,9 +13,12 @@ pub(crate) struct ParsedFacts {
     pub anchors: Vec<ExplicitAnchor>,
     pub header: DocumentHeader,
     pub attribute_expansion_limits: AttributeExpansionLimits,
+    pub processing_limits: crate::limits::ProcessingLimits,
 }
 
-pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
+pub(crate) fn lower(
+    mut facts: ParsedFacts,
+) -> Result<AstDocument, crate::catalog::CatalogLimitExceeded> {
     let resolved_attributes = crate::presentation::resolve_document_attributes(&facts.attributes);
     let source_language = resolved_attributes
         .get("source-language")
@@ -34,12 +37,12 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
         facts.attribute_expansion_limits,
     );
     configure_tables(&mut document.blocks);
-    document.identifiers = crate::document::build_identifiers(&document);
-    document.structure = crate::structure::build(&document);
-    document.index = crate::presentation::build_index(&document);
-    document.presentation = crate::presentation::build_presentation(&document, resolved_attributes);
-    document.layout = crate::presentation::build_layout(&document);
-    document
+    document.resolved = crate::resolved::ResolvedDocument::build(
+        &document,
+        resolved_attributes,
+        facts.processing_limits,
+    )?;
+    Ok(document)
 }
 
 fn resolve_delimited_presentations(blocks: &mut [AstBlock]) {

@@ -6,7 +6,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use adocweave::Engine;
-use adocweave::preprocessor::{PreprocessedAnalysis, ProjectionLimits, preprocess};
+use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits, preprocess};
 use adocweave::{CancellationCheck, CancellationToken};
 use async_lsp::concurrency::ConcurrencyLayer;
 use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
@@ -422,9 +422,9 @@ impl Backend {
 fn workspace_problem(job: &AnalysisJob, code: &str, message: &str) -> WorkspaceProblem {
     WorkspaceProblem {
         source_id: Some(job.uri.clone()),
-        range: adocweave::source::TextRange::new(
-            adocweave::source::TextSize::ZERO,
-            adocweave::source::TextSize::ZERO,
+        range: adocweave::text::TextRange::new(
+            adocweave::text::TextSize::ZERO,
+            adocweave::text::TextSize::ZERO,
         )
         .expect("zero range is ordered"),
         code: code.to_owned(),

@@ -1,6 +1,6 @@
-use adocweave::inline::{Inline, InlineLiteralKind, InlineStyle};
-use adocweave::parser::{AstBlock, VerbatimKind};
-use adocweave::syntax::{SyntaxIssueClass, SyntaxKind};
+use adocweave::semantic::{AstBlock, VerbatimKind};
+use adocweave::semantic::{Inline, InlineLiteralKind, InlineStyle};
+use adocweave::text::{SyntaxIssueClass, SyntaxKind};
 use adocweave::{Analysis, Engine, ParseOptions};
 
 const SOURCE: &str = include_str!("../../../fixtures/grammar/ambiguous.adoc");
@@ -78,11 +78,13 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         Some(AstBlock::Heading(_))
     ));
 
-    let diagnostics =
-        adocweave::lint::lint_analysis(&parsed, &adocweave::lint::LintConfig::default())
-            .expect("fixture lints");
+    let diagnostics = adocweave::output::diagnostics::lint_analysis(
+        &parsed,
+        &adocweave::output::diagnostics::LintConfig::default(),
+    )
+    .expect("fixture lints");
     assert_eq!(
-        adocweave::diagnostic::render_json(&diagnostics),
+        adocweave::output::diagnostics::render_json(&diagnostics),
         include_str!("../../../fixtures/grammar/ambiguous.diagnostics.json").trim_end()
     );
     let codes = diagnostics
@@ -108,8 +110,11 @@ fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
         .expect("source block");
     assert_eq!(source_block.value, "_source_ <tag>\n");
 
-    let html =
-        adocweave::html::render(parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
+    let html = adocweave::output::html::render(
+        parsed.ast(),
+        &adocweave::output::html::RenderPolicy::default(),
+    )
+    .html;
     assert!(html.contains("<pre>*literal* &lt;tag&gt;\n.....\n</pre>"));
     assert!(
         html.contains("<pre><code class=\"language-rust\">_source_ &lt;tag&gt;\n</code></pre>")
@@ -123,8 +128,11 @@ fn substitution_pipeline_fixture_is_lossless_and_backend_safe() {
     let source = include_str!("../../../fixtures/substitutions/pipeline.adoc");
     let parsed = parse(source);
     assert_eq!(parsed.syntax().reconstruct(), source);
-    let html =
-        adocweave::html::render(parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
+    let html = adocweave::output::html::render(
+        parsed.ast(),
+        &adocweave::output::html::RenderPolicy::default(),
+    )
+    .html;
     assert!(html.contains("https://example.test"));
     assert!(html.contains("<mark>highlight</mark>"));
     assert!(html.contains("H<sub>2</sub>O E=mc<sup>2</sup>"));
@@ -168,8 +176,11 @@ fn substitutions_cover_every_supported_semantic_context() {
     );
     assert!(matches!(parsed.ast().blocks()[5], AstBlock::Paragraph(_)));
 
-    let html =
-        adocweave::html::render(parsed.ast(), &adocweave::html::RenderPolicy::default()).html;
+    let html = adocweave::output::html::render(
+        parsed.ast(),
+        &adocweave::output::html::RenderPolicy::default(),
+    )
+    .html;
     assert!(html.contains(
         "&lt;Title&gt; <strong>strong <em>nested</em> and <code>code &lt;&amp;&gt;</code></strong>"
     ));

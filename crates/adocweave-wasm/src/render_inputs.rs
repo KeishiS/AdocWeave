@@ -113,64 +113,65 @@ pub(crate) fn validate(inputs: &WasmRenderInputs, limits: &WasmLimits) -> Result
 pub(crate) fn convert(
     inputs: WasmRenderInputs,
     analysis: &Analysis,
-) -> Result<adocweave::render::RenderInputs, WasmError> {
-    let references = inputs
-        .references
-        .into_iter()
-        .map(|resolution| {
-            let range = source_range(resolution.source_start, resolution.source_end, analysis)?;
-            Ok(match resolution.outcome {
+) -> Result<adocweave::resolution::RenderInputs, WasmError> {
+    let references =
+        inputs
+            .references
+            .into_iter()
+            .map(|resolution| {
+                let range = source_range(resolution.source_start, resolution.source_end, analysis)?;
+                Ok(match resolution.outcome {
                 WasmReferenceOutcome::Resolved {
                     href,
                     display_text,
                     notices,
                 } => {
                     let mut resolved =
-                        adocweave::reference::ResolvedReference::resolved(range, href)
+                        adocweave::resolution::ResolvedReference::resolved(range, href)
                             .with_notices(
-                                notices
-                                    .into_iter()
-                                    .map(|notice| adocweave::reference::ResolutionNotice {
-                                        kind: match notice {
-                                            WasmReferenceNotice::Fallback => {
-                                                adocweave::reference::ResolutionNoticeKind::Fallback
-                                            }
-                                        },
-                                    })
-                                    .collect(),
-                            );
+                            notices
+                                .into_iter()
+                                .map(|notice| adocweave::resolution::ResolutionNotice {
+                                    kind: match notice {
+                                        WasmReferenceNotice::Fallback => {
+                                            adocweave::resolution::ResolutionNoticeKind::Fallback
+                                        }
+                                    },
+                                })
+                                .collect(),
+                        );
                     if let Some(display_text) = display_text {
                         resolved = resolved.with_display_text(display_text);
                     }
                     resolved
                 }
                 WasmReferenceOutcome::Failed { kind } => {
-                    adocweave::reference::ResolvedReference::failed(
+                    adocweave::resolution::ResolvedReference::failed(
                         range,
-                        adocweave::reference::ResolverFailure {
+                        adocweave::resolution::ResolverFailure {
                             kind: match kind {
                                 WasmReferenceFailureKind::MissingTarget => {
-                                    adocweave::reference::ResolutionFailureKind::MissingTarget
+                                    adocweave::resolution::ResolutionFailureKind::MissingTarget
                                 }
                                 WasmReferenceFailureKind::MissingAnchor => {
-                                    adocweave::reference::ResolutionFailureKind::MissingAnchor
+                                    adocweave::resolution::ResolutionFailureKind::MissingAnchor
                                 }
                                 WasmReferenceFailureKind::AmbiguousTarget => {
-                                    adocweave::reference::ResolutionFailureKind::AmbiguousTarget
+                                    adocweave::resolution::ResolutionFailureKind::AmbiguousTarget
                                 }
                                 WasmReferenceFailureKind::OutsideRoot => {
-                                    adocweave::reference::ResolutionFailureKind::OutsideRoot
+                                    adocweave::resolution::ResolutionFailureKind::OutsideRoot
                                 }
                                 WasmReferenceFailureKind::ResolverFailure => {
-                                    adocweave::reference::ResolutionFailureKind::ResolverFailure
+                                    adocweave::resolution::ResolutionFailureKind::ResolverFailure
                                 }
                             },
                         },
                     )
                 }
             })
-        })
-        .collect::<Result<Vec<_>, WasmError>>()?;
+            })
+            .collect::<Result<Vec<_>, WasmError>>()?;
     let resources = inputs
         .resources
         .into_iter()
@@ -181,31 +182,31 @@ pub(crate) fn convert(
                     href,
                     media_type,
                     byte_length,
-                } => adocweave::resource::ResolvedResource::resolved(
+                } => adocweave::resolution::ResolvedResource::resolved(
                     range,
                     href,
                     media_type,
                     byte_length,
                 ),
                 WasmResourceOutcome::Failed { kind } => {
-                    adocweave::resource::ResolvedResource::failed(
+                    adocweave::resolution::ResolvedResource::failed(
                         range,
-                        adocweave::resource::ResourceFailure {
+                        adocweave::resolution::ResourceFailure {
                             kind: match kind {
                                 WasmResourceFailureKind::Missing => {
-                                    adocweave::resource::ResourceFailureKind::Missing
+                                    adocweave::resolution::ResourceFailureKind::Missing
                                 }
                                 WasmResourceFailureKind::OutsideRoot => {
-                                    adocweave::resource::ResourceFailureKind::OutsideRoot
+                                    adocweave::resolution::ResourceFailureKind::OutsideRoot
                                 }
                                 WasmResourceFailureKind::SchemeDenied => {
-                                    adocweave::resource::ResourceFailureKind::SchemeDenied
+                                    adocweave::resolution::ResourceFailureKind::SchemeDenied
                                 }
                                 WasmResourceFailureKind::PermissionDenied => {
-                                    adocweave::resource::ResourceFailureKind::PermissionDenied
+                                    adocweave::resolution::ResourceFailureKind::PermissionDenied
                                 }
                                 WasmResourceFailureKind::ResolverFailure => {
-                                    adocweave::resource::ResourceFailureKind::ResolverFailure
+                                    adocweave::resolution::ResourceFailureKind::ResolverFailure
                                 }
                             },
                         },
@@ -214,17 +215,19 @@ pub(crate) fn convert(
             })
         })
         .collect::<Result<Vec<_>, WasmError>>()?;
-    Ok(adocweave::render::RenderInputs::new(references, resources))
+    Ok(adocweave::resolution::RenderInputs::new(
+        references, resources,
+    ))
 }
 
 fn source_range(
     start: u32,
     end: u32,
     analysis: &Analysis,
-) -> Result<adocweave::source::TextRange, WasmError> {
-    let start = adocweave::source::TextSize::new(start as usize).map_err(|_| invalid_input())?;
-    let end = adocweave::source::TextSize::new(end as usize).map_err(|_| invalid_input())?;
-    let range = adocweave::source::TextRange::new(start, end).map_err(|_| invalid_input())?;
+) -> Result<adocweave::text::TextRange, WasmError> {
+    let start = adocweave::text::TextSize::new(start as usize).map_err(|_| invalid_input())?;
+    let end = adocweave::text::TextSize::new(end as usize).map_err(|_| invalid_input())?;
+    let range = adocweave::text::TextRange::new(start, end).map_err(|_| invalid_input())?;
     analysis
         .source_document()
         .text(range)

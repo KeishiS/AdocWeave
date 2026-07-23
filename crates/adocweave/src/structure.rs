@@ -105,7 +105,10 @@ struct ArenaSection {
     children: Vec<usize>,
 }
 
-pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
+pub(crate) fn build(
+    document: &AstDocument,
+    identifiers: &crate::document::DocumentIdentifiers,
+) -> DocumentStructure {
     let mut structure = DocumentStructure::default();
     let mut arena = Vec::<ArenaSection>::new();
     let mut stack = Vec::<(u8, usize)>::new();
@@ -119,13 +122,11 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
         let AstBlock::Heading(heading) = block else {
             continue;
         };
-        let identifier = document
-            .identifiers()
+        let identifier = identifiers
             .heading_at(heading.text_range)
             .expect("lowering assigns every heading an identifier");
         let id = identifier.id.clone();
-        let id_range = document
-            .identifiers()
+        let id_range = identifiers
             .targets()
             .iter()
             .find(|target| target.target_range == heading.range && target.id == id)

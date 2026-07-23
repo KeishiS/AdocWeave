@@ -3,19 +3,20 @@
 use std::fmt;
 use std::sync::Arc;
 
-use adocweave::diagnostic::{Applicability, Severity};
-use adocweave::document::{
+use adocweave::output::diagnostics::{Applicability, Severity};
+use adocweave::output::formatter;
+use adocweave::output::projection::project;
+use adocweave::resolution::ReferenceKey;
+use adocweave::semantic as parser;
+use adocweave::semantic::{
     DocumentElement, DocumentSymbol as CoreDocumentSymbol, ReferenceTargetKind,
     SymbolKind as CoreSymbolKind, document_element_at, document_symbols, generate_heading_ids,
     source_language_candidates,
 };
-use adocweave::inline::{Inline, MathLanguage, ReferenceDestination};
-use adocweave::projection::project;
-use adocweave::reference::ReferenceKey;
-use adocweave::source::{
+use adocweave::semantic::{Inline, MathLanguage, ReferenceDestination};
+use adocweave::text::{
     PositionEncoding as CorePositionEncoding, SourceDocument, TextRange as CoreTextRange,
 };
-use adocweave::{formatter, parser};
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
@@ -242,7 +243,7 @@ impl LanguageService {
                 None => source = change.text,
                 Some(range) => {
                     let index = SourceDocument::new(&source).map_err(|error| error.to_string())?;
-                    let position = |position: lsp::Position| adocweave::source::Position {
+                    let position = |position: lsp::Position| adocweave::text::Position {
                         line: position.line,
                         character: position.character,
                     };
@@ -1121,13 +1122,14 @@ impl LanguageService {
         let mut links = Vec::new();
         for link in project(
             &document.analysis,
-            &adocweave::render::RenderInputs::default(),
+            &adocweave::resolution::RenderInputs::default(),
         )
         .external_links
         {
-            if !adocweave::url::UrlPolicy::default()
-                .allows(&link.target, adocweave::url::UrlContext::AuthoredLink)
-            {
+            if !adocweave::resolution::UrlPolicy::default().allows(
+                &link.target,
+                adocweave::resolution::UrlContext::AuthoredLink,
+            ) {
                 continue;
             }
             let Ok(target) = lsp::Url::parse(&link.target) else {
@@ -1242,7 +1244,7 @@ impl LanguageService {
         let mut raw = Vec::<(lsp::Position, u32, u32)>::new();
         for link in project(
             &document.analysis,
-            &adocweave::render::RenderInputs::default(),
+            &adocweave::resolution::RenderInputs::default(),
         )
         .external_links
         {
@@ -1293,14 +1295,14 @@ impl LanguageService {
             )?;
         }
         let mut inline_ranges = Vec::new();
-        adocweave::walker::walk(document.analysis.ast(), |node| {
-            let adocweave::walker::SemanticNode::Inline(inline) = node else {
+        adocweave::semantic::walk(document.analysis.ast(), |node| {
+            let adocweave::semantic::SemanticNode::Inline(inline) = node else {
                 return;
             };
             match inline {
                 Inline::Literal { content_range, .. }
                 | Inline::Passthrough { content_range, .. }
-                | Inline::Formula(adocweave::inline::InlineFormula { content_range, .. }) => {
+                | Inline::Formula(adocweave::semantic::InlineFormula { content_range, .. }) => {
                     inline_ranges.push((*content_range, 0))
                 }
                 Inline::Text(_)
@@ -1405,8 +1407,8 @@ fn hover_markup(
 
 fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, CoreTextRange)> {
     let mut found = None;
-    adocweave::walker::walk(document, |node| {
-        let adocweave::walker::SemanticNode::Inline(inline) = node else {
+    adocweave::semantic::walk(document, |node| {
+        let adocweave::semantic::SemanticNode::Inline(inline) = node else {
             return;
         };
         if contains(inline.range(), offset) {
@@ -1433,7 +1435,7 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
                     Some(format!("**passthrough**  \nLiteral content: `{value}`"))
                 }
                 Inline::Macro(node) => match node.kind {
-                    adocweave::inline::StandardMacroKind::Footnote => document
+                    adocweave::semantic::StandardMacroKind::Footnote => document
                         .catalogs()
                         .footnote_occurrence(node.range)
                         .map(|(footnote, _)| {
@@ -1444,7 +1446,7 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
                                 footnote.text
                             )
                         }),
-                    adocweave::inline::StandardMacroKind::BibliographyAnchor => document
+                    adocweave::semantic::StandardMacroKind::BibliographyAnchor => document
                         .catalogs()
                         .bibliography()
                         .iter()
@@ -1456,7 +1458,7 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
                                 entry.references.len()
                             )
                         }),
-                    adocweave::inline::StandardMacroKind::IndexTerm => document
+                    adocweave::semantic::StandardMacroKind::IndexTerm => document
                         .catalogs()
                         .index()
                         .iter()
@@ -1487,8 +1489,8 @@ fn block_presentation_hover(
     offset: u32,
 ) -> Option<(String, CoreTextRange)> {
     let mut found = None;
-    adocweave::walker::walk(document, |node| {
-        let adocweave::walker::SemanticNode::Block(block) = node else {
+    adocweave::semantic::walk(document, |node| {
+        let adocweave::semantic::SemanticNode::Block(block) = node else {
             return;
         };
         match block {
@@ -1634,7 +1636,7 @@ fn request_offset(
         .analysis
         .source_document()
         .position_to_offset(
-            adocweave::source::Position {
+            adocweave::text::Position {
                 line: position.line,
                 character: position.character,
             },

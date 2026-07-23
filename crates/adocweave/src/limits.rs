@@ -62,18 +62,3 @@ impl Default for ProcessingLimits {
         }
     }
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProcessConfig {
-    pub limits: ProcessingLimits,
-    pub syntax_mode: SyntaxMode,
-}
-
-impl Default for ProcessConfig {
-    fn default() -> Self {
-        Self {
-            limits: ProcessingLimits::default(),
-            syntax_mode: SyntaxMode::Permissive,
-        }
-    }
-}
