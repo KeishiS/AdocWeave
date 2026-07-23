@@ -83,6 +83,13 @@
       "contractImpact": "core-api,html,projection,conformance,wasm-api"
     },
     {
+      "name": "explicit-ordered-list-numbering",
+      "source": "4. four\n5. five\n6. six\n\n9. nine\n11. eleven\n",
+      "compatibility": "supported-subset",
+      "rationale": "明示番号は開始値を型付きpresentationへ確定し、非連番はnativeとWASMで同じ診断を返す",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
       "name": "document-presentation-toc-and-sectnums",
       "source": "= Book\n:toc:\n:toclevels: 1\n:sectnums:\n\n== First\n=== Hidden child\n\n== Second\n",
       "compatibility": "supported-subset",
