@@ -213,7 +213,6 @@ pub fn render_with_inputs(
             catalogs: document.catalogs(),
             structure: document.structure(),
             presentation: document.presentation(),
-            bibliography_section: false,
         };
         render_layout_nodes(
             &mut fragment,
@@ -222,7 +221,7 @@ pub fn render_with_inputs(
             &heading_ids,
             policy,
             &mut inline_context,
-            false,
+            RenderScope::default(),
         );
     }
     for problem in input_usage.finish() {
@@ -261,6 +260,20 @@ pub fn render_with_inputs(
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct RenderScope {
+    bibliography_section: bool,
+}
+
+impl RenderScope {
+    fn enter(self, scope: crate::presentation::LayoutScope) -> Self {
+        Self {
+            bibliography_section: self.bibliography_section
+                || matches!(scope, crate::presentation::LayoutScope::Bibliography),
+        }
+    }
+}
+
 fn render_layout_nodes(
     output: &mut String,
     document: &AstDocument,
@@ -268,7 +281,7 @@ fn render_layout_nodes(
     heading_ids: &[HeadingId],
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
-    bibliography_section: bool,
+    scope: RenderScope,
 ) {
     for node in nodes {
         match node {
@@ -278,7 +291,10 @@ fn render_layout_nodes(
             crate::presentation::LayoutNode::Generated(
                 crate::presentation::GeneratedLayoutNode::FootnoteCatalog,
             ) => render_footnote_catalog(output, document.catalogs()),
-            crate::presentation::LayoutNode::Section { scope, nodes } => {
+            crate::presentation::LayoutNode::Section {
+                scope: layout_scope,
+                nodes,
+            } => {
                 render_layout_nodes(
                     output,
                     document,
@@ -286,12 +302,10 @@ fn render_layout_nodes(
                     heading_ids,
                     policy,
                     context,
-                    bibliography_section
-                        || matches!(scope, crate::presentation::LayoutScope::Bibliography),
+                    scope.enter(*layout_scope),
                 );
             }
             crate::presentation::LayoutNode::Block(block_id) => {
-                context.bibliography_section = bibliography_section;
                 let block = document
                     .top_level_block(*block_id)
                     .expect("layout only contains top-level blocks");
@@ -306,7 +320,15 @@ fn render_layout_nodes(
                         matches!(block, AstBlock::Heading(value) if value.text_range == heading.range)
                     })
                     .map(|heading| heading.id.as_str());
-                render_block(output, block, explicit_id, heading_id, policy, context);
+                render_block(
+                    output,
+                    block,
+                    explicit_id,
+                    heading_id,
+                    policy,
+                    context,
+                    scope,
+                );
                 if matches!(
                     block,
                     AstBlock::Heading(Heading {
@@ -359,6 +381,7 @@ fn render_block(
     heading_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
+    scope: RenderScope,
 ) {
     let explicit_id = explicit_id.or_else(|| {
         context
@@ -432,7 +455,7 @@ fn render_block(
                 render_preformatted(output, explicit_id, None, &block.value);
             }
         },
-        AstBlock::List(list) => render_list(output, list, explicit_id, policy, context),
+        AstBlock::List(list) => render_list(output, list, explicit_id, policy, context, scope),
         AstBlock::Math(block) => {
             if policy.math_languages.allowed.contains(&block.language) {
                 render_preformatted(
@@ -451,7 +474,7 @@ fn render_block(
             }
         }
         AstBlock::Delimited(block) => {
-            render_delimited(output, block, explicit_id, policy, context);
+            render_delimited(output, block, explicit_id, policy, context, scope);
         }
         AstBlock::Unsupported(block) => render_unsupported(output, block, explicit_id),
     }
@@ -487,6 +510,7 @@ fn render_delimited(
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
+    scope: RenderScope,
 ) {
     match &block.content {
         crate::parser::DelimitedContent::Verbatim(value) => {
@@ -506,11 +530,11 @@ fn render_delimited(
             output.push_str("</pre>\n");
         }
         crate::parser::DelimitedContent::Table(table) => {
-            render_table(output, table, explicit_id, policy, context);
+            render_table(output, table, explicit_id, policy, context, scope);
         }
         crate::parser::DelimitedContent::Compound(children) => {
             for child in children {
-                render_block(output, child, None, None, policy, context);
+                render_block(output, child, None, None, policy, context, scope);
             }
         }
     }
@@ -522,6 +546,7 @@ fn render_table(
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
+    scope: RenderScope,
 ) {
     use crate::table::{HorizontalAlignment, TableCellStyle, TableSection};
     output.push_str("<table");
@@ -589,7 +614,7 @@ fn render_table(
                 crate::table::VerticalAlignment::Bottom => "table-valign-bottom",
             });
             output.push_str("\">");
-            render_table_cell(output, cell, policy, context);
+            render_table_cell(output, cell, policy, context, scope);
             output.push_str("</");
             output.push_str(tag);
             output.push_str(">\n");
@@ -615,6 +640,7 @@ fn render_table_cell(
     cell: &crate::table::TableCell,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
+    scope: RenderScope,
 ) {
     use crate::table::{TableCellContent, TableCellStyle};
     match &cell.content {
@@ -644,7 +670,7 @@ fn render_table_cell(
         }
         TableCellContent::AsciiDoc(blocks) => {
             for block in blocks {
-                render_block(output, block, None, None, policy, context);
+                render_block(output, block, None, None, policy, context, scope);
             }
         }
     }
@@ -665,6 +691,7 @@ fn render_list(
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
+    scope: RenderScope,
 ) {
     let tag = match list.kind {
         crate::parser::ListKind::Unordered => "ul",
@@ -725,20 +752,20 @@ fn render_list(
             output.push_str("</span> ");
         }
         render_inlines(output, &item.inlines, context);
-        if context.bibliography_section && list.kind == crate::parser::ListKind::Unordered {
+        if scope.bibliography_section && list.kind == crate::parser::ListKind::Unordered {
             if let Some(entry) = bibliography_entry_for_item(&item.inlines, context.catalogs) {
                 render_bibliography_backrefs(output, entry);
             }
         }
         for child in &item.children {
             output.push('\n');
-            render_list(output, child, None, policy, context);
+            render_list(output, child, None, policy, context, scope);
         }
         for continuation in &item.continuations {
             if !output.ends_with('\n') {
                 output.push('\n');
             }
-            render_block(output, continuation, None, None, policy, context);
+            render_block(output, continuation, None, None, policy, context, scope);
         }
         output.push_str(if list.kind == crate::parser::ListKind::Description {
             "</dd>\n"
@@ -1240,7 +1267,6 @@ struct InlineRenderContext<'inputs, 'render> {
     catalogs: &'inputs crate::catalog::DocumentCatalogs,
     structure: &'inputs crate::structure::DocumentStructure,
     presentation: &'inputs crate::presentation::DocumentPresentation,
-    bibliography_section: bool,
 }
 
 fn render_toc(output: &mut String, presentation: &crate::presentation::DocumentPresentation) {
