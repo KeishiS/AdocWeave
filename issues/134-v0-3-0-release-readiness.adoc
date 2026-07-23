@@ -1,5 +1,5 @@
 = v0.3.0 release readinessとtable表示属性の受け入れ
-:status: in-progress
+:status: completed
 :depends-on: 133,135
 
 == 目的
@@ -31,3 +31,18 @@ canonical AST表現は同じ単一契約version内の機能追加としてfixtur
 * `node tools/release-contract.mjs --tag=v0.3.0`
 * tag workflowの必須job、公開assetの完全性検証およびclean環境の導入E2E
 * Linux x86-64／ARM64、browser Worker、NixOSおよびZedの受け入れ記録
+
+== 受け入れ結果
+
+`v0.3.0-rc.1`は`f3503083f1caa051266cce5e7376535599e0d9df`、stable `v0.3.0`は
+`4e08c0334ee65d68e3d0cfa170a65aab5a9a3b14`をそれぞれtagした。RC Releaseはprerelease、stable Releaseは
+非draft・非prereleaseであり、いずれも計画どおり9 assetを含む。
+
+stableのhttps://github.com/KeishiS/AdocWeave/actions/runs/30015154848[Release run 30015154848]は、
+quality、Linux x86-64／ARM64 native build・smoke、browser／Zed artifact verification、candidate metadata、
+Linux 2 architectureのNix packageを含むinstallation E2Eおよびpublishをすべて成功した。
+公開asset集合はCLI／LSP各2 architecture、browser、Zed、manifest、SPDX SBOM、checksumの9 fileであり、
+0 byte assetはなかった。`cargo make release-gate`と`node tools/release-contract.mjs --tag=v0.3.0`も成功した。
+
+`v0.2.0`からの機能差分はtable caption、`frame`、`grid`、`stripes`、`width`および`autowidth`である。
+公開契約versionは2のままとし、移行手順はxref:../docs/upgrade-0-3.adoc[v0.3.0への移行]へ記録した。
