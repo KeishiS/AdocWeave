@@ -1,0 +1,37 @@
+= HTML出力CSSカスタマイズ境界
+:status: planned
+:depends-on: 144
+
+== 目的
+
+HTML変換結果へ利用者がCSSを適用できる、明示的でホスト非依存な設定方法を追加する。
+現在のHTML backendは固定classとallowlistだけを出力し、stylesheet本文、`<style>`、`<link>`
+またはCLIのCSS指定を提供していないため、生成HTMLの見た目を利用者が変更できない。
+
+== 現状
+
+`RenderPolicy`はdocument mode、URL、resource、言語classおよび未解決参照の表示を制御するが、
+CSSを保持または出力するfieldはない。入力由来の`style`属性、任意classおよびraw HTMLは意図的に
+拒否している。この安全境界を、文書入力のCSS注入を許可する変更によって緩めてはならない。
+
+== 設計方針
+
+* CSSは文書入力ではなく、ホストまたはCLIが明示的に渡す出力設定として扱う。
+* fragment出力とcomplete document出力で適用方法を分離し、既定値は現行HTMLとbyte-for-byte互換にする。
+* complete documentでは、許可したstylesheet URLの`<link rel="stylesheet">`、または明示したCSS本文の
+  `<style>`を出力する方式を比較する。fragmentではHTMLへCSSを混在させず、外部style assetを返すAPIも評価する。
+* CSS本文とURLのサイズ上限、URL policy、HTML escape、重複排除および出力順を固定する。
+* CLI、WASM、LSPの各consumerが同じ設定モデルを利用し、入力属性の`style`や任意classの通過を復活させない。
+* CSS配布方法（埋め込み、外部asset、標準theme）と契約versionへの影響を文書化する。
+
+== 優先度
+
+中期の利用者向け機能とする。HTMLをアプリケーションへ組み込む際の需要が確認されるまで、
+既定出力やfail-closedのresource境界は変更しない。
+
+== 完了条件
+
+* 採用するCSS設定モデルとfragment／completeの出力契約をADRへ記録する。
+* Core、CLIおよびWASMで同一設定を使い、CSSの注入経路と上限をテストで固定する。
+* CSSなしの既定出力が既存fixtureと一致し、埋め込みCSS、stylesheet URL、不正URL、上限超過およびHTML escapeを検証する。
+* `html-contract.adoc`、CLI／WASM利用文書、互換性表およびrelease manifestを更新する。
