@@ -1,5 +1,5 @@
 = List表示属性と順序付き番号形式
-:status: in-progress
+:status: completed
 :depends-on: 063,112,118
 
 == 目的
