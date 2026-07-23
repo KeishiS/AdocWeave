@@ -15,7 +15,7 @@ xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。
-初回stable版からの更新手順はxref:upgrade-0-2.adoc[v0.2.0への移行]を参照する。
+最新版への更新手順はxref:upgrade-0-3.adoc[v0.3.0への移行]を参照する。
 
 == 規範文書
 

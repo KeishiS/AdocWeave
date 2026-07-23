@@ -1,0 +1,25 @@
+= v0.3.0への移行
+
+v0.3.0はtable captionと表示属性を追加するminor releaseである。公開契約versionは2のままであり、
+request／response envelopeは変更しない。
+
+== 利用者可視の変更
+
+* block titleをHTMLの`caption`として出力する。
+* `frame`、`grid`、`stripes`を固定の安全なHTML classへ写像する。
+* `width`の百分率と`options="autowidth"`を解決し、不正値、重複および競合を`invalid-table`診断として報告する。
+* table presentationをcanonical AST snapshotで観測できる。
+
+既存文書にこれらの属性がなければ、従来どおり`table-frame-all`、`table-grid-all`および
+`table-stripes-none`の既定値を出力する。入力由来のCSSまたはinline `style`は受け入れない。
+
+== 更新手順
+
+. 同じreleaseのCLI、LSP、browser archiveおよびZed archiveを取得する。
+. sha256.sumとartifact attestationを検証する。
+. version別directoryへ導入し、CLIとLSPのversion JSONがpackage versionとcontract version 2を返すことを確認する。
+. hostのHTML、projectionおよびconformance snapshotを再構築する。
+. 問題があれば以前のversion別directoryへcurrentを戻す。
+
+導入、rollbackおよび完全削除の詳細はxref:release-installation.adoc[GitHub Releaseからの導入・更新・削除]を
+参照する。
