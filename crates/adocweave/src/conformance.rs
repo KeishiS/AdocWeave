@@ -12,7 +12,7 @@ use crate::projection::project;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
 
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 13;
+pub const CONFORMANCE_CONTRACT_VERSION: u16 = 14;
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///

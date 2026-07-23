@@ -271,6 +271,7 @@ pub(crate) fn lint_syntax(
     lint_anchors(document, config, &mut diagnostics);
     lint_links_and_references(document, config, &mut diagnostics);
     lint_list_presentation(document, config, &mut diagnostics);
+    lint_document_presentation(document, config, &mut diagnostics);
     lint_tables(document, config, &mut diagnostics);
     lint_catalogs(document, config, &mut diagnostics);
     lint_document_structure(document, config, &mut diagnostics);
@@ -309,6 +310,23 @@ fn lint_list_presentation(
             );
         }
     });
+}
+
+fn lint_document_presentation(
+    document: &crate::parser::AstDocument,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if let Some(range) = document.presentation().toc_policy().invalid_level_range {
+        push_diagnostic(
+            diagnostics,
+            config,
+            LintRule::InvalidAttribute,
+            range,
+            "toclevels must be an integer from 1 to 5",
+            None,
+        );
+    }
 }
 
 fn lint_document_structure(
@@ -1003,6 +1021,17 @@ mod tests {
                 "unsupported ordered list style"
             ]
         );
+    }
+
+    #[test]
+    fn invalid_toclevels_uses_the_resolved_attribute_range() {
+        let diagnostics =
+            lint("= Title\n:toclevels: 0\n", &LintConfig::default()).expect("valid source");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "invalid-attribute"
+                && diagnostic.message == "toclevels must be an integer from 1 to 5"
+        }));
     }
 
     #[test]

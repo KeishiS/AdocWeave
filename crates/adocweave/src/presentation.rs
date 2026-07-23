@@ -192,6 +192,7 @@ pub struct BibliographySection {
 pub struct TocPolicy {
     pub enabled: bool,
     pub max_level: Option<u8>,
+    pub invalid_level_range: Option<TextRange>,
 }
 
 /// A generated document-level item. It is not a source AST node.
@@ -303,12 +304,22 @@ pub(crate) fn build_presentation(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
+    let toclevels = attributes.get("toclevels");
+    let max_level = toclevels
+        .and_then(|value| value.trim().parse::<u8>().ok())
+        .filter(|level| (1..=5).contains(level));
+    let invalid_level_range = toclevels.filter(|_| max_level.is_none()).and_then(|_| {
+        document
+            .attributes()
+            .iter()
+            .rev()
+            .find(|attribute| attribute.name == "toclevels")
+            .map(|attribute| attribute.value_range)
+    });
     let toc_policy = TocPolicy {
         enabled: attributes.get("toc").is_some(),
-        max_level: attributes
-            .get("toclevels")
-            .and_then(|value| value.trim().parse::<u8>().ok())
-            .filter(|level| (1..=5).contains(level)),
+        max_level,
+        invalid_level_range,
     };
     let section_numbers = attributes.get("sectnums").is_some();
     let mut counters = [0_u32; 6];
@@ -502,6 +513,7 @@ mod tests {
             super::TocPolicy {
                 enabled: true,
                 max_level: Some(3),
+                invalid_level_range: None,
             }
         );
         assert!(document.presentation().section_numbers_enabled());
