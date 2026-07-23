@@ -1,17 +1,18 @@
 = 文書表示属性：TOCとsection番号
 :status: planned
-:depends-on: 074,112
+:depends-on: 074,112,118
 
 == 目的
 
-既存の`DocumentStructure` projectionを用い、`toc`、`toclevels`および`sectnums`を文書表示属性として
-解決し、HTML出力を制御する。
+既存の`DocumentStructure` projectionとIssue 118のdocument layoutを用い、`toc`、`toclevels`および`sectnums`を
+文書表示属性として解決し、HTML出力を制御する。
 
 == 作業
 
 * document attributeからTOCの有効化、表示深さ、section番号の有効化を型付きpresentation policyへ解決する。
 * article、book、manpage、appendix、part、discrete headingに対するTOC・番号の適用範囲を明示する。
-* HTMLが既存TOC entryとsection treeを再利用し、指定した深さと番号規則で出力するようにする。
+* backend非依存document layoutが既存TOC entryとsection treeを再利用し、指定した深さと番号規則で
+  生成物を配置するようにする。HTMLはそのlayoutを描画するだけとする。
 * document symbols、xref ID、LSP hoverおよびJSON projectionが表示用番号の変更で不安定にならないことを保証する。
 * 公開契約への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
 

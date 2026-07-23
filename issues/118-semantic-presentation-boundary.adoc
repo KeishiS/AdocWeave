@@ -1,0 +1,44 @@
+= 意味解析と表示計画の境界再設計
+:status: planned
+:depends-on: 112
+
+== 目的
+
+stable後の標準AsciiDoc互換性拡張に先立ち、source block、list表示属性、bibliographyおよび文書表示属性が
+属性文字列の再解釈やHTML固有の特例を増やさず共有できる境界へ再設計する。後方互換layerは作らず、
+影響する公開契約と全consumerを同時に移行する。
+
+== 作業
+
+* lossless syntax上のraw attributeと、semantic modelで一度だけ解決する型付き属性を分離する。
+  不正値・未対応値・由来の診断を解決結果と同じsnapshotに保持する。
+* source既定言語、list表示、TOC、section番号およびbibliographyに共通する文書表示設定を、
+  immutableな型付き設定として解決する。host固有の出力設定はこの設定に含めない。
+* `DocumentStructure`を階層、識別子および順序を表す意味構造へ限定する。TOC抽出、表示番号および
+  生成物の配置は表示設定から導く。
+* blockとsectionへ安定した識別子を導入し、catalog、structureおよび生成するbibliography項目を
+  source rangeの偶然の一致に依存せず結合できるようにする。
+* semantic ASTとは別に、TOC、footnote、bibliography等の生成物を配置するbackend非依存の
+  document layoutを導入する。HTML rendererはこのlayoutを描画し、文書末尾への特別な追加処理を廃止する。
+* listing、literalおよびsourceのverbatim content modelを正規化し、source言語の明示指定、短縮記法、
+  文書既定値を由来付きの一つの表現へloweringする。
+* Core Profile、Core API、HTML、projection、conformanceおよびWASM APIの破壊的変更を一括で判定し、
+  version、fixture、規範文書およびRelease noteを同期する。
+
+== 検証
+
+* raw attribute、型付き解決結果、diagnostic、stable IDおよびdocument layoutを検査するfixtureを追加する。
+* 同じ文書についてnative、WASM、CLI、LSP、formatterおよびHTMLが一つのAnalysis snapshotを共有し、
+  consumer側で属性を再解釈しないことを確認する。
+* TOC、footnote、bibliographyを文書中の指定位置へ配置する回帰fixtureを追加する。
+* sourceの標準形・短縮形・既定値が同じverbatim意味表現へ正規化されることを確認する。
+* `cargo make release-gate`を実行する。
+
+== 完了条件
+
+表示に関わる標準属性と生成物が、型付きsemantic snapshotとbackend非依存layoutから決定される。HTML、
+projection、LSPおよび将来のbackendは属性文字列やASTを再走査して独自の表示判断を行わない。
+
+== 範囲外
+
+`subs`属性の追加、theme・CSSの設計、PDF／DocBook backend、外部citation database、host固有のresource解決は扱わない。

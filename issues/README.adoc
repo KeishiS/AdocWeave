@@ -204,11 +204,12 @@ RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先
 
 === M26: stable後の標準AsciiDoc互換性拡張
 
-`v0.1.0`の公開契約と安全境界を維持しつつ、利用者需要の高い標準AsciiDoc機能を小さな互換性単位で追加する。
-source block短縮記法とlist表示属性は互いに独立に進める。bibliography出力と文書表示属性は既存catalog／
-document structureを再利用し、semantic AST、source IDおよびhost resource境界を変更しない。`subs`属性、
-高度なinclude属性、table表示属性およびMarkdown互換は後続の候補とする。
+利用者需要の高い標準AsciiDoc機能を追加する前に、raw attribute、意味解析、文書構造および表示生成物の
+境界を再設計する。M26は後方互換layerを作らない破壊的移行として扱い、Issue 118完了時に全consumerと
+公開契約を一斉に移行する。その後の機能Issueは型付きsemantic snapshotとbackend非依存layoutを共有する。
+`subs`属性、高度なinclude属性、table表示属性およびMarkdown互換は後続の候補とする。
 
+* xref:118-semantic-presentation-boundary.adoc[118: 意味解析と表示計画の境界再設計]（計画）
 * xref:114-source-block-shorthand-and-default-language.adoc[114: Source block短縮記法と既定言語]（計画）
 * xref:115-list-presentation-attributes.adoc[115: List表示属性と順序付き番号形式]（計画）
 * xref:116-bibliography-section-rendering.adoc[116: Bibliography sectionのHTML出力]（計画）

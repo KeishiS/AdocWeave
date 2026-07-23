@@ -365,10 +365,13 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 
 == stable後の標準AsciiDoc互換性拡張
 
-`v0.1.0`の公開契約と安全境界を維持し、既存のsemantic AST、catalogおよびdocument structureを再利用して
-標準AsciiDocの利用頻度が高い不足領域を拡張する。source block短縮記法とlist表示属性は独立に着手できる。
-bibliography出力と文書表示属性は、それぞれ既存のcatalogと`DocumentStructure`への追加projectionとする。
+標準AsciiDocの利用頻度が高い不足領域を拡張する前に、raw attribute、意味解析、文書構造および表示生成物の
+境界を再設計する。Issue 118は後方互換layerを作らず、型付きsemantic snapshot、stable IDおよび
+backend非依存document layoutへ全consumerを一斉に移行する。その完了後、source block短縮記法とlist表示属性は
+独立に進められる。bibliography出力と文書表示属性はlayoutを共有する。
 
+. xref:../issues/118-semantic-presentation-boundary.adoc[Issue 118]で意味解析と表示計画を分離し、
+  型付き属性解決と生成物配置を一つのsnapshotへ収束する。（計画）
 . xref:../issues/114-source-block-shorthand-and-default-language.adoc[Issue 114]で`[,LANGUAGE]`と`source-language`を
   source blockへ正規化する。（計画）
 . xref:../issues/115-list-presentation-attributes.adoc[Issue 115]で開始番号、逆順および番号形式をlist表示属性として
