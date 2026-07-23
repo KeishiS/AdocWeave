@@ -7,6 +7,12 @@
 安全なhost委譲モデルを維持しつつ、単体CLIで相対画像・リンクを扱う需要に対して、明示opt-inの
 local resource profileを提供すべきか評価する。
 
+== 優先度
+
+後順位とする。`v0.4.0`公開後の機能release、既定profileまたは公開契約の前提にはしない。
+相対resourceを含む単体CLI変換の具体的な利用需要が確認されたときだけ、次の論点を再評価する。
+それまでは既定のhost委譲・fail-closed境界を維持し、実装作業を開始しない。
+
 == 論点
 
 * 既定の`RenderInputs`必須・fail-closed契約を変更せず、CLIだけがどのroot、scheme、symlink、MIME、
