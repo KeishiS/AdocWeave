@@ -104,6 +104,13 @@
       "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
     },
     {
+      "name": "bibliography-section-structure-validation",
+      "source": "[bibliography]\n= tool(1)\n:doctype: manpage\n\n* bibanchor:ref[] Entry\n",
+      "compatibility": "supported-subset",
+      "rationale": "bibliography styleのdoctypeとsection位置の診断はnativeとWASMで同じdocument structure snapshotから決定する",
+      "contractImpact": "core-profile,core-api,conformance,wasm-api"
+    },
+    {
       "name": "advanced-tables-and-asciidoc-cell",
       "source": "[format=csv,options=header]\n|===\nname,value\nalpha,\"one, two\"\n|===\n\n[cols=a]\n|===\n|[[cell-section]]\n== Cell section\n\n literal\n\n'''\n\n[source,rust]\n----\nfn main() {}\n----\n\n!===\n!nested\n!===\n|===\n",
       "compatibility": "supported-subset",

@@ -83,6 +83,8 @@ pub struct Manpage {
 pub enum StructureProblemKind {
     AppendixLevel,
     AppendixDoctype,
+    BibliographyLevel,
+    BibliographyDoctype,
     MissingManpageTitle,
     InvalidManpageTitle,
     MissingManpageNameSection,
@@ -124,6 +126,7 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
             .find(|target| target.target_range == heading.range && target.id == id)
             .map_or(heading.text_range, |target| target.id_range);
         let appendix = is_appendix(heading);
+        let bibliography = is_bibliography(heading);
         let (kind, level) = match heading.kind {
             HeadingKind::DocumentTitle => (SectionKind::DocumentTitle, 0),
             HeadingKind::Part => (SectionKind::Part, 0),
@@ -144,6 +147,23 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
             ) {
                 structure.problems.push(StructureProblem {
                     kind: StructureProblemKind::AppendixDoctype,
+                    range: heading.range,
+                });
+            }
+        }
+        if bibliography {
+            if matches!(heading.kind, HeadingKind::DocumentTitle) {
+                structure.problems.push(StructureProblem {
+                    kind: StructureProblemKind::BibliographyLevel,
+                    range: heading.range,
+                });
+            }
+            if !matches!(
+                document.header().doctype,
+                DocumentType::Article | DocumentType::Book
+            ) {
+                structure.problems.push(StructureProblem {
+                    kind: StructureProblemKind::BibliographyDoctype,
                     range: heading.range,
                 });
             }
@@ -221,6 +241,14 @@ fn is_appendix(heading: &Heading) -> bool {
             .roles
             .iter()
             .any(|role| role.value == "appendix")
+}
+
+fn is_bibliography(heading: &Heading) -> bool {
+    heading
+        .metadata
+        .attributes
+        .iter()
+        .any(|attribute| attribute.name.is_none() && attribute.value == "bibliography")
 }
 
 fn materialize_section(index: usize, arena: &[ArenaSection]) -> Section {

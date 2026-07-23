@@ -324,6 +324,12 @@ fn lint_document_structure(
             crate::structure::StructureProblemKind::AppendixDoctype => {
                 "appendix is only valid for article or book documents"
             }
+            crate::structure::StructureProblemKind::BibliographyLevel => {
+                "bibliography must be a section, not the document title"
+            }
+            crate::structure::StructureProblemKind::BibliographyDoctype => {
+                "bibliography is only valid for article or book documents"
+            }
             crate::structure::StructureProblemKind::MissingManpageTitle => {
                 "manpage document title is missing"
             }
@@ -1030,8 +1036,7 @@ mod tests {
 
     #[test]
     fn document_structure_lint_reports_doctype_specific_failures() {
-        let source =
-            "= tool(1)\n:doctype: manpage\n\n= Not a book part\n\n[appendix]\n=== Bad appendix\n";
+        let source = "[bibliography]\n= tool(1)\n:doctype: manpage\n\n= Not a book part\n\n[appendix]\n=== Bad appendix\n";
         let diagnostics = lint(source, &LintConfig::default()).expect("valid source");
         let messages = diagnostics
             .iter()
@@ -1041,6 +1046,8 @@ mod tests {
 
         assert!(messages.contains(&"appendix must be a level-one section"));
         assert!(messages.contains(&"appendix is only valid for article or book documents"));
+        assert!(messages.contains(&"bibliography must be a section, not the document title"));
+        assert!(messages.contains(&"bibliography is only valid for article or book documents"));
         assert!(messages.contains(&"manpage NAME section is missing"));
     }
 
