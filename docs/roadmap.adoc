@@ -409,7 +409,7 @@ M26–M28で追加したsource block短縮記法、list表示属性、bibliograp
 含めない。公開契約に互換性のない差分が残る場合は、release candidateを作る前に`CONTRACT_VERSION`、
 release manifest、fixture、互換性文書およびmigration noteを一つの変更で更新する。
 
-. xref:../issues/129-v0-2-0-release-readiness.adoc[Issue 129]で契約差分を監査し、`v0.2.0-rc.1`を公開・受け入れする。（進行中）
+. xref:../issues/129-v0-2-0-release-readiness.adoc[Issue 129]で契約差分を監査し、`v0.2.0-rc.1`と`v0.2.0`を公開・受け入れした。（完了）
 . RC後は機能追加を停止し、repository所有者の公開前確認後にstableを公開する。
 . blocker修正に公開契約変更が含まれる場合は新しいRCを公開する。stableでは最終RCと同じ機能baselineへstable version metadataだけを同期する。
 
