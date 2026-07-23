@@ -1,11 +1,11 @@
 // Keep this thin runtime constant synchronized with release-manifest.json.
 // The synchronization test fails whenever the public WASM contract changes.
-export const WASM_API_VERSION = 4;
-export const CORE_API_VERSION = 4;
-export const CORE_PROFILE_VERSION = 1;
-export const HTML_CONTRACT_VERSION = 3;
-export const PROJECTION_CONTRACT_VERSION = 4;
-export const CONFORMANCE_CONTRACT_VERSION = 4;
+export const WASM_API_VERSION = 6;
+export const CORE_API_VERSION = 7;
+export const CORE_PROFILE_VERSION = 3;
+export const HTML_CONTRACT_VERSION = 5;
+export const PROJECTION_CONTRACT_VERSION = 7;
+export const CONFORMANCE_CONTRACT_VERSION = 7;
 export const BROWSER_PACKAGE_VERSION = "0.1.0";
 export const CONTRACT_VERSIONS = Object.freeze({
   conformance: CONFORMANCE_CONTRACT_VERSION,
