@@ -1631,6 +1631,18 @@ mod tests {
     }
 
     #[test]
+    fn bibliography_back_references_are_scoped_to_bibliography_sections() {
+        let parsed = parse(
+            "* bibanchor:outside[] Outside\n\nSee <<outside>>.\n\n[bibliography]\n== Sources\n\n* bibanchor:inside[] Inside\n\nSee <<inside>>.\n\n== After\n\n* bibanchor:after[] After\n\nSee <<after>>.\n",
+        )
+        .expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default()).html;
+
+        assert_eq!(output.matches("class=\"bibliography-backref\"").count(), 1);
+        assert!(output.contains("href=\"#_bibliography_ref_"));
+    }
+
+    #[test]
     fn inline_regression_keeps_plain_text_html_output_unchanged() {
         let parsed = parse("plain <text>\nnext").expect("valid source");
 
