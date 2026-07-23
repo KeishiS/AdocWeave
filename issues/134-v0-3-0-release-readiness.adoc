@@ -1,6 +1,6 @@
 = v0.3.0 release readinessとtable表示属性の受け入れ
 :status: in-progress
-:depends-on: 133
+:depends-on: 133,135
 
 == 目的
 
@@ -31,4 +31,3 @@ canonical AST表現は同じ単一契約version内の機能追加としてfixtur
 * `node tools/release-contract.mjs --tag=v0.3.0-rc.1`
 * tag workflowの必須job、公開assetの完全性検証およびclean環境の導入E2E
 * Linux x86-64／ARM64、browser Worker、NixOSおよびZedの受け入れ記録
-

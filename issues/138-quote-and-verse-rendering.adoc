@@ -1,0 +1,21 @@
+= Quote・verse blockの意味保持レンダリング
+:status: planned
+:depends-on: 136
+
+== 目的
+
+quoteおよびverseのcontainer metadataを、compound blockとして子内容だけを出力する現状から、引用本文、
+attribution、citationおよび改行意味を保持する型付きpresentationへ移行する。
+
+== 作業
+
+* `[quote,Author,Source]`のpositional metadataを型付きquote presentationへ解決する。
+* HTML allowlistへ`blockquote`、`cite`など必要最小限の固定要素・classを追加する。
+* quote、verse、metadataなしのcontainer、入れ子blockおよびescapeをfixtureで固定する。
+* LSP hover／completion、formatter、CLI、WASMおよびHTML契約へ同じ意味を反映する。
+
+== 完了条件
+
+* attributionとcitationが出力から黙って失われない。
+* quote／verseの改行とcompound子blockの意味が決定的で、raw HTMLを通過させない。
+* 文書の「ソースを黙って破棄しない」方針とHTML出力が一致する。

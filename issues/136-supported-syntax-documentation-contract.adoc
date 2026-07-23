@@ -1,0 +1,23 @@
+= 対応構文文書と実装契約の同期
+:status: planned
+:depends-on:
+
+== 目的
+
+対応表、互換性評価、規範文法およびIssue完了記録が、実装済みの構文と意図的な未実装を同じ粒度で
+記述するようにする。実装と文書の乖離をrelease前ではなく検証時に検出する。
+
+== 作業
+
+* highlight、subscript、superscript、typographic quoteを`docs/syntax-support.adoc`の対応表へ反映する。
+* 未実装のadmonitionとquoteのHTML意味を、対応済みと主張せず明示的な制限として記録する。
+* `docs/compatibility.adoc`、`docs/syntax-support.adoc`、`docs/grammar.adoc`およびIssue statusの間で
+  対応状態を機械検査できる最小の規範表またはfixture manifestを設計する。
+* 既存の実装済み構文について、少なくとも一つの対応表記述とHTML／semantic fixtureが対応することを
+  repository governance testで固定する。
+
+== 完了条件
+
+* 対応表に「未対応」と記載された構文をrendererが対応済みHTMLへ変換していない。
+* 未実装構文を対応済みとする文書記述がなく、意図的な制限とfallbackが明記される。
+* 文書・fixture・Issue statusの不一致を追加した検証が検出する。

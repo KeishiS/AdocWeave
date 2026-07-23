@@ -1,0 +1,21 @@
+= 単体CLIのlocal resource profile評価
+:status: planned
+:depends-on:
+
+== 目的
+
+安全なhost委譲モデルを維持しつつ、単体CLIで相対画像・リンクを扱う需要に対して、明示opt-inの
+local resource profileを提供すべきか評価する。
+
+== 論点
+
+* 既定の`RenderInputs`必須・fail-closed契約を変更せず、CLIだけがどのroot、scheme、symlink、MIME、
+  file sizeを許可できるか。
+* include providerの`--base-dir`／`--allow-root`と同じ権限境界を再利用できるか。
+* 相対linkとimageをhost解決済みURLへ変換する責務、browser／WASMとの非対称性、portable HTMLの意味。
+* 実装しない場合に、CLI文書でresource fallbackをどこまで明示するか。
+
+== 完了条件
+
+* 採用・不採用をADRへ記録し、採用時だけ別IssueでI/O境界、security test、CLI UXおよびrelease影響を定義する。
+* 既定profileがresourceの生targetをactive HTMLへ昇格しない不変条件を維持する。

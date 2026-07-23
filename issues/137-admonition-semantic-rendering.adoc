@@ -1,0 +1,22 @@
+= Admonitionの型付き意味解析と診断
+:status: planned
+:depends-on: 136
+
+== 目的
+
+paragraph形式（`NOTE: text`等）およびblock形式（`[NOTE]` example block）のadmonitionを、URLや通常paragraphへ
+誤回復させず、型付きsemantic modelから安全なHTML、診断、LSPおよびprojectionへ一貫して投影する。
+
+== 作業
+
+* NOTE、TIP、IMPORTANT、WARNING、CAUTIONを通常URL認識より優先して認識する。
+* paragraph形式とblock形式を共通のadmonition presentationへlowerし、title、内容およびsource rangeを保持する。
+* HTML allowlistへ固定admonition要素・classだけを追加し、入力由来classやraw HTMLを通過させない。
+* invalid-url-schemeの偽陽性を除去し、未知style、不完全入力および入れ子内容の回復規則を固定する。
+* CLI、WASM、LSP、formatterおよびcross-runtime fixtureを追加する。
+
+== 完了条件
+
+* `NOTE: text`が`invalid-url-scheme`を出さず、typed admonitionとして出力される。
+* block形式とparagraph形式が同じ許可集合・診断契約を共有する。
+* 対応仕様、HTML契約、互換性評価およびfixtureが同期する。
