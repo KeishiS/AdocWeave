@@ -166,19 +166,32 @@ fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
     }
 
     let mut presentation = crate::parser::OrderedListPresentation::default();
+    let mut problems = Vec::new();
     for attribute in &list.metadata.attributes {
         match attribute.name.as_deref() {
             Some("start") => {
-                presentation.start = attribute
+                let start = attribute
                     .value
                     .trim()
                     .parse::<u32>()
                     .ok()
                     .filter(|value| *value > 0);
+                if start.is_none() {
+                    problems.push(crate::parser::ListPresentationProblem {
+                        kind: crate::parser::ListPresentationProblemKind::InvalidStart,
+                        range: attribute.range,
+                    });
+                }
+                presentation.start = start;
             }
             Some("style") => {
                 if let Some(style) = ordered_list_style(&attribute.value) {
                     presentation.style = style;
+                } else {
+                    problems.push(crate::parser::ListPresentationProblem {
+                        kind: crate::parser::ListPresentationProblemKind::UnknownOrderedStyle,
+                        range: attribute.range,
+                    });
                 }
             }
             Some("options") => {
@@ -209,6 +222,7 @@ fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
         presentation.reversed = true;
     }
     list.presentation = presentation;
+    list.presentation_problems = problems;
 }
 
 fn ordered_list_style(value: &str) -> Option<crate::parser::OrderedListStyle> {

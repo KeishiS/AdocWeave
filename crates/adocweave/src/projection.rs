@@ -21,6 +21,7 @@ pub struct DocumentProjection {
     pub external_links: Vec<ExternalLink>,
     pub reference_edges: Vec<ReferenceEdge>,
     pub source_blocks: Vec<SourceBlockProjection>,
+    pub ordered_lists: Vec<OrderedListProjection>,
     pub formulas: Vec<FormulaProjection>,
     pub searchable_text: SearchableText,
     pub catalogs: crate::catalog::DocumentCatalogs,
@@ -37,10 +38,33 @@ pub struct SourceBlockProjection {
     pub source: String,
 }
 
+/// Presentation facts for an ordered list, resolved once during lowering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OrderedListProjection {
+    pub source_range: TextRange,
+    pub start: Option<u32>,
+    pub reversed: bool,
+    pub style: crate::parser::OrderedListStyle,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FormulaKind {
     Inline,
     Block,
+}
+
+impl OrderedListProjection {
+    const fn style_name(self) -> &'static str {
+        match self.style {
+            crate::parser::OrderedListStyle::Arabic => "arabic",
+            crate::parser::OrderedListStyle::Decimal => "decimal",
+            crate::parser::OrderedListStyle::LowerAlpha => "loweralpha",
+            crate::parser::OrderedListStyle::UpperAlpha => "upperalpha",
+            crate::parser::OrderedListStyle::LowerRoman => "lowerroman",
+            crate::parser::OrderedListStyle::UpperRoman => "upperroman",
+            crate::parser::OrderedListStyle::LowerGreek => "lowergreek",
+        }
+    }
 }
 
 impl FormulaKind {
@@ -155,6 +179,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         .collect();
 
     let mut source_blocks = Vec::new();
+    let mut ordered_lists = Vec::new();
     let mut formulas = Vec::new();
     crate::walker::walk(analysis.ast(), |node| match node {
         crate::walker::SemanticNode::Block(AstBlock::Source(source)) => {
@@ -198,9 +223,20 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 source: formula.value.clone(),
             });
         }
+        crate::walker::SemanticNode::Block(AstBlock::List(list))
+            if list.kind == crate::parser::ListKind::Ordered =>
+        {
+            ordered_lists.push(OrderedListProjection {
+                source_range: list.range,
+                start: list.presentation.start,
+                reversed: list.presentation.reversed,
+                style: list.presentation.style,
+            });
+        }
         _ => {}
     });
     source_blocks.sort_by_key(|source| (source.source_range.start(), source.source_range.end()));
+    ordered_lists.sort_by_key(|list| (list.source_range.start(), list.source_range.end()));
     formulas.sort_by_key(|formula| (formula.source_range.start(), formula.source_range.end()));
 
     DocumentProjection {
@@ -211,6 +247,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         external_links,
         reference_edges,
         source_blocks,
+        ordered_lists,
         formulas,
         searchable_text: searchable_text(analysis),
         catalogs: analysis.catalogs().clone(),
@@ -514,6 +551,22 @@ impl DocumentProjection {
                 json_range(formula.source_range),
                 json_range(formula.content_range),
                 json_string(&formula.source),
+            )
+            .expect("writing to String cannot fail");
+        }
+        output.push_str("],\"orderedLists\":[");
+        for (index, list) in self.ordered_lists.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            write!(
+                output,
+                "{{\"sourceRange\":{},\"start\":{},\"reversed\":{},\"style\":\"{}\"}}",
+                json_range(list.source_range),
+                list.start
+                    .map_or_else(|| "null".to_owned(), |value| value.to_string()),
+                list.reversed,
+                list.style_name(),
             )
             .expect("writing to String cannot fail");
         }
@@ -931,6 +984,30 @@ mod tests {
     }
 
     #[test]
+    fn ordered_list_projection_uses_lowered_presentation() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze("[start=4,%reversed,loweralpha]\n. one\n. two\n")
+            .expect("analysis");
+        let projected = project(&analysis, &RenderInputs::default());
+
+        assert_eq!(projected.ordered_lists.len(), 1);
+        assert_eq!(
+            projected.ordered_lists[0],
+            OrderedListProjection {
+                source_range: analysis.ast().blocks()[0].range(),
+                start: Some(4),
+                reversed: true,
+                style: crate::parser::OrderedListStyle::LowerAlpha,
+            }
+        );
+        assert!(
+            projected
+                .render_json()
+                .contains("\"orderedLists\":[{\"sourceRange\":")
+        );
+    }
+
+    #[test]
     fn duplicate_resolution_ranges_never_depend_on_input_order() {
         let analysis = Engine::new(ParseOptions::default())
             .analyze("xref:other.adoc[Other]")
@@ -958,7 +1035,7 @@ mod tests {
             .expect("analysis");
         assert_eq!(
             project(&analysis, &RenderInputs::default()).render_json(),
-            "{\"contractVersion\":6,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":6,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

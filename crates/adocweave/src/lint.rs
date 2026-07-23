@@ -38,6 +38,7 @@ pub enum LintRule {
     InvalidCrossReference,
     UnresolvedCrossReference,
     InconsistentList,
+    InvalidListPresentation,
     InvalidStem,
     InvalidTable,
     InvalidCatalog,
@@ -45,7 +46,7 @@ pub enum LintRule {
 }
 
 impl LintRule {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::TrailingWhitespace,
         Self::ExcessiveBlankLines,
         Self::LineTooLong,
@@ -68,6 +69,7 @@ impl LintRule {
         Self::InvalidCrossReference,
         Self::UnresolvedCrossReference,
         Self::InconsistentList,
+        Self::InvalidListPresentation,
         Self::InvalidStem,
         Self::InvalidTable,
         Self::InvalidCatalog,
@@ -98,6 +100,7 @@ impl LintRule {
             Self::InvalidCrossReference => "invalid-cross-reference",
             Self::UnresolvedCrossReference => "unresolved-cross-reference",
             Self::InconsistentList => "inconsistent-list",
+            Self::InvalidListPresentation => "invalid-list-presentation",
             Self::InvalidStem => "invalid-stem",
             Self::InvalidTable => "invalid-table",
             Self::InvalidCatalog => "invalid-catalog",
@@ -267,11 +270,42 @@ pub(crate) fn lint_syntax(
     lint_attributes(document, config, &mut diagnostics);
     lint_anchors(document, config, &mut diagnostics);
     lint_links_and_references(document, config, &mut diagnostics);
+    lint_list_presentation(document, config, &mut diagnostics);
     lint_tables(document, config, &mut diagnostics);
     lint_catalogs(document, config, &mut diagnostics);
     lint_document_structure(document, config, &mut diagnostics);
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
+}
+
+fn lint_list_presentation(
+    document: &crate::parser::AstDocument,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    crate::walker::walk(document, |node| {
+        let crate::walker::SemanticNode::Block(AstBlock::List(list)) = node else {
+            return;
+        };
+        for problem in &list.presentation_problems {
+            let message = match problem.kind {
+                crate::parser::ListPresentationProblemKind::InvalidStart => {
+                    "ordered list start must be a positive integer"
+                }
+                crate::parser::ListPresentationProblemKind::UnknownOrderedStyle => {
+                    "unsupported ordered list style"
+                }
+            };
+            push_diagnostic(
+                diagnostics,
+                config,
+                LintRule::InvalidListPresentation,
+                problem.range,
+                message,
+                None,
+            );
+        }
+    });
 }
 
 fn lint_document_structure(
@@ -941,6 +975,25 @@ mod tests {
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].code.as_str(), "trailing-whitespace");
         assert_eq!(diagnostics[1].code.as_str(), "line-too-long");
+    }
+
+    #[test]
+    fn list_presentation_diagnostics_use_lowered_attribute_problems() {
+        let diagnostics = lint("[start=0,style=unknown]\n. item\n", &LintConfig::default())
+            .expect("valid source");
+        let messages = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "invalid-list-presentation")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            messages,
+            [
+                "ordered list start must be a positive integer",
+                "unsupported ordered list style"
+            ]
+        );
     }
 
     #[test]

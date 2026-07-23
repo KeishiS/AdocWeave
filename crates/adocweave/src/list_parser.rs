@@ -121,6 +121,7 @@ pub(super) fn build_tree(
         metadata: BlockMetadata::default(),
         kind,
         presentation: crate::block_model::OrderedListPresentation::default(),
+        presentation_problems: Vec::new(),
         range,
         items,
     })

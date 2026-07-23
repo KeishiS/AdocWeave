@@ -265,6 +265,22 @@ pub enum OrderedListStyle {
     LowerGreek,
 }
 
+/// A recoverable problem found while resolving ordered-list presentation.
+///
+/// The raw attribute remains in [`BlockMetadata`], while this record gives
+/// consumers one stable diagnostic source without reparsing attribute text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ListPresentationProblemKind {
+    InvalidStart,
+    UnknownOrderedStyle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ListPresentationProblem {
+    pub kind: ListPresentationProblemKind,
+    pub range: TextRange,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChecklistState {
     Unchecked,
@@ -305,6 +321,7 @@ pub struct ListBlock {
     pub metadata: BlockMetadata,
     pub kind: ListKind,
     pub presentation: OrderedListPresentation,
+    pub presentation_problems: Vec<ListPresentationProblem>,
     pub range: TextRange,
     pub items: Vec<ListItem>,
 }
