@@ -16,7 +16,7 @@ use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, Reso
 use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::{UrlContext, UrlPolicy};
 
-pub const HTML_CONTRACT_VERSION: u16 = 6;
+pub const HTML_CONTRACT_VERSION: u16 = 7;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
@@ -30,6 +30,7 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
     "appendix",
     "bibliography-anchor",
+    "bibliography-backref",
     "button",
     "callout-list",
     "callout-number",
@@ -213,6 +214,7 @@ pub fn render_with_inputs(
             catalogs: document.catalogs(),
             structure: document.structure(),
             presentation: document.presentation(),
+            bibliography_section: false,
         };
         for node in document.layout().nodes() {
             let crate::presentation::LayoutNode::Block(block_id) = node else {
@@ -246,6 +248,12 @@ pub fn render_with_inputs(
                     matches!(block, AstBlock::Heading(value) if value.text_range == heading.range)
                 })
                 .map(|heading| heading.id.as_str());
+            if matches!(block, AstBlock::Heading(_)) {
+                inline_context.bibliography_section = document
+                    .presentation()
+                    .bibliography_section_at(block.range())
+                    .is_some();
+            }
             render_block(
                 &mut fragment,
                 block,
@@ -705,6 +713,11 @@ fn render_list(
             output.push_str("</span> ");
         }
         render_inlines(output, &item.inlines, context);
+        if context.bibliography_section && list.kind == crate::parser::ListKind::Unordered {
+            if let Some(entry) = bibliography_entry_for_item(&item.inlines, context.catalogs) {
+                render_bibliography_backrefs(output, entry);
+            }
+        }
         for child in &item.children {
             output.push('\n');
             render_list(output, child, None, policy, context);
@@ -737,6 +750,39 @@ fn safe_language_class(language: &str) -> String {
             }
         })
         .collect()
+}
+
+fn bibliography_entry_for_item<'a>(
+    inlines: &[Inline],
+    catalogs: &'a crate::catalog::DocumentCatalogs,
+) -> Option<&'a crate::catalog::BibliographyEntry> {
+    inlines.iter().find_map(|inline| {
+        let Inline::Macro(node) = inline else {
+            return None;
+        };
+        (node.kind == crate::inline::StandardMacroKind::BibliographyAnchor)
+            .then(|| {
+                catalogs
+                    .bibliography()
+                    .iter()
+                    .find(|entry| entry.definition_range == node.range)
+            })
+            .flatten()
+    })
+}
+
+fn bibliography_reference_id(range: crate::source::TextRange) -> String {
+    format!("_bibliography_ref_{}", range.start().to_u32())
+}
+
+fn render_bibliography_backrefs(output: &mut String, entry: &crate::catalog::BibliographyEntry) {
+    for (index, reference) in entry.references.iter().enumerate() {
+        output.push_str(" <a class=\"bibliography-backref\" href=\"#");
+        output.push_str(&bibliography_reference_id(reference.range));
+        output.push_str("\">↩");
+        output.push_str(&(index + 1).to_string());
+        output.push_str("</a>");
+    }
 }
 
 fn render_heading(
@@ -1182,6 +1228,7 @@ struct InlineRenderContext<'inputs, 'render> {
     catalogs: &'inputs crate::catalog::DocumentCatalogs,
     structure: &'inputs crate::structure::DocumentStructure,
     presentation: &'inputs crate::presentation::DocumentPresentation,
+    bibliography_section: bool,
 }
 
 fn render_toc(output: &mut String, presentation: &crate::presentation::DocumentPresentation) {
@@ -1367,6 +1414,15 @@ fn render_reference(
     if let Some(href) = href {
         output.push_str("<a href=\"");
         escape_html_into(output, &href);
+        if context.catalogs.bibliography().iter().any(|entry| {
+            entry
+                .references
+                .iter()
+                .any(|candidate| candidate.range == reference.range)
+        }) {
+            output.push_str("\" id=\"");
+            output.push_str(&bibliography_reference_id(reference.range));
+        }
         output.push_str("\">");
         render_label_or_text(output, &reference.label, &fallback, context);
         output.push_str("</a>");
@@ -1558,6 +1614,20 @@ mod tests {
             render(&parsed.ast, &RenderPolicy::default()).html,
             "<h1 class=\"document-title\" id=\"_book\">Book</h1>\n<div class=\"toc\">\n<ul>\n<li><a href=\"#_part\">1. Part</a><ul>\n<li><a href=\"#_chapter\">1.1. Chapter</a></li>\n<li><a href=\"#_reference\">1.2. Reference</a></li>\n</ul>\n</li>\n</ul>\n</div>\n<h1 id=\"_part\">1. Part</h1>\n<h1 id=\"_chapter\">1.1. Chapter</h1>\n<h1 class=\"appendix\" id=\"_reference\">1.2. Reference</h1>\n"
         );
+    }
+
+    #[test]
+    fn bibliography_section_uses_catalog_entries_for_citation_back_references() {
+        let parsed = parse(
+            "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nSee <<ref,Entry>>.\n",
+        )
+        .expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default()).html;
+
+        assert!(output.contains("<span id=\"ref\" class=\"bibliography-anchor\"></span>"));
+        assert!(output.contains("class=\"bibliography-backref\""));
+        assert!(output.contains("id=\"_bibliography_ref_"));
+        assert!(output.contains("href=\"#_bibliography_ref_"));
     }
 
     #[test]
@@ -1953,7 +2023,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 6);
+        assert_eq!(HTML_CONTRACT_VERSION, 7);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -1976,6 +2046,7 @@ mod tests {
                 "author",
                 "appendix",
                 "bibliography-anchor",
+                "bibliography-backref",
                 "button",
                 "callout-list",
                 "callout-number",

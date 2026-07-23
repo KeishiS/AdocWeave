@@ -3,7 +3,7 @@
 この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
 製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-この対応範囲は`CORE_PROFILE_VERSION = 4`として公開する。version、SemVerおよび再構築条件は
+この対応範囲は`CORE_PROFILE_VERSION = 5`として公開する。version、SemVerおよび再構築条件は
 xref:core-profile.adoc[AdocWeave Core Profile]で定義する。
 実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
 AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
@@ -264,7 +264,8 @@ xref:preprocessor.adoc[プリプロセッサとresource snapshot]を参照
 |Bibliographyとfootnote
 |部分対応
 |bibliography anchorとfootnote macroの構文node、名前付きfootnote再利用、出現順番号、back reference、
-bibliography参照edgeおよび階層index catalogに対応する。完全なbibliography section表示は未対応
+bibliography参照edgeおよび階層index catalogに対応する。`[bibliography]` section内の順序なしlistは
+catalogのcitation／back referenceを出力する。section levelの検証、citation styleの整形およびindex rangeは未対応
 
 |Markdown互換構文
 |未対応

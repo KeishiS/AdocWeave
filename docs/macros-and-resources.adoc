@@ -53,7 +53,8 @@ catalog entry数は重複occurrenceを含め`max_catalog_entries`、文字列と
 
 == 今後の拡張
 
-AsciiDocのbibliography sectionから表示内容を組み立てる完全なbibliography backend、index range marker、
+catalogと`[bibliography]` sectionを結ぶ出力は対応済みである。citation styleの自動整形、外部citation database、
+index range marker、
 see／see-also関係、icon set解決、poster／start属性、YouTube／Vimeo video target、
 新しいmacroは`StandardMacroKind`、共通scanner、
 walker、projection、HTML allowlist、resource queryおよびconformance表現を同じ変更で更新する。

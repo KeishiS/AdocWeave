@@ -67,8 +67,8 @@ impl DocumentIndex {
         self.blocks.len()
     }
 
-    pub const fn is_empty(&self) -> bool {
-        self.blocks.is_empty()
+    pub fn is_empty(&self) -> bool {
+        self.blocks.len() == 0
     }
 
     pub fn top_level_blocks(&self) -> &[BlockId] {
@@ -119,6 +119,7 @@ pub struct DocumentPresentation {
     section_numbers: bool,
     headings: Vec<HeadingPresentation>,
     toc: Vec<crate::structure::TocEntry>,
+    bibliography_sections: Vec<BibliographySection>,
 }
 
 impl DocumentPresentation {
@@ -149,6 +150,16 @@ impl DocumentPresentation {
     pub fn toc(&self) -> &[crate::structure::TocEntry] {
         &self.toc
     }
+
+    pub fn bibliography_section_at(&self, range: TextRange) -> Option<&BibliographySection> {
+        self.bibliography_sections
+            .iter()
+            .find(|section| section.range == range)
+    }
+
+    pub fn bibliography_sections(&self) -> &[BibliographySection] {
+        &self.bibliography_sections
+    }
 }
 
 /// Presentation facts derived from a structural heading.
@@ -160,21 +171,19 @@ pub struct HeadingPresentation {
     pub toc_included: bool,
 }
 
+/// A section explicitly styled as an AsciiDoc bibliography section.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BibliographySection {
+    pub block: BlockId,
+    pub range: TextRange,
+}
+
 /// Typed document-level TOC configuration. Placement is intentionally absent:
 /// a backend-independent layout decides where generated material is inserted.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TocPolicy {
     pub enabled: bool,
     pub max_level: Option<u8>,
-}
-
-impl Default for TocPolicy {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            max_level: None,
-        }
-    }
 }
 
 /// A generated document-level item. It is not a source AST node.
@@ -330,6 +339,27 @@ pub(crate) fn build_presentation(
         &headings,
         toc_policy.max_level,
     );
+    let bibliography_sections = document
+        .blocks()
+        .iter()
+        .filter_map(|block| {
+            let crate::parser::AstBlock::Heading(heading) = block else {
+                return None;
+            };
+            block
+                .metadata()
+                .attributes
+                .iter()
+                .any(|attribute| attribute.name.is_none() && attribute.value == "bibliography")
+                .then(|| BibliographySection {
+                    block: document
+                        .index()
+                        .block_id_at(heading.range)
+                        .expect("every heading is indexed"),
+                    range: heading.range,
+                })
+        })
+        .collect();
     DocumentPresentation {
         attributes,
         source_language,
@@ -337,6 +367,7 @@ pub(crate) fn build_presentation(
         section_numbers,
         headings,
         toc,
+        bibliography_sections,
     }
 }
 
@@ -460,6 +491,18 @@ mod tests {
         assert_eq!(
             document.layout().nodes().last(),
             Some(&LayoutNode::Generated(GeneratedLayoutNode::FootnoteCatalog))
+        );
+    }
+
+    #[test]
+    fn bibliography_section_is_resolved_once_from_heading_style() {
+        let parsed = parse("= References\n\n[bibliography]\n== Sources\n").expect("parse");
+        let document = parsed.ast;
+
+        assert_eq!(document.presentation().bibliography_sections().len(), 1);
+        assert_eq!(
+            document.presentation().bibliography_sections()[0].range,
+            document.blocks()[1].range()
         );
     }
 }

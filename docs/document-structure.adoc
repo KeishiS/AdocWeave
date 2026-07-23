@@ -39,7 +39,8 @@ adocweave - convert AsciiDoc safely
 
 == 境界
 
-この構造はナビゲーションと意味分類を提供する。TOCの有効化・深さ・section番号は
+この構造はナビゲーションと意味分類を提供する。TOCの有効化・深さ・section番号および`bibliography` sectionは
 `DocumentPresentation`が型付き属性として解決し、backend非依存の`DocumentLayout`がTOCを文書タイトル直後へ
-配置する。HTMLはこのlayoutとpresentationを描画するだけである。manpage backend固有のレイアウト、
+配置する。HTMLはlayout、presentationおよび既存catalogだけを描画し、bibliography section内のlistを
+citationとback referenceで接続する。manpage backend固有のレイアウト、
 ノートアプリ固有の階層、権限およびDB IDは含めない。

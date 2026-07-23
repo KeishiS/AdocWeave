@@ -1,5 +1,5 @@
 = Bibliography sectionのHTML出力
-:status: planned
+:status: in-progress
 :depends-on: 073,074,112,118
 
 == 目的

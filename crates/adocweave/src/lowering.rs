@@ -22,7 +22,7 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
         .get("source-language")
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    facts.blocks = normalize_verbatim_blocks(facts.blocks, source_language.as_deref());
+    facts.blocks = normalize_verbatim_blocks(facts.blocks, source_language);
     attach_anchors(&mut facts.anchors, &facts.blocks);
     facts.header.doctype = document_type(&facts.attributes);
     let mut document =

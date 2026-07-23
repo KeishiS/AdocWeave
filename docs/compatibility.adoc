@@ -203,7 +203,8 @@ inline／block image、icon、audioおよびvideo、footnote一覧、bibliograph
 |文書上の補助要素
 |comment、admonition、thematic／page break、bibliography、footnote
 |comment、admonition、thematic／page break、bibliography anchor、footnote macro、文書catalog、番号付け、
-再利用およびback referenceに対応。完全なbibliography section表示とindex rangeは未対応
+再利用およびback referenceに対応。`[bibliography]` section内の順序なしlistとcitation back referenceを出力する。
+index rangeは未対応
 |===
 
 Markdown風見出し、fenced code blockおよびMarkdown blockquoteは公式quick referenceにも掲載されるが、
