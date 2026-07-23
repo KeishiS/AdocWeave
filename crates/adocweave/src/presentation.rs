@@ -86,12 +86,35 @@ impl ResolvedDocumentAttributes {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DocumentPresentation {
     attributes: ResolvedDocumentAttributes,
+    headings: Vec<HeadingPresentation>,
+    toc: Vec<crate::structure::TocEntry>,
 }
 
 impl DocumentPresentation {
     pub const fn attributes(&self) -> &ResolvedDocumentAttributes {
         &self.attributes
     }
+
+    pub fn headings(&self) -> &[HeadingPresentation] {
+        &self.headings
+    }
+
+    pub fn heading_at(&self, range: TextRange) -> Option<&HeadingPresentation> {
+        self.headings.iter().find(|heading| heading.range == range)
+    }
+
+    pub fn toc(&self) -> &[crate::structure::TocEntry] {
+        &self.toc
+    }
+}
+
+/// Presentation facts derived from a structural heading.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HeadingPresentation {
+    pub block: BlockId,
+    pub range: TextRange,
+    pub number: Vec<u32>,
+    pub toc_included: bool,
 }
 
 /// A generated document-level item. It is not a source AST node.
@@ -197,9 +220,84 @@ pub(crate) fn build_presentation(document: &AstDocument) -> DocumentPresentation
             }
         }
     }
+    let mut counters = [0_u32; 6];
+    let headings = document
+        .structure()
+        .headings()
+        .iter()
+        .map(|heading| {
+            let index = usize::from(heading.level.min(5));
+            let number = if matches!(
+                heading.kind,
+                crate::structure::SectionKind::DocumentTitle
+                    | crate::structure::SectionKind::Discrete
+            ) {
+                Vec::new()
+            } else {
+                counters[index] += 1;
+                counters[index + 1..].fill(0);
+                counters[1..=index]
+                    .iter()
+                    .copied()
+                    .filter(|number| *number != 0)
+                    .collect()
+            };
+            let toc_included = !matches!(
+                heading.kind,
+                crate::structure::SectionKind::DocumentTitle
+                    | crate::structure::SectionKind::Discrete
+            ) && !heading_has_role(document, heading.range, "notoc");
+            HeadingPresentation {
+                block: document
+                    .index()
+                    .block_id_at(heading.range)
+                    .expect("every structured heading is indexed"),
+                range: heading.range,
+                number,
+                toc_included,
+            }
+        })
+        .collect::<Vec<_>>();
+    let toc = toc_entries(document.structure().roots(), &headings);
     DocumentPresentation {
         attributes: ResolvedDocumentAttributes { values },
+        headings,
+        toc,
     }
+}
+
+fn heading_has_role(document: &AstDocument, range: TextRange, role: &str) -> bool {
+    document.blocks().iter().any(|block| {
+        matches!(block, crate::parser::AstBlock::Heading(heading) if heading.range == range)
+            && block.metadata().roles.iter().any(|item| item.value == role)
+    })
+}
+
+fn toc_entries(
+    sections: &[crate::structure::Section],
+    headings: &[HeadingPresentation],
+) -> Vec<crate::structure::TocEntry> {
+    let mut entries = Vec::new();
+    for section in sections {
+        let children = toc_entries(&section.children, headings);
+        let presentation = headings
+            .iter()
+            .find(|item| item.range == section.heading.range)
+            .expect("every section heading has presentation facts");
+        if presentation.toc_included {
+            entries.push(crate::structure::TocEntry {
+                id: section.heading.id.clone(),
+                title: section.heading.title.clone(),
+                level: section.heading.level,
+                number: presentation.number.clone(),
+                range: section.heading.range,
+                children,
+            });
+        } else {
+            entries.extend(children);
+        }
+    }
+    entries
 }
 
 pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {

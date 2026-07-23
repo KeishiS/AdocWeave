@@ -25,6 +25,7 @@ pub struct DocumentProjection {
     pub searchable_text: SearchableText,
     pub catalogs: crate::catalog::DocumentCatalogs,
     pub structure: crate::structure::DocumentStructure,
+    pub presentation: crate::presentation::DocumentPresentation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -200,6 +201,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         searchable_text: searchable_text(analysis),
         catalogs: analysis.catalogs().clone(),
         structure: analysis.structure().clone(),
+        presentation: analysis.presentation().clone(),
     }
 }
 
@@ -496,7 +498,7 @@ impl DocumentProjection {
             .expect("writing to String cannot fail");
         }
         output.push_str("],\"structure\":");
-        write_structure(&mut output, &self.structure);
+        write_structure(&mut output, &self.structure, &self.presentation);
         output.push_str(",\"catalogs\":");
         write_catalogs(&mut output, &self.catalogs);
         output.push_str(",\"searchableText\":{\"text\":");
@@ -527,7 +529,11 @@ const fn math_language(language: crate::inline::MathLanguage) -> &'static str {
     }
 }
 
-fn write_structure(output: &mut String, structure: &crate::structure::DocumentStructure) {
+fn write_structure(
+    output: &mut String,
+    structure: &crate::structure::DocumentStructure,
+    presentation: &crate::presentation::DocumentPresentation,
+) {
     output.push_str("{\"headings\":[");
     for (index, heading) in structure.headings().iter().enumerate() {
         if index > 0 {
@@ -545,12 +551,15 @@ fn write_structure(output: &mut String, structure: &crate::structure::DocumentSt
             json_range(heading.title_range),
         )
         .expect("writing to String cannot fail");
-        write_numbers(output, &heading.number);
-        write!(output, "],\"tocIncluded\":{}}}", heading.toc_included)
+        let presentation = presentation
+            .heading_at(heading.range)
+            .expect("every projected heading has presentation facts");
+        write_numbers(output, &presentation.number);
+        write!(output, "],\"tocIncluded\":{}}}", presentation.toc_included)
             .expect("writing to String cannot fail");
     }
     output.push_str("],\"toc\":");
-    write_toc(output, structure.toc());
+    write_toc(output, presentation.toc());
     output.push_str(",\"manpage\":");
     if let Some(manpage) = structure.manpage() {
         write!(

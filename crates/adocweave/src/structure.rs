@@ -7,7 +7,6 @@ use crate::source::TextRange;
 pub struct DocumentStructure {
     roots: Vec<Section>,
     headings: Vec<StructuredHeading>,
-    toc: Vec<TocEntry>,
     manpage: Option<Manpage>,
     problems: Vec<StructureProblem>,
 }
@@ -19,10 +18,6 @@ impl DocumentStructure {
 
     pub fn headings(&self) -> &[StructuredHeading] {
         &self.headings
-    }
-
-    pub fn toc(&self) -> &[TocEntry] {
-        &self.toc
     }
 
     pub const fn manpage(&self) -> Option<&Manpage> {
@@ -56,8 +51,6 @@ pub struct StructuredHeading {
     pub title: String,
     pub range: TextRange,
     pub title_range: TextRange,
-    pub number: Vec<u32>,
-    pub toc_included: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,7 +107,6 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
     let mut arena = Vec::<ArenaSection>::new();
     let mut stack = Vec::<(u8, usize)>::new();
     let mut title = None;
-    let mut counters = [0_u32; 6];
 
     for block in document.blocks() {
         let AstBlock::Heading(heading) = block else {
@@ -156,7 +148,6 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
                 });
             }
         }
-        let number = section_number(kind, level, &mut counters);
         let structured = StructuredHeading {
             kind,
             level,
@@ -165,13 +156,6 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
             title: heading.text.clone(),
             range: heading.range,
             title_range: heading.text_range,
-            number,
-            toc_included: !matches!(kind, SectionKind::DocumentTitle | SectionKind::Discrete)
-                && !heading
-                    .metadata
-                    .roles
-                    .iter()
-                    .any(|role| role.value == "notoc"),
         };
         structure.headings.push(structured.clone());
         if kind == SectionKind::Discrete {
@@ -220,7 +204,6 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
         .filter(|(_, node)| node.parent.is_none())
         .map(|(index, _)| materialize_section(index, &arena))
         .collect();
-    structure.toc = toc_entries(&structure.roots);
     if document.header().doctype == DocumentType::Manpage {
         structure.manpage = build_manpage(document, &mut structure.problems);
     }
@@ -240,20 +223,6 @@ fn is_appendix(heading: &Heading) -> bool {
             .any(|role| role.value == "appendix")
 }
 
-fn section_number(kind: SectionKind, level: u8, counters: &mut [u32; 6]) -> Vec<u32> {
-    if matches!(kind, SectionKind::DocumentTitle | SectionKind::Discrete) {
-        return Vec::new();
-    }
-    let index = usize::from(level.min(5));
-    counters[index] += 1;
-    counters[index + 1..].fill(0);
-    counters[1..=index]
-        .iter()
-        .copied()
-        .filter(|number| *number != 0)
-        .collect()
-}
-
 fn materialize_section(index: usize, arena: &[ArenaSection]) -> Section {
     Section {
         heading: arena[index].heading.clone(),
@@ -263,26 +232,6 @@ fn materialize_section(index: usize, arena: &[ArenaSection]) -> Section {
             .map(|child| materialize_section(*child, arena))
             .collect(),
     }
-}
-
-fn toc_entries(sections: &[Section]) -> Vec<TocEntry> {
-    let mut entries = Vec::new();
-    for section in sections {
-        let children = toc_entries(&section.children);
-        if section.heading.toc_included {
-            entries.push(TocEntry {
-                id: section.heading.id.clone(),
-                title: section.heading.title.clone(),
-                level: section.heading.level,
-                number: section.heading.number.clone(),
-                range: section.heading.range,
-                children,
-            });
-        } else {
-            entries.extend(children);
-        }
-    }
-    entries
 }
 
 fn build_manpage(document: &AstDocument, problems: &mut Vec<StructureProblem>) -> Option<Manpage> {
@@ -375,11 +324,18 @@ mod tests {
         assert_eq!(structure.roots().len(), 1);
         assert_eq!(structure.roots()[0].children.len(), 3);
         assert_eq!(structure.headings()[1].id, "_one");
-        assert_eq!(structure.headings()[2].number, [1, 1]);
-        assert_eq!(structure.toc().len(), 2);
-        assert_eq!(structure.toc()[0].title, "One");
-        assert_eq!(structure.toc()[0].children[0].title, "Child");
-        assert_eq!(structure.toc()[1].title, "Two");
+        let presentation = parsed.ast.presentation();
+        assert_eq!(
+            presentation
+                .heading_at(structure.headings()[2].range)
+                .unwrap()
+                .number,
+            [1, 1]
+        );
+        assert_eq!(presentation.toc().len(), 2);
+        assert_eq!(presentation.toc()[0].title, "One");
+        assert_eq!(presentation.toc()[0].children[0].title, "Child");
+        assert_eq!(presentation.toc()[1].title, "Two");
     }
 
     #[test]
