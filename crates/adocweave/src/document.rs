@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use crate::parser::{
-    AstBlock, AstDocument, ElementAttribute, Heading, HeadingKind, MetadataValue, SourceBlock,
+    AstBlock, AstDocument, ElementAttribute, Heading, HeadingKind, MetadataValue, SourceInfo,
 };
 use crate::source::TextRange;
 
@@ -198,6 +198,14 @@ fn block_label(block: &AstBlock) -> String {
             || "source block".to_owned(),
             |name| format!("{name} source block"),
         ),
+        AstBlock::Verbatim(value) => match &value.kind {
+            crate::parser::VerbatimKind::Source(source) => source.language.as_ref().map_or_else(
+                || "source block".to_owned(),
+                |name| format!("{name} source block"),
+            ),
+            crate::parser::VerbatimKind::Listing => "listing block".to_owned(),
+            crate::parser::VerbatimKind::Literal => "literal block".to_owned(),
+        },
         AstBlock::List(value) => value
             .items
             .first()
@@ -252,12 +260,12 @@ pub fn source_language_candidates(prefix: &str) -> Vec<&'static str> {
         .collect()
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DocumentElement<'document> {
     HeadingMarker(&'document Heading),
     HeadingText(&'document Heading),
-    SourceLanguage(&'document SourceBlock),
-    SourceAttribute(&'document SourceBlock),
+    SourceLanguage(SourceInfo),
+    SourceAttribute(SourceInfo),
     MetadataTitle(&'document MetadataValue),
     MetadataId(&'document MetadataValue),
     MetadataRole(&'document MetadataValue),
@@ -279,10 +287,34 @@ pub fn document_element_at(document: &AstDocument, offset: u32) -> Option<Docume
                     .language_range
                     .is_some_and(|range| contains(range, offset, true)) =>
             {
-                Some(DocumentElement::SourceLanguage(source))
+                Some(DocumentElement::SourceLanguage(SourceInfo {
+                    attribute_range: source.attribute_range,
+                    language_range: source.language_range,
+                    language: source.language.clone(),
+                }))
             }
             AstBlock::Source(source) if contains(source.attribute_range, offset, false) => {
-                Some(DocumentElement::SourceAttribute(source))
+                Some(DocumentElement::SourceAttribute(SourceInfo {
+                    attribute_range: source.attribute_range,
+                    language_range: source.language_range,
+                    language: source.language.clone(),
+                }))
+            }
+            AstBlock::Verbatim(block)
+                if matches!(&block.kind, crate::parser::VerbatimKind::Source(source) if source.language_range.is_some_and(|range| contains(range, offset, true))) =>
+            {
+                let crate::parser::VerbatimKind::Source(source) = &block.kind else {
+                    unreachable!("match guard ensures source block")
+                };
+                Some(DocumentElement::SourceLanguage(source.clone()))
+            }
+            AstBlock::Verbatim(block)
+                if matches!(&block.kind, crate::parser::VerbatimKind::Source(source) if contains(source.attribute_range, offset, false)) =>
+            {
+                let crate::parser::VerbatimKind::Source(source) = &block.kind else {
+                    unreachable!("match guard ensures source block")
+                };
+                Some(DocumentElement::SourceAttribute(source.clone()))
             }
             _ => None,
         };

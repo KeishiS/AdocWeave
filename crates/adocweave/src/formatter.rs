@@ -203,6 +203,7 @@ mod tests {
                 AstBlock::Heading(_) => None,
                 AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => None,
                 AstBlock::Source(_) => None,
+                AstBlock::Verbatim(_) => None,
                 AstBlock::List(_) => None,
                 AstBlock::Math(_) => None,
                 AstBlock::Delimited(_) => None,

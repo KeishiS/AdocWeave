@@ -2,7 +2,7 @@ Document
   DocumentTitle@0..19 marker=0..1 text=2..18 "Grammar recovery" problems=[]
   Paragraph@20..119
     Text@20..118 "word`not-code`word and some_identifier\n*strong _nested_ and `code`*\nunclosed _emphasis then `safe`"
-  Literal@120..152 delimiter="...." content=125..147 Verbatim("*literal* <tag>\n.....\n") problems=[]
-  Source@153..193 language=Some("rust") content=173..188 problems=[]
-  Literal@194..216 delimiter="...." content=199..216 Verbatim("unclosed literal\n") problems=[]
+  Verbatim@120..152 kind=Literal content=125..147 problems=[]
+  Verbatim@153..193 kind=Source(SourceInfo { attribute_range: TextRange { start: TextSize(153), end: TextSize(167) }, language_range: Some(TextRange { start: TextSize(162), end: TextSize(166) }), language: Some("rust") }) content=173..188 problems=[]
+  Verbatim@194..216 kind=Literal content=199..216 problems=[]
   Section { level: 1 }@216..237 marker=216..218 text=219..236 "Recovered heading" problems=[]

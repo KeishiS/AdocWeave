@@ -134,6 +134,25 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
             )),
             children: Vec::new(),
         },
+        AstBlock::Verbatim(node) => CanonicalNode {
+            kind: match node.kind {
+                crate::parser::VerbatimKind::Listing => "listing-block",
+                crate::parser::VerbatimKind::Literal => "literal-block",
+                crate::parser::VerbatimKind::Source(_) => "source-block",
+            },
+            range: range(node.range),
+            value: Some(match &node.kind {
+                crate::parser::VerbatimKind::Source(source) => format!(
+                    "{}:{}",
+                    source.language.as_deref().unwrap_or(""),
+                    node.value
+                ),
+                crate::parser::VerbatimKind::Listing | crate::parser::VerbatimKind::Literal => {
+                    node.value.clone()
+                }
+            }),
+            children: Vec::new(),
+        },
         AstBlock::List(node) => list_node(node),
         AstBlock::Math(node) => leaf("math-block", node.range, &node.value),
         AstBlock::Delimited(node) => {

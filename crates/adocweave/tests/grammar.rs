@@ -1,5 +1,5 @@
 use adocweave::inline::{Inline, InlineLiteralKind, InlineStyle};
-use adocweave::parser::{AstBlock, DelimitedBlockKind, DelimitedContent};
+use adocweave::parser::{AstBlock, VerbatimKind};
 use adocweave::syntax::{SyntaxIssueClass, SyntaxKind};
 use adocweave::{Analysis, Engine, ParseOptions};
 
@@ -67,14 +67,11 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         .blocks()
         .iter()
         .filter_map(|block| match block {
-            AstBlock::Delimited(block) if block.kind == DelimitedBlockKind::Literal => Some(block),
+            AstBlock::Verbatim(block) if matches!(block.kind, VerbatimKind::Literal) => Some(block),
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(matches!(
-        &literals[0].content,
-        DelimitedContent::Verbatim(value) if value == "*literal* <tag>\n.....\n"
-    ));
+    assert_eq!(literals[0].value, "*literal* <tag>\n.....\n");
     assert_eq!(parsed.syntax().nodes(SyntaxKind::Error).count(), 1);
     assert!(matches!(
         parsed.ast().blocks().last(),
@@ -103,7 +100,9 @@ fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
         .blocks()
         .iter()
         .find_map(|block| match block {
-            AstBlock::Source(source) => Some(source),
+            AstBlock::Verbatim(source) if matches!(source.kind, VerbatimKind::Source(_)) => {
+                Some(source)
+            }
             _ => None,
         })
         .expect("source block");
@@ -162,9 +161,11 @@ fn substitutions_cover_every_supported_semantic_context() {
     assert!(matches!(parsed.ast().blocks()[2], AstBlock::Unsupported(_)));
     assert!(matches!(
         parsed.ast().blocks()[3],
-        AstBlock::Delimited(ref block) if block.kind == DelimitedBlockKind::Literal
+        AstBlock::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Literal)
     ));
-    assert!(matches!(parsed.ast().blocks()[4], AstBlock::Source(_)));
+    assert!(
+        matches!(parsed.ast().blocks()[4], AstBlock::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Source(_)))
+    );
     assert!(matches!(parsed.ast().blocks()[5], AstBlock::Paragraph(_)));
 
     let html =

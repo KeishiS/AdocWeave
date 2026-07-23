@@ -138,6 +138,32 @@ pub struct SourceBlock {
     pub(crate) problems: Vec<BlockProblem>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceInfo {
+    pub attribute_range: TextRange,
+    pub language_range: Option<TextRange>,
+    pub language: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VerbatimKind {
+    Listing,
+    Literal,
+    Source(SourceInfo),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerbatimBlock {
+    pub metadata: BlockMetadata,
+    pub kind: VerbatimKind,
+    pub range: TextRange,
+    pub delimiter_range: TextRange,
+    pub content_range: TextRange,
+    pub value: String,
+    pub callouts: Vec<CalloutMarker>,
+    pub(crate) problems: Vec<BlockProblem>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DelimitedBlockKind {
     Comment,
@@ -305,6 +331,7 @@ pub enum AstBlock {
     LiteralParagraph(LiteralParagraph),
     Break(BreakBlock),
     Source(SourceBlock),
+    Verbatim(VerbatimBlock),
     List(ListBlock),
     Math(MathBlock),
     Delimited(DelimitedBlock),

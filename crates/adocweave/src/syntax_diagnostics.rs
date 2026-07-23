@@ -138,6 +138,14 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
         AstBlock::Paragraph(paragraph) => inline_issues(&mut paragraph.inline_problems, output),
         AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => {}
         AstBlock::Source(block) => block_problem_issues(&mut block.problems, "source", output),
+        AstBlock::Verbatim(block) => {
+            let name = match block.kind {
+                crate::parser::VerbatimKind::Literal => "literal",
+                crate::parser::VerbatimKind::Listing => "listing",
+                crate::parser::VerbatimKind::Source(_) => "source",
+            };
+            block_problem_issues(&mut block.problems, name, output);
+        }
         AstBlock::List(_) => {}
         AstBlock::Math(math) => {
             for problem in std::mem::take(&mut math.problems) {

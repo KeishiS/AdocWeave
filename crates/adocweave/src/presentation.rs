@@ -222,6 +222,7 @@ pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
             | crate::parser::AstBlock::LiteralParagraph(_)
             | crate::parser::AstBlock::Break(_)
             | crate::parser::AstBlock::Source(_)
+            | crate::parser::AstBlock::Verbatim(_)
             | crate::parser::AstBlock::Math(_)
             | crate::parser::AstBlock::Unsupported(_) => {}
         }

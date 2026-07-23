@@ -99,6 +99,7 @@ pub(crate) fn walk_blocks_mut(blocks: &mut [AstBlock], visitor: &mut impl BlockV
             | AstBlock::LiteralParagraph(_)
             | AstBlock::Break(_)
             | AstBlock::Source(_)
+            | AstBlock::Verbatim(_)
             | AstBlock::Math(_)
             | AstBlock::Unsupported(_) => {}
         }
@@ -152,6 +153,7 @@ pub(crate) fn walk_inline_sequences_mut(
             AstBlock::LiteralParagraph(_)
             | AstBlock::Break(_)
             | AstBlock::Source(_)
+            | AstBlock::Verbatim(_)
             | AstBlock::Math(_)
             | AstBlock::Unsupported(_) => {}
         }
@@ -200,6 +202,7 @@ fn walk_blocks<'document>(
             AstBlock::LiteralParagraph(_)
             | AstBlock::Break(_)
             | AstBlock::Source(_)
+            | AstBlock::Verbatim(_)
             | AstBlock::Math(_)
             | AstBlock::Unsupported(_) => {}
         }
@@ -400,6 +403,7 @@ mod tests {
                     }
                     AstBlock::Paragraph(value) => assert!(value.inline_problems.is_empty()),
                     AstBlock::Source(value) => assert!(value.problems.is_empty()),
+                    AstBlock::Verbatim(value) => assert!(value.problems.is_empty()),
                     AstBlock::Math(value) => assert!(value.problems.is_empty()),
                     AstBlock::Delimited(value) => assert!(value.problems.is_empty()),
                     AstBlock::List(_)

@@ -17,6 +17,7 @@ pub(crate) struct ParsedFacts {
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     configure_tables(&mut facts.blocks);
+    facts.blocks = normalize_verbatim_blocks(facts.blocks);
     attach_anchors(&mut facts.anchors, &facts.blocks);
     facts.header.doctype = document_type(&facts.attributes);
     let mut document =
@@ -29,6 +30,78 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     document.presentation = crate::presentation::build_presentation(&document);
     document.layout = crate::presentation::build_layout(&document);
     document
+}
+
+fn normalize_verbatim_blocks(blocks: Vec<AstBlock>) -> Vec<AstBlock> {
+    blocks.into_iter().map(normalize_verbatim_block).collect()
+}
+
+fn normalize_verbatim_block(block: AstBlock) -> AstBlock {
+    match block {
+        AstBlock::Source(source) => AstBlock::Verbatim(crate::parser::VerbatimBlock {
+            metadata: source.metadata,
+            kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
+                attribute_range: source.attribute_range,
+                language_range: source.language_range,
+                language: source.language,
+            }),
+            range: source.range,
+            delimiter_range: source.delimiter_range,
+            content_range: source.content_range,
+            value: source.value,
+            callouts: source.callouts,
+            problems: source.problems,
+        }),
+        AstBlock::Delimited(mut block) => {
+            if let crate::parser::DelimitedContent::Compound(children) = &mut block.content {
+                *children = normalize_verbatim_blocks(std::mem::take(children));
+            }
+            let kind = match block.kind {
+                crate::parser::DelimitedBlockKind::Listing => {
+                    Some(crate::parser::VerbatimKind::Listing)
+                }
+                crate::parser::DelimitedBlockKind::Literal => {
+                    Some(crate::parser::VerbatimKind::Literal)
+                }
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                if let crate::parser::DelimitedContent::Verbatim(value) = block.content {
+                    return AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                        metadata: block.metadata,
+                        kind,
+                        range: block.range,
+                        delimiter_range: block.opening_delimiter_range,
+                        content_range: block.content_range,
+                        value,
+                        callouts: Vec::new(),
+                        problems: block.problems,
+                    });
+                }
+            }
+            AstBlock::Delimited(block)
+        }
+        AstBlock::List(mut list) => {
+            for item in &mut list.items {
+                for child in &mut item.children {
+                    normalize_list(child);
+                }
+                item.continuations =
+                    normalize_verbatim_blocks(std::mem::take(&mut item.continuations));
+            }
+            AstBlock::List(list)
+        }
+        other => other,
+    }
+}
+
+fn normalize_list(list: &mut crate::parser::ListBlock) {
+    for item in &mut list.items {
+        for child in &mut item.children {
+            normalize_list(child);
+        }
+        item.continuations = normalize_verbatim_blocks(std::mem::take(&mut item.continuations));
+    }
 }
 
 fn configure_tables(blocks: &mut [AstBlock]) {

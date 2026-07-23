@@ -283,6 +283,19 @@ impl AstDocument {
                     )
                     .expect("writing to a String cannot fail");
                 }
+                AstBlock::Verbatim(verbatim) => {
+                    writeln!(
+                        output,
+                        "  Verbatim@{}..{} kind={:?} content={}..{} problems={:?}",
+                        verbatim.range.start().to_u32(),
+                        verbatim.range.end().to_u32(),
+                        verbatim.kind,
+                        verbatim.content_range.start().to_u32(),
+                        verbatim.content_range.end().to_u32(),
+                        verbatim.problems
+                    )
+                    .expect("writing to a String cannot fail");
+                }
                 AstBlock::List(list) => {
                     writeln!(
                         output,
@@ -352,6 +365,7 @@ impl AstBlock {
             Self::LiteralParagraph(value) => &value.metadata,
             Self::Break(value) => &value.metadata,
             Self::Source(value) => &value.metadata,
+            Self::Verbatim(value) => &value.metadata,
             Self::List(value) => &value.metadata,
             Self::Math(value) => &value.metadata,
             Self::Delimited(value) => &value.metadata,
@@ -366,6 +380,7 @@ impl AstBlock {
             Self::LiteralParagraph(value) => &mut value.metadata,
             Self::Break(value) => &mut value.metadata,
             Self::Source(value) => &mut value.metadata,
+            Self::Verbatim(value) => &mut value.metadata,
             Self::List(value) => &mut value.metadata,
             Self::Math(value) => &mut value.metadata,
             Self::Delimited(value) => &mut value.metadata,
@@ -380,6 +395,7 @@ impl AstBlock {
             Self::LiteralParagraph(value) => value.range,
             Self::Break(value) => value.range,
             Self::Source(value) => value.range,
+            Self::Verbatim(value) => value.range,
             Self::List(value) => value.range,
             Self::Math(value) => value.range,
             Self::Delimited(value) => value.range,
@@ -2426,7 +2442,8 @@ fn is_delimiter(text: &str) -> bool {
 mod tests {
     use super::{
         AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlock, DelimitedBlockKind,
-        DelimitedContent, DocumentType, Heading, HeadingKind, ListKind, SyntaxKind, parse,
+        DelimitedContent, DocumentType, Heading, HeadingKind, ListKind, SyntaxKind, VerbatimKind,
+        parse,
     };
 
     #[test]
@@ -2665,7 +2682,7 @@ mod tests {
             .blocks()
             .iter()
             .filter_map(|block| match block {
-                AstBlock::Delimited(block) if block.kind == DelimitedBlockKind::Literal => {
+                AstBlock::Verbatim(block) if matches!(block.kind, VerbatimKind::Literal) => {
                     Some(block)
                 }
                 _ => None,
@@ -2673,14 +2690,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(literals.len(), 2);
-        assert!(matches!(
-            &literals[0].content,
-            DelimitedContent::Verbatim(value) if value == "<tag>\n*not strong*\n"
-        ));
-        assert!(matches!(
-            &literals[1].content,
-            DelimitedContent::Verbatim(value) if value.is_empty()
-        ));
+        assert_eq!(literals[0].value, "<tag>\n*not strong*\n");
+        assert_eq!(literals[1].value, "");
         assert!(literals.iter().all(|literal| literal.problems.is_empty()));
         assert_eq!(parsed.syntax.reconstruct(), source);
     }
@@ -2689,14 +2700,11 @@ mod tests {
     fn literal_block_recovers_at_heading_when_unclosed() {
         let source = "....\ncontent\n== Next\nparagraph";
         let parsed = parse(source).expect("valid source");
-        let AstBlock::Delimited(literal) = &parsed.ast.blocks()[0] else {
+        let AstBlock::Verbatim(literal) = &parsed.ast.blocks()[0] else {
             panic!("expected literal");
         };
 
-        assert!(matches!(
-            &literal.content,
-            DelimitedContent::Verbatim(value) if value == "content\n"
-        ));
+        assert_eq!(literal.value, "content\n");
         assert!(literal.problems.is_empty());
         assert!(
             parsed
@@ -2722,22 +2730,18 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(containers.len(), 5);
+        assert_eq!(containers.len(), 4);
         assert!(matches!(
             containers[0].content,
             DelimitedContent::Verbatim(_)
         ));
         assert!(matches!(
             containers[1].content,
-            DelimitedContent::Verbatim(_)
-        ));
-        assert!(matches!(
-            containers[2].content,
             DelimitedContent::Passthrough(_)
         ));
-        assert!(matches!(containers[3].content, DelimitedContent::Table(_)));
+        assert!(matches!(containers[2].content, DelimitedContent::Table(_)));
         assert!(matches!(
-            &containers[4].content,
+            &containers[3].content,
             DelimitedContent::Compound(children)
                 if matches!(&children[..], [AstBlock::Paragraph(_)])
         ));
@@ -2760,10 +2764,18 @@ mod tests {
         ] {
             let source = format!("{delimiter}\nbody\n{delimiter}\n");
             let parsed = parse(&source).expect("container");
-            let AstBlock::Delimited(block) = &parsed.ast.blocks()[0] else {
-                panic!("{delimiter} must create a container");
-            };
-            assert_eq!(block.kind, expected, "{delimiter}");
+            match (&parsed.ast.blocks()[0], expected) {
+                (AstBlock::Verbatim(block), DelimitedBlockKind::Listing) => {
+                    assert!(matches!(block.kind, VerbatimKind::Listing));
+                }
+                (AstBlock::Verbatim(block), DelimitedBlockKind::Literal) => {
+                    assert!(matches!(block.kind, VerbatimKind::Literal));
+                }
+                (AstBlock::Delimited(block), expected) => {
+                    assert_eq!(block.kind, expected, "{delimiter}")
+                }
+                _ => panic!("{delimiter} must create the expected semantic block"),
+            }
         }
     }
 
@@ -2808,12 +2820,15 @@ mod tests {
     fn source_block_keeps_language_code_and_ranges() {
         let source = "[source, rust]\n----\nfn main() {}\n----\n";
         let parsed = parse(source).expect("valid source");
-        let AstBlock::Source(block) = &parsed.ast.blocks()[0] else {
+        let AstBlock::Verbatim(block) = &parsed.ast.blocks()[0] else {
             panic!("expected source block");
         };
+        let VerbatimKind::Source(source_info) = &block.kind else {
+            panic!("source kind");
+        };
 
-        assert_eq!(block.language.as_deref(), Some("rust"));
-        let language_range = block.language_range.expect("language range");
+        assert_eq!(source_info.language.as_deref(), Some("rust"));
+        let language_range = source_info.language_range.expect("language range");
         assert_eq!(
             &source[language_range.start().to_usize()..language_range.end().to_usize()],
             "rust"
@@ -2826,11 +2841,14 @@ mod tests {
     #[test]
     fn source_block_handles_missing_language_empty_and_unclosed() {
         let parsed = parse("[source]\n----\n== Next\n").expect("valid source");
-        let AstBlock::Source(block) = &parsed.ast.blocks()[0] else {
+        let AstBlock::Verbatim(block) = &parsed.ast.blocks()[0] else {
             panic!("expected source block");
         };
+        let VerbatimKind::Source(source) = &block.kind else {
+            panic!("source kind");
+        };
 
-        assert!(block.language.is_none());
+        assert!(source.language.is_none());
         assert_eq!(block.value, "");
         assert!(block.problems.is_empty());
         assert!(parsed.syntax.issues().iter().any(|issue| {
@@ -2948,14 +2966,11 @@ mod tests {
         };
         assert!(matches!(
             list.items[0].continuations[0],
-            AstBlock::Delimited(DelimitedBlock {
-                kind: DelimitedBlockKind::Literal,
-                ..
-            })
+            AstBlock::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Literal)
         ));
         assert!(matches!(
             list.items[1].continuations[0],
-            AstBlock::Source(_)
+            AstBlock::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Source(_))
         ));
     }
 
@@ -2982,8 +2997,11 @@ mod tests {
         );
         assert_eq!(checklist.items[1].checklist, Some(ChecklistState::Checked));
 
-        let AstBlock::Source(source_block) = &parsed.ast.blocks()[2] else {
+        let AstBlock::Verbatim(source_block) = &parsed.ast.blocks()[2] else {
             panic!("source block");
+        };
+        let VerbatimKind::Source(_) = &source_block.kind else {
+            panic!("source kind");
         };
         assert_eq!(source_block.callouts[0].id, 1);
         let AstBlock::List(callouts) = &parsed.ast.blocks()[3] else {

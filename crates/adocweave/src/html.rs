@@ -385,6 +385,32 @@ fn render_block(
             escape_html_into(output, &block.value);
             output.push_str("</code></pre>\n");
         }
+        AstBlock::Verbatim(block) => match &block.kind {
+            crate::parser::VerbatimKind::Source(source) => {
+                output.push_str("<pre");
+                render_optional_id(output, explicit_id);
+                output.push_str("><code");
+                if let Some(language) = &source.language {
+                    if policy.source_languages.allows(language) {
+                        output.push_str(" class=\"language-");
+                        escape_html_into(output, &safe_language_class(language));
+                        output.push('"');
+                    } else if policy.source_languages.unknown == UnknownSourceLanguage::Diagnostic {
+                        context.diagnostics.push(render_diagnostic(
+                            "source-language-not-allowed",
+                            "source language is rejected by the render policy",
+                            source.language_range.unwrap_or(source.attribute_range),
+                        ));
+                    }
+                }
+                output.push('>');
+                escape_html_into(output, &block.value);
+                output.push_str("</code></pre>\n");
+            }
+            crate::parser::VerbatimKind::Listing | crate::parser::VerbatimKind::Literal => {
+                render_preformatted(output, explicit_id, None, &block.value);
+            }
+        },
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context),
         AstBlock::Math(block) => {
             if policy.math_languages.allowed.contains(&block.language) {

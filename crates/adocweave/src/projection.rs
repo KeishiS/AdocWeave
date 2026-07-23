@@ -166,6 +166,20 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 source: source.value.clone(),
             });
         }
+        crate::walker::SemanticNode::Block(AstBlock::Verbatim(block))
+            if matches!(block.kind, crate::parser::VerbatimKind::Source(_)) =>
+        {
+            let crate::parser::VerbatimKind::Source(source) = &block.kind else {
+                unreachable!("match guard ensures source verbatim block")
+            };
+            source_blocks.push(SourceBlockProjection {
+                source_range: block.range,
+                content_range: block.content_range,
+                language_range: source.language_range,
+                language: source.language.clone(),
+                source: block.value.clone(),
+            });
+        }
         crate::walker::SemanticNode::Inline(Inline::Formula(formula)) => {
             formulas.push(FormulaProjection {
                 kind: FormulaKind::Inline,
@@ -256,6 +270,12 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
             ),
             AstBlock::Break(_) => {}
             AstBlock::Source(source) => push_search(
+                output,
+                SearchTextKind::Code,
+                source.content_range,
+                source.value.clone(),
+            ),
+            AstBlock::Verbatim(source) => push_search(
                 output,
                 SearchTextKind::Code,
                 source.content_range,
@@ -430,7 +450,7 @@ impl DocumentProjection {
             write!(
                 output,
                 "{{\"kind\":\"{}\",\"id\":{},\"label\":{},\"idRange\":{},\"targetRange\":{}}}",
-                reference_target_kind(target.kind),
+                reference_target_kind(target.kind.clone()),
                 json_string(&target.id),
                 json_string(&target.label),
                 json_range(target.id_range),
