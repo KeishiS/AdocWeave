@@ -31,7 +31,7 @@ impl PendingBlockMetadata {
         self.semantic.range.is_none()
     }
 
-    fn push_title(&mut self, value: MetadataValue, line_range: TextRange) {
+    fn push_title(&mut self, value: BlockTitle, line_range: TextRange) {
         self.extend_range(line_range);
         self.semantic.title = Some(value);
         self.syntax
@@ -513,7 +513,7 @@ fn recognize_line(
         .is_some()
     {
         LineRecognition::Anchor
-    } else if parse_block_title(content, content_start).is_some() {
+    } else if is_block_title(content) {
         LineRecognition::BlockTitle
     } else if parse_block_attributes(content, content_start).is_some() {
         LineRecognition::BlockMetadata
@@ -818,8 +818,13 @@ fn parse_block_sequence(
             root.iter_mut()
                 .for_each(DocumentHeaderState::close_attributes);
         } else if recognition == LineRecognition::BlockTitle {
-            let title = parse_block_title(content, line.content_range().start().to_usize())
-                .expect("recognizer verified block title");
+            let title = parse_block_title(
+                content,
+                line.content_range().start().to_usize(),
+                config,
+                budget,
+            )?
+            .expect("recognizer verified block title");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -1177,17 +1182,40 @@ fn parse_explicit_anchor(
     })
 }
 
-fn parse_block_title(content: &str, base: usize) -> Option<MetadataValue> {
-    let value = content.strip_prefix('.')?;
-    if value.is_empty() || value.starts_with([' ', '\t', '.']) {
-        return None;
+fn parse_block_title(
+    content: &str,
+    base: usize,
+    config: &ParseConfig,
+    budget: &mut ParseBudget,
+) -> Result<Option<BlockTitle>, BudgetExceeded> {
+    if !is_block_title(content) {
+        return Ok(None);
     }
-    let start = TextSize::new(base + 1).ok()?;
-    let end = TextSize::new(base + content.len()).ok()?;
-    Some(MetadataValue {
+    let value = content.strip_prefix('.').expect("checked title prefix");
+    let start = TextSize::new(base + 1).expect("recognized title offset");
+    let end = TextSize::new(base + content.len()).expect("recognized title offset");
+    let range = TextRange::new(start, end).expect("recognized title range");
+    let parsed = parse_inlines(
+        value,
+        range,
+        InlineParseConfig {
+            max_depth: config.max_inline_depth,
+            max_formula_bytes: config.max_formula_bytes,
+        },
+        budget,
+    )?;
+    Ok(Some(BlockTitle {
         value: value.to_owned(),
-        range: TextRange::new(start, end).ok()?,
-    })
+        range,
+        inlines: split_hard_breaks(parsed.inlines),
+        inline_problems: parsed.problems,
+    }))
+}
+
+fn is_block_title(content: &str) -> bool {
+    content
+        .strip_prefix('.')
+        .is_some_and(|value| !value.is_empty() && !value.starts_with([' ', '\t', '.']))
 }
 
 fn parse_block_attributes(content: &str, base: usize) -> Option<BlockMetadata> {

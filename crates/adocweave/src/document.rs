@@ -266,7 +266,7 @@ pub enum DocumentElement<'document> {
     HeadingText(&'document Heading),
     SourceLanguage(SourceInfo),
     SourceAttribute(SourceInfo),
-    MetadataTitle(&'document MetadataValue),
+    MetadataTitle(&'document crate::parser::BlockTitle),
     MetadataId(&'document MetadataValue),
     MetadataRole(&'document MetadataValue),
     MetadataOption(&'document MetadataValue),

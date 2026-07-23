@@ -104,6 +104,9 @@ fn inline_issues(problems: &mut Vec<InlineProblem>, output: &mut Vec<SyntaxIssue
 }
 
 fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
+    if let Some(title) = &mut block.metadata_mut().title {
+        inline_issues(&mut title.inline_problems, output);
+    }
     match block {
         AstBlock::Heading(heading) => {
             inline_issues(&mut heading.inline_problems, output);

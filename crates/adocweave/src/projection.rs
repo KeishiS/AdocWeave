@@ -284,7 +284,11 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                             kind: BlockPresentationKind::Admonition,
                             source_range: value.range,
                             content_range: value.content_range,
-                            title: value.metadata.title.as_ref().map(|item| item.value.clone()),
+                            title: value
+                                .metadata
+                                .title
+                                .as_ref()
+                                .map(|item| resolved_inline_text(&item.inlines)),
                             attribution: None,
                             citation: None,
                         }),
@@ -296,7 +300,11 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                             },
                             source_range: value.range,
                             content_range: value.content_range,
-                            title: value.metadata.title.as_ref().map(|item| item.value.clone()),
+                            title: value
+                                .metadata
+                                .title
+                                .as_ref()
+                                .map(|item| resolved_inline_text(&item.inlines)),
                             attribution: quote.attribution.as_ref().map(|item| item.value.clone()),
                             citation: quote.citation.as_ref().map(|item| item.value.clone()),
                         })
@@ -477,13 +485,29 @@ fn push_search(
 }
 
 fn inline_text(inlines: &[Inline]) -> String {
+    inline_text_with_attributes(inlines, false)
+}
+
+fn resolved_inline_text(inlines: &[Inline]) -> String {
+    inline_text_with_attributes(inlines, true)
+}
+
+fn inline_text_with_attributes(inlines: &[Inline], include_attribute_values: bool) -> String {
     let mut output = String::new();
     for inline in inlines {
         match inline {
             Inline::Text(text) => output.push_str(&text.value),
             Inline::Literal { value, .. } => output.push_str(value),
-            Inline::Styled { children, .. } => output.push_str(&inline_text(children)),
-            Inline::AttributeReference { .. } | Inline::Formula(_) => {}
+            Inline::Styled { children, .. } => output.push_str(&inline_text_with_attributes(
+                children,
+                include_attribute_values,
+            )),
+            Inline::AttributeReference { value, .. } => {
+                if include_attribute_values {
+                    output.push_str(value.as_deref().unwrap_or_default());
+                }
+            }
+            Inline::Formula(_) => {}
             Inline::Macro(node) => {
                 use crate::inline::StandardMacroKind as Kind;
                 match node.kind {
@@ -508,7 +532,7 @@ fn inline_text(inlines: &[Inline]) -> String {
             Inline::HardBreak { .. } => output.push('\n'),
             Inline::Passthrough { value, .. } => output.push_str(value),
             Inline::Link(link) => {
-                let label = inline_text(&link.label);
+                let label = inline_text_with_attributes(&link.label, include_attribute_values);
                 output.push_str(if label.is_empty() {
                     &link.target
                 } else {
@@ -516,7 +540,7 @@ fn inline_text(inlines: &[Inline]) -> String {
                 });
             }
             Inline::Reference(reference) => {
-                let label = inline_text(&reference.label);
+                let label = inline_text_with_attributes(&reference.label, include_attribute_values);
                 output.push_str(if label.is_empty() {
                     &reference.target_source
                 } else {
@@ -1010,6 +1034,19 @@ mod tests {
         assert_eq!(
             projected.render_json(),
             project(&analysis, &RenderInputs::default()).render_json()
+        );
+    }
+
+    #[test]
+    fn block_presentation_titles_use_resolved_inline_text() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze("= Title\n:product: AdocWeave\n\n.*Important* {product}\n[NOTE]\n====\nbody\n====\n")
+            .expect("analysis");
+        let projection = project(&analysis, &RenderInputs::default());
+
+        assert_eq!(
+            projection.block_presentations[0].title.as_deref(),
+            Some("Important AdocWeave")
         );
     }
 

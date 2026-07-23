@@ -1,5 +1,5 @@
 = 解決済みblock title・caption presentation
-:status: planned
+:status: completed
 :depends-on: 141
 
 == 目的
@@ -18,3 +18,9 @@ inline診断を持つ。backendはsource文字列を再解析せず、このinli
 * table captionとadmonition titleが共通presentationを利用する。
 * 未解決属性・不完全inlineの診断範囲がtitle sourceへ対応する。
 * 旧raw caption契約を維持するadapterは残さない。
+
+== 実施結果
+
+`BlockTitle`はlossless source値・rangeと解決済みinline列を一体で持つ。loweringは全metadata titleの
+属性展開をparagraph等と同じ経路で行い、table presentationは解決済みtitleをcaptionとして保持する。
+HTMLはcaptionとadmonition titleをそのinline列から描画し、projectionは同じ列のplain textを返す。

@@ -463,7 +463,7 @@ fn render_block(
         }
         AstBlock::Paragraph(paragraph) => {
             if let Some(admonition) = &paragraph.admonition {
-                render_admonition_start(output, admonition, explicit_id, &paragraph.metadata);
+                render_admonition_start(output, admonition, explicit_id, &paragraph.metadata, context);
                 render_paragraph(output, paragraph, None, context);
                 output.push_str("</div>\n");
             } else {
@@ -581,7 +581,7 @@ fn render_delimited(
     if let Some(presentation) = &block.presentation {
         match presentation {
             crate::parser::DelimitedPresentation::Admonition(admonition) => {
-                render_admonition_start(output, admonition, explicit_id, &block.metadata);
+                render_admonition_start(output, admonition, explicit_id, &block.metadata, context);
                 render_delimited_children(output, block, policy, context, scope);
                 output.push_str("</div>\n");
                 return;
@@ -701,6 +701,7 @@ fn render_admonition_start(
     admonition: &crate::parser::AdmonitionPresentation,
     explicit_id: Option<&str>,
     metadata: &crate::parser::BlockMetadata,
+    context: &mut InlineRenderContext<'_, '_>,
 ) {
     output.push_str("<div class=\"admonition admonition-");
     output.push_str(admonition.kind.label().to_ascii_lowercase().as_str());
@@ -708,7 +709,7 @@ fn render_admonition_start(
     render_optional_id(output, explicit_id);
     output.push_str("><div class=\"title\">");
     if let Some(title) = &metadata.title {
-        escape_html_into(output, &title.value);
+        render_inlines(output, &title.inlines, context);
     } else {
         output.push_str(admonition.kind.label());
     }
@@ -759,7 +760,7 @@ fn render_table(
     output.push_str(">\n");
     if let Some(caption) = &table.presentation.caption {
         output.push_str("<caption>");
-        escape_html_into(output, caption);
+        render_inlines(output, &caption.inlines, context);
         output.push_str("</caption>\n");
     }
     let mut section = None;
@@ -1827,6 +1828,19 @@ mod tests {
         assert_eq!(
             render(&parsed.ast, &RenderPolicy::default()).html,
             "<p>first line second line</p>\n<p>last</p>\n"
+        );
+    }
+
+    #[test]
+    fn resolved_block_titles_render_inline_semantics_for_captions_and_admonitions() {
+        let parsed = parse(
+            "= Title\n:product: AdocWeave\n\n.The *bold* {product} caption\n|===\n|cell\n|===\n\n.*Important* {product}\n[NOTE]\n====\nbody\n====\n",
+        )
+        .expect("parse");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<h1 class=\"document-title\" id=\"_title\">Title</h1>\n<table class=\"table-frame-all table-grid-all table-stripes-none\">\n<caption>The <strong>bold</strong> AdocWeave caption</caption>\n<tbody>\n<tr>\n<td class=\"table-align-left table-valign-top\">cell</td>\n</tr>\n</tbody>\n</table>\n<div class=\"admonition admonition-note\"><div class=\"title\"><strong>Important</strong> AdocWeave</div>\n<p>body</p>\n</div>\n"
         );
     }
 

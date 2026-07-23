@@ -4,7 +4,7 @@ use crate::attributes::DocumentAttribute;
 use crate::inline::Inline;
 use crate::parser::{
     AstBlock, AstDocument, BlockMetadata, ElementAttribute, ExplicitAnchor, ListBlock, ListItem,
-    MetadataValue,
+    BlockTitle, MetadataValue,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -19,7 +19,7 @@ pub enum SemanticNode<'document> {
     Attribute(&'document DocumentAttribute),
     Anchor(&'document ExplicitAnchor),
     Metadata(&'document BlockMetadata),
-    MetadataTitle(&'document MetadataValue),
+    MetadataTitle(&'document BlockTitle),
     MetadataId(&'document MetadataValue),
     MetadataRole(&'document MetadataValue),
     MetadataOption(&'document MetadataValue),
@@ -124,6 +124,9 @@ pub(crate) fn walk_inline_sequences_mut(
     }
 
     for block in blocks {
+        if let Some(title) = &mut block.metadata_mut().title {
+            visitor(&mut title.inlines);
+        }
         match block {
             AstBlock::Heading(heading) => visitor(&mut heading.inlines),
             AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines),

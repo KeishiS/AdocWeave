@@ -200,7 +200,7 @@ xref:substitutions.adoc[Core置換モデル]で定義する。
 quoted multiline cell、任意の1文字separator、duplicationおよびPSVのAsciiDoc block cellに対応。
 AsciiDoc cellは対応済みblock sequence全体とカスタムseparator delimiterによる入れ子表を解析する。
 caption、frame、grid、stripes、width（1から100のunitlessまたは`%`付き百分率）およびautowidthを型付きpresentationとして解決する。
-caption内のinline置換と自動header推論は未対応
+captionは属性展開と通常inline構文を適用する。自動header推論は未対応
 
 |標準inline／block macro
 |image、footnote、anchor、email、keyboard、button、menu、index等

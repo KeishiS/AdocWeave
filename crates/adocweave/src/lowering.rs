@@ -16,7 +16,6 @@ pub(crate) struct ParsedFacts {
 }
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
-    configure_tables(&mut facts.blocks);
     let resolved_attributes = crate::presentation::resolve_document_attributes(&facts.attributes);
     let source_language = resolved_attributes
         .get("source-language")
@@ -34,6 +33,7 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
         &resolved_attributes,
         facts.attribute_expansion_limits,
     );
+    configure_tables(&mut document.blocks);
     document.identifiers = crate::document::build_identifiers(&document);
     document.structure = crate::structure::build(&document);
     document.index = crate::presentation::build_index(&document);

@@ -300,7 +300,7 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
 fn table_presentation_value(presentation: &crate::table::TablePresentation) -> String {
     format!(
         "caption={:?};frame={};grid={};stripes={};width={};autowidth={}",
-        presentation.caption,
+        presentation.caption.as_ref().map(|caption| &caption.value),
         match presentation.frame {
             crate::table::TableFrame::All => "all",
             crate::table::TableFrame::Ends => "ends",
@@ -330,7 +330,12 @@ fn table_presentation_value(presentation: &crate::table::TablePresentation) -> S
 fn metadata_nodes(metadata: &BlockMetadata) -> Vec<CanonicalNode> {
     let mut nodes = Vec::new();
     if let Some(title) = &metadata.title {
-        nodes.push(leaf("block-title", title.range, &title.value));
+        nodes.push(CanonicalNode {
+            kind: "block-title",
+            range: range(title.range),
+            value: Some(title.value.clone()),
+            children: inline_nodes(&title.inlines),
+        });
     }
     if let Some(id) = &metadata.id {
         nodes.push(leaf("block-id", id.range, &id.value));

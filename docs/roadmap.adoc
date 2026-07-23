@@ -463,7 +463,7 @@ backend非依存の意味モデルとsnapshot境界で拡張する。暗黙resou
 index range、`subs`属性およびMarkdown互換はこのマイルストーンへ含めない。
 
 . xref:../issues/141-bibliography-contract-synchronization.adoc[Issue 141]（完了）でbibliography構造検証の実装・文書・fixtureを同期した。
-. xref:../issues/142-resolved-block-title-presentation.adoc[Issue 142]（計画）で解決済みblock titleとcaption presentationを統一する。
+. xref:../issues/142-resolved-block-title-presentation.adoc[Issue 142]（完了）で解決済みblock titleとcaption presentationを統一した。
 . xref:../issues/143-safe-include-attribute-grammar.adoc[Issue 143]（計画）でquote-aware include属性とoptional includeを安全に実装する。
 
 == ドキュメント保守規則

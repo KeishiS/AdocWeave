@@ -225,7 +225,8 @@ xref:roadmap.adoc[ロードマップ]を参照する。
 |Block metadata
 |対応
 |block title、明示anchor、ID、role、option、positional／named属性を共通モデルへ保持する。
-captionの出力意味とblock種別ごとの属性検証は今後のblock実装で追加する
+block titleは属性展開と通常inline構文を適用したbackend非依存のpresentationとして保持する。
+block種別ごとの属性検証は今後のblock実装で追加する
 
 |Delimited block
 |部分対応

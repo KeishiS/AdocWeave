@@ -7,11 +7,20 @@ use crate::source::{TextRange, TextSize};
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BlockMetadata {
     pub range: Option<TextRange>,
-    pub title: Option<MetadataValue>,
+    pub title: Option<BlockTitle>,
     pub id: Option<MetadataValue>,
     pub roles: Vec<MetadataValue>,
     pub options: Vec<MetadataValue>,
     pub attributes: Vec<ElementAttribute>,
+}
+
+/// A lossless block title together with its resolved inline presentation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlockTitle {
+    pub value: String,
+    pub range: TextRange,
+    pub inlines: Vec<Inline>,
+    pub(crate) inline_problems: Vec<InlineProblem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
