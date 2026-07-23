@@ -722,6 +722,13 @@ fn hover_and_completion_cover_common_block_metadata() {
             .iter()
             .any(|item| item["label"] == "subs")
     );
+    assert!(
+        value
+            .as_array()
+            .expect("items")
+            .iter()
+            .any(|item| item["label"] == "frame")
+    );
 }
 
 #[test]

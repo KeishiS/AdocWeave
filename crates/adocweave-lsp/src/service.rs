@@ -803,7 +803,10 @@ impl LanguageService {
                 lsp::CompletionItemKind::VALUE,
             )),
             DocumentElement::ElementAttribute(_) => Some((
-                &["cols", "id", "options", "role", "subs"],
+                &[
+                    "cols", "frame", "grid", "id", "options", "role", "stripes", "subs",
+                    "width",
+                ],
                 lsp::CompletionItemKind::PROPERTY,
             )),
             DocumentElement::MetadataTitle(_) | DocumentElement::MetadataId(_) => {
