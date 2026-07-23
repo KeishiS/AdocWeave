@@ -410,8 +410,8 @@ M26–M28で追加したsource block短縮記法、list表示属性、bibliograp
 release manifest、fixture、互換性文書およびmigration noteを一つの変更で更新する。
 
 . xref:../issues/129-v0-2-0-release-readiness.adoc[Issue 129]で契約差分を監査し、`v0.2.0-rc.1`を公開・受け入れする。（進行中）
-. RC後は機能追加を停止し、少なくとも一週間かつ二回の独立した受け入れ確認を終える。
-. blocker修正に公開契約変更が含まれる場合は新しいRCを公開する。stable tagは最終RCと同一commitに限定する。
+. RC後は機能追加を停止し、repository所有者の公開前確認後にstableを公開する。
+. blocker修正に公開契約変更が含まれる場合は新しいRCを公開する。stableでは最終RCと同じ機能baselineへstable version metadataだけを同期する。
 
 == M30: 次期標準AsciiDoc互換性
 
