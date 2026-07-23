@@ -241,7 +241,7 @@ Markdown互換は個別の設計Issueで扱う。CIの性能改善、current sta
 * xref:130-ci-throughput-optimization.adoc[130: CI実行時間の最適化]（完了）
 * xref:131-zed-lsp-repository-separation-evaluation.adoc[131: Zed LSPのリポジトリ独立化評価]（完了）
 * xref:132-current-stable-rust-policy.adoc[132: Current stable Rust方針への移行]（完了）
-* xref:133-table-presentation-attributes.adoc[133: Table表示属性とcaptionの型付きprojection]（進行中）
+* xref:133-table-presentation-attributes.adoc[133: Table表示属性とcaptionの型付きprojection]（完了）
 
 === M1: プレーンテキスト変換
 

@@ -804,8 +804,7 @@ impl LanguageService {
             )),
             DocumentElement::ElementAttribute(_) => Some((
                 &[
-                    "cols", "frame", "grid", "id", "options", "role", "stripes", "subs",
-                    "width",
+                    "cols", "frame", "grid", "id", "options", "role", "stripes", "subs", "width",
                 ],
                 lsp::CompletionItemKind::PROPERTY,
             )),

@@ -1,5 +1,5 @@
 = Table表示属性とcaptionの型付きprojection
-:status: in-progress
+:status: completed
 :depends-on:
 
 == 目的

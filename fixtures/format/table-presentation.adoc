@@ -1,0 +1,5 @@
+.Example
+[frame=ends,grid=rows,stripes=even,width=75%]
+|===
+|value
+|===

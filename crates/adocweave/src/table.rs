@@ -628,6 +628,11 @@ fn absolute_range(parent: TextRange, start: usize, end: usize) -> TextRange {
 }
 
 pub(crate) fn configure(table: &mut Table, metadata: &crate::parser::BlockMetadata) {
+    // Tables are configured during parsing and again while lowering. Keep the
+    // metadata-derived diagnostics idempotent across those two passes.
+    table
+        .problems
+        .retain(|problem| problem.kind != TableProblemKind::InvalidPresentation);
     table.presentation = resolve_presentation(metadata, &mut table.problems);
     let cols = metadata
         .attributes
@@ -697,6 +702,18 @@ fn resolve_presentation(
             range: attribute.range,
         });
     };
+    for name in ["frame", "grid", "stripes", "width"] {
+        let mut attributes = metadata
+            .attributes
+            .iter()
+            .filter(|attribute| attribute.name.as_deref() == Some(name));
+        let Some(_) = attributes.next() else {
+            continue;
+        };
+        for duplicate in attributes {
+            invalid(duplicate, problems);
+        }
+    }
     if let Some(attribute) = attribute("frame") {
         presentation.frame = match attribute.value.as_str() {
             "all" => TableFrame::All,

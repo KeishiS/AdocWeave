@@ -362,6 +362,17 @@ mod tests {
     }
 
     #[test]
+    fn formatter_preserves_table_presentation_metadata_byte_for_byte() {
+        let source = include_str!("../../../fixtures/format/table-presentation.adoc");
+        let formatted = format(source, &FormatConfig::default()).expect("format");
+
+        assert_eq!(
+            formatted.formatted,
+            include_str!("../../../fixtures/format/table-presentation.formatted.adoc")
+        );
+    }
+
+    #[test]
     fn formatter_preserves_block_metadata_byte_for_byte() {
         let source = ".Visible title  \n[#item.custom%collapsible,kind=\"demo\"]\nParagraph  ";
         let formatted = format(source, &FormatConfig::default()).expect("format");

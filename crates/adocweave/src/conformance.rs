@@ -196,10 +196,14 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                 }
                 crate::parser::DelimitedContent::Table(table) => (
                     Some(format!("{:?}", table.format).to_ascii_lowercase()),
-                    table
-                        .rows
-                        .iter()
-                        .map(|row| CanonicalNode {
+                    std::iter::once(CanonicalNode {
+                        kind: "table-presentation",
+                        range: range(node.range),
+                        value: Some(table_presentation_value(&table.presentation)),
+                        children: Vec::new(),
+                    })
+                    .chain(table.rows.iter().map(|row| {
+                        CanonicalNode {
                             kind: "table-row",
                             range: range(row.range),
                             value: Some(format!("{:?}", row.section).to_ascii_lowercase()),
@@ -224,8 +228,9 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                                     }
                                 })
                                 .collect(),
-                        })
-                        .collect(),
+                        }
+                    }))
+                    .collect(),
                 ),
             };
             CanonicalNode {
@@ -251,6 +256,36 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
     children.append(&mut node.children);
     node.children = children;
     node
+}
+
+fn table_presentation_value(presentation: &crate::table::TablePresentation) -> String {
+    format!(
+        "caption={:?};frame={};grid={};stripes={};width={};autowidth={}",
+        presentation.caption,
+        match presentation.frame {
+            crate::table::TableFrame::All => "all",
+            crate::table::TableFrame::Ends => "ends",
+            crate::table::TableFrame::None => "none",
+            crate::table::TableFrame::Sides => "sides",
+        },
+        match presentation.grid {
+            crate::table::TableGrid::All => "all",
+            crate::table::TableGrid::Columns => "cols",
+            crate::table::TableGrid::None => "none",
+            crate::table::TableGrid::Rows => "rows",
+        },
+        match presentation.stripes {
+            crate::table::TableStripes::All => "all",
+            crate::table::TableStripes::Even => "even",
+            crate::table::TableStripes::Hover => "hover",
+            crate::table::TableStripes::None => "none",
+            crate::table::TableStripes::Odd => "odd",
+        },
+        presentation
+            .width
+            .map_or_else(|| "none".to_owned(), |width| format!("{width}%")),
+        presentation.autowidth,
+    )
 }
 
 fn metadata_nodes(metadata: &BlockMetadata) -> Vec<CanonicalNode> {
@@ -485,5 +520,25 @@ mod tests {
         assert_eq!(value["blocks"][0]["children"][0]["kind"], "paragraph");
         assert_eq!(value["blocks"][1]["kind"], "pass-block");
         assert_eq!(value["blocks"][1]["value"], "<tag>\n");
+    }
+
+    #[test]
+    fn canonical_ast_exposes_typed_table_presentation() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze(".Caption\n[frame=ends,grid=rows,stripes=odd,width=75%]\n|===\n|cell\n|===\n")
+            .expect("analysis");
+        let value: serde_json::Value =
+            serde_json::from_str(&canonical_ast(analysis.ast())).expect("canonical JSON");
+        assert_eq!(value["blocks"][0]["kind"], "table-block");
+        let presentation = value["blocks"][0]["children"]
+            .as_array()
+            .expect("table children")
+            .iter()
+            .find(|child| child["kind"] == "table-presentation")
+            .expect("table presentation");
+        assert_eq!(
+            presentation["value"],
+            "caption=Some(\"Caption\");frame=ends;grid=rows;stripes=odd;width=75%;autowidth=false"
+        );
     }
 }

@@ -1436,6 +1436,23 @@ mod tests {
     }
 
     #[test]
+    fn table_presentation_diagnostics_cover_invalid_duplicate_and_conflicting_values() {
+        let diagnostics = lint(
+            ".Caption\n[frame=ends,frame=sides,grid=diagonal,stripes=even,width=75%,options=autowidth]\n|===\n|cell\n|===\n",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+        let invalid = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "invalid-table")
+            .collect::<Vec<_>>();
+        assert_eq!(invalid.len(), 3);
+        assert!(invalid.iter().all(|diagnostic| {
+            diagnostic.message == "invalid or conflicting table presentation attribute"
+        }));
+    }
+
+    #[test]
     fn catalog_diagnostics_preserve_duplicate_and_missing_ranges() {
         let diagnostics = lint(
             "footnote:missing[] footnote:n[one] footnote:n[two] bibanchor:b[] bibanchor:b[] indexterm:[]",

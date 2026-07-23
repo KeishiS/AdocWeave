@@ -492,6 +492,26 @@ fn diagnostics_preserve_invalid_explicit_ordered_number_ranges() {
 }
 
 #[test]
+fn diagnostics_preserve_invalid_table_presentation_ranges() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///table.adoc",
+        1,
+        "[frame=ends,frame=sides,grid=diagonal,width=75%,options=autowidth]\n|===\n|cell\n|===\n",
+    );
+    let diagnostics = service
+        .diagnostics(&uri("file:///table.adoc"))
+        .expect("diagnostics");
+
+    assert_eq!(diagnostics.diagnostics.len(), 3);
+    assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code == Some(lsp::NumberOrString::String("invalid-table".to_owned()))
+            && diagnostic.range.start.line == 0
+    }));
+}
+
+#[test]
 fn close_clears_diagnostics() {
     let mut service = LanguageService::default();
     let document_uri = uri("file:///a.adoc");
