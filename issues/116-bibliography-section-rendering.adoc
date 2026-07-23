@@ -1,0 +1,29 @@
+= Bibliography sectionのHTML出力
+:status: planned
+:depends-on: 073,074,112
+
+== 目的
+
+既存のbibliography catalogとreference edgeを利用し、`[bibliography]`を持つsectionを標準AsciiDocの
+bibliography sectionとしてHTMLへ投影する。
+
+== 作業
+
+* section style `bibliography`をdocument structureから識別し、doctypeとsection levelに対する妥当性を検証する。
+* bibliography anchorを持つ順序なしlistを、catalog順・xref text・back referenceを保った一覧として出力する。
+* bibliography sectionの外ではentryの出力意味を変更せず、通常listとの混同を防ぐ。
+* bibliography anchor、xref、section、HTML IDおよびprojectionの対応を一つのcatalog／structure snapshotから導く。
+* 公開契約への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
+
+== 検証
+
+* article、partを持つbook、part内section、xref text、未参照entry、重複entry、不正section levelをfixture化する。
+* HTML、native／WASM conformance、LSP hover／Definition／Referencesおよびdocument projectionが一致することを確認する。
+
+== 完了条件
+
+bibliography sectionがAST再走査やI/Oなしに既存catalogから決定的に出力され、標準listとbibliography listの意味が区別される。
+
+== 範囲外
+
+BibTeX等の外部citation database、引用styleの自動整形、番号の自動割当、host外resource取得は扱わない。

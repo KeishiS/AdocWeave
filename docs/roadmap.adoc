@@ -360,8 +360,23 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
   `v0.1.0-rc.6`として公開・受け入れし、そのsource commitをstable baselineとして凍結した。（完了）
 . xref:../issues/112-v0-1-0-stable-release.adoc[Issue 112]でRC.6と機能的に同じbaselineを`v0.1.0`として公開し、
   公開物を再受け入れした。（完了）
-. stable公開後に、source短縮記法、追加inline書式、list属性、`subs`属性およびbibliography表示等の標準AsciiDoc未対応領域を
-  依存関係付きIssueへ分解する。
+. stable公開後の標準AsciiDoc互換性拡張は、次のIssueへ分解する。`subs`属性、追加inline書式、
+  高度なinclude属性、table表示属性およびMarkdown互換は、これらの結果と利用者需要を評価して後続Issueとする。
+
+== stable後の標準AsciiDoc互換性拡張
+
+`v0.1.0`の公開契約と安全境界を維持し、既存のsemantic AST、catalogおよびdocument structureを再利用して
+標準AsciiDocの利用頻度が高い不足領域を拡張する。source block短縮記法とlist表示属性は独立に着手できる。
+bibliography出力と文書表示属性は、それぞれ既存のcatalogと`DocumentStructure`への追加projectionとする。
+
+. xref:../issues/114-source-block-shorthand-and-default-language.adoc[Issue 114]で`[,LANGUAGE]`と`source-language`を
+  source blockへ正規化する。（計画）
+. xref:../issues/115-list-presentation-attributes.adoc[Issue 115]で開始番号、逆順および番号形式をlist表示属性として
+  型付ける。（計画）
+. xref:../issues/116-bibliography-section-rendering.adoc[Issue 116]で`[bibliography]` sectionを既存catalogから
+  HTMLへ投影する。（計画）
+. xref:../issues/117-document-presentation-attributes.adoc[Issue 117]で`toc`、`toclevels`および`sectnums`を
+  `DocumentStructure`の表示policyとして追加する。（計画）
 
 == ドキュメント保守規則
 

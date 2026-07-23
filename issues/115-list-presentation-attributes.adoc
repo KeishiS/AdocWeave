@@ -1,0 +1,30 @@
+= List表示属性と順序付き番号形式
+:status: planned
+:depends-on: 063,112
+
+== 目的
+
+標準AsciiDocのlist属性のうち、順序付きlistの開始番号、逆順表示および番号形式を意味モデルとHTMLへ追加する。
+
+== 作業
+
+* list metadataから`start`、`reversed` optionおよび`arabic`、`decimal`、`loweralpha`、`upperalpha`、
+  `lowerroman`、`upperroman`、`lowergreek` styleを型付きlist presentationとして解決する。
+* 明示番号と`start`の整合性、正の開始番号、styleごとの表示規則およびnested listの既定規則を診断する。
+* HTMLが意味モデルから`ol`のstart、reversedおよび安全なlist-style表現を生成するようにする。
+* Formatter、projection、LSP hoverおよびcode actionが未対応属性を推測・破壊しないことを固定する。
+* 公開契約への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
+
+== 検証
+
+* `start`、`reversed`、各番号形式、明示番号、nested list、block continuation、description／checklist／calloutとの混在をfixture化する。
+* 無効な開始番号、不整合な明示番号、未知styleおよび不完全attribute listの回復と診断を確認する。
+* native、WASM、HTML、LSPおよびformatterの意味同値性を確認する。
+
+== 完了条件
+
+listの表示属性がsourceから一度だけ解決され、全consumerが同じ開始番号・順序・番号形式を利用する。
+
+== 範囲外
+
+CSS themeの固定、任意のcustom counter、list markerの自動書換え、Markdown list互換は扱わない。

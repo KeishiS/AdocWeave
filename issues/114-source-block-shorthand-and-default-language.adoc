@@ -1,0 +1,32 @@
+= Source block短縮記法と既定言語
+:status: planned
+:depends-on: 112
+
+== 目的
+
+標準AsciiDocのlisting blockにおけるsource style省略形を実装する。`[,rust]`のように言語だけを指定した
+listing blockをsource blockとして扱い、文書属性`source-language`を既定言語として利用できるようにする。
+
+== 作業
+
+* block attributeの位置属性から、listing blockの言語指定とstyle指定を区別する。
+* `[,LANGUAGE]`を`[source,LANGUAGE]`と同じ意味モデルへ正規化する。
+* `source-language`があるlisting blockをsource blockとして扱い、明示した言語を既定値より優先する。
+* `listing` styleを明示した場合は、`source-language`があっても通常listingとして扱う。
+* Parser、semantic AST、HTML、projection、LSP hover、formatterおよびZed色付けを同じsource block契約へ接続する。
+* Core Profile、Core API、HTML、projection、conformanceおよびWASM APIへの互換性影響を判定し、変更する契約だけを
+  version、fixtureおよびRelease noteと同じ変更で更新する。
+
+== 検証
+
+* `[source,rust]`、`[,rust]`、`source-language`、`[listing]`による抑止、空言語、未知言語、CRLFおよびUnicodeをfixture化する。
+* native、WASM、CLI、LSPおよびZedが同じ言語名・source range・HTMLを観測することを確認する。
+* `cargo make release-gate`を実行する。
+
+== 完了条件
+
+標準形と短縮形が同じ意味出力を生成し、既定言語と明示的listingの優先規則が文書・fixture・公開projectionで一致する。
+
+== 範囲外
+
+syntax highlighter libraryの内蔵、言語名のallowlist化、source codeの実行、`subs`属性によるsource block置換の変更は扱わない。
