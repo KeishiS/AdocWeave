@@ -1,0 +1,24 @@
+= Section scopeを所有するdocument layout
+:status: in-progress
+:depends-on: 118
+
+== 目的
+
+backendが開始／終了の可変状態や見出しの再走査を行わず、sectionの構造的な範囲をdocument layoutから直接取得できるようにする。
+
+== 作業
+
+* bibliographyを含むsectionの開始、内容および終了を一つの型付きlayout nodeとして表現する。
+* 子sectionではscopeを終了せず、次のsiblingまたはancestorでだけ終了する。
+* `BlockId`からtop-level blockへ定数時間で到達できるindexを導入し、rendererのrange経由探索を廃止する。
+* TOC、footnote、bibliographyを同じlayout protocolで描画する。
+
+== 検証
+
+* bibliography section内の子section、複数section、book part、section外listをnative/WASM fixture化する。
+* rendererがraw attributeおよびheading metadataを参照せずlayoutだけからscopeを得ることを固定する。
+
+== 完了条件
+
+section scopeと生成物配置が一つのimmutable layoutから決定され、rendererがASTを探索せずに描画できる。
+

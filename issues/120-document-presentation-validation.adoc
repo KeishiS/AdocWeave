@@ -1,0 +1,18 @@
+= 文書表示属性とbibliography構造の検証完全化
+:status: planned
+:depends-on: 119
+
+== 目的
+
+表示属性の無効値とbibliographyのdoctype・section level規則を、型付きdiagnosticとして全runtimeで同一に扱う。
+
+== 作業
+
+* `toclevels`の未指定・無効・範囲外を区別し、由来range付きのdiagnosticを保持する。
+* article、book、part内section、book全体のbibliographyに対する標準level規則をsection treeで検証する。
+* すべての回復値をLSP、CLI、WASM、projectionの診断へ一度だけ投影する。
+
+== 検証
+
+* doctype、part、appendix、discrete heading、無効属性値をnative/WASM/LSP fixture化する。
+

@@ -1,0 +1,13 @@
+= 明示番号listのlossless回復と診断
+:status: planned
+:depends-on: 115
+
+== 目的
+
+桁あふれ等の不正な明示番号を段落へ退化させず、lossless構文と安定診断として保持する。
+
+== 作業
+
+* 不正／桁あふれ番号markerをrecoverable list itemとして認識する。
+* Formatter、LSP、CLIおよびWASMで同じrangeとdiagnosticを返す。
+

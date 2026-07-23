@@ -214,6 +214,10 @@ RC.5の実Release受け入れで見つかったZed基本色付けの欠落を先
 * xref:115-list-presentation-attributes.adoc[115: List表示属性と順序付き番号形式]（完了）
 * xref:116-bibliography-section-rendering.adoc[116: Bibliography sectionのHTML出力]（完了）
 * xref:117-document-presentation-attributes.adoc[117: 文書表示属性：TOCとsection番号]（完了）
+* xref:119-section-scope-layout-model.adoc[119: Section scopeを所有するdocument layout]（進行中）
+* xref:120-document-presentation-validation.adoc[120: 文書表示属性とbibliography構造の検証完全化]（計画）
+* xref:121-bibliography-conformance-coverage.adoc[121: Bibliography sectionのconsumer横断適合性]（計画）
+* xref:122-lossless-explicit-list-numbering.adoc[122: 明示番号listのlossless回復と診断]（計画）
 
 === M1: プレーンテキスト変換
 
