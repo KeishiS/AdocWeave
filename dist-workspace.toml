@@ -28,11 +28,11 @@ source-tarball = false
 include = ["THIRD_PARTY_NOTICES.adoc"]
 
 [[dist.extra-artifacts]]
-artifacts = ["target/distrib/adocweave-browser-0.3.0-rc.1.tar.xz"]
+artifacts = ["target/distrib/adocweave-browser-0.3.0.tar.xz"]
 build = ["bash", "tools/package-browser-release.sh"]
 
 [[dist.extra-artifacts]]
-artifacts = ["target/distrib/adocweave-zed-0.3.0-rc.1.tar.xz"]
+artifacts = ["target/distrib/adocweave-zed-0.3.0.tar.xz"]
 build = ["bash", "tools/package-zed-release.sh"]
 
 [dist.github-custom-runners]

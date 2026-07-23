@@ -19,7 +19,7 @@ canonical AST表現は同じ単一契約version内の機能追加としてfixtur
 
 == 作業
 
-* workspace、Zed、browser、release manifestおよび配布設定を`0.3.0-rc.1`へ同期する。
+* 最終RCと同じ機能baselineへ、workspace、Zed、browser、release manifestおよび配布設定のversionを`0.3.0`へ同期する。
 * `v0.2.0`からの利用者可視差分、HTML allowlist、診断、LSP completionおよびformatter契約を監査する。
 * mainのcandidate成功後に`v0.3.0-rc.1`を公開し、9 asset、checksum、attestation、CLI、LSP、browser、ZedおよびNixを受け入れる。
 * RC公開後は機能追加を停止し、repository所有者の公開前確認後にstableを公開する。
@@ -28,6 +28,6 @@ canonical AST表現は同じ単一契約version内の機能追加としてfixtur
 == 検証
 
 * `cargo make release-gate`
-* `node tools/release-contract.mjs --tag=v0.3.0-rc.1`
+* `node tools/release-contract.mjs --tag=v0.3.0`
 * tag workflowの必須job、公開assetの完全性検証およびclean環境の導入E2E
 * Linux x86-64／ARM64、browser Worker、NixOSおよびZedの受け入れ記録
