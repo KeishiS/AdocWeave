@@ -213,6 +213,25 @@ fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
     {
         presentation.reversed = true;
     }
+    if presentation.start.is_none() {
+        presentation.start = list.items.first().and_then(|item| item.explicit_number);
+    }
+    let mut expected = presentation.start.unwrap_or(1);
+    for item in &list.items {
+        if let Some(number) = item.explicit_number {
+            if number != expected {
+                problems.push(crate::parser::ListPresentationProblem {
+                    kind: crate::parser::ListPresentationProblemKind::InconsistentExplicitNumber,
+                    range: item.marker_range,
+                });
+            }
+        }
+        expected = if presentation.reversed {
+            expected.saturating_sub(1)
+        } else {
+            expected.saturating_add(1)
+        };
+    }
     list.presentation = presentation;
     list.presentation_problems = problems;
 }

@@ -1473,6 +1473,7 @@ fn parse_lists(
             depth,
             marker_start,
             marker_end,
+            explicit_number,
             mut text_start,
             term_end,
             mut callout_id,
@@ -1582,6 +1583,7 @@ fn parse_lists(
         let mut item = ListItem {
             range: line.full_range(),
             marker_range,
+            explicit_number,
             separator_range,
             text_range: item_text_range,
             text: text.to_owned(),
@@ -3033,6 +3035,19 @@ mod tests {
             list.presentation.style,
             crate::parser::OrderedListStyle::UpperRoman
         );
+    }
+
+    #[test]
+    fn explicit_ordered_numbers_set_start_and_preserve_the_marker_value() {
+        let parsed = parse("4. four\n5. five\n").expect("parse");
+        let AstBlock::List(list) = &parsed.ast.blocks()[0] else {
+            panic!("ordered list");
+        };
+
+        assert_eq!(list.presentation.start, Some(4));
+        assert_eq!(list.items[0].explicit_number, Some(4));
+        assert_eq!(list.items[1].explicit_number, Some(5));
+        assert!(list.presentation_problems.is_empty());
     }
 
     #[test]

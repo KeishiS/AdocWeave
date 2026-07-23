@@ -292,6 +292,9 @@ fn lint_list_presentation(
                 crate::parser::ListPresentationProblemKind::InvalidStart => {
                     "ordered list start must be a positive integer"
                 }
+                crate::parser::ListPresentationProblemKind::InconsistentExplicitNumber => {
+                    "explicit ordered-list numbers must be sequential"
+                }
                 crate::parser::ListPresentationProblemKind::UnknownOrderedStyle => {
                     "unsupported ordered list style"
                 }
@@ -994,6 +997,16 @@ mod tests {
                 "unsupported ordered list style"
             ]
         );
+    }
+
+    #[test]
+    fn explicit_ordered_numbers_must_be_sequential() {
+        let diagnostics = lint("4. four\n6. six\n", &LintConfig::default()).expect("valid source");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "invalid-list-presentation"
+                && diagnostic.message == "explicit ordered-list numbers must be sequential"
+        }));
     }
 
     #[test]

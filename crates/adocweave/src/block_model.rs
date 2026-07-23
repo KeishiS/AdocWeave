@@ -272,6 +272,7 @@ pub enum OrderedListStyle {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ListPresentationProblemKind {
     InvalidStart,
+    InconsistentExplicitNumber,
     UnknownOrderedStyle,
 }
 
@@ -330,6 +331,8 @@ pub struct ListBlock {
 pub struct ListItem {
     pub range: TextRange,
     pub marker_range: TextRange,
+    /// The numeral supplied in an explicitly numbered ordered-list marker.
+    pub explicit_number: Option<u32>,
     pub separator_range: TextRange,
     pub text_range: TextRange,
     pub text: String,
