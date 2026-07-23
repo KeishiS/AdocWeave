@@ -86,6 +86,9 @@ impl ResolvedDocumentAttributes {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DocumentPresentation {
     attributes: ResolvedDocumentAttributes,
+    source_language: Option<String>,
+    toc_policy: TocPolicy,
+    section_numbers: bool,
     headings: Vec<HeadingPresentation>,
     toc: Vec<crate::structure::TocEntry>,
 }
@@ -97,6 +100,18 @@ impl DocumentPresentation {
 
     pub fn headings(&self) -> &[HeadingPresentation] {
         &self.headings
+    }
+
+    pub fn source_language(&self) -> Option<&str> {
+        self.source_language.as_deref()
+    }
+
+    pub const fn toc_policy(&self) -> TocPolicy {
+        self.toc_policy
+    }
+
+    pub const fn section_numbers_enabled(&self) -> bool {
+        self.section_numbers
     }
 
     pub fn heading_at(&self, range: TextRange) -> Option<&HeadingPresentation> {
@@ -115,6 +130,23 @@ pub struct HeadingPresentation {
     pub range: TextRange,
     pub number: Vec<u32>,
     pub toc_included: bool,
+}
+
+/// Typed document-level TOC configuration. Placement is intentionally absent:
+/// a backend-independent layout decides where generated material is inserted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TocPolicy {
+    pub enabled: bool,
+    pub max_level: Option<u8>,
+}
+
+impl Default for TocPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_level: None,
+        }
+    }
 }
 
 /// A generated document-level item. It is not a source AST node.
@@ -220,6 +252,20 @@ pub(crate) fn build_presentation(document: &AstDocument) -> DocumentPresentation
             }
         }
     }
+    let source_language = values
+        .get("source-language")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let toc_policy = TocPolicy {
+        enabled: values.contains_key("toc"),
+        max_level: values
+            .get("toclevels")
+            .and_then(|value| value.trim().parse::<u8>().ok())
+            .filter(|level| (1..=5).contains(level)),
+    };
+    let section_numbers = values.contains_key("sectnums");
     let mut counters = [0_u32; 6];
     let headings = document
         .structure()
@@ -261,6 +307,9 @@ pub(crate) fn build_presentation(document: &AstDocument) -> DocumentPresentation
     let toc = toc_entries(document.structure().roots(), &headings);
     DocumentPresentation {
         attributes: ResolvedDocumentAttributes { values },
+        source_language,
+        toc_policy,
+        section_numbers,
         headings,
         toc,
     }
@@ -319,14 +368,25 @@ mod tests {
 
     #[test]
     fn resolves_final_attributes_and_indexes_layout_without_ranges_as_ids() {
-        let parsed = parse(":source-language: rust\n:source-language!:\n\nfirst\n\nsecond\n")
-            .expect("parse");
+        let parsed = parse(
+            "= Title\n:source-language: rust\n:source-language!:\n:toc:\n:toclevels: 3\n:sectnums:\n\nfirst\n\nsecond\n",
+        )
+        .expect("parse");
         let document = parsed.ast;
 
         assert_eq!(
             document.presentation().attributes().get("source-language"),
             None
         );
+        assert_eq!(document.presentation().source_language(), None);
+        assert_eq!(
+            document.presentation().toc_policy(),
+            super::TocPolicy {
+                enabled: true,
+                max_level: Some(3),
+            }
+        );
+        assert!(document.presentation().section_numbers_enabled());
         assert!(document.index().len() >= document.blocks().len());
         assert_eq!(document.layout().nodes().len(), document.blocks().len() + 1);
         for (node, block) in document.layout().nodes().iter().zip(document.blocks()) {
