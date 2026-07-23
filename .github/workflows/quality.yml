@@ -58,7 +58,7 @@ jobs:
         with:
           determinate: false
       - name: Compile and explore fuzz targets
-        run: nix develop .#ci -c cargo make fuzz-check fuzz-smoke
+        run: nix develop .#ci -c cargo make fuzz
 
   nix-package:
     if: inputs.run_nix_package

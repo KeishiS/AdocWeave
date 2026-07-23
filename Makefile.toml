@@ -463,6 +463,10 @@ for target in analyze process render; do
 done
 '''
 
+[tasks.fuzz]
+description = "Compile every fuzz target and run deterministic short exploration"
+dependencies = ["fuzz-check", "fuzz-smoke"]
+
 [tasks.test-release-core]
 private = true
 command = "cargo"
@@ -673,7 +677,7 @@ dependencies = [
 
 [tasks.ci]
 description = "Run the complete gate plus fuzz target compilation and short exploration"
-dependencies = ["verify", "fuzz-check", "fuzz-smoke"]
+dependencies = ["verify", "fuzz"]
 
 [tasks.release-check]
 description = "Run the publish gate and report release WASM artifact sizes"

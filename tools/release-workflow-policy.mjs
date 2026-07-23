@@ -194,7 +194,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   const dependencyRun = step(contractJobs.dependencies, (item) => item.name === "Audit dependency boundaries", "dependency governance step is missing").run;
   requireCommand(dependencyRun, "nix develop .#ci -c cargo make dependency-governance", "quality must audit every dependency boundary");
   const fuzzRun = step(contractJobs.fuzz, (item) => item.name === "Compile and explore fuzz targets", "fuzz quality step is missing").run;
-  requireCommand(fuzzRun, "nix develop .#ci -c cargo make fuzz-check fuzz-smoke", "quality must compile and explore fuzz targets");
+  requireCommand(fuzzRun, "nix develop .#ci -c cargo make fuzz", "quality must compile and explore fuzz targets");
   const nixRun = step(contractJobs["nix-package"], (item) => item.name === "Build and run the Nix package", "Nix package quality step is missing").run;
   requireCommand(nixRun, "nix develop .#ci -c cargo make nix-package-check", "quality must verify the Nix package on pull requests");
   if (contractJobs["nix-package"].if !== "inputs.run_nix_package") fail("Nix package quality must be controlled by an explicit caller input");
