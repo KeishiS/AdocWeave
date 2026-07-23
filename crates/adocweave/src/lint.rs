@@ -342,8 +342,11 @@ fn lint_document_structure(
             crate::structure::StructureProblemKind::AppendixDoctype => {
                 "appendix is only valid for article or book documents"
             }
-            crate::structure::StructureProblemKind::BibliographyLevel => {
-                "bibliography must be a section, not the document title"
+            crate::structure::StructureProblemKind::BibliographyNotSection => {
+                "bibliography must be a section, not a document title or discrete heading"
+            }
+            crate::structure::StructureProblemKind::BibliographyScope => {
+                "whole-book bibliography must be a level-zero section in a multipart book"
             }
             crate::structure::StructureProblemKind::BibliographyDoctype => {
                 "bibliography is only valid for article or book documents"
@@ -1075,9 +1078,63 @@ mod tests {
 
         assert!(messages.contains(&"appendix must be a level-one section"));
         assert!(messages.contains(&"appendix is only valid for article or book documents"));
-        assert!(messages.contains(&"bibliography must be a section, not the document title"));
+        assert!(
+            messages.contains(
+                &"bibliography must be a section, not a document title or discrete heading"
+            )
+        );
         assert!(messages.contains(&"bibliography is only valid for article or book documents"));
         assert!(messages.contains(&"manpage NAME section is missing"));
+    }
+
+    #[test]
+    fn bibliography_style_requires_a_structural_section() {
+        let diagnostics = lint(
+            "= Title\n\n[discrete,bibliography]\n=== References\n",
+            &LintConfig::default(),
+        )
+        .expect("valid source");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "invalid-document-structure"
+                && diagnostic.message
+                    == "bibliography must be a section, not a document title or discrete heading"
+        }));
+    }
+
+    #[test]
+    fn bibliography_scope_accepts_article_book_part_and_nested_section() {
+        for source in [
+            "= Title\n\n[bibliography]\n== References\n",
+            "= Book\n:doctype: book\n\n[bibliography]\n== References\n",
+            "= Book\n:doctype: book\n\n= Part\n\n== Chapter\n\n[bibliography]\n== References\n",
+            "= Book\n:doctype: book\n\n= Part\n\n== Chapter\n\n[bibliography]\n= References\n",
+            "= Title\n:doctype: manpage\n\n== NAME\n\ntool - purpose\n\n=== Parent\n\n[bibliography]\n==== References\n",
+        ] {
+            let diagnostics = lint(source, &LintConfig::default()).expect("valid source");
+            assert!(
+                !diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "invalid-document-structure"
+                        && diagnostic.message.contains("bibliography")
+                }),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn bibliography_scope_requires_a_multipart_book_for_level_zero() {
+        let diagnostics = lint(
+            "= Book\n:doctype: book\n\n[bibliography]\n= References\n",
+            &LintConfig::default(),
+        )
+        .expect("valid source");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "invalid-document-structure"
+                && diagnostic.message
+                    == "whole-book bibliography must be a level-zero section in a multipart book"
+        }));
     }
 
     #[test]

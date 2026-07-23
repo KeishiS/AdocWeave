@@ -83,7 +83,8 @@ pub struct Manpage {
 pub enum StructureProblemKind {
     AppendixLevel,
     AppendixDoctype,
-    BibliographyLevel,
+    BibliographyNotSection,
+    BibliographyScope,
     BibliographyDoctype,
     MissingManpageTitle,
     InvalidManpageTitle,
@@ -109,6 +110,10 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
     let mut arena = Vec::<ArenaSection>::new();
     let mut stack = Vec::<(u8, usize)>::new();
     let mut title = None;
+    let multipart_book = document.header().doctype == DocumentType::Book
+        && document.blocks().iter().any(|block| {
+            matches!(block, AstBlock::Heading(heading) if heading.kind == HeadingKind::Part && !is_bibliography(heading))
+        });
 
     for block in document.blocks() {
         let AstBlock::Heading(heading) = block else {
@@ -152,16 +157,27 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
             }
         }
         if bibliography {
-            if matches!(heading.kind, HeadingKind::DocumentTitle) {
+            if matches!(
+                heading.kind,
+                HeadingKind::DocumentTitle | HeadingKind::Discrete { .. }
+            ) {
                 structure.problems.push(StructureProblem {
-                    kind: StructureProblemKind::BibliographyLevel,
+                    kind: StructureProblemKind::BibliographyNotSection,
                     range: heading.range,
                 });
             }
-            if !matches!(
-                document.header().doctype,
-                DocumentType::Article | DocumentType::Book
-            ) {
+            if heading.kind == HeadingKind::Part && !multipart_book {
+                structure.problems.push(StructureProblem {
+                    kind: StructureProblemKind::BibliographyScope,
+                    range: heading.range,
+                });
+            }
+            if matches!(heading.kind, HeadingKind::Section { level: 1 })
+                && !matches!(
+                    document.header().doctype,
+                    DocumentType::Article | DocumentType::Book
+                )
+            {
                 structure.problems.push(StructureProblem {
                     kind: StructureProblemKind::BibliographyDoctype,
                     range: heading.range,
