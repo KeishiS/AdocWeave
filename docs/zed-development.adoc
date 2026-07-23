@@ -134,6 +134,8 @@ Zedの`settings.json`へ次を追加すると、Tree-sitter由来ではなくAdo
 * `editor: format`を明示的に実行すると整形され、再実行しても変更が生じない。
 * 見出しへhoverするとlevel、生成IDおよび対象部分が表示される。
 * `[source, ru]`の`ru`直後で`Ctrl+Space`を実行すると`rust`が候補に出る。
+* `[,rust]`のlisting blockは`[source,rust]`と同じ言語注入を受ける。`source-language`による既定言語は
+  tree-sitter queryだけでは文書属性を解決できないため、Zed上では明示指定したblockを確認対象とする。
 * 明示anchorとxrefでDefinitionおよびFind All Referencesが動作する。
 * xref targetはLinux／Windowsでは`Ctrl+クリック`、macOSでは`Cmd+クリック`で開ける。通常クリックは
   Document Linkを開く操作ではない。

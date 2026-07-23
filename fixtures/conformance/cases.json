@@ -69,6 +69,13 @@
       "contractImpact": "none"
     },
     {
+      "name": "source-block-shorthand-default-crlf",
+      "source": "= Source😀\r\n:source-language: rust\r\n\r\n[,python]\r\n----\r\nprint(\"😀\")\r\n----\r\n\r\n----\r\nfn main() {}\r\n----\r\n\r\n[listing]\r\n----\r\nplain\r\n----\r\n",
+      "compatibility": "supported-subset",
+      "rationale": "短縮source属性、文書既定言語、listing明示指定はCRLFとUnicode入力でも同じverbatim意味構造とHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
       "name": "advanced-tables-and-asciidoc-cell",
       "source": "[format=csv,options=header]\n|===\nname,value\nalpha,\"one, two\"\n|===\n\n[cols=a]\n|===\n|[[cell-section]]\n== Cell section\n\n literal\n\n'''\n\n[source,rust]\n----\nfn main() {}\n----\n\n!===\n!nested\n!===\n|===\n",
       "compatibility": "supported-subset",

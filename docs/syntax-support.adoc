@@ -95,10 +95,10 @@ header／footer、column／row span、配置、cell styleおよびPSVのAsciiDoc
 AsciiDoc cellは文書rootと同じblock sequence状態機械を用い、カスタムseparator delimiterによる入れ子表も扱う。
 詳細はxref:tables.adoc[表の対応仕様]を参照する。
 
-|ソースブロック（`[source,LANGUAGE]`と後続する`----`）
-|部分対応
-|言語と不透明な本体を意味表現へ変換する。属性listは共通メタデータにも保持する。
-ソース短縮記法には対応しない。
+|ソースブロック（`[source,LANGUAGE]`、`[,LANGUAGE]`、`source-language`）
+|対応
+|標準形と短縮形を同じsource verbatim blockへ正規化する。`source-language`はlisting blockの既定言語となり、
+明示した`[listing]`は既定値を抑止する。言語と不透明な本体はHTML、projection、LSPで共有する。
 
 |空行
 |対応

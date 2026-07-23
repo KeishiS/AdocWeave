@@ -24,6 +24,13 @@
 
 ((section_block
   (element_attr
+    ","
+    (positional_attr) @injection.language)
+  (listing_block
+    (listing_block_body) @injection.content)))
+
+((section_block
+  (element_attr
     (positional_attr (block_style) @injection.language))
   (listing_block
     (listing_block_body) @injection.content))
