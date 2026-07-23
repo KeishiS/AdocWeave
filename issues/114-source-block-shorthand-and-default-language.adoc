@@ -1,6 +1,6 @@
 = Source block短縮記法と既定言語
-:status: planned
-:depends-on: 112,118
+:status: completed
+:depends-on: 112
 
 == 目的
 
