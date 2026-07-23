@@ -71,33 +71,35 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
             if let crate::parser::DelimitedContent::Compound(children) = &mut block.content {
                 *children = normalize_verbatim_blocks(std::mem::take(children), source_language);
             }
-            if block.kind == crate::parser::DelimitedBlockKind::Listing
+            let implicit_listing = block.kind == crate::parser::DelimitedBlockKind::Listing
                 && !block
                     .metadata
                     .attributes
                     .iter()
-                    .any(|attribute| attribute.name.is_none() && attribute.value == "listing")
-                && let Some(language) = source_language
-                && let crate::parser::DelimitedContent::Verbatim(value) = block.content
-            {
-                let attribute_range = block
-                    .metadata
-                    .range
-                    .unwrap_or(block.opening_delimiter_range);
-                return AstBlock::Verbatim(crate::parser::VerbatimBlock {
-                    metadata: block.metadata,
-                    kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
-                        attribute_range,
-                        language_range: None,
-                        language: Some(language.to_owned()),
-                    }),
-                    range: block.range,
-                    delimiter_range: block.opening_delimiter_range,
-                    content_range: block.content_range,
-                    value,
-                    callouts: Vec::new(),
-                    problems: block.problems,
-                });
+                    .any(|attribute| attribute.name.is_none() && attribute.value == "listing");
+            if implicit_listing {
+                if let Some(language) = source_language {
+                    if let crate::parser::DelimitedContent::Verbatim(value) = block.content {
+                        let attribute_range = block
+                            .metadata
+                            .range
+                            .unwrap_or(block.opening_delimiter_range);
+                        return AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                            metadata: block.metadata,
+                            kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
+                                attribute_range,
+                                language_range: None,
+                                language: Some(language.to_owned()),
+                            }),
+                            range: block.range,
+                            delimiter_range: block.opening_delimiter_range,
+                            content_range: block.content_range,
+                            value,
+                            callouts: Vec::new(),
+                            problems: block.problems,
+                        });
+                    }
+                }
             }
             let kind = match block.kind {
                 crate::parser::DelimitedBlockKind::Listing => {
