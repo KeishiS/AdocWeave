@@ -36,6 +36,8 @@
           "rustfmt"
         ];
         targets = [
+          "aarch64-unknown-linux-musl"
+          "x86_64-unknown-linux-musl"
           "wasm32-unknown-unknown"
           "wasm32-wasip2"
         ];

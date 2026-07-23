@@ -18,3 +18,44 @@
 
 * 現在の必須検証を保持した比較可能な計測結果と、採用した最適化の根拠を記録する。
 * fork、pull request、main、tagの権限境界とartifact provenanceを弱めない。
+
+== 計測基準
+
+測定対象はGitHub Actionsのjob APIが返す`created_at`、`started_at`および`completed_at`とする。queue timeは
+`started_at - created_at`、wall-clock timeは`completed_at - started_at`で定義する。cache hit率は、明示的な
+cache actionが存在せずNix binary cacheのsubstitute結果もActions APIから取得できないため、このCIの最適化指標には
+含めない。代わりにlockfile固定とjobの依存edgeを再現可能な最適化単位とする。
+
+[cols="2,2,2,3",options="header"]
+|===
+|基準run |対象 |wall-clock time |観測
+
+|https://github.com/KeishiS/AdocWeave/actions/runs/30002513033[v0.2.0 tag run]
+|全workflow
+|15分34秒
+|2026-07-23。旧graphではquality完了（8分35秒）の後にcandidate buildを開始していた。
+
+|同run
+|`quality / verify`
+|8分35秒
+|最長quality job。MSRVは1分未満であり、current stable方針への統合によって独立jobを廃止した。
+
+|同run
+|candidate build（最長native）
+|3分32秒
+|旧graphではqualityの後に開始していた。新graphではplan完了後にsource qualityおよびfuzzと並列に開始する。
+|===
+
+同runのartifact upload sizeはnative x86-64が1,462,400 bytes、native ARM64が1,235,166 bytes、globalが
+219,773 bytes、集約candidateが2,933,999 bytesであった。中間artifactの保持期間は7日、集約candidateは14日を
+維持する。新graphの実測値は変更を`main`へpushしたrunで同じ定義により追記し、公開前に比較する。
+
+== 採用した最適化
+
+* source quality、fuzz、pull requestのNix package検証を独立jobに分離した。
+* mainおよびtagではcandidate buildをplan直後に開始し、publishだけがquality、fuzz、candidate verificationおよび
+  installation E2Eの全成功を待つ。
+* mainおよびtagで重複していたx86-64のNix package buildを省き、candidate installation E2EのLinux 2 architectureで
+  同じpackage検証を実施する。
+* native release buildをNix development shellで実行し、runnerの`rustup`ではなく、release manifestと一致する
+  lockfile固定Rust toolchainを使用する。

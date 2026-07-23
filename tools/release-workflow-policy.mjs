@@ -153,7 +153,10 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
     step(releaseJobs[jobName], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), `${jobName} must install the locked Nix environment`);
   }
   const nativeBuildRun = step(releaseJobs["build-native"], (item) => item.name === "Build target archives", "native build step is missing").run;
-  requireCommand(nativeBuildRun, "tools/run-pinned-dist.sh build", "native archives must use the locked cargo-dist closure");
+  requireCommand(nativeBuildRun, "nix develop .#ci -c tools/run-pinned-dist.sh build", "native archives must use the locked cargo-dist closure and locked Nix toolchain");
+  if (release.includes("rustup target add")) {
+    fail("release builds must not bypass the locked Nix Rust toolchain through rustup");
+  }
   if (release.includes("cargo-dist-installer") || release.includes("curl | sh")) {
     fail("release workflow must not execute a network-fetched cargo-dist installer");
   }

@@ -82,18 +82,17 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
         with:
           determinate: false
-      - name: Install native build tools and pinned dist
+      - name: Install native build linker
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
-          rustup target add "${{ matrix.target }}"
       - name: Build target archives
         env:
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           args=()
           if [ -n "$RELEASE_TAG" ]; then args+=("--tag=$RELEASE_TAG"); fi
-          tools/run-pinned-dist.sh build "${args[@]}" --artifacts=local --target="${{ matrix.target }}" --output-format=json > dist-manifest.json
+          nix develop .#ci -c tools/run-pinned-dist.sh build "${args[@]}" --artifacts=local --target="${{ matrix.target }}" --output-format=json > dist-manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-local-${{ matrix.target }}
