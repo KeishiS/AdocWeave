@@ -1,0 +1,39 @@
+= Table表示属性のRC前是正
+:status: in-progress
+:depends-on: 133
+
+== 目的
+
+Issue 133で導入したtable presentationを、`v0.3.0-rc.1`公開前に利用者が理解可能で
+AsciiDoc参照動作と文書契約に整合するものへ是正する。既存のlocal RC tagは公開せず、
+是正後のcandidate commitへ付け替える。
+
+== 対応範囲
+
+* 重複した`frame`、`grid`、`stripes`、`width`について、採用値と診断対象が矛盾しない
+  決定的なfirst-wins規則へ統一する。不正な重複値には同一範囲へ重複診断と値診断を重ねない。
+* `width`は1から100のunitless整数または`%`付き整数を百分率として受け入れ、符号、空値、
+  小数、範囲外および他の単位を拒否する。`autowidth`との競合規則は維持する。
+* captionは安全なliteral textとして出力し、inline置換を適用しない現時点の制限を文書化する。
+* HTML出力契約へ`width`百分率値を明記し、履歴記述の順序と契約versionの説明を整合させる。
+* table presentationを含むCLI、WASM、native cross-runtimeのgolden fixtureを追加し、
+  formatter、LSP診断およびHTMLの既存検証と合わせて固定する。
+
+== 非目標
+
+captionへのinline置換、任意CSS、`align`、`float`、`stretch`、列ごとの`autowidth`および
+DocBook専用属性はこのIssueで追加しない。
+
+== 完了条件
+
+* 診断済みの属性値がeffective presentationに採用されず、各不正属性rangeは一つの
+  `invalid-table`診断だけを持つ。
+* unitlessと`%`付きの正当なwidth、拒否値、重複および`autowidth`競合がnative、WASM、CLI、LSPで一致する。
+* HTML契約、表対応仕様、互換性評価、移行文書およびIssue 133の完了記録が実装と一致する。
+* `cargo make release-gate`と`node tools/release-contract.mjs --tag=v0.3.0-rc.1`が通る。
+
+== 参照
+
+* https://docs.asciidoctor.org/asciidoc/latest/tables/width/[Asciidoctor Table Width]
+* xref:133-table-presentation-attributes.adoc[Issue 133]
+* xref:134-v0-3-0-release-readiness.adoc[Issue 134]
