@@ -1040,6 +1040,22 @@ mod tests {
     }
 
     #[test]
+    fn bibliography_catalog_keeps_definition_and_all_reference_ranges() {
+        let analysis = Engine::new(ParseOptions::default())
+            .analyze("* bibanchor:ref[] Entry\n\nSee <<ref>> and <<ref,Entry>>.")
+            .expect("analysis");
+        let projection = project(&analysis, &RenderInputs::default());
+
+        assert_eq!(projection.catalogs.bibliography().len(), 1);
+        assert_eq!(projection.catalogs.bibliography()[0].references.len(), 2);
+        assert!(
+            projection
+                .render_json()
+                .contains("\"bibliography\":[{\"id\":\"ref\",\"definitionRange\":")
+        );
+    }
+
+    #[test]
     fn searchable_text_excludes_attributes_math_and_invisible_anchor_syntax() {
         let source = "= Visible\n:name: hidden\n\n[[secret]]\n== Section\n\nstem:[hidden-math]\n\n....\nvisible code\n....\n";
         let analysis = Engine::new(ParseOptions::default())

@@ -1,5 +1,5 @@
 = Bibliography sectionのconsumer横断適合性
-:status: planned
+:status: completed
 :depends-on: 119,120
 
 == 目的
@@ -10,4 +10,3 @@ bibliography entry、xref text、back referenceおよび構造診断の契約を
 
 * 未参照・重複entry、複数back reference、book part、nested sectionを共有fixture化する。
 * HTML、native/WASM、LSP hover／Definition／References、projectionの対応を固定する。
-

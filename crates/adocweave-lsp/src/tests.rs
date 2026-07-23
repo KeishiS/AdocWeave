@@ -728,6 +728,39 @@ fn hover_uses_document_catalogs_for_footnotes_bibliography_and_index() {
     }
 }
 
+#[test]
+fn bibliography_targets_support_hover_definition_and_references() {
+    let mut service = LanguageService::default();
+    let source = "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nSee <<ref,Entry>> and <<ref>>.\n";
+    let document_uri = uri("file:///bibliography.adoc");
+    open(&mut service, document_uri.as_str(), 1, source);
+
+    let hover = service
+        .hover(&document_uri, lsp::Position::new(5, 9))
+        .expect("hover")
+        .expect("value");
+    assert!(
+        serde_json::to_value(hover).expect("serialize")["contents"]["value"]
+            .as_str()
+            .expect("hover text")
+            .contains("bibliography entry")
+    );
+
+    let definition = service
+        .definition(&document_uri, lsp::Position::new(7, 6))
+        .expect("definition")
+        .expect("value");
+    let definition = serde_json::to_value(definition).expect("serialize");
+    assert_eq!(definition["uri"], "file:///bibliography.adoc");
+    assert_eq!(definition["range"]["start"]["line"], 5);
+
+    let references = service
+        .references(&document_uri, lsp::Position::new(5, 13), true)
+        .expect("references")
+        .expect("locations");
+    assert_eq!(references.len(), 3);
+}
+
 fn open_reference_workspace(service: &mut LanguageService) {
     open(
         service,
