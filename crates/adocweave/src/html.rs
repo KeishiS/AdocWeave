@@ -752,10 +752,11 @@ fn render_list(
             output.push_str("</span> ");
         }
         render_inlines(output, &item.inlines, context);
-        if scope.bibliography_section && list.kind == crate::parser::ListKind::Unordered {
-            if let Some(entry) = bibliography_entry_for_item(&item.inlines, context.catalogs) {
-                render_bibliography_backrefs(output, entry);
-            }
+        if scope.bibliography_section
+            && list.kind == crate::parser::ListKind::Unordered
+            && let Some(entry) = bibliography_entry_for_item(&item.inlines, context.catalogs)
+        {
+            render_bibliography_backrefs(output, entry);
         }
         for child in &item.children {
             output.push('\n');
@@ -874,10 +875,10 @@ fn render_heading_level(
     output.push_str(" id=\"");
     output.push_str(id);
     output.push_str("\">");
-    if context.presentation.section_numbers_enabled() {
-        if let Some(presentation) = context.presentation.heading_at(heading.range) {
-            render_section_number(output, &presentation.number);
-        }
+    if context.presentation.section_numbers_enabled()
+        && let Some(presentation) = context.presentation.heading_at(heading.range)
+    {
+        render_section_number(output, &presentation.number);
     }
     render_inlines(output, &heading.inlines, context);
     output.push_str("</h");
@@ -1241,14 +1242,15 @@ fn render_dimension(
     name: &str,
     position: usize,
 ) {
-    if let Some(value) = macro_attribute(node, name, position) {
-        if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
-            output.push(' ');
-            output.push_str(name);
-            output.push_str("=\"");
-            output.push_str(value);
-            output.push('"');
-        }
+    if let Some(value) = macro_attribute(node, name, position)
+        && !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        output.push(' ');
+        output.push_str(name);
+        output.push_str("=\"");
+        output.push_str(value);
+        output.push('"');
     }
 }
 
@@ -1594,15 +1596,15 @@ mod tests {
     fn echo_resource_inputs(document: &crate::parser::AstDocument) -> RenderInputs {
         let mut resources = Vec::new();
         crate::walker::walk(document, |node| {
-            if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node {
-                if crate::resource::ResourceReference::from_macro(node).is_some() {
-                    resources.push(ResolvedResource::resolved(
-                        node.range,
-                        node.target.clone(),
-                        None,
-                        None,
-                    ));
-                }
+            if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node
+                && crate::resource::ResourceReference::from_macro(node).is_some()
+            {
+                resources.push(ResolvedResource::resolved(
+                    node.range,
+                    node.target.clone(),
+                    None,
+                    None,
+                ));
             }
         });
         RenderInputs::new(Vec::new(), resources)

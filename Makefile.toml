@@ -111,7 +111,7 @@ node tools/release-contract.mjs $args
 node tools/release-contract.test.mjs
 cargo metadata --locked --format-version=1 > "$metadata"
 cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
-node tools/verify-cargo-release-metadata.mjs "$metadata"
+node tools/verify-cargo-release-metadata.mjs "$metadata" "$zed_metadata"
 node tools/verify-third-party-notices.mjs "$metadata" "$zed_metadata"
 '''
 

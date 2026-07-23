@@ -10,9 +10,11 @@ test("worker consumes the public WASM contract registry", async () => {
   assert.deepEqual(Object.keys(manifest).sort(), [
     "contractVersion",
     "packageVersion",
+    "rustVersion",
     "schemaVersion",
   ]);
   assert.equal(manifest.schemaVersion, 2);
   assert.equal(manifest.contractVersion, CONTRACT_VERSION);
   assert.equal(manifest.packageVersion, BROWSER_PACKAGE_VERSION);
+  assert.match(manifest.rustVersion, /^\d+\.\d+\.\d+$/);
 });

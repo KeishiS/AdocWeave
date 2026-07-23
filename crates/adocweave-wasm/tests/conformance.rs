@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 struct ReleaseManifest {
     schema_version: u16,
     package_version: String,
+    rust_version: String,
     contract_version: u16,
 }
 
@@ -81,6 +82,7 @@ fn release_contract_version_is_explicit() {
             .expect("valid release manifest");
     assert_eq!(manifest.schema_version, 2);
     assert_eq!(manifest.package_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(manifest.rust_version, env!("CARGO_PKG_RUST_VERSION"));
     assert_eq!(manifest.contract_version, adocweave::CONTRACT_VERSION);
 }
 

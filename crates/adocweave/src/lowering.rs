@@ -77,29 +77,28 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
                     .attributes
                     .iter()
                     .any(|attribute| attribute.name.is_none() && attribute.value == "listing");
-            if implicit_listing {
-                if let Some(language) = source_language {
-                    if let crate::parser::DelimitedContent::Verbatim(value) = block.content {
-                        let attribute_range = block
-                            .metadata
-                            .range
-                            .unwrap_or(block.opening_delimiter_range);
-                        return AstBlock::Verbatim(crate::parser::VerbatimBlock {
-                            metadata: block.metadata,
-                            kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
-                                attribute_range,
-                                language_range: None,
-                                language: Some(language.to_owned()),
-                            }),
-                            range: block.range,
-                            delimiter_range: block.opening_delimiter_range,
-                            content_range: block.content_range,
-                            value,
-                            callouts: Vec::new(),
-                            problems: block.problems,
-                        });
-                    }
-                }
+            if implicit_listing
+                && let Some(language) = source_language
+                && let crate::parser::DelimitedContent::Verbatim(value) = block.content
+            {
+                let attribute_range = block
+                    .metadata
+                    .range
+                    .unwrap_or(block.opening_delimiter_range);
+                return AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                    metadata: block.metadata,
+                    kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
+                        attribute_range,
+                        language_range: None,
+                        language: Some(language.to_owned()),
+                    }),
+                    range: block.range,
+                    delimiter_range: block.opening_delimiter_range,
+                    content_range: block.content_range,
+                    value,
+                    callouts: Vec::new(),
+                    problems: block.problems,
+                });
             }
             let kind = match block.kind {
                 crate::parser::DelimitedBlockKind::Listing => {
@@ -110,19 +109,19 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
                 }
                 _ => None,
             };
-            if let Some(kind) = kind {
-                if let crate::parser::DelimitedContent::Verbatim(value) = block.content {
-                    return AstBlock::Verbatim(crate::parser::VerbatimBlock {
-                        metadata: block.metadata,
-                        kind,
-                        range: block.range,
-                        delimiter_range: block.opening_delimiter_range,
-                        content_range: block.content_range,
-                        value,
-                        callouts: Vec::new(),
-                        problems: block.problems,
-                    });
-                }
+            if let Some(kind) = kind
+                && let crate::parser::DelimitedContent::Verbatim(value) = block.content
+            {
+                return AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                    metadata: block.metadata,
+                    kind,
+                    range: block.range,
+                    delimiter_range: block.opening_delimiter_range,
+                    content_range: block.content_range,
+                    value,
+                    callouts: Vec::new(),
+                    problems: block.problems,
+                });
             }
             AstBlock::Delimited(block)
         }
@@ -226,13 +225,13 @@ fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
                 range: item.marker_range,
             });
         }
-        if let Some(number) = item.explicit_number {
-            if number != expected {
-                problems.push(crate::parser::ListPresentationProblem {
-                    kind: crate::parser::ListPresentationProblemKind::InconsistentExplicitNumber,
-                    range: item.marker_range,
-                });
-            }
+        if let Some(number) = item.explicit_number
+            && number != expected
+        {
+            problems.push(crate::parser::ListPresentationProblem {
+                kind: crate::parser::ListPresentationProblemKind::InconsistentExplicitNumber,
+                range: item.marker_range,
+            });
         }
         expected = if presentation.reversed {
             expected.saturating_sub(1)
@@ -261,10 +260,10 @@ fn ordered_list_style(value: &str) -> Option<crate::parser::OrderedListStyle> {
 
 fn configure_tables(blocks: &mut [AstBlock]) {
     crate::walker::walk_blocks_mut(blocks, &mut |block: &mut AstBlock| {
-        if let AstBlock::Delimited(block) = block {
-            if let crate::parser::DelimitedContent::Table(table) = &mut block.content {
-                crate::table::configure(table, &block.metadata);
-            }
+        if let AstBlock::Delimited(block) = block
+            && let crate::parser::DelimitedContent::Table(table) = &mut block.content
+        {
+            crate::table::configure(table, &block.metadata);
         }
     });
 }

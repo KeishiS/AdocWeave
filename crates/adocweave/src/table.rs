@@ -256,13 +256,12 @@ fn resolve_input(
         delimiter_separator,
         attribute_separator,
         separator_attribute,
-    ) {
-        if delimiter_separator != attribute_separator {
-            problems.push(TableProblem {
-                kind: TableProblemKind::InvalidSeparator,
-                range: attribute.range,
-            });
-        }
+    ) && delimiter_separator != attribute_separator
+    {
+        problems.push(TableProblem {
+            kind: TableProblemKind::InvalidSeparator,
+            range: attribute.range,
+        });
     }
     (TableInputSpec { format, separator }, problems)
 }
@@ -613,15 +612,15 @@ pub(crate) fn configure(table: &mut Table, metadata: &crate::parser::BlockMetada
                         .any(|option| option.trim() == name)
             })
     };
-    if has_option("header") {
-        if let Some(row) = table.rows.first_mut() {
-            row.section = TableSection::Header;
-        }
+    if has_option("header")
+        && let Some(row) = table.rows.first_mut()
+    {
+        row.section = TableSection::Header;
     }
-    if has_option("footer") {
-        if let Some(row) = table.rows.last_mut() {
-            row.section = TableSection::Footer;
-        }
+    if has_option("footer")
+        && let Some(row) = table.rows.last_mut()
+    {
+        row.section = TableSection::Footer;
     }
 }
 

@@ -1,5 +1,5 @@
 = Current stable Rust方針への移行
-:status: planned
+:status: completed
 :depends-on: 129
 
 == 目的

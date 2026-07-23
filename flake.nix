@@ -21,8 +21,31 @@
         "x86_64-linux"
       ];
       forAllPackageSystems = nixpkgs.lib.genAttrs packageSystems;
-      packageVersion = (builtins.fromJSON (builtins.readFile ./release-manifest.json)).packageVersion;
-      mkAdocWeave = pkgs: pkgs.rustPlatform.buildRustPackage {
+      releaseManifest = builtins.fromJSON (builtins.readFile ./release-manifest.json);
+      packageVersion = releaseManifest.packageVersion;
+      rustVersion = releaseManifest.rustVersion;
+      mkPkgs = system: import nixpkgs {
+        inherit system;
+        overlays = [ (import rust-overlay) ];
+      };
+      stableRust = pkgs: pkgs.rust-bin.stable.latest.default.override {
+        extensions = [
+          "clippy"
+          "rust-src"
+          "rustfmt"
+        ];
+        targets = [
+          "wasm32-unknown-unknown"
+          "wasm32-wasip2"
+        ];
+      };
+      rustPlatform = pkgs: pkgs.makeRustPlatform {
+        cargo = stableRust pkgs;
+        rustc = stableRust pkgs;
+      };
+      mkAdocWeave = pkgs:
+        assert (stableRust pkgs).version == rustVersion;
+        (rustPlatform pkgs).buildRustPackage {
         pname = "adocweave";
         version = packageVersion;
         src = self;
@@ -57,10 +80,7 @@
       packages = forAllPackageSystems (
         system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ self.overlays.default ];
-          };
+          pkgs = (mkPkgs system).extend self.overlays.default;
           package = pkgs.adocweave;
         in
         {
@@ -87,7 +107,7 @@
       checks = forAllPackageSystems (
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = mkPkgs system;
           package = self.packages.${system}.default;
           runtimeClosure = pkgs.closureInfo {
             rootPaths = [ package ];
@@ -138,22 +158,8 @@
       devShells = forAllSystems (
         system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ (import rust-overlay) ];
-          };
+          pkgs = mkPkgs system;
           fuzzRust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default);
-          stableRust = pkgs.rust-bin.stable.latest.default.override {
-            extensions = [
-              "clippy"
-              "rust-src"
-              "rustfmt"
-            ];
-            targets = [
-              "wasm32-unknown-unknown"
-              "wasm32-wasip2"
-            ];
-          };
           adocweave-fuzz = pkgs.writeShellScriptBin "adocweave-fuzz" ''
             export PATH=${fuzzRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH
             exec cargo fuzz "$@"
@@ -177,7 +183,7 @@
             typescript
             ripgrep
             rust-analyzer
-            stableRust
+            (stableRust pkgs)
             stdenv.cc
             wasm-bindgen-cli
             xz
@@ -187,7 +193,7 @@
           shell = packages: pkgs.mkShell {
             inherit packages;
             ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
-            RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+            RUST_SRC_PATH = "${stableRust pkgs}/lib/rustlib/src/rust/library";
           };
         in
         {

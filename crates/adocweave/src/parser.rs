@@ -625,17 +625,16 @@ fn parse_block_sequence(
                 && !content.starts_with([':', '[', '='])
                 && crate::delimiter::spec(content).is_none()
                 && !content.starts_with("//")
+                && let Some(author) = crate::document_header::parse_author(content, line)?
             {
-                if let Some(author) = crate::document_header::parse_author(content, line)? {
-                    budget.consume_node()?;
-                    let root = root.as_mut().expect("root state exists");
-                    root.extend_range(line.full_range());
-                    root.header.authors.push(author);
-                    blocks.push(SyntaxNode::leaf(SyntaxKind::AuthorLine, line.full_range()));
-                    root.expect_revision = true;
-                    cursor.commit(BlockRecognition::OneLine)?;
-                    continue;
-                }
+                budget.consume_node()?;
+                let root = root.as_mut().expect("root state exists");
+                root.extend_range(line.full_range());
+                root.header.authors.push(author);
+                blocks.push(SyntaxNode::leaf(SyntaxKind::AuthorLine, line.full_range()));
+                root.expect_revision = true;
+                cursor.commit(BlockRecognition::OneLine)?;
+                continue;
             }
         }
         if root.as_ref().is_some_and(|state| state.expect_revision)
@@ -1545,13 +1544,13 @@ fn parse_lists(
                 range: marker_range,
             });
         }
-        if let Some((previous_depth, _)) = previous {
-            if effective_depth > previous_depth + 1 {
-                problems.push(ListProblem {
-                    kind: ListProblemKind::InvalidNesting,
-                    range: marker_range,
-                });
-            }
+        if let Some((previous_depth, _)) = previous
+            && effective_depth > previous_depth + 1
+        {
+            problems.push(ListProblem {
+                kind: ListProblemKind::InvalidNesting,
+                range: marker_range,
+            });
         }
         if kinds_by_depth
             .get(effective_depth)
@@ -1765,16 +1764,16 @@ fn scan_callout_markers(
             break;
         };
         let close = open + 1 + close_relative;
-        if let Ok(id) = value[open + 1..close].parse::<u32>() {
-            if id != 0 {
-                output.push(CalloutMarker {
-                    id,
-                    range: text_range(
-                        range.start().to_usize() + open,
-                        range.start().to_usize() + close + 1,
-                    )?,
-                });
-            }
+        if let Ok(id) = value[open + 1..close].parse::<u32>()
+            && id != 0
+        {
+            output.push(CalloutMarker {
+                id,
+                range: text_range(
+                    range.start().to_usize() + open,
+                    range.start().to_usize() + close + 1,
+                )?,
+            });
         }
         cursor = close + 1;
     }

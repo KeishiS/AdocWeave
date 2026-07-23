@@ -107,7 +107,7 @@ test("network installer cannot replace the locked cargo-dist closure", () => {
   );
 });
 
-test("quality cannot omit dependency governance or the Zed MSRV", () => {
+test("quality cannot omit dependency governance or the complete gate", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({
@@ -119,9 +119,9 @@ test("quality cannot omit dependency governance or the Zed MSRV", () => {
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      contract: inputs.contract.replace('test "$zed_msrv" = "$msrv"', 'true # test "$zed_msrv" = "$msrv"'),
+      contract: inputs.contract.replace("nix develop .#ci -c cargo make release-gate", "true # release-gate"),
     }),
-    /MSRV declarations must match/,
+    /canonical local gate/,
   );
 });
 

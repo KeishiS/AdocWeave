@@ -476,25 +476,25 @@ fn preparsed_candidates(value: &str) -> (Vec<InlineCandidate>, Vec<bool>, usize)
                 .min(3);
             if run > 0 && (run > 1 || is_open_boundary(value, cursor, '+')) {
                 let content_start = cursor + run;
-                if let Some(content_end) = next_plus[run - 1].get(content_start) {
-                    if content_end > content_start {
-                        let end = content_end + run;
-                        for marker in markers.iter_mut().skip(cursor).take(run) {
-                            *marker = true;
-                        }
-                        for marker in markers.iter_mut().take(end).skip(content_end) {
-                            *marker = true;
-                        }
-                        candidates.push(InlineCandidate::Passthrough {
-                            open: cursor,
-                            width: run,
-                            content_start,
-                            content_end,
-                            end,
-                        });
-                        cursor = end;
-                        continue;
+                if let Some(content_end) = next_plus[run - 1].get(content_start)
+                    && content_end > content_start
+                {
+                    let end = content_end + run;
+                    for marker in markers.iter_mut().skip(cursor).take(run) {
+                        *marker = true;
                     }
+                    for marker in markers.iter_mut().take(end).skip(content_end) {
+                        *marker = true;
+                    }
+                    candidates.push(InlineCandidate::Passthrough {
+                        open: cursor,
+                        width: run,
+                        content_start,
+                        content_end,
+                        end,
+                    });
+                    cursor = end;
+                    continue;
                 }
             }
         }
@@ -1083,29 +1083,29 @@ fn recognize_macro_with_index(
     delimiters: &DelimiterIndex,
 ) -> MacroRecognition {
     let rest = &value[open..];
-    if let Some(content) = rest.strip_prefix("[[[") {
-        if let Some(relative_end) = content.find("]]]") {
-            let target_end = open + 3 + relative_end;
-            return MacroRecognition::Complete(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
-                kind: StandardMacroKind::BibliographyAnchor,
-                open,
-                target_start: open + 3,
-                target_end,
-                end: target_end + 3,
-            }));
-        }
+    if let Some(content) = rest.strip_prefix("[[[")
+        && let Some(relative_end) = content.find("]]]")
+    {
+        let target_end = open + 3 + relative_end;
+        return MacroRecognition::Complete(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
+            kind: StandardMacroKind::BibliographyAnchor,
+            open,
+            target_start: open + 3,
+            target_end,
+            end: target_end + 3,
+        }));
     }
-    if let Some(content) = rest.strip_prefix("[[") {
-        if let Some(relative_end) = content.find("]]") {
-            let target_end = open + 2 + relative_end;
-            return MacroRecognition::Complete(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
-                kind: StandardMacroKind::Anchor,
-                open,
-                target_start: open + 2,
-                target_end,
-                end: target_end + 2,
-            }));
-        }
+    if let Some(content) = rest.strip_prefix("[[")
+        && let Some(relative_end) = content.find("]]")
+    {
+        let target_end = open + 2 + relative_end;
+        return MacroRecognition::Complete(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
+            kind: StandardMacroKind::Anchor,
+            open,
+            target_start: open + 2,
+            target_end,
+            end: target_end + 2,
+        }));
     }
     let formula_prefix = if starts_ascii_case_insensitive(rest, "stem:[") {
         Some("stem:[".len())

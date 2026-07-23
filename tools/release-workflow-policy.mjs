@@ -191,11 +191,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireCommand(qualityRun, "nix develop .#ci -c cargo make release-gate", "the reusable quality workflow must run the canonical local gate");
   const dependencyRun = step(contractJobs.dependencies, (item) => item.name === "Audit dependency boundaries", "dependency governance step is missing").run;
   requireCommand(dependencyRun, "nix develop .#ci -c cargo make dependency-governance", "quality must audit every dependency boundary");
-  const msrvRun = step(contractJobs.msrv, (item) => item.name === "Install and verify the declared minimum Rust version", "MSRV step is missing").run;
-  requireCommand(msrvRun, ".rust_version] | unique", "CI must derive one MSRV from workspace package metadata");
-  requireCommand(msrvRun, 'cargo "+$msrv" check --locked --workspace --all-targets --all-features', "CI must enforce the declared workspace MSRV");
-  requireCommand(msrvRun, 'test "$zed_msrv" = "$msrv"', "Zed and workspace MSRV declarations must match");
-  requireCommand(msrvRun, 'cargo "+$msrv" check --manifest-path editors/zed/Cargo.toml --locked --all-targets', "CI must enforce the declared Zed MSRV");
+  if (contractJobs.msrv) fail("quality must not retain an MSRV-only job");
   const tagStep = step(contractJobs.verify, (item) => item.name === "Verify an optional publication tag", "optional publication tag step is missing");
   if (tagStep.if !== "inputs.release_tag != ''") fail("only explicit publication tags may receive tag validation");
   if (contract.includes("github.event_name") || contract.includes("github.ref")) {

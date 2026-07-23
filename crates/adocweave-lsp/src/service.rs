@@ -679,15 +679,15 @@ impl LanguageService {
                 return hover_markup(value, author.range, &document, self.position_encoding);
             }
         }
-        if let Some(revision) = &document.analysis.ast().header().revision {
-            if contains(revision.range, offset) {
-                return hover_markup(
-                    "**document revision**".to_owned(),
-                    revision.range,
-                    &document,
-                    self.position_encoding,
-                );
-            }
+        if let Some(revision) = &document.analysis.ast().header().revision
+            && contains(revision.range, offset)
+        {
+            return hover_markup(
+                "**document revision**".to_owned(),
+                revision.range,
+                &document,
+                self.position_encoding,
+            );
         }
         let Some(element) = document_element_at(document.analysis.ast(), offset) else {
             return Ok(None);
@@ -875,16 +875,15 @@ impl LanguageService {
                     .as_ref()
                     .is_some_and(|source_id| source_id.as_str() == uri.as_str())
                     && contains(directive.target_range, offset)
-            }) {
-                if let Some(target) = directive.resource_source_id.as_ref() {
-                    let target: lsp::Url = target
-                        .as_str()
-                        .parse()
-                        .map_err(|error| format!("invalid include resource URI: {error}"))?;
-                    return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-                        lsp::Location::new(target, lsp::Range::default()),
-                    )));
-                }
+            }) && let Some(target) = directive.resource_source_id.as_ref()
+            {
+                let target: lsp::Url = target
+                    .as_str()
+                    .parse()
+                    .map_err(|error| format!("invalid include resource URI: {error}"))?;
+                return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                    lsp::Location::new(target, lsp::Range::default()),
+                )));
             }
         }
         let Some(reference) = document
@@ -898,12 +897,11 @@ impl LanguageService {
         let Some(key) = ReferenceKey::from_destination(&reference.destination) else {
             return Ok(None);
         };
-        if let Some(identity) = reference_identity(uri, &reference.destination) {
-            if let Some(location) =
+        if let Some(identity) = reference_identity(uri, &reference.destination)
+            && let Some(location) =
                 self.target_location(&identity.uri, identity.anchor.as_deref())?
-            {
-                return Ok(Some(lsp::GotoDefinitionResponse::Scalar(location)));
-            }
+        {
+            return Ok(Some(lsp::GotoDefinitionResponse::Scalar(location)));
         }
         let host_request = host_reference_request(&document, uri, key, self.position_encoding);
         self.host_index
@@ -969,12 +967,11 @@ impl LanguageService {
         };
 
         let mut locations = Vec::new();
-        if include_declaration {
-            if let Some(location) =
+        if include_declaration
+            && let Some(location) =
                 self.target_location(&identity.uri, identity.anchor.as_deref())?
-            {
-                locations.push(location);
-            }
+        {
+            locations.push(location);
         }
         for candidate in self.documents.snapshots() {
             let candidate_uri: lsp::Url = candidate
