@@ -17,7 +17,7 @@ request／response envelopeは変更しない。
 
 . 同じreleaseのCLI、LSP、browser archiveおよびZed archiveを取得する。
 . sha256.sumとartifact attestationを検証する。
-. version別directoryへ導入し、CLIとLSPのversion JSONがpackage versionとcontract version 2を返すことを確認する。
+. version別directoryへ導入し、CLIとLSPのversion JSONがpackage versionとcontract version 3を返すことを確認する。
 . hostのHTML、projectionおよびconformance snapshotを再構築する。
 . 問題があれば以前のversion別directoryへcurrentを戻す。
 

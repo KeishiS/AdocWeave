@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "issue": "136",
+  "issueStatus": "completed",
+  "features": [
+    {"name": "highlight", "status": "supported", "syntaxNeedle": "highlight", "compatibilityNeedle": "highlight", "grammarNeedle": "置換", "fixture": "fixtures/conformance/full.adoc"},
+    {"name": "subscript", "status": "supported", "syntaxNeedle": "subscript", "compatibilityNeedle": "subscript", "grammarNeedle": "置換", "fixture": "fixtures/conformance/full.adoc"},
+    {"name": "superscript", "status": "supported", "syntaxNeedle": "superscript", "compatibilityNeedle": "superscript", "grammarNeedle": "置換", "fixture": "fixtures/conformance/full.adoc"},
+    {"name": "typographic quote", "status": "supported", "syntaxNeedle": "typographic quote", "compatibilityNeedle": "typographic quote", "grammarNeedle": "置換", "fixture": "fixtures/conformance/full.adoc"},
+    {"name": "admonition", "status": "supported", "syntaxNeedle": "Admonition", "compatibilityNeedle": "admonition paragraph", "grammarNeedle": "admonition paragraph", "fixture": "fixtures/conformance/semantic-blocks.adoc"},
+    {"name": "quote and verse", "status": "supported", "syntaxNeedle": "Quoteとverse", "compatibilityNeedle": "quote,Author,Source", "grammarNeedle": "quote,AUTHOR,CITATION", "fixture": "fixtures/conformance/semantic-blocks.adoc"}
+  ]
+}

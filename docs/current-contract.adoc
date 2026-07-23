@@ -11,7 +11,7 @@ xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 [cols="2,1",options="header"]
 |===
 |契約 |現在値
-|公開契約 |2
+|公開契約 |3
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。

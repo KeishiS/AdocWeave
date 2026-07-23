@@ -3,7 +3,7 @@
 この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
 製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
 
-この対応範囲は`CONTRACT_VERSION = 2`として公開する。version、SemVerおよび再構築条件は
+この対応範囲は`CONTRACT_VERSION = 3`として公開する。version、SemVerおよび再構築条件は
 xref:core-profile.adoc[AdocWeave Core Profile]で定義する。
 実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
 AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
@@ -87,6 +87,16 @@ HTML IDに使用する。
 |comment（`////`）、example（`====`）、listing（`----`）、literal（`....`）、open（`--`）、
 sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===`、カスタムseparatorの`!===`等）を認識する。
 内容はcompound／verbatim／raw／tableの型で区別し、同種blockは異なるdelimiter長で入れ子にできる。
+
+|Admonition
+|対応
+|`NOTE`、`TIP`、`IMPORTANT`、`WARNING`、`CAUTION`のparagraph形式（`NOTE: text`）と、
+example／open blockへ付けるblock形式（`[NOTE]`）を同じ型付きpresentationへ解決する。未知styleは通常blockとして保持する。
+
+|Quoteとverse
+|対応
+|`[quote,Author,Source]`および`[verse,Author,Source]`を`____` blockへ付けると、引用種別、
+attribution、citationを型付きpresentationへ解決する。quoteは`blockquote`、verseは改行を保持する`pre`として出力する。
 
 |表
 |対応
@@ -193,8 +203,9 @@ xref:macros-and-resources.adoc[標準macroとresource境界]を参照する。
 不透明contextでは適用せず、未対応構文のescapeは対象外。
 
 |ハイライト、下付き、上付き、組版用引用符
-|未対応
-|対応する書式マーカー専用のsemantic nodeはない。
+|対応
+|`#highlight#`、`~subscript~`、`^superscript^`および曲線引用符のmarkerを型付きinline nodeとして保持し、
+HTMLでは`mark`、`sub`、`sup`および対応するUnicode引用符へ変換する。
 
 |インラインpassthrough
 |対応

@@ -23,6 +23,7 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
         .map(str::trim)
         .filter(|value| !value.is_empty());
     facts.blocks = normalize_verbatim_blocks(facts.blocks, source_language);
+    resolve_delimited_presentations(&mut facts.blocks);
     attach_anchors(&mut facts.anchors, &facts.blocks);
     facts.header.doctype = document_type(&facts.attributes);
     let mut document =
@@ -39,6 +40,85 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     document.presentation = crate::presentation::build_presentation(&document, resolved_attributes);
     document.layout = crate::presentation::build_layout(&document);
     document
+}
+
+fn resolve_delimited_presentations(blocks: &mut [AstBlock]) {
+    for block in blocks {
+        match block {
+            AstBlock::Delimited(block) => {
+                if let crate::parser::DelimitedContent::Compound(children) = &mut block.content {
+                    resolve_delimited_presentations(children);
+                }
+                let positional: Vec<_> = block
+                    .metadata
+                    .attributes
+                    .iter()
+                    .filter(|attribute| attribute.name.is_none())
+                    .collect();
+                let style = positional.first().map(|attribute| attribute.value.as_str());
+                block.presentation = match (block.kind, style) {
+                    (crate::parser::DelimitedBlockKind::Example, Some(style))
+                    | (crate::parser::DelimitedBlockKind::Open, Some(style))
+                        if crate::parser::AdmonitionKind::parse(style).is_some() =>
+                    {
+                        let attribute = positional[0];
+                        Some(crate::parser::DelimitedPresentation::Admonition(
+                            crate::parser::AdmonitionPresentation {
+                                kind: crate::parser::AdmonitionKind::parse(&attribute.value)
+                                    .expect("guarded admonition style"),
+                                label_range: attribute.range,
+                            },
+                        ))
+                    }
+                    (crate::parser::DelimitedBlockKind::Quote, Some("quote")) => {
+                        Some(crate::parser::DelimitedPresentation::Quote(
+                            crate::parser::QuotePresentation {
+                                kind: crate::parser::QuoteKind::Quote,
+                                attribution: positional.get(1).map(|attribute| {
+                                    crate::parser::MetadataValue {
+                                        value: attribute.value.clone(),
+                                        range: attribute.range,
+                                    }
+                                }),
+                                citation: positional.get(2).map(|attribute| {
+                                    crate::parser::MetadataValue {
+                                        value: attribute.value.clone(),
+                                        range: attribute.range,
+                                    }
+                                }),
+                            },
+                        ))
+                    }
+                    (crate::parser::DelimitedBlockKind::Quote, Some("verse")) => {
+                        Some(crate::parser::DelimitedPresentation::Quote(
+                            crate::parser::QuotePresentation {
+                                kind: crate::parser::QuoteKind::Verse,
+                                attribution: positional.get(1).map(|attribute| {
+                                    crate::parser::MetadataValue {
+                                        value: attribute.value.clone(),
+                                        range: attribute.range,
+                                    }
+                                }),
+                                citation: positional.get(2).map(|attribute| {
+                                    crate::parser::MetadataValue {
+                                        value: attribute.value.clone(),
+                                        range: attribute.range,
+                                    }
+                                }),
+                            },
+                        ))
+                    }
+                    _ => None,
+                };
+            }
+            AstBlock::List(list) => {
+                for item in &mut list.items {
+                    resolve_delimited_presentations(&mut item.continuations);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn normalize_verbatim_blocks(

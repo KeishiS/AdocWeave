@@ -17,9 +17,46 @@ use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::{UrlContext, UrlPolicy};
 
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "a", "audio", "body", "br", "caption", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3",
-    "h4", "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong",
-    "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video",
+    "a",
+    "audio",
+    "body",
+    "blockquote",
+    "br",
+    "caption",
+    "cite",
+    "code",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "hr",
+    "html",
+    "img",
+    "kbd",
+    "li",
+    "mark",
+    "ol",
+    "p",
+    "pre",
+    "span",
+    "strong",
+    "sub",
+    "sup",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+    "video",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &[
     "alt", "class", "colspan", "controls", "height", "href", "id", "rel", "rowspan", "src",
@@ -27,6 +64,13 @@ pub const ALLOWED_ATTRIBUTES: &[&str] = &[
 ];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
+    "admonition",
+    "admonition-caution",
+    "admonition-important",
+    "admonition-note",
+    "admonition-tip",
+    "admonition-warning",
+    "attribution",
     "appendix",
     "bibliography-anchor",
     "bibliography-backref",
@@ -47,6 +91,7 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "menu",
     "page-break",
     "revision",
+    "quote",
     "table-align-center",
     "table-align-left",
     "table-align-right",
@@ -67,6 +112,8 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "table-stripes-none",
     "table-stripes-odd",
     "toc",
+    "title",
+    "verse",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -415,7 +462,13 @@ fn render_block(
             render_heading(output, heading, id, policy, context);
         }
         AstBlock::Paragraph(paragraph) => {
-            render_paragraph(output, paragraph, explicit_id, context);
+            if let Some(admonition) = &paragraph.admonition {
+                render_admonition_start(output, admonition, explicit_id, &paragraph.metadata);
+                render_paragraph(output, paragraph, None, context);
+                output.push_str("</div>\n");
+            } else {
+                render_paragraph(output, paragraph, explicit_id, context);
+            }
         }
         AstBlock::LiteralParagraph(paragraph) => {
             render_preformatted(output, explicit_id, None, &paragraph.value);
@@ -525,6 +578,52 @@ fn render_delimited(
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
+    if let Some(presentation) = &block.presentation {
+        match presentation {
+            crate::parser::DelimitedPresentation::Admonition(admonition) => {
+                render_admonition_start(output, admonition, explicit_id, &block.metadata);
+                render_delimited_children(output, block, policy, context, scope);
+                output.push_str("</div>\n");
+                return;
+            }
+            crate::parser::DelimitedPresentation::Quote(quote) => {
+                output.push_str("<div class=\"");
+                output.push_str(match quote.kind {
+                    crate::parser::QuoteKind::Quote => "quote",
+                    crate::parser::QuoteKind::Verse => "verse",
+                });
+                output.push('\"');
+                render_optional_id(output, explicit_id);
+                output.push_str(">\n");
+                if quote.kind == crate::parser::QuoteKind::Quote {
+                    output.push_str("<blockquote>\n");
+                }
+                if quote.kind == crate::parser::QuoteKind::Verse {
+                    render_verse_children(output, block, policy, context, scope);
+                } else {
+                    render_delimited_children(output, block, policy, context, scope);
+                }
+                if quote.kind == crate::parser::QuoteKind::Quote {
+                    output.push_str("</blockquote>\n");
+                }
+                if quote.attribution.is_some() || quote.citation.is_some() {
+                    output.push_str("<div class=\"attribution\">");
+                    if let Some(attribution) = &quote.attribution {
+                        output.push_str("— ");
+                        escape_html_into(output, &attribution.value);
+                    }
+                    if let Some(citation) = &quote.citation {
+                        output.push_str(" <cite>");
+                        escape_html_into(output, &citation.value);
+                        output.push_str("</cite>");
+                    }
+                    output.push_str("</div>\n");
+                }
+                output.push_str("</div>\n");
+                return;
+            }
+        }
+    }
     match &block.content {
         crate::parser::DelimitedContent::Verbatim(value) => {
             if !matches!(block.kind, crate::parser::DelimitedBlockKind::Comment) {
@@ -545,12 +644,75 @@ fn render_delimited(
         crate::parser::DelimitedContent::Table(table) => {
             render_table(output, table, explicit_id, policy, context, scope);
         }
-        crate::parser::DelimitedContent::Compound(children) => {
-            for child in children {
-                render_block(output, child, None, None, policy, context, scope);
-            }
+        crate::parser::DelimitedContent::Compound(_) => {
+            render_delimited_children(output, block, policy, context, scope);
         }
     }
+}
+
+fn render_delimited_children(
+    output: &mut String,
+    block: &crate::parser::DelimitedBlock,
+    policy: &RenderPolicy,
+    context: &mut InlineRenderContext<'_, '_>,
+    scope: RenderScope,
+) {
+    if let crate::parser::DelimitedContent::Compound(children) = &block.content {
+        for child in children {
+            render_block(output, child, None, None, policy, context, scope);
+        }
+    }
+}
+
+fn render_verse_children(
+    output: &mut String,
+    block: &crate::parser::DelimitedBlock,
+    policy: &RenderPolicy,
+    context: &mut InlineRenderContext<'_, '_>,
+    scope: RenderScope,
+) {
+    let crate::parser::DelimitedContent::Compound(children) = &block.content else {
+        return;
+    };
+    if children
+        .iter()
+        .all(|child| matches!(child, AstBlock::Paragraph(_)))
+    {
+        output.push_str("<pre>");
+        for (index, child) in children.iter().enumerate() {
+            let AstBlock::Paragraph(paragraph) = child else {
+                unreachable!()
+            };
+            if index > 0 {
+                output.push_str("\n\n");
+            }
+            // Verse preserves source line boundaries. Rendering the stored source text
+            // avoids the normal paragraph inline renderer's intentional newline folding.
+            escape_html_into(output, &paragraph.value);
+        }
+        output.push_str("</pre>\n");
+    } else {
+        render_delimited_children(output, block, policy, context, scope);
+    }
+}
+
+fn render_admonition_start(
+    output: &mut String,
+    admonition: &crate::parser::AdmonitionPresentation,
+    explicit_id: Option<&str>,
+    metadata: &crate::parser::BlockMetadata,
+) {
+    output.push_str("<div class=\"admonition admonition-");
+    output.push_str(admonition.kind.label().to_ascii_lowercase().as_str());
+    output.push('\"');
+    render_optional_id(output, explicit_id);
+    output.push_str("><div class=\"title\">");
+    if let Some(title) = &metadata.title {
+        escape_html_into(output, &title.value);
+    } else {
+        output.push_str(admonition.kind.label());
+    }
+    output.push_str("</div>\n");
 }
 
 fn render_table(
@@ -2134,14 +2296,50 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(crate::CONTRACT_VERSION, 2);
+        assert_eq!(crate::CONTRACT_VERSION, 3);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
-                "a", "audio", "body", "br", "caption", "code", "dd", "div", "dl", "dt", "em", "h1",
-                "h2", "h3", "h4", "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre",
-                "span", "strong", "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead",
-                "tr", "ul", "video"
+                "a",
+                "audio",
+                "body",
+                "blockquote",
+                "br",
+                "caption",
+                "cite",
+                "code",
+                "dd",
+                "div",
+                "dl",
+                "dt",
+                "em",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "hr",
+                "html",
+                "img",
+                "kbd",
+                "li",
+                "mark",
+                "ol",
+                "p",
+                "pre",
+                "span",
+                "strong",
+                "sub",
+                "sup",
+                "table",
+                "tbody",
+                "td",
+                "tfoot",
+                "th",
+                "thead",
+                "tr",
+                "ul",
+                "video"
             ]
         );
         assert_eq!(
@@ -2155,6 +2353,13 @@ mod tests {
             ALLOWED_CLASSES,
             [
                 "author",
+                "admonition",
+                "admonition-caution",
+                "admonition-important",
+                "admonition-note",
+                "admonition-tip",
+                "admonition-warning",
+                "attribution",
                 "appendix",
                 "bibliography-anchor",
                 "bibliography-backref",
@@ -2175,6 +2380,7 @@ mod tests {
                 "menu",
                 "page-break",
                 "revision",
+                "quote",
                 "table-align-center",
                 "table-align-left",
                 "table-align-right",
@@ -2194,7 +2400,9 @@ mod tests {
                 "table-stripes-hover",
                 "table-stripes-none",
                 "table-stripes-odd",
-                "toc"
+                "toc",
+                "title",
+                "verse"
             ]
         );
         let parsed = parse("paragraph").expect("parse");

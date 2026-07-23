@@ -1,5 +1,5 @@
 = 対応構文文書と実装契約の同期
-:status: planned
+:status: completed
 :depends-on:
 
 == 目的
@@ -21,3 +21,9 @@
 * 対応表に「未対応」と記載された構文をrendererが対応済みHTMLへ変換していない。
 * 未実装構文を対応済みとする文書記述がなく、意図的な制限とfallbackが明記される。
 * 文書・fixture・Issue statusの不一致を追加した検証が検出する。
+
+== 結果
+
+`docs/syntax-contract.json`を正本として、対応表、互換性評価、文法、fixtureおよび本Issueのstatusを
+repository governance testで照合する。highlight、subscript、superscript、typographic quote、admonition、
+quoteおよびverseはそれぞれ対応済みのfixtureを持つ。

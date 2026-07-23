@@ -1,5 +1,5 @@
 {
-  "contractVersion": 2,
+  "contractVersion": 3,
   "cases": [
     {
       "name": "release-lf",
@@ -8,6 +8,14 @@
       "compatibility": "supported-subset",
       "rationale": "基本ブロックとconstrainedインラインはAsciidoctorと同じ意味構造を期待する",
       "contractImpact": "none"
+    },
+    {
+      "name": "semantic-blocks",
+      "sourceFile": "semantic-blocks.adoc",
+      "expectedHtmlFile": "semantic-blocks.html",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "admonition、quote、verseは型付きblock presentationから安全な固定HTMLへ投影し、quoteの出典とverseの改行を保持する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {
       "name": "attributes-anchors-links-references-lists-stem",

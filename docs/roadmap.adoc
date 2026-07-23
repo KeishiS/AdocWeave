@@ -443,9 +443,9 @@ metadataだけを保持して子blockへ退化させず、backend非依存の型
 対応表と実装の乖離は機械検査で防ぐ。単体CLIのlocal resource解決は、既定のhost委譲・fail-closed
 境界を弱めないかを評価してから採否を決める。
 
-. xref:../issues/136-supported-syntax-documentation-contract.adoc[Issue 136]で対応構文文書と実装契約を同期する。
-. xref:../issues/137-admonition-semantic-rendering.adoc[Issue 137]でadmonitionの誤診断を除去し、型付き意味を実装する。
-. xref:../issues/138-quote-and-verse-rendering.adoc[Issue 138]でquote／verseのattributionとcitationを意味保持して出力する。
+. xref:../issues/136-supported-syntax-documentation-contract.adoc[Issue 136]で対応構文文書と実装契約を同期した。（完了）
+. xref:../issues/137-admonition-semantic-rendering.adoc[Issue 137]でadmonitionの誤診断を除去し、型付き意味を実装した。（完了）
+. xref:../issues/138-quote-and-verse-rendering.adoc[Issue 138]でquote／verseのattributionとcitationを意味保持して出力した。（完了）
 . xref:../issues/139-standalone-cli-resource-profile-evaluation.adoc[Issue 139]で単体CLIのlocal resource profileを評価する。
 
 == ドキュメント保守規則

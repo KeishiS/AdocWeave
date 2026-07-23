@@ -670,6 +670,9 @@ impl LanguageService {
         if let Some((value, range)) = inline_hover(document.analysis.ast(), offset) {
             return hover_markup(value, range, &document, self.position_encoding);
         }
+        if let Some((value, range)) = block_presentation_hover(document.analysis.ast(), offset) {
+            return hover_markup(value, range, &document, self.position_encoding);
+        }
         for author in &document.analysis.ast().header().authors {
             if contains(author.range, offset) {
                 let value = author.email.as_ref().map_or_else(
@@ -804,7 +807,22 @@ impl LanguageService {
             )),
             DocumentElement::ElementAttribute(_) => Some((
                 &[
-                    "cols", "frame", "grid", "id", "options", "role", "stripes", "subs", "width",
+                    "CAUTION",
+                    "IMPORTANT",
+                    "NOTE",
+                    "TIP",
+                    "WARNING",
+                    "cols",
+                    "frame",
+                    "grid",
+                    "id",
+                    "options",
+                    "quote",
+                    "role",
+                    "stripes",
+                    "subs",
+                    "verse",
+                    "width",
                 ],
                 lsp::CompletionItemKind::PROPERTY,
             )),
@@ -1459,6 +1477,61 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
             if let Some(value) = value {
                 found = Some((value, inline.range()));
             }
+        }
+    });
+    found
+}
+
+fn block_presentation_hover(
+    document: &parser::AstDocument,
+    offset: u32,
+) -> Option<(String, CoreTextRange)> {
+    let mut found = None;
+    adocweave::walker::walk(document, |node| {
+        let adocweave::walker::SemanticNode::Block(block) = node else {
+            return;
+        };
+        match block {
+            parser::AstBlock::Paragraph(value)
+                if value
+                    .admonition
+                    .as_ref()
+                    .is_some_and(|item| contains(item.label_range, offset)) =>
+            {
+                let item = value.admonition.as_ref().expect("guarded admonition");
+                found = Some((
+                    format!("**{} admonition**", item.kind.label()),
+                    item.label_range,
+                ));
+            }
+            parser::AstBlock::Delimited(value) => match &value.presentation {
+                Some(parser::DelimitedPresentation::Admonition(item))
+                    if contains(item.label_range, offset) =>
+                {
+                    found = Some((
+                        format!("**{} admonition**", item.kind.label()),
+                        item.label_range,
+                    ));
+                }
+                Some(parser::DelimitedPresentation::Quote(item))
+                    if contains(value.metadata.range.unwrap_or(value.range), offset) =>
+                {
+                    let kind = match item.kind {
+                        parser::QuoteKind::Quote => "quote",
+                        parser::QuoteKind::Verse => "verse",
+                    };
+                    found = Some((
+                        format!(
+                            "**{kind} block**  \nAttribution: `{}`  \nCitation: `{}`",
+                            item.attribution.as_ref().map_or("", |value| &value.value),
+                            item.citation.as_ref().map_or("", |value| &value.value)
+                        ),
+                        value.metadata.range.unwrap_or(value.range),
+                    ));
+                }
+                _ => {}
+            },
+            _ => {}
         }
     });
     found

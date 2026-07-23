@@ -1742,6 +1742,7 @@ fn parse_list_continuation(
             content_range: line.content_range(),
             value: content.to_owned(),
             inlines: parsed.inlines,
+            admonition: None,
             inline_problems: parsed.problems,
         })],
         index + 1,
@@ -1868,6 +1869,7 @@ fn parse_delimited_block(
             closing_delimiter_range: body.closing_delimiter_range,
             content_range: body.content_range,
             delimiter: delimiter.to_owned(),
+            presentation: None,
             content,
             problems: body.problems,
         },
@@ -2323,6 +2325,7 @@ fn flush_paragraph(
         },
         value: String::new(),
         inlines: Vec::new(),
+        admonition: None,
         inline_problems: Vec::new(),
     };
     for (line, value) in lines.drain(..) {
@@ -2335,9 +2338,28 @@ fn flush_paragraph(
             });
         }
     }
+    let body_offset = admonition_paragraph(&paragraph.value)
+        .map(|(_, offset)| offset)
+        .unwrap_or(0);
+    if let Some((kind, offset)) = admonition_paragraph(&paragraph.value) {
+        paragraph.admonition = Some(AdmonitionPresentation {
+            kind,
+            label_range: TextRange::new(
+                paragraph.content_range.start(),
+                TextSize::new(paragraph.content_range.start().to_usize() + offset - 1)
+                    .expect("admonition label is in range"),
+            )
+            .expect("admonition label range is ordered"),
+        });
+    }
     let inline_output = parse_inlines(
-        &paragraph.value,
-        paragraph.content_range,
+        &paragraph.value[body_offset..],
+        TextRange::new(
+            TextSize::new(paragraph.content_range.start().to_usize() + body_offset)
+                .expect("admonition body is in range"),
+            paragraph.content_range.end(),
+        )
+        .expect("paragraph body range is ordered"),
         InlineParseConfig {
             max_depth: config.max_inline_depth,
             max_formula_bytes: config.max_formula_bytes,
@@ -2350,6 +2372,14 @@ fn flush_paragraph(
     ast_blocks.push(AstBlock::Paragraph(paragraph));
     attach_pending_metadata(cst_blocks, ast_blocks, pending_metadata);
     Ok(())
+}
+
+fn admonition_paragraph(value: &str) -> Option<(AdmonitionKind, usize)> {
+    let (label, body) = value.split_once(':')?;
+    let kind = AdmonitionKind::parse(label)?;
+    let whitespace = body.len() - body.trim_start_matches([' ', '\t']).len();
+    (whitespace > 0 && !body[whitespace..].trim().is_empty())
+        .then_some((kind, label.len() + 1 + whitespace))
 }
 
 fn split_hard_breaks(inlines: Vec<Inline>) -> Vec<Inline> {

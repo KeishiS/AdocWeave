@@ -69,7 +69,59 @@ pub struct Paragraph {
     pub content_range: TextRange,
     pub value: String,
     pub inlines: Vec<Inline>,
+    pub admonition: Option<AdmonitionPresentation>,
     pub(crate) inline_problems: Vec<InlineProblem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdmonitionKind {
+    Note,
+    Tip,
+    Important,
+    Warning,
+    Caution,
+}
+
+impl AdmonitionKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Note => "NOTE",
+            Self::Tip => "TIP",
+            Self::Important => "IMPORTANT",
+            Self::Warning => "WARNING",
+            Self::Caution => "CAUTION",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "NOTE" => Some(Self::Note),
+            "TIP" => Some(Self::Tip),
+            "IMPORTANT" => Some(Self::Important),
+            "WARNING" => Some(Self::Warning),
+            "CAUTION" => Some(Self::Caution),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmonitionPresentation {
+    pub kind: AdmonitionKind,
+    pub label_range: TextRange,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QuoteKind {
+    Quote,
+    Verse,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuotePresentation {
+    pub kind: QuoteKind,
+    pub attribution: Option<MetadataValue>,
+    pub citation: Option<MetadataValue>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -194,8 +246,15 @@ pub struct DelimitedBlock {
     pub closing_delimiter_range: Option<TextRange>,
     pub content_range: TextRange,
     pub delimiter: String,
+    pub presentation: Option<DelimitedPresentation>,
     pub content: DelimitedContent,
     pub problems: Vec<BlockProblem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DelimitedPresentation {
+    Admonition(AdmonitionPresentation),
+    Quote(QuotePresentation),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

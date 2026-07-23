@@ -141,7 +141,17 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
             kind: "paragraph",
             range: range(node.range),
             value: Some(node.value.clone()),
-            children: inline_nodes(&node.inlines),
+            children: node
+                .admonition
+                .iter()
+                .map(|presentation| CanonicalNode {
+                    kind: "admonition-presentation",
+                    range: range(presentation.label_range),
+                    value: Some(presentation.kind.label().to_owned()),
+                    children: Vec::new(),
+                })
+                .chain(inline_nodes(&node.inlines))
+                .collect(),
         },
         AstBlock::LiteralParagraph(node) => leaf("literal-paragraph", node.range, &node.value),
         AstBlock::Break(node) => CanonicalNode {
@@ -185,7 +195,7 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
         AstBlock::List(node) => list_node(node),
         AstBlock::Math(node) => leaf("math-block", node.range, &node.value),
         AstBlock::Delimited(node) => {
-            let (value, children) = match &node.content {
+            let (value, mut children) = match &node.content {
                 crate::parser::DelimitedContent::Compound(children) => (
                     Some(node.delimiter.clone()),
                     children.iter().map(block_node).collect(),
@@ -233,6 +243,35 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                     .collect(),
                 ),
             };
+            if let Some(presentation) = &node.presentation {
+                children.insert(
+                    0,
+                    CanonicalNode {
+                        kind: match presentation {
+                            crate::parser::DelimitedPresentation::Admonition(_) => {
+                                "admonition-presentation"
+                            }
+                            crate::parser::DelimitedPresentation::Quote(_) => "quote-presentation",
+                        },
+                        range: range(node.range),
+                        value: Some(match presentation {
+                            crate::parser::DelimitedPresentation::Admonition(value) => {
+                                value.kind.label().to_owned()
+                            }
+                            crate::parser::DelimitedPresentation::Quote(value) => format!(
+                                "{}:{}:{}",
+                                match value.kind {
+                                    crate::parser::QuoteKind::Quote => "quote",
+                                    crate::parser::QuoteKind::Verse => "verse",
+                                },
+                                value.attribution.as_ref().map_or("", |value| &value.value),
+                                value.citation.as_ref().map_or("", |value| &value.value),
+                            ),
+                        }),
+                        children: Vec::new(),
+                    },
+                );
+            }
             CanonicalNode {
                 kind: match node.kind {
                     crate::parser::DelimitedBlockKind::Comment => "comment-block",

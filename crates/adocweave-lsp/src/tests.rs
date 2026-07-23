@@ -752,6 +752,50 @@ fn hover_and_completion_cover_common_block_metadata() {
 }
 
 #[test]
+fn hover_and_completion_cover_semantic_block_presentations() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///semantic-blocks.adoc",
+        1,
+        "NOTE: text\n\n[quote,Author,Work]\n____\nquoted\n____\n",
+    );
+    let document_uri = uri("file:///semantic-blocks.adoc");
+    let note = service
+        .hover(&document_uri, lsp::Position::new(0, 1))
+        .expect("hover")
+        .expect("note hover");
+    assert!(
+        serde_json::to_value(note).expect("serialize")["contents"]["value"]
+            .as_str()
+            .expect("text")
+            .contains("NOTE admonition")
+    );
+    let quote = service
+        .hover(&document_uri, lsp::Position::new(2, 2))
+        .expect("hover")
+        .expect("quote hover");
+    assert!(
+        serde_json::to_value(quote).expect("serialize")["contents"]["value"]
+            .as_str()
+            .expect("text")
+            .contains("quote block")
+    );
+    let completion = service
+        .completion(&document_uri, lsp::Position::new(2, 2))
+        .expect("completion")
+        .expect("response");
+    assert!(
+        serde_json::to_value(completion)
+            .expect("serialize")
+            .as_array()
+            .expect("items")
+            .iter()
+            .any(|item| item["label"] == "NOTE")
+    );
+}
+
+#[test]
 fn hover_uses_document_catalogs_for_footnotes_bibliography_and_index() {
     let mut service = LanguageService::default();
     let source = "footnote:n[note] footnote:n[] bibanchor:ref[] indexterm:[Rust,Ownership]";

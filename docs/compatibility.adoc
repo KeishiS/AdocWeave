@@ -186,7 +186,8 @@ xref:substitutions.adoc[Core置換モデル]で定義する。
 |区切り付きblock
 |comment、example、listing、literal、open、sidebar、table、pass、quoteのcontainerとcontent model
 |各containerとcompound／verbatim／raw／table content modelを認識する。異なる長さのdelimiterによる
-同種compound block入れ子に対応し、raw contentもHTMLへ無条件に通過させない
+同種compound block入れ子に対応し、raw contentもHTMLへ無条件に通過させない。`[quote,Author,Source]`と
+`[verse,Author,Source]`は引用種別、attribution、citationを保持し、入力由来HTMLやclassを通過させない
 
 |表
 |PSVを既定とし、CSV／DSV／TSV、列・cell属性、spanおよびAsciiDoc cellを定義する
@@ -204,7 +205,7 @@ inline／block image、icon、audioおよびvideo、footnote一覧、bibliograph
 
 |文書上の補助要素
 |comment、admonition、thematic／page break、bibliography、footnote
-|comment、admonition、thematic／page break、bibliography anchor、footnote macro、文書catalog、番号付け、
+|comment、5種のadmonition paragraph／block、thematic／page break、bibliography anchor、footnote macro、文書catalog、番号付け、
 再利用およびback referenceに対応。`[bibliography]` section内の順序なしlistとcitation back referenceを出力する。
 index rangeは未対応
 |===

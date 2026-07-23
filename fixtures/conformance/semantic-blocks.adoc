@@ -1,0 +1,17 @@
+NOTE: *watch* this
+
+[WARNING]
+====
+Block text.
+====
+
+[quote,Author,Work]
+____
+Quoted *text*.
+____
+
+[verse,Poet,Poem]
+____
+line one
+line two
+____

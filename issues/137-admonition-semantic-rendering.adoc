@@ -1,5 +1,5 @@
 = Admonitionの型付き意味解析と診断
-:status: planned
+:status: completed
 :depends-on: 136
 
 == 目的
@@ -20,3 +20,8 @@ paragraph形式（`NOTE: text`等）およびblock形式（`[NOTE]` example bloc
 * `NOTE: text`が`invalid-url-scheme`を出さず、typed admonitionとして出力される。
 * block形式とparagraph形式が同じ許可集合・診断契約を共有する。
 * 対応仕様、HTML契約、互換性評価およびfixtureが同期する。
+
+== 結果
+
+paragraph形式とexample／open block形式を共通の`AdmonitionPresentation`へ解決し、HTML、canonical AST、
+projection、CLI、WASMおよびLSPで共有する。固定allowlistだけを用い、`NOTE: text`はURLとして解析しない。

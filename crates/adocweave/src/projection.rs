@@ -20,6 +20,7 @@ pub struct DocumentProjection {
     pub reference_edges: Vec<ReferenceEdge>,
     pub source_blocks: Vec<SourceBlockProjection>,
     pub ordered_lists: Vec<OrderedListProjection>,
+    pub block_presentations: Vec<BlockPresentationProjection>,
     pub formulas: Vec<FormulaProjection>,
     pub searchable_text: SearchableText,
     pub catalogs: crate::catalog::DocumentCatalogs,
@@ -43,6 +44,33 @@ pub struct OrderedListProjection {
     pub start: Option<u32>,
     pub reversed: bool,
     pub style: crate::parser::OrderedListStyle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlockPresentationKind {
+    Admonition,
+    Quote,
+    Verse,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlockPresentationProjection {
+    pub kind: BlockPresentationKind,
+    pub source_range: TextRange,
+    pub content_range: TextRange,
+    pub title: Option<String>,
+    pub attribution: Option<String>,
+    pub citation: Option<String>,
+}
+
+impl BlockPresentationKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Admonition => "admonition",
+            Self::Quote => "quote",
+            Self::Verse => "verse",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -178,6 +206,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
 
     let mut source_blocks = Vec::new();
     let mut ordered_lists = Vec::new();
+    let mut block_presentations = Vec::new();
     let mut formulas = Vec::new();
     crate::walker::walk(analysis.ast(), |node| match node {
         crate::walker::SemanticNode::Block(AstBlock::Source(source)) => {
@@ -231,10 +260,55 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                 style: list.presentation.style,
             });
         }
+        crate::walker::SemanticNode::Block(AstBlock::Paragraph(value))
+            if value.admonition.is_some() =>
+        {
+            block_presentations.push(BlockPresentationProjection {
+                kind: BlockPresentationKind::Admonition,
+                source_range: value.range,
+                content_range: value.content_range,
+                title: value
+                    .metadata
+                    .title
+                    .as_ref()
+                    .map(|value| value.value.clone()),
+                attribution: None,
+                citation: None,
+            });
+        }
+        crate::walker::SemanticNode::Block(AstBlock::Delimited(value)) => {
+            if let Some(presentation) = &value.presentation {
+                match presentation {
+                    crate::parser::DelimitedPresentation::Admonition(_) => block_presentations
+                        .push(BlockPresentationProjection {
+                            kind: BlockPresentationKind::Admonition,
+                            source_range: value.range,
+                            content_range: value.content_range,
+                            title: value.metadata.title.as_ref().map(|item| item.value.clone()),
+                            attribution: None,
+                            citation: None,
+                        }),
+                    crate::parser::DelimitedPresentation::Quote(quote) => {
+                        block_presentations.push(BlockPresentationProjection {
+                            kind: match quote.kind {
+                                crate::parser::QuoteKind::Quote => BlockPresentationKind::Quote,
+                                crate::parser::QuoteKind::Verse => BlockPresentationKind::Verse,
+                            },
+                            source_range: value.range,
+                            content_range: value.content_range,
+                            title: value.metadata.title.as_ref().map(|item| item.value.clone()),
+                            attribution: quote.attribution.as_ref().map(|item| item.value.clone()),
+                            citation: quote.citation.as_ref().map(|item| item.value.clone()),
+                        })
+                    }
+                }
+            }
+        }
         _ => {}
     });
     source_blocks.sort_by_key(|source| (source.source_range.start(), source.source_range.end()));
     ordered_lists.sort_by_key(|list| (list.source_range.start(), list.source_range.end()));
+    block_presentations.sort_by_key(|block| (block.source_range.start(), block.source_range.end()));
     formulas.sort_by_key(|formula| (formula.source_range.start(), formula.source_range.end()));
 
     DocumentProjection {
@@ -246,6 +320,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         reference_edges,
         source_blocks,
         ordered_lists,
+        block_presentations,
         formulas,
         searchable_text: searchable_text(analysis),
         catalogs: analysis.catalogs().clone(),
@@ -567,6 +642,22 @@ impl DocumentProjection {
                 list.style_name(),
             )
             .expect("writing to String cannot fail");
+        }
+        output.push_str("],\"blockPresentations\":[");
+        for (index, block) in self.block_presentations.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            write!(
+                output,
+                "{{\"kind\":\"{}\",\"sourceRange\":{},\"contentRange\":{},\"title\":{},\"attribution\":{},\"citation\":{}}}",
+                block.kind.as_str(),
+                json_range(block.source_range),
+                json_range(block.content_range),
+                block.title.as_deref().map_or_else(|| "null".to_owned(), json_string),
+                block.attribution.as_deref().map_or_else(|| "null".to_owned(), json_string),
+                block.citation.as_deref().map_or_else(|| "null".to_owned(), json_string),
+            ).expect("writing to String cannot fail");
         }
         output.push_str("],\"structure\":");
         write_structure(&mut output, &self.structure, &self.presentation);
@@ -1033,7 +1124,7 @@ mod tests {
             .expect("analysis");
         assert_eq!(
             project(&analysis, &RenderInputs::default()).render_json(),
-            "{\"contractVersion\":2,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":3,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

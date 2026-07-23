@@ -23,6 +23,26 @@ struct ReleaseManifest {
     contract_version: u16,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyntaxContract {
+    schema_version: u8,
+    issue: String,
+    issue_status: String,
+    features: Vec<SyntaxContractFeature>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyntaxContractFeature {
+    name: String,
+    status: String,
+    syntax_needle: String,
+    compatibility_needle: String,
+    grammar_needle: String,
+    fixture: String,
+}
+
 fn repository_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -40,6 +60,49 @@ fn manifest() -> CorpusManifest {
         &fs::read_to_string(repository_root().join("docs/corpus.json")).expect("corpus manifest"),
     )
     .expect("valid corpus manifest")
+}
+
+#[test]
+fn syntax_contract_keeps_docs_and_fixtures_in_sync() {
+    let root = repository_root();
+    let contract: SyntaxContract = serde_json::from_str(
+        &fs::read_to_string(root.join("docs/syntax-contract.json")).expect("syntax contract"),
+    )
+    .expect("valid syntax contract");
+    assert_eq!(contract.schema_version, 1);
+    let issue = fs::read_to_string(root.join(format!(
+        "issues/{}-supported-syntax-documentation-contract.adoc",
+        contract.issue
+    )))
+    .expect("syntax contract issue");
+    assert!(issue.contains(&format!(":status: {}", contract.issue_status)));
+    let syntax = fs::read_to_string(root.join("docs/syntax-support.adoc")).expect("syntax support");
+    let compatibility =
+        fs::read_to_string(root.join("docs/compatibility.adoc")).expect("compatibility");
+    let grammar = fs::read_to_string(root.join("docs/grammar.adoc")).expect("grammar");
+    for feature in contract.features {
+        assert_eq!(feature.status, "supported", "{}", feature.name);
+        assert!(
+            syntax.contains(&feature.syntax_needle),
+            "syntax: {}",
+            feature.name
+        );
+        assert!(
+            compatibility.contains(&feature.compatibility_needle),
+            "compatibility: {}",
+            feature.name
+        );
+        assert!(
+            grammar.contains(&feature.grammar_needle),
+            "grammar: {}",
+            feature.name
+        );
+        assert!(
+            root.join(&feature.fixture).is_file(),
+            "fixture: {}",
+            feature.name
+        );
+    }
 }
 
 fn validate_issue_dependencies(
