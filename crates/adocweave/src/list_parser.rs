@@ -120,6 +120,7 @@ pub(super) fn build_tree(
     Ok(ListBlock {
         metadata: BlockMetadata::default(),
         kind,
+        presentation: crate::block_model::OrderedListPresentation::default(),
         range,
         items,
     })

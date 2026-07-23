@@ -133,6 +133,7 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
             AstBlock::Delimited(block)
         }
         AstBlock::List(mut list) => {
+            resolve_list_presentation(&mut list);
             for item in &mut list.items {
                 for child in &mut item.children {
                     normalize_list(child, source_language);
@@ -149,12 +150,79 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
 }
 
 fn normalize_list(list: &mut crate::parser::ListBlock, source_language: Option<&str>) {
+    resolve_list_presentation(list);
     for item in &mut list.items {
         for child in &mut item.children {
             normalize_list(child, source_language);
         }
         item.continuations =
             normalize_verbatim_blocks(std::mem::take(&mut item.continuations), source_language);
+    }
+}
+
+fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
+    if list.kind != crate::parser::ListKind::Ordered {
+        return;
+    }
+
+    let mut presentation = crate::parser::OrderedListPresentation::default();
+    for attribute in &list.metadata.attributes {
+        match attribute.name.as_deref() {
+            Some("start") => {
+                presentation.start = attribute
+                    .value
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0);
+            }
+            Some("style") => {
+                if let Some(style) = ordered_list_style(&attribute.value) {
+                    presentation.style = style;
+                }
+            }
+            Some("options") => {
+                if attribute
+                    .value
+                    .split(',')
+                    .any(|option| option.trim() == "reversed")
+                {
+                    presentation.reversed = true;
+                }
+            }
+            None => {
+                if attribute.value == "reversed" {
+                    presentation.reversed = true;
+                } else if let Some(style) = ordered_list_style(&attribute.value) {
+                    presentation.style = style;
+                }
+            }
+            Some(_) => {}
+        }
+    }
+    if list
+        .metadata
+        .options
+        .iter()
+        .any(|option| option.value == "reversed")
+    {
+        presentation.reversed = true;
+    }
+    list.presentation = presentation;
+}
+
+fn ordered_list_style(value: &str) -> Option<crate::parser::OrderedListStyle> {
+    use crate::parser::OrderedListStyle;
+
+    match value.trim() {
+        "arabic" => Some(OrderedListStyle::Arabic),
+        "decimal" => Some(OrderedListStyle::Decimal),
+        "loweralpha" => Some(OrderedListStyle::LowerAlpha),
+        "upperalpha" => Some(OrderedListStyle::UpperAlpha),
+        "lowerroman" => Some(OrderedListStyle::LowerRoman),
+        "upperroman" => Some(OrderedListStyle::UpperRoman),
+        "lowergreek" => Some(OrderedListStyle::LowerGreek),
+        _ => None,
     }
 }
 

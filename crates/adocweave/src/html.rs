@@ -657,6 +657,26 @@ fn render_list(
     if list.kind == crate::parser::ListKind::Callout {
         output.push_str(" class=\"callout-list\"");
     }
+    if list.kind == crate::parser::ListKind::Ordered {
+        if let Some(start) = list.presentation.start {
+            output.push_str(" start=\"");
+            output.push_str(&start.to_string());
+            output.push('\"');
+        }
+        if list.presentation.reversed {
+            output.push_str(" reversed");
+        }
+        match list.presentation.style {
+            crate::parser::OrderedListStyle::Arabic | crate::parser::OrderedListStyle::Decimal => {}
+            crate::parser::OrderedListStyle::LowerAlpha => output.push_str(" type=\"a\""),
+            crate::parser::OrderedListStyle::UpperAlpha => output.push_str(" type=\"A\""),
+            crate::parser::OrderedListStyle::LowerRoman => output.push_str(" type=\"i\""),
+            crate::parser::OrderedListStyle::UpperRoman => output.push_str(" type=\"I\""),
+            crate::parser::OrderedListStyle::LowerGreek => {
+                output.push_str(" style=\"list-style-type:lower-greek\"")
+            }
+        }
+    }
     output.push_str(">\n");
     for item in &list.items {
         if list.kind == crate::parser::ListKind::Description {
@@ -2164,6 +2184,17 @@ mod tests {
         assert_eq!(
             output.html,
             include_str!("../../../fixtures/lists/standard-forms.html")
+        );
+    }
+
+    #[test]
+    fn ordered_list_html_uses_resolved_presentation() {
+        let parsed = parse("[start=3,%reversed,upperroman]\n. one\n. two\n").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            "<ol start=\"3\" reversed type=\"I\">\n<li>one</li>\n<li>two</li>\n</ol>\n"
         );
     }
 

@@ -231,6 +231,40 @@ pub enum ListKind {
     Callout,
 }
 
+/// Backend-independent presentation resolved for an ordered list.
+///
+/// The parser retains the source metadata losslessly. Lowering resolves the
+/// supported display attributes once, so renderers do not inspect raw block
+/// attributes to decide how an ordered list is presented.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OrderedListPresentation {
+    pub start: Option<u32>,
+    pub reversed: bool,
+    pub style: OrderedListStyle,
+}
+
+impl Default for OrderedListPresentation {
+    fn default() -> Self {
+        Self {
+            start: None,
+            reversed: false,
+            style: OrderedListStyle::Arabic,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OrderedListStyle {
+    #[default]
+    Arabic,
+    Decimal,
+    LowerAlpha,
+    UpperAlpha,
+    LowerRoman,
+    UpperRoman,
+    LowerGreek,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChecklistState {
     Unchecked,
@@ -270,6 +304,7 @@ pub struct ListProblem {
 pub struct ListBlock {
     pub metadata: BlockMetadata,
     pub kind: ListKind,
+    pub presentation: OrderedListPresentation,
     pub range: TextRange,
     pub items: Vec<ListItem>,
 }

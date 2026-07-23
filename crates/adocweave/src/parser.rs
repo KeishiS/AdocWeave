@@ -3020,6 +3020,22 @@ mod tests {
     }
 
     #[test]
+    fn ordered_list_presentation_is_resolved_during_lowering() {
+        let parsed = parse("[start=3,%reversed,upperroman]\n. one\n. two\n").expect("parse");
+        let AstBlock::List(list) = &parsed.ast.blocks()[0] else {
+            panic!("ordered list");
+        };
+
+        assert_eq!(list.kind, ListKind::Ordered);
+        assert_eq!(list.presentation.start, Some(3));
+        assert!(list.presentation.reversed);
+        assert_eq!(
+            list.presentation.style,
+            crate::parser::OrderedListStyle::UpperRoman
+        );
+    }
+
+    #[test]
     fn list_continuation_attaches_literal_and_source_blocks() {
         let source =
             "* item\n+\n....\nliteral\n....\n* code\n+\n[source,rust]\n----\nfn main() {}\n----\n";
