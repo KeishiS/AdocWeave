@@ -1,0 +1,21 @@
+= CI実行時間の最適化
+:status: planned
+:depends-on: 129
+
+== 目的
+
+品質、MSRV、release candidateおよびpublishの検証責務を維持したまま、GitHub Actionsの待ち時間、
+重複buildおよび不要なartifact転送を減らす。
+
+== 作業
+
+* workflow jobごとのwall-clock time、queue time、cache hit率およびartifact sizeを計測する。
+* quality、MSRV、native target build、WASM、Zedおよびrelease artifactの依存graphを見直す。
+* Rust、NixおよびNode cacheのkey・復元範囲を、lockfileとtargetに基づき再設計する。
+* security、MSRV、cross-runtime、release contractおよび公開前の完全性検証を省略しないことをpolicy testで固定する。
+
+== 完了条件
+
+* 現在の必須検証を保持した比較可能な計測結果と、採用した最適化の根拠を記録する。
+* fork、pull request、main、tagの権限境界とartifact provenanceを弱めない。
+

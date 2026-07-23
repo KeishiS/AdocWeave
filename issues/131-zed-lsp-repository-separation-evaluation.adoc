@@ -1,0 +1,21 @@
+= Zed LSPのリポジトリ独立化評価
+:status: planned
+:depends-on: 129
+
+== 目的
+
+Zed extensionとLanguage ServerをAdocWeave本体から別repositoryへ分離する利点・コスト・契約上の
+影響を評価し、分離しない場合を含む明確な判断を残す。
+
+== 評価項目
+
+* release train、version、artifact attestation、Nix導入およびZed managed LSP更新の同期方法。
+* Tree-sitter query、extension API、LSP protocol、Core契約versionおよびconformance fixtureの所有境界。
+* CI時間、review単位、issue管理、security advisory、rollbackおよび利用者導入への影響。
+* monorepoのまま境界を明確化する代替案と、分離が必要になる定量的な条件。
+
+== 完了条件
+
+* ADRまたは同等の判断記録に、採否、根拠、移行が必要な場合の段階、採用しない場合の再評価条件を記す。
+* 分離を採用する場合でも、CoreとZed利用者のversion不一致を検出する契約を先に設計する。
+
