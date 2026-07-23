@@ -55,6 +55,54 @@ pub enum TableCellStyle {
     Verse,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableFrame {
+    All,
+    Ends,
+    None,
+    Sides,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableGrid {
+    All,
+    Columns,
+    None,
+    Rows,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableStripes {
+    All,
+    Even,
+    Hover,
+    None,
+    Odd,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TablePresentation {
+    pub caption: Option<String>,
+    pub frame: TableFrame,
+    pub grid: TableGrid,
+    pub stripes: TableStripes,
+    pub width: Option<u8>,
+    pub autowidth: bool,
+}
+
+impl Default for TablePresentation {
+    fn default() -> Self {
+        Self {
+            caption: None,
+            frame: TableFrame::All,
+            grid: TableGrid::All,
+            stripes: TableStripes::None,
+            width: None,
+            autowidth: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TableCellContent {
     Inlines(Vec<Inline>),
@@ -101,6 +149,7 @@ pub struct Table {
     pub content_range: TextRange,
     pub columns: Vec<TableColumn>,
     pub rows: Vec<TableRow>,
+    pub presentation: TablePresentation,
     pub problems: Vec<TableProblem>,
 }
 
@@ -109,6 +158,7 @@ pub enum TableProblemKind {
     InvalidFormat,
     InvalidSeparator,
     UnclosedQuotedCell,
+    InvalidPresentation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -578,6 +628,7 @@ fn absolute_range(parent: TextRange, start: usize, end: usize) -> TextRange {
 }
 
 pub(crate) fn configure(table: &mut Table, metadata: &crate::parser::BlockMetadata) {
+    table.presentation = resolve_presentation(metadata, &mut table.problems);
     let cols = metadata
         .attributes
         .iter()
@@ -622,6 +673,95 @@ pub(crate) fn configure(table: &mut Table, metadata: &crate::parser::BlockMetada
     {
         row.section = TableSection::Footer;
     }
+}
+
+fn resolve_presentation(
+    metadata: &crate::parser::BlockMetadata,
+    problems: &mut Vec<TableProblem>,
+) -> TablePresentation {
+    let mut presentation = TablePresentation {
+        caption: metadata.title.as_ref().map(|title| title.value.clone()),
+        ..TablePresentation::default()
+    };
+    let attribute = |name| {
+        metadata
+            .attributes
+            .iter()
+            .rev()
+            .find(|attribute| attribute.name.as_deref() == Some(name))
+    };
+    let invalid = |attribute: &crate::parser::ElementAttribute,
+                   problems: &mut Vec<TableProblem>| {
+        problems.push(TableProblem {
+            kind: TableProblemKind::InvalidPresentation,
+            range: attribute.range,
+        });
+    };
+    if let Some(attribute) = attribute("frame") {
+        presentation.frame = match attribute.value.as_str() {
+            "all" => TableFrame::All,
+            "ends" => TableFrame::Ends,
+            "none" => TableFrame::None,
+            "sides" => TableFrame::Sides,
+            _ => {
+                invalid(attribute, problems);
+                TableFrame::All
+            }
+        };
+    }
+    if let Some(attribute) = attribute("grid") {
+        presentation.grid = match attribute.value.as_str() {
+            "all" => TableGrid::All,
+            "cols" => TableGrid::Columns,
+            "none" => TableGrid::None,
+            "rows" => TableGrid::Rows,
+            _ => {
+                invalid(attribute, problems);
+                TableGrid::All
+            }
+        };
+    }
+    if let Some(attribute) = attribute("stripes") {
+        presentation.stripes = match attribute.value.as_str() {
+            "all" => TableStripes::All,
+            "even" => TableStripes::Even,
+            "hover" => TableStripes::Hover,
+            "none" => TableStripes::None,
+            "odd" => TableStripes::Odd,
+            _ => {
+                invalid(attribute, problems);
+                TableStripes::None
+            }
+        };
+    }
+    if let Some(attribute) = attribute("width") {
+        presentation.width = attribute
+            .value
+            .strip_suffix('%')
+            .and_then(|value| value.parse::<u8>().ok())
+            .filter(|value| *value <= 100);
+        if presentation.width.is_none() {
+            invalid(attribute, problems);
+        }
+    }
+    presentation.autowidth = metadata
+        .options
+        .iter()
+        .any(|option| option.value == "autowidth")
+        || metadata.attributes.iter().any(|attribute| {
+            attribute.name.as_deref() == Some("options")
+                && attribute
+                    .value
+                    .split(',')
+                    .any(|option| option.trim() == "autowidth")
+        });
+    if presentation.autowidth && presentation.width.is_some() {
+        if let Some(attribute) = attribute("width") {
+            invalid(attribute, problems);
+        }
+        presentation.width = None;
+    }
+    presentation
 }
 
 fn expand_column(value: &str) -> Vec<TableColumn> {

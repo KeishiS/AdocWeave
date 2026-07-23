@@ -443,6 +443,9 @@ fn lint_tables(
                     "table separator must be one non-control character and match the delimiter"
                 }
                 crate::table::TableProblemKind::UnclosedQuotedCell => "unclosed quoted table cell",
+                crate::table::TableProblemKind::InvalidPresentation => {
+                    "invalid or conflicting table presentation attribute"
+                }
             };
             push_diagnostic(
                 diagnostics,

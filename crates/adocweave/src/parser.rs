@@ -2011,6 +2011,7 @@ fn parse_table(
                 cells,
             }]
         },
+        presentation: crate::table::TablePresentation::default(),
         problems: table_problems,
     };
     crate::table::layout_rows(&mut table);

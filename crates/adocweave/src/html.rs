@@ -17,9 +17,9 @@ use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::{UrlContext, UrlPolicy};
 
 pub const ALLOWED_ELEMENTS: &[&str] = &[
-    "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
-    "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
-    "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video",
+    "a", "audio", "body", "br", "caption", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3",
+    "h4", "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong",
+    "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "video",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &[
     "alt", "class", "colspan", "controls", "height", "href", "id", "rel", "rowspan", "src",
@@ -53,6 +53,19 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "table-valign-bottom",
     "table-valign-middle",
     "table-valign-top",
+    "table-frame-all",
+    "table-frame-ends",
+    "table-frame-none",
+    "table-frame-sides",
+    "table-grid-all",
+    "table-grid-cols",
+    "table-grid-none",
+    "table-grid-rows",
+    "table-stripes-all",
+    "table-stripes-even",
+    "table-stripes-hover",
+    "table-stripes-none",
+    "table-stripes-odd",
     "toc",
 ];
 
@@ -548,10 +561,45 @@ fn render_table(
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
-    use crate::table::{HorizontalAlignment, TableCellStyle, TableSection};
+    use crate::table::{
+        HorizontalAlignment, TableCellStyle, TableFrame, TableGrid, TableSection, TableStripes,
+    };
     output.push_str("<table");
     render_optional_id(output, explicit_id);
+    output.push_str(" class=\"");
+    output.push_str(match table.presentation.frame {
+        TableFrame::All => "table-frame-all",
+        TableFrame::Ends => "table-frame-ends",
+        TableFrame::None => "table-frame-none",
+        TableFrame::Sides => "table-frame-sides",
+    });
+    output.push(' ');
+    output.push_str(match table.presentation.grid {
+        TableGrid::All => "table-grid-all",
+        TableGrid::Columns => "table-grid-cols",
+        TableGrid::None => "table-grid-none",
+        TableGrid::Rows => "table-grid-rows",
+    });
+    output.push(' ');
+    output.push_str(match table.presentation.stripes {
+        TableStripes::All => "table-stripes-all",
+        TableStripes::Even => "table-stripes-even",
+        TableStripes::Hover => "table-stripes-hover",
+        TableStripes::None => "table-stripes-none",
+        TableStripes::Odd => "table-stripes-odd",
+    });
+    output.push('"');
+    if let Some(width) = table.presentation.width {
+        output.push_str(" width=\"");
+        output.push_str(&width.to_string());
+        output.push_str("%\"");
+    }
     output.push_str(">\n");
+    if let Some(caption) = &table.presentation.caption {
+        output.push_str("<caption>");
+        escape_html_into(output, caption);
+        output.push_str("</caption>\n");
+    }
     let mut section = None;
     for row in &table.rows {
         if section != Some(row.section) {
@@ -2090,8 +2138,8 @@ mod tests {
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
-                "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2",
-                "h3", "h4", "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre",
+                "a", "audio", "body", "br", "caption", "code", "dd", "div", "dl", "dt", "em", "h1",
+                "h2", "h3", "h4", "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre",
                 "span", "strong", "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead",
                 "tr", "ul", "video"
             ]
@@ -2133,6 +2181,19 @@ mod tests {
                 "table-valign-bottom",
                 "table-valign-middle",
                 "table-valign-top",
+                "table-frame-all",
+                "table-frame-ends",
+                "table-frame-none",
+                "table-frame-sides",
+                "table-grid-all",
+                "table-grid-cols",
+                "table-grid-none",
+                "table-grid-rows",
+                "table-stripes-all",
+                "table-stripes-even",
+                "table-stripes-hover",
+                "table-stripes-none",
+                "table-stripes-odd",
                 "toc"
             ]
         );
@@ -2425,6 +2486,19 @@ mod tests {
         assert_eq!(
             output.html,
             include_str!("../../../fixtures/tables/standard-forms.html")
+        );
+    }
+
+    #[test]
+    fn table_presentation_renders_only_fixed_classes_and_caption() {
+        let parsed =
+            parse(".Example\n[frame=ends,grid=rows,stripes=even,width=75%]\n|===\n|value\n|===\n")
+                .expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            "<table class=\"table-frame-ends table-grid-rows table-stripes-even\" width=\"75%\">\n<caption>Example</caption>\n<tbody>\n<tr>\n<td class=\"table-align-left table-valign-top\">value</td>\n</tr>\n</tbody>\n</table>\n"
         );
     }
 
