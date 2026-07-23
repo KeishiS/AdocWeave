@@ -323,7 +323,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "0f412caa45cec5a855edab8b7fad90ddd3bde0178490af74f4b05358d449ba05"
+            "0fe88415bc2f0506473c311727bd7d4b80efba6162566549c139b6ca7dabd26c"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

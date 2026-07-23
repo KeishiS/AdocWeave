@@ -216,57 +216,15 @@ pub fn render_with_inputs(
             presentation: document.presentation(),
             bibliography_section: false,
         };
-        for node in document.layout().nodes() {
-            let crate::presentation::LayoutNode::Block(block_id) = node else {
-                match node {
-                    crate::presentation::LayoutNode::Generated(
-                        crate::presentation::GeneratedLayoutNode::TableOfContents,
-                    ) => render_toc(&mut fragment, document.presentation()),
-                    crate::presentation::LayoutNode::Generated(
-                        crate::presentation::GeneratedLayoutNode::FootnoteCatalog,
-                    ) => render_footnote_catalog(&mut fragment, document.catalogs()),
-                    crate::presentation::LayoutNode::Generated(
-                        crate::presentation::GeneratedLayoutNode::BibliographySectionStart(_),
-                    ) => inline_context.bibliography_section = true,
-                    crate::presentation::LayoutNode::Generated(
-                        crate::presentation::GeneratedLayoutNode::BibliographySectionEnd,
-                    ) => inline_context.bibliography_section = false,
-                    crate::presentation::LayoutNode::Block(_) => unreachable!(),
-                }
-                continue;
-            };
-            let block = document
-                .top_level_block(*block_id)
-                .expect("layout only contains top-level blocks");
-            let explicit_id = targets
-                .iter()
-                .find(|target| target.target_range == block.range())
-                .map(|target| target.id.as_str());
-            let heading_id = heading_ids
-                .iter()
-                .find(|heading| {
-                    matches!(block, AstBlock::Heading(value) if value.text_range == heading.range)
-                })
-                .map(|heading| heading.id.as_str());
-            render_block(
-                &mut fragment,
-                block,
-                explicit_id,
-                heading_id,
-                policy,
-                &mut inline_context,
-            );
-            if matches!(
-                block,
-                AstBlock::Heading(Heading {
-                    kind: HeadingKind::DocumentTitle,
-                    ..
-                })
-            ) && policy.render_document_title
-            {
-                render_header_metadata(&mut fragment, document.header());
-            }
-        }
+        render_layout_nodes(
+            &mut fragment,
+            document,
+            document.layout().nodes(),
+            &heading_ids,
+            policy,
+            &mut inline_context,
+            false,
+        );
     }
     for problem in input_usage.finish() {
         let domain = problem.domain.as_str();
@@ -301,6 +259,67 @@ pub fn render_with_inputs(
         diagnostics,
         document_attributes,
         heading_ids,
+    }
+}
+
+fn render_layout_nodes(
+    output: &mut String,
+    document: &AstDocument,
+    nodes: &[crate::presentation::LayoutNode],
+    heading_ids: &[HeadingId],
+    policy: &RenderPolicy,
+    context: &mut InlineRenderContext<'_, '_>,
+    bibliography_section: bool,
+) {
+    for node in nodes {
+        match node {
+            crate::presentation::LayoutNode::Generated(
+                crate::presentation::GeneratedLayoutNode::TableOfContents,
+            ) => render_toc(output, document.presentation()),
+            crate::presentation::LayoutNode::Generated(
+                crate::presentation::GeneratedLayoutNode::FootnoteCatalog,
+            ) => render_footnote_catalog(output, document.catalogs()),
+            crate::presentation::LayoutNode::Section { scope, nodes } => {
+                render_layout_nodes(
+                    output,
+                    document,
+                    nodes,
+                    heading_ids,
+                    policy,
+                    context,
+                    bibliography_section
+                        || matches!(scope, crate::presentation::LayoutScope::Bibliography),
+                );
+            }
+            crate::presentation::LayoutNode::Block(block_id) => {
+                context.bibliography_section = bibliography_section;
+                let block = document
+                    .top_level_block(*block_id)
+                    .expect("layout only contains top-level blocks");
+                let explicit_id = context
+                    .targets
+                    .iter()
+                    .find(|target| target.target_range == block.range())
+                    .map(|target| target.id.as_str());
+                let heading_id = heading_ids
+                    .iter()
+                    .find(|heading| {
+                        matches!(block, AstBlock::Heading(value) if value.text_range == heading.range)
+                    })
+                    .map(|heading| heading.id.as_str());
+                render_block(output, block, explicit_id, heading_id, policy, context);
+                if matches!(
+                    block,
+                    AstBlock::Heading(Heading {
+                        kind: HeadingKind::DocumentTitle,
+                        ..
+                    })
+                ) && policy.render_document_title
+                {
+                    render_header_metadata(output, document.header());
+                }
+            }
+        }
     }
 }
 

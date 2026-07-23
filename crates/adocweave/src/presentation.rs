@@ -200,15 +200,23 @@ pub struct TocPolicy {
 pub enum GeneratedLayoutNode {
     TableOfContents,
     FootnoteCatalog,
-    BibliographySectionStart(BlockId),
-    BibliographySectionEnd,
+}
+
+/// Semantic scope attached to a nested layout region.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayoutScope {
+    Bibliography,
 }
 
 /// One item in a backend-independent document layout.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LayoutNode {
     Block(BlockId),
     Generated(GeneratedLayoutNode),
+    Section {
+        scope: LayoutScope,
+        nodes: Vec<LayoutNode>,
+    },
 }
 
 /// Immutable presentation order for top-level semantic blocks and generated
@@ -436,36 +444,68 @@ fn toc_entries(
 }
 
 pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
-    let mut nodes = Vec::new();
-    let mut bibliography_level = None;
-    for id in document.index().top_level_blocks().iter().copied() {
-        let block = document
-            .top_level_block(id)
-            .expect("indexed top-level block");
-        if let crate::parser::AstBlock::Heading(heading) = block {
-            let level = match heading.kind {
-                crate::parser::HeadingKind::DocumentTitle | crate::parser::HeadingKind::Part => 0,
-                crate::parser::HeadingKind::Section { level }
-                | crate::parser::HeadingKind::Discrete { level } => level,
+    fn structural_heading_level(block: &crate::parser::AstBlock) -> Option<u8> {
+        let crate::parser::AstBlock::Heading(heading) = block else {
+            return None;
+        };
+        match heading.kind {
+            crate::parser::HeadingKind::DocumentTitle | crate::parser::HeadingKind::Part => Some(0),
+            crate::parser::HeadingKind::Section { level } => Some(level),
+            crate::parser::HeadingKind::Discrete { .. } => None,
+        }
+    }
+
+    fn layout_nodes(
+        document: &AstDocument,
+        ids: &[BlockId],
+        recognize_scopes: bool,
+    ) -> Vec<LayoutNode> {
+        let mut nodes = Vec::new();
+        let mut index = 0;
+        while index < ids.len() {
+            let id = ids[index];
+            let block = document
+                .top_level_block(id)
+                .expect("indexed top-level block");
+            let bibliography_level = if recognize_scopes {
+                match block {
+                    crate::parser::AstBlock::Heading(heading)
+                        if document
+                            .presentation()
+                            .bibliography_section_at(heading.range)
+                            .is_some() =>
+                    {
+                        structural_heading_level(block)
+                    }
+                    _ => None,
+                }
+            } else {
+                None
             };
-            let bibliography = document
-                .presentation()
-                .bibliography_section_at(heading.range)
-                .is_some();
-            if bibliography {
-                nodes.push(LayoutNode::Generated(
-                    GeneratedLayoutNode::BibliographySectionStart(id),
-                ));
-                bibliography_level = Some(level);
-            } else if bibliography_level.is_some_and(|active| level <= active) {
-                nodes.push(LayoutNode::Generated(
-                    GeneratedLayoutNode::BibliographySectionEnd,
-                ));
-                bibliography_level = None;
+            if let Some(level) = bibliography_level {
+                let end = ids[index + 1..]
+                    .iter()
+                    .position(|next_id| {
+                        document
+                            .top_level_block(*next_id)
+                            .and_then(structural_heading_level)
+                            .is_some_and(|next_level| next_level <= level)
+                    })
+                    .map_or(ids.len(), |offset| index + offset + 1);
+                nodes.push(LayoutNode::Section {
+                    scope: LayoutScope::Bibliography,
+                    nodes: layout_nodes(document, &ids[index..end], false),
+                });
+                index = end;
+            } else {
+                nodes.push(LayoutNode::Block(id));
+                index += 1;
             }
         }
-        nodes.push(LayoutNode::Block(id));
+        nodes
     }
+
+    let mut nodes = layout_nodes(document, document.index().top_level_blocks(), true);
     if document.presentation().toc_policy().enabled {
         let insertion = nodes
             .iter()
@@ -473,12 +513,11 @@ pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
                 let LayoutNode::Block(id) = node else {
                     return false;
                 };
-                document.index().block_range(*id).is_some_and(|range| {
-                    document.blocks().iter().any(|block| {
-                        matches!(block, crate::parser::AstBlock::Heading(heading) if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle))
-                            && block.range() == range
-                    })
-                })
+                matches!(
+                    document.top_level_block(*id),
+                    Some(crate::parser::AstBlock::Heading(heading))
+                        if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle)
+                )
             })
             .map_or(0, |index| index + 1);
         nodes.insert(
@@ -492,7 +531,7 @@ pub(crate) fn build_layout(document: &AstDocument) -> DocumentLayout {
 
 #[cfg(test)]
 mod tests {
-    use super::{GeneratedLayoutNode, LayoutNode};
+    use super::{GeneratedLayoutNode, LayoutNode, LayoutScope};
     use crate::parser::parse;
 
     #[test]
@@ -557,7 +596,7 @@ mod tests {
     }
 
     #[test]
-    fn bibliography_sections_are_explicit_layout_boundaries() {
+    fn bibliography_sections_own_their_layout_scope() {
         let parsed =
             parse("= Title\n\n[bibliography]\n== Sources\n\n* entry\n\n== After\n").expect("parse");
         let nodes = parsed.ast.layout().nodes();
@@ -565,13 +604,10 @@ mod tests {
         assert!(nodes.iter().any(|node| {
             matches!(
                 node,
-                LayoutNode::Generated(GeneratedLayoutNode::BibliographySectionStart(_))
-            )
-        }));
-        assert!(nodes.iter().any(|node| {
-            matches!(
-                node,
-                LayoutNode::Generated(GeneratedLayoutNode::BibliographySectionEnd)
+                LayoutNode::Section {
+                    scope: LayoutScope::Bibliography,
+                    nodes
+                } if matches!(nodes.first(), Some(LayoutNode::Block(_)))
             )
         }));
     }

@@ -1,5 +1,5 @@
 = 文書表示属性とbibliography構造の検証完全化
-:status: in-progress
+:status: completed
 :depends-on: 119
 
 == 目的

@@ -1,5 +1,5 @@
 = Section scopeを所有するdocument layout
-:status: in-progress
+:status: completed
 :depends-on: 118
 
 == 目的
@@ -21,4 +21,3 @@ backendが開始／終了の可変状態や見出しの再走査を行わず、s
 == 完了条件
 
 section scopeと生成物配置が一つのimmutable layoutから決定され、rendererがASTを探索せずに描画できる。
-
