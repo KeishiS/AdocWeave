@@ -1,0 +1,20 @@
+= Bibliography構造検証の契約同期
+:status: completed
+:depends-on: 140
+
+== 目的
+
+実装済みのbibliography section検証を、対応表、互換性文書、fixtureおよびconsumer横断検証へ同期する。
+実装と文書が異なる対応状態を述べないことを完了条件とする。
+
+== 完了条件
+
+* article、book、multipart book、manpage、document titleおよびdiscrete headingのsection検証をfixtureで固定する。
+* 対応表と互換性文書がsection level検証を対応済みとして記載する。
+* citation style整形とindex rangeを未対応の独立した後順位項目として記録する。
+
+== 実施結果
+
+既存のlint、structure snapshotおよびconformance fixtureがdoctype・heading種別・multipart book scopeを
+検証していることを確認した。対応表と互換性文書を実装済み契約へ同期し、citation style整形とindex rangeだけを
+未対応として明記した。

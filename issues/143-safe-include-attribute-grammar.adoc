@@ -1,0 +1,21 @@
+= 安全なinclude属性文法とoptional include
+:status: planned
+:depends-on: 141
+
+== 目的
+
+snapshotだけを参照するpreprocessor境界を維持したまま、quote内のcommaを含むinclude属性値と
+明示`optional` includeを扱う。
+
+== 設計判断
+
+属性listはquote-awareな構文値として一度だけ解析する。`optional`はmissing resourceだけを空展開として
+扱い、unsafe target、cycle、encoding、resource上限およびattribute構文エラーを抑止しない。wildcard includeと
+host I/Oは本Issueの範囲外とする。
+
+== 完了条件
+
+* `tag`、`tags`、`lines`、`indent`、`leveloffset`、`encoding`および`optional`がquote-awareな属性文法を共有する。
+* optional includeはmissing snapshot resourceだけを安定したnotice付きの空展開にする。
+* native、WASM、LSPが同じsnapshot入力で同じ展開結果・source map・diagnosticを得る。
+* wildcard、暗黙filesystemアクセスおよびnetwork取得を導入しない。

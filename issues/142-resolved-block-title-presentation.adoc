@@ -1,0 +1,20 @@
+= 解決済みblock title・caption presentation
+:status: planned
+:depends-on: 141
+
+== 目的
+
+block titleをraw metadata文字列としてbackendへ渡す経路を廃止し、属性展開と通常inline構文を適用した
+backend非依存のtitle presentationへ統一する。table captionとadmonition titleを最初のconsumerとする。
+
+== 設計判断
+
+sourceのlossless metadata titleは保持する。一方、semantic documentはtitleのsource range、解決済みinline列および
+inline診断を持つ。backendはsource文字列を再解析せず、このinline列だけを描画する。
+
+== 完了条件
+
+* 属性参照、強調、link macroを含むtitle/captionがHTML、projection、canonical ASTおよびWASMで同じ意味を持つ。
+* table captionとadmonition titleが共通presentationを利用する。
+* 未解決属性・不完全inlineの診断範囲がtitle sourceへ対応する。
+* 旧raw caption契約を維持するadapterは残さない。

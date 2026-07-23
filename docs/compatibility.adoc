@@ -201,7 +201,6 @@ quoted multiline cell、任意の1文字separator、duplicationおよびPSVのAs
 AsciiDoc cellは対応済みblock sequence全体とカスタムseparator delimiterによる入れ子表を解析する。
 caption、frame、grid、stripes、width（1から100のunitlessまたは`%`付き百分率）およびautowidthを型付きpresentationとして解決する。
 caption内のinline置換と自動header推論は未対応
-自動header推論は未対応
 
 |標準inline／block macro
 |image、footnote、anchor、email、keyboard、button、menu、index等
@@ -212,7 +211,8 @@ inline／block image、icon、audioおよびvideo、footnote一覧、bibliograph
 |comment、admonition、thematic／page break、bibliography、footnote
 |comment、5種のadmonition paragraph／block、thematic／page break、bibliography anchor、footnote macro、文書catalog、番号付け、
 再利用およびback referenceに対応。`[bibliography]` section内の順序なしlistとcitation back referenceを出力する。
-index rangeは未対応
+bibliography styleはdoctype、document title／discrete headingおよびmultipart bookのsection scopeを検証する。
+citation styleの整形とindex rangeは未対応
 |===
 
 Markdown風見出し、fenced code blockおよびMarkdown blockquoteは公式quick referenceにも掲載されるが、
