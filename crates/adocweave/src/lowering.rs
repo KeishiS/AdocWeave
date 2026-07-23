@@ -17,7 +17,8 @@ pub(crate) struct ParsedFacts {
 
 pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     configure_tables(&mut facts.blocks);
-    facts.blocks = normalize_verbatim_blocks(facts.blocks);
+    let source_language = source_language(&facts.attributes);
+    facts.blocks = normalize_verbatim_blocks(facts.blocks, source_language.as_deref());
     attach_anchors(&mut facts.anchors, &facts.blocks);
     facts.header.doctype = document_type(&facts.attributes);
     let mut document =
@@ -32,11 +33,33 @@ pub(crate) fn lower(mut facts: ParsedFacts) -> AstDocument {
     document
 }
 
-fn normalize_verbatim_blocks(blocks: Vec<AstBlock>) -> Vec<AstBlock> {
-    blocks.into_iter().map(normalize_verbatim_block).collect()
+fn source_language(attributes: &[DocumentAttribute]) -> Option<String> {
+    let mut language = None;
+    for attribute in attributes {
+        if attribute.name != "source-language" {
+            continue;
+        }
+        match attribute.operation {
+            AttributeOperation::Set if !attribute.raw_value.trim().is_empty() => {
+                language = Some(attribute.raw_value.trim().to_owned());
+            }
+            AttributeOperation::Set | AttributeOperation::Unset => language = None,
+        }
+    }
+    language
 }
 
-fn normalize_verbatim_block(block: AstBlock) -> AstBlock {
+fn normalize_verbatim_blocks(
+    blocks: Vec<AstBlock>,
+    source_language: Option<&str>,
+) -> Vec<AstBlock> {
+    blocks
+        .into_iter()
+        .map(|block| normalize_verbatim_block(block, source_language))
+        .collect()
+}
+
+fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> AstBlock {
     match block {
         AstBlock::Source(source) => AstBlock::Verbatim(crate::parser::VerbatimBlock {
             metadata: source.metadata,
@@ -54,7 +77,35 @@ fn normalize_verbatim_block(block: AstBlock) -> AstBlock {
         }),
         AstBlock::Delimited(mut block) => {
             if let crate::parser::DelimitedContent::Compound(children) = &mut block.content {
-                *children = normalize_verbatim_blocks(std::mem::take(children));
+                *children = normalize_verbatim_blocks(std::mem::take(children), source_language);
+            }
+            if block.kind == crate::parser::DelimitedBlockKind::Listing
+                && !block
+                    .metadata
+                    .attributes
+                    .iter()
+                    .any(|attribute| attribute.name.is_none() && attribute.value == "listing")
+                && let Some(language) = source_language
+                && let crate::parser::DelimitedContent::Verbatim(value) = block.content
+            {
+                let attribute_range = block
+                    .metadata
+                    .range
+                    .unwrap_or(block.opening_delimiter_range);
+                return AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                    metadata: block.metadata,
+                    kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
+                        attribute_range,
+                        language_range: None,
+                        language: Some(language.to_owned()),
+                    }),
+                    range: block.range,
+                    delimiter_range: block.opening_delimiter_range,
+                    content_range: block.content_range,
+                    value,
+                    callouts: Vec::new(),
+                    problems: block.problems,
+                });
             }
             let kind = match block.kind {
                 crate::parser::DelimitedBlockKind::Listing => {
@@ -84,10 +135,12 @@ fn normalize_verbatim_block(block: AstBlock) -> AstBlock {
         AstBlock::List(mut list) => {
             for item in &mut list.items {
                 for child in &mut item.children {
-                    normalize_list(child);
+                    normalize_list(child, source_language);
                 }
-                item.continuations =
-                    normalize_verbatim_blocks(std::mem::take(&mut item.continuations));
+                item.continuations = normalize_verbatim_blocks(
+                    std::mem::take(&mut item.continuations),
+                    source_language,
+                );
             }
             AstBlock::List(list)
         }
@@ -95,12 +148,13 @@ fn normalize_verbatim_block(block: AstBlock) -> AstBlock {
     }
 }
 
-fn normalize_list(list: &mut crate::parser::ListBlock) {
+fn normalize_list(list: &mut crate::parser::ListBlock, source_language: Option<&str>) {
     for item in &mut list.items {
         for child in &mut item.children {
-            normalize_list(child);
+            normalize_list(child, source_language);
         }
-        item.continuations = normalize_verbatim_blocks(std::mem::take(&mut item.continuations));
+        item.continuations =
+            normalize_verbatim_blocks(std::mem::take(&mut item.continuations), source_language);
     }
 }
 

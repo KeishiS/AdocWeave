@@ -2159,11 +2159,16 @@ fn parse_source_block(
 }
 
 fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)>> {
-    let inner = text.strip_prefix("[source")?.strip_suffix(']')?;
-    if inner.is_empty() {
-        return Some(None);
-    }
-    let language = inner.strip_prefix(',')?;
+    let (language, prefix_len) = if let Some(inner) = text.strip_prefix("[source") {
+        let inner = inner.strip_suffix(']')?;
+        if inner.is_empty() {
+            return Some(None);
+        }
+        (inner.strip_prefix(',')?, "[source,".len())
+    } else {
+        let inner = text.strip_prefix('[')?.strip_suffix(']')?;
+        (inner.strip_prefix(',')?, "[,".len())
+    };
     let leading = language.len() - language.trim_start_matches([' ', '\t']).len();
     let trimmed = language.trim_matches([' ', '\t']);
     if trimmed.is_empty() {
@@ -2172,7 +2177,7 @@ fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)>> {
     if trimmed.contains([',', ']']) {
         return None;
     }
-    let start = "[source,".len() + leading;
+    let start = prefix_len + leading;
     Some(Some((start, start + trimmed.len())))
 }
 
@@ -2836,6 +2841,64 @@ mod tests {
         assert_eq!(block.value, "fn main() {}\n");
         assert!(block.problems.is_empty());
         assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
+    fn source_shorthand_and_document_default_normalize_to_verbatim_source() {
+        let source = concat!(
+            "= T\n",
+            ":source-language: rust\n",
+            "\n",
+            "[,python]\n",
+            "----\n",
+            "print('ok')\n",
+            "----\n",
+            "\n",
+            "----\n",
+            "fn main() {}\n",
+            "----\n",
+            "\n",
+            "[listing]\n",
+            "----\n",
+            "not source\n",
+            "----\n",
+        );
+        let parsed = parse(source).expect("parse");
+
+        let AstBlock::Verbatim(shorthand) = &parsed.ast.blocks()[1] else {
+            panic!("shorthand source");
+        };
+        let VerbatimKind::Source(shorthand_info) = &shorthand.kind else {
+            panic!("shorthand source kind");
+        };
+        assert_eq!(shorthand_info.language.as_deref(), Some("python"));
+        assert_eq!(
+            &source[shorthand_info
+                .language_range
+                .expect("range")
+                .start()
+                .to_usize()
+                ..shorthand_info
+                    .language_range
+                    .expect("range")
+                    .end()
+                    .to_usize()],
+            "python"
+        );
+
+        let AstBlock::Verbatim(defaulted) = &parsed.ast.blocks()[2] else {
+            panic!("default source");
+        };
+        let VerbatimKind::Source(default_info) = &defaulted.kind else {
+            panic!("default source kind");
+        };
+        assert_eq!(default_info.language.as_deref(), Some("rust"));
+        assert_eq!(default_info.language_range, None);
+
+        assert!(matches!(
+            parsed.ast.blocks()[3],
+            AstBlock::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Listing)
+        ));
     }
 
     #[test]
