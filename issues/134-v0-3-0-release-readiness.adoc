@@ -1,0 +1,34 @@
+= v0.3.0 release readinessとtable表示属性の受け入れ
+:status: in-progress
+:depends-on: 133
+
+== 目的
+
+`v0.2.0`以後に追加したtable captionと表示属性を、`v0.3.0-rc.N`から`v0.3.0` stableまでの
+一つのrelease trainとして受け入れる。公開前に機能追加を停止し、native、WASM、CLI、ZedおよびNixの
+成果物が同じversionと契約を参照することを確認する。
+
+== 判断
+
+block title caption、`frame`、`grid`、`stripes`、`width`および`autowidth`は利用者可視の機能追加である。
+`0.y.z`期間の方針に従い、次版はpatchではなくminorの`0.3.0`とする。
+
+`CONTRACT_VERSION`は、既存のrequest／response envelopeを変えない限り更新しない。table presentationの
+canonical AST表現は同じ単一契約version内の機能追加としてfixtureで固定し、hostは対応versionの成果物を
+混在させない。
+
+== 作業
+
+* workspace、Zed、browser、release manifestおよび配布設定を`0.3.0-rc.1`へ同期する。
+* `v0.2.0`からの利用者可視差分、HTML allowlist、診断、LSP completionおよびformatter契約を監査する。
+* mainのcandidate成功後に`v0.3.0-rc.1`を公開し、9 asset、checksum、attestation、CLI、LSP、browser、ZedおよびNixを受け入れる。
+* RC公開後は機能追加を停止し、repository所有者の公開前確認後にstableを公開する。
+* blocker修正が公開契約を変更する場合は新しいRCを公開する。stableは最終RCと同じ機能baselineに、stable version metadataだけを同期して公開する。
+
+== 検証
+
+* `cargo make release-gate`
+* `node tools/release-contract.mjs --tag=v0.3.0-rc.1`
+* tag workflowの必須job、公開assetの完全性検証およびclean環境の導入E2E
+* Linux x86-64／ARM64、browser Worker、NixOSおよびZedの受け入れ記録
+

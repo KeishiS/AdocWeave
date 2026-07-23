@@ -243,6 +243,13 @@ Markdown互換は個別の設計Issueで扱う。CIの性能改善、current sta
 * xref:132-current-stable-rust-policy.adoc[132: Current stable Rust方針への移行]（完了）
 * xref:133-table-presentation-attributes.adoc[133: Table表示属性とcaptionの型付きprojection]（完了）
 
+=== M31: v0.3.0 release train
+
+table表示属性をminor releaseとして受け入れる。RCで公開assetを確認した後、機能追加を止めて
+同一source commitをstableへ昇格する。
+
+* xref:134-v0-3-0-release-readiness.adoc[134: v0.3.0 release readinessとtable表示属性の受け入れ]（進行中）
+
 === M1: プレーンテキスト変換
 
 * xref:001-workspace-and-cli.adoc[001: Cargo workspaceとCLIの初期化]
