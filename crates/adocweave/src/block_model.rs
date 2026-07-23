@@ -272,6 +272,7 @@ pub enum OrderedListStyle {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ListPresentationProblemKind {
     InvalidStart,
+    InvalidExplicitNumber,
     InconsistentExplicitNumber,
     UnknownOrderedStyle,
 }
@@ -333,6 +334,9 @@ pub struct ListItem {
     pub marker_range: TextRange,
     /// The numeral supplied in an explicitly numbered ordered-list marker.
     pub explicit_number: Option<u32>,
+    /// Whether the explicitly numbered marker cannot be represented as `u32`.
+    /// The original marker remains available through [`Self::marker_range`].
+    pub invalid_explicit_number: bool,
     pub separator_range: TextRange,
     pub text_range: TextRange,
     pub text: String,

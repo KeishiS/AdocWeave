@@ -82,7 +82,7 @@ Issue 040で、xref:../fixtures/conformance/cases.json[共通conformance manifes
 
 `ConformanceSnapshot`は比較専用のversion付き契約である。syntax token表現、semantic ASTの
 構造・順序、診断JSON、シンボルJSON、projection JSONまたはHTMLの意味を変更する場合は、
-fixtureの`contractImpact`を再判定し、必要なら`CONFORMANCE_CONTRACT_VERSION`を更新する。
+fixtureの`contractImpact`を再判定し、必要なら`CONTRACT_VERSION`を更新する。
 
 AST適合性値はcompact JSONであり、Rustの`Debug`表示ではない。公開semantic APIから独立した
 version付きconformance DTOを使用し、`schemaVersion`、意味node種別、UTF-8 byte range、

@@ -1,19 +1,10 @@
-export interface AdocWeaveContracts {
-  conformance: number;
-  coreApi: number;
-  coreProfile: number;
-  html: number;
-  projection: number;
-  wasmApi: number;
-}
-
 export interface AdocWeaveResult {
   html: string;
   diagnostics: unknown[];
   renderDiagnostics: unknown[];
   sourceVersion: number;
   generation: number;
-  contracts: AdocWeaveContracts;
+  contractVersion: number;
   result: AdocWeaveWasmResponse;
 }
 
@@ -181,10 +172,4 @@ export declare function defaultAssetUrls(baseUrl?: string | URL): {
   wasmUrl: URL;
 };
 export declare const BROWSER_PACKAGE_VERSION: string;
-export declare const CONTRACT_VERSIONS: Readonly<AdocWeaveContracts>;
-export declare const CONFORMANCE_CONTRACT_VERSION: number;
-export declare const CORE_API_VERSION: number;
-export declare const CORE_PROFILE_VERSION: number;
-export declare const HTML_CONTRACT_VERSION: number;
-export declare const PROJECTION_CONTRACT_VERSION: number;
-export declare const WASM_API_VERSION: number;
+export declare const CONTRACT_VERSION: number;

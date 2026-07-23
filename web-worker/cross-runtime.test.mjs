@@ -20,7 +20,7 @@ function requestFor(entry) {
     ? readFileSync(resolve(fixtures, entry.sourceFile), "utf8")
     : entry.source;
   return {
-    apiVersion: release.contracts.wasmApi,
+    apiVersion: release.contractVersion,
     sourceId: `conformance:${entry.name}`,
     version: 1,
     generation: 1,

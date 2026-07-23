@@ -294,6 +294,14 @@ mod tests {
     }
 
     #[test]
+    fn formatter_preserves_invalid_explicit_ordered_number_markers() {
+        let source = "4294967296. overflow\n0. zero\n";
+        let output = format(source, &FormatConfig::default()).expect("valid source");
+
+        assert_eq!(output.formatted, source);
+    }
+
+    #[test]
     fn formatter_supports_crlf_and_no_final_newline() {
         let config = FormatConfig {
             newline: NewlineStyle::CrLf,

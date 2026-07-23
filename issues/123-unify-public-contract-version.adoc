@@ -1,0 +1,19 @@
+= 公開契約versionの単一化
+:status: completed
+:depends-on: 118
+
+== 目的
+
+`CORE_PROFILE_VERSION`、`CORE_API_VERSION`、`HTML_CONTRACT_VERSION`、
+`PROJECTION_CONTRACT_VERSION`、`CONFORMANCE_CONTRACT_VERSION`および`WASM_API_VERSION`を
+一つの`CONTRACT_VERSION`へ破壊的に統合し、公開変更時の同期コストを下げる。
+
+== 作業
+
+* Rust core、HTML、projection、conformance、WASM、Web Workerおよびrelease manifestを単一versionへ移行する。
+* package versionとは独立に、cache、snapshotおよびWASM要求境界を一つのversionで無効化する。
+* version catalog・文書・governance testを単一契約の正本へ再設計する。
+
+== 検証
+
+* CLI、LSP、native/WASM conformanceおよびrepository governanceで単一versionを検証する。

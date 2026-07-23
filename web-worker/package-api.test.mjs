@@ -56,7 +56,7 @@ test("fallback mode recreates workers and never publishes stale results", async 
   assert.equal(oldWorker.terminated, true);
   oldWorker.publish({ type: "result", version: 1, generation: 1, result: { html: "old" } });
   currentWorker.publish({ type: "result", version: 2, generation: 2, result: {
-    html: "new", diagnostics: [], renderDiagnostics: [], contracts: {},
+    html: "new", diagnostics: [], renderDiagnostics: [], contractVersion: 1,
   } });
   assert.equal(results.length, 1);
   assert.equal(results[0].html, "new");

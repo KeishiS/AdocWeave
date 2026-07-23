@@ -171,7 +171,7 @@ async function verifyBrowserContract() {
     return { sourceStart, sourceEnd: sourceStart + Buffer.byteLength(text) };
   });
   const response = wasm.process({
-    apiVersion: contracts.WASM_API_VERSION,
+    apiVersion: contracts.CONTRACT_VERSION,
     sourceId: "acceptance:resolved-display-text",
     version: 1,
     generation: 1,

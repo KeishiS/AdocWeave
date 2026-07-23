@@ -7,7 +7,7 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Analysis, CORE_API_VERSION, CancellationCheck, Engine, ParseError, ParseOptions, SourceId,
+    Analysis, CONTRACT_VERSION, CancellationCheck, Engine, ParseError, ParseOptions, SourceId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,7 +106,7 @@ impl AnalysisCacheKey {
             allow_data_uris,
         } = url_policy;
         let mut hasher = Sha256::new();
-        hash_u16(&mut hasher, CORE_API_VERSION);
+        hash_u16(&mut hasher, CONTRACT_VERSION);
         hash_bytes(&mut hasher, source.as_bytes());
         hash_optional_string(&mut hasher, source_id.as_ref().map(SourceId::as_str));
         hash_u8(
@@ -323,7 +323,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "0fe88415bc2f0506473c311727bd7d4b80efba6162566549c139b6ca7dabd26c"
+            "040c1a4b5fa41ee0b00c948d5c7d1d070d90621a9adfa1813cac5fab64815a17"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

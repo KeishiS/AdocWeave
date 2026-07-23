@@ -48,8 +48,8 @@ pub mod url;
 pub mod walker;
 
 pub use core::{
-    Analysis, CORE_API_VERSION, CORE_PROFILE_VERSION, CancellationCheck, CancellationToken, Engine,
-    NeverCancel, ParseError, ParseOptions, SourceId,
+    Analysis, CONTRACT_VERSION, CancellationCheck, CancellationToken, Engine, NeverCancel,
+    ParseError, ParseOptions, SourceId,
 };
 pub use execution::{AnalysisRequest, AnalysisResult, DocumentRevision};
 

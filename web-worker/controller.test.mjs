@@ -6,7 +6,7 @@ import {
   createController,
 } from "./controller.mjs";
 import { AdocWeaveWorkerClient } from "./client.mjs";
-import { WASM_API_VERSION } from "./contracts.mjs";
+import { CONTRACT_VERSION } from "./contracts.mjs";
 
 function harness(process = (request) => request) {
   const messages = [];
@@ -45,7 +45,7 @@ function request(version, generation) {
     version,
     generation,
     payload: {
-      apiVersion: WASM_API_VERSION,
+      apiVersion: CONTRACT_VERSION,
       sourceId: null,
       version,
       generation,
@@ -115,7 +115,7 @@ test("client sends the current WASM API version with core-owned default options"
 
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(messages[1].payload.apiVersion, WASM_API_VERSION);
+  assert.equal(messages[1].payload.apiVersion, CONTRACT_VERSION);
   assert.deepEqual(messages[1].payload.options, {});
   client.dispose();
 });

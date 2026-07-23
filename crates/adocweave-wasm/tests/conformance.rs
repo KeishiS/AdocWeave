@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use adocweave::NeverCancel;
-use adocweave_wasm::{WASM_API_VERSION, WasmRequest, process_request};
+use adocweave_wasm::{WasmRequest, process_request};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -11,18 +11,7 @@ use serde_json::{Value, json};
 struct ReleaseManifest {
     schema_version: u16,
     package_version: String,
-    contracts: ContractVersions,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ContractVersions {
-    core_profile: u16,
-    core_api: u16,
-    html: u16,
-    projection: u16,
-    conformance: u16,
-    wasm_api: u16,
+    contract_version: u16,
 }
 
 #[test]
@@ -50,7 +39,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
             continue;
         }
         let response = result.expect(name);
-        assert_eq!(response.api_version, WASM_API_VERSION, "{name}");
+        assert_eq!(response.api_version, adocweave::CONTRACT_VERSION, "{name}");
         assert!(!response.syntax.is_empty(), "{name}: syntax tree");
         assert!(!response.ast.is_empty(), "{name}: AST");
         if let Some(file) = entry["expectedHtmlFile"].as_str() {
@@ -86,25 +75,13 @@ fn native_adapter_accepts_every_shared_conformance_case() {
 }
 
 #[test]
-fn release_contract_versions_are_explicit_and_independent() {
+fn release_contract_version_is_explicit() {
     let manifest: ReleaseManifest =
         serde_json::from_str(include_str!("../../../release-manifest.json"))
             .expect("valid release manifest");
     assert_eq!(manifest.schema_version, 2);
     assert_eq!(manifest.package_version, env!("CARGO_PKG_VERSION"));
-    let contracts = manifest.contracts;
-    assert_eq!(contracts.core_profile, adocweave::CORE_PROFILE_VERSION);
-    assert_eq!(contracts.core_api, adocweave::CORE_API_VERSION);
-    assert_eq!(contracts.html, adocweave::html::HTML_CONTRACT_VERSION);
-    assert_eq!(
-        contracts.projection,
-        adocweave::projection::PROJECTION_CONTRACT_VERSION
-    );
-    assert_eq!(
-        contracts.conformance,
-        adocweave::conformance::CONFORMANCE_CONTRACT_VERSION
-    );
-    assert_eq!(contracts.wasm_api, WASM_API_VERSION);
+    assert_eq!(manifest.contract_version, adocweave::CONTRACT_VERSION);
 }
 
 fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
@@ -118,7 +95,7 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
         .cloned()
         .unwrap_or_else(|| json!({}));
     serde_json::from_value(json!({
-        "apiVersion": WASM_API_VERSION,
+        "apiVersion": adocweave::CONTRACT_VERSION,
         "sourceId": format!("conformance:{}", entry["name"].as_str().expect("name")),
         "version": 1,
         "generation": 1,

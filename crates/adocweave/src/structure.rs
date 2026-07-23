@@ -172,7 +172,7 @@ pub(crate) fn build(document: &AstDocument) -> DocumentStructure {
                     range: heading.range,
                 });
             }
-            if matches!(heading.kind, HeadingKind::Section { level: 1 })
+            if !matches!(heading.kind, HeadingKind::Section { level: 2.. })
                 && !matches!(
                     document.header().doctype,
                     DocumentType::Article | DocumentType::Book

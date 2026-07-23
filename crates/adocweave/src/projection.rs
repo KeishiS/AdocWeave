@@ -10,8 +10,6 @@ use crate::reference::{ReferenceKey, ResolutionOutcome};
 use crate::render::{RenderInputs, ResolutionMatch};
 use crate::source::TextRange;
 
-pub const PROJECTION_CONTRACT_VERSION: u16 = 10;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
     pub contract_version: u16,
@@ -240,7 +238,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
     formulas.sort_by_key(|formula| (formula.source_range.start(), formula.source_range.end()));
 
     DocumentProjection {
-        contract_version: PROJECTION_CONTRACT_VERSION,
+        contract_version: crate::CONTRACT_VERSION,
         source_id: analysis.source_id().cloned(),
         title,
         targets: analysis.reference_targets().to_vec(),
@@ -900,7 +898,7 @@ mod tests {
         let projected = project(&analysis, &RenderInputs::default());
         let html = crate::html::render(analysis.ast(), &crate::html::RenderPolicy::default());
 
-        assert_eq!(projected.contract_version, PROJECTION_CONTRACT_VERSION);
+        assert_eq!(projected.contract_version, crate::CONTRACT_VERSION);
         assert!(html.html.contains("<h1"));
         assert_eq!(projected.external_links.len(), 1);
         assert_eq!(projected.reference_edges.len(), 3);
@@ -1035,7 +1033,7 @@ mod tests {
             .expect("analysis");
         assert_eq!(
             project(&analysis, &RenderInputs::default()).render_json(),
-            "{\"contractVersion\":10,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"contractVersion\":1,\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

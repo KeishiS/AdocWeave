@@ -293,6 +293,9 @@ fn lint_list_presentation(
                 crate::parser::ListPresentationProblemKind::InvalidStart => {
                     "ordered list start must be a positive integer"
                 }
+                crate::parser::ListPresentationProblemKind::InvalidExplicitNumber => {
+                    "explicit ordered-list number must be a positive 32-bit integer"
+                }
                 crate::parser::ListPresentationProblemKind::InconsistentExplicitNumber => {
                     "explicit ordered-list numbers must be sequential"
                 }
@@ -1045,6 +1048,24 @@ mod tests {
             diagnostic.code.as_str() == "invalid-list-presentation"
                 && diagnostic.message == "explicit ordered-list numbers must be sequential"
         }));
+    }
+
+    #[test]
+    fn invalid_explicit_ordered_numbers_have_stable_diagnostics() {
+        let diagnostics =
+            lint("4294967296. overflow\n0. zero\n", &LintConfig::default()).expect("valid source");
+
+        let invalid = diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code.as_str() == "invalid-list-presentation"
+                    && diagnostic.message
+                        == "explicit ordered-list number must be a positive 32-bit integer"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(invalid.len(), 2);
+        assert_eq!(invalid[0].range.start().to_u32(), 0);
+        assert_eq!(invalid[0].range.end().to_u32(), 11);
     }
 
     #[test]

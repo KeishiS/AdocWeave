@@ -218,6 +218,12 @@ fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
     }
     let mut expected = presentation.start.unwrap_or(1);
     for item in &list.items {
+        if item.invalid_explicit_number {
+            problems.push(crate::parser::ListPresentationProblem {
+                kind: crate::parser::ListPresentationProblemKind::InvalidExplicitNumber,
+                range: item.marker_range,
+            });
+        }
         if let Some(number) = item.explicit_number {
             if number != expected {
                 problems.push(crate::parser::ListPresentationProblem {

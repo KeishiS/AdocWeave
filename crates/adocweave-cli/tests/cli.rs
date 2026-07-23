@@ -69,11 +69,7 @@ fn cli_reports_machine_readable_release_contracts() {
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("version JSON");
     assert_eq!(value["packageVersion"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(
-        value["contracts"]["coreProfile"],
-        adocweave::CORE_PROFILE_VERSION
-    );
-    assert_eq!(value["contracts"]["coreApi"], adocweave::CORE_API_VERSION);
+    assert_eq!(value["contractVersion"], adocweave::CONTRACT_VERSION);
 }
 
 #[test]
@@ -145,6 +141,20 @@ fn check_supports_human_and_json_diagnostics() {
     assert!(json.status.success());
     assert!(
         String::from_utf8_lossy(&json.stdout).starts_with("[{\"id\":\"trailing-whitespace@8:9\"")
+    );
+}
+
+#[test]
+fn check_reports_invalid_explicit_ordered_numbers_without_losing_the_list() {
+    let source = b"4294967296. overflow\n0. zero\n";
+    let output = run_with_stdin(&["check", "--json", "-"], source);
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
+
+    assert!(output.status.success());
+    assert_eq!(diagnostics.as_array().expect("array").len(), 2);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("explicit ordered-list number must be a positive 32-bit integer")
     );
 }
 

@@ -20,18 +20,7 @@ struct AbnormalCase {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReleaseManifest {
-    contracts: ContractCatalog,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ContractCatalog {
-    core_profile: u16,
-    core_api: u16,
-    html: u16,
-    projection: u16,
-    conformance: u16,
-    wasm_api: u16,
+    contract_version: u16,
 }
 
 fn repository_root() -> std::path::PathBuf {
@@ -346,20 +335,20 @@ fn table_governance_validator_rejects_nested_stray_and_unclosed_delimiters() {
 }
 
 #[test]
-fn wasm_documentation_uses_the_release_manifest_version() {
+fn wasm_documentation_uses_the_release_manifest_contract_version() {
     let manifest: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(repository_root().join("release-manifest.json"))
             .expect("release manifest"),
     )
     .expect("valid release manifest");
-    let version = manifest["contracts"]["wasmApi"]
+    let version = manifest["contractVersion"]
         .as_u64()
         .expect("WASM API version");
     let documentation =
         fs::read_to_string(repository_root().join("docs/wasm-worker.adoc")).expect("WASM docs");
     assert!(
-        documentation.contains(&format!("`WASM_API_VERSION`は{version}")),
-        "WASM version prose"
+        documentation.contains(&format!("`CONTRACT_VERSION`は{version}")),
+        "contract version prose"
     );
     assert!(
         documentation.contains(&format!("\"apiVersion\": {version}")),
@@ -378,51 +367,18 @@ fn release_manifest_is_the_single_contract_version_catalog() {
         &fs::read_to_string(root.join("release-manifest.json")).expect("release manifest"),
     )
     .expect("valid release manifest");
-    let contracts = manifest.contracts;
-    assert_eq!(contracts.core_profile, adocweave::CORE_PROFILE_VERSION);
-    assert_eq!(contracts.core_api, adocweave::CORE_API_VERSION);
-    assert_eq!(contracts.html, adocweave::html::HTML_CONTRACT_VERSION);
-    assert_eq!(
-        contracts.projection,
-        adocweave::projection::PROJECTION_CONTRACT_VERSION
-    );
-    assert_eq!(
-        contracts.conformance,
-        adocweave::conformance::CONFORMANCE_CONTRACT_VERSION
-    );
-
-    let wasm_source =
-        fs::read_to_string(root.join("crates/adocweave-wasm/src/lib.rs")).expect("WASM source");
-    assert!(wasm_source.contains(&format!(
-        "pub const WASM_API_VERSION: u16 = {};",
-        contracts.wasm_api
-    )));
+    assert_eq!(manifest.contract_version, adocweave::CONTRACT_VERSION);
 
     let documentation =
         fs::read_to_string(root.join("docs/core-profile.adoc")).expect("contract documentation");
-    for expected in [
-        format!("`CORE_PROFILE_VERSION = {}`", contracts.core_profile),
-        format!("`CORE_API_VERSION = {}`", contracts.core_api),
-        format!("`HTML_CONTRACT_VERSION = {}`", contracts.html),
-        format!("`PROJECTION_CONTRACT_VERSION = {}`", contracts.projection),
-        format!("`CONFORMANCE_CONTRACT_VERSION = {}`", contracts.conformance),
-        format!("`WASM_API_VERSION = {}`", contracts.wasm_api),
-    ] {
-        assert!(documentation.contains(&expected), "missing {expected}");
-    }
+    assert!(documentation.contains(&format!(
+        "`CONTRACT_VERSION = {}`",
+        manifest.contract_version
+    )));
 
     let current_contract = fs::read_to_string(root.join("docs/current-contract.adoc"))
         .expect("current contract index");
-    for expected in [
-        format!("|Core profile |{}", contracts.core_profile),
-        format!("|Rust core API |{}", contracts.core_api),
-        format!("|HTML |{}", contracts.html),
-        format!("|Projection |{}", contracts.projection),
-        format!("|Conformance snapshot |{}", contracts.conformance),
-        format!("|WASM API |{}", contracts.wasm_api),
-    ] {
-        assert!(current_contract.contains(&expected), "missing {expected}");
-    }
+    assert!(current_contract.contains(&format!("|公開契約 |{}", manifest.contract_version)));
 }
 
 #[test]

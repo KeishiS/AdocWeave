@@ -20,7 +20,7 @@ workspace、CLI、LSP、WASM、browser packageおよびZed拡張は一つのpack
 stableの`vX.Y.Z`とrelease candidateの`vX.Y.Z-rc.N`（`N >= 1`）だけである。tagとversionが一致しない場合は
 build開始前に拒否する。
 
-初回公開baselineでは、Core Profile、Core API、HTML、projection、conformanceおよびWASM APIの6契約を
+初回公開baselineでは、すべての公開成果物が共有する単一の`CONTRACT_VERSION`を
 すべて`1`とする。この一括resetは公開前に一度だけ行った操作であり、以後は各契約を独立に単調増加させる。
 
 == Targetとarchive
@@ -46,7 +46,7 @@ GitHubが自動生成するsource archiveはbinary配布契約に含めない。
 
 == Distribution manifest
 
-`adocweave-dist-manifest.json`はpackage version、source commit、6契約versionおよび6 archiveのmetadataを
+`adocweave-dist-manifest.json`はpackage version、source commit、`CONTRACT_VERSION`および6 archiveのmetadataを
 保持する。各asset entryは名前、kind、target、archive形式、byte数、SHA-256および実行ファイル名を持つ。
 path separatorは`/`、hash対象はuploadするarchiveのbyte列そのものとする。assetは名前の昇順、JSON objectの
 keyは再帰的な辞書順とし、UTF-8、LF、末尾改行1個のpretty JSONとしてcanonicalizeする。

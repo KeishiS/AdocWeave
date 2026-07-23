@@ -90,6 +90,13 @@
       "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
     },
     {
+      "name": "invalid-explicit-ordered-list-numbering",
+      "source": "4294967296. overflow\n0. zero\n",
+      "compatibility": "supported-subset",
+      "rationale": "桁あふれと零の明示番号markerは段落に退化させず、lossless list itemと同一diagnosticをnative/WASM/LSP/CLIで保持する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
       "name": "document-presentation-toc-and-sectnums",
       "source": "= Book\n:toc:\n:toclevels: 1\n:sectnums:\n\n== First\n=== Hidden child\n\n== Second\n",
       "compatibility": "supported-subset",

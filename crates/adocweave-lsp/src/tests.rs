@@ -469,6 +469,29 @@ fn diagnostics_use_current_version_codes_and_unicode_positions() {
 }
 
 #[test]
+fn diagnostics_preserve_invalid_explicit_ordered_number_ranges() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///ordered-list.adoc",
+        1,
+        "4294967296. overflow\n0. zero\n",
+    );
+    let diagnostics = service
+        .diagnostics(&uri("file:///ordered-list.adoc"))
+        .expect("diagnostics");
+
+    assert_eq!(diagnostics.diagnostics.len(), 2);
+    assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code
+            == Some(lsp::NumberOrString::String(
+                "invalid-list-presentation".to_owned(),
+            ))
+            && diagnostic.range.start.line <= 1
+    }));
+}
+
+#[test]
 fn close_clears_diagnostics() {
     let mut service = LanguageService::default();
     let document_uri = uri("file:///a.adoc");

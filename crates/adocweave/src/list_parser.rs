@@ -19,6 +19,7 @@ pub(super) struct ParsedListMarker {
     pub(super) marker_start: usize,
     pub(super) marker_end: usize,
     pub(super) explicit_number: Option<u32>,
+    pub(super) invalid_explicit_number: bool,
     pub(super) text_start: usize,
     pub(super) term_end: Option<usize>,
     pub(super) callout_id: Option<u32>,
@@ -40,6 +41,7 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
             marker_start: 0,
             marker_end: depth,
             explicit_number: None,
+            invalid_explicit_number: false,
             text_start: depth + 1,
             term_end: None,
             callout_id: None,
@@ -47,9 +49,12 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
     }
     if marker.is_ascii_digit() {
         let digits = content.bytes().take_while(u8::is_ascii_digit).count();
-        let number = content[..digits].parse::<u32>().ok()?;
         let marker_end = digits + usize::from(content.as_bytes().get(digits) == Some(&b'.'));
         let separator = *content.as_bytes().get(marker_end)?;
+        let explicit_number = content[..digits]
+            .parse::<u32>()
+            .ok()
+            .filter(|number| *number > 0);
         return (content.as_bytes().get(digits) == Some(&b'.')
             && matches!(separator, b' ' | b'\t'))
         .then_some(ParsedListMarker {
@@ -57,7 +62,8 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
             depth: 1,
             marker_start: 0,
             marker_end,
-            explicit_number: Some(number),
+            explicit_number,
+            invalid_explicit_number: explicit_number.is_none(),
             text_start: marker_end + 1,
             term_end: None,
             callout_id: None,
@@ -74,6 +80,7 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
             marker_start: 0,
             marker_end: close + 1,
             explicit_number: None,
+            invalid_explicit_number: false,
             text_start: close + 2,
             term_end: None,
             callout_id: Some(id),
@@ -103,6 +110,7 @@ pub(super) fn marker(content: &str) -> Option<ParsedListMarker> {
             marker_start: offset,
             marker_end: after,
             explicit_number: None,
+            invalid_explicit_number: false,
             text_start: after
                 + usize::from(matches!(content.as_bytes().get(after), Some(b' ' | b'\t'))),
             term_end: Some(offset),

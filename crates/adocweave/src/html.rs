@@ -16,7 +16,6 @@ use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, Reso
 use crate::resource::{ResolvedResource, ResourceOutcome};
 use crate::url::{UrlContext, UrlPolicy};
 
-pub const HTML_CONTRACT_VERSION: u16 = 8;
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a", "audio", "body", "br", "code", "dd", "div", "dl", "dt", "em", "h1", "h2", "h3", "h4",
     "h5", "hr", "html", "img", "kbd", "li", "mark", "ol", "p", "pre", "span", "strong", "sub",
@@ -254,7 +253,7 @@ pub fn render_with_inputs(
     };
 
     HtmlOutput {
-        contract_version: HTML_CONTRACT_VERSION,
+        contract_version: crate::CONTRACT_VERSION,
         html,
         diagnostics,
         document_attributes,
@@ -1555,8 +1554,8 @@ fn escape_inline_text(output: &mut String, text: &str) {
 mod tests {
     use super::{
         ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
-        HTML_CONTRACT_VERSION, HtmlDocumentMode, MathLanguagePolicy, RenderPolicy,
-        ResolvedReference, ResourceCapabilities, SourceLanguagePolicy, UnknownSourceLanguage,
+        HtmlDocumentMode, MathLanguagePolicy, RenderPolicy, ResolvedReference,
+        ResourceCapabilities, SourceLanguagePolicy, UnknownSourceLanguage,
         UnresolvedReferencePresentation, render, render_with_inputs,
     };
     use crate::inline::{Inline, ReferenceDestination};
@@ -2059,7 +2058,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(HTML_CONTRACT_VERSION, 8);
+        assert_eq!(crate::CONTRACT_VERSION, 1);
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -2112,7 +2111,7 @@ mod tests {
         let parsed = parse("paragraph").expect("parse");
         assert_eq!(
             render(&parsed.ast, &RenderPolicy::default()).contract_version,
-            HTML_CONTRACT_VERSION
+            crate::CONTRACT_VERSION
         );
     }
 

@@ -1480,6 +1480,7 @@ fn parse_lists(
             marker_start,
             marker_end,
             explicit_number,
+            invalid_explicit_number,
             mut text_start,
             term_end,
             mut callout_id,
@@ -1590,6 +1591,7 @@ fn parse_lists(
             range: line.full_range(),
             marker_range,
             explicit_number,
+            invalid_explicit_number,
             separator_range,
             text_range: item_text_range,
             text: text.to_owned(),
@@ -3054,6 +3056,19 @@ mod tests {
         assert_eq!(list.items[0].explicit_number, Some(4));
         assert_eq!(list.items[1].explicit_number, Some(5));
         assert!(list.presentation_problems.is_empty());
+    }
+
+    #[test]
+    fn invalid_explicit_ordered_numbers_remain_list_items() {
+        let parsed = parse("4294967296. overflow\n0. zero\n").expect("parse");
+        let AstBlock::List(list) = &parsed.ast.blocks()[0] else {
+            panic!("ordered list");
+        };
+
+        assert_eq!(list.items.len(), 2);
+        assert!(list.items.iter().all(|item| item.invalid_explicit_number));
+        assert!(list.items.iter().all(|item| item.explicit_number.is_none()));
+        assert_eq!(list.items[0].marker_range.end().to_u32(), 11);
     }
 
     #[test]

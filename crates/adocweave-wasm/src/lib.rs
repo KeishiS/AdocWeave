@@ -2,14 +2,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use adocweave::conformance::{CONFORMANCE_CONTRACT_VERSION, snapshot};
+use adocweave::conformance::snapshot;
 use adocweave::html::RenderPolicy;
 use adocweave::limits::{ProcessingLimits, SyntaxMode};
 use adocweave::preprocessor::{
     PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode, preprocess,
 };
 use adocweave::url::UrlPolicy;
-use adocweave::{CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId};
+use adocweave::{
+    CONTRACT_VERSION, CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -18,8 +20,6 @@ pub use render_inputs::{
     WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
-
-pub const WASM_API_VERSION: u16 = 15;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -364,11 +364,11 @@ pub struct WasmError {
 pub fn preprocess_request(
     request: WasmPreprocessRequest,
 ) -> Result<WasmPreprocessResponse, WasmError> {
-    if request.api_version != WASM_API_VERSION {
+    if request.api_version != CONTRACT_VERSION {
         return Err(WasmError {
             code: "unsupported-api-version".to_owned(),
             message: format!(
-                "unsupported WASM API version {} (expected {WASM_API_VERSION})",
+                "unsupported contract version {} (expected {CONTRACT_VERSION})",
                 request.api_version
             ),
         });
@@ -435,7 +435,7 @@ pub fn preprocess_request(
         })
         .collect();
     Ok(WasmPreprocessResponse {
-        api_version: WASM_API_VERSION,
+        api_version: CONTRACT_VERSION,
         source: document.source,
         source_map,
     })
@@ -445,11 +445,11 @@ pub fn process_request(
     request: WasmRequest,
     cancellation: &dyn CancellationCheck,
 ) -> Result<WasmResponse, WasmError> {
-    if request.api_version != WASM_API_VERSION {
+    if request.api_version != CONTRACT_VERSION {
         return Err(WasmError {
             code: "unsupported-api-version".to_owned(),
             message: format!(
-                "unsupported WASM API version {} (expected {WASM_API_VERSION})",
+                "unsupported contract version {} (expected {CONTRACT_VERSION})",
                 request.api_version
             ),
         });
@@ -556,10 +556,10 @@ pub fn process_request(
     }
 
     let response = WasmResponse {
-        api_version: WASM_API_VERSION,
+        api_version: CONTRACT_VERSION,
         version: request.version,
         generation: request.generation,
-        conformance_contract_version: CONFORMANCE_CONTRACT_VERSION,
+        conformance_contract_version: CONTRACT_VERSION,
         parse: ParseSummary {
             profile_version: analysis.profile_version(),
             block_count: analysis.ast().blocks().len(),
@@ -691,7 +691,7 @@ mod tests {
 
     fn request(source: &str) -> WasmRequest {
         WasmRequest {
-            api_version: WASM_API_VERSION,
+            api_version: CONTRACT_VERSION,
             source_id: Some("web:document".to_owned()),
             version: 3,
             generation: 7,
@@ -708,18 +708,12 @@ mod tests {
 
         assert_eq!(response.version, 3);
         assert_eq!(response.generation, 7);
-        assert_eq!(
-            response.conformance_contract_version,
-            CONFORMANCE_CONTRACT_VERSION
-        );
+        assert_eq!(response.conformance_contract_version, CONTRACT_VERSION);
         assert!(response.syntax.contains("Document@"));
         assert!(response.ast.contains("\"blocks\""));
         assert!(response.html.contains("<h1"));
         assert_eq!(response.symbols[0]["name"], "Title");
-        assert_eq!(
-            response.projection["contractVersion"],
-            adocweave::projection::PROJECTION_CONTRACT_VERSION
-        );
+        assert_eq!(response.projection["contractVersion"], CONTRACT_VERSION);
         assert_eq!(response.parse.reference_count, 0);
     }
 
@@ -914,7 +908,7 @@ mod tests {
     #[test]
     fn wasm_api_rejects_unknown_fields_and_versions() {
         let invalid = json!({
-            "apiVersion": WASM_API_VERSION,
+            "apiVersion": CONTRACT_VERSION,
             "sourceId": null,
             "version": 1,
             "generation": 1,
@@ -926,7 +920,7 @@ mod tests {
         assert!(error.contains("invalid-request"));
 
         let leaked_failure = json!({
-            "apiVersion": WASM_API_VERSION,
+            "apiVersion": CONTRACT_VERSION,
             "sourceId": null,
             "version": 1,
             "generation": 1,
@@ -949,7 +943,7 @@ mod tests {
 
         let error = process_request(
             WasmRequest {
-                api_version: WASM_API_VERSION + 1,
+                api_version: CONTRACT_VERSION + 1,
                 ..request("text")
             },
             &NeverCancel,
@@ -978,7 +972,7 @@ mod tests {
     #[test]
     fn wasm_options_are_partial_overrides_and_bound_the_complete_response() {
         let value = json!({
-            "apiVersion": WASM_API_VERSION,
+            "apiVersion": CONTRACT_VERSION,
             "sourceId": null,
             "version": 1,
             "generation": 1,
@@ -1001,7 +995,7 @@ mod tests {
             },
         )]);
         let response = preprocess_request(WasmPreprocessRequest {
-            api_version: WASM_API_VERSION,
+            api_version: CONTRACT_VERSION,
             source_id: Some("root".to_owned()),
             source: "include::intro.adoc[leveloffset=+1]\n".to_owned(),
             resources,

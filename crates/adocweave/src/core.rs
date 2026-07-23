@@ -16,10 +16,11 @@ use crate::parser::{self, AstBlock, ParsedDocument};
 use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
-/// Version of the public parsing contract.
-pub const CORE_API_VERSION: u16 = 16;
-/// Current host-independent syntax and diagnostic behavior profile.
-pub const CORE_PROFILE_VERSION: u16 = 12;
+/// Version shared by every public AdocWeave contract.
+///
+/// A change invalidates analysis caches, rendered products, projections,
+/// conformance snapshots, and WASM requests together.
+pub const CONTRACT_VERSION: u16 = 1;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -339,7 +340,7 @@ fn analyze_inner(
 
     Ok(Analysis {
         source_id: options.source_id.clone(),
-        profile_version: CORE_PROFILE_VERSION,
+        profile_version: CONTRACT_VERSION,
         syntax,
         ast,
         diagnostics,

@@ -2,7 +2,6 @@
 
 use std::fmt::Write as _;
 
-use crate::Analysis;
 use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, render_with_inputs};
@@ -11,8 +10,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
-
-pub const CONFORMANCE_CONTRACT_VERSION: u16 = 16;
+use crate::{Analysis, CONTRACT_VERSION};
 
 /// Canonical products derived from exactly one owned analysis snapshot.
 ///
@@ -37,7 +35,7 @@ pub fn snapshot(
 ) -> ConformanceSnapshot {
     let html = render_with_inputs(analysis.ast(), policy, inputs);
     ConformanceSnapshot {
-        contract_version: CONFORMANCE_CONTRACT_VERSION,
+        contract_version: CONTRACT_VERSION,
         syntax: canonical_syntax(analysis),
         ast: canonical_ast(analysis.ast()),
         diagnostics_json: render_diagnostics_json(analysis.diagnostics()),
@@ -421,7 +419,7 @@ mod tests {
         );
 
         assert_eq!(first, second);
-        assert_eq!(first.contract_version, CONFORMANCE_CONTRACT_VERSION);
+        assert_eq!(first.contract_version, CONTRACT_VERSION);
         assert!(first.syntax.contains("Document@"));
         assert!(first.ast.contains("\"schemaVersion\":2"));
         assert!(first.ast.contains("local-reference"));

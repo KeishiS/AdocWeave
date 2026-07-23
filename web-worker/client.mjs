@@ -1,5 +1,5 @@
 import { WORKER_PROTOCOL_VERSION } from "./controller.mjs";
-import { CONTRACT_VERSIONS, WASM_API_VERSION } from "./contracts.mjs";
+import { CONTRACT_VERSION } from "./contracts.mjs";
 
 export class AdocWeaveClient {
   #options;
@@ -51,7 +51,7 @@ export class AdocWeaveClient {
       this.#spawnWorker();
     }
     const payload = {
-      apiVersion: WASM_API_VERSION,
+      apiVersion: CONTRACT_VERSION,
       sourceId,
       version,
       generation,
@@ -108,7 +108,7 @@ export class AdocWeaveClient {
             renderDiagnostics: data.result.renderDiagnostics,
             sourceVersion: data.version,
             generation: data.generation,
-            contracts: CONTRACT_VERSIONS,
+            contractVersion: CONTRACT_VERSION,
             result: data.result,
           });
         } else if (data?.type === "error" && data.generation === this.#generation) {

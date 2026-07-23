@@ -1,5 +1,5 @@
 = 明示番号listのlossless回復と診断
-:status: planned
+:status: completed
 :depends-on: 115
 
 == 目的
@@ -10,4 +10,3 @@
 
 * 不正／桁あふれ番号markerをrecoverable list itemとして認識する。
 * Formatter、LSP、CLIおよびWASMで同じrangeとdiagnosticを返す。
-
