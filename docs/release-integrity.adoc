@@ -19,7 +19,7 @@
 * `sha256.sum`には6 archive、distribution manifestおよびSBOMの8 fileを名前順で記録する。
 
 frontendにruntime dependencyを追加する場合、lockfileに基づくSBOM生成を実装するまでrelease gateは失敗する。
-SBOMに推測したdownload URLを記録してはならない。stable tagとRC tagをpackage versionだけから区別できないため、
+SBOMに推測したdownload URLを記録してはならない。archive作成時点ではGitHubへのupload成功を証明できないため、
 archive packageの`downloadLocation`は`NOASSERTION`とする。
 
 `node tools/release-metadata.mjs verify DIRECTORY COMMIT`はmetadataを同じ入力から再生成し、byte単位の一致と

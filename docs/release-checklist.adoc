@@ -35,7 +35,7 @@ cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=
 
 配布releaseでは、さらにxref:release-distribution.adoc[GitHub Releases配布契約]に従い、固定した`dist`の
 dry run、release train、target matrix、browser extra artifactおよび公的registryが無効であることを確認する。
-RC tagではxref:release-workflow.adoc[Transactional workflow]の9 asset集合を確認し、
+stable tagではxref:release-workflow.adoc[Transactional workflow]の9 asset集合を確認し、
 xref:release-integrity.adoc[完全性検証]に従ってchecksumとattestationをそれぞれ検証する。
 
 == Zed

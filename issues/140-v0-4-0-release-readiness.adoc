@@ -1,0 +1,33 @@
+= v0.4.0 release readinessとstable直送
+:status: in-progress
+:depends-on: 136, 137, 138
+
+== 目的
+
+typed admonition、quote／verse presentationおよび対応構文文書のmachine-readableな同期を、公開契約version 3の
+破壊的更新として`v0.4.0`へまとめる。個人開発の実際の受け入れ経路に合わせ、release candidateを廃止し、
+mainで成功したcandidateをstable tag一回で公開する。
+
+== 設計判断
+
+release manifestをrelease trainの正本とし、workspace、Zed、browser、distribution planとfixtureの値は
+`cargo make release-contract`で一致を検証する。Cargoとnpmのpackage metadata、およびcargo-distが読む静的な
+extra artifact名には同じversionを持つ必要があるため、これらを生成時に書き換える隠れた状態は導入しない。
+版数更新は一つのreview可能なcommitとし、欠落は自動gateで拒否する。
+
+RC tag、prerelease分岐および二段階のversion同期は廃止する。公開はmainの成功commitに`vX.Y.Z`を付ける一回だけの
+操作とし、既存releaseは置換しない。公開後の不具合は新しいstable versionで修正する。
+
+== 完了条件
+
+* workspace、Zed、browser、release manifest、distribution planおよびfixtureが`0.4.0`で一致する。
+* 公開tagは`vX.Y.Z`だけを受理し、workflowは常にstable Releaseだけを作成する。
+* `docs/upgrade-0-4.adoc`が契約version 3への移行を定義する。
+* `cargo make release-gate`と`node tools/release-contract.mjs --tag=v0.4.0`が成功する。
+* mainのcandidate成功後、`v0.4.0`を作成してGitHub Actionsと公開assetを受け入れる。
+
+== 実施結果
+
+版数、lockfile、配布計画およびfixtureを`0.4.0`へ同期し、RC専用のtag、schemaおよびpublish分岐を削除した。
+`cargo make release-gate`および`node tools/release-contract.mjs --tag=v0.4.0`は2026-07-23に成功した。
+残る作業は、このcommitをmainへpushしたcandidateの受け入れとstable tagの公開だけである。

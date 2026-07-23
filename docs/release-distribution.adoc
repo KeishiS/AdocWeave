@@ -17,8 +17,7 @@ source codeまたは配布例へ埋め込んではならない。
 == Release train
 
 workspace、CLI、LSP、WASM、browser packageおよびZed拡張は一つのpackage versionを共有する。受理するtagは
-stableの`vX.Y.Z`とrelease candidateの`vX.Y.Z-rc.N`（`N >= 1`）だけである。tagとversionが一致しない場合は
-build開始前に拒否する。
+stableの`vX.Y.Z`だけである。tagとversionが一致しない場合はbuild開始前に拒否する。
 
 初回公開baselineでは、すべての公開成果物が共有する単一の`CONTRACT_VERSION`を
 すべて`1`とする。この一括resetは公開前に一度だけ行った操作であり、以後は各契約を独立に単調増加させる。

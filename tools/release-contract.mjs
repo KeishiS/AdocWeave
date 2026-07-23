@@ -11,10 +11,9 @@ const fail = (message) => {
 };
 
 export const STABLE_TAG = /^v(\d+\.\d+\.\d+)$/;
-export const RC_TAG = /^v(\d+\.\d+\.\d+-rc\.[1-9]\d*)$/;
 
 export function versionFromTag(tag) {
-  const match = STABLE_TAG.exec(tag) ?? RC_TAG.exec(tag);
+  const match = STABLE_TAG.exec(tag);
   if (!match) {
     fail(`unsupported release tag: ${tag}`);
   }

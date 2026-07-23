@@ -5,10 +5,9 @@ import { EXPECTED_RELEASE_METADATA, canonicalJson, expectedAssets, validateDistr
 import plan from "../release/distribution-plan.json" with { type: "json" };
 import fixture from "../release/adocweave-dist-manifest.fixture.json" with { type: "json" };
 
-test("stable and rc tags are exact and versioned", () => {
+test("stable tags are exact and versioned", () => {
   assert.equal(versionFromTag("v1.2.3"), "1.2.3");
-  assert.equal(versionFromTag("v1.2.3-rc.4"), "1.2.3-rc.4");
-  for (const invalid of ["1.2.3", "v1.2", "release/v1.2.3", "v1.2.3-alpha.1", "v1.2.3-rc.0"]) {
+  for (const invalid of ["1.2.3", "v1.2", "release/v1.2.3", "v1.2.3-alpha.1", "v1.2.3-rc.0", "v1.2.3-rc.1"]) {
     assert.throws(() => versionFromTag(invalid));
   }
 });

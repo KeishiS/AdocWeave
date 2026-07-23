@@ -1,0 +1,19 @@
+= ADR 0006: stable tagへ直接公開する
+:status: accepted
+
+== 文脈
+
+このrepositoryは個人開発であり、mainへのcandidate build、2 architectureでの導入E2E、checksum、SBOM、
+attestationおよびprotected publish jobをすでに毎回実行する。RCとstableを別tagで公開すると、同じ検査と
+version同期を二度運用する一方、追加の独立した受け入れ情報は得られない。
+
+== 決定
+
+release candidate tagを受理しない。mainの成功commitへ`vX.Y.Z`を一度だけ付け、同じworkflowでstable
+GitHub Releaseを公開する。公開後の修正はtagを付け替えず、新しいstable versionとして公開する。
+
+== 帰結
+
+release workflow、distribution schemaおよびrelease contractはstable SemVerだけを受理する。公開assetの
+手動受け入れはtag後に行う。未知の環境での長期試験が必要になった場合だけ、通常release trainとは別の
+検証用branchまたは事前配布を明示的に設計する。

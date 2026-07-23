@@ -1,0 +1,22 @@
+= v0.4.0への移行
+
+v0.4.0はadmonitionとquote／verse blockを型付きpresentationとして公開し、公開契約を2から3へ更新する
+minor releaseである。0.y.z期間のため、旧contractを受理するadapterとの後方互換性は提供しない。
+
+== 利用者可視の変更
+
+* `NOTE:`、`TIP:`、`IMPORTANT:`、`WARNING:`および`CAUTION:`をadmonitionとして解釈し、安全なHTMLへ出力する。
+* `[quote,Author,Source]`と`[verse,Author,Source]`のattributionおよびcitationを保持して出力する。
+* projectionに`blockPresentations`を追加し、WASMとbrowserのrequest／responseはcontract version 3だけを受理する。
+* 対応構文文書は`docs/syntax-contract.json`とfixtureで機械検証する。
+
+== 更新手順
+
+. 同じ`v0.4.0` ReleaseのCLI、LSP、browser archiveおよびZed archiveを取得する。
+. `sha256.sum`とartifact attestationを検証する。
+. version別directoryへ導入し、CLIとLSPのversion JSONがpackage version `0.4.0`とcontract version `3`を返すことを確認する。
+. hostのHTML、projection、conformance snapshotおよびWASM clientをcontract version `3`へ更新する。
+. 問題があれば以前のversion別directoryへcurrentを戻す。旧contractを送るadapterはv0.4.0と組み合わせない。
+
+導入、rollbackおよび完全削除の詳細はxref:release-installation.adoc[GitHub Releaseからの導入・更新・削除]を
+参照する。

@@ -158,8 +158,8 @@ export function buildMetadata(directory, sourceCommit) {
       SPDXID: packageId,
       checksums: [{ algorithm: "SHA256", checksumValue: asset.sha256 }],
       copyrightText: "NOASSERTION",
-      // RC tags cannot be derived from packageVersion alone.  Recording an
-      // invented stable URL would make the SBOM factually wrong.
+      // Artifact bytes are produced before their GitHub Release is public.
+      // The stable tag alone is insufficient to prove that upload succeeded.
       downloadLocation: "NOASSERTION",
       filesAnalyzed: true,
       licenseConcluded: "NOASSERTION",

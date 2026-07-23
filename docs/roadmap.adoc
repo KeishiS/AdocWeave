@@ -448,6 +448,13 @@ metadataだけを保持して子blockへ退化させず、backend非依存の型
 . xref:../issues/138-quote-and-verse-rendering.adoc[Issue 138]でquote／verseのattributionとcitationを意味保持して出力した。（完了）
 . xref:../issues/139-standalone-cli-resource-profile-evaluation.adoc[Issue 139]で単体CLIのlocal resource profileを評価する。
 
+== M33: v0.4.0 release train
+
+M32で追加したblock意味と公開契約version 3を`v0.4.0`として公開する。個人開発の運用に合わせ、RCの
+二段階公開を廃止し、mainの完全candidateが成功したcommitをstable tagへ直接公開する。
+
+. xref:../issues/140-v0-4-0-release-readiness.adoc[Issue 140]で版数、配布計画、移行文書およびstable直送workflowを同期する。
+
 == ドキュメント保守規則
 
 リポジトリのドキュメントはAsciiDoc（`.adoc`）で記述し、`.md`ファイルを受け入れない。
