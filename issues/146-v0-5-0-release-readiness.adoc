@@ -1,0 +1,29 @@
+= v0.5.0 release readiness
+:status: in-progress
+:depends-on: 141, 142, 143, 144, 145
+
+== 目的
+
+M34からM36で実装したbibliography契約同期、解決済みblock title presentation、安全なinclude属性文法、
+Core facadeと`ResolvedDocument`、およびホスト供給stylesheetを、公開契約version 5の破壊的更新として
+`v0.5.0`へまとめる。ADR 0006に従い、mainで成功したcandidateをstable tag一回で公開する。
+
+== 設計判断
+
+release manifest（`packageVersion` 0.5.0、`contractVersion` 5）をrelease trainの正本とし、
+workspace、Zed、browser、distribution planおよびfixtureの一致は`cargo make release-contract`で検証する。
+`RenderPolicy.stylesheets`はHTML契約の許可集合へ`head`・`style`・`link`を追加するが、stylesheetを
+設定しない既定出力は`v0.4.0`のcomplete document出力とbyte単位で一致するため、契約versionは
+未公開のversion 5に含め、追加のbumpは行わない。
+
+== 完了条件
+
+* workspace、Zed、browser、release manifest、distribution planおよびfixtureが`0.5.0`で一致する。
+* `docs/upgrade-0-5.adoc`が契約version 5への移行（facade再編、`process`削除、block title、
+  include属性、stylesheet設定）を定義する。
+* `cargo make release-gate`と`node tools/release-contract.mjs --tag=v0.5.0`が成功する。
+* mainのcandidate成功後、`v0.5.0`を作成してGitHub Actionsと公開assetを受け入れる。
+
+== 実施結果
+
+（tag公開後に記録する）
