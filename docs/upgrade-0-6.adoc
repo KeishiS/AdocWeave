@@ -1,7 +1,8 @@
 = v0.6.0への移行
 
-v0.6.0では、文書属性を定義した順番や場所も取り出せるようになりました。ライブラリやWASMを
-使って属性を書き換えるアプリケーションは、この変更に合わせてください。
+v0.6.0では、文書属性を定義した順番や場所も取り出せるようになりました。同時に、公開互換性の
+識別子を`CONTRACT_VERSION`からpackage versionへ変更しました。ライブラリやWASMを使うアプリケーションは、
+この変更に合わせてください。
 
 == 必要な環境とバージョン
 
@@ -16,14 +17,29 @@ Rustは必要ありません。パッケージとRustのバージョンはxref:.
 * WASM responseとbrowser libraryの`attributeOccurrences`が同じ情報をcamelCaseのJSONで返す。
 * `Analysis::presentation().attributes()`は従来どおり最終属性値だけを返す。source順やrangeを必要とするhostは
   occurrence queryへ移行する。
+* `CONTRACT_VERSION`は廃止した。v0.6.0の公開互換性識別子は`adocweave::VERSION == "0.6.0"`であり、
+  Rust、WASM、projectionおよびbrowser packageはこの完全一致のpackage versionを使用する。
+* `Analysis::ast()`は公開しない。公開semantic documentが必要なRust hostは`Analysis::document()`を使用する。
+  `semantic` facadeはparser内部型を再公開しない。
+* `ProductSet`でsyntax、canonical AST、HTML、属性occurrence、診断、symbolおよびprojectionを選択する。
+  WASM／browserでは`products`に同じ選択を渡す。省略時はbrowser向け既定値であり、全productを常時返さない。
+* projection JSONの`contractVersion`は文字列の`packageVersion`へ変更した。WASM request／responseの`apiVersion`と
+  responseの`conformanceContractVersion`も`packageVersion`へ統一した。
 
 Coreは標準属性名にアプリケーション固有の意味を与えない。UUID、日時、タグ、DB key、保護規則および
 投影はhostがoccurrenceを利用して実装する。
 
 == 更新手順
 
-. hostの`CONTRACT_VERSION`照合値を6へ更新する。
-. Web／WASM hostは`attributeOccurrences`を受け取り、独自のheader scannerを廃止する。
-. Rust hostは`Analysis::document_attribute_occurrences()`と`semantic` facadeの公開型を利用する。
-. 最終属性値だけを必要とする既存処理は`analysis.presentation().attributes()`をそのまま利用する。
+. 利用するreleaseのpackage versionをすべてのhost照合値へ設定する。v0.6.0では`"0.6.0"`であり、数値の
+  `CONTRACT_VERSION`は使用しない。
+. Rust hostの`analysis.ast()`を`analysis.document()`へ置き換え、parser由来の公開型への依存を`semantic` facadeの
+  公開型へ置き換える。
+. Web／WASM hostの`apiVersion`と`conformanceContractVersion`を`packageVersion`へ置き換え、projection JSONは
+  `contractVersion`でなく`packageVersion`を検査する。
+. 必要な出力だけを`ProductSet`またはWASM／browser requestの`products`で要求する。全出力を必要とするhostは
+  すべてのproductを`true`に設定する。
+. Web／WASM hostは`attributeOccurrences`を要求して受け取り、独自のheader scannerを廃止する。
+. Rust hostは`Analysis::document_attribute_occurrences()`と`semantic` facadeの公開型を利用する。最終属性値だけを
+  必要とする既存処理は`analysis.presentation().attributes()`をそのまま利用する。
 . 同じ`v0.6.0` ReleaseのCLI、LSP、browser archiveおよびZed archiveを同時に導入する。

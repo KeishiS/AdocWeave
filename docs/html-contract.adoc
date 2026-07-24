@@ -4,26 +4,14 @@
 出力をそのまま使えます。HTMLの見た目はxref:browser-library.adoc[ブラウザーで使う]と
 `RenderPolicy.stylesheets`の説明を参照してください。
 
-== 契約バージョン
+== Versionと互換性
 
-HTML出力契約の現在のバージョンは、統一公開契約の `6` であり、`HtmlOutput.contract_version` と
-xref:../release-manifest.json[release manifest]に記録する。契約バージョンを変更する場合は、
-golden fixture、許可集合および見出しID規則の差分を確認する。
+HTML出力は独立した契約versionを持たない。生成元のpackage versionはxref:../release-manifest.json[release manifest]、
+WASM応答およびprojection JSONの`packageVersion`で識別する。HTML DOM自体へversion値は埋め込まない。
 
-契約version 3は、PSV／CSV／DSV／TSV table、AsciiDoc block cell、`caption`、固定のframe・grid・stripes class、
-百分率`width`値、footnote、appendix、標準macroおよびmediaを許可集合へ含める。`width`はimage等の整数寸法だけでなく、
-tableに対しては`75%`のような百分率値を出力する。resource URLは`UrlPolicy`を通過した値だけを出力し、
-生targetを直接active要素へ変換しない。
-
-契約version 4はblock titleとtable captionを解決済みinline presentationへ変更した。契約version 5は
-Rust API、projection、conformanceおよびWASMと共有する単一契約の更新に加えて、ホスト供給stylesheetを
-complete document出力へ適用する`RenderPolicy.stylesheets`設定と、それに伴う`head`、`style`、`link`
-要素の許可を追加する。契約version 6は公開文書属性occurrence queryとWASM応答を追加し、HTML DOMは
-変更しない。stylesheetを設定しない既定出力は従来とbyte単位で一致する。
-
-互換性はDOM構造と意味について保証する。属性順、改行および空白もgolden fixtureで
-固定するが、将来の契約バージョンでは変更できる。異なる契約バージョン間の
-バイト列互換性は保証しない。
+互換性はDOM構造と意味について保証する。属性順、改行および空白もgolden fixtureで固定するが、将来の
+package versionでは変更できる。許可集合、見出しID規則またはDOMの意味を変更する場合は、fixtureと利用側の
+検証器を同じpackage version更新で確認する。異なるpackage version間のバイト列互換性は保証しない。
 
 == 文書モード
 
@@ -109,7 +97,7 @@ xref:adr/0007-host-supplied-stylesheets.adoc[ADR 0007]に記録する。
 限定する。入力由来の任意属性、`style`、
 イベントハンドラ、`script`、SVGおよび生HTMLは生成しない。
 
-許可集合を検証器やサニタイザーへ固定しているホストは、契約version変更時に更新が必要である。
+許可集合を検証器やサニタイザーへ固定しているホストは、package version変更時に更新が必要である。
 
 == URLポリシー
 

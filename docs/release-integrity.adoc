@@ -15,7 +15,7 @@
 `tools/release-metadata.mjs` version 1をSBOMとchecksumの唯一の生成器とする。target別build artifactを
 一つのcandidate directoryへ集約した後、生成器は実際に公開する6 archiveを読み、次を決定的に生成する。
 
-* distribution manifestにはarchive byte列のSHA-256、byte数、source commitおよび公開契約versionを記録する。
+* distribution manifestにはarchive byte列のSHA-256、byte数、source commitおよびpackage versionを記録する。
 * SPDX 2.3 JSON SBOMにはarchive内の各file、root workspaceと`editors/zed`に対する
   `cargo metadata --locked`が返すCargo package、および`web-worker/package.json`のfrontend packageを記録する。
 * `sha256.sum`には6 archive、distribution manifestおよびSBOMの8 fileを名前順で記録する。
