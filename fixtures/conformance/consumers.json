@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "fixture": "cases.json",
+  "consumers": [
+    {
+      "name": "native-core",
+      "path": "crates/adocweave/src/conformance.rs"
+    },
+    {
+      "name": "wasm",
+      "path": "crates/adocweave-wasm/tests/conformance.rs"
+    },
+    {
+      "name": "browser",
+      "path": "web-worker/cross-runtime.test.mjs"
+    }
+  ]
+}

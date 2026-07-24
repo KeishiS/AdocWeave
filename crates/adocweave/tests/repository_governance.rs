@@ -43,6 +43,21 @@ struct SyntaxContractFeature {
     fixture: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConformanceConsumers {
+    schema_version: u8,
+    fixture: String,
+    consumers: Vec<ConformanceConsumer>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConformanceConsumer {
+    name: String,
+    path: String,
+}
+
 fn repository_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -440,6 +455,29 @@ fn release_manifest_is_the_single_release_identity_catalog() {
     let current_contract = fs::read_to_string(root.join("docs/current-contract.adoc"))
         .expect("current contract index");
     assert!(current_contract.contains(&format!("|package version |{}", manifest.package_version)));
+}
+
+#[test]
+fn conformance_fixture_has_every_declared_consumer() {
+    let root = repository_root();
+    let manifest: ConformanceConsumers = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/conformance/consumers.json"))
+            .expect("conformance consumer manifest"),
+    )
+    .expect("valid conformance consumer manifest");
+    assert_eq!(manifest.schema_version, 1);
+    assert!(root.join("fixtures/conformance").join(&manifest.fixture).is_file());
+    assert_eq!(manifest.consumers.len(), 3);
+    for consumer in manifest.consumers {
+        let content = fs::read_to_string(root.join(&consumer.path))
+            .unwrap_or_else(|error| panic!("{}: {error}", consumer.name));
+        assert!(
+            content.contains(&manifest.fixture),
+            "{} does not consume {}",
+            consumer.name,
+            manifest.fixture
+        );
+    }
 }
 
 #[test]
