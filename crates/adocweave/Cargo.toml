@@ -12,7 +12,7 @@ description = "An AsciiDoc processor with lossless syntax and language services"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha2 = { version = "0.10.9", default-features = false }
+sha2 = { version = "0.11.0", default-features = false }
 
 [lib]
 path = "src/lib.rs"
