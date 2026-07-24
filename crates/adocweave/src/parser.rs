@@ -13,7 +13,8 @@ use crate::block_sequence::{
 use crate::budget::{BudgetExceeded, ParseBudget};
 use crate::delimiter::{DelimitedContentModel, DelimiterSpec};
 use crate::document_header::DocumentHeaderState;
-use crate::inline::{Inline, InlineParseConfig, MathLanguage, parse_with_budget as parse_inlines};
+use crate::inline::{Inline, InlineParseConfig, MathLanguage};
+use crate::inline_grammar::parse as parse_inlines;
 use crate::limits::ProcessingLimits;
 use crate::list_parser::{FlatListItem, ParsedListMarker};
 use crate::parser_support::{ParseFailure, ParseState};

@@ -32,11 +32,11 @@ fn parse_text(value: &str, range: TextRange, config: InlineParseConfig) -> Vec<I
 
 #[cfg(test)]
 pub(crate) fn parse(value: &str, range: TextRange, config: InlineParseConfig) -> InlineParseOutput {
-    parse_with_budget(value, range, config, &mut ParseBudget::unlimited())
+    parse_with_budget_impl(value, range, config, &mut ParseBudget::unlimited())
         .expect("the test and compatibility parser uses an unlimited budget")
 }
 
-pub(crate) fn parse_with_budget(
+pub(crate) fn parse_with_budget_impl(
     value: &str,
     range: TextRange,
     config: InlineParseConfig,

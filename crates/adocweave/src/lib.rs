@@ -20,6 +20,7 @@ mod execution;
 mod formatter;
 mod html;
 mod inline;
+mod inline_grammar;
 mod inline_model;
 mod json;
 mod limits;
