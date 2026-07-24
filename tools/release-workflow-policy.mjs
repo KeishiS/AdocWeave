@@ -161,6 +161,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireCommand(tagRun, 'test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"', "publication tags must identify the current main commit");
   const candidateLookup = step(releaseJobs.plan, (item) => item.id === "candidate", "successful main candidate lookup is missing").run;
   requireCommand(candidateLookup, 'actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA', "tag publication must select a successful main workflow for the same commit");
+  requireCommand(candidateLookup, ".[].workflow_runs[]", "tag publication must traverse workflow-run response pages");
   requireCommand(candidateLookup, 'no successful main candidate exists', "missing main candidates must stop publication");
 
   for (const jobName of ["plan", "build-native"]) {
