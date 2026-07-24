@@ -13,6 +13,6 @@ path = "src/lib.rs"
 
 [dependencies]
 lzma-rs = "0.3.0"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 tar = { version = "0.4.46", default-features = false }
 zed_extension_api = "0.7.0"
