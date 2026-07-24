@@ -109,6 +109,7 @@ pub mod text {
     pub use crate::syntax::*;
 }
 
+pub use conformance::{DocumentProducts, ProductSet};
 pub use core::{
     Analysis, CONTRACT_VERSION, CancellationCheck, CancellationToken, Engine, NeverCancel,
     ParseError, ParseOptions, SourceId,

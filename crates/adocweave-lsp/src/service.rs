@@ -670,7 +670,8 @@ impl LanguageService {
         if let Some((value, range)) = inline_hover(document.analysis.document(), offset) {
             return hover_markup(value, range, &document, self.position_encoding);
         }
-        if let Some((value, range)) = block_presentation_hover(document.analysis.document(), offset) {
+        if let Some((value, range)) = block_presentation_hover(document.analysis.document(), offset)
+        {
             return hover_markup(value, range, &document, self.position_encoding);
         }
         for author in &document.analysis.document().header().authors {

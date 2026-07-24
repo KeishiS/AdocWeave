@@ -35,9 +35,13 @@ impl DocumentFacts {
             }
             _ => {}
         });
-        facts.references.sort_by_key(|reference| reference.range.start());
+        facts
+            .references
+            .sort_by_key(|reference| reference.range.start());
         facts.macros.sort_by_key(|node| node.range.start());
-        facts.resources.sort_by_key(|resource| resource.range.start());
+        facts
+            .resources
+            .sort_by_key(|resource| resource.range.start());
         facts
     }
 

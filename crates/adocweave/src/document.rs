@@ -623,7 +623,8 @@ mod tests {
     use super::{
         DocumentElement, ReferenceTargetKind, document_element_at_ast as document_element_at,
         document_symbols_ast as document_symbols, generate_heading_ids_ast as generate_heading_ids,
-        reference_targets_ast as reference_targets, render_symbols_json, source_language_candidates,
+        reference_targets_ast as reference_targets, render_symbols_json,
+        source_language_candidates,
     };
     use crate::parser::parse;
 

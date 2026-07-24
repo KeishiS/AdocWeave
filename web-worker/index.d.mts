@@ -56,6 +56,7 @@ export interface AdocWeaveWasmResponse {
   apiVersion: number;
   version: number;
   generation: number;
+  products: Required<ProductSet>;
   conformanceContractVersion: number;
   parse: {
     profileVersion: number;
@@ -73,6 +74,16 @@ export interface AdocWeaveWasmResponse {
   projection: DocumentProjection;
 }
 
+export interface ProductSet {
+  syntax?: boolean;
+  canonicalAst?: boolean;
+  html?: boolean;
+  attributeOccurrences?: boolean;
+  diagnostics?: boolean;
+  symbols?: boolean;
+  projection?: boolean;
+}
+
 export interface AdocWeaveError {
   code: string;
   message: string;
@@ -84,6 +95,7 @@ export interface UpdateRequest {
   sourceId?: string | null;
   version: number;
   source: string;
+  products?: ProductSet;
   renderInputs?: RenderInputs;
   options?: AdocWeaveOptions;
 }

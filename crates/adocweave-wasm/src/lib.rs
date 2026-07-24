@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use adocweave::output::conformance::snapshot;
 use adocweave::output::html::RenderPolicy;
 use adocweave::preprocess::{
     PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode, preprocess,
@@ -138,9 +137,54 @@ pub struct WasmRequest {
     pub generation: u32,
     pub source: String,
     #[serde(default)]
+    pub products: WasmProductSet,
+    #[serde(default)]
     pub render_inputs: WasmRenderInputs,
     #[serde(default)]
     pub options: WasmOptions,
+}
+
+/// Output products requested by a WASM host. Omitted fields use the browser
+/// default and therefore do not cause canonical syntax or AST serialization.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmProductSet {
+    pub syntax: bool,
+    pub canonical_ast: bool,
+    pub html: bool,
+    pub attribute_occurrences: bool,
+    pub diagnostics: bool,
+    pub symbols: bool,
+    pub projection: bool,
+}
+
+impl Default for WasmProductSet {
+    fn default() -> Self {
+        let products = adocweave::ProductSet::browser_default();
+        Self {
+            syntax: products.syntax,
+            canonical_ast: products.canonical_ast,
+            html: products.html,
+            attribute_occurrences: products.attribute_occurrences,
+            diagnostics: products.diagnostics,
+            symbols: products.symbols,
+            projection: products.projection,
+        }
+    }
+}
+
+impl From<WasmProductSet> for adocweave::ProductSet {
+    fn from(value: WasmProductSet) -> Self {
+        Self {
+            syntax: value.syntax,
+            canonical_ast: value.canonical_ast,
+            html: value.html,
+            attribute_occurrences: value.attribute_occurrences,
+            diagnostics: value.diagnostics,
+            symbols: value.symbols,
+            projection: value.projection,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -382,6 +426,7 @@ pub struct WasmResponse {
     pub api_version: u16,
     pub version: u32,
     pub generation: u32,
+    pub products: WasmProductSet,
     pub conformance_contract_version: u16,
     pub parse: ParseSummary,
     pub syntax: String,
@@ -503,6 +548,8 @@ pub fn process_request(
             ),
         });
     }
+    let requested_products = request.products;
+    let products: adocweave::ProductSet = requested_products.into();
     let render_inputs = request.render_inputs;
     let options = request.options;
     render_inputs::validate(&render_inputs, &options.limits)?;
@@ -611,14 +658,36 @@ pub fn process_request(
         },
         ..RenderPolicy::default()
     };
-    let products = snapshot(&analysis, &render_policy, &render_inputs);
-    let diagnostics =
-        serde_json::from_str(&products.diagnostics_json).map_err(serialization_error)?;
-    let render_diagnostics =
-        serde_json::from_str(&products.render_diagnostics_json).map_err(serialization_error)?;
-    let symbols = serde_json::from_str(&products.symbols_json).map_err(serialization_error)?;
-    let projection =
-        serde_json::from_str(&products.projection_json).map_err(serialization_error)?;
+    let products = adocweave::output::conformance::products(
+        &analysis,
+        &render_policy,
+        &render_inputs,
+        products,
+    );
+    let diagnostics = products
+        .diagnostics_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(serialization_error)?;
+    let render_diagnostics = products
+        .render_diagnostics_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(serialization_error)?;
+    let symbols = products
+        .symbols_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(serialization_error)?;
+    let projection = products
+        .projection_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(serialization_error)?;
     if cancellation.is_cancelled() {
         return Err(cancelled_error());
     }
@@ -627,6 +696,7 @@ pub fn process_request(
         api_version: CONTRACT_VERSION,
         version: request.version,
         generation: request.generation,
+        products: requested_products,
         conformance_contract_version: CONTRACT_VERSION,
         parse: ParseSummary {
             profile_version: analysis.profile_version(),
@@ -634,18 +704,23 @@ pub fn process_request(
             node_count: analysis.document().node_count(),
             reference_count: analysis.references().len(),
         },
-        syntax: products.syntax,
-        ast: products.ast,
-        html: products.html,
-        attribute_occurrences: analysis
-            .document_attribute_occurrences()
-            .iter()
-            .map(wasm_document_attribute_occurrence)
-            .collect(),
-        diagnostics,
-        render_diagnostics,
-        symbols,
-        projection,
+        syntax: products.syntax.unwrap_or_default(),
+        ast: products.canonical_ast.unwrap_or_default(),
+        html: products.html.unwrap_or_default(),
+        attribute_occurrences: requested_products
+            .attribute_occurrences
+            .then(|| {
+                analysis
+                    .document_attribute_occurrences()
+                    .iter()
+                    .map(wasm_document_attribute_occurrence)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        diagnostics: diagnostics.unwrap_or_else(|| Value::Array(Vec::new())),
+        render_diagnostics: render_diagnostics.unwrap_or_else(|| Value::Array(Vec::new())),
+        symbols: symbols.unwrap_or_else(|| Value::Array(Vec::new())),
+        projection: projection.unwrap_or(Value::Null),
     };
     let output_bytes = serde_json::to_vec(&response)
         .map_err(serialization_error)?
@@ -796,6 +871,15 @@ mod tests {
             version: 3,
             generation: 7,
             source: source.to_owned(),
+            products: WasmProductSet {
+                syntax: true,
+                canonical_ast: true,
+                html: true,
+                attribute_occurrences: true,
+                diagnostics: true,
+                symbols: true,
+                projection: true,
+            },
             render_inputs: WasmRenderInputs::default(),
             options: WasmOptions::default(),
         }
@@ -815,6 +899,20 @@ mod tests {
         assert_eq!(response.symbols[0]["name"], "Title");
         assert_eq!(response.projection["contractVersion"], CONTRACT_VERSION);
         assert_eq!(response.parse.reference_count, 0);
+    }
+
+    #[test]
+    fn wasm_default_product_set_omits_unused_canonical_products() {
+        let mut request = request("= Title\n\nText");
+        request.products = WasmProductSet::default();
+        let response = process_request(request, &NeverCancel).expect("response");
+
+        assert!(response.syntax.is_empty());
+        assert!(response.ast.is_empty());
+        assert!(response.attribute_occurrences.is_empty());
+        assert!(response.symbols.as_array().is_some_and(Vec::is_empty));
+        assert!(!response.html.is_empty());
+        assert!(response.projection.is_object());
     }
 
     #[test]

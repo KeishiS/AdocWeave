@@ -2605,7 +2605,10 @@ mod tests {
 
         assert_eq!(parsed.syntax.reconstruct(), source);
         assert_eq!(parsed.ast.attributes.len(), 5);
-        assert_eq!(parsed.ast.attributes[0].operation, DocumentAttributeOperation::Set);
+        assert_eq!(
+            parsed.ast.attributes[0].operation,
+            DocumentAttributeOperation::Set
+        );
         assert_eq!(
             parsed.ast.attributes[0].raw_value,
             "123E4567-E89B-12D3-A456-426614174000"
@@ -3500,8 +3503,8 @@ mod tests {
                 &crate::html::RenderPolicy::default(),
                 &crate::render::RenderInputs::default(),
             )
-                .html
-                .contains("<h1 id=\"cell-target\">Cell heading</h1>")
+            .html
+            .contains("<h1 id=\"cell-target\">Cell heading</h1>")
         );
         assert_eq!(parsed.syntax.reconstruct(), source);
     }

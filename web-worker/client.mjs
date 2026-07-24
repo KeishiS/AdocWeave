@@ -39,7 +39,7 @@ export class AdocWeaveClient {
     }
   }
 
-  update({ sourceId = null, version, source, renderInputs, options = {} }) {
+  update({ sourceId = null, version, source, products, renderInputs, options = {} }) {
     this.#assertActive();
     const generation = ++this.#generation;
     if (this.#options.sharedCancellation) {
@@ -58,6 +58,7 @@ export class AdocWeaveClient {
       source,
       options,
     };
+    if (products !== undefined) payload.products = products;
     if (renderInputs !== undefined) payload.renderInputs = renderInputs;
     this.#ready.then(() => {
       if (!this.#disposed && generation === this.#generation) {

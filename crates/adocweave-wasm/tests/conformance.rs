@@ -102,6 +102,15 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
         "version": 1,
         "generation": 1,
         "source": source,
+        "products": {
+            "syntax": true,
+            "canonicalAst": true,
+            "html": true,
+            "attributeOccurrences": true,
+            "diagnostics": true,
+            "symbols": true,
+            "projection": true,
+        },
         "renderInputs": render_inputs,
         "options": options,
     }))

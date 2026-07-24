@@ -166,7 +166,10 @@ fn substitutions_cover_every_supported_semantic_context() {
     let parsed = parse(source);
     assert!(matches!(parsed.document().blocks()[0], Block::Heading(_)));
     assert!(matches!(parsed.document().blocks()[1], Block::Paragraph(_)));
-    assert!(matches!(parsed.document().blocks()[2], Block::Unsupported(_)));
+    assert!(matches!(
+        parsed.document().blocks()[2],
+        Block::Unsupported(_)
+    ));
     assert!(matches!(
         parsed.document().blocks()[3],
         Block::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Literal)
