@@ -324,6 +324,10 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 * xref:154-grammar-component-boundaries.adoc[154: 文法component境界の再編]（完了）
 * xref:155-contract-test-ownership-reorganization.adoc[155: 契約testの所有権再編]（完了）
 
+=== M41: インライン書式の互換性
+
+* xref:156-inline-monospace-boundaries.adoc[156: インライン等幅書式の境界規則]（計画）
+
 === M1: プレーンテキスト変換
 
 * xref:001-workspace-and-cli.adoc[001: Cargo workspaceとCLIの初期化]

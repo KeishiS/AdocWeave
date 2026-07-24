@@ -520,6 +520,13 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 . xref:../issues/154-grammar-component-boundaries.adoc[Issue 154]でparserとinlineの文法component境界を再編した。（完了）
 . xref:../issues/155-contract-test-ownership-reorganization.adoc[Issue 155]で契約testの所有権を再編した。（完了）
 
+== M41: インライン書式の互換性
+
+Asciidoctorとの互換性を高めるため、インライン等幅書式の単一・二重バッククオートの境界規則を整える。
+
+. xref:../issues/156-inline-monospace-boundaries.adoc[Issue 156]で、語中・CJK文字・句読点に隣接する
+  等幅書式を検証・修正する。（計画）
+
 == ドキュメント保守規則
 
 リポジトリのドキュメントはAsciiDoc（`.adoc`）で記述し、`.md`ファイルを受け入れない。
