@@ -102,6 +102,33 @@ pub struct WasmSourceMapSegment {
     pub mapping: String,
 }
 
+/// A half-open UTF-8 byte range in the submitted source.
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmTextRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+/// One source-preserving standard document-attribute occurrence.
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDocumentAttributeOccurrence {
+    pub range: WasmTextRange,
+    pub name_range: WasmTextRange,
+    pub value_range: WasmTextRange,
+    pub name: String,
+    pub raw_value: String,
+    pub operation: WasmDocumentAttributeOperation,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmDocumentAttributeOperation {
+    Set,
+    Unset,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRequest {
@@ -360,6 +387,7 @@ pub struct WasmResponse {
     pub syntax: String,
     pub ast: String,
     pub html: String,
+    pub attribute_occurrences: Vec<WasmDocumentAttributeOccurrence>,
     pub diagnostics: Value,
     pub render_diagnostics: Value,
     pub symbols: Value,
@@ -609,6 +637,11 @@ pub fn process_request(
         syntax: products.syntax,
         ast: products.ast,
         html: products.html,
+        attribute_occurrences: analysis
+            .document_attribute_occurrences()
+            .iter()
+            .map(wasm_document_attribute_occurrence)
+            .collect(),
         diagnostics,
         render_diagnostics,
         symbols,
@@ -626,6 +659,33 @@ pub fn process_request(
         });
     }
     Ok(response)
+}
+
+fn wasm_document_attribute_occurrence(
+    occurrence: &adocweave::semantic::DocumentAttributeOccurrence,
+) -> WasmDocumentAttributeOccurrence {
+    WasmDocumentAttributeOccurrence {
+        range: wasm_text_range(occurrence.range),
+        name_range: wasm_text_range(occurrence.name_range),
+        value_range: wasm_text_range(occurrence.value_range),
+        name: occurrence.name.clone(),
+        raw_value: occurrence.raw_value.clone(),
+        operation: match occurrence.operation {
+            adocweave::semantic::DocumentAttributeOperation::Set => {
+                WasmDocumentAttributeOperation::Set
+            }
+            adocweave::semantic::DocumentAttributeOperation::Unset => {
+                WasmDocumentAttributeOperation::Unset
+            }
+        },
+    }
+}
+
+fn wasm_text_range(range: adocweave::text::TextRange) -> WasmTextRange {
+    WasmTextRange {
+        start: range.start().to_u32(),
+        end: range.end().to_u32(),
+    }
 }
 
 pub fn process_json(request: &str) -> Result<String, String> {
@@ -755,6 +815,38 @@ mod tests {
         assert_eq!(response.symbols[0]["name"], "Title");
         assert_eq!(response.projection["contractVersion"], CONTRACT_VERSION);
         assert_eq!(response.parse.reference_count, 0);
+    }
+
+    #[test]
+    fn wasm_api_exposes_source_preserving_document_attribute_occurrences() {
+        let source = include_str!("../../../fixtures/attributes/public-occurrences.adoc");
+        let response = process_request(request(source), &NeverCancel).expect("response");
+
+        assert_eq!(response.attribute_occurrences.len(), 5);
+        assert_eq!(response.attribute_occurrences[0].name, "duplicate");
+        assert_eq!(response.attribute_occurrences[0].raw_value, "first");
+        assert_eq!(
+            response.attribute_occurrences[1].operation,
+            WasmDocumentAttributeOperation::Set
+        );
+        assert_eq!(response.attribute_occurrences[2].raw_value, "");
+        assert_eq!(
+            response.attribute_occurrences[3].operation,
+            WasmDocumentAttributeOperation::Unset
+        );
+        assert_eq!(
+            response.attribute_occurrences[4].operation,
+            WasmDocumentAttributeOperation::Unset
+        );
+        assert!(
+            response.attribute_occurrences[2].value_range.start
+                == response.attribute_occurrences[2].value_range.end
+        );
+        assert_eq!(
+            &source[usize::try_from(response.attribute_occurrences[0].range.start).expect("offset")
+                ..usize::try_from(response.attribute_occurrences[0].range.end).expect("offset")],
+            ":duplicate: first\n"
+        );
     }
 
     #[test]

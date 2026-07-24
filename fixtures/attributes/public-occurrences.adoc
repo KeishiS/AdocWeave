@@ -1,0 +1,8 @@
+= Attributes
+:duplicate: first
+:duplicate: second
+:empty:
+:removed!:
+:!alternate:
+
+Body

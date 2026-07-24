@@ -20,7 +20,7 @@ use crate::syntax::SyntaxTree;
 ///
 /// A change invalidates analysis caches, rendered products, projections,
 /// conformance snapshots, and WASM requests together.
-pub const CONTRACT_VERSION: u16 = 5;
+pub const CONTRACT_VERSION: u16 = 6;
 
 /// A caller-defined, opaque source identity.
 ///
@@ -89,6 +89,7 @@ pub struct Analysis {
     profile_version: u16,
     syntax: SyntaxTree,
     ast: parser::AstDocument,
+    attribute_occurrences: Vec<crate::attribute_occurrence::DocumentAttributeOccurrence>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -130,6 +131,17 @@ impl Analysis {
 
     pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
         self.ast.layout()
+    }
+
+    /// Returns standard document-attribute occurrences in source order.
+    ///
+    /// Unlike [`Self::presentation`], this preserves duplicates, set/unset
+    /// operations, empty values, and source ranges for host-side editing or
+    /// metadata projection.
+    pub fn document_attribute_occurrences(
+        &self,
+    ) -> &[crate::attribute_occurrence::DocumentAttributeOccurrence] {
+        &self.attribute_occurrences
     }
 
     pub fn references(&self) -> Vec<&crate::inline::Reference> {
@@ -338,11 +350,18 @@ fn analyze_inner(
         return Err(ParseError::Cancelled);
     }
 
+    let attribute_occurrences = ast
+        .attributes()
+        .iter()
+        .map(crate::attribute_occurrence::DocumentAttributeOccurrence::from_internal)
+        .collect();
+
     Ok(Analysis {
         source_id: options.source_id.clone(),
         profile_version: CONTRACT_VERSION,
         syntax,
         ast,
+        attribute_occurrences,
         diagnostics,
     })
 }

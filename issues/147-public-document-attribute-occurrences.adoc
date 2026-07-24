@@ -1,5 +1,5 @@
 = 公開文書属性occurrence query
-:status: planned
+:status: completed
 :depends-on: 146
 
 == 目的
@@ -31,3 +31,13 @@ source rangeを観測できない。
   v0.6.0移行文書を同期する。
 * Marginalis等のhostが独自header scannerを持たず、公開occurrence queryだけで保護属性置換を
   実装できることをconsumer fixtureで検証する。
+
+== 実施結果
+
+`semantic` facadeへ`DocumentAttributeOccurrence`と`DocumentAttributeOperation`を追加し、
+`Analysis::document_attribute_occurrences()`がsource順sliceを返すようにした。内部parser型は非公開のままとし、
+公開型への変換境界を置いた。
+
+consumer統合テストとWASM fixtureで、重複、set／unset、空文字set、および各rangeを固定した。WASM／browserの
+応答は同じ情報を`attributeOccurrences`として返す。contract version、release manifest、conformance fixture、
+Core Profile、属性文書およびv0.6.0移行ガイドを同期し、完了条件を満たした。

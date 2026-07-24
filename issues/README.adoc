@@ -301,12 +301,14 @@ M34からM36の互換性収束、Core簡素化およびホスト供給stylesheet
 最終属性値とは別に、標準AsciiDocの属性occurrenceを公開semantic APIとして提供する。Coreは属性名の
 アプリケーション固有の意味を解釈せず、hostがsource-preservingな保護・検証・投影を実装できる境界を作る。
 
-* xref:147-public-document-attribute-occurrences.adoc[147: 公開文書属性occurrence query]（計画）
+* xref:147-public-document-attribute-occurrences.adoc[147: 公開文書属性occurrence query]（完了）
 
 === M39: v0.6.0 release train
 
 M38の公開Rust API追加を`v0.6.0`として公開する。公開契約、移行ガイド、consumer fixtureおよび
 release acceptanceを同じrelease trainで同期する。
+
+* xref:148-v0-6-0-release-readiness.adoc[148: v0.6.0 release readiness]（計画）
 
 === M1: プレーンテキスト変換
 

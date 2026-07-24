@@ -43,6 +43,15 @@ export interface DocumentProjection {
   title: unknown;
 }
 
+export interface DocumentAttributeOccurrence {
+  range: TextRange;
+  nameRange: TextRange;
+  valueRange: TextRange;
+  name: string;
+  rawValue: string;
+  operation: "set" | "unset";
+}
+
 export interface AdocWeaveWasmResponse {
   apiVersion: number;
   version: number;
@@ -57,6 +66,7 @@ export interface AdocWeaveWasmResponse {
   syntax: string;
   ast: string;
   html: string;
+  attributeOccurrences: DocumentAttributeOccurrence[];
   diagnostics: unknown[];
   renderDiagnostics: unknown[];
   symbols: unknown[];

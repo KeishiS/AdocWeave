@@ -636,8 +636,7 @@ impl LanguageService {
         let offset = request_offset(&document, position, self.position_encoding)?;
         if let Some(attribute) = document
             .analysis
-            .ast()
-            .attributes()
+            .document_attribute_occurrences()
             .iter()
             .find(|attribute| contains(attribute.range, offset))
         {

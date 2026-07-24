@@ -1,0 +1,21 @@
+= v0.6.0 release readiness
+:status: planned
+:depends-on: 147
+
+== 目的
+
+公開文書属性occurrence queryを、公開契約version 6の`v0.6.0`として配布する。版数、契約、移行ガイド、
+conformance fixtureおよびrelease acceptanceを一つのrelease trainで同期する。
+
+== 設計判断
+
+release manifest（`packageVersion` 0.6.0、`contractVersion` 6）をrelease trainの機械可読な正本とする。
+workspace、Zed、browser、distribution planおよびfixtureの一致は`cargo make release-contract`で検証する。
+ADR 0006に従い、mainの完全candidate成功commitへstable tagを一度だけ付ける。
+
+== 完了条件
+
+* workspace、Zed、browser、release manifest、distribution planおよびfixtureが`0.6.0`で一致する。
+* `docs/upgrade-0-6.adoc`がcontract version 5から6への移行と公開occurrence queryを定義する。
+* `cargo make release-gate`と`node tools/release-contract.mjs --tag=v0.6.0`が成功する。
+* mainのcandidate成功後、`v0.6.0`を作成してGitHub Actionsと公開assetを受け入れる。

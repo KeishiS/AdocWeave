@@ -1,4 +1,4 @@
 // Keep this thin runtime constant synchronized with release-manifest.json.
 // The synchronization test fails whenever any public contract changes.
-export const CONTRACT_VERSION = 5;
-export const BROWSER_PACKAGE_VERSION = "0.5.0";
+export const CONTRACT_VERSION = 6;
+export const BROWSER_PACKAGE_VERSION = "0.6.0";

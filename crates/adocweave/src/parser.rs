@@ -97,7 +97,7 @@ impl AstDocument {
             .and_then(|ordinal| self.blocks.get(ordinal))
     }
 
-    pub fn attributes(&self) -> &[DocumentAttribute] {
+    pub(crate) fn attributes(&self) -> &[DocumentAttribute] {
         &self.attributes
     }
 

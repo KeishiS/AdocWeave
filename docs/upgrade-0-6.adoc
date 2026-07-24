@@ -1,0 +1,30 @@
+= v0.6.0への移行
+
+v0.6.0は標準AsciiDocの文書属性occurrenceを、source-preservingな公開Core APIおよびWASM応答として
+追加するminor releaseである。公開契約は5から6へ更新する。
+
+== 必要環境と契約値
+
+sourceからv0.6.0をbuildするRust hostはRust 1.97.1以上を使用する。binary releaseだけを利用する場合は
+Rust toolchainを必要としない。package version、Rust versionおよびcontract versionの機械可読な正本は
+xref:../release-manifest.json[v0.6.0 release manifest]である。hostはpinned contractを5から6へ更新する。
+
+== 利用者可視の変更
+
+* `Analysis::document_attribute_occurrences()`が、`semantic::DocumentAttributeOccurrence`のsource順sliceを返す。
+* occurrenceは行全体、name、valueのrange、name、raw value、`DocumentAttributeOperation`の`Set`または`Unset`を持つ。
+  重複、空文字setおよびunsetは区別して保持する。
+* WASM responseとbrowser libraryの`attributeOccurrences`が同じ情報をcamelCaseのJSONで返す。
+* `Analysis::presentation().attributes()`は従来どおり最終属性値だけを返す。source順やrangeを必要とするhostは
+  occurrence queryへ移行する。
+
+Coreは標準属性名にアプリケーション固有の意味を与えない。UUID、日時、タグ、DB key、保護規則および
+投影はhostがoccurrenceを利用して実装する。
+
+== 更新手順
+
+. hostの`CONTRACT_VERSION`照合値を6へ更新する。
+. Web／WASM hostは`attributeOccurrences`を受け取り、独自のheader scannerを廃止する。
+. Rust hostは`Analysis::document_attribute_occurrences()`と`semantic` facadeの公開型を利用する。
+. 最終属性値だけを必要とする既存処理は`analysis.presentation().attributes()`をそのまま利用する。
+. 同じ`v0.6.0` ReleaseのCLI、LSP、browser archiveおよびZed archiveを同時に導入する。

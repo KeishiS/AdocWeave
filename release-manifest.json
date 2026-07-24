@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "packageVersion": "0.5.0",
+  "packageVersion": "0.6.0",
   "rustVersion": "1.97.1",
-  "contractVersion": 5
+  "contractVersion": 6
 }

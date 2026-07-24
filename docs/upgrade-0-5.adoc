@@ -63,8 +63,9 @@ xref:../release-manifest.json[v0.5.0 release manifest]である。hostはpinned 
 
 `DocumentAttribute`と`AttributeOperation`は、source属性の構築途中だけに必要な内部型として非公開化した。
 最終的な属性値は`analysis.presentation().attributes()`から`ResolvedDocumentAttributes`として読む。source順、
-set／unset操作またはrangeが必要なconsumerだけ、`analysis.ast().attributes()`の戻り値を反復してfieldを読む。
-この戻り値の要素型へ依存した新しい公開APIは作らず、必要なqueryをCoreへ追加する。
+set／unset操作またはrangeが必要なconsumerには、v0.5.0では安定した公開APIを提供しない。
+v0.6.0以後はxref:upgrade-0-6.adoc[公開occurrence query]を使用する。この内部型や`AstDocument`の
+内部fieldへ依存した公開APIは作らない。
 
 == 更新手順
 
