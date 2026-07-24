@@ -1,13 +1,12 @@
 = v0.6.0への移行
 
-v0.6.0は標準AsciiDocの文書属性occurrenceを、source-preservingな公開Core APIおよびWASM応答として
-追加するminor releaseである。公開契約は5から6へ更新する。
+v0.6.0では、文書属性を定義した順番や場所も取り出せるようになりました。ライブラリやWASMを
+使って属性を書き換えるアプリケーションは、この変更に合わせてください。
 
-== 必要環境と契約値
+== 必要な環境とバージョン
 
-sourceからv0.6.0をbuildするRust hostはRust 1.97.1以上を使用する。binary releaseだけを利用する場合は
-Rust toolchainを必要としない。package version、Rust versionおよびcontract versionの機械可読な正本は
-xref:../release-manifest.json[v0.6.0 release manifest]である。hostはpinned contractを5から6へ更新する。
+ソースからv0.6.0をビルドする場合はRust 1.97.1以上が必要です。配布済みのバイナリだけを使う場合は
+Rustは必要ありません。パッケージとRustのバージョンはxref:../release-manifest.json[release manifest]で確認できます。
 
 == 利用者可視の変更
 

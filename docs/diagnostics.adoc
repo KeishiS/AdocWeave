@@ -1,13 +1,13 @@
-= 診断契約
+= 問題の見方
 
-標準診断は構文・意味解析から生成し、`Analysis.diagnostics`へ同じ文書版の結果として
-格納する。CLI、LSP、HTMLその他のconsumerは独自にLintを再実行しない。
+`adocweave check`とエディターは、文書中の問題を同じ形式で表示します。問題には安定したコードが
+付くため、別のツールから判定することもできます。ここでは、問題を追加・利用する人向けの細かな規則を説明します。
 
 生成経路を、syntax認識時の`SyntaxIssue`、semantic loweringおよび意味・style lintに分ける。
 認識中の回復情報はsyntax treeのissueへ確定してからLintへ渡し、consumerがASTを再走査して
 構文problemを診断へ変換しない。`Analysis`構築時に一度だけ安定順序へ統合する。
 
-== 安定識別子
+== 問題コード
 
 `LintRule`を標準診断コードの単一レジストリとする。診断コードはASCII小文字、数字、
 `-`から構成し、利用者向けmessageではなくcodeを機械判定に用いる。

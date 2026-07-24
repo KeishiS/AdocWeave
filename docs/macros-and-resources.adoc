@@ -1,4 +1,6 @@
-= 標準macroとresource境界
+= マクロと画像・音声・動画
+
+画像、音声、動画、脚注、キーボード表記などの書き方と、利用側アプリがファイルを渡す方法を説明します。
 
 AdocWeaveは標準macroを、macroごとの文字列再走査ではなく、共通の`StandardMacro`として表現する。
 各nodeはkind、inline／block form、全体range、targetとtarget range、属性listとrange、および属性展開結果を

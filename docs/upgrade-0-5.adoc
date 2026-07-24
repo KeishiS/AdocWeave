@@ -1,15 +1,13 @@
 = v0.5.0への移行
 
-v0.5.0はblock title／table captionを解決済みinline presentationへ移行し、quote-aware include属性と
-明示`optional` includeを追加する。またホスト供給stylesheetをcomplete document出力へ適用する
-`RenderPolicy.stylesheets`、CLIの`--complete`／`--css`／`--css-url`およびWASMの`documentMode`／
-`stylesheets`設定を追加する。公開契約は3から5へ更新する。
+v0.5.0では、ブロックの題名と表の見出しでインライン書式を使えるようになりました。`include::`の属性、
+HTMLへ適用するスタイルシート、CLIの`--complete`／`--css`／`--css-url`、WASMの`documentMode`／
+`stylesheets`も追加しています。
 
-== 必要環境と契約値
+== 必要な環境とバージョン
 
-sourceからv0.5.0をbuildするRust hostはRust 1.97.1以上を使用する。binary releaseだけを利用する場合は
-Rust toolchainを必要としない。package version、Rust versionおよびcontract versionの機械可読な正本は
-xref:../release-manifest.json[v0.5.0 release manifest]である。hostはpinned contractを3から5へ更新する。
+ソースからv0.5.0をビルドする場合はRust 1.97.1以上が必要です。配布済みのバイナリだけを使う場合は
+Rustは必要ありません。パッケージとRustのバージョンは対象リリースの`release-manifest.json`で確認できます。
 
 == 破壊的変更
 

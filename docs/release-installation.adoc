@@ -1,4 +1,7 @@
-= GitHub Releaseからの導入・更新・削除
+= インストールと更新
+
+GitHub ReleasesからCLIとLanguage Serverを入れる手順、更新する手順、不要になったときに削除する手順を説明します。
+開発版を使う場合はxref:nix-installation.adoc[Nixで使う・開発する]を参照してください。
 
 この文書は、Rust toolchainおよびAdocWeaveのsource checkoutを持たないLinux利用者が、GitHub Releaseだけから
 CLI、Language Server、browser libraryおよびZed開発拡張を導入する手順を定義する。配布先は

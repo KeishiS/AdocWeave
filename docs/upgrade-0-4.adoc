@@ -1,7 +1,7 @@
 = v0.4.0への移行
 
-v0.4.0はadmonitionとquote／verse blockを型付きpresentationとして公開し、公開契約を2から3へ更新する
-minor releaseである。0.y.z期間のため、旧contractを受理するadapterとの後方互換性は提供しない。
+v0.4.0では、注意書き、引用、詩のブロックをHTMLや構造情報で扱えるようになりました。
+0.y.zの間は、古いライブラリ利用者との互換性を維持しません。
 
 == 必要環境
 

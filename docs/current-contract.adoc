@@ -1,64 +1,63 @@
-= 現行契約の正本索引
+= 公開している仕様と移行情報
 
-この文書は、現行実装を説明する規範文書の入口である。作業の経緯はIssue、長期的な
-設計判断はADR、将来の機能はロードマップを参照する。
+このページは、AdocWeaveをライブラリやWebAssemblyとして使う人のための入口です。
+公開API、JSONの入出力、HTMLの出力は、すべてリリース番号で対応関係を確認します。
+更新時に何を変更すればよいかは、下の移行ガイドを参照してください。
 
-公開API、解析、HTML、projection、conformanceおよびWASMは単一のpackage SemVerを共有する。配布時の対応関係は
-xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
+作業の経緯はIssue、設計を選んだ理由はADR、今後の予定はロードマップに分けて記録しています。
 
-== 契約値
+== 現在のバージョン
 
 [cols="2,1",options="header"]
 |===
-|契約 |現在値
+|項目 |現在値
 |package version |0.6.0
 |===
 
-機械可読な値の正本はxref:../release-manifest.json[release manifest]である。
+機械可読な値の正本はxref:../release-manifest.json[release manifest]です。
 最新版への更新手順はxref:upgrade-0-6.adoc[v0.6.0への移行]を参照する。
 
 == 移行ガイド
 
-過去のreleaseから更新するhostは、現在の導入versionより後の移行ガイドを番号順にすべて適用する。
+過去のリリースから更新する利用側アプリは、現在使っている版より後の移行ガイドを番号順にすべて確認してください。
 たとえばv0.1.xからv0.6.0へ更新する場合は、xref:upgrade-0-2.adoc[v0.2.0]、
 xref:upgrade-0-3.adoc[v0.3.0]、xref:upgrade-0-4.adoc[v0.4.0]および
-xref:upgrade-0-5.adoc[v0.5.0]およびxref:upgrade-0-6.adoc[v0.6.0]への移行をこの順で読む。各ガイドの必要Rust版と対象releaseの
-release manifestを確認し、contract versionが変わる段階ではcacheと保存済み成果物を再構築する。
+xref:upgrade-0-5.adoc[v0.5.0]およびxref:upgrade-0-6.adoc[v0.6.0]への移行をこの順で読みます。各ガイドの必要なRust版と対象リリースの
+release manifestを確認し、保存しているHTMLや検索用の情報を作り直してください。
 
-* xref:upgrade-0-2.adoc[v0.2.0]：contract version 1から2
-* xref:upgrade-0-3.adoc[v0.3.0]：table表示属性の追加、contract versionは2のまま
-* xref:upgrade-0-4.adoc[v0.4.0]：contract version 2から3
-* xref:upgrade-0-5.adoc[v0.5.0]：contract version 3から5、Rust facade再編
-* xref:upgrade-0-6.adoc[v0.6.0]：contract version 5から6、公開文書属性occurrence
+* xref:upgrade-0-2.adoc[v0.2.0]：表現力のあるリスト、文献、目次の追加
+* xref:upgrade-0-3.adoc[v0.3.0]：表の見出しと表示属性の追加
+* xref:upgrade-0-4.adoc[v0.4.0]：注意書き、引用、詩のブロックの追加
+* xref:upgrade-0-5.adoc[v0.5.0]：公開Rust APIの整理とスタイルシートの追加
+* xref:upgrade-0-6.adoc[v0.6.0]：文書属性を記述した順番と位置の取得
 
-== 規範文書
+== 詳しい仕様
 
 言語と出力の正本は次である。
 
-* 構文と回復規則：xref:grammar.adoc[規範文法]
-* 置換順序とcontext：xref:substitutions.adoc[置換モデル]
-* HTML出力：xref:html-contract.adoc[HTML契約]
-* 公開APIと再構築条件：xref:core-profile.adoc[Core Profile]
-* include前処理とsource map：xref:preprocessor.adoc[プリプロセッサとresource snapshot]
+* 構文と回復規則：xref:grammar.adoc[文法の詳細]
+* 置換の順序：xref:substitutions.adoc[文字の置換とインライン書式]
+* HTML出力：xref:html-contract.adoc[HTML出力の仕様]
+* 公開APIと更新時の注意：xref:core-profile.adoc[対応範囲の定義]
+* `include::`：xref:preprocessor.adoc[外部ファイルを読み込む]
 
-公開projectionと実行境界の正本は次である。
+構造情報と利用側アプリへの組み込み方は次を参照してください。
 
-* 診断とfix：xref:diagnostics.adoc[診断契約]
-* Formatter：xref:formatting.adoc[Formatting契約]
-* 参照、検索およびresource projection：xref:projections.adoc[Projection契約]
-* section、TOCおよびdoctype固有構造：xref:document-structure.adoc[文書構造契約]
-* host解決結果と純粋rendererの境界：xref:render-inputs.adoc[解決済みrenderer入力契約]
-* cross reference解決：xref:reference-resolution.adoc[参照解決契約]
-* ホスト実行とcache：xref:server-execution.adoc[サーバ実行契約]
-* ホスト拡張：xref:extensions.adoc[拡張境界]
-* Webホストadapter：xref:web-host-adapter.adoc[Webホストadapter契約]
-* Language Server：xref:language-server.adoc[Language Server設計]
-* WASM adapter：xref:wasm-worker.adoc[WASM API]
-* 検証gate：xref:testing.adoc[品質保証]
+* 問題と修正：xref:diagnostics.adoc[問題の見方]
+* 整形：xref:formatting.adoc[整形]
+* 参照、検索、画像などの情報：xref:projections.adoc[文書の構造情報を取り出す]
+* 見出しと目次：xref:document-structure.adoc[文書の構造]
+* HTMLを作る前に渡す情報：xref:render-inputs.adoc[変換前に利用側アプリが渡す情報]
+* 相互参照：xref:reference-resolution.adoc[相互参照のリンク先を決める]
+* サーバーでの実行：xref:server-execution.adoc[サーバーやアプリで実行する]
+* 独自機能の追加：xref:extensions.adoc[独自機能を追加する]
+* Webアプリ：xref:web-host-adapter.adoc[Webアプリへの組み込み]
+* エディター：xref:language-server.adoc[エディター連携]
+* WebAssembly：xref:wasm-worker.adoc[WebAssemblyとWeb Worker]
+* テスト：xref:testing.adoc[テストの実行]
 
-xref:syntax-support.adoc[対応構文]とxref:compatibility.adoc[互換性評価]は規範文書から導出する
-現行対応表である。実装済みと記載する項目は上記正本とfixtureに一致しなければならない。
-機械可読catalogへの統合はxref:../issues/081-contract-and-issue-governance.adoc[Issue 081]で行う。
+xref:syntax-support.adoc[対応しているAsciiDocの書式]とxref:compatibility.adoc[AsciiDocとの違い]は、
+現在の対応状況を知るための一覧です。
 
 == 文書の分類
 

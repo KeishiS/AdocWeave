@@ -1,6 +1,9 @@
-= プリプロセッサとresource snapshot
+= `include::`と外部ファイル
 
-== 責務境界
+このページは、`include::`などで別のファイルを読み込む場合の動きを説明します。通常の解析では、
+AdocWeave自身はファイルやネットワークへアクセスしません。利用側アプリが読み込む内容を渡します。
+
+== 役割分担
 
 AdocWeaveの通常解析はファイルシステムやネットワークへアクセスしない。hostは必要なresourceを
 取得し、targetをkeyとする`ResourceSnapshot`を構築してから`preprocess`または

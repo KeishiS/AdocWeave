@@ -1,13 +1,13 @@
-= ブラウザライブラリ
+= ブラウザーで使う
 
-`adocweave-browser-{version}.tar.xz`は、ブラウザでAsciiDoc入力をHTMLへ継続的に変換するための
-自己完結した配布物である。npm等のregistryには公開せず、GitHub Releaseのarchiveを展開して利用する。
-libraryはDOMを変更しない。HTMLの挿入、sanitizationおよび表示sandboxはホストの責務である。
+`adocweave-browser-{version}.tar.xz`は、ブラウザーでAsciiDocをHTMLへ変換するための配布物です。
+npmには公開していません。GitHub Releasesから取得して展開してください。ライブラリは画面を直接変更しません。
+返されたHTMLをどこに表示するか、安全性をどう確認するかは、利用するWebアプリが決めます。
 
-== 公開入口
+== 使い始める
 
-利用側がimportする入口は`worker/index.mjs`だけである。`worker/worker.mjs`、WASM glueおよびWorker messageは
-内部実装であり、直接利用する公開APIではない。TypeScript宣言は`worker/index.d.mts`にある。
+importするのは`worker/index.mjs`だけです。`worker/worker.mjs`やWASMの補助ファイルは内部用であり、
+直接使わないでください。TypeScriptの型定義は`worker/index.d.mts`にあります。
 
 [source,javascript]
 ----

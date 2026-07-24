@@ -1,0 +1,68 @@
+= AdocWeaveの文書
+
+このディレクトリには、使い方、対応している書式、アプリケーションへの組み込み方、開発方法を
+まとめています。最初からすべてを読む必要はありません。目的に近い入口を選んでください。
+
+== 文書を書く・変換する
+
+* xref:command-line.adoc[コマンドラインの使い方]
+* xref:syntax-support.adoc[対応している書式]
+* xref:tables.adoc[表]
+* xref:lists.adoc[リスト]
+* xref:links-and-cross-references.adoc[リンクと相互参照]
+* xref:diagnostics.adoc[問題の見方]
+* xref:formatting.adoc[整形]
+
+== エディター・Webアプリで使う
+
+* xref:language-server.adoc[エディター連携]
+* xref:zed-development.adoc[Zedで開発版を試す]
+* xref:browser-library.adoc[ブラウザーで使う]
+* xref:wasm-worker.adoc[WebAssemblyとWeb Worker]
+* xref:web-host-adapter.adoc[Webアプリへの組み込み]
+
+== 開発する・配布する
+
+* xref:nix-installation.adoc[開発環境を用意する]
+* xref:testing.adoc[テストの実行]
+* xref:continuous-integration.adoc[継続的インテグレーション]
+* xref:release-installation.adoc[インストールと更新]
+* xref:roadmap.adoc[今後の予定]
+
+== 詳しい仕様と設計
+
+ここから先は、AdocWeaveを組み込むライブラリ利用者や、実装を変更する人向けです。
+
+* xref:compatibility.adoc[AsciiDocとの違い]
+* xref:current-contract.adoc[公開している仕様と移行情報]
+* xref:core-profile.adoc[対応範囲の定義]
+* xref:architecture.adoc[内部の仕組み]
+* xref:grammar.adoc[文法の詳細]
+
+== このリポジトリで使う言葉
+
+通常の利用に必要な説明では、できるだけ日本語を使います。API名やプログラム内の名前は、
+コードと一致させるため英字のまま表記します。
+
+[cols="1,3",options="header"]
+|===
+|表記 |この文書での意味
+
+|公開仕様
+|ライブラリや配布物を利用するプログラムとの約束。以前の「contract」と同じ意味。
+
+|対応範囲
+|AdocWeaveが受け付け、期待どおりに処理するAsciiDocの範囲。以前の「profile」と同じ意味。
+
+|意味情報
+|解析して得た、見出し・リンク・表・属性などの構造化された情報。以前の「semantic model」や「projection」の説明で使っていた語。
+
+|利用側アプリ
+|AdocWeaveを呼び出すCLI、エディター、Webアプリなど。以前の「host」と同じ意味。
+
+|テスト用入力
+|期待する結果と組で保存する入力例。以前の「fixture」と同じ意味。
+
+|===
+
+厳密な用語が必要な箇所では、英語の名前をコード書式で併記します。

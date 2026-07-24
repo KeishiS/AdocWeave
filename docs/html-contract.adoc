@@ -1,4 +1,8 @@
-= HTML出力契約
+= HTML出力の仕様
+
+このページは、生成されるHTMLをプログラムで利用する人向けの詳細です。通常は`adocweave convert`の
+出力をそのまま使えます。HTMLの見た目はxref:browser-library.adoc[ブラウザーで使う]と
+`RenderPolicy.stylesheets`の説明を参照してください。
 
 == 契約バージョン
 

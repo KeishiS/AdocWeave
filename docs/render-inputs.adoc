@@ -1,4 +1,7 @@
-= 解決済みrenderer入力契約
+= 変換前に利用側アプリが渡す情報
+
+リンク先や画像の実際のURLを利用側アプリが調べてからHTMLを作る場合の詳細です。
+通常のCLI利用では設定する必要はありません。
 
 `RenderInputs`は、同じ`Analysis`から得たreference queryおよびresource queryに対するhost解決結果を
 一つにまとめた、backend非依存の所有snapshotである。rendererはこの値を読むだけであり、filesystem、

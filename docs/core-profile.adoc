@@ -1,135 +1,60 @@
-= AdocWeave Core Profile
+= 対応範囲の定義
 
-この文書は、ホスト非依存な標準構文profile 1の公開契約、互換性判断および再構築条件を
-定義する。特定ノートアプリのメタデータ、DB、権限、参照先URL生成および製品サーバは
-このprofileに含めない。
+このページは、AdocWeaveがどの環境でも同じように扱う範囲を定めます。通常の文書を書く場合は
+xref:syntax-support.adoc[対応しているAsciiDocの書式]を参照してください。
 
-== Release identity
+== 何を含むか
 
-machine-readableな検証registryはxref:../release-manifest.json[release manifest]である。Rustおよび
-Workerの公開定数は、このmanifestとの一致をrelease gateで検査する。version変更では最初に
-manifestを更新し、対応する実装、fixture、移行説明および以下の人向け一覧を同じ変更で同期する。
+AdocWeaveは、AsciiDocの読み取り、問題の検出、整形、HTMLへの変換、見出しやリンクなどの構造情報を提供します。
+特定のノートアプリのデータベース、ログイン権限、画面の構成、ネットワーク通信は提供しません。
+そのような機能は利用側アプリで追加します。
 
-[cols="2,1,3",options="header"]
-|===
-|契約 |現在値 |更新する変更
+== バージョン
 
-|package version
-|`VERSION = 0.6.0`
-|公開Rust型、構文認識、診断、HTML、projection、conformance snapshotまたはWASM要求・応答の非互換変更
+公開API、WebAssembly、HTML出力、構造情報は、同じパッケージバージョンを使います。現在の`VERSION = 0.6.0`です。
+現在の値と必要なRustのバージョンはxref:../release-manifest.json[release manifest]が正本です。
+公開される結果を保存しているアプリケーションは、AdocWeaveを更新したら保存済みのHTMLや検索用の情報を作り直してください。
 
-|===
+0.y.zの間は、minor版で互換性のない変更を行うことがあります。更新前に
+xref:current-contract.adoc[公開している仕様と移行情報]の該当する移行ガイドを確認してください。
 
-すべての公開成果物は同じpackage SemVerを共有する。任意の公開変更でこの値を一度だけ更新し、
-hostは解析cache、HTML、projection、conformance snapshotおよびWASM adapterを同時に再構築する。
+== 対応する書式
 
-Rust APIは次の用途別facadeを公開する。
+文書の題名、見出し、段落、属性、アンカー、リテラル・ソースブロック、リスト、表、リンク、
+相互参照、数式、画像・音声・動画などを扱います。各書式の対応状況は
+xref:syntax-support.adoc[対応しているAsciiDocの書式]にあります。
 
-* `semantic`：semantic AST、文書構造、catalogおよびwalker
-* `output`：HTML、formatter、diagnostic、projectionおよびconformance
-* `preprocess`：I/Oを行わないinclude前処理とsource map
-* `resolution`：hostが供給する参照・resource解決結果とrenderer入力
-* `text`：source位置とlossless syntax tree
+未対応の書式を通常のHTMLとしてそのまま出力することはありません。`SyntaxMode::Permissive`では
+内容を安全なテキストとして残し、`SyntaxMode::Strict`では未対応の書式を含む文書を処理しません。
 
-解析の入口はcrate rootの`Engine`、`ParseOptions`および`Analysis`である。CLI commandを表すenumや
-任意byte列から出力文字列までを一括処理するAPIはcoreに置かない。
+== 処理の上限
 
-`Analysis::document_attribute_occurrences()`は、標準AsciiDocの文書属性をsource順の公開型
-`DocumentAttributeOccurrence`として返す。これは重複、set／unset、空文字値および各source rangeを
-保持するsource-preservingなhost拡張向けqueryである。最終属性値だけが必要な通常の変換・表示では、
-`Analysis::presentation().attributes()`の`ResolvedDocumentAttributes`を使用する。
-
-現行profileだけを実装するため、解析要求にprofile version selectorは持たない。解析結果の
-`profile_version`とrelease manifestが実際に使用したprofileを公開する。複数profileを同時提供する
-場合だけ、実際のdispatchを伴うselectorを再導入する。
-
-== 必須構文
-
-profile 1の必須構文はxref:syntax-support.adoc[対応構文表]で「対応」「部分対応」または
-「回復対応」と記載した範囲である。規範的な認識規則と置換順序は
-xref:grammar.adoc[規範文法]およびxref:substitutions.adoc[Core置換モデル]を正本とする。
-
-必須範囲には文書header、段落、タイトル、section、book part、discrete heading、break、汎用文書属性、明示アンカー、リテラル・ソース
-ブロック、順序付き・順序なしリストとblock continuation、constrainedおよびunconstrainedな
-強調・斜体・等幅、
-属性参照、通常リンク、文書内・文書間・任意スキームxrefおよびLaTeX STEMを含む。
-基本PSV表、標準macroおよびmedia resource参照も必須範囲に含む。一般passthrough、include、
-条件分岐およびraw HTMLは
-必須範囲外である。
-
-`SyntaxMode::Permissive`は認識した未対応領域を保持し、安全なテキストとして処理する。
-`SyntaxMode::Strict`は`Unsupported`ブロックを含む文書を公開処理前に拒否する。どちらの
-modeでも未知構文をraw HTMLとして通過させない。
-
-== 既定処理上限
+大きすぎる入力で処理が止まらないように、既定の上限を設けています。
 
 [cols="2,1",options="header"]
 |===
-|資源 |Profile 1既定値
+|対象 |既定の上限
+
 |入力 |10 MiB
 |出力 |50 MiB
 |1行 |1 MiB
-|リスト深さ |8
-|インライン深さ |32
-|数式 |1 MiB
-|表本体 |5 MiB
-|表cell |100,000
-|表列 |1,000
-|表深さ |8
+|リストの深さ |8
+|インライン書式の深さ |32
+|表の本体 |5 MiB
+|表のセル |100,000
+|表の列 |1,000
 |ブロック |100,000
-|semantic node |1,000,000
-|参照 |100,000
-|属性 |1,000
-|診断 |1,000
+|問題の件数 |1,000
 |===
 
-ホストは明示的に小さい値を指定できる。同じprofileを名乗るruntimeは、同じ入力と同じ
-`ParseOptions`に対して同じ上限判断を行わなければならない。
-公開上限値はruntimeのword sizeに依存しない`u32`で表す。入力長やnode数を扱う内部の
-`usize`との比較では、`u32`から損失なく変換し、切り詰めるcastを行わない。
+利用側アプリは、必要ならより小さい上限を指定できます。CLIとWebAssemblyは出力サイズも確認します。
+ライブラリを直接使ってHTMLを表示するアプリは、表示前に同等の出力サイズ確認を行ってください。
 
-入力および構造上限（1行、深さ、node数、参照、属性等）はcoreの構築経路で強制する。
-一方で出力上限は例外であり、coreのHTML renderは失敗しない全域関数として出力byte列を返すため、
-構築時には強制しない。出力上限は各出力frontendが生成後のbyte列に対して出力境界で強制する。
-CLI（`adocweave-cli`）とWASM（`adocweave-wasm`）はrender後に`max_output_bytes`を検査し、
-超過時は出力を拒否する。renderした HTML を直接発行する組み込みホストは、同じ上限を自ら適用する。
+== APIを使う人へ
 
-== crateのSemVer
+Rustからは`Engine`、`ParseOptions`、`Analysis`が主な入口です。属性の最終値は
+`Analysis::presentation().attributes()`から、属性を記述した順番や位置は
+`Analysis::document_attribute_occurrences()`から取得できます。
 
-すべてのworkspace crateは同じSemVerを使用する。`0.y.z`期間は次を適用する。
-
-* patchは不具合修正に限定し、公開契約を意図的に破壊しない。
-* minorは機能追加または破壊的変更を含められるが、影響する上記契約version、fixture、
-  移行説明を同時に更新する。
-* `1.0.0`以降はRust公開APIの破壊的変更をmajor、後方互換な機能追加をminor、修正をpatchとする。
-* 診断codeの削除・意味変更、既定severityの意味変更および自動修正Editの意味変更は
-  profile上の互換性変更として扱う。message文言だけは安定APIとしない。
-
-crate SemVerだけからHTMLやprojectionの再構築要否を推測せず、個別契約versionを比較する。
-
-== 再構築条件
-
-[cols="2,3",options="header"]
-|===
-|変更された契約 |ホストが再構築する成果物
-
-|Core profile、Core APIまたは解析option
-|保存済み解析cache、診断、HTML、検索projection、参照projectionおよびシンボル
-
-|HTML contractまたはHTML policy
-|保存済みHTML・プレビュー。解析cacheとprojectionは変更がなければ再利用できる
-
-|Projection contract
-|検索索引、通常リンク索引、参照edgeおよび逆参照索引
-
-|Resolver結果、対象文書versionまたは権限
-|解決済み参照edge、逆参照索引および参照を含むHTML。元文書の構文解析は再利用できる
-
-|診断設定だけ
-|診断。syntax tree・AST・HTML・projectionは設定が意味処理へ影響しない限り再利用できる
-
-|Formatter設定だけ
-|保存済み整形結果。解析・HTML・projectionの再構築理由にはならない
-|===
-
-cache keyと採用判定の詳細はxref:server-execution.adoc[ホスト実行・キャッシュ契約]に従う。
+HTML、整形、問題一覧、構造情報、外部リンクの解決結果は用途ごとの公開モジュールにあります。
+型名やJSONの詳細は、各ページからソースコードのAPIドキュメントを参照してください。

@@ -1,6 +1,10 @@
-= AsciiDoc仕様との互換性
+= AsciiDocとの違い
 
-== 参照基準
+AdocWeaveは、日常的なAsciiDoc文書でよく使う書式から対応しています。Asciidoctorを含む
+既存の処理系と同じ動作を目指す箇所もありますが、すべての機能を再現するものではありません。
+移行前にはxref:syntax-support.adoc[対応しているAsciiDocの書式]と、このページを確認してください。
+
+== 参照する資料
 
 AdocWeaveは次の公式資料を外部仕様の参照基準とする。
 
@@ -10,10 +14,10 @@ AdocWeaveは次の公式資料を外部仕様の参照基準とする。
 * https://docs.asciidoctor.org/asciidoc/latest/syntax-quick-reference/[AsciiDoc syntax quick reference]
 
 AsciiDocプロジェクトは言語仕様が現在も策定中であると説明している。そのためAdocWeaveは、
-未確定の最終仕様への準拠を主張せず、採用した参照基準と意図的な差異を記録する。
+未確定の最終仕様に完全に従うとは主張せず、採用した資料と意図的な違いを記録します。
 
-Core 0.4は意図的に小さく定義したプロファイルである。そのテスト成功が証明するのは
-xref:grammar.adoc[AdocWeaveの規範文法]への準拠であり、AsciiDoc全体への準拠ではない。
+対応範囲は意図的に小さく定義しています。テストが保証するのは
+xref:grammar.adoc[AdocWeaveの文法]への適合であり、AsciiDoc全体への適合ではありません。
 
 == 書式ペアの互換性
 

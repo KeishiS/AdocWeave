@@ -1,21 +1,22 @@
-= AdocWeave対応構文
+= 対応しているAsciiDocの書式
 
-この文書は現在のAdocWeaveコアが実装する動作を記録する。対応する部分集合を列挙する
-製品上の対応表であり、AsciiDoc言語の完全な実装を主張するものではない。
+このページでは、AdocWeaveで使えるAsciiDocの書式を一覧にしています。表の「対応」は、
+実際に解析し、必要な出力やエディター機能でも確認しているものです。「保持」は、内容を失わずに
+読み込めますが、書式としての処理はまだ行わないものです。
 
-この対応範囲は`CONTRACT_VERSION = 6`として公開する。version、SemVerおよび再構築条件は
-xref:core-profile.adoc[AdocWeave Core Profile]で定義する。
-実装済み構文の規範的規則はxref:grammar.adoc[Core 0.4規範文法]で定義する。
-AsciiDoc言語全体との差異はxref:compatibility.adoc[AsciiDoc仕様との互換性]に記載する。
+AsciiDoc全体を実装しているわけではありません。他の実装との差は
+xref:compatibility.adoc[AsciiDocとの違い]を参照してください。
+
+利用側アプリとの細かな約束はxref:current-contract.adoc[公開している仕様と移行情報]、
+文法の厳密な定義はxref:grammar.adoc[文法の詳細]にあります。
 
 == 状態の定義
 
 対応::
-構文にsemantic AST表現があり、Parserと、該当するRenderer、診断、Formatter、
-エディター機能を縦断してテストしている。
+書式を理解しており、変換・問題表示・整形・エディター機能のうち必要な機能で確認している。
 
 保持::
-最終的な意味は未実装だが、入力を通常テキストまたは`Unsupported`ノードとして保持する。
+内容を失わずに読み込めるが、書式としての意味付けや変換は行わない。
 HTML出力では保持したテキストをエスケープする。
 
 未対応::

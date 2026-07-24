@@ -1,4 +1,7 @@
-= 汎用文書projection契約
+= 文書の構造情報を取り出す
+
+HTMLへ変換せずに、見出し、リンク、参照、属性などの情報を利用側アプリで使う方法を説明します。
+ここで返す情報は、検索、目次、独自の画面表示に利用できます。
 
 `adocweave::output::projection::project`は、一つの所有型`Analysis`と同revisionの`RenderInputs`からHTMLとは独立した
 ホスト向け情報を抽出する。projection生成時にソースを再解析せず、ファイル、DB、

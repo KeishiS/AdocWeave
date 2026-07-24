@@ -1,68 +1,90 @@
 = AdocWeave
 
-AdocWeaveはRustで実装するAsciiDoc処理系です。損失のないsyntax tree、出力形式に依存しない
-semantic AST、診断、整形、HTML変換およびLanguage Serverを提供します。
+AdocWeaveは、AsciiDoc文書を確認、整形、HTML変換できるRust製のツールです。
+コマンドライン、WebAssembly、Language Serverを提供します。まずはCLIで文書を変換したり、
+書式やリンクの問題を確認したりできます。
 
-== ドキュメント
+== できること
 
-* xref:docs/syntax-support.adoc[対応構文]
-* xref:docs/compatibility.adoc[AsciiDoc仕様との互換性]
-* xref:docs/current-contract.adoc[現行契約とバージョン別移行ガイド]
-* xref:docs/roadmap.adoc[ロードマップ]
-* xref:docs/grammar.adoc[コア文法]
-* xref:docs/substitutions.adoc[置換モデル]
-* xref:docs/architecture.adoc[アーキテクチャ]
-* xref:docs/language-server.adoc[Language Server設計]
-* xref:docs/zed-development.adoc[Zedへの開発版導入]
-* xref:docs/release-distribution.adoc[GitHub Releases配布契約]
-* xref:docs/release-integrity.adoc[Release assetの完全性、SBOMおよびprovenance]
-* xref:docs/release-workflow.adoc[Transactional GitHub Release workflow]
-* xref:docs/continuous-integration.adoc[継続的インテグレーション]
-* xref:docs/dependency-governance.adoc[依存関係governance]
-* xref:docs/release-installation.adoc[GitHub Releaseからの導入・更新・削除]
-* xref:docs/native-release.adoc[Native CLI・Language Server配布契約]
-* xref:docs/browser-library.adoc[ブラウザライブラリ]
-* xref:docs/command-line.adoc[Command Line Interface]
-* xref:docs/diagnostics.adoc[診断契約]
-* xref:docs/formatting.adoc[Formatter契約]
-* xref:docs/extensions.adoc[ホスト拡張実装契約]
-* xref:docs/reference-resolution.adoc[cross reference解決契約]
-* xref:docs/stem.adoc[STEMとLaTeX]
-* xref:editors/zed/README.adoc[Zed拡張の実装]
+* AsciiDocを安全なHTMLへ変換する。
+* 文法やリンク、表などの問題を行番号付きで表示する。
+* 意味を変えずに、対応済みの範囲を整形する。
+* Zedなどのエディターで診断、補完、定義への移動を提供する。
+* ブラウザーや別のアプリケーションに組み込む。
+
+対応している書式と、まだ対応していない書式はxref:docs/syntax-support.adoc[対応している書式]で確認できます。
+AdocWeaveはAsciiDocの全機能を実装するものではありません。対応範囲と他の実装との違いは
+xref:docs/compatibility.adoc[AsciiDocとの違い]にまとめています。
+
+== はじめに使う
+
+GitHub Releasesから自分の環境に合うファイルを入手する方法は、
+xref:docs/release-installation.adoc[インストールと更新]を参照してください。Nixを使う場合は
+xref:docs/nix-installation.adoc[Nixで使う]が利用できます。
+
+インストール後は、次のように使えます。
+
+[source,console]
+----
+# HTMLへ変換する
+adocweave convert manual.adoc > manual.html
+
+# 問題を確認する
+adocweave check manual.adoc
+
+# 整形が必要かだけを確認する
+adocweave format --check manual.adoc
+----
+
+コマンドの全オプション、標準入力、`include::`の扱いはxref:docs/command-line.adoc[コマンドラインの使い方]を参照してください。
+
+== 読みたい内容から探す
+
+すべての文書の一覧はxref:docs/README.adoc[文書の案内]にあります。
+
+=== 文書を書く人へ
+
+* xref:docs/syntax-support.adoc[対応している書式] — 見出し、リスト、表、リンクなどの対応状況。
+* xref:docs/command-line.adoc[コマンドラインの使い方] — 変換、確認、整形の実行方法。
+* xref:docs/diagnostics.adoc[問題の見方] — 表示される問題の種類と対処の考え方。
+* xref:docs/formatting.adoc[整形] — 変更される部分と変更されない部分。
+* xref:docs/tables.adoc[表]、xref:docs/lists.adoc[リスト]、xref:docs/links-and-cross-references.adoc[リンクと相互参照]。
+
+=== エディターで使う人へ
+
+* xref:docs/zed-development.adoc[Zedで開発版を試す]。
+* xref:docs/language-server.adoc[エディター連携] — できることと設定方法。
+* xref:docs/zed-lsp-resolution.adoc[ZedがLanguage Serverを見つける順序]。
+
+=== アプリケーションに組み込む人へ
+
+* xref:docs/browser-library.adoc[ブラウザーで使う]。
+* xref:docs/wasm-worker.adoc[WebAssemblyとWeb Worker]。
+* xref:docs/web-host-adapter.adoc[Webアプリへの組み込み]。
+* xref:docs/extensions.adoc[独自機能を追加する]。
+
+=== 開発に参加する人へ
+
+* xref:docs/nix-installation.adoc[開発環境を用意する]。
+* xref:docs/testing.adoc[テストの実行]。
+* xref:docs/architecture.adoc[内部の仕組み]。
+* xref:docs/current-contract.adoc[公開している仕様と移行情報]。
+* xref:docs/roadmap.adoc[今後の予定]。
 
 == 開発
 
-Nix開発環境にはRustツールチェーン、`cargo-make`、`ripgrep`、`actionlint`、Git、GitHub CLI、`jq`、TypeScript、
-esbuildおよびChromiumが含まれます。
+Nixを使う場合は、リポジトリのルートで次を実行すると必要なツールを用意できます。
 
 [source,console]
 ----
 nix develop
+cargo make verify
 ----
 
-利用可能なタスクは次のとおりです。
+`cargo make verify`は、整形、型検査、テスト、ブラウザー向けテスト、文書の検査をまとめて実行します。
+個別の作業に使うコマンドはxref:docs/testing.adoc[テストの実行]に載せています。
 
-- `cargo make fmt`または`cargo make format`: Rustソースを整形する。
-- `cargo make fmt-check`または`cargo make format-check`: ファイルを変更せず整形状態を検査する。
-- `cargo make check`: 全target・全featureを型検査する。
-- `cargo make clippy`: warningを許可せずClippyを実行する。
-- `cargo make test`: workspace全体のテストを実行する。
-- `cargo make test-core`: コアとCLIのテストを実行する。
-- `cargo make test-lsp`: Language Serverのテストを実行する。
-- `cargo make test-grammar`: 規範文法と置換契約のテストを実行する。
-- `cargo make test-properties`: syntax範囲、lossless性、Formatter冪等性の不変条件を検証する。
-- `cargo make test-release`: CLIとLanguage Serverで共通の初期リリースfixtureを検証する。
-- `cargo make check-zed`: Zed拡張crateを型検査する。
-- `cargo make clippy-zed`: Zed拡張crateへClippyを実行する。
-- `cargo make doc-check`: warningを許可せずAPIドキュメントを生成する。
-- `cargo make docs-check`: `.md`ファイルの混入を検出する。
-- `cargo make workflow-lint`: GitHub Actionsの構文、action pinおよびrelease権限境界を検査する。
-- `cargo make release-metadata-test`: 配布manifest、SPDX SBOMおよびchecksum生成を検査する。
-- `cargo make release-contract`: release train、配布計画、metadataおよびworkflow policyをまとめて検査する。
-- `cargo make release-ci-contract`: PR用のrelease contract、workflow lintおよびdist planをまとめて検査する。
-- `cargo make release-installation-e2e-host`: 隔離HOMEでRelease配布物の導入・version選択・完全削除を検査する。
-- `cargo make dev-tools-check`: `flake.nix`が提供すべき開発tool一式を検査する。
-- `cargo make flake-check`: Nix flakeの評価を成果物buildなしで検査する。
-- `cargo make build`: 全target・全featureをビルドする。
-- `cargo make run-lsp`: 標準入出力でLanguage Serverを起動する。
-- `cargo make verify`、`cargo make ci`または`cargo make`: 変更を伴わない全検証を実行する。
+== 詳しい設計資料
+
+文法の厳密な定義、公開APIの約束、配布手順などは`docs/`にあります。これらはライブラリや
+配布物を保守する人向けの資料です。普段の利用では、上の「読みたい内容から探す」だけで十分です。

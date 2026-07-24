@@ -1,6 +1,28 @@
-= Command Line Interface
+= コマンドラインの使い方
 
-== 通常動作
+`adocweave`は、AsciiDocファイルを変換、確認、整形するコマンドです。入力ファイルを指定しない場合は
+標準入力を読み、結果を標準出力へ書きます。
+
+== よく使うコマンド
+
+[cols="1,3",options="header"]
+|===
+|コマンド |用途
+
+|`adocweave convert manual.adoc`
+|HTMLへ変換する。
+
+|`adocweave check manual.adoc`
+|書式やリンクなどの問題を確認する。
+
+|`adocweave format manual.adoc`
+|整形後の内容を標準出力へ書く。`--check`を付けると、変更が必要かだけを確認する。
+
+|`adocweave symbols manual.adoc`
+|見出しなどの構造をJSONで出力する。
+|===
+
+== 入力と出力
 
 `convert`、`check`、`format`および`symbols`はfileまたは標準入力を受け取る。既定では入力file以外を
 読み込まず、`include::`を展開しない。

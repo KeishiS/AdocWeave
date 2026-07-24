@@ -1,8 +1,8 @@
-= Language Server設計
+= エディター連携
 
-この文書は`adocweave-lsp`の責務、実行モデルおよびIssue 045以降の設計を定義する。
-AsciiDocの構文・意味・診断・整形は`adocweave`コアが所有し、Language Serverは
-LSPとの変換、文書世代管理および実行制御だけを所有する。
+`adocweave-lsp`は、対応するエディターに問題表示、補完、定義への移動、整形を提供します。
+AsciiDocの読み取りやHTML変換の規則はコアライブラリにあり、Language Serverはエディターとの通信を担当します。
+Zedで開発版を試す手順はxref:zed-development.adoc[Zedで開発版を試す]を参照してください。
 
 == 現在の状態と移行範囲
 

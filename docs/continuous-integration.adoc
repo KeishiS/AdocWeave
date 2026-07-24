@@ -1,9 +1,9 @@
 = 継続的インテグレーション
 
-この文書は、repositoryの変更検証とGitHub Release候補の受け入れを分離するCI契約を定義する。実行内容の正本は
-`.github/workflows`と`Makefile.toml`であり、この文書はeventごとの保証と運用境界を説明する。
+GitHub Actionsは、変更の確認とリリース前の確認を分けて実行します。実際に動く設定は
+`.github/workflows`と`Makefile.toml`です。このページでは、いつ何を確認するかを説明します。
 
-== Event model
+== 実行するタイミング
 
 [cols="2,3,3,2",options="header"]
 |===

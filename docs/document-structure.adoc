@@ -1,4 +1,7 @@
-= 文書構造契約
+= 文書の構造
+
+このページは、見出し、節、目次を扱う人向けの詳細です。通常は`symbols`コマンドやエディター機能を
+使えばよく、内部の型を意識する必要はありません。
 
 `DocumentStructure`は、`DocumentIdentifiers`でID確定済みのtop-level見出し列から一度だけ構築する
 backend非依存の不変snapshotである。HTMLは全階層のidentifier catalog、LSP Document Symbolsと

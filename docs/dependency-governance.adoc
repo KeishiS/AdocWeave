@@ -1,7 +1,7 @@
-= 依存関係governance
+= 依存関係の管理
 
-この文書は、配布物、開発toolおよび検査harnessの依存境界、更新手順、license、既知脆弱性および例外の規範を定義する。
-machine-readableな正本は`security/dependency-boundaries.json`である。
+このページでは、配布物や開発用ツールが使う依存関係、更新手順、ライセンス、既知の脆弱性の扱いを説明します。
+機械的に確認するための情報は`security/dependency-boundaries.json`にあります。
 
 == 境界
 

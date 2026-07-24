@@ -1,6 +1,6 @@
-= Transactional GitHub Release workflow
+= GitHub Releaseの公開手順
 
-この文書は、`.github/workflows/release.yml`と`release-publish.yml`による公開手順および障害対応を定義する。
+このページは、`.github/workflows/release.yml`と`release-publish.yml`を使った公開手順と、失敗したときの対応を説明します。
 xref:continuous-integration.adoc[継続的インテグレーション]はquality、candidateおよびpublish laneの責務境界を定義する。
 repository所有のworkflowを正本とし、`dist 0.32.0`はrelease planとnative archive build engineとして固定する。
 `allow-dirty = ["ci"]`は、この意図的なworkflow所有権の宣言であり、生成漏れの黙認には使用しない。

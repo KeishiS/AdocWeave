@@ -1,7 +1,7 @@
-= Webホストadapter契約
+= Webアプリへの組み込み
 
-この文書は、Webアプリが標準AsciiDoc入力へ利用側profileを適用するための公開API対応を定義する。
-AdocWeaveはアプリ固有parser、DB、ACL、HTTP client、DOMまたはHTML後処理を要求しない。
+WebアプリからAdocWeaveを使うときの役割分担を説明します。AdocWeaveはAsciiDocを読み、HTMLなどを返します。
+データベース、ログインの権限、HTTP通信、DOMの操作、HTMLを画面に置く処理はWebアプリ側で行います。
 
 == 処理順
 
