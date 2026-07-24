@@ -1,0 +1,27 @@
+= RenovateによるNix依存更新の評価
+:status: planned
+:depends-on: 157
+
+== 目的
+
+Dependabot導入後の運用結果を基に、`flake.nix`と`flake.lock`を含む更新をRenovateへ移す価値を判断する。
+同じ依存集合を複数botで更新せず、review量と設定保守を増やさない。
+
+== 作業
+
+* Dependabotの運用実績と手動Nix更新の頻度を記録し、Nix入力更新が継続的な負担かを評価する。
+* RenovateのCargo、GitHub ActionsおよびNix managerの対応範囲、Nix managerの安定性、実行方法、権限および更新Pull Requestの品質を検証する。
+* Renovateを採用する場合は、Dependabotと対象ecosystemが重複しない移行手順を定義する。
+* 採用する場合は、Nix入力、Cargo、Zed、fuzzおよびActionsを明示的な更新単位へ分け、同時Pull Request数と自動merge禁止を設定する。
+* 採用しない場合は、Nix更新を手動手順として維持する根拠と再評価条件を依存関係の管理文書へ記録する。
+
+== 判断基準
+
+Nix入力の定期更新を安全なreview単位で継続でき、bot自身の設定・実行・権限管理が手動更新より小さい場合にのみ採用する。
+Nix managerのbeta制約、CI時間の増加、更新Pull Requestの重複またはlockfile競合が許容できない場合は採用しない。
+
+== 完了条件
+
+* Renovateを導入するか、導入しないかを文書化した判断がある。
+* 導入する場合、Dependabotとの更新対象重複がなく、Nixを含む各更新Pull Requestが既存quality gateを通過する。
+* 導入しない場合、Nix入力の手動更新手順と再評価条件が依存関係の管理文書にある。

@@ -1,0 +1,28 @@
+= Dependabotによる依存更新の導入
+:status: in-progress
+:depends-on: 104
+
+== 目的
+
+GitHub標準のDependabotを導入し、配布対象のCargo依存とGitHub Actionsを小さいreview単位で継続更新する。
+自動mergeは行わず、既存の品質・供給網検査を通過したPull Requestだけを人手で取り込む。
+
+== 作業
+
+* `.github/dependabot.yml`でroot workspace、`editors/zed`および`fuzz`のCargo manifestと、rootのGitHub Actionsを対象にする。
+* 通常更新は週次とし、同時に開くPull Request数を制限する。security updateは通常更新とは独立して扱う。
+* Cargo、ZedおよびActionsを別の更新単位とし、無関係なlockfile変更を一つのPull Requestへ混在させない。
+* Actionsの完全SHA固定を維持し、更新時は参照先のrelease noteとリポジトリ内のversionコメントをreviewする。
+* xref:../docs/dependency-governance.adoc[依存関係の管理]に、対象、review手順および自動merge禁止を記載する。
+
+== 対象外
+
+`flake.nix`と`flake.lock`の更新はDependabotの対象にしない。browser workerはruntime dependencyを持たないため、
+npm更新も設定しない。Nix入力の自動更新はIssue 158で評価する。
+
+== 完了条件
+
+* Dependabotがroot、Zed、fuzzおよびGitHub Actionsについて、設定した周期で更新Pull Requestを作成する。
+* 更新Pull Requestが既存のquality gateとdependency governanceを通過する。
+* DependabotのPull Requestを自動mergeするworkflow、ruleまたは設定が存在しない。
+* 依存関係の管理文書と設定対象が一致する。

@@ -1,0 +1,27 @@
+= Release candidate artifactの再利用
+:status: in-progress
+:depends-on: 130
+
+== 目的
+
+`main`で完全検証したrelease candidateを、同一commitへのversion tag公開時に再利用する。
+同じsourceに対する品質検査、fuzz、buildおよび導入E2Eの重複実行を除き、tag固有の完全性確認と公開だけを行う。
+
+== 作業
+
+* `main` pushの完全candidateから、commit ID、workflow run、artifact集合、checksumおよびmetadataを対応付ける不変な記録を作る。
+* tag workflowはtagが現在の`main`かつ成功済みcandidateと同一commitを指すことを確認し、そのcandidate artifactだけを取得する。
+* tag固有の版数・release contract・asset完全性・SBOM・provenanceを検証してからGitHub Releaseを公開する。
+* candidateが未完了、失敗、期限切れまたはcommit不一致の場合は公開せず、利用者へ再実行方法を示す。
+* `main`とtagで実行するjob、artifact保存期間、再利用境界および公開権限をworkflow policy testと運用文書へ固定する。
+
+== 対象外
+
+source変更を伴うtag、異なるcommitのartifact再利用、品質検査の省略、公開後assetの差し替えは認めない。
+
+== 完了条件
+
+* `main`の完全candidate成功後、同じcommitのtag公開がsource品質・fuzz・配布物build・導入E2Eを再実行しない。
+* tag workflowが検証済みcandidateのcommit、artifact、checksumおよびrelease manifestの一致を確認する。
+* candidateが利用不能または不一致の場合、GitHub Releaseは作成されない。
+* releaseのasset、SBOMおよびprovenanceが再利用したcandidateとbyte単位で一致する。

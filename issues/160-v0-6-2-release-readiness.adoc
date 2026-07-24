@@ -1,0 +1,15 @@
+= v0.6.2 release readinessとCI公開経路の受け入れ
+:status: in-progress
+:depends-on: 157, 159
+
+== 目的
+
+Dependabotによる依存更新と、成功済みmain candidateのtag公開時再利用を`v0.6.2`として受け入れる。
+公開API・AsciiDoc意味・配布対象を変えず、公開経路の検証範囲と待ち時間を改善する。
+
+== 完了条件
+
+* workspace、Zed、browser、protocol、release manifest、distribution planおよびfixtureが`0.6.2`で一致する。
+* main pushでquality、fuzz、native／browser／Zed build、candidate verificationおよびLinux 2 architectureの導入E2Eが成功する。
+* `v0.6.2` tagが同じcommitの成功済みcandidateを再利用し、source quality、fuzz、archive buildおよび導入E2Eを再実行しない。
+* GitHub Releaseがstableであり、計画どおりの9 asset、checksum、SBOMおよびprovenanceを持つ。

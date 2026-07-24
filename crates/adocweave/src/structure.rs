@@ -363,8 +363,20 @@ mod tests {
 
     #[test]
     fn section_tree_ids_toc_numbers_and_exclusions_share_one_projection() {
-        let parsed = parse("= Title\n\n== One\n=== Child\n\n[.notoc]\n== Hidden\n\n== Two\n")
-            .expect("parse");
+        let parsed = parse(
+            "\
+= Title
+
+== One
+=== Child
+
+[.notoc]
+== Hidden
+
+== Two
+",
+        )
+        .expect("parse");
         let structure = parsed.ast.structure();
         assert_eq!(structure.roots().len(), 1);
         assert_eq!(structure.roots()[0].children.len(), 3);
@@ -385,16 +397,35 @@ mod tests {
 
     #[test]
     fn book_parts_and_appendices_are_typed_and_validated() {
-        let parsed =
-            parse("= Book\n:doctype: book\n\n= Part\n\n== Chapter\n\n[appendix]\n== Reference\n")
-                .expect("parse");
+        let parsed = parse(
+            "\
+= Book
+:doctype: book
+
+= Part
+
+== Chapter
+
+[appendix]
+== Reference
+",
+        )
+        .expect("parse");
         let headings = parsed.ast.structure().headings();
         assert_eq!(headings[1].kind, super::SectionKind::Part);
         assert_eq!(headings[3].kind, super::SectionKind::Appendix);
         assert!(parsed.ast.structure().problems().is_empty());
 
-        let invalid =
-            parse("= Tool(1)\n:doctype: manpage\n\n[appendix]\n=== Bad\n").expect("parse");
+        let invalid = parse(
+            "\
+= Tool(1)
+:doctype: manpage
+
+[appendix]
+=== Bad
+",
+        )
+        .expect("parse");
         assert!(
             invalid
                 .ast
@@ -408,7 +439,14 @@ mod tests {
     #[test]
     fn manpage_name_section_and_purpose_are_structured() {
         let parsed = parse(
-            "= adocweave(1)\n:doctype: manpage\n\n== NAME\n\nadocweave - convert AsciiDoc safely\n",
+            "\
+= adocweave(1)
+:doctype: manpage
+
+== NAME
+
+adocweave - convert AsciiDoc safely
+",
         )
         .expect("parse");
         let manpage = parsed.ast.structure().manpage().expect("manpage");

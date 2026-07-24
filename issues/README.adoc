@@ -328,6 +328,28 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 
 * xref:156-inline-monospace-boundaries.adoc[156: インライン等幅書式の境界規則]（計画）
 
+=== M42: 依存更新の自動化
+
+DependabotでCargoとGitHub Actionsの更新を小さいreview単位へ定着させる。Nix入力を含む更新は、
+その運用結果を基にRenovateへの移行可否を判断する。同じ依存集合を複数botで更新しない。
+
+* xref:157-dependabot-dependency-updates.adoc[157: Dependabotによる依存更新の導入]（実施中）
+* xref:158-renovate-nix-update-evaluation.adoc[158: RenovateによるNix依存更新の評価]（計画）
+
+=== M43: Release公開の重複検証削減
+
+`main`で検証済みのrelease candidateを同一commitのtag公開で再利用し、公開固有の完全性検証を維持したまま
+CIの重複実行を削減する。
+
+* xref:159-release-candidate-artifact-reuse.adoc[159: Release candidate artifactの再利用]（実施中）
+
+=== M44: v0.6.2 CI公開経路の受け入れ
+
+Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatch releaseとして受け入れる。tag公開では
+同一commitのmain candidateを再利用し、GitHub Releaseのasset、checksum、SBOMおよびprovenanceを確認する。
+
+* xref:160-v0-6-2-release-readiness.adoc[160: v0.6.2 release readinessとCI公開経路の受け入れ]（実施中）
+
 === M1: プレーンテキスト変換
 
 * xref:001-workspace-and-cli.adoc[001: Cargo workspaceとCLIの初期化]

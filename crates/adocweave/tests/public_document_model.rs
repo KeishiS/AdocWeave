@@ -4,7 +4,17 @@ use adocweave::{Engine, ParseOptions};
 #[test]
 fn public_document_model_exposes_semantic_facts_without_parser_types() {
     let analysis = Engine::new(ParseOptions::default())
-        .analyze("= Guide\n:edition: first\n:edition!:\n\n[[intro]]\n== Intro\n\nText.")
+        .analyze(
+            "\
+= Guide
+:edition: first
+:edition!:
+
+[[intro]]
+== Intro
+
+Text.",
+        )
         .expect("analysis succeeds");
     let document = analysis.document();
 

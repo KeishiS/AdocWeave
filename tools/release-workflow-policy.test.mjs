@@ -56,16 +56,26 @@ test("quality and candidate jobs cannot infer or broaden their event scope", () 
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      contract: `${inputs.contract}\n# if: inputs.release_tag != ''\nCALLER_EVENT: github.event_name\n`,
+      contract: `${inputs.contract}\nCALLER_EVENT: github.event_name\n`,
     }),
     /must not infer/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      release: inputs.release.replaceAll("    if: github.event_name == 'push'\n", ""),
+      release: inputs.release.replace("if: github.ref == 'refs/heads/main'", "if: github.event_name == 'push'"),
     }),
-    /candidate artifacts must be limited|exactly five/,
+    /candidate jobs must be limited to main pushes/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'",
+        "if: github.event_name != 'pull_request'",
+      ),
+    }),
+    /reuse main quality/,
   );
 });
 
@@ -75,11 +85,11 @@ test("required fields cannot move to another job or a same-name step", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        "needs: [plan, quality, verify-candidate, installation-e2e]",
-        "needs: [plan, quality, verify-candidate] # installation-e2e",
+        "needs: [plan, reuse-candidate]",
+        "needs: [plan] # reuse-candidate",
       ),
     }),
-    /installation acceptance/,
+    /reused candidate verification/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
@@ -136,5 +146,26 @@ test("candidate acceptance cannot omit the Nix package contract", () => {
       ),
     }),
     /both Linux architectures must build and run the Nix package/,
+  );
+});
+
+test("tag publication must reuse and verify the selected main candidate", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace('run-id: ${{ needs.plan.outputs.candidate_run_id }}', 'run-id: ${{ github.run_id }}'),
+    }),
+    /download the named candidate/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        '      - name: Verify the reused candidate\n        run: node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"',
+        '      - name: Verify the reused candidate\n        run: true',
+      ),
+    }),
+    /verify candidate metadata/,
   );
 });

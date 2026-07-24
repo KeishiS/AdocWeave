@@ -9,6 +9,7 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -24,6 +25,7 @@ jobs:
       manifest: ${{ steps.plan.outputs.manifest }}
       tag: ${{ steps.plan.outputs.tag }}
       publishing: ${{ steps.plan.outputs.publishing }}
+      candidate_run_id: ${{ steps.candidate.outputs.run_id }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -37,6 +39,18 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@4eea0b33e3d1f02ecfe37cf16e7204c424009606 # v3.21.0
         with:
           determinate: false
+      - id: candidate
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA&per_page=100")"
+          run_id="$(jq -r '[.[][] | select(.head_branch == "main" and .head_sha == env.GITHUB_SHA and .conclusion == "success") | .id] | max // empty' <<<"$runs")"
+          if [ -z "$run_id" ]; then
+            echo "no successful main candidate exists for $GITHUB_SHA" >&2
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
       - id: plan
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
@@ -56,13 +70,13 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   quality:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/quality.yml
     with:
-      release_tag: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
       run_nix_package: ${{ github.event_name == 'pull_request' }}
 
   build-native:
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/main'
     needs: [plan]
     strategy:
       fail-fast: false
@@ -102,14 +116,14 @@ jobs:
             target/distrib/adocweave-lsp-${{ matrix.target }}.tar.xz
 
   native-smoke:
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/main'
     needs: [plan, build-native]
     uses: ./.github/workflows/native-artifact-smoke.yml
     with:
       plan: ${{ needs.plan.outputs.manifest }}
 
   build-global:
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/main'
     needs: [plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -132,7 +146,7 @@ jobs:
             target/distrib/adocweave-zed-*.tar.xz
 
   verify-candidate:
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/main'
     needs: [plan, native-smoke, build-global]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -157,7 +171,7 @@ jobs:
           path: artifacts/*
 
   installation-e2e:
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/main'
     needs: [verify-candidate]
     strategy:
       fail-fast: false
@@ -192,9 +206,34 @@ jobs:
       - name: Install and completely remove the candidate
         run: node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}"
 
+  reuse-candidate:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [plan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-candidate
+          path: artifacts
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.plan.outputs.candidate_run_id }}
+      - name: Verify the reused candidate
+        run: node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-candidate
+          if-no-files-found: error
+          retention-days: 1
+          path: artifacts/*
+
   publish:
     if: needs.plan.outputs.publishing == 'true'
-    needs: [plan, quality, verify-candidate, installation-e2e]
+    needs: [plan, reuse-candidate]
     uses: ./.github/workflows/release-publish.yml
     with:
       plan: ${{ needs.plan.outputs.manifest }}

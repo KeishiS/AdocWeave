@@ -1003,7 +1003,21 @@ mod tests {
 
     #[test]
     fn projections_are_stable_and_keep_links_and_reference_kinds_distinct() {
-        let source = "= Title\n\n[[part]]\n== Section\n\nhttps://example.com[Site] <<part>> xref:other.adoc#x[] xref:note:42[]\n\n[source,rust]\n----\nfn main() {}\n----\n\nstem:[x+y]\n";
+        let source = "\
+= Title
+
+[[part]]
+== Section
+
+https://example.com[Site] <<part>> xref:other.adoc#x[] xref:note:42[]
+
+[source,rust]
+----
+fn main() {}
+----
+
+stem:[x+y]
+";
         let analysis = Engine::new(ParseOptions {
             source_id: Some(SourceId::new("host:document")),
             ..ParseOptions::default()
@@ -1040,7 +1054,18 @@ mod tests {
     #[test]
     fn block_presentation_titles_use_resolved_inline_text() {
         let analysis = Engine::new(ParseOptions::default())
-            .analyze("= Title\n:product: AdocWeave\n\n.*Important* {product}\n[NOTE]\n====\nbody\n====\n")
+            .analyze(
+                "\
+= Title
+:product: AdocWeave
+
+.*Important* {product}
+[NOTE]
+====
+body
+====
+",
+            )
             .expect("analysis");
         let projection = project(&analysis, &RenderInputs::default());
 
@@ -1079,7 +1104,16 @@ mod tests {
     #[test]
     fn formula_projection_preserves_inline_and_block_sources() {
         let analysis = Engine::new(ParseOptions::default())
-            .analyze("stem:[x + y]\n\n[stem]\n++++\na^2\n++++\n")
+            .analyze(
+                "\
+stem:[x + y]
+
+[stem]
+++++
+a^2
+++++
+",
+            )
             .expect("analysis");
         let projected = project(&analysis, &RenderInputs::default());
 
@@ -1096,7 +1130,14 @@ mod tests {
     #[test]
     fn source_block_projection_separates_language_content_and_ranges() {
         let analysis = Engine::new(ParseOptions::default())
-            .analyze("[source,rust]\n----\nlet x = 1;\n----\n")
+            .analyze(
+                "\
+[source,rust]
+----
+let x = 1;
+----
+",
+            )
             .expect("analysis");
         let projected = project(&analysis, &RenderInputs::default());
 
@@ -1112,7 +1153,13 @@ mod tests {
     #[test]
     fn ordered_list_projection_uses_lowered_presentation() {
         let analysis = Engine::new(ParseOptions::default())
-            .analyze("[start=4,%reversed,loweralpha]\n. one\n. two\n")
+            .analyze(
+                "\
+[start=4,%reversed,loweralpha]
+. one
+. two
+",
+            )
             .expect("analysis");
         let projected = project(&analysis, &RenderInputs::default());
 
@@ -1161,7 +1208,7 @@ mod tests {
             .expect("analysis");
         assert_eq!(
             project(&analysis, &RenderInputs::default()).render_json(),
-            "{\"packageVersion\":\"0.6.1\",\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"packageVersion\":\"0.6.2\",\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 
@@ -1183,7 +1230,19 @@ mod tests {
 
     #[test]
     fn searchable_text_excludes_attributes_math_and_invisible_anchor_syntax() {
-        let source = "= Visible\n:name: hidden\n\n[[secret]]\n== Section\n\nstem:[hidden-math]\n\n....\nvisible code\n....\n";
+        let source = "\
+= Visible
+:name: hidden
+
+[[secret]]
+== Section
+
+stem:[hidden-math]
+
+....
+visible code
+....
+";
         let analysis = Engine::new(ParseOptions::default())
             .analyze(source)
             .expect("analysis");
