@@ -10,5 +10,5 @@ export interface ProductSet {
 }
 
 export declare const PROTOCOL_SCHEMA_VERSION: 1;
-export declare const PACKAGE_VERSION: "0.6.1";
+export declare const PACKAGE_VERSION: "0.6.2";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "diagnostics", "symbols", "projection"];

@@ -3,10 +3,6 @@ name: Quality gate
 on:
   workflow_call:
     inputs:
-      release_tag:
-        required: false
-        type: string
-        default: ''
       run_nix_package:
         required: false
         type: boolean
@@ -41,11 +37,6 @@ jobs:
           determinate: false
       - name: Run the source quality gate
         run: nix develop .#ci -c cargo make quality
-      - name: Verify an optional publication tag
-        if: inputs.release_tag != ''
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: node tools/release-contract.mjs "--tag=$RELEASE_TAG"
 
   fuzz:
     runs-on: ubuntu-24.04

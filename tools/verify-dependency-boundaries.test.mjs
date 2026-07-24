@@ -3,11 +3,28 @@ import test from "node:test";
 
 import {
   loadDependencyBoundaryInputs,
+  validateDependabotConfig,
   validateDependencyBoundaries,
 } from "./verify-dependency-boundaries.mjs";
 
 test("repository dependency boundaries and exceptions are complete", () => {
-  validateDependencyBoundaries(loadDependencyBoundaryInputs());
+  const inputs = loadDependencyBoundaryInputs();
+  validateDependencyBoundaries(inputs);
+  validateDependabotConfig(inputs.dependabot);
+});
+
+test("Dependabot keeps every managed boundary separate and bounded", () => {
+  const { dependabot } = loadDependencyBoundaryInputs();
+  assert.throws(() => validateDependabotConfig({
+    ...dependabot,
+    updates: dependabot.updates.filter((entry) => entry.directory !== "/fuzz"),
+  }), /incomplete/);
+  assert.throws(() => validateDependabotConfig({
+    ...dependabot,
+    updates: dependabot.updates.map((entry) => entry.directory === "/" && entry["package-ecosystem"] === "cargo"
+      ? { ...entry, "open-pull-requests-limit": 3 }
+      : entry),
+  }), /limit open pull requests/);
 });
 
 test("runtime frontend dependencies require an approved lockfile boundary", () => {

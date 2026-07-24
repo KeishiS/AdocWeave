@@ -425,7 +425,7 @@ fn marker_positions(line: &str, separator: char) -> Vec<(usize, usize)> {
             {
                 return None;
             }
-            let prefix_start = cell_spec_start(&line[..pipe]);
+            let prefix_start = cell_spec_start(&line[..pipe], separator);
             let boundary =
                 prefix_start == 0 || line.as_bytes()[prefix_start - 1].is_ascii_whitespace();
             boundary.then_some((prefix_start, pipe))
@@ -433,9 +433,12 @@ fn marker_positions(line: &str, separator: char) -> Vec<(usize, usize)> {
         .collect()
 }
 
-fn cell_spec_start(prefix: &str) -> usize {
+fn cell_spec_start(prefix: &str, separator: char) -> usize {
     let mut start = prefix.len();
     for (offset, character) in prefix.char_indices().rev() {
+        if character == separator {
+            break;
+        }
         if character.is_ascii_digit()
             || matches!(
                 character,
@@ -1052,5 +1055,36 @@ mod tests {
         let table = scan_psv(source, range(source));
         assert_eq!(table.cells[0].duplication, 3);
         assert_eq!(table.cells[1].duplication, 1);
+    }
+
+    #[test]
+    fn custom_separator_is_not_reparsed_as_a_previous_cell_spec() {
+        // `>` is both a permitted custom separator and a cell-spec character.
+        // The second `>` must remain content of the cell opened by the first.
+        let source = ">e>:Rc{he";
+        let table = scan(
+            source,
+            range(source),
+            TableInputSpec {
+                format: TableFormat::Psv,
+                separator: '>',
+            },
+        );
+        assert_eq!(table.cells.len(), 1);
+        assert_eq!(table.cells[0].raw, "e>:Rc{he");
+        assert_eq!(table.cells[0].range, range(source));
+
+        // Keep the minimized fuzz input at the parser boundary as well.  This
+        // previously constructed an inverted table-cell range and panicked.
+        let fuzz_regression = "\
+COip&t
+
+=ip&t=
+>===
+:Rc{;h
+>e>:Rc{he}";
+        crate::Engine::new(crate::ParseOptions::default())
+            .analyze(fuzz_regression)
+            .expect("custom separator input must analyze without a panic");
     }
 }

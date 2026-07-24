@@ -112,6 +112,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   if (!releaseDoc.on.push.branches?.includes("main")) {
     fail("release workflow must validate every main push before tagging");
   }
+  requirePermission(releaseDoc, "actions", "read", "release build workflow must read verified candidate artifacts");
   requirePermission(releaseDoc, "contents", "read", "release build workflow must be read-only");
   if (releaseDoc.concurrency?.group !== "ci-release-${{ github.ref }}") {
     fail("CI and release runs must be serialized per ref");
@@ -121,21 +122,31 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   }
 
   if (releaseJobs.quality?.uses !== "./.github/workflows/quality.yml") {
-    fail("every event must pass the reusable quality gate");
+    fail("pull requests and main pushes must pass the reusable quality gate");
   }
-  const pushOnly = Object.entries(releaseJobs)
-    .filter(([, job]) => job.if === "github.event_name == 'push'")
+  if (releaseJobs.plan?.if !== "github.event_name == 'push'") {
+    fail("main and tag pushes must create an explicit release plan");
+  }
+  if (releaseJobs.quality?.if !== "github.event_name == 'pull_request' || github.ref == 'refs/heads/main'") {
+    fail("release tags must reuse main quality rather than rerunning it");
+  }
+  const mainOnly = Object.entries(releaseJobs)
+    .filter(([, job]) => job.if === "github.ref == 'refs/heads/main'")
     .map(([name]) => name).sort();
   const expectedPushOnly = ["build-global", "build-native", "installation-e2e", "native-smoke", "plan", "verify-candidate"];
-  if (JSON.stringify(pushOnly) !== JSON.stringify(expectedPushOnly)) {
-    fail("the plan and exactly five candidate jobs must be limited to main and tag pushes");
+  if (JSON.stringify(["plan", ...mainOnly].sort()) !== JSON.stringify(expectedPushOnly)) {
+    fail("the plan and exactly five candidate jobs must be limited to main pushes");
   }
 
   requireNeeds(releaseJobs["build-native"], ["plan"], "native builds must start as soon as the release plan is available");
   requireNeeds(releaseJobs["build-global"], ["plan"], "global artifacts must start as soon as the release plan is available");
   requireNeeds(releaseJobs["verify-candidate"], ["plan", "native-smoke", "build-global"], "candidate verification dependency edge is incomplete");
   requireNeeds(releaseJobs["installation-e2e"], ["verify-candidate"], "installation E2E must consume only a verified candidate");
-  requireNeeds(releaseJobs.publish, ["plan", "quality", "verify-candidate", "installation-e2e"], "publication must depend on quality and candidate installation acceptance");
+  requireNeeds(releaseJobs["reuse-candidate"], ["plan"], "tag reuse must depend on the release plan");
+  if (releaseJobs["reuse-candidate"]?.if !== "startsWith(github.ref, 'refs/tags/')") {
+    fail("only version tags may reuse a main candidate");
+  }
+  requireNeeds(releaseJobs.publish, ["plan", "reuse-candidate"], "publication must depend on reused candidate verification");
   if (releaseJobs.publish?.if !== "needs.plan.outputs.publishing == 'true'") {
     fail("pull requests must not invoke publication");
   }
@@ -148,6 +159,9 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireCommand(planRun, 'tools/run-pinned-dist.sh plan --tag="$candidate_tag"', "every dist plan must use the locked cargo-dist closure");
   const tagRun = step(releaseJobs.plan, (item) => item.name === "Verify publication tag is the current main commit", "publication tag check is missing").run;
   requireCommand(tagRun, 'test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"', "publication tags must identify the current main commit");
+  const candidateLookup = step(releaseJobs.plan, (item) => item.id === "candidate", "successful main candidate lookup is missing").run;
+  requireCommand(candidateLookup, 'actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA', "tag publication must select a successful main workflow for the same commit");
+  requireCommand(candidateLookup, 'no successful main candidate exists', "missing main candidates must stop publication");
 
   for (const jobName of ["plan", "build-native"]) {
     step(releaseJobs[jobName], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), `${jobName} must install the locked Nix environment`);
@@ -174,10 +188,23 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.public-contract"', "candidate runners must verify the public flake output contract");
   requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.package-smoke"', "both Linux architectures must build and run the Nix package");
   requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.nixos-package-evaluation"', "both Linux architectures must evaluate the NixOS installation contract");
+  const reusedDownload = step(releaseJobs["reuse-candidate"], (item) => item.uses?.startsWith("actions/download-artifact@"), "tag candidate download is missing");
+  if (reusedDownload.with?.name !== "release-candidate" ||
+      reusedDownload.with?.["github-token"] !== "${{ github.token }}" ||
+      reusedDownload.with?.repository !== "${{ github.repository }}" ||
+      reusedDownload.with?.["run-id"] !== "${{ needs.plan.outputs.candidate_run_id }}") {
+    fail("tag publication must download the named candidate from the selected main run");
+  }
+  const reuseRun = step(releaseJobs["reuse-candidate"], (item) => item.name === "Verify the reused candidate", "tag candidate verification is missing").run;
+  requireCommand(reuseRun, 'node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"', "tag publication must verify candidate metadata against the tag commit");
 
   const uploads = (releaseJobs["verify-candidate"]?.steps ?? []).filter((item) => item.uses?.startsWith("actions/upload-artifact@"));
   if (!uploads.some((item) => item.with?.name === "release-candidate" && item.with?.["retention-days"] === 14)) {
     fail("verified candidates must have bounded retention");
+  }
+  const reusedUploads = (releaseJobs["reuse-candidate"]?.steps ?? []).filter((item) => item.uses?.startsWith("actions/upload-artifact@"));
+  if (!reusedUploads.some((item) => item.with?.name === "release-candidate" && item.with?.["retention-days"] === 1)) {
+    fail("tag candidate handoff must have minimal retention");
   }
   if (!Object.values(releaseJobs).flatMap((job) => job.steps ?? [])
     .some((item) => item.uses?.startsWith("actions/upload-artifact@") && item.with?.["retention-days"] === 7)) {
@@ -190,6 +217,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireTimeout(contractJobs["nix-package"], 20, "Nix package quality must have a timeout");
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke tests must have a timeout");
   requireTimeout(releaseJobs["installation-e2e"], 15, "candidate installation and Nix package acceptance must have a timeout");
+  requireTimeout(releaseJobs["reuse-candidate"], 15, "tag candidate reuse must have a timeout");
   requireTimeout(publishJob, 20, "publication must have a timeout and cleanup path");
   const qualityStep = step(contractJobs.verify, (item) => item.name === "Run the source quality gate", "source quality step is missing");
   const qualityRun = qualityStep.run;
@@ -202,10 +230,8 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireCommand(nixRun, "nix develop .#ci -c cargo make nix-package-check", "quality must verify the Nix package on pull requests");
   if (contractJobs["nix-package"].if !== "inputs.run_nix_package") fail("Nix package quality must be controlled by an explicit caller input");
   if (contractJobs.msrv) fail("quality must not retain an MSRV-only job");
-  const tagStep = step(contractJobs.verify, (item) => item.name === "Verify an optional publication tag", "optional publication tag step is missing");
-  if (tagStep.if !== "inputs.release_tag != ''") fail("only explicit publication tags may receive tag validation");
   if (contract.includes("github.event_name") || contract.includes("github.ref")) {
-    fail("the reusable quality workflow must not infer its caller event or publication tag");
+    fail("the reusable quality workflow must not infer its caller event or tag");
   }
 
   if (JSON.stringify(releaseDoc).includes('"secrets"') || release.includes("secrets.")) {

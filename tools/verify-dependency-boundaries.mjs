@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const ROOT = new URL("../", import.meta.url);
 const readJson = (path) => JSON.parse(readFileSync(new URL(path, ROOT), "utf8"));
@@ -49,12 +51,46 @@ export function validateDependencyBoundaries({ inventory, exceptions, exists, ma
   }
 }
 
+export function validateDependabotConfig(config) {
+  if (config?.version !== 2 || !Array.isArray(config.updates)) fail("invalid Dependabot configuration");
+  const expected = new Set([
+    "cargo\u0000/",
+    "cargo\u0000/editors/zed",
+    "cargo\u0000/fuzz",
+    "github-actions\u0000/",
+  ]);
+  const actual = new Set();
+  for (const update of config.updates) {
+    const ecosystem = update?.["package-ecosystem"];
+    const directory = update?.directory;
+    const key = `${ecosystem}\u0000${directory}`;
+    if (!expected.has(key) || actual.has(key)) fail(`unexpected or duplicate Dependabot update boundary: ${ecosystem} ${directory}`);
+    actual.add(key);
+    if (update?.schedule?.interval !== "weekly" || update.schedule?.day !== "monday") {
+      fail(`Dependabot update boundary must run weekly on Monday: ${ecosystem} ${directory}`);
+    }
+    if (update?.["open-pull-requests-limit"] !== 2) {
+      fail(`Dependabot update boundary must limit open pull requests: ${ecosystem} ${directory}`);
+    }
+  }
+  if (actual.size !== expected.size || [...expected].some((key) => !actual.has(key))) {
+    fail("Dependabot update boundaries are incomplete");
+  }
+}
+
+function readYaml(path) {
+  const result = spawnSync("yq", ["-o=json", ".", fileURLToPath(new URL(path, ROOT))], { encoding: "utf8" });
+  if (result.status !== 0) fail(`cannot parse ${path}: ${result.stderr.trim() || result.error?.message}`);
+  return JSON.parse(result.stdout);
+}
+
 export function loadDependencyBoundaryInputs() {
   return {
     inventory: readJson("security/dependency-boundaries.json"),
     exceptions: readJson("security/dependency-exceptions.json"),
     exists: (path) => existsSync(new URL(path, ROOT)),
     manifest: readJson,
+    dependabot: readYaml(".github/dependabot.yml"),
     today: new Date().toISOString().slice(0, 10),
   };
 }
@@ -62,6 +98,7 @@ export function loadDependencyBoundaryInputs() {
 export function main() {
   const inputs = loadDependencyBoundaryInputs();
   validateDependencyBoundaries(inputs);
+  validateDependabotConfig(inputs.dependabot);
   if (process.argv.includes("--audit-ignores")) {
     for (const exception of inputs.exceptions.exceptions) process.stdout.write(`${exception.value}\n`);
   } else {
