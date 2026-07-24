@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Write},
+    io::{self, BufReader, BufWriter, Read, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -97,9 +97,21 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
         File::open(path).map_err(|error| format!("failed to open {}: {error}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut digest = Sha256::new();
-    io::copy(&mut reader, &mut digest)
-        .map_err(|error| format!("failed to hash {}: {error}", path.display()))?;
-    Ok(format!("{:x}", digest.finalize()))
+    let mut buffer = [0; 8192];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("failed to hash {}: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 pub fn verify_download(path: &Path, asset: &ReleaseAsset) -> Result<(), String> {
@@ -328,6 +340,19 @@ mod tests {
         assert!(verify_download(&root, &asset)
             .unwrap_err()
             .contains("SHA-256"));
+        fs::remove_file(root).unwrap();
+    }
+
+    #[test]
+    fn hash_empty_file_has_the_standard_sha256_encoding() {
+        let root =
+            std::env::temp_dir().join(format!("adocweave-zed-empty-hash-{}", std::process::id()));
+        let _ = fs::remove_file(&root);
+        fs::write(&root, []).unwrap();
+        assert_eq!(
+            sha256_file(&root).unwrap(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
         fs::remove_file(root).unwrap();
     }
 
