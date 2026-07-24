@@ -1,8 +1,8 @@
 = AsciiDocとの違い
 
-AdocWeaveは、日常的なAsciiDoc文書でよく使う書式から対応しています。Asciidoctorを含む
-既存の処理系と同じ動作を目指す箇所もありますが、すべての機能を再現するものではありません。
-移行前にはxref:syntax-support.adoc[対応しているAsciiDocの書式]と、このページを確認してください。
+AdocWeaveは、日常的なAsciiDoc文書で使用される書式から対応する。Asciidoctorを含む既存の処理系との
+互換性を目指す箇所もあるが、全機能の再現は目的としない。移行前に
+xref:syntax-support.adoc[対応しているAsciiDocの書式]と本書を確認すること。
 
 == 参照する資料
 

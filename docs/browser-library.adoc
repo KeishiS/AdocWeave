@@ -1,8 +1,8 @@
 = ブラウザーで使う
 
-`adocweave-browser-{version}.tar.xz`は、ブラウザーでAsciiDocをHTMLへ変換するための配布物です。
-npmには公開していません。GitHub Releasesから取得して展開してください。ライブラリは画面を直接変更しません。
-返されたHTMLをどこに表示するか、安全性をどう確認するかは、利用するWebアプリが決めます。
+`adocweave-browser-{version}.tar.xz`は、ブラウザーでAsciiDocをHTMLへ変換するための配布物である。
+npmには公開しない。GitHub Releasesから取得して展開する。ライブラリは画面を直接変更しない。
+返されたHTMLの表示位置および安全性の確認は、利用側Webアプリが定める。
 
 == 使い始める
 
