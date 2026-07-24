@@ -1,0 +1,24 @@
+= 公開Document modelとcanonical facts
+:status: planned
+:depends-on: 148
+
+== 目的
+
+公開semantic APIをparser実装型から分離し、文書全体の構文事実と派生事実を一つの不変モデルとして所有する。
+構文追加が`parser` moduleの公開構造、host、backendへ不要に波及する状態を解消する。
+
+== 設計方針
+
+* `semantic::Document`を公開モデルの唯一のrootとし、`Analysis::document()`から返す。
+  `Analysis::ast()`および`semantic` facadeからの`parser::*`再公開を削除する。
+* parserは内部のsyntax factsだけを構築し、loweringが公開Documentを一度だけ構築する。
+* 文書属性を含むsource-preserving factsは、内部用と公開用の同一canonical型で保持する。
+  `DocumentAttribute`から`DocumentAttributeOccurrence`への複製・変換を廃止する。
+* HTML、projection、formatter、LSPおよびWASMを新しいDocument modelへ同時移行し、互換wrapperは残さない。
+
+== 完了条件
+
+* 公開APIに`parser`由来のDocument rootまたはblock型が露出しない。
+* attribute occurrence、anchor、metadata、block、inlineおよびrangeが新しい公開modelから取得できる。
+* parser内部表現の変更だけでは公開model、backendおよびhostの変更を要求しないことをconsumer compile testで固定する。
+* Core Profile、migration guide、conformance fixtureおよび公開契約を同期する。

@@ -1,0 +1,23 @@
+= 文法component境界の再編
+:status: planned
+:depends-on: 149
+
+== 目的
+
+`parser.rs`と`inline.rs`へ集中した構文追加・回復・budget変更を、文法領域ごとのcomponentへ分離する。
+単なるファイル分割ではなく、cursor、diagnostic、budgetおよびcontext境界を明確にする。
+
+== 設計方針
+
+* block dispatch、metadata/header、list、delimited block、table、paragraphを独立したblock grammar componentにする。
+* inline style、macro、attribute reference、escape/recoveryを独立したinline grammar componentにする。
+* 各componentは共通のparse contextからcursor、source、budget、diagnostic sinkだけを受け取り、他componentの
+  private stateへ直接アクセスしない。
+* syntax recoveryはcomponentの出力型で表し、top-level parserが文字列規則を重複して解釈しない。
+
+== 完了条件
+
+* 新規blockまたはinline構文を追加する際の変更点が対応component、semantic lowering、fixtureに限定される。
+* parserとinlineの主要dispatchはcomponent registryまたは明示的な責務別entry pointだけを持つ。
+* linear-time、進捗、深さ、node数およびlossless recoveryの不変条件をcomponent横断testで固定する。
+* 外部に見える構文・診断・formatter結果の互換layerを残さず移行する。

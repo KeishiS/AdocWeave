@@ -1,0 +1,24 @@
+= 選択的Document product API
+:status: planned
+:depends-on: 150
+
+== 目的
+
+全adapterがsyntax、AST、HTML、診断、symbolsおよびprojectionを常に生成・転送する設計を廃止する。
+hostが必要なproductだけを要求する共通APIを導入し、WASMのCPU、応答サイズおよび契約変更面を縮小する。
+
+== 設計方針
+
+* `ProductSet`と`DocumentProducts`をCoreに定義し、HTML、diagnostics、symbols、projection、canonical syntax、
+  canonical AST、source-preserving factsを独立に選択する。
+* output backendは`Analysis`ではなく公開Document factsと明示的なrender inputsからproductを生成する。
+* WASM requestへrequested productsを追加し、responseは要求したproductだけを含める。既定はbrowser clientが
+  必要とする最小集合とする。
+* CLIとLSPも同じproduct APIを利用し、adapterが独自にproductの生成順を所有しない。
+
+== 完了条件
+
+* product未指定時、不要なHTML・canonical AST・projectionを生成しないことをinstrumentation testで確認する。
+* WASM responseのbyte上限を生成中に予算化し、巨大な中間JSONを文字列から再parseしない。
+* conformanceは全product集合を明示して既存のcross-runtime比較を維持する。
+* protocol、browser型、CLI、LSPおよび文書を同時に移行し、旧全量responseは削除する。

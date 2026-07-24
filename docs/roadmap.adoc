@@ -506,6 +506,20 @@ release acceptanceを同じrelease trainで同期する。
 . xref:../issues/148-v0-6-0-release-readiness.adoc[Issue 148]で、版数、契約、配布計画、移行ガイドおよび
   release acceptanceを同期する。（計画）
 
+== M40: 公開model・product・protocolの単純化
+
+Issue 001以後の機能実装を横断し、parser実装への公開依存、繰り返しtree walk、全量WASM応答、
+手書きprotocol DTOおよび独立contract versionを除去する。後方互換layerは設けず、標準AsciiDocの
+host非依存coreと拡張境界をより小さい正本へ再編する。
+
+. xref:../issues/149-public-document-model-and-canonical-facts.adoc[Issue 149]で公開Document modelとcanonical factsを導入する。（計画）
+. xref:../issues/150-single-pass-document-facts-and-queries.adoc[Issue 150]で単一passのfacts indexへ派生queryを統合する。（計画）
+. xref:../issues/151-selective-product-api.adoc[Issue 151]で選択的product APIを導入する。（計画）
+. xref:../issues/152-generated-public-protocol-schema.adoc[Issue 152]で公開protocol schemaからDTOを生成する。（計画）
+. xref:../issues/153-release-identity-unification.adoc[Issue 153]でrelease identityを単一化する。（計画）
+. xref:../issues/154-grammar-component-boundaries.adoc[Issue 154]でparserとinlineの文法component境界を再編する。（計画）
+. xref:../issues/155-contract-test-ownership-reorganization.adoc[Issue 155]で契約testの所有権を再編する。（計画）
+
 == ドキュメント保守規則
 
 リポジトリのドキュメントはAsciiDoc（`.adoc`）で記述し、`.md`ファイルを受け入れない。

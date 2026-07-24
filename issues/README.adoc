@@ -310,6 +310,20 @@ release acceptanceを同じrelease trainで同期する。
 
 * xref:148-v0-6-0-release-readiness.adoc[148: v0.6.0 release readiness]（計画）
 
+=== M40: 公開model・product・protocolの単純化
+
+Issue 001以後の機能実装を横断し、parser実装への公開依存、繰り返しtree walk、全量WASM応答、
+手書きprotocol DTOおよび独立contract versionを除去する。後方互換layerは設けず、標準AsciiDocの
+host非依存coreと拡張境界をより小さい正本へ再編する。
+
+* xref:149-public-document-model-and-canonical-facts.adoc[149: 公開Document modelとcanonical facts]（計画）
+* xref:150-single-pass-document-facts-and-queries.adoc[150: 単一passのDocument factsとquery index]（計画）
+* xref:151-selective-product-api.adoc[151: 選択的Document product API]（計画）
+* xref:152-generated-public-protocol-schema.adoc[152: 生成される公開protocol schema]（計画）
+* xref:153-release-identity-unification.adoc[153: Release identityの単一化]（計画）
+* xref:154-grammar-component-boundaries.adoc[154: 文法component境界の再編]（計画）
+* xref:155-contract-test-ownership-reorganization.adoc[155: 契約testの所有権再編]（計画）
+
 === M1: プレーンテキスト変換
 
 * xref:001-workspace-and-cli.adoc[001: Cargo workspaceとCLIの初期化]

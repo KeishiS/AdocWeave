@@ -1,0 +1,24 @@
+= Release identityの単一化
+:status: planned
+:depends-on: 152
+
+== 目的
+
+package SemVerと独立した数値`CONTRACT_VERSION`を廃止し、release identityを唯一のruntime compatibility
+identityにする。公開変更ごとのversion、manifest、browser定数、fixtureおよび文書の手同期をなくす。
+
+== 設計方針
+
+* `packageVersion`をWASM request/response、cache key、conformance snapshotおよびrelease manifestの共通identityにする。
+* Coreの`CONTRACT_VERSION`、browserの`CONTRACT_VERSION`、`contractVersion` fieldおよび対応する手書きfixtureを削除する。
+* compatibility不一致はexact SemVer identityで検出する。Rust hostは通常のcrate dependency version、Web hostは
+  request/response identityを照合する。
+* release manifestを全配布物の唯一の生成入力とし、Cargo workspace以外のversion文字列、asset名およびpackage metadataを
+  `prepare-release` taskで生成・検証する。
+
+== 完了条件
+
+* runtime compatibilityを示す独立した整数versionが存在しない。
+* release versionの変更はmanifestと一つのrelease preparation commandだけで完結する。
+* cache invalidation、WASM mismatch、conformance mismatchおよびrelease asset検証がexact SemVer identityで成功する。
+* 旧contract versionを読む互換layerは残さない。

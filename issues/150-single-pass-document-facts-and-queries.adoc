@@ -1,0 +1,25 @@
+= 単一passのDocument factsとquery index
+:status: planned
+:depends-on: 149
+
+== 目的
+
+識別子、構造、layout、catalog、参照、resourceおよびeditor queryを、treeの反復走査ではなく一つの
+`DocumentFacts` indexから提供する。新しいquery追加時の走査重複、所有権判断およびcache検証コストを下げる。
+
+== 設計方針
+
+* lowering後に一度だけDocumentをwalkし、range順の参照、macro、resource、identifier、catalog候補および
+  block関係を収集する。
+* structure、presentation、layoutおよびcatalogはそのfactsから構築する。各派生viewがDocumentを独自に
+  再走査しない。
+* `Analysis::references()`、`macros()`、`resources()`、各queryはallocationを伴う`Vec`生成ではなく、
+  indexのsliceまたは軽量viewを返す。
+* document固有の解決済み情報は`DocumentFacts`へ集約し、`ResolvedDocument`と複数の個別indexを統合する。
+
+== 完了条件
+
+* 代表的なAnalysis queryが同一treeを再走査しないことを計測可能なtestで固定する。
+* HTML、projection、LSPおよびpreprocess projectionが同じfactsを利用する。
+* source順、range、catalog番号および既存診断の決定性をfixtureとproperty testで維持する。
+* 対象外のbackend固有状態やhost解決結果をfactsへ混在させない。

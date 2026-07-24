@@ -1,0 +1,21 @@
+= 契約testの所有権再編
+:status: planned
+:depends-on: 150, 152, 154
+
+== 目的
+
+巨大なproduction module内に混在した実装詳細testと公開契約testを分離し、仕様変更時に更新すべき
+fixture・consumer test・private invariantを明確にする。
+
+== 設計方針
+
+* private algorithm invariantはcomponent直下のunit testに残す。
+* 公開semantic model、HTML、projection、protocolおよびadapter横断挙動は名前付きfixtureとconsumer contract testへ移す。
+* conformance fixtureは全productを明示し、native、WASM、CLI、LSP、browserのconsumer coverageをmanifestで宣言する。
+* repository governance testは文書同期だけでなく、公開schemaとfixture consumerの対応を検証する。
+
+== 完了条件
+
+* public contractの変更は対応fixture、consumer、migration文書の不足を機械的に検出する。
+* production moduleのtestはprivate invariant中心となり、公開出力のgoldenが分散しない。
+* release gateがfixtureの未消費、schema生成差分およびconsumer coverage不足を拒否する。

@@ -1,0 +1,23 @@
+= 生成される公開protocol schema
+:status: planned
+:depends-on: 151
+
+== 目的
+
+RustのWASM DTO、browserのTypeScript宣言、JSON fixtureおよびprotocol検証を一つのschemaから導出する。
+手書きの並行定義をなくし、公開field追加時の同期漏れを防ぐ。
+
+== 設計方針
+
+* version付きのprotocol schemaを正本にする。request、response、range、diagnostic、render input、productおよび
+  stable error codeを定義する。
+* Rust serialization/deserialization型、TypeScript declaration、JSON Schema検証fixtureを生成する。
+* worker clientは生成されたcontract registryだけを参照し、手書きのversion定数と構造宣言を削除する。
+* schema生成物は追跡し、生成差分をquality gateで拒否する。
+
+== 完了条件
+
+* 一つのschema変更からRust API、`.d.mts`、fixture validatorが再生成される。
+* unknown field拒否、camelCase、tagged unionおよびbyte rangeの契約をschema testで固定する。
+* protocolの手書きDTOまたは重複したTypeScript interfaceを残さない。
+* schemaとbrowser packageを含むrelease artifactの再現性をrelease gateで検証する。
