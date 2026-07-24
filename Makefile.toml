@@ -103,7 +103,8 @@ script = '''
 args=""
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-release-metadata.XXXXXX.json")"
-trap 'rm -f "$metadata" "$zed_metadata"' EXIT
+notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
+trap 'rm -f "$metadata" "$zed_metadata" "$notice"' EXIT
 if [ -n "${RELEASE_TAG:-}" ]; then
   args="--tag=$RELEASE_TAG"
 fi
@@ -112,7 +113,7 @@ node tools/release-contract.test.mjs
 cargo metadata --locked --format-version=1 > "$metadata"
 cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
 node tools/verify-cargo-release-metadata.mjs "$metadata" "$zed_metadata"
-node tools/verify-third-party-notices.mjs "$metadata" "$zed_metadata"
+node tools/generate-third-party-notices.mjs "$notice"
 '''
 
 [tasks.release-metadata-test]
@@ -132,6 +133,11 @@ tools/dependency-governance.sh
 description = "Test dependency boundary and exception policy"
 command = "node"
 args = ["--test", "tools/verify-dependency-boundaries.test.mjs"]
+
+[tasks.third-party-notices]
+description = "Generate the release third-party notices from locked Cargo metadata"
+command = "node"
+args = ["tools/generate-third-party-notices.mjs", "target/THIRD_PARTY_NOTICES.adoc"]
 
 [tasks.release-notes-test]
 description = "Verify mandatory GitHub Release note sections"
@@ -208,7 +214,8 @@ for package in adocweave-cli adocweave-lsp; do
   stage="$root/$archive_root"
   mkdir -p "$stage"
   cp "target/debug/$executable" "$stage/$executable"
-  cp README.adoc LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc "$stage/"
+  cp README.adoc LICENSE-MIT LICENSE-APACHE "$stage/"
+  node tools/generate-third-party-notices.mjs "$stage/THIRD_PARTY_NOTICES.adoc"
   tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
     -cJf "$artifacts/$archive_root.tar.xz" -C "$root" "$archive_root"
 done
@@ -238,6 +245,7 @@ script = '''
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
 plan="$(mktemp "${TMPDIR:-/tmp}/adocweave-dist-plan.XXXXXX.json")"
 trap 'rm -f "$plan"' EXIT
+node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
 dist plan --tag="v$version" --output-format=json > "$plan"
 node tools/verify-dist-plan.mjs "$plan" "v$version"
 '''

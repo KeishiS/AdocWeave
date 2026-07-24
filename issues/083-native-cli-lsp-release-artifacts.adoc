@@ -30,7 +30,7 @@ host toolchainや作業tree内binaryを誤って試験していないことをpa
 == 実装状況
 
 `dist` profileへthin LTO、codegen unit 1、panic abort、debug情報なしおよびsymbol stripを明記した。
-両native archiveへlicense、READMEおよびxref:../THIRD_PARTY_NOTICES.adoc[third-party notices]を同梱し、noticeと
+両native archiveへlicense、READMEおよびCargo metadataから生成するthird-party noticesを同梱し、noticeと
 `cargo metadata`の同期検査をrelease gateへ追加した。CLIとLSPは`--version --json`でpackage versionとCore契約を
 報告する。
 

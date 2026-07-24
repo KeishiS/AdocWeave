@@ -14,7 +14,8 @@ fi
 readonly database="${CARGO_TARGET_DIR:-target}/rustsec-advisory-db"
 readonly metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-dependencies.XXXXXX.json")"
 readonly zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-dependencies.XXXXXX.json")"
-trap 'rm -f "$metadata" "$zed_metadata"' EXIT
+readonly notice="$(mktemp "${TMPDIR:-/tmp}/adocweave-third-party-notices.XXXXXX.adoc")"
+trap 'rm -f "$metadata" "$zed_metadata" "$notice"' EXIT
 if [[ ! -d "$database/.git" ]]; then
   rm -rf "$database"
   git init --quiet "$database"
@@ -44,4 +45,4 @@ node tools/verify-dependency-boundaries.mjs
 cargo metadata --locked --format-version=1 > "$metadata"
 cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
 node tools/verify-duplicate-dependencies.mjs "$metadata" "$zed_metadata"
-node tools/verify-third-party-notices.mjs "$metadata" "$zed_metadata"
+node tools/generate-third-party-notices.mjs "$notice"

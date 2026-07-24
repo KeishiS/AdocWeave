@@ -25,4 +25,5 @@ if [[ "$actual_version" != "cargo-dist $expected_version" ]]; then
   exit 1
 fi
 
+node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
 exec "$dist_bin" "$@"
