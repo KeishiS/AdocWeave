@@ -111,8 +111,8 @@ pub mod text {
 
 pub use conformance::{DocumentProducts, ProductSet};
 pub use core::{
-    Analysis, CONTRACT_VERSION, CancellationCheck, CancellationToken, Engine, NeverCancel,
-    ParseError, ParseOptions, SourceId,
+    Analysis, CancellationCheck, CancellationToken, Engine, NeverCancel, ParseError, ParseOptions,
+    SourceId,
 };
 pub use execution::{AnalysisRequest, AnalysisResult, DocumentRevision};
 pub use limits::{ProcessingLimits, SyntaxMode};

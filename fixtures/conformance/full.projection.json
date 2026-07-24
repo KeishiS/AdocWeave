@@ -1,6 +1,6 @@
 {
   "catalogs": { "bibliography": [], "footnotes": [], "index": [] },
-  "contractVersion": 6,
+  "packageVersion": "0.6.0",
   "externalLinks": [
     {
       "label": "link",

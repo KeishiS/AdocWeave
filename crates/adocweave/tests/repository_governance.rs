@@ -20,7 +20,7 @@ struct AbnormalCase {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReleaseManifest {
-    contract_version: u16,
+    package_version: String,
 }
 
 #[derive(Deserialize)]
@@ -398,23 +398,21 @@ fn table_governance_validator_rejects_nested_stray_and_unclosed_delimiters() {
 }
 
 #[test]
-fn wasm_documentation_uses_the_release_manifest_contract_version() {
+fn wasm_documentation_uses_the_release_manifest_package_version() {
     let manifest: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(repository_root().join("release-manifest.json"))
             .expect("release manifest"),
     )
     .expect("valid release manifest");
-    let version = manifest["contractVersion"]
-        .as_u64()
-        .expect("WASM API version");
+    let version = manifest["packageVersion"].as_str().expect("package version");
     let documentation =
         fs::read_to_string(repository_root().join("docs/wasm-worker.adoc")).expect("WASM docs");
     assert!(
-        documentation.contains(&format!("`CONTRACT_VERSION`は{version}")),
-        "contract version prose"
+        documentation.contains(&format!("`VERSION`は`{version}`")),
+        "package version prose"
     );
     assert!(
-        documentation.contains(&format!("\"apiVersion\": {version}")),
+        documentation.contains(&format!("\"packageVersion\": \"{version}\"")),
         "WASM request example"
     );
     assert!(
@@ -424,24 +422,24 @@ fn wasm_documentation_uses_the_release_manifest_contract_version() {
 }
 
 #[test]
-fn release_manifest_is_the_single_contract_version_catalog() {
+fn release_manifest_is_the_single_release_identity_catalog() {
     let root = repository_root();
     let manifest: ReleaseManifest = serde_json::from_str(
         &fs::read_to_string(root.join("release-manifest.json")).expect("release manifest"),
     )
     .expect("valid release manifest");
-    assert_eq!(manifest.contract_version, adocweave::CONTRACT_VERSION);
+    assert_eq!(manifest.package_version, adocweave::VERSION);
 
     let documentation =
         fs::read_to_string(root.join("docs/core-profile.adoc")).expect("contract documentation");
     assert!(documentation.contains(&format!(
-        "`CONTRACT_VERSION = {}`",
-        manifest.contract_version
+        "`VERSION = {}`",
+        manifest.package_version
     )));
 
     let current_contract = fs::read_to_string(root.join("docs/current-contract.adoc"))
         .expect("current contract index");
-    assert!(current_contract.contains(&format!("|公開契約 |{}", manifest.contract_version)));
+    assert!(current_contract.contains(&format!("|package version |{}", manifest.package_version)));
 }
 
 #[test]

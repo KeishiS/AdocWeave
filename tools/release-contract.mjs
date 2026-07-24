@@ -135,14 +135,11 @@ export function validateDistPlan(distPlan, plan, tag) {
 
 export function validateDistributionManifest(manifest, plan) {
   const keys = Object.keys(manifest).sort();
-  const expectedKeys = ["assets", "contractVersion", "packageVersion", "schemaVersion", "sourceCommit"];
+  const expectedKeys = ["assets", "packageVersion", "schemaVersion", "sourceCommit"];
   if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) fail("distribution manifest has unknown or missing fields");
   if (manifest.schemaVersion !== 1) fail("distribution manifest schemaVersion must be 1");
   if (manifest.packageVersion !== plan.packageVersion) fail("distribution manifest package version mismatch");
   if (!/^[0-9a-f]{40}$/.test(manifest.sourceCommit)) fail("sourceCommit must be a lowercase 40-character Git commit");
-  if (!Number.isInteger(manifest.contractVersion) || manifest.contractVersion < 1) {
-    fail("distribution manifest contractVersion must be a positive integer");
-  }
   const expected = new Map(plan.assets.map((asset) => [asset.name, asset]));
   const names = manifest.assets.map((asset) => asset.name);
   if (new Set(names).size !== names.length || names.some((name, index) => index && name < names[index - 1])) {

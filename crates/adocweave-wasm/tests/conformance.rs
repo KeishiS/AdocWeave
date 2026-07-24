@@ -12,7 +12,6 @@ struct ReleaseManifest {
     schema_version: u16,
     package_version: String,
     rust_version: String,
-    contract_version: u16,
 }
 
 #[test]
@@ -22,7 +21,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
         &fs::read_to_string(fixtures.join("cases.json")).expect("conformance manifest"),
     )
     .expect("valid conformance manifest");
-    assert_eq!(manifest["contractVersion"], 6);
+    assert_eq!(manifest["packageVersion"], adocweave::VERSION);
 
     for entry in manifest["cases"].as_array().expect("cases") {
         let name = entry["name"].as_str().expect("case name");
@@ -40,7 +39,7 @@ fn native_adapter_accepts_every_shared_conformance_case() {
             continue;
         }
         let response = result.expect(name);
-        assert_eq!(response.api_version, adocweave::CONTRACT_VERSION, "{name}");
+        assert_eq!(response.package_version, adocweave::VERSION, "{name}");
         assert!(!response.syntax.is_empty(), "{name}: syntax tree");
         assert!(!response.ast.is_empty(), "{name}: AST");
         if let Some(file) = entry["expectedHtmlFile"].as_str() {
@@ -76,14 +75,13 @@ fn native_adapter_accepts_every_shared_conformance_case() {
 }
 
 #[test]
-fn release_contract_version_is_explicit() {
+fn release_package_version_is_explicit() {
     let manifest: ReleaseManifest =
         serde_json::from_str(include_str!("../../../release-manifest.json"))
             .expect("valid release manifest");
-    assert_eq!(manifest.schema_version, 2);
+    assert_eq!(manifest.schema_version, 3);
     assert_eq!(manifest.package_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(manifest.rust_version, env!("CARGO_PKG_RUST_VERSION"));
-    assert_eq!(manifest.contract_version, adocweave::CONTRACT_VERSION);
 }
 
 fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
@@ -97,7 +95,7 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
         .cloned()
         .unwrap_or_else(|| json!({}));
     serde_json::from_value(json!({
-        "apiVersion": adocweave::CONTRACT_VERSION,
+        "packageVersion": adocweave::VERSION,
         "sourceId": format!("conformance:{}", entry["name"].as_str().expect("name")),
         "version": 1,
         "generation": 1,

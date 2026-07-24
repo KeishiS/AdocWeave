@@ -69,7 +69,7 @@ fn cli_reports_machine_readable_release_contracts() {
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("version JSON");
     assert_eq!(value["packageVersion"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(value["contractVersion"], adocweave::CONTRACT_VERSION);
+    assert_eq!(value["packageVersion"], adocweave::VERSION);
 }
 
 #[test]

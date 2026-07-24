@@ -8,7 +8,7 @@ use adocweave::preprocess::{
 };
 use adocweave::resolution::UrlPolicy;
 use adocweave::{
-    CONTRACT_VERSION, CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId,
+    CancellationCheck, Engine, NeverCancel, ParseError, ParseOptions, SourceId, VERSION,
 };
 use adocweave::{ProcessingLimits, SyntaxMode};
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ pub use render_inputs::{
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessRequest {
-    pub api_version: u16,
+    pub package_version: String,
     pub source_id: Option<String>,
     pub source: String,
     #[serde(default)]
@@ -85,7 +85,7 @@ pub enum WasmSafeMode {
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WasmPreprocessResponse {
-    pub api_version: u16,
+    pub package_version: &'static str,
     pub source: String,
     pub source_map: Vec<WasmSourceMapSegment>,
 }
@@ -131,7 +131,7 @@ pub enum WasmDocumentAttributeOperation {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRequest {
-    pub api_version: u16,
+    pub package_version: String,
     pub source_id: Option<String>,
     pub version: u32,
     pub generation: u32,
@@ -423,11 +423,10 @@ impl Default for WasmUrlPolicy {
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WasmResponse {
-    pub api_version: u16,
+    pub package_version: &'static str,
     pub version: u32,
     pub generation: u32,
     pub products: WasmProductSet,
-    pub conformance_contract_version: u16,
     pub parse: ParseSummary,
     pub syntax: String,
     pub ast: String,
@@ -442,7 +441,7 @@ pub struct WasmResponse {
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ParseSummary {
-    pub profile_version: u16,
+    pub package_version: &'static str,
     pub block_count: usize,
     pub node_count: usize,
     pub reference_count: usize,
@@ -458,12 +457,12 @@ pub struct WasmError {
 pub fn preprocess_request(
     request: WasmPreprocessRequest,
 ) -> Result<WasmPreprocessResponse, WasmError> {
-    if request.api_version != CONTRACT_VERSION {
+    if request.package_version != VERSION {
         return Err(WasmError {
             code: "unsupported-api-version".to_owned(),
             message: format!(
-                "unsupported contract version {} (expected {CONTRACT_VERSION})",
-                request.api_version
+                "unsupported package version {} (expected {VERSION})",
+                request.package_version
             ),
         });
     }
@@ -529,7 +528,7 @@ pub fn preprocess_request(
         })
         .collect();
     Ok(WasmPreprocessResponse {
-        api_version: CONTRACT_VERSION,
+        package_version: VERSION,
         source: document.source,
         source_map,
     })
@@ -539,12 +538,12 @@ pub fn process_request(
     request: WasmRequest,
     cancellation: &dyn CancellationCheck,
 ) -> Result<WasmResponse, WasmError> {
-    if request.api_version != CONTRACT_VERSION {
+    if request.package_version != VERSION {
         return Err(WasmError {
             code: "unsupported-api-version".to_owned(),
             message: format!(
-                "unsupported contract version {} (expected {CONTRACT_VERSION})",
-                request.api_version
+                "unsupported package version {} (expected {VERSION})",
+                request.package_version
             ),
         });
     }
@@ -693,13 +692,12 @@ pub fn process_request(
     }
 
     let response = WasmResponse {
-        api_version: CONTRACT_VERSION,
+        package_version: VERSION,
         version: request.version,
         generation: request.generation,
         products: requested_products,
-        conformance_contract_version: CONTRACT_VERSION,
         parse: ParseSummary {
-            profile_version: analysis.profile_version(),
+            package_version: analysis.package_version(),
             block_count: analysis.document().blocks().len(),
             node_count: analysis.document().node_count(),
             reference_count: analysis.references().len(),
@@ -866,7 +864,7 @@ mod tests {
 
     fn request(source: &str) -> WasmRequest {
         WasmRequest {
-            api_version: CONTRACT_VERSION,
+            package_version: VERSION.to_owned(),
             source_id: Some("web:document".to_owned()),
             version: 3,
             generation: 7,
@@ -892,12 +890,12 @@ mod tests {
 
         assert_eq!(response.version, 3);
         assert_eq!(response.generation, 7);
-        assert_eq!(response.conformance_contract_version, CONTRACT_VERSION);
+        assert_eq!(response.package_version, VERSION);
         assert!(response.syntax.contains("Document@"));
         assert!(response.ast.contains("\"blocks\""));
         assert!(response.html.contains("<h1"));
         assert_eq!(response.symbols[0]["name"], "Title");
-        assert_eq!(response.projection["contractVersion"], CONTRACT_VERSION);
+        assert_eq!(response.projection["packageVersion"], VERSION);
         assert_eq!(response.parse.reference_count, 0);
     }
 
@@ -1205,7 +1203,7 @@ mod tests {
     #[test]
     fn wasm_api_rejects_unknown_fields_and_versions() {
         let invalid = json!({
-            "apiVersion": CONTRACT_VERSION,
+            "packageVersion": VERSION,
             "sourceId": null,
             "version": 1,
             "generation": 1,
@@ -1217,7 +1215,7 @@ mod tests {
         assert!(error.contains("invalid-request"));
 
         let leaked_failure = json!({
-            "apiVersion": CONTRACT_VERSION,
+            "packageVersion": VERSION,
             "sourceId": null,
             "version": 1,
             "generation": 1,
@@ -1240,7 +1238,7 @@ mod tests {
 
         let error = process_request(
             WasmRequest {
-                api_version: CONTRACT_VERSION + 1,
+                package_version: "0.0.0".to_owned(),
                 ..request("text")
             },
             &NeverCancel,
@@ -1269,7 +1267,7 @@ mod tests {
     #[test]
     fn wasm_options_are_partial_overrides_and_bound_the_complete_response() {
         let value = json!({
-            "apiVersion": CONTRACT_VERSION,
+            "packageVersion": VERSION,
             "sourceId": null,
             "version": 1,
             "generation": 1,
@@ -1292,7 +1290,7 @@ mod tests {
             },
         )]);
         let response = preprocess_request(WasmPreprocessRequest {
-            api_version: CONTRACT_VERSION,
+            package_version: VERSION.to_owned(),
             source_id: Some("root".to_owned()),
             source: "include::intro.adoc[leveloffset=+1]\n".to_owned(),
             resources,

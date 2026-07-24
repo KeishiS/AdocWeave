@@ -1,5 +1,5 @@
 import { WORKER_PROTOCOL_VERSION } from "./controller.mjs";
-import { CONTRACT_VERSION } from "./contracts.mjs";
+import { PACKAGE_VERSION } from "./contracts.mjs";
 
 export class AdocWeaveClient {
   #options;
@@ -51,7 +51,7 @@ export class AdocWeaveClient {
       this.#spawnWorker();
     }
     const payload = {
-      apiVersion: CONTRACT_VERSION,
+      packageVersion: PACKAGE_VERSION,
       sourceId,
       version,
       generation,
@@ -103,11 +103,11 @@ export class AdocWeaveClient {
         if (data?.type === "ready") {
           resolve();
         } else if (data?.type === "result" && data.generation === this.#generation) {
-          const contractVersion = verifiedContractVersion(data.result);
-          if (contractVersion === null) {
+          const packageVersion = verifiedPackageVersion(data.result);
+          if (packageVersion === null) {
             this.#options.onError({
-              code: "unsupported-contract-version",
-              message: `expected contract version ${CONTRACT_VERSION}`,
+              code: "unsupported-package-version",
+              message: `expected package version ${PACKAGE_VERSION}`,
               sourceVersion: data.version,
               generation: data.generation,
             });
@@ -119,7 +119,7 @@ export class AdocWeaveClient {
             renderDiagnostics: data.result.renderDiagnostics,
             sourceVersion: data.version,
             generation: data.generation,
-            contractVersion,
+            packageVersion,
             result: data.result,
           });
         } else if (data?.type === "error" && data.generation === this.#generation) {
@@ -166,8 +166,8 @@ export class AdocWeaveClient {
   }
 }
 
-function verifiedContractVersion(result) {
-  return result?.apiVersion === CONTRACT_VERSION ? result.apiVersion : null;
+function verifiedPackageVersion(result) {
+  return result?.packageVersion === PACKAGE_VERSION ? result.packageVersion : null;
 }
 
 export { AdocWeaveClient as AdocWeaveWorkerClient };

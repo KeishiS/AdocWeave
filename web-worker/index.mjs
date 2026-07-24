@@ -1,7 +1,7 @@
 export { AdocWeaveClient, AdocWeaveWorkerClient } from "./client.mjs";
 export {
   BROWSER_PACKAGE_VERSION,
-  CONTRACT_VERSION,
+  PACKAGE_VERSION,
 } from "./contracts.mjs";
 
 export function defaultAssetUrls(baseUrl = import.meta.url) {

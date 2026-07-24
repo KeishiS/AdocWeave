@@ -280,7 +280,7 @@ impl RenderPolicy {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HtmlOutput {
-    pub contract_version: u16,
+    pub package_version: &'static str,
     pub html: String,
     pub diagnostics: Vec<Diagnostic>,
     pub document_attributes: BTreeMap<String, String>,
@@ -367,7 +367,7 @@ pub(crate) fn render_with_inputs_ast(
     };
 
     HtmlOutput {
-        contract_version: crate::CONTRACT_VERSION,
+        package_version: crate::VERSION,
         html,
         diagnostics,
         document_attributes,
@@ -2668,7 +2668,7 @@ mod tests {
 
     #[test]
     fn html_contract_has_explicit_allowlists() {
-        assert_eq!(crate::CONTRACT_VERSION, 6);
+        assert_eq!(crate::VERSION, env!("CARGO_PKG_VERSION"));
         assert_eq!(
             ALLOWED_ELEMENTS,
             [
@@ -2782,8 +2782,8 @@ mod tests {
         );
         let parsed = parse("paragraph").expect("parse");
         assert_eq!(
-            render(&parsed.ast, &RenderPolicy::default()).contract_version,
-            crate::CONTRACT_VERSION
+            render(&parsed.ast, &RenderPolicy::default()).package_version,
+            crate::VERSION
         );
     }
 

@@ -5,9 +5,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use crate::{
-    Analysis, CONTRACT_VERSION, CancellationCheck, Engine, ParseError, ParseOptions, SourceId,
-};
+use crate::{Analysis, CancellationCheck, Engine, ParseError, ParseOptions, SourceId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentRevision {
@@ -105,7 +103,7 @@ impl AnalysisCacheKey {
             allow_data_uris,
         } = url_policy;
         let mut hasher = Sha256::new();
-        hash_u16(&mut hasher, CONTRACT_VERSION);
+        hash_bytes(&mut hasher, crate::VERSION.as_bytes());
         hash_bytes(&mut hasher, source.as_bytes());
         hash_optional_string(&mut hasher, source_id.as_ref().map(SourceId::as_str));
         hash_u8(
@@ -229,10 +227,6 @@ fn hash_u8(hasher: &mut Sha256, value: u8) {
     hasher.update([value]);
 }
 
-fn hash_u16(hasher: &mut Sha256, value: u16) {
-    hasher.update(value.to_le_bytes());
-}
-
 fn hash_u64(hasher: &mut Sha256, value: u64) {
     hasher.update(value.to_le_bytes());
 }
@@ -260,7 +254,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "14ff5910d2a354eae4b92d2cd3a329bd37b7c376b6c2ee7c31232b7370e739b1"
+            "07b22814bddd33406dcabaeccef8ebc2f6ef86ebbed646d39a37a7938304da4e"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

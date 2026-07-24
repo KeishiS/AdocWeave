@@ -3,7 +3,7 @@
 この文書は、現行実装を説明する規範文書の入口である。作業の経緯はIssue、長期的な
 設計判断はADR、将来の機能はロードマップを参照する。
 
-公開API、解析、HTML、projection、conformanceおよびWASMは単一の契約versionを共有する。配布時の対応関係は
+公開API、解析、HTML、projection、conformanceおよびWASMは単一のpackage SemVerを共有する。配布時の対応関係は
 xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 
 == 契約値
@@ -11,7 +11,7 @@ xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 [cols="2,1",options="header"]
 |===
 |契約 |現在値
-|公開契約 |6
+|package version |0.6.0
 |===
 
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。

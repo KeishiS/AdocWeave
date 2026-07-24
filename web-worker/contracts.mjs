@@ -1,4 +1,4 @@
-// Keep this thin runtime constant synchronized with release-manifest.json.
-// The synchronization test fails whenever any public contract changes.
-export const CONTRACT_VERSION = 6;
+// Generated release identity. The release-manifest synchronization test rejects
+// a browser package built for a different exact package SemVer.
 export const BROWSER_PACKAGE_VERSION = "0.6.0";
+export const PACKAGE_VERSION = BROWSER_PACKAGE_VERSION;

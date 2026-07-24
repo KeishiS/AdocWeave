@@ -4,7 +4,7 @@ export interface AdocWeaveResult {
   renderDiagnostics: unknown[];
   sourceVersion: number;
   generation: number;
-  contractVersion: number;
+  packageVersion: string;
   result: AdocWeaveWasmResponse;
 }
 
@@ -30,7 +30,7 @@ export interface FormulaProjection {
 }
 
 export interface DocumentProjection {
-  contractVersion: number;
+  packageVersion: string;
   sourceId: string | null;
   sourceBlocks: SourceBlockProjection[];
   formulas: FormulaProjection[];
@@ -53,13 +53,12 @@ export interface DocumentAttributeOccurrence {
 }
 
 export interface AdocWeaveWasmResponse {
-  apiVersion: number;
+  packageVersion: string;
   version: number;
   generation: number;
   products: Required<ProductSet>;
-  conformanceContractVersion: number;
   parse: {
-    profileVersion: number;
+    packageVersion: string;
     blockCount: number;
     nodeCount: number;
     referenceCount: number;
@@ -199,4 +198,4 @@ export declare function defaultAssetUrls(baseUrl?: string | URL): {
   wasmUrl: URL;
 };
 export declare const BROWSER_PACKAGE_VERSION: string;
-export declare const CONTRACT_VERSION: number;
+export declare const PACKAGE_VERSION: string;

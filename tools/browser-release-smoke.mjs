@@ -73,12 +73,11 @@ try {
         throw new Error(`browser smoke failed (${isolated ? "isolated" : "fallback"}); requests=${requests.join(",")}: ${JSON.stringify(state)}`);
       }
       if (state.packageVersion !== releaseManifest.packageVersion ||
-          state.contractVersion !== releaseManifest.contractVersion ||
-          state.wasmApi !== releaseManifest.contractVersion ||
-          state.conformance !== releaseManifest.contractVersion ||
-          state.coreProfile !== releaseManifest.contractVersion ||
-          state.projection !== releaseManifest.contractVersion) {
-        throw new Error(`browser contract mismatch: ${JSON.stringify(state)}`);
+          state.resultPackageVersion !== releaseManifest.packageVersion ||
+          state.wasmPackageVersion !== releaseManifest.packageVersion ||
+          state.analysisPackageVersion !== releaseManifest.packageVersion ||
+          state.projectionPackageVersion !== releaseManifest.packageVersion) {
+        throw new Error(`browser package version mismatch: ${JSON.stringify(state)}`);
       }
       console.log(`browser release smoke: passed ${context} context`);
     }
@@ -158,11 +157,10 @@ async function inspectPage(chromium, url, temporaryRoot) {
               html: document.querySelector('#preview').textContent,
               isolated: crossOriginIsolated,
               packageVersion: globalThis.adocweavePackageVersion,
-              contractVersion: globalThis.adocweaveLastResult.contractVersion,
-              wasmApi: response.apiVersion,
-              conformance: response.conformanceContractVersion,
-              coreProfile: response.parse.profileVersion,
-              projection: response.projection.contractVersion,
+              resultPackageVersion: globalThis.adocweaveLastResult.packageVersion,
+              wasmPackageVersion: response.packageVersion,
+              analysisPackageVersion: response.parse.packageVersion,
+              projectionPackageVersion: response.projection.packageVersion,
             });
           } else if (Date.now() >= deadline) {
             reject(new Error('result timeout: ' + status));

@@ -18,7 +18,6 @@ async fn main() {
                 serde_json::json!({
                     "name": adocweave_lsp::SERVER_NAME,
                     "packageVersion": adocweave_lsp::VERSION,
-                    "contractVersion": adocweave::CONTRACT_VERSION,
                 })
             );
             return;

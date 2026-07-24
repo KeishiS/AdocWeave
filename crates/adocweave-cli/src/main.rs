@@ -388,7 +388,6 @@ fn run() -> Result<(), CliError> {
                     serde_json::json!({
                         "name": "adocweave",
                         "packageVersion": adocweave::VERSION,
-                        "contractVersion": adocweave::CONTRACT_VERSION,
                     })
                 );
             } else {

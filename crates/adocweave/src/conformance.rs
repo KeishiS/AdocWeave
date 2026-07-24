@@ -10,7 +10,7 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
-use crate::{Analysis, CONTRACT_VERSION};
+use crate::Analysis;
 
 /// Returns an inline source fixture from the shared cross-runtime manifest.
 /// File-backed fixtures deliberately return `None`: consumers should retain
@@ -28,14 +28,14 @@ pub fn fixture_source(name: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct FixtureManifest {
-        contract_version: u16,
+        package_version: String,
         cases: Vec<FixtureCase>,
     }
 
     let manifest: FixtureManifest =
         serde_json::from_str(include_str!("../../../fixtures/conformance/cases.json"))
             .expect("repository conformance fixture manifest is valid");
-    assert_eq!(manifest.contract_version, CONTRACT_VERSION);
+    assert_eq!(manifest.package_version, crate::VERSION);
     manifest
         .cases
         .into_iter()
@@ -139,7 +139,7 @@ pub fn products(
 /// the same bytes without depending on host object-key ordering.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConformanceSnapshot {
-    pub contract_version: u16,
+    pub package_version: &'static str,
     pub syntax: String,
     pub ast: String,
     pub diagnostics_json: String,
@@ -156,7 +156,7 @@ pub fn snapshot(
 ) -> ConformanceSnapshot {
     let products = products(analysis, policy, inputs, ProductSet::all());
     ConformanceSnapshot {
-        contract_version: CONTRACT_VERSION,
+        package_version: crate::VERSION,
         syntax: products.syntax.expect("all products include syntax"),
         ast: products
             .canonical_ast
@@ -626,7 +626,7 @@ mod tests {
         );
 
         assert_eq!(first, second);
-        assert_eq!(first.contract_version, CONTRACT_VERSION);
+        assert_eq!(first.package_version, crate::VERSION);
         assert!(first.syntax.contains("Document@"));
         assert!(first.ast.contains("\"schemaVersion\":2"));
         assert!(first.ast.contains("local-reference"));

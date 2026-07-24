@@ -16,12 +16,6 @@ use crate::parser::{self, AstBlock, ParsedDocument};
 use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
-/// Version shared by every public AdocWeave contract.
-///
-/// A change invalidates analysis caches, rendered products, projections,
-/// conformance snapshots, and WASM requests together.
-pub const CONTRACT_VERSION: u16 = 6;
-
 /// A caller-defined, opaque source identity.
 ///
 /// AdocWeave never interprets this value as a path, URL, UUID, or database key.
@@ -86,15 +80,16 @@ impl CancellationCheck for CancellationToken {
 #[derive(Debug)]
 pub struct Analysis {
     source_id: Option<SourceId>,
-    profile_version: u16,
+    package_version: &'static str,
     syntax: SyntaxTree,
     document: crate::document::Document,
     diagnostics: Vec<Diagnostic>,
 }
 
 impl Analysis {
-    pub const fn profile_version(&self) -> u16 {
-        self.profile_version
+    /// Exact package SemVer that produced this analysis.
+    pub const fn package_version(&self) -> &'static str {
+        self.package_version
     }
     pub const fn source_id(&self) -> Option<&SourceId> {
         self.source_id.as_ref()
@@ -344,7 +339,7 @@ fn analyze_inner(
 
     Ok(Analysis {
         source_id: options.source_id.clone(),
-        profile_version: CONTRACT_VERSION,
+        package_version: crate::VERSION,
         syntax,
         document: crate::document::Document::from_ast(ast),
         diagnostics,

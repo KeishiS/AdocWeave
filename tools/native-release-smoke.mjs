@@ -78,9 +78,6 @@ function run(binary, args, options = {}) {
 function version(binary) {
   const value = JSON.parse(run(binary, ["--version", "--json"]));
   if (value.packageVersion !== manifest.packageVersion) throw new Error(`${value.name} package version mismatch`);
-  if (value.contractVersion !== manifest.contractVersion) {
-    throw new Error(`${value.name} contract version mismatch`);
-  }
 }
 
 function send(child, message) {
