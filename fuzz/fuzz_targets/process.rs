@@ -9,14 +9,14 @@ fuzz_target!(|input: &[u8]| {
     };
     if let Ok(analysis) = Engine::new(ParseOptions::default()).analyze(source) {
         let _ = adocweave::output::html::render(
-            analysis.ast(),
+            analysis.document(),
             &adocweave::output::html::RenderPolicy::default(),
         );
         let _ = adocweave::output::formatter::format_analysis(
             &analysis,
             &adocweave::output::formatter::FormatConfig::default(),
         );
-        let _ = adocweave::semantic::document_symbols(analysis.ast());
+        let _ = analysis.document().symbols();
         let _ = adocweave::output::diagnostics::render_json(analysis.diagnostics());
     }
 });

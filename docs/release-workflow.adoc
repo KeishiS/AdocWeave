@@ -49,12 +49,11 @@ read-only経路だけを通り、Environmentとpublish jobへ到達しない。
 
 === Release trainの開始判断
 
-`0.y.z`期間は、利用者可視の不具合修正だけをpatch releaseに含める。新しい構文、HTML・projection・
+`0.y.z`期間は、利用者から見える不具合修正だけをpatch releaseに含めます。新しい構文、HTML・構造情報・
 WASM応答の意味変更、公開API変更または破壊的変更を含む場合はminor releaseを開始する。
 
-minor releaseを作る前に、前stableからの利用者可視差分と`CONTRACT_VERSION`更新の要否を監査する。
-契約versionを更新する場合は、release manifest、fixture、互換性文書およびmigration noteを同じcommitで
-同期する。package versionだけを理由に契約versionを更新してはならない。
+minor releaseを作る前に、前のstable版から利用者に見える差分を確認します。release manifest、
+テスト用入力、互換性文書、移行ガイドは同じcommitで更新します。
 
 . release対象versionを全componentで一致させ、mainへmergeする。
 . mainの全checkが成功したcommitへ`vX.Y.Z` tagを作成してpushする。
