@@ -1,5 +1,5 @@
 = v0.5.0 release readiness
-:status: in-progress
+:status: completed
 :depends-on: 141, 142, 143, 144, 145
 
 == 目的
@@ -31,5 +31,8 @@ distribution planおよびfixtureで一致する。2026-07-24に`node tools/rele
 `cargo make release-gate`が成功し、browser／Zed release packageの検証、隔離HOMEでのinstallation E2E
 （0.5.0 x86_64-unknown-linux-musl）およびdist plan（v0.5.0）を確認した。
 
-mainへのtag付け、GitHub Actionsによる公開、および公開assetの受け入れはrepository所有者が行う。
-tag公開後に、source commit、公開asset集合、checksumおよびattestationの受け入れ結果をここへ記録する。
+2026-07-24に、commit `48b8c284402763729a560366f7cbac9fc218edc8` へannotated tag `v0.5.0`を付け、
+repository所有者がpushした。candidate buildとtransactional publish workflowが成功し、
+`v0.5.0` stable Releaseを公開した。transactional publishはdraftを作成して9 asset集合の完全一致を
+検証してからpublishする。公開asset、`sha256.sum`およびattestationの受け入れ確認は、repository所有者が
+clean環境で行う。過去のtagは付け替えていない。

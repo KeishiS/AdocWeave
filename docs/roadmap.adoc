@@ -488,7 +488,7 @@ M34からM36の互換性収束、Core簡素化およびホスト供給stylesheet
 ADR 0006に従い、mainの完全candidate成功commitへstable tagを一度だけ付ける。
 
 . xref:../issues/146-v0-5-0-release-readiness.adoc[Issue 146]で契約差分を監査し、release gateの成功後に
-  `v0.5.0`を公開・受け入れする。（進行中）
+  `v0.5.0`を公開・受け入れした。（完了）
 
 == ドキュメント保守規則
 
