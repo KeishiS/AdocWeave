@@ -419,7 +419,9 @@ fn wasm_documentation_uses_the_release_manifest_package_version() {
             .expect("release manifest"),
     )
     .expect("valid release manifest");
-    let version = manifest["packageVersion"].as_str().expect("package version");
+    let version = manifest["packageVersion"]
+        .as_str()
+        .expect("package version");
     let documentation =
         fs::read_to_string(repository_root().join("docs/wasm-worker.adoc")).expect("WASM docs");
     assert!(
@@ -447,10 +449,7 @@ fn release_manifest_is_the_single_release_identity_catalog() {
 
     let documentation =
         fs::read_to_string(root.join("docs/core-profile.adoc")).expect("contract documentation");
-    assert!(documentation.contains(&format!(
-        "`VERSION = {}`",
-        manifest.package_version
-    )));
+    assert!(documentation.contains(&format!("`VERSION = {}`", manifest.package_version)));
 
     let current_contract = fs::read_to_string(root.join("docs/current-contract.adoc"))
         .expect("current contract index");
@@ -466,7 +465,11 @@ fn conformance_fixture_has_every_declared_consumer() {
     )
     .expect("valid conformance consumer manifest");
     assert_eq!(manifest.schema_version, 1);
-    assert!(root.join("fixtures/conformance").join(&manifest.fixture).is_file());
+    assert!(
+        root.join("fixtures/conformance")
+            .join(&manifest.fixture)
+            .is_file()
+    );
     assert_eq!(manifest.consumers.len(), 3);
     for consumer in manifest.consumers {
         let content = fs::read_to_string(root.join(&consumer.path))

@@ -14,13 +14,13 @@ use adocweave::{ProcessingLimits, SyntaxMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-mod render_inputs;
 mod protocol_generated;
+mod render_inputs;
+pub use protocol_generated::WasmProductSet;
 pub use render_inputs::{
     WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
-pub use protocol_generated::WasmProductSet;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

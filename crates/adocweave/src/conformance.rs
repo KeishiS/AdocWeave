@@ -2,6 +2,7 @@
 
 use std::fmt::Write as _;
 
+use crate::Analysis;
 use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, render_with_inputs};
@@ -10,7 +11,6 @@ use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
-use crate::Analysis;
 
 /// Returns an inline source fixture from the shared cross-runtime manifest.
 /// File-backed fixtures deliberately return `None`: consumers should retain

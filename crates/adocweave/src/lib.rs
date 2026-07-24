@@ -5,8 +5,8 @@
 //! remain deterministic core operations over caller-provided input.
 
 mod attributes;
-mod block_model;
 mod block_grammar;
+mod block_model;
 mod block_sequence;
 mod budget;
 mod catalog;
