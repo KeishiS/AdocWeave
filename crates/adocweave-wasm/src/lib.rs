@@ -15,10 +15,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod render_inputs;
+mod protocol_generated;
 pub use render_inputs::{
     WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
+pub use protocol_generated::WasmProductSet;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -142,49 +144,6 @@ pub struct WasmRequest {
     pub render_inputs: WasmRenderInputs,
     #[serde(default)]
     pub options: WasmOptions,
-}
-
-/// Output products requested by a WASM host. Omitted fields use the browser
-/// default and therefore do not cause canonical syntax or AST serialization.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct WasmProductSet {
-    pub syntax: bool,
-    pub canonical_ast: bool,
-    pub html: bool,
-    pub attribute_occurrences: bool,
-    pub diagnostics: bool,
-    pub symbols: bool,
-    pub projection: bool,
-}
-
-impl Default for WasmProductSet {
-    fn default() -> Self {
-        let products = adocweave::ProductSet::browser_default();
-        Self {
-            syntax: products.syntax,
-            canonical_ast: products.canonical_ast,
-            html: products.html,
-            attribute_occurrences: products.attribute_occurrences,
-            diagnostics: products.diagnostics,
-            symbols: products.symbols,
-            projection: products.projection,
-        }
-    }
-}
-
-impl From<WasmProductSet> for adocweave::ProductSet {
-    fn from(value: WasmProductSet) -> Self {
-        Self {
-            syntax: value.syntax,
-            canonical_ast: value.canonical_ast,
-            html: value.html,
-            attribute_occurrences: value.attribute_occurrences,
-            diagnostics: value.diagnostics,
-            symbols: value.symbols,
-            projection: value.projection,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]

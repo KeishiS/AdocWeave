@@ -73,15 +73,7 @@ export interface AdocWeaveWasmResponse {
   projection: DocumentProjection;
 }
 
-export interface ProductSet {
-  syntax?: boolean;
-  canonicalAst?: boolean;
-  html?: boolean;
-  attributeOccurrences?: boolean;
-  diagnostics?: boolean;
-  symbols?: boolean;
-  projection?: boolean;
-}
+export type { ProductSet } from "./protocol.generated.d.mts";
 
 export interface AdocWeaveError {
   code: string;
