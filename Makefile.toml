@@ -337,6 +337,13 @@ printf '%s\n' \
   "$package/worker/protocol.generated.mjs" \
   "$package/worker/worker.mjs" | LC_ALL=C sort > "$expected"
 diff -u "$expected" "$actual"
+root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser-import.XXXXXX")"
+trap 'rm -f "$actual" "$expected"; rm -rf "$root"' EXIT
+tar -xJf "$archive" -C "$root"
+node --input-type=module -e '
+  const contracts = await import(process.argv[1]);
+  if (contracts.PACKAGE_VERSION !== process.argv[2]) throw new Error("browser archive package version mismatch");
+' "$root/$package/worker/contracts.mjs" "$version"
 echo "browser release package verified: $second"
 '''
 
@@ -643,6 +650,7 @@ dependencies = [
   "clippy-zed",
   "test",
   "test-web-worker",
+  "test-browser-types",
   "test-zed",
   "release-contract",
   "workflow-lint",

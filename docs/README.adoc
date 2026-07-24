@@ -25,6 +25,7 @@
 
 * xref:nix-installation.adoc[開発環境を用意する]
 * xref:testing.adoc[テストの実行]
+* xref:git-workflow.adoc[Git branchの運用]
 * xref:continuous-integration.adoc[継続的インテグレーション]
 * xref:release-installation.adoc[インストールと更新]
 * xref:roadmap.adoc[今後の予定]

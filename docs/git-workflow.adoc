@@ -1,0 +1,81 @@
+= Git branchの運用
+
+このリポジトリはtrunk-based developmentを採用する。長期的に維持するbranchは`main`だけである。
+作業は短命なbranchで完結させ、pull requestを通して`main`へ統合する。
+
+== Branchの用途
+
+[cols="1,3",options="header"]
+|===
+|Branch |用途
+
+|`main`
+|統合済みの変更とrelease candidate。stable tagはこのbranchの成功commitだけに付ける。
+
+|`feat/<topic>`
+|利用者に見える機能の追加。
+
+|`fix/<topic>`
+|不具合の修正。
+
+|`refactor/<topic>`
+|外部の意味を変えない内部構造の整理。
+
+|`ci/<topic>`
+|CI、build、releaseまたは開発環境の変更。
+
+|`docs/<topic>`
+|文書だけの変更。
+|===
+
+`release/*`の長期branchは作らない。releaseは`main`の完全candidateが成功したcommitへstable tagを付けて開始する。
+
+== 作業手順
+
+. 最新の`main`から用途に対応するbranchを作る。
+. 一つの目的に限定して変更し、検証を実行する。
+. pull requestを作成し、必須checkが成功した状態で`main`へrebase and mergeする。
+. 統合後、pull requestのhead branchを削除する。
+
+[source,console]
+----
+git switch main
+git pull --ff-only origin main
+git switch -c fix/browser-archive-import-check
+# 変更・検証・commit
+git fetch origin main
+git rebase origin/main
+git push -u origin fix/browser-archive-import-check
+----
+
+rebaseで解決できない競合や、変更の目的が増えた場合は、作業を分割する。merge commitは`main`へ作らない。
+
+== `main`の保護
+
+GitHub repository rulesetで`main`に次を設定する。
+
+* direct push、force pushおよびbranch削除を禁止する。
+* pull requestを必須とする。個人開発ではreviewer approvalを必須にしない。
+* `quality` workflowのdependency governance、source quality、fuzz quality、Nix package qualityを必須checkにする。
+* merge前にbranchを最新の`main`へ更新することと、linear historyを要求する。
+* pull request head branchをmerge後に自動削除する。
+
+必須checkの表示名はworkflowまたはjob名の変更で変わり得る。CI構成を変更した場合は、GitHub上のrulesetも同じ変更で更新する。
+
+== Release tag
+
+`vX.Y.Z` tagは不変とする。tag作成前に、対象commitが`main`の先端であり、main candidateが成功していることを確認する。
+tagのforce pushと削除はGitHub rulesetで禁止する。公開後に修正が必要になった場合は、tagを付け替えず新しいversionを公開する。
+
+詳細はxref:release-workflow.adoc[GitHub Releaseの公開手順]を参照する。
+
+== Branchの整理
+
+統合済みbranchは削除する前に、対象と基点を確認する。未統合branch、release tagを指すbranch、または調査中のbranchを
+自動削除してはならない。local branchの確認には次を用いる。
+
+[source,console]
+----
+git fetch --prune origin
+git branch --merged main
+----

@@ -11,16 +11,16 @@
 [cols="2,1",options="header"]
 |===
 |項目 |現在値
-|package version |0.6.0
+|package version |0.6.1
 |===
 
 機械可読な値の基準はxref:../release-manifest.json[release manifest]です。
-最新版への更新手順はxref:upgrade-0-6.adoc[v0.6.0への移行]を参照する。
+v0.6.1は公開API・契約の変更を含まない。v0.6.0から更新する場合もxref:upgrade-0-6.adoc[v0.6.0への移行]を参照する。
 
 == 移行ガイド
 
 過去のリリースから更新する利用側アプリは、現在使っている版より後の移行ガイドを番号順にすべて確認してください。
-たとえばv0.1.xからv0.6.0へ更新する場合は、xref:upgrade-0-2.adoc[v0.2.0]、
+たとえばv0.1.xからv0.6.1へ更新する場合は、xref:upgrade-0-2.adoc[v0.2.0]、
 xref:upgrade-0-3.adoc[v0.3.0]、xref:upgrade-0-4.adoc[v0.4.0]および
 xref:upgrade-0-5.adoc[v0.5.0]およびxref:upgrade-0-6.adoc[v0.6.0]への移行をこの順で読みます。各ガイドの必要なRust版と対象リリースの
 release manifestを確認し、保存しているHTMLや検索用の情報を作り直してください。
