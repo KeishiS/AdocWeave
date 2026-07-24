@@ -30,7 +30,8 @@ if [[ -f target/adocweave-wasm/adocweave_wasm.d.ts ]]; then
   cp target/adocweave-wasm/adocweave_wasm.d.ts "$stage/wasm/"
 fi
 cp web-worker/client.mjs web-worker/contracts.mjs web-worker/controller.mjs web-worker/index.mjs \
-  web-worker/index.d.mts web-worker/worker.mjs "$stage/worker/"
+  web-worker/index.d.mts web-worker/protocol.generated.mjs web-worker/protocol.generated.d.mts \
+  web-worker/worker.mjs "$stage/worker/"
 cp web-worker/example/index.html web-worker/example/app.mjs "$stage/example/"
 cp web-worker/package.json web-worker/README.adoc LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc "$stage/"
 

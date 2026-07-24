@@ -9,7 +9,8 @@
 * `wasm/adocweave_wasm.d.ts`：生成された場合のTypeScript declaration
 * `worker/index.mjs`と`worker/index.d.mts`：frontend向けの公開ES module入口と型定義
 * `worker/client.mjs`、`worker/controller.mjs`、`worker/worker.mjs`：最新generationだけを採用する内部実装
-* `worker/contracts.mjs`：公開契約version
+* `worker/contracts.mjs`：公開パッケージ版
+* `worker/protocol.generated.mjs`と`worker/protocol.generated.d.mts`：生成された公開型と版数
 
 == 最小例
 

@@ -333,6 +333,8 @@ printf '%s\n' \
   "$package/worker/controller.mjs" \
   "$package/worker/index.d.mts" \
   "$package/worker/index.mjs" \
+  "$package/worker/protocol.generated.d.mts" \
+  "$package/worker/protocol.generated.mjs" \
   "$package/worker/worker.mjs" | LC_ALL=C sort > "$expected"
 diff -u "$expected" "$actual"
 echo "browser release package verified: $second"
