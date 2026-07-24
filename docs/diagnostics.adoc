@@ -25,7 +25,9 @@
 
 `RenderPolicy`と`RenderInputs`に依存する診断は不変`Analysis`へ混在させず、backendの出力診断として返す。
 Webホスト向けpolicyは`source-language-not-allowed`、`math-language-not-allowed`、
-`resource-capability-disabled`および`reference-resolution-fallback`を使用する。同じAnalysisでもhost profileが
+`resource-capability-disabled`および`reference-resolution-fallback`を使用する。ホスト供給stylesheetは
+`stylesheet-not-applicable`、`invalid-stylesheet-content`、`invalid-stylesheet-url`および
+`stylesheet-limit-exceeded`を使用し、いずれもCSS本文やURLの値をmessageへ含めない。同じAnalysisでもhost profileが
 異なればrender診断は異なり得るため、cache keyにはprofileとRenderInputsのrevisionを含める。
 
 == Fix
