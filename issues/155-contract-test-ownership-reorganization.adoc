@@ -1,5 +1,5 @@
 = 契約testの所有権再編
-:status: planned
+:status: completed
 :depends-on: 150, 152, 154
 
 == 目的

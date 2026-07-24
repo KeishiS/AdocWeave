@@ -1,5 +1,5 @@
 = 文法component境界の再編
-:status: planned
+:status: completed
 :depends-on: 149
 
 == 目的

@@ -1,5 +1,5 @@
 = 選択的Document product API
-:status: planned
+:status: completed
 :depends-on: 150
 
 == 目的

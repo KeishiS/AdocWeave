@@ -1,5 +1,5 @@
 = 生成される公開protocol schema
-:status: planned
+:status: completed
 :depends-on: 151
 
 == 目的

@@ -1,5 +1,5 @@
 = 単一passのDocument factsとquery index
-:status: planned
+:status: completed
 :depends-on: 149
 
 == 目的

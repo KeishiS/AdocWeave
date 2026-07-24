@@ -1,5 +1,5 @@
 = Release identityの単一化
-:status: planned
+:status: completed
 :depends-on: 152
 
 == 目的

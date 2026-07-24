@@ -1,6 +1,6 @@
 = 公開Document modelとcanonical facts
-:status: planned
-:depends-on: 148
+:status: completed
+:depends-on: 147
 
 == 目的
 
