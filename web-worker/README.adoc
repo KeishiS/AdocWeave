@@ -11,6 +11,7 @@
 * `worker/client.mjs`、`worker/controller.mjs`、`worker/worker.mjs`：最新generationだけを採用する内部実装
 * `worker/contracts.mjs`：公開パッケージ版
 * `worker/protocol.generated.mjs`と`worker/protocol.generated.d.mts`：生成された公開型と版数
+* `THIRD_PARTY_NOTICES.adoc`：rootとZedのlockfileから生成したthird-party package一覧
 
 == 最小例
 

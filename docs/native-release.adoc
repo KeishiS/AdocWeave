@@ -63,8 +63,9 @@ adocweave-lsp-{target}/
 shell completionは現行CLIが生成機能を提供していないため同梱しない。将来追加する場合は、対応shell、生成元version、
 install先および更新規則をCLIと同じreleaseで固定する。
 
-xref:../THIRD_PARTY_NOTICES.adoc[third-party notices]は`Cargo.lock`に含まれる全third-party crateのname、version、
-SPDX license expressionを列挙する。`cargo make release-contract`は`cargo metadata`との不一致を拒否する。
+`THIRD_PARTY_NOTICES.adoc`はrootとZedのlockfileから配布時に生成する。全third-party crateのname、version、
+SPDX license expressionを列挙し、license metadataがないpackageを拒否する。`cargo make third-party-notices`は同じ内容を
+`target/`へ生成する。
 
 == Static linkとarchitecture
 

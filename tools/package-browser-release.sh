@@ -33,7 +33,8 @@ cp web-worker/client.mjs web-worker/contracts.mjs web-worker/controller.mjs web-
   web-worker/index.d.mts web-worker/protocol.generated.mjs web-worker/protocol.generated.d.mts \
   web-worker/worker.mjs "$stage/worker/"
 cp web-worker/example/index.html web-worker/example/app.mjs "$stage/example/"
-cp web-worker/package.json web-worker/README.adoc LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc "$stage/"
+cp web-worker/package.json web-worker/README.adoc LICENSE-MIT LICENSE-APACHE "$stage/"
+node tools/generate-third-party-notices.mjs "$stage/THIRD_PARTY_NOTICES.adoc"
 
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
   -cJf "$archive" -C target/distrib "$package"
