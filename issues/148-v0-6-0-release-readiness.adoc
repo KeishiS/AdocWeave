@@ -1,5 +1,5 @@
 = v0.6.0 release readiness
-:status: in-progress
+:status: completed
 :depends-on: 147
 
 == 目的

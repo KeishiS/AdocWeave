@@ -308,7 +308,7 @@ M34からM36の互換性収束、Core簡素化およびホスト供給stylesheet
 M38の公開Rust API追加を`v0.6.0`として公開する。公開契約、移行ガイド、consumer fixtureおよび
 release acceptanceを同じrelease trainで同期する。
 
-* xref:148-v0-6-0-release-readiness.adoc[148: v0.6.0 release readiness]（進行中）
+* xref:148-v0-6-0-release-readiness.adoc[148: v0.6.0 release readiness]（完了）
 
 === M40: 公開model・product・protocolの単純化
 

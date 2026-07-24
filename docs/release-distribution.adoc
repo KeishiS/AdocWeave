@@ -22,8 +22,8 @@ source codeまたは配布例へ埋め込んではならない。
 workspace、CLI、LSP、WASM、browser packageおよびZed拡張は一つのpackage versionを共有する。受理するtagは
 stableの`vX.Y.Z`だけである。tagとversionが一致しない場合はbuild開始前に拒否する。
 
-初回公開baselineでは、すべての公開成果物が共有する単一の`CONTRACT_VERSION`を
-すべて`1`とする。この一括resetは公開前に一度だけ行った操作であり、以後は各契約を独立に単調増加させる。
+公開互換性の識別子はpackage versionである。利用側アプリは、CLI、LSP、WASM、browser packageおよび
+projectionを異なるpackage versionで混在させてはならない。
 
 == Targetとarchive
 
@@ -48,7 +48,7 @@ GitHubが自動生成するsource archiveはbinary配布契約に含めない。
 
 == Distribution manifest
 
-`adocweave-dist-manifest.json`はpackage version、source commit、`CONTRACT_VERSION`および6 archiveのmetadataを
+`adocweave-dist-manifest.json`はpackage version、source commitおよび6 archiveのmetadataを
 保持する。各asset entryは名前、kind、target、archive形式、byte数、SHA-256および実行ファイル名を持つ。
 path separatorは`/`、hash対象はuploadするarchiveのbyte列そのものとする。assetは名前の昇順、JSON objectの
 keyは再帰的な辞書順とし、UTF-8、LF、末尾改行1個のpretty JSONとしてcanonicalizeする。

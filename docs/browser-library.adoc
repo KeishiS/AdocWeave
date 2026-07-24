@@ -50,7 +50,8 @@ client.dispose();
 `invalid-stylesheet-content`または`invalid-stylesheet-url`として報告される。
 
 `update`は単調増加するgenerationを返す。結果は`html`、`diagnostics`、`renderDiagnostics`、
-`sourceVersion`、`generation`、`CONTRACT_VERSION`および完全なWASM応答を所有する。古いgenerationの結果は通知しない。
+`sourceVersion`、`generation`、`packageVersion`およびWASM応答を所有する。WASM応答のproductは
+`update`へ渡した`products`で選択する。古いgenerationの結果は通知しない。
 `cancel`は現在の処理を無効化し、`dispose`後の`update`と`cancel`は失敗する。
 
 `renderInputs`と`options`は`index.d.mts`で型付けされる。任意schemeのxrefは利用側が同じsource revisionの

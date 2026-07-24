@@ -81,9 +81,9 @@ Issue 040で、xref:../fixtures/conformance/cases.json[共通conformance manifes
 実WASMで実行する`cargo make test-cross-runtime`を追加した。各caseは互換性分類と差分理由を
 必須とし、syntax tree、AST、診断、シンボル、projectionおよびHTMLを応答全体で比較する。
 
-`ConformanceSnapshot`は比較専用のversion付き契約である。syntax token表現、semantic ASTの
+`ConformanceSnapshot`は比較専用のpackage version付き形式である。syntax token表現、semantic ASTの
 構造・順序、診断JSON、シンボルJSON、projection JSONまたはHTMLの意味を変更する場合は、
-fixtureの`contractImpact`を再判定し、必要なら`CONTRACT_VERSION`を更新する。
+fixtureの`contractImpact`を再判定し、必要ならpackage versionを更新する。
 
 AST適合性値はcompact JSONであり、Rustの`Debug`表示ではない。公開semantic APIから独立した
 version付きconformance DTOを使用し、`schemaVersion`、意味node種別、UTF-8 byte range、
@@ -96,7 +96,7 @@ Rustの型が同じであることだけをruntime一致の代わりにせず、
 
 `attributes-anchors-links-references-lists-stem` caseはAST、診断、projection、symbolおよびHTMLの
 固定goldenを持つ。runnerの出力から試験時に期待値を再生成してはならない。意図した契約変更では
-各差分をレビューし、`contractImpact`と契約versionを判定してから期待ファイルを更新する。
+各差分をレビューし、`contractImpact`とpackage versionへの影響を判定してから期待ファイルを更新する。
 
 == Formatterの不変条件
 
