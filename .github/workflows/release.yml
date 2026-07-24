@@ -45,7 +45,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           runs="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA&per_page=100")"
-          run_id="$(jq -r '[.[][] | select(.head_branch == "main" and .head_sha == env.GITHUB_SHA and .conclusion == "success") | .id] | max // empty' <<<"$runs")"
+          run_id="$(jq -r '[.[].workflow_runs[] | select(.head_branch == "main" and .head_sha == env.GITHUB_SHA and .conclusion == "success") | .id] | max // empty' <<<"$runs")"
           if [ -z "$run_id" ]; then
             echo "no successful main candidate exists for $GITHUB_SHA" >&2
             exit 1

@@ -154,6 +154,13 @@ test("tag publication must reuse and verify the selected main candidate", () => 
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
+      release: inputs.release.replace(".[].workflow_runs[]", ".[][]"),
+    }),
+    /traverse workflow-run response pages/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
       release: inputs.release.replace('run-id: ${{ needs.plan.outputs.candidate_run_id }}', 'run-id: ${{ github.run_id }}'),
     }),
     /download the named candidate/,
