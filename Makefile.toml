@@ -547,12 +547,12 @@ command = "cargo"
 args = ["doc", "--workspace", "--all-features", "--no-deps"]
 
 [tasks.docs-check]
-description = "Reject .md files"
+description = "Reject documentation .md files except the repository agent instructions"
 script_runner = "@shell"
 script = '''
-unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' || true)"
+unexpected="$(rg --files --hidden -g '*.md' -g '!.git/**' | rg -v '^AGENTS\.md$' || true)"
 if [ -n "$unexpected" ]; then
-  echo "repository documentation must use .adoc:" >&2
+  echo "repository documentation must use .adoc except AGENTS.md:" >&2
   echo "$unexpected" >&2
   exit 1
 fi
