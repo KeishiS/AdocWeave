@@ -664,16 +664,15 @@ pub fn process_request(
         syntax: products.syntax.unwrap_or_default(),
         ast: products.canonical_ast.unwrap_or_default(),
         html: products.html.unwrap_or_default(),
-        attribute_occurrences: requested_products
-            .attribute_occurrences
-            .then(|| {
-                analysis
-                    .document_attribute_occurrences()
-                    .iter()
-                    .map(wasm_document_attribute_occurrence)
-                    .collect()
-            })
-            .unwrap_or_default(),
+        attribute_occurrences: if requested_products.attribute_occurrences {
+            analysis
+                .document_attribute_occurrences()
+                .iter()
+                .map(wasm_document_attribute_occurrence)
+                .collect()
+        } else {
+            Vec::new()
+        },
         diagnostics: diagnostics.unwrap_or_else(|| Value::Array(Vec::new())),
         render_diagnostics: render_diagnostics.unwrap_or_else(|| Value::Array(Vec::new())),
         symbols: symbols.unwrap_or_else(|| Value::Array(Vec::new())),

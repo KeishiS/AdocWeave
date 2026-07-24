@@ -188,7 +188,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
 
     let reference_edges = analysis
         .references()
-        .into_iter()
+        .iter()
         .filter_map(|reference| {
             let target = ReferenceKey::from_destination(&reference.destination)?;
             let resolution = match inputs.reference_at(reference.range) {

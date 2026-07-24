@@ -559,7 +559,7 @@ impl PreprocessedAnalysis {
         let references = self
             .analysis
             .references()
-            .into_iter()
+            .iter()
             .map(|value| {
                 Ok(ProjectedReference {
                     origins: project(value.range)?,
@@ -571,7 +571,7 @@ impl PreprocessedAnalysis {
         let resources = self
             .analysis
             .resources()
-            .into_iter()
+            .iter()
             .map(|value| {
                 Ok(ProjectedResource {
                     origins: project(value.range)?,

@@ -411,7 +411,7 @@ impl LanguageService {
         let version = document.map(|document| revision_version_i32(&document.request.revision));
         let mut diagnostics = document
             .and_then(|document| document.view.as_ref().map(|view| view.root.as_ref()))
-            .into_iter()
+            .iter()
             .flat_map(|analysis| analysis.diagnostics().iter())
             .map(|diagnostic| {
                 Ok(lsp::Diagnostic {
@@ -737,9 +737,9 @@ impl LanguageService {
             | DocumentElement::ElementAttribute(_) => unreachable!(),
         };
         let id = generate_heading_ids(document.analysis.document())
-            .into_iter()
+            .iter()
             .find(|candidate| candidate.range == heading.text_range)
-            .map(|candidate| candidate.id)
+            .map(|candidate| candidate.id.clone())
             .unwrap_or_else(|| "_section".to_owned());
         let level = match heading.kind {
             parser::HeadingKind::DocumentTitle => "document title".to_owned(),
@@ -772,7 +772,7 @@ impl LanguageService {
         if document
             .analysis
             .references()
-            .into_iter()
+            .iter()
             .any(|reference| contains(reference.target_range, offset))
         {
             let items = document
@@ -870,9 +870,9 @@ impl LanguageService {
             })
             .unwrap_or("");
         let items = source_language_candidates(prefix)
-            .into_iter()
+            .iter()
             .map(|language| lsp::CompletionItem {
-                label: language.to_owned(),
+                label: language.to_string(),
                 kind: Some(lsp::CompletionItemKind::VALUE),
                 ..lsp::CompletionItem::default()
             })
@@ -910,7 +910,7 @@ impl LanguageService {
         let Some(reference) = document
             .analysis
             .references()
-            .into_iter()
+            .iter()
             .find(|reference| contains(reference.range, offset))
         else {
             return Ok(None);
@@ -943,7 +943,7 @@ impl LanguageService {
         let reference_at_position = document
             .analysis
             .references()
-            .into_iter()
+            .iter()
             .find(|reference| contains(reference.range, offset));
         let key = reference_at_position
             .and_then(|reference| ReferenceKey::from_destination(&reference.destination))

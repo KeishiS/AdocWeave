@@ -199,12 +199,12 @@ fn semantic_signature(analysis: &adocweave::Analysis) -> (String, Vec<String>, V
     (
         searchable_text(analysis).text,
         reference_targets(analysis.document())
-            .into_iter()
+            .iter()
             .map(|target| format!("{:?}:{}:{}", target.kind, target.id, target.label))
             .collect(),
         analysis
             .references()
-            .into_iter()
+            .iter()
             .filter_map(|reference| ReferenceKey::from_destination(&reference.destination))
             .collect(),
     )

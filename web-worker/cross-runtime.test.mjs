@@ -25,6 +25,15 @@ function requestFor(entry) {
     version: 1,
     generation: 1,
     source,
+    products: {
+      syntax: true,
+      canonicalAst: true,
+      html: true,
+      attributeOccurrences: true,
+      diagnostics: true,
+      symbols: true,
+      projection: true,
+    },
     renderInputs: entry.renderInputs ?? {},
     options: entry.options ?? {},
   };
