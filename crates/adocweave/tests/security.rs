@@ -183,7 +183,12 @@ fn tight_limits_fail_without_partial_analysis() {
     };
     for source in [
         "a very long line",
-        "one\n\ntwo\n\nthree",
+        "\
+one
+
+two
+
+three",
         "https://example.com[x] https://example.com[y]",
     ] {
         assert!(matches!(
@@ -196,9 +201,14 @@ fn tight_limits_fail_without_partial_analysis() {
 #[test]
 fn each_structural_resource_limit_rejects_the_corresponding_input() {
     let cases: [LimitCase; 3] = [
-        ("one\n\ntwo\n", |limits: &mut ProcessingLimits| {
-            limits.max_blocks = 1
-        }),
+        (
+            "\
+one
+
+two
+",
+            |limits: &mut ProcessingLimits| limits.max_blocks = 1,
+        ),
         (
             "xref:note:a[] xref:note:b[]",
             |limits: &mut ProcessingLimits| {
@@ -206,7 +216,11 @@ fn each_structural_resource_limit_rejects_the_corresponding_input() {
             },
         ),
         (
-            "= Title\n:one: 1\n:two: 2\n",
+            "\
+= Title
+:one: 1
+:two: 2
+",
             |limits: &mut ProcessingLimits| limits.max_attributes = 1,
         ),
     ];
@@ -227,7 +241,10 @@ fn construction_budgets_accept_exact_boundaries_and_reject_the_next_item() {
     let cases: [BoundaryCase; 5] = [
         (
             "blocks",
-            "one\n\ntwo",
+            "\
+one
+
+two",
             2_u32,
             |limits: &mut ProcessingLimits, value| {
                 limits.max_blocks = value;
@@ -251,7 +268,11 @@ fn construction_budgets_accept_exact_boundaries_and_reject_the_next_item() {
         ),
         (
             "document attributes",
-            "= T\n:a: 1\n:b: 2\n",
+            "\
+= T
+:a: 1
+:b: 2
+",
             2_u32,
             |limits: &mut ProcessingLimits, value| {
                 limits.max_attributes = value;
@@ -259,7 +280,13 @@ fn construction_budgets_accept_exact_boundaries_and_reject_the_next_item() {
         ),
         (
             "list continuations",
-            "* item\n+\nfirst\n+\nsecond\n",
+            "\
+* item
++
+first
++
+second
+",
             2_u32,
             |limits: &mut ProcessingLimits, value| {
                 limits.max_list_continuations = value;
@@ -314,7 +341,11 @@ fn list_depth_limit_recovers_with_a_diagnostic() {
         max_list_depth: 2,
         ..ProcessingLimits::default()
     };
-    let source = "* one\n** two\n*** three\n";
+    let source = "\
+* one
+** two
+*** three
+";
     let analysis = analyze_with_limits(source, limits).expect("list depth overflow is recoverable");
     let html = render(analysis.document(), &RenderPolicy::default()).html;
     let diagnostics = adocweave::output::diagnostics::render_json(analysis.diagnostics());
@@ -329,7 +360,14 @@ fn compound_block_depth_limit_rejects_unbounded_nesting() {
         max_block_depth: 1,
         ..ProcessingLimits::default()
     };
-    let source = "=====\nouter\n======\ninner\n======\n=====\n";
+    let source = "\
+=====
+outer
+======
+inner
+======
+=====
+";
 
     assert!(matches!(
         analyze_with_limits(source, limits),
@@ -346,7 +384,14 @@ fn asciidoc_cell_uses_the_parent_table_depth_budget() {
         max_table_depth: 1,
         ..ProcessingLimits::default()
     };
-    let source = "[cols=a]\n|===\n|!===\n!nested\n!===\n|===\n";
+    let source = "\
+[cols=a]
+|===
+|!===
+!nested
+!===
+|===
+";
 
     assert!(matches!(
         analyze_with_limits(source, limits),
@@ -391,7 +436,14 @@ fn table_resources_are_rejected_at_the_construction_boundary() {
     ];
     for (resource, limits) in cases {
         assert!(matches!(
-            analyze_with_limits("|===\n|a |b\n|===\n", limits),
+            analyze_with_limits(
+                "\
+|===
+|a |b
+|===
+",
+                limits,
+            ),
             Err(ParseError::LimitExceeded { resource: actual, .. }) if actual == resource
         ));
     }
