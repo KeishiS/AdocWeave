@@ -12,7 +12,8 @@ cp editors/zed/Cargo.toml editors/zed/Cargo.lock editors/zed/extension.toml "$st
 cp editors/zed/src/*.rs "$stage/src/"
 cp -R editors/zed/languages/. "$stage/languages/"
 cp editors/zed/README.adoc "$stage/"
-cp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc "$stage/"
+cp LICENSE-MIT LICENSE-APACHE "$stage/"
+node tools/generate-third-party-notices.mjs "$stage/THIRD_PARTY_NOTICES.adoc"
 
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
   -cJf "$archive" -C target/zed-release "$package"
