@@ -1,0 +1,33 @@
+= 公開文書属性occurrence query
+:status: planned
+:depends-on: 146
+
+== 目的
+
+標準AsciiDocの文書属性を、host固有の意味をCoreへ持ち込まず、source-preservingなconsumerが
+公開facadeから型付きで取得できるようにする。現行の`ResolvedDocumentAttributes`は最終値だけを
+公開するため、属性occurrenceのsource順、重複、set／unset、空文字setとunsetの区別、および
+source rangeを観測できない。
+
+== 設計方針
+
+* `semantic` facadeに、backend非依存の公開型`DocumentAttributeOccurrence`と
+  `DocumentAttributeOperation`を追加する。
+* occurrenceは行全体、name、valueの`TextRange`、name、raw valueおよびset／unset操作だけを持つ。
+  UUID、日時、タグ、DB key、保護規則その他のアプリケーション固有の意味は持たない。
+* `Analysis`またはsemantic documentへ、source順のoccurrence sliceを返すqueryを追加する。
+* `ResolvedDocumentAttributes`は通常の変換・表示向けの最終値APIとして維持する。occurrence queryは
+  それを置換せず、source-preserving編集、LSPおよびhost拡張のための標準構文事実を公開する。
+* parser内部の`DocumentAttribute`と`AttributeOperation`をそのまま公開契約へ昇格せず、公開query型と
+  内部表現の変換境界を設ける。これによりparserの内部変更をhost APIの破壊的変更にしない。
+
+== 完了条件
+
+* `semantic` facadeからnameableなoccurrence型と操作enumを利用できる。
+* source順、重複定義、set、unset、空文字set、name／value／行全体rangeを統合テストで固定する。
+* `analysis.presentation().attributes()`が最終値だけを返すことと、occurrence queryとの用途の違いを
+  `document-attributes.adoc`、Core Profileおよび移行ガイドへ記録する。
+* 公開Rust APIの変更として`CONTRACT_VERSION`、release manifest、conformance fixtureおよび
+  v0.6.0移行文書を同期する。
+* Marginalis等のhostが独自header scannerを持たず、公開occurrence queryだけで保護属性置換を
+  実装できることをconsumer fixtureで検証する。
