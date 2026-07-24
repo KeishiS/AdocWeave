@@ -97,6 +97,43 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
 }
 
 #[test]
+fn hostile_stylesheet_configuration_never_reaches_the_output() {
+    use adocweave::output::html::{HtmlDocumentMode, StylesheetPolicy, StylesheetSource};
+
+    let analysis = Engine::new(ParseOptions::default())
+        .analyze("paragraph")
+        .expect("analysis");
+    let output = render(
+        analysis.ast(),
+        &RenderPolicy {
+            document_mode: HtmlDocumentMode::Complete,
+            stylesheets: StylesheetPolicy {
+                sources: vec![
+                    StylesheetSource::Inline("p {}</StYlE><script>alert(1)</script>".to_owned()),
+                    StylesheetSource::External("javascript:alert(1)".to_owned()),
+                    StylesheetSource::External("https://ok.example/x.css\"onload=\"x".to_owned()),
+                ],
+                ..StylesheetPolicy::default()
+            },
+            ..RenderPolicy::default()
+        },
+    );
+
+    let lower = output.html.to_ascii_lowercase();
+    assert!(!lower.contains("<script"));
+    assert!(!lower.contains("<style"));
+    assert!(!lower.contains("javascript:"));
+    assert!(!lower.contains("onload"));
+    let codes = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code.as_str())
+        .collect::<Vec<_>>();
+    assert!(codes.contains(&"invalid-stylesheet-content"));
+    assert!(codes.contains(&"invalid-stylesheet-url"));
+}
+
+#[test]
 fn heading_anchor_cannot_break_out_of_the_id_attribute() {
     let source = "[[x\"onclick=\"alert(1)]]\n== Target\n";
     let analysis = Engine::new(ParseOptions::default())

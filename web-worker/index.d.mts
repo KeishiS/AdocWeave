@@ -144,6 +144,11 @@ export interface AdocWeaveOptions {
     images?: boolean;
     media?: boolean;
   };
+  documentMode?: "fragment" | "complete";
+  stylesheets?: (
+    | { kind: "inline"; css: string }
+    | { kind: "external"; url: string }
+  )[];
   limits?: Record<string, number>;
 }
 

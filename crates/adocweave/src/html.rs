@@ -35,17 +35,20 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "h3",
     "h4",
     "h5",
+    "head",
     "hr",
     "html",
     "img",
     "kbd",
     "li",
+    "link",
     "mark",
     "ol",
     "p",
     "pre",
     "span",
     "strong",
+    "style",
     "sub",
     "sup",
     "table",
@@ -198,6 +201,41 @@ impl Default for ResourceCapabilities {
     }
 }
 
+/// A host-supplied stylesheet emitted into the complete document `<head>`.
+/// Stylesheets are output configuration, never document input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StylesheetSource {
+    /// CSS text emitted inside a `<style>` element.
+    Inline(String),
+    /// Stylesheet URL emitted as `<link rel="stylesheet">` after the
+    /// [`UrlPolicy`] revalidates it in the resolved-resource context.
+    External(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StylesheetPolicy {
+    /// Stylesheet sources emitted in host order. Duplicate sources are
+    /// emitted once; rejected sources are skipped with a diagnostic.
+    pub sources: Vec<StylesheetSource>,
+    /// Upper bound in bytes for each inline CSS body.
+    pub max_inline_bytes: u32,
+    /// Upper bound in bytes for each stylesheet URL.
+    pub max_url_bytes: u32,
+    /// Upper bound on the number of emitted stylesheet sources.
+    pub max_sources: u32,
+}
+
+impl Default for StylesheetPolicy {
+    fn default() -> Self {
+        Self {
+            sources: Vec::new(),
+            max_inline_bytes: 1_048_576,
+            max_url_bytes: 2_048,
+            max_sources: 16,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderPolicy {
     pub document_mode: HtmlDocumentMode,
@@ -210,6 +248,7 @@ pub struct RenderPolicy {
     pub math_languages: MathLanguagePolicy,
     pub unresolved_references: UnresolvedReferencePresentation,
     pub resources: ResourceCapabilities,
+    pub stylesheets: StylesheetPolicy,
 }
 
 impl Default for RenderPolicy {
@@ -224,6 +263,7 @@ impl Default for RenderPolicy {
             math_languages: MathLanguagePolicy::default(),
             unresolved_references: UnresolvedReferencePresentation::default(),
             resources: ResourceCapabilities::default(),
+            stylesheets: StylesheetPolicy::default(),
         }
     }
 }
@@ -303,10 +343,17 @@ pub fn render_with_inputs(
             problem.range,
         ));
     }
+    let head = render_stylesheets(policy, &mut diagnostics);
     crate::diagnostic::sort_diagnostics(&mut diagnostics);
 
     let html = if policy.document_mode == HtmlDocumentMode::Complete {
-        format!("<!doctype html>\n<html>\n<body>\n{fragment}</body>\n</html>\n")
+        if head.is_empty() {
+            format!("<!doctype html>\n<html>\n<body>\n{fragment}</body>\n</html>\n")
+        } else {
+            format!(
+                "<!doctype html>\n<html>\n<head>\n{head}</head>\n<body>\n{fragment}</body>\n</html>\n"
+            )
+        }
     } else {
         fragment
     };
@@ -1758,6 +1805,127 @@ fn render_input_diagnostic(
     diagnostic
 }
 
+/// Validates the host-supplied stylesheet configuration and returns the
+/// `<head>` payload for complete document output. Rejected sources are never
+/// emitted; every rejection is reported as a diagnostic that identifies the
+/// source by index without echoing CSS content or URLs.
+fn render_stylesheets(policy: &RenderPolicy, diagnostics: &mut Vec<Diagnostic>) -> String {
+    let config = &policy.stylesheets;
+    if config.sources.is_empty() {
+        return String::new();
+    }
+    if policy.document_mode != HtmlDocumentMode::Complete {
+        diagnostics.push(stylesheet_diagnostic(
+            "stylesheet-not-applicable",
+            0,
+            "stylesheets apply only to complete document output",
+        ));
+        return String::new();
+    }
+    let mut output = String::new();
+    let mut emitted: Vec<&StylesheetSource> = Vec::new();
+    for (index, source) in config.sources.iter().enumerate() {
+        if emitted.contains(&source) {
+            continue;
+        }
+        if emitted.len() == usize::try_from(config.max_sources).unwrap_or(usize::MAX) {
+            diagnostics.push(stylesheet_diagnostic(
+                "stylesheet-limit-exceeded",
+                index,
+                &format!(
+                    "stylesheet count exceeds the limit of {}",
+                    config.max_sources
+                ),
+            ));
+            break;
+        }
+        match source {
+            StylesheetSource::Inline(css) => {
+                if css.len() > usize::try_from(config.max_inline_bytes).unwrap_or(usize::MAX) {
+                    diagnostics.push(stylesheet_diagnostic(
+                        "stylesheet-limit-exceeded",
+                        index,
+                        &format!(
+                            "inline stylesheet {index} exceeds the limit of {} bytes",
+                            config.max_inline_bytes
+                        ),
+                    ));
+                    continue;
+                }
+                if !safe_inline_css(css) {
+                    diagnostics.push(stylesheet_diagnostic(
+                        "invalid-stylesheet-content",
+                        index,
+                        &format!(
+                            "inline stylesheet {index} contains a forbidden sequence or control character"
+                        ),
+                    ));
+                    continue;
+                }
+                output.push_str("<style>\n");
+                output.push_str(css);
+                if !css.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str("</style>\n");
+            }
+            StylesheetSource::External(url) => {
+                if url.len() > usize::try_from(config.max_url_bytes).unwrap_or(usize::MAX) {
+                    diagnostics.push(stylesheet_diagnostic(
+                        "stylesheet-limit-exceeded",
+                        index,
+                        &format!(
+                            "stylesheet URL {index} exceeds the limit of {} bytes",
+                            config.max_url_bytes
+                        ),
+                    ));
+                    continue;
+                }
+                if !policy.allows_url(url, UrlContext::ResolvedResource) {
+                    diagnostics.push(stylesheet_diagnostic(
+                        "invalid-stylesheet-url",
+                        index,
+                        &format!("stylesheet URL {index} is not allowed by the URL policy"),
+                    ));
+                    continue;
+                }
+                output.push_str("<link rel=\"stylesheet\" href=\"");
+                escape_html_into(&mut output, url);
+                output.push_str("\">\n");
+            }
+        }
+        emitted.push(source);
+    }
+    output
+}
+
+/// Inline CSS cannot be protected by HTML escaping, so bodies that could
+/// terminate the `<style>` element or open a comment context are rejected.
+fn safe_inline_css(css: &str) -> bool {
+    if css
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return false;
+    }
+    if css.contains("<!--") {
+        return false;
+    }
+    let bytes = css.as_bytes();
+    !bytes
+        .windows("</style".len())
+        .any(|window| window.eq_ignore_ascii_case(b"</style"))
+}
+
+fn stylesheet_diagnostic(code: &str, index: usize, message: &str) -> Diagnostic {
+    let range =
+        crate::source::TextRange::new(crate::source::TextSize::ZERO, crate::source::TextSize::ZERO)
+            .expect("the empty range at the document start is always valid");
+    let mut diagnostic = render_diagnostic(code, message, range);
+    diagnostic.id = DiagnosticId::new(format!("{code}:stylesheet-{index}@0:0"));
+    diagnostic
+}
+
 fn render_unsupported(output: &mut String, unsupported: &Unsupported, id: Option<&str>) {
     output.push_str("<p");
     render_optional_id(output, id);
@@ -1809,8 +1977,8 @@ mod tests {
     use super::{
         ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
         HtmlDocumentMode, MathLanguagePolicy, RenderPolicy, ResolvedReference,
-        ResourceCapabilities, SourceLanguagePolicy, UnknownSourceLanguage,
-        UnresolvedReferencePresentation, render, render_with_inputs,
+        ResourceCapabilities, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
+        UnknownSourceLanguage, UnresolvedReferencePresentation, render, render_with_inputs,
     };
     use crate::inline::{Inline, ReferenceDestination};
     use crate::parser::AstBlock;
@@ -2045,6 +2213,161 @@ mod tests {
                 "</html>\n"
             )
         );
+    }
+
+    fn stylesheet_policy(sources: Vec<StylesheetSource>) -> RenderPolicy {
+        RenderPolicy {
+            document_mode: HtmlDocumentMode::Complete,
+            stylesheets: StylesheetPolicy {
+                sources,
+                ..StylesheetPolicy::default()
+            },
+            ..RenderPolicy::default()
+        }
+    }
+
+    #[test]
+    fn stylesheets_render_into_the_complete_document_head_in_host_order() {
+        let parsed = parse("paragraph").expect("valid source");
+        let output = render(
+            &parsed.ast,
+            &stylesheet_policy(vec![
+                StylesheetSource::External("https://example.com/a.css".to_owned()),
+                StylesheetSource::Inline("p { margin: 0; }".to_owned()),
+                StylesheetSource::External("https://example.com/a.css".to_owned()),
+            ]),
+        );
+
+        assert_eq!(
+            output.html,
+            concat!(
+                "<!doctype html>\n",
+                "<html>\n",
+                "<head>\n",
+                "<link rel=\"stylesheet\" href=\"https://example.com/a.css\">\n",
+                "<style>\n",
+                "p { margin: 0; }\n",
+                "</style>\n",
+                "</head>\n",
+                "<body>\n",
+                "<p>paragraph</p>\n",
+                "</body>\n",
+                "</html>\n"
+            )
+        );
+        assert!(output.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn stylesheets_are_not_mixed_into_fragment_output() {
+        let parsed = parse("paragraph").expect("valid source");
+        let output = render(
+            &parsed.ast,
+            &RenderPolicy {
+                stylesheets: StylesheetPolicy {
+                    sources: vec![StylesheetSource::Inline("p {}".to_owned())],
+                    ..StylesheetPolicy::default()
+                },
+                ..RenderPolicy::default()
+            },
+        );
+
+        assert_eq!(output.html, "<p>paragraph</p>\n");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "stylesheet-not-applicable")
+        );
+    }
+
+    #[test]
+    fn inline_css_cannot_terminate_the_style_element() {
+        let parsed = parse("paragraph").expect("valid source");
+        for css in [
+            "p {}</style><script>alert(1)</script>",
+            "p {}</STYLE ><script>x</script>",
+            "p {}<!-- boo",
+            "p {}\u{0}",
+        ] {
+            let output = render(
+                &parsed.ast,
+                &stylesheet_policy(vec![StylesheetSource::Inline(css.to_owned())]),
+            );
+
+            assert!(!output.html.contains("<style"), "css {css:?} was emitted");
+            assert!(!output.html.contains("script"));
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code.as_str() == "invalid-stylesheet-content"),
+                "css {css:?} was not rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn stylesheet_urls_are_checked_by_the_url_policy_and_escaped() {
+        let parsed = parse("paragraph").expect("valid source");
+        for url in [
+            "javascript:alert(1)",
+            "data:text/css,p{}",
+            "../theme.css",
+            "//evil.example/theme.css",
+        ] {
+            let output = render(
+                &parsed.ast,
+                &stylesheet_policy(vec![StylesheetSource::External(url.to_owned())]),
+            );
+
+            assert!(!output.html.contains("<link"), "url {url:?} was emitted");
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code.as_str() == "invalid-stylesheet-url"),
+                "url {url:?} was not rejected"
+            );
+        }
+
+        let output = render(
+            &parsed.ast,
+            &stylesheet_policy(vec![StylesheetSource::External(
+                "https://example.com/a.css?x=\"1\"".to_owned(),
+            )]),
+        );
+        assert!(!output.html.contains("<link"));
+    }
+
+    #[test]
+    fn stylesheet_limits_reject_oversized_and_excess_sources() {
+        let parsed = parse("paragraph").expect("valid source");
+        let policy = RenderPolicy {
+            document_mode: HtmlDocumentMode::Complete,
+            stylesheets: StylesheetPolicy {
+                sources: vec![
+                    StylesheetSource::Inline("p { margin: 0; }".to_owned()),
+                    StylesheetSource::Inline("q { margin: 0; }".to_owned()),
+                    StylesheetSource::Inline("body { margin: 0; }".to_owned()),
+                ],
+                max_inline_bytes: 16,
+                max_sources: 1,
+                ..StylesheetPolicy::default()
+            },
+            ..RenderPolicy::default()
+        };
+        let output = render(&parsed.ast, &policy);
+
+        assert_eq!(output.html.matches("<style>").count(), 1);
+        assert!(output.html.contains("p { margin: 0; }"));
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "stylesheet-limit-exceeded")
+        );
+        assert!(!output.html.contains("body { margin: 0; }"));
     }
 
     #[test]
@@ -2347,17 +2670,20 @@ mod tests {
                 "h3",
                 "h4",
                 "h5",
+                "head",
                 "hr",
                 "html",
                 "img",
                 "kbd",
                 "li",
+                "link",
                 "mark",
                 "ol",
                 "p",
                 "pre",
                 "span",
                 "strong",
+                "style",
                 "sub",
                 "sup",
                 "table",

@@ -24,6 +24,11 @@ client.update({
     mathLanguages: ["latex"],
     unresolvedReferences: "label-only",
     resources: { images: false, media: false },
+    documentMode: "complete",
+    stylesheets: [
+      { kind: "inline", css: "p { margin: 0; }" },
+      { kind: "external", url: "https://example.com/theme.css" },
+    ],
   },
 });
 client.cancel();

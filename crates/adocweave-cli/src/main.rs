@@ -8,7 +8,9 @@ use std::process::ExitCode;
 
 use adocweave::output::diagnostics as diagnostic;
 use adocweave::output::formatter::{FormatConfig, format_analysis};
-use adocweave::output::html::{RenderPolicy, render};
+use adocweave::output::html::{
+    HtmlDocumentMode, RenderPolicy, StylesheetPolicy, StylesheetSource, render,
+};
 use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits};
 use adocweave::text::{PositionEncoding, SourceDocument};
 use adocweave::{Engine, ParseError, ParseOptions};
@@ -37,6 +39,9 @@ Options:
   --include   Enable bounded local include processing
   --base-dir DIR    Resolve root document includes from DIR
   --allow-root DIR  Permit include resources below DIR; repeatable
+  --complete  Convert to a complete HTML document instead of a fragment
+  --css FILE      Embed CSS from FILE into the complete document; repeatable
+  --css-url URL   Link an allowed stylesheet URL; repeatable
   -V, --version  Print version
   -h, --help  Print help
 ";
@@ -60,6 +65,7 @@ enum CliError {
     },
     Include(local_include::LocalIncludeError),
     FormattingRequired,
+    Stylesheet(String),
 }
 
 impl fmt::Display for CliError {
@@ -85,6 +91,7 @@ impl fmt::Display for CliError {
             }
             Self::Include(source) => source.fmt(formatter),
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
+            Self::Stylesheet(message) => formatter.write_str(message),
         }
     }
 }
@@ -99,7 +106,8 @@ impl Error for CliError {
             Self::Usage(_)
             | Self::InvalidUtf8 { .. }
             | Self::OutputLimit { .. }
-            | Self::FormattingRequired => None,
+            | Self::FormattingRequired
+            | Self::Stylesheet(_) => None,
         }
     }
 }
@@ -112,6 +120,14 @@ enum Operation {
     Symbols,
 }
 
+/// A stylesheet argument in command-line order; files are embedded, URLs are
+/// linked, and both apply only to complete document output.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CssArgument {
+    File(PathBuf),
+    Url(String),
+}
+
 struct Arguments {
     operation: Operation,
     input: Option<PathBuf>,
@@ -120,6 +136,8 @@ struct Arguments {
     include: bool,
     base_dir: Option<PathBuf>,
     allowed_roots: Vec<PathBuf>,
+    complete: bool,
+    css: Vec<CssArgument>,
 }
 
 enum Action {
@@ -164,12 +182,27 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut include = false;
     let mut base_dir = None;
     let mut allowed_roots = Vec::new();
+    let mut complete = false;
+    let mut css = Vec::new();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
             "--json" if operation == Operation::Check => json = true,
             "--check" if operation == Operation::Format => format_check = true,
             "--include" => include = true,
+            "--complete" if operation == Operation::Convert => complete = true,
+            "--css" if operation == Operation::Convert => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--css requires a file".to_owned()))?;
+                css.push(CssArgument::File(PathBuf::from(value)));
+            }
+            "--css-url" if operation == Operation::Convert => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--css-url requires a URL".to_owned()))?;
+                css.push(CssArgument::Url(value));
+            }
             "--base-dir" => {
                 let value = arguments
                     .next()
@@ -196,6 +229,11 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "--base-dir and --allow-root require --include".to_owned(),
         ));
     }
+    if !complete && !css.is_empty() {
+        return Err(CliError::Usage(
+            "--css and --css-url require --complete".to_owned(),
+        ));
+    }
 
     Ok(Action::Run(Arguments {
         operation,
@@ -205,6 +243,8 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         include,
         base_dir,
         allowed_roots,
+        complete,
+        css,
     }))
 }
 
@@ -250,11 +290,72 @@ fn finish_output(output: String) -> Result<String, CliError> {
     Ok(output)
 }
 
-fn process(operation: Operation, input: &[u8], json: bool) -> Result<String, CliError> {
+/// Builds the convert render policy from command-line stylesheet arguments.
+/// CSS files are read here so a missing or oversized file fails before any
+/// output is produced; the renderer revalidates every source.
+fn convert_policy(complete: bool, css: &[CssArgument]) -> Result<RenderPolicy, CliError> {
+    let limits = StylesheetPolicy::default();
+    let mut sources = Vec::new();
+    for argument in css {
+        match argument {
+            CssArgument::File(path) => {
+                let bytes = fs::read(path).map_err(|source| CliError::Read {
+                    source_name: path.display().to_string(),
+                    source,
+                })?;
+                if bytes.len()
+                    > usize::try_from(limits.max_inline_bytes)
+                        .expect("u32 fits usize on supported targets")
+                {
+                    return Err(CliError::Stylesheet(format!(
+                        "stylesheet {} exceeds the limit of {} bytes",
+                        path.display(),
+                        limits.max_inline_bytes
+                    )));
+                }
+                let text = String::from_utf8(bytes).map_err(|error| CliError::InvalidUtf8 {
+                    valid_up_to: error.utf8_error().valid_up_to(),
+                })?;
+                sources.push(StylesheetSource::Inline(text));
+            }
+            CssArgument::Url(url) => sources.push(StylesheetSource::External(url.clone())),
+        }
+    }
+    Ok(RenderPolicy {
+        document_mode: if complete {
+            HtmlDocumentMode::Complete
+        } else {
+            HtmlDocumentMode::Fragment
+        },
+        stylesheets: StylesheetPolicy { sources, ..limits },
+        ..RenderPolicy::default()
+    })
+}
+
+fn process(
+    operation: Operation,
+    input: &[u8],
+    json: bool,
+    render_policy: &RenderPolicy,
+) -> Result<String, CliError> {
     let source = decode_input(input)?;
     let analysis = analyze(source)?;
     let output = match operation {
-        Operation::Convert => render(analysis.ast(), &RenderPolicy::default()).html,
+        Operation::Convert => {
+            let output = render(analysis.ast(), render_policy);
+            if let Some(diagnostic) = output.diagnostics.iter().find(|diagnostic| {
+                matches!(
+                    diagnostic.code.as_str(),
+                    "invalid-stylesheet-url"
+                        | "invalid-stylesheet-content"
+                        | "stylesheet-limit-exceeded"
+                        | "stylesheet-not-applicable"
+                )
+            }) {
+                return Err(CliError::Stylesheet(diagnostic.message.clone()));
+            }
+            output.html
+        }
         Operation::Check if json => diagnostic::render_json(analysis.diagnostics()),
         Operation::Check => diagnostic::render_human(
             analysis.diagnostics(),
@@ -340,21 +441,22 @@ fn run() -> Result<(), CliError> {
             } else {
                 input.clone()
             };
+            let render_policy = convert_policy(arguments.complete, &arguments.css)?;
             let output = if arguments.operation == Operation::Check {
                 if let Some(prepared) = prepared.as_ref() {
                     check_preprocessed(prepared, arguments.json).map_err(CliError::Include)
                 } else {
-                    process(Operation::Check, &processed, arguments.json)
+                    process(Operation::Check, &processed, arguments.json, &render_policy)
                 }
             } else if arguments.operation == Operation::Format && arguments.format_check {
                 let source = decode_input(&input)?;
-                let output = process(Operation::Format, &input, false)?;
+                let output = process(Operation::Format, &input, false, &render_policy)?;
                 if output != source {
                     return Err(CliError::FormattingRequired);
                 }
                 Ok(String::new())
             } else {
-                process(arguments.operation, &processed, false)
+                process(arguments.operation, &processed, false, &render_policy)
             }?;
             let output = finish_output(output)?;
             io::stdout()

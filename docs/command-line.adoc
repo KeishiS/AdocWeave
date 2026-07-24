@@ -39,3 +39,18 @@ targetはbase directoryからの相対pathに限定する。絶対path、`..`、
 `convert`、`check`および`symbols`は同じ展開snapshotを使用する。`check`の診断は元resourceのpath、行、
 columnへ投影する。`format`はinclude treeを安全性検査するが、展開結果をroot fileへ書き戻さずroot入力
 だけを整形する。
+
+== complete documentとCSS
+
+`convert`は既定でHTML fragmentを出力する。`--complete`を指定すると完全なHTML文書を出力し、
+`--css FILE`と`--css-url URL`でstylesheetを`<head>`へ追加できる。どちらも複数回指定でき、
+指定順に出力する。CSSは出力設定であり、文書入力の`style`属性や任意classは引き続き拒否する。
+
+[source,console]
+----
+adocweave convert --complete --css theme.css --css-url https://example.com/print.css manual.adoc
+----
+
+`--css`と`--css-url`は`--complete`が必須である。CSS fileはUTF-8で、1 sourceあたり1 MiBを上限とする。
+`</style`、`<!--`または改行・タブ以外の制御文字を含むCSS本文、URL policyが拒否するURL
+（既定は`http`と`https`だけ）および上限超過は、部分的なHTMLを出力せずエラーで終了する。

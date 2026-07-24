@@ -128,6 +128,8 @@ pub struct WasmOptions {
     pub math_languages: Vec<WasmMathLanguage>,
     pub unresolved_references: WasmUnresolvedReferencePresentation,
     pub resources: WasmResourceCapabilities,
+    pub document_mode: WasmDocumentMode,
+    pub stylesheets: Vec<WasmStylesheet>,
 }
 
 impl Default for WasmOptions {
@@ -142,8 +144,27 @@ impl Default for WasmOptions {
             math_languages: vec![WasmMathLanguage::Latex, WasmMathLanguage::Typst],
             unresolved_references: WasmUnresolvedReferencePresentation::Target,
             resources: WasmResourceCapabilities::default(),
+            document_mode: WasmDocumentMode::Fragment,
+            stylesheets: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmDocumentMode {
+    #[default]
+    Fragment,
+    Complete,
+}
+
+/// A host-supplied stylesheet forwarded to the core stylesheet policy.
+/// Rejected sources surface as `renderDiagnostics`, never as emitted CSS.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum WasmStylesheet {
+    Inline { css: String },
+    External { url: String },
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
@@ -541,6 +562,25 @@ pub fn process_request(
             images: options.resources.images,
             media: options.resources.media,
         },
+        document_mode: match options.document_mode {
+            WasmDocumentMode::Fragment => adocweave::output::html::HtmlDocumentMode::Fragment,
+            WasmDocumentMode::Complete => adocweave::output::html::HtmlDocumentMode::Complete,
+        },
+        stylesheets: adocweave::output::html::StylesheetPolicy {
+            sources: options
+                .stylesheets
+                .into_iter()
+                .map(|stylesheet| match stylesheet {
+                    WasmStylesheet::Inline { css } => {
+                        adocweave::output::html::StylesheetSource::Inline(css)
+                    }
+                    WasmStylesheet::External { url } => {
+                        adocweave::output::html::StylesheetSource::External(url)
+                    }
+                })
+                .collect(),
+            ..adocweave::output::html::StylesheetPolicy::default()
+        },
         ..RenderPolicy::default()
     };
     let products = snapshot(&analysis, &render_policy, &render_inputs);
@@ -903,6 +943,73 @@ mod tests {
         assert!(codes.contains(&"source-language-not-allowed"));
         assert!(codes.contains(&"math-language-not-allowed"));
         assert!(codes.contains(&"resource-capability-disabled"));
+    }
+
+    #[test]
+    fn wasm_stylesheets_render_only_into_the_complete_document_head() {
+        let mut complete = request("paragraph");
+        complete.options.document_mode = WasmDocumentMode::Complete;
+        complete.options.stylesheets = vec![
+            WasmStylesheet::Inline {
+                css: "p { margin: 0; }".to_owned(),
+            },
+            WasmStylesheet::External {
+                url: "https://example.com/theme.css".to_owned(),
+            },
+        ];
+
+        let response = process_request(complete, &NeverCancel).expect("response");
+        assert!(response.html.starts_with("<!doctype html>"));
+        assert!(
+            response
+                .html
+                .contains("<style>\np { margin: 0; }\n</style>")
+        );
+        assert!(
+            response
+                .html
+                .contains("<link rel=\"stylesheet\" href=\"https://example.com/theme.css\">")
+        );
+        assert_eq!(response.render_diagnostics, json!([]));
+
+        let mut fragment = request("paragraph");
+        fragment.options.stylesheets = vec![WasmStylesheet::Inline {
+            css: "p {}".to_owned(),
+        }];
+        let response = process_request(fragment, &NeverCancel).expect("response");
+        assert_eq!(response.html, "<p>paragraph</p>\n");
+        assert_eq!(
+            response.render_diagnostics[0]["code"],
+            "stylesheet-not-applicable"
+        );
+    }
+
+    #[test]
+    fn wasm_stylesheets_fail_closed_on_hostile_configuration() {
+        let mut hostile = request("paragraph");
+        hostile.options.document_mode = WasmDocumentMode::Complete;
+        hostile.options.stylesheets = vec![
+            WasmStylesheet::Inline {
+                css: "p {}</style><script>alert(1)</script>".to_owned(),
+            },
+            WasmStylesheet::External {
+                url: "javascript:alert(1)".to_owned(),
+            },
+        ];
+
+        let response = process_request(hostile, &NeverCancel).expect("response");
+        assert!(!response.html.contains("<style"));
+        assert!(!response.html.contains("<link"));
+        assert!(!response.html.contains("script"));
+        let codes = response
+            .render_diagnostics
+            .as_array()
+            .expect("render diagnostics")
+            .iter()
+            .filter_map(|diagnostic| diagnostic["code"].as_str())
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"invalid-stylesheet-content"));
+        assert!(codes.contains(&"invalid-stylesheet-url"));
     }
 
     #[test]

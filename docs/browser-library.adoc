@@ -33,11 +33,21 @@ client.update({
     mathLanguages: ["latex"],
     unresolvedReferences: "label-only",
     resources: { images: false, media: false },
+    documentMode: "complete",
+    stylesheets: [
+      { kind: "inline", css: "p { margin: 0; }" },
+      { kind: "external", url: "https://example.com/theme.css" },
+    ],
   },
 });
 client.cancel();
 client.dispose();
 ----
+
+`documentMode`の既定は`fragment`である。`stylesheets`はホストが明示的に渡す出力設定であり、
+`complete`出力の`<head>`へ指定順に出力される。fragment出力へはCSSを混在させず、設定した場合は
+`stylesheet-not-applicable`が`renderDiagnostics`へ入る。危険なCSS本文と不許可URLは出力されず、
+`invalid-stylesheet-content`または`invalid-stylesheet-url`として報告される。
 
 `update`は単調増加するgenerationを返す。結果は`html`、`diagnostics`、`renderDiagnostics`、
 `sourceVersion`、`generation`、`CONTRACT_VERSION`および完全なWASM応答を所有する。古いgenerationの結果は通知しない。

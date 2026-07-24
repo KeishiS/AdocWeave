@@ -1,0 +1,35 @@
+= ADR 0007: ホスト供給stylesheetはcomplete documentだけへ出力する
+:status: accepted
+
+== 文脈
+
+HTML backendは固定classとallowlistだけを出力し、生成HTMLの見た目を利用者が変更する手段を
+提供していなかった。一方で、入力由来の`style`属性、任意classおよびraw HTMLの拒否は公開契約であり、
+CSS対応のためにこの安全境界を緩めることはできない。CSSの適用先には、`<style>`本文の埋め込み、
+`<link rel="stylesheet">`によるURL参照、fragment出力への混在、および検証済みstyle assetを
+返す専用APIという候補があった。
+
+== 決定
+
+CSSは文書入力ではなく、ホストまたはCLIが明示的に渡す`RenderPolicy.stylesheets`出力設定として扱う。
+
+* stylesheet sourceは埋め込みCSS本文（`<style>`）と許可URL（`<link rel="stylesheet">`）の
+  二種類の型付き値とし、`Complete` document modeでだけ`<head>`内へホスト指定順に出力する。
+* `Fragment`出力へはCSSを混在させない。fragmentを埋め込むホストは文書shellを自身で所有しており、
+  CSSもshell側で適用できるため、検証済みstyle assetを返す専用APIは採用しない。fragment出力で
+  stylesheetを設定した場合は、黙って捨てずに`stylesheet-not-applicable`診断を返す。
+* 埋め込みCSS本文はHTML escapeでは保護できないため、`</style`（ASCII大小文字非区別）、`<!--`
+  および改行・タブ以外の制御文字を含む本文を拒否し、`invalid-stylesheet-content`診断を返す。
+* stylesheet URLはhost供給値であっても信頼せず、`UrlPolicy`を`ResolvedResource` contextで再検査し、
+  href属性値としてHTML escapeして出力する。拒否時は`invalid-stylesheet-url`診断を返し、
+  `<link>`を生成しない。
+* CSS本文・URLのbyte数とsource件数へ固定の既定上限を設け、超過sourceは
+  `stylesheet-limit-exceeded`診断とともに出力しない。同一内容のsourceは最初の一つだけを出力する。
+* 既定値（stylesheetなし）の出力は従来のHTMLとbyte単位で一致させる。
+
+== 帰結
+
+HTML契約の許可集合へ`head`、`style`、`link`要素と`rel`属性（`stylesheet`固定値）が加わる。
+CLIは`--complete`と`--css`／`--css-url`、WASMは`documentMode`と`stylesheets`設定で同じモデルを
+共有する。入力属性の`style`・任意classの拒否、resourceのfail-closed境界および観測情報へCSS本文を
+含めない方針は変更しない。標準themeの同梱は行わず、CSS本文の配布はホストの責務とする。

@@ -395,3 +395,94 @@ fn include_provider_rejects_a_symlink_escape() {
     std::fs::remove_dir_all(root).expect("cleanup root");
     std::fs::remove_file(outside).expect("cleanup outside");
 }
+
+#[test]
+fn complete_conversion_embeds_validated_stylesheets_in_order() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let css = std::env::temp_dir().join(format!("adocweave-cli-css-{unique}.css"));
+    std::fs::write(&css, "p { color: red; }\n").expect("css source");
+
+    let output = run_with_stdin(
+        &[
+            "convert",
+            "--complete",
+            "--css",
+            css.to_str().expect("UTF-8 path"),
+            "--css-url",
+            "https://example.com/theme.css",
+            "-",
+        ],
+        b"paragraph\n",
+    );
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        concat!(
+            "<!doctype html>\n",
+            "<html>\n",
+            "<head>\n",
+            "<style>\n",
+            "p { color: red; }\n",
+            "</style>\n",
+            "<link rel=\"stylesheet\" href=\"https://example.com/theme.css\">\n",
+            "</head>\n",
+            "<body>\n",
+            "<p>paragraph</p>\n",
+            "</body>\n",
+            "</html>\n"
+        )
+    );
+
+    std::fs::remove_file(css).expect("cleanup css");
+}
+
+#[test]
+fn stylesheet_options_fail_closed() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let evil = std::env::temp_dir().join(format!("adocweave-cli-evil-{unique}.css"));
+    std::fs::write(&evil, "p {}</style><script>alert(1)</script>").expect("css source");
+
+    let breakout = run_with_stdin(
+        &[
+            "convert",
+            "--complete",
+            "--css",
+            evil.to_str().expect("UTF-8 path"),
+            "-",
+        ],
+        b"paragraph\n",
+    );
+    assert!(!breakout.status.success());
+    assert!(breakout.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&breakout.stderr).contains("forbidden sequence"));
+
+    let unsafe_url = run_with_stdin(
+        &[
+            "convert",
+            "--complete",
+            "--css-url",
+            "javascript:alert(1)",
+            "-",
+        ],
+        b"paragraph\n",
+    );
+    assert!(!unsafe_url.status.success());
+    assert!(unsafe_url.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unsafe_url.stderr).contains("not allowed by the URL policy"));
+
+    let fragment_css = run_with_stdin(
+        &["convert", "--css-url", "https://example.com/theme.css", "-"],
+        b"paragraph\n",
+    );
+    assert!(!fragment_css.status.success());
+    assert!(String::from_utf8_lossy(&fragment_css.stderr).contains("require --complete"));
+
+    std::fs::remove_file(evil).expect("cleanup css");
+}
