@@ -30,7 +30,7 @@ fn adversarial_fixture_never_emits_active_input_or_unsafe_urls() {
     let analysis = Engine::new(ParseOptions::default())
         .analyze(source)
         .expect("adversarial fixture remains bounded");
-    let output = render(analysis.ast(), &RenderPolicy::default());
+    let output = render(analysis.document(), &RenderPolicy::default());
     let lower = output.html.to_ascii_lowercase();
 
     assert!(!lower.contains("<script"));
@@ -49,7 +49,7 @@ fn hostile_resolver_href_is_revalidated_by_the_renderer() {
         .expect("analysis");
     let range = analysis.references()[0].range;
     let output = render_with_inputs(
-        analysis.ast(),
+        analysis.document(),
         &RenderPolicy::default(),
         &RenderInputs::new(
             vec![ResolvedReference::resolved(range, "javascript:alert(1)")],
@@ -73,7 +73,7 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
         .expect("analysis");
     let range = analysis.resources()[0].range;
     let output = render_with_inputs(
-        analysis.ast(),
+        analysis.document(),
         &RenderPolicy::default(),
         &RenderInputs::new(
             vec![],
@@ -104,7 +104,7 @@ fn hostile_stylesheet_configuration_never_reaches_the_output() {
         .analyze("paragraph")
         .expect("analysis");
     let output = render(
-        analysis.ast(),
+        analysis.document(),
         &RenderPolicy {
             document_mode: HtmlDocumentMode::Complete,
             stylesheets: StylesheetPolicy {
@@ -139,7 +139,7 @@ fn heading_anchor_cannot_break_out_of_the_id_attribute() {
     let analysis = Engine::new(ParseOptions::default())
         .analyze(source)
         .expect("analysis");
-    let output = render(analysis.ast(), &RenderPolicy::default());
+    let output = render(analysis.document(), &RenderPolicy::default());
 
     // The dangerous anchor never reaches the output as raw attribute syntax:
     // neither an attribute breakout nor an unescaped quote survives.
@@ -299,7 +299,7 @@ fn formula_limit_recovers_as_text_and_reports_a_diagnostic() {
     };
     let source = "stem:[12345<script>]";
     let analysis = analyze_with_limits(source, limits).expect("formula overflow is recoverable");
-    let html = render(analysis.ast(), &RenderPolicy::default()).html;
+    let html = render(analysis.document(), &RenderPolicy::default()).html;
     let diagnostics = adocweave::output::diagnostics::render_json(analysis.diagnostics());
 
     assert!(!html.contains("<script>"));
@@ -316,7 +316,7 @@ fn list_depth_limit_recovers_with_a_diagnostic() {
     };
     let source = "* one\n** two\n*** three\n";
     let analysis = analyze_with_limits(source, limits).expect("list depth overflow is recoverable");
-    let html = render(analysis.ast(), &RenderPolicy::default()).html;
+    let html = render(analysis.document(), &RenderPolicy::default()).html;
     let diagnostics = adocweave::output::diagnostics::render_json(analysis.diagnostics());
 
     assert!(html.contains("three"));

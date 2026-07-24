@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::inline::{Inline, ReferenceDestination, StandardMacro, StandardMacroKind};
+use crate::inline::{ReferenceDestination, StandardMacro, StandardMacroKind};
 use crate::limits::ProcessingLimits;
 use crate::source::TextRange;
 
@@ -101,7 +101,7 @@ pub(crate) struct CatalogLimitExceeded {
 }
 
 pub(crate) fn build(
-    document: &crate::parser::AstDocument,
+    facts: &crate::resolved::DocumentFacts,
     document_index: &crate::presentation::DocumentIndex,
     limits: ProcessingLimits,
 ) -> Result<DocumentCatalogs, CatalogLimitExceeded> {
@@ -114,12 +114,9 @@ pub(crate) fn build(
     let mut index = BTreeMap::<Vec<String>, usize>::new();
     let mut catalog_bytes = 0_u64;
 
-    crate::walker::walk(document, |node| {
-        let crate::walker::SemanticNode::Inline(inline) = node else {
-            return;
-        };
-        match inline {
-            Inline::Macro(node) if node.kind == StandardMacroKind::Footnote => {
+    for node in facts.macros() {
+        match node {
+            node if node.kind == StandardMacroKind::Footnote => {
                 let text = node
                     .attributes
                     .first()
@@ -157,7 +154,7 @@ pub(crate) fn build(
                     pending_references.push((node.target.clone(), node.range));
                 }
             }
-            Inline::Macro(node) if node.kind == StandardMacroKind::BibliographyAnchor => {
+            node if node.kind == StandardMacroKind::BibliographyAnchor => {
                 if let Some(existing) = bibliography.get(&node.target).copied() {
                     catalogs.problems.push(CatalogProblem {
                         kind: CatalogProblemKind::DuplicateBibliographyEntry,
@@ -177,7 +174,7 @@ pub(crate) fn build(
                     });
                 }
             }
-            Inline::Macro(node) if node.kind == StandardMacroKind::IndexTerm => {
+            node if node.kind == StandardMacroKind::IndexTerm => {
                 let terms = node
                     .attributes
                     .iter()
@@ -203,21 +200,21 @@ pub(crate) fn build(
                     });
                 }
             }
-            Inline::Reference(reference) => {
-                let ReferenceDestination::Local { anchor, .. } = &reference.destination else {
-                    return;
-                };
-                bibliography_references.push((
-                    anchor.clone(),
-                    reference.range,
-                    document_index
-                        .block_containing(reference.range)
-                        .expect("bibliography reference belongs to a semantic block"),
-                ));
-            }
             _ => {}
         }
-    });
+    }
+    for reference in facts.references() {
+        let ReferenceDestination::Local { anchor, .. } = &reference.destination else {
+            continue;
+        };
+        bibliography_references.push((
+            anchor.clone(),
+            reference.range,
+            document_index
+                .block_containing(reference.range)
+                .expect("bibliography reference belongs to a semantic block"),
+        ));
+    }
 
     for (id, range) in pending_references {
         if let Some(existing) = named_footnotes.get(&id).copied() {

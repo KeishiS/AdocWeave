@@ -64,14 +64,14 @@ pub fn snapshot(
     policy: &RenderPolicy,
     inputs: &RenderInputs,
 ) -> ConformanceSnapshot {
-    let html = render_with_inputs(analysis.ast(), policy, inputs);
+    let html = render_with_inputs(analysis.document(), policy, inputs);
     ConformanceSnapshot {
         contract_version: CONTRACT_VERSION,
         syntax: canonical_syntax(analysis),
         ast: canonical_ast(analysis.ast()),
         diagnostics_json: render_diagnostics_json(analysis.diagnostics()),
         render_diagnostics_json: render_diagnostics_json(&html.diagnostics),
-        symbols_json: render_symbols_json(&document_symbols(analysis.ast())),
+        symbols_json: render_symbols_json(&document_symbols(analysis.document())),
         projection_json: project(analysis, inputs).render_json(),
         html: html.html,
     }

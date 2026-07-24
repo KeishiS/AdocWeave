@@ -56,7 +56,7 @@ fn arbitrary_utf8_like_corpus_is_lossless_and_has_valid_ranges() {
             assert!(source.is_char_boundary(start));
             assert!(source.is_char_boundary(end));
         }
-        for block in analysis.ast().blocks() {
+        for block in analysis.document().blocks() {
             let range = block.range();
             assert!(range.start() <= range.end());
             assert!(range.end().to_usize() <= source.len());
@@ -119,8 +119,8 @@ fn renderer_and_projections_are_deterministic_for_generated_input() {
     let engine = Engine::new(ParseOptions::default());
     for source in corpus() {
         let analysis = engine.analyze(&source).expect("analysis");
-        let first_html = render(analysis.ast(), &RenderPolicy::default());
-        let second_html = render(analysis.ast(), &RenderPolicy::default());
+        let first_html = render(analysis.document(), &RenderPolicy::default());
+        let second_html = render(analysis.document(), &RenderPolicy::default());
         assert_eq!(first_html, second_html);
         assert_eq!(
             project(&analysis, &adocweave::resolution::RenderInputs::default()),
@@ -137,11 +137,11 @@ fn generated_reference_keys_and_targets_are_stable_and_bounded() {
     for source in corpus() {
         let analysis = engine.analyze(&source).expect("analysis");
         assert_eq!(
-            generate_heading_ids(analysis.ast()),
-            generate_heading_ids(analysis.ast())
+            generate_heading_ids(analysis.document()),
+            generate_heading_ids(analysis.document())
         );
         assert_eq!(
-            reference_targets(analysis.ast()),
+            reference_targets(analysis.document()),
             analysis.reference_targets()
         );
         for reference in analysis.references() {
@@ -198,7 +198,7 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
 fn semantic_signature(analysis: &adocweave::Analysis) -> (String, Vec<String>, Vec<ReferenceKey>) {
     (
         searchable_text(analysis).text,
-        reference_targets(analysis.ast())
+        reference_targets(analysis.document())
             .into_iter()
             .map(|target| format!("{:?}:{}:{}", target.kind, target.id, target.label))
             .collect(),

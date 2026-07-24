@@ -541,7 +541,7 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())));
         };
-        let symbols = document_symbols(document.analysis.ast())
+        let symbols = document_symbols(document.analysis.document())
             .iter()
             .map(|symbol| {
                 symbol_to_lsp(
@@ -652,10 +652,10 @@ impl LanguageService {
         }
         if let Some(target) = document.analysis.reference_targets().iter().find(|target| {
             contains(target.id_range, offset)
-                && !document.analysis.ast().blocks().iter().any(|block| {
+                && !document.analysis.document().blocks().iter().any(|block| {
                     matches!(
                         block,
-                        parser::AstBlock::Heading(heading)
+                        parser::Block::Heading(heading)
                             if heading.text_range == target.id_range
                     )
                 })
@@ -667,13 +667,13 @@ impl LanguageService {
                 self.position_encoding,
             );
         }
-        if let Some((value, range)) = inline_hover(document.analysis.ast(), offset) {
+        if let Some((value, range)) = inline_hover(document.analysis.document(), offset) {
             return hover_markup(value, range, &document, self.position_encoding);
         }
-        if let Some((value, range)) = block_presentation_hover(document.analysis.ast(), offset) {
+        if let Some((value, range)) = block_presentation_hover(document.analysis.document(), offset) {
             return hover_markup(value, range, &document, self.position_encoding);
         }
-        for author in &document.analysis.ast().header().authors {
+        for author in &document.analysis.document().header().authors {
             if contains(author.range, offset) {
                 let value = author.email.as_ref().map_or_else(
                     || format!("**author**  \nName: `{}`", author.name),
@@ -682,7 +682,7 @@ impl LanguageService {
                 return hover_markup(value, author.range, &document, self.position_encoding);
             }
         }
-        if let Some(revision) = &document.analysis.ast().header().revision
+        if let Some(revision) = &document.analysis.document().header().revision
             && contains(revision.range, offset)
         {
             return hover_markup(
@@ -692,7 +692,7 @@ impl LanguageService {
                 self.position_encoding,
             );
         }
-        let Some(element) = document_element_at(document.analysis.ast(), offset) else {
+        let Some(element) = document_element_at(document.analysis.document(), offset) else {
             return Ok(None);
         };
         let metadata_hover = match element {
@@ -735,7 +735,7 @@ impl LanguageService {
             | DocumentElement::MetadataOption(_)
             | DocumentElement::ElementAttribute(_) => unreachable!(),
         };
-        let id = generate_heading_ids(document.analysis.ast())
+        let id = generate_heading_ids(document.analysis.document())
             .into_iter()
             .find(|candidate| candidate.range == heading.text_range)
             .map(|candidate| candidate.id)
@@ -787,7 +787,7 @@ impl LanguageService {
                 .collect();
             return Ok(Some(lsp::CompletionResponse::Array(items)));
         }
-        let Some(element) = document_element_at(document.analysis.ast(), offset) else {
+        let Some(element) = document_element_at(document.analysis.document(), offset) else {
             return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
         };
         let metadata_candidates: Option<(&[&str], lsp::CompletionItemKind)> = match element {
@@ -1266,7 +1266,7 @@ impl LanguageService {
         }
         for anchor in document
             .analysis
-            .ast()
+            .document()
             .anchors()
             .iter()
             .filter(|anchor| anchor.valid)
@@ -1294,7 +1294,7 @@ impl LanguageService {
             )?;
         }
         let mut inline_ranges = Vec::new();
-        adocweave::semantic::walk(document.analysis.ast(), |node| {
+        adocweave::semantic::walk(document.analysis.document(), |node| {
             let adocweave::semantic::SemanticNode::Inline(inline) = node else {
                 return;
             };
@@ -1404,7 +1404,10 @@ fn hover_markup(
     }))
 }
 
-fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, CoreTextRange)> {
+fn inline_hover(
+    document: &adocweave::semantic::Document,
+    offset: u32,
+) -> Option<(String, CoreTextRange)> {
     let mut found = None;
     adocweave::semantic::walk(document, |node| {
         let adocweave::semantic::SemanticNode::Inline(inline) = node else {
@@ -1484,7 +1487,7 @@ fn inline_hover(document: &parser::AstDocument, offset: u32) -> Option<(String, 
 }
 
 fn block_presentation_hover(
-    document: &parser::AstDocument,
+    document: &adocweave::semantic::Document,
     offset: u32,
 ) -> Option<(String, CoreTextRange)> {
     let mut found = None;
@@ -1493,7 +1496,7 @@ fn block_presentation_hover(
             return;
         };
         match block {
-            parser::AstBlock::Paragraph(value)
+            parser::Block::Paragraph(value)
                 if value
                     .admonition
                     .as_ref()
@@ -1505,7 +1508,7 @@ fn block_presentation_hover(
                     item.label_range,
                 ));
             }
-            parser::AstBlock::Delimited(value) => match &value.presentation {
+            parser::Block::Delimited(value) => match &value.presentation {
                 Some(parser::DelimitedPresentation::Admonition(item))
                     if contains(item.label_range, offset) =>
                 {

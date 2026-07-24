@@ -284,7 +284,7 @@ fn lint_list_presentation(
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    crate::walker::walk(document, |node| {
+    crate::walker::walk_ast(document, |node| {
         let crate::walker::SemanticNode::Block(AstBlock::List(list)) = node else {
             return;
         };
@@ -432,7 +432,7 @@ fn lint_tables(
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    crate::walker::walk(document, |node| {
+    crate::walker::walk_ast(document, |node| {
         let crate::walker::SemanticNode::Table(table) = node else {
             return;
         };
@@ -484,7 +484,7 @@ fn lint_links_and_references(
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let targets = crate::document::reference_targets(document);
+    let targets = crate::document::reference_targets_ast(document);
     fn inspect(
         inline: &crate::inline::Inline,
         targets: &[crate::document::ReferenceTarget],
@@ -589,7 +589,7 @@ fn lint_links_and_references(
             | Inline::Formula(_) => {}
         }
     }
-    crate::walker::walk(document, |node| {
+    crate::walker::walk_ast(document, |node| {
         if let crate::walker::SemanticNode::Inline(inline) = node {
             inspect(inline, &targets, config, diagnostics);
         }
@@ -626,7 +626,7 @@ fn lint_anchors(
             );
         }
     }
-    for target in crate::document::reference_targets(document) {
+    for target in crate::document::reference_targets_ast(document) {
         if let Some(first) = ids.insert(target.id.clone(), target.id_range) {
             let settings = config.rule(LintRule::DuplicateAnchor);
             if settings.enabled && diagnostics.len() < config.max_diagnostics {
@@ -657,7 +657,7 @@ fn lint_attributes(
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    use crate::attributes::AttributeOperation;
+    use crate::attributes::DocumentAttributeOperation;
 
     let mut definitions = BTreeMap::<String, TextRange>::new();
     let mut used = BTreeMap::<String, Vec<TextRange>>::new();
@@ -686,8 +686,8 @@ fn lint_attributes(
         }
         if let Some(expected) = config.protected_attributes.get(&attribute.name) {
             let changed = match &attribute.operation {
-                AttributeOperation::Set => &attribute.raw_value != expected,
-                AttributeOperation::Unset => true,
+                DocumentAttributeOperation::Set => &attribute.raw_value != expected,
+                DocumentAttributeOperation::Unset => true,
             };
             if changed
                 && config.rule(LintRule::ProtectedAttribute).enabled
@@ -725,7 +725,7 @@ fn lint_attributes(
             }
         }
     }
-    crate::walker::walk(document, |node| {
+    crate::walker::walk_ast(document, |node| {
         let crate::walker::SemanticNode::Inline(inline) = node else {
             return;
         };
@@ -783,7 +783,7 @@ fn collect_attribute_references(
     document: &crate::parser::AstDocument,
     used: &mut BTreeMap<String, Vec<TextRange>>,
 ) {
-    crate::walker::walk(document, |node| {
+    crate::walker::walk_ast(document, |node| {
         let crate::walker::SemanticNode::Inline(inline) = node else {
             return;
         };

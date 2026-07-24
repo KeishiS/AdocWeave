@@ -88,8 +88,7 @@ pub struct Analysis {
     source_id: Option<SourceId>,
     profile_version: u16,
     syntax: SyntaxTree,
-    ast: parser::AstDocument,
-    attribute_occurrences: Vec<crate::attribute_occurrence::DocumentAttributeOccurrence>,
+    document: crate::document::Document,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -105,8 +104,13 @@ impl Analysis {
         &self.syntax
     }
 
-    pub const fn ast(&self) -> &parser::AstDocument {
-        &self.ast
+    /// Returns the immutable public semantic document model.
+    pub const fn document(&self) -> &crate::document::Document {
+        &self.document
+    }
+
+    pub(crate) const fn ast(&self) -> &parser::AstDocument {
+        self.document.inner()
     }
 
     pub fn diagnostics(&self) -> &[Diagnostic] {
@@ -114,23 +118,28 @@ impl Analysis {
     }
 
     pub fn reference_targets(&self) -> &[crate::document::ReferenceTarget] {
-        self.ast.identifiers().targets()
+        self.ast().identifiers().targets()
     }
 
     pub const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {
-        self.ast.catalogs()
+        self.ast().catalogs()
     }
 
     pub const fn structure(&self) -> &crate::structure::DocumentStructure {
-        self.ast.structure()
+        self.ast().structure()
     }
 
     pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {
-        self.ast.presentation()
+        self.ast().presentation()
     }
 
     pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
-        self.ast.layout()
+        self.ast().layout()
+    }
+
+    /// Returns immutable, source-ordered facts collected during analysis.
+    pub const fn facts(&self) -> &crate::resolved::DocumentFacts {
+        self.ast().resolved.facts()
     }
 
     /// Returns standard document-attribute occurrences in source order.
@@ -140,21 +149,12 @@ impl Analysis {
     /// metadata projection.
     pub fn document_attribute_occurrences(
         &self,
-    ) -> &[crate::attribute_occurrence::DocumentAttributeOccurrence] {
-        &self.attribute_occurrences
+    ) -> &[crate::attributes::DocumentAttributeOccurrence] {
+        self.document.attribute_occurrences()
     }
 
-    pub fn references(&self) -> Vec<&crate::inline::Reference> {
-        let mut references = Vec::new();
-        crate::walker::walk(&self.ast, |node| {
-            if let crate::walker::SemanticNode::Inline(crate::inline::Inline::Reference(
-                reference,
-            )) = node
-            {
-                references.push(reference);
-            }
-        });
-        references
+    pub fn references(&self) -> &[crate::inline::Reference] {
+        self.facts().references()
     }
 
     pub fn source(&self) -> &str {
@@ -167,33 +167,25 @@ impl Analysis {
 
     pub fn reference_queries(&self) -> Vec<crate::reference::ReferenceQuery> {
         self.references()
-            .into_iter()
+            .iter()
             .filter_map(|reference| {
                 crate::reference::query_from_reference(self.source_id.clone(), reference)
             })
             .collect()
     }
 
-    pub fn resources(&self) -> Vec<crate::resource::ResourceReference> {
-        self.macros()
-            .into_iter()
-            .filter_map(crate::resource::ResourceReference::from_macro)
-            .collect()
+    pub fn resources(&self) -> &[crate::resource::ResourceReference] {
+        self.facts().resources()
     }
 
-    pub fn macros(&self) -> Vec<&crate::inline::StandardMacro> {
-        let mut macros = Vec::new();
-        crate::walker::walk(&self.ast, |node| {
-            if let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(node)) = node {
-                macros.push(node);
-            }
-        });
-        macros
+    pub fn macros(&self) -> &[crate::inline::StandardMacro] {
+        self.facts().macros()
     }
 
     pub fn resource_queries(&self) -> Vec<crate::resource::ResourceQuery> {
         self.resources()
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|reference| crate::resource::ResourceQuery {
                 source_id: self.source_id.clone(),
                 reference,
@@ -350,18 +342,11 @@ fn analyze_inner(
         return Err(ParseError::Cancelled);
     }
 
-    let attribute_occurrences = ast
-        .attributes()
-        .iter()
-        .map(crate::attribute_occurrence::DocumentAttributeOccurrence::from_internal)
-        .collect();
-
     Ok(Analysis {
         source_id: options.source_id.clone(),
         profile_version: CONTRACT_VERSION,
         syntax,
-        ast,
-        attribute_occurrences,
+        document: crate::document::Document::from_ast(ast),
         diagnostics,
     })
 }
@@ -405,7 +390,7 @@ mod tests {
 
         assert_eq!(first.source_id, second.source_id);
         assert_eq!(first.syntax.snapshot(), second.syntax.snapshot());
-        assert_eq!(first.ast, second.ast);
+        assert_eq!(first.document, second.document);
         assert_eq!(
             first.source_id.as_ref().map(SourceId::as_str),
             Some("host:any/value")

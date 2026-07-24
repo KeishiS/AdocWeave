@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
-use crate::document::{HeadingId, ReferenceTarget, generate_heading_ids, reference_targets};
+use crate::document::{HeadingId, ReferenceTarget};
 use crate::inline::{
     Inline, InlineLiteralKind, InlineStyle, Link, Reference, ReferenceDestination,
 };
@@ -287,21 +287,29 @@ pub struct HtmlOutput {
     pub heading_ids: Vec<HeadingId>,
 }
 
-pub fn render(document: &AstDocument, policy: &RenderPolicy) -> HtmlOutput {
+pub fn render(document: &crate::document::Document, policy: &RenderPolicy) -> HtmlOutput {
     render_with_inputs(document, policy, &RenderInputs::default())
 }
 
 pub use crate::reference::ResolvedReference;
 
 pub fn render_with_inputs(
+    document: &crate::document::Document,
+    policy: &RenderPolicy,
+    inputs: &RenderInputs,
+) -> HtmlOutput {
+    render_with_inputs_ast(document.inner(), policy, inputs)
+}
+
+pub(crate) fn render_with_inputs_ast(
     document: &AstDocument,
     policy: &RenderPolicy,
     inputs: &RenderInputs,
 ) -> HtmlOutput {
     let mut fragment = String::new();
     let document_attributes = document.presentation().attributes().values().clone();
-    let heading_ids = generate_heading_ids(document);
-    let targets = reference_targets(document);
+    let heading_ids = crate::document::generate_heading_ids_ast(document);
+    let targets = crate::document::reference_targets_ast(document);
     let mut diagnostics = Vec::new();
     let mut input_usage = inputs.track_usage();
     {
@@ -1978,7 +1986,7 @@ mod tests {
         ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
         HtmlDocumentMode, MathLanguagePolicy, RenderPolicy, ResolvedReference,
         ResourceCapabilities, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
-        UnknownSourceLanguage, UnresolvedReferencePresentation, render, render_with_inputs,
+        UnknownSourceLanguage, UnresolvedReferencePresentation,
     };
     use crate::inline::{Inline, ReferenceDestination};
     use crate::parser::AstBlock;
@@ -1987,9 +1995,21 @@ mod tests {
     use crate::resource::ResolvedResource;
     use crate::url::{UrlContext, UrlDecision};
 
+    fn render(document: &crate::parser::AstDocument, policy: &RenderPolicy) -> super::HtmlOutput {
+        super::render_with_inputs_ast(document, policy, &RenderInputs::default())
+    }
+
+    fn render_with_inputs(
+        document: &crate::parser::AstDocument,
+        policy: &RenderPolicy,
+        inputs: &RenderInputs,
+    ) -> super::HtmlOutput {
+        super::render_with_inputs_ast(document, policy, inputs)
+    }
+
     fn echo_resource_inputs(document: &crate::parser::AstDocument) -> RenderInputs {
         let mut resources = Vec::new();
-        crate::walker::walk(document, |node| {
+        crate::walker::walk_ast(document, |node| {
             if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node
                 && crate::resource::ResourceReference::from_macro(node).is_some()
             {
@@ -2987,7 +3007,7 @@ mod tests {
             "<h1 id=\"heading-id\">Heading</h1>\n\
              <p id=\"paragraph-id\">Paragraph</p>\n"
         );
-        let target_ids = crate::document::reference_targets(&parsed.ast)
+        let target_ids = crate::document::reference_targets_ast(&parsed.ast)
             .into_iter()
             .map(|target| target.id)
             .collect::<Vec<_>>();

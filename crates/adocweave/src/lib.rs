@@ -4,7 +4,6 @@
 //! and standard-stream I/O. Parsing, diagnostics, formatting, and rendering
 //! remain deterministic core operations over caller-provided input.
 
-mod attribute_occurrence;
 mod attributes;
 mod block_model;
 mod block_sequence;
@@ -48,12 +47,23 @@ mod walker;
 
 /// Typed semantic document model and output-independent queries.
 pub mod semantic {
-    pub use crate::attribute_occurrence::*;
+    pub use crate::attributes::{DocumentAttributeOccurrence, DocumentAttributeOperation};
+    pub use crate::block_model::{
+        AdmonitionKind, AdmonitionPresentation, Author, Block, BlockMetadata, BlockProblem,
+        BlockProblemKind, BlockTitle, BreakBlock, BreakKind, CalloutMarker, ChecklistState,
+        DelimitedBlock, DelimitedBlockKind, DelimitedContent, DelimitedPresentation,
+        DescriptionTerm, DocumentHeader, DocumentType, ElementAttribute, ExplicitAnchor, Heading,
+        HeadingKind, HeadingProblem, ListBlock, ListItem, ListKind, ListPresentationProblem,
+        ListPresentationProblemKind, ListProblem, ListProblemKind, LiteralParagraph, MathBlock,
+        MathProblem, MathProblemKind, MetadataValue, OrderedListPresentation, OrderedListStyle,
+        Paragraph, QuoteKind, QuotePresentation, Revision, SourceBlock, SourceInfo, Unsupported,
+        VerbatimBlock, VerbatimKind,
+    };
     pub use crate::catalog::*;
     pub use crate::document::*;
     pub use crate::inline::*;
-    pub use crate::parser::*;
     pub use crate::presentation::*;
+    pub use crate::resolved::DocumentFacts;
     pub use crate::structure::*;
     pub use crate::substitution::*;
     pub use crate::table::*;

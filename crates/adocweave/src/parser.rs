@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use crate::attributes::{DocumentAttribute, parse_line as parse_attribute_line};
+use crate::attributes::{DocumentAttributeOccurrence, parse_line as parse_attribute_line};
 pub use crate::block_model::*;
 use crate::block_sequence::{
     BlockContext, BlockCursor, BlockFacts, BlockInput, BlockLocation, BlockRecognition,
@@ -73,7 +73,7 @@ impl PendingBlockMetadata {
 impl AstDocument {
     pub(crate) fn new(
         blocks: Vec<AstBlock>,
-        attributes: Vec<DocumentAttribute>,
+        attributes: Vec<DocumentAttributeOccurrence>,
         anchors: Vec<ExplicitAnchor>,
         header: DocumentHeader,
     ) -> Self {
@@ -97,7 +97,7 @@ impl AstDocument {
             .and_then(|ordinal| self.blocks.get(ordinal))
     }
 
-    pub(crate) fn attributes(&self) -> &[DocumentAttribute] {
+    pub(crate) fn attributes(&self) -> &[DocumentAttributeOccurrence] {
         &self.attributes
     }
 
@@ -121,7 +121,8 @@ impl AstDocument {
         self.resolved.structure()
     }
 
-    pub const fn index(&self) -> &crate::presentation::DocumentIndex {
+    #[cfg(test)]
+    pub(crate) const fn index(&self) -> &crate::presentation::DocumentIndex {
         self.resolved.index()
     }
 
@@ -211,7 +212,7 @@ impl AstDocument {
 
     pub fn node_count(&self) -> usize {
         let mut count = 1;
-        crate::walker::walk(self, |_| count += 1);
+        crate::walker::walk_ast(self, |_| count += 1);
         count
     }
 
@@ -2569,7 +2570,7 @@ mod tests {
         };
         assert_eq!(open_children[0].range().start().to_usize(), 24);
     }
-    use crate::attributes::AttributeOperation;
+    use crate::attributes::DocumentAttributeOperation;
     use crate::inline::{Inline, MathLanguage};
 
     #[test]
@@ -2604,7 +2605,7 @@ mod tests {
 
         assert_eq!(parsed.syntax.reconstruct(), source);
         assert_eq!(parsed.ast.attributes.len(), 5);
-        assert_eq!(parsed.ast.attributes[0].operation, AttributeOperation::Set);
+        assert_eq!(parsed.ast.attributes[0].operation, DocumentAttributeOperation::Set);
         assert_eq!(
             parsed.ast.attributes[0].raw_value,
             "123E4567-E89B-12D3-A456-426614174000"
@@ -2613,7 +2614,7 @@ mod tests {
         assert_eq!(parsed.ast.attributes[3].raw_value, "latexmath");
         assert_eq!(
             parsed.ast.attributes[4].operation,
-            AttributeOperation::Unset
+            DocumentAttributeOperation::Unset
         );
         assert!(parsed.syntax.issues().is_empty());
     }
@@ -3316,7 +3317,7 @@ mod tests {
                 ..
             })
         ));
-        assert_eq!(crate::document::document_symbols(&parsed.ast).len(), 1);
+        assert_eq!(crate::document::document_symbols_ast(&parsed.ast).len(), 1);
     }
 
     #[test]
@@ -3487,14 +3488,18 @@ mod tests {
                 && anchor.target_range == Some(blocks[0].range())
         }));
         assert!(
-            crate::document::reference_targets(&parsed.ast)
+            crate::document::reference_targets_ast(&parsed.ast)
                 .iter()
                 .any(|target| {
                     target.id == "cell-target" && target.target_range == blocks[0].range()
                 })
         );
         assert!(
-            crate::html::render(&parsed.ast, &crate::html::RenderPolicy::default())
+            crate::html::render_with_inputs_ast(
+                &parsed.ast,
+                &crate::html::RenderPolicy::default(),
+                &crate::render::RenderInputs::default(),
+            )
                 .html
                 .contains("<h1 id=\"cell-target\">Cell heading</h1>")
         );

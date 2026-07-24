@@ -179,7 +179,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         });
 
     let mut external_links = Vec::new();
-    crate::walker::walk(analysis.ast(), |node| {
+    crate::walker::walk(analysis.document(), |node| {
         if let crate::walker::SemanticNode::Inline(Inline::Link(link)) = node {
             external_links.push(project_link(link));
         }
@@ -208,7 +208,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
     let mut ordered_lists = Vec::new();
     let mut block_presentations = Vec::new();
     let mut formulas = Vec::new();
-    crate::walker::walk(analysis.ast(), |node| match node {
+    crate::walker::walk(analysis.document(), |node| match node {
         crate::walker::SemanticNode::Block(AstBlock::Source(source)) => {
             source_blocks.push(SourceBlockProjection {
                 source_range: source.range,
@@ -1011,7 +1011,7 @@ mod tests {
         .analyze(source)
         .expect("analysis");
         let projected = project(&analysis, &RenderInputs::default());
-        let html = crate::html::render(analysis.ast(), &crate::html::RenderPolicy::default());
+        let html = crate::html::render(analysis.document(), &crate::html::RenderPolicy::default());
 
         assert_eq!(projected.contract_version, crate::CONTRACT_VERSION);
         assert!(html.html.contains("<h1"));

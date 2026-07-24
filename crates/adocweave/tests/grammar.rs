@@ -1,4 +1,4 @@
-use adocweave::semantic::{AstBlock, VerbatimKind};
+use adocweave::semantic::{Block, VerbatimKind};
 use adocweave::semantic::{Inline, InlineLiteralKind, InlineStyle};
 use adocweave::text::{SyntaxIssueClass, SyntaxKind};
 use adocweave::{Analysis, Engine, ParseOptions};
@@ -20,11 +20,11 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         include_str!("../../../fixtures/grammar/ambiguous.syntax")
     );
     assert_eq!(
-        parsed.ast().snapshot(),
+        parsed.document().snapshot(),
         include_str!("../../../fixtures/grammar/ambiguous.ast")
     );
 
-    let AstBlock::Paragraph(first) = &parsed.ast().blocks()[1] else {
+    let Block::Paragraph(first) = &parsed.document().blocks()[1] else {
         panic!("first content block is a paragraph");
     };
     assert!(first.inlines.iter().any(|inline| matches!(
@@ -63,19 +63,19 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
     )));
 
     let literals = parsed
-        .ast()
+        .document()
         .blocks()
         .iter()
         .filter_map(|block| match block {
-            AstBlock::Verbatim(block) if matches!(block.kind, VerbatimKind::Literal) => Some(block),
+            Block::Verbatim(block) if matches!(block.kind, VerbatimKind::Literal) => Some(block),
             _ => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(literals[0].value, "*literal* <tag>\n.....\n");
     assert_eq!(parsed.syntax().nodes(SyntaxKind::Error).count(), 1);
     assert!(matches!(
-        parsed.ast().blocks().last(),
-        Some(AstBlock::Heading(_))
+        parsed.document().blocks().last(),
+        Some(Block::Heading(_))
     ));
 
     let diagnostics = adocweave::output::diagnostics::lint_analysis(
@@ -98,11 +98,11 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
 fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
     let parsed = parse(SOURCE);
     let source_block = parsed
-        .ast()
+        .document()
         .blocks()
         .iter()
         .find_map(|block| match block {
-            AstBlock::Verbatim(source) if matches!(source.kind, VerbatimKind::Source(_)) => {
+            Block::Verbatim(source) if matches!(source.kind, VerbatimKind::Source(_)) => {
                 Some(source)
             }
             _ => None,
@@ -111,7 +111,7 @@ fn substitutions_keep_opaque_contexts_unparsed_and_html_safe() {
     assert_eq!(source_block.value, "_source_ <tag>\n");
 
     let html = adocweave::output::html::render(
-        parsed.ast(),
+        parsed.document(),
         &adocweave::output::html::RenderPolicy::default(),
     )
     .html;
@@ -129,7 +129,7 @@ fn substitution_pipeline_fixture_is_lossless_and_backend_safe() {
     let parsed = parse(source);
     assert_eq!(parsed.syntax().reconstruct(), source);
     let html = adocweave::output::html::render(
-        parsed.ast(),
+        parsed.document(),
         &adocweave::output::html::RenderPolicy::default(),
     )
     .html;
@@ -164,20 +164,20 @@ fn substitutions_cover_every_supported_semantic_context() {
         "https://example.test[label] stem:[x < y]\n",
     );
     let parsed = parse(source);
-    assert!(matches!(parsed.ast().blocks()[0], AstBlock::Heading(_)));
-    assert!(matches!(parsed.ast().blocks()[1], AstBlock::Paragraph(_)));
-    assert!(matches!(parsed.ast().blocks()[2], AstBlock::Unsupported(_)));
+    assert!(matches!(parsed.document().blocks()[0], Block::Heading(_)));
+    assert!(matches!(parsed.document().blocks()[1], Block::Paragraph(_)));
+    assert!(matches!(parsed.document().blocks()[2], Block::Unsupported(_)));
     assert!(matches!(
-        parsed.ast().blocks()[3],
-        AstBlock::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Literal)
+        parsed.document().blocks()[3],
+        Block::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Literal)
     ));
     assert!(
-        matches!(parsed.ast().blocks()[4], AstBlock::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Source(_)))
+        matches!(parsed.document().blocks()[4], Block::Verbatim(ref block) if matches!(block.kind, VerbatimKind::Source(_)))
     );
-    assert!(matches!(parsed.ast().blocks()[5], AstBlock::Paragraph(_)));
+    assert!(matches!(parsed.document().blocks()[5], Block::Paragraph(_)));
 
     let html = adocweave::output::html::render(
-        parsed.ast(),
+        parsed.document(),
         &adocweave::output::html::RenderPolicy::default(),
     )
     .html;
@@ -207,14 +207,14 @@ fn grammar_rejects_invalid_source_language_syntax() {
 
     assert!(
         parsed
-            .ast()
+            .document()
             .blocks()
             .iter()
-            .all(|block| !matches!(block, AstBlock::Source(_)))
+            .all(|block| !matches!(block, Block::Source(_)))
     );
     assert!(matches!(
-        parsed.ast().blocks().first(),
-        Some(AstBlock::Unsupported(_))
+        parsed.document().blocks().first(),
+        Some(Block::Unsupported(_))
     ));
 }
 
@@ -234,10 +234,10 @@ fn grammar_source_attribute_requires_an_adjacent_column_zero_delimiter() {
 
     assert!(
         parsed
-            .ast()
+            .document()
             .blocks()
             .iter()
-            .all(|block| !matches!(block, AstBlock::Source(_)))
+            .all(|block| !matches!(block, Block::Source(_)))
     );
     assert_eq!(
         parsed

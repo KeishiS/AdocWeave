@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::attributes::{AttributeOperation, DocumentAttribute};
+use crate::attributes::{DocumentAttributeOccurrence, DocumentAttributeOperation};
 use crate::parser::AstDocument;
 use crate::source::TextRange;
 
@@ -92,15 +92,15 @@ impl ResolvedDocumentAttributes {
 
 /// Resolve document attribute set/unset operations once in source order.
 pub(crate) fn resolve_document_attributes(
-    attributes: &[DocumentAttribute],
+    attributes: &[DocumentAttributeOccurrence],
 ) -> ResolvedDocumentAttributes {
     let mut values = BTreeMap::new();
     for attribute in attributes {
         match attribute.operation {
-            AttributeOperation::Set => {
+            DocumentAttributeOperation::Set => {
                 values.insert(attribute.name.clone(), attribute.raw_value.clone());
             }
-            AttributeOperation::Unset => {
+            DocumentAttributeOperation::Unset => {
                 values.remove(&attribute.name);
             }
         }

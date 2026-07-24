@@ -342,7 +342,7 @@ fn process(
     let analysis = analyze(source)?;
     let output = match operation {
         Operation::Convert => {
-            let output = render(analysis.ast(), render_policy);
+            let output = render(analysis.document(), render_policy);
             if let Some(diagnostic) = output.diagnostics.iter().find(|diagnostic| {
                 matches!(
                     diagnostic.code.as_str(),
@@ -369,7 +369,7 @@ fn process(
                 .formatted
         }
         Operation::Symbols => adocweave::semantic::render_symbols_json(
-            &adocweave::semantic::document_symbols(analysis.ast()),
+            &adocweave::semantic::document_symbols(analysis.document()),
         ),
     };
     Ok(output)

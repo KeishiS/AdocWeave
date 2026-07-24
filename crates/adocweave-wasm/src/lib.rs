@@ -630,8 +630,8 @@ pub fn process_request(
         conformance_contract_version: CONTRACT_VERSION,
         parse: ParseSummary {
             profile_version: analysis.profile_version(),
-            block_count: analysis.ast().blocks().len(),
-            node_count: analysis.ast().node_count(),
+            block_count: analysis.document().blocks().len(),
+            node_count: analysis.document().node_count(),
             reference_count: analysis.references().len(),
         },
         syntax: products.syntax,

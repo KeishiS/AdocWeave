@@ -2,14 +2,14 @@
 
 use std::collections::BTreeSet;
 
-use crate::attributes::DocumentAttribute;
+use crate::attributes::DocumentAttributeOccurrence;
 use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
 use crate::substitution::{AttributeEvaluator, AttributeExpansionLimits};
 
 pub(crate) struct ParsedFacts {
     pub blocks: Vec<AstBlock>,
-    pub attributes: Vec<DocumentAttribute>,
+    pub attributes: Vec<DocumentAttributeOccurrence>,
     pub anchors: Vec<ExplicitAnchor>,
     pub header: DocumentHeader,
     pub attribute_expansion_limits: AttributeExpansionLimits,
@@ -340,7 +340,7 @@ fn configure_tables(blocks: &mut [AstBlock]) {
     });
 }
 
-fn document_type(attributes: &[DocumentAttribute]) -> DocumentType {
+fn document_type(attributes: &[DocumentAttributeOccurrence]) -> DocumentType {
     let mut doctype = DocumentType::Article;
     for attribute in attributes
         .iter()

@@ -1,6 +1,6 @@
 //! Shared immutable traversal of the output-independent semantic tree.
 
-use crate::attributes::DocumentAttribute;
+use crate::attributes::DocumentAttributeOccurrence;
 use crate::inline::Inline;
 use crate::parser::{
     AstBlock, AstDocument, BlockMetadata, BlockTitle, ElementAttribute, ExplicitAnchor, ListBlock,
@@ -16,7 +16,7 @@ pub enum SemanticNode<'document> {
     TableRow(&'document crate::table::TableRow),
     TableCell(&'document crate::table::TableCell),
     Inline(&'document Inline),
-    Attribute(&'document DocumentAttribute),
+    Attribute(&'document DocumentAttributeOccurrence),
     Anchor(&'document ExplicitAnchor),
     Metadata(&'document BlockMetadata),
     MetadataTitle(&'document BlockTitle),
@@ -27,6 +27,13 @@ pub enum SemanticNode<'document> {
 }
 
 pub fn walk<'document>(
+    document: &'document crate::document::Document,
+    visitor: impl FnMut(SemanticNode<'document>),
+) {
+    walk_ast(document.inner(), visitor);
+}
+
+pub(crate) fn walk_ast<'document>(
     document: &'document AstDocument,
     mut visitor: impl FnMut(SemanticNode<'document>),
 ) {
@@ -275,7 +282,7 @@ fn walk_inlines<'document>(
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockVisitorMut, SemanticNode, walk, walk_blocks_mut};
+    use super::{BlockVisitorMut, SemanticNode, walk, walk_ast, walk_blocks_mut};
     use crate::parser::AstBlock;
 
     #[test]
@@ -287,7 +294,7 @@ mod tests {
         let mut lists = 0;
         let mut items = 0;
         let mut inlines = 0;
-        walk(analysis.ast(), |node| match node {
+        walk(analysis.document(), |node| match node {
             SemanticNode::Block(_) => blocks += 1,
             SemanticNode::List(_) => lists += 1,
             SemanticNode::ListItem(_) => items += 1,
@@ -327,7 +334,7 @@ mod tests {
             .expect("source");
         let mut walked_references = 0;
         let mut walked_macros = 0;
-        walk(analysis.ast(), |node| {
+        walk(analysis.document(), |node| {
             if let SemanticNode::Inline(inline) = node {
                 match inline {
                     crate::inline::Inline::Reference(_) => walked_references += 1,
@@ -363,7 +370,7 @@ mod tests {
         );
         let mut parsed = crate::parser::parse(source).expect("nested source");
         let mut immutable = (0, 0);
-        walk(&parsed.ast, |node| match node {
+        walk_ast(&parsed.ast, |node| match node {
             SemanticNode::Block(_) => immutable.0 += 1,
             SemanticNode::List(_) => immutable.1 += 1,
             _ => {}
@@ -398,7 +405,7 @@ mod tests {
             let analysis = crate::Engine::new(crate::ParseOptions::default())
                 .analyze(source)
                 .expect("recoverable source");
-            walk(analysis.ast(), |node| match node {
+            walk(analysis.document(), |node| match node {
                 SemanticNode::Block(block) => match block {
                     AstBlock::Heading(value) => {
                         assert!(value.problems.is_empty());

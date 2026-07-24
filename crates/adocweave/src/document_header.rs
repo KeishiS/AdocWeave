@@ -3,7 +3,7 @@
 //! Nested block parsing never constructs this state. This keeps document
 //! attributes, authors, and revision metadata out of recursive block output.
 
-use crate::attributes::{AttributeProblem, DocumentAttribute};
+use crate::attributes::{AttributeProblem, DocumentAttributeOccurrence};
 use crate::block_model::{Author, DocumentHeader, MetadataValue, Revision};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::SourceLine;
@@ -14,7 +14,7 @@ pub(super) struct DocumentHeaderState {
     pub(super) expect_author: bool,
     pub(super) expect_revision: bool,
     pub(super) header: DocumentHeader,
-    pub(super) attributes: Vec<DocumentAttribute>,
+    pub(super) attributes: Vec<DocumentAttributeOccurrence>,
     pub(super) attribute_problems: Vec<AttributeProblem>,
 }
 

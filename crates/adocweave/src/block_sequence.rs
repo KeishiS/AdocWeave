@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use crate::attributes::{AttributeProblem, DocumentAttribute};
+use crate::attributes::{AttributeProblem, DocumentAttributeOccurrence};
 use crate::block_model::{AstBlock, DocumentHeader, ExplicitAnchor};
 use crate::parser_support::ParseFailure;
 use crate::source_document::SourceDocument;
@@ -16,7 +16,7 @@ pub(super) struct BlockFacts {
 
 pub(super) struct RootBlockSequenceOutput {
     pub(super) common: BlockFacts,
-    pub(super) attributes: Vec<DocumentAttribute>,
+    pub(super) attributes: Vec<DocumentAttributeOccurrence>,
     pub(super) attribute_problems: Vec<AttributeProblem>,
     pub(super) header: DocumentHeader,
 }

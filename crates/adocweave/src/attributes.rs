@@ -2,20 +2,26 @@
 
 use crate::source::{TextRange, TextSize};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AttributeOperation {
+/// The standard AsciiDoc operation represented by a document attribute line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocumentAttributeOperation {
     Set,
     Unset,
 }
 
+/// One source-preserving standard document-attribute occurrence.
+///
+/// This is a backend-independent syntax fact. Hosts may interpret attribute
+/// names for their own metadata, but the core does not assign application-
+/// specific meaning to them.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DocumentAttribute {
+pub struct DocumentAttributeOccurrence {
     pub range: TextRange,
     pub name_range: TextRange,
     pub value_range: TextRange,
     pub name: String,
     pub raw_value: String,
-    pub operation: AttributeOperation,
+    pub operation: DocumentAttributeOperation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,7 +41,7 @@ pub(crate) fn parse_line(
     content: &str,
     absolute_start: usize,
     full_range: TextRange,
-) -> Option<(DocumentAttribute, Option<AttributeProblem>)> {
+) -> Option<(DocumentAttributeOccurrence, Option<AttributeProblem>)> {
     let inner = content.strip_prefix(':')?;
     let delimiter = inner.find(':')?;
     let raw_name = &inner[..delimiter];
@@ -64,7 +70,7 @@ pub(crate) fn parse_line(
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'));
     let (operation, problem) = if !valid_name {
         (
-            AttributeOperation::Set,
+            DocumentAttributeOperation::Set,
             Some(AttributeProblem {
                 kind: AttributeProblemKind::InvalidName,
                 range: name_range,
@@ -73,7 +79,7 @@ pub(crate) fn parse_line(
         )
     } else if unset {
         (
-            AttributeOperation::Unset,
+            DocumentAttributeOperation::Unset,
             (!raw_value.is_empty()).then(|| AttributeProblem {
                 kind: AttributeProblemKind::InvalidValue,
                 range: value_range,
@@ -81,11 +87,11 @@ pub(crate) fn parse_line(
             }),
         )
     } else {
-        (AttributeOperation::Set, None)
+        (DocumentAttributeOperation::Set, None)
     };
 
     Some((
-        DocumentAttribute {
+        DocumentAttributeOccurrence {
             range: full_range,
             name_range,
             value_range,

@@ -8,6 +8,82 @@ use crate::parser::{
 };
 use crate::source::TextRange;
 
+/// The immutable public semantic document model.
+///
+/// Parser implementation details remain private. Backends and hosts use this
+/// type as the sole root for blocks, header metadata, anchors, and source facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Document {
+    inner: AstDocument,
+}
+
+impl Document {
+    pub(crate) const fn from_ast(inner: AstDocument) -> Self {
+        Self { inner }
+    }
+
+    pub fn blocks(&self) -> &[crate::block_model::Block] {
+        self.inner.blocks()
+    }
+
+    pub fn anchors(&self) -> &[crate::block_model::ExplicitAnchor] {
+        self.inner.anchors()
+    }
+
+    /// Returns document-attribute occurrences in source order.
+    ///
+    /// This preserves duplicate definitions, set/unset operations, empty
+    /// values, and source ranges. Use [`Self::presentation`] when only the
+    /// final resolved values are needed.
+    pub fn attribute_occurrences(&self) -> &[crate::attributes::DocumentAttributeOccurrence] {
+        self.inner.attributes()
+    }
+
+    pub const fn header(&self) -> &crate::block_model::DocumentHeader {
+        self.inner.header()
+    }
+
+    pub fn preamble(&self) -> &[crate::block_model::Block] {
+        self.inner.preamble()
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.inner.node_count()
+    }
+
+    pub fn snapshot(&self) -> String {
+        self.inner.snapshot()
+    }
+
+    pub fn heading_ids(&self) -> Vec<HeadingId> {
+        generate_heading_ids_ast(&self.inner)
+    }
+
+    pub fn element_at(&self, offset: u32) -> Option<DocumentElement<'_>> {
+        document_element_at_ast(&self.inner, offset)
+    }
+
+    pub fn symbols(&self) -> Vec<DocumentSymbol> {
+        document_symbols_ast(&self.inner)
+    }
+
+    pub const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {
+        self.inner.catalogs()
+    }
+
+    pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {
+        self.inner.presentation()
+    }
+
+    pub fn reference_targets(&self) -> &[ReferenceTarget] {
+        self.inner.identifiers().targets()
+    }
+
+    pub(crate) const fn inner(&self) -> &AstDocument {
+        &self.inner
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadingId {
     pub range: TextRange,
@@ -37,7 +113,11 @@ impl DocumentIdentifiers {
     }
 }
 
-pub fn generate_heading_ids(document: &AstDocument) -> Vec<HeadingId> {
+pub fn generate_heading_ids(document: &Document) -> Vec<HeadingId> {
+    document.heading_ids()
+}
+
+pub(crate) fn generate_heading_ids_ast(document: &AstDocument) -> Vec<HeadingId> {
     document.identifiers().heading_ids.clone()
 }
 
@@ -59,13 +139,17 @@ pub struct ReferenceTarget {
     pub target_range: TextRange,
 }
 
-pub fn reference_targets(document: &AstDocument) -> Vec<ReferenceTarget> {
+pub fn reference_targets(document: &Document) -> Vec<ReferenceTarget> {
+    reference_targets_ast(document.inner())
+}
+
+pub(crate) fn reference_targets_ast(document: &AstDocument) -> Vec<ReferenceTarget> {
     document.identifiers().targets.clone()
 }
 
 pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
     let mut inline_anchors = Vec::new();
-    crate::walker::walk(document, |node| {
+    crate::walker::walk_ast(document, |node| {
         let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(anchor)) = node else {
             return;
         };
@@ -273,7 +357,14 @@ pub enum DocumentElement<'document> {
     ElementAttribute(&'document ElementAttribute),
 }
 
-pub fn document_element_at(document: &AstDocument, offset: u32) -> Option<DocumentElement<'_>> {
+pub fn document_element_at(document: &Document, offset: u32) -> Option<DocumentElement<'_>> {
+    document.element_at(offset)
+}
+
+pub(crate) fn document_element_at_ast(
+    document: &AstDocument,
+    offset: u32,
+) -> Option<DocumentElement<'_>> {
     document.blocks().iter().find_map(|block| {
         let structural = match block {
             AstBlock::Heading(heading) if contains(heading.marker_range, offset, false) => {
@@ -394,7 +485,11 @@ pub struct DocumentSymbol {
     pub children: Vec<DocumentSymbol>,
 }
 
-pub fn document_symbols(document: &AstDocument) -> Vec<DocumentSymbol> {
+pub fn document_symbols(document: &Document) -> Vec<DocumentSymbol> {
+    document.symbols()
+}
+
+pub(crate) fn document_symbols_ast(document: &AstDocument) -> Vec<DocumentSymbol> {
     let mut symbols = document
         .structure()
         .roots()
@@ -526,8 +621,9 @@ fn write_json_string(output: &mut String, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        DocumentElement, ReferenceTargetKind, document_element_at, document_symbols,
-        generate_heading_ids, reference_targets, render_symbols_json, source_language_candidates,
+        DocumentElement, ReferenceTargetKind, document_element_at_ast as document_element_at,
+        document_symbols_ast as document_symbols, generate_heading_ids_ast as generate_heading_ids,
+        reference_targets_ast as reference_targets, render_symbols_json, source_language_candidates,
     };
     use crate::parser::parse;
 
@@ -546,19 +642,19 @@ mod tests {
         let parsed = parse(source).expect("valid source");
 
         assert!(matches!(
-            super::document_element_at(&parsed.ast, 0),
+            document_element_at(&parsed.ast, 0),
             Some(super::DocumentElement::HeadingMarker(_))
         ));
         assert!(matches!(
-            super::document_element_at(&parsed.ast, 2),
+            document_element_at(&parsed.ast, 2),
             Some(super::DocumentElement::HeadingText(_))
         ));
         let language_end = source.find("ru]").expect("language") as u32 + 2;
         assert!(matches!(
-            super::document_element_at(&parsed.ast, language_end),
+            document_element_at(&parsed.ast, language_end),
             Some(super::DocumentElement::SourceLanguage(_))
         ));
-        assert!(super::document_element_at(&parsed.ast, 13).is_none());
+        assert!(document_element_at(&parsed.ast, 13).is_none());
     }
 
     #[test]
@@ -630,7 +726,12 @@ mod tests {
             ["_same", "_same_2"]
         );
         assert_eq!(parsed.ast.structure().headings().len(), 1);
-        let html = crate::html::render(&parsed.ast, &crate::html::RenderPolicy::default()).html;
+        let html = crate::html::render_with_inputs_ast(
+            &parsed.ast,
+            &crate::html::RenderPolicy::default(),
+            &crate::render::RenderInputs::default(),
+        )
+        .html;
         assert!(html.contains("<h1 id=\"_same\">Same</h1>"));
         assert!(html.contains("<h1 id=\"_same_2\">Same</h1>"));
         assert!(html.contains("href=\"#_same_2\""));

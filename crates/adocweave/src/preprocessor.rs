@@ -576,11 +576,11 @@ impl PreprocessedAnalysis {
                 Ok(ProjectedResource {
                     origins: project(value.range)?,
                     target_origins: project(value.target_range)?,
-                    value,
+                    value: value.clone(),
                 })
             })
             .collect::<Result<Vec<_>, ProjectionError>>()?;
-        let symbols = crate::document::document_symbols(self.analysis.ast())
+        let symbols = crate::document::document_symbols(self.analysis.document())
             .into_iter()
             .map(|symbol| project_symbol(symbol, &mut project))
             .collect::<Result<Vec<_>, ProjectionError>>()?;

@@ -1,6 +1,6 @@
 //! Backend-independent block semantic model.
 
-use crate::attributes::DocumentAttribute;
+use crate::attributes::DocumentAttributeOccurrence;
 use crate::inline::{Inline, InlineProblem, MathLanguage};
 use crate::source::{TextRange, TextSize};
 
@@ -468,8 +468,11 @@ pub enum AstBlock {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AstDocument {
     pub(crate) blocks: Vec<AstBlock>,
-    pub(crate) attributes: Vec<DocumentAttribute>,
+    pub(crate) attributes: Vec<DocumentAttributeOccurrence>,
     pub(crate) anchors: Vec<ExplicitAnchor>,
     pub(crate) header: DocumentHeader,
     pub(crate) resolved: crate::resolved::ResolvedDocument,
 }
+
+/// A semantic block in the public document model.
+pub type Block = AstBlock;
