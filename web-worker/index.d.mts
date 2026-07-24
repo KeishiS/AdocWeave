@@ -1,3 +1,7 @@
+import type { ProductSet } from "./protocol.generated.d.mts";
+
+export type { ProductSet } from "./protocol.generated.d.mts";
+
 export interface AdocWeaveResult {
   html: string;
   diagnostics: unknown[];
@@ -72,8 +76,6 @@ export interface AdocWeaveWasmResponse {
   symbols: unknown[];
   projection: DocumentProjection;
 }
-
-export type { ProductSet } from "./protocol.generated.d.mts";
 
 export interface AdocWeaveError {
   code: string;
