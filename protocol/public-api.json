@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "0.6.3",
+  "packageVersion": "0.6.4",
   "identityField": "packageVersion",
   "products": [
     { "json": "syntax", "rust": "syntax" },

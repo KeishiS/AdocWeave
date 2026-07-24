@@ -5,7 +5,7 @@
       "byteSize": 103,
       "executable": null,
       "kind": "browser",
-      "name": "adocweave-browser-0.6.3.tar.xz",
+      "name": "adocweave-browser-0.6.4.tar.xz",
       "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
       "target": null
     },
@@ -50,12 +50,12 @@
       "byteSize": 106,
       "executable": null,
       "kind": "zed",
-      "name": "adocweave-zed-0.6.3.tar.xz",
+      "name": "adocweave-zed-0.6.4.tar.xz",
       "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
       "target": null
     }
   ],
-  "packageVersion": "0.6.3",
+  "packageVersion": "0.6.4",
   "schemaVersion": 1,
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567"
 }
