@@ -1,7 +1,7 @@
 = Zed開発用拡張
 
 開発版のbuild、導入、動作確認、問題の切り分けおよび削除手順は
-xref:../../docs/zed-development.adoc[Zedへ開発版を導入する]を正本とする。
+xref:../../docs/zed-development.adoc[Zedへ開発版を導入する]を基準とする。
 
 このdirectoryはZedが選択する拡張rootであり、`extension.toml`、Rust製WASM adapterおよび
 AsciiDoc言語設定を保持する。binaryの解決、公開Releaseからの安全な取得およびcache契約は

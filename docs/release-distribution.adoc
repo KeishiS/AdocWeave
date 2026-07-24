@@ -4,7 +4,7 @@
 xref:release-installation.adoc[インストールと更新]を参照してください。
 
 この文書は、AdocWeaveのCLI、Language Serverおよびbrowser packageを配布する際の規範的な入口を定義する。
-machine-readableな正本はxref:../release/distribution-plan.json[`release/distribution-plan.json`]、配布manifestの
+machine-readableな基準はxref:../release/distribution-plan.json[`release/distribution-plan.json`]、配布manifestの
 schemaはxref:../release/adocweave-dist-manifest.schema.json[`adocweave-dist-manifest.schema.json`]である。
 
 == 配布境界

@@ -10,7 +10,7 @@ mainで成功したcandidateをstable tag一回で公開する。
 
 == 設計判断
 
-release manifestをrelease trainの正本とし、workspace、Zed、browser、distribution planとfixtureの値は
+release manifestをrelease trainの基準とし、workspace、Zed、browser、distribution planとfixtureの値は
 `cargo make release-contract`で一致を検証する。Cargoとnpmのpackage metadata、およびcargo-distが読む静的な
 extra artifact名には同じversionを持つ必要があるため、これらを生成時に書き換える隠れた状態は導入しない。
 版数更新は一つのreview可能なcommitとし、欠落は自動gateで拒否する。

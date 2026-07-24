@@ -22,5 +22,5 @@ inline診断を持つ。backendはsource文字列を再解析せず、このinli
 == 実施結果
 
 `BlockTitle`はlossless source値・rangeと解決済みinline列を一体で持つ。loweringは全metadata titleの
-属性展開をparagraph等と同じ経路で行う。`BlockMetadata.title`だけをcaptionの正本とし、
+属性展開をparagraph等と同じ経路で行う。`BlockMetadata.title`だけをcaptionの基準とし、
 HTMLはtableの親metadataとadmonition metadataから同じinline列を描画する。projectionも同じ列のplain textを返す。

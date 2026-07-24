@@ -9,7 +9,7 @@
 
 == 設計判断
 
-release manifest（`packageVersion` 0.6.0）をリリース版数の機械可読な正本とする。
+release manifest（`packageVersion` 0.6.0）をリリース版数の機械可読な基準とする。
 workspace、Zed、browser、distribution planおよびテスト用入力の一致は`cargo make release-contract`で検証する。
 ADR 0006に従い、mainの完全candidate成功commitへstable tagを一度だけ付ける。
 

@@ -19,7 +19,7 @@ Rustは必要ありません。パッケージとRustのバージョンは対象
   hostは`Engine::analyze`の結果を必要なrenderer、formatterまたはdiagnostic serializerへ明示的に渡す。
 * Rustの公開moduleを`semantic`、`output`、`preprocess`、`resolution`および`text` facadeへ再編する。
   旧`parser`、`html`、`projection`等のroot module pathは提供しない。
-* table captionの正本を`BlockMetadata.title`だけに限定し、`TablePresentation.caption`を削除する。
+* table captionの基準を`BlockMetadata.title`だけに限定し、`TablePresentation.caption`を削除する。
 * `RenderPolicy`へ`stylesheets`フィールドが追加される。網羅的なstruct literalで構築するhostは
   更新が必要である。stylesheetを設定しない既定のHTML出力は従来とbyte単位で一致する。
 * HTML契約の許可集合へ`head`、`style`、`link`が加わる。許可集合を検証器へ固定しているhostは更新する。

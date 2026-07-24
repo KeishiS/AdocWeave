@@ -22,7 +22,7 @@ Language Serverだけへ依存させない。基本色付けはZed拡張のTree-
 
 === Grammar契約
 
-* `extension.toml`に固定した`tree-sitter-asciidoc` commitの`node-types.json`と既存queryを正本としてnode名を列挙する。
+* `extension.toml`に固定した`tree-sitter-asciidoc` commitの`node-types.json`と既存queryを基準としてnode名を列挙する。
 * queryは固定commitに存在するnodeだけを参照し、推測したnode名やwildcardで誤検出を隠さない。
 * grammar commit更新とquery更新を同じ変更単位にし、片方だけを更新できない検証を追加する。
 

@@ -13,14 +13,14 @@
 * 規範文書subsetに予期しない診断がないことを検査する`docs-lint`を追加する。
 * 意図的な異常fixtureは期待診断を持つmanifestまたはgoldenへ分類する。
 * 完了Issueを履歴として扱い、現在の規範仕様と将来ロードマップから分離する。
-* 長期的な設計判断はADRへ移し、Issue作業日誌を規範仕様の正本にしない。
+* 長期的な設計判断はADRへ移し、Issue作業日誌を規範仕様の基準にしない。
 * Issue statusと依存関係を機械検査可能な形式にする方法を決定する。
 
 == 完了条件
 
 * 新しい誤診断が規範文書へ追加された場合にCIが失敗する。
 * 故意の異常入力と通常文書を同じ成功基準で扱わない。
-* 現行仕様、設計判断、完了履歴および未完了計画の正本が明確である。
+* 現行仕様、設計判断、完了履歴および未完了計画の基準が明確である。
 * M12の破壊的移行を終え、workspace全体、native／WASM適合性、CLI、LSPおよびZed連携が
   新しい解析基盤だけで動作する。
 * cargo make release-gateが成功し、途中移行用の旧型、adapterおよび二重pipelineが残っていない。
@@ -31,7 +31,7 @@ Issue 055の診断pipeline確定後に完了する。分類と文書整理は先
 
 == 完了確認
 
-`docs/corpus.json`を通常文書と異常fixtureの機械可読な分類正本とし、repository governance testで
+`docs/corpus.json`を通常文書と異常fixtureの機械可読な分類基準とし、repository governance testで
 lossless復元、UTF-8 range、規範文書の無診断および異常fixtureの診断code列を検査する。
 `issues/m12.json`と各Issue属性の一致・依存順を同じgateで検査する。長期判断はADR、現行仕様は
 `docs/current-contract.adoc`から参照する規範文書、完了履歴はIssue、未実装機能はroadmapへ分離した。

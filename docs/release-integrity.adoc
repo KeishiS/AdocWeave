@@ -3,7 +3,7 @@
 このページは、リリースに添えるチェックサム、SBOM、来歴情報を保守する人向けです。
 
 この文書は、GitHub Releaseから取得したAdocWeaveの成果物を検証する方法と、生成側の契約を定義する。
-公開asset集合の正本はxref:../release/distribution-plan.json[`release/distribution-plan.json`]であり、6個のarchiveと
+公開asset集合の基準はxref:../release/distribution-plan.json[`release/distribution-plan.json`]であり、6個のarchiveと
 次の3個のmetadataだけを公開する。
 
 * `adocweave-dist-manifest.json`

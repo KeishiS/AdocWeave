@@ -11,7 +11,7 @@
 
 * 現行profileだけを実装する間はversionを解析要求のselectorから除き、解析結果metadataで公開する。
 * 複数profileを同時実装する場合だけ、明示的なprofile dispatchを再導入する。
-* release manifestとRust定数・Worker定数・文書表の正本関係を自動検査する。
+* release manifestとRust定数・Worker定数・文書表の基準関係を自動検査する。
 * `AnalysisRequest`、`AnalysisResult`、LSPの`AnalysisJob`とgeneration採用規則を比較し、
   runtime非依存部分を共通化する。
 * `Engine`、free function、CLI convenience APIの重複を監査し、主要入口を一つにする。

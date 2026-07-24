@@ -7,7 +7,7 @@ request／response envelopeは変更しない。
 
 sourceからv0.3.0をbuildするRust hostはRust 1.97.1以上を使用する。binary releaseだけを利用する場合は
 Rust toolchainを必要としない。配布物のpackage version、Rust versionおよびcontract versionは、対象release
-tagに含まれる`release-manifest.json`を正本として確認する。
+tagに含まれる`release-manifest.json`を基準として確認する。
 
 == 利用者可視の変更
 

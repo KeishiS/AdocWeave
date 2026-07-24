@@ -4,7 +4,7 @@
 
 == 目的
 
-規範文書、対応表、互換性表、roadmapおよびIssue statusの重複正本を減らし、表破損、version例の陳腐化、
+規範文書、対応表、互換性表、roadmapおよびIssue statusの重複基準を減らし、表破損、version例の陳腐化、
 実装状態の矛盾をrelease gateで検出する。
 
 == 作業

@@ -96,7 +96,7 @@ node tools/release-installation-e2e.mjs /path/to/candidate <target>
 == Nix flake
 
 受け入れ対象Releaseのtag commitを明示的に固定し、Linux x86-64／ARM64のclean環境で次を確認する。詳細な利用方法は
-xref:nix-installation.adoc[Nix flakeからの導入]を正本とする。
+xref:nix-installation.adoc[Nix flakeからの導入]を基準とする。
 
 . `nix run github:KeishiS/AdocWeave/<commit> -- --version --json`が対象Release versionを返す。
 . `nix profile install github:KeishiS/AdocWeave/<commit>`でCLIとLSPを導入できる。

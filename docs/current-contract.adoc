@@ -14,7 +14,7 @@
 |package version |0.6.0
 |===
 
-機械可読な値の正本はxref:../release-manifest.json[release manifest]です。
+機械可読な値の基準はxref:../release-manifest.json[release manifest]です。
 最新版への更新手順はxref:upgrade-0-6.adoc[v0.6.0への移行]を参照する。
 
 == 移行ガイド
@@ -33,7 +33,7 @@ release manifestを確認し、保存しているHTMLや検索用の情報を作
 
 == 詳しい仕様
 
-言語と出力の正本は次である。
+言語と出力の基準は次である。
 
 * 構文と回復規則：xref:grammar.adoc[文法の詳細]
 * 置換の順序：xref:substitutions.adoc[文字の置換とインライン書式]
@@ -63,4 +63,4 @@ xref:syntax-support.adoc[対応しているAsciiDocの書式]とxref:compatibili
 
 このディレクトリは現行仕様を記述する。xref:adr/index.adoc[ADR]は採用済みの長期的な
 設計判断、xref:roadmap.adoc[ロードマップ]は未実装の計画、xref:../issues/README.adoc[Issue]
-は完了履歴と作業単位を記録する。Issue本文を現行仕様の正本として参照してはならない。
+は完了履歴と作業単位を記録する。Issue本文を現行仕様の基準として参照してはならない。

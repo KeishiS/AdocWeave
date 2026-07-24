@@ -5,7 +5,7 @@
 == 目的
 
 入力長検査、SourceLinesおよびLineIndexが個別に行走査と行情報を保持する重複をなくし、
-ソース、改行、lossless tokenおよびUTF-8／UTF-16位置変換の正本を一つにする。
+ソース、改行、lossless tokenおよびUTF-8／UTF-16位置変換の基準を一つにする。
 
 == 作業
 
@@ -34,7 +34,7 @@ SourceDocumentが一つのArc付きsource、行の内容・改行・全体範囲
 UTF-8／UTF-16位置変換を所有する構成へ移行した。行長上限と協調キャンセルは改行認識と同じ
 走査で検査し、コアの独立した事前行走査を削除した。
 
-AnalysisはCST内のSourceDocumentを唯一の正本として公開し、別のLineIndexを所有しない。
+AnalysisはCST内のSourceDocumentを唯一の基準として公開し、別のLineIndexを所有しない。
 Parser、Formatter、Lint、診断表示、CLIおよびLanguage Serverを同じSourceDocumentへ移行し、
 SourceLines型、LineIndex型および旧moduleを削除した。CRLF内部offset、終端改行、空入力、
 UnicodeのUTF-8／UTF-16往復とキャンセル・行長上限はworkspace試験で確認した。

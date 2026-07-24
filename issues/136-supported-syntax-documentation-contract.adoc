@@ -24,6 +24,6 @@
 
 == 結果
 
-`docs/syntax-contract.json`を正本として、対応表、互換性評価、文法、fixtureおよび本Issueのstatusを
+`docs/syntax-contract.json`を基準として、対応表、互換性評価、文法、fixtureおよび本Issueのstatusを
 repository governance testで照合する。highlight、subscript、superscript、typographic quote、admonition、
 quoteおよびverseはそれぞれ対応済みのfixtureを持つ。

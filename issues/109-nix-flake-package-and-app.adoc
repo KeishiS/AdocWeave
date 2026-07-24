@@ -60,7 +60,7 @@ NixOS flakeでは、入力を固定したうえで次の形で導入できるこ
 * 現在devShellだけを公開する`flake.nix`へpackage、app、overlayおよびcheckを追加する。
 * Cargo workspaceを一度だけbuildし、CLIとLSPを同じoutputへinstallする。browser、Zed拡張、fuzz targetおよび
   開発toolchainはruntime closureへ含めない。
-* `Cargo.lock`を依存の正本とし、network accessなしでNix sandbox buildできるようにする。
+* `Cargo.lock`を依存の基準とし、network accessなしでNix sandbox buildできるようにする。
 * package versionはworkspaceと`release-manifest.json`に一致させ、`--version --json`で検証する。
 * Linux x86-64／ARM64を必須対象とする。Darwin outputを公開する場合も同じsource package定義を再利用し、
   未検証platformをLinuxの公開受け入れ済みtargetとして扱わない。

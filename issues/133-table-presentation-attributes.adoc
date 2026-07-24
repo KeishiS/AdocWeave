@@ -21,7 +21,7 @@
 == 非目標
 
 `align`、`halign`、`valign`、`float`、`orientation`、PDF／DocBook専用の`rotate`・`breakable`は扱わない。
-列・cellの配置は既存の`cols`とcell specifierを正本とし、任意のCSS、色、長さ単位およびinline `style`は
+列・cellの配置は既存の`cols`とcell specifierを基準とし、任意のCSS、色、長さ単位およびinline `style`は
 受け入れない。
 
 == 完了条件

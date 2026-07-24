@@ -22,5 +22,5 @@ Zed extensionとLanguage ServerをAdocWeave本体から別repositoryへ分離す
 == 結論
 
 分離しない。根拠、非採用案および定量的な再評価条件はxref:../docs/adr/0005-zed-lsp-monorepo.adoc[ADR 0005]を
-正本とする。現行の単一release manifest、artifact provenance、conformance fixtureおよびrollback境界を維持し、
+基準とする。現行の単一release manifest、artifact provenance、conformance fixtureおよびrollback境界を維持し、
 Zed固有の責務はmonorepo内のadapter境界へ局所化する。

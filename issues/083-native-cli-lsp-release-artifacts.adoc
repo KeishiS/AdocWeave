@@ -12,7 +12,7 @@
 * release profileのpanic、LTO、codegen units、stripおよびdebug symbol方針を明示する。
 * CLIとLSPを別assetとしてbuildし、archive root、executable permission、`.exe`、license、READMEおよび
   completion等の同梱規則を固定する。
-* `MIT OR Apache-2.0`に対応するlicense本文とthird-party noticeをrepositoryの正本として追加し、全archiveへ
+* `MIT OR Apache-2.0`に対応するlicense本文とthird-party noticeをrepositoryの基準として追加し、全archiveへ
   同じfileを同梱する。Cargo metadata上のlicense表記だけで配布を済ませない。
 * Linuxはmusl static linkを検証し、`ldd`または同等の検査で想定外のdynamic dependencyを拒否する。
 * Linux 2 targetをbuildし、各architectureの実行環境で検証する。cross compileだけで「対応」と判定しない。

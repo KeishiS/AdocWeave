@@ -17,10 +17,10 @@ loweringにも持ち込まない。
 == 却下した案
 
 Syntax treeからsemantic ASTを作るためにsourceを再解析する案は、認識規則と処理予算を二重化するため
-採用しない。Syntax nodeへ全semantic値を複製する案も、lossless表現と正規化値の正本を曖昧にするため
+採用しない。Syntax nodeへ全semantic値を複製する案も、lossless表現と正規化値の基準を曖昧にするため
 採用しない。
 
 == 帰結
 
-Syntax treeはsource表記と回復地点、semantic ASTは確定した意味の正本になる。parserのraw factは
+Syntax treeはsource表記と回復地点、semantic ASTは確定した意味の基準になる。parserのraw factは
 crate内部だけに置き、公開契約にはしない。
