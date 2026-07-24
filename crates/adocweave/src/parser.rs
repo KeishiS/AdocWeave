@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::attributes::{DocumentAttributeOccurrence, parse_line as parse_attribute_line};
+use crate::block_grammar::{LineRecognition, recognize_line};
 pub use crate::block_model::*;
 use crate::block_sequence::{
     BlockContext, BlockCursor, BlockFacts, BlockInput, BlockLocation, BlockRecognition,
@@ -468,70 +469,6 @@ pub(crate) fn parse_shared(
         ) => {
             unreachable!("default test parser cannot be cancelled or exhaust its budget")
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LineRecognition {
-    Source,
-    InvalidSource,
-    Math,
-    Delimited,
-    Anchor,
-    BlockTitle,
-    BlockMetadata,
-    Blank,
-    DocumentAttribute,
-    Break,
-    LiteralParagraph,
-    Heading,
-    List,
-    Unsupported,
-    Paragraph,
-}
-
-fn recognize_line(
-    content: &str,
-    next_content: Option<&str>,
-    content_start: usize,
-    full_range: TextRange,
-    header_attributes_open: bool,
-) -> LineRecognition {
-    if parse_source_attribute(content).is_some() && next_content == Some("----") {
-        LineRecognition::Source
-    } else if content.starts_with("[source") && next_content == Some("----") {
-        LineRecognition::InvalidSource
-    } else if parse_math_attribute(content).is_some() && next_content == Some("++++") {
-        LineRecognition::Math
-    } else if crate::delimiter::spec(content).is_some() {
-        LineRecognition::Delimited
-    } else if parse_explicit_anchor(content, content_start, full_range)
-        .filter(|_| content.starts_with("[["))
-        .is_some()
-    {
-        LineRecognition::Anchor
-    } else if is_block_title(content) {
-        LineRecognition::BlockTitle
-    } else if parse_block_attributes(content, content_start).is_some() {
-        LineRecognition::BlockMetadata
-    } else if content.trim_matches([' ', '\t']).is_empty() {
-        LineRecognition::Blank
-    } else if header_attributes_open
-        && parse_attribute_line(content, content_start, full_range).is_some()
-    {
-        LineRecognition::DocumentAttribute
-    } else if matches!(content, "'''" | "<<<") {
-        LineRecognition::Break
-    } else if content.starts_with([' ', '\t']) {
-        LineRecognition::LiteralParagraph
-    } else if content.starts_with('=') {
-        LineRecognition::Heading
-    } else if crate::list_parser::marker(content).is_some() {
-        LineRecognition::List
-    } else if unsupported_reason(content).is_some() {
-        LineRecognition::Unsupported
-    } else {
-        LineRecognition::Paragraph
     }
 }
 
@@ -1138,7 +1075,7 @@ fn finish_document(
     })
 }
 
-fn parse_explicit_anchor(
+pub(crate) fn parse_explicit_anchor(
     content: &str,
     absolute_start: usize,
     full_range: TextRange,
@@ -1210,13 +1147,13 @@ fn parse_block_title(
     }))
 }
 
-fn is_block_title(content: &str) -> bool {
+pub(crate) fn is_block_title(content: &str) -> bool {
     content
         .strip_prefix('.')
         .is_some_and(|value| !value.is_empty() && !value.starts_with([' ', '\t', '.']))
 }
 
-fn parse_block_attributes(content: &str, base: usize) -> Option<BlockMetadata> {
+pub(crate) fn parse_block_attributes(content: &str, base: usize) -> Option<BlockMetadata> {
     let inner = content.strip_prefix('[')?.strip_suffix(']')?;
     if inner.starts_with('[') || inner.ends_with(']') {
         return None;
@@ -1475,7 +1412,7 @@ fn parse_math_block(
     ))
 }
 
-fn parse_math_attribute(text: &str) -> Option<MathLanguage> {
+pub(crate) fn parse_math_attribute(text: &str) -> Option<MathLanguage> {
     match text {
         "[stem]" | "[latexmath]" => Some(MathLanguage::Latex),
         _ => None,
@@ -2189,7 +2126,7 @@ fn parse_source_block(
     ))
 }
 
-fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)>> {
+pub(crate) fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)>> {
     let (language, prefix_len) = if let Some(inner) = text.strip_prefix("[source") {
         let inner = inner.strip_suffix(']')?;
         if inner.is_empty() {
@@ -2480,7 +2417,7 @@ fn relative_range(parent: TextRange, start: usize, end: usize) -> TextRange {
     .expect("relative inline range is ordered")
 }
 
-fn unsupported_reason(content: &str) -> Option<&'static str> {
+pub(crate) fn unsupported_reason(content: &str) -> Option<&'static str> {
     let trimmed = content.trim_start_matches([' ', '\t']);
     if trimmed.starts_with('[') {
         Some("block attributes are not implemented")

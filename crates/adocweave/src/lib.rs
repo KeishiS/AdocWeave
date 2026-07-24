@@ -6,6 +6,7 @@
 
 mod attributes;
 mod block_model;
+mod block_grammar;
 mod block_sequence;
 mod budget;
 mod catalog;
