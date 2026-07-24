@@ -17,6 +17,19 @@ xref:release-distribution.adoc[GitHub Releases配布契約]を参照する。
 機械可読な値の正本はxref:../release-manifest.json[release manifest]である。
 最新版への更新手順はxref:upgrade-0-5.adoc[v0.5.0への移行]を参照する。
 
+== 移行ガイド
+
+過去のreleaseから更新するhostは、現在の導入versionより後の移行ガイドを番号順にすべて適用する。
+たとえばv0.1.xからv0.5.0へ更新する場合は、xref:upgrade-0-2.adoc[v0.2.0]、
+xref:upgrade-0-3.adoc[v0.3.0]、xref:upgrade-0-4.adoc[v0.4.0]および
+xref:upgrade-0-5.adoc[v0.5.0]への移行をこの順で読む。各ガイドの必要Rust版と対象releaseの
+release manifestを確認し、contract versionが変わる段階ではcacheと保存済み成果物を再構築する。
+
+* xref:upgrade-0-2.adoc[v0.2.0]：contract version 1から2
+* xref:upgrade-0-3.adoc[v0.3.0]：table表示属性の追加、contract versionは2のまま
+* xref:upgrade-0-4.adoc[v0.4.0]：contract version 2から3
+* xref:upgrade-0-5.adoc[v0.5.0]：contract version 3から5、Rust facade再編
+
 == 規範文書
 
 言語と出力の正本は次である。

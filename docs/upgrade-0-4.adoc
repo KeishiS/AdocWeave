@@ -3,6 +3,12 @@
 v0.4.0はadmonitionとquote／verse blockを型付きpresentationとして公開し、公開契約を2から3へ更新する
 minor releaseである。0.y.z期間のため、旧contractを受理するadapterとの後方互換性は提供しない。
 
+== 必要環境
+
+sourceからv0.4.0をbuildするRust hostはRust 1.97.1以上を使用する。binary releaseだけを利用する場合は
+Rust toolchainを必要としない。配布物のpackage version、Rust versionおよびcontract versionは、対象release
+tagに含まれる`release-manifest.json`を正本として確認する。
+
 == 利用者可視の変更
 
 * `NOTE:`、`TIP:`、`IMPORTANT:`、`WARNING:`および`CAUTION:`をadmonitionとして解釈し、安全なHTMLへ出力する。

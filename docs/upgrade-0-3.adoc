@@ -3,6 +3,12 @@
 v0.3.0はtable captionと表示属性を追加するminor releaseである。公開契約versionは2のままであり、
 request／response envelopeは変更しない。
 
+== 必要環境
+
+sourceからv0.3.0をbuildするRust hostはRust 1.97.1以上を使用する。binary releaseだけを利用する場合は
+Rust toolchainを必要としない。配布物のpackage version、Rust versionおよびcontract versionは、対象release
+tagに含まれる`release-manifest.json`を正本として確認する。
+
 == 利用者可視の変更
 
 * block titleをHTMLの`caption`として出力する。

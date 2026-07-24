@@ -4,6 +4,12 @@ v0.2.0は初回stable版以後に追加した標準AsciiDoc互換性拡張を含
 公開契約versionは2へ更新された。初回stable版の解析cache、HTML、projection、
 conformance snapshotおよびWASM adapterをv0.2.0の成果物と混在させてはならない。
 
+== 必要環境
+
+sourceからv0.2.0をbuildするRust hostはRust 1.86以上を使用する。binary releaseだけを利用する場合は
+Rust toolchainを必要としない。配布物のpackage versionとcontract versionは、対象release tagに含まれる
+`release-manifest.json`を正本として確認する。
+
 == 利用者可視の変更
 
 * 属性行によるsource block短縮記法とsource-language既定値を利用できる。
