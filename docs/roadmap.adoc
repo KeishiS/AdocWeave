@@ -214,7 +214,7 @@ HTMLのraw出力は禁止する。
 |高
 |表
 |PSV／CSV／DSV／TSV、任意separator、duplicationおよびPSVのAsciiDoc block cellまで完了。
-自動header推論と表示属性は将来対応
+表示属性も完了。残る標準構文は自動header推論
 
 |高
 |標準macro
@@ -227,7 +227,8 @@ icon setとmedia typeに応じたbackend presentation
 
 |中
 |文書機能
-|文書構造projectionは完了。将来はsectnums／toclevels等の高度な表示属性とbibliography本文生成を追加する
+|文書構造projection、`toc`、`toclevels`、`sectnums`およびbibliography本文生成は完了。
+残る標準構文は文書内での属性変更
 
 |中
 |media

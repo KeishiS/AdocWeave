@@ -19,6 +19,26 @@ TOC収録可否を保持する。kindは`DocumentTitle`、`Part`、`Section`、`
 discrete headingはTOCへ含めず、`notoc` roleを持つ見出し自身も除く。その子は直近の可視階層へ
 繰り上げる。番号は数値列として保持し、表示文字列への変換はbackendの責務とする。
 
+== 目次と節番号
+
+文書ヘッダーで`:toc:`を設定すると、`DocumentPresentation`が目次を有効化し、HTMLでは文書タイトルの
+直後へ出力する。`:sectnums:`を設定すると、同じ節番号列を目次項目と見出しの両方へ表示する。
+どちらも値は不要であり、属性の存在によって有効になる。
+
+`:toclevels: N`は任意である。指定しない場合は、対応するlevel 1から5までを目次候補とする。指定する場合、
+`N`は1から5までの整数であり、それより深い見出しを目次から除外する。不正な値は
+`invalid-attribute`診断となるが、`:toc:`自体の有効・無効は変更しない。
+
+[source,asciidoc]
+----
+= 文書
+:toc:
+:toclevels: 2
+:sectnums:
+
+== 節
+----
+
 == doctype固有規則
 
 `article`では通常sectionとlevel 1のappendixを認める。`book`ではlevel 0のpart、その配下の
