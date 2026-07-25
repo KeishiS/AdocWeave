@@ -55,9 +55,38 @@ fn initialize(service: &mut LanguageService, encodings: &[&str]) -> lsp::Initial
     let params = typed(json!({
         "processId": null,
         "rootUri": null,
-        "capabilities": {"general": {"positionEncodings": encodings}}
+        "capabilities": full_capabilities(encodings)
     }));
     service.initialize(&params)
+}
+
+fn full_capabilities(encodings: &[&str]) -> Value {
+    json!({
+        "general": {"positionEncodings": encodings},
+        "workspace": {
+            "workspaceEdit": {"documentChanges": true},
+            "workspaceFolders": true,
+            "didChangeWatchedFiles": {"dynamicRegistration": true}
+        },
+        "textDocument": {
+            "hover": {"contentFormat": ["markdown", "plaintext"]},
+            "documentSymbol": {"hierarchicalDocumentSymbolSupport": true},
+            "codeAction": {
+                "codeActionLiteralSupport": {
+                    "codeActionKind": {"valueSet": ["quickfix"]}
+                },
+                "isPreferredSupport": true
+            },
+            "documentLink": {"tooltipSupport": true},
+            "publishDiagnostics": {"versionSupport": true},
+            "semanticTokens": {
+                "requests": {"full": true},
+                "tokenTypes": ["string", "variable"],
+                "tokenModifiers": [],
+                "formats": ["relative"]
+            }
+        }
+    })
 }
 
 fn open(service: &mut LanguageService, uri: &str, version: i32, text: &str) {
@@ -72,6 +101,24 @@ fn open(service: &mut LanguageService, uri: &str, version: i32, text: &str) {
     for job in jobs {
         adopt(service, job);
     }
+}
+
+fn all_code_actions(
+    service: &LanguageService,
+    document_uri: &lsp::Url,
+) -> Result<Option<Vec<lsp::CodeActionOrCommand>>, String> {
+    service.code_actions(
+        document_uri,
+        lsp::Range::new(
+            lsp::Position::new(0, 0),
+            lsp::Position::new(u32::MAX, u32::MAX),
+        ),
+        &lsp::CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            trigger_kind: None,
+        },
+    )
 }
 
 fn change(
@@ -207,6 +254,265 @@ fn initialize_negotiates_encoding_and_advertises_existing_features() {
     assert!(value["capabilities"]["documentLinkProvider"].is_object());
     assert!(value["capabilities"]["semanticTokensProvider"].is_object());
     assert_eq!(value["serverInfo"]["name"], "adocweave-lsp");
+}
+
+#[test]
+fn minimal_client_never_receives_capability_gated_response_shapes() {
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+    }));
+    let result = service.initialize(&params);
+    let capabilities = serde_json::to_value(result.capabilities).expect("capabilities");
+
+    assert_eq!(capabilities["positionEncoding"], "utf-16");
+    assert!(capabilities.get("codeActionProvider").is_none());
+    assert!(capabilities.get("semanticTokensProvider").is_none());
+    assert!(capabilities.get("workspace").is_none());
+
+    open(
+        &mut service,
+        "file:///minimal.adoc",
+        7,
+        "= Minimal\n\n== Child\n\nhttps://example.com\n\ntext  \n",
+    );
+    let symbols = serde_json::to_value(
+        service
+            .document_symbols(&uri("file:///minimal.adoc"))
+            .expect("symbols")
+            .expect("response"),
+    )
+    .expect("serialize");
+    assert_eq!(symbols[0]["name"], "Minimal");
+    assert!(symbols[0].get("location").is_some());
+    assert!(symbols[0].get("children").is_none());
+
+    let hover = serde_json::to_value(
+        service
+            .hover(&uri("file:///minimal.adoc"), lsp::Position::new(0, 3))
+            .expect("hover")
+            .expect("response"),
+    )
+    .expect("serialize");
+    assert!(hover["contents"].is_string());
+    assert!(
+        !hover["contents"]
+            .as_str()
+            .expect("hover text")
+            .contains("**")
+    );
+
+    let diagnostics = service
+        .diagnostics(&uri("file:///minimal.adoc"))
+        .expect("diagnostics");
+    assert_eq!(diagnostics.version, None);
+    assert!(
+        all_code_actions(&service, &uri("file:///minimal.adoc"))
+            .expect("actions")
+            .expect("response")
+            .is_empty()
+    );
+    let links = service
+        .document_links(&uri("file:///minimal.adoc"))
+        .expect("links")
+        .expect("response");
+    assert!(links.iter().all(|link| link.tooltip.is_none()));
+    assert_eq!(
+        service
+            .semantic_tokens(&uri("file:///minimal.adoc"))
+            .expect("semantic tokens"),
+        None
+    );
+}
+
+#[test]
+fn client_preferences_select_plaintext_hover_and_unversioned_code_action_edits() {
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {
+            "workspace": {"workspaceEdit": {"documentChanges": false}},
+            "textDocument": {
+                "hover": {"contentFormat": ["plaintext", "markdown"]},
+                "codeAction": {
+                    "codeActionLiteralSupport": {
+                        "codeActionKind": {"valueSet": ["quickfix"]}
+                    },
+                    "isPreferredSupport": false
+                }
+            }
+        }
+    }));
+    service.initialize(&params);
+    open(&mut service, "file:///mixed.adoc", 4, "= Mixed\n\ntext  \n");
+
+    let hover = serde_json::to_value(
+        service
+            .hover(&uri("file:///mixed.adoc"), lsp::Position::new(0, 3))
+            .expect("hover")
+            .expect("response"),
+    )
+    .expect("serialize");
+    assert_eq!(hover["contents"]["kind"], "plaintext");
+    assert!(
+        !hover["contents"]["value"]
+            .as_str()
+            .expect("hover text")
+            .contains("**")
+    );
+
+    let actions = serde_json::to_value(
+        all_code_actions(&service, &uri("file:///mixed.adoc"))
+            .expect("actions")
+            .expect("response"),
+    )
+    .expect("serialize");
+    assert!(!actions.as_array().expect("actions").is_empty());
+    assert!(actions[0]["edit"]["changes"]["file:///mixed.adoc"].is_array());
+    assert!(actions[0]["edit"].get("documentChanges").is_none());
+    assert!(actions[0].get("isPreferred").is_none());
+}
+
+#[test]
+fn workspace_folders_null_does_not_fall_back_to_legacy_root_uri() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-workspace-null-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(root.join("part.adoc"), "included\n").expect("part");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "workspaceFolders": null,
+        "capabilities": {"workspace": {"workspaceFolders": true}}
+    }));
+    service.initialize(&params);
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "include::part.adoc[]\n",
+    );
+
+    assert!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .expect("document")
+            .workspace_analysis()
+            .is_none()
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn legacy_root_path_is_used_only_when_root_uri_is_null() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-root-path-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(root.join("part.adoc"), "included\n").expect("part");
+    let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "rootPath": root,
+        "rootUri": null,
+        "capabilities": {}
+    }));
+    service.initialize(&params);
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "include::part.adoc[]\n",
+    );
+
+    assert!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .expect("document")
+            .workspace_analysis()
+            .is_some()
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("adocweave-workspace-change-{unique}"));
+    let retained = base.join("retained");
+    let removed = base.join("removed");
+    let added = base.join("added");
+    for root in [&retained, &removed, &added] {
+        fs::create_dir_all(root).expect("workspace");
+    }
+    fs::write(retained.join("part.adoc"), "disk\n").expect("part");
+    let retained_uri = lsp::Url::from_directory_path(&retained).expect("retained URI");
+    let removed_uri = lsp::Url::from_directory_path(&removed).expect("removed URI");
+    let added_uri = lsp::Url::from_directory_path(&added).expect("added URI");
+    let document_uri = lsp::Url::from_file_path(retained.join("root.adoc")).expect("document URI");
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "workspaceFolders": [
+            {"uri": retained_uri, "name": "retained"},
+            {"uri": removed_uri, "name": "removed"}
+        ],
+        "capabilities": {"workspace": {"workspaceFolders": true}}
+    }));
+    let result = service.initialize(&params);
+    let value = serde_json::to_value(result).expect("initialize result");
+    assert_eq!(
+        value["capabilities"]["workspace"]["workspaceFolders"]["supported"],
+        true
+    );
+    assert_eq!(
+        value["capabilities"]["workspace"]["workspaceFolders"]["changeNotifications"],
+        true
+    );
+    open(
+        &mut service,
+        document_uri.as_str(),
+        3,
+        "include::part.adoc[]\n\noverlay\n",
+    );
+
+    let jobs = service.workspace_folders_changed(typed(json!({
+        "event": {
+            "removed": [{"uri": removed_uri, "name": "removed"}],
+            "added": [{"uri": added_uri, "name": "added"}]
+        }
+    })));
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].request.revision.version, 3);
+    assert!(jobs[0].request.source.contains("overlay"));
+    assert_eq!(
+        jobs[0]
+            .workspace
+            .as_ref()
+            .expect("retained workspace")
+            .root
+            .text
+            .as_ref(),
+        "include::part.adoc[]\n\noverlay\n"
+    );
+    fs::remove_dir_all(base).expect("cleanup");
 }
 
 #[test]
@@ -548,8 +854,7 @@ fn document_symbols_preserve_hierarchy_and_ranges() {
 fn code_actions_use_typed_versioned_workspace_edits() {
     let mut service = LanguageService::default();
     open(&mut service, "file:///fix.adoc", 4, "==Title\ntext  \n");
-    let actions = service
-        .code_actions(&uri("file:///fix.adoc"))
+    let actions = all_code_actions(&service, &uri("file:///fix.adoc"))
         .expect("actions")
         .expect("response");
     let value = serde_json::to_value(actions).expect("serialize");
@@ -562,6 +867,41 @@ fn code_actions_use_typed_versioned_workspace_edits() {
             .iter()
             .all(|action| { action["edit"]["documentChanges"][0]["textDocument"]["version"] == 4 })
     );
+}
+
+#[test]
+fn code_actions_respect_the_requested_range_and_kind() {
+    let mut service = LanguageService::default();
+    let document_uri = uri("file:///scoped-fix.adoc");
+    open(&mut service, document_uri.as_str(), 1, "==Title\ntext  \n");
+
+    let line_two = service
+        .code_actions(
+            &document_uri,
+            lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
+            &lsp::CodeActionContext {
+                diagnostics: Vec::new(),
+                only: Some(vec![lsp::CodeActionKind::QUICKFIX]),
+                trigger_kind: Some(lsp::CodeActionTriggerKind::INVOKED),
+            },
+        )
+        .expect("actions")
+        .expect("response");
+    assert_eq!(line_two.len(), 1);
+
+    let wrong_kind = service
+        .code_actions(
+            &document_uri,
+            lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(1, 6)),
+            &lsp::CodeActionContext {
+                diagnostics: Vec::new(),
+                only: Some(vec![lsp::CodeActionKind::SOURCE]),
+                trigger_kind: Some(lsp::CodeActionTriggerKind::INVOKED),
+            },
+        )
+        .expect("actions")
+        .expect("response");
+    assert!(wrong_kind.is_empty());
 }
 
 fn apply_edits(source: &str, edits: &[lsp::TextEdit]) -> String {
@@ -1215,14 +1555,37 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                 "jsonrpc":"2.0",
                 "id":1,
                 "method":"initialize",
-                "params":{"processId":null,"rootUri":null,"capabilities":{}}
+                "params":{
+                    "processId":null,
+                    "rootUri":null,
+                    "capabilities":full_capabilities(&["utf-16"])
+                }
             }),
         )
         .await;
-        assert_eq!(read_message(&mut client_read).await["id"], 1);
+        let initialize_response = read_message(&mut client_read).await;
+        assert_eq!(initialize_response["id"], 1);
+        assert_eq!(
+            initialize_response["result"]["capabilities"]["workspace"]["workspaceFolders"]["supported"],
+            true
+        );
+        assert_eq!(
+            initialize_response["result"]["capabilities"]["codeActionProvider"],
+            true
+        );
+        assert!(
+            initialize_response["result"]["capabilities"]["semanticTokensProvider"].is_object()
+        );
         write_message(
             &mut client_write,
             &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        )
+        .await;
+        let registration = read_message(&mut client_read).await;
+        assert_eq!(registration["method"], "client/registerCapability");
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","id":registration["id"].clone(),"result":null}),
         )
         .await;
         write_message(
@@ -1234,7 +1597,7 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
                     "uri":"file:///typed.adoc",
                     "languageId":"asciidoc",
                     "version":1,
-                    "text":"[[part]]\n= Typed path\n\n<<part>>\n"
+                    "text":"[[part]]\n= Typed path\n\n<<part>>\ntext  \n"
                 }}
             }),
         )
@@ -1256,6 +1619,96 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
         assert_eq!(
             read_message(&mut client_read).await["result"][0]["name"],
             "Typed path"
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":10,
+                "method":"textDocument/hover",
+                "params":{
+                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "position":{"line":1,"character":3}
+                }
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_message(&mut client_read).await["result"]["contents"]["kind"],
+            "markdown"
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":11,
+                "method":"textDocument/completion",
+                "params":{
+                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "position":{"line":3,"character":3}
+                }
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_message(&mut client_read).await["result"][0]["label"],
+            "part"
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":12,
+                "method":"textDocument/codeAction",
+                "params":{
+                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "range":{
+                        "start":{"line":4,"character":0},
+                        "end":{"line":4,"character":6}
+                    },
+                    "context":{"diagnostics":[],"only":["quickfix"]}
+                }
+            }),
+        )
+        .await;
+        assert!(
+            read_message(&mut client_read).await["result"][0]["edit"]["documentChanges"].is_array()
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":13,
+                "method":"textDocument/formatting",
+                "params":{
+                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "options":{"tabSize":4,"insertSpaces":true}
+                }
+            }),
+        )
+        .await;
+        assert!(
+            read_message(&mut client_read).await["result"]
+                .as_array()
+                .is_some_and(|edits| !edits.is_empty())
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":14,
+                "method":"textDocument/rename",
+                "params":{
+                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "position":{"line":0,"character":3},
+                    "newName":"renamed"
+                }
+            }),
+        )
+        .await;
+        assert!(
+            read_message(&mut client_read).await["result"]["changes"]["file:///typed.adoc"]
+                .is_array()
         );
         write_message(
             &mut client_write,
@@ -1355,6 +1808,20 @@ async fn protocol_async_lsp_lifecycle_rejects_requests_in_invalid_states() {
             &mut client_write,
             &json!({
                 "jsonrpc":"2.0",
+                "method":"textDocument/didOpen",
+                "params":{"textDocument":{
+                    "uri":"file:///lifecycle.adoc",
+                    "languageId":"asciidoc",
+                    "version":1,
+                    "text":"= Must be dropped\n"
+                }}
+            }),
+        )
+        .await;
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
                 "id":1,
                 "method":"textDocument/documentSymbol",
                 "params":{"textDocument":{"uri":"file:///lifecycle.adoc"}}
@@ -1373,7 +1840,12 @@ async fn protocol_async_lsp_lifecycle_rejects_requests_in_invalid_states() {
             "params":{"processId":null,"rootUri":null,"capabilities":{}}
         });
         write_message(&mut client_write, &initialize).await;
-        assert_eq!(read_message(&mut client_read).await["id"], 2);
+        let initialize_response = read_message(&mut client_read).await;
+        assert_eq!(initialize_response["id"], 2);
+        let capabilities = &initialize_response["result"]["capabilities"];
+        assert!(capabilities.get("codeActionProvider").is_none());
+        assert!(capabilities.get("semanticTokensProvider").is_none());
+        assert!(capabilities.get("workspace").is_none());
 
         let mut duplicate = initialize;
         duplicate["id"] = json!(3);
@@ -1382,6 +1854,17 @@ async fn protocol_async_lsp_lifecycle_rejects_requests_in_invalid_states() {
             &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
         )
         .await;
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":6,
+                "method":"textDocument/documentSymbol",
+                "params":{"textDocument":{"uri":"file:///lifecycle.adoc"}}
+            }),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["result"], json!([]));
         write_message(&mut client_write, &duplicate).await;
         assert_eq!(
             read_message(&mut client_read).await["error"]["code"],
@@ -1395,6 +1878,20 @@ async fn protocol_async_lsp_lifecycle_rejects_requests_in_invalid_states() {
         .await;
         assert_eq!(read_message(&mut client_read).await["id"], 4);
 
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "method":"textDocument/didOpen",
+                "params":{"textDocument":{
+                    "uri":"file:///after-shutdown.adoc",
+                    "languageId":"asciidoc",
+                    "version":1,
+                    "text":"= Must also be dropped\n"
+                }}
+            }),
+        )
+        .await;
         write_message(
             &mut client_write,
             &json!({
@@ -1418,4 +1915,134 @@ async fn protocol_async_lsp_lifecycle_rejects_requests_in_invalid_states() {
 
     let (server_result, ()) = tokio::join!(server, client);
     server_result.expect("clean exit");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn protocol_registers_file_watchers_and_survives_client_rejection() {
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
+    let mut client_read = BufReader::new(client_read);
+
+    let client = async move {
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"initialize",
+                "params":{
+                    "processId":null,
+                    "rootUri":null,
+                    "workspaceFolders":[],
+                    "capabilities":{
+                        "workspace":{
+                            "workspaceFolders":true,
+                            "didChangeWatchedFiles":{"dynamicRegistration":true}
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let initialized = read_message(&mut client_read).await;
+        assert_eq!(initialized["id"], 1);
+        assert_eq!(
+            initialized["result"]["capabilities"]["workspace"]["workspaceFolders"]["supported"],
+            true
+        );
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        )
+        .await;
+
+        let registration = read_message(&mut client_read).await;
+        assert_eq!(registration["method"], "client/registerCapability");
+        assert_eq!(
+            registration["params"]["registrations"][0]["method"],
+            "workspace/didChangeWatchedFiles"
+        );
+        assert_eq!(
+            registration["params"]["registrations"][0]["registerOptions"]["watchers"][0]["globPattern"],
+            "**/*.adoc"
+        );
+        assert_eq!(
+            registration["params"]["registrations"][0]["registerOptions"]["watchers"][0]["kind"],
+            7
+        );
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":registration["id"].clone(),
+                "error":{"code":-32603,"message":"registration rejected for test"}
+            }),
+        )
+        .await;
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}),
+        )
+        .await;
+        assert_eq!(read_message(&mut client_read).await["id"], 2);
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"exit","params":null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::join!(server, client);
+    server_result.expect("clean exit");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn protocol_exit_without_shutdown_is_an_error() {
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let (server_stream, mut client_stream) = tokio::io::duplex(4096);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let client = async move {
+        write_message(
+            &mut client_stream,
+            &json!({"jsonrpc":"2.0","method":"exit","params":null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::join!(server, client);
+    assert!(server_result.is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn protocol_stops_when_the_declared_client_process_does_not_exist() {
+    use std::time::Duration;
+
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let (server_stream, mut client_stream) = tokio::io::duplex(4096);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    write_message(
+        &mut client_stream,
+        &json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"initialize",
+            "params":{"processId":i32::MAX,"rootUri":null,"capabilities":{}}
+        }),
+    )
+    .await;
+
+    let result = tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .expect("client process monitor timeout");
+    assert!(result.is_err());
 }

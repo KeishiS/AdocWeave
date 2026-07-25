@@ -31,6 +31,123 @@ pub enum PositionEncoding {
     Utf16,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum HoverPresentation {
+    #[default]
+    Legacy,
+    Markdown,
+    PlainText,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ClientProfile {
+    hover: HoverPresentation,
+    hierarchical_document_symbols: bool,
+    code_action_quickfix: bool,
+    code_action_is_preferred: bool,
+    versioned_document_changes: bool,
+    diagnostic_version: bool,
+    document_link_tooltip: bool,
+    semantic_tokens_full: bool,
+    workspace_folders: bool,
+    watched_files_dynamic_registration: bool,
+}
+
+impl Default for ClientProfile {
+    fn default() -> Self {
+        Self {
+            hover: HoverPresentation::Markdown,
+            hierarchical_document_symbols: true,
+            code_action_quickfix: true,
+            code_action_is_preferred: true,
+            versioned_document_changes: true,
+            diagnostic_version: true,
+            document_link_tooltip: true,
+            semantic_tokens_full: true,
+            workspace_folders: false,
+            watched_files_dynamic_registration: false,
+        }
+    }
+}
+
+impl ClientProfile {
+    fn from_capabilities(capabilities: &lsp::ClientCapabilities) -> Self {
+        let text_document = capabilities.text_document.as_ref();
+        let workspace = capabilities.workspace.as_ref();
+        let hover = text_document
+            .and_then(|capabilities| capabilities.hover.as_ref())
+            .and_then(|capabilities| capabilities.content_format.as_ref())
+            .and_then(|formats| {
+                formats.iter().find_map(|format| {
+                    if format == &lsp::MarkupKind::Markdown {
+                        Some(HoverPresentation::Markdown)
+                    } else if format == &lsp::MarkupKind::PlainText {
+                        Some(HoverPresentation::PlainText)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_default();
+        let code_action = text_document.and_then(|capabilities| capabilities.code_action.as_ref());
+        let code_action_quickfix = code_action
+            .and_then(|capabilities| capabilities.code_action_literal_support.as_ref())
+            .is_some_and(|support| {
+                support
+                    .code_action_kind
+                    .value_set
+                    .iter()
+                    .any(|kind| kind == lsp::CodeActionKind::QUICKFIX.as_str())
+            });
+        Self {
+            hover,
+            hierarchical_document_symbols: text_document
+                .and_then(|capabilities| capabilities.document_symbol.as_ref())
+                .and_then(|capabilities| capabilities.hierarchical_document_symbol_support)
+                == Some(true),
+            code_action_quickfix,
+            code_action_is_preferred: code_action
+                .and_then(|capabilities| capabilities.is_preferred_support)
+                == Some(true),
+            versioned_document_changes: workspace
+                .and_then(|capabilities| capabilities.workspace_edit.as_ref())
+                .and_then(|capabilities| capabilities.document_changes)
+                == Some(true),
+            diagnostic_version: text_document
+                .and_then(|capabilities| capabilities.publish_diagnostics.as_ref())
+                .and_then(|capabilities| capabilities.version_support)
+                == Some(true),
+            document_link_tooltip: text_document
+                .and_then(|capabilities| capabilities.document_link.as_ref())
+                .and_then(|capabilities| capabilities.tooltip_support)
+                == Some(true),
+            semantic_tokens_full: text_document
+                .and_then(|capabilities| capabilities.semantic_tokens.as_ref())
+                .is_some_and(|capabilities| {
+                    capabilities.requests.full.as_ref().is_some_and(|full| {
+                        matches!(
+                            full,
+                            lsp::SemanticTokensFullOptions::Bool(true)
+                                | lsp::SemanticTokensFullOptions::Delta { .. }
+                        )
+                    }) && capabilities.formats.contains(&lsp::TokenFormat::RELATIVE)
+                        && capabilities
+                            .token_types
+                            .contains(&lsp::SemanticTokenType::STRING)
+                        && capabilities
+                            .token_types
+                            .contains(&lsp::SemanticTokenType::VARIABLE)
+                }),
+            workspace_folders: workspace.and_then(|capabilities| capabilities.workspace_folders)
+                == Some(true),
+            watched_files_dynamic_registration: workspace
+                .and_then(|capabilities| capabilities.did_change_watched_files)
+                .and_then(|capabilities| capabilities.dynamic_registration)
+                == Some(true),
+        }
+    }
+}
+
 impl PositionEncoding {
     const fn core(self) -> CorePositionEncoding {
         match self {
@@ -93,9 +210,11 @@ impl HostReferenceIndex for NoHostReferenceIndex {
 pub(crate) struct LanguageService {
     pub documents: DocumentStore,
     pub position_encoding: PositionEncoding,
+    client: ClientProfile,
     settings: ServerSettings,
     host_index: Arc<dyn HostReferenceIndex>,
     workspace: WorkspaceResources,
+    workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
     workspace_error: Option<String>,
 }
 
@@ -105,6 +224,7 @@ impl fmt::Debug for LanguageService {
             .debug_struct("LanguageService")
             .field("documents", &self.documents)
             .field("position_encoding", &self.position_encoding)
+            .field("client", &self.client)
             .field("settings", &self.settings)
             .field("has_complete_host_index", &self.host_index.is_complete())
             .finish()
@@ -116,9 +236,11 @@ impl Default for LanguageService {
         Self {
             documents: DocumentStore::default(),
             position_encoding: PositionEncoding::Utf16,
+            client: ClientProfile::default(),
             settings: ServerSettings::default(),
             host_index: Arc::new(NoHostReferenceIndex),
             workspace: WorkspaceResources::default(),
+            workspace_roots: std::collections::BTreeMap::new(),
             workspace_error: None,
         }
     }
@@ -145,14 +267,40 @@ impl LanguageService {
     }
 
     pub fn initialize(&mut self, params: &lsp::InitializeParams) -> lsp::InitializeResult {
+        self.client = ClientProfile::from_capabilities(&params.capabilities);
         self.position_encoding = negotiate_encoding(params);
-        let roots: Vec<lsp::Url> = if let Some(folders) = &params.workspace_folders {
-            folders.iter().map(|folder| folder.uri.clone()).collect()
+        let roots: Vec<lsp::Url> = if self.client.workspace_folders {
+            params
+                .workspace_folders
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .map(|folder| folder.uri.clone())
+                .collect()
         } else {
             #[allow(deprecated)]
-            params.root_uri.clone().into_iter().collect()
+            params
+                .root_uri
+                .clone()
+                .or_else(|| {
+                    params
+                        .root_path
+                        .as_deref()
+                        .and_then(|path| lsp::Url::from_directory_path(path).ok())
+                })
+                .into_iter()
+                .collect()
         };
-        self.workspace_error = self.workspace.load_roots(&roots).err();
+        match self.workspace.load_roots(&roots) {
+            Ok(()) => {
+                self.workspace_roots = roots
+                    .into_iter()
+                    .map(|uri| (uri.to_string(), uri))
+                    .collect();
+                self.workspace_error = None;
+            }
+            Err(error) => self.workspace_error = Some(error),
+        }
         lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
                 position_encoding: Some(self.position_encoding.lsp()),
@@ -170,7 +318,10 @@ impl LanguageService {
                     },
                 )),
                 document_symbol_provider: Some(lsp::OneOf::Left(true)),
-                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                code_action_provider: self
+                    .client
+                    .code_action_quickfix
+                    .then_some(lsp::CodeActionProviderCapability::Simple(true)),
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                 definition_provider: Some(lsp::OneOf::Left(true)),
@@ -180,7 +331,7 @@ impl LanguageService {
                     resolve_provider: Some(false),
                     work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
                 }),
-                semantic_tokens_provider: Some(
+                semantic_tokens_provider: self.client.semantic_tokens_full.then_some(
                     lsp::SemanticTokensOptions {
                         work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
                         legend: lsp::SemanticTokensLegend {
@@ -199,6 +350,15 @@ impl LanguageService {
                     trigger_characters: Some(vec![",".to_owned(), " ".to_owned()]),
                     ..lsp::CompletionOptions::default()
                 }),
+                workspace: self.client.workspace_folders.then_some(
+                    lsp::WorkspaceServerCapabilities {
+                        workspace_folders: Some(lsp::WorkspaceFoldersServerCapabilities {
+                            supported: Some(true),
+                            change_notifications: Some(lsp::OneOf::Left(true)),
+                        }),
+                        file_operations: None,
+                    },
+                ),
                 ..lsp::ServerCapabilities::default()
             },
             server_info: Some(lsp::ServerInfo {
@@ -322,6 +482,74 @@ impl LanguageService {
         jobs
     }
 
+    pub fn workspace_folders_changed(
+        &mut self,
+        params: lsp::DidChangeWorkspaceFoldersParams,
+    ) -> Vec<AnalysisJob> {
+        if !self.client.workspace_folders {
+            return Vec::new();
+        }
+        let mut roots = self.workspace_roots.clone();
+        for folder in params.event.removed {
+            roots.remove(folder.uri.as_str());
+        }
+        for folder in params.event.added {
+            roots.insert(folder.uri.to_string(), folder.uri);
+        }
+        let root_uris = roots.values().cloned().collect::<Vec<_>>();
+        let open_sources = self.documents.open_sources();
+        if let Err(error) = self.workspace.load_roots(&root_uris) {
+            self.workspace_error = Some(error);
+            return Vec::new();
+        }
+        self.workspace_roots = roots;
+        self.workspace_error = None;
+        for (uri, version, source) in &open_sources {
+            let Ok(uri) = uri.parse() else {
+                continue;
+            };
+            if let Err(error) = self
+                .workspace
+                .upsert_open(uri, i64::from(*version), source.clone())
+            {
+                self.workspace_error = Some(error);
+            }
+        }
+        open_sources
+            .into_iter()
+            .filter_map(|(uri, _, _)| {
+                let parsed = uri.parse().ok()?;
+                let mut job = self.documents.begin_reanalysis(&uri)?;
+                job.workspace = self.workspace.input(&parsed).ok();
+                Some(job)
+            })
+            .collect()
+    }
+
+    pub fn watched_files_registration(&self) -> Option<lsp::RegistrationParams> {
+        self.client
+            .watched_files_dynamic_registration
+            .then(|| lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "adocweave-watch-asciidoc".to_owned(),
+                    method: "workspace/didChangeWatchedFiles".to_owned(),
+                    register_options: Some(
+                        serde_json::to_value(lsp::DidChangeWatchedFilesRegistrationOptions {
+                            watchers: vec![lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String("**/*.adoc".to_owned()),
+                                kind: Some(
+                                    lsp::WatchKind::Create
+                                        | lsp::WatchKind::Change
+                                        | lsp::WatchKind::Delete,
+                                ),
+                            }],
+                        })
+                        .expect("watched file registration is serializable"),
+                    ),
+                }],
+            })
+    }
+
     pub fn adopt(&mut self, job: &AnalysisJob, result: adocweave::AnalysisResult) -> Adoption {
         if job
             .workspace
@@ -408,7 +636,11 @@ impl LanguageService {
             ));
         };
         let source_document = SourceDocument::new(source).map_err(|error| error.to_string())?;
-        let version = document.map(|document| revision_version_i32(&document.request.revision));
+        let version = self
+            .client
+            .diagnostic_version
+            .then(|| document.map(|document| revision_version_i32(&document.request.revision)))
+            .flatten();
         let mut diagnostics = document
             .and_then(|document| document.view.as_ref().map(|view| view.root.as_ref()))
             .iter()
@@ -539,30 +771,65 @@ impl LanguageService {
         uri: &lsp::Url,
     ) -> Result<Option<lsp::DocumentSymbolResponse>, String> {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
-            return Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())));
+            return Ok(Some(if self.client.hierarchical_document_symbols {
+                lsp::DocumentSymbolResponse::Nested(Vec::new())
+            } else {
+                lsp::DocumentSymbolResponse::Flat(Vec::new())
+            }));
         };
-        let symbols = document_symbols(document.analysis.document())
-            .iter()
-            .map(|symbol| {
-                symbol_to_lsp(
-                    symbol,
+        let symbols = document_symbols(document.analysis.document());
+        if self.client.hierarchical_document_symbols {
+            let symbols = symbols
+                .iter()
+                .map(|symbol| {
+                    symbol_to_lsp(
+                        symbol,
+                        document.analysis.source_document(),
+                        self.position_encoding,
+                    )
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(Some(lsp::DocumentSymbolResponse::Nested(symbols)))
+        } else {
+            let mut flat = Vec::new();
+            for symbol in symbols {
+                flatten_symbol_to_lsp(
+                    &symbol,
+                    None,
+                    uri,
                     document.analysis.source_document(),
                     self.position_encoding,
-                )
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        Ok(Some(lsp::DocumentSymbolResponse::Nested(symbols)))
+                    &mut flat,
+                )?;
+            }
+            Ok(Some(lsp::DocumentSymbolResponse::Flat(flat)))
+        }
     }
 
     pub fn code_actions(
         &self,
         uri: &lsp::Url,
+        range: lsp::Range,
+        context: &lsp::CodeActionContext,
     ) -> Result<Option<Vec<lsp::CodeActionOrCommand>>, String> {
+        if !self.client.code_action_quickfix
+            || !code_action_kind_requested(context.only.as_deref(), &lsp::CodeActionKind::QUICKFIX)
+        {
+            return Ok(Some(Vec::new()));
+        }
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
         let mut actions = Vec::new();
         for diagnostic in document.analysis.diagnostics() {
+            let diagnostic_range = range_to_lsp(
+                diagnostic.range,
+                document.analysis.source_document(),
+                self.position_encoding,
+            )?;
+            if !ranges_intersect(range, diagnostic_range) {
+                continue;
+            }
             for fix in &diagnostic.fixes {
                 let edits = fix
                     .edits()
@@ -578,10 +845,8 @@ impl LanguageService {
                         )))
                     })
                     .collect::<Result<Vec<_>, String>>()?;
-                actions.push(lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
-                    title: fix.title.clone(),
-                    kind: Some(lsp::CodeActionKind::QUICKFIX),
-                    edit: Some(lsp::WorkspaceEdit {
+                let edit = if self.client.versioned_document_changes {
+                    lsp::WorkspaceEdit {
                         document_changes: Some(lsp::DocumentChanges::Edits(vec![
                             lsp::TextDocumentEdit {
                                 text_document: lsp::OptionalVersionedTextDocumentIdentifier {
@@ -592,8 +857,32 @@ impl LanguageService {
                             },
                         ])),
                         ..lsp::WorkspaceEdit::default()
-                    }),
-                    is_preferred: Some(fix.applicability == Applicability::Always),
+                    }
+                } else {
+                    lsp::WorkspaceEdit {
+                        changes: Some(std::collections::HashMap::from([(
+                            uri.clone(),
+                            edits
+                                .into_iter()
+                                .map(|edit| match edit {
+                                    lsp::OneOf::Left(edit) => edit,
+                                    lsp::OneOf::Right(_) => {
+                                        unreachable!("AdocWeave emits plain text edits")
+                                    }
+                                })
+                                .collect(),
+                        )])),
+                        ..lsp::WorkspaceEdit::default()
+                    }
+                };
+                actions.push(lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: fix.title.clone(),
+                    kind: Some(lsp::CodeActionKind::QUICKFIX),
+                    edit: Some(edit),
+                    is_preferred: self
+                        .client
+                        .code_action_is_preferred
+                        .then_some(fix.applicability == Applicability::Always),
                     ..lsp::CodeAction::default()
                 }));
             }
@@ -640,7 +929,7 @@ impl LanguageService {
             .iter()
             .find(|attribute| contains(attribute.range, offset))
         {
-            return hover_markup(
+            return make_hover(
                 format!(
                     "**document attribute**  \nName: `{}`  \nRaw value: `{}`",
                     attribute.name, attribute.raw_value
@@ -648,6 +937,7 @@ impl LanguageService {
                 attribute.range,
                 &document,
                 self.position_encoding,
+                self.client.hover,
             );
         }
         if let Some(target) = document.analysis.reference_targets().iter().find(|target| {
@@ -660,19 +950,32 @@ impl LanguageService {
                     )
                 })
         }) {
-            return hover_markup(
+            return make_hover(
                 format!("**reference target**  \nID: `{}`", target.id),
                 target.id_range,
                 &document,
                 self.position_encoding,
+                self.client.hover,
             );
         }
         if let Some((value, range)) = inline_hover(document.analysis.document(), offset) {
-            return hover_markup(value, range, &document, self.position_encoding);
+            return make_hover(
+                value,
+                range,
+                &document,
+                self.position_encoding,
+                self.client.hover,
+            );
         }
         if let Some((value, range)) = block_presentation_hover(document.analysis.document(), offset)
         {
-            return hover_markup(value, range, &document, self.position_encoding);
+            return make_hover(
+                value,
+                range,
+                &document,
+                self.position_encoding,
+                self.client.hover,
+            );
         }
         for author in &document.analysis.document().header().authors {
             if contains(author.range, offset) {
@@ -680,17 +983,24 @@ impl LanguageService {
                     || format!("**author**  \nName: `{}`", author.name),
                     |email| format!("**author**  \nName: `{}`  \nEmail: `{email}`", author.name),
                 );
-                return hover_markup(value, author.range, &document, self.position_encoding);
+                return make_hover(
+                    value,
+                    author.range,
+                    &document,
+                    self.position_encoding,
+                    self.client.hover,
+                );
             }
         }
         if let Some(revision) = &document.analysis.document().header().revision
             && contains(revision.range, offset)
         {
-            return hover_markup(
+            return make_hover(
                 "**document revision**".to_owned(),
                 revision.range,
                 &document,
                 self.position_encoding,
+                self.client.hover,
             );
         }
         let Some(element) = document_element_at(document.analysis.document(), offset) else {
@@ -717,11 +1027,12 @@ impl LanguageService {
             _ => None,
         };
         if let Some((kind, value, range)) = metadata_hover {
-            return hover_markup(
+            return make_hover(
                 format!("**{kind}**  \nValue: `{value}`"),
                 range,
                 &document,
                 self.position_encoding,
+                self.client.hover,
             );
         }
         let (heading, range, part) = match element {
@@ -747,17 +1058,13 @@ impl LanguageService {
             parser::HeadingKind::Section { level } => format!("section level {level}"),
             parser::HeadingKind::Discrete { level } => format!("discrete heading level {level}"),
         };
-        Ok(Some(lsp::Hover {
-            contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                kind: lsp::MarkupKind::Markdown,
-                value: format!("**{level}**  \nGenerated ID: `{id}`  \nPart: {part}"),
-            }),
-            range: Some(range_to_lsp(
-                range,
-                document.analysis.source_document(),
-                self.position_encoding,
-            )?),
-        }))
+        make_hover(
+            format!("**{level}**  \nGenerated ID: `{id}`  \nPart: {part}"),
+            range,
+            &document,
+            self.position_encoding,
+            self.client.hover,
+        )
     }
 
     pub fn completion(
@@ -1142,7 +1449,10 @@ impl LanguageService {
                     self.position_encoding,
                 )?,
                 target: Some(target),
-                tooltip: Some("外部リンクを開く".to_owned()),
+                tooltip: self
+                    .client
+                    .document_link_tooltip
+                    .then(|| "外部リンクを開く".to_owned()),
                 data: None,
             });
         }
@@ -1172,7 +1482,10 @@ impl LanguageService {
                     self.position_encoding,
                 )?,
                 target: Some(target),
-                tooltip: Some("参照先を開く".to_owned()),
+                tooltip: self
+                    .client
+                    .document_link_tooltip
+                    .then(|| "参照先を開く".to_owned()),
                 data: None,
             });
         }
@@ -1198,7 +1511,10 @@ impl LanguageService {
                         self.position_encoding,
                     )?,
                     target: Some(target),
-                    tooltip: Some("include先を開く".to_owned()),
+                    tooltip: self
+                        .client
+                        .document_link_tooltip
+                        .then(|| "include先を開く".to_owned()),
                     data: None,
                 });
             }
@@ -1233,6 +1549,9 @@ impl LanguageService {
         &self,
         uri: &lsp::Url,
     ) -> Result<Option<lsp::SemanticTokensResult>, String> {
+        if !self.client.semantic_tokens_full {
+            return Ok(None);
+        }
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(lsp::SemanticTokensResult::Tokens(
                 lsp::SemanticTokens {
@@ -1386,23 +1705,82 @@ impl LanguageService {
     }
 }
 
-fn hover_markup(
+fn make_hover(
     value: String,
     range: CoreTextRange,
     document: &DocumentSnapshot,
     encoding: PositionEncoding,
+    presentation: HoverPresentation,
 ) -> Result<Option<lsp::Hover>, String> {
-    Ok(Some(lsp::Hover {
-        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+    let contents = match presentation {
+        HoverPresentation::Markdown => lsp::HoverContents::Markup(lsp::MarkupContent {
             kind: lsp::MarkupKind::Markdown,
             value,
         }),
+        HoverPresentation::PlainText => lsp::HoverContents::Markup(lsp::MarkupContent {
+            kind: lsp::MarkupKind::PlainText,
+            value: hover_plain_text(&value),
+        }),
+        HoverPresentation::Legacy => {
+            lsp::HoverContents::Scalar(lsp::MarkedString::String(hover_plain_text(&value)))
+        }
+    };
+    Ok(Some(lsp::Hover {
+        contents,
         range: Some(range_to_lsp(
             range,
             document.analysis.source_document(),
             encoding,
         )?),
     }))
+}
+
+fn code_action_kind_requested(
+    only: Option<&[lsp::CodeActionKind]>,
+    offered: &lsp::CodeActionKind,
+) -> bool {
+    only.is_none_or(|requested| {
+        requested.iter().any(|kind| {
+            offered == kind
+                || offered
+                    .as_str()
+                    .strip_prefix(kind.as_str())
+                    .is_some_and(|suffix| suffix.starts_with('.'))
+        })
+    })
+}
+
+fn ranges_intersect(left: lsp::Range, right: lsp::Range) -> bool {
+    if left.start == left.end {
+        return point_in_range(left.start, right);
+    }
+    if right.start == right.end {
+        return point_in_range(right.start, left);
+    }
+    position_lt(left.start, right.end) && position_lt(right.start, left.end)
+}
+
+fn point_in_range(point: lsp::Position, range: lsp::Range) -> bool {
+    if range.start == range.end {
+        point == range.start
+    } else {
+        position_le(range.start, point) && position_lt(point, range.end)
+    }
+}
+
+fn position_le(left: lsp::Position, right: lsp::Position) -> bool {
+    (left.line, left.character) <= (right.line, right.character)
+}
+
+fn position_lt(left: lsp::Position, right: lsp::Position) -> bool {
+    (left.line, left.character) < (right.line, right.character)
+}
+
+fn hover_plain_text(markdown: &str) -> String {
+    markdown
+        .replace("  \n", "\n")
+        .replace("**", "")
+        .replace('`', "")
 }
 
 fn inline_hover(
@@ -1676,6 +2054,48 @@ fn symbol_to_lsp(
                 .collect::<Result<Vec<_>, _>>()?,
         ),
     })
+}
+
+#[allow(deprecated)]
+fn flatten_symbol_to_lsp(
+    symbol: &CoreDocumentSymbol,
+    container_name: Option<&str>,
+    uri: &lsp::Url,
+    source_document: &SourceDocument,
+    encoding: PositionEncoding,
+    output: &mut Vec<lsp::SymbolInformation>,
+) -> Result<(), String> {
+    output.push(lsp::SymbolInformation {
+        name: symbol.name.clone(),
+        kind: core_symbol_kind_to_lsp(symbol.kind),
+        tags: None,
+        deprecated: None,
+        location: lsp::Location::new(
+            uri.clone(),
+            range_to_lsp(symbol.range, source_document, encoding)?,
+        ),
+        container_name: container_name.map(str::to_owned),
+    });
+    for child in &symbol.children {
+        flatten_symbol_to_lsp(
+            child,
+            Some(&symbol.name),
+            uri,
+            source_document,
+            encoding,
+            output,
+        )?;
+    }
+    Ok(())
+}
+
+fn core_symbol_kind_to_lsp(kind: CoreSymbolKind) -> lsp::SymbolKind {
+    match kind {
+        CoreSymbolKind::DocumentTitle => lsp::SymbolKind::FILE,
+        CoreSymbolKind::Part => lsp::SymbolKind::MODULE,
+        CoreSymbolKind::Section => lsp::SymbolKind::NAMESPACE,
+        CoreSymbolKind::ListItem => lsp::SymbolKind::STRING,
+    }
 }
 
 fn range_to_lsp(

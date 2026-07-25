@@ -18,6 +18,13 @@ Issue 045で、既存機能の意味処理とfixtureを維持しながら、prot
 https://github.com/oxalica/async-lsp[`async-lsp`]、実行runtimeを
 https://tokio.rs/[Tokio]へ破壊的に移行した。この文書は現在の実装契約を表す。
 
+Issue 162では
+https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/[
+Language Server Protocol 3.18]を固定revisionで監査した。完全なcapability matrix、非目標および
+protocol libraryの判断は
+xref:../issues/162-lsp-3-18-conformance-audit.adoc[Language Server Protocol 3.18適合性監査]を
+参照する。
+
 == crate境界
 
 [source,text]
@@ -140,14 +147,51 @@ tokenを発火した場合、計算済みであっても応答を`ContentModifie
 
 採用するmiddlewareはコード上で明示し、既定featureだけに依存しない。
 
-* server lifecycle
+* AdocWeave所有のserver lifecycle state machine
 * 要求の同時実行制限と`$/cancelRequest`
 * panic隔離
 * 本文を記録しない構造化tracing
+* initializeの`processId`が指定された場合のclient process監視
 
-client process監視、network transportその他の不要なfeatureは、利用要件が生じるまで
-有効にしない。LSP仕様型はprotocol境界でのみ使用し、コア型との変換関数をテスト可能な
-安定面とする。
+`async-lsp 0.2.4`の既定lifecycleはinitialize前とshutdown後の通知を転送し、shutdown前の
+exitを異常終了にできないため使用しない。独自state machineはinitialize前のrequestを
+`ServerNotInitialized`、重複initializeとshutdown後のrequestを`InvalidRequest`とし、
+無効な状態の通知を破棄する。shutdown後のexitだけを正常終了とする。
+
+製品transportはstdioだけを提供し、network transportは非目標とする。LSP仕様型はprotocol境界で
+のみ使用し、コア型との変換関数をテスト可能な安定面とする。
+
+== client capability profile
+
+initializeで合意したclient capabilityは一つのprofileとして保持し、その後の応答形を決める。
+serverはclientが宣言していない追加表現を送らない。
+
+[cols="2,3",options="header"]
+|===
+|client capability |応答契約
+
+|Hover `contentFormat`
+|clientの優先順でMarkdownまたはPlain Textを選ぶ。未指定時はlegacy plain文字列を返す。
+
+|Document Symbol `hierarchicalDocumentSymbolSupport`
+|trueなら階層形式、それ以外は平坦な`SymbolInformation[]`を返す。
+
+|Code Action literal、`isPreferredSupport`
+|`quickfix` literalを扱えるclientにだけproviderを広告する。`range`と`context.only`を適用し、
+`isPreferred`は対応clientにだけ付ける。
+
+|Workspace Edit `documentChanges`
+|trueならversion付き`documentChanges`、それ以外は`changes`を使う。
+
+|Publish Diagnostics `versionSupport`
+|trueの場合だけversionを通知へ含める。
+
+|Document Link `tooltipSupport`
+|trueの場合だけtooltipを含める。
+
+|Semantic Tokens
+|full、relative、`string`および`variable`をすべて扱えるclientにだけproviderを広告する。
+|===
 
 == 診断
 
@@ -167,6 +211,18 @@ pull diagnosticsは現段階では広告しない。
 `workspace/didChangeConfiguration`は直下または`adocweave`オブジェクト内の
 `debounceMs`を受け付け、0から1,000 msへ制限する。不正設定は現在値を維持し、サーバを
 終了させない。既定は30 msである。
+
+`workspace.workspaceFolders`を宣言したclientに対して、serverはworkspace folder対応と
+change notificationをinitialize結果で広告する。初期folder集合に加え、
+`workspace/didChangeWorkspaceFolders`で追加・削除されたrootを原子的に再構築し、open bufferを
+新しいworkspace snapshotへ再適用する。workspace folder対応clientの`workspaceFolders: null`は
+空集合として扱い、`rootUri`へfallbackしない。未対応clientだけがlegacy `rootUri`を使用し、
+nullの場合はさらにdeprecatedなfilesystem `rootPath`へfallbackする。
+
+`workspace.didChangeWatchedFiles.dynamicRegistration`を宣言したclientには、initialized後に
+`client/registerCapability`を送り、`**/*.adoc`のcreate、changeおよびdeleteを購読する。
+登録に失敗してもserverは終了しない。watch通知の有無を正確性の境界にせず、受信したURIには
+初期scanと同じworkspace境界とresource上限を再適用する。
 
 既定サーバはinitialize時のworkspace folderから`.adoc` fileを上限付きで読み、open文書を優先する
 version付きsnapshotを構築する。`include::`の依存graphと逆依存索引を保持し、open文書変更または

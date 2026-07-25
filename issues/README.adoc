@@ -364,7 +364,7 @@ Dependabot導入とcandidate artifact再利用を受け入れた。
 LSP 3.18を固定revisionで監査し、client capability、workspace通知購読および応答形式の相互運用性を
 次期`v0.8.0`候補として固定する。
 
-* xref:162-lsp-3-18-conformance-audit.adoc[162: Language Server Protocol 3.18適合性監査]（計画）
+* xref:162-lsp-3-18-conformance-audit.adoc[162: Language Server Protocol 3.18適合性監査]（進行中）
 
 === M47: 標準構文の互換性
 

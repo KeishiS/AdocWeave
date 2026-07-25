@@ -1,5 +1,5 @@
 = Language Server Protocol 3.18適合性監査
-:status: planned
+:status: in-progress
 :depends-on: 038, 069
 
 == 目的
@@ -9,9 +9,123 @@ https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/spe
 再現可能な一覧にする。optional機能を網羅的に実装するのではなく、対応、非対応および意図的な
 非目標を区別し、既存clientとの相互運用性に影響する差分だけを後続実装へ結び付ける。
 
-監査基準は仕様siteの更新を追跡できるrevisionへ固定する。初回監査では、2026-07-16の
-`gh-pages` commit `b7f5132c95261c0898ae5124e7a91707abc48fcd`を基準候補とし、着手時に
-URL、revisionおよび参照日を確定する。
+監査基準は2026-07-25に参照した
+https://github.com/microsoft/language-server-protocol/tree/b7f5132c95261c0898ae5124e7a91707abc48fcd/_specifications/lsp/3.18[
+`microsoft/language-server-protocol`の`gh-pages` commit
+`b7f5132c95261c0898ae5124e7a91707abc48fcd`]とする。公開仕様siteは
+https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/[
+Language Server Protocol 3.18]である。
+
+== 監査結果
+
+=== capability matrix
+
+[cols="2,2,5",options="header"]
+|===
+|仕様領域 |状態 |AdocWeaveの契約
+
+|initialize、initialized、shutdown、exit
+|対応
+|initialize前のrequestは`ServerNotInitialized`、重複initializeとshutdown後のrequestは
+`InvalidRequest`とする。initialize前とshutdown後の通知を破棄し、shutdown後のexitだけを
+終了status 0とする。それ以外のexitはstatus 1で終了する。
+
+|client process
+|対応
+|`processId`が指定された場合は`async-lsp`のclient process monitorを有効にし、client終了を監視する。
+`processId: null`では監視しない。
+
+|position encoding
+|対応
+|`general.positionEncodings`からUTF-8またはUTF-16をclientの優先順で選ぶ。共通候補がなければ
+仕様既定のUTF-16を使う。UTF-32は非目標とする。
+
+|text synchronization
+|対応
+|open／close、incremental changeおよびsaveを静的に広告する。複数change、CRLF、UTF-8／UTF-16、
+generation gateおよびcancellationを既存testで固定する。
+
+|workspace folders
+|条件付き対応
+|`workspace.workspaceFolders`がtrueのclientにだけ
+`workspace.workspaceFolders.supported`と`changeNotifications`を広告する。
+初期folder集合と`workspace/didChangeWorkspaceFolders`を扱い、open overlayを再適用する。
+対応clientが`workspaceFolders: null`を送った場合は空集合であり、deprecatedな`rootUri`へ
+fallbackしない。未対応clientに限り`rootUri`を使い、nullの場合はdeprecatedな`rootPath`へ
+fallbackする。
+
+|watched files
+|条件付き対応
+|`workspace.didChangeWatchedFiles.dynamicRegistration`がtrueの場合、initialized後に
+`client/registerCapability`で`**/*.adoc`のcreate／change／deleteを登録する。
+登録失敗はserverを終了させず、watcherなしで継続する。未登録clientから届いた通知も
+workspace境界とresource上限を再検査して安全に処理する。
+
+|Hover
+|対応
+|`contentFormat`の優先順にMarkdownまたはPlain Textの`MarkupContent`を返す。
+capabilityがなければlegacy `MarkedString`互換のplain文字列を返す。
+
+|Document Symbol
+|対応
+|`hierarchicalDocumentSymbolSupport`がtrueの場合だけ`DocumentSymbol[]`を返し、
+それ以外は階層をpre-orderで平坦化した`SymbolInformation[]`を返す。
+
+|Code Action／Workspace Edit
+|条件付き対応
+|literal supportの`valueSet`に`quickfix`がある場合だけproviderを広告し、`CodeAction`を返す。
+requestの`range`と`context.only`を適用する。`isPreferred`、version付き`documentChanges`は
+対応capabilityがある場合だけ使い、それ以外は`changes`へfallbackする。Command形式、
+resolve、data、disabled、documentation、tagsおよびchange annotationは非目標とする。
+
+|push diagnostics
+|対応
+|`versionSupport`がtrueの場合だけversionを含める。pull diagnosticsとdiagnostic refreshは
+非目標とする。
+
+|Document Link
+|対応
+|`tooltipSupport`がtrueの場合だけtooltipを含める。resolveは広告しない。
+
+|Semantic Tokens
+|条件付き対応
+|clientがfull request、relative formatならびに`string`と`variable` token typeをすべて
+扱える場合だけfull providerを広告する。range、deltaおよびrefreshは非目標とする。
+
+|Completion
+|対応
+|基本`CompletionItem[]`だけを返す。resolve、snippet、insert／replace edit、label details、
+item defaultsおよび3.18 apply kindは非目標とする。
+
+|Definition、References、Rename
+|対応
+|`Location`／`Location[]`と`WorkspaceEdit`の基本形を使う。Location Link、prepare rename、
+default behaviorおよびresolveは非目標とする。
+
+|Formatting
+|対応
+|文書全体のformattingだけを広告する。range、on-typeおよび3.18のmultiple document rangesは
+非目標とする。
+
+|3.18 optional追加機能
+|非目標
+|inline completion、text document content、folding range refresh、notebook同期、
+file operation、call／type hierarchy、inlay hint、inline value、linked editing、
+selection range、monikerおよびworkspace symbolは今回の適合条件に含めない。
+
+|transport
+|意図的制約
+|製品binaryはstdioだけを提供する。in-memory transportはprotocol testに使う。
+network socketまたは独自framingは非目標とする。
+|===
+
+=== protocol libraryの判断
+
+`async-lsp 0.2.4`と、その公開型で解決される`lsp-types 0.95.1`を維持する。今回必要な
+client capability、server capability、registrationおよび応答unionはこの組合せで型付きに
+表現できる。`async-lsp`の既定lifecycleはinitialize前／shutdown後の通知を転送し、
+shutdown前のexitを異常終了にできないため、AdocWeave所有の小さなlifecycle state machineへ
+置き換える。3.18 optional機能を実装するまで、meta model全体を局所的なJSON型として複製しない。
 
 == 既知の確認対象
 
@@ -47,3 +161,13 @@ URL、revisionおよび参照日を確定する。
 * 最小・全対応client fixtureで、server capabilityと応答形式が宣言済みclient capabilityを超えない。
 * file watcherとworkspace folder変更の登録・通知契約が自動テストで再現される。
 * `cargo make verify`、Zed extension testおよび主要LSP機能の手動確認が成功する。
+
+== 実装記録
+
+* initializeでclient capability profileを確定し、Hover、Document Symbol、Code Action、
+  Workspace Edit、diagnostics、Document LinkおよびSemantic Tokensの応答へ適用した。
+* workspace folderの静的capabilityと変更通知、watched filesの動的登録を追加した。
+* `async-lsp`既定lifecycleを置き換え、invalid-state通知の破棄とexit statusを3.18契約へ合わせた。
+* client process monitorを有効にした。
+* 最小client、全対応client、workspace再構築、watcher登録、Code Action range／kind、
+  invalid lifecycleおよびbinary exit statusを自動testで固定した。
