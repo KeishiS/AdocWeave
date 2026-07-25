@@ -1,6 +1,7 @@
 //! Typed LSP adapter, isolated from the deterministic parsing core.
 
 mod backend;
+mod lifecycle;
 mod service;
 mod state;
 mod workspace;

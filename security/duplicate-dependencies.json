@@ -11,6 +11,11 @@
         "crate": "syn",
         "versions": ["2.0.119", "3.0.2"],
         "reason": "ICU・WASM macro群とserde 1.0.229が異なるmajor versionを要求するため"
+      },
+      {
+        "crate": "windows-sys",
+        "versions": ["0.59.0", "0.61.2"],
+        "reason": "async-lspのclient-monitorが使うwaitpid-anyとTokio・rustixがWindows向けに異なるminor versionを要求するため"
       }
     ],
     "zed-extension": [

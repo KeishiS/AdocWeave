@@ -8,17 +8,18 @@ use std::sync::Arc;
 use adocweave::Engine;
 use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits, preprocess};
 use adocweave::{CancellationCheck, CancellationToken};
+use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
 use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
 use async_lsp::panic::CatchUnwindLayer;
 use async_lsp::router::Router;
-use async_lsp::server::LifecycleLayer;
 use async_lsp::tracing::TracingLayer;
 use async_lsp::{ClientSocket, ErrorCode, ResponseError};
 use serde_json::Value;
 use tokio::sync::Semaphore;
 use tower::ServiceBuilder;
 
+use crate::lifecycle::ProtocolLifecycleLayer;
 use crate::service::LanguageService;
 use crate::state::{Adoption, AnalysisJob, WorkspaceAnalysis, WorkspaceProblem};
 use crate::{HostReferenceIndex, NoHostReferenceIndex};
@@ -55,6 +56,7 @@ impl Backend {
         client: ClientSocket,
         host_index: Arc<dyn HostReferenceIndex>,
     ) -> impl async_lsp::LspService<Response = Value, Error = ResponseError> {
+        let process_monitor = client.clone();
         let mut router = Router::new(Self {
             client,
             service: LanguageService::with_host_index(host_index),
@@ -67,14 +69,17 @@ impl Backend {
                 let response = state.service.initialize(&params);
                 async move { Ok(response) }
             })
-            .notification::<notification::Initialized>(|_, _| ControlFlow::Continue(()))
+            .notification::<notification::Initialized>(|state, _| {
+                state.register_dynamic_capabilities();
+                ControlFlow::Continue(())
+            })
             .request::<request::Shutdown, _>(|state, _| {
                 state.cancel_all_analysis();
                 async move { Ok(()) }
             })
             .notification::<notification::Exit>(|state, _| {
                 state.cancel_all_analysis();
-                ControlFlow::Break(Ok(()))
+                ControlFlow::Continue(())
             })
             .notification::<notification::DidOpenTextDocument>(|state, params| {
                 for job in state.service.begin_open(params) {
@@ -106,6 +111,12 @@ impl Backend {
                 }
                 ControlFlow::Continue(())
             })
+            .notification::<notification::DidChangeWorkspaceFolders>(|state, params| {
+                for job in state.service.workspace_folders_changed(params) {
+                    state.schedule_analysis(job);
+                }
+                ControlFlow::Continue(())
+            })
             .notification::<notification::DidCloseTextDocument>(|state, params| {
                 let uri = params.text_document.uri;
                 state.cancel_analysis(uri.as_str());
@@ -121,8 +132,10 @@ impl Backend {
                 })
             })
             .request::<request::CodeActionRequest, _>(|state, params| {
+                let range = params.range;
+                let context = params.context;
                 state.cpu_request(params.text_document.uri, move |service, uri| {
-                    service.code_actions(uri)
+                    service.code_actions(uri, range, &context)
                 })
             })
             .request::<request::Formatting, _>(|state, params| {
@@ -181,12 +194,23 @@ impl Backend {
 
         ServiceBuilder::new()
             .layer(TracingLayer::default())
-            .layer(LifecycleLayer::default())
+            .layer(ProtocolLifecycleLayer)
             .layer(CatchUnwindLayer::default())
             .layer(ConcurrencyLayer::new(
                 NonZeroUsize::new(MAX_CONCURRENT_REQUESTS).expect("non-zero request limit"),
             ))
+            .layer(ClientProcessMonitorLayer::new(process_monitor))
             .service(router)
+    }
+
+    fn register_dynamic_capabilities(&mut self) {
+        let Some(params) = self.service.watched_files_registration() else {
+            return;
+        };
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let _ = client.request::<request::RegisterCapability>(params).await;
+        });
     }
 
     /// Runs a read-only language request on the CPU pool with the shared

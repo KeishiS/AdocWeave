@@ -128,6 +128,19 @@ impl DocumentStore {
             .collect()
     }
 
+    pub fn open_sources(&self) -> Vec<(String, i32, String)> {
+        self.documents
+            .values()
+            .filter_map(|document| {
+                Some((
+                    document.uri.clone(),
+                    i32::try_from(document.request.revision.version).ok()?,
+                    document.request.source.to_string(),
+                ))
+            })
+            .collect()
+    }
+
     pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
         self.documents
             .values()
