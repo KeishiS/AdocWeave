@@ -326,6 +326,8 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 
 === M41: インライン書式の互換性
 
+M45までには着手せず、M47へ繰り越した。
+
 * xref:156-inline-monospace-boundaries.adoc[156: インライン等幅書式の境界規則]（計画）
 
 === M42: 依存更新の自動化
@@ -333,22 +335,22 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 DependabotでCargoとGitHub Actionsの更新を小さいreview単位へ定着させる。Nix入力を含む更新は、
 その運用結果を基にRenovateへの移行可否を判断する。同じ依存集合を複数botで更新しない。
 
-* xref:157-dependabot-dependency-updates.adoc[157: Dependabotによる依存更新の導入]（実施中）
-* xref:158-renovate-nix-update-evaluation.adoc[158: RenovateによるNix依存更新の評価]（計画）
+* xref:157-dependabot-dependency-updates.adoc[157: Dependabotによる依存更新の導入]（完了）
+* xref:158-renovate-nix-update-evaluation.adoc[158: RenovateによるNix依存更新の評価]（計画・条件付き）
 
 === M43: Release公開の重複検証削減
 
 `main`で検証済みのrelease candidateを同一commitのtag公開で再利用し、公開固有の完全性検証を維持したまま
 CIの重複実行を削減する。
 
-* xref:159-release-candidate-artifact-reuse.adoc[159: Release candidate artifactの再利用]（実施中）
+* xref:159-release-candidate-artifact-reuse.adoc[159: Release candidate artifactの再利用]（完了）
 
-=== M44: v0.6.2 CI公開経路の受け入れ
+=== M44: CI公開経路の受け入れ
 
-Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatch releaseとして受け入れる。tag公開では
-同一commitのmain candidateを再利用し、GitHub Releaseのasset、checksum、SBOMおよびprovenanceを確認する。
+当初は`v0.6.2`での受け入れを計画したが、patch releaseを独立して公開せず、後続の`v0.7.0`で
+Dependabot導入とcandidate artifact再利用を受け入れた。
 
-* xref:160-v0-6-2-release-readiness.adoc[160: v0.6.2 release readinessとCI公開経路の受け入れ]（実施中）
+* xref:160-v0-6-2-release-readiness.adoc[160: v0.6.2 release readinessとCI公開経路の受け入れ]（完了・後続releaseで代替）
 
 === M45: v0.7.0 release train
 
@@ -356,6 +358,29 @@ Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatc
 公開する。Dependabot PRとM40後の内部設計課題は含めない。
 
 * xref:161-v0-7-0-release-readiness.adoc[161: v0.7.0 release readiness]（完了）
+
+=== M46: LSP 3.18相互運用性
+
+LSP 3.18を固定revisionで監査し、client capability、workspace通知購読および応答形式の相互運用性を
+次期`v0.8.0`候補として固定する。
+
+* xref:162-lsp-3-18-conformance-audit.adoc[162: Language Server Protocol 3.18適合性監査]（計画）
+
+=== M47: 標準構文の互換性
+
+* xref:156-inline-monospace-boundaries.adoc[156: インライン等幅書式の境界規則]（計画）
+* xref:163-table-automatic-header-inference.adoc[163: Tableの自動header推論]（計画）
+
+=== M48: 文書状態とmedia presentation
+
+影響範囲を分離し、各Issueを個別のminor release候補として扱う。
+
+* xref:164-document-scoped-attribute-changes.adoc[164: 文書内属性変更の評価]（計画）
+* xref:165-media-backend-presentation.adoc[165: Mediaのbackend presentation]（計画）
+
+=== 継続運用: 依存更新
+
+* xref:166-dependabot-safe-auto-merge.adoc[166: Dependabot PRの安全な自動merge]（計画）
 
 === M1: プレーンテキスト変換
 

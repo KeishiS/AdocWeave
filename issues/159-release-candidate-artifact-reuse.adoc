@@ -1,5 +1,5 @@
 = Release candidate artifactの再利用
-:status: in-progress
+:status: completed
 :depends-on: 130
 
 == 目的
@@ -25,3 +25,15 @@ source変更を伴うtag、異なるcommitのartifact再利用、品質検査の
 * tag workflowが検証済みcandidateのcommit、artifact、checksumおよびrelease manifestの一致を確認する。
 * candidateが利用不能または不一致の場合、GitHub Releaseは作成されない。
 * releaseのasset、SBOMおよびprovenanceが再利用したcandidateとbyte単位で一致する。
+
+== 受け入れ結果
+
+https://github.com/KeishiS/AdocWeave/actions/runs/30158770759[main candidate run 30158770759]で
+`v0.7.0`の完全candidateを作成し、
+https://github.com/KeishiS/AdocWeave/actions/runs/30159071293[tag publication run 30159071293]で
+同一commitのcandidate metadataとartifactを再検証して再利用した。tag publicationはsource quality、
+fuzz、archive buildおよびinstallation E2Eを再実行せず、tag固有の完全性検証、provenance生成および
+publishだけを行った。
+
+https://github.com/KeishiS/AdocWeave/releases/tag/v0.7.0[GitHub Release v0.7.0]の9 asset、
+checksum、SPDX SBOMおよびprovenanceは受け入れ済みである。

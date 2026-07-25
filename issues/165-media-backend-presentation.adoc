@@ -1,0 +1,24 @@
+= Mediaのbackend presentation
+:status: planned
+:depends-on: 065, 075
+
+== 目的
+
+実装済みのblock／inline image、icon、audioおよびvideo resource modelを利用し、media typeと解決結果に
+応じたbackend presentationを定める。コアとrendererはI/Oを行わず、取得、権限判定および埋め込み判断を
+hostのresource resolverへ委譲する。
+
+== 作業
+
+* media typeごとのHTML要素、属性allowlist、代替表現および失敗時fallbackを規範化する。
+* icon set、寸法、title／alt、poster、controlsおよびlink化に関する標準属性の対応範囲を決める。
+* `RenderInputs`で解決済みURLまたは拒否・欠落・失敗を受け取り、rendererで再検証する既存境界を維持する。
+* URI scheme、data URI、remote resourceおよび埋め込み可否をhost policyとbackend presentationへ分離する。
+* macros and resources、render inputs、HTML contract、syntax support、compatibilityおよびfixtureを同期する。
+
+== 完了条件
+
+* image、icon、audioおよびvideoの対応・fallbackがbackend contractに明記される。
+* 同じDocumentと`RenderInputs`から、I/Oなしで決定的なHTMLを生成する。
+* 未解決・拒否・不正URLがraw HTMLや許可されない属性を出力しない。
+* native／WASM同値fixtureとsecurity testがmedia typeごとの境界を固定する。
