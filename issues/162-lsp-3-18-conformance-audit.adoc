@@ -1,5 +1,5 @@
 = Language Server Protocol 3.18適合性監査
-:status: in-progress
+:status: completed
 :depends-on: 038, 069
 
 == 目的
@@ -168,18 +168,15 @@ responseへ同じ値を返す。成功responseは`result`、失敗responseは`er
 in-memory streamで使用する。
 |===
 
-== 既知の確認対象
+== 監査で確認した乖離
 
-* `workspace/didChangeWatchedFiles`を処理する一方、動的な`client/registerCapability`による
-  watcher登録を行っていない。
-* 初期化時の`workspaceFolders`を読む一方、`workspace.workspaceFolders` capabilityと
-  `workspace/didChangeWorkspaceFolders`通知を扱っていない。
-* client capabilityは主に`general.positionEncodings`だけを保持し、Hoverの`contentFormat`、
-  Document Symbolの`hierarchicalDocumentSymbolSupport`およびWorkspace Editの
-  `documentChanges`対応可否を応答へ反映していない。
-* Code Action literal、version付きdiagnostics、Document Linkの`tooltip`を含む3.18追加・変更点と、
-  現在の`async-lsp`／`lsp-types`が表現できる型の範囲を確認する。
-* stdio transportとclient process監視に関する現在の判断を、仕様の推奨事項と意図的な制約に分ける。
+監査開始時にはwatched filesの動的登録、workspace folder変更、Hover、Document Symbol、
+Workspace Edit、Code Action、diagnosticsおよびDocument Linkのcapability negotiationが不足していた。
+これらはcapability matrixと実装記録に示す契約へ修正した。
+
+stdio transportは意図的な制約として維持し、client process監視は`async-lsp`の
+`client-monitor` featureで有効化した。LSP 3.18 optional機能は、相互運用性に必要な範囲と
+非目標をmatrixで区別した。
 
 == 作業
 
@@ -213,3 +210,5 @@ in-memory streamで使用する。
 * 最小client、全対応client、workspace再構築、watcher登録、Code Action range／kind、
   invalid lifecycle、JSON-RPCのid／error／notificationおよびbinary exit statusを自動testで
   固定した。
+* `cargo make verify`とZed extension testが成功し、Zed上の診断、Outline、Code Action、
+  Format、Hover、補完、Definition、References、Document LinkおよびSemantic Tokensを手動確認した。

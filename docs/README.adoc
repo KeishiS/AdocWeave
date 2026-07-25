@@ -45,6 +45,7 @@
 
 * xref:compatibility.adoc[AsciiDocとの違い]
 * xref:current-contract.adoc[公開している仕様と移行情報]
+* xref:upgrade-0-8.adoc[v0.8.0への移行]
 * xref:upgrade-0-7.adoc[v0.7.0への移行]
 * xref:core-profile.adoc[対応範囲の定義]
 * xref:architecture.adoc[内部の仕組み]

@@ -1,0 +1,26 @@
+= v0.8.0 release readiness
+:status: in-progress
+:depends-on: 162
+
+== 目的
+
+LSP 3.18に沿ったlifecycle、client capability別応答、workspace folder変更およびwatched files登録を
+`v0.8.0`として配布する。版数、移行ガイド、公開契約、fixtureおよびrelease acceptanceを
+一つのrelease trainで同期する。M47以降の構文機能と内部設計課題はこのreleaseへ含めない。
+
+== 設計判断
+
+Language Serverの利用者可視なprotocol動作を変更するため、patchでなくminor releaseとする。
+Rust公開API、WASM protocol schemaおよび`CONTRACT_VERSION = 1`は変更しない。
+release manifestの`packageVersion`を機械可読な基準とし、Rust 1.97.1を維持する。
+mainの完全candidate成功commitへstable tagを一度だけ付ける。
+
+== 完了条件
+
+* workspace、Zed、browser、protocol、release manifest、distribution planおよびfixtureが`0.8.0`で一致する。
+* xref:../docs/upgrade-0-8.adoc[v0.8.0への移行]がLSP clientへの影響と更新手順を定義する。
+* `RELEASE_TAG=v0.8.0 cargo make release-gate`が成功する。
+* pull requestを最新の`origin/main`へrebaseし、必須check成功後にmergeする。
+* mainのcandidate成功後、`v0.8.0`を作成し、GitHub Releaseの9 asset、checksum、SBOMおよびprovenanceを受け入れる。
+* Zedで診断、Outline、Code Action、Format、Hover、補完、Definition、References、
+  Document LinkおよびSemantic Tokensを手動確認する。
