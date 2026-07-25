@@ -339,7 +339,12 @@ fn append_tokens(source: &SourceDocument, range: TextRange, output: &mut Vec<Syn
     if range.is_empty() {
         return;
     }
-    for token in source.tokens() {
+    let tokens = source.tokens();
+    let first = tokens.partition_point(|token| token.range.end() <= range.start());
+    for token in tokens[first..]
+        .iter()
+        .take_while(|token| token.range.start() < range.end())
+    {
         let start = token.range.start().max(range.start());
         let end = token.range.end().min(range.end());
         if start < end {
@@ -376,6 +381,23 @@ mod tests {
                 .iter()
                 .all(|node| matches!(node.kind(), SyntaxKind::Token(_)))
         );
+    }
+
+    #[test]
+    fn large_flat_syntax_materializes_without_rescanning_all_tokens_per_block() {
+        let source = "line\n".repeat(10_000);
+        let document = SourceDocument::new(&source).expect("source");
+        let block_count = document.lines().len();
+        let blocks = document
+            .lines()
+            .iter()
+            .map(|line| SyntaxNode::leaf(SyntaxKind::Paragraph, line.full_range()))
+            .collect();
+
+        let tree = SyntaxTree::from_blocks(document, blocks, Vec::new());
+
+        assert_eq!(tree.blocks().len(), block_count);
+        assert_eq!(tree.reconstruct(), source);
     }
 
     #[test]

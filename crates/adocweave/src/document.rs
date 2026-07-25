@@ -87,6 +87,7 @@ impl Document {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadingId {
     pub range: TextRange,
+    pub id_range: TextRange,
     pub base: String,
     pub id: String,
 }
@@ -94,7 +95,10 @@ pub struct HeadingId {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DocumentIdentifiers {
     heading_ids: Vec<HeadingId>,
+    heading_ordinals: BTreeMap<TextRange, usize>,
     targets: Vec<ReferenceTarget>,
+    target_ordinals_by_range: BTreeMap<TextRange, usize>,
+    target_ordinals_by_id: BTreeMap<String, usize>,
 }
 
 impl DocumentIdentifiers {
@@ -106,10 +110,22 @@ impl DocumentIdentifiers {
         &self.targets
     }
 
+    pub fn target_at(&self, range: TextRange) -> Option<&ReferenceTarget> {
+        self.target_ordinals_by_range
+            .get(&range)
+            .and_then(|ordinal| self.targets.get(*ordinal))
+    }
+
+    pub fn target_by_id(&self, id: &str) -> Option<&ReferenceTarget> {
+        self.target_ordinals_by_id
+            .get(id)
+            .and_then(|ordinal| self.targets.get(*ordinal))
+    }
+
     pub fn heading_at(&self, range: TextRange) -> Option<&HeadingId> {
-        self.heading_ids
-            .iter()
-            .find(|heading| heading.range == range)
+        self.heading_ordinals
+            .get(&range)
+            .and_then(|ordinal| self.heading_ids.get(*ordinal))
     }
 }
 
@@ -213,6 +229,7 @@ pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
             );
             heading_ids.push(HeadingId {
                 range: heading.text_range,
+                id_range,
                 base,
                 id: id.clone(),
             });
@@ -247,9 +264,27 @@ pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
     }
     targets.sort_by_key(|target| (target.target_range.start(), target.target_range.end()));
     heading_ids.sort_by_key(|heading| heading.range);
+    let heading_ordinals = heading_ids
+        .iter()
+        .enumerate()
+        .map(|(ordinal, heading)| (heading.range, ordinal))
+        .collect();
+    let mut target_ordinals_by_range = BTreeMap::new();
+    let mut target_ordinals_by_id = BTreeMap::new();
+    for (ordinal, target) in targets.iter().enumerate() {
+        target_ordinals_by_range
+            .entry(target.target_range)
+            .or_insert(ordinal);
+        target_ordinals_by_id
+            .entry(target.id.clone())
+            .or_insert(ordinal);
+    }
     DocumentIdentifiers {
         heading_ids,
+        heading_ordinals,
         targets,
+        target_ordinals_by_range,
+        target_ordinals_by_id,
     }
 }
 

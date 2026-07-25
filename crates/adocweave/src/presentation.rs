@@ -116,8 +116,10 @@ pub struct DocumentPresentation {
     toc_policy: TocPolicy,
     section_numbers: bool,
     headings: Vec<HeadingPresentation>,
+    heading_ordinals: BTreeMap<TextRange, usize>,
     toc: Vec<crate::structure::TocEntry>,
     bibliography_sections: Vec<BibliographySection>,
+    bibliography_ordinals: BTreeMap<TextRange, usize>,
 }
 
 impl DocumentPresentation {
@@ -142,7 +144,9 @@ impl DocumentPresentation {
     }
 
     pub fn heading_at(&self, range: TextRange) -> Option<&HeadingPresentation> {
-        self.headings.iter().find(|heading| heading.range == range)
+        self.heading_ordinals
+            .get(&range)
+            .and_then(|ordinal| self.headings.get(*ordinal))
     }
 
     pub fn toc(&self) -> &[crate::structure::TocEntry] {
@@ -150,9 +154,9 @@ impl DocumentPresentation {
     }
 
     pub fn bibliography_section_at(&self, range: TextRange) -> Option<&BibliographySection> {
-        self.bibliography_sections
-            .iter()
-            .find(|section| section.range == range)
+        self.bibliography_ordinals
+            .get(&range)
+            .and_then(|ordinal| self.bibliography_sections.get(*ordinal))
     }
 
     pub fn bibliography_sections(&self) -> &[BibliographySection] {
@@ -347,22 +351,42 @@ pub(crate) fn build_presentation(
                     .filter(|number| *number != 0)
                     .collect()
             };
+            let block = index
+                .block_id_at(heading.range)
+                .expect("every structured heading is indexed");
             let toc_included = !matches!(
                 heading.kind,
                 crate::structure::SectionKind::DocumentTitle
                     | crate::structure::SectionKind::Discrete
-            ) && !heading_has_role(document, heading.range, "notoc");
+            ) && !index
+                .top_level_ordinal(block)
+                .and_then(|ordinal| document.blocks().get(ordinal))
+                .is_some_and(|block| {
+                    block
+                        .metadata()
+                        .roles
+                        .iter()
+                        .any(|item| item.value == "notoc")
+                });
             HeadingPresentation {
-                block: index
-                    .block_id_at(heading.range)
-                    .expect("every structured heading is indexed"),
+                block,
                 range: heading.range,
                 number,
                 toc_included,
             }
         })
         .collect::<Vec<_>>();
-    let toc = toc_entries(structure.roots(), &headings, toc_policy.max_level);
+    let heading_ordinals = headings
+        .iter()
+        .enumerate()
+        .map(|(ordinal, heading)| (heading.range, ordinal))
+        .collect::<BTreeMap<_, _>>();
+    let toc = toc_entries(
+        structure.roots(),
+        &headings,
+        &heading_ordinals,
+        toc_policy.max_level,
+    );
     let bibliography_sections = document
         .blocks()
         .iter()
@@ -382,6 +406,11 @@ pub(crate) fn build_presentation(
                     range: heading.range,
                 })
         })
+        .collect::<Vec<_>>();
+    let bibliography_ordinals = bibliography_sections
+        .iter()
+        .enumerate()
+        .map(|(ordinal, section)| (section.range, ordinal))
         .collect();
     DocumentPresentation {
         attributes,
@@ -389,21 +418,17 @@ pub(crate) fn build_presentation(
         toc_policy,
         section_numbers,
         headings,
+        heading_ordinals,
         toc,
         bibliography_sections,
+        bibliography_ordinals,
     }
-}
-
-fn heading_has_role(document: &AstDocument, range: TextRange, role: &str) -> bool {
-    document.blocks().iter().any(|block| {
-        matches!(block, crate::parser::AstBlock::Heading(heading) if heading.range == range)
-            && block.metadata().roles.iter().any(|item| item.value == role)
-    })
 }
 
 fn toc_entries(
     sections: &[crate::structure::Section],
     headings: &[HeadingPresentation],
+    heading_ordinals: &BTreeMap<TextRange, usize>,
     max_level: Option<u8>,
 ) -> Vec<crate::structure::TocEntry> {
     let mut entries = Vec::new();
@@ -411,10 +436,10 @@ fn toc_entries(
         if max_level.is_some_and(|max_level| section.heading.level > max_level) {
             continue;
         }
-        let children = toc_entries(&section.children, headings, max_level);
-        let presentation = headings
-            .iter()
-            .find(|item| item.range == section.heading.range)
+        let children = toc_entries(&section.children, headings, heading_ordinals, max_level);
+        let presentation = heading_ordinals
+            .get(&section.heading.range)
+            .and_then(|ordinal| headings.get(*ordinal))
             .expect("every section heading has presentation facts");
         if presentation.toc_included {
             entries.push(crate::structure::TocEntry {
