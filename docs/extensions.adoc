@@ -20,7 +20,8 @@ let host_result = host_extension.analyze(&analysis, host_context).await?;
 
 == 属性拡張
 
-ホストは`Analysis.ast.attributes`の名前、`raw_value`、操作および範囲を使用する。
+利用側アプリは`Analysis::document_attribute_occurrences()`が返す
+`DocumentAttributeOccurrence`の名前、`raw_value`、操作および範囲を使用する。
 たとえばノートアプリは`note-id`をUUIDとして検証できるが、コアASTへノート専用variantを
 追加してはならない。
 

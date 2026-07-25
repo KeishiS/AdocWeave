@@ -30,8 +30,8 @@ index termは表示テキストおよび検索テキストへ混在させない�
 
 `bibanchor:id[]`はbibliography entryとなり、同じIDへのlocal xrefを参照edgeとしてcatalogへ接続する。
 `indexterm:[primary,secondary,...]`は空でない階層pathとして正規化し、同じpathの出現rangeをまとめる。
-重複bibliography IDと空index termも`invalid-catalog`である。catalogは`AstDocument::catalogs()`、
-`Analysis::catalogs()`およびJSON projectionから取得でき、consumerがASTを再走査して再構築しない。
+重複bibliography IDと空index termも`invalid-catalog`である。catalogは`Analysis::catalogs()`および
+JSON projectionから取得でき、consumerが文書modelを再走査して再構築しない。
 
 UI macroは`RenderPolicy.render_ui_macros`を明示的に有効化した場合だけ専用HTMLを生成する。無効時も
 表示文字列を失わない。これは構文認識を切り替えるflagではなく、backend presentationのfeature flagである。

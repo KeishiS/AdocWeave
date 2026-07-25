@@ -56,5 +56,27 @@ Rustからは`Engine`、`ParseOptions`、`Analysis`が主な入口です。属�
 `Analysis::presentation().attributes()`から、属性を記述した順番や位置は
 `Analysis::document_attribute_occurrences()`から取得する。
 
+[source,rust]
+----
+use adocweave::output::html::{RenderPolicy, render};
+use adocweave::{Engine, ParseError, ParseOptions};
+
+fn convert() -> Result<String, ParseError> {
+    let source = "\
+= 文書
+:toc:
+:sectnums:
+
+== 節
+";
+    let analysis = Engine::new(ParseOptions::default()).analyze(source)?;
+    Ok(render(analysis.document(), &RenderPolicy::default()).html)
+}
+----
+
+`:toc:`と`:sectnums:`はRust側のflagではなく、文書ヘッダーの属性によって有効になる。
+`:toclevels:`は任意であり、省略時はlevel 1から5までを目次候補とする。詳細は
+xref:document-structure.adoc[文書の構造]を参照。
+
 HTML、整形、問題一覧、構造情報、外部リンクの解決結果は用途ごとの公開モジュールにあります。
 型名およびJSONの詳細は、各ページからソースコードのAPIドキュメントを参照。

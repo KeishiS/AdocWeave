@@ -45,6 +45,7 @@ adocweave format --check manual.adoc
 * xref:docs/command-line.adoc[コマンドラインの使い方] — 変換、確認、整形の実行方法。
 * xref:docs/diagnostics.adoc[問題の見方] — 表示される問題の種類と対処の考え方。
 * xref:docs/formatting.adoc[整形] — 変更される部分と変更されない部分。
+* xref:docs/document-structure.adoc[文書の構造] — 目次、節番号、文書型ごとの見出し規則。
 * xref:docs/tables.adoc[表]、xref:docs/lists.adoc[リスト]、xref:docs/links-and-cross-references.adoc[リンクと相互参照]。
 
 === エディター統合
@@ -55,6 +56,7 @@ adocweave format --check manual.adoc
 
 === アプリケーション統合
 
+* xref:docs/core-profile.adoc[コアAPIと対応範囲] — Rustから解析し、HTMLへ変換する。
 * xref:docs/browser-library.adoc[ブラウザーで使う]。
 * xref:docs/wasm-worker.adoc[WebAssemblyとWeb Worker]。
 * xref:docs/web-host-adapter.adoc[Webアプリへの組み込み]。

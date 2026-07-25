@@ -216,7 +216,7 @@ targetはinline解析せず、属性listはquote内のcommaを除くcommaで分�
 |`AstBlock::Delimited`（`DelimitedBlockKind::Literal`、`DelimitedContent::Verbatim`）
 
 |`source-block`
-|`AstBlock::Source`
+|`AstBlock::Verbatim`（`VerbatimKind::Source`）
 
 |`document-attribute`
 |`AstDocument::attributes`

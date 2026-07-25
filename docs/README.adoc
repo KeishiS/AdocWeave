@@ -7,6 +7,8 @@
 
 * xref:command-line.adoc[コマンドラインの使い方]
 * xref:syntax-support.adoc[対応している書式]
+* xref:document-attributes.adoc[文書属性]
+* xref:document-structure.adoc[文書の構造、目次、節番号]
 * xref:tables.adoc[表]
 * xref:lists.adoc[リスト]
 * xref:links-and-cross-references.adoc[リンクと相互参照]
@@ -20,6 +22,8 @@
 * xref:browser-library.adoc[ブラウザーで使う]
 * xref:wasm-worker.adoc[WebAssemblyとWeb Worker]
 * xref:web-host-adapter.adoc[Webアプリへの組み込み]
+* xref:core-profile.adoc[RustコアAPIと対応範囲]
+* xref:extensions.adoc[利用側アプリの独自機能]
 
 == 開発する・配布する
 
