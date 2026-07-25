@@ -11,7 +11,7 @@ xref:zed-lsp-resolution.adoc[公開Releaseからのmanaged binary]をdownloadし
 
 次を利用できることを確認する。
 
-* Zedと`zed` CLI
+* Zedと`zed`または`zeditor` CLI。Linuxではdistributionによりbinary名が異なる
 * `cargo`、`rustc`、`rustfmt`およびClippy
 * `rustup`で管理されたRust toolchainと、Zedが要求するWASM target
 * C compiler。Nix開発環境では`stdenv.cc`を含めている
@@ -57,7 +57,15 @@ cargo make test-zed
 export PATH="$PWD/target/debug:$PATH"
 ZED_DEV_DATA="$(mktemp -d /tmp/adocweave-zed-dev.XXXXXX)"
 printf '%s\n' "$ZED_DEV_DATA"
-zed --foreground --user-data-dir "$ZED_DEV_DATA" .
+if command -v zed >/dev/null; then
+  ZED_CLI=zed
+elif command -v zeditor >/dev/null; then
+  ZED_CLI=zeditor
+else
+  printf '%s\n' 'Zed CLIが見つかりません' >&2
+  exit 1
+fi
+"$ZED_CLI" --foreground --user-data-dir "$ZED_DEV_DATA" .
 ----
 
 `--foreground`は必須ではないが、拡張buildとLanguage Server起動のlogをterminalで確認できる。
