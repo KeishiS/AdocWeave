@@ -567,7 +567,7 @@ Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatc
 公開する。Dependabot PRとM40後の内部設計課題はrelease scopeへ含めない。
 
 . xref:../issues/161-v0-7-0-release-readiness.adoc[Issue 161]で版数、移行ガイド、fixtureおよび
-  release acceptanceを同期する。（実施中）
+  release acceptanceを同期した。（完了）
 
 == ドキュメント保守規則
 
