@@ -140,8 +140,27 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
             problems: source.problems,
         }),
         AstBlock::Delimited(mut block) => {
-            if let crate::parser::DelimitedContent::Compound(children) = &mut block.content {
-                *children = normalize_verbatim_blocks(std::mem::take(children), source_language);
+            match &mut block.content {
+                crate::parser::DelimitedContent::Compound(children) => {
+                    *children =
+                        normalize_verbatim_blocks(std::mem::take(children), source_language);
+                }
+                crate::parser::DelimitedContent::Table(table) => {
+                    for row in &mut table.rows {
+                        for cell in &mut row.cells {
+                            if let crate::table::TableCellContent::AsciiDoc(children) =
+                                &mut cell.content
+                            {
+                                *children = normalize_verbatim_blocks(
+                                    std::mem::take(children),
+                                    source_language,
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::parser::DelimitedContent::Verbatim(_)
+                | crate::parser::DelimitedContent::Passthrough(_) => {}
             }
             let implicit_listing = block.kind == crate::parser::DelimitedBlockKind::Listing
                 && !block

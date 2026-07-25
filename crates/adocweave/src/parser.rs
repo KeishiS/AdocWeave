@@ -2451,9 +2451,9 @@ fn is_delimiter(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmonitionKind, AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlock,
-        DelimitedBlockKind, DelimitedContent, DocumentType, Heading, HeadingKind, ListKind,
-        SyntaxKind, VerbatimKind, parse,
+        AdmonitionKind, AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlockKind,
+        DelimitedContent, DocumentType, Heading, HeadingKind, ListKind, SourceInfo, SyntaxKind,
+        VerbatimBlock, VerbatimKind, parse,
     };
 
     #[test]
@@ -3408,9 +3408,13 @@ mod tests {
         ));
         assert!(matches!(
             &blocks[4],
-            AstBlock::Source(block)
-                if block.language.as_deref() == Some("rust")
-                    && block.metadata.title.as_ref().map(|title| title.value.as_str())
+            AstBlock::Verbatim(VerbatimBlock {
+                kind: VerbatimKind::Source(SourceInfo { language, .. }),
+                metadata,
+                ..
+            })
+                if language.as_deref() == Some("rust")
+                    && metadata.title.as_ref().map(|title| title.value.as_str())
                         == Some("Cell source")
         ));
         assert!(matches!(blocks[5], AstBlock::Math(_)));
@@ -3515,12 +3519,18 @@ mod tests {
                         | (Expected::Break, AstBlock::Break(_))
                         | (
                             Expected::Literal,
-                            AstBlock::Delimited(DelimitedBlock {
-                                kind: DelimitedBlockKind::Literal,
+                            AstBlock::Verbatim(VerbatimBlock {
+                                kind: VerbatimKind::Literal,
                                 ..
                             })
                         )
-                        | (Expected::Source, AstBlock::Source(_))
+                        | (
+                            Expected::Source,
+                            AstBlock::Verbatim(VerbatimBlock {
+                                kind: VerbatimKind::Source(_),
+                                ..
+                            })
+                        )
                         | (Expected::List, AstBlock::List(_))
                         | (Expected::Math, AstBlock::Math(_))
                         | (Expected::Delimited, AstBlock::Delimited(_))
