@@ -36,7 +36,6 @@ pub(crate) fn lower(
         &resolved_attributes,
         facts.attribute_expansion_limits,
     );
-    configure_tables(&mut document.blocks);
     document.resolved = crate::resolved::ResolvedDocument::build(
         &document,
         resolved_attributes,
@@ -347,16 +346,6 @@ fn ordered_list_style(value: &str) -> Option<crate::parser::OrderedListStyle> {
         "lowergreek" => Some(OrderedListStyle::LowerGreek),
         _ => None,
     }
-}
-
-fn configure_tables(blocks: &mut [AstBlock]) {
-    crate::walker::walk_blocks_mut(blocks, &mut |block: &mut AstBlock| {
-        if let AstBlock::Delimited(block) = block
-            && let crate::parser::DelimitedContent::Table(table) = &mut block.content
-        {
-            crate::table::configure(table, &block.metadata);
-        }
-    });
 }
 
 fn document_type(attributes: &[DocumentAttributeOccurrence]) -> DocumentType {

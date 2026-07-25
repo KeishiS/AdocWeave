@@ -629,11 +629,6 @@ fn absolute_range(parent: TextRange, start: usize, end: usize) -> TextRange {
 }
 
 pub(crate) fn configure(table: &mut Table, metadata: &crate::parser::BlockMetadata) {
-    // Tables are configured during parsing and again while lowering. Keep the
-    // metadata-derived diagnostics idempotent across those two passes.
-    table
-        .problems
-        .retain(|problem| problem.kind != TableProblemKind::InvalidPresentation);
     table.presentation = resolve_presentation(metadata, &mut table.problems);
     let cols = metadata
         .attributes
@@ -837,17 +832,12 @@ fn apply_column_defaults(table: &mut Table) {
             };
             if !cell.style_is_explicit {
                 cell.style = column.style;
-                cell.content = match column.style {
-                    TableCellStyle::Literal | TableCellStyle::Verse => {
-                        TableCellContent::Verbatim(cell.raw.clone())
-                    }
-                    TableCellStyle::AsciiDoc => {
-                        std::mem::replace(&mut cell.content, TableCellContent::Inlines(Vec::new()))
-                    }
-                    _ => {
-                        std::mem::replace(&mut cell.content, TableCellContent::Inlines(Vec::new()))
-                    }
-                };
+                if matches!(
+                    column.style,
+                    TableCellStyle::Literal | TableCellStyle::Verse
+                ) {
+                    cell.content = TableCellContent::Verbatim(cell.raw.clone());
+                }
             }
         }
     }
