@@ -1,5 +1,5 @@
 = Dependabotによる依存更新の導入
-:status: in-progress
+:status: completed
 :depends-on: 104
 
 == 目的
@@ -26,3 +26,14 @@ npm更新も設定しない。Nix入力の自動更新はIssue 158で評価す�
 * 更新Pull Requestが既存のquality gateとdependency governanceを通過する。
 * DependabotのPull Requestを自動mergeするworkflow、ruleまたは設定が存在しない。
 * 依存関係の管理文書と設定対象が一致する。
+
+== 受け入れ結果
+
+`.github/dependabot.yml`と依存関係の管理文書を導入し、root、Zed、fuzzおよびGitHub Actionsを
+独立した更新単位にした。初回のDependabot Pull Request #8から#13は人手でreview・mergeされ、
+https://github.com/KeishiS/AdocWeave/actions/runs/30159894194[main CI run 30159894194]で
+quality、dependency governance、fuzz、native build・smoke、candidate verificationおよび
+Linux 2 architectureのinstallation E2Eが成功した。
+
+このIssueが定めた自動merge禁止を維持した状態で導入を完了した。限定的な自動mergeの評価と導入は
+xref:166-dependabot-safe-auto-merge.adoc[Issue 166]で別に扱う。

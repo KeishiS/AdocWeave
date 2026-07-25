@@ -1,0 +1,49 @@
+= Language Server Protocol 3.18適合性監査
+:status: planned
+:depends-on: 038, 069
+
+== 目的
+
+https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/[Language Server Protocol 3.18]
+を基準として、AdocWeave LSPの実装、capability negotiation、通知購読および応答形式の乖離を
+再現可能な一覧にする。optional機能を網羅的に実装するのではなく、対応、非対応および意図的な
+非目標を区別し、既存clientとの相互運用性に影響する差分だけを後続実装へ結び付ける。
+
+監査基準は仕様siteの更新を追跡できるrevisionへ固定する。初回監査では、2026-07-16の
+`gh-pages` commit `b7f5132c95261c0898ae5124e7a91707abc48fcd`を基準候補とし、着手時に
+URL、revisionおよび参照日を確定する。
+
+== 既知の確認対象
+
+* `workspace/didChangeWatchedFiles`を処理する一方、動的な`client/registerCapability`による
+  watcher登録を行っていない。
+* 初期化時の`workspaceFolders`を読む一方、`workspace.workspaceFolders` capabilityと
+  `workspace/didChangeWorkspaceFolders`通知を扱っていない。
+* client capabilityは主に`general.positionEncodings`だけを保持し、Hoverの`contentFormat`、
+  Document Symbolの`hierarchicalDocumentSymbolSupport`およびWorkspace Editの
+  `documentChanges`対応可否を応答へ反映していない。
+* Code Action literal、version付きdiagnostics、Document Linkの`tooltip`を含む3.18追加・変更点と、
+  現在の`async-lsp`／`lsp-types`が表現できる型の範囲を確認する。
+* stdio transportとclient process監視に関する現在の判断を、仕様の推奨事項と意図的な制約に分ける。
+
+== 作業
+
+* 3.18のserver capability、client capability、request、notificationおよびlifecycleを
+  「対応」「部分対応」「非対応」「非目標」のmatrixへ整理する。
+* 初期化で合意したclient capability profileを保持し、応答形式とworkspace通知購読へ反映する設計を定める。
+* file watcherの動的登録、workspace folder変更およびclient別のHover、Document Symbol、
+  Code Action／Workspace Edit応答を検証する。
+* `async-lsp 0.2.4`と解決される`lsp-types 0.95.1`の3.18対応範囲を評価し、更新または局所的な
+  protocol表現の判断を記録する。
+* 最小capability clientと全対応clientのfixtureを用意し、in-memory transport testで
+  initializeからshutdown／exitまでを固定する。
+* lifecycle、UTF-8／UTF-16位置、incremental sync、generationおよびcancellationの既存保証を
+  regression testとして維持する。
+
+== 完了条件
+
+* revisionと参照日を固定したLSP 3.18 capability matrixが文書化されている。
+* 部分対応または不適合の各項目に、実装修正、文書化された非目標または依存libraryの判断が対応する。
+* 最小・全対応client fixtureで、server capabilityと応答形式が宣言済みclient capabilityを超えない。
+* file watcherとworkspace folder変更の登録・通知契約が自動テストで再現される。
+* `cargo make verify`、Zed extension testおよび主要LSP機能の手動確認が成功する。

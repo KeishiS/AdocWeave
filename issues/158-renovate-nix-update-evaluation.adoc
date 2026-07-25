@@ -7,6 +7,9 @@
 Dependabot導入後の運用結果を基に、`flake.nix`と`flake.lock`を含む更新をRenovateへ移す価値を判断する。
 同じ依存集合を複数botで更新せず、review量と設定保守を増やさない。
 
+この評価は直ちに着手しない。手動Nix更新が複数回のrelease trainで反復的な負担となり、更新漏れ、
+長期間の停滞またはDependabot更新とのlockfile競合が観測された時点を再評価条件とする。
+
 == 作業
 
 * Dependabotの運用実績と手動Nix更新の頻度を記録し、Nix入力更新が継続的な負担かを評価する。

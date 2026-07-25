@@ -214,7 +214,8 @@ HTMLのraw出力は禁止する。
 |高
 |表
 |PSV／CSV／DSV／TSV、任意separator、duplicationおよびPSVのAsciiDoc block cellまで完了。
-表示属性も完了。残る標準構文は自動header推論
+表示属性も完了。残る標準構文は
+xref:../issues/163-table-automatic-header-inference.adoc[自動header推論]
 
 |高
 |標準macro
@@ -228,11 +229,14 @@ icon setとmedia typeに応じたbackend presentation
 |中
 |文書機能
 |文書構造projection、`toc`、`toclevels`、`sectnums`およびbibliography本文生成は完了。
-残る標準構文は文書内での属性変更
+残る標準構文は
+xref:../issues/164-document-scoped-attribute-changes.adoc[文書内での属性変更]
 
 |中
 |media
-|block／inline image、icon、audio、video。取得と埋め込みはホスト側resource resolverへ委譲する
+|block／inline image、icon、audio、videoのsemantic modelは完了。残る
+xref:../issues/165-media-backend-presentation.adoc[backend presentation]でも、取得と埋め込みは
+ホスト側resource resolverへ委譲する
 
 |低
 |互換拡張
@@ -529,13 +533,15 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 * blockの純粋recognizerは`block_grammar`へ分離したが、block dispatchとinline grammarの責務分割は継続できる。
 * 公開契約testの一部とrepository fixture helperは、引き続きproduction module内に置かれている。
 
-これらを次期releaseの完了条件へ含める場合は、Issue 150、154、155の完了履歴を書き換えず、新しいIssueとして
-scopeと受け入れ条件を定義する。含めない場合も、release noteで既知の内部設計課題として区別し、
-公開契約が完了済みであることと内部再編の余地があることを混同しない。
+これらはprofiling、障害分析または公開契約の変更から具体的な必要性が示されるまで、次期releaseの
+完了条件へ昇格させない。着手する場合はIssue 150、154、155の完了履歴を書き換えず、新しいIssueとして
+観測根拠、scopeおよび受け入れ条件を定義する。release noteでは、公開契約が完了済みであることと
+内部再編の余地があることを混同しない。
 
 == M41: インライン書式の互換性
 
 Asciidoctorとの互換性を高めるため、インライン等幅書式の単一・二重バッククオートの境界規則を整える。
+M45までには着手せず、M47の標準構文互換性へ繰り越した。
 
 . xref:../issues/156-inline-monospace-boundaries.adoc[Issue 156]で、語中・CJK文字・句読点に隣接する
   等幅書式を検証・修正する。（計画）
@@ -545,21 +551,25 @@ Asciidoctorとの互換性を高めるため、インライン等幅書式の単
 DependabotでCargoとGitHub Actionsの更新を小さいreview単位へ定着させる。Nix入力を含む更新は、
 その運用結果を基にRenovateへの移行可否を判断する。同じ依存集合を複数botで更新しない。
 
-. xref:../issues/157-dependabot-dependency-updates.adoc[Issue 157]でDependabotによる依存更新を導入する。（実施中）
-. xref:../issues/158-renovate-nix-update-evaluation.adoc[Issue 158]でRenovateによるNix依存更新を評価する。（計画）
+. xref:../issues/157-dependabot-dependency-updates.adoc[Issue 157]でDependabotによる依存更新を導入した。（完了）
+. xref:../issues/158-renovate-nix-update-evaluation.adoc[Issue 158]で、手動Nix更新の反復的負担が
+  観測された場合にRenovateを評価する。（計画・条件付き）
 
 == M43: Release公開の重複検証削減
 
 `main`で検証済みのrelease candidateを同一commitのtag公開で再利用し、公開固有の完全性検証を
 維持したままCIの重複実行を削減する。
 
-. xref:../issues/159-release-candidate-artifact-reuse.adoc[Issue 159]でcandidate artifact再利用を導入する。（実施中）
+. xref:../issues/159-release-candidate-artifact-reuse.adoc[Issue 159]でcandidate artifact再利用を導入し、
+  `v0.7.0`公開で受け入れた。（完了）
 
-== M44: v0.6.2 CI公開経路の受け入れ
+== M44: CI公開経路の受け入れ
 
-Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatch releaseとして受け入れる。
+当初はDependabot導入とcandidate artifact再利用を`v0.6.2`として受け入れる計画だったが、
+patch releaseを独立して公開せず、後続の`v0.7.0` release trainで受け入れた。
 
-. xref:../issues/160-v0-6-2-release-readiness.adoc[Issue 160]でCI公開経路を受け入れる。（実施中）
+. xref:../issues/160-v0-6-2-release-readiness.adoc[Issue 160]は`v0.6.2`を公開せず、後続releaseによる
+  代替を記録して終了した。（完了）
 
 == M45: v0.7.0 release train
 
@@ -568,6 +578,38 @@ Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatc
 
 . xref:../issues/161-v0-7-0-release-readiness.adoc[Issue 161]で版数、移行ガイド、fixtureおよび
   release acceptanceを同期した。（完了）
+
+== M46: LSP 3.18相互運用性
+
+LSP 3.18を固定revisionで監査し、client capabilityを超えない応答、workspace通知購読および
+lifecycleを相互運用testで固定する。このmilestoneを次期`v0.8.0`候補とする。
+
+. xref:../issues/162-lsp-3-18-conformance-audit.adoc[Issue 162]で仕様と実装のcapability matrixを作り、
+  確認された乖離を修正または意図的な非目標として記録する。（計画）
+
+== M47: 標準構文の互換性
+
+既存semantic modelを小さく拡張できるインライン等幅書式とtable header推論をまとめる。
+M46後の`v0.9.0`候補とするが、版数は公開APIとsemantic変更の実差分に基づいてrelease readinessで確定する。
+
+. xref:../issues/156-inline-monospace-boundaries.adoc[Issue 156]で等幅書式の境界規則を修正する。（計画）
+. xref:../issues/163-table-automatic-header-inference.adoc[Issue 163]でtableの自動header推論を実装する。（計画）
+
+== M48: 文書状態とmedia presentation
+
+位置依存の属性environmentとmediaのbackend presentationは、影響範囲が異なるため個別のminor release候補として
+扱う。同時実装を前提にせず、各Issueの公開契約とmigration impactが受け入れ可能になった順にrelease trainを作る。
+
+. xref:../issues/164-document-scoped-attribute-changes.adoc[Issue 164]で文書内属性変更を評価・実装する。（計画）
+. xref:../issues/165-media-backend-presentation.adoc[Issue 165]でmedia type別のbackend presentationを定める。（計画）
+
+== 継続運用: 依存更新
+
+製品milestoneと独立して、Dependabotの運用負担と安全性を改善する。
+
+. xref:../issues/166-dependabot-safe-auto-merge.adoc[Issue 166]で、低riskなDependabot Pull Requestに限定した
+  自動mergeを導入する。（計画）
+. Issue 158のRenovate評価は、手動Nix更新の再評価条件を満たすまで保留する。
 
 == ドキュメント保守規則
 
