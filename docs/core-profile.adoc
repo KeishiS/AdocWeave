@@ -11,7 +11,7 @@ AdocWeaveは、AsciiDocの読み取り、問題の検出、整形、HTMLへの�
 
 == バージョン
 
-公開API、WebAssembly、HTML出力、構造情報は、同じパッケージバージョンを使います。現在の`VERSION = 0.6.4`です。
+公開API、WebAssembly、HTML出力、構造情報は、同じパッケージバージョンを使います。現在の`VERSION = 0.7.0`です。
 現在の値と必要なRustのバージョンはxref:../release-manifest.json[release manifest]が基準です。
 公開結果を保存するアプリケーションは、AdocWeaveの更新時にHTMLおよび検索用情報を再構築すること。
 

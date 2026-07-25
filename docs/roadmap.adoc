@@ -561,6 +561,14 @@ Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatc
 
 . xref:../issues/160-v0-6-2-release-readiness.adoc[Issue 160]でCI公開経路を受け入れる。（実施中）
 
+== M45: v0.7.0 release train
+
+見出しID range、公開text facade、table cell semantic正規化および設計・性能改善をminor releaseとして
+公開する。Dependabot PRとM40後の内部設計課題はrelease scopeへ含めない。
+
+. xref:../issues/161-v0-7-0-release-readiness.adoc[Issue 161]で版数、移行ガイド、fixtureおよび
+  release acceptanceを同期する。（実施中）
+
 == ドキュメント保守規則
 
 リポジトリのドキュメントはAsciiDoc（`.adoc`）で記述し、`.md`ファイルを受け入れない。
