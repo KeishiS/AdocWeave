@@ -1,0 +1,61 @@
+name: 機能提案
+description: 新しい機能や改善を提案します
+title: "[提案] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提案ありがとうございます。目的と利用場面が分かるように記載してください。
+
+  - type: checkboxes
+    id: existing-issue
+    attributes:
+      label: 既存Issueの確認
+      options:
+        - label: 同じ提案がないことを確認しました
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい問題
+      description: 現在困っていることや、想定する利用場面を記載してください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案内容
+      description: 期待する動作や利用例を記載してください。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 対象
+      options:
+        - AsciiDoc構文
+        - CLI
+        - Language Server
+        - Zed拡張
+        - Rust API
+        - WebAssembly・Web Worker
+        - 配布・導入
+        - ドキュメント
+        - その他
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案
+      description: 現在の回避方法や、検討した別の方法があれば記載してください。
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 補足
+      description: 関連する仕様、実装例、画像などがあれば記載してください。
