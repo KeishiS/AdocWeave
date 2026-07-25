@@ -20,8 +20,7 @@ CI用の`cargo make ci`は`verify`に加えて`fuzz-check`と`fuzz-smoke`を実�
 
 == リポジトリ文書corpus
 
-`cargo make docs-check`は、repository metadataである`AGENTS.md`と`CONTRIBUTING.md`を除く
-`.md`混入だけを検査する。`cargo make adoc-check`はGitが追跡する
+`cargo make docs-check`は`.md`混入だけを検査する。`cargo make adoc-check`はGitが追跡する
 すべての`.adoc`をbyte順のpathで列挙し、既定処理上限と寛容modeでAdocWeave自身へ渡す。
 未追跡ファイル、`target/`生成物およびネットワークには依存しない。
 
