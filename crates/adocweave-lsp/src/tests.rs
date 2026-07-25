@@ -2020,6 +2020,97 @@ async fn protocol_exit_without_shutdown_is_an_error() {
     assert!(server_result.is_err());
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn protocol_preserves_json_rpc_ids_errors_and_notification_silence() {
+    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    let (server_stream, client_stream) = tokio::io::duplex(16 * 1024);
+    let (server_read, server_write) = tokio::io::split(server_stream);
+    let server = run(server_read.compat(), server_write.compat_write());
+    let (client_read, mut client_write) = tokio::io::split(client_stream);
+    let mut client_read = BufReader::new(client_read);
+
+    let client = async move {
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":"initialize-string-id",
+                "method":"initialize",
+                "params":{"processId":null,"rootUri":null,"capabilities":{}}
+            }),
+        )
+        .await;
+        assert_eq!(
+            read_message(&mut client_read).await["id"],
+            "initialize-string-id"
+        );
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        )
+        .await;
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":"unknown-method",
+                "method":"adocweave/unknown",
+                "params":{}
+            }),
+        )
+        .await;
+        let unknown = read_message(&mut client_read).await;
+        assert_eq!(unknown["id"], "unknown-method");
+        assert_eq!(unknown["error"]["code"], -32601);
+        assert!(unknown.get("result").is_none());
+
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":"invalid-params",
+                "method":"textDocument/hover",
+                "params":{"textDocument":{"uri":"file:///json-rpc.adoc"}}
+            }),
+        )
+        .await;
+        let invalid = read_message(&mut client_read).await;
+        assert_eq!(invalid["id"], "invalid-params");
+        assert_eq!(invalid["error"]["code"], -32602);
+        assert!(invalid.get("result").is_none());
+
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"$/futureNotification","params":{}}),
+        )
+        .await;
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":"shutdown-after-notification",
+                "method":"shutdown",
+                "params":null
+            }),
+        )
+        .await;
+        let shutdown = read_message(&mut client_read).await;
+        assert_eq!(shutdown["id"], "shutdown-after-notification");
+        assert_eq!(shutdown["result"], Value::Null);
+        assert!(shutdown.get("error").is_none());
+        write_message(
+            &mut client_write,
+            &json!({"jsonrpc":"2.0","method":"exit","params":null}),
+        )
+        .await;
+    };
+
+    let (server_result, ()) = tokio::join!(server, client);
+    server_result.expect("clean exit");
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn protocol_stops_when_the_declared_client_process_does_not_exist() {

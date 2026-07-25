@@ -127,6 +127,47 @@ client capability、server capability、registrationおよび応答unionはこ�
 shutdown前のexitを異常終了にできないため、AdocWeave所有の小さなlifecycle state machineへ
 置き換える。3.18 optional機能を実装するまで、meta model全体を局所的なJSON型として複製しない。
 
+=== JSON-RPC 2.0境界
+
+2026-07-25にhttps://www.jsonrpc.org/specification[JSON-RPC 2.0 Specification]も参照した。
+LSP 3.18はcontent部にJSON-RPC 2.0を使用する一方、JSON-RPC batch messageを明示的に禁止する。
+
+[cols="2,2,5",options="header"]
+|===
+|項目 |状態 |判断
+
+|version、request、response
+|対応
+|`jsonrpc`は常に`"2.0"`とする。LSPの`RequestId`に従って整数または文字列の`id`を受け、
+responseへ同じ値を返す。成功responseは`result`、失敗responseは`error`の一方だけを持つ。
+
+|notification
+|対応
+|notificationにはresponseを返さない。未知の`$/`通知はLSP規則に従って無視する。
+既知通知のparams不正または未知の通常通知は、文書同期を失ったまま継続しないよう
+`async-lsp`のfail-closedな接続終了を維持する。
+
+|error code
+|対応
+|未知requestは`MethodNotFound`（`-32601`）、既知requestの不正paramsは`InvalidParams`
+（`-32602`）とし、requestの`id`を保持する。lifecycle固有errorはLSPの規則を優先する。
+
+|batch
+|非対応
+|JSON-RPC 2.0ではoptionalだが、LSP 3.18が禁止するため受け付けず、送信もしない。
+
+|malformed JSON／invalid request object
+|library制約
+|`async-lsp 0.2.4`のcodecはdeserialize errorで接続をfail-closedに終了し、JSON-RPCの
+`ParseError`／`InvalidRequest` responseを合成しない。正常なLSP peerとの相互運用性に
+影響せず、framingとdispatchを再実装するriskに見合わないため今回は維持する。
+
+|framing
+|対応
+|UTF-8 JSONとbyte単位の`Content-Length`を使う。製品はstdio、testは同じMainLoopを
+in-memory streamで使用する。
+|===
+
 == 既知の確認対象
 
 * `workspace/didChangeWatchedFiles`を処理する一方、動的な`client/registerCapability`による
@@ -170,4 +211,5 @@ shutdown前のexitを異常終了にできないため、AdocWeave所有の小�
 * `async-lsp`既定lifecycleを置き換え、invalid-state通知の破棄とexit statusを3.18契約へ合わせた。
 * client process monitorを有効にした。
 * 最小client、全対応client、workspace再構築、watcher登録、Code Action range／kind、
-  invalid lifecycleおよびbinary exit statusを自動testで固定した。
+  invalid lifecycle、JSON-RPCのid／error／notificationおよびbinary exit statusを自動testで
+  固定した。

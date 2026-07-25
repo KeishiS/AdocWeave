@@ -161,6 +161,15 @@ exitを異常終了にできないため使用しない。独自state machineは
 製品transportはstdioだけを提供し、network transportは非目標とする。LSP仕様型はprotocol境界で
 のみ使用し、コア型との変換関数をテスト可能な安定面とする。
 
+content部はhttps://www.jsonrpc.org/specification[JSON-RPC 2.0]に従う。整数または文字列の
+request IDをresponseへ保持し、notificationへresponseを返さない。未知requestは
+`MethodNotFound`、既知requestの不正paramsは`InvalidParams`とする。未知の`$/`通知は無視する。
+LSP 3.18が禁止するJSON-RPC batchは扱わない。
+
+`async-lsp 0.2.4`のcodecはmalformed JSONまたはinvalid request objectを受けると接続を
+fail-closedに終了し、`ParseError`または`InvalidRequest` responseを合成しない。正常なLSP
+clientとの相互運用性に影響せず、独自codecを再導入しないため、このlibrary制約を維持する。
+
 == client capability profile
 
 initializeで合意したclient capabilityは一つのprofileとして保持し、その後の応答形を決める。
