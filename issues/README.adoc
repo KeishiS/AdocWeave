@@ -355,7 +355,7 @@ Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatc
 見出しID range、公開text facade、table cell semantic正規化および設計・性能改善をminor releaseとして
 公開する。Dependabot PRとM40後の内部設計課題は含めない。
 
-* xref:161-v0-7-0-release-readiness.adoc[161: v0.7.0 release readiness]（実施中）
+* xref:161-v0-7-0-release-readiness.adoc[161: v0.7.0 release readiness]（完了）
 
 === M1: プレーンテキスト変換
 

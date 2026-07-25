@@ -1,5 +1,5 @@
 = v0.7.0 release readiness
-:status: in-progress
+:status: completed
 :depends-on:
 
 == 目的
@@ -22,3 +22,18 @@ Rust 1.97.1を維持する。mainの完全candidate成功commitへstable tagを�
 * pull requestを最新の`origin/main`へrebaseし、必須check成功後にmergeする。
 * mainのcandidate成功後、`v0.7.0`を作成し、GitHub Releaseの9 asset、checksum、SBOMおよびprovenanceを受け入れる。
 * Zedで診断、Outline、Format、Hover、Definition、ReferencesおよびSemantic Tokensを手動確認する。
+
+== 受け入れ結果
+
+stable `v0.7.0`は`927c3b93ec4c4a0192289ae35253168c05cd9e0d`をtagした。
+https://github.com/KeishiS/AdocWeave/actions/runs/30158770759[main candidate run 30158770759]は、
+quality、Linux x86-64／ARM64 native build・smoke、browser／Zed artifact verification、candidate metadata
+およびLinux 2 architectureのinstallation E2Eをすべて成功した。
+
+https://github.com/KeishiS/AdocWeave/actions/runs/30159071293[tag publication run 30159071293]は
+同じcommitのcandidateを再検証して再利用し、全公開assetのprovenance生成とpublishを成功した。
+https://github.com/KeishiS/AdocWeave/releases/tag/v0.7.0[GitHub Release v0.7.0]は
+非draft・非prereleaseであり、CLI／LSP各2 architecture、browser、Zed、manifest、SPDX SBOMおよび
+checksumの9 assetを含む。全assetはuploadedかつ0 byteでない。
+
+Zedの診断、Outline、Format、Hover、Definition、ReferencesおよびSemantic Tokensは手動確認済みである。
