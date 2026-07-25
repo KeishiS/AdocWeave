@@ -33,7 +33,7 @@ xref:grammar.adoc[AdocWeaveの文法]への適合であり、AsciiDoc全体へ�
 
 [cols="2,2,2",options="header"]
 |===
-|機能 |AsciiDoc参照動作 |AdocWeave Core 0.4
+|機能 |AsciiDoc参照動作 |AdocWeave現行契約
 
 |Constrained strong
 |単一の`*`ペア
@@ -68,7 +68,7 @@ xref:grammar.adoc[AdocWeaveの文法]への適合であり、AsciiDoc全体へ�
 |未対応
 |===
 
-AdocWeaveのconstrained境界条件は、現時点ではCore 0.4固有の明示的契約である。
+AdocWeaveのconstrained境界条件は、現行package version固有の明示的契約である。
 識別子中の記号を誤認しないよう設計しているが、策定中のAsciiDoc言語に含まれる全境界例と
 等価であることはまだ証明していない。
 
@@ -140,7 +140,7 @@ xref:substitutions.adoc[Core置換モデル]で定義する。
 
 [cols="2,2,2",options="header"]
 |===
-|領域 |AsciiDoc言語 |AdocWeave Core 0.4
+|領域 |AsciiDoc言語 |AdocWeave現行契約
 
 |文書ヘッダー
 |タイトル、著者、改訂、属性

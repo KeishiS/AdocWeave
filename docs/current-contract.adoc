@@ -62,5 +62,6 @@ xref:syntax-support.adoc[対応しているAsciiDocの書式]とxref:compatibili
 == 文書の分類
 
 このディレクトリは現行仕様を記述する。xref:adr/index.adoc[ADR]は採用済みの長期的な
-設計判断、xref:roadmap.adoc[ロードマップ]は未実装の計画、xref:../issues/README.adoc[Issue]
-は完了履歴と作業単位を記録する。Issue本文を現行仕様の基準として参照してはならない。
+設計判断、xref:roadmap.adoc[ロードマップ]はmilestoneごとの計画と完了概要、xref:../issues/README.adoc[Issue]は
+詳細な完了履歴と作業単位を記録する。
+Issue本文を現行仕様の基準として参照してはならない。

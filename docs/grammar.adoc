@@ -213,7 +213,7 @@ targetはinline解析せず、属性listはquote内のcommaを除くcommaで分�
 |`Inline::HardBreak`
 
 |`literal-block`
-|`AstBlock::Delimited`（`DelimitedBlockKind::Literal`、`DelimitedContent::Verbatim`）
+|`AstBlock::Verbatim`（`VerbatimKind::Literal`）
 
 |`source-block`
 |`AstBlock::Verbatim`（`VerbatimKind::Source`）

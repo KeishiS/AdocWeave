@@ -85,9 +85,10 @@ delimiter、macro、target、label、errorおよびunknownを表す。triviaと�
 syntax diagnosticの構造変更は共通の`BlockVisitorMut`を利用する。inline sequenceの可変走査もwalkerに
 集約する。出力固有処理はenumを明示的かつ網羅的に分岐し、新しいvariantを黙って無視するwildcard分岐を避ける。
 
-区切り付きリテラルは他のdelimiter blockと同じ`AstBlock::Delimited`で表し、kindを`Literal`、contentを
-`Verbatim`とする。過去の`AstBlock::Literal`と専用recognizerは持たない。syntax treeではFormatterが不透明領域を
-識別できるよう`SyntaxKind::LiteralBlock`へ投影するが、semantic modelを二重化しない。
+parserは区切り付きリテラルを他のdelimiter blockと同じfactとして認識するが、semantic loweringは
+literalとsourceを共通の`AstBlock::Verbatim`へ正規化する。top-level、compound blockおよびAsciiDoc table cellで
+この不変条件を共有し、最終semantic modelへparser専用の`AstBlock::Source`を残さない。syntax treeではFormatterが
+不透明領域を識別できるよう`SyntaxKind::LiteralBlock`または`SyntaxKind::SourceBlock`へ投影する。
 
 すべてのsemantic blockは出力非依存な`BlockMetadata`を所有し、`AstBlock::metadata()`を
 共通query入口とする。title、ID、role、optionおよびelement attributeは値とsource rangeを
@@ -124,7 +125,7 @@ sequence orchestratorに残す。共有`ParseBudget`、cancel checkおよびsour
 `block_model`と`parser_support`へ依存し、`parser` facadeへ逆依存しない。
 
 解析順序は、raw block／syntax factの収集、semantic lowering、文書属性の確定、identifier catalog、
-document structure、syntax diagnostic投影、catalog、lint diagnostic確定の順とする。後段からparserへ
+document structure、catalogを含むresolved document、syntax diagnostic投影、lint diagnostic確定の順とする。後段からparserへ
 情報を戻して再解釈せず、CLI、LSP、WASMおよびZed adapterは完成した一つの`Analysis`だけを利用する。
 
 == 標準コアとホスト拡張

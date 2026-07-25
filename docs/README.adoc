@@ -32,6 +32,11 @@
 * xref:git-workflow.adoc[Git branchの運用]
 * xref:continuous-integration.adoc[継続的インテグレーション]
 * xref:release-installation.adoc[インストールと更新]
+* xref:release-checklist.adoc[リリース前の確認]
+* xref:release-workflow.adoc[GitHub Releaseの公開手順]
+* xref:release-distribution.adoc[配布assetの契約]
+* xref:release-integrity.adoc[checksum、SBOM、provenance]
+* xref:native-release.adoc[Native archiveの契約]
 * xref:roadmap.adoc[今後の予定]
 
 == 詳しい仕様と設計

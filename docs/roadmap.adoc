@@ -13,7 +13,7 @@
 * HTML変換、Lint、保守的なFormatter、CLIコマンド
 * Language Serverの診断、シンボル、アクション、Formatting、hover、補完
 * 資源上限と、未対応構文に対する厳格・寛容ポリシー
-* 出力形式に依存しないsemantic AST、Core 0.4規範文法、置換モデル
+* 出力形式に依存しないsemantic AST、package-versioned規範文法、置換モデル
 * Zed開発用拡張
 
 Linux版Zedでの初期受け入れ確認は2026-07-20に完了した。LSP文書シンボルをOutlineへ
@@ -521,12 +521,45 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 . xref:../issues/154-grammar-component-boundaries.adoc[Issue 154]でparserとinlineの文法component境界を再編した。（完了）
 . xref:../issues/155-contract-test-ownership-reorganization.adoc[Issue 155]で契約testの所有権を再編した。（完了）
 
+=== M40後の再監査
+
+次期minor release前の再監査では、M40の完了記録より厳しい意味で次の残作業を確認した。
+
+* `ResolvedDocument`の派生値は依存順に構築されるが、文書全体の走査を厳密な一回へ統合してはいない。
+* blockの純粋recognizerは`block_grammar`へ分離したが、block dispatchとinline grammarの責務分割は継続できる。
+* 公開契約testの一部とrepository fixture helperは、引き続きproduction module内に置かれている。
+
+これらを次期releaseの完了条件へ含める場合は、Issue 150、154、155の完了履歴を書き換えず、新しいIssueとして
+scopeと受け入れ条件を定義する。含めない場合も、release noteで既知の内部設計課題として区別し、
+公開契約が完了済みであることと内部再編の余地があることを混同しない。
+
 == M41: インライン書式の互換性
 
 Asciidoctorとの互換性を高めるため、インライン等幅書式の単一・二重バッククオートの境界規則を整える。
 
 . xref:../issues/156-inline-monospace-boundaries.adoc[Issue 156]で、語中・CJK文字・句読点に隣接する
   等幅書式を検証・修正する。（計画）
+
+== M42: 依存更新の自動化
+
+DependabotでCargoとGitHub Actionsの更新を小さいreview単位へ定着させる。Nix入力を含む更新は、
+その運用結果を基にRenovateへの移行可否を判断する。同じ依存集合を複数botで更新しない。
+
+. xref:../issues/157-dependabot-dependency-updates.adoc[Issue 157]でDependabotによる依存更新を導入する。（実施中）
+. xref:../issues/158-renovate-nix-update-evaluation.adoc[Issue 158]でRenovateによるNix依存更新を評価する。（計画）
+
+== M43: Release公開の重複検証削減
+
+`main`で検証済みのrelease candidateを同一commitのtag公開で再利用し、公開固有の完全性検証を
+維持したままCIの重複実行を削減する。
+
+. xref:../issues/159-release-candidate-artifact-reuse.adoc[Issue 159]でcandidate artifact再利用を導入する。（実施中）
+
+== M44: v0.6.2 CI公開経路の受け入れ
+
+Dependabot導入とcandidate artifact再利用を、公開APIを変えないpatch releaseとして受け入れる。
+
+. xref:../issues/160-v0-6-2-release-readiness.adoc[Issue 160]でCI公開経路を受け入れる。（実施中）
 
 == ドキュメント保守規則
 
