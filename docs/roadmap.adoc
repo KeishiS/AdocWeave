@@ -585,7 +585,9 @@ LSP 3.18を固定revisionで監査し、client capabilityを超えない応答�
 lifecycleを相互運用testで固定する。このmilestoneを次期`v0.8.0`候補とする。
 
 . xref:../issues/162-lsp-3-18-conformance-audit.adoc[Issue 162]で仕様と実装のcapability matrixを作り、
-  確認された乖離を修正または意図的な非目標として記録する。（進行中）
+  確認された乖離を修正または意図的な非目標として記録した。（完了）
+. xref:../issues/167-v0-8-0-release-readiness.adoc[Issue 167]で版数、移行ガイド、fixtureおよび
+  release acceptanceを同期する。（進行中）
 
 == M47: 標準構文の互換性
 
