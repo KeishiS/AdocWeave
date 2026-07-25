@@ -3,7 +3,9 @@
 use std::error::Error;
 use std::fmt;
 
-pub use crate::source_document::SourceDocument;
+pub use crate::source_document::{
+    LineEnding, LosslessToken, LosslessTokenKind, SourceDocument, SourceLine,
+};
 
 /// A zero-based offset in the original UTF-8 byte sequence.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
