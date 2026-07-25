@@ -36,7 +36,6 @@ pub(crate) fn lower(
         &resolved_attributes,
         facts.attribute_expansion_limits,
     );
-    configure_tables(&mut document.blocks);
     document.resolved = crate::resolved::ResolvedDocument::build(
         &document,
         resolved_attributes,
@@ -140,8 +139,27 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
             problems: source.problems,
         }),
         AstBlock::Delimited(mut block) => {
-            if let crate::parser::DelimitedContent::Compound(children) = &mut block.content {
-                *children = normalize_verbatim_blocks(std::mem::take(children), source_language);
+            match &mut block.content {
+                crate::parser::DelimitedContent::Compound(children) => {
+                    *children =
+                        normalize_verbatim_blocks(std::mem::take(children), source_language);
+                }
+                crate::parser::DelimitedContent::Table(table) => {
+                    for row in &mut table.rows {
+                        for cell in &mut row.cells {
+                            if let crate::table::TableCellContent::AsciiDoc(children) =
+                                &mut cell.content
+                            {
+                                *children = normalize_verbatim_blocks(
+                                    std::mem::take(children),
+                                    source_language,
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::parser::DelimitedContent::Verbatim(_)
+                | crate::parser::DelimitedContent::Passthrough(_) => {}
             }
             let implicit_listing = block.kind == crate::parser::DelimitedBlockKind::Listing
                 && !block
@@ -328,16 +346,6 @@ fn ordered_list_style(value: &str) -> Option<crate::parser::OrderedListStyle> {
         "lowergreek" => Some(OrderedListStyle::LowerGreek),
         _ => None,
     }
-}
-
-fn configure_tables(blocks: &mut [AstBlock]) {
-    crate::walker::walk_blocks_mut(blocks, &mut |block: &mut AstBlock| {
-        if let AstBlock::Delimited(block) = block
-            && let crate::parser::DelimitedContent::Table(table) = &mut block.content
-        {
-            crate::table::configure(table, &block.metadata);
-        }
-    });
 }
 
 fn document_type(attributes: &[DocumentAttributeOccurrence]) -> DocumentType {

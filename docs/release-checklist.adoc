@@ -2,7 +2,7 @@
 
 リリースを公開する前に行う確認をまとめています。個人開発でも、同じ手順を残すことで公開後の調査を簡単にします。
 
-この確認項目はZed、ブラウザWorkerおよび将来のnativeホストで再利用する。製品固有の
+この確認項目はZed、ブラウザWorkerおよびnativeホストで再利用する。製品固有の
 DB migration、認証、配布またはノートアプリの受け入れ確認は外部リポジトリで追加する。
 
 GitHub Releasesからの導入、更新、版数の固定、削除は
@@ -19,8 +19,8 @@ cargo make release-check
 このtaskはstable Rustの全workspace・Clippy・docs・Zed・WASM型検査、native／実WASM
 conformance、短時間fuzz、Web Worker、release fixtureおよびWASM sizeを実行する。
 長時間fuzzはxref:testing.adoc[品質保証とFuzzing]の手順で別途定期実行する。
-Rust、WASM、Workerのパッケージバージョンがxref:../release-manifest.json[release manifest]と
-一致しない場合も失敗します。
+Rust workspace、WASM、browser package、Zed拡張および配布planのパッケージバージョンが
+xref:../release-manifest.json[release manifest]と一致しない場合も失敗します。
 
 == Rust toolchain
 
@@ -36,7 +36,7 @@ cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=
 ----
 
 配布releaseでは、さらにxref:release-distribution.adoc[GitHub Releases配布契約]に従い、固定した`dist`の
-dry run、release train、target matrix、browser extra artifactおよび公的registryが無効であることを確認する。
+dry run、release train、target matrix、browser／Zed extra artifactおよび公的registryが無効であることを確認する。
 stable tagではxref:release-workflow.adoc[Transactional workflow]の9 asset集合を確認し、
 xref:release-integrity.adoc[完全性検証]に従ってchecksumとattestationをそれぞれ検証する。
 
@@ -85,13 +85,17 @@ repository開発版の導入と削除はxref:zed-development.adoc[Zedへの開�
 node tools/release-installation-e2e.mjs /path/to/candidate <target>
 ----
 
-. checksumとattestationの検証後に開始する。
+. main candidateでは、生成済みmetadataとchecksumの整合性を検証してから開始する。
 . 一時HOMEの導入前file一覧を保存する。
 . CLIとLSPをversion別directoryへ配置し、clean PATHから選択されることを確認する。
 . browser libraryとZed拡張が同じversion別directoryへ配置されることを確認する。
 . `current`が指定versionを指し、CLIとLSPの`--version --json`が一致することを確認する。
 . Zed、browserおよびnativeの各機能checklistを実行する。
 . 全管理対象を削除し、導入前後のfile一覧が一致することを確認する。
+
+tag公開後の手動受け入れでは、同じcandidate由来の公開assetを取得し、checksumに加えて
+GitHub Artifact Attestationを検証してから同じライフサイクルを再実行する。main candidateは
+attestationを生成しないため、自動candidate E2Eの前提にattestationを含めない。
 
 == Nix flake
 

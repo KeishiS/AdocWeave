@@ -109,7 +109,7 @@ fn format_syntax(
 
         let trimmed = content.trim_end_matches([' ', '\t']);
         if trimmed.len() != content.len()
-            && !crate::parser::trailing_whitespace_is_structural(content)
+            && !crate::block_grammar::trailing_whitespace_is_structural(content)
         {
             edits.push(TextEdit {
                 range: text_range(

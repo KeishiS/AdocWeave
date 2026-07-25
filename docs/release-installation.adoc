@@ -42,7 +42,7 @@ versionを固定し、同じReleaseのarchive 6個とmetadata 3個を空のdirec
 
 [source,console]
 ----
-VERSION=0.1.0
+VERSION=X.Y.Z
 mkdir "adocweave-$VERSION"
 gh release download "v$VERSION" \
   --repo KeishiS/AdocWeave \
@@ -73,7 +73,7 @@ private repositoryへ移行した場合は、read権限だけを持つ`gh auth`�
 
 [source,console]
 ----
-VERSION=0.1.0
+VERSION=X.Y.Z
 TARGET=x86_64-unknown-linux-musl
 PREFIX="$HOME/.local"
 ROOT="$PREFIX/lib/adocweave/$VERSION"
@@ -116,10 +116,14 @@ adocweave-lsp --version --json
 
 [source,console]
 ----
-sudo install -d /opt/adocweave/0.1.0/bin
-sudo install -m 0755 adocweave /opt/adocweave/0.1.0/bin/adocweave
-sudo install -m 0755 adocweave-lsp /opt/adocweave/0.1.0/bin/adocweave-lsp
-sudo ln -sfn /opt/adocweave/0.1.0 /opt/adocweave/current
+VERSION=X.Y.Z
+TARGET=x86_64-unknown-linux-musl
+sudo install -d "/opt/adocweave/$VERSION/bin"
+sudo install -m 0755 "adocweave-cli-$TARGET/adocweave" \
+  "/opt/adocweave/$VERSION/bin/adocweave"
+sudo install -m 0755 "adocweave-lsp-$TARGET/adocweave-lsp" \
+  "/opt/adocweave/$VERSION/bin/adocweave-lsp"
+sudo ln -sfn "/opt/adocweave/$VERSION" /opt/adocweave/current
 sudo ln -sfn /opt/adocweave/current/bin/adocweave /usr/local/bin/adocweave
 sudo ln -sfn /opt/adocweave/current/bin/adocweave-lsp /usr/local/bin/adocweave-lsp
 ----
@@ -183,7 +187,7 @@ managed LSP取得とeditor機能を確認するまで保持する。
 
 [source,console]
 ----
-VERSION=0.1.0
+VERSION=X.Y.Z
 TEST_ROOT="$(mktemp -d "/tmp/adocweave-zed-$VERSION.XXXXXX")"
 cd "$TEST_ROOT"
 
@@ -245,7 +249,7 @@ AdocWeave管理対象だけを削除する。
 
 [source,console]
 ----
-VERSION=0.1.0
+VERSION=X.Y.Z
 PREFIX="$HOME/.local"
 rm "$PREFIX/bin/adocweave" "$PREFIX/bin/adocweave-lsp"
 rm "$PREFIX/lib/adocweave/current"
@@ -264,7 +268,7 @@ release candidateを同一directoryへ集めた状態で、対応architectureの
 
 [source,console]
 ----
-node release-installation-e2e.mjs /path/to/candidate x86_64-unknown-linux-musl
+node tools/release-installation-e2e.mjs /path/to/candidate x86_64-unknown-linux-musl
 ----
 
 この試験は一時的なclean HOMEへCLI、LSP、browserおよびZed archiveを導入し、clean PATHからversionを確認する。

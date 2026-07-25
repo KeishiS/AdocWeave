@@ -37,9 +37,9 @@ AsciiDocを読む部分、HTMLなどへ変換する部分、利用側アプリ�
 == 単一解析スナップショット
 
 `Analysis`は入力テキストと行索引を一元化した`SourceDocument`、syntax tree、AST、診断および参照先を
-所有する。reference、macroおよびresource queryはASTを唯一の基準として導出し、別の深い複製索引を
-保持しない。同じ`Analysis`に含まれる値は、すべて同じ文書版と`ParseOptions`から
-生成される。
+所有する。reference、macroおよびresource queryはASTを唯一の基準として導出する。文書全体の検索に必要な
+identifier、rangeおよびblockの索引は`ResolvedDocument`の構築時に一度だけ作り、consumerが線形走査や
+別の深い複製索引を作らない。同じ`Analysis`に含まれる値は、すべて同じ文書版と`ParseOptions`から生成される。
 
 `AstDocument`の文書全体にわたる派生情報は、一つのimmutableな`ResolvedDocument`が所有する。
 構築器はraw semantic blockが完成した後にidentifier、section structure、block index、
@@ -57,10 +57,11 @@ xref:core-profile.adoc[AdocWeave Core Profile]で定義する。
 
 == Native host境界
 
-`adocweave-host` crateは`adocweave-cli`とLanguage Serverが共有するnative filesystem境界である。canonical path、
-許可root、regular file、UTF-8、file数、resource byte数、総byte数および依存graphのforward／reverse closureを
-ここで一度だけ実装する。`adocweave` core packageはこのcrateに依存せず、I/Oを行わない。CLI packageとLSP adapterだけが
-host crateを利用し、検証済みtextからcoreの`ResourceSnapshot`を構築する。
+`adocweave-host` crateは`adocweave-cli`とLanguage Serverが共有するnative host境界である。
+`local_resource` moduleはcanonical path、許可root、regular file、UTF-8、file数、resource byte数および
+総byte数を検証し、`dependency_graph` moduleはforward／reverse closureを管理する。crate rootはこの二つの
+公開APIだけを再公開する。`adocweave` core packageはこのcrateに依存せず、I/Oを行わない。CLI packageと
+LSP adapterだけがhost crateを利用し、検証済みtextからcoreの`ResourceSnapshot`を構築する。
 
 LSPの解析jobはrootの`DocumentRevision`と`WorkspaceGeneration`を同時に取得する。採用時にどちらかが変化して
 いれば、直接解析とinclude展開解析を含むjob全体を破棄する。採用済み結果は一つの`DocumentView`がroot解析と
@@ -84,9 +85,10 @@ delimiter、macro、target、label、errorおよびunknownを表す。triviaと�
 syntax diagnosticの構造変更は共通の`BlockVisitorMut`を利用する。inline sequenceの可変走査もwalkerに
 集約する。出力固有処理はenumを明示的かつ網羅的に分岐し、新しいvariantを黙って無視するwildcard分岐を避ける。
 
-区切り付きリテラルは他のdelimiter blockと同じ`AstBlock::Delimited`で表し、kindを`Literal`、contentを
-`Verbatim`とする。過去の`AstBlock::Literal`と専用recognizerは持たない。syntax treeではFormatterが不透明領域を
-識別できるよう`SyntaxKind::LiteralBlock`へ投影するが、semantic modelを二重化しない。
+parserは区切り付きリテラルを他のdelimiter blockと同じfactとして認識するが、semantic loweringは
+literalとsourceを共通の`AstBlock::Verbatim`へ正規化する。top-level、compound blockおよびAsciiDoc table cellで
+この不変条件を共有し、最終semantic modelへparser専用の`AstBlock::Source`を残さない。syntax treeではFormatterが
+不透明領域を識別できるよう`SyntaxKind::LiteralBlock`または`SyntaxKind::SourceBlock`へ投影する。
 
 すべてのsemantic blockは出力非依存な`BlockMetadata`を所有し、`AstBlock::metadata()`を
 共通query入口とする。title、ID、role、optionおよびelement attributeは値とsource rangeを
@@ -108,6 +110,8 @@ block parserは`recognize_line`の固定優先順位表で行を分類し、`Blo
 syntax nodeとsemantic blockの追加およびpending metadataの付与は共通commit処理を用いる。
 recognizerが生成した回復factはsyntax issueへ移動した後に破棄し、最終semantic ASTからqueryできない。
 doctype依存のheading正規化はfactの移動前に行い、構文診断と意味判断の順序を固定する。
+行単体のanchor、block title、block属性、delimiterおよび末尾空白の純粋な認識規則は
+`block_grammar`が所有し、parserの状態機械へ逆依存しない。
 
 再帰sequenceの入力範囲、context、cursorおよび出力型は`block_sequence`が所有する。root出力だけが
 document header、文書属性と属性問題を持ち、nested出力はblock、syntax、anchorだけを返す。
@@ -121,7 +125,7 @@ sequence orchestratorに残す。共有`ParseBudget`、cancel checkおよびsour
 `block_model`と`parser_support`へ依存し、`parser` facadeへ逆依存しない。
 
 解析順序は、raw block／syntax factの収集、semantic lowering、文書属性の確定、identifier catalog、
-document structure、syntax diagnostic投影、catalog、lint diagnostic確定の順とする。後段からparserへ
+document structure、catalogを含むresolved document、syntax diagnostic投影、lint diagnostic確定の順とする。後段からparserへ
 情報を戻して再解釈せず、CLI、LSP、WASMおよびZed adapterは完成した一つの`Analysis`だけを利用する。
 
 == 標準コアとホスト拡張

@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
-use crate::document::{HeadingId, ReferenceTarget};
+use crate::document::HeadingId;
 use crate::inline::{
     Inline, InlineLiteralKind, InlineStyle, Link, Reference, ReferenceDestination,
 };
@@ -309,16 +309,15 @@ pub(crate) fn render_with_inputs_ast(
     let mut fragment = String::new();
     let document_attributes = document.presentation().attributes().values().clone();
     let heading_ids = crate::document::generate_heading_ids_ast(document);
-    let targets = crate::document::reference_targets_ast(document);
     let mut diagnostics = Vec::new();
     let mut input_usage = inputs.track_usage();
     {
         let mut inline_context = InlineRenderContext {
             policy,
-            targets: &targets,
             input_usage: &mut input_usage,
             diagnostics: &mut diagnostics,
             catalogs: document.catalogs(),
+            identifiers: document.identifiers(),
             structure: document.structure(),
             presentation: document.presentation(),
         };
@@ -326,7 +325,6 @@ pub(crate) fn render_with_inputs_ast(
             &mut fragment,
             document,
             document.layout().nodes(),
-            &heading_ids,
             policy,
             &mut inline_context,
             RenderScope::default(),
@@ -393,7 +391,6 @@ fn render_layout_nodes(
     output: &mut String,
     document: &AstDocument,
     nodes: &[crate::presentation::LayoutNode],
-    heading_ids: &[HeadingId],
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
@@ -414,7 +411,6 @@ fn render_layout_nodes(
                     output,
                     document,
                     nodes,
-                    heading_ids,
                     policy,
                     context,
                     scope.enter(*layout_scope),
@@ -424,26 +420,7 @@ fn render_layout_nodes(
                 let block = document
                     .top_level_block(*block_id)
                     .expect("layout only contains top-level blocks");
-                let explicit_id = context
-                    .targets
-                    .iter()
-                    .find(|target| target.target_range == block.range())
-                    .map(|target| target.id.as_str());
-                let heading_id = heading_ids
-                    .iter()
-                    .find(|heading| {
-                        matches!(block, AstBlock::Heading(value) if value.text_range == heading.range)
-                    })
-                    .map(|heading| heading.id.as_str());
-                render_block(
-                    output,
-                    block,
-                    explicit_id,
-                    heading_id,
-                    policy,
-                    context,
-                    scope,
-                );
+                render_block(output, block, policy, context, scope);
                 if matches!(
                     block,
                     AstBlock::Heading(Heading {
@@ -492,22 +469,21 @@ fn render_header_metadata(output: &mut String, header: &crate::parser::DocumentH
 fn render_block(
     output: &mut String,
     block: &AstBlock,
-    explicit_id: Option<&str>,
-    heading_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
-    let explicit_id = explicit_id.or_else(|| {
-        context
-            .targets
-            .iter()
-            .find(|target| target.target_range == block.range())
-            .map(|target| target.id.as_str())
-    });
+    let explicit_id = context
+        .identifiers
+        .target_at(block.range())
+        .map(|target| target.id.as_str());
     match block {
         AstBlock::Heading(heading) => {
-            let id = if let Some(id) = heading_id {
+            let id = if let Some(id) = context
+                .identifiers
+                .heading_at(heading.text_range)
+                .map(|heading| heading.id.as_str())
+            {
                 id
             } else if let Some(id) = explicit_id {
                 id
@@ -728,7 +704,7 @@ fn render_delimited_children(
 ) {
     if let crate::parser::DelimitedContent::Compound(children) = &block.content {
         for child in children {
-            render_block(output, child, None, None, policy, context, scope);
+            render_block(output, child, policy, context, scope);
         }
     }
 }
@@ -951,7 +927,7 @@ fn render_table_cell(
         }
         TableCellContent::AsciiDoc(blocks) => {
             for block in blocks {
-                render_block(output, block, None, None, policy, context, scope);
+                render_block(output, block, policy, context, scope);
             }
         }
     }
@@ -1047,7 +1023,7 @@ fn render_list(
             if !output.ends_with('\n') {
                 output.push('\n');
             }
-            render_block(output, continuation, None, None, policy, context, scope);
+            render_block(output, continuation, policy, context, scope);
         }
         output.push_str(if list.kind == crate::parser::ListKind::Description {
             "</dd>\n"
@@ -1544,10 +1520,10 @@ const fn math_class(language: crate::inline::MathLanguage) -> &'static str {
 
 struct InlineRenderContext<'inputs, 'render> {
     policy: &'inputs RenderPolicy,
-    targets: &'inputs [ReferenceTarget],
     input_usage: &'render mut RenderInputUsage<'inputs>,
     diagnostics: &'render mut Vec<Diagnostic>,
     catalogs: &'inputs crate::catalog::DocumentCatalogs,
+    identifiers: &'inputs crate::document::DocumentIdentifiers,
     structure: &'inputs crate::structure::DocumentStructure,
     presentation: &'inputs crate::presentation::DocumentPresentation,
 }
@@ -1659,7 +1635,7 @@ fn render_reference(
 ) {
     let (href, fallback, diagnostic) = match &reference.destination {
         ReferenceDestination::Local { anchor, .. } => {
-            if let Some(target) = context.targets.iter().find(|target| target.id == *anchor) {
+            if let Some(target) = context.identifiers.target_by_id(anchor) {
                 (Some(format!("#{anchor}")), target.label.clone(), None)
             } else {
                 (

@@ -11,7 +11,7 @@ AdocWeaveは、AsciiDocの読み取り、問題の検出、整形、HTMLへの�
 
 == バージョン
 
-公開API、WebAssembly、HTML出力、構造情報は、同じパッケージバージョンを使います。現在の`VERSION = 0.6.4`です。
+公開API、WebAssembly、HTML出力、構造情報は、同じパッケージバージョンを使います。現在の`VERSION = 0.7.0`です。
 現在の値と必要なRustのバージョンはxref:../release-manifest.json[release manifest]が基準です。
 公開結果を保存するアプリケーションは、AdocWeaveの更新時にHTMLおよび検索用情報を再構築すること。
 
@@ -29,7 +29,8 @@ xref:syntax-support.adoc[対応しているAsciiDocの書式]にあります。
 
 == 処理の上限
 
-大きすぎる入力で処理が止まらないように、既定の上限を設けています。
+大きすぎる入力で処理が止まらないように、既定の上限を設けています。次は主な上限であり、
+完全な一覧は`ProcessingLimits`のAPI documentationを基準とする。
 
 [cols="2,1",options="header"]
 |===
@@ -47,7 +48,8 @@ xref:syntax-support.adoc[対応しているAsciiDocの書式]にあります。
 |問題の件数 |1,000
 |===
 
-利用側アプリはより小さい上限を指定できる。CLIとWebAssemblyは出力サイズも検査する。
+利用側アプリは用途に応じて上限を設定でき、安全側へ制限する場合は既定値より小さくする。CLIとWebAssemblyは
+出力サイズも検査する。
 ライブラリを直接使用してHTMLを表示するアプリは、表示前に同等の出力サイズ検査を行うこと。
 
 == API利用
@@ -55,6 +57,28 @@ xref:syntax-support.adoc[対応しているAsciiDocの書式]にあります。
 Rustからは`Engine`、`ParseOptions`、`Analysis`が主な入口です。属性の最終値は
 `Analysis::presentation().attributes()`から、属性を記述した順番や位置は
 `Analysis::document_attribute_occurrences()`から取得する。
+
+[source,rust]
+----
+use adocweave::output::html::{RenderPolicy, render};
+use adocweave::{Engine, ParseError, ParseOptions};
+
+fn convert() -> Result<String, ParseError> {
+    let source = "\
+= 文書
+:toc:
+:sectnums:
+
+== 節
+";
+    let analysis = Engine::new(ParseOptions::default()).analyze(source)?;
+    Ok(render(analysis.document(), &RenderPolicy::default()).html)
+}
+----
+
+`:toc:`と`:sectnums:`はRust側のflagではなく、文書ヘッダーの属性によって有効になる。
+`:toclevels:`は任意であり、省略時はlevel 1から5までを目次候補とする。詳細は
+xref:document-structure.adoc[文書の構造]を参照。
 
 HTML、整形、問題一覧、構造情報、外部リンクの解決結果は用途ごとの公開モジュールにあります。
 型名およびJSONの詳細は、各ページからソースコードのAPIドキュメントを参照。

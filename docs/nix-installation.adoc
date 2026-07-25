@@ -26,7 +26,7 @@ branch先端は更新されるため、再現性が必要な環境ではcommit�
 [source,console]
 ----
 nix run github:KeishiS/AdocWeave/<commit-sha> -- --version --json
-nix run 'github:KeishiS/AdocWeave?ref=v0.1.0' -- --version --json
+nix run 'github:KeishiS/AdocWeave?ref=vX.Y.Z' -- --version --json
 ----
 
 == Nix profileへの導入

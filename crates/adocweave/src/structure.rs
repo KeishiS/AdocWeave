@@ -1,5 +1,7 @@
 //! Shared doctype-aware document structure projection.
 
+use std::collections::BTreeMap;
+
 use crate::parser::{AstBlock, AstDocument, DocumentType, Heading, HeadingKind};
 use crate::source::TextRange;
 
@@ -7,6 +9,7 @@ use crate::source::TextRange;
 pub struct DocumentStructure {
     roots: Vec<Section>,
     headings: Vec<StructuredHeading>,
+    heading_ordinals: BTreeMap<TextRange, usize>,
     manpage: Option<Manpage>,
     problems: Vec<StructureProblem>,
 }
@@ -29,7 +32,9 @@ impl DocumentStructure {
     }
 
     pub fn heading_at(&self, range: TextRange) -> Option<&StructuredHeading> {
-        self.headings.iter().find(|heading| heading.range == range)
+        self.heading_ordinals
+            .get(&range)
+            .and_then(|ordinal| self.headings.get(*ordinal))
     }
 }
 
@@ -126,11 +131,7 @@ pub(crate) fn build(
             .heading_at(heading.text_range)
             .expect("lowering assigns every heading an identifier");
         let id = identifier.id.clone();
-        let id_range = identifiers
-            .targets()
-            .iter()
-            .find(|target| target.target_range == heading.range && target.id == id)
-            .map_or(heading.text_range, |target| target.id_range);
+        let id_range = identifier.id_range;
         let appendix = is_appendix(heading);
         let bibliography = is_bibliography(heading);
         let (kind, level) = match heading.kind {
@@ -194,6 +195,9 @@ pub(crate) fn build(
             range: heading.range,
             title_range: heading.text_range,
         };
+        structure
+            .heading_ordinals
+            .insert(structured.range, structure.headings.len());
         structure.headings.push(structured.clone());
         if kind == SectionKind::Discrete {
             continue;

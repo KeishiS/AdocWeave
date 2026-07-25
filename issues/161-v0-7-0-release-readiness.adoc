@@ -1,0 +1,24 @@
+= v0.7.0 release readiness
+:status: in-progress
+:depends-on:
+
+== 目的
+
+見出しID range、公開text facade、table cell semantic正規化および設計・性能改善を`v0.7.0`として配布する。
+版数、移行ガイド、公開契約、fixtureおよびrelease acceptanceを一つのrelease trainで同期する。
+Dependabot PRとM40後の内部設計課題はこのreleaseへ含めない。
+
+== 設計判断
+
+公開Rust型へのfield追加を含むため、xref:../docs/release-workflow.adoc[release workflow]の規則に従い
+patchでなくminor releaseとする。release manifestの`packageVersion`を機械可読な基準とし、
+Rust 1.97.1を維持する。mainの完全candidate成功commitへstable tagを一度だけ付ける。
+
+== 完了条件
+
+* workspace、Zed、browser、protocol、release manifest、distribution planおよびfixtureが`0.7.0`で一致する。
+* xref:../docs/upgrade-0-7.adoc[v0.7.0への移行]が公開APIとsemantic正規化への移行を定義する。
+* `RELEASE_TAG=v0.7.0 cargo make release-gate`が成功する。
+* pull requestを最新の`origin/main`へrebaseし、必須check成功後にmergeする。
+* mainのcandidate成功後、`v0.7.0`を作成し、GitHub Releaseの9 asset、checksum、SBOMおよびprovenanceを受け入れる。
+* Zedで診断、Outline、Format、Hover、Definition、ReferencesおよびSemantic Tokensを手動確認する。

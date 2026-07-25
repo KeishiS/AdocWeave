@@ -38,7 +38,7 @@ build jobはGitHub Releaseへの書き込み権限を持たないため、途中
 
 == 初期設定
 
-repositoryのSettingsから`github-release` Environmentを一度作成し、必要なreviewerとmain branchまたはrelease tagの
+repositoryのSettingsから`github-release` Environmentを一度作成し、必要なreviewerとstable version tagだけを許可する
 deployment ruleを設定する。OS code signingを導入するまでは追加secretを登録しない。forkからのpull requestは
 read-only経路だけを通り、Environmentとpublish jobへ到達しない。
 
@@ -57,14 +57,16 @@ minor releaseを作る前に、前のstable版から利用者に見える差分�
 . Environmentの画面でsource commitとcandidateを確認し、publishを承認する。
 . GitHub Releaseがstableであり、計画された9 assetだけを含むことを確認する。
 . xref:release-integrity.adoc[完全性検証]に従い、download後のchecksumとattestationを別々に検証する。
-. CLI／LSPの2 targetとbrowser packageについてxref:release-checklist.adoc[リリース確認]を実行する。
+. CLI／LSPの2 target、browser package、Zed拡張およびNix flakeについて
+  xref:release-checklist.adoc[リリース確認]を実行する。
 
 この受け入れ結果にはtag、commit、workflow run URL、検証環境および不一致を記録する。tag後にblockerが見つかった場合は
 既存Releaseを置換せず、新しいstable versionで最初から実行する。
 
-=== `v0.1.0-rc.1`の受け入れ結果
+=== 旧方式の記録: `v0.1.0-rc.1`
 
-2026-07-21に最初のrelease candidateを次の条件で受け入れた。
+2026-07-21に最初のrelease candidateを次の条件で受け入れた。この記録はstable-onlyの9 asset契約と
+main candidate再利用を導入する前の履歴であり、現在の受け入れ手順には使用しない。
 
 * Release: https://github.com/KeishiS/AdocWeave/releases/tag/v0.1.0-rc.1[`v0.1.0-rc.1`]
 * source commit: `72ad5a677e179448b4de7f524710f4e455aa163d`

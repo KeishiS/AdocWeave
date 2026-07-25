@@ -7,6 +7,8 @@
 
 * xref:command-line.adoc[コマンドラインの使い方]
 * xref:syntax-support.adoc[対応している書式]
+* xref:document-attributes.adoc[文書属性]
+* xref:document-structure.adoc[文書の構造、目次、節番号]
 * xref:tables.adoc[表]
 * xref:lists.adoc[リスト]
 * xref:links-and-cross-references.adoc[リンクと相互参照]
@@ -20,6 +22,8 @@
 * xref:browser-library.adoc[ブラウザーで使う]
 * xref:wasm-worker.adoc[WebAssemblyとWeb Worker]
 * xref:web-host-adapter.adoc[Webアプリへの組み込み]
+* xref:core-profile.adoc[RustコアAPIと対応範囲]
+* xref:extensions.adoc[利用側アプリの独自機能]
 
 == 開発する・配布する
 
@@ -28,6 +32,11 @@
 * xref:git-workflow.adoc[Git branchの運用]
 * xref:continuous-integration.adoc[継続的インテグレーション]
 * xref:release-installation.adoc[インストールと更新]
+* xref:release-checklist.adoc[リリース前の確認]
+* xref:release-workflow.adoc[GitHub Releaseの公開手順]
+* xref:release-distribution.adoc[配布assetの契約]
+* xref:release-integrity.adoc[checksum、SBOM、provenance]
+* xref:native-release.adoc[Native archiveの契約]
 * xref:roadmap.adoc[今後の予定]
 
 == 詳しい仕様と設計
@@ -36,6 +45,7 @@
 
 * xref:compatibility.adoc[AsciiDocとの違い]
 * xref:current-contract.adoc[公開している仕様と移行情報]
+* xref:upgrade-0-7.adoc[v0.7.0への移行]
 * xref:core-profile.adoc[対応範囲の定義]
 * xref:architecture.adoc[内部の仕組み]
 * xref:grammar.adoc[文法の詳細]

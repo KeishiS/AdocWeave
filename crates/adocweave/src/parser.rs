@@ -4,7 +4,11 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::attributes::{DocumentAttributeOccurrence, parse_line as parse_attribute_line};
-use crate::block_grammar::{LineRecognition, recognize_line};
+use crate::block_grammar::{
+    LineRecognition, is_block_title, parse_block_attributes, parse_explicit_anchor,
+    parse_math_attribute, parse_source_attribute, recognize_line, unsupported_reason,
+    valid_anchor_id,
+};
 pub use crate::block_model::*;
 use crate::block_sequence::{
     BlockContext, BlockCursor, BlockFacts, BlockInput, BlockLocation, BlockRecognition,
@@ -13,7 +17,7 @@ use crate::block_sequence::{
 use crate::budget::{BudgetExceeded, ParseBudget};
 use crate::delimiter::{DelimitedContentModel, DelimiterSpec};
 use crate::document_header::DocumentHeaderState;
-use crate::inline::{Inline, InlineParseConfig, MathLanguage};
+use crate::inline::{Inline, InlineParseConfig};
 use crate::inline_grammar::parse as parse_inlines;
 use crate::limits::ProcessingLimits;
 use crate::list_parser::{FlatListItem, ParsedListMarker};
@@ -1076,48 +1080,6 @@ fn finish_document(
     })
 }
 
-pub(crate) fn parse_explicit_anchor(
-    content: &str,
-    absolute_start: usize,
-    full_range: TextRange,
-) -> Option<ExplicitAnchor> {
-    let (inner, prefix_len) = if let Some(inner) = content
-        .strip_prefix("[[")
-        .and_then(|value| value.strip_suffix("]]"))
-    {
-        (inner, 2)
-    } else {
-        let inner = content
-            .strip_prefix("[#")
-            .and_then(|value| value.strip_suffix(']'))?;
-        (inner, 2)
-    };
-    let (id, label) = inner
-        .split_once(',')
-        .map_or((inner, None), |(id, label)| (id, Some(label)));
-    let id_range = text_range(
-        absolute_start + prefix_len,
-        absolute_start + prefix_len + id.len(),
-    )
-    .expect("anchor range fits");
-    let label_range = label.map(|label| {
-        text_range(
-            absolute_start + prefix_len + id.len() + 1,
-            absolute_start + prefix_len + id.len() + 1 + label.len(),
-        )
-        .expect("anchor label range fits")
-    });
-    Some(ExplicitAnchor {
-        range: full_range,
-        id_range,
-        label_range,
-        id: id.to_owned(),
-        label: label.map(str::to_owned),
-        target_range: None,
-        valid: valid_anchor_id(id),
-    })
-}
-
 fn parse_block_title(
     content: &str,
     base: usize,
@@ -1146,108 +1108,6 @@ fn parse_block_title(
         inlines: split_hard_breaks(parsed.inlines),
         inline_problems: parsed.problems,
     }))
-}
-
-pub(crate) fn is_block_title(content: &str) -> bool {
-    content
-        .strip_prefix('.')
-        .is_some_and(|value| !value.is_empty() && !value.starts_with([' ', '\t', '.']))
-}
-
-pub(crate) fn parse_block_attributes(content: &str, base: usize) -> Option<BlockMetadata> {
-    let inner = content.strip_prefix('[')?.strip_suffix(']')?;
-    if inner.starts_with('[') || inner.ends_with(']') {
-        return None;
-    }
-    let mut metadata = BlockMetadata::default();
-    let mut field_start = 0;
-    let mut quoted = false;
-    for field_end in inner
-        .char_indices()
-        .filter_map(|(index, character)| {
-            if character == '"' {
-                quoted = !quoted;
-            }
-            (character == ',' && !quoted).then_some(index)
-        })
-        .chain(std::iter::once(inner.len()))
-    {
-        let raw = &inner[field_start..field_end];
-        let leading = raw.len() - raw.trim_start().len();
-        let value = raw.trim();
-        let absolute_start = base + 1 + field_start + leading;
-        let range = TextRange::new(
-            TextSize::new(absolute_start).ok()?,
-            TextSize::new(absolute_start + value.len()).ok()?,
-        )
-        .ok()?;
-        if !value.is_empty() {
-            parse_element_attribute(value, range, &mut metadata);
-        }
-        field_start = field_end.saturating_add(1);
-    }
-    Some(metadata)
-}
-
-fn parse_element_attribute(value: &str, range: TextRange, metadata: &mut BlockMetadata) {
-    if let Some((name, raw_value)) = value.split_once('=') {
-        let name = name.trim();
-        let raw_value = raw_value.trim();
-        metadata.attributes.push(ElementAttribute {
-            name: (!name.is_empty()).then(|| name.to_owned()),
-            value: unquote(raw_value).to_owned(),
-            range,
-        });
-        return;
-    }
-
-    let mut shorthand = value;
-    let mut consumed_shorthand = false;
-    while let Some(marker) = shorthand
-        .chars()
-        .next()
-        .filter(|value| matches!(value, '#' | '.' | '%'))
-    {
-        let tail = &shorthand[marker.len_utf8()..];
-        let end = tail.find(['#', '.', '%']).unwrap_or(tail.len());
-        let item = &tail[..end];
-        if item.is_empty() {
-            break;
-        }
-        let offset = value.len() - shorthand.len() + marker.len_utf8();
-        let item_range = TextRange::new(
-            TextSize::new(range.start().to_usize() + offset).expect("attribute offset is bounded"),
-            TextSize::new(range.start().to_usize() + offset + item.len())
-                .expect("attribute offset is bounded"),
-        )
-        .expect("ordered shorthand range");
-        let item = MetadataValue {
-            value: item.to_owned(),
-            range: item_range,
-        };
-        match marker {
-            '#' => metadata.id = Some(item),
-            '.' => metadata.roles.push(item),
-            '%' => metadata.options.push(item),
-            _ => unreachable!(),
-        }
-        consumed_shorthand = true;
-        shorthand = &tail[end..];
-    }
-    if !consumed_shorthand || !shorthand.is_empty() {
-        metadata.attributes.push(ElementAttribute {
-            name: None,
-            value: unquote(value).to_owned(),
-            range,
-        });
-    }
-}
-
-fn unquote(value: &str) -> &str {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value)
 }
 
 fn consume_metadata_budget(
@@ -1339,18 +1199,6 @@ fn merge_block_metadata(mut leading: BlockMetadata, trailing: BlockMetadata) -> 
     leading
 }
 
-fn valid_anchor_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.chars().all(|character| {
-            !character.is_control()
-                && !character.is_whitespace()
-                && !matches!(
-                    character,
-                    '[' | ']' | '<' | '>' | ',' | '#' | '"' | '\'' | '&' | '=' | '(' | ')'
-                )
-        })
-}
-
 fn parse_math_block(
     source_document: &SourceDocument,
     attribute_index: usize,
@@ -1411,13 +1259,6 @@ fn parse_math_block(
         },
         body.next_line,
     ))
-}
-
-pub(crate) fn parse_math_attribute(text: &str) -> Option<MathLanguage> {
-    match text {
-        "[stem]" | "[latexmath]" => Some(MathLanguage::Latex),
-        _ => None,
-    }
 }
 
 fn parse_lists(
@@ -1743,21 +1584,6 @@ struct DelimitedParseContext<'source> {
     source: &'source str,
     config: &'source ParseConfig,
     is_cancelled: &'source dyn Fn() -> bool,
-}
-
-pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {
-    let trimmed = content.trim_end_matches([' ', '\t']);
-    trimmed.len() != content.len()
-        && (crate::delimiter::spec(trimmed).is_some()
-            || parse_block_attributes(trimmed, 0).is_some()
-            || parse_source_attribute(trimmed).is_some()
-            || parse_math_attribute(trimmed).is_some()
-            || parse_explicit_anchor(
-                trimmed,
-                0,
-                text_range(0, trimmed.len()).expect("trimmed line range is bounded"),
-            )
-            .is_some())
 }
 
 fn parse_delimited_block(
@@ -2127,29 +1953,6 @@ fn parse_source_block(
     ))
 }
 
-pub(crate) fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)>> {
-    let (language, prefix_len) = if let Some(inner) = text.strip_prefix("[source") {
-        let inner = inner.strip_suffix(']')?;
-        if inner.is_empty() {
-            return Some(None);
-        }
-        (inner.strip_prefix(',')?, "[source,".len())
-    } else {
-        let inner = text.strip_prefix('[')?.strip_suffix(']')?;
-        (inner.strip_prefix(',')?, "[,".len())
-    };
-    let leading = language.len() - language.trim_start_matches([' ', '\t']).len();
-    let trimmed = language.trim_matches([' ', '\t']);
-    if trimmed.is_empty() {
-        return Some(None);
-    }
-    if trimmed.contains([',', ']']) {
-        return None;
-    }
-    let start = prefix_len + leading;
-    Some(Some((start, start + trimmed.len())))
-}
-
 fn parse_heading(
     content: &str,
     line: SourceLine,
@@ -2418,19 +2221,6 @@ fn relative_range(parent: TextRange, start: usize, end: usize) -> TextRange {
     .expect("relative inline range is ordered")
 }
 
-pub(crate) fn unsupported_reason(content: &str) -> Option<&'static str> {
-    let trimmed = content.trim_start_matches([' ', '\t']);
-    if trimmed.starts_with('[') {
-        Some("block attributes are not implemented")
-    } else if is_delimiter(trimmed) {
-        Some("delimited blocks are not implemented")
-    } else if trimmed.starts_with("* ") || trimmed.starts_with(". ") {
-        Some("list syntax is not implemented")
-    } else {
-        None
-    }
-}
-
 fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
     TextRange::new(
         crate::source::TextSize::new(start)?,
@@ -2438,30 +2228,23 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
     )
 }
 
-fn is_delimiter(text: &str) -> bool {
-    let mut characters = text.chars();
-    let Some(first) = characters.next() else {
-        return false;
-    };
-    matches!(first, '-' | '.' | '=' | '_')
-        && text.chars().count() >= 4
-        && characters.all(|character| character == first)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmonitionKind, AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlock,
-        DelimitedBlockKind, DelimitedContent, DocumentType, Heading, HeadingKind, ListKind,
-        SyntaxKind, VerbatimKind, parse,
+        AdmonitionKind, AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlockKind,
+        DelimitedContent, DocumentType, Heading, HeadingKind, ListKind, SourceInfo, SyntaxKind,
+        VerbatimBlock, VerbatimKind, parse,
     };
 
     #[test]
     fn valid_anchor_id_rejects_html_attribute_metacharacters() {
-        assert!(super::valid_anchor_id("section-1"));
-        assert!(super::valid_anchor_id("item.lead"));
+        assert!(crate::block_grammar::valid_anchor_id("section-1"));
+        assert!(crate::block_grammar::valid_anchor_id("item.lead"));
         for id in ["a\"b", "a'b", "a&b", "a=b", "a(b)", "a b", "a\tb", ""] {
-            assert!(!super::valid_anchor_id(id), "expected {id:?} to be invalid");
+            assert!(
+                !crate::block_grammar::valid_anchor_id(id),
+                "expected {id:?} to be invalid"
+            );
         }
     }
 
@@ -3408,9 +3191,13 @@ mod tests {
         ));
         assert!(matches!(
             &blocks[4],
-            AstBlock::Source(block)
-                if block.language.as_deref() == Some("rust")
-                    && block.metadata.title.as_ref().map(|title| title.value.as_str())
+            AstBlock::Verbatim(VerbatimBlock {
+                kind: VerbatimKind::Source(SourceInfo { language, .. }),
+                metadata,
+                ..
+            })
+                if language.as_deref() == Some("rust")
+                    && metadata.title.as_ref().map(|title| title.value.as_str())
                         == Some("Cell source")
         ));
         assert!(matches!(blocks[5], AstBlock::Math(_)));
@@ -3515,12 +3302,18 @@ mod tests {
                         | (Expected::Break, AstBlock::Break(_))
                         | (
                             Expected::Literal,
-                            AstBlock::Delimited(DelimitedBlock {
-                                kind: DelimitedBlockKind::Literal,
+                            AstBlock::Verbatim(VerbatimBlock {
+                                kind: VerbatimKind::Literal,
                                 ..
                             })
                         )
-                        | (Expected::Source, AstBlock::Source(_))
+                        | (
+                            Expected::Source,
+                            AstBlock::Verbatim(VerbatimBlock {
+                                kind: VerbatimKind::Source(_),
+                                ..
+                            })
+                        )
                         | (Expected::List, AstBlock::List(_))
                         | (Expected::Math, AstBlock::Math(_))
                         | (Expected::Delimited, AstBlock::Delimited(_))

@@ -399,6 +399,7 @@ mod tests {
             "==Missing\n",
             "paragraph **open\n",
             "[source]\n----\n== Next\n",
+            "[cols=a]\n|===\n|[source,rust]\n----\nfn main() {}\n----\n|===\n",
             "*  item\n",
             "[stem]\n++++\nopen\n== Next\n",
         ] {
@@ -412,7 +413,9 @@ mod tests {
                         assert!(value.inline_problems.is_empty());
                     }
                     AstBlock::Paragraph(value) => assert!(value.inline_problems.is_empty()),
-                    AstBlock::Source(value) => assert!(value.problems.is_empty()),
+                    AstBlock::Source(_) => {
+                        panic!("parser-only source blocks must not reach the semantic document")
+                    }
                     AstBlock::Verbatim(value) => assert!(value.problems.is_empty()),
                     AstBlock::Math(value) => assert!(value.problems.is_empty()),
                     AstBlock::Delimited(value) => assert!(value.problems.is_empty()),

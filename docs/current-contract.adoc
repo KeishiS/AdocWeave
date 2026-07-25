@@ -11,18 +11,20 @@
 [cols="2,1",options="header"]
 |===
 |項目 |現在値
-|package version |0.6.4
+|package version |0.7.0
 |===
 
 機械可読な値の基準はxref:../release-manifest.json[release manifest]です。
-v0.6.4は公開API・契約の変更を含まない。v0.6.0から更新する場合もxref:upgrade-0-6.adoc[v0.6.0への移行]を参照する。
+v0.7.0は見出しID range、公開text facadeおよびtable cell semantic正規化を含む。
+v0.6.xから更新する場合はxref:upgrade-0-7.adoc[v0.7.0への移行]を参照する。
 
 == 移行ガイド
 
 過去のリリースから更新する利用側アプリは、現在使っている版より後の移行ガイドを番号順にすべて確認してください。
-たとえばv0.1.xからv0.6.4へ更新する場合は、xref:upgrade-0-2.adoc[v0.2.0]、
+たとえばv0.1.xからv0.7.0へ更新する場合は、xref:upgrade-0-2.adoc[v0.2.0]、
 xref:upgrade-0-3.adoc[v0.3.0]、xref:upgrade-0-4.adoc[v0.4.0]および
-xref:upgrade-0-5.adoc[v0.5.0]およびxref:upgrade-0-6.adoc[v0.6.0]への移行をこの順で読みます。各ガイドの必要なRust版と対象リリースの
+xref:upgrade-0-5.adoc[v0.5.0]、xref:upgrade-0-6.adoc[v0.6.0]および
+xref:upgrade-0-7.adoc[v0.7.0]への移行をこの順で読みます。各ガイドの必要なRust版と対象リリースの
 release manifestを確認し、保存しているHTMLや検索用の情報を作り直してください。
 
 * xref:upgrade-0-2.adoc[v0.2.0]：表現力のあるリスト、文献、目次の追加
@@ -30,6 +32,7 @@ release manifestを確認し、保存しているHTMLや検索用の情報を作
 * xref:upgrade-0-4.adoc[v0.4.0]：注意書き、引用、詩のブロックの追加
 * xref:upgrade-0-5.adoc[v0.5.0]：公開Rust APIの整理とスタイルシートの追加
 * xref:upgrade-0-6.adoc[v0.6.0]：文書属性を記述した順番と位置の取得
+* xref:upgrade-0-7.adoc[v0.7.0]：見出しID range、公開text model、table cell semantic正規化
 
 == 詳しい仕様
 
@@ -62,5 +65,6 @@ xref:syntax-support.adoc[対応しているAsciiDocの書式]とxref:compatibili
 == 文書の分類
 
 このディレクトリは現行仕様を記述する。xref:adr/index.adoc[ADR]は採用済みの長期的な
-設計判断、xref:roadmap.adoc[ロードマップ]は未実装の計画、xref:../issues/README.adoc[Issue]
-は完了履歴と作業単位を記録する。Issue本文を現行仕様の基準として参照してはならない。
+設計判断、xref:roadmap.adoc[ロードマップ]はmilestoneごとの計画と完了概要、xref:../issues/README.adoc[Issue]は
+詳細な完了履歴と作業単位を記録する。
+Issue本文を現行仕様の基準として参照してはならない。

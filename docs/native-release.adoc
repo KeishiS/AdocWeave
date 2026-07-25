@@ -83,6 +83,6 @@ CLIでは`--version --json`とrelease manifestのpackage versionを照合し、`
 `format --check`を実行する。LSPでは`--version --json`に加え、stdio上でinitialize、文書open、fixture診断、
 shutdownおよびexitを実行し、`serverInfo.version`を照合する。
 
-GitHub Actionsのmain／tag candidate buildは2 targetのarchiveを一時artifactへ保存し、それぞれ対応するnative runnerで
-このsmokeを実行する。pull requestは品質gateまでに限定する。smoke jobはread-onlyであり、GitHub Releaseを
-作成しない。
+GitHub Actionsのmain candidate buildは2 targetのarchiveを一時artifactへ保存し、それぞれ対応するnative runnerで
+このsmokeを実行する。tag runは同じcommitの検証済みmain candidateを再利用し、native archiveを再buildしない。
+pull requestは品質gateまでに限定する。smoke jobはread-onlyであり、GitHub Releaseを作成しない。

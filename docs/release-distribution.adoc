@@ -3,7 +3,7 @@
 このページは、リリースに含めるファイルと対象環境を保守する人向けです。通常のインストール手順は
 xref:release-installation.adoc[インストールと更新]を参照してください。
 
-この文書は、AdocWeaveのCLI、Language Serverおよびbrowser packageを配布する際の規範的な入口を定義する。
+この文書は、AdocWeaveのCLI、Language Server、browser packageおよびZed拡張を配布する際の規範的な入口を定義する。
 machine-readableな基準はxref:../release/distribution-plan.json[`release/distribution-plan.json`]、配布manifestの
 schemaはxref:../release/adocweave-dist-manifest.schema.json[`adocweave-dist-manifest.schema.json`]である。
 
@@ -62,7 +62,7 @@ provenanceはarchiveへcredentialや署名fileを埋め込まず、GitHub Artifa
 
 `cargo make release-contract`はrelease train、tag、target、asset計画、非公開registry設定、schemaおよびfixtureを
 検査する。`cargo make dist-plan`は固定した`dist 0.32.0`のJSON planを生成し、package、version、2 target、
-archive名、実行ファイル、license、READMEおよびbrowser extra artifactが配布計画と一致することを検査する。
+archive名、実行ファイル、license、READMEおよびbrowser／Zed extra artifactが配布計画と一致することを検査する。
 `cargo make release-gate`は両方を含む。
 GitHub Actions上のstage、権限境界、protected Environmentおよび障害対応は
 xref:release-workflow.adoc[Transactional GitHub Release workflow]で定義する。
