@@ -379,6 +379,13 @@ LSP 3.18を固定revisionで監査し、client capability、workspace通知購�
 * xref:164-document-scoped-attribute-changes.adoc[164: 文書内属性変更の評価]（計画）
 * xref:165-media-backend-presentation.adoc[165: Mediaのbackend presentation]（計画）
 
+=== M49: 文書参照の完全性
+
+文書の移動や削除に伴う更新漏れを検出するため、CLIへopt-inのlocal target実在検査を追加し、
+repositoryの文書検査で使用する。
+
+* xref:168-cli-local-target-validation.adoc[168: CLIによるlocal targetの実在検査]（計画）
+
 === 継続運用: 依存更新
 
 * xref:166-dependabot-safe-auto-merge.adoc[166: Dependabot PRの安全な自動merge]（計画）
