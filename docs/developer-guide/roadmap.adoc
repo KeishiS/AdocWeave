@@ -8,15 +8,6 @@ xref:../../issues/README.adoc[Issue一覧]を参照してください。
 https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 現在のリリース
-
-=== M50: v0.8.1文書構成整理
-
-利用者向け文書、developer向け文書、ADRおよび作業計画の責務を整理し、`v0.8.1`として公開します。
-runtime動作、公開仕様および対応するAsciiDoc構文は変更せず、M47以降の機能は含めません。
-
-* xref:../../issues/174-v0-8-1-release-readiness.adoc[Issue 174: v0.8.1 release readiness]（進行中）
-
 == 次期機能
 
 === M47: 標準構文の互換性
