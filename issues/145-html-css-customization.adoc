@@ -38,7 +38,7 @@ CSSを保持または出力するfieldはない。入力由来の`style`属性�
 
 == 実施結果
 
-採用モデルをxref:../docs/adr/0007-host-supplied-stylesheets.adoc[ADR 0007]へ記録した。
+採用モデルをxref:../docs/developer-guide/adr/0007-host-supplied-stylesheets.adoc[ADR 0007]へ記録した。
 `RenderPolicy.stylesheets`が埋め込みCSS本文とstylesheet URLをcomplete document出力の`<head>`へ
 ホスト指定順に出力し、fragment出力へはCSSを混在させず`stylesheet-not-applicable`診断を返す。
 埋め込みCSSは`</style`・`<!--`・制御文字を拒否し、URLは`UrlPolicy`のResolvedResource contextで

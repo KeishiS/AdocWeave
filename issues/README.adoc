@@ -385,6 +385,11 @@ LSP 3.18を固定revisionで監査し、client capability、workspace通知購�
 repositoryの文書検査で使用する。
 
 * xref:168-cli-local-target-validation.adoc[168: CLIによるlocal targetの実在検査]（計画）
+* xref:169-link-xref-lint.adoc[169: linkとxrefの使い分けに対するLint]（計画）
+* xref:170-list-lint-rules-json.adoc[170: Lint rule一覧のJSON出力]（計画）
+* xref:171-url-policy-responsibility-separation.adoc[171: URL検査の責務分割]（計画）
+* xref:172-html5-validator-fixture.adoc[172: 生成HTMLのHTML5適合性検査]（計画）
+* xref:173-macro-boundary-lint.adoc[173: Macro境界のLint]（計画）
 
 === 継続運用: 依存更新
 

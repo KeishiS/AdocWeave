@@ -18,7 +18,7 @@ AsciiDocの二重マーカーによるstrong、emphasisおよびmonospaceを、�
 
 * ASCII単語内部、日本語、emoji、句読点隣接および入れ子fixtureを持つ。
 * constrained記法と識別子中のunderscoreに回帰がない。
-* AsciiDoc参照動作との差異を`docs/compatibility.adoc`へ明記する。
+* AsciiDoc参照動作との差異を`docs/user-guide/compatibility.adoc`へ明記する。
 * nativeとWASMの結果が一致し、`cargo make release-check`が成功する。
 
 == 依存関係

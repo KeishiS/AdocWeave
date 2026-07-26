@@ -73,8 +73,8 @@ adocweave check --local-targets --project-root . <document>
   確認する。
 * `cargo make adoc-check`へopt-in検査を組み込み、存在するtargetのfixtureと欠落targetの回帰testを
   追加する。
-* xref:../docs/command-line.adoc[コマンドラインの使い方]と
-  xref:../docs/testing.adoc[テストの実行]へoption、対象範囲、非対象およびCIでの扱いを記載する。
+* xref:../docs/user-guide/command-line.adoc[コマンドライン]へoption、対象範囲および非対象を記載し、
+  CIでの検査は`Makefile.toml`のtaskとして定義する。
 
 == 非目標
 

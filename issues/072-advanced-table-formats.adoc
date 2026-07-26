@@ -21,8 +21,8 @@ duplicationおよびblockを含むAsciiDoc cellは未対応である。`a` style
 
 == 完了条件
 
-各形式の正常、曖昧、上限超過fixtureがあり、対応範囲と公式AsciiDocとの差異が`docs/tables.adoc`に
-明記される。
+各形式の正常、曖昧、上限超過fixtureがあり、対応範囲と公式AsciiDocとの差異が
+xref:../docs/user-guide/compatibility.adoc[AsciiDocとの互換性]に記録される。
 
 == 完了結果
 
@@ -34,4 +34,5 @@ AsciiDoc style cellはtop-levelと個別recognizer／builderおよび親budget�
 listおよび対応済み区切り付きblockをHTML、projection、lint、LSP共通walkerから到達できる。ただしline
 dispatch自体はcell用に限定されており、完全なblock sequenceへの統合はIssue 089で追跡する。native／WASM conformance case、
 Formatterのbyte保持、HTML安全出力、cell duplicationを含む形式別testを追加し、公開Core／HTML／conformance
-仕様versionを更新した。対応範囲と残る表示属性はxref:../docs/tables.adoc[表の対応仕様]へ記録した。
+仕様versionを更新した。対応範囲と残る表示属性は
+xref:../docs/user-guide/compatibility.adoc[AsciiDocとの互換性]へ記録した。

@@ -1,0 +1,72 @@
+= 生成HTMLのHTML5適合性検査
+:status: planned
+:depends-on: 028,126
+
+== 目的
+
+AdocWeaveが生成したHTML断片を検証用の完全HTML文書で包み、外部のHTML5 validatorで検査します。
+既存の期待出力との比較に加え、要素の入れ子、属性、文書構造などがHTML5の標準仕様に適合していることを
+CIで確認します。
+
+== 検証用テンプレート
+
+HTML断片を包む最小テンプレートを`fixtures/html/`へ配置します。テンプレートには、文書型、
+`html`、`head`、文字encoding、`title`および`body`を含め、生成HTMLを挿入する位置を一意のmarkerで示します。
+
+テンプレート自体を個別に検証し、AdocWeaveの出力とは無関係な違反を含めません。markerの欠落または
+重複をエラーとし、文字列置換後の完全HTMLだけをvalidatorへ渡します。
+
+== 検査対象
+
+次の出力を検査します。
+
+* 代表的な構文を含む共通fixtureのHTML断片
+* 見出し、list、table、media、数式、admonition、quoteおよびsource block
+* URL、xref、resource解決、stylesheetおよび安全側へ縮退した出力
+* `HtmlDocumentMode::Complete`が生成した完全HTML文書
+
+HTML断片は検証用テンプレートで包みます。完全HTML文書は包まず、そのまま検証します。診断を伴う
+意図的な不完全入力は、生成HTMLが検査対象として有効な場合だけ含めます。
+
+== Validator
+
+WHATWG HTMLに対応する外部validatorを使用します。候補はNu HTML Checkerとし、使用するversionと
+取得元をNix開発環境またはrepositoryのtool設定で固定します。CI実行時に未固定の最新版をdownloadせず、
+同じ入力から同じ検査結果を得られるようにします。
+
+validatorのwarningとerrorの扱いを明示し、既知の例外をmessage文字列だけで無差別に除外しません。
+例外が必要な場合は、対象fixture、規則および削除条件を限定して機械可読なallowlistへ記録します。
+
+== CIへの統合
+
+専用の`cargo make html5-check` taskを追加し、通常の`cargo make verify`から実行します。taskは次の順序で
+処理します。
+
+. 対象fixtureからHTML断片と完全HTML文書を生成します。
+. HTML断片を検証用テンプレートへ挿入します。
+. 生成した全HTMLをvalidatorへ渡します。
+. 違反が一件でもあれば、fixture名、行、列および規則を表示して非0で終了します。
+
+検査用生成物は`target/`以下へ出力し、source treeへ書き込みません。
+
+== 既存検査との関係
+
+期待HTMLとのgolden fixture比較は、byte列、属性順および意図した出力変更を検査するため維持します。
+HTML5 validatorは標準適合性だけを担当し、AdocWeave固有の要素・属性allowlist、URL policyおよび
+安全性検査を置き換えません。nativeとWASMの出力一致検査も維持します。
+
+== 完了条件
+
+* `fixtures/html/`へ検証用テンプレートと代表入力のmanifestを追加します。
+* テンプレート単体、包んだHTML断片および完全HTML文書がvalidatorを通過します。
+* 不正な入れ子、許可されない属性および不完全な文書構造を含むnegative fixtureでtaskが失敗します。
+* validatorのversion、取得元および実行optionを固定します。
+* `cargo make html5-check`を`cargo make verify`とGitHub Actionsで実行します。
+* local、NixおよびCIで同じ対象集合と結果を使用します。
+* xref:../docs/developer-guide/html-contract.adoc[HTML出力の仕様]へ標準適合性検査の境界を記載します。
+
+== 非目標
+
+* ブラウザーごとの描画結果やCSSの見た目を比較しません。
+* 外部URLへアクセスして到達性を検査しません。
+* validatorの成功だけを根拠に、生成HTMLを信頼済みDOMとして扱いません。

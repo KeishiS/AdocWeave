@@ -32,7 +32,7 @@ Zed設定、worktreeの`PATH`、version一致managed binaryの順に解決する
 target写像、exact tagとdistribution manifestによるasset選択、byte数／SHA-256の展開前検証、上限付きの純Rust
 XZ/TAR抽出、検証marker付きcacheおよびatomic更新rollbackを備える。単体testはmanifest不一致、hash不一致、抽出、
 cache改変およびcommit失敗時の旧cache復元を検査する。規範仕様は
-xref:../docs/zed-lsp-resolution.adoc[zed-lsp-resolution.adoc]に記載した。
+xref:../docs/user-guide/release-installation.adoc#zed-installation[Zedへの導入]に記載した。
 
 `wasm32-wasip2` buildとadapter testに加え、2026-07-22に公開`0.1.0-rc.1`からLinux x86-64用LSPを
 Zedの管理directoryへ取得し、`verified.json`とbinaryが生成されることを確認した。Zed上でLSPが起動し、

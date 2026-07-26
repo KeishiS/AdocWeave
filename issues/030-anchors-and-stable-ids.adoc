@@ -54,4 +54,4 @@ cargo test --workspace heading_id
 - 不正、対象なし、同一対象への複数指定を `invalid-anchor`、重複IDを
   `duplicate-anchor` として診断する。
 - 日本語、結合文字、絵文字および大小文字の境界fixtureを追加した。
-- 規則を `docs/anchors.adoc` に記録した。
+- 現行の見出しID規則をxref:../docs/developer-guide/core-profile.adoc#document-projection[構造情報]に記録した。

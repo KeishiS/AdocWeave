@@ -1,11 +1,11 @@
 = Zed開発用拡張
 
 開発版のbuild、導入、動作確認、問題の切り分けおよび削除手順は
-xref:../../docs/zed-development.adoc[Zedへ開発版を導入する]を基準とする。
+xref:../../docs/developer-guide/zed-development.adoc[Zedへ開発版を導入する]を基準とする。
 
 このdirectoryはZedが選択する拡張rootであり、`extension.toml`、Rust製WASM adapterおよび
 AsciiDoc言語設定を保持する。binaryの解決、公開Releaseからの安全な取得およびcache仕様は
-xref:../../docs/zed-lsp-resolution.adoc[Zed拡張によるLanguage Serverの解決]を参照する。開発時はworktreeの
+xref:../../docs/user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照する。開発時はworktreeの
 `PATH`にある`adocweave-lsp`がmanaged binaryより優先される。
 
 基本的な構文色付けは`languages/asciidoc`と`languages/asciidoc_inline`のTree-sitter queryが担当する。
@@ -24,4 +24,4 @@ LSP Semantic Tokensはリンク、参照、anchor等の意味的補足であり�
 - ソース言語`ru`に対する`rust`補完
 
 Tree-sitter構文色付けはIssue 110で追加したため、上記2026-07-20の受け入れ実績とは別に、
-xref:../../docs/zed-development.adoc[開発版の動作確認]に従う目視確認を必要とする。
+xref:../../docs/developer-guide/zed-development.adoc[開発版の動作確認]に従う目視確認を必要とする。

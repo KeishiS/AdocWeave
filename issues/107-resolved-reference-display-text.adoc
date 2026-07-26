@@ -38,7 +38,7 @@ fallbackするため、Resolverが得たタイトルをHTMLへ渡す公開APIは
 * reference graph／projectionへ表示テキストを含める必要性を決定し、含める場合は解決revisionとsource rangeを保持する。
 * native／WASM共通fixtureへ空label、明示label、Unicode、HTML特殊文字、oversize、failureおよびACL非漏洩を追加する。
 * core API、WASM API、HTML、conformanceおよび必要なprojectionの仕様versionを同一変更で更新する。
-* xref:../docs/web-host-adapter.adoc[Webホストadapter仕様]、HTML仕様、WASM文書および対応表を更新する。
+* xref:../docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API]、HTML仕様および対応表を更新する。
 
 == 完了条件
 

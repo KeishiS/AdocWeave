@@ -1,0 +1,153 @@
+= 利用側アプリの実行仕様
+
+この文書では、サーバー、デスクトップアプリ、Language ServerおよびWeb Workerが解析から変換までを
+実行する場合の責務、順序および安全性の境界を定義します。
+
+コアcrateはthread pool、async runtime、filesystem、network、DB、時刻およびログ出力を所有しません。
+利用側アプリが処理の投入、外部情報の取得、キャンセル、結果の採用および観測を管理します。
+
+== 解析
+
+=== 所有権と実行順序
+
+利用側アプリは`AnalysisRequest`へ、不透明な`SourceId`、文書version、単調増加するgeneration、
+入力snapshotおよび完全な`ParseOptions`を所有値として渡します。
+
+推奨する実行順序は次のとおりです。
+
+. 文書の逐次更新処理で新しいgenerationとキャンセルtokenを作ります。
+. 上限を設けたCPU workerの実行枠を取得します。
+. `AnalysisRequest::analyze`へtokenを`CancellationCheck`として渡します。
+. 結果を共有状態へ入れる前に`AnalysisResult::is_current`を確認します。
+. 文書revisionが一致し、tokenがキャンセルされていない場合だけ結果を採用します。
+
+Semaphore、`spawn_blocking`またはthread poolなどの具体的な投入方法は利用側アプリが選びます。待ち行列にも
+明示的な上限を設け、runtime既定の無制限queueをAdocWeaveの処理上限として扱いません。
+
+`AnalysisRequest::analyze`はpanicを捕捉しません。通常入力の失敗は`ParseError`として扱い、panicの隔離と
+workerの再起動はFFI、taskまたはthreadなどの利用側アプリの境界で行います。panicを構文診断へ変換しません。
+
+=== キャッシュ
+
+`AnalysisCacheKey`は、package version、生入力、`SourceId`および`ParseOptions`全体から決定します。
+Mapとsetは規範順に並べるため、挿入順は結果へ影響しません。`ParseOptions`または構成型へfieldを追加する
+場合は、キャッシュキーも同時に更新します。
+
+文書versionとgenerationはキャッシュキーへ含めません。同じ入力、設定および処理系なら解析結果を共有できます。
+ただし、キャッシュから得た結果にもrevisionの採用判定を適用します。
+
+=== 観測
+
+通常のログ、メトリクスおよびtraceには次の情報だけを使用します。
+
+* 成功、キャンセル、入力不正、上限超過、失敗、panicまたはstaleの結果分類
+* 処理時間
+* 入力と出力のbyte数
+* 診断数
+
+入力本文、展開後の属性値、リンク先、xref locatorおよび生成HTMLを通常の観測情報へ含めません。
+本文を必要とするデバッグ機能には、明示的な有効化とアクセス制御を設けます。
+
+[#preprocessing]
+== 外部ファイルの展開
+
+通常の解析はfilesystemやnetworkへアクセスしません。利用側アプリが必要なresourceを取得して
+`ResourceSnapshot`を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じsnapshotと
+設定から同じ展開結果を生成します。
+
+`discover_includes`は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
+含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
+
+`base_uri`はroot文書の相対targetへ前置する論理的なsnapshot keyであり、実在するpathを意味しません。
+Include先の相対targetは、そのresource keyの親を基準に解決します。取得方法、cache、認証、timeout、
+redirect、response size、content typeおよびnetwork addressの制限は利用側アプリが管理します。
+
+プリプロセッサはincludeの深さ、件数、展開後byte数、node数およびsource map segment数を制限します。
+Includeを無効にした場合はdirectiveを展開せず、snapshotも参照しません。循環、絶対path、path traversal、
+制御文字および許可していないschemeを拒否します。
+
+CLIとLanguage Serverは、同一のpath検査、上限付きUTF-8読み取り、byte数集計および
+依存関係構築規則を使用します。各adapterで異なる上限やsymlink判定を設けません。
+
+=== ソースマップ
+
+展開後の半開byte rangeは、source mapによって元の`SourceId`とrangeへ対応付けます。展開後の座標と
+元resourceの座標は別の型として扱い、複数segmentを横断するrangeは複数のoriginへ投影します。
+
+診断、関連情報、修正候補、参照、resourceおよび文書symbolは元の位置へ投影します。複数originまたは
+変換されたsegmentにまたがる修正候補は適用不可とします。Include directiveの記述位置と参照先resourceの
+位置を区別するため、Document LinkとDefinitionは展開後offsetを推測しません。WASMも同じmapping情報を
+公開します。
+
+[#render-inputs]
+== 変換入力
+
+`RenderInputs`は、同じ`Analysis`から得たreference queryとresource queryに対する解決結果をまとめた、
+出力形式に依存しないsnapshotです。変換処理はこの値を読むだけであり、filesystem、network、DBまたは
+resolverを呼び出しません。
+
+=== 照合
+
+参照とresourceの解決結果は、元の構文node全体のUTF-8 byte rangeで照合します。target文字列による照合は、
+同じtargetの複数出現を区別できないため使用しません。
+
+一つのqueryには結果を一つだけ渡します。同じ種類とrangeに複数の結果がある場合はどれも採用せず、
+`duplicate-render-input`を返します。解析結果に対応しない入力は`unused-render-input`とします。
+入力順へ依存せず、診断は共通の規範順に並べます。
+
+=== 成功、失敗およびフォールバック
+
+参照の成功結果はhref、任意の表示文字列および型付きnoticeを、resourceの成功結果はhref、任意のmedia type
+およびbyte lengthを持ちます。これらは利用側アプリから渡される非信頼入力であり、HTML変換ではhrefを
+`UrlPolicy`で再検査します。不許可URLからactive linkやmedia要素を生成しません。
+
+xrefに明示labelがある場合はそのlabelを優先します。空labelで解決に成功した場合だけ解決済み表示文字列を使い、
+値がなければ元targetへ戻します。表示文字列は公開可能なプレーンテキストとして扱い、AsciiDoc、属性参照または
+HTMLとして再解析しません。解決失敗から非公開のタイトル、権限情報または内部障害の詳細を表示しません。
+
+解決結果の欠落、失敗、重複またはURL拒否では、label、元targetまたは代替文字列をescapeした非activeな内容を
+出力します。安全に見える生targetも、解決結果なしにactive要素へ昇格させません。安全な上位対象へのfallbackに
+成功した場合はlinkを生成し、型付きnoticeと診断を残します。
+
+=== 処理順序
+
+. 同じrevisionの`Analysis`からreference queryとresource queryを取得します。
+. I/O、権限検査、実在確認およびURL生成を変換処理の外で完了します。
+. queryのrangeを変更せず、成功または型付き失敗を`RenderInputs`へ格納します。
+. 同じ`Analysis`、`RenderPolicy`および`RenderInputs`を変換処理へ渡します。
+. 文書revisionが変わった場合は、古い入力を再利用せず新しいqueryから作り直します。
+
+WASM APIは同じ構造をJSONで受け取り、rangeが入力sourceのUTF-8境界内であること、入力数および文字列の
+合計byte数が処理上限内であることを確認します。失敗値には安定した種類だけを含め、自由形式のmessageを
+受け取りません。NativeとWASMは同じ入力から同じHTML、診断、noticeおよび構造情報を生成します。
+
+== 診断の統合
+
+構文認識、意味解析および標準Lintの診断は`Analysis`の構築時に一度だけ統合します。利用側が構文木や
+意味情報を再走査して同じ問題を生成しません。
+
+外部文書の存在、DB、権限およびアプリ固有の識別子に関する診断は、`Analysis`を書き換えず別の結果として
+生成します。`RenderPolicy`と`RenderInputs`に依存する問題も変換結果の診断として返します。解析診断、
+利用側アプリの診断および変換診断を表示するときは、source位置とcodeによる安定した順序へ統合します。
+
+診断codeは機械判定に使用できる安定した識別子とし、messageを判定条件にしません。診断IDはcodeとsource
+rangeから決定的に生成します。同じ入力、設定およびpackage versionからは、範囲、重要度、関連情報および
+修正候補を含めて同じ順序の診断を返します。
+
+修正候補は重複しない`TextEdit`だけを持ちます。`Always`は構文上安全に適用できる変更、`Maybe`は利用者の
+判断を必要とする変更を表します。
+
+[#web-worker-execution]
+== Web Workerでの実行
+
+ブラウザーでは公開されているBrowser clientを使用し、Workerの内部メッセージ形式やWASM補助fileを
+直接利用しません。clientはgenerationを単調増加させ、現在のgenerationと一致する結果だけを通知します。
+sourceが変わった場合は古いquery、解決結果および表示結果を破棄します。
+
+`SharedArrayBuffer`を利用できる場合は、共有したgenerationを`CancellationCheck`から確認して同期WASMを
+協調停止します。利用できない場合は古いWorkerを終了して再生成します。message送信やJavaScriptの
+Promiseを破棄するだけで、実行中の同期WASMが停止したとはみなしません。
+
+WASMもnativeと同じ処理上限を使用し、上限超過時に別のparserへ切り替えません。必要な出力だけを要求し、
+最後に成功した表示を保持したまま利用側アプリがエラーと再試行手段を表示します。DOM、認証、DB、
+network、CSPおよび表示sandboxは利用側アプリが管理します。生成HTMLは信頼済みDOMとして扱いません。

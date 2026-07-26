@@ -36,6 +36,6 @@ Issue 053。
 == 完了確認
 
 構文を二回認識しないため、syntax nodeとraw semantic factを同じ走査で生成する方式を採用した。
-この判断と却下案はxref:../docs/adr/0004-joint-syntax-and-fact-recognition.adoc[ADR 0004]を基準とする。
+この判断と却下案はxref:../docs/developer-guide/adr/0004-joint-syntax-and-fact-recognition.adoc[ADR 0004]を基準とする。
 Syntax treeは入力をbyte単位で復元し、delimiter、macro、block属性、errorおよびunknownを構造として
 公開する。Loweringだけが属性評価とアンカー結合を行う。

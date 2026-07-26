@@ -51,7 +51,8 @@ cargo test --workspace protected_metadata
   `unused-attribute` および `protected-attribute` を追加した。
 - 属性参照は一回だけ置換し、再帰展開、条件分岐および外部環境参照を実装しない。
 - 属性数に `ProcessingLimits.max_attributes` を適用した。
-- 構文、型、保護属性および対象外機能を `docs/document-attributes.adoc` に記録した。
+- 対応する構文をxref:../docs/user-guide/syntax-support.adoc[対応しているAsciiDocの書式]、保護属性と
+  アプリ固有メタデータの扱いをxref:../docs/developer-guide/extensions.adoc[拡張境界]に記録した。
 
 == 後続の破壊的変更
 

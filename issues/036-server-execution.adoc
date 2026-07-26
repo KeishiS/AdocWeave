@@ -46,4 +46,4 @@ cargo test --workspace cancellation
 設定フィールド追加時の更新漏れをコンパイルエラーにする。
 
 規範的な実行順序、panic隔離および本文を含まない観測項目は
-xref:../docs/server-execution.adoc[ホスト実行・キャッシュ仕様]に記載する。
+xref:../docs/developer-guide/server-execution.adoc[利用側アプリの実行仕様]に記載する。

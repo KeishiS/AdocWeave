@@ -1,0 +1,263 @@
+= 文法の詳細
+
+この文書では、AdocWeaveが受け付けるAsciiDocの文法、置換および回復規則を定義します。
+通常の文書を書くときは xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]を参照してください。
+ここで「〜しなければならない」と書く箇所は、実装とテストが従う規則です。位置はUTF-8のバイト数で表し、先頭を0とします。
+
+== プリプロセッサ
+
+プリプロセッサは文書構造の解析前に、次のdirectiveを行単位で処理します。
+
+* `include::target[]`
+* `ifdef::name[]`
+* `ifndef::name[]`
+* `ifeval::[expression]`
+* `endif::[]`
+
+行頭のbackslashはdirectiveをliteral化します。Include属性は`tag`、`tags`、`lines`、`leveloffset`、
+`indent`、UTF-8の`encoding`および`optional`を扱います。属性listでは引用符内のcommaを区切りとしません。
+
+`optional`は参照先がsnapshotにない場合だけ空展開します。安全でないtarget、循環、不正なencoding、
+構文エラーまたは処理上限の超過は省略しません。WildcardとURI転送は扱いません。
+
+== 字句モデル
+
+入力は正しいUTF-8でなければなりません。行を次のように定義します。
+
+[source,ebnf]
+----
+line        = content, [ line-ending ] ;
+line-ending = LF | CRLF ;
+----
+
+単独のCRは内容です。lossless層は全バイトと元の改行を保持しなければなりません。
+別途指定しない限り、ブロックマーカーは列0でのみ認識します。
+
+== 文書とブロック
+
+[source,ebnf]
+----
+document       = [ document-header ], { blank-line | [ block-metadata ],
+                   (heading | break | source-block | literal-block | literal-paragraph | math-block
+                   | delimited-block | list | unsupported | paragraph)
+                 | document-attribute } ;
+document-header = document-title, [ author-line ], [ revision-line ],
+                  { document-attribute }, blank-line ;
+blank-line     = { " " | TAB } ;
+paragraph      = paragraph-line, { paragraph-line } ;
+paragraph-line = nonblank content not beginning another recognized block ;
+literal-paragraph = indented-line, { indented-line } ;
+indented-line = (" " | TAB), content ;
+break         = "'''" | "<<<" ;
+
+heading        = heading-marker, [ " " ], heading-text ;
+heading-marker = "=", { "=" } ;
+
+literal-block  = "....", line-ending,
+                 { literal-line },
+                 "....", [ line-ending ] ;
+
+source-block   = source-attribute, line-ending,
+                 "----", line-ending,
+                 { source-line },
+                 "----", [ line-ending ] ;
+source-attribute = "[source]"
+                 | "[source,", horizontal-space*, language,
+                   horizontal-space*, "]" ;
+language       = nonempty text excluding "," and "]" ;
+math-block     = ("[stem]" | "[latexmath]"), line-ending,
+                 "++++", [ line-ending ], opaque-math,
+                 "++++", [ line-ending ] ;
+document-attribute = ":", attribute-name, [ "!" ], ":",
+                     [ horizontal-space, attribute-value ]
+                   | ":!", attribute-name, ":" ;
+block-anchor   = "[[", anchor-id, [ ",", reference-text ], "]]"
+               | "[#", anchor-id, "]" ;
+block-metadata = { block-title | block-anchor | element-attribute-list } ;
+block-title    = ".", nonempty text not beginning with space, TAB, or "." ;
+element-attribute-list = "[", [ element-attribute,
+                         { ",", element-attribute } ], "]" ;
+element-attribute = positional-attribute
+                  | attribute-name, "=", attribute-value
+                  | { "#", id | ".", role | "%", option } ;
+delimited-block = opening-delimiter, line-ending,
+                  (compound-content | verbatim-content | raw-content | table-content),
+                  matching-delimiter, [ line-ending ] ;
+opening-delimiter = "--" | table-delimiter
+                  | four-or-more of "/", "=", "-", ".", "*", "+", or "_" ;
+table-delimiter = table-separator, "===" ;
+table-separator = any single Unicode scalar value except "=" ;
+matching-delimiter = exactly the same bytes as opening-delimiter ;
+----
+
+文書headerは先頭の連続行だけであり、最初の空行で終了します。文書タイトル直後の著者行と
+改訂行を型付きmetadataとして保持します。`doctype`の既定値は`article`であり、`book`では本文中の
+level-0見出しをpartとします。`[discrete]`または`[float]`付き見出しはsection階層へ入れません。
+header終端から最初のsectionまたはpartまでのblock列をpreambleとし、人工的なblock nodeは作りません。
+
+文書内容より前に現れる最初の1個マーカーの見出しは文書タイトルです。2個から6個の
+マーカーはセクションレベル1から5を表します。それ以外の位置または深さでも、問題情報を
+付与した見出しノードとして保持し、利用側がソースを破棄せず回復できるようにします。
+
+ソース属性の直後には正確な`----`行が必要であり、間に空行を許可しません。インデントした
+属性と区切りは認識しません。文書タイトル直後の連続する文書属性だけを認識します。
+
+ブロックメタデータ行は空行を挟まず直後のブロックへ結合します。複数行のソース順と
+各値のUTF-8バイト範囲はsyntax treeから復元可能でなければなりません。二重引用符内のcommaは
+属性区切りとしません。未知のstyle、role、optionおよびnamed属性は文字列として保持し、
+Parserが出力バックエンドの属性へ変換してはいけません。対象ブロックのないメタデータ列は
+`Unsupported`としてlosslessに回復します。
+
+delimiterはcomment、example、listing、literal、open、sidebar、pass、quoteまたはtableの
+container kindへ一意に分類します。example、open、sidebarおよびquoteはcompound、comment、listing、
+literalはverbatim、passはraw、tableはtable content modelです。rawは安全であることを意味せず、
+rendererが必ず明示的に扱う危険な入力型です。同じkindの入れ子には異なる長さのdelimiterを使い、
+閉じdelimiterは開始delimiterとbyte単位で一致しなければなりません。compoundの深さは
+`max_block_depth`で制限します。
+
+`NOTE:`、`TIP:`、`IMPORTANT:`、`WARNING:`および`CAUTION:`で始まり、colonの後に空白と内容を持つ段落は
+admonition paragraphです。`[NOTE]`等の同じstyleをexampleまたはopen blockへ付けた場合も同じ意味を持ちます。
+`[quote,AUTHOR,CITATION]`または`[verse,AUTHOR,CITATION]`をquote delimiterへ付ける場合、最初の位置付き属性は
+style、二番目と三番目はそれぞれattributionとcitationです。未知styleは汎用metadataとして保持します。
+
+`[source,LANGUAGE]`と`[,LANGUAGE]`は同じsource verbatim blockを導きます。文書属性`source-language`が
+有効なlisting blockはその既定言語を用いますが、`[listing]`はこの変換を明示的に抑止します。
+
+表delimiterの先頭文字はcell separatorです。既定は`|===`であり、AsciiDoc cell内の入れ子表では
+`!===`を使います。delimiterの先頭文字がその表のseparatorとなり、開始・終了delimiterは同じseparatorを
+使わなければなりません。separatorは空白、制御文字および`=`以外の単一Unicode scalarとします。`,`と`:`は
+明示`format`がない場合にそれぞれCSVとDSVを選ぶ短縮delimiterでもあります。
+
+リテラルおよびソースの内容は不透明です。開始区切りと等しい行がブロックを閉じます。
+より長い行やインデントした区切り状の行は内容として扱います。
+
+== インライン構文
+
+[source,ebnf]
+----
+inline-sequence = { text | hard-break | monospace | strong | emphasis
+                  | attribute-reference | link | cross-reference
+                  | inline-math } ;
+monospace       = "`", literal-content, "`" ;
+strong          = "*", inline-sequence, "*" ;
+emphasis        = "_", inline-sequence, "_" ;
+attribute-reference = "{", attribute-name, "}" ;
+link             = URL, [ "[", inline-sequence, "]" ] ;
+cross-reference  = "<<", anchor-id, [ ",", inline-sequence ], ">>"
+                 | "xref:", reference-destination,
+                   "[", inline-sequence, "]" ;
+unordered-list-item = "*", { "*" }, (" " | "\t"), inline-sequence ;
+ordered-list-item   = ".", { "." }, (" " | "\t"), inline-sequence ;
+list-continuation   = "+", line-end,
+                      (literal-block | source-block) ;
+inline-math      = ("stem:[" | "latexmath:["), opaque-math, "]" ;
+hard-break       = " +", line-ending ;
+----
+
+EBNFには次の区切り記号条件を追加します。
+
+- 直後に空白でも同一markerでもないUnicode scalarが存在し、直前のscalarが存在しないか
+  英数字以外である開始記号
+- 直前に空白でも同一markerでもないscalarが存在し、直後のscalarが存在しないか
+  英数字以外である終了記号
+- 最初の有効な開始記号と、その後の最初の同種の有効な終了記号の選択、および
+  同順位におけるsource順の優先
+- 等幅内容の不透明性、および強調・斜体内容の再帰的な解析
+- 数式内容の不透明性、および属性、書式、linkその他のAsciiDoc置換の非適用
+- 所定のtoken境界に限定したURL、email、`link:`、`xref:`、`stem:`、`latexmath:`および
+  標準macroの認識、escape用backslash直前の一つ前の文字による境界判定、ならびに
+  短縮xrefの`<<`に対する境界条件の非適用
+- 既定の再帰深さ上限32、および上限到達spanのテキスト化と
+  `nesting-limit-exceeded`の報告
+
+unconstrained形式はstrongの`**`、emphasisの`__`およびmonospaceの二重バッククォートを
+境界に依存せず認識します。同種markerの連続runは左から2文字ずつpair候補へ分割し、最初の
+開始候補に対する最初の同種候補を終了記号とします。空pairは通常テキストとして保持します。
+対応する書式、属性参照、URL、macroおよびanchor開始記号の直前にある奇数個の
+連続バックスラッシュは、その最後の一つで認識を抑止し、最後の一つだけを表示値から除きます。
+偶数個の場合は認識を抑止せず、バックスラッシュをそのまま表示します。escapeされた二重
+markerでは最後のバックスラッシュと開始markerだけをliteral化し、対応する終了markerも
+通常テキストとして残ります。末尾の単独
+バックスラッシュは通常テキストとして保持します。不透明context内ではescapeを解釈しません。
+
+リンクとxrefのターゲットは不透明な字句として解析し、表示文字列だけを
+`inline-sequence`として再帰解析します。認識優先順位は、ソース上で先に始まる
+リンク・xrefまたは書式spanを優先し、同じ位置ではリンク・xrefを優先します。
+
+標準macroは`name:target[attributes]`を共通形とし、mediaのblock formだけ
+`name::target[attributes]`を使用します。footnote、kbd、btnおよびindextermは空targetを許します。
+inline anchorの`[[id]]`とbibliography anchorの`[[[id]]]`は同じmacro modelへ正規化します。
+targetはinline解析せず、属性listはquote内のcommaを除くcommaで分割し、named属性の`name=value`を
+位置付きで保持します。
+
+== 置換規則
+
+置換は出力形式へ変換する前に、意味コンテキストごとの順序付きpipelineとして実行します。出力側は
+元のsourceを再解析せず、属性展開も繰り返しません。
+
+置換は次の順序を基準とします。
+
+. `SpecialCharacters`で出力時に特別な意味を持つ文字を識別します。
+. `Quotes`で強調、斜体、等幅、highlight、subscript、superscriptおよび組版用引用符を意味nodeへ変換します。
+. `Attributes`で文書属性を再帰展開します。
+. `Replacements`で著作権記号、省略記号、矢印および語中apostropheを置換します。
+. `Macros`でlink、xref、anchor、数式および対応する標準macroを意味nodeへ変換します。
+. `PostReplacements`で改行など、inline構造の確定後に適用する置換を扱います。
+
+適用する段階はコンテキストごとに次のとおりです。
+
+[cols="1,4",options="header"]
+|===
+|コンテキスト |適用規則
+
+|`Normal`
+|全段階の上記順序による適用
+
+|`Header`
+|`SpecialCharacters`と`Attributes`のみの適用
+
+|`Verbatim`
+|`SpecialCharacters`のみの適用と内容の不透明な保持
+
+|`Pass`
+|AsciiDoc置換の非適用
+
+|`None`
+|置換の非適用
+|===
+
+段落、通常見出し、list項目、通常のtable cellおよびlink・xrefの表示文字列には`Normal`を使用します。
+文書headerには`Header`、等幅、literal、sourceおよびliteral・verse形式のtable cellには`Verbatim`を
+使用します。数式と未対応構文は`None`として不透明に保持します。AsciiDoc形式のtable cellは子blockごとの
+コンテキストを使用し、cell全体をinlineとして再解析しません。
+
+属性参照は最終的な文書属性に対して再帰評価します。`\{name}`は参照を抑止し、解除された属性は未定義として
+扱います。循環、展開の深さ上限または生成byte数の上限に達した場合は入力表記を保持して診断を返します。
+Linkと標準macroのtargetは属性展開後の同じ値を検査と出力へ渡します。xref targetはコアで展開しません。
+
+`Pass`はAsciiDoc置換を行わない指定であり、raw HTMLの出力許可ではありません。出力側は通常テキスト、
+不透明な内容、表示文字列および属性値をそれぞれの出力文脈でescapeし、URLはURL policyで再検査します。
+
+== 回復規則
+
+- 未閉鎖のinline開始記号のテキスト保持と`unclosed-inline`の報告、およびmarker直後からの
+  走査再開
+- 未閉鎖のlinkまたはxref表示文字列のテキスト保持、専用診断の付与、および後続inline走査の継続
+- 段落内の連続行を一つの列として扱うinline走査、LF／CRLFの内容・source rangeへの保持、
+  および空行による段落境界・見出し境界の非横断
+- 未閉鎖の区切りblockに対するfile末尾までの内容化、列0の見出し候補からの回復、
+  候補の通常解析、および開始区切りへの`unclosed-block`の報告
+- 寛容modeにおける未対応構文の明示的な`Unsupported` node化、および厳格modeにおける
+  同nodeを含む文書の拒否
+- 空入力、不完全入力および不正な見出しに対するpanicの回避と、回復可能なsyntax tree・ASTの返却
+
+== 意味情報への対応
+
+見出し、段落、break、literal、source、listおよび数式は、それぞれ対応するblockの意味情報に
+変換します。通常テキスト、書式、属性参照、link、xrefおよびinline数式は、対応するinlineの
+意味情報に変換します。文書属性とanchorは文書全体の索引へ統合します。
+
+未対応構文は専用の意味情報として元範囲を保持し、対応する構文へ推測変換しません。公開する
+Rust型と構造情報はxref:core-profile.adoc[コアの対応範囲]を基準とします。
+
+新しい出力バックエンドの都合で文法またはsemantic ASTの意味を変更してはいけません。

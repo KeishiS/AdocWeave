@@ -1,0 +1,108 @@
+= 拡張境界
+
+この文書では、利用側アプリが独自のリンク、メタデータおよび検索を追加する場合の責務境界を定義します。
+AdocWeave本体は標準AsciiDocを読みます。ノートアプリ固有のデータベースや権限、画面の作りは
+利用側アプリで扱います。
+
+== 二段階解析
+
+ホスト拡張は、必ず標準コア解析の後に動作します。
+
+[source,text]
+----
+let analysis = Engine::new(options).analyze(source)?;
+let host_result = host_extension.analyze(&analysis, host_context).await?;
+----
+
+ホストは`Analysis`を変更せず、別の結果型へアプリケーション固有の診断、メタデータ投影、
+解決済み参照および検索情報を格納します。標準診断とホスト診断を統合する場合は、範囲、
+診断コードおよび安定IDによる決定的な順序を定義します。
+
+== 属性拡張
+
+利用側アプリは`Analysis::document_attribute_occurrences()`が返す
+`DocumentAttributeOccurrence`の名前、`raw_value`、操作および範囲を使用します。
+たとえばノートアプリは`note-id`をUUIDとして検証できますが、コアASTへノート専用variantを
+追加してはいけません。
+
+属性検証は次の条件を満たします。
+
+* 同一の入力、設定およびホストスキーマに対する結果の再現性
+* `name_range`または`value_range`への診断範囲の限定
+* 未知属性の暗黙的な削除または書換えの禁止
+* 原値を保持するための正規化値と原値の区別
+* DB、時刻等を必要とする検証と純粋な構文・型検証の分離
+
+利用側アプリが変更を許可しない属性値は、`ParseOptions.protected_attributes`へ渡します。文書内の定義や解除が
+その値を変更する場合、コアは寛容modeで警告、厳格modeでエラーとなる`protected-attribute`診断を返します。
+コア自身は属性値をDB、環境変数または外部commandから取得しません。
+
+== xrefスキーム拡張
+
+文書内xrefは同じ`Analysis`の参照先索引で検査し、存在しないIDへ`unresolved-cross-reference`診断を
+付けます。別文書と任意スキーム参照は`reference_queries()`で`ReferenceQuery`へ正規化し、不透明な
+`SourceId`とともに利用側アプリへ渡します。コアは参照先の実在を確認しません。
+
+相対文書表記では、空の文書名、`..` path要素、先頭の`/`または`\`、backslash、空白、制御文字および
+`://`を含むURL風表記を拒否します。字句上安全な表記についても、コアはfileの存在を確認しません。
+
+ノート参照には独立マクロを追加せず、標準xrefを使用します。
+
+[source,asciidoc]
+----
+xref:note:123e4567-e89b-12d3-a456-426614174000#section[関連ノート]
+----
+
+Parserは未知のスキームも`ReferenceDestination::Scheme`へ保持します。ホストは
+`Analysis::reference_queries()`から`ReferenceKey::Scheme`を取得し、scheme、locator、
+anchorを検証・解決します。標準ParserやLintへUUID規則を登録してはいけません。
+
+構文解析中にResolverを呼びません。不完全xrefにも標準解析結果を返し、I/O待ちによって
+Parser、Formatterまたは標準Lintを停止させません。
+
+== Resolver
+
+I/Oを必要とするホストは`ReferenceResolver`を実装します。アプリ専用メソッドではなく、
+`resolve_scheme(scheme, locator)`で不透明な`SourceId`を返し、`resolve_anchor()`で
+アンカー確認と最終href生成を行います。文書候補、相対文書、任意スキーム、アンカーおよび逆参照は
+同じResolver境界で扱い、コアへfilesystem、DBまたはnetworkの知識を持ち込みません。
+
+Resolverは次の規則を守ります。
+
+* `Send + Sync`による複数文書からの同時利用
+* キャンセル時の共有状態の保全
+* 対象不在、アンカー不在、曖昧、ルート外、権限不足および内部障害の安定コードへの正規化
+* 診断とhrefへのOSパス、DB主キーおよび認証情報の漏えい防止
+* 参照元`SourceId`、文書versionおよび`TextRange`の保持
+
+== キャッシュと無効化
+
+参照元文書、参照先、構文仕様、ホストスキーマ、権限または索引のversionが変化した場合は、
+古い成功結果と失敗結果を再利用しません。キャッシュキーは、この無効化条件を識別できる
+情報を含めます。
+
+== エディター統合
+
+補完、Hover、Definition、ReferencesおよびDocument Linkは同じ`Analysis`、
+`ReferenceQuery`および解決結果を共有します。機能ごとに対象文字列を再解析しません。
+入力途中の構文失敗と、確定した対象不在を区別します。
+
+LSPアダプターはxref:language-server.adoc[Language Server設計]の通知順序、generation、
+キャンセルおよびlock規則に従います。`ReferenceResolver`の仕様自体は特定async runtimeへ
+依存せず、外部ホストへTokioを要求しません。
+
+== HTMLと信頼境界
+
+Resolverが返すhrefは信頼済みHTMLではありません。HTML出力前にAdocWeaveの`UrlPolicy`を
+必ず通過させます。拡張はraw HTML、イベント属性、`javascript:`または許可されていない
+`data:` URIを許可する経路を提供してはいけません。
+
+URL検査では文書入力とResolver出力のcontextを混同しません。たとえばhostは文書入力の
+`/notes/id`を拒否したまま、Resolverが生成した同じroot-relative URLだけを許可できます。外部リンク属性、
+source言語、数式言語、未解決参照表示およびresource capabilityは`RenderPolicy`へ設定し、HTML文字列の
+置換で実装しません。
+
+== 互換性
+
+ホストは起動時またはビルド時にpackage versionを照合します。公開型またはResolver仕様の
+破壊的変更に備え、Rust enumの序数を永続化せず、未知の値を安全な未解決状態として扱います。

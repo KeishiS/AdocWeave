@@ -1,0 +1,79 @@
+= Lint rule一覧のJSON出力
+:status: planned
+:depends-on: 051
+
+== 目的
+
+利用可能なLint ruleとwarningの意味を実装から機械的に取得できるよう、
+`adocweave check --list-rules --json`を追加します。診断一覧を手書き文書へ重複させず、
+CLI、エディター統合およびCIが同じ情報を利用できるようにします。
+
+== CLI
+
+[source,console]
+----
+adocweave check --list-rules --json
+----
+
+`--list-rules`を指定した場合は文書を読み込まず、標準入力も待ちません。file引数、`--include`、
+`--base-dir`および`--allow-root`との併用はusage errorとします。出力は標準出力へ書き、
+一覧の生成に成功した場合は終了code 0を返します。
+
+初期実装では`--json`を必須とします。human向け一覧が必要になった場合は、同じ型付きcatalogから
+別の表示形式を追加します。
+
+== JSON schema
+
+top-levelにはschema version、package versionおよびrule配列を含めます。各ruleは少なくとも
+次のfieldを持ちます。
+
+* 安定した診断code
+* 既定のseverity
+* 既定で有効かどうか
+* 利用者向けの簡潔な説明
+* 修正候補を返す可能性
+
+ruleは診断codeの昇順で出力します。説明文は表示用であり、自動処理の判定条件にしません。
+fieldの追加は許容しますが、既存fieldの削除または意味変更はpackage versionの変更として扱います。
+
+[source,json]
+----
+{
+  "schemaVersion": 1,
+  "packageVersion": "X.Y.Z",
+  "rules": [
+    {
+      "code": "line-too-long",
+      "defaultSeverity": "warning",
+      "enabledByDefault": true,
+      "description": "行が既定の最大文字数を超えています。",
+      "fixable": false
+    }
+  ]
+}
+----
+
+== 実装方針
+
+`LintRule`を唯一のrule catalogとし、診断code、既定設定および説明を同じ定義から取得します。
+CLI側へrule一覧を複製しません。追加のfilesystem、networkまたは文書解析を必要としない
+決定的な出力とします。
+
+Issue 169で追加する`asciidoc-file-link`と`non-asciidoc-xref`も、実装後は同じ一覧へ
+自動的に含まれるようにします。
+
+== 完了条件
+
+* `adocweave check --list-rules --json`が文書入力なしで成功します。
+* すべての`LintRule`が重複なく一度ずつ出力されます。
+* code順、field名、severity表現およびschema versionをCLI統合testで固定します。
+* ruleを追加して一覧への登録を忘れた場合にtestが失敗します。
+* human向けmessageを変更してもcodeとJSON schemaが変わらないことを確認します。
+* xref:../docs/user-guide/command-line.adoc#diagnostics[問題の確認]へコマンドの用途と
+  JSON fieldの安定性を記載します。
+
+== 非目標
+
+* 個々の文書を検査した結果を返しません。
+* ruleの有効化、severity変更または設定fileの導入は扱いません。
+* 説明文を自動処理の安定した識別子として扱いません。

@@ -34,7 +34,7 @@ xref:../CONTRIBUTING.adoc#release-checklist[Release checklist]と利用者向け
 
 == 実装状況
 
-* xref:../docs/release-installation.adoc[利用者向け導入文書]へasset選択、checksum／attestation、user-local／
+* xref:../docs/user-guide/release-installation.adoc[利用者向け導入文書]へasset選択、checksum／attestation、user-local／
   system-wide配置、PATH、version固定、rollback、browser hosting、Zed、更新および削除手順を集約した。
 * `release-installation-e2e.mjs`は隔離HOMEへCLI、LSP、browser libraryおよびZed拡張を導入し、clean PATH、
   version symlink、公開入口およびuninstall後のfile集合一致を検査する。
@@ -77,7 +77,7 @@ Linux x86-64／ARM64 native build・smoke、candidate検証、Nix package／NixO
 * `nix run github:KeishiS/AdocWeave/v0.1.0-rc.5 -- --version --json`がRC.5と仕様versionを返した。
 * 隔離したx86-64 Linux profileで公開flakeをinstallし、CLI／LSPのversionを確認してから完全にremoveできた。
 * 2026-07-22に隔離したZed profileへRC.5公開拡張を導入し、managed LSP取得、editor機能、offline再起動および
-  削除を確認した。再現手順はxref:../docs/release-installation.adoc[Release導入文書]へ記録した。
+  削除を確認した。再現手順はxref:../docs/user-guide/release-installation.adoc[Release導入文書]へ記録した。
 
 == 実機確認の代替判断
 

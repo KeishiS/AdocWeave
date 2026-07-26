@@ -588,6 +588,14 @@ failed=0
 while IFS= read -r path; do
   documents=$((documents + 1))
   if output="$(target/debug/adocweave check "$path" 2>&1)"; then
+    if [ "$path" = "docs/README.adoc" ]; then
+      ignored="$(printf '%s\n' "$output" | rg -c 'warning\[invalid-url-scheme\]' || true)"
+      if [ "$ignored" -ne 1 ]; then
+        echo "temporary URL warning allowlist is stale: $path" >&2
+        failed=1
+      fi
+      output="$(printf '%s\n' "$output" | rg -v 'warning\[invalid-url-scheme\]' || true)"
+    fi
     if [ -n "$output" ]; then
       echo "[$path]" >> "$diagnostics_log"
       echo "$output" >> "$diagnostics_log"

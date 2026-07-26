@@ -29,8 +29,9 @@
 * table presentationがsemantic modelに一度だけ解決され、HTML backendがmetadataを再解析しない。
 * 不正値、重複、`autowidth`と`width`の競合が安全な既定値と決定的な診断になる。
 * 既存table形式、span、AsciiDoc cell、HTML allowlistおよび公開snapshotの検証が通る。
-* xref:../docs/tables.adoc[表の対応仕様]、xref:../docs/html-contract.adoc[HTML出力仕様]、
-  xref:../docs/compatibility.adoc[互換性評価]を実装範囲と一致させる。
+* xref:../docs/user-guide/syntax-support.adoc[対応しているAsciiDocの書式]、
+  xref:../docs/developer-guide/html-contract.adoc[HTML出力仕様]およびxref:../docs/user-guide/compatibility.adoc[互換性評価]を
+  実装範囲と一致させる。
 
 == 参照
 

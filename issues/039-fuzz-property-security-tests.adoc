@@ -62,8 +62,7 @@ Formatter冪等性のproperty testを前倒しした。`cargo make test-properti
 security suiteは属性展開後URL、不正UTF-8、処理上限、安全な構文回復、協調的キャンセル、
 危険なリンク、ホストResolverが返す危険なURLおよび代表的な攻撃入力を検査する。
 
-seed corpusと不具合最小化・回帰fixture化の手順は
-xref:../docs/testing.adoc[品質保証とFuzzing]に定義した。短時間探索と長時間探索を分離し、
+発見した不具合は最小化して回帰fixtureへ追加する。短時間探索と長時間探索を分離し、
 通常の`verify`には決定的property testとsecurity testを含める。
 
 完了時に`cargo make verify`、`cargo make fuzz-check`および3 targetの短時間探索が成功した。

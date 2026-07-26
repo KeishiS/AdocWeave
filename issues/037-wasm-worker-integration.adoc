@@ -48,7 +48,7 @@ HTML、診断、シンボルおよびprojectionを返す。未知フィールド
 WASM callbackから読むことで同期解析中の協調キャンセルを可能にした。
 
 ビルド、bundle size測定、メモリ・大文書の縮退、CSP、cross-origin isolationおよび
-数式レンダラーの信頼境界はxref:../docs/wasm-worker.adoc[WASM APIとWeb Worker統合]に
+数式レンダラーの信頼境界はxref:../docs/developer-guide/server-execution.adoc#web-worker-execution[Web Workerでの実行]に
 記載する。
 
 Issue 040でWASM APIを破壊的にversion 2へ更新し、完全な解析設定、CST、ASTおよび

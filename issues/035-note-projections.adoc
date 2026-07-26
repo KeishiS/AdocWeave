@@ -46,6 +46,6 @@ cargo test --workspace searchable_text
 
 検索テキストはproseとcodeの元範囲付きsegmentを保持する。コードは対象、数式、属性行、
 不可視アンカーおよび未対応ブロックは対象外とした。規範は
-xref:../docs/projections.adoc[汎用文書projection仕様]に記載する。
+xref:../docs/developer-guide/core-profile.adoc#document-projection[構造情報]に記載する。
 
 この公開仕様の追加と`ReferenceKey`の破壊的拡張により`CORE_API_VERSION`を5へ更新した。

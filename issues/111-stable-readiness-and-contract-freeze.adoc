@@ -54,7 +54,7 @@ stable公開可否は、RC.6のGitHub Actions、公開asset受け入れおよび
 
 == 文書
 
-`docs/current-contract.adoc`、`docs/compatibility.adoc`、`docs/syntax-support.adoc`、`docs/roadmap.adoc`、
+`docs/README.adoc`、`docs/user-guide/compatibility.adoc`、`docs/user-guide/syntax-support.adoc`、`docs/developer-guide/roadmap.adoc`、
 Release導入文書およびRelease checklistを横断し、stable時点の保証と既知制約を一致させる。
 
 == 完了条件

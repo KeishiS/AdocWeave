@@ -16,3 +16,6 @@ fixtureは担当機能ごとに分類する。各機能ディレクトリには�
 `conformance/cases.json`はruntime横断fixtureのmanifestである。各caseには互換性分類、
 差分理由および仕様versionへの影響判断を記録しなければならない。native、WASMおよび
 LSPはこのmanifestまたは参照先の同じソースを使用し、別内容の複製fixtureを作らない。
+
+`syntax-support.json`は、対応表、互換性評価、文法および対応するfixtureの同期を検査するための
+manifestである。人向けの仕様は`docs/`に記載し、このファイルへ説明文を重複させない。

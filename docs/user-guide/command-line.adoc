@@ -1,0 +1,98 @@
+= コマンドライン
+
+この文書では、`adocweave`によるAsciiDocファイルの変換、確認および整形を説明します。
+入力ファイルを指定しない場合は標準入力を読み、結果を標準出力へ書きます。
+
+== よく使うコマンド
+
+[cols="1,3",options="header"]
+|===
+|コマンド |用途
+
+|`adocweave convert manual.adoc`
+|HTMLへ変換します。
+
+|`adocweave check manual.adoc`
+|書式やリンクなどの問題を確認します。
+
+|`adocweave format manual.adoc`
+|整形後の内容を標準出力へ書きます。`--check`を付けると、変更が必要かだけを確認します。
+
+|`adocweave symbols manual.adoc`
+|見出しなどの構造をJSONで出力します。
+|===
+
+== 入力と出力
+
+`convert`、`check`、`format`および`symbols`はfileまたは標準入力を受け取ります。既定では入力file以外を
+読み込まず、`include::`を展開しません。
+
+[source,console]
+----
+adocweave convert manual.adoc
+adocweave check --json manual.adoc
+adocweave format --check manual.adoc
+----
+
+[#diagnostics]
+== 問題の確認
+
+`check`は文書の問題を位置、重要度、安定したcodeおよびmessageとともに表示します。自動処理では
+`--json`を指定し、変更される可能性があるmessageではなくcodeを判定に使用してください。同じ入力、
+設定およびpackage versionからは同じ順序で問題を返します。
+
+`--include`を使用した場合も、問題の位置は展開後の仮想文書ではなく、問題がある元fileのpath、行および
+columnとして表示します。
+
+[#formatting]
+== 整形
+
+`format`は整形後の内容を標準出力へ書き、入力fileを直接変更しません。`--check`を指定すると内容を出力せず、
+変更が不要なら終了code 0、必要なら非0を返します。
+
+整形対象は、安全に意味を保持できる段落と空行に限定します。行末空白、連続空行、改行形式および
+最終改行を正規化する一方、literal、source、数式、macro、inline書式、見出し、属性、anchor、list、
+未対応構文および不完全な構文は元のbyte列を保持します。同じ入力を繰り返し整形しても結果は変わりません。
+
+== ローカルファイルの展開
+
+ローカルファイルの展開は`--include`を指定した場合だけ有効になります。
+
+[source,console]
+----
+adocweave convert --include docs/manual.adoc
+adocweave check --include docs/manual.adoc
+----
+
+file入力では、`--base-dir`を省略するとroot文書の親directoryを基準にします。標準入力は位置を持たない
+ため、`--include`と同時に`--base-dir DIR`が必須です。`--allow-root DIR`は複数指定でき、省略時は
+base directoryだけを許可します。
+
+[source,console]
+----
+adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
+----
+
+targetはbase directoryからの相対pathに限定します。絶対path、`..`、scheme付きtarget、制御文字および
+許可root外へ解決されるsymlinkを拒否します。個別resourceは10 MiB、resource tree全体は50 MiB、file数は
+10,000件を上限とします。循環、include深さ、展開nodeおよび展開後byte数にはコアpreprocessorの上限も
+適用します。network resourceは取得しません。
+
+`convert`、`check`および`symbols`は同じ展開snapshotを使用します。`check`の診断は元resourceのpath、行、
+columnへ投影します。`format`はinclude treeを安全性検査しますが、展開結果をroot fileへ書き戻さずroot入力
+だけを整形します。
+
+== 完全なHTML文書とCSS
+
+`convert`は既定でHTML fragmentを出力します。`--complete`を指定すると完全なHTML文書を出力し、
+`--css FILE`と`--css-url URL`でstylesheetを`<head>`へ追加できます。どちらも複数回指定でき、
+指定順に出力します。CSSは出力設定であり、文書入力の`style`属性や任意classは引き続き拒否します。
+
+[source,console]
+----
+adocweave convert --complete --css theme.css --css-url https://example.com/print.css manual.adoc
+----
+
+`--css`と`--css-url`は`--complete`が必須です。CSS fileはUTF-8で、1 sourceあたり1 MiBを上限とします。
+`</style`、`<!--`または改行・タブ以外の制御文字を含むCSS本文、URL policyが拒否するURL
+（既定は`http`と`https`だけ）および上限超過は、部分的なHTMLを出力せずエラーで終了します。

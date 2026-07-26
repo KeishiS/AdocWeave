@@ -37,7 +37,7 @@ cargo test --workspace list_continuation
 - リテラルブロックとソースブロックへの`+`継続を項目へ関連付けた。
 - `inconsistent-list`診断と、タブ区切りに対する安全な空白修正を追加した。
 - HTMLの`ul`/`ol`/`li`、文書シンボル、Formatterによる原表記保持を追加した。
-- 対応範囲と未対応範囲を`docs/lists.adoc`へ記録した。
+- 対応範囲と未対応範囲をxref:../docs/user-guide/syntax-support.adoc[対応しているAsciiDocの書式]へ記録した。
 
 == 依存関係
 

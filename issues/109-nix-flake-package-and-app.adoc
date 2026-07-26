@@ -91,7 +91,7 @@ NixOS flakeでは、入力を固定したうえで次の形で導入できるこ
 
 === 4. 利用文書と受け入れ
 
-* `docs/nix-installation.adoc`と既存Release導入文書を相互参照する。
+* Nixによる導入と既存Releaseによる導入を同じ文書から参照できるようにする。
 * clean Nix store相当の環境でGitHub flake URLをcommitへ固定し、run、profile導入、NixOS評価、更新、
   rollbackおよび削除を確認する。
 * Issue 088のRC.5受け入れ記録へNix flake source commitとLinux両architectureの結果を追加する。
@@ -133,9 +133,9 @@ NixOS flakeでは、入力を固定したうえで次の形で導入できるこ
 
 == 文書
 
-`docs/nix-installation.adoc`へ`nix run`、profile導入、NixOS flake、overlay、更新、version固定、削除、
+`docs/user-guide/release-installation.adoc`へ`nix run`、profile導入、flake output、更新、version固定、削除、
 local buildおよびbinary cache未提供時の挙動を記載する。GitHub Release archiveによる導入とは
-xref:../docs/release-installation.adoc[既存の導入文書]から相互参照し、両方式を混同しない。
+xref:../docs/user-guide/release-installation.adoc[既存の導入文書]から相互参照し、両方式を混同しない。
 
 == 完了条件
 
@@ -153,7 +153,7 @@ flake lockで固定した同一revisionから再現可能にbuildできる。
 * `cargo make nix-package-check`を必須quality gateへ追加し、x86-64 local buildと`nix run`を確認した。
 * release candidateの導入E2Eはx86-64／ARM64の各native runnerでflake packageもsource buildする。
 * 利用、version固定、profile、NixOS、overlay、更新、rollbackおよび削除は
-  xref:../docs/nix-installation.adoc[Nix flakeからの導入]へ集約した。
+  xref:../docs/user-guide/release-installation.adoc#nix-installation[Nixによる導入]へ集約した。
 
 公開GitHub URLからのclean環境受け入れは、RC.5のtagとReleaseを必要とするためIssue 088で記録する。
 

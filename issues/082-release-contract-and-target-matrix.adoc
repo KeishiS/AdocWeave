@@ -120,14 +120,14 @@ version関係、初回仕様version baseline、後方互換性および非目標
 だけに限定した。
 
 `dist 0.32.0`、Linux musl 2 target、CLI／LSP native archiveおよびversion付きbrowser extra artifactを
-xref:../dist-workspace.toml[`dist-workspace.toml`]へ固定した。browser archiveはWASM、JavaScript、TypeScript
+link:../dist-workspace.toml[`dist-workspace.toml`]へ固定した。browser archiveはWASM、JavaScript、TypeScript
 declaration、Worker、licenseおよび最小例を決定的な`.tar.xz`として生成する。生成workflowは手編集せず、
 正式な`plan-jobs`拡張からtag／release train検証をbuild前へ接続した。
 native build hostは`aarch64-unknown-linux-musl`を`ubuntu-24.04-arm`、
 `x86_64-unknown-linux-musl`を`ubuntu-24.04`へ割り当て、target非依存jobも`ubuntu-24.04`へ統一した。
 
-xref:../release/distribution-plan.json[配布計画]、xref:../release/adocweave-dist-manifest.schema.json[schema]、
-xref:../release/adocweave-dist-manifest.fixture.json[canonical fixture]およびNode検証器により、version、repository、
+link:../release/distribution-plan.json[配布計画]、link:../release/adocweave-dist-manifest.schema.json[schema]、
+link:../release/adocweave-dist-manifest.fixture.json[canonical fixture]およびNode検証器により、version、repository、
 Cargo metadata、tag形式、target、archive内容、sort順、SHA-256形式およびJSON canonicalizationを検査する。
 `cargo make dist-plan`は`dist`のmachine-readable planを同じ仕様と照合する。
 

@@ -37,7 +37,7 @@ cargo make verify
 == 進捗
 
 `CORE_PROFILE_VERSION = 1`を公開し、構文profileの直書きversionを一元化した。
-xref:../docs/core-profile.adoc[AdocWeave Core Profile 1]に必須構文、未対応範囲、mode、既定上限、
+xref:../docs/developer-guide/core-profile.adoc[AdocWeave Core Profile 1]に必須構文、未対応範囲、mode、既定上限、
 Rust API・診断・HTML・projection・conformance・WASM・Workerの仕様version、crate SemVerおよび
 成果物別の再構築条件を定義した。
 
