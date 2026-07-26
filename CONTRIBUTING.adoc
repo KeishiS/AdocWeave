@@ -1,0 +1,215 @@
+= コントリビューションガイド
+
+AdocWeaveへの変更は短命なbranchで作業し、pull requestを通してmainへ統合します。
+
+== 開発環境
+
+開発環境はNixで提供しています。repositoryのrootで次を実行してください。
+
+[source,console]
+----
+nix develop
+cargo make verify
+----
+
+`cargo make verify`は、整形、型検査、test、browser向けtest、文書検査を実行します。
+
+== 作業の進め方
+
+. `main`を最新にし、変更の目的に合う短命なbranchを作成します。
++
+[source,console]
+----
+git switch main
+git pull --ff-only origin main
+git switch -c fix/browser-archive-import-check
+----
+
+. 一つのbranchでは一つの目的に集中し、実装と対応するテストとドキュメントを更新します。
+. 変更をcommitする前に検証を実行します。
++
+[source,console]
+----
+cargo make verify
+----
+
+. 最新の`origin/main`へrebaseし、branchをpushしてpull requestを作成します。
++
+[source,console]
+----
+git fetch origin main
+git rebase origin/main
+git push -u origin fix/browser-archive-import-check
+gh pr create
+----
+
+. pull request完了後は作業branchを削除します。
+
+競合の解消が難しい場合や変更の目的が増えた場合は、pull requestを分割します。
+
+== Branch名
+
+変更内容に応じて、次の接頭辞を使います。
+
+[cols="1,3",options="header"]
+|===
+|接頭辞 |用途
+
+|`feat/<topic>`
+|利用者に見える機能の追加
+
+|`fix/<topic>`
+|不具合の修正
+
+|`refactor/<topic>`
+|外部の意味を変えない内部構造の整理
+
+|`ci/<topic>`
+|CI、build、release、開発環境の変更
+
+|`docs/<topic>`
+|文書だけの変更
+|===
+
+== 変更時の確認
+
+* 不具合修正には、可能な限り再発を防ぐテストを追加します。
+* 依存関係を更新する場合は、対象のlockfileだけを更新し、`cargo make dependency-governance`を実行します。
+* Nix flakeまたはpackageを変更する場合は、`cargo make nix-package-check`を実行します。
+* `.adoc`文書は既存の用語と書式に合わせます。
+* 比較用の期待出力は、実際の出力との差分を確認し、意図した変更である場合だけ更新します。
+* AsciiDoc構文を変更する場合は、`docs/user-guide/syntax-support.adoc`、`docs/user-guide/compatibility.adoc`、
+  `docs/developer-guide/grammar.adoc`、対応するテスト用入力およびテストを更新します。
+
+AsciiDoc構文を追加または変更する場合は、同じ変更で次を確認します。
+
+. 字句とEBNFまたは同等の認識規則を定義します。
+. 既存のblock構文とinline構文に対する認識優先順位を定義します。
+. 構文情報から意味情報への対応と、保持する元範囲を定義します。
+. 不完全入力の同期点、回復結果および安定した診断codeを定義します。
+. 厳格modeと寛容modeでの扱いを定義します。
+. 曖昧入力、境界値および回復をテスト用入力と期待結果で固定します。
+
+[#dependencies]
+== 依存関係
+
+依存境界、許可するlicenseと取得元、重複依存および一時的な例外は`security/`以下の機械可読な設定を
+基準とします。文書へpackage一覧やversionを転記しません。
+
+依存関係を更新するときは次を確認します。
+
+. 対象のmanifestとlockfileだけを更新し、無関係な依存境界の変更を分離します。
+. RustSec Advisory Databaseの固定revisionを更新し、新しいadvisoryを確認します。
+. `cargo make dependency-governance`を実行します。
+. license、取得元、重複依存、生成されるnotice、SBOMおよびbrowser sizeの差分を確認します。
+. 通常の品質検査を通してからpull requestを統合します。
+
+重複versionは一律に禁止しません。増減した場合は、上流のversion制約、解消可能性、実行ファイルの大きさおよび
+対応するRust stableへの影響を確認してから、理由付きの基準を更新します。
+
+Advisoryを一時的に除外する場合は、RustSec advisory ID、担当者、影響しないと判断した理由、将来の期限および
+追跡Issueを記録します。包括的な除外や無期限の例外は追加しません。期限切れの例外は検査を失敗させます。
+
+Dependabotのpull requestでも通常のreviewと必須検査を省略しません。Cargo更新ではlockfile、license、取得元、
+advisoryおよびRust stableへの影響を、GitHub Actions更新では完全なcommit SHAへの固定とRelease Notesを
+確認します。安全な自動mergeの条件が実装されるまでは手動で統合します。
+
+Nix入力はDependabotの対象外であり、`flake.lock`を手動で更新します。Frontendへruntime dependencyを追加する
+場合は、lockfileに基づくSBOM生成を先に実装します。
+
+== 文書を増やさない規則
+
+文書の重複と陳腐化を避けるため、次の規則に従います。
+
+* 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
+* version固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。
+* CLI option、診断code、package version、対応target、公開APIおよびschemaなど、codeや機械可読な
+  manifestから取得できる情報を文書へ重複して記載しません。
+* 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は`docs/`、設計理由はADR、
+  作業計画はGitHub Issuesを正本とします。
+* 利用者から見える変更では、関連文書を同じpull requestで更新します。文書更新が不要な場合は、
+  その理由をpull requestへ記載します。
+* 文書内のcommand例は、可能な限りCIまたは自動testで実行できる形にします。
+
+== Pull request
+
+pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
+変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
+
+CIではdependency governance、source quality、fuzz quality、Nix package qualityを確認します。失敗した場合は、
+該当する`cargo make` taskをNix開発環境で再実行し、設定の基準である`.github/workflows`と
+`Makefile.toml`を確認してください。
+
+== Tag
+
+安定版には`vX.Y.Z`形式のtagを使用します。tagは`main`の先端であり、
+同じcommitに対するmain candidateのすべてのcheckが成功していることを確認してから作成します。
+作業branchや未検証のcommitにはtagを付けず、`release/*`の長期branchも作成しません。
+
+== Release
+
+release作業も通常の変更と同様に、短命なbranchとpull requestから開始します。
+
+. release対象versionを全componentで一致させ、必要な仕様文書、Release Notes、テスト用入力を更新します。
+. `cargo make release-check`を実行し、pull requestの必須checkが成功したことを確認して`main`へ統合します。
+. 対象commitへ`vX.Y.Z` tagを作成し、GitHubへpushします。
+. `github-release` Environmentでsource commitとcandidateを確認し、公開を承認します。
+. GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
+. checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
+
+公開処理はprotected `github-release` Environmentだけに書き込み権限とOIDCを与えます。既存releaseがないことを
+確認してprivate draftを作成し、全assetのupload、集合検査、provenance生成が完了した後、最後の操作として
+stable releaseを公開します。build jobやforkからのpull requestには公開権限を与えません。
+
+candidateが未完了、失敗、期限切れまたはcommit不一致の場合は公開を中止します。公開前に失敗した場合は、
+workflowが作成したprivate draftだけを削除します。attestation作成後の失敗では孤立したattestationが残る場合が
+あるため、再実行前に対象digestを確認します。
+
+公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで`main`へ統合して
+新しいversionで最初から実行します。tag、assetまたはattestationの手動削除は監査可能な破壊的操作であるため、
+実行前に対象、影響および理由を確認し、記録してください。
+
+repositoryの初期設定では`github-release` Environmentを作成し、必要なreviewerとstable version tagだけを許可する
+deployment ruleを設定します。公開workflowの構成は`.github/workflows`、assetの仕様は
+xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
+
+[#release-checklist]
+== Release checklist
+
+個人開発でも公開後の調査を再現できるよう、各releaseで同じ項目を確認します。公開後の手動確認は、
+repositoryのcheckoutやworkspaceの`target`を`PATH`へ含めないclean環境で、公開assetだけを使って実行します。
+
+=== 公開前
+
+* [ ] `flake.lock`で固定したRust stable、`release-manifest.json`の`rustVersion`、root workspaceと
+      Zed crateの`rust-version`が一致しています。
+* [ ] Rust workspace、WASM、browser package、Zed拡張、配布planのpackage versionが
+      `release-manifest.json`と一致しています。
+* [ ] `cargo make release-check`が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
+      conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
+* [ ] 対象commitが現在の`origin/main`の先端であり、同じcommitのmain candidateが成功しています。
+* [ ] xref:docs/developer-guide/release-distribution.adoc[配布仕様]に定義したtarget、archive、metadataおよび9個のasset集合が
+      candidateと一致しています。
+
+=== 公開後
+
+* [ ] GitHub Releaseがstableであり、計画した9個のassetだけを含み、各assetが非0 byteです。
+* [ ] xref:docs/user-guide/release-installation.adoc[導入手順]に従い、download後のchecksumとattestationを別々に検証しました。
+      main candidateにはattestationがなく、公開assetではattestationを必須とします。
+* [ ] 対応architectureごとにCLIとLSPをclean `PATH`へ導入し、`--version --json`が対象versionを返します。
+      versionの選択、更新、rollbackおよび完全削除は
+      xref:docs/user-guide/release-installation.adoc[インストールと更新]に従って確認します。
+* [ ] browser packageで実WASMを読み込み、共通fixtureのHTML、診断、シンボルおよびprojectionを確認しました。
+      明示labelの優先、解決済み表示テキストのescape、解決失敗時の機密情報非漏洩、最新generationだけの採用、
+      SharedArrayBufferあり／なしの両経路、CSP、cross-origin isolation、TypeScript宣言、size、
+      機械固有pathの不在およびbundler後のasset解決も確認しました。
+* [ ] 公開Zed archiveとmanaged LSPをoverrideなしで使用し、AsciiDoc認識とLSP起動前の基本構文色付けを確認しました。
+      診断、Outline、Code Action、Format、Hover、補完、Definition、References、Document Linkおよび
+      Semantic Tokensが編集後と再起動後にも更新されることを確認しました。
+* [ ] native利用側アプリでpackage versionを照合し、`ParseOptions`、`SourceId`、文書versionおよびgenerationを
+      明示しました。DB、network、file、権限および任意scheme Resolverをcoreの外へ置き、更新対象が
+      xref:docs/developer-guide/core-profile.adoc[対応範囲]と一致し、Resolverが返したURLを`UrlPolicy`で再検証しました。
+* [ ] Nix flakeをtag commitへ固定し、Linux x86-64／ARM64で`nix run`、profileへの導入・rollback・削除、
+      利用側flakeへの固定、NixOS package評価およびoverlayを確認しました。runtime closureにbrowser、Node.js、
+      Rust compiler、Cargoまたはfuzz toolが含まれていないことも確認しました。
+* [ ] 導入前後のfile一覧を比較し、CLI、LSP、browser packageおよびZed拡張の削除後に管理対象fileが残っていないことを確認しました。

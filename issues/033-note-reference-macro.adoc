@@ -63,4 +63,4 @@ Issue 044で固定的な`ReferenceSchemeExtension`とUUID制約をコアから�
   `ReferenceResolver`境界を追加した。
 - Resolver失敗の分類、安定診断コード、逆参照範囲およびキャッシュキーを公開型にした。
 - Resolverなしの解析・抽出・HTML回復と、解決hrefへのURLポリシー再検査を維持した。
-- 規範契約を`docs/reference-resolution.adoc`へ記録した。
+- 参照解決の仕様をxref:../docs/developer-guide/extensions.adoc[拡張境界]へ記録した。

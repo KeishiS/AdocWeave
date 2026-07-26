@@ -1,4 +1,4 @@
-= URL由来別policyとWASM描画契約
+= URL由来別policyとWASM描画仕様
 :status: completed
 :depends-on: 075,084,094
 
@@ -21,9 +21,9 @@ WASMの診断および描画へ適用する。
 * URL policy APIを由来context付きの判定へ破壊的に再設計する。
 * link、referenceおよびresourceの全判定箇所を共通APIへ移行する。
 * WASM requestからparse／lint／renderへ同一policy snapshotを伝播する。
-* native、WASM、CLIおよびbrowser libraryの公開DTOと契約versionを更新する。
+* native、WASM、CLIおよびbrowser libraryの公開DTOと仕様versionを更新する。
 * `http`／`https`、control文字、難読化、relative、root-relative、host解決結果のsecurity fixtureを追加する。
-* URL policy、RenderInputs、WASMおよびHTML契約文書を更新する。
+* URL policy、RenderInputs、WASMおよびHTML仕様文書を更新する。
 
 == 完了条件
 

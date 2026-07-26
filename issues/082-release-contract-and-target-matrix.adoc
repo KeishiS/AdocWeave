@@ -1,4 +1,4 @@
-= GitHub Releasesの配布契約とtarget matrix
+= GitHub Releasesの配布仕様とtarget matrix
 :status: completed
 :depends-on: 094
 
@@ -21,7 +21,7 @@ AsciiDoc入力をWeb Workerで継続解析し、最新generationの安全なHTML
 * `adocweave-browser-{version}`：browser向けWASM、JavaScript API、TypeScript declaration、Worker module、
   licenseおよびリアルタイムHTML変換の最小利用例
 * `adocweave-dist-manifest.json`：asset名、target、kind、byte数、SHA-256、executable名、package version、
-  Core／WASM等の契約version
+  Core／WASM等の仕様version
 * `sha256.sum`、SBOMおよびprovenance verification手順
 
 GitHubが自動生成するsource archiveは上記binary contractへ含めない。assetはrelease後に上書きせず、
@@ -48,7 +48,7 @@ native packageから共有される一つのextra artifactであり、同名asse
 |===
 
 初回公開は上記2種類のLinux targetだけを対応対象とする。32-bit targetとGNU Linux dynamic buildは扱わない。
-targetの追加・削除は配布契約変更としてmanifestと文書を同時更新する。
+targetの追加・削除は配布仕様変更としてmanifestと文書を同時更新する。
 
 == 将来target
 
@@ -74,7 +74,7 @@ OS固有試験を確認した後に、独立したmilestoneで追加する。
 
 Windows ARM64はWindows x86-64の公開後に利用要求を確認して判断する。
 
-== 初回公開時の契約version baseline
+== 初回公開時の仕様version baseline
 
 開発中に蓄積した番号を、初回の公開互換性履歴として外部へ持ち出さない。最初のrelease candidateを作る変更で、
 `CORE_PROFILE_VERSION`、`CORE_API_VERSION`、`HTML_CONTRACT_VERSION`、
@@ -82,7 +82,7 @@ Windows ARM64はWindows x86-64の公開後に利用要求を確認して判断�
 すべて`1`へ一度だけリセットする。これはworkspace packageのSemVerとは別の操作である。
 
 同じ変更でRust定数、`release-manifest.json`、fixture、Worker、テストおよび現在値を記載する文書を更新し、
-release gateで不一致を拒否する。リセット後は各契約を再び独立に単調増加させ、公開済み番号の再利用や巻き戻しを
+release gateで不一致を拒否する。リセット後は各仕様を再び独立に単調増加させ、公開済み番号の再利用や巻き戻しを
 行わない。完了済みIssueに記録された開発中の履歴は書き換えず、公開前の履歴であることをこのbaseline定義により
 区別する。
 
@@ -97,39 +97,39 @@ release gateで不一致を拒否する。リセット後は各契約を再び�
 * native archive生成には`dist`（旧cargo-dist）をexact versionでpinして用いる。生成workflowと設定は
   repositoryへcommitし、更新時に差分をreviewする。
 * browser libraryは`dist`のextra artifactとして同じreleaseへ統合し、別のversionや手動upload経路を作らない。
-* 初回release candidateの作成前に、上記6契約を一括で`1`へリセットする原子的な変更を適用する。
+* 初回release candidateの作成前に、上記6種類の仕様versionを一括で`1`へリセットする原子的な変更を適用する。
 * `adocweave-dist-manifest.json`のschema、sort順、path separator、hash対象およびJSON canonicalizationを
   fixtureで固定する。
 * 配布先はリポジトリ所有者自身のGitHubリポジトリにあるGitHub Releasesだけとする。
   crates.io、npm、Homebrew、WinGet、Zed Extension Registryその他の公的registryへの登録は行わず、
   将来の配布計画にも含めない。
-* GitHubリポジトリの可視性にかかわらずasset契約は共通とする。private repositoryから取得するconsumerは、
+* GitHubリポジトリの可視性にかかわらずasset仕様は共通とする。private repositoryから取得するconsumerは、
   GitHubが要求する認証を利用側で与えなければならない。
 
 == 完了条件
 
 release tagから生成される全asset名と内容がmachine-readable fixtureで決定的に再現され、未対応platform、
-version関係、初回契約version baseline、後方互換性および非目標が文書化される。初回公開対象がLinux 2 target
+version関係、初回仕様version baseline、後方互換性および非目標が文書化される。初回公開対象がLinux 2 target
 だけであることをmanifest fixtureで検査し、`dist plan`相当のdry runをPRで実行できる。
 
 == 実装結果
 
 2026-07-21に完了した。workspace、CLI、LSP、WASM、browser packageおよびZed拡張を`0.1.0`のrelease trainへ
-統合し、6種類の公開契約versionを初回公開baselineの`1`へ一括resetした。Cargo packageとZed crateは
+統合し、6種類の公開仕様のversionを初回公開baselineの`1`へ一括resetした。Cargo packageとZed crateは
 `publish = false`、browser packageは`private = true`とし、配布先をリポジトリ所有者自身のGitHub Releases
 だけに限定した。
 
 `dist 0.32.0`、Linux musl 2 target、CLI／LSP native archiveおよびversion付きbrowser extra artifactを
-xref:../dist-workspace.toml[`dist-workspace.toml`]へ固定した。browser archiveはWASM、JavaScript、TypeScript
+link:../dist-workspace.toml[`dist-workspace.toml`]へ固定した。browser archiveはWASM、JavaScript、TypeScript
 declaration、Worker、licenseおよび最小例を決定的な`.tar.xz`として生成する。生成workflowは手編集せず、
 正式な`plan-jobs`拡張からtag／release train検証をbuild前へ接続した。
 native build hostは`aarch64-unknown-linux-musl`を`ubuntu-24.04-arm`、
 `x86_64-unknown-linux-musl`を`ubuntu-24.04`へ割り当て、target非依存jobも`ubuntu-24.04`へ統一した。
 
-xref:../release/distribution-plan.json[配布計画]、xref:../release/adocweave-dist-manifest.schema.json[schema]、
-xref:../release/adocweave-dist-manifest.fixture.json[canonical fixture]およびNode検証器により、version、repository、
+link:../release/distribution-plan.json[配布計画]、link:../release/adocweave-dist-manifest.schema.json[schema]、
+link:../release/adocweave-dist-manifest.fixture.json[canonical fixture]およびNode検証器により、version、repository、
 Cargo metadata、tag形式、target、archive内容、sort順、SHA-256形式およびJSON canonicalizationを検査する。
-`cargo make dist-plan`は`dist`のmachine-readable planを同じ契約と照合する。
+`cargo make dist-plan`は`dist`のmachine-readable planを同じ仕様と照合する。
 
 2026-07-21に`nix develop -c cargo make release-gate`を実行し、全workspace test、Clippy、native／WASM
 conformance、文書検査、fuzz smoke、browser archiveの2回生成による同一SHA-256確認および`dist plan`を含む

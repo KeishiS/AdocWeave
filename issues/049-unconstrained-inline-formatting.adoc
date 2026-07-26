@@ -18,7 +18,7 @@ AsciiDocの二重マーカーによるstrong、emphasisおよびmonospaceを、�
 
 * ASCII単語内部、日本語、emoji、句読点隣接および入れ子fixtureを持つ。
 * constrained記法と識別子中のunderscoreに回帰がない。
-* AsciiDoc参照動作との差異を`docs/compatibility.adoc`へ明記する。
+* AsciiDoc参照動作との差異を`docs/user-guide/compatibility.adoc`へ明記する。
 * nativeとWASMの結果が一致し、`cargo make release-check`が成功する。
 
 == 依存関係
@@ -29,4 +29,4 @@ AsciiDocの二重マーカーによるstrong、emphasisおよびmonospaceを、�
 
 完了。二重マーカーを単一マーカーと同じsemantic nodeへ構築し、marker形式だけをrecognizerの
 型で区別した。ASCII単語内部、CJK、emoji、入れ子、隣接pair、空pairおよびescapeをテストし、
-native／WASM共通fixtureへHTML契約を追加した。
+native／WASM共通fixtureへHTML仕様を追加した。

@@ -1,0 +1,89 @@
+= HTML出力の仕様
+
+この文書では、生成HTMLの構造、出力規則および安全性の境界を定義します。CLIの操作方法は
+xref:../user-guide/command-line.adoc[コマンドライン]、参照先やresourceの解決結果を渡す方法は
+xref:server-execution.adoc#render-inputs[変換入力]を参照してください。
+
+HTML出力はpackage versionの一部であり、独立した仕様versionを持ちません。異なるpackage version間で
+DOM構造、属性順、空白またはbyte列が同一であることは保証しません。
+
+== 文書モード
+
+`Fragment`は本文要素だけを出力する既定のモードです。`Complete`は文書型、`html`および`body`を持つ
+完全なHTML文書を出力します。stylesheetを一件以上出力する場合だけ`head`を追加します。
+
+[source,html]
+----
+<!doctype html>
+<html>
+<body>
+...
+</body>
+</html>
+----
+
+== スタイルシート
+
+`RenderPolicy.stylesheets`は利用側アプリまたはCLIが明示的に渡す設定であり、文書入力からCSSへ到達する
+経路はありません。埋め込みCSSと外部stylesheet URLを`Complete`の`head`へ指定順に出力し、同じ内容は
+最初の一件だけを採用します。`Fragment`では出力せず、診断を返します。
+
+埋め込みCSSでは、`style`要素を終了できる文字列、HTML comment開始文字列および不正な制御文字を拒否します。
+外部URLは`UrlPolicy`で検査してから属性値としてescapeします。件数とbyte数には`ProcessingLimits`を適用し、
+拒否した値をHTMLや診断messageへ出力しません。
+
+文書入力に由来する任意の`style`、classまたはraw HTMLは、stylesheet設定の有無にかかわらず拒否します。
+この境界を採用した理由はxref:adr/0007-host-supplied-stylesheets.adoc[ADR 0007]に記録しています。
+
+== 許可するHTML
+
+生成する要素は次に限定します。
+
+* 文書構造：`html`、`head`、`body`、`style`、`link`
+* 見出しと本文：`h1`から`h5`、`p`、`div`、`br`、`hr`
+* インライン：`a`、`strong`、`em`、`code`、`mark`、`span`、`sub`、`sup`、`kbd`
+* ブロック：`pre`、`blockquote`、`cite`
+* list：`ul`、`ol`、`li`、`dl`、`dt`、`dd`
+* table：`table`、`caption`、`thead`、`tbody`、`tfoot`、`tr`、`th`、`td`
+* media：`img`、`audio`、`video`
+
+属性は`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、`target`、
+`rel`、`colspan`および`rowspan`に限定します。classには実装が列挙する固定値だけを使用します。
+入力由来の任意属性、event handler、`script`、SVGおよびraw HTMLは生成しません。
+
+`target`と`rel`は外部HTTP(S) linkの固定表示と外部stylesheetだけに使用します。入力に書かれた同名属性を
+そのまま通過させません。
+
+Tableの`width`は1から100までの値を百分率として正規化し、`%`付きで出力します。Captionは安全な
+literal textとしてescapeし、inline書式や属性参照を再解析しません。
+
+== URLとリソース
+
+URLは由来を示すcontextとともに`RenderPolicy`の`UrlPolicy`で検査します。文書に記述されたlink、
+解決済みxrefおよび解決済みresourceを区別し、利用側アプリが返したURLも信頼済みとして扱いません。
+
+制御文字、空白、不正なscheme、絶対filesystem path、backslash、network-path referenceおよびpath traversalを
+拒否します。許可するscheme、root-relative URL、外部画像およびdata URIはpolicyで明示します。
+root-relative URLの許可は解決済みの値だけに適用し、文書へ直接記述した値へは適用しません。
+
+解決できない参照、拒否したURLおよび利用できないresourceはactive要素へ変換せず、表示文字列や代替文字列を
+escapeした非activeな内容として出力します。解決済み表示文字列はプレーンテキストとして扱い、AsciiDocや
+HTMLとして再解析しません。詳しいfallback規則はxref:server-execution.adoc#render-inputs[変換入力]を
+基準とします。
+
+画像、音声および動画は、解決済みURLと対応する`ResourceCapabilities`がある場合だけactive要素として
+出力します。寸法には10進整数だけを使用します。
+
+== ソースと数式
+
+Source blockの言語classは`SourceLanguagePolicy`で許可した言語だけに付けます。未知の言語ではclassを
+省略して診断を返します。
+
+数式engineは内蔵しません。許可した数式言語だけに固定classを付け、内容は常にescapeします。Inline数式は
+`code`、block数式は`pre`内の`code`として出力します。
+
+== 決定性
+
+同じpackage version、解析結果、`RenderPolicy`および`RenderInputs`からは同じHTMLを生成します。
+属性順、改行、空白および末尾改行はテスト用の期待出力で固定し、変更時は意図した差分であることを
+確認します。

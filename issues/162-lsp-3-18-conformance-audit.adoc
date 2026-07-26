@@ -22,7 +22,7 @@ Language Server Protocol 3.18]である。
 
 [cols="2,2,5",options="header"]
 |===
-|仕様領域 |状態 |AdocWeaveの契約
+|仕様領域 |状態 |AdocWeaveの仕様
 
 |initialize、initialized、shutdown、exit
 |対応
@@ -172,7 +172,7 @@ in-memory streamで使用する。
 
 監査開始時にはwatched filesの動的登録、workspace folder変更、Hover、Document Symbol、
 Workspace Edit、Code Action、diagnosticsおよびDocument Linkのcapability negotiationが不足していた。
-これらはcapability matrixと実装記録に示す契約へ修正した。
+これらはcapability matrixと実装記録に示す仕様へ修正した。
 
 stdio transportは意図的な制約として維持し、client process監視は`async-lsp`の
 `client-monitor` featureで有効化した。LSP 3.18 optional機能は、相互運用性に必要な範囲と
@@ -197,7 +197,7 @@ stdio transportは意図的な制約として維持し、client process監視は
 * revisionと参照日を固定したLSP 3.18 capability matrixが文書化されている。
 * 部分対応または不適合の各項目に、実装修正、文書化された非目標または依存libraryの判断が対応する。
 * 最小・全対応client fixtureで、server capabilityと応答形式が宣言済みclient capabilityを超えない。
-* file watcherとworkspace folder変更の登録・通知契約が自動テストで再現される。
+* file watcherとworkspace folder変更の登録・通知仕様が自動テストで再現される。
 * `cargo make verify`、Zed extension testおよび主要LSP機能の手動確認が成功する。
 
 == 実装記録
@@ -205,7 +205,7 @@ stdio transportは意図的な制約として維持し、client process監視は
 * initializeでclient capability profileを確定し、Hover、Document Symbol、Code Action、
   Workspace Edit、diagnostics、Document LinkおよびSemantic Tokensの応答へ適用した。
 * workspace folderの静的capabilityと変更通知、watched filesの動的登録を追加した。
-* `async-lsp`既定lifecycleを置き換え、invalid-state通知の破棄とexit statusを3.18契約へ合わせた。
+* `async-lsp`既定lifecycleを置き換え、invalid-state通知の破棄とexit statusを3.18仕様へ合わせた。
 * client process monitorを有効にした。
 * 最小client、全対応client、workspace再構築、watcher登録、Code Action range／kind、
   invalid lifecycle、JSON-RPCのid／error／notificationおよびbinary exit statusを自動testで

@@ -1,23 +1,23 @@
 = AdocWeave
 
-AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツールである。
-コマンドライン、WebAssembly、Language Serverを提供する。
+AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツールです。
+コマンドライン、WebAssembly、Language Serverを提供します。
 
 == 機能
 
-* AsciiDocを安全なHTMLへ変換する。
-* 文法やリンク、表などの問題を行番号付きで表示する。
-* 意味を変えずに、対応済みの範囲を整形する。
-* Zedなどのエディターで診断、補完、定義への移動を提供する。
-* ブラウザーや別のアプリケーションに組み込む。
+* AsciiDocを安全なHTMLへ変換します。
+* 文法やリンク、表などの問題を行番号付きで表示します。
+* 意味を変えずに、対応済みの範囲を整形します。
+* Zedなどのエディターで診断、補完、定義への移動を提供します。
+* ブラウザーや別のアプリケーションに組み込みます。
 
-対応状況はxref:docs/syntax-support.adoc[対応している書式]を参照。AdocWeaveはAsciiDocの全機能を実装しない。
-対応範囲と他の実装との差異はxref:docs/compatibility.adoc[AsciiDocとの違い]に記載する。
+対応状況はxref:docs/user-guide/syntax-support.adoc[対応している書式]を参照してください。AdocWeaveはAsciiDocの全機能を実装しません。
+対応範囲と他の実装との差異はxref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]に記載します。
 
 == 使用方法
 
-GitHub Releasesからの導入方法はxref:docs/release-installation.adoc[インストールと更新]を参照。
-Nix環境ではxref:docs/nix-installation.adoc[Nixで使う]を用いる。
+GitHub Releasesからの導入方法はxref:docs/user-guide/release-installation.adoc[インストールと更新]を参照してください。
+Nix環境での実行と導入もxref:docs/user-guide/release-installation.adoc#nix-installation[Nixによる導入]を参照してください。
 
 基本的な実行例:
 
@@ -33,46 +33,40 @@ adocweave check manual.adoc
 adocweave format --check manual.adoc
 ----
 
-全オプション、標準入力、`include::`の扱いはxref:docs/command-line.adoc[コマンドラインの使い方]を参照。
+全オプション、標準入力、`include::`の扱いはxref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
 
 == 文書構成
 
-文書一覧はxref:docs/README.adoc[文書構成]を参照。
+文書一覧はxref:docs/README.adoc[文書構成]を参照してください。
 
 === 文書作成
 
-* xref:docs/syntax-support.adoc[対応している書式] — 見出し、リスト、表、リンクなどの対応状況。
-* xref:docs/command-line.adoc[コマンドラインの使い方] — 変換、確認、整形の実行方法。
-* xref:docs/diagnostics.adoc[問題の見方] — 表示される問題の種類と対処の考え方。
-* xref:docs/formatting.adoc[整形] — 変更される部分と変更されない部分。
-* xref:docs/document-structure.adoc[文書の構造] — 目次、節番号、文書型ごとの見出し規則。
-* xref:docs/tables.adoc[表]、xref:docs/lists.adoc[リスト]、xref:docs/links-and-cross-references.adoc[リンクと相互参照]。
+* xref:docs/user-guide/syntax-support.adoc[対応している書式] — 見出し、リスト、表、リンクなどの対応状況を説明します。
+* xref:docs/user-guide/command-line.adoc[コマンドライン] — 変換、確認、整形の実行方法を説明します。
+* xref:docs/user-guide/command-line.adoc#diagnostics[問題の確認] — 表示される問題と機械判定用code。
 
 === エディター統合
 
-* xref:docs/zed-development.adoc[Zedで開発版を導入する]。
-* xref:docs/language-server.adoc[エディター連携] — 提供機能と設定方法。
-* xref:docs/zed-lsp-resolution.adoc[ZedがLanguage Serverを見つける順序]。
+* xref:docs/developer-guide/zed-development.adoc[Zedで開発版を導入する]。
+* xref:docs/developer-guide/language-server.adoc[Language Serverの実行仕様] — 提供機能と設定方法を説明します。
+* xref:docs/user-guide/release-installation.adoc#zed-installation[ZedとLanguage Serverを導入する]。
 
 === アプリケーション統合
 
-* xref:docs/core-profile.adoc[コアAPIと対応範囲] — Rustから解析し、HTMLへ変換する。
-* xref:docs/browser-library.adoc[ブラウザーで使う]。
-* xref:docs/wasm-worker.adoc[WebAssemblyとWeb Worker]。
-* xref:docs/web-host-adapter.adoc[Webアプリへの組み込み]。
-* xref:docs/extensions.adoc[独自機能を追加する]。
+* xref:docs/developer-guide/core-profile.adoc[コアAPIと対応範囲] — Rustから解析し、HTMLへ変換します。
+* xref:docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API] — ブラウザーやJavaScriptから解析結果を利用します。
+* xref:docs/user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]。
+* xref:docs/developer-guide/extensions.adoc[独自機能を追加する]。
 
 === 開発
 
-* xref:docs/nix-installation.adoc[開発環境を用意する]。
-* xref:docs/testing.adoc[テストの実行]。
-* xref:docs/architecture.adoc[内部の仕組み]。
-* xref:docs/current-contract.adoc[公開している仕様と移行情報]。
-* xref:docs/roadmap.adoc[今後の予定]。
+* xref:docs/developer-guide/architecture.adoc[アーキテクチャ]。
+* xref:docs/README.adoc[文書と公開仕様の一覧]。
+* xref:docs/developer-guide/roadmap.adoc[今後の予定]。
 
 == 開発環境
 
-Nix環境では、リポジトリのルートで次を実行する。
+Nix環境では、リポジトリのルートで次を実行します。
 
 [source,console]
 ----
@@ -80,9 +74,8 @@ nix develop
 cargo make verify
 ----
 
-`cargo make verify`は、整形、型検査、テスト、ブラウザー向けテスト、文書検査を実行する。
-個別のコマンドはxref:docs/testing.adoc[テストの実行]を参照。
+`cargo make verify`は、整形、型検査、テスト、ブラウザー向けテスト、文書検査を実行します。
 
 == 設計資料
 
-文法の詳細、公開API、配布手順は`docs/`に置く。これらはライブラリと配布物の保守者向け資料である。
+文法の詳細、公開API、配布手順は`docs/`に置きます。これらはライブラリと配布物の保守者向け資料です。

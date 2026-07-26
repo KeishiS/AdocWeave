@@ -21,4 +21,4 @@
 * 公開APIに`parser`由来のDocument rootまたはblock型が露出しない。
 * attribute occurrence、anchor、metadata、block、inlineおよびrangeが新しい公開modelから取得できる。
 * parser内部表現の変更だけでは公開model、backendおよびhostの変更を要求しないことをconsumer compile testで固定する。
-* Core Profile、migration guide、conformance fixtureおよび公開契約を同期する。
+* Core Profile、migration guide、conformance fixtureおよび公開仕様を同期する。

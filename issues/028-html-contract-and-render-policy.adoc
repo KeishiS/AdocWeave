@@ -1,4 +1,4 @@
-= HTML出力契約とレンダーポリシー
+= HTML出力仕様とレンダーポリシー
 :status: completed
 :depends-on:
 
@@ -16,7 +16,7 @@
 - 未解決cross referenceを勝手にファイルURLへ変換せず、解決済みの安全なhrefだけを
   ホストから受け取るレンダリング境界を定義する。
 - 入力由来のstyle、script、SVG、イベントハンドラおよび任意属性を生成しない。
-- DOM・意味・バイト列のうち、互換性を保証する水準と契約バージョンを定義する。
+- DOM・意味・バイト列のうち、互換性を保証する水準と仕様バージョンを定義する。
 
 == 完了条件
 
@@ -44,7 +44,7 @@ cargo test --workspace html_security
 
 完了。
 
-- HTML契約バージョン1、`RenderPolicy` および `HtmlDocumentMode` を公開した。
+- HTML仕様バージョン1、`RenderPolicy` および `HtmlDocumentMode` を公開した。
 - 既定のノートアプリ設定では `http` と `https` だけを許可し、ホストが許可
   スキームと相対URLの可否を明示的に設定できる。
 - URLの大小文字、制御文字、空白、percent encodingされた制御文字、不正スキーム、
@@ -54,4 +54,4 @@ cargo test --workspace html_security
   `fixtures/html/contract.*` のgolden fixtureで固定した。
 - 未解決参照はレンダラーで解決せず、安全なhrefだけをホストから受け取る境界とした。
   Issue 031で非リンク回復と位置付き診断を接続済みである。
-- 詳細な契約を `docs/html-contract.adoc` に記録した。
+- 詳細な仕様を `docs/developer-guide/html-contract.adoc` に記録した。

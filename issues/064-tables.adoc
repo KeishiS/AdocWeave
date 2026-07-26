@@ -12,11 +12,11 @@ AsciiDocのtableを文字列分割ではなく、行・列・cell spanとcell co
 * column／row span、alignmentおよびcell styleを型付けする。
 * literal、verse、header、monospaceおよびAsciiDoc cellの置換contextを接続する。
 * cell数、列数、入れ子深さおよび入力byteの上限を構築時に強制する。
-* CSV／DSV／TSVはPSV契約を完成させた後に追加する。
+* CSV／DSV／TSVはPSV仕様を完成させた後に追加する。
 
 == 完了条件
 
-基本PSV tableと複数行cellをlosslessに復元でき、HTML table出力がallowlist契約に従う。
+基本PSV tableと複数行cellをlosslessに復元でき、HTML table出力がallowlist仕様に従う。
 
 == 完了内容
 
@@ -24,4 +24,4 @@ PSVを列、行、cell、span、配置、styleおよびsource rangeからなる�
 `cols`、multiplier、header／footer、column／row span、複数行cellおよび列・cell styleを
 実装し、HTML allowlistとfixtureで固定した。表のbyte数、cell数、列数および深さは構築時に
 検査する。完全なblock文書としてのAsciiDoc cellとCSV／DSV／TSVは後続Issueへ残し、
-xref:../docs/tables.adoc[表の対応仕様]に境界を明記した。
+xref:../docs/user-guide/syntax-support.adoc[対応しているAsciiDocの書式]に対応範囲を記録した。

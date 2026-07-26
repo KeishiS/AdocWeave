@@ -10,7 +10,7 @@ AdocWeaveの標準構文プロファイルをネイティブ、WASM、CLIおよ�
 == 実装範囲
 
 * 必須構文、未対応構文、厳格・寛容モードおよび既定上限をversion付きで固定する。
-* 公開API、診断、HTML契約、WASM APIおよびcrateのSemVer方針を文書化する。
+* 公開API、診断、HTML仕様、WASM APIおよびcrateのSemVer方針を文書化する。
 * 処理系更新時にHTML、検索projectionおよび参照projectionを再構築すべき条件を定義する。
 * 文書内・文書間xref、通常リンク、任意スキームおよびブラウザプレビューを受け入れ試験する。
 * Zed、ブラウザおよび将来のネイティブホストで再利用する手動確認項目を整備する。
@@ -37,16 +37,16 @@ cargo make verify
 == 進捗
 
 `CORE_PROFILE_VERSION = 1`を公開し、構文profileの直書きversionを一元化した。
-xref:../docs/core-profile.adoc[AdocWeave Core Profile 1]に必須構文、未対応範囲、mode、既定上限、
-Rust API・診断・HTML・projection・conformance・WASM・Workerの契約version、crate SemVerおよび
+xref:../docs/developer-guide/core-profile.adoc[AdocWeave Core Profile 1]に必須構文、未対応範囲、mode、既定上限、
+Rust API・診断・HTML・projection・conformance・WASM・Workerの仕様version、crate SemVerおよび
 成果物別の再構築条件を定義した。
 
-xref:../docs/release-checklist.adoc[Core Profileリリース確認]に自動ゲートとZed、ブラウザWorker、
+xref:../CONTRIBUTING.adoc#release-checklist[Release checklist]に自動ゲートとZed、ブラウザWorker、
 nativeホストの手動確認項目を定義した。`cargo make release-check`は全検証、実WASM適合性、
 短時間fuzz、release fixtureおよびWASM sizeをまとめる。
 
 CLI、LSP、native WASM adapterおよび実WASMは共通conformance fixtureを再利用する。
-契約versionの独立性を自動試験で固定し、fixtureごとに互換性、差分理由およびversion影響を
+仕様versionの独立性を自動試験で固定し、fixtureごとに互換性、差分理由およびversion影響を
 記録する。
 
 コアcrateの通常依存が`sha2`だけであり、DB、ノートメタデータ型およびアプリ固有サーバを

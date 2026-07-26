@@ -1,0 +1,280 @@
+= Language Serverの実行仕様
+
+この文書では、`adocweave-lsp`のプロトコル境界、並行実行および検証方法を定義します。
+`adocweave-lsp`は、対応するエディターに問題表示、補完、定義への移動、整形を提供します。
+AsciiDocの読み取りやHTML変換の規則はコアライブラリにあり、Language Serverはエディターとの通信を担当します。
+Zedで開発版を試す手順はxref:zed-development.adoc[Zedで開発版を試す]を参照してください。
+
+== 対応範囲
+
+実行バイナリは`async-lsp`のstdio、ライフサイクルおよび型付きRouterを使用し、
+診断、Outline、Code Action、Format、Hover、補完、Definition、References、
+Document Link、条件付きRenameおよびSemantic Tokensを提供します。
+
+意味処理はruntime非依存の型付き`LanguageService`が担当し、protocol基盤には
+https://github.com/oxalica/async-lsp[`async-lsp`]、実行runtimeには
+https://tokio.rs/[Tokio]を使用します。
+
+適合性の基準には
+https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/[
+Language Server Protocol 3.18]の固定revisionを使用します。
+
+== crateの境界
+
+[source,text]
+----
+Zedまたは他のLSP client
+  -> async-lsp main loop
+       -> protocol adapter
+            -> DocumentStore
+            -> LSP意味処理service
+                 -> adocweave::Engine
+                      -> 所有型Analysis
+----
+
+`adocweave-lsp`は次を所有します。
+
+* LSPのinitialize、shutdown、exitおよびstdio transport
+* URI、position encodingおよびLSP型とコア型の変換
+* 開いている文書とworkspace resourceのtext、version、generationおよび解析スナップショット
+* file URIに限定したinclude依存graph、逆依存索引および上限付きlocal resource読込
+* 通知順序、要求並行数、CPU解析数、debounceおよび結果採用判定
+* clientへの診断、応答、通知および進捗報告
+
+`adocweave`コアは次を所有します。
+
+* AsciiDocのsyntax tree、AST、診断、Formatterおよびprojection
+* UTF-8ソース範囲とスナップショット固有の`SourceDocument`
+* `ProcessingLimits`と協調的な`CancellationCheck`
+* 外部I/Oを行わない決定的な`Engine::analyze`
+
+`async-lsp`、TokioおよびLSP型をコアcrateの依存関係または公開APIへ持ち込んではなりません。
+xref:server-execution.adoc[利用側アプリの実行仕様]も特定async runtimeへ依存しません。
+
+== 通知と要求
+
+LSP通知と要求は同じ並行処理規則を使用しません。
+
+`didOpen`、`didChange`、`didSave`および`didClose`はmain loopで受信順に適用します。
+source、versionおよびgenerationはhandler内で更新し、CPU解析だけを有界workerへ渡します。
+状態更新を別taskへ移してはいけません。
+
+文書ごとに待機中または実行中の解析を高々一つ保持します。新しい更新は以前の解析を
+キャンセルし、debounce待機が入力回数に比例して蓄積しないようにします。開始済みの
+CPU解析にも協調キャンセルを伝播します。
+
+文書同期はincrementalを広告します。一つの`didChange`に複数変更がある場合、各rangeを
+その直前の変更適用後の本文と交渉済みposition encodingへ順番に適用します。rangeなしの変更は
+その時点で全文を置き換えます。LFとCRLFを独自に数えず、コア`SourceDocument`の行索引を使用します。
+
+読み取り要求は並行処理できます。handlerは開始時に次の不変スナップショットを取得します。
+
+* 文書URI
+* clientが送った文書version
+* server内部のgeneration
+* ソースまたは既存`Analysis`のスナップショット
+* position encodingと有効な設定
+
+この分離により、通知は決定的な順序で状態を変更し、HoverやDocument Symbol等の要求は
+同じ時点のスナップショット上で安全に並行実行できます。
+
+要求は取得時のスナップショットだけを参照し、その後の文書更新によって観測内容を変えません。
+文書状態を変更するすべての経路でgenerationの整合性を維持します。
+
+== CPU解析と流量制御
+
+同期CPU解析はprotocolのmain loopから分離した有界workerで実行し、通知と要求の受信を
+停止させません。
+
+同時LSP要求数と同時CPU解析数は異なる上限として設定し、解析待ちにもbackpressureを適用します。
+
+worker待機中に要求がキャンセルされた場合は、解析を開始しません。実行枠は解析完了または
+失敗時に必ず解放し、panic時にも文書状態のlockを残しません。
+
+読み取り要求もhandler開始時点の不変スナップショットを有界workerへ渡します。文書状態を
+借用したままCPU処理や実行枠の待機を行いません。
+
+== キャンセルと古い結果
+
+`$/cancelRequest`を受けた場合は、待機中の解析を開始せず、開始済みの解析へキャンセルを
+伝播します。解析が停止できない段階に達していても、その結果を公開しません。
+
+文書解析は要求固有tokenとは別にgeneration固有tokenを持ちます。`didChange`、`didClose`、
+shutdownおよびexitは該当tokenを発火し、解析内部の既存検査点で停止させます。
+
+結果をclientへ公開する直前に、対象文書が開かれており、取得時のgenerationと現在の
+generationが一致することを再確認します。一致しない解析から次を公開してはいけません。
+
+* 診断
+* Hover、補完、シンボルその他の応答
+* Code ActionまたはWorkspace Edit
+* 参照解決結果またはDocument Link
+
+キャンセルとgeneration不一致は通常の構文診断ではなく、結果を採用しないための
+実行制御です。
+
+読み取り要求も取得時の文書tokenを保持します。要求計算中に`didChange`または`didClose`が
+tokenを発火した場合、計算済みであっても応答を`ContentModified`として破棄します。これにより
+古いFormatting Edit、Code Action、Definitionその他の応答を更新後に送信しません。
+
+== ロック規則
+
+共有状態のlock区間は、文書の検索、スナップショット取得、generation比較および
+結果差し替えに限定します。次の処理中にlockを保持してはいけません。
+
+* `Engine::analyze`その他のCPU処理
+* ResolverのI/O
+* 実行枠の待機
+* clientへのrequest、notificationまたは進捗送信
+
+文書単位の更新順序はmain loopで保証し、文書状態全体を長時間lockすることで代用しません。
+
+== async-lspミドルウェア
+
+採用するmiddlewareはコード上で明示し、既定featureだけに依存しません。
+
+* AdocWeave所有のserver lifecycle state machine
+* 要求の同時実行制限と`$/cancelRequest`
+* panic隔離
+* 本文を記録しない構造化tracing
+* initializeの`processId`が指定された場合のclient process監視
+
+server lifecycle state machineはinitialize前のrequestを
+`ServerNotInitialized`、重複initializeとshutdown後のrequestを`InvalidRequest`とし、
+無効な状態の通知を破棄します。shutdown後のexitだけを正常終了とします。
+
+製品transportはstdioだけを提供し、network transportは非目標とします。LSP仕様型はprotocol境界で
+のみ使用し、コア型との変換関数をテスト可能な安定面とします。
+
+content部はhttps://www.jsonrpc.org/specification[JSON-RPC 2.0]に従います。整数または文字列の
+request IDをresponseへ保持し、notificationへresponseを返しません。未知requestは
+`MethodNotFound`、既知requestの不正paramsは`InvalidParams`とします。未知の`$/`通知は無視します。
+LSP 3.18が禁止するJSON-RPC batchは扱いません。
+
+malformed JSONまたはinvalid request objectを受けると接続をfail-closedに終了し、
+`ParseError`または`InvalidRequest` responseを合成しません。
+
+== クライアント機能
+
+initializeで合意したclient capabilityは一つのprofileとして保持し、その後の応答形を決めます。
+serverはclientが宣言していない追加表現を送りません。
+
+[cols="2,3",options="header"]
+|===
+|client capability |応答仕様
+
+|Hover `contentFormat`
+|clientの優先順でMarkdownまたはPlain Textを選びます。未指定時はlegacy plain文字列を返します。
+
+|Document Symbol `hierarchicalDocumentSymbolSupport`
+|trueなら階層形式、それ以外は平坦な`SymbolInformation[]`を返します。
+
+|Code Action literal、`isPreferredSupport`
+|`quickfix` literalを扱えるclientにだけproviderを広告します。`range`と`context.only`を適用し、
+`isPreferred`は対応clientにだけ付けます。
+
+|Workspace Edit `documentChanges`
+|trueならversion付き`documentChanges`、それ以外は`changes`を使います。
+
+|Publish Diagnostics `versionSupport`
+|trueの場合だけversionを通知へ含めます。
+
+|Document Link `tooltipSupport`
+|trueの場合だけtooltipを含めます。
+
+|Semantic Tokens
+|full、relative、`string`および`variable`をすべて扱えるclientにだけproviderを広告します。
+|===
+
+== 診断
+
+Language Serverは直接解析の`Analysis.diagnostics`と、include展開解析の型付きorigin projectionを
+LSP診断へ変換し、同じ入力を独自にLintしません。
+push diagnosticsを送る場合、文書URI、versionまたはgenerationおよびposition encodingを
+同じスナップショットから得ます。
+
+ホストResolver由来の診断は標準診断と区別し、安定した順序で統合します。Resolver障害が
+コア構文診断の公開を妨げてはなりません。
+
+push diagnosticsを使用します。文書解析完了eventで現在generationを再確認してから通知し、
+pull diagnosticsは広告しません。
+
+診断に含まれる`Always`の修正候補は優先するCode Actionとして、`Maybe`は利用者の判断を必要とする
+Code Actionとして公開します。いずれも診断と同じ文書versionに対してだけ適用し、更新後の文書へ古い
+`TextEdit`を適用しません。
+
+== ワークスペース設定と参照索引
+
+`workspace/didChangeConfiguration`は直下または`adocweave`オブジェクト内の
+`debounceMs`を受け付け、0から1,000 msへ制限します。不正設定は現在値を維持し、サーバを
+終了させません。既定は30 msです。
+
+`workspace.workspaceFolders`を宣言したclientに対して、serverはworkspace folder対応と
+change notificationをinitialize結果で広告します。初期folder集合に加え、
+`workspace/didChangeWorkspaceFolders`で追加・削除されたrootを原子的に再構築し、open bufferを
+新しいworkspace snapshotへ再適用します。workspace folder対応clientの`workspaceFolders: null`は
+空集合として扱い、`rootUri`へfallbackしません。未対応clientだけがlegacy `rootUri`を使用し、
+nullの場合はさらにdeprecatedなfilesystem `rootPath`へfallbackします。
+
+`workspace.didChangeWatchedFiles.dynamicRegistration`を宣言したclientには、initialized後に
+`client/registerCapability`を送り、`**/*.adoc`のcreate、changeおよびdeleteを購読します。
+登録に失敗してもserverは終了しません。watch通知の有無を正確性の境界にせず、受信したURIには
+初期scanと同じworkspace境界とresource上限を再適用します。
+
+既定サーバはinitialize時のworkspace folderから`.adoc` fileを上限付きで読み、open文書を優先する
+version付きsnapshotを構築します。`include::`の依存graphと逆依存索引を保持し、open文書変更または
+`workspace/didChangeWatchedFiles`で変更resourceに依存するrootだけを新generationとして再解析します。
+symlinkは追跡せず、workspace外、network URI、1 resource 10 MiB超、合計50 MiB超または10,000 file超を
+拒否します。LSP自身はnetwork resourceを取得しません。
+
+disk resourceとopen bufferは別のrevision domainとして保持します。open中のLSP versionは同じopen期間だけで
+比較し、close後にversion 1から再openしても以前のversionと比較しません。open bufferをcloseした場合は
+resourceを削除せず、初期scanまたはwatch通知で得たdisk resourceへ戻し、そのresourceに依存するrootを
+再解析します。watch通知からdiskを読む場合も初期scanと同じcanonical workspace root、拡張子、regular file
+およびbyte上限の検査を通し、通知された任意のfile URIを直接読んではなりません。
+
+include展開結果は直接解析と別のimmutable snapshotとして採用し、diagnostic、include Definition、
+Document Link、ReferencesおよびRenameを元`SourceId`とrangeへ投影します。欠落resource、循環、safe
+mode違反および上限超過は`adocweave-project`診断となります。古いresource versionを含むjobはroot文書の
+generation gateで破棄します。
+
+任意スキームおよび製品DBを扱うホストは`run_with_host_index`へ`HostReferenceIndex`を注入します。
+このtraitは事前構築済みのメモリ索引を問い合わせる境界であり、実装内で同期I/Oを行っては
+なりません。
+
+`HostReferenceRequest`は参照元URI、文書version、generation、`ReferenceKey`およびposition
+encodingを所有します。ホストは要求generationより古い索引からLocationを返さず、対象不在・
+曖昧・索引更新中は`None`、ホスト障害は`Err`として区別します。障害を受けた要求は失敗しても、
+コア診断、Outline、Formatその他の機能とサーバプロセスは継続します。
+
+Renameはhost indexが結果を返す場合はそれを優先し、それ以外は採用済みworkspace snapshot内の宣言と
+参照だけを編集します。対象がworkspace外へ解決される場合や参照集合を構築できない場合は編集を返しません。
+
+== エディター投影
+
+Definition、ReferencesおよびDocument Linkは文書内、相対文書および任意スキームを同じ
+`ReferenceKey`で扱います。通常の外部URLは`UrlPolicy`を通したDocument Linkとして別に扱います。
+Semantic Tokensは通常リンク・xrefの参照先、アンカーID、リテラルおよび数式内容を`Analysis`から生成し、
+ソースを再解析しません。見出しmarker・本文、属性、commentおよび書式delimiter等、構文木だけで決まる基本色付けは
+各editorのTree-sitter queryが所有します。見出し本文を`namespace`等の一致しないLSP token typeへ投影しません。
+
+Hoverは見出し、文書属性、アンカー、通常リンク、xref、属性参照および数式の意味を表示します。
+補完はsource block言語と、現在文書で解析済みのアンカー候補を提供します。URLや数式本文を
+推測補完せず、任意スキームと未open文書の候補は提供しません。
+
+== 検証
+
+少なくとも次を自動検証します。
+
+* initialize前、重複initialize、shutdown後およびexitのライフサイクル
+* `didOpen`から複数`didChange`までの受信順
+* 更新通知直後の要求が更新前の状態を観測しないこと
+* 異なる文書の要求を並行処理できること
+* LSP要求数とCPU解析数の独立した上限
+* 実行枠の待機中とCPU解析中のキャンセル
+* 古いgenerationの診断と編集を破棄すること
+* UTF-8、UTF-16およびCRLFの位置変換
+* stdioとin-memory transportで同じprotocol fixtureを利用できること
+
+手動検証では、Zedで診断、Outline、Code Action、Format、Hover、補完、Definition、
+References、Document LinkおよびSemantic Tokensを再確認します。

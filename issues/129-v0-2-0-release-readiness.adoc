@@ -1,4 +1,4 @@
-= v0.2.0 release readinessと契約凍結
+= v0.2.0 release readinessと仕様凍結
 :status: completed
 :depends-on: 128
 
@@ -9,7 +9,7 @@
 
 == 判断
 
-source block短縮記法、list表示属性、bibliography section、TOCおよびsection番号は利用者可視の
+source block短縮記法、list表示属性、bibliography section、TOCおよびsection番号は利用者に見える
 機能追加である。`0.y.z`期間の方針に従い、次版はpatchではなくminorの`0.2.0`とする。
 
 公開HTML、projection、conformance、WASM応答または公開Rust APIに互換性のない変更が含まれる場合は、
@@ -17,11 +17,11 @@ source block短縮記法、list表示属性、bibliography section、TOCおよ�
 
 == 作業
 
-* `v0.1.0`からの利用者可視差分と契約version更新の要否を監査する。
+* `v0.1.0`から利用者に影響する差分と仕様version更新の要否を監査する。
 * workspace、Zed、browser、release manifestおよび配布設定を`0.2.0-rc.1`へ同期する。
 * mainのcandidate成功後に`v0.2.0-rc.1`を公開し、9 asset、checksum、attestation、CLI、LSP、browser、ZedおよびNixを受け入れる。
 * RC公開後は機能追加を停止し、repository所有者が公開前確認を完了した時点でstableを公開する。
-* blocker修正が公開契約を変更する場合は新しいRCを公開する。stableは最終RCと同じ機能baselineに、stable version metadataだけを同期して公開する。
+* blocker修正が公開仕様を変更する場合は新しいRCを公開する。stableは最終RCと同じ機能baselineに、stable version metadataだけを同期して公開する。
 
 == 検証
 
@@ -43,4 +43,4 @@ Linux 2 architectureのNix packageを含むinstallation E2Eおよびpublishを�
 0 byte assetはなかった。`node tools/release-contract.mjs --tag=v0.2.0`も成功した。
 
 `v0.1.0`からの機能差分はsource block短縮記法、list表示属性、bibliography section、TOCおよびsection番号であり、
-公開契約versionは2へ更新した。移行手順はxref:../docs/upgrade-0-2.adoc[v0.2.0への移行]へ記録した。
+公開仕様のversionは2へ更新した。移行手順はv0.2.0のRelease Notesへ記録した。

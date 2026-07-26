@@ -89,7 +89,7 @@ cargo make verify
 適合するため採用する。一方、依存するLSP型crateや公開APIの変更は将来起こり得る。
 その影響をLSP境界へ閉じ込め、コア型との変換関数とprotocol fixtureを移行の安定面とする。
 
-TokioはLSP実行アダプターだけで使用する。Issue 036のホスト実行契約は引き続き特定runtime
+TokioはLSP実行アダプターだけで使用する。Issue 036のホスト実行仕様は引き続き特定runtime
 へ依存せず、WASM、CLIおよび外部ホストにTokioを要求しない。
 
 == 進捗

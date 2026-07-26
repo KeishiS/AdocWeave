@@ -1,4 +1,4 @@
-= Bibliography構造検証の契約同期
+= Bibliography構造検証の仕様同期
 :status: completed
 :depends-on: 140
 
@@ -16,5 +16,5 @@
 == 実施結果
 
 既存のlint、structure snapshotおよびconformance fixtureがdoctype・heading種別・multipart book scopeを
-検証していることを確認した。対応表と互換性文書を実装済み契約へ同期し、citation style整形とindex rangeだけを
+検証していることを確認した。対応表と互換性文書を実装済み仕様へ同期し、citation style整形とindex rangeだけを
 未対応として明記した。

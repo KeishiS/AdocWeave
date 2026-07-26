@@ -21,7 +21,7 @@
 * 通常リンクと解決済みxrefで分類規則が分岐しないよう共通化する。
 * 空、重複または矛盾するpolicyをconstructorで拒否する。
 * raw HTML、event handler、source-controlled属性が混入しないsecurity fixtureを追加する。
-* HTML契約、linkおよびbrowser利用文書を更新する。
+* HTML仕様、linkおよびbrowser利用文書を更新する。
 
 == 完了条件
 

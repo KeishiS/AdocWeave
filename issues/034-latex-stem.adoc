@@ -13,7 +13,7 @@ LaTeXによるインライン・ブロックSTEMを解析し、将来のTypst数
 - 未閉鎖数式、空数式、サイズ上限および入力途中の回復を実装する。
 - ASTで数式言語と元範囲を明示し、LaTeXと将来のTypstを列挙可能にする。
 - コアは数式を実行・評価せず、レンダラーまたはホストへ安全な構造として渡す。
-- 数式レンダラー出力を独立した信頼境界として扱う契約を文書化する。
+- 数式レンダラー出力を独立した信頼境界として扱う方針を文書化する。
 
 == 完了条件
 
@@ -46,4 +46,5 @@ cargo test --workspace stem_recovery
 - HTMLは数式本文を`code`/`pre`内でエスケープし、評価やraw HTML通過を行わない。
 - `MathLanguage`を閉じた意味variantとして定義し、将来のTypst追加がLaTeXの意味を
   変更しない境界にした。
-- 置換fixtureと信頼境界を`docs/stem.adoc`および規範的置換表へ記録した。
+- 置換と信頼境界をxref:../docs/developer-guide/grammar.adoc[文法と置換規則]および
+  xref:../docs/developer-guide/html-contract.adoc[HTML出力仕様]に記録した。

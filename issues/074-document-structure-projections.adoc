@@ -28,5 +28,5 @@ section hierarchyを構築する実装が一つだけとなり、各consumerがd
 * `DocumentStructure`をsemantic ASTの不変snapshotとして構築し、section tree、TOC、番号、安定ID、
   appendix、book partおよびmanpage headerを集約した。
 * HTML、Document Symbols、projectionおよびlintを同じsnapshotへ接続した。
-* article／book／manpageの正常・異常ケース、native／WASM共通fixture、公開JSON契約を追加した。
-* 詳細な規則とhost境界をxref:../docs/document-structure.adoc[文書構造契約]へ記録した。
+* article／book／manpageの正常・異常ケース、native／WASM共通fixture、公開JSON仕様を追加した。
+* 詳細な規則とhost境界をxref:../docs/developer-guide/core-profile.adoc#document-projection[構造情報]へ記録した。

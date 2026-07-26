@@ -5,7 +5,7 @@
 == 目的
 
 Issue 133で導入したtable presentationを、`v0.3.0-rc.1`公開前に利用者が理解可能で
-AsciiDoc参照動作と文書契約に整合するものへ是正する。既存のlocal RC tagは公開せず、
+AsciiDoc参照動作と文書仕様に整合するものへ是正する。既存のlocal RC tagは公開せず、
 是正後のcandidate commitへ付け替える。
 
 == 対応範囲
@@ -15,7 +15,7 @@ AsciiDoc参照動作と文書契約に整合するものへ是正する。既存
 * `width`は1から100のunitless整数または`%`付き整数を百分率として受け入れ、符号、空値、
   小数、範囲外および他の単位を拒否する。`autowidth`との競合規則は維持する。
 * captionは安全なliteral textとして出力し、inline置換を適用しない現時点の制限を文書化する。
-* HTML出力契約へ`width`百分率値を明記し、履歴記述の順序と契約versionの説明を整合させる。
+* HTML出力仕様へ`width`百分率値を明記し、履歴記述の順序と仕様versionの説明を整合させる。
 * table presentationを含むCLI、WASM、native cross-runtimeのgolden fixtureを追加し、
   formatter、LSP診断およびHTMLの既存検証と合わせて固定する。
 
@@ -29,7 +29,7 @@ DocBook専用属性はこのIssueで追加しない。
 * 診断済みの属性値がeffective presentationに採用されず、各不正属性rangeは一つの
   `invalid-table`診断だけを持つ。
 * unitlessと`%`付きの正当なwidth、拒否値、重複および`autowidth`競合がnative、WASM、CLI、LSPで一致する。
-* HTML契約、表対応仕様、互換性評価、移行文書およびIssue 133の完了記録が実装と一致する。
+* HTML仕様、表対応仕様、互換性評価、移行文書およびIssue 133の完了記録が実装と一致する。
 * `cargo make release-gate`と`node tools/release-contract.mjs --tag=v0.3.0-rc.1`が通る。
 
 == 結果
@@ -39,7 +39,7 @@ DocBook専用属性はこのIssueで追加しない。
 受け入れ、符号、0、範囲外および単位付きの値を拒否する。
 
 table presentation fixtureはCLI、native adapterおよびbrowser WASMが共有し、重複、autowidth競合、
-captionおよび固定classを同じHTMLとdiagnosticへ固定した。HTML契約と表対応文書には百分率widthと
+captionおよび固定classを同じHTMLとdiagnosticへ固定した。HTML仕様と表対応文書には百分率widthと
 literal captionの制限を記録した。
 
 == 参照

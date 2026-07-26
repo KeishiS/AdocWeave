@@ -1,80 +1,44 @@
 = AdocWeaveの文書
 
-このディレクトリには、利用方法、対応書式、アプリケーションへの組み込み、開発方法を記載する。
-用途に応じて次の入口を参照する。
+このディレクトリには、利用方法、対応書式、アプリケーションへの組み込み、開発方法を記載します。
 
-== 文書を書く・変換する
+== Version方針
 
-* xref:command-line.adoc[コマンドラインの使い方]
-* xref:syntax-support.adoc[対応している書式]
-* xref:document-attributes.adoc[文書属性]
-* xref:document-structure.adoc[文書の構造、目次、節番号]
-* xref:tables.adoc[表]
-* xref:lists.adoc[リスト]
-* xref:links-and-cross-references.adoc[リンクと相互参照]
-* xref:diagnostics.adoc[問題の見方]
-* xref:formatting.adoc[整形]
+現在のpackage versionとRust versionは次のfileを基準とします。
+link:../release-manifest.json[release manifest]
 
-== エディター・Webアプリで使う
+version固有の変更内容と移行手順は
+https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]を参照してください。
 
-* xref:language-server.adoc[エディター連携]
-* xref:zed-development.adoc[Zedで開発版を試す]
-* xref:browser-library.adoc[ブラウザーで使う]
-* xref:wasm-worker.adoc[WebAssemblyとWeb Worker]
-* xref:web-host-adapter.adoc[Webアプリへの組み込み]
-* xref:core-profile.adoc[RustコアAPIと対応範囲]
-* xref:extensions.adoc[利用側アプリの独自機能]
+== ディレクトリの案内
 
-== 開発する・配布する
+user-guideディレクトリには、利用目的、操作、入力および結果を利用者の視点で記載します。
+実装内部の説明は、操作結果を理解するために必要な範囲に限定します。
+developer-guideディレクトリには、アプリへの組み込み、実装、配布および設計について、
+コンポーネントの責務、境界、不変条件および検証方法を記載します。基本的な操作手順は
+user-guideと重複させません。
+採用した設計とその背景はdeveloper-guide内のADR、
+現在の計画はロードマップ、作業単位と完了履歴はissuesディレクトリに記録します。
 
-* xref:nix-installation.adoc[開発環境を用意する]
-* xref:testing.adoc[テストの実行]
-* xref:git-workflow.adoc[Git branchの運用]
-* xref:continuous-integration.adoc[継続的インテグレーション]
-* xref:release-installation.adoc[インストールと更新]
-* xref:release-checklist.adoc[リリース前の確認]
-* xref:release-workflow.adoc[GitHub Releaseの公開手順]
-* xref:release-distribution.adoc[配布assetの契約]
-* xref:release-integrity.adoc[checksum、SBOM、provenance]
-* xref:native-release.adoc[Native archiveの契約]
-* xref:roadmap.adoc[今後の予定]
-
-== 詳しい仕様と設計
-
-ここから先は、AdocWeaveを組み込むライブラリ利用者や、実装を変更する人向けです。
-
-* xref:compatibility.adoc[AsciiDocとの違い]
-* xref:current-contract.adoc[公開している仕様と移行情報]
-* xref:upgrade-0-8.adoc[v0.8.0への移行]
-* xref:upgrade-0-7.adoc[v0.7.0への移行]
-* xref:core-profile.adoc[対応範囲の定義]
-* xref:architecture.adoc[内部の仕組み]
-* xref:grammar.adoc[文法の詳細]
-
-== このリポジトリで使う言葉
-
-通常の利用に必要な説明では、できるだけ日本語を使います。API名やプログラム内の名前は、
-コードと一致させるため英字のまま表記します。
+== このリポジトリで使用する用語
 
 [cols="1,3",options="header"]
 |===
 |表記 |この文書での意味
 
-|公開仕様
-|ライブラリや配布物を利用するプログラムとの約束。以前の「contract」と同じ意味。
+|公開仕様(contract)
+|ライブラリや配布物を利用するプログラムとの取り決めです。
 
-|対応範囲
-|AdocWeaveが受け付け、期待どおりに処理するAsciiDocの範囲。以前の「profile」と同じ意味。
+|対応範囲(profile)
+|AdocWeaveが受け付け、期待どおりに処理するAsciiDocの範囲です。
 
-|意味情報
-|解析して得た、見出し・リンク・表・属性などの構造化された情報。以前の「semantic model」や「projection」の説明で使っていた語。
+|意味情報(semantic model, projection)
+|解析して得た、見出し・リンク・表・属性などの構造化された情報です。
 
-|利用側アプリ
-|AdocWeaveを呼び出すCLI、エディター、Webアプリなど。以前の「host」と同じ意味。
+|利用側アプリ(host)
+|AdocWeaveを呼び出すCLI、エディター、Webアプリなどです。
 
-|テスト用入力
-|期待する結果と組で保存する入力例。以前の「fixture」と同じ意味。
+|テスト用入力(fixture)
+|期待する結果と組で保存する入力例です。
 
 |===
-
-厳密な用語が必要な箇所では、英語の名前をコード書式で併記します。

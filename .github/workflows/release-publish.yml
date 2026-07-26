@@ -25,7 +25,7 @@ jobs:
         with:
           name: release-candidate
           path: artifacts
-      - name: Verify immutable release inputs
+      - name: Immutable release input verification
         env:
           GH_TOKEN: ${{ github.token }}
           PLAN: ${{ inputs.plan }}
@@ -44,7 +44,7 @@ jobs:
             echo "release already exists: $tag" >&2
             exit 1
           fi
-      - name: Create and verify private draft
+      - name: Private draft creation and verification
         id: draft
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,18 +82,18 @@ jobs:
             diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual")
             exit 1
           fi
-      - name: Attest every public asset
+      - name: Public asset attestations
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
         with:
           subject-path: artifacts/*
-      - name: Publish the complete release
+      - name: Complete release publication
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.draft.outputs.release-id }}
         run: |
           result="$(gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false)"
           test "$(jq -r '.draft' <<<"$result")" = false
-      - name: Remove an incomplete draft
+      - name: Incomplete draft removal
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}

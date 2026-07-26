@@ -34,7 +34,7 @@ pull request、main pushおよびrelease tagで必要な検証を明示し、eve
 == 意図的な重複
 
 quality gateのhost-local archive試験と、main／tag candidateのnative target試験は統合しない。前者はsource treeから
-再現できる全機能・package契約をmerge前に検査し、後者はGitHub runnerが生成してjob境界を通過した実公開byte列を
+再現できる全機能・package仕様をmerge前に検査し、後者はGitHub runnerが生成してjob境界を通過した実公開byte列を
 対応architecture上で検査する。入力と保証が異なるため、この重複は削除対象ではない。
 
 == 完了条件

@@ -1,0 +1,154 @@
+= コアAPIと対応範囲
+
+この文書では、AdocWeaveが環境に依存せず扱う範囲、公開APIおよび処理上限を定義します。
+通常の文書作成では xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]を参照してください。
+
+== 対象範囲
+
+AdocWeaveは、AsciiDocの読み取り、問題の検出、整形、HTMLへの変換、見出しやリンクなどの構造情報を提供します。
+特定のノートアプリのデータベース、ログイン権限、画面の構成、ネットワーク通信は提供しません。
+そのような機能は利用側アプリで追加します。
+
+== バージョン
+
+公開API、WebAssembly、HTML出力、構造情報は、同じpackage versionを使います。
+現在の値と必要なRust versionは次のfileが基準です。
+link:../../release-manifest.json[release manifest]
+公開結果を保存するアプリケーションは、AdocWeaveの更新時にHTMLおよび検索用情報を再構築してください。
+
+0.y.zの間はminor版で互換性のない変更を行う場合があります。更新前に
+https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notesを確認してください。
+
+== 対応する書式
+
+文書の題名、見出し、段落、属性、アンカー、リテラル・ソースブロック、リスト、表、リンク、
+相互参照、数式、画像・音声・動画などを扱います。各書式の対応状況は
+xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]にあります。
+
+未対応の書式を通常のHTMLとしてそのまま出力することはありません。`SyntaxMode::Permissive`では
+内容を安全なテキストとして残し、`SyntaxMode::Strict`では未対応の書式を含む文書を処理しません。
+
+[#document-projection]
+== 構造情報
+
+`adocweave::output::projection::project`は、一つの`Analysis`と同じrevisionの`RenderInputs`から、
+HTMLに依存しない`DocumentProjection`を生成します。生成時にsourceを再解析せず、filesystem、network、
+DBまたはアプリ固有のschemaへアクセスしません。
+
+構造情報には次を含みます。
+
+* 文書タイトル、見出し、明示anchorおよび文書構造
+* 通常の外部linkと、文書内・文書間・任意schemeのxref
+* Source block、数式およびmedia resource
+* Footnote、bibliographyおよび階層indexのcatalog
+* TOC、appendix、book partおよびmanpage header
+* 検索用文字列と元sourceのrange
+* 生成元の`SourceId`とpackage version
+
+通常linkは`ExternalLink`、xrefは`ReferenceEdge`として区別します。xrefの参照先は文書内、別文書または
+任意schemeのいずれかです。`RenderInputs`を渡した場合はsource rangeが一致するedgeだけへ解決結果を
+追加し、構造情報の生成中には参照を解決しません。
+
+解決失敗は安定した種類だけを保持し、自由形式のmessageや表示名を含めません。権限拒否、対象不在または
+内部障害から、非公開のタイトル、DB情報または内部例外を構造情報へ漏らしません。
+
+同じpackage version、`Analysis`および解決結果からは同じ順序のJSONを生成します。保存した構造情報は
+AdocWeaveの更新時に再生成してください。
+
+=== 識別子と文書構造
+
+見出しとanchorのIDは文書全体で一度だけ決定し、HTML、xref、Language Serverおよび構造情報で共有します。
+明示IDには空白、制御文字、`[`、`]`、`<`、`>`、`,`および`#`を使用できません。Unicode正規化や
+大小文字変換は行わず、入力の表記を保持します。
+
+明示IDがない見出しでは、Unicode英数字を小文字化し、それ以外の連続部分を`_`へ置き換えて先頭に`_`を
+付けます。英数字が残らない場合は`_section`とし、重複時は`_2`、`_3`のように最小の連番を付けます。
+
+TOCとDocument Symbolsは共通の文書構造を使用し、個別に見出し階層を再構築しません。文書タイトル、
+discrete headingおよび`notoc`を指定した見出しはTOCから除き、その子は直近の表示対象階層へ繰り上げます。
+
+=== 検索用文字列
+
+タイトル、見出し、段落、list項目、linkおよびxrefは、inline装飾を除いた可読文字列として検索対象にします。
+Literal blockとsource blockはcodeとして区別します。数式、文書属性行、anchor記号および未対応blockは
+検索文字列へ含めません。
+
+各segmentは元sourceのUTF-8 byte rangeを保持します。連結した検索文字列内のoffsetとは一致しないため、
+位置対応が必要な場合はsegmentごとのrangeを使用します。
+
+=== 利用側アプリの拡張
+
+アプリ固有のID、tag、DB列、アクセス制御および検索engine固有のtokenを標準の構造情報へ追加しません。
+利用側アプリは`DocumentProjection`を入力として、固有の構造情報や検索索引を別に構築します。
+
+== 処理の上限
+
+大きすぎる入力で処理が止まらないように、既定の上限を設けています。次は主な上限であり、
+完全な一覧は`ProcessingLimits`のAPI documentationを基準とします。
+
+[cols="2,1",options="header"]
+|===
+|対象 |既定の上限
+
+|入力 |10 MiB
+|出力 |50 MiB
+|1行 |1 MiB
+|リストの深さ |8
+|インライン書式の深さ |32
+|表の本体 |5 MiB
+|表のセル |100,000
+|表の列 |1,000
+|ブロック |100,000
+|問題の件数 |1,000
+|===
+
+利用側アプリは用途に応じて上限を設定でき、安全側へ制限する場合は既定値より小さくします。CLIとWebAssemblyは
+出力サイズも検査します。
+ライブラリを直接使用してHTMLを表示するアプリは、表示前に同等の出力サイズ検査を行ってください。
+
+== APIの利用
+
+Rustからは`Engine`、`ParseOptions`、`Analysis`が主な入口です。属性の最終値は
+`Analysis::presentation().attributes()`から、属性を記述した順番や位置は
+`Analysis::document_attribute_occurrences()`から取得します。
+
+[source,rust]
+----
+use adocweave::output::html::{RenderPolicy, render};
+use adocweave::{Engine, ParseError, ParseOptions};
+
+fn convert() -> Result<String, ParseError> {
+    let source = "\
+= 文書
+:toc:
+:sectnums:
+
+== 節
+";
+    let analysis = Engine::new(ParseOptions::default()).analyze(source)?;
+    Ok(render(analysis.document(), &RenderPolicy::default()).html)
+}
+----
+
+`:toc:`と`:sectnums:`はRust側のflagではなく、文書ヘッダーの属性によって有効になります。
+`:toclevels:`は1から5までの整数であり、省略時はlevel 1から5までを目次候補とします。不正な値は
+`invalid-attribute`診断となります。
+
+[#wasm-api]
+== WebAssembly API
+
+`adocweave-wasm`は、ブラウザーとJavaScriptからコアAPIを利用するための入口です。要求には
+`packageVersion`、`sourceId`、文書version、generation、source、必要な出力および設定を渡します。
+package versionが一致しない要求や未知のfieldは拒否します。versionとgenerationは`u32`の範囲に制限します。
+
+出力はsyntax tree、AST、HTML、文書属性の出現箇所、診断、symbolおよび構造情報から選択できます。
+省略時はHTML、診断および構造情報を返します。設定はnativeの`ParseOptions`、`RenderPolicy`および
+`RenderInputs`に対応し、省略したfieldにはコアの既定値を使用します。参照とresourceのJSON表現および
+安全性の規則はxref:server-execution.adoc#render-inputs[変換入力]を基準とします。
+
+応答には入力のversionとgeneration、package version、解析結果の概要および要求した出力を含めます。
+エラーは安定した`code`と利用者向けの`message`だけを返します。source、応答およびエラーは呼び出しごとの
+所有値であり、次回の呼び出しで無効になるpointerを公開しません。
+
+HTML、整形、問題一覧、構造情報、外部リンクの解決結果は用途ごとの公開moduleにあります。型名とJSONの
+詳細はAPIドキュメントを参照してください。

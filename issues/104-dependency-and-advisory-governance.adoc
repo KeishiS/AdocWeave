@@ -18,7 +18,7 @@ license、重複versionおよびrelease SBOMの差異を継続的に検出する
 * rootとZedのMSRVをRust 1.86へ統一し、qualityの独立jobでadvisory、license、source、重複、noticeおよび境界を検査する。
 * 例外registryはowner、理由、期限およびrepository Issueを必須とし、期限切れと包括ignoreを拒否する。
 * 自動更新serviceはRC安定化中には採用せず、月次のDB／依存review手順を
-  xref:../docs/dependency-governance.adoc[依存関係governance]へ定義した。
+  xref:../CONTRIBUTING.adoc#dependencies[依存関係の更新規則]へ定義した。
 
 == 完了条件
 

@@ -6,7 +6,7 @@
 
 stable後の標準AsciiDoc互換性拡張に先立ち、source block、list表示属性、bibliographyおよび文書表示属性が
 属性文字列の再解釈やHTML固有の特例を増やさず共有できる境界へ再設計する。後方互換layerは作らず、
-影響する公開契約と全consumerを同時に移行する。
+影響する公開仕様と全consumerを同時に移行する。
 
 == 作業
 

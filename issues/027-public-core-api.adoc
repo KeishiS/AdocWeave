@@ -9,7 +9,7 @@ CLI、サーバ、WASMおよびLSPが共有する、純粋で決定的なコアA
 == 実装範囲
 
 - バージョン付き `SyntaxProfile`、`Limits`、`ParseOptions` および公開結果型を定義する。
-- `parse(source, profile, limits)` 相当のAPIと、診断・CST・ASTを返す契約を定義する。
+- `parse(source, profile, limits)` 相当のAPIと、診断・CST・ASTを返す仕様を定義する。
 - 呼び出し側が文書を識別するための不透明な `SourceId` を任意指定できるようにし、パス、
   UUID、URL等のホスト固有表現をコアへ持ち込まない。
 - 解析結果を出力形式非依存とし、HTMLその他のレンダーバックエンドを追加できる一方向の依存境界を定義する。
@@ -46,7 +46,7 @@ cargo test --workspace send_sync
 
 完了。
 
-- 公開境界を `adocweave::core` に集約し、契約バージョン
+- 公開境界を `adocweave::core` に集約し、仕様バージョン
   `CORE_API_VERSION = 1` を定義した。
 - `SyntaxProfile`、`ParseOptions`、`ProcessingLimits`、`ParseResult`、
   `ParseError` および不透明な `SourceId` を公開した。
@@ -61,7 +61,7 @@ cargo test --workspace send_sync
 - 公開APIは入力文字列と明示的な設定だけを参照し、I/O、DB、時刻、乱数、
   環境変数およびグローバル可変状態を使用しない。
 - 決定性、匿名ソース、不透明な文書ID、キャンセル、スレッド共有および
-  `Send + Sync` の契約を単体テストで固定した。
+  `Send + Sync` の仕様を単体テストで固定した。
 - Issue 031で未解決参照の公開フィールドを`references`へ改め、参照モデルを
   具体化した破壊的変更に伴い、`CORE_API_VERSION`を2へ更新した。
 - note専用参照型を汎用スキーム拡張へ置き換え、`ExtensionConfig`を公開入力へ追加した

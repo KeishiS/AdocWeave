@@ -19,7 +19,7 @@ hostがAST全体を再解釈せずにinline／block数式を列挙し、許可�
 * `DocumentProjection`へ型付きformula項目を追加する。
 * inline／block数式を共通queryから一度だけ収集する。
 * 許可言語と未対応言語の診断policyを追加し、parse profileとrender policyの責務を明記する。
-* WASM、browser TypeScript型、canonical snapshotおよび契約versionを更新する。
+* WASM、browser TypeScript型、canonical snapshotおよび仕様versionを更新する。
 * include由来位置、空数式、複数言語およびnative／WASM同値fixtureを追加する。
 * STEM、projectionおよびbrowser integration文書を更新する。
 

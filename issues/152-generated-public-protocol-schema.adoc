@@ -18,6 +18,6 @@ RustのWASM DTO、browserのTypeScript宣言、JSON fixtureおよびprotocol検�
 == 完了条件
 
 * 一つのschema変更からRust API、`.d.mts`、fixture validatorが再生成される。
-* unknown field拒否、camelCase、tagged unionおよびbyte rangeの契約をschema testで固定する。
+* unknown field拒否、camelCase、tagged unionおよびbyte rangeの仕様をschema testで固定する。
 * protocolの手書きDTOまたは重複したTypeScript interfaceを残さない。
 * schemaとbrowser packageを含むrelease artifactの再現性をrelease gateで検証する。

@@ -1,0 +1,94 @@
+name: 不具合報告
+description: AdocWeaveの動作上の問題を報告します
+title: "[不具合] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。再現に必要な情報を記載してください。
+
+  - type: checkboxes
+    id: existing-issue
+    attributes:
+      label: 既存Issueの確認
+      options:
+        - label: 同じ問題が報告されていないことを確認しました
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 対象
+      description: 問題が発生した機能を選択してください。
+      options:
+        - CLI
+        - Language Server
+        - Zed拡張
+        - Rust API
+        - WebAssembly・Web Worker
+        - Nix
+        - その他
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: バージョン
+      description: "`adocweave --version --json`などで確認したバージョンまたはcommitを記載してください。"
+      placeholder: "v0.8.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 実行環境
+      description: OS、architecture、導入方法、関連するツールのバージョンを記載してください。
+      placeholder: |
+        OS:
+        architecture:
+        導入方法:
+        関連ツール:
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順
+      description: 可能なら、問題を再現できる最小の入力と実行コマンドを記載してください。秘密情報は含めないでください。
+      placeholder: |
+        1. 次の文書を保存する
+        2. 次のコマンドを実行する
+        3. 問題が発生する
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する結果
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の結果
+      description: 表示された診断や終了codeも記載してください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ
+      description: 関連するログがある場合に貼り付けてください。
+      render: shell
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 補足
+      description: 関連する文書、画像、その他の情報があれば記載してください。

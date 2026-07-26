@@ -9,7 +9,7 @@
 == 作業
 
 * include、ifdef、ifndefおよびifevalのsyntaxとescapeを認識する。
-* host提供resource resolver、base URI、safe modeおよび許可scheme契約を定義する。
+* host提供resource resolver、base URI、safe modeおよび許可scheme仕様を定義する。
 * include depth、総byte、展開node、循環およびURL取得を上限管理する。
 * tag、lines、leveloffset、indentおよびencoding属性を段階的に実装する。
 * 展開後sourceと元sourceのsource mapを保持し、診断、DefinitionおよびDocument Linkへ接続する。
@@ -26,7 +26,7 @@ includeの深さ、件数、出力byteおよび展開nodeを独立に制限し�
 
 展開結果はbyte range単位のsource mapを持つ。診断、DefinitionおよびDocument Linkを返すhostは、
 解析結果のrangeを`origin_for_range`または`source_map`で元の`SourceId`とrangeへ投影する。
-WASMはversion 10の`preprocess`入口で同じsnapshot契約を公開する。
+WASMはversion 10の`preprocess`入口で同じsnapshot仕様を公開する。
 
 == 完了条件
 

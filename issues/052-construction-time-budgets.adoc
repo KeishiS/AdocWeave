@@ -1,4 +1,4 @@
-= 構築時の処理予算と計測可能な線形性
+= 構築時の処理上限と計測可能な線形性
 :status: completed
 :depends-on:
 
@@ -11,7 +11,7 @@
 == 作業
 
 * ブロック、semantic node、属性、参照および診断に共通する`ParseBudget`を導入する。
-* nodeを確保または結果へ追加する前に予算を消費し、超過地点で`LimitExceeded`を返す。
+* nodeを確保または結果へ追加する前に使用量を加算し、上限を超えた地点で`LimitExceeded`を返す。
 * 深さ上限と個数上限の責務を同じ解析contextへ集約する。
 * InlineScannerの推定inspected_positionsを廃止し、実際の文字・delimiter検査を計測する。
 * 密集した不正marker、未閉鎖macro、巨大な属性列および深いリストを回帰入力へ追加する。
@@ -36,8 +36,8 @@ closer索引およびdelimiter索引で実際に検査した位置の合計へ�
 不正macroが密集する可変長入力で、計測値そのものと入力長に対する定数倍上限を検証する。
 
 共有ParseBudgetを導入し、文書root、block、semantic node、文書属性およびxrefを結果collectionへ
-追加する前に予算を消費するよう変更した。コア解析後のblock、node、属性、参照の事後検査は
+追加する前に使用量を加算するよう変更した。コア解析後のblock、node、属性、参照の事後検査は
 削除した。診断も全件生成後のtruncateを廃止し、上限到達後は新しい診断を構築しない。
 
 各構造資源について上限直前、同値および1超過を公開Engine経由で検証し、超過時のresource、
-limitおよびactualを固定した。escaped macroは参照nodeを構築せず、参照予算も消費しない。
+limitおよびactualを固定した。escaped macroは参照nodeを構築せず、参照数にも加算しない。

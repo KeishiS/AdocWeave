@@ -16,7 +16,8 @@ Dependabot導入後の運用結果を基に、`flake.nix`と`flake.lock`を含�
 * RenovateのCargo、GitHub ActionsおよびNix managerの対応範囲、Nix managerの安定性、実行方法、権限および更新Pull Requestの品質を検証する。
 * Renovateを採用する場合は、Dependabotと対象ecosystemが重複しない移行手順を定義する。
 * 採用する場合は、Nix入力、Cargo、Zed、fuzzおよびActionsを明示的な更新単位へ分け、同時Pull Request数と自動merge禁止を設定する。
-* 採用しない場合は、Nix更新を手動手順として維持する根拠と再評価条件を依存関係の管理文書へ記録する。
+* 採用しない場合は、Nix更新を手動手順として維持する根拠と再評価条件を
+  xref:../CONTRIBUTING.adoc#dependencies[依存関係の更新規則]へ記録する。
 
 == 判断基準
 
@@ -27,4 +28,4 @@ Nix managerのbeta制約、CI時間の増加、更新Pull Requestの重複また
 
 * Renovateを導入するか、導入しないかを文書化した判断がある。
 * 導入する場合、Dependabotとの更新対象重複がなく、Nixを含む各更新Pull Requestが既存quality gateを通過する。
-* 導入しない場合、Nix入力の手動更新手順と再評価条件が依存関係の管理文書にある。
+* 導入しない場合、Nix入力の手動更新手順と再評価条件がコントリビューションガイドにある。

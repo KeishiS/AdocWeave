@@ -32,12 +32,13 @@ attestationが一つのGitHub Releaseに揃う。任意のbuild失敗時にparti
 5 archiveからのmetadata生成と完全candidate検証までを実行する。tagだけがprotected `github-release` Environmentの
 `release-publish.yml`を呼び、private draftへの一括upload、asset集合検査、attestationおよび最後の公開を行う。
 同一refのrunは直列化し、既存releaseを拒否する。失敗時のdraft cleanupと公開後のrunbookは
-xref:../docs/release-workflow.adoc[release-workflow.adoc]に記載した。
+xref:../CONTRIBUTING.adoc[コントリビューションガイド]に記載した。
 
 `github-release` Environmentを経由した`v0.1.0-rc.1`の公開に成功した。ReleaseはLinux 2 targetのCLI／LSP、
 browser library、manifest、checksumおよびSBOMからなる計画どおりの8 assetだけを含み、全assetのattestationも
 検証できた。公開準備中に生じたbuild／検証／publish失敗では公開Releaseを作らず、修正後のcandidateだけが
-prereleaseとして公開された。受け入れ記録はxref:../docs/release-workflow.adoc[release-workflow.adoc]に記載する。
+prereleaseとして公開された。source commitは`72ad5a677e179448b4de7f524710f4e455aa163d`、
+workflow runはhttps://github.com/KeishiS/AdocWeave/actions/runs/29860007614[`29860007614`]である。
 
 browser archiveはcargo-distのglobal artifact後処理を介さず、同じrepository builderを直接実行する。upload前に
 非0 byteとtar.xzとしての妥当性を検査し、集約後にもmetadata生成器が再検査する。

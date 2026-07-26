@@ -1,10 +1,10 @@
-= 契約testの所有権再編
+= 仕様検証testの所有権再編
 :status: completed
 :depends-on: 150, 152, 154
 
 == 目的
 
-巨大なproduction module内に混在した実装詳細testと公開契約testを分離し、仕様変更時に更新すべき
+巨大なproduction module内に混在した実装詳細testと公開仕様のtestを分離し、仕様変更時に更新すべき
 fixture・consumer test・private invariantを明確にする。
 
 == 設計方針

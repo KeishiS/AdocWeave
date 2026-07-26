@@ -14,7 +14,7 @@ sectionを標準AsciiDocのbibliography sectionとしてHTMLへ投影する。
 * bibliography sectionの外ではentryの出力意味を変更せず、通常listとの混同を防ぐ。
 * bibliography anchor、xref、section、HTML IDおよびprojectionの対応を、stable IDを持つ一つの
   catalog／structure snapshotから導く。
-* 公開契約への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
+* 公開仕様への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
 
 == 検証
 

@@ -1,0 +1,95 @@
+= 配布仕様
+
+この文書では、GitHub Releaseへ公開する成果物、権限境界および検証方法を定義します。利用者向けの
+導入、checksumおよびattestationの確認手順は
+xref:../user-guide/release-installation.adoc[インストールと更新]を参照してください。
+
+配布対象の機械可読な基準は次のfileです。
+
+* link:../../release/distribution-plan.json[配布計画]
+* link:../../release/adocweave-dist-manifest.schema.json[JSON Schema]
+
+成果物名、対象環境、個数および
+versionを本文へ重複して記載しません。
+
+== 配布境界
+
+CLI、Language Server、WebAssembly、browser packageおよびZed拡張は、一つのpackage versionとして
+GitHub Releasesへまとめて公開します。crates.io、npm、Homebrew、WinGetおよびZed Extension Registryには
+公開しません。GitHubが自動生成するsource archiveは、検証対象のbinary配布物に含めません。
+
+公開には`vX.Y.Z`形式のstable tagだけを使用します。tag、source commit、release manifestおよび各成果物の
+versionが一致しない場合は公開しません。異なるpackage versionの成果物を組み合わせて利用することも
+想定しません。
+
+private repositoryから取得する場合、利用者が明示的に与えたGitHub認証だけを使用します。credentialを
+archive、manifest、log、source codeまたは設定例へ埋め込みません。
+
+== ネイティブアーカイブ
+
+CLIとLanguage Serverは別々の`.tar.xz` archiveとして配布します。各archiveは同名のroot directoryを持ち、
+次のファイルだけを含めます。
+
+* 対応する実行ファイル
+* `README.adoc`
+* `LICENSE-MIT`
+* `LICENSE-APACHE`
+* `THIRD_PARTY_NOTICES.adoc`
+
+Native binaryはCargoの`dist` profileで構築し、対応するLinux architectureの静的実行ファイルとして
+配布します。具体的なprofileとtargetはCargo設定と配布計画を基準とします。検証ではELF architectureを
+照合し、dynamic dependencyがないことと、実行ファイルにUnixの実行権限があることを確認します。
+
+`THIRD_PARTY_NOTICES.adoc`はlockfileから生成し、配布対象crateの名前、versionおよびSPDX licenseを
+列挙します。license情報がないpackageは受理しません。
+
+展開後のsmoke testは、workspaceの`target`にある実行ファイルを誤用しないよう、新しい一時directory内の
+実行ファイルだけを使用します。CLIではversion、文書検査、変換および整形を確認します。Language Serverでは
+versionに加え、初期化、文書open、診断、shutdownおよびexitをstdio経由で確認します。
+
+== ブラウザーパッケージとZed拡張
+
+Browser packageとZed拡張は、Native archiveと同じReleaseへ一度だけ追加します。Browser packageの内容と
+公開APIはxref:core-profile.adoc#wasm-api[WebAssembly API]、展開と配備は
+xref:../user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]を基準とします。
+
+== 配布メタデータ
+
+`tools/release-metadata.mjs`を配布manifest、SPDX SBOMおよびchecksumの生成器とします。target別の成果物を
+一つのcandidate directoryへ集約した後、実際に公開するarchiveから次を決定的に生成します。
+
+* 配布manifestへのpackage version、source commit、archive名、種類、対象環境、byte数およびSHA-256の記録
+* SPDX SBOMへのarchive内のfileと、lockfileから得たRustおよびfrontend packageの記録
+* checksum一覧への公開archive、配布manifestおよびSBOMの名前順での記録
+
+Frontendへruntime dependencyを追加する場合、対応するlockfileからSBOMを生成できるようになるまで公開しません。
+推測したdownload URLはSBOMへ記録しません。
+
+生成器の検証機能はmetadataを同じ入力から再生成し、byte単位の一致とcandidate directory内の成果物集合を
+確認します。未知のfile、subdirectory、欠落、改変またはsource commitの不一致を受理しません。
+
+公開するすべての成果物にはGitHub Artifact Attestationsによるprovenanceを付与します。credentialや署名fileは
+archiveへ埋め込みません。
+
+== 権限境界
+
+計画、build、smoke testおよびcandidate集約はread-onlyで実行し、repository secretを参照しません。
+Releaseへの書き込みとOIDCは、保護された`github-release` Environmentを使用する公開jobだけへ付与します。
+外部actionは完全なcommit SHAへ固定します。
+
+tagの公開処理は、同じcommitに対する検証済みmain candidateを再利用します。成果物を再構築せず、metadataを
+再検証してからprivate draftへ追加し、成果物集合とattestationが揃った後にstable releaseとして公開します。
+
+== 検証
+
+配布仕様の確認には次のtaskを使用します。
+
+[source,console]
+----
+cargo make release-contract
+cargo make dist-plan
+cargo make release-gate
+----
+
+この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は
+xref:../../CONTRIBUTING.adoc[コントリビューションガイド]に従います。

@@ -13,7 +13,7 @@ MSRV専用jobを廃止して、CIと開発手順をcurrent stableの単一toolch
 * release前に`flake.lock`を更新し、そこで解決されたRust stableを当該releaseの対応toolchainとして記録する。
 * development shellの`stableRust`とNix package buildの`rustPlatform`を同じRust toolchainに揃える。
 * `quality.yml`からMSRV専用jobと二重のCargo graph検査を除去し、complete gateを唯一のRust検証とする。
-* CI契約、release手順および依存governanceのMSRV記述をcurrent stable方針へ更新する。
+* CI仕様、release手順および依存governanceのMSRV記述をcurrent stable方針へ更新する。
 * supported Rust versionをrelease noteと利用者向け文書へ明記する。
 
 == 完了条件

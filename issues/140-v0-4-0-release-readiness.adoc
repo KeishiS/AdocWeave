@@ -4,7 +4,7 @@
 
 == 目的
 
-typed admonition、quote／verse presentationおよび対応構文文書のmachine-readableな同期を、公開契約version 3の
+typed admonition、quote／verse presentationおよび対応構文文書のmachine-readableな同期を、公開仕様のversion 3の
 破壊的更新として`v0.4.0`へまとめる。個人開発の実際の受け入れ経路に合わせ、release candidateを廃止し、
 mainで成功したcandidateをstable tag一回で公開する。
 
@@ -22,7 +22,7 @@ RC tag、prerelease分岐および二段階のversion同期は廃止する。公
 
 * workspace、Zed、browser、release manifest、distribution planおよびfixtureが`0.4.0`で一致する。
 * 公開tagは`vX.Y.Z`だけを受理し、workflowは常にstable Releaseだけを作成する。
-* `docs/upgrade-0-4.adoc`が契約version 3への移行を定義する。
+* v0.4.0のRelease Notesが仕様version 3への移行を定義する。
 * `cargo make release-gate`と`node tools/release-contract.mjs --tag=v0.4.0`が成功する。
 * mainのcandidate成功後、`v0.4.0`を作成してGitHub Actionsと公開assetを受け入れる。
 
@@ -32,7 +32,7 @@ RC tag、prerelease分岐および二段階のversion同期は廃止する。公
 `cargo make release-gate`および`node tools/release-contract.mjs --tag=v0.4.0`は2026-07-23に成功した。
 同日、commit `5a7c5dbbeb2fc98b8f7f273e86596fa26cc268f8` に`v0.4.0`を付け、
 https://github.com/KeishiS/AdocWeave/releases/tag/v0.4.0[stable Release]を公開した。
-公開asset 9件は`sha256.sum`で検証し、release metadataのsource commit・版数・契約versionも一致した。
+公開asset 9件は`sha256.sum`で検証し、release metadataのsource commit・版数・仕様versionも一致した。
 Artifact AttestationのCLI検証は、受け入れ環境にGitHub認証情報がないため実行していない。
 
 == 公開前review是正

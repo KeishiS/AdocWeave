@@ -5,7 +5,7 @@
 == 目的
 
 未解決参照で機密性のあるtargetを意図せず表示せず、解決成功時の安全なfallbackを構造化して表現できる
-汎用的な参照描画契約を追加する。
+汎用的な参照描画仕様を追加する。
 
 == 設計方針
 
@@ -16,12 +16,12 @@
 
 == 作業
 
-* `ResolvedReference`とRenderInputsの成功結果へ型付きnoticeを追加するか、同等のsidecar契約を設計する。
+* `ResolvedReference`とRenderInputsの成功結果へ型付きnoticeを追加するか、同等のsidecar仕様を設計する。
 * 未解決・拒否・missing anchor・fallback成功の表示policyを追加する。
 * HTML、diagnostic、projection、WASM DTOおよびbrowser型へ必要最小限の状態を投影する。
 * target、title、ACL状態およびresolver内部messageが意図せずHTMLへ現れないsecurity fixtureを追加する。
 * labelあり／なし、anchor fallback、重複入力およびnative／WASM同値testを追加する。
-* 参照解決、RenderInputs、projectionおよびHTML契約文書を更新する。
+* 参照解決、RenderInputs、projectionおよびHTML仕様文書を更新する。
 
 == 完了条件
 

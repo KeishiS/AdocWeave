@@ -1,11 +1,11 @@
-= ホスト実行境界とキャッシュ契約
+= ホスト実行境界とキャッシュ仕様
 :status: completed
 :depends-on:
 
 == 目的
 
 外部サーバ、デスクトップアプリその他のホストがAdocWeaveを安全に実行するための
-ホスト非依存契約と補助型を定義する。WebサーバやDBアダプター自体は実装しない。
+ホスト非依存仕様と補助型を定義する。WebサーバやDBアダプター自体は実装しない。
 
 == 実装範囲
 
@@ -17,7 +17,7 @@
 
 == 完了条件
 
-* 契約が特定async runtime、HTTP framework、DBまたはノートアプリへ依存しない。
+* 仕様が特定async runtime、HTTP framework、DBまたはノートアプリへ依存しない。
 * 設定または処理系versionが異なる結果をキャッシュ共有しない。
 * キャンセル済みまたは古い文書versionの結果を採用しない手順をfixtureで確認できる。
 * 通常ログ、メトリクスおよびトレースに入力本文を要求しない。
@@ -46,4 +46,4 @@ cargo test --workspace cancellation
 設定フィールド追加時の更新漏れをコンパイルエラーにする。
 
 規範的な実行順序、panic隔離および本文を含まない観測項目は
-xref:../docs/server-execution.adoc[ホスト実行・キャッシュ契約]に記載する。
+xref:../docs/developer-guide/server-execution.adoc[利用側アプリの実行仕様]に記載する。

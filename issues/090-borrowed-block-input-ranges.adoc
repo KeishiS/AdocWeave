@@ -28,7 +28,7 @@ context policyの責務が混在している。Issue 089でline dispatchは統�
 
 元sourceを共有できる再帰contextで`Arc::from(fragment_source)`および
 `SourceDocument::from_fragment_bounded`を呼ばない。深いcompound入力のsource索引構築が一回であり、全子nodeの
-rangeがroot source座標を直接指す。変換済みtable cellだけが明示的な別入力経路を使用し、その座標契約が
+rangeがroot source座標を直接指す。変換済みtable cellだけが明示的な別入力経路を使用し、その座標仕様が
 文書化・試験される。
 
 == 完了結果

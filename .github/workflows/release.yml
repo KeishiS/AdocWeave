@@ -31,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify publication tag is the current main commit
+      - name: Publication tag verification against the current main commit
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           git fetch origin main:refs/remotes/origin/main
@@ -95,11 +95,11 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
         with:
           determinate: false
-      - name: Install native build linker
+      - name: Native build linker installation
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
-      - name: Build target archives
+      - name: Target archive builds
         env:
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
@@ -134,7 +134,7 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
         with:
           determinate: false
-      - name: Build and verify browser and Zed archives
+      - name: Browser and Zed archive build and verification
         run: nix develop .#ci -c cargo make release-global-artifacts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -159,7 +159,7 @@ jobs:
           pattern: artifacts-build-*
           path: artifacts
           merge-multiple: true
-      - name: Generate and verify metadata for the complete candidate
+      - name: Complete candidate metadata generation and verification
         run: |
           node tools/release-metadata.mjs generate artifacts "$GITHUB_SHA"
           node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
@@ -192,7 +192,7 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
         with:
           determinate: false
-      - name: Build and run the Nix package
+      - name: Nix package build and execution
         run: >-
           nix build
           ".#checks.${{ matrix.nix-system }}.public-contract"
@@ -203,7 +203,7 @@ jobs:
         with:
           name: release-candidate
           path: artifacts
-      - name: Install and completely remove the candidate
+      - name: Candidate installation and complete removal
         run: node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}"
 
   reuse-candidate:
@@ -222,7 +222,7 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.plan.outputs.candidate_run_id }}
-      - name: Verify the reused candidate
+      - name: Reused candidate verification
         run: node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

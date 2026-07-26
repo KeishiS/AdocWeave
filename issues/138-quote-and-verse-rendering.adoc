@@ -12,7 +12,7 @@ attribution、citationおよび改行意味を保持する型付きpresentation�
 * `[quote,Author,Source]`のpositional metadataを型付きquote presentationへ解決する。
 * HTML allowlistへ`blockquote`、`cite`など必要最小限の固定要素・classを追加する。
 * quote、verse、metadataなしのcontainer、入れ子blockおよびescapeをfixtureで固定する。
-* LSP hover／completion、formatter、CLI、WASMおよびHTML契約へ同じ意味を反映する。
+* LSP hover／completion、formatter、CLI、WASMおよびHTML仕様へ同じ意味を反映する。
 
 == 完了条件
 

@@ -15,13 +15,13 @@
 - 対応構文に限定した承認済みAsciidoctor互換HTMLとの差分テストを追加し、意図的差異を
   fixture manifestで管理する。Asciidoctor実行時依存は導入しない。
 - Unicode、LF・CRLF、厳格・寛容モードおよび各上限の組合せを含める。
-- クロスランタイム差異を構文プロファイルまたは出力契約の変更として扱う。
+- クロスランタイム差異を構文プロファイルまたは出力仕様の変更として扱う。
 
 == 完了条件
 
 - ネイティブとWASMが同じAST、診断、projectionおよびHTMLを生成する。
 - 意図しないAsciidoctor差分をCIで検出できる。
-- fixture更新時に差分理由と契約バージョン変更の要否を記録する。
+- fixture更新時に差分理由と仕様バージョン変更の要否を記録する。
 - native、実WASM、CLIおよびLSPが共通fixtureを再利用し、外部サーバとブラウザホストも
   同じversion付きmanifestを利用できる。
 

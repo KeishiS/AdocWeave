@@ -1,0 +1,48 @@
+= AsciiDocとの互換性
+
+この文書では、AsciiDocおよびAsciidoctorに対するAdocWeaveの意図的な違いを説明します。
+AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としません。
+対応範囲は xref:syntax-support.adoc[対応しているAsciiDocの書式]、
+実装する文法は xref:../developer-guide/grammar.adoc[文法の詳細]を基準とします。
+
+参照する標準仕様は以下のとおりです。
+
+* https://docs.asciidoctor.org/asciidoc/latest/[AsciiDoc Language documentation]
+* https://docs.asciidoctor.org/asciidoc/latest/_exports/asciidoc-pre-spec.pdf[AsciiDoc pre-specification, 2026-02-03版]
+
+== 意図的な違い
+
+[cols="2,4",options="header"]
+|===
+|領域 |AdocWeaveの動作
+
+|未対応構文
+|寛容modeでは元の内容を保持し、厳格modeではコア操作を拒否します。
+
+|インライン書式
+|highlight、subscript、superscript、typographic quoteを含む対応書式について、境界と不完全なmarkerの
+回復規則だけを保証します。AsciiDoc処理系すべてとの同一結果は保証しません。
+
+|Passthrough
+|置換を抑止する不透明nodeとして保持しますが、raw HTMLとして出力せずHTML escapeします。
+
+|Quoteとverse
+|styleなしの`____`はcompound blockとして扱い、`[quote,Author,Source]`だけを`blockquote`として出力します。
+`[verse]`は改行を保持し、内容のinline書式を解釈しません。
+
+|Admonition
+|admonition paragraphとblockを型付き意味として扱い、未知のstyleは通常のblockとして保持します。
+
+|表
+|PSV／CSV／DSV／TSVと対応する表示属性を扱います。AsciiDoc style cellのblock解析はPSVを対象とし、
+自動header推論には対応しません。
+
+|相互参照とresource
+|文書間xrefとmediaの実在確認、取得および権限検査を行わず、利用側アプリが解決結果を渡します。
+
+|Preprocessor
+|利用側アプリが渡す不変resource snapshotだけを展開します。wildcardとURI転送には対応しません。
+
+|Markdown互換構文
+|AsciiDoc標準の必須範囲ではないため対応しません。
+|===

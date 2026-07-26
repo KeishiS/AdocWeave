@@ -1,7 +1,7 @@
 = AdocWeave browser package
 
-このarchiveは、AdocWeaveのWebAssembly moduleとWeb Worker adapterを同じversionで提供する。
-公的なpackage registryへは登録せず、リポジトリ所有者のGitHub Releasesから取得して展開する。
+このarchiveは、AdocWeaveのWebAssembly moduleとWeb Worker adapterを同じversionで提供します。
+公的なpackage registryへは登録せず、リポジトリ所有者のGitHub Releasesから取得して展開します。
 
 == 内容
 
@@ -22,7 +22,7 @@ import { AdocWeaveClient, defaultAssetUrls } from "./worker/index.mjs";
 const client = new AdocWeaveClient({
   ...defaultAssetUrls(),
   onResult(result) {
-    // HTMLの信頼方針はホストが決める。この例では文字列として表示する。
+    // HTMLの信頼方針はホストが決めます。この例では文字列として表示します。
     preview.textContent = result.html;
   },
   onError(error) {
@@ -32,7 +32,7 @@ const client = new AdocWeaveClient({
 client.update({ version: 1, source: "= Title\n\nAsciiDoc text" });
 ----
 
-公開入口がWorkerの生成、初期化、debounce、generation、cancelおよびdisposeを所有する。
-`SharedArrayBuffer`を利用できない場合はWorker再生成へ自動的に縮退する。DOMへの反映とUI stateは
-利用側が所有する。動作するtextarea例は`example/index.html`に含む。APIと返却値の詳細は
-リポジトリの`docs/wasm-worker.adoc`を参照する。
+公開入口がWorkerの生成、初期化、debounce、generation、cancelおよびdisposeを所有します。
+`SharedArrayBuffer`を利用できない場合はWorker再生成へ自動的に縮退します。DOMへの反映とUI stateは
+利用側が所有します。動作するtextarea例は`example/index.html`に含まれます。APIと返却値の詳細は
+xref:../docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。

@@ -1,11 +1,11 @@
-= 解決済み参照の表示テキスト契約
+= 解決済み参照の表示テキスト仕様
 :status: completed
 :depends-on: 099,101
 
 == 目的
 
 明示labelのない標準xrefについて、hostが解決時に取得した公開可能な文書名やタイトルを、アプリ固有schemeや
-parser拡張なしで安全に表示できる汎用契約を追加する。
+parser拡張なしで安全に表示できる汎用仕様を追加する。
 
 [source,asciidoc]
 ----
@@ -37,8 +37,8 @@ fallbackするため、Resolverが得たタイトルをHTMLへ渡す公開APIは
 * HTMLで明示label、解決済み表示テキスト、target fallbackの優先順位を一箇所へ集約する。
 * reference graph／projectionへ表示テキストを含める必要性を決定し、含める場合は解決revisionとsource rangeを保持する。
 * native／WASM共通fixtureへ空label、明示label、Unicode、HTML特殊文字、oversize、failureおよびACL非漏洩を追加する。
-* core API、WASM API、HTML、conformanceおよび必要なprojectionの契約versionを同一変更で更新する。
-* xref:../docs/web-host-adapter.adoc[Webホストadapter契約]、HTML契約、WASM文書および対応表を更新する。
+* core API、WASM API、HTML、conformanceおよび必要なprojectionの仕様versionを同一変更で更新する。
+* xref:../docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API]、HTML仕様および対応表を更新する。
 
 == 完了条件
 
@@ -56,4 +56,4 @@ HTML、診断またはprojectionへ漏れない。nativeとWASMは同じ入力�
 RC.4でnative `ResolvedReference::with_display_text`とWASM `displayText`を追加した。HTMLは明示label、
 解決済み表示テキスト、元targetの優先順位で描画し、表示テキストをプレーンテキストとしてescapeする。
 projectionにも同じ成功値を保持し、失敗型には表示テキストを追加しない。core API、HTML、projection、
-conformanceおよびWASM APIの契約versionを3へ更新した。
+conformanceおよびWASM APIの仕様versionを3へ更新した。

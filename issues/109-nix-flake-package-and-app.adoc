@@ -1,4 +1,4 @@
-= Nix flake package・appとNixOS導入契約
+= Nix flake package・appとNixOS導入仕様
 :status: completed
 :depends-on: 083,108
 
@@ -7,7 +7,7 @@
 優先度は最優先とする。Issue 108を含むRC.5候補をGitHubへpushする前に実装し、Nix packageを同じ
 source commitと品質gateで検証する。その後にmain candidate Actions、RC.5 tag・公開、Issue 088の
 実Release受け入れを順に行う。Issue 088へ依存させると「RC.5へ何を含めるか」と「RC.5受け入れ」が
-循環するため、依存先はnative配布基盤のIssue 083と直前の公開契約Issue 108に限定する。
+循環するため、依存先はnative配布基盤のIssue 083と直前の公開仕様を扱うIssue 108に限定する。
 
 == 目的
 
@@ -15,7 +15,7 @@ source commitと品質gateで検証する。その後にmain candidate Actions�
 再現可能にbuild・実行・NixOSへ導入できるようにする。nixpkgsへの登録は要求せず、配布元は
 `github:KeishiS/adocweave`のままとする。
 
-== 利用契約
+== 利用仕様
 
 [source,console]
 ----
@@ -91,7 +91,7 @@ NixOS flakeでは、入力を固定したうえで次の形で導入できるこ
 
 === 4. 利用文書と受け入れ
 
-* `docs/nix-installation.adoc`と既存Release導入文書を相互参照する。
+* Nixによる導入と既存Releaseによる導入を同じ文書から参照できるようにする。
 * clean Nix store相当の環境でGitHub flake URLをcommitへ固定し、run、profile導入、NixOS評価、更新、
   rollbackおよび削除を確認する。
 * Issue 088のRC.5受け入れ記録へNix flake source commitとLinux両architectureの結果を追加する。
@@ -99,7 +99,7 @@ NixOS flakeでは、入力を固定したうえで次の形で導入できるこ
 == 検証
 
 * `nix flake check`で全公開packageとapp metadataを評価する。
-* Linuxで`nix build .#default`を実行し、result内のCLI／LSPが同じpackage versionと契約versionを返す。
+* Linuxで`nix build .#default`を実行し、result内のCLI／LSPが同じpackage versionと仕様versionを返す。
 * `nix run . -- --version --json`がCLIを起動し、引数を保持する。
 * 最小NixOS testまたは評価fixtureで`environment.systemPackages`から両binaryを解決できることを確認する。
 * `nix flake show`の公開outputと利用例をfixtureまたは構造検査で固定する。
@@ -133,9 +133,9 @@ NixOS flakeでは、入力を固定したうえで次の形で導入できるこ
 
 == 文書
 
-`docs/nix-installation.adoc`へ`nix run`、profile導入、NixOS flake、overlay、更新、version固定、削除、
+`docs/user-guide/release-installation.adoc`へ`nix run`、profile導入、flake output、更新、version固定、削除、
 local buildおよびbinary cache未提供時の挙動を記載する。GitHub Release archiveによる導入とは
-xref:../docs/release-installation.adoc[既存の導入文書]から相互参照し、両方式を混同しない。
+xref:../docs/user-guide/release-installation.adoc[既存の導入文書]から相互参照し、両方式を混同しない。
 
 == 完了条件
 
@@ -153,7 +153,7 @@ flake lockで固定した同一revisionから再現可能にbuildできる。
 * `cargo make nix-package-check`を必須quality gateへ追加し、x86-64 local buildと`nix run`を確認した。
 * release candidateの導入E2Eはx86-64／ARM64の各native runnerでflake packageもsource buildする。
 * 利用、version固定、profile、NixOS、overlay、更新、rollbackおよび削除は
-  xref:../docs/nix-installation.adoc[Nix flakeからの導入]へ集約した。
+  xref:../docs/user-guide/release-installation.adoc#nix-installation[Nixによる導入]へ集約した。
 
 公開GitHub URLからのclean環境受け入れは、RC.5のtagとReleaseを必要とするためIssue 088で記録する。
 

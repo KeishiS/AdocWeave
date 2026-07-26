@@ -19,7 +19,7 @@ asset／flake revisionを選択、検証、install、更新および削除でき
   E2E checklistを実行する。macOS／Windowsは将来targetの受け入れIssueへ分離する。
 * Issue 109のflakeをcommitへ固定し、Linux x86-64／ARM64で`nix run`、profile導入およびNixOS
   `environment.systemPackages`評価を確認する。
-* release noteに対応target、契約version、breaking change、既知の制約、asset verificationおよびupgrade手順を
+* release noteに対応target、仕様version、breaking change、既知の制約、asset verificationおよびupgrade手順を
   必須化する。
 * 配布元はリポジトリ所有者自身のGitHub Releasesだけとする。package manager、container registry、
   crates.io、npmおよびZed Registryへの公開は行わず、導入経路もGitHub Releasesだけで完結させる。
@@ -30,23 +30,23 @@ asset／flake revisionを選択、検証、install、更新および削除でき
 
 source checkoutと手動Rust toolchainのないclean環境でCLI、LSP、browser library、Zed連携およびNix flake導入を確認し、
 install前後のfilesystem差分からuninstall後に管理対象fileが残らないことを確認する。最終手順を
-`docs/release-checklist.adoc`と利用者向け導入文書へ反映する。
+xref:../CONTRIBUTING.adoc#release-checklist[Release checklist]と利用者向け導入文書へ反映する。
 
 == 実装状況
 
-* xref:../docs/release-installation.adoc[利用者向け導入文書]へasset選択、checksum／attestation、user-local／
+* xref:../docs/user-guide/release-installation.adoc[利用者向け導入文書]へasset選択、checksum／attestation、user-local／
   system-wide配置、PATH、version固定、rollback、browser hosting、Zed、更新および削除手順を集約した。
 * `release-installation-e2e.mjs`は隔離HOMEへCLI、LSP、browser libraryおよびZed拡張を導入し、clean PATH、
   version symlink、公開入口およびuninstall後のfile集合一致を検査する。
 * Galleryへ公開しない方針とsource checkout不要の完了条件を両立するため、version付き
-  `adocweave-zed-<version>.tar.xz`を6番目のarchiveとして配布契約へ追加した。
-* 公開済み`v0.1.0-rc.1`を変更せず、新しいasset契約と公開契約version 2をrelease candidateへ分離した。
+  `adocweave-zed-<version>.tar.xz`を6番目のarchiveとして配布仕様へ追加した。
+* 公開済み`v0.1.0-rc.1`を変更せず、新しいasset仕様と公開仕様のversion 2をrelease candidateへ分離した。
   失敗した`v0.1.0-rc.2` tagも付け替えず、Chromium終了競合の修正を含む`v0.1.0-rc.3`を受け入れ対象とする。
 * `v0.1.0-rc.3`の公開と必須Actionsは完了した。その後Issue 107で公開APIをversion 3へ変更したため、
   現行成果物の最終受け入れ対象は`v0.1.0-rc.4`へ進める。RC.3のtagとReleaseは変更しない。
 * `v0.1.0-rc.4`の公開後、Issue 108で失敗詳細の非漏洩境界を破壊的に修正したため、最終受け入れ対象を
   `v0.1.0-rc.5`へ進める。RC.4以前のtagとReleaseは変更しない。
-* GitHub Release noteへ対応target、公開契約とbreaking change、既知制約、asset検証および
+* GitHub Release noteへ対応target、公開仕様とbreaking change、既知制約、asset検証および
   upgrade／rollbackを必ず追加する生成・検証処理をpublish境界へ追加した。
 * local x86-64成果物では、Zed archiveの決定性検査と導入・完全削除E2Eが成功した。
 * Release workflowは集約candidateをx86-64／ARM64のnative runnerへ戻し、両architectureの導入・完全削除E2Eが
@@ -57,7 +57,7 @@ install前後のfilesystem差分からuninstall後に管理対象fileが残ら�
 == 残る受け入れ
 
 `v0.1.0-rc.5`を公開した後、source checkoutとRust toolchainを持たないclean Linux x86-64／ARM64で実Release assetを
-使うE2Eを実行する。CLIとLSPに加え、空labelのxrefへResolverの`displayText`を渡すnative／WASM契約を確認する。
+使うE2Eを実行する。CLIとLSPに加え、空labelのxrefへResolverの`displayText`を渡すnative／WASM仕様を確認する。
 browserは実配備header、Zedは初回managed LSP取得、offline再起動およびUIからの削除までを確認する。
 Nixは公開flake URLをRC.5 commitへ固定し、`nix run`、profile install／removeおよびNixOS評価をLinux両architectureで
 確認する。この公開と実機操作はrepository所有者のpush、tag作成、Environment承認および対応環境を必要とする。
@@ -74,10 +74,10 @@ Linux x86-64／ARM64 native build・smoke、candidate検証、Nix package／NixO
 
 * 公開9 assetを新しい一時directoryへ取得し、`sha256.sum`と配布metadataがsource commitに一致した。
 * 公開GitHub APIで9 assetすべてに同じrepository由来のArtifact Attestation bundleが存在することを確認した。
-* `nix run github:KeishiS/AdocWeave/v0.1.0-rc.5 -- --version --json`がRC.5と契約versionを返した。
+* `nix run github:KeishiS/AdocWeave/v0.1.0-rc.5 -- --version --json`がRC.5と仕様versionを返した。
 * 隔離したx86-64 Linux profileで公開flakeをinstallし、CLI／LSPのversionを確認してから完全にremoveできた。
 * 2026-07-22に隔離したZed profileへRC.5公開拡張を導入し、managed LSP取得、editor機能、offline再起動および
-  削除を確認した。再現手順はxref:../docs/release-installation.adoc[Release導入文書]へ記録した。
+  削除を確認した。再現手順はxref:../docs/user-guide/release-installation.adoc[Release導入文書]へ記録した。
 
 == 実機確認の代替判断
 

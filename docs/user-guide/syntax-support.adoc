@@ -1,0 +1,289 @@
+= 対応しているAsciiDocの書式
+
+この文書では、AdocWeaveで利用できるAsciiDocの書式と対応状態を説明します。表の「対応」は、
+構文を認識し、必要な変換、問題表示、整形またはエディター機能を提供するものです。「保持」は、
+内容を失わずに読み込みますが、書式としての処理を行わないものです。
+
+AsciiDoc全体を実装しているわけではありません。他の実装との差は
+xref:compatibility.adoc[AsciiDocとの互換性]を参照してください。
+
+利用側アプリとの細かな仕様はxref:../README.adoc[文書の案内]、
+文法の厳密な定義はxref:../developer-guide/grammar.adoc[文法の詳細]にあります。
+
+== 状態の定義
+
+対応::
+書式を認識し、必要な変換、問題表示、整形またはエディター機能を提供します。
+
+保持::
+内容を失わずに読み込めますが、書式としての意味付けや変換は行いません。
+HTML出力では保持したテキストをエスケープします。
+
+未対応::
+その構文についてAsciiDoc互換の認識または動作を保証しません。
+
+== 対応するブロック構文
+
+[cols="2,1,3",options="header"]
+|===
+|構文 |状態 |動作
+
+|段落
+|対応
+|連続する非空行を段落にします。syntax treeでは元のソース範囲を利用できます。
+
+|文書header
+|対応
+|連続した文書タイトル、著者行、改訂行および文書属性を認識します。最初の空行をheader終端とし、
+著者名・email、改訂番号・日付・備考および`article`、`book`、`manpage`、`inline` doctypeを型付きで公開します。
+
+|Preamble
+|対応
+|header終端から最初のsectionまたはbook partまでのblock列を、人工的なAST nodeを加えずprojectionとして公開します。
+
+|文書タイトル
+|対応
+|文書内容より前にある最初の1個マーカーの見出しを文書タイトルとし、既定で出力します。
+
+|セクション見出し
+|対応
+|2個から6個の`=`マーカーをセクションレベル1から5とします。階層診断、文書シンボル、
+hover情報、安定した生成IDを提供します。
+
+|Book partとdiscrete heading
+|対応
+|`book` doctypeにおける本文中のlevel-0見出しをpartとします。`[discrete]`または`[float]`付き見出しは
+参照対象に含めますが、section階層およびOutlineから除外します。
+
+|Indented literal paragraph
+|対応
+|空白またはtabで開始する連続行を専用literal paragraphとして保持し、inline置換を適用せず`pre`へ安全に出力します。
+
+|Thematic breakとpage break
+|対応
+|単独行の`'''`と`<<<`を専用blockとして認識します。HTMLでは`hr`と`hr.page-break`へ変換します。
+
+|文書属性
+|対応
+|文書タイトル直後の定義・解除をlosslessに保持します。属性値は汎用文字列であり、
+アプリ固有メタデータの型検証はホストへ委譲します。
+
+|共通ブロックメタデータ
+|対応
+|空行を挟まず直前に置いたblock title、`[[id]]`、`[#id]`、shorthand role／option、
+positional／named element attributeをすべてのsemantic blockで共通表現として保持します。
+未知のstyleや属性は意味を推測せず、HTML属性へ通過させません。
+
+|明示アンカー
+|対応
+|`[[id]]`、`[[id,label]]`および`[#id]`を直後のブロックへ関連付け、共通参照先索引と
+HTML IDに使用します。
+
+|区切り付きリテラルブロック（`....`）
+|対応
+|本体を不透明として扱い、インライン置換を適用しません。
+
+|汎用区切り付きblock
+|対応
+|comment（`////`）、example（`====`）、listing（`----`）、literal（`....`）、open（`--`）、
+sidebar（`****`）、pass（`++++`）、quote（`____`）およびtable（`|===`、カスタムseparatorの`!===`等）を認識します。
+内容はcompound／verbatim／raw／tableの型で区別し、同種blockは異なるdelimiter長で入れ子にできます。
+
+|Admonition
+|対応
+|`NOTE`、`TIP`、`IMPORTANT`、`WARNING`、`CAUTION`のparagraph形式（`NOTE: text`）と、
+example／open blockへ付けるblock形式（`[NOTE]`）を同じ型付きpresentationへ解決します。未知styleは通常blockとして保持します。
+
+|Quoteとverse
+|対応
+|`[quote,Author,Source]`および`[verse,Author,Source]`を`____` blockへ付けると、引用種別、
+attribution、citationを型付きpresentationへ解決します。quoteは`blockquote`、verseは改行を保持する`pre`として出力します。
+
+|表
+|対応
+|PSV／CSV／DSV／TSV、空白・制御文字・`=`を除く1文字separator、quoted multiline cell、duplication、暗黙／明示列、
+header／footer、column／row span、配置、cell styleおよびPSVのAsciiDoc block cellを型付きで扱います。
+AsciiDoc cellは文書rootと同じblock sequence状態機械を用い、カスタムseparator delimiterによる入れ子表も扱います。
+caption、`frame`、`grid`、`stripes`、1から100までの百分率`width`および`autowidth`を解決します。
+`width`と`autowidth`を同時に指定した場合は診断し、`autowidth`を優先します。
+
+|ソースブロック（`[source,LANGUAGE]`、`[,LANGUAGE]`、`source-language`）
+|対応
+|標準形と短縮形を同じsource verbatim blockへ正規化します。`source-language`はlisting blockの既定言語となり、
+明示した`[listing]`は既定値を抑止します。言語と不透明な本体はHTML、projection、LSPで共有します。
+
+|空行
+|対応
+|空白またはタブだけの行を空行とします。
+
+|未知のブロック構文
+|保持
+|認識できた構文は寛容モードで`Unsupported`になります。厳格モードでは、このノードを
+含む文書を全コア操作で拒否します。
+
+|順序なし・順序付きリスト
+|対応
+|`*`と`.`の反復による入れ子、およびリテラル・ソースブロックへの`+`継続を扱います。順序付きlistは
+`start`、`reversed`および標準番号形式を型付きpresentationとして解決します。
+
+|LaTeX STEMブロック
+|対応
+|`[stem]`または`[latexmath]`と`++++`による本体を、AsciiDoc置換を適用しない不透明な数式ノードとして保持します。
+空または閉じていない内容は`invalid-stem`とし、入力範囲を保持します。
+|===
+
+== 対応するインライン構文
+
+[cols="2,1,3",options="header"]
+|===
+|構文 |状態 |動作
+
+|強調（`*text*`）
+|対応
+|constrainedな単一マーカーとunconstrainedな二重マーカーを認識します。
+
+|斜体（`_text_`）
+|対応
+|constrainedな単一マーカーとunconstrainedな二重マーカーを認識します。
+`snake_case`のような単一アンダースコアはテキストとして残します。
+
+|等幅（pass:[`text`]）
+|対応
+|constrainedな単一マーカーとunconstrainedな二重マーカーを認識し、内容を不透明として扱います。
+
+|強調と斜体の入れ子
+|対応
+|設定したインライン深さ上限まで、スタイル付き内容を再帰的に解析します。
+
+|連続行をまたぐ書式とmacro label
+|対応
+|段落内のLF／CRLFを保持した一つのinline列として解析します。空行またはblock境界は越えません。
+
+|Hard line break
+|対応
+|行末の空白と`+`を`HardBreak`として保持し、HTMLでは`br`へ変換します。通常の段落改行は折り畳みます。
+
+|閉じていない書式
+|回復対応
+|開始記号をテキストとして残して診断を出し、後続の安全なspanを失わないよう走査を続けます。
+
+|文書属性参照（`{name}`）
+|対応
+|文書タイトル直後の属性を再帰展開します。循環、展開深さおよび生成byte数を制限します。
+
+|URL単体と`URL[label]`
+|対応
+|URLポリシーで許可したスキームだけをリンクにします。ターゲットと表示文字列の範囲を
+分離して保持します。
+
+|文書内xref（`<<id,label>>`、`xref:#id[label]`）
+|対応
+|共通`Reference`へ変換し、同じ文書のアンカー索引で解決します。
+
+|文書間・スキーム付きxref
+|構文対応
+|Resolverなしで解析、整形、抽出できます。HTMLリンク化にはホストの安全な解決結果が必要です。
+空labelには解決成功と同じrevisionの任意のプレーンテキスト表示名を渡せます。
+
+|インラインSTEM
+|対応
+|`stem:[...]`と`latexmath:[...]`を、AsciiDoc置換を適用しない不透明なLaTeX数式ノードとして保持します。
+
+|標準macroとmedia
+|部分対応
+|email／mailto、footnote、inline／bibliography anchor、index term、feature flag付きUI macro、
+inline／block image、icon、audioおよびvideoを共通macro modelで扱います。footnoteの番号・再利用・back reference、
+bibliography entry／参照edgeおよび階層index catalogに対応します。UI macroは`render_ui_macros`を有効にした場合だけ
+専用HTMLを生成し、無効時も表示文字列を保持します。欠落・重複したcatalog定義と空index termは
+`invalid-catalog`として診断します。
+
+|Unconstrained書式（`**text**`、`__text__`、二重バッククォート）
+|対応
+|境界文字に依存せず認識します。空pairはテキストとして保持し、隣接pairは左から決定的に分割します。
+
+|バックスラッシュエスケープ
+|対応
+|対応する書式、属性参照、URL、xref、STEM macroおよびanchorの認識を抑止します。
+不透明contextでは適用せず、未対応構文のescapeは対象外です。
+
+|ハイライト、下付き、上付き、組版用引用符
+|対応
+|`#highlight#`、`~subscript~`、`^superscript^`および曲線引用符のmarkerを型付きinline nodeとして保持し、
+HTMLでは`mark`、`sub`、`sup`および対応するUnicode引用符へ変換します。
+
+|インラインpassthrough
+|対応
+|単一、二重、三重のプラス記号と`pass:[...]`を不透明なinline nodeとして保持します。
+HTMLへraw markupとして通過させず、テキストとしてescapeします。
+|===
+
+== 公式仕様との主な対応差
+
+AsciiDoc pre-specificationおよび公式言語文書と比較した、主な対応差です。
+
+[cols="2,1,4",options="header"]
+|===
+|領域 |状態 |不足している主な機能
+
+|Block metadata
+|対応
+|block title、明示anchor、ID、role、option、positional／named属性を共通モデルへ保持します。
+block titleは属性展開と通常inline構文を適用したbackend非依存のpresentationとして保持します。
+block種別ごとの属性検証には対応していません。
+
+|Delimited block
+|部分対応
+|標準delimiterとcontent model、異なるdelimiter長によるcompound入れ子に対応します。
+compoundとAsciiDoc cellは文書rootと同じblock sequence状態機械で、対応するblock列を解析します。
+
+|Document headerとsection
+|対応
+|著者、改訂、doctype、preamble、book part、appendix、discrete heading、`toc`、`toclevels`、`sectnums`、
+manpageのname／section／purpose構造に対応します。
+
+|Paragraphとbreak
+|対応
+|通常段落、明示lead role、indented literal paragraph、hard line break、thematic breakおよびpage breakに対応します。
+
+|List
+|対応
+|順序なし、順序付き、description、checklist、callout、入れ子および複数のattached blockに対応しています。
+順序付きlistは`start`、`reversed`、`arabic`、`decimal`、`loweralpha`、`upperalpha`、`lowerroman`、
+`upperroman`および`lowergreek`を解決します。明示番号と`start`の整合性を診断します。任意custom counterおよび複雑なlist属性は未対応です。
+
+|Table
+|対応
+|PSV／CSV／DSV／TSV、separator、quoted multiline cell、duplication、列指定、header／footer、
+cell span、cell styleおよびPSVのAsciiDoc block cellに対応しています。
+
+|Inline macro
+|対応
+|URL、xref、email／mailto、image、footnote、anchor、bibliography anchor、kbd、btn、menuおよび
+index termを意味nodeとして扱い、文書catalogへfootnote、bibliography、階層indexを投影します。
+
+|Media
+|対応
+|block／inline image、icon、audioおよびvideoをresource参照として公開します。取得と埋め込みはhostの責務です。
+
+|置換pipeline
+|対応
+|6段階の順序、型付きcontext、文字置換、typographic quote、再帰属性展開、循環・資源上限、
+安全なinline／block passthroughに対応しています。任意`subs`属性による段階の編集は未対応です。
+
+|Preprocessor directive
+|部分対応
+|純粋なresource snapshot上で`include`、`ifdef`、`ifndef`、`ifeval`、`endif`、escape、基本include属性
+およびsource mapに対応します。引用符を考慮した属性値と、参照先がない場合だけ空展開する`optional`に対応します。
+WildcardおよびURI転送は未対応です。
+
+|Bibliographyとfootnote
+|部分対応
+|bibliography anchorとfootnote macroの構文node、名前付きfootnote再利用、出現順番号、back reference、
+bibliography参照edgeおよび階層index catalogに対応します。`[bibliography]` section内の順序なしlistは
+catalogのcitation／back referenceを出力します。bibliography styleのdoctype、document title／discrete heading、
+multipart bookのsection scopeを検証します。citation styleの整形およびindex rangeは未対応です。
+
+|Markdown互換構文
+|未対応
+|AsciiDoc標準の必須範囲ではないAsciidoctorのoptional機能には対応していません。
+|===

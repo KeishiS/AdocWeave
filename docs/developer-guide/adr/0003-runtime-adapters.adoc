@@ -1,0 +1,17 @@
+= ADR 0003: ランタイムアダプターの分離
+:status: accepted
+
+== 文脈
+
+非同期runtimeやprotocol型を解析コアへ持ち込むと、native、WASMおよびeditor統合の再利用性が
+低下します。
+
+== 決定
+
+コアは同期的でruntime非依存なAnalysisRequest、AnalysisResult、revision、cancel判定および
+stale判定を定義します。LSPはasync-lspとTokio、WASMはwasm-bindgen、Web WorkerはJavaScriptを
+adapterとして使用します。
+
+== 帰結
+
+adapterは実行順序、backpressureおよびtransportを所有しますが、解析規則や採用判定を複製しません。

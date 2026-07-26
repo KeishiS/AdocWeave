@@ -7,8 +7,15 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct CorpusManifest {
-    normative: Vec<String>,
+    normative: Vec<NormativeCase>,
     abnormal: Vec<AbnormalCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NormativeCase {
+    path: String,
+    ignored_codes: BTreeSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -25,16 +32,16 @@ struct ReleaseManifest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SyntaxContract {
+struct SyntaxSupportManifest {
     schema_version: u8,
     issue: String,
     issue_status: String,
-    features: Vec<SyntaxContractFeature>,
+    features: Vec<SyntaxSupportFeature>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SyntaxContractFeature {
+struct SyntaxSupportFeature {
     name: String,
     status: String,
     syntax_needle: String,
@@ -72,30 +79,34 @@ fn analyze(path: &str) -> adocweave::Analysis {
 
 fn manifest() -> CorpusManifest {
     serde_json::from_str(
-        &fs::read_to_string(repository_root().join("docs/corpus.json")).expect("corpus manifest"),
+        &fs::read_to_string(repository_root().join("fixtures/corpus.json"))
+            .expect("corpus manifest"),
     )
     .expect("valid corpus manifest")
 }
 
 #[test]
-fn syntax_contract_keeps_docs_and_fixtures_in_sync() {
+fn syntax_support_manifest_keeps_docs_and_fixtures_in_sync() {
     let root = repository_root();
-    let contract: SyntaxContract = serde_json::from_str(
-        &fs::read_to_string(root.join("docs/syntax-contract.json")).expect("syntax contract"),
+    let manifest: SyntaxSupportManifest = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/syntax-support.json"))
+            .expect("syntax support manifest"),
     )
-    .expect("valid syntax contract");
-    assert_eq!(contract.schema_version, 1);
+    .expect("valid syntax support manifest");
+    assert_eq!(manifest.schema_version, 1);
     let issue = fs::read_to_string(root.join(format!(
         "issues/{}-supported-syntax-documentation-contract.adoc",
-        contract.issue
+        manifest.issue
     )))
-    .expect("syntax contract issue");
-    assert!(issue.contains(&format!(":status: {}", contract.issue_status)));
-    let syntax = fs::read_to_string(root.join("docs/syntax-support.adoc")).expect("syntax support");
+    .expect("syntax support issue");
+    assert!(issue.contains(&format!(":status: {}", manifest.issue_status)));
+    let syntax = fs::read_to_string(root.join("docs/user-guide/syntax-support.adoc"))
+        .expect("syntax support");
     let compatibility =
-        fs::read_to_string(root.join("docs/compatibility.adoc")).expect("compatibility");
-    let grammar = fs::read_to_string(root.join("docs/grammar.adoc")).expect("grammar");
-    for feature in contract.features {
+        fs::read_to_string(root.join("docs/user-guide/compatibility.adoc")).expect("compatibility");
+    let grammar =
+        fs::read_to_string(root.join("docs/developer-guide/grammar.adoc")).expect("grammar");
+    for feature in manifest.features {
         assert_eq!(feature.status, "supported", "{}", feature.name);
         assert!(
             syntax.contains(&feature.syntax_needle),
@@ -234,13 +245,25 @@ fn tracked_adoc_corpus_is_lossless_and_has_valid_ranges() {
 
 #[test]
 fn normative_documents_have_no_diagnostics() {
-    for path in manifest().normative {
-        let analysis = analyze(&path);
-        assert!(
-            analysis.diagnostics().is_empty(),
-            "{path}: {:?}",
-            analysis.diagnostics()
+    for case in manifest().normative {
+        let analysis = analyze(&case.path);
+        let ignored: BTreeSet<_> = analysis
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| case.ignored_codes.contains(diagnostic.code.as_str()))
+            .map(|diagnostic| diagnostic.code.as_str().to_owned())
+            .collect();
+        assert_eq!(
+            ignored, case.ignored_codes,
+            "{}: stale diagnostic allowlist",
+            case.path
         );
+        let diagnostics: Vec<_> = analysis
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| !case.ignored_codes.contains(diagnostic.code.as_str()))
+            .collect();
+        assert!(diagnostics.is_empty(), "{}: {diagnostics:?}", case.path);
     }
 }
 
@@ -382,11 +405,11 @@ fn issue_governance_validator_accepts_forward_dependencies_and_rejects_invalid_g
 #[test]
 fn contract_tables_are_not_nested_or_unclosed() {
     for path in [
-        "docs/current-contract.adoc",
-        "docs/syntax-support.adoc",
-        "docs/compatibility.adoc",
-        "docs/substitutions.adoc",
-        "docs/html-contract.adoc",
+        "docs/README.adoc",
+        "docs/user-guide/syntax-support.adoc",
+        "docs/user-guide/compatibility.adoc",
+        "docs/developer-guide/grammar.adoc",
+        "docs/developer-guide/html-contract.adoc",
     ] {
         let source = fs::read_to_string(repository_root().join(path)).expect("contract document");
         validate_table_delimiters(path, &source).unwrap_or_else(|error| panic!("{error}"));
@@ -413,32 +436,6 @@ fn table_governance_validator_rejects_nested_stray_and_unclosed_delimiters() {
 }
 
 #[test]
-fn wasm_documentation_uses_the_release_manifest_package_version() {
-    let manifest: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(repository_root().join("release-manifest.json"))
-            .expect("release manifest"),
-    )
-    .expect("valid release manifest");
-    let version = manifest["packageVersion"]
-        .as_str()
-        .expect("package version");
-    let documentation =
-        fs::read_to_string(repository_root().join("docs/wasm-worker.adoc")).expect("WASM docs");
-    assert!(
-        documentation.contains(&format!("`VERSION`は`{version}`")),
-        "package version prose"
-    );
-    assert!(
-        documentation.contains(&format!("\"packageVersion\": \"{version}\"")),
-        "WASM request example"
-    );
-    assert!(
-        documentation.contains(&format!("expected {version}")),
-        "WASM error example"
-    );
-}
-
-#[test]
 fn release_manifest_is_the_single_release_identity_catalog() {
     let root = repository_root();
     let manifest: ReleaseManifest = serde_json::from_str(
@@ -447,13 +444,18 @@ fn release_manifest_is_the_single_release_identity_catalog() {
     .expect("valid release manifest");
     assert_eq!(manifest.package_version, adocweave::VERSION);
 
-    let documentation =
-        fs::read_to_string(root.join("docs/core-profile.adoc")).expect("contract documentation");
-    assert!(documentation.contains(&format!("`VERSION = {}`", manifest.package_version)));
-
-    let current_contract = fs::read_to_string(root.join("docs/current-contract.adoc"))
-        .expect("current contract index");
-    assert!(current_contract.contains(&format!("|package version |{}", manifest.package_version)));
+    for path in ["docs/developer-guide/core-profile.adoc", "docs/README.adoc"] {
+        let documentation =
+            fs::read_to_string(root.join(path)).expect("release identity documentation");
+        assert!(
+            documentation.contains("release-manifest.json[release manifest]"),
+            "{path} must reference the release manifest"
+        );
+        assert!(
+            !documentation.contains(&manifest.package_version),
+            "{path} must not duplicate the package version"
+        );
+    }
 }
 
 #[test]
