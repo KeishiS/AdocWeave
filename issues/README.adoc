@@ -371,7 +371,7 @@ LSP 3.18を固定revisionで監査し、client capability、workspace通知購�
 
 利用者向け文書、developer向け文書、ADRおよび作業計画の責務を整理し、文書だけのpatch releaseとして公開する。
 
-* xref:174-v0-8-1-release-readiness.adoc[174: v0.8.1 release readiness]（進行中）
+* xref:174-v0-8-1-release-readiness.adoc[174: v0.8.1 release readiness]（完了）
 
 === M47: 標準構文の互換性
 
