@@ -1,5 +1,5 @@
 = v0.8.0 release readiness
-:status: in-progress
+:status: completed
 :depends-on: 162
 
 == 目的
@@ -24,3 +24,16 @@ mainの完全candidate成功commitへstable tagを一度だけ付ける。
 * mainのcandidate成功後、`v0.8.0`を作成し、GitHub Releaseの9 asset、checksum、SBOMおよびprovenanceを受け入れる。
 * Zedで診断、Outline、Code Action、Format、Hover、補完、Definition、References、
   Document LinkおよびSemantic Tokensを手動確認する。
+
+== 受け入れ結果
+
+stable `v0.8.0`は`193ea0dda15dc6ece31ebce5f81b4fe2a493fc2b`をtagしました。
+https://github.com/KeishiS/AdocWeave/actions/runs/30165774504[main candidate run 30165774504]は、
+quality、fuzz、Linux x86-64／ARM64 native build・smoke、browser／Zed artifact verification、
+candidate metadataおよびLinux 2 architectureのinstallation E2Eを成功しました。
+
+https://github.com/KeishiS/AdocWeave/actions/runs/30166227775[tag publication run 30166227775]は
+同じcommitのcandidateを再検証して再利用し、全公開assetのprovenance生成と公開を成功しました。
+https://github.com/KeishiS/AdocWeave/releases/tag/v0.8.0[GitHub Release v0.8.0]は
+非draft・非prereleaseであり、CLI／LSP各2 architecture、browser、Zed、manifest、SPDX SBOMおよび
+checksumの9 assetを含みます。全assetはuploadedかつ0 byteではありません。

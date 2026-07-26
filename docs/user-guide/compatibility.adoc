@@ -1,11 +1,11 @@
 = AsciiDocとの互換性
 
 この文書では、AsciiDocおよびAsciidoctorに対するAdocWeaveの意図的な違いを説明します。
-AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としません。対応範囲は
-xref:syntax-support.adoc[対応しているAsciiDocの書式]、実装する文法は
-xref:../developer-guide/grammar.adoc[文法の詳細]を基準とします。
+AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としません。
+対応範囲は xref:syntax-support.adoc[対応しているAsciiDocの書式]、
+実装する文法は xref:../developer-guide/grammar.adoc[文法の詳細]を基準とします。
 
-参照基準は次の公式資料です。
+参照する標準仕様は以下のとおりです。
 
 * https://docs.asciidoctor.org/asciidoc/latest/[AsciiDoc Language documentation]
 * https://docs.asciidoctor.org/asciidoc/latest/_exports/asciidoc-pre-spec.pdf[AsciiDoc pre-specification, 2026-02-03版]
@@ -46,8 +46,3 @@ xref:../developer-guide/grammar.adoc[文法の詳細]を基準とします。
 |Markdown互換構文
 |AsciiDoc標準の必須範囲ではないため対応しません。
 |===
-
-置換と安全な出力はxref:../developer-guide/grammar.adoc[文法の詳細]とxref:../developer-guide/html-contract.adoc[HTML出力仕様]、参照とresourceの解決は
-xref:../developer-guide/server-execution.adoc#render-inputs[利用側アプリの実行仕様]、プリプロセッサの構文は
-xref:../developer-guide/grammar.adoc[文法の詳細]、resource取得は
-xref:../developer-guide/server-execution.adoc#preprocessing[外部ファイルの展開]を参照します。

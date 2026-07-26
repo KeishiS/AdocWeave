@@ -365,7 +365,13 @@ LSP 3.18を固定revisionで監査し、client capability、workspace通知購�
 次期`v0.8.0`候補として固定する。
 
 * xref:162-lsp-3-18-conformance-audit.adoc[162: Language Server Protocol 3.18適合性監査]（完了）
-* xref:167-v0-8-0-release-readiness.adoc[167: v0.8.0 release readiness]（進行中）
+* xref:167-v0-8-0-release-readiness.adoc[167: v0.8.0 release readiness]（完了）
+
+=== M50: v0.8.1文書構成整理
+
+利用者向け文書、developer向け文書、ADRおよび作業計画の責務を整理し、文書だけのpatch releaseとして公開する。
+
+* xref:174-v0-8-1-release-readiness.adoc[174: v0.8.1 release readiness]（進行中）
 
 === M47: 標準構文の互換性
 

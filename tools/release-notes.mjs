@@ -18,7 +18,7 @@ export function appendRequiredReleaseNotes(body, tag) {
   const contracts = `- unified package version: ${manifest.packageVersion}`;
   const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
   const notes = "## Highlights\n\n" +
-    "- This release adds the approved AsciiDoc compatibility changes and updates the unified public contract when required. See docs/developer-guide/roadmap.adoc for the release train scope.\n" +
+    "- This patch release reorganizes the documentation by audience and responsibility. Runtime behavior, supported AsciiDoc syntax, and public contracts are unchanged. See docs/developer-guide/roadmap.adoc for the release train scope.\n" +
     "- The repository flake provides AdocWeave CLI and LSP packages for Linux x86-64 and ARM64. Run `nix run github:KeishiS/AdocWeave`.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${contracts}\n\n` +

@@ -10,19 +10,19 @@ https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notes�
 
 == 現在のリリース
 
-=== M46: LSP 3.18相互運用性
+=== M50: v0.8.1文書構成整理
 
-LSP 3.18に沿ったlifecycle、client capability別の応答、workspace folder変更および
-watched files登録を`v0.8.0`として公開します。M47以降の構文機能は含めません。
+利用者向け文書、developer向け文書、ADRおよび作業計画の責務を整理し、`v0.8.1`として公開します。
+runtime動作、公開仕様および対応するAsciiDoc構文は変更せず、M47以降の機能は含めません。
 
-* xref:../../issues/167-v0-8-0-release-readiness.adoc[Issue 167: v0.8.0 release readiness]（進行中）
+* xref:../../issues/174-v0-8-1-release-readiness.adoc[Issue 174: v0.8.1 release readiness]（進行中）
 
 == 次期機能
 
 === M47: 標準構文の互換性
 
 既存の意味情報を小さく拡張できるインライン等幅書式とtable header推論を扱います。
-`v0.8.0`の公開後に着手し、公開versionは実際の変更内容に基づいて決定します。
+`v0.8.1`の公開後に着手し、公開versionは実際の変更内容に基づいて決定します。
 
 * xref:../../issues/156-inline-monospace-boundaries.adoc[Issue 156: インライン等幅書式の境界規則]（計画）
 * xref:../../issues/163-table-automatic-header-inference.adoc[Issue 163: Tableの自動header推論]（計画）

@@ -1,7 +1,6 @@
 = インストールと更新
 
 この文書では、GitHub ReleasesからCLIとLanguage Serverを導入し、更新および削除する手順を説明します。
-Source checkoutの開発環境は、リポジトリ直下の`CONTRIBUTING.adoc`を参照してください。
 
 Rust toolchainおよびsource checkoutを使わない場合はGitHub Releaseを、Nixを利用する場合はflakeを使用できます。
 GitHub Release archiveとNix packageは別の配布経路であり、Nix packageはarchiveを再包装せずsourceからbuildします。
