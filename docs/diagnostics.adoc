@@ -33,7 +33,7 @@ Webホスト向けpolicyは`source-language-not-allowed`、`math-language-not-al
 == Fix
 
 Fixは重複しない`TextEdit`だけを保持する。`Always`は構文上安全に適用できる変更、
-`Maybe`は利用者判断を必要とする変更を表す。FormatterとCode Actionは同じEdit契約を
+`Maybe`は利用者判断を必要とする変更を表す。FormatterとCode Actionは同じEdit仕様を
 利用する。
 
 == Language Serverへの公開

@@ -1,10 +1,10 @@
-= ADR 0007: ホスト供給stylesheetはcomplete documentだけへ出力する
+= ADR 0007: ホスト供給stylesheetのcomplete document限定出力
 :status: accepted
 
 == 文脈
 
 HTML backendは固定classとallowlistだけを出力し、生成HTMLの見た目を利用者が変更する手段を
-提供していなかった。一方で、入力由来の`style`属性、任意classおよびraw HTMLの拒否は公開契約であり、
+提供していなかった。一方で、入力由来の`style`属性、任意classおよびraw HTMLの拒否は公開仕様であり、
 CSS対応のためにこの安全境界を緩めることはできない。CSSの適用先には、`<style>`本文の埋め込み、
 `<link rel="stylesheet">`によるURL参照、fragment出力への混在、および検証済みstyle assetを
 返す専用APIという候補があった。
@@ -29,7 +29,7 @@ CSSは文書入力ではなく、ホストまたはCLIが明示的に渡す`Rend
 
 == 帰結
 
-HTML契約の許可集合へ`head`、`style`、`link`要素と`rel`属性（`stylesheet`固定値）が加わる。
+HTML仕様の許可集合へ`head`、`style`、`link`要素と`rel`属性（`stylesheet`固定値）が加わる。
 CLIは`--complete`と`--css`／`--css-url`、WASMは`documentMode`と`stylesheets`設定で同じモデルを
 共有する。入力属性の`style`・任意classの拒否、resourceのfail-closed境界および観測情報へCSS本文を
 含めない方針は変更しない。標準themeの同梱は行わず、CSS本文の配布はホストの責務とする。

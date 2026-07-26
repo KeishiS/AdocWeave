@@ -29,7 +29,7 @@ span、配置、style、内容modelおよびsource rangeを持つ意味モデル
 * 表本体byte数、cell数、列数および表深さの構築時上限
 
 列指定よりcell指定を優先する。header行は列またはcellのstyleにかかわらずheader要素として
-出力する。HTML backendは`table`、section、row、cell要素と、契約で許可した属性・classだけを
+出力する。HTML backendは`table`、section、row、cell要素と、仕様で許可した属性・classだけを
 生成し、入力由来のHTMLを通過させない。
 
 == 形式とescape

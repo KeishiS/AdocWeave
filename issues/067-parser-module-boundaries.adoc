@@ -6,7 +6,7 @@
 
 Issue 001から066までの横断レビューでは、`parser.rs`と`inline.rs`が最大の変更集中点として
 残った。行数そのものではなく、公開意味型、recognizer、状態遷移、semantic builder、syntax tree、
-診断変換および処理予算が同じmoduleで相互に参照していることが問題である。
+診断変換および処理上限の管理が同じmoduleで相互に参照していることが問題である。
 
 新しいblockやmacroを追加するたびに巨大なdispatchを変更する構成は、回復規則の競合、consumerの
 更新漏れおよび局所テストの困難さを増やす。
@@ -25,7 +25,7 @@ Issue 001から066までの横断レビューでは、`parser.rs`と`inline.rs`�
 * syntax node構築とsyntax diagnostic投影を構文認識から分離する。
 * table、list、container、macroおよびpreprocessorの既存専用moduleとの依存方向を統一する。
 * wildcard matchや互換wrapperで移行漏れを隠さず、全consumerを新しい型へ同時に移行する。
-* 分割後も線形走査予算、lossless source rangeおよびnative／WASM決定性を維持する。
+* 分割後も線形走査量の上限、lossless source rangeおよびnative／WASM決定性を維持する。
 
 == 設計原則
 
@@ -41,12 +41,12 @@ moduleの行数を減らすだけの転送関数は作らない。独立した�
   および公開semantic型の定義を抱え込まない。
 * `inline`の公開model、scanner、delimiter、macroおよびbuilderの責務がsource上で識別できる。
 * 同一構文を認識または構築する実装が複数moduleに重複しない。
-* 公開契約、規範文書、fixtureおよび全consumerが新構成へ移行する。
+* 公開仕様、規範文書、fixtureおよび全consumerが新構成へ移行する。
 * `cargo make release-gate`が通過する。
 
 == 非目標
 
-Issue 067では新しいAsciiDoc記法を追加しない。性能改善を推測で主張せず、既存の走査予算とproperty
+Issue 067では新しいAsciiDoc記法を追加しない。性能改善を推測で主張せず、既存の走査量上限とproperty
 testで退行がないことを確認する。
 
 == 実装結果

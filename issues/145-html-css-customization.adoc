@@ -22,7 +22,7 @@ CSSを保持または出力するfieldはない。入力由来の`style`属性�
   `<style>`を出力する方式を比較する。fragmentではHTMLへCSSを混在させず、外部style assetを返すAPIも評価する。
 * CSS本文とURLのサイズ上限、URL policy、HTML escape、重複排除および出力順を固定する。
 * CLI、WASM、LSPの各consumerが同じ設定モデルを利用し、入力属性の`style`や任意classの通過を復活させない。
-* CSS配布方法（埋め込み、外部asset、標準theme）と契約versionへの影響を文書化する。
+* CSS配布方法（埋め込み、外部asset、標準theme）と仕様versionへの影響を文書化する。
 
 == 優先度
 
@@ -31,7 +31,7 @@ CSSを保持または出力するfieldはない。入力由来の`style`属性�
 
 == 完了条件
 
-* 採用するCSS設定モデルとfragment／completeの出力契約をADRへ記録する。
+* 採用するCSS設定モデルとfragment／completeの出力仕様をADRへ記録する。
 * Core、CLIおよびWASMで同一設定を使い、CSSの注入経路と上限をテストで固定する。
 * CSSなしの既定出力が既存fixtureと一致し、埋め込みCSS、stylesheet URL、不正URL、上限超過およびHTML escapeを検証する。
 * `html-contract.adoc`、CLI／WASM利用文書、互換性表およびrelease manifestを更新する。
@@ -45,4 +45,4 @@ CSSを保持または出力するfieldはない。入力由来の`style`属性�
 再検査してHTML escapeする。既定上限は本文1 MiB／URL 2,048 byte／16件で、超過・拒否sourceは
 診断とともに出力しない。CLIは`--complete`／`--css`／`--css-url`、WASMは`documentMode`／`stylesheets`で
 同一設定を共有する。stylesheetなしの既定出力は従来fixtureとbyte単位で一致し、注入経路はcore・CLI・
-WASMの各テストで固定した。公開契約は未公開のversion 5に含める。
+WASMの各テストで固定した。公開仕様は未公開のversion 5に含める。

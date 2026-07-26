@@ -157,7 +157,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   const planRun = step(releaseJobs.plan, (item) => item.id === "plan", "release plan step is missing").run;
   requireCommand(planRun, 'candidate_tag="v$(jq -r .packageVersion release-manifest.json)"', "non-tag candidate plans must use the release train version");
   requireCommand(planRun, 'tools/run-pinned-dist.sh plan --tag="$candidate_tag"', "every dist plan must use the locked cargo-dist closure");
-  const tagRun = step(releaseJobs.plan, (item) => item.name === "Verify publication tag is the current main commit", "publication tag check is missing").run;
+  const tagRun = step(releaseJobs.plan, (item) => item.name === "Publication tag verification against the current main commit", "publication tag check is missing").run;
   requireCommand(tagRun, 'test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"', "publication tags must identify the current main commit");
   const candidateLookup = step(releaseJobs.plan, (item) => item.id === "candidate", "successful main candidate lookup is missing").run;
   requireCommand(candidateLookup, 'actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA', "tag publication must select a successful main workflow for the same commit");
@@ -167,7 +167,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   for (const jobName of ["plan", "build-native"]) {
     step(releaseJobs[jobName], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), `${jobName} must install the locked Nix environment`);
   }
-  const nativeBuildRun = step(releaseJobs["build-native"], (item) => item.name === "Build target archives", "native build step is missing").run;
+  const nativeBuildRun = step(releaseJobs["build-native"], (item) => item.name === "Target archive builds", "native build step is missing").run;
   requireCommand(nativeBuildRun, "nix develop .#ci -c tools/run-pinned-dist.sh build", "native archives must use the locked cargo-dist closure and locked Nix toolchain");
   if (release.includes("rustup target add")) {
     fail("release builds must not bypass the locked Nix Rust toolchain through rustup");
@@ -176,16 +176,16 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
     fail("release workflow must not execute a network-fetched cargo-dist installer");
   }
 
-  const aggregateRun = step(releaseJobs["verify-candidate"], (item) => item.name === "Generate and verify metadata for the complete candidate", "candidate metadata step is missing").run;
+  const aggregateRun = step(releaseJobs["verify-candidate"], (item) => item.name === "Complete candidate metadata generation and verification", "candidate metadata step is missing").run;
   requireCommand(aggregateRun, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");
   requireCommand(aggregateRun, "node tools/release-metadata.mjs verify artifacts", "the aggregate job must verify exact release metadata");
-  const globalStep = step(releaseJobs["build-global"], (item) => item.name === "Build and verify browser and Zed archives", "global artifact step is missing");
+  const globalStep = step(releaseJobs["build-global"], (item) => item.name === "Browser and Zed archive build and verification", "global artifact step is missing");
   const globalRun = globalStep.run;
   requireCommand(globalRun, "nix develop .#ci -c cargo make release-global-artifacts", "uploaded browser and Zed archives must pass their complete artifact gate");
-  const installRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Install and completely remove the candidate", "installation E2E step is missing").run;
+  const installRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Candidate installation and complete removal", "installation E2E step is missing").run;
   requireCommand(installRun, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
   step(releaseJobs["installation-e2e"], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), "installation E2E must install the locked Nix environment");
-  const nixInstallRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Build and run the Nix package", "Nix package acceptance step is missing").run;
+  const nixInstallRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Nix package build and execution", "Nix package acceptance step is missing").run;
   requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.public-contract"', "candidate runners must verify the public flake output contract");
   requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.package-smoke"', "both Linux architectures must build and run the Nix package");
   requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.nixos-package-evaluation"', "both Linux architectures must evaluate the NixOS installation contract");
@@ -196,7 +196,7 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
       reusedDownload.with?.["run-id"] !== "${{ needs.plan.outputs.candidate_run_id }}") {
     fail("tag publication must download the named candidate from the selected main run");
   }
-  const reuseRun = step(releaseJobs["reuse-candidate"], (item) => item.name === "Verify the reused candidate", "tag candidate verification is missing").run;
+  const reuseRun = step(releaseJobs["reuse-candidate"], (item) => item.name === "Reused candidate verification", "tag candidate verification is missing").run;
   requireCommand(reuseRun, 'node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"', "tag publication must verify candidate metadata against the tag commit");
 
   const uploads = (releaseJobs["verify-candidate"]?.steps ?? []).filter((item) => item.uses?.startsWith("actions/upload-artifact@"));
@@ -220,14 +220,14 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   requireTimeout(releaseJobs["installation-e2e"], 15, "candidate installation and Nix package acceptance must have a timeout");
   requireTimeout(releaseJobs["reuse-candidate"], 15, "tag candidate reuse must have a timeout");
   requireTimeout(publishJob, 20, "publication must have a timeout and cleanup path");
-  const qualityStep = step(contractJobs.verify, (item) => item.name === "Run the source quality gate", "source quality step is missing");
+  const qualityStep = step(contractJobs.verify, (item) => item.name === "Source quality gate execution", "source quality step is missing");
   const qualityRun = qualityStep.run;
   requireCommand(qualityRun, "nix develop .#ci -c cargo make quality", "the reusable quality workflow must run the source quality gate");
-  const dependencyRun = step(contractJobs.dependencies, (item) => item.name === "Audit dependency boundaries", "dependency governance step is missing").run;
+  const dependencyRun = step(contractJobs.dependencies, (item) => item.name === "Dependency boundary audit", "dependency governance step is missing").run;
   requireCommand(dependencyRun, "nix develop .#ci -c cargo make dependency-governance", "quality must audit every dependency boundary");
-  const fuzzRun = step(contractJobs.fuzz, (item) => item.name === "Compile and explore fuzz targets", "fuzz quality step is missing").run;
+  const fuzzRun = step(contractJobs.fuzz, (item) => item.name === "Fuzz target compilation and exploration", "fuzz quality step is missing").run;
   requireCommand(fuzzRun, "nix develop .#ci -c cargo make fuzz", "quality must compile and explore fuzz targets");
-  const nixRun = step(contractJobs["nix-package"], (item) => item.name === "Build and run the Nix package", "Nix package quality step is missing").run;
+  const nixRun = step(contractJobs["nix-package"], (item) => item.name === "Nix package build and execution", "Nix package quality step is missing").run;
   requireCommand(nixRun, "nix develop .#ci -c cargo make nix-package-check", "quality must verify the Nix package on pull requests");
   if (contractJobs["nix-package"].if !== "inputs.run_nix_package") fail("Nix package quality must be controlled by an explicit caller input");
   if (contractJobs.msrv) fail("quality must not retain an MSRV-only job");

@@ -169,8 +169,8 @@ test("tag publication must reuse and verify the selected main candidate", () => 
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        '      - name: Verify the reused candidate\n        run: node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"',
-        '      - name: Verify the reused candidate\n        run: true',
+        '      - name: Reused candidate verification\n        run: node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"',
+        '      - name: Reused candidate verification\n        run: true',
       ),
     }),
     /verify candidate metadata/,

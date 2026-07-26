@@ -4,7 +4,7 @@
 
 == 目的
 
-bibliography entry、xref text、back referenceおよび構造診断の契約を全consumerで網羅的に固定する。
+bibliography entry、xref text、back referenceおよび構造診断の仕様を全consumerで網羅的に固定する。
 
 == 作業
 

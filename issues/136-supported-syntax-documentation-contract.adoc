@@ -1,4 +1,4 @@
-= 対応構文文書と実装契約の同期
+= 対応構文文書と実装仕様の同期
 :status: completed
 :depends-on:
 

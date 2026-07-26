@@ -10,7 +10,7 @@ RC.5以後に追加したZed Tree-sitter構文色付けとLSP Semantic Tokens責
 == 作業
 
 * workspace、Zed、browser、Release manifestおよび配布設定を`0.1.0-rc.6`へ同期する。
-* 6種類のコア公開契約versionはIssue 111で凍結した値を維持する。
+* 6種類のコア公開仕様のversionはIssue 111で凍結した値を維持する。
 * `cargo make release-gate`、MSRV、依存監査、Linux両architectureのcandidateおよび導入E2Eを完了する。
 * mainのcandidate成功後にannotated tag `v0.1.0-rc.6`を作り、protected Environmentを経てprereleaseを公開する。
 * 公開9 asset、checksum、metadata、SBOM、attestation、source commitおよびNix flakeを再照合する。
@@ -39,7 +39,7 @@ prereleaseには予定した9 assetだけが公開された。
 * 公開API上で9 assetそれぞれにGitHub artifact attestationが1件存在した。
 * x86_64 Linuxのclean導入E2EでCLI、LSP、browserおよびZed archiveの導入、version照合と削除が成功した。
   aarch64 Linuxのcandidate・Nix検証は同じtag workflowのmatrixで成功した。
-* source commitを固定した公開Nix flakeの`--version --json`がpackage versionと凍結済み契約versionを返した。
+* source commitを固定した公開Nix flakeの`--version --json`がpackage versionと凍結済み仕様versionを返した。
 
 残作業は、公開Zed archiveを隔離profileへ導入し、managed LSP、基本色付け、Semantic Tokens、light／dark themeおよび
 既存LSP機能を実機で受け入れることだけである。
@@ -53,7 +53,7 @@ Code Action、Format、Hover、補完、DefinitionおよびFind All References�
 == 完了条件
 
 `v0.1.0-rc.6`がprereleaseとして公開され、9 assetと公開flakeが同じsource commit、package versionおよび
-凍結済み契約versionを持つ。公開Zed archiveでIssue 110の色付けと既存LSP機能を確認し、stableを阻害する不一致がない。
+凍結済み仕様versionを持つ。公開Zed archiveでIssue 110の色付けと既存LSP機能を確認し、stableを阻害する不一致がない。
 
 == 範囲外
 

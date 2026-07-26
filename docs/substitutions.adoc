@@ -82,7 +82,7 @@ HTMLその他のバックエンドは元ソースを再解析したり、属性�
 |inline／block passthrough
 |`Pass`
 |なし
-|raw出力せずエスケープ。raw HTMLは別の明示的な権限契約がない限り禁止
+|raw出力せずエスケープ。raw HTMLは別途明示的に許可しない限り禁止
 
 |リンク・xrefの表示文字列
 |`Normal`

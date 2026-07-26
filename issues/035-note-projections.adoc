@@ -12,7 +12,7 @@ HTMLとは独立して、ホストが検索や参照索引へ利用できる情�
 * タイトル、アンカー、通常リンク、xrefおよび検索用可読テキストの汎用projectionを定義する。
 * 参照元`SourceId`、範囲、`ReferenceKey`および任意の解決結果からなるedge表現を定義する。
 * コード、数式、属性行および不可視構文の検索テキスト上の扱いを仕様化する。
-* 抽出結果に元範囲とprojection契約versionを保持する。
+* 抽出結果に元範囲とprojection仕様versionを保持する。
 * HTMLとprojectionが同じ`Analysis`を読み、独自に再解析しない。
 * 順序、重複処理およびシリアライズ表現を固定する。
 
@@ -39,13 +39,13 @@ cargo test --workspace searchable_text
 
 == 実装結果
 
-`adocweave::projection`に契約version 1の`DocumentProjection`を追加した。一つの
+`adocweave::projection`に仕様version 1の`DocumentProjection`を追加した。一つの
 `Analysis`からタイトル、参照先、通常リンク、統一参照edgeおよび検索テキストを抽出し、
 安定JSONを生成する。`ReferenceKey`には文書内参照を表す`Local`を追加し、文書内・文書間・
 任意スキーム参照を同じedge型で表現する。
 
 検索テキストはproseとcodeの元範囲付きsegmentを保持する。コードは対象、数式、属性行、
 不可視アンカーおよび未対応ブロックは対象外とした。規範は
-xref:../docs/projections.adoc[汎用文書projection契約]に記載する。
+xref:../docs/projections.adoc[汎用文書projection仕様]に記載する。
 
-この公開契約追加と`ReferenceKey`の破壊的拡張により`CORE_API_VERSION`を5へ更新した。
+この公開仕様の追加と`ReferenceKey`の破壊的拡張により`CORE_API_VERSION`を5へ更新した。

@@ -82,8 +82,8 @@ ASTは参照全体、ターゲット、文書表記、スキーム、locator、�
 `render_with_inputs()`へ渡した場合だけリンクにする。未解決、解決失敗または
 URLポリシー違反では非リンク表現と位置付き診断を返す。
 
-Resolver契約、note UUID、失敗分類およびキャッシュ単位は
-xref:reference-resolution.adoc[cross reference解決契約]に定義する。
+Resolver仕様、note UUID、失敗分類およびキャッシュ単位は
+xref:reference-resolution.adoc[cross reference解決仕様]に定義する。
 
 == 不完全入力
 

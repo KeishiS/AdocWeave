@@ -16,7 +16,7 @@
 * referenceとresourceの解決結果をrange付き`RenderInputs`へ統合する。
 * 欠落、拒否、失敗および安全なfallbackのbackend非依存規則を定義する。
 * renderer側でもhost提供URLを再検証し、未使用または重複する結果を決定的に扱う。
-* HTMLと将来backendが同じ入力契約を利用できるようにする。
+* HTMLと将来backendが同じ入力仕様を利用できるようにする。
 * security、snapshot、native／WASM同値fixtureと文書を更新する。
 
 == 完了条件
@@ -30,4 +30,4 @@ rendererがI/Oやresolverを呼ばず、同じ解析と`RenderInputs`から決�
 * 欠落、型付き失敗、URL拒否、重複および未使用入力の決定的診断と安全なfallbackを実装した。
 * 入力をrange indexへ一度だけ構築し、node数と結果数の積になる照合を避けた。
 * WASM APIにも同じtagged outcomeを追加し、range検証、security試験およびnative／WASM同値fixtureを追加した。
-* 詳細はxref:../docs/render-inputs.adoc[解決済みrenderer入力契約]へ記録した。
+* 詳細はxref:../docs/render-inputs.adoc[解決済みrenderer入力仕様]へ記録した。

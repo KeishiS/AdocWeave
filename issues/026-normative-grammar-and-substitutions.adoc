@@ -42,7 +42,7 @@ cargo make test-grammar
   `fixtures/grammar/ambiguous.*`と統合テストで固定している。
 - xref:../docs/substitutions.adoc[Core 0.1置換モデル]の全対応コンテキストについて、
   semantic ASTからHTMLを生成し、raw入力を安全化する横断テストがある。
-- 将来の構文と置換コンテキストを追加する際の必須契約を規範文書に定義している。
+- 将来の構文と置換コンテキストを追加する際の必須仕様を規範文書に定義している。
 - `cargo make verify`が成功する。
 
 == 依存関係

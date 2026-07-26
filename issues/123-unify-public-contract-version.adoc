@@ -1,4 +1,4 @@
-= 公開契約versionの単一化
+= 公開仕様のversionの単一化
 :status: completed
 :depends-on: 118
 
@@ -12,7 +12,7 @@
 
 * Rust core、HTML、projection、conformance、WASM、Web Workerおよびrelease manifestを単一versionへ移行する。
 * package versionとは独立に、cache、snapshotおよびWASM要求境界を一つのversionで無効化する。
-* version catalog・文書・governance testを単一契約の基準へ再設計する。
+* version catalog・文書・governance testを単一仕様の基準へ再設計する。
 
 == 検証
 

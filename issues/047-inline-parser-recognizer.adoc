@@ -58,7 +58,7 @@ label診断を伝播し、escaped macroではliteral内容の診断を採用し�
 
 nativeとWASMの比較はruntime adapter差分を検出するが、同じRustコアに共有された意味バグの
 独立なoracleではない。さらに公開ASTへ直接`Serialize`をderiveしたschemaは、semantic APIと
-適合性契約を不要に密結合する。Issue 047を再開し、単一走査化、型付きmacro token、明示的な
+適合性仕様を不要に密結合する。Issue 047を再開し、単一走査化、型付きmacro token、明示的な
 version付きconformance DTOおよび独立golden fixtureまでを残作業とする。
 
 macro tokenを`FormulaToken`、`ReferenceToken`および`LinkToken`へ分割し、異なる構文familyを

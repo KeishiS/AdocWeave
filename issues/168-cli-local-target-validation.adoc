@@ -48,7 +48,7 @@ filesystem accessは正規化済みpathごとに一度だけ行う。検査件�
 
 `--include`はresourceを読み込んで展開するoption、`--local-targets`は参照先の実在だけを検査する
 optionとして責務を分ける。両方を指定した場合、include targetを重複して読み込まない。
-`include::missing.adoc[optional]`の扱いはpreprocessorのoptional notice契約と一致させる。
+`include::missing.adoc[optional]`の扱いはpreprocessorのoptional notice仕様と一致させる。
 
 == CIへの統合
 

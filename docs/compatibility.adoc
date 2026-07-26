@@ -33,7 +33,7 @@ xref:grammar.adoc[AdocWeaveの文法]への適合であり、AsciiDoc全体へ�
 
 [cols="2,2,2",options="header"]
 |===
-|機能 |AsciiDoc参照動作 |AdocWeave現行契約
+|機能 |AsciiDoc参照動作 |AdocWeave現行仕様
 
 |Constrained strong
 |単一の`*`ペア
@@ -68,14 +68,14 @@ xref:grammar.adoc[AdocWeaveの文法]への適合であり、AsciiDoc全体へ�
 |未対応
 |===
 
-AdocWeaveのconstrained境界条件は、現行package version固有の明示的契約である。
+AdocWeaveのconstrained境界条件は、現行package version固有の明示的仕様である。
 識別子中の記号を誤認しないよう設計しているが、策定中のAsciiDoc言語に含まれる全境界例と
 等価であることはまだ証明していない。
 
 Unconstrained形式は単語、CJK、emojiおよび句読点の境界に依存せず認識する。同種の
 マーカーが連続するrunは左から2文字ずつpairへ分割する。この規則により、隣接する
 `**one****two**`は二つのstrong spanになる。空pairは通常テキストとして保持する。
-この隣接runと不完全pairの回復規則はAdocWeaveの決定的な部分集合契約であり、AsciiDocの
+この隣接runと不完全pairの回復規則はAdocWeaveの決定的な部分集合仕様であり、AsciiDocの
 すべてのprocessorにおける曖昧な入れ子結果との同一性までは保証しない。
 
 == バックスラッシュエスケープ
@@ -133,14 +133,14 @@ AdocWeaveは現在、次の意味上の対応を実装する。
   安全なpassthrough意味ノードを扱う。
 
 コンテキストごとの置換段階は型で固定している。任意の`subs`属性による段階の追加・削除と、
-未対応macro固有の置換は今後の範囲である。実装済み契約は
+未対応macro固有の置換は今後の範囲である。実装済み仕様は
 xref:substitutions.adoc[Core置換モデル]で定義する。
 
 == ブロックと文書の互換性
 
 [cols="2,2,2",options="header"]
 |===
-|領域 |AsciiDoc言語 |AdocWeave現行契約
+|領域 |AsciiDoc言語 |AdocWeave現行仕様
 
 |文書ヘッダー
 |タイトル、著者、改訂、属性

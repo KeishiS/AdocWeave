@@ -20,7 +20,7 @@ source blockの言語と本文を分離したまま、許可した言語だけ�
 * HTML renderer、projection、WASM DTOおよびbrowser libraryへ同じ判定結果を伝播する。
 * 空文字、Unicode、空白、quote、control文字および長大な言語名をfixture化する。
 * 許可言語、拒否言語および言語指定なしのnative／WASM同値testを追加する。
-* source block、HTML契約およびextension境界の文書を更新する。
+* source block、HTML仕様およびextension境界の文書を更新する。
 
 == 完了条件
 

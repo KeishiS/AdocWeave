@@ -97,7 +97,7 @@ Rustの型が同じであることだけをruntime一致の代わりにせず、
 比較する。
 
 `attributes-anchors-links-references-lists-stem` caseはAST、診断、projection、symbolおよびHTMLの
-固定goldenを持つ。runnerの出力から試験時に期待値を再生成してはならない。意図した契約変更では
+固定goldenを持つ。runnerの出力から試験時に期待値を再生成してはならない。意図した仕様変更では
 各差分をレビューし、`contractImpact`とpackage versionへの影響を判定してから期待ファイルを更新する。
 
 == Formatterの不変条件

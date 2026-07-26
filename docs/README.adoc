@@ -3,7 +3,7 @@
 このディレクトリには、利用方法、対応書式、アプリケーションへの組み込み、開発方法を記載する。
 用途に応じて次の入口を参照する。
 
-== 文書を書く・変換する
+== 文書の作成と変換
 
 * xref:command-line.adoc[コマンドラインの使い方]
 * xref:syntax-support.adoc[対応している書式]
@@ -15,28 +15,26 @@
 * xref:diagnostics.adoc[問題の見方]
 * xref:formatting.adoc[整形]
 
-== エディター・Webアプリで使う
+== エディター・Webアプリでの利用
 
 * xref:language-server.adoc[エディター連携]
-* xref:zed-development.adoc[Zedで開発版を試す]
-* xref:browser-library.adoc[ブラウザーで使う]
+* xref:zed-development.adoc[Zedへの開発版導入]
+* xref:browser-library.adoc[ブラウザーでの利用]
 * xref:wasm-worker.adoc[WebAssemblyとWeb Worker]
 * xref:web-host-adapter.adoc[Webアプリへの組み込み]
 * xref:core-profile.adoc[RustコアAPIと対応範囲]
 * xref:extensions.adoc[利用側アプリの独自機能]
 
-== 開発する・配布する
+== 開発と配布
 
-* xref:nix-installation.adoc[開発環境を用意する]
+* xref:nix-installation.adoc[開発環境の準備]
 * xref:testing.adoc[テストの実行]
-* xref:git-workflow.adoc[Git branchの運用]
 * xref:continuous-integration.adoc[継続的インテグレーション]
 * xref:release-installation.adoc[インストールと更新]
-* xref:release-checklist.adoc[リリース前の確認]
-* xref:release-workflow.adoc[GitHub Releaseの公開手順]
-* xref:release-distribution.adoc[配布assetの契約]
+* xref:../CONTRIBUTING.adoc#release-checklist[リリース前の確認]
+* xref:release-distribution.adoc[配布assetの仕様]
 * xref:release-integrity.adoc[checksum、SBOM、provenance]
-* xref:native-release.adoc[Native archiveの契約]
+* xref:native-release.adoc[Native archiveの仕様]
 * xref:roadmap.adoc[今後の予定]
 
 == 詳しい仕様と設計
@@ -44,9 +42,8 @@
 ここから先は、AdocWeaveを組み込むライブラリ利用者や、実装を変更する人向けです。
 
 * xref:compatibility.adoc[AsciiDocとの違い]
-* xref:current-contract.adoc[公開している仕様と移行情報]
-* xref:upgrade-0-8.adoc[v0.8.0への移行]
-* xref:upgrade-0-7.adoc[v0.7.0への移行]
+* xref:current-contract.adoc[公開している仕様]
+* https://github.com/KeishiS/AdocWeave/releases[version固有の変更と移行手順]
 * xref:core-profile.adoc[対応範囲の定義]
 * xref:architecture.adoc[内部の仕組み]
 * xref:grammar.adoc[文法の詳細]

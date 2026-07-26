@@ -17,7 +17,7 @@ inline診断を持つ。backendはsource文字列を再解析せず、このinli
 * 属性参照、強調、link macroを含むtitle/captionがHTML、projection、canonical ASTおよびWASMで同じ意味を持つ。
 * table captionとadmonition titleが共通presentationを利用する。
 * 未解決属性・不完全inlineの診断範囲がtitle sourceへ対応する。
-* 旧raw caption契約を維持するadapterは残さない。
+* 旧raw caption仕様を維持するadapterは残さない。
 
 == 実施結果
 

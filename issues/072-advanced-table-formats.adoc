@@ -34,4 +34,4 @@ AsciiDoc style cellはtop-levelと個別recognizer／builderおよび親budget�
 listおよび対応済み区切り付きblockをHTML、projection、lint、LSP共通walkerから到達できる。ただしline
 dispatch自体はcell用に限定されており、完全なblock sequenceへの統合はIssue 089で追跡する。native／WASM conformance case、
 Formatterのbyte保持、HTML安全出力、cell duplicationを含む形式別testを追加し、公開Core／HTML／conformance
-契約versionを更新した。対応範囲と残る表示属性はxref:../docs/tables.adoc[表の対応仕様]へ記録した。
+仕様versionを更新した。対応範囲と残る表示属性はxref:../docs/tables.adoc[表の対応仕様]へ記録した。

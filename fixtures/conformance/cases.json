@@ -42,7 +42,7 @@
       "sourceFile": "../stem/substitutions.adoc",
       "expectedHtmlFile": "../stem/substitutions.html",
       "compatibility": "approved-adocweave-output",
-      "rationale": "数式は評価せずopaqueなLaTeXとして安全に出力するAdocWeave契約を固定する",
+      "rationale": "数式は評価せずopaqueなLaTeXとして安全に出力するAdocWeave仕様を固定する",
       "contractImpact": "none"
     },
     {
@@ -267,7 +267,7 @@
       "options": { "limits": { "maxInputBytes": 4 } },
       "expectedErrorCode": "limit-exceeded",
       "compatibility": "host-safety-contract",
-      "rationale": "処理上限はAsciiDoc意味論ではなく全runtime共通のホスト安全契約である",
+      "rationale": "処理上限はAsciiDoc意味論ではなく全runtime共通のホスト安全仕様である",
       "contractImpact": "none"
     },
     {

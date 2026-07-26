@@ -1,6 +1,6 @@
 = Zed拡張によるLanguage Serverの解決
 
-この文書は、AdocWeave Zed拡張が起動する`adocweave-lsp`の選択、取得、完全性検証およびcache契約を定義する。
+この文書は、AdocWeave Zed拡張が起動する`adocweave-lsp`の選択、取得、完全性検証およびcache仕様を定義する。
 公開Extension Galleryへの登録は行わず、開発拡張として導入した場合にも同じ解決器を利用する。
 
 == 解決順序
@@ -86,7 +86,7 @@ cargo make test-zed
 cargo make check-zed-wasm
 ----
 
-単体testはmanifest契約、hash不一致、XZ/TAR抽出、cache改変および更新rollbackを検査する。cleanなZed user dataを
+単体testはmanifest仕様、hash不一致、XZ/TAR抽出、cache改変および更新rollbackを検査する。cleanなZed user dataを
 使う手動試験では、`PATH` overrideを外して初回自動取得を確認した後、networkを切断して同じcacheから起動する。
 cache内binaryを改変した試験では、offline状態で起動せず、online状態で再取得することを確認する。
 
@@ -95,4 +95,4 @@ cache内binaryを改変した試験では、offline状態で起動せず、onlin
 * https://zed.dev/docs/extensions/developing-extensions[Zed公式：Developing Extensions]
 * https://docs.rs/zed_extension_api/0.7.0/zed_extension_api/[Zed Extension API 0.7.0]
 * xref:release-integrity.adoc[Release assetの完全性、SBOMおよびprovenance]
-* xref:zed-development.adoc[Zedへ開発版を導入する]
+* xref:zed-development.adoc[Zedへの開発版導入]

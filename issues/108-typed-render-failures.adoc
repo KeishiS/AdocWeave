@@ -21,7 +21,7 @@ Issue 107の不変条件を公開型だけでは保証できない。
 * projectionの失敗JSONは`status`と`kind`だけを出力する。
 * resolver実装の内部例外、監査情報およびlocalized UI messageはhostが別の非公開log／状態として所有する。
 * referenceとresourceで同じ規則を適用し、一方だけに自由形式の迂回路を残さない。
-* WASM入力予算からfailure messageを除き、未知の`message`フィールドは拒否する。
+* WASM入力サイズの算定対象からfailure messageを除き、未知の`message`フィールドは拒否する。
 
 == 作業
 
@@ -29,7 +29,7 @@ Issue 107の不変条件を公開型だけでは保証できない。
 * WASM DTO、TypeScript宣言、fixtureおよびprojection JSONを同期する。
 * 任意messageを含むWASM入力が拒否され、kind-only失敗から機密文字列が全出力へ現れないことを検証する。
 * 実browser archiveを使うinstallation E2Eで、`displayText`、明示label優先およびfailure非漏洩を実行する。
-* core API、projection、conformanceおよびWASM APIの契約versionを同一変更で更新する。
+* core API、projection、conformanceおよびWASM APIの仕様versionを同一変更で更新する。
 
 == 完了条件
 
@@ -49,5 +49,5 @@ reference projectionは`status`と`kind`だけを出力し、旧messageを含む
 共有conformanceへkind-only失敗を追加し、実browser archiveを展開するinstallation E2Eで`displayText`、
 明示label優先、プレーンテキストescapeおよび失敗projectionのフィールド集合を実行確認する。
 
-Core API、Projection、ConformanceおよびWASM APIの契約versionは4へ更新した。HTML出力の要素・属性・
-表示規則は変わらないため、HTML契約versionは3を維持した。
+Core API、Projection、ConformanceおよびWASM APIの仕様versionは4へ更新した。HTML出力の要素・属性・
+表示規則は変わらないため、HTML仕様versionは3を維持した。

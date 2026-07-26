@@ -175,7 +175,7 @@ directoryを選ぶ。source repositoryのcheckoutは不要である。
 初回buildではZedがRust extension用toolchainと、固定commitの`tree-sitter-asciidoc` grammarを取得する。初回build後は
 拡張のworking directoryにある検証済みLSP cacheをofflineでも利用できる。初回から完全offlineで導入できるという意味では
 ない。Zed設定で明示したbinaryや`PATH`上のbinaryはmanaged binaryより優先されるため、公開LSPの受け入れ時はoverrideを
-外す。動作確認はxref:release-checklist.adoc[Release受け入れchecklist]に従う。
+外す。動作確認はxref:../CONTRIBUTING.adoc#release-checklist[Release checklist]に従う。
 
 更新時は新versionのZed directoryを別に展開し、dev extensionをそのdirectoryへ再設定する。旧directoryは、新versionの
 managed LSP取得とeditor機能を確認するまで保持する。
@@ -214,7 +214,7 @@ Extension Galleryの`Install Dev Extension`または`zed: install dev extension`
 `$TEST_ROOT/adocweave-zed-$VERSION`を選ぶ。`extension.toml`を直接含むdirectoryが選択対象である。初回buildと
 managed LSP取得にはnetwork、`rustup`、`wasm32-wasip2` target、GitおよびC compilerが必要である。
 
-AsciiDoc文書を開き、xref:release-checklist.adoc[Release受け入れchecklist]の基本構文色付け、診断、Outline、Code Action、Format、
+AsciiDoc文書を開き、xref:../CONTRIBUTING.adoc#release-checklist[Release checklist]の基本構文色付け、診断、Outline、Code Action、Format、
 Hover、補完、DefinitionおよびFind All Referencesを確認する。基本色付けはSemantic Tokensを`off`にしても残り、
 light／darkの標準themeで構文を判別できることを確認する。`zed: open log`では、対象Releaseと同じversionの
 managed LSP取得・起動に失敗がないことを確認する。Outlineが表示されない場合は隔離profileの設定へ次を追加する。

@@ -16,7 +16,7 @@ Linux版Zedでの初期受け入れ確認は移行前の実装で完了してい
 
 Issue 045で、既存機能の意味処理とfixtureを維持しながら、protocol基盤を
 https://github.com/oxalica/async-lsp[`async-lsp`]、実行runtimeを
-https://tokio.rs/[Tokio]へ破壊的に移行した。この文書は現在の実装契約を表す。
+https://tokio.rs/[Tokio]へ破壊的に移行した。この文書は現在の実装仕様を表す。
 
 Issue 162では
 https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/[
@@ -55,7 +55,7 @@ Zedまたは他のLSP client
 * 外部I/Oを行わない決定的な`Engine::analyze`
 
 `async-lsp`、TokioおよびLSP型をコアcrateの依存関係または公開APIへ持ち込んではならない。
-Issue 036のホスト実行契約も特定async runtimeへ依存しない。
+Issue 036のホスト実行仕様も特定async runtimeへ依存しない。
 
 == 通知と要求
 
@@ -177,7 +177,7 @@ serverはclientが宣言していない追加表現を送らない。
 
 [cols="2,3",options="header"]
 |===
-|client capability |応答契約
+|client capability |応答仕様
 
 |Hover `contentFormat`
 |clientの優先順でMarkdownまたはPlain Textを選ぶ。未指定時はlegacy plain文字列を返す。

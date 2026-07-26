@@ -20,7 +20,7 @@ Language Serverだけへ依存させない。基本色付けはZed拡張のTree-
 
 == 実装方針
 
-=== Grammar契約
+=== Grammar仕様
 
 * `extension.toml`に固定した`tree-sitter-asciidoc` commitの`node-types.json`と既存queryを基準としてnode名を列挙する。
 * queryは固定commitに存在するnodeだけを参照し、推測したnode名やwildcardで誤検出を隠さない。
@@ -64,7 +64,7 @@ LSPからは見出しの構文色付けを除き、リンク、参照、明示an
 
 Zed実機導入で、injection queryに`@content`と`@injection.content`を混在できないこと、Zed themeが解決するcapture名は
 `title`、`emphasis.strong`、`emphasis`等のZed公開集合であること、固定injectionはgrammar IDではなく登録済みlanguage名を
-参照することを確認した。これらをquery契約検査へ追加し、inline言語を非表示の埋め込み専用languageとして登録した。
+参照することを確認した。これらをquery仕様検査へ追加し、inline言語を非表示の埋め込み専用languageとして登録した。
 
 2026-07-23にLinux版Zedへ開発拡張を再導入し、文書がAsciiDocとして読み込まれ、見出し、source block、strongおよび
 emphasisへTree-sitter highlightが適用されることを確認した。`semantic_tokens = combined`でも不自然な競合はなく、
@@ -72,7 +72,9 @@ One Light／One Darkの双方で構文を判別できた。自動試験と実機
 
 == 文書
 
-`docs/zed-development.adoc`と`docs/release-checklist.adoc`へ、基本highlight、LSP Semantic Tokens、確認fixtureおよび
+xref:../docs/zed-development.adoc[Zed開発文書]と
+xref:../CONTRIBUTING.adoc#release-checklist[Release checklist]へ、
+基本highlight、LSP Semantic Tokens、確認fixtureおよび
 問題切り分けを記載する。Zed拡張archiveの導入文書にも、色付けを受け入れ項目として追加する。
 
 == 完了条件

@@ -1,7 +1,7 @@
-= Native CLI・Language Server配布契約
+= Native CLI・Language Server配布仕様
 
 この文書は、Linux向けCLIおよびLanguage Server archiveのbuild・内容・検証規則を定義する。
-共通のrelease train、target、asset名および配布先はxref:release-distribution.adoc[GitHub Releases配布契約]に従う。
+共通のrelease train、target、asset名および配布先はxref:release-distribution.adoc[GitHub Releases配布仕様]に従う。
 
 == Build profile
 

@@ -1,4 +1,4 @@
-= ADR 0006: stable tagへ直接公開する
+= ADR 0006: stable tagへの直接公開
 :status: accepted
 
 == 文脈

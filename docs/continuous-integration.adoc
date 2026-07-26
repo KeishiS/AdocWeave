@@ -39,7 +39,7 @@ Dependency governance::
 
 Source quality::
 Chromiumを含まないNixの`ci` shellで`cargo make quality`を実行する。format、Clippy、全test、WASM、Zed、
-TypeScript、cross-runtime、docsおよびrelease契約を含む。
+TypeScript、cross-runtime、docsおよびrelease仕様を含む。
 
 Fuzz quality::
 `fuzz-check`とshort fuzzを独立jobで実行する。source qualityと並列化するが、publishは両方の成功を必要とする。
@@ -50,7 +50,7 @@ Linux x86-64／ARM64のcandidate installation jobへ移し、同じsource build�
 
 Linuxの開発者向けdefault shellは任意の実browser受け入れ用にNix Chromiumを引き続き含む。aarch64 Darwinでは
 対応packageがないため含めない。現行nixpkgsが対応を終了したx86-64 Darwin shellは公開しない。CIでは実browserを起動せず、
-巨大なChromium closureの取得失敗やrunner固有のsandbox差によってRust、CLI、LSPおよび配布契約の検証まで停止することを
+巨大なChromium closureの取得失敗やrunner固有のsandbox差によってRust、CLI、LSPおよび配布仕様の検証まで停止することを
 避ける。Rust toolchain、cargo-distおよび検査toolは`ci` shellでも`flake.lock`に固定する。
 
 Rust toolchainは`flake.lock`で固定したcurrent stableだけを使う。root workspaceとZedの`rust-version`、
@@ -83,7 +83,8 @@ private draftのasset集合とattestationを確認し、最後にdraftを解除�
 
 == Repository設定
 
-branchの作成、pull requestによる統合、`main`とrelease tagの保護はxref:git-workflow.adoc[Git branchの運用]に定義する。
+branchの作成、pull requestによる統合、`main`とrelease tagの運用は
+xref:../CONTRIBUTING.adoc[コントリビューションガイド]に定義する。
 branch protectionまたはrulesetでは、少なくともqualityのsource quality、fuzz quality、Nix package qualityを
 pull requestの必須checkにする。
 dependency governanceも必須checkとし、RustSec取得障害を一時的にskipしてmergeしてはならない。

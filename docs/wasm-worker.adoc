@@ -58,7 +58,7 @@ source／math言語、resource capability、文書modeおよびstylesheetを明�
 `limits`には`ProcessingLimits`の各フィールドをcamelCaseで必要なものだけ指定できる。
 異なるpackage versionは`unsupported-api-version`として拒否され、応答には`expected 0.8.0`を含める。
 
-`renderInputs`はxref:render-inputs.adoc[解決済みrenderer入力契約]のWASM表現であり、
+`renderInputs`はxref:render-inputs.adoc[解決済みrenderer入力仕様]のWASM表現であり、
 `references`と`resources`の各要素へ`sourceStart`、`sourceEnd`およびtagged `outcome`を指定する。
 reference成功outcomeは`{"status":"resolved","href":"...","displayText":"公開タイトル"}`、
 失敗outcomeは`{"status":"failed","kind":"missing-target"}`の形を取る。resource成功outcomeは
@@ -135,5 +135,5 @@ CSPでは少なくとも`worker-src 'self'`を設定し、WASMの読み込み元
 `'wasm-unsafe-eval'`を追加し、`unsafe-eval`全体を許可しない。
 
 生成HTMLは信頼済みDOMではない。ホストは`innerHTML`へ無条件に挿入せず、AdocWeaveの
-HTML契約とホスト側sanitization・表示sandboxを適用する。KaTeX等の数式レンダラーは
+HTML仕様とホスト側sanitization・表示sandboxを適用する。KaTeX等の数式レンダラーは
 別の依存・CSP・入力検証境界として統合する。

@@ -1,39 +1,17 @@
-= 公開している仕様と移行情報
+= 公開している仕様
 
 このページは、AdocWeaveをライブラリやWebAssemblyとして使う人のための入口です。
 公開API、JSONの入出力、HTMLの出力は、すべてリリース番号で対応関係を確認します。
-更新時に何を変更すればよいかは、下の移行ガイドを参照してください。
+version固有の変更内容と移行手順は
+https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notesを参照してください。
 
 作業の経緯はIssue、設計を選んだ理由はADR、今後の予定はロードマップに分けて記録しています。
 
-== 現在のバージョン
+== Version方針
 
-[cols="2,1",options="header"]
-|===
-|項目 |現在値
-|package version |0.8.0
-|===
-
-機械可読な値の基準はxref:../release-manifest.json[release manifest]です。
-v0.8.0はLSP 3.18に沿ったlifecycle、client capability別応答およびworkspace通知購読を含む。
-v0.7.xから更新する場合はxref:upgrade-0-8.adoc[v0.8.0への移行]を参照する。
-
-== 移行ガイド
-
-過去のリリースから更新する利用側アプリは、現在使っている版より後の移行ガイドを番号順にすべて確認してください。
-たとえばv0.1.xからv0.8.0へ更新する場合は、xref:upgrade-0-2.adoc[v0.2.0]、
-xref:upgrade-0-3.adoc[v0.3.0]、xref:upgrade-0-4.adoc[v0.4.0]および
-xref:upgrade-0-5.adoc[v0.5.0]、xref:upgrade-0-6.adoc[v0.6.0]および
-xref:upgrade-0-7.adoc[v0.7.0]、xref:upgrade-0-8.adoc[v0.8.0]への移行をこの順で読みます。各ガイドの必要なRust版と対象リリースの
-release manifestを確認し、保存しているHTMLや検索用の情報を作り直してください。
-
-* xref:upgrade-0-2.adoc[v0.2.0]：表現力のあるリスト、文献、目次の追加
-* xref:upgrade-0-3.adoc[v0.3.0]：表の見出しと表示属性の追加
-* xref:upgrade-0-4.adoc[v0.4.0]：注意書き、引用、詩のブロックの追加
-* xref:upgrade-0-5.adoc[v0.5.0]：公開Rust APIの整理とスタイルシートの追加
-* xref:upgrade-0-6.adoc[v0.6.0]：文書属性を記述した順番と位置の取得
-* xref:upgrade-0-7.adoc[v0.7.0]：見出しID range、公開text model、table cell semantic正規化
-* xref:upgrade-0-8.adoc[v0.8.0]：LSP 3.18 lifecycle、capability negotiation、workspace連携
+現在のpackage versionとRust versionはxref:../release-manifest.json[release manifest]を基準とします。
+サポート対象は最新releaseだけです。CLI、LSP、WASM、browser package、Zed拡張および保存済み成果物を
+異なるpackage versionの間で混在させず、更新時は同じversionへ揃えてHTMLや検索情報を再構築してください。
 
 == 詳しい仕様
 
@@ -49,12 +27,12 @@ release manifestを確認し、保存しているHTMLや検索用の情報を作
 
 * 問題と修正：xref:diagnostics.adoc[問題の見方]
 * 整形：xref:formatting.adoc[整形]
-* 参照、検索、画像などの情報：xref:projections.adoc[文書の構造情報を取り出す]
+* 参照、検索、画像などの情報：xref:projections.adoc[文書構造情報の取得]
 * 見出しと目次：xref:document-structure.adoc[文書の構造]
 * HTMLを作る前に渡す情報：xref:render-inputs.adoc[変換前に利用側アプリが渡す情報]
-* 相互参照：xref:reference-resolution.adoc[相互参照のリンク先を決める]
-* サーバーでの実行：xref:server-execution.adoc[サーバーやアプリで実行する]
-* 独自機能の追加：xref:extensions.adoc[独自機能を追加する]
+* 相互参照：xref:reference-resolution.adoc[相互参照先の決定]
+* サーバーでの実行：xref:server-execution.adoc[サーバーやアプリでの実行]
+* 独自機能の追加：xref:extensions.adoc[独自機能の追加]
 * Webアプリ：xref:web-host-adapter.adoc[Webアプリへの組み込み]
 * エディター：xref:language-server.adoc[エディター連携]
 * WebAssembly：xref:wasm-worker.adoc[WebAssemblyとWeb Worker]
@@ -68,4 +46,5 @@ xref:syntax-support.adoc[対応しているAsciiDocの書式]とxref:compatibili
 このディレクトリは現行仕様を記述する。xref:adr/index.adoc[ADR]は採用済みの長期的な
 設計判断、xref:roadmap.adoc[ロードマップ]はmilestoneごとの計画と完了概要、xref:../issues/README.adoc[Issue]は
 詳細な完了履歴と作業単位を記録する。
+version固有の変更内容と移行手順はGitHub Release Notesを正本とする。
 Issue本文を現行仕様の基準として参照してはならない。

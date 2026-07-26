@@ -14,7 +14,7 @@
 * backend非依存document layoutが既存TOC entryとsection treeを再利用し、指定した深さと番号規則で
   生成物を配置するようにする。HTMLはそのlayoutを描画するだけとする。
 * document symbols、xref ID、LSP hoverおよびJSON projectionが表示用番号の変更で不安定にならないことを保証する。
-* 公開契約への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
+* 公開仕様への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
 
 == 検証
 

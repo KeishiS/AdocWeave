@@ -13,7 +13,7 @@
 * 行の内容範囲、改行を含む範囲、改行種別およびlossless tokenを同じ走査で構築する。
 * 1行のbyte上限をSourceDocument構築中に検査する。
 * SourceLinesとLineIndexの利用側を段階的にSourceDocumentへ移行して削除する。
-* CRLF内部offset、終端改行、空入力、Unicode位置変換の既存契約を維持する。
+* CRLF内部offset、終端改行、空入力、Unicode位置変換の既存仕様を維持する。
 
 == 完了条件
 

@@ -447,13 +447,18 @@ fn release_manifest_is_the_single_release_identity_catalog() {
     .expect("valid release manifest");
     assert_eq!(manifest.package_version, adocweave::VERSION);
 
-    let documentation =
-        fs::read_to_string(root.join("docs/core-profile.adoc")).expect("contract documentation");
-    assert!(documentation.contains(&format!("`VERSION = {}`", manifest.package_version)));
-
-    let current_contract = fs::read_to_string(root.join("docs/current-contract.adoc"))
-        .expect("current contract index");
-    assert!(current_contract.contains(&format!("|package version |{}", manifest.package_version)));
+    for path in ["docs/core-profile.adoc", "docs/current-contract.adoc"] {
+        let documentation =
+            fs::read_to_string(root.join(path)).expect("release identity documentation");
+        assert!(
+            documentation.contains("xref:../release-manifest.json[release manifest]"),
+            "{path} must reference the release manifest"
+        );
+        assert!(
+            !documentation.contains(&manifest.package_version),
+            "{path} must not duplicate the package version"
+        );
+    }
 }
 
 #[test]

@@ -6,7 +6,7 @@
 
 == Versionと互換性
 
-HTML出力は独立した契約versionを持たない。生成元のpackage versionはxref:../release-manifest.json[release manifest]、
+HTML出力は独立した仕様versionを持たない。生成元のpackage versionはxref:../release-manifest.json[release manifest]、
 WASM応答およびprojection JSONの`packageVersion`で識別する。HTML DOM自体へversion値は埋め込まない。
 
 互換性はDOM構造と意味について保証する。属性順、改行および空白もgolden fixtureで固定するが、将来の
@@ -118,7 +118,7 @@ URLは `RenderPolicy` により検査する。既定では `http` と `https` �
 未解決またはポリシー違反の参照はリンクへ変換せず、表示文字列をHTMLエスケープした
 非リンク表現として出力し、位置付き診断を返す。media resourceも同様に、解決済みURLがない場合は
 画像のaltまたはmedia targetを安全なテキストとして出力する。参照・resource解決はレンダラー内で行わない。
-入力契約はxref:render-inputs.adoc[解決済みrenderer入力契約]を参照する。
+入力仕様はxref:render-inputs.adoc[解決済みrenderer入力仕様]を参照する。
 
 `SourceLanguagePolicy`はsource blockの言語allowlistと未知言語時のclass省略・診断を制御する。
 `MathLanguagePolicy`は許可した数式言語だけへ数式classを付ける。`ResourceCapabilities`で画像またはmediaを

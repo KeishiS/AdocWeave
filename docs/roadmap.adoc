@@ -19,12 +19,12 @@
 Linux版Zedでの初期受け入れ確認は2026-07-20に完了した。LSP文書シンボルをOutlineへ
 表示するには、ZedのAsciiDoc言語設定で`document_symbols`を`on`にする。
 
-== 実装済み: 公開コア、レンダリング契約、参照構文: Issue 027から031
+== 実装済み: 公開コア、レンダリング仕様、参照構文: Issue 027から031
 
 この段階では次を実装した。
 
 * 構文プロファイルとキャンセル可能な公開処理API
-* 明示的なHTMLレンダリングポリシーと出力契約
+* 明示的なHTMLレンダリングポリシーと出力仕様
 * nativeおよびWASMホスト向けのバックエンド非依存処理結果
 * 汎用文書属性とホスト提供の保護属性
 * 明示アンカー、安定した見出しID、共通参照先索引
@@ -50,8 +50,8 @@ Linux版Zedでの初期受け入れ確認は2026-07-20に完了した。LSP文�
 * 入力、CST、AST、行索引、診断および参照を所有する単一`Analysis`
 * CLI、Formatter、HTML、LSPによる同一解析スナップショットの再利用
 * 標準属性とxrefからノートアプリ固有の型・UUID規則を分離
-* HTML契約version 2と一元化した処理上限
-* property testと契約不変条件の前倒し
+* HTML仕様version 2と一元化した処理上限
+* property testと仕様上の不変条件の前倒し
 
 == AdocWeave内のホスト非依存統合: Issue 035から040
 
@@ -89,7 +89,7 @@ Issue 039では、解析、公開バイトAPIおよびHTML出力のfuzz target�
 == Core Profile 1公開後の持続可能性改善: Issue 046
 
 公開後レビューで、derived `Debug`に依存するAST適合性表現、runtime依存の`usize`処理上限、
-分散した契約versionおよび過大なfuzz成功ログを改善対象とした。Issue 046で明示的な
+分散した仕様versionおよび過大なfuzz成功ログを改善対象とした。Issue 046で明示的な
 canonical schema、固定幅上限、machine-readableなrelease manifestへ破壊的に移行した
 （完了）。
 
@@ -119,12 +119,12 @@ Issue 047は初回検証後の批判的レビューで再開した。候補位�
 完了した。
 
 文書corpusの自己検査はIssue 051で導入した。既存の`docs-check`は`.md`混入検査だけという
-契約を維持し、自己解析は別の`adoc-check` taskとしてverifyとrelease gateへ追加した。
+仕様を維持し、自己解析は別の`adoc-check` taskとしてverifyとrelease gateへ追加した。
 
 == 完了した中期ゴール: 持続可能な解析基盤: Issue 052から058
 
 Issue 001から051までの実装を横断レビューし、構文表現と解析snapshotを再設計した。構築時の
-処理予算、共有`SourceDocument`、構造化lossless syntax tree、不変`Analysis`、共通semantic
+処理上限、共有`SourceDocument`、構造化lossless syntax tree、不変`Analysis`、共通semantic
 walker、syntax treeに基づくFormatterおよび共通実行要求へ移行した。
 
 次の順序で完了した。
@@ -134,7 +134,7 @@ walker、syntax treeに基づくFormatterおよび共通実行要求へ移行し
 . Issue 054で、構造化syntax treeとsemantic loweringを導入する。
 . Issue 055で、`Analysis`とsemantic ASTを不変にし、syntax・lowering・lint診断を整理する。
 . Issue 056で、共通の木構造走査とFormatterを新しいsyntax表現へ移行する。
-. Issue 057で、profile selector、契約versionおよび実行job境界を簡素化する。
+. Issue 057で、profile selector、仕様versionおよび実行job境界を簡素化する。
 . Issue 058で、規範文書の診断回帰検査とIssue・ADR・履歴の運用を整理する。
 
 native、WASM、CLIおよびLSPは別parserを持たず、semantic ASTへ出力形式固有情報を入れず、
@@ -182,7 +182,7 @@ resource取得はコア、LSPおよび標準CLIの責務に含めない。
 
 Issue 071完了後の横断レビューでは、watch通知のworkspace境界、open bufferのlifecycleおよびinline
 delimiter索引のmemory増幅を即時修正した。残る持続可能性課題はIssue 077から081で、host resource
-pipelineの原子性、semantic queryと木構造cursor、source座標の型分離、parser状態機械および契約文書
+pipelineの原子性、semantic queryと木構造cursor、source座標の型分離、parser状態機械および仕様文書
 governanceとして追跡する。これらは単なるfile分割ではなく、状態の基準と不変条件を一つにする変更で
 あり、関連するIssue 072から075の機能追加より先に適用する。
 
@@ -256,7 +256,7 @@ xref:../issues/165-media-backend-presentation.adoc[backend presentation]でも�
 * 展開後sourceと元sourceの位置対応を保持し、診断とLSP navigationをinclude元へ投影できる。
 * URL includeはhostが明示的に取得したsnapshotだけを参照し、通常の解析APIはI/Oを行わない。
 
-実装契約はxref:preprocessor.adoc[プリプロセッサとresource snapshot]に記載する。
+実装仕様はxref:preprocessor.adoc[プリプロセッサとresource snapshot]に記載する。
 
 参照基準はhttps://docs.asciidoctor.org/asciidoc/latest/directives/include/[Includes]および
 https://docs.asciidoctor.org/asciidoc/latest/directives/conditionals/[Conditionals]とする。
@@ -272,7 +272,7 @@ Issue 089で解消した。header可否等のcontext差を型付けした単一�
 == 公開前のsemantic・parser収束
 
 Issue 089後の再監査により、line dispatchの統一だけでは未解消の資源増幅と意味上の基準分散を確認した。
-GitHub Releaseの契約を固定する前に、次の順序で破壊的に収束させる。途中互換wrapperは作らず、Issue 094の
+GitHub Releaseの仕様を固定する前に、次の順序で破壊的に収束させる。途中互換wrapperは作らず、Issue 094の
 完了時点でnative、WASM、CLI、LSP、Zedおよび文書を最終構成へ一致させる。
 
 . xref:../issues/090-borrowed-block-input-ranges.adoc[Issue 090]で、再帰block入力をroot
@@ -297,7 +297,7 @@ GitHub ReleasesをCLI、Language Serverおよびbrowser向けリアルタイムH
 入力に対して最新generationの安全なHTMLと診断を返す。DOM描画とUI stateは利用側が所有し、Zedは
 frontend libraryではなく公開LSP binaryのconsumerとして扱う。
 
-Issue 090から094の構造収束、Issue 082の配布契約、Issue 083のnative artifactおよびIssue 084の
+Issue 090から094の構造収束、Issue 082の配布仕様、Issue 083のnative artifactおよびIssue 084の
 xref:browser-library.adoc[browser library]を完了した。Issue 085と086ではchecksum／SBOM／provenanceおよび
 原子的なGitHub Actions workflowを実装し、`v0.1.0-rc.1`による受け入れ確認まで完了した。Issue 087では
 Zedによる公開LSP取得を完了した。Issue 088ではsource checkoutなしのZed導入を可能にする拡張archiveを追加した。
@@ -306,7 +306,7 @@ Zedによる公開LSP取得を完了した。Issue 088ではsource checkoutな�
 clean環境で現行成果物全体の最終受け入れを行う。過去のtagは付け替えない。
 Issue 102ではCIを再監査し、全event共通quality gate、main／tag限定candidate buildおよびtag限定publishへ責務を
 分離した。再利用workflowはevent種別を推測せず、callerが必要な検証だけを明示入力として渡す。
-最初のrelease candidateでは、公開契約versionを一つの`CONTRACT_VERSION = 1`へ統合し、
+最初のrelease candidateでは、公開仕様のversionを一つの`CONTRACT_VERSION = 1`へ統合し、
 以後の公開互換性履歴のbaselineとする。macOS／WindowsはLinux releaseの運用を確認した後のmilestoneへ延期する。
 配布先はリポジトリ所有者自身のGitHubリポジトリにあるGitHub Release assetだけに限定する。
 crates.io、npm、Homebrew、WinGet、Zed Extension Registryその他の公的registryへの登録は予定しない。
@@ -324,11 +324,11 @@ Resolver由来だけroot-relative URLを許可できる。WASMはnativeと同じ
 projectionを生成することを確認する。
 
 AdocWeaveは`note`、UUID、DB、ACL、Base URL、KaTeX、syntax highlighterおよびDOMを解釈しない。これらは
-xref:web-host-adapter.adoc[Webホストadapter契約]に従う利用側adapterが所有する。
+xref:web-host-adapter.adoc[Webホストadapter仕様]に従う利用側adapterが所有する。
 
 RC.3の受け入れ後、xref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で、明示labelのないxrefへ
-hostが解決した公開可能なタイトルをRenderInputsとして渡す汎用契約を追加した。明示label優先、
-プレーンテキストescape、failure時の非漏洩をnative／WASM共通契約として固定し、`note`等のscheme固有意味はhostに残した。
+hostが解決した公開可能なタイトルをRenderInputsとして渡す汎用仕様を追加した。明示label優先、
+プレーンテキストescape、failure時の非漏洩をnative／WASM共通仕様として固定し、`note`等のscheme固有意味はhostに残した。
 
 == CI・依存供給網の持続可能性
 
@@ -336,7 +336,7 @@ Issue 102ではpull request、mainおよびtagのevent modelを破壊的に再�
 tag限定publishへ分離した。Issue 103ではcargo-distをlocked Nix closureへ統一し、workflow policyをYAML構造検証へ移行した。
 Issue 104ではroot／Zed／frontendを横断するadvisory、license、MSRV、noticeおよびSBOM governanceを整備した。
 Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。Issue 106ではrunner依存の実browser E2Eを
-任意gateへ移し、静的なbrowser artifact契約だけを必須CIへ残した。
+任意gateへ移し、静的なbrowser artifact仕様だけを必須CIへ残した。
 
 * xref:../issues/102-ci-responsibility-and-release-event-model.adoc[Issue 102: CI責務境界とRelease event modelの収束]
 * xref:../issues/103-ci-bootstrap-and-structural-policy.adoc[Issue 103: CI bootstrap固定とworkflow構造検証]
@@ -346,8 +346,8 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
 
 == RC.5完了後からstable公開までの実行順
 
-. xref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で空xref labelへ解決済み表示テキストを渡す汎用契約を実装し、
-  公開契約versionとconformance fixtureをRC.4へ更新する。（完了）
+. xref:../issues/107-resolved-reference-display-text.adoc[Issue 107]で空xref labelへ解決済み表示テキストを渡す汎用仕様を実装し、
+  公開仕様のversionとconformance fixtureをRC.4へ更新する。（完了）
 . xref:../issues/108-typed-render-failures.adoc[Issue 108]で描画入力の自由形式failure messageを廃止し、
   reference／resource／WASM／projectionの非漏洩を型で保証する。（完了）
 . xref:../issues/109-nix-flake-package-and-app.adoc[Issue 109]で`nix run github:KeishiS/adocweave`、
@@ -359,8 +359,8 @@ Issue 105ではCIのbrowser runtimeをNix Chromium closureから分離した。I
   CLI／LSPおよびZedの実Release受け入れを完了する。実browser E2EはIssue 106の方針に従い任意gateへ分離する。（完了）
 . xref:../issues/110-zed-tree-sitter-highlighting.adoc[Issue 110]で、RC.5受け入れで判明したZedの基本構文色付けを
   Tree-sitter queryとして追加し、LSP Semantic Tokensを意味的補足へ整理する。
-. xref:../issues/111-stable-readiness-and-contract-freeze.adoc[Issue 111]で公開契約、既知制約、配布経路および
-  互換性方針を監査する。RC.5以後の利用者可視差分があるため、stableへの直送は行わない。
+. xref:../issues/111-stable-readiness-and-contract-freeze.adoc[Issue 111]で公開仕様、既知制約、配布経路および
+  互換性方針を監査する。RC.5以後に利用者へ影響する差分があるため、stableへの直送は行わない。
 . xref:../issues/113-rc6-zed-highlighting-candidate.adoc[Issue 113]で色付け済みZed archiveと整理後のLSPを
   `v0.1.0-rc.6`として公開・受け入れし、そのsource commitをstable baselineとして凍結した。（完了）
 . xref:../issues/112-v0-1-0-stable-release.adoc[Issue 112]でRC.6と機能的に同じbaselineを`v0.1.0`として公開し、
@@ -394,29 +394,29 @@ M26の実装を横断レビューし、section scope、属性検証、consumer�
 . xref:../issues/120-document-presentation-validation.adoc[Issue 120]で文書表示属性とbibliography構造の検証を完全化する。（完了）
 . xref:../issues/121-bibliography-conformance-coverage.adoc[Issue 121]でbibliographyのconsumer横断適合性を固定する。（完了）
 . xref:../issues/122-lossless-explicit-list-numbering.adoc[Issue 122]で不正な明示番号のlossless回復を追加する。（完了）
-. xref:../issues/123-unify-public-contract-version.adoc[Issue 123]で公開契約versionを単一化する。（完了）
+. xref:../issues/123-unify-public-contract-version.adoc[Issue 123]で公開仕様のversionを単一化する。（完了）
 
 == M28: 実装運用コストの削減
 
 M27の実装を、利用者向けの構文、HTML、診断および通常系の公開応答を変えずに保守するため、
-renderer state、文書索引、consumer fixture、契約version検証およびlist回復状態を整理する。
+renderer state、文書索引、consumer fixture、仕様version検証およびlist回復状態を整理する。
 
 . xref:../issues/124-immutable-render-scope.adoc[Issue 124]でrendererのsection scopeを不変値にする。（完了）
 . xref:../issues/125-linear-document-layout-index.adoc[Issue 125]で文書索引とlayout構築を線形化する。（完了）
 . xref:../issues/126-shared-consumer-fixture-harness.adoc[Issue 126]でconsumer testのfixture読込を共通化する。（完了）
-. xref:../issues/127-contract-version-response-verification.adoc[Issue 127]でWASM応答の契約version検証を集約する。（完了）
+. xref:../issues/127-contract-version-response-verification.adoc[Issue 127]でWASM応答の仕様version検証を集約する。（完了）
 . xref:../issues/128-list-recovery-state-invariants.adoc[Issue 128]でlist回復状態の内部不変条件を型付ける。（完了）
 
 == M29: v0.2.0 release train
 
 M26–M28で追加したsource block短縮記法、list表示属性、bibliography sectionおよび文書表示属性を
-`v0.2.0`として公開する。これらは`v0.1.0`に対する利用者可視の機能追加であるため、patch releaseには
-含めない。公開契約に互換性のない差分が残る場合は、release candidateを作る前に`CONTRACT_VERSION`、
+`v0.2.0`として公開する。これらは`v0.1.0`に対する利用者に見える機能追加であるため、patch releaseには
+含めない。公開仕様に互換性のない差分が残る場合は、release candidateを作る前に`CONTRACT_VERSION`、
 release manifest、fixture、互換性文書およびmigration noteを一つの変更で更新する。
 
-. xref:../issues/129-v0-2-0-release-readiness.adoc[Issue 129]で契約差分を監査し、`v0.2.0-rc.1`と`v0.2.0`を公開・受け入れした。（完了）
+. xref:../issues/129-v0-2-0-release-readiness.adoc[Issue 129]で仕様差分を監査し、`v0.2.0-rc.1`と`v0.2.0`を公開・受け入れした。（完了）
 . RC後は機能追加を停止し、repository所有者の公開前確認後にstableを公開する。
-. blocker修正に公開契約変更が含まれる場合は新しいRCを公開する。stableでは最終RCと同じ機能baselineへstable version metadataだけを同期する。
+. blocker修正に公開仕様の変更が含まれる場合は新しいRCを公開する。stableでは最終RCと同じ機能baselineへstable version metadataだけを同期する。
 
 == M30: 次期標準AsciiDoc互換性
 
@@ -434,12 +434,12 @@ release manifest、fixture、互換性文書およびmigration noteを一つの�
 == M31: v0.3.0 release train
 
 M30で追加したtable captionと表示属性を`v0.3.0`として公開する。これらは`v0.2.0`に対する
-利用者可視の機能追加であるため、patch releaseには含めない。RCで公開assetを確認した後、機能追加を
+利用者に見える機能追加であるため、patch releaseには含めない。RCで公開assetを確認した後、機能追加を
 停止して同一source commitをstableへ昇格する。
 
-. xref:../issues/134-v0-3-0-release-readiness.adoc[Issue 134]で契約差分を監査し、`v0.3.0-rc.1`と`v0.3.0`を公開・受け入れした。（完了）
+. xref:../issues/134-v0-3-0-release-readiness.adoc[Issue 134]で仕様差分を監査し、`v0.3.0-rc.1`と`v0.3.0`を公開・受け入れした。（完了）
 . xref:../issues/135-table-presentation-release-corrections.adoc[Issue 135]でtable表示属性の診断、width互換性、
-  契約文書およびconsumer fixtureをRC公開前に是正した。（完了）
+  仕様文書およびconsumer fixtureをRC公開前に是正した。（完了）
 
 == M32: 文書向けblock意味と単体利用の境界
 
@@ -448,7 +448,7 @@ metadataだけを保持して子blockへ退化させず、backend非依存の型
 対応表と実装の乖離は機械検査で防ぐ。単体CLIのlocal resource解決は、既定のhost委譲・fail-closed
 境界を弱めないかを評価してから採否を決める。
 
-. xref:../issues/136-supported-syntax-documentation-contract.adoc[Issue 136]で対応構文文書と実装契約を同期した。（完了）
+. xref:../issues/136-supported-syntax-documentation-contract.adoc[Issue 136]で対応構文文書と実装仕様を同期した。（完了）
 . xref:../issues/137-admonition-semantic-rendering.adoc[Issue 137]でadmonitionの誤診断を除去し、型付き意味を実装した。（完了）
 . xref:../issues/138-quote-and-verse-rendering.adoc[Issue 138]でquote／verseのattributionとcitationを意味保持して出力した。（完了）
 . xref:../issues/139-standalone-cli-resource-profile-evaluation.adoc[Issue 139]（計画）で単体CLIのlocal resource profileを評価する。
@@ -456,14 +456,14 @@ metadataだけを保持して子blockへ退化させず、backend非依存の型
 
 == M33: v0.4.0 release train
 
-M32で追加したblock意味と公開契約version 3を`v0.4.0`として公開する。個人開発の運用に合わせ、RCの
+M32で追加したblock意味と公開仕様のversion 3を`v0.4.0`として公開する。個人開発の運用に合わせ、RCの
 二段階公開を廃止し、mainの完全candidateが成功したcommitをstable tagへ直接公開する。
 
 . xref:../issues/140-v0-4-0-release-readiness.adoc[Issue 140]（完了）で版数、配布計画、移行文書およびstable直送workflowを同期した。
 
 == M34: 日常文書の互換性収束
 
-`v0.4.0`後は、実装済み契約の文書同期を先に完了したうえで、block title／captionとinclude属性を
+`v0.4.0`後は、実装済み仕様の文書同期を先に完了したうえで、block title／captionとinclude属性を
 backend非依存の意味モデルとsnapshot境界で拡張する。暗黙resource取得、wildcard include、citation style、
 index range、`subs`属性およびMarkdown互換はこのマイルストーンへ含めない。
 
@@ -492,7 +492,7 @@ HTMLの固定class・allowlistとfail-closed方針を維持しながら、変換
 M34からM36の互換性収束、Core簡素化およびホスト供給stylesheetを`v0.5.0`として公開する。
 ADR 0006に従い、mainの完全candidate成功commitへstable tagを一度だけ付ける。
 
-. xref:../issues/146-v0-5-0-release-readiness.adoc[Issue 146]で契約差分を監査し、release gateの成功後に
+. xref:../issues/146-v0-5-0-release-readiness.adoc[Issue 146]で仕様差分を監査し、release gateの成功後に
   `v0.5.0`を公開・受け入れした。（完了）
 
 == M38: 標準属性occurrenceとhost拡張境界
@@ -505,10 +505,10 @@ ADR 0006に従い、mainの完全candidate成功commitへstable tagを一度だ�
 
 == M39: v0.6.0 release train
 
-M38の公開Rust API追加を`v0.6.0`として公開する。公開契約、移行ガイド、consumer fixtureおよび
+M38の公開Rust API追加を`v0.6.0`として公開する。公開仕様、Release Notes、consumer fixtureおよび
 release acceptanceを同じrelease trainで同期する。
 
-. xref:../issues/148-v0-6-0-release-readiness.adoc[Issue 148]で、版数、配布計画、移行ガイドおよび
+. xref:../issues/148-v0-6-0-release-readiness.adoc[Issue 148]で、版数、配布計画、Release Notesおよび
   リリース前の確認を同期し、`v0.6.0`を公開・受け入れした。（完了）
 
 == M40: 公開model・product・protocolの単純化
@@ -523,7 +523,7 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 . xref:../issues/152-generated-public-protocol-schema.adoc[Issue 152]で公開protocol schemaからDTOを生成した。（完了）
 . xref:../issues/153-release-identity-unification.adoc[Issue 153]でrelease identityを単一化した。（完了）
 . xref:../issues/154-grammar-component-boundaries.adoc[Issue 154]でparserとinlineの文法component境界を再編した。（完了）
-. xref:../issues/155-contract-test-ownership-reorganization.adoc[Issue 155]で契約testの所有権を再編した。（完了）
+. xref:../issues/155-contract-test-ownership-reorganization.adoc[Issue 155]で仕様検証testの所有権を再編した。（完了）
 
 === M40後の再監査
 
@@ -531,11 +531,11 @@ host非依存coreと拡張境界をより小さい基準へ再編する。
 
 * `ResolvedDocument`の派生値は依存順に構築されるが、文書全体の走査を厳密な一回へ統合してはいない。
 * blockの純粋recognizerは`block_grammar`へ分離したが、block dispatchとinline grammarの責務分割は継続できる。
-* 公開契約testの一部とrepository fixture helperは、引き続きproduction module内に置かれている。
+* 公開仕様のtestの一部とrepository fixture helperは、引き続きproduction module内に置かれている。
 
-これらはprofiling、障害分析または公開契約の変更から具体的な必要性が示されるまで、次期releaseの
+これらはprofiling、障害分析または公開仕様の変更から具体的な必要性が示されるまで、次期releaseの
 完了条件へ昇格させない。着手する場合はIssue 150、154、155の完了履歴を書き換えず、新しいIssueとして
-観測根拠、scopeおよび受け入れ条件を定義する。release noteでは、公開契約が完了済みであることと
+観測根拠、scopeおよび受け入れ条件を定義する。release noteでは、公開仕様が完了済みであることと
 内部再編の余地があることを混同しない。
 
 == M41: インライン書式の互換性
@@ -576,7 +576,7 @@ patch releaseを独立して公開せず、後続の`v0.7.0` release trainで受
 見出しID range、公開text facade、table cell semantic正規化および設計・性能改善をminor releaseとして
 公開する。Dependabot PRとM40後の内部設計課題はrelease scopeへ含めない。
 
-. xref:../issues/161-v0-7-0-release-readiness.adoc[Issue 161]で版数、移行ガイド、fixtureおよび
+. xref:../issues/161-v0-7-0-release-readiness.adoc[Issue 161]で版数、Release Notes、fixtureおよび
   release acceptanceを同期した。（完了）
 
 == M46: LSP 3.18相互運用性
@@ -586,7 +586,7 @@ lifecycleを相互運用testで固定する。このmilestoneを次期`v0.8.0`�
 
 . xref:../issues/162-lsp-3-18-conformance-audit.adoc[Issue 162]で仕様と実装のcapability matrixを作り、
   確認された乖離を修正または意図的な非目標として記録した。（完了）
-. xref:../issues/167-v0-8-0-release-readiness.adoc[Issue 167]で版数、移行ガイド、fixtureおよび
+. xref:../issues/167-v0-8-0-release-readiness.adoc[Issue 167]で版数、Release Notes、fixtureおよび
   release acceptanceを同期する。（進行中）
 
 == M47: 標準構文の互換性
@@ -600,7 +600,7 @@ M46後の`v0.9.0`候補とするが、版数は公開APIとsemantic変更の実�
 == M48: 文書状態とmedia presentation
 
 位置依存の属性environmentとmediaのbackend presentationは、影響範囲が異なるため個別のminor release候補として
-扱う。同時実装を前提にせず、各Issueの公開契約とmigration impactが受け入れ可能になった順にrelease trainを作る。
+扱う。同時実装を前提にせず、各Issueの公開仕様とmigration impactが受け入れ可能になった順にrelease trainを作る。
 
 . xref:../issues/164-document-scoped-attribute-changes.adoc[Issue 164]で文書内属性変更を評価・実装する。（計画）
 . xref:../issues/165-media-backend-presentation.adoc[Issue 165]でmedia type別のbackend presentationを定める。（計画）

@@ -14,5 +14,5 @@ fixtureは担当機能ごとに分類する。各機能ディレクトリには�
 置き、CLI、Lint、Formatterのテストで同じソースを使う。
 
 `conformance/cases.json`はruntime横断fixtureのmanifestである。各caseには互換性分類、
-差分理由および契約versionへの影響判断を記録しなければならない。native、WASMおよび
+差分理由および仕様versionへの影響判断を記録しなければならない。native、WASMおよび
 LSPはこのmanifestまたは参照先の同じソースを使用し、別内容の複製fixtureを作らない。

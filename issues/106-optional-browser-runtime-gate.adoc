@@ -4,8 +4,8 @@
 
 == 目的
 
-優先度の低いbrowser runtime E2EがCLI、LSP、Zed、文書および配布契約の必須CIを繰り返し停止する状態を解消し、
-静的に保証できるbrowser artifact契約とrunner依存の実browser受け入れを分離する。
+優先度の低いbrowser runtime E2EがCLI、LSP、Zed、文書および配布仕様の必須CIを繰り返し停止する状態を解消し、
+静的に保証できるbrowser artifact仕様とrunner依存の実browser受け入れを分離する。
 
 == 判断
 

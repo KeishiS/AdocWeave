@@ -1,4 +1,4 @@
-= Nixで使う・開発する
+= Nixでの利用と開発
 
 本書は、NixからAdocWeaveのCLIとLanguage Serverを利用する方法、および開発環境の構築方法を定義する。
 対象環境は`x86_64-linux`と`aarch64-linux`である。GitHub Releasesの配布物を使用する場合は

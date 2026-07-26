@@ -14,4 +14,4 @@
 == 帰結
 
 製品拡張は別リポジトリで実装できる。Parserへ任意コードを注入するplug-in ABIは提供せず、
-拡張は公開Analysis、projectionおよびResolver契約だけを利用する。
+拡張は公開Analysis、projectionおよびResolver仕様だけを利用する。

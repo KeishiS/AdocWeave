@@ -28,4 +28,4 @@ Ubuntu 24.04 runnerはChromiumを提供しており、browser smokeのためだ�
 == 完了条件
 
 CIがNix Chromium closureへ依存せず、Rust、cargo-distおよび検査toolは引き続き`flake.lock`へ固定される。実browser
-smokeはdefault shellから明示的に実行でき、CI shellは静的なbrowser artifact契約だけを検査する。
+smokeはdefault shellから明示的に実行でき、CI shellは静的なbrowser artifact仕様だけを検査する。

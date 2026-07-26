@@ -17,7 +17,7 @@ Webホストが公開APIだけを用いて標準AsciiDoc構文へ安全な利用
 * 同じsource revision、profileおよびRenderInputsからnativeとWASMが同じAST snapshot、診断、HTMLおよび
   projectionを生成することを確認する。
 * browser libraryの型定義、Worker経路、CSPおよび高速更新時の世代管理を回帰試験する。
-* 公開extension契約、browser利用手順、security境界およびroadmapを更新する。
+* 公開extension仕様、browser利用手順、security境界およびroadmapを更新する。
 
 == 完了条件
 
@@ -26,11 +26,11 @@ Webホストが公開APIだけを用いて標準AsciiDoc構文へ安全な利用
 
 == 範囲外
 
-特定アプリ名、`note`専用型、UUID、DB、ACL、route、KaTeX、highlighterおよびDOM更新をfixtureの公開契約へ
+特定アプリ名、`note`専用型、UUID、DB、ACL、route、KaTeX、highlighterおよびDOM更新をfixtureで検証する公開仕様へ
 組み込まない。
 
 == 実装結果
 
 任意scheme xrefのroot-relative解決、fallback notice、外部link属性、source・数式policy、formula／source projection、
 resource無効化を一つの共通fixtureへ統合した。native testと実WASM cross-runtime testは同じrequest全体を比較する。
-browser TypeScript宣言へprofileとRenderInputsを型付けし、公開契約と利用文書をversion 2へ同期した。
+browser TypeScript宣言へprofileとRenderInputsを型付けし、公開仕様と利用文書をversion 2へ同期した。

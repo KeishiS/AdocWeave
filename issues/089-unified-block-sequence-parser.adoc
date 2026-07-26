@@ -55,7 +55,7 @@ rootで一度だけ実行し、旧`parse_compound_children`は削除した。
 再帰contextは親のnode／block／table budget、block／table深さ、cancel checkおよびglobal UTF-8 byte rangeを
 共有する。cell内の見出し、literal paragraph、break、source／STEM、metadata、明示anchor、syntax diagnosticと
 入れ子表をtestおよびnative／WASM conformance caseで固定した。明示anchorのtarget探索とHTML ID生成も共通walkerで
-全階層へ拡張した。カスタムseparatorの表delimiterを規範文法へ追加し、Core Profile、HTMLおよびconformance契約を
+全階層へ拡張した。カスタムseparatorの表delimiterを規範文法へ追加し、Core Profile、HTMLおよびconformance仕様を
 更新した。
 
 Issue 094では単一loopを維持したまま出力をroot／nestedへ型分離した。nested syntaxはcompound blockとAsciiDoc

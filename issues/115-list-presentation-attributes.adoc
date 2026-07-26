@@ -13,7 +13,7 @@
 * 明示番号と`start`の整合性、正の開始番号、styleごとの表示規則およびnested listの既定規則を診断する。
 * HTMLが意味モデルから`ol`のstart、reversedおよび安全なlist-style表現を生成するようにする。
 * Formatter、projection、LSP hoverおよびcode actionが未対応属性を推測・破壊しないことを固定する。
-* 公開契約への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
+* 公開仕様への影響を判定し、必要ならversion、fixtureおよびRelease noteを同期する。
 
 == 検証
 

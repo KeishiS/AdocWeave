@@ -31,7 +31,7 @@ host toolchainや作業tree内binaryを誤って試験していないことをpa
 
 `dist` profileへthin LTO、codegen unit 1、panic abort、debug情報なしおよびsymbol stripを明記した。
 両native archiveへlicense、READMEおよびCargo metadataから生成するthird-party noticesを同梱し、noticeと
-`cargo metadata`の同期検査をrelease gateへ追加した。CLIとLSPは`--version --json`でpackage versionとCore契約を
+`cargo metadata`の同期検査をrelease gateへ追加した。CLIとLSPは`--version --json`でpackage versionとCore仕様を
 報告する。
 
 xref:../tools/native-release-smoke.mjs[native smoke]はarchive layout、安全なpath、executable permission、ELF

@@ -4,7 +4,7 @@
 
 == 目的
 
-Issue 111で凍結し、Issue 113のRC.6で受け入れた契約と実装を、同じ原子的なGitHub Release workflowを用いて
+Issue 111で凍結し、Issue 113のRC.6で受け入れた仕様と実装を、同じ原子的なGitHub Release workflowを用いて
 `v0.1.0` stableとして公開する。
 CLI、LSP、browser library、Zed開発拡張、metadata、SBOM、checksum、attestationおよびNix flakeを一つの
 source commitとversionへ一致させる。
@@ -12,16 +12,16 @@ source commitとversionへ一致させる。
 == 作業
 
 * workspace、Zed、browser、Release manifestおよび配布設定を`0.1.0`へ更新する。
-* 個別契約versionはIssue 111で承認した値を維持し、package version変更と混同しない。
-* Release noteへ対応target、公開契約、RC.6からの差分、既知制約、asset検証、Nix導入およびrollbackを記載する。
+* 個別仕様versionはIssue 111で承認した値を維持し、package version変更と混同しない。
+* Release noteへ対応target、公開仕様、RC.6からの差分、既知制約、asset検証、Nix導入およびrollbackを記載する。
 * main candidateのquality、MSRV、依存監査、Linux x86-64／ARM64 build、native smoke、Nix packageおよび導入E2Eを確認する。
 * main成功後にannotated tag `v0.1.0`を作り、protected Environment経由でprivate draftを検証して公開する。
 * 公開後にtag commit、9 asset、checksum、metadata、SBOM、attestation、公開Nix flakeおよびZed managed LSPを受け入れる。
 
 == 破壊的変更の扱い
 
-このIssueではRC.6からの意図的な機能・公開API変更を行わない。blocker修正が契約変更を必要とする場合はIssue 111を再開し、
-影響する契約versionとfixtureを更新した新しいRCを先に公開する。stable tagへ未検証の修正を直接含めない。
+このIssueではRC.6からの意図的な機能・公開API変更を行わない。blocker修正が仕様変更を必要とする場合はIssue 111を再開し、
+影響する仕様versionとfixtureを更新した新しいRCを先に公開する。stable tagへ未検証の修正を直接含めない。
 
 == 検証
 
@@ -45,14 +45,14 @@ Core Profile 1、Core API 4、HTML 3、Projection 4、Conformance 4、WASM API 4
 GitHub Artifact Attestationが1件存在し、対象repositoryと同じsource commitを示した。
 
 x86_64 Linuxのclean導入E2EでCLI、LSP、browserおよびZed archiveの導入、version照合と削除が成功した。公開Nix flakeの
-`nix run github:KeishiS/AdocWeave/v0.1.0 -- --version --json`はpackage versionと凍結済み契約versionを返した。
+`nix run github:KeishiS/AdocWeave/v0.1.0 -- --version --json`はpackage versionと凍結済み仕様versionを返した。
 NixOS 26.05（x86_64）、Zed 1.10.0の隔離profileで公開Zed archiveとmanaged LSPを確認し、基本色付け、Semantic Tokens、
 診断、Outline、Code Action、Format、Hover、補完、DefinitionおよびFind All ReferencesにRC.6からの回帰はなかった。
 不一致はない。
 
 == 完了条件
 
-`v0.1.0`がdraftでないstable Releaseとして公開され、全9 assetが同じsource commit、package versionおよび承認済み契約を
+`v0.1.0`がdraftでないstable Releaseとして公開され、全9 assetが同じsource commit、package versionおよび承認済み仕様を
 持つ。公開flake、CLI、LSPおよびZed managed binaryがstable versionを返し、公開後の受け入れ記録がmainへ反映される。
 
 == 範囲外

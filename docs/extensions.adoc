@@ -1,4 +1,4 @@
-= 独自機能を追加する
+= 独自機能の追加
 
 別のアプリケーションでAdocWeaveを使い、独自のリンク、メタデータ、検索などを追加する方法を説明します。
 AdocWeave本体は標準AsciiDocを読みます。ノートアプリ固有のデータベースや権限、画面の作りは
@@ -76,7 +76,7 @@ Resolverは次を守る。
 入力途中の構文失敗と、確定した対象不在を区別する。
 
 LSPアダプターはxref:language-server.adoc[Language Server設計]の通知順序、generation、
-キャンセルおよびlock規則に従う。`ReferenceResolver`の契約自体は特定async runtimeへ
+キャンセルおよびlock規則に従う。`ReferenceResolver`の仕様自体は特定async runtimeへ
 依存せず、外部ホストへTokioを要求しない。
 
 == HTMLと信頼境界
@@ -92,5 +92,5 @@ source言語、数式言語、未解決参照表示およびresource capability�
 
 == 互換性
 
-ホストは起動時またはビルド時にpackage versionを照合する。公開型またはResolver契約の
+ホストは起動時またはビルド時にpackage versionを照合する。公開型またはResolver仕様の
 破壊的変更に備え、Rust enumの序数を永続化せず、未知の値を安全な未解決状態として扱う。

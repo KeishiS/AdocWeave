@@ -1,4 +1,4 @@
-= ADR 0005: Zed LSPはmonorepoで維持する
+= ADR 0005: Zed LSPのmonorepo管理
 :status: accepted
 
 == 文脈
@@ -15,7 +15,7 @@ release version、binary provenance、LSP protocol、Tree-sitter queryおよびr
 
 Zed extensionとLanguage ServerはAdocWeave monorepoに維持し、独立repositoryおよび独立release trainは導入しない。
 Zed固有の責務は`editors/zed`、query contract、release artifactおよびadapter testへ局所化する。Core、LSP、Zedの
-利用者可視契約を変更する場合は、同じchangeでmanifest、conformance fixture、release verificationおよび利用者文書を
+利用者に影響する仕様を変更する場合は、同じchangeでmanifest、conformance fixture、release verificationおよび利用者文書を
 更新する。
 
 == 非採用案
@@ -28,7 +28,8 @@ binaryのversion不一致、artifact provenance、offline cacheおよびrollback
 
 次のいずれかを満たしたときだけ、この決定を再評価する。
 
-* 連続する3 release trainで、CoreまたはLSP binaryを変更しないZed固有の公開要求が各trainに1件以上ある。
+* 連続する3回のrelease trainで、CoreまたはLSP binaryを変更せずにZed extensionだけを公開する必要が
+  各回1件以上生じる。
 * Zed固有jobが、連続する10回のmain runでCI critical pathの中央値の50%超を占め、monorepo内のjob分離だけでは
   解消できない。
 * Zed extensionを本体と異なる所有者、権限境界またはsecurity response期限で運用する明確な要件が生じる。

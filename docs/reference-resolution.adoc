@@ -1,4 +1,4 @@
-= 相互参照のリンク先を決める
+= 相互参照先の決定
 
 別文書への参照をどのURLへつなぐかは、利用側アプリが決めます。このページは、そのための情報を
 AdocWeaveから取り出す方法を説明します。
@@ -32,11 +32,11 @@ Resolverが返したhrefは信頼境界を越える外部入力である。HTML�
 再適用し、拒否したhrefをリンクとして出力しない。
 
 参照グラフや検索索引へ渡す場合は
-xref:projections.adoc[汎用文書projection契約]の`ReferenceEdge`を使用する。通常の外部URLは
+xref:projections.adoc[汎用文書projection仕様]の`ReferenceEdge`を使用する。通常の外部URLは
 `ExternalLink`としてxrefと型で区別する。
 
 別リポジトリで拡張を実装する際の登録、Resolver、キャッシュ、診断および安全性の
-規範要件はxref:extensions.adoc[ホスト拡張実装契約]に定義する。このリポジトリは
+規範要件はxref:extensions.adoc[ホスト拡張実装仕様]に定義する。このリポジトリは
 noteアプリ固有の登録設定、DBアダプターまたはResolver実装を提供しない。
 
 Language Serverへ外部索引を接続する場合は`adocweave-lsp::HostReferenceIndex`を実装し、

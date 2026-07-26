@@ -18,8 +18,8 @@ paragraph形式（`NOTE: text`等）およびblock形式（`[NOTE]` example bloc
 == 完了条件
 
 * `NOTE: text`が`invalid-url-scheme`を出さず、typed admonitionとして出力される。
-* block形式とparagraph形式が同じ許可集合・診断契約を共有する。
-* 対応仕様、HTML契約、互換性評価およびfixtureが同期する。
+* block形式とparagraph形式が同じ許可集合・診断仕様を共有する。
+* 対応仕様、HTML仕様、互換性評価およびfixtureが同期する。
 
 == 結果
 

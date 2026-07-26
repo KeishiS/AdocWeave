@@ -9,7 +9,7 @@ CIが実行前に取得するtool自体の完全性を固定し、GitHub Actions
 
 == 監査結果
 
-従来はcargo-dist 0.32.0のversion付き公式installerをTLS経由で直接実行し、installer byte列のdigestをrepository契約へ
+従来はcargo-dist 0.32.0のversion付き公式installerをTLS経由で直接実行し、installer byte列のdigestをrepositoryの検証要件へ
 含めていなかった。公式Releaseはarchive checksumとGitHub Artifact Attestationを提供するが、installerと取得binaryの
 検証を各jobで再実装するとversion、platformおよびdigestの管理点が増える。
 

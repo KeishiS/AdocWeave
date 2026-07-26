@@ -1,4 +1,4 @@
-= Zedへ開発版を導入する
+= Zedへの開発版導入
 
 この文書は、リポジトリの作業treeからAdocWeaveのZed拡張とLanguage Serverを一時的に試す
 手順を定義する。公開Extension Galleryからの導入手順ではない。
@@ -35,7 +35,7 @@ nix develop
 Nix shellのRust toolchainでリポジトリ本体をbuildできても、Zedの開発拡張builderは別processとして
 `rustup`とWASM targetを探す。`nix develop`だけで`wasm32-wasip2`導入エラーが解消するとは限らない。
 
-== 推奨手順：隔離したZed user dataを使う
+== 隔離したZed user dataによる推奨手順
 
 通常利用しているZedの拡張、設定、DBおよびcacheへ影響させないため、workspace外の一時directoryを
 user data directoryとして使う。workspace内へ置くと、Zedのworktree監視が拡張builder自身のWASI SDK、
@@ -192,7 +192,7 @@ manifestと対象platformのLSP assetがあることを確認する。
 
 AsciiDocとして認識されるが色付けされない::
 dev extensionを再導入して、Zed logに`asciidoc`と`asciidoc_inline`のgrammar build失敗がないことを確認する。
-`cargo make check-zed`は固定grammarとqueryのnode／capture契約を、`cargo make test-zed-release-package`はqueryのarchive同梱を検査する。
+`cargo make check-zed`は固定grammarとqueryのnode／capture仕様を、`cargo make test-zed-release-package`はqueryのarchive同梱を検査する。
 Semantic Tokensを`off`にしても色付けされない場合はLSPではなくgrammarまたはquery側の問題である。
 
 `wasi-sdk-temp`内のsymlinkまたはinotify watch errorが出る::

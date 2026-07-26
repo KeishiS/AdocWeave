@@ -5,7 +5,7 @@
 == 目的
 
 全adapterがsyntax、AST、HTML、診断、symbolsおよびprojectionを常に生成・転送する設計を廃止する。
-hostが必要なproductだけを要求する共通APIを導入し、WASMのCPU、応答サイズおよび契約変更面を縮小する。
+hostが必要なproductだけを要求する共通APIを導入し、WASMのCPU、応答サイズおよび仕様変更の影響範囲を縮小する。
 
 == 設計方針
 
@@ -19,6 +19,6 @@ hostが必要なproductだけを要求する共通APIを導入し、WASMのCPU�
 == 完了条件
 
 * product未指定時、不要なHTML・canonical AST・projectionを生成しないことをinstrumentation testで確認する。
-* WASM responseのbyte上限を生成中に予算化し、巨大な中間JSONを文字列から再parseしない。
+* WASM responseのbyte数を生成中に計測して上限を適用し、巨大な中間JSONを文字列から再parseしない。
 * conformanceは全product集合を明示して既存のcross-runtime比較を維持する。
 * protocol、browser型、CLI、LSPおよび文書を同時に移行し、旧全量responseは削除する。

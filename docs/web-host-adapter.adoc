@@ -81,7 +81,7 @@ ResolvedReference {
 
 === 空labelと解決済みタイトル
 
-現行契約では、Resolverが得た公開可能なタイトルを解決成功の`display_text`（WASMでは`displayText`）として渡せる。
+現行仕様では、Resolverが得た公開可能なタイトルを解決成功の`display_text`（WASMでは`displayText`）として渡せる。
 空labelだけがこの値を使用し、明示labelは常に原文を優先する。値はプレーンテキストとしてescapeされ、
 AsciiDoc inlineやHTMLとして再解析されない。失敗結果は表示テキストを保持できない。
 

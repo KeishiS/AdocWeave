@@ -165,7 +165,7 @@ Issue 052以降、入力、行および深さ上限に加え、block、semantic 
 
 Language Serverのprotocol処理には`async-lsp`、実行runtimeにはTokioを使用する。
 これらは`adocweave-lsp`のアダプター依存であり、`adocweave`コアの公開API、解析型および
-ホスト実行契約へ持ち込まない。
+ホスト実行仕様へ持ち込まない。
 
 文書更新通知はmain loopで受信順に`DocumentStore`へ適用する。読み取り要求は開始時に
 文書versionと所有スナップショットを取得し、その後は文書状態を借用せずに並行実行する。
@@ -180,7 +180,7 @@ client通信のawait中に保持してはならない。
 xref:language-server.adoc[Language Server設計]で定義する。
 
 Language Server以外のサーバ、Workerおよびデスクトップホストも
-xref:server-execution.adoc[ホスト実行・キャッシュ契約]に従い、同じrevision採用判定と
+xref:server-execution.adoc[ホスト実行・キャッシュ仕様]に従い、同じrevision採用判定と
 本文を含まない観測モデルを使用する。
 
 ブラウザ統合のversion付きschema、協調キャンセルおよびCSP要件は
@@ -219,7 +219,7 @@ Issue 063後の横断レビューでは、さらに次を不変条件とする�
 * blockのHTML変換は再帰的な単一dispatcherを通す。top-level、compound containerおよび
   list continuationごとに`AstBlock`のmatchを複製しない。新variantの出力漏れは
   compilerの網羅性検査で検出する。
-* inline認識の事前indexも走査予算へ含める。各delimiterの次位置を一回の逆走査で構築し、
+* inline認識の事前index構築も走査回数の計測対象へ含める。各delimiterの次位置を一回の逆走査で構築し、
   openerごとの残り文字列検索を禁止する。大量の未閉じmarkerでも入力長に対して線形に保つ。
 * well-formedかつ正しい位置のdocument titleだけが著者・改訂metadataの認識を開始できる。
   malformed headingからheader状態を推測しない。

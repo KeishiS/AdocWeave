@@ -26,7 +26,7 @@ index termは表示テキストおよび検索テキストへ混在させない�
 文書末尾へback reference付き一覧を生成する。前方参照を許可し、欠落定義と重複定義は元rangeを持つ
 `invalid-catalog`診断になる。
 名前付きfootnote参照は別IDへのaliasを定義できないため、現在の型では循環参照を構築できない。
-将来alias構文を追加する場合は、catalog edgeとcycle診断を同じ契約変更で追加する。
+将来alias構文を追加する場合は、catalog edgeとcycle診断を同じ仕様変更で追加する。
 
 `bibanchor:id[]`はbibliography entryとなり、同じIDへのlocal xrefを参照edgeとしてcatalogへ接続する。
 `indexterm:[primary,secondary,...]`は空でない階層pathとして正規化し、同じpathの出現rangeをまとめる。

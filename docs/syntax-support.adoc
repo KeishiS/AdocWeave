@@ -237,7 +237,7 @@ compoundとAsciiDoc cellは文書rootと同じblock sequence状態機械で完�
 |Document headerとsection
 |対応
 |著者、改訂、doctype、preamble、book part、appendix、discrete heading、`toc`、`toclevels`、`sectnums`、
-manpageのname／section／purpose構造に対応する。詳細はxref:document-structure.adoc[文書構造契約]を参照する
+manpageのname／section／purpose構造に対応する。詳細はxref:document-structure.adoc[文書構造仕様]を参照する
 
 |Paragraphとbreak
 |対応
