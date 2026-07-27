@@ -620,8 +620,9 @@ fi
 local_documents=0
 while IFS= read -r path; do
   local_documents=$((local_documents + 1))
-  if ! target/debug/adocweave check --local-targets --project-root . "$path" >/dev/null; then
+  if ! output="$(target/debug/adocweave check --local-targets --project-root . "$path" 2>&1)"; then
     echo "[$path] local target check failed" >&2
+    echo "$output" >&2
     failed=1
   fi
 done <<'EOF'
@@ -652,6 +653,8 @@ docs/developer-guide/adr/0007-host-supplied-stylesheets.adoc
 docs/developer-guide/adr/0008-minimal-documentation-management.adoc
 docs/developer-guide/adr/0009-public-configuration-boundaries.adoc
 docs/developer-guide/adr/index.adoc
+editors/zed/README.adoc
+web-worker/README.adoc
 EOF
 
 if [ "$failed" -ne 0 ]; then

@@ -612,10 +612,11 @@ impl PreprocessedAnalysis {
             let origins = project(value.range)?;
             let target_origins = project(value.target_range)?;
             if let Some(local) = crate::local_target::LocalTargetReference::from_reference(value) {
+                let local_target_origins = project(local.target_range)?;
                 local_targets.push(ProjectedLocalTarget {
                     value: local,
                     origins: origins.clone(),
-                    target_origins: target_origins.clone(),
+                    target_origins: local_target_origins,
                 });
             }
             references.push(ProjectedReference {

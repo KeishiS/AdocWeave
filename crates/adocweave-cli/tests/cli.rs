@@ -315,6 +315,31 @@ fn local_target_human_output_escapes_control_characters() {
 }
 
 #[test]
+fn local_target_columns_use_utf8_bytes() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = run_with_stdin(
+        &[
+            "check",
+            "--json",
+            "--local-targets",
+            "--project-root",
+            root.to_str().expect("UTF-8 root"),
+            "-",
+        ],
+        "あ xref:missing-unicode.adoc[target]\n".as_bytes(),
+    );
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    let local = diagnostics
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|value| value["code"] == "local-target-missing")
+        .expect("local diagnostic");
+    assert_eq!(local["column"], 10);
+}
+
+#[test]
 fn local_target_file_base_uses_the_invocation_directory_for_bare_paths() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -322,7 +347,9 @@ fn local_target_file_base_uses_the_invocation_directory_for_bare_paths() {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("adocweave-local-base-{unique}"));
     let docs = root.join("docs");
+    let include_base = root.join("include-base");
     std::fs::create_dir_all(&docs).expect("docs");
+    std::fs::create_dir_all(&include_base).expect("include base");
     std::fs::write(docs.join("root.adoc"), "xref:target.adoc[target]\n").expect("source");
     std::fs::write(docs.join("target.adoc"), "= Target\n").expect("target");
 
@@ -330,6 +357,9 @@ fn local_target_file_base_uses_the_invocation_directory_for_bare_paths() {
         .current_dir(&docs)
         .args([
             "check",
+            "--include",
+            "--base-dir",
+            "../include-base",
             "--local-targets",
             "--project-root",
             "..",
@@ -627,7 +657,11 @@ fn local_target_check_shares_include_resolution_and_honors_optional() {
         "include::../part.adoc[]\ninclude::missing-part.adoc[]\ninclude::optional.adoc[optional]\n",
     )
     .expect("root source");
-    std::fs::write(root.join("part.adoc"), "xref:missing.adoc[missing]\n").expect("part source");
+    std::fs::write(
+        root.join("part.adoc"),
+        "xref:missing.adoc#section[missing]\n",
+    )
+    .expect("part source");
 
     let output = adocweave()
         .args([
@@ -658,6 +692,9 @@ fn local_target_check_shares_include_resolution_and_honors_optional() {
     assert!(diagnostics.as_array().expect("array").iter().any(|value| {
         value["sourceId"] == root.join("part.adoc").to_string_lossy().as_ref()
             && value["target"] == "missing.adoc"
+            && value["range"]["end"].as_u64().expect("end")
+                - value["range"]["start"].as_u64().expect("start")
+                == "missing.adoc".len() as u64
     }));
 
     std::fs::remove_dir_all(root).expect("cleanup");

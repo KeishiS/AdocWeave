@@ -643,7 +643,17 @@ fn run() -> Result<ExitCode, CliError> {
                     },
                 );
                 let include_input = if let Some(project_root) = &arguments.project_root {
-                    local_include::prepare_local(source, source_id, &base_dir, project_root)
+                    let source_base = local_context
+                        .as_ref()
+                        .map(|(base, _, _)| base.as_path())
+                        .unwrap_or(&base_dir);
+                    local_include::prepare_local(
+                        source,
+                        source_id,
+                        &base_dir,
+                        source_base,
+                        project_root,
+                    )
                 } else {
                     local_include::prepare(
                         source,

@@ -173,6 +173,7 @@ pub fn prepare_local(
     source: &str,
     source_id: String,
     base_dir: &Path,
+    source_base: &Path,
     project_root: &Path,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let base_dir = base_dir
@@ -195,7 +196,14 @@ pub fn prepare_local(
     );
 
     let mut sources = BTreeMap::from([(source_id.clone(), source.to_owned())]);
-    let mut source_bases = BTreeMap::from([(source_id.clone(), base_dir)]);
+    let source_base =
+        source_base
+            .canonicalize()
+            .map_err(|source| LocalIncludeError::InvalidBase {
+                path: source_base.to_owned(),
+                source,
+            })?;
+    let mut source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
     let mut snapshot_entries = Vec::new();
     let mut include_errors = BTreeMap::new();
     let mut pending = VecDeque::new();

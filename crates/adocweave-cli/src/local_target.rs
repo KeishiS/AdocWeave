@@ -158,8 +158,7 @@ fn line_column(source: &str, offset: usize) -> (u32, u32) {
     let column = prefix
         .rsplit_once('\n')
         .map_or(prefix, |(_, tail)| tail)
-        .chars()
-        .count() as u32
+        .len() as u32
         + 1;
     (line, column)
 }

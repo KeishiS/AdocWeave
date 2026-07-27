@@ -155,26 +155,32 @@ impl LocalTargetSession {
         if let Some(result) = self.text.get(&canonical) {
             return result.clone().map(|text| (canonical, text));
         }
+        if self.read_files >= self.limits.max_files
+            || self.read_bytes >= self.limits.max_total_bytes
+        {
+            return Err(LocalTargetError::ReadLimitExceeded);
+        }
+        let remaining = self.limits.max_total_bytes - self.read_bytes;
+        let read_limit = self
+            .limits
+            .max_resource_bytes
+            .min(remaining)
+            .saturating_add(1);
         let result = fs::File::open(&canonical)
             .map_err(|source| classify_io(canonical.clone(), source))
             .and_then(|file| {
+                self.read_files += 1;
                 let mut bytes = Vec::new();
-                file.take(self.limits.max_resource_bytes.saturating_add(1))
+                file.take(read_limit)
                     .read_to_end(&mut bytes)
                     .map_err(|source| classify_io(canonical.clone(), source))?;
+                self.read_bytes = self.read_bytes.saturating_add(bytes.len() as u64);
+                if self.read_bytes > self.limits.max_total_bytes {
+                    return Err(LocalTargetError::ReadLimitExceeded);
+                }
                 if bytes.len() as u64 > self.limits.max_resource_bytes {
                     return Err(LocalTargetError::ResourceTooLarge(canonical.clone()));
                 }
-                if self.read_files >= self.limits.max_files {
-                    return Err(LocalTargetError::ReadLimitExceeded);
-                }
-                let total = self
-                    .read_bytes
-                    .checked_add(bytes.len() as u64)
-                    .filter(|total| *total <= self.limits.max_total_bytes)
-                    .ok_or(LocalTargetError::ReadLimitExceeded)?;
-                self.read_files += 1;
-                self.read_bytes = total;
                 String::from_utf8(bytes).map_err(|source| {
                     LocalTargetError::Unverifiable(format!(
                         "{} is not UTF-8: {source}",
@@ -471,6 +477,33 @@ mod tests {
             session.inspect(&root.0.join("docs"), "missing.adoc"),
             Err(LocalTargetError::LimitExceeded { limit: 1 })
         ));
+    }
+
+    #[test]
+    fn read_budget_stops_io_after_total_bytes_are_exhausted() {
+        let root = TestDir::new();
+        fs::write(root.0.join("docs/other.adoc"), "other").expect("second file");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(
+            policy,
+            2,
+            ResourceLimits {
+                max_files: 2,
+                max_resource_bytes: 10,
+                max_total_bytes: 1,
+            },
+        );
+
+        assert!(matches!(
+            session.read_utf8(&root.0.join("docs"), "guide.adoc"),
+            Err(LocalTargetError::ReadLimitExceeded)
+        ));
+        assert_eq!(session.read_files, 1);
+        assert!(matches!(
+            session.read_utf8(&root.0.join("docs"), "other.adoc"),
+            Err(LocalTargetError::ReadLimitExceeded)
+        ));
+        assert_eq!(session.read_files, 1);
     }
 
     #[cfg(unix)]
