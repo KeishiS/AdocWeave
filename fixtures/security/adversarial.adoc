@@ -14,7 +14,7 @@ data:text/html,<svg/onload=alert(3)>[data]
 == Safe anchor
 
 <<safe-anchor,local>>
-xref:../outside.adoc[traversal]
+xref:../outside.adoc[parent document]
 xref:missing.adoc#anchor[missing]
 xref:note:item[scheme]
 

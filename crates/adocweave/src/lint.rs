@@ -1362,23 +1362,29 @@ mod tests {
 
     #[test]
     fn relative_target_validation_remains_lexically_bounded() {
-        for source in [
-            "link://example.com/path[network path]",
-            "link:../%2e%2e/secret[encoded traversal]",
-            "link:../line%0afeed[encoded control]",
-            "link:javascript:alert(1)[scheme]",
-            "xref:/absolute.adoc[absolute]",
-            "xref:..\\\\secret.adoc[backslash]",
+        for (source, expected_code) in [
+            (
+                "link://example.com/path[network path]",
+                "invalid-url-scheme",
+            ),
+            (
+                "link:../%2e%2e/secret[encoded traversal]",
+                "invalid-url-scheme",
+            ),
+            ("link:../line%0afeed[encoded control]", "invalid-url-scheme"),
+            ("link:javascript:alert(1)[scheme]", "invalid-url-scheme"),
+            ("xref:/absolute.adoc[absolute]", "invalid-cross-reference"),
+            (
+                "xref:..\\\\secret.adoc[backslash]",
+                "invalid-cross-reference",
+            ),
         ] {
             let diagnostics = lint(source, &LintConfig::default()).expect("lint");
             assert!(
-                diagnostics.iter().any(|diagnostic| {
-                    matches!(
-                        diagnostic.code.as_str(),
-                        "invalid-url-scheme" | "invalid-cross-reference"
-                    )
-                }),
-                "missing invalid-target diagnostic for {source}"
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code.as_str() == expected_code),
+                "missing {expected_code} diagnostic for {source}"
             );
         }
     }
