@@ -192,6 +192,17 @@
       "contractImpact": "core-profile,core-api,html,projection,conformance"
     },
     {
+      "name": "html5-complete-document",
+      "sourceFile": "full.adoc",
+      "expectedHtmlFile": "full.complete.html",
+      "options": {
+        "documentMode": "complete"
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "完全HTML文書の必須head metadataと本文をnativeおよびWASMで一致させる",
+      "contractImpact": "html,conformance,wasm-api"
+    },
+    {
       "name": "manpage-structure",
       "source": "= adocweave(1)\n:doctype: manpage\n\n== NAME\n\nadocweave - convert AsciiDoc safely\n",
       "compatibility": "supported-subset",

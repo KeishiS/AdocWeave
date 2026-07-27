@@ -202,6 +202,13 @@
         {
           default = shell (commonPackages ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.chromium ]);
           ci = shell commonPackages;
+          html5 = pkgs.mkShell {
+            packages = [
+              pkgs.nodejs
+              pkgs.validator-nu
+            ];
+            ADOCWEAVE_HTML_VALIDATOR = "${pkgs.validator-nu}/bin/vnu";
+          };
         }
       );
     };

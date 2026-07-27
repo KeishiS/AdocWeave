@@ -419,6 +419,12 @@ description = "Build the native JSON conformance adapter"
 command = "cargo"
 args = ["build", "-p", "adocweave-wasm", "--bin", "adocweave-conformance-native"]
 
+[tasks.html5-check]
+description = "Validate generated fragment and complete-document HTML with Nu Html Checker"
+dependencies = ["build-adoc-check", "build-conformance-native"]
+command = "nix"
+args = ["develop", ".#html5", "-c", "node", "tools/html5-check.mjs"]
+
 [tasks.test-cross-runtime]
 description = "Compare native and actual WASM results over shared conformance fixtures"
 dependencies = ["build-conformance-native", "build-wasm-node"]
@@ -666,6 +672,7 @@ dependencies = [
   "doc-check",
   "docs-check",
   "adoc-check",
+  "html5-check",
   "docs-lint",
 ]
 

@@ -43,6 +43,7 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "li",
     "link",
     "mark",
+    "meta",
     "ol",
     "p",
     "pre",
@@ -57,13 +58,14 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "tfoot",
     "th",
     "thead",
+    "title",
     "tr",
     "ul",
     "video",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &[
-    "alt", "class", "colspan", "controls", "height", "href", "id", "poster", "rel", "rowspan",
-    "src", "target", "title", "width",
+    "alt", "charset", "class", "colspan", "controls", "height", "href", "id", "lang", "poster",
+    "rel", "rowspan", "src", "target", "title", "width",
 ];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
@@ -349,17 +351,12 @@ pub(crate) fn render_with_inputs_ast(
             problem.range,
         ));
     }
-    let head = render_stylesheets(policy, &mut diagnostics);
+    let stylesheets = render_stylesheets(policy, &mut diagnostics);
     crate::diagnostic::sort_diagnostics(&mut diagnostics);
 
     let html = if policy.document_mode == HtmlDocumentMode::Complete {
-        if head.is_empty() {
-            format!("<!doctype html>\n<html>\n<body>\n{fragment}</body>\n</html>\n")
-        } else {
-            format!(
-                "<!doctype html>\n<html>\n<head>\n{head}</head>\n<body>\n{fragment}</body>\n</html>\n"
-            )
-        }
+        let head = render_document_head(document, &stylesheets);
+        format!("<!doctype html>\n<html lang=\"\">\n{head}<body>\n{fragment}</body>\n</html>\n")
     } else {
         fragment
     };
@@ -371,6 +368,23 @@ pub(crate) fn render_with_inputs_ast(
         document_attributes,
         heading_ids,
     }
+}
+
+fn render_document_head(document: &AstDocument, stylesheets: &str) -> String {
+    let title = document
+        .structure()
+        .headings()
+        .iter()
+        .find(|heading| heading.kind == crate::structure::SectionKind::DocumentTitle)
+        .map(|heading| heading.title.as_str())
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or("AdocWeave document");
+    let mut head = String::from("<head>\n<meta charset=\"utf-8\">\n<title>");
+    escape_html_into(&mut head, title);
+    head.push_str("</title>\n");
+    head.push_str(stylesheets);
+    head.push_str("</head>\n");
+    head
 }
 
 #[derive(Clone, Copy, Default)]
@@ -2282,12 +2296,43 @@ mod tests {
             .html,
             concat!(
                 "<!doctype html>\n",
-                "<html>\n",
+                "<html lang=\"\">\n",
+                "<head>\n",
+                "<meta charset=\"utf-8\">\n",
+                "<title>AdocWeave document</title>\n",
+                "</head>\n",
                 "<body>\n",
                 "<p>paragraph</p>\n",
                 "</body>\n",
                 "</html>\n"
             )
+        );
+    }
+
+    #[test]
+    fn complete_document_title_is_non_empty_and_escaped() {
+        let policy = RenderPolicy {
+            document_mode: HtmlDocumentMode::Complete,
+            ..RenderPolicy::default()
+        };
+        let titled = parse("= <script> & title").expect("valid source");
+        let formatted = parse("= *Formatted* title").expect("valid source");
+        let untitled = parse("paragraph").expect("valid source");
+
+        assert!(
+            render(&titled.ast, &policy)
+                .html
+                .contains("<title>&lt;script&gt; &amp; title</title>")
+        );
+        assert!(
+            render(&formatted.ast, &policy)
+                .html
+                .contains("<title>*Formatted* title</title>")
+        );
+        assert!(
+            render(&untitled.ast, &policy)
+                .html
+                .contains("<title>AdocWeave document</title>")
         );
     }
 
@@ -2318,8 +2363,10 @@ mod tests {
             output.html,
             concat!(
                 "<!doctype html>\n",
-                "<html>\n",
+                "<html lang=\"\">\n",
                 "<head>\n",
+                "<meta charset=\"utf-8\">\n",
+                "<title>AdocWeave document</title>\n",
                 "<link rel=\"stylesheet\" href=\"https://example.com/a.css\">\n",
                 "<style>\n",
                 "p { margin: 0; }\n",
@@ -2754,6 +2801,7 @@ mod tests {
                 "li",
                 "link",
                 "mark",
+                "meta",
                 "ol",
                 "p",
                 "pre",
@@ -2768,6 +2816,7 @@ mod tests {
                 "tfoot",
                 "th",
                 "thead",
+                "title",
                 "tr",
                 "ul",
                 "video"
@@ -2776,8 +2825,8 @@ mod tests {
         assert_eq!(
             ALLOWED_ATTRIBUTES,
             [
-                "alt", "class", "colspan", "controls", "height", "href", "id", "poster", "rel",
-                "rowspan", "src", "target", "title", "width"
+                "alt", "charset", "class", "colspan", "controls", "height", "href", "id", "lang",
+                "poster", "rel", "rowspan", "src", "target", "title", "width"
             ]
         );
         assert_eq!(

@@ -1,0 +1,31 @@
+= HTML5 validation
+
+== Blocks
+
+NOTE: Generated HTML remains structurally valid.
+
+. First item
+. Second item
+
+[cols="1,1",options="header"]
+|===
+|Name |Value
+|alpha |one
+|beta |two
+|===
+
+[source,rust]
+----
+fn main() {}
+----
+
+[quote,AdocWeave]
+____
+Safe output has explicit boundaries.
+____
+
+== Inline and fallback output
+
+https://example.com[External link] stem:[x < y]
+link:../guide.adoc[Relative link] xref:../reference.adoc[Reference]
+image:diagram.png[Diagram] audio:sample.ogg[Sample] video:sample.mp4[Sample]

@@ -9,13 +9,18 @@ DOM構造、属性順、空白またはbyte列が同一であることは保証�
 
 == 文書モード
 
-`Fragment`は本文要素だけを出力する既定のモードです。`Complete`は文書型、`html`および`body`を持つ
-完全なHTML文書を出力します。stylesheetを一件以上出力する場合だけ`head`を追加します。
+`Fragment`は本文要素だけを出力する既定のモードです。`Complete`は文書型、言語未確定の`html`、
+UTF-8 encodingと非空タイトルを持つ`head`および`body`を常に出力します。Stylesheetは同じ`head`へ
+追加します。
 
 [source,html]
 ----
 <!doctype html>
-<html>
+<html lang="">
+<head>
+<meta charset="utf-8">
+<title>AdocWeave document</title>
+</head>
 <body>
 ...
 </body>
@@ -39,7 +44,7 @@ DOM構造、属性順、空白またはbyte列が同一であることは保証�
 
 生成する要素は次に限定します。
 
-* 文書構造：`html`、`head`、`body`、`style`、`link`
+* 文書構造：`html`、`head`、`meta`、`title`、`body`、`style`、`link`
 * 見出しと本文：`h1`から`h5`、`p`、`div`、`br`、`hr`
 * インライン：`a`、`strong`、`em`、`code`、`mark`、`span`、`sub`、`sup`、`kbd`
 * ブロック：`pre`、`blockquote`、`cite`
@@ -47,12 +52,17 @@ DOM構造、属性順、空白またはbyte列が同一であることは保証�
 * table：`table`、`caption`、`thead`、`tbody`、`tfoot`、`tr`、`th`、`td`
 * media：`img`、`audio`、`video`
 
-属性は`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、`poster`、`target`、
-`rel`、`colspan`および`rowspan`に限定します。classには実装が列挙する固定値だけを使用します。
+属性は`lang`、`charset`、`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、
+`poster`、`target`、`rel`、`colspan`および`rowspan`に限定します。classには実装が列挙する固定値だけを使用します。
 入力由来の任意属性、event handler、`script`、SVGおよびraw HTMLは生成しません。
 
 `target`と`rel`は外部HTTP(S) linkの固定表示と外部stylesheetだけに使用します。入力に書かれた同名属性を
 そのまま通過させません。
+
+完全HTML文書には`doctype`、`html`、`head`、UTF-8の`meta`、非空の`title`および`body`を常に出力します。
+文書タイトルがある場合は構造モデルのタイトル文字列をinline記法として再解釈せず、escapeして`title`へ
+使用します。タイトルがない場合は固定の代替タイトルを使用します。言語を推測せず、`html`の`lang`には
+未知を表す空文字列を出力します。
 
 Tableの`width`は1から100までの値を百分率として正規化し、`%`付きで出力します。Captionは安全な
 literal textとしてescapeし、inline書式や属性参照を再解析しません。
@@ -80,6 +90,20 @@ iconはaltとtitle、audioはtitle、videoは寸法、poster、titleを出力で
 `controls`はaudioとvideoへ常に付与し、入力から無効化しません。Video posterは独立した`image/*` resourceとして
 URLとMIME typeを検査します。posterだけを利用できない場合は診断を返してposterを省略し、安全なvideo本体は
 維持します。Mediaのlink化、icon set固有の要素・classおよびその他の再生属性には対応しません。
+
+== HTML5標準適合性検査
+
+生成HTMLの標準適合性は`cargo make html5-check`で検査します。検査対象は
+`fixtures/html/validation.json`で一意に管理し、断片出力は同directoryの固定テンプレートで完全HTML文書へ
+変換します。完全文書出力は包まず、そのまま検査します。生成物は`target/html5/`だけへ書き込みます。
+
+Validatorには`flake.lock`で固定したNixpkgsのNu Html Checkerを使用し、manifestにversionと実行optionを
+記録します。errorとwarningをいずれも失敗として扱い、言語推定だけを無効にします。既知違反のallowlistは
+設けません。不正な入れ子、標準外属性および不完全な文書のnegative fixtureがvalidatorで拒否されることも
+同じtaskで確認します。
+
+この検査はHTML5標準への適合性だけを担当します。Golden fixtureのbyte比較、要素・属性allowlist、
+URL policy、安全性検査およびnativeとWASMの一致検査は引き続き独立して実行します。
 
 == ソースと数式
 

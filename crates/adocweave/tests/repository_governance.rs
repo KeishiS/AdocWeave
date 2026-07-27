@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
 
@@ -61,6 +61,49 @@ struct ConformanceConsumers {
 struct ConformanceConsumer {
     name: String,
     path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Html5Manifest {
+    schema_version: u8,
+    validator: Html5Validator,
+    template: Html5Template,
+    cases: Vec<Html5Case>,
+    negative_fixtures: Vec<Html5NegativeFixture>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Html5Validator {
+    package: String,
+    version: String,
+    options: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Html5Template {
+    path: String,
+    marker: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Html5Case {
+    name: String,
+    kind: String,
+    source: Option<String>,
+    case: Option<String>,
+    args: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Html5NegativeFixture {
+    path: String,
+    r#type: String,
+    message_pattern: String,
 }
 
 fn repository_root() -> std::path::PathBuf {
@@ -372,6 +415,121 @@ fn conformance_fixture_has_every_declared_consumer() {
             manifest.fixture
         );
     }
+}
+
+#[test]
+fn html5_validation_manifest_has_fixed_tools_and_complete_inputs() {
+    let root = repository_root();
+    let manifest: Html5Manifest = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/html/validation.json"))
+            .expect("HTML5 validation manifest"),
+    )
+    .expect("valid HTML5 validation manifest");
+    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.validator.package, "validator-nu");
+    assert!(!manifest.validator.version.is_empty());
+    assert_eq!(
+        manifest.validator.options,
+        ["--format", "json", "--Werror", "--no-langdetect"]
+    );
+
+    let template = fs::read_to_string(root.join(&manifest.template.path)).expect("HTML5 template");
+    assert_eq!(template.matches(&manifest.template.marker).count(), 1);
+
+    let conformance: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/conformance/cases.json"))
+            .expect("conformance manifest"),
+    )
+    .expect("valid conformance manifest");
+    let conformance_modes = conformance["cases"]
+        .as_array()
+        .expect("conformance cases")
+        .iter()
+        .map(|case| {
+            (
+                case["name"]
+                    .as_str()
+                    .expect("conformance case name")
+                    .to_owned(),
+                case["options"]["documentMode"]
+                    .as_str()
+                    .unwrap_or("fragment")
+                    .to_owned(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let mut names = BTreeSet::new();
+    for case in manifest.cases {
+        assert!(
+            names.insert(case.name.clone()),
+            "duplicate case: {}",
+            case.name
+        );
+        match case.kind.as_str() {
+            "cli-fragment" | "cli-complete" => {
+                assert!(
+                    case.case.is_none(),
+                    "CLI case {} has conformance input",
+                    case.name
+                );
+                assert!(
+                    root.join(case.source.expect("CLI source")).is_file(),
+                    "missing CLI source for {}",
+                    case.name
+                );
+            }
+            "conformance-fragment" | "conformance-complete" => {
+                assert!(
+                    case.source.is_none(),
+                    "conformance case {} has CLI source",
+                    case.name
+                );
+                let reference = case.case.as_deref().expect("conformance input");
+                let actual_mode = conformance_modes
+                    .get(reference)
+                    .unwrap_or_else(|| panic!("unknown conformance case: {reference}"));
+                let expected_mode = if case.kind == "conformance-complete" {
+                    "complete"
+                } else {
+                    "fragment"
+                };
+                assert_eq!(
+                    actual_mode, expected_mode,
+                    "document mode mismatch for {}",
+                    case.name
+                );
+                assert!(
+                    case.args.is_none(),
+                    "conformance case {} has CLI args",
+                    case.name
+                );
+            }
+            other => panic!("unsupported HTML5 case kind: {other}"),
+        }
+    }
+
+    let mut negative = BTreeSet::new();
+    for fixture in manifest.negative_fixtures {
+        assert!(
+            negative.insert(fixture.path.clone()),
+            "duplicate negative fixture: {}",
+            fixture.path
+        );
+        assert!(
+            root.join(&fixture.path).is_file(),
+            "missing negative fixture"
+        );
+        assert_eq!(fixture.r#type, "error");
+        assert!(!fixture.message_pattern.is_empty());
+    }
+
+    let makefile = fs::read_to_string(root.join("Makefile.toml")).expect("Makefile");
+    assert!(makefile.contains("[tasks.html5-check]"));
+    assert!(makefile.contains("\"html5-check\","));
+    let flake = fs::read_to_string(root.join("flake.nix")).expect("flake");
+    assert!(flake.contains("ADOCWEAVE_HTML_VALIDATOR"));
+    assert!(flake.contains("pkgs.validator-nu"));
 }
 
 #[test]
