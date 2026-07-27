@@ -127,6 +127,7 @@ Nix入力はDependabotの対象外であり、`flake.lock`を手動で更新し�
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は`docs/`、設計理由はADR、
   作業計画はGitHub Issuesを正本とします。
+* 完了した作業の経緯はGit履歴とGitHub Issuesで確認し、repository内にIssue台帳を複製しません。
 * 利用者から見える変更では、関連文書を同じpull requestで更新します。文書更新が不要な場合は、
   その理由をpull requestへ記載します。
 * 文書内のcommand例は、可能な限りCIまたは自動testで実行できる形にします。

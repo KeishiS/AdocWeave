@@ -23,5 +23,5 @@ LSP Semantic Tokensはリンク、参照、anchor等の意味的補足であり�
 - 見出しレベル、生成IDおよび対象部分を表示するHover
 - ソース言語`ru`に対する`rust`補完
 
-Tree-sitter構文色付けはIssue 110で追加したため、上記2026-07-20の受け入れ実績とは別に、
-xref:../../docs/developer-guide/zed-development.adoc[開発版の動作確認]に従う目視確認を必要とする。
+Tree-sitter queryを変更した場合は、
+xref:../../docs/developer-guide/zed-development.adoc[開発版の動作確認]に従って目視確認する。
