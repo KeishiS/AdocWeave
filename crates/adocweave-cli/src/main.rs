@@ -13,7 +13,7 @@ use adocweave::output::html::{
 };
 use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits};
 use adocweave::text::{PositionEncoding, SourceDocument};
-use adocweave::{Engine, ParseError, ParseOptions};
+use adocweave::{AnalysisOptions, Engine, OutputLimits, ParseError};
 
 mod local_include;
 
@@ -35,6 +35,7 @@ Arguments:
 
 Options:
   --json      Emit check diagnostics as JSON
+  --list-rules  List available check rules; requires --json
   --check     Check formatting without writing formatted text
   --include   Enable bounded local include processing
   --base-dir DIR    Resolve root document includes from DIR
@@ -128,16 +129,72 @@ enum CssArgument {
     Url(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiagnosticFormat {
+    Human,
+    Json,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CheckOptions {
+    format: DiagnosticFormat,
+    list_rules: bool,
+}
+
+struct CheckOutcome {
+    output: String,
+    /// Host-side validation errors make `check` fail. Core diagnostics remain
+    /// report output and do not change the process status by themselves.
+    has_host_errors: bool,
+}
+
+impl CheckOutcome {
+    fn success(output: String) -> Self {
+        Self {
+            output,
+            has_host_errors: false,
+        }
+    }
+
+    const fn exit_code(&self) -> ExitCode {
+        if self.has_host_errors {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+#[derive(Debug)]
+enum CommandOptions {
+    Convert {
+        complete: bool,
+        css: Vec<CssArgument>,
+    },
+    Check(CheckOptions),
+    Format {
+        check: bool,
+    },
+    Symbols,
+}
+
+impl CommandOptions {
+    const fn operation(&self) -> Operation {
+        match self {
+            Self::Convert { .. } => Operation::Convert,
+            Self::Check(_) => Operation::Check,
+            Self::Format { .. } => Operation::Format,
+            Self::Symbols => Operation::Symbols,
+        }
+    }
+}
+
 struct Arguments {
-    operation: Operation,
+    command: CommandOptions,
     input: Option<PathBuf>,
-    json: bool,
-    format_check: bool,
     include: bool,
     base_dir: Option<PathBuf>,
     allowed_roots: Vec<PathBuf>,
-    complete: bool,
-    css: Vec<CssArgument>,
 }
 
 enum Action {
@@ -178,6 +235,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut input = None;
     let mut stdin_selected = false;
     let mut json = false;
+    let mut list_rules = false;
     let mut format_check = false;
     let mut include = false;
     let mut base_dir = None;
@@ -188,6 +246,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         match argument.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
             "--json" if operation == Operation::Check => json = true,
+            "--list-rules" if operation == Operation::Check => list_rules = true,
             "--check" if operation == Operation::Format => format_check = true,
             "--include" => include = true,
             "--complete" if operation == Operation::Convert => complete = true,
@@ -234,17 +293,43 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "--css and --css-url require --complete".to_owned(),
         ));
     }
+    if list_rules {
+        if !json {
+            return Err(CliError::Usage("--list-rules requires --json".to_owned()));
+        }
+        if input.is_some()
+            || stdin_selected
+            || include
+            || base_dir.is_some()
+            || !allowed_roots.is_empty()
+        {
+            return Err(CliError::Usage(
+                "--list-rules cannot be combined with document input or include options".to_owned(),
+            ));
+        }
+    }
 
+    let command = match operation {
+        Operation::Convert => CommandOptions::Convert { complete, css },
+        Operation::Check => CommandOptions::Check(CheckOptions {
+            format: if json {
+                DiagnosticFormat::Json
+            } else {
+                DiagnosticFormat::Human
+            },
+            list_rules,
+        }),
+        Operation::Format => CommandOptions::Format {
+            check: format_check,
+        },
+        Operation::Symbols => CommandOptions::Symbols,
+    };
     Ok(Action::Run(Arguments {
-        operation,
+        command,
         input,
-        json,
-        format_check,
         include,
         base_dir,
         allowed_roots,
-        complete,
-        css,
     }))
 }
 
@@ -274,13 +359,13 @@ fn decode_input(input: &[u8]) -> Result<&str, CliError> {
 }
 
 fn analyze(source: &str) -> Result<adocweave::Analysis, CliError> {
-    Engine::new(ParseOptions::default())
+    Engine::new(AnalysisOptions::default())
         .analyze(source)
         .map_err(CliError::Analysis)
 }
 
 fn finish_output(output: String) -> Result<String, CliError> {
-    let limit = ParseOptions::default().limits.max_output_bytes;
+    let limit = OutputLimits::default().max_output_bytes;
     if output.len() > usize::try_from(limit).expect("u32 fits usize on supported targets") {
         return Err(CliError::OutputLimit {
             limit,
@@ -332,54 +417,60 @@ fn convert_policy(complete: bool, css: &[CssArgument]) -> Result<RenderPolicy, C
     })
 }
 
-fn process(
-    operation: Operation,
-    input: &[u8],
-    json: bool,
-    render_policy: &RenderPolicy,
-) -> Result<String, CliError> {
+fn process_convert(input: &[u8], render_policy: &RenderPolicy) -> Result<String, CliError> {
     let source = decode_input(input)?;
     let analysis = analyze(source)?;
-    let output = match operation {
-        Operation::Convert => {
-            let output = render(analysis.document(), render_policy);
-            if let Some(diagnostic) = output.diagnostics.iter().find(|diagnostic| {
-                matches!(
-                    diagnostic.code.as_str(),
-                    "invalid-stylesheet-url"
-                        | "invalid-stylesheet-content"
-                        | "stylesheet-limit-exceeded"
-                        | "stylesheet-not-applicable"
-                )
-            }) {
-                return Err(CliError::Stylesheet(diagnostic.message.clone()));
-            }
-            output.html
-        }
-        Operation::Check if json => diagnostic::render_json(analysis.diagnostics()),
-        Operation::Check => diagnostic::render_human(
+    let output = render(analysis.document(), render_policy);
+    if let Some(diagnostic) = output.diagnostics.iter().find(|diagnostic| {
+        matches!(
+            diagnostic.code.as_str(),
+            "invalid-stylesheet-url"
+                | "invalid-stylesheet-content"
+                | "stylesheet-limit-exceeded"
+                | "stylesheet-not-applicable"
+        )
+    }) {
+        return Err(CliError::Stylesheet(diagnostic.message.clone()));
+    }
+    Ok(output.html)
+}
+
+fn process_check(input: &[u8], format: DiagnosticFormat) -> Result<CheckOutcome, CliError> {
+    let source = decode_input(input)?;
+    let analysis = analyze(source)?;
+    let output = match format {
+        DiagnosticFormat::Json => diagnostic::render_json(analysis.diagnostics()),
+        DiagnosticFormat::Human => diagnostic::render_human(
             analysis.diagnostics(),
             analysis.source_document(),
             PositionEncoding::Utf16,
         )
         .map_err(CliError::Position)?,
-        Operation::Format => {
-            format_analysis(&analysis, &FormatConfig::default())
-                .map_err(CliError::Position)?
-                .formatted
-        }
-        Operation::Symbols => adocweave::semantic::render_symbols_json(
-            &adocweave::semantic::document_symbols(analysis.document()),
-        ),
     };
-    Ok(output)
+    Ok(CheckOutcome::success(output))
 }
 
-fn run() -> Result<(), CliError> {
+fn process_format(input: &[u8]) -> Result<String, CliError> {
+    let source = decode_input(input)?;
+    let analysis = analyze(source)?;
+    Ok(format_analysis(&analysis, &FormatConfig::default())
+        .map_err(CliError::Position)?
+        .formatted)
+}
+
+fn process_symbols(input: &[u8]) -> Result<String, CliError> {
+    let source = decode_input(input)?;
+    let analysis = analyze(source)?;
+    Ok(adocweave::semantic::render_symbols_json(
+        &adocweave::semantic::document_symbols(analysis.document()),
+    ))
+}
+
+fn run() -> Result<ExitCode, CliError> {
     match parse_arguments(env::args().skip(1))? {
         Action::Help => {
             print!("{HELP}");
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
         Action::Version { json } => {
             if json {
@@ -393,9 +484,23 @@ fn run() -> Result<(), CliError> {
             } else {
                 println!("adocweave {}", adocweave::VERSION);
             }
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
         Action::Run(arguments) => {
+            let operation = arguments.command.operation();
+            if matches!(
+                &arguments.command,
+                CommandOptions::Check(CheckOptions {
+                    list_rules: true,
+                    ..
+                })
+            ) {
+                let output = diagnostic::render_lint_rule_catalog_json();
+                io::stdout()
+                    .write_all(output.as_bytes())
+                    .map_err(CliError::Write)?;
+                return Ok(ExitCode::SUCCESS);
+            }
             let input_path = arguments.input.clone();
             let input = read_input(arguments.input)?;
             let mut prepared = None;
@@ -430,7 +535,7 @@ fn run() -> Result<(), CliError> {
                     &arguments.allowed_roots,
                 )
                 .map_err(CliError::Include)?;
-                let processed = if arguments.operation == Operation::Format {
+                let processed = if operation == Operation::Format {
                     input.clone()
                 } else {
                     include_input.document.source.as_bytes().to_vec()
@@ -440,36 +545,48 @@ fn run() -> Result<(), CliError> {
             } else {
                 input.clone()
             };
-            let render_policy = convert_policy(arguments.complete, &arguments.css)?;
-            let output = if arguments.operation == Operation::Check {
-                if let Some(prepared) = prepared.as_ref() {
-                    check_preprocessed(prepared, arguments.json).map_err(CliError::Include)
+            let (output, exit_code) = if let CommandOptions::Check(check) = &arguments.command {
+                let outcome = if let Some(prepared) = prepared.as_ref() {
+                    check_preprocessed(prepared, check.format)
+                        .map(CheckOutcome::success)
+                        .map_err(CliError::Include)
                 } else {
-                    process(Operation::Check, &processed, arguments.json, &render_policy)
-                }
-            } else if arguments.operation == Operation::Format && arguments.format_check {
+                    process_check(&processed, check.format)
+                }?;
+                let exit_code = outcome.exit_code();
+                Ok((outcome.output, exit_code))
+            } else if matches!(&arguments.command, CommandOptions::Format { check: true }) {
                 let source = decode_input(&input)?;
-                let output = process(Operation::Format, &input, false, &render_policy)?;
+                let output = process_format(&input)?;
                 if output != source {
                     return Err(CliError::FormattingRequired);
                 }
-                Ok(String::new())
+                Ok((String::new(), ExitCode::SUCCESS))
             } else {
-                process(arguments.operation, &processed, false, &render_policy)
+                let output = match &arguments.command {
+                    CommandOptions::Convert { complete, css } => {
+                        process_convert(&processed, &convert_policy(*complete, css)?)?
+                    }
+                    CommandOptions::Format { .. } => process_format(&processed)?,
+                    CommandOptions::Symbols => process_symbols(&processed)?,
+                    CommandOptions::Check(_) => unreachable!("check handled above"),
+                };
+                Ok((output, ExitCode::SUCCESS))
             }?;
             let output = finish_output(output)?;
             io::stdout()
                 .write_all(output.as_bytes())
-                .map_err(CliError::Write)
+                .map_err(CliError::Write)?;
+            Ok(exit_code)
         }
     }
 }
 
 fn check_preprocessed(
     prepared: &local_include::PreparedInput,
-    json: bool,
+    format: DiagnosticFormat,
 ) -> Result<String, local_include::LocalIncludeError> {
-    let engine = adocweave::Engine::new(adocweave::ParseOptions::default());
+    let engine = adocweave::Engine::new(adocweave::AnalysisOptions::default());
     let analysis = engine
         .analyze(&prepared.document.source)
         .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
@@ -479,7 +596,7 @@ fn check_preprocessed(
     }
     .project_origins(ProjectionLimits::default())
     .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
-    if json {
+    if format == DiagnosticFormat::Json {
         let values = projected
             .diagnostics
             .iter()
@@ -537,7 +654,7 @@ fn check_preprocessed(
 
 fn main() -> ExitCode {
     match run() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(exit_code) => exit_code,
         Err(error) => {
             eprintln!("adocweave: {error}");
             eprintln!("Try 'adocweave --help' for more information.");
@@ -548,7 +665,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Operation, parse_arguments};
+    use super::{Action, CommandOptions, DiagnosticFormat, Operation, parse_arguments};
 
     fn arguments(values: &[&str]) -> impl Iterator<Item = String> {
         values.iter().map(ToString::to_string)
@@ -562,7 +679,7 @@ mod tests {
             panic!("expected run action");
         };
 
-        assert_eq!(parsed.operation, Operation::Convert);
+        assert_eq!(parsed.command.operation(), Operation::Convert);
         assert_eq!(
             parsed.input.as_deref(),
             Some(std::path::Path::new("document.adoc"))
@@ -577,7 +694,7 @@ mod tests {
             panic!("expected run action");
         };
 
-        assert_eq!(parsed.operation, Operation::Check);
+        assert_eq!(parsed.command.operation(), Operation::Check);
         assert!(parsed.input.is_none());
     }
 
@@ -601,7 +718,10 @@ mod tests {
             else {
                 panic!("expected run action");
             };
-            assert!(parsed.json);
+            assert!(matches!(
+                parsed.command,
+                CommandOptions::Check(options) if options.format == DiagnosticFormat::Json
+            ));
             assert_eq!(
                 parsed.input.as_deref(),
                 Some(std::path::Path::new("document.adoc"))
@@ -617,7 +737,10 @@ mod tests {
         else {
             panic!("expected run action");
         };
-        assert!(parsed.format_check);
+        assert!(matches!(
+            parsed.command,
+            CommandOptions::Format { check: true }
+        ));
     }
 
     #[test]

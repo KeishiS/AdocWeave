@@ -45,7 +45,7 @@ Zedまたは他のLSP client
 
 * AsciiDocのsyntax tree、AST、診断、Formatterおよびprojection
 * UTF-8ソース範囲とスナップショット固有の`SourceDocument`
-* `ProcessingLimits`と協調的な`CancellationCheck`
+* `AnalysisLimits`と協調的な`CancellationCheck`
 * 外部I/Oを行わない決定的な`Engine::analyze`
 
 `async-lsp`、TokioおよびLSP型をコアcrateの依存関係または公開APIへ持ち込んではなりません。
@@ -253,7 +253,7 @@ Renameはhost indexが結果を返す場合はそれを優先し、それ以外�
 == エディター投影
 
 Definition、ReferencesおよびDocument Linkは文書内、相対文書および任意スキームを同じ
-`ReferenceKey`で扱います。通常の外部URLは`UrlPolicy`を通したDocument Linkとして別に扱います。
+`ReferenceKey`で扱います。通常の外部URLは`AuthoredUrlPolicy`を通したDocument Linkとして別に扱います。
 Semantic Tokensは通常リンク・xrefの参照先、アンカーID、リテラルおよび数式内容を`Analysis`から生成し、
 ソースを再解析しません。見出しmarker・本文、属性、commentおよび書式delimiter等、構文木だけで決まる基本色付けは
 各editorのTree-sitter queryが所有します。見出し本文を`namespace`等の一致しないLSP token typeへ投影しません。

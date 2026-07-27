@@ -179,7 +179,7 @@ function conformanceRequest(name, expectedMode) {
   if (!entry) {
     fail(`unknown conformance case: ${name}`);
   }
-  const actualMode = entry.options?.documentMode ?? "fragment";
+  const actualMode = entry.renderPolicy?.documentMode ?? "fragment";
   if (actualMode !== expectedMode) {
     fail(
       `conformance case ${name} uses ${actualMode} output, expected ${expectedMode}`,
@@ -205,7 +205,9 @@ function conformanceRequest(name, expectedMode) {
       projection: false,
     },
     renderInputs: entry.renderInputs ?? {},
-    options: entry.options ?? {},
+    analysisOptions: entry.analysisOptions ?? {},
+    renderPolicy: entry.renderPolicy ?? {},
+    outputLimits: entry.outputLimits ?? {},
   };
 }
 

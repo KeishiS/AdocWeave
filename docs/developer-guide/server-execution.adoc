@@ -11,7 +11,7 @@
 === 所有権と実行順序
 
 利用側アプリは`AnalysisRequest`へ、不透明な`SourceId`、文書version、単調増加するgeneration、
-入力snapshotおよび完全な`ParseOptions`を所有値として渡します。
+入力snapshotおよび完全な`AnalysisOptions`を所有値として渡します。
 
 推奨する実行順序は次のとおりです。
 
@@ -29,8 +29,9 @@ workerの再起動はFFI、taskまたはthreadなどの利用側アプリの境�
 
 === キャッシュ
 
-`AnalysisCacheKey`は、package version、生入力、`SourceId`および`ParseOptions`全体から決定します。
-Mapとsetは規範順に並べるため、挿入順は結果へ影響しません。`ParseOptions`または構成型へfieldを追加する
+`AnalysisCacheKey`は、package version、生入力、`SourceId`および解析結果・診断を変える
+`AnalysisOptions`から決定します。`RenderPolicy`と`OutputLimits`は含めません。
+Mapとsetは規範順に並べるため、挿入順は結果へ影響しません。`AnalysisOptions`または構成型へfieldを追加する
 場合は、キャッシュキーも同時に更新します。
 
 文書versionとgenerationはキャッシュキーへ含めません。同じ入力、設定および処理系なら解析結果を共有できます。

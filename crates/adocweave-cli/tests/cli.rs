@@ -145,6 +145,51 @@ fn check_supports_human_and_json_diagnostics() {
 }
 
 #[test]
+fn check_lists_the_typed_rule_catalog_without_reading_input() {
+    let output = adocweave()
+        .args(["check", "--list-rules", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the adocweave binary should run");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("catalog JSON");
+    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["packageVersion"], adocweave::VERSION);
+    let rules = value["rules"].as_array().expect("rules");
+    assert!(!rules.is_empty());
+    assert!(
+        rules
+            .windows(2)
+            .all(|pair| pair[0]["code"].as_str() < pair[1]["code"].as_str())
+    );
+    assert!(rules.iter().all(|rule| {
+        rule.get("defaultSeverity").is_some()
+            && rule.get("enabledByDefault").is_some()
+            && rule.get("description").is_some()
+            && rule.get("fixable").is_some()
+    }));
+}
+
+#[test]
+fn list_rules_rejects_missing_json_and_document_options() {
+    for arguments in [
+        vec!["check", "--list-rules"],
+        vec!["check", "--list-rules", "--json", "document.adoc"],
+        vec!["check", "--list-rules", "--json", "--include"],
+    ] {
+        let output = adocweave()
+            .args(arguments)
+            .stdin(Stdio::null())
+            .output()
+            .expect("the adocweave binary should run");
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
 fn check_accepts_relative_targets_without_activating_them_in_html() {
     let source = b"link:../release-manifest.json[release manifest]\n\
                    xref:../guide.adoc[guide]\n";

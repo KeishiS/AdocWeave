@@ -997,7 +997,7 @@ fn json_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::reference::ResolvedReference;
-    use crate::{Engine, ParseOptions, SourceId};
+    use crate::{AnalysisOptions, Engine, SourceId};
 
     use super::*;
 
@@ -1018,12 +1018,9 @@ fn main() {}
 
 stem:[x+y]
 ";
-        let analysis = Engine::new(ParseOptions {
-            source_id: Some(SourceId::new("host:document")),
-            ..ParseOptions::default()
-        })
-        .analyze(source)
-        .expect("analysis");
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze_with_source_id(Some(SourceId::new("host:document")), source)
+            .expect("analysis");
         let projected = project(&analysis, &RenderInputs::default());
         let html = crate::html::render(analysis.document(), &crate::html::RenderPolicy::default());
 
@@ -1053,7 +1050,7 @@ stem:[x+y]
 
     #[test]
     fn block_presentation_titles_use_resolved_inline_text() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(
                 "\
 = Title
@@ -1077,7 +1074,7 @@ body
 
     #[test]
     fn reference_graph_attaches_optional_resolution_by_exact_source_range() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze("xref:other.adoc[Other]")
             .expect("analysis");
         let resolution =
@@ -1103,7 +1100,7 @@ body
 
     #[test]
     fn formula_projection_preserves_inline_and_block_sources() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(
                 "\
 stem:[x + y]
@@ -1129,7 +1126,7 @@ a^2
 
     #[test]
     fn source_block_projection_separates_language_content_and_ranges() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(
                 "\
 [source,rust]
@@ -1152,7 +1149,7 @@ let x = 1;
 
     #[test]
     fn ordered_list_projection_uses_lowered_presentation() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(
                 "\
 [start=4,%reversed,loweralpha]
@@ -1182,7 +1179,7 @@ let x = 1;
 
     #[test]
     fn duplicate_resolution_ranges_never_depend_on_input_order() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze("xref:other.adoc[Other]")
             .expect("analysis");
         let range = analysis.references()[0].range;
@@ -1203,18 +1200,18 @@ let x = 1;
 
     #[test]
     fn projections_keep_the_public_baseline_json_contract() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze("= T")
             .expect("analysis");
         assert_eq!(
             project(&analysis, &RenderInputs::default()).render_json(),
-            "{\"packageVersion\":\"0.10.1\",\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"packageVersion\":\"0.11.0\",\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 
     #[test]
     fn bibliography_catalog_keeps_definition_and_all_reference_ranges() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze("* bibanchor:ref[] Entry\n\nSee <<ref>> and <<ref,Entry>>.")
             .expect("analysis");
         let projection = project(&analysis, &RenderInputs::default());
@@ -1243,7 +1240,7 @@ stem:[hidden-math]
 visible code
 ....
 ";
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(source)
             .expect("analysis");
         let searchable = searchable_text(&analysis);

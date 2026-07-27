@@ -17,7 +17,13 @@ test("release notes always contain the acceptance contract", () => {
   assert.match(notes, /serialized bytes and DOM shape/);
   assert.match(notes, /relative link is activated in HTML only after a host resolves it/);
   assert.match(notes, new RegExp(`WASM protocol schema version: ${protocol.schemaVersion}`));
-  assert.match(notes, /does not change the public Rust API or protocol schema/);
+  assert.match(notes, /previous flat options object is rejected/);
+  assert.match(notes, /replaces ParseOptions with AnalysisOptions/);
+  assert.match(notes, /Update browser requests from the removed flat `options`/);
+  assert.match(notes, /Engine::new\(AnalysisOptions::default\(\)\)/);
+  assert.match(notes, /analysisOptions:.*syntaxMode/s);
+  assert.match(notes, /renderPolicy:.*activeUrls/s);
+  assert.match(notes, /outputLimits:.*maxOutputBytes/s);
   assert.match(notes, /does not make generated markup a trusted DOM/);
   assert.match(notes, new RegExp(`unified package version: ${manifest.packageVersion}`));
   assert.match(notes, new RegExp(`Supported Rust toolchain: ${manifest.rustVersion}`));

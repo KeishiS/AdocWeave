@@ -1724,7 +1724,7 @@ mod tests {
                     .to_owned(),
             },
         );
-        let engine = Engine::new(crate::core::ParseOptions::default());
+        let engine = Engine::new(crate::core::AnalysisOptions::default());
         let analysis = preprocess_and_analyze(
             &engine,
             "include::part.adoc[]\n",
@@ -1771,7 +1771,7 @@ mod tests {
         .expect_err("source map limit");
         assert_eq!(source_map_error.kind, PreprocessErrorKind::SourceMapLimit);
 
-        let engine = Engine::new(crate::core::ParseOptions::default());
+        let engine = Engine::new(crate::core::AnalysisOptions::default());
         let analysis = preprocess_and_analyze(
             &engine,
             "= Title\n\n== Section\n",

@@ -95,6 +95,11 @@ description = "Run the Web Worker protocol tests"
 command = "npm"
 args = ["test", "--prefix", "web-worker"]
 
+[tasks.protocol-check]
+description = "Verify generated Web Worker protocol files are current"
+command = "node"
+args = ["tools/generate-protocol.mjs", "--check"]
+
 [tasks.release-contract]
 description = "Verify release train versions, targets, tags, and distribution manifest schema"
 dependencies = ["release-metadata-test", "release-notes-test", "release-workflow-policy"]
@@ -664,6 +669,7 @@ dependencies = [
   "clippy-zed",
   "test",
   "test-web-worker",
+  "protocol-check",
   "test-browser-types",
   "test-zed",
   "release-contract",

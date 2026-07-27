@@ -33,8 +33,9 @@ let host_result = host_extension.analyze(&analysis, host_context).await?;
 * 原値を保持するための正規化値と原値の区別
 * DB、時刻等を必要とする検証と純粋な構文・型検証の分離
 
-利用側アプリが変更を許可しない属性値は、`ParseOptions.protected_attributes`へ渡します。文書内の定義や解除が
-その値を変更する場合、コアは寛容modeで警告、厳格modeでエラーとなる`protected-attribute`診断を返します。
+利用側アプリが変更を許可しない属性値は、
+`AnalysisOptions.diagnostics.lint.protected_attributes`へ渡します。文書内の定義や解除が
+その値を変更する場合、コアは`protected-attribute`診断を返します。severityは同じ診断profileで指定します。
 コア自身は属性値をDB、環境変数または外部commandから取得しません。
 
 == xrefスキーム拡張
@@ -43,8 +44,9 @@ let host_result = host_extension.analyze(&analysis, host_context).await?;
 付けます。別文書と任意スキーム参照は`reference_queries()`で`ReferenceQuery`へ正規化し、不透明な
 `SourceId`とともに利用側アプリへ渡します。コアは参照先の実在を確認しません。
 
-相対文書表記では、空の文書名、`..` path要素、先頭の`/`または`\`、backslash、空白、制御文字および
-`://`を含むURL風表記を拒否します。字句上安全な表記についても、コアはfileの存在を確認しません。
+相対文書表記では、空の文書名、先頭の`/`または`\`、backslash、空白、制御文字および`://`を含む
+URL風表記を拒否します。`..` path要素はコアで受理し、ホストがproject rootとsymlinkを解決して
+範囲外への移動を拒否します。字句上安全な表記についても、コアはfileの存在を確認しません。
 
 ノート参照には独立マクロを追加せず、標準xrefを使用します。
 
@@ -93,7 +95,7 @@ LSPアダプターはxref:language-server.adoc[Language Server設計]の通知�
 
 == HTMLと信頼境界
 
-Resolverが返すhrefは信頼済みHTMLではありません。HTML出力前にAdocWeaveの`UrlPolicy`を
+Resolverが返すhrefは信頼済みHTMLではありません。HTML出力前にAdocWeaveの`ActiveUrlPolicy`を
 必ず通過させます。拡張はraw HTML、イベント属性、`javascript:`または許可されていない
 `data:` URIを許可する経路を提供してはいけません。
 

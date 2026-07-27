@@ -1,12 +1,12 @@
 #![no_main]
 
 use adocweave::output::html::{RenderPolicy, render};
-use adocweave::resolution::UrlContext;
-use adocweave::{Engine, ParseOptions};
+use adocweave::resolution::UrlProvenance;
+use adocweave::{AnalysisOptions, Engine};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|source: &str| {
-    if let Ok(analysis) = Engine::new(ParseOptions::default()).analyze(source) {
+    if let Ok(analysis) = Engine::new(AnalysisOptions::default()).analyze(source) {
         let policy = RenderPolicy::default();
         let first = render(analysis.document(), &policy);
         let second = render(analysis.document(), &policy);
@@ -15,9 +15,9 @@ fuzz_target!(|source: &str| {
             let href = tail.split('"').next().expect("renderer closes href");
             assert!(
                 href.starts_with('#')
-                    || policy.allows_url(href, UrlContext::ResolvedReference)
-                    || policy.allows_url(href, UrlContext::ResolvedResource)
-                    || policy.allows_url(href, UrlContext::AuthoredLink)
+                    || policy.allows_url(href, UrlProvenance::ResolvedReference)
+                    || policy.allows_url(href, UrlProvenance::ResolvedResource)
+                    || policy.allows_url(href, UrlProvenance::Authored)
             );
         }
     }

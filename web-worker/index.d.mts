@@ -100,7 +100,9 @@ export interface UpdateRequest {
   source: string;
   products?: ProductSet;
   renderInputs?: RenderInputs;
-  options?: AdocWeaveOptions;
+  analysisOptions?: AnalysisOptions;
+  renderPolicy?: RenderPolicy;
+  outputLimits?: OutputLimits;
 }
 
 export interface RenderInputs {
@@ -146,12 +148,54 @@ export interface ResolvedResource {
       };
 }
 
-export interface AdocWeaveOptions {
-  syntaxMode?: "permissive" | "strict";
-  protectedAttributes?: Record<string, string>;
-  urlPolicy?: {
+export interface AnalysisOptions {
+  syntax?: {
+    syntaxMode?: "permissive" | "strict";
+    limits?: AnalysisLimits;
+  };
+  diagnostics?: {
+    protectedAttributes?: Record<string, string>;
+    authoredUrls?: {
+      allowedSchemes?: string[];
+      allowRelative?: boolean;
+    };
+    maxDiagnostics?: number;
+    rules?: Record<
+      string,
+      {
+        enabled?: boolean;
+        severity?: "error" | "warning" | "information" | "hint";
+      }
+    >;
+  };
+}
+
+export interface AnalysisLimits {
+  maxInputBytes?: number;
+  maxLineBytes?: number;
+  maxListDepth?: number;
+  maxListContinuations?: number;
+  maxBlockDepth?: number;
+  maxInlineDepth?: number;
+  maxFormulaBytes?: number;
+  maxTableBytes?: number;
+  maxTableCells?: number;
+  maxTableColumns?: number;
+  maxTableDepth?: number;
+  maxCatalogEntries?: number;
+  maxCatalogBytes?: number;
+  maxBlocks?: number;
+  maxNodes?: number;
+  maxReferences?: number;
+  maxAttributes?: number;
+  maxAttributeExpansionDepth?: number;
+  maxAttributeExpansionBytes?: number;
+}
+
+export interface RenderPolicy {
+  activeUrls?: {
     allowedSchemes?: string[];
-    allowRelative?: boolean;
+    allowAuthoredRelative?: boolean;
     allowResolvedRelative?: boolean;
     allowResolvedRootRelative?: boolean;
     allowDataUris?: boolean;
@@ -175,7 +219,10 @@ export interface AdocWeaveOptions {
     | { kind: "inline"; css: string }
     | { kind: "external"; url: string }
   )[];
-  limits?: Record<string, number>;
+}
+
+export interface OutputLimits {
+  maxOutputBytes?: number;
 }
 
 export interface AdocWeaveClientOptions {

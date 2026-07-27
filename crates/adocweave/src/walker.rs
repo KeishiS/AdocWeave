@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn walk_visits_nested_lists_continuations_and_inline_labels_once() {
-        let analysis = crate::Engine::new(crate::ParseOptions::default())
+        let analysis = crate::Engine::new(crate::AnalysisOptions::default())
             .analyze("* outer\n** https://example.test[*label*]\n+\n....\nbody\n....\n")
             .expect("source");
         let mut blocks = 0;
@@ -329,7 +329,7 @@ mod tests {
             "|===\n",
             "====\n",
         );
-        let analysis = crate::Engine::new(crate::ParseOptions::default())
+        let analysis = crate::Engine::new(crate::AnalysisOptions::default())
             .analyze(source)
             .expect("source");
         let mut walked_references = 0;
@@ -403,7 +403,7 @@ mod tests {
             "*  item\n",
             "[stem]\n++++\nopen\n== Next\n",
         ] {
-            let analysis = crate::Engine::new(crate::ParseOptions::default())
+            let analysis = crate::Engine::new(crate::AnalysisOptions::default())
                 .analyze(source)
                 .expect("recoverable source");
             walk(analysis.document(), |node| match node {

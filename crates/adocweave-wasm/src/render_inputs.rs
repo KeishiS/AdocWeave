@@ -85,9 +85,13 @@ pub enum WasmResourceFailureKind {
     ResolverFailure,
 }
 
-pub(crate) fn validate(inputs: &WasmRenderInputs, limits: &WasmLimits) -> Result<(), WasmError> {
+pub(crate) fn validate(
+    inputs: &WasmRenderInputs,
+    analysis_limits: &WasmLimits,
+    output_limits: &crate::WasmOutputLimits,
+) -> Result<(), WasmError> {
     let count = inputs.references.len() as u64 + inputs.resources.len() as u64;
-    if count > u64::from(limits.max_references) {
+    if count > u64::from(analysis_limits.max_references) {
         return Err(limit_error("render input count"));
     }
     let reference_bytes = inputs.references.iter().map(|input| match &input.outcome {
@@ -105,7 +109,7 @@ pub(crate) fn validate(inputs: &WasmRenderInputs, limits: &WasmLimits) -> Result
     let bytes = reference_bytes
         .chain(resource_bytes)
         .fold(0_u64, u64::saturating_add);
-    if bytes > u64::from(limits.max_output_bytes) {
+    if bytes > u64::from(output_limits.max_output_bytes) {
         return Err(limit_error("render input bytes"));
     }
     Ok(())

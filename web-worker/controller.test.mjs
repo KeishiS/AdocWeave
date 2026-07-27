@@ -93,7 +93,7 @@ test("protocol mismatch returns a stable error without executing WASM", () => {
   assert.equal(state.messages[0].error.code, "unsupported-worker-protocol");
 });
 
-test("client sends the current WASM API version with core-owned default options", async () => {
+test("client sends the current WASM API version with responsibility-specific defaults", async () => {
   const messages = [];
   class FakeWorker {
     listeners = new Map();
@@ -116,6 +116,8 @@ test("client sends the current WASM API version with core-owned default options"
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(messages[1].payload.packageVersion, PACKAGE_VERSION);
-  assert.deepEqual(messages[1].payload.options, {});
+  assert.deepEqual(messages[1].payload.analysisOptions, {});
+  assert.deepEqual(messages[1].payload.renderPolicy, {});
+  assert.deepEqual(messages[1].payload.outputLimits, {});
   client.dispose();
 });

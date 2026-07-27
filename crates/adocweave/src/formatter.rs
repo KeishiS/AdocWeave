@@ -2,7 +2,7 @@
 
 use crate::core::Analysis;
 #[cfg(test)]
-use crate::core::{ParseError, ParseOptions, analyze};
+use crate::core::{AnalysisOptions, ParseError, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::LineEnding;
@@ -54,7 +54,7 @@ impl FormatOutput {
 
 #[cfg(test)]
 fn format(source: &str, config: &FormatConfig) -> Result<FormatOutput, ParseError> {
-    let analysis = analyze(source, &ParseOptions::default())?;
+    let analysis = analyze(source, &AnalysisOptions::default())?;
     format_analysis(&analysis, config).map_err(ParseError::Position)
 }
 

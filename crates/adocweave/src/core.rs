@@ -3,14 +3,13 @@
 //! Hosts own all I/O and reference resolution. This module only consumes
 //! caller-provided text and deterministic options.
 
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::diagnostic::{CoreErrorCode, Diagnostic};
-use crate::limits::{ProcessingLimits, SyntaxMode};
+use crate::limits::{AnalysisLimits, SyntaxMode};
 use crate::lint::{self, LintConfig};
 use crate::parser::{self, AstBlock, ParsedDocument};
 use crate::source::{PositionError, SourceDocument};
@@ -32,15 +31,32 @@ impl SourceId {
     }
 }
 
-/// Complete deterministic input to the parsing operation.
+/// Deterministic settings for syntax recognition and resource budgets.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ParseOptions {
-    pub source_id: Option<SourceId>,
+pub struct SyntaxOptions {
     pub syntax_mode: SyntaxMode,
-    pub limits: ProcessingLimits,
-    /// Host-authoritative values that source text may not change.
-    pub protected_attributes: BTreeMap<String, String>,
-    pub url_policy: crate::url::UrlPolicy,
+    pub limits: AnalysisLimits,
+}
+
+/// Diagnostic rules applied to the parsed snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticProfile {
+    pub lint: LintConfig,
+}
+
+impl Default for DiagnosticProfile {
+    fn default() -> Self {
+        let mut lint = LintConfig::default();
+        lint.protected_attribute_severity = crate::diagnostic::Severity::Warning;
+        Self { lint }
+    }
+}
+
+/// Deterministic configuration shared by analyses.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AnalysisOptions {
+    pub syntax: SyntaxOptions,
+    pub diagnostics: DiagnosticProfile,
 }
 
 /// Cooperative cancellation checked at deterministic parsing checkpoints.
@@ -240,16 +256,24 @@ impl Error for ParseError {}
 /// Stateless analysis engine with deterministic options.
 #[derive(Clone, Debug)]
 pub struct Engine {
-    options: ParseOptions,
+    options: AnalysisOptions,
 }
 
 impl Engine {
-    pub fn new(options: ParseOptions) -> Self {
+    pub fn new(options: AnalysisOptions) -> Self {
         Self { options }
     }
 
     pub fn analyze(&self, source: &str) -> Result<Analysis, ParseError> {
         analyze(source, &self.options)
+    }
+
+    pub fn analyze_with_source_id(
+        &self,
+        source_id: Option<SourceId>,
+        source: &str,
+    ) -> Result<Analysis, ParseError> {
+        analyze_cancellable_with_source_id(source, source_id.as_ref(), &self.options, &NeverCancel)
     }
 
     pub fn analyze_cancellable(
@@ -259,28 +283,42 @@ impl Engine {
     ) -> Result<Analysis, ParseError> {
         analyze_cancellable(source, &self.options, cancellation)
     }
+
+    pub fn analyze_cancellable_with_source_id(
+        &self,
+        source_id: Option<&SourceId>,
+        source: &str,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<Analysis, ParseError> {
+        analyze_cancellable_with_source_id(source, source_id, &self.options, cancellation)
+    }
 }
 
 /// Analyzes with a cancellation token that never cancels.
-pub(crate) fn analyze(source: &str, options: &ParseOptions) -> Result<Analysis, ParseError> {
-    analyze_cancellable(source, options, &NeverCancel)
+pub(crate) fn analyze(source: &str, options: &AnalysisOptions) -> Result<Analysis, ParseError> {
+    analyze_cancellable_with_source_id(source, None, options, &NeverCancel)
 }
 
 /// Analyzes caller-provided source without performing I/O or reference resolution.
 pub(crate) fn analyze_cancellable(
     source: &str,
-    options: &ParseOptions,
+    options: &AnalysisOptions,
     cancellation: &dyn CancellationCheck,
 ) -> Result<Analysis, ParseError> {
-    analyze_inner(source, options, cancellation)
+    analyze_cancellable_with_source_id(source, None, options, cancellation)
 }
 
-fn analyze_inner(
+fn analyze_cancellable_with_source_id(
     source: &str,
-    options: &ParseOptions,
+    source_id: Option<&SourceId>,
+    options: &AnalysisOptions,
     cancellation: &dyn CancellationCheck,
 ) -> Result<Analysis, ParseError> {
-    enforce_limit("input bytes", options.limits.max_input_bytes, source.len())?;
+    enforce_limit(
+        "input bytes",
+        options.syntax.limits.max_input_bytes,
+        source.len(),
+    )?;
 
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
@@ -290,11 +328,11 @@ fn analyze_inner(
     let ParsedDocument { syntax, ast } = parser::parse_shared_cancellable(
         shared_source,
         &parser::ParseConfig {
-            max_inline_depth: limit_to_usize(options.limits.max_inline_depth),
-            max_list_depth: limit_to_usize(options.limits.max_list_depth),
-            max_block_depth: limit_to_usize(options.limits.max_block_depth),
-            max_formula_bytes: limit_to_usize(options.limits.max_formula_bytes),
-            limits: options.limits,
+            max_inline_depth: limit_to_usize(options.syntax.limits.max_inline_depth),
+            max_list_depth: limit_to_usize(options.syntax.limits.max_list_depth),
+            max_block_depth: limit_to_usize(options.syntax.limits.max_block_depth),
+            max_formula_bytes: limit_to_usize(options.syntax.limits.max_formula_bytes),
+            limits: options.syntax.limits,
         },
         &|| cancellation.is_cancelled(),
     )
@@ -308,7 +346,7 @@ fn analyze_inner(
         crate::parser_support::ParseFailure::Cancelled => ParseError::Cancelled,
         crate::parser_support::ParseFailure::InternalInvariant => ParseError::InternalInvariant,
     })?;
-    if options.syntax_mode == SyntaxMode::Strict
+    if options.syntax.syntax_mode == SyntaxMode::Strict
         && ast
             .blocks()
             .iter()
@@ -320,17 +358,7 @@ fn analyze_inner(
         return Err(ParseError::Cancelled);
     }
 
-    let mut lint_config = LintConfig::default();
-    lint_config.max_diagnostics = limit_to_usize(options.limits.max_diagnostics);
-    lint_config.max_inline_depth = limit_to_usize(options.limits.max_inline_depth);
-    lint_config.max_formula_bytes = limit_to_usize(options.limits.max_formula_bytes);
-    lint_config.protected_attributes = options.protected_attributes.clone();
-    lint_config.url_policy = options.url_policy.clone();
-    lint_config.protected_attribute_severity = if options.syntax_mode == SyntaxMode::Strict {
-        crate::diagnostic::Severity::Error
-    } else {
-        crate::diagnostic::Severity::Warning
-    };
+    let lint_config = options.diagnostics.lint.clone();
     let diagnostics =
         lint::lint_syntax(&syntax, &ast, &lint_config).map_err(ParseError::Position)?;
     if cancellation.is_cancelled() {
@@ -338,7 +366,7 @@ fn analyze_inner(
     }
 
     Ok(Analysis {
-        source_id: options.source_id.clone(),
+        source_id: source_id.cloned(),
         package_version: crate::VERSION,
         syntax,
         document: crate::document::Document::from_ast(ast),
@@ -368,20 +396,21 @@ mod tests {
     use std::thread;
 
     use super::{
-        CancellationCheck, CancellationToken, ParseError, ParseOptions, SourceId, analyze,
-        analyze_cancellable,
+        AnalysisOptions, CancellationCheck, CancellationToken, Engine, ParseError, SourceId,
+        SyntaxOptions, analyze, analyze_cancellable,
     };
 
     fn assert_send_sync<T: Send + Sync>() {}
 
     #[test]
     fn public_api_is_deterministic_and_source_id_is_opaque() {
-        let options = ParseOptions {
-            source_id: Some(SourceId::new("host:any/value")),
-            ..ParseOptions::default()
-        };
-        let first = analyze("== 日本語\n", &options).expect("analyze");
-        let second = analyze("== 日本語\n", &options).expect("analyze");
+        let engine = Engine::new(AnalysisOptions::default());
+        let first = engine
+            .analyze_with_source_id(Some(SourceId::new("host:any/value")), "== 日本語\n")
+            .expect("analyze");
+        let second = engine
+            .analyze_with_source_id(Some(SourceId::new("host:any/value")), "== 日本語\n")
+            .expect("analyze");
 
         assert_eq!(first.source_id, second.source_id);
         assert_eq!(first.syntax.snapshot(), second.syntax.snapshot());
@@ -394,7 +423,7 @@ mod tests {
 
     #[test]
     fn public_api_accepts_anonymous_sources() {
-        let result = analyze("paragraph", &ParseOptions::default()).expect("analyze");
+        let result = analyze("paragraph", &AnalysisOptions::default()).expect("analyze");
         assert_eq!(result.source_id, None);
     }
 
@@ -402,7 +431,7 @@ mod tests {
     fn analysis_owns_the_source_and_semantic_queries_borrow_the_ast() {
         let analysis = {
             let source = String::from("== 所有される見出し\n");
-            analyze(&source, &ParseOptions::default()).expect("analyze")
+            analyze(&source, &AnalysisOptions::default()).expect("analyze")
         };
 
         assert_eq!(analysis.source(), "== 所有される見出し\n");
@@ -412,8 +441,8 @@ mod tests {
 
     #[test]
     fn configured_structure_limits_are_enforced() {
-        let mut options = ParseOptions::default();
-        options.limits.max_blocks = 1;
+        let mut options = AnalysisOptions::default();
+        options.syntax.limits.max_blocks = 1;
         assert!(matches!(
             analyze("one\n\ntwo\n", &options),
             Err(ParseError::LimitExceeded {
@@ -422,8 +451,8 @@ mod tests {
             })
         ));
 
-        options.limits.max_blocks = 100;
-        options.limits.max_references = 1;
+        options.syntax.limits.max_blocks = 100;
+        options.syntax.limits.max_references = 1;
         assert!(matches!(
             analyze("xref:a.adoc[] xref:b.adoc[]", &options),
             Err(ParseError::LimitExceeded {
@@ -445,8 +474,8 @@ mod tests {
                 .unwrap_or(0)
         }
 
-        let mut options = ParseOptions::default();
-        options.limits.max_list_depth = 3;
+        let mut options = AnalysisOptions::default();
+        options.syntax.limits.max_list_depth = 3;
         let analysis = analyze(
             "* one\n** two\n*** three\n**** four\n***** five\n",
             &options,
@@ -455,7 +484,7 @@ mod tests {
         let crate::parser::AstBlock::List(list) = &analysis.ast().blocks()[0] else {
             panic!("expected list");
         };
-        assert!(depth(list) <= super::limit_to_usize(options.limits.max_list_depth));
+        assert!(depth(list) <= super::limit_to_usize(options.syntax.limits.max_list_depth));
         assert!(
             analysis
                 .diagnostics
@@ -475,7 +504,7 @@ mod tests {
 
         let source = "a".repeat(16 * 1024);
         let cancellation = CancelAfterFirstCheck(std::sync::atomic::AtomicUsize::new(0));
-        let error = analyze_cancellable(&source, &ParseOptions::default(), &cancellation)
+        let error = analyze_cancellable(&source, &AnalysisOptions::default(), &cancellation)
             .expect_err("cancelled");
         assert_eq!(error, ParseError::Cancelled);
         assert_eq!(error.code().as_str(), "cancelled");
@@ -494,7 +523,7 @@ mod tests {
         assert!(matches!(
             analyze_cancellable(
                 "first\nsecond\nthird\n",
-                &ParseOptions::default(),
+                &AnalysisOptions::default(),
                 &cancellation,
             ),
             Err(ParseError::Cancelled)
@@ -514,18 +543,22 @@ mod tests {
     #[test]
     fn public_types_are_send_and_sync() {
         assert_send_sync::<SourceId>();
-        assert_send_sync::<ParseOptions>();
+        assert_send_sync::<AnalysisOptions>();
         assert_send_sync::<CancellationToken>();
         assert_send_sync::<ParseError>();
     }
 
     #[test]
     fn protected_attribute_is_an_error_in_strict_mode() {
-        let mut options = ParseOptions {
-            syntax_mode: crate::limits::SyntaxMode::Strict,
-            ..ParseOptions::default()
+        let mut options = AnalysisOptions {
+            syntax: SyntaxOptions {
+                syntax_mode: crate::limits::SyntaxMode::Strict,
+                ..SyntaxOptions::default()
+            },
+            ..AnalysisOptions::default()
         };
-        options.protected_attributes.insert(
+        options.diagnostics.lint.protected_attribute_severity = crate::diagnostic::Severity::Error;
+        options.diagnostics.lint.protected_attributes.insert(
             "note-id".to_owned(),
             "123e4567-e89b-12d3-a456-426614174000".to_owned(),
         );
@@ -549,9 +582,12 @@ mod tests {
         ] {
             let analysis = analyze(
                 source,
-                &ParseOptions {
-                    syntax_mode,
-                    ..ParseOptions::default()
+                &AnalysisOptions {
+                    syntax: SyntaxOptions {
+                        syntax_mode,
+                        ..SyntaxOptions::default()
+                    },
+                    ..AnalysisOptions::default()
                 },
             )
             .expect("analysis recovers from an unclosed quoted cell");
@@ -573,7 +609,7 @@ mod tests {
     fn public_api_extracts_cross_references_without_resolving_them() {
         let parsed = analyze(
             "[[local]]\n== Local\n\n<<local>> xref:other.adoc#part[] xref:note:123#part[]",
-            &ParseOptions::default(),
+            &AnalysisOptions::default(),
         )
         .expect("analyze");
 
@@ -586,7 +622,7 @@ mod tests {
         let analysis = analyze(
             "image:https://example.org/a.png[Alt]\n\n\
              video:https://example.org/demo.mp4[Demo,poster=https://example.org/poster.jpg]",
-            &ParseOptions::default(),
+            &AnalysisOptions::default(),
         )
         .expect("analysis");
         assert_eq!(analysis.resources().len(), 3);
@@ -619,7 +655,7 @@ mod tests {
     fn inline_anchor_macros_join_the_common_reference_target_index() {
         let analysis = analyze(
             "See <<spot>> and anchor:spot[]target.",
-            &ParseOptions::default(),
+            &AnalysisOptions::default(),
         )
         .expect("analysis");
         assert!(analysis.reference_targets().iter().any(|target| {
@@ -635,15 +671,12 @@ mod tests {
 
     #[test]
     fn reference_resolution_queries_are_host_independent() {
-        let options = ParseOptions {
-            source_id: Some(SourceId::new("opaque:source")),
-            ..ParseOptions::default()
-        };
-        let parsed = analyze(
-            "xref:other.adoc#part[] xref:note:123e4567-e89b-12d3-a456-426614174000#part[]",
-            &options,
-        )
-        .expect("analyze");
+        let parsed = Engine::new(AnalysisOptions::default())
+            .analyze_with_source_id(
+                Some(SourceId::new("opaque:source")),
+                "xref:other.adoc#part[] xref:note:123e4567-e89b-12d3-a456-426614174000#part[]",
+            )
+            .expect("analyze");
         let queries = parsed.reference_queries();
 
         assert_eq!(queries.len(), 2);
@@ -663,9 +696,11 @@ mod tests {
 
     #[test]
     fn public_api_accepts_host_configured_url_schemes() {
-        let mut options = ParseOptions::default();
+        let mut options = AnalysisOptions::default();
         options
-            .url_policy
+            .diagnostics
+            .lint
+            .authored_url_policy
             .allowed_schemes
             .insert("mailto".to_owned());
         let parsed = analyze("mailto:user@example.com[mail]", &options).expect("analyze");

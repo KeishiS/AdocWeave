@@ -1,25 +1,28 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use adocweave::ProcessingLimits;
+use adocweave::AnalysisLimits;
 use adocweave::output::html::{RenderPolicy, render, render_with_inputs};
 use adocweave::resolution::RenderInputs;
 use adocweave::resolution::ResolvedReference;
 use adocweave::resolution::ResolvedResource;
 use adocweave::resolution::{ReferenceKey, ResolutionFailureKind};
-use adocweave::{Analysis, CancellationCheck, Engine, ParseError, ParseOptions};
+use adocweave::{Analysis, AnalysisOptions, CancellationCheck, Engine, ParseError};
 
-type LimitCase = (&'static str, fn(&mut ProcessingLimits));
+type LimitCase = (&'static str, fn(&mut AnalysisLimits));
 type BoundaryCase = (
     &'static str,
     &'static str,
     u32,
-    fn(&mut ProcessingLimits, u32),
+    fn(&mut AnalysisLimits, u32),
 );
 
-fn analyze_with_limits(source: &str, limits: ProcessingLimits) -> Result<Analysis, ParseError> {
-    Engine::new(ParseOptions {
-        limits,
-        ..ParseOptions::default()
+fn analyze_with_limits(source: &str, limits: AnalysisLimits) -> Result<Analysis, ParseError> {
+    Engine::new(AnalysisOptions {
+        syntax: adocweave::SyntaxOptions {
+            limits,
+            ..adocweave::SyntaxOptions::default()
+        },
+        ..AnalysisOptions::default()
     })
     .analyze(source)
 }
@@ -27,7 +30,7 @@ fn analyze_with_limits(source: &str, limits: ProcessingLimits) -> Result<Analysi
 #[test]
 fn adversarial_fixture_never_emits_active_input_or_unsafe_urls() {
     let source = include_str!("../../../fixtures/security/adversarial.adoc");
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze(source)
         .expect("adversarial fixture remains bounded");
     let output = render(analysis.document(), &RenderPolicy::default());
@@ -45,7 +48,7 @@ fn adversarial_fixture_never_emits_active_input_or_unsafe_urls() {
 fn relative_targets_are_valid_analysis_inputs_but_not_active_html_urls() {
     let source = "link:../release-manifest.json[release manifest]\n\
                   xref:../guide.adoc[guide]\n";
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze(source)
         .expect("analysis");
 
@@ -68,9 +71,32 @@ fn relative_targets_are_valid_analysis_inputs_but_not_active_html_urls() {
 }
 
 #[test]
+fn malformed_url_syntax_is_diagnosed_and_never_activated() {
+    for target in ["http//example.com", "bad%ZZpath", "trailing%"] {
+        let source = format!("link:{target}[unsafe]");
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&source)
+            .expect("analysis");
+
+        assert!(
+            analysis
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme"),
+            "{target}"
+        );
+        assert!(
+            !render(analysis.document(), &RenderPolicy::default())
+                .html
+                .contains("href=")
+        );
+    }
+}
+
+#[test]
 fn hostile_resolver_href_is_revalidated_by_the_renderer() {
     let source = "xref:note:item[unsafe]";
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze(source)
         .expect("analysis");
     let range = analysis.references()[0].range;
@@ -94,7 +120,7 @@ fn hostile_resolver_href_is_revalidated_by_the_renderer() {
 
 #[test]
 fn hostile_resource_href_is_revalidated_by_the_renderer() {
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze("image:asset.png[safe]")
         .expect("analysis");
     let range = analysis.resources()[0].range();
@@ -124,7 +150,7 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
 
 #[test]
 fn hostile_video_poster_is_omitted_without_disabling_safe_video() {
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze("video:demo.mp4[Demo,poster=poster.jpg]")
         .expect("analysis");
     let primary = analysis
@@ -174,7 +200,7 @@ fn hostile_video_poster_is_omitted_without_disabling_safe_video() {
 fn hostile_stylesheet_configuration_never_reaches_the_output() {
     use adocweave::output::html::{HtmlDocumentMode, StylesheetPolicy, StylesheetSource};
 
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze("paragraph")
         .expect("analysis");
     let output = render(
@@ -210,7 +236,7 @@ fn hostile_stylesheet_configuration_never_reaches_the_output() {
 #[test]
 fn heading_anchor_cannot_break_out_of_the_id_attribute() {
     let source = "[[x\"onclick=\"alert(1)]]\n== Target\n";
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze(source)
         .expect("analysis");
     let output = render(analysis.document(), &RenderPolicy::default());
@@ -232,9 +258,8 @@ fn heading_anchor_cannot_break_out_of_the_id_attribute() {
 
 #[test]
 fn tight_limits_fail_without_partial_analysis() {
-    let limits = ProcessingLimits {
+    let limits = AnalysisLimits {
         max_input_bytes: 32,
-        max_output_bytes: 8,
         max_line_bytes: 8,
         max_list_depth: 2,
         max_list_continuations: 1,
@@ -253,7 +278,6 @@ fn tight_limits_fail_without_partial_analysis() {
         max_attributes: 1,
         max_attribute_expansion_depth: 1,
         max_attribute_expansion_bytes: 8,
-        max_diagnostics: 1,
     };
     for source in [
         "a very long line",
@@ -281,11 +305,11 @@ one
 
 two
 ",
-            |limits: &mut ProcessingLimits| limits.max_blocks = 1,
+            |limits: &mut AnalysisLimits| limits.max_blocks = 1,
         ),
         (
             "xref:note:a[] xref:note:b[]",
-            |limits: &mut ProcessingLimits| {
+            |limits: &mut AnalysisLimits| {
                 limits.max_references = 1;
             },
         ),
@@ -295,12 +319,12 @@ two
 :one: 1
 :two: 2
 ",
-            |limits: &mut ProcessingLimits| limits.max_attributes = 1,
+            |limits: &mut AnalysisLimits| limits.max_attributes = 1,
         ),
     ];
 
     for (source, restrict) in cases {
-        let mut limits = ProcessingLimits::default();
+        let mut limits = AnalysisLimits::default();
         restrict(&mut limits);
         let result = analyze_with_limits(source, limits);
         assert!(
@@ -320,7 +344,7 @@ one
 
 two",
             2_u32,
-            |limits: &mut ProcessingLimits, value| {
+            |limits: &mut AnalysisLimits, value| {
                 limits.max_blocks = value;
             },
         ),
@@ -328,7 +352,7 @@ two",
             "nodes",
             "plain",
             3_u32,
-            |limits: &mut ProcessingLimits, value| {
+            |limits: &mut AnalysisLimits, value| {
                 limits.max_nodes = value;
             },
         ),
@@ -336,7 +360,7 @@ two",
             "references",
             "xref:#a[] xref:#b[]",
             2_u32,
-            |limits: &mut ProcessingLimits, value| {
+            |limits: &mut AnalysisLimits, value| {
                 limits.max_references = value;
             },
         ),
@@ -348,7 +372,7 @@ two",
 :b: 2
 ",
             2_u32,
-            |limits: &mut ProcessingLimits, value| {
+            |limits: &mut AnalysisLimits, value| {
                 limits.max_attributes = value;
             },
         ),
@@ -362,21 +386,21 @@ first
 second
 ",
             2_u32,
-            |limits: &mut ProcessingLimits, value| {
+            |limits: &mut AnalysisLimits, value| {
                 limits.max_list_continuations = value;
             },
         ),
     ];
 
     for (resource, source, exact, set_limit) in cases {
-        let mut accepted = ParseOptions::default();
-        set_limit(&mut accepted.limits, exact);
+        let mut accepted = AnalysisOptions::default();
+        set_limit(&mut accepted.syntax.limits, exact);
         Engine::new(accepted)
             .analyze(source)
             .unwrap_or_else(|error| panic!("{resource} exact boundary failed: {error}"));
 
-        let mut rejected = ParseOptions::default();
-        set_limit(&mut rejected.limits, exact - 1);
+        let mut rejected = AnalysisOptions::default();
+        set_limit(&mut rejected.syntax.limits, exact - 1);
         match Engine::new(rejected).analyze(source) {
             Err(ParseError::LimitExceeded {
                 resource: actual_resource,
@@ -394,9 +418,9 @@ second
 
 #[test]
 fn formula_limit_recovers_as_text_and_reports_a_diagnostic() {
-    let limits = ProcessingLimits {
+    let limits = AnalysisLimits {
         max_formula_bytes: 4,
-        ..ProcessingLimits::default()
+        ..AnalysisLimits::default()
     };
     let source = "stem:[12345<script>]";
     let analysis = analyze_with_limits(source, limits).expect("formula overflow is recoverable");
@@ -411,9 +435,9 @@ fn formula_limit_recovers_as_text_and_reports_a_diagnostic() {
 
 #[test]
 fn list_depth_limit_recovers_with_a_diagnostic() {
-    let limits = ProcessingLimits {
+    let limits = AnalysisLimits {
         max_list_depth: 2,
-        ..ProcessingLimits::default()
+        ..AnalysisLimits::default()
     };
     let source = "\
 * one
@@ -430,9 +454,9 @@ fn list_depth_limit_recovers_with_a_diagnostic() {
 
 #[test]
 fn compound_block_depth_limit_rejects_unbounded_nesting() {
-    let limits = ProcessingLimits {
+    let limits = AnalysisLimits {
         max_block_depth: 1,
-        ..ProcessingLimits::default()
+        ..AnalysisLimits::default()
     };
     let source = "\
 =====
@@ -454,9 +478,9 @@ inner
 
 #[test]
 fn asciidoc_cell_uses_the_parent_table_depth_budget() {
-    let limits = ProcessingLimits {
+    let limits = AnalysisLimits {
         max_table_depth: 1,
-        ..ProcessingLimits::default()
+        ..AnalysisLimits::default()
     };
     let source = "\
 [cols=a]
@@ -481,30 +505,30 @@ fn table_resources_are_rejected_at_the_construction_boundary() {
     let cases = [
         (
             "table bytes",
-            ProcessingLimits {
+            AnalysisLimits {
                 max_table_bytes: 3,
-                ..ProcessingLimits::default()
+                ..AnalysisLimits::default()
             },
         ),
         (
             "table cells",
-            ProcessingLimits {
+            AnalysisLimits {
                 max_table_cells: 1,
-                ..ProcessingLimits::default()
+                ..AnalysisLimits::default()
             },
         ),
         (
             "table columns",
-            ProcessingLimits {
+            AnalysisLimits {
                 max_table_columns: 1,
-                ..ProcessingLimits::default()
+                ..AnalysisLimits::default()
             },
         ),
         (
             "table nesting depth",
-            ProcessingLimits {
+            AnalysisLimits {
                 max_table_depth: 0,
-                ..ProcessingLimits::default()
+                ..AnalysisLimits::default()
             },
         ),
     ];
@@ -536,7 +560,7 @@ fn cooperative_cancellation_returns_no_analysis_to_render() {
     }
 
     let source = "paragraph\n\n".repeat(10_000);
-    let result = Engine::new(ParseOptions::default()).analyze_cancellable(
+    let result = Engine::new(AnalysisOptions::default()).analyze_cancellable(
         &source,
         &CancelAfter {
             checks: AtomicUsize::new(0),

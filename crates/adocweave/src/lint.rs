@@ -14,99 +14,213 @@ use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::LineEnding;
 use crate::syntax::{SyntaxIssueClass, SyntaxTree};
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum LintRule {
-    TrailingWhitespace,
-    ExcessiveBlankLines,
-    LineTooLong,
-    InvalidHeadingLevel,
-    DuplicateHeadingId,
-    HeadingMarkerSpace,
-    UnclosedInline,
-    NestingLimitExceeded,
-    UnclosedBlock,
-    MissingSourceLanguage,
-    InvalidAttribute,
-    DuplicateAttribute,
-    UndefinedAttribute,
-    AttributeExpansion,
-    UnusedAttribute,
-    ProtectedAttribute,
-    InvalidAnchor,
-    DuplicateAnchor,
-    InvalidUrlScheme,
-    InvalidCrossReference,
-    UnresolvedCrossReference,
-    InconsistentList,
-    InvalidListPresentation,
-    InvalidStem,
-    InvalidTable,
-    InvalidCatalog,
-    InvalidDocumentStructure,
+/// Stable identifier for a lint rule.
+///
+/// Rule identifiers are values rather than enum variants, so adding a rule
+/// does not break exhaustive matches in callers.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct LintRuleId(&'static str);
+
+impl LintRuleId {
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
 }
 
-impl LintRule {
-    pub const ALL: [Self; 27] = [
-        Self::TrailingWhitespace,
-        Self::ExcessiveBlankLines,
-        Self::LineTooLong,
-        Self::InvalidHeadingLevel,
-        Self::DuplicateHeadingId,
-        Self::HeadingMarkerSpace,
-        Self::UnclosedInline,
-        Self::NestingLimitExceeded,
-        Self::UnclosedBlock,
-        Self::MissingSourceLanguage,
-        Self::InvalidAttribute,
-        Self::DuplicateAttribute,
-        Self::UndefinedAttribute,
-        Self::AttributeExpansion,
-        Self::UnusedAttribute,
-        Self::ProtectedAttribute,
-        Self::InvalidAnchor,
-        Self::DuplicateAnchor,
-        Self::InvalidUrlScheme,
-        Self::InvalidCrossReference,
-        Self::UnresolvedCrossReference,
-        Self::InconsistentList,
-        Self::InvalidListPresentation,
-        Self::InvalidStem,
-        Self::InvalidTable,
-        Self::InvalidCatalog,
-        Self::InvalidDocumentStructure,
-    ];
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LintRuleDescriptor {
+    pub id: LintRuleId,
+    pub default_enabled: bool,
+    pub default_severity: Severity,
+    pub description: &'static str,
+    pub fixable: bool,
+}
 
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::TrailingWhitespace => "trailing-whitespace",
-            Self::ExcessiveBlankLines => "excessive-blank-lines",
-            Self::LineTooLong => "line-too-long",
-            Self::InvalidHeadingLevel => "invalid-heading-level",
-            Self::DuplicateHeadingId => "duplicate-heading-id",
-            Self::HeadingMarkerSpace => "heading-marker-space",
-            Self::UnclosedInline => "unclosed-inline",
-            Self::NestingLimitExceeded => "nesting-limit-exceeded",
-            Self::UnclosedBlock => "unclosed-block",
-            Self::MissingSourceLanguage => "missing-source-language",
-            Self::InvalidAttribute => "invalid-attribute",
-            Self::DuplicateAttribute => "duplicate-attribute",
-            Self::UndefinedAttribute => "undefined-attribute",
-            Self::AttributeExpansion => "attribute-expansion",
-            Self::UnusedAttribute => "unused-attribute",
-            Self::ProtectedAttribute => "protected-attribute",
-            Self::InvalidAnchor => "invalid-anchor",
-            Self::DuplicateAnchor => "duplicate-anchor",
-            Self::InvalidUrlScheme => "invalid-url-scheme",
-            Self::InvalidCrossReference => "invalid-cross-reference",
-            Self::UnresolvedCrossReference => "unresolved-cross-reference",
-            Self::InconsistentList => "inconsistent-list",
-            Self::InvalidListPresentation => "invalid-list-presentation",
-            Self::InvalidStem => "invalid-stem",
-            Self::InvalidTable => "invalid-table",
-            Self::InvalidCatalog => "invalid-catalog",
-            Self::InvalidDocumentStructure => "invalid-document-structure",
-        }
-    }
+macro_rules! lint_rule_catalog {
+    ($(($constant:ident, $code:literal, $description:literal, $fixable:literal)),+ $(,)?) => {
+        $(pub const $constant: LintRuleId = LintRuleId($code);)+
+
+        pub const LINT_RULES: &[LintRuleDescriptor] = &[
+            $(LintRuleDescriptor {
+                id: $constant,
+                default_enabled: true,
+                default_severity: Severity::Warning,
+                description: $description,
+                fixable: $fixable,
+            }),+
+        ];
+    };
+}
+
+lint_rule_catalog!(
+    (
+        TRAILING_WHITESPACE,
+        "trailing-whitespace",
+        "行末の不要な空白",
+        true
+    ),
+    (
+        EXCESSIVE_BLANK_LINES,
+        "excessive-blank-lines",
+        "連続する空行の上限超過",
+        true
+    ),
+    (LINE_TOO_LONG, "line-too-long", "行長の上限超過", false),
+    (
+        INVALID_HEADING_LEVEL,
+        "invalid-heading-level",
+        "不正な見出しレベル",
+        false
+    ),
+    (
+        DUPLICATE_HEADING_ID,
+        "duplicate-heading-id",
+        "重複する見出しID",
+        false
+    ),
+    (
+        HEADING_MARKER_SPACE,
+        "heading-marker-space",
+        "見出し記号の後の空白不足",
+        true
+    ),
+    (
+        UNCLOSED_INLINE,
+        "unclosed-inline",
+        "閉じられていないインライン構文",
+        false
+    ),
+    (
+        NESTING_LIMIT_EXCEEDED,
+        "nesting-limit-exceeded",
+        "構文の入れ子上限超過",
+        false
+    ),
+    (
+        UNCLOSED_BLOCK,
+        "unclosed-block",
+        "閉じられていないブロック",
+        false
+    ),
+    (
+        MISSING_SOURCE_LANGUAGE,
+        "missing-source-language",
+        "ソースブロックの言語指定不足",
+        false
+    ),
+    (
+        INVALID_ATTRIBUTE,
+        "invalid-attribute",
+        "不正な文書属性",
+        false
+    ),
+    (
+        DUPLICATE_ATTRIBUTE,
+        "duplicate-attribute",
+        "重複する文書属性",
+        false
+    ),
+    (
+        UNDEFINED_ATTRIBUTE,
+        "undefined-attribute",
+        "未定義の文書属性参照",
+        false
+    ),
+    (
+        ATTRIBUTE_EXPANSION,
+        "attribute-expansion",
+        "不正な文書属性展開",
+        false
+    ),
+    (
+        UNUSED_ATTRIBUTE,
+        "unused-attribute",
+        "使用されていない文書属性",
+        false
+    ),
+    (
+        PROTECTED_ATTRIBUTE,
+        "protected-attribute",
+        "保護された文書属性の変更",
+        false
+    ),
+    (INVALID_ANCHOR, "invalid-anchor", "不正なアンカー", false),
+    (
+        DUPLICATE_ANCHOR,
+        "duplicate-anchor",
+        "重複するアンカー",
+        false
+    ),
+    (
+        INVALID_URL_SCHEME,
+        "invalid-url-scheme",
+        "許可されていないURL",
+        false
+    ),
+    (
+        INVALID_CROSS_REFERENCE,
+        "invalid-cross-reference",
+        "不正な相互参照",
+        false
+    ),
+    (
+        UNRESOLVED_CROSS_REFERENCE,
+        "unresolved-cross-reference",
+        "未解決の相互参照",
+        false
+    ),
+    (
+        INCONSISTENT_LIST,
+        "inconsistent-list",
+        "一貫しないリスト構造",
+        false
+    ),
+    (
+        INVALID_LIST_PRESENTATION,
+        "invalid-list-presentation",
+        "不正なリスト表示指定",
+        false
+    ),
+    (INVALID_STEM, "invalid-stem", "不正な数式構文", false),
+    (INVALID_TABLE, "invalid-table", "不正な表", false),
+    (
+        INVALID_CATALOG,
+        "invalid-catalog",
+        "不正な文書カタログ",
+        false
+    ),
+    (
+        INVALID_DOCUMENT_STRUCTURE,
+        "invalid-document-structure",
+        "不正な文書構造",
+        false
+    ),
+);
+
+pub fn lint_rule(code: &str) -> Option<&'static LintRuleDescriptor> {
+    LINT_RULES
+        .iter()
+        .find(|descriptor| descriptor.id.as_str() == code)
+}
+
+pub fn render_lint_rule_catalog_json() -> String {
+    let mut rules = LINT_RULES.iter().collect::<Vec<_>>();
+    rules.sort_by_key(|descriptor| descriptor.id.as_str());
+    serde_json::to_string(&serde_json::json!({
+        "schemaVersion": 1,
+        "packageVersion": crate::VERSION,
+        "rules": rules
+            .into_iter()
+            .map(|descriptor| serde_json::json!({
+                "code": descriptor.id.as_str(),
+                "defaultSeverity": descriptor.default_severity.as_str(),
+                "enabledByDefault": descriptor.default_enabled,
+                "description": descriptor.description,
+                "fixable": descriptor.fixable,
+            }))
+            .collect::<Vec<_>>(),
+    }))
+    .expect("lint rule catalog contains only serializable values")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,29 +231,26 @@ pub struct RuleSettings {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LintConfig {
-    rules: BTreeMap<LintRule, RuleSettings>,
+    rules: BTreeMap<LintRuleId, RuleSettings>,
     pub max_line_length: usize,
     pub max_consecutive_blank_lines: usize,
     pub max_diagnostics: usize,
-    pub max_inline_depth: usize,
-    pub max_list_depth: usize,
-    pub max_formula_bytes: usize,
     pub protected_attributes: BTreeMap<String, String>,
     pub protected_attribute_severity: Severity,
-    pub url_policy: crate::url::UrlPolicy,
+    pub authored_url_policy: crate::url::AuthoredUrlPolicy,
 }
 
 impl Default for LintConfig {
     fn default() -> Self {
         Self {
-            rules: LintRule::ALL
-                .into_iter()
-                .map(|rule| {
+            rules: LINT_RULES
+                .iter()
+                .map(|descriptor| {
                     (
-                        rule,
+                        descriptor.id,
                         RuleSettings {
-                            enabled: true,
-                            severity: Severity::Warning,
+                            enabled: descriptor.default_enabled,
+                            severity: descriptor.default_severity,
                         },
                     )
                 })
@@ -147,37 +258,53 @@ impl Default for LintConfig {
             max_line_length: 100,
             max_consecutive_blank_lines: 2,
             max_diagnostics: 1_000,
-            max_inline_depth: 32,
-            max_list_depth: 8,
-            max_formula_bytes: 1024 * 1024,
             protected_attributes: BTreeMap::new(),
             protected_attribute_severity: Severity::Error,
-            url_policy: crate::url::UrlPolicy::default(),
+            authored_url_policy: crate::url::AuthoredUrlPolicy::default(),
         }
     }
 }
 
 impl LintConfig {
-    pub fn set_rule(&mut self, rule: LintRule, settings: RuleSettings) {
+    pub fn set_rule(&mut self, rule: LintRuleId, settings: RuleSettings) {
         self.rules.insert(rule, settings);
     }
 
-    pub fn rule(&self, rule: LintRule) -> RuleSettings {
+    pub fn rule(&self, rule: LintRuleId) -> RuleSettings {
         self.rules.get(&rule).copied().unwrap_or(RuleSettings {
             enabled: false,
-            severity: Severity::Warning,
+            severity: lint_rule(rule.as_str())
+                .map_or(Severity::Warning, |descriptor| descriptor.default_severity),
         })
+    }
+
+    pub(crate) fn configured_rules(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (LintRuleId, RuleSettings)> + '_ {
+        self.rules.iter().map(|(rule, settings)| (*rule, *settings))
     }
 }
 
 #[cfg(test)]
 fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, PositionError> {
+    lint_with_analysis_limits(source, config, crate::limits::AnalysisLimits::default())
+}
+
+#[cfg(test)]
+fn lint_with_analysis_limits(
+    source: &str,
+    config: &LintConfig,
+    limits: crate::limits::AnalysisLimits,
+) -> Result<Vec<Diagnostic>, PositionError> {
     let parsed = parse_with_config(
         source,
         &ParseConfig {
-            max_inline_depth: config.max_inline_depth,
-            max_list_depth: config.max_list_depth,
-            max_formula_bytes: config.max_formula_bytes,
+            max_inline_depth: usize::try_from(limits.max_inline_depth)
+                .expect("u32 fits usize on supported targets"),
+            max_list_depth: usize::try_from(limits.max_list_depth)
+                .expect("u32 fits usize on supported targets"),
+            max_formula_bytes: usize::try_from(limits.max_formula_bytes)
+                .expect("u32 fits usize on supported targets"),
             ..ParseConfig::default()
         },
     )?;
@@ -214,7 +341,7 @@ pub(crate) fn lint_syntax(
                 push_diagnostic(
                     &mut diagnostics,
                     config,
-                    LintRule::ExcessiveBlankLines,
+                    EXCESSIVE_BLANK_LINES,
                     line.full_range(),
                     "excessive blank line",
                     Some(("remove excessive blank line", line.full_range(), "")),
@@ -233,7 +360,7 @@ pub(crate) fn lint_syntax(
             push_diagnostic(
                 &mut diagnostics,
                 config,
-                LintRule::TrailingWhitespace,
+                TRAILING_WHITESPACE,
                 range,
                 "trailing whitespace",
                 Some(("remove trailing whitespace", range, "")),
@@ -254,7 +381,7 @@ pub(crate) fn lint_syntax(
             push_diagnostic(
                 &mut diagnostics,
                 config,
-                LintRule::LineTooLong,
+                LINE_TOO_LONG,
                 range,
                 &format!(
                     "line has {character_count} characters; maximum is {}",
@@ -306,7 +433,7 @@ fn lint_list_presentation(
             push_diagnostic(
                 diagnostics,
                 config,
-                LintRule::InvalidListPresentation,
+                INVALID_LIST_PRESENTATION,
                 problem.range,
                 message,
                 None,
@@ -324,7 +451,7 @@ fn lint_document_presentation(
         push_diagnostic(
             diagnostics,
             config,
-            LintRule::InvalidAttribute,
+            INVALID_ATTRIBUTE,
             range,
             "toclevels must be an integer from 1 to 5",
             None,
@@ -370,7 +497,7 @@ fn lint_document_structure(
         push_diagnostic(
             diagnostics,
             config,
-            LintRule::InvalidDocumentStructure,
+            INVALID_DOCUMENT_STRUCTURE,
             problem.range,
             message,
             None,
@@ -383,7 +510,7 @@ fn lint_catalogs(
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let settings = config.rule(LintRule::InvalidCatalog);
+    let settings = config.rule(INVALID_CATALOG);
     if !settings.enabled {
         return;
     }
@@ -406,11 +533,11 @@ fn lint_catalogs(
         diagnostics.push(Diagnostic {
             id: DiagnosticId::new(format!(
                 "{}@{}:{}",
-                LintRule::InvalidCatalog.code(),
+                INVALID_CATALOG.as_str(),
                 problem.range.start().to_u32(),
                 problem.range.end().to_u32()
             )),
-            code: DiagnosticCode::new(LintRule::InvalidCatalog.code()),
+            code: DiagnosticCode::new(INVALID_CATALOG.as_str()),
             severity: settings.severity,
             message: message.to_owned(),
             range: problem.range,
@@ -450,7 +577,7 @@ fn lint_tables(
             push_diagnostic(
                 diagnostics,
                 config,
-                LintRule::InvalidTable,
+                INVALID_TABLE,
                 problem.range,
                 message,
                 None,
@@ -462,17 +589,17 @@ fn lint_tables(
 fn lint_syntax_issues(syntax: &SyntaxTree, config: &LintConfig, diagnostics: &mut Vec<Diagnostic>) {
     for issue in syntax.issues() {
         let rule = match issue.class {
-            SyntaxIssueClass::HeadingMarkerSpace => LintRule::HeadingMarkerSpace,
-            SyntaxIssueClass::InvalidHeadingLevel => LintRule::InvalidHeadingLevel,
-            SyntaxIssueClass::UnclosedInline => LintRule::UnclosedInline,
-            SyntaxIssueClass::NestingLimitExceeded => LintRule::NestingLimitExceeded,
-            SyntaxIssueClass::UnclosedBlock => LintRule::UnclosedBlock,
-            SyntaxIssueClass::MissingSourceLanguage => LintRule::MissingSourceLanguage,
-            SyntaxIssueClass::InvalidAttribute => LintRule::InvalidAttribute,
-            SyntaxIssueClass::InvalidUrl => LintRule::InvalidUrlScheme,
-            SyntaxIssueClass::InvalidCrossReference => LintRule::InvalidCrossReference,
-            SyntaxIssueClass::InconsistentList => LintRule::InconsistentList,
-            SyntaxIssueClass::InvalidStem => LintRule::InvalidStem,
+            SyntaxIssueClass::HeadingMarkerSpace => HEADING_MARKER_SPACE,
+            SyntaxIssueClass::InvalidHeadingLevel => INVALID_HEADING_LEVEL,
+            SyntaxIssueClass::UnclosedInline => UNCLOSED_INLINE,
+            SyntaxIssueClass::NestingLimitExceeded => NESTING_LIMIT_EXCEEDED,
+            SyntaxIssueClass::UnclosedBlock => UNCLOSED_BLOCK,
+            SyntaxIssueClass::MissingSourceLanguage => MISSING_SOURCE_LANGUAGE,
+            SyntaxIssueClass::InvalidAttribute => INVALID_ATTRIBUTE,
+            SyntaxIssueClass::InvalidUrl => INVALID_URL_SCHEME,
+            SyntaxIssueClass::InvalidCrossReference => INVALID_CROSS_REFERENCE,
+            SyntaxIssueClass::InconsistentList => INCONSISTENT_LIST,
+            SyntaxIssueClass::InvalidStem => INVALID_STEM,
         };
         let fix = issue.fix.map(|fix| (fix.label, fix.range, fix.replacement));
         push_diagnostic(diagnostics, config, rule, issue.range, issue.message, fix);
@@ -494,15 +621,11 @@ fn lint_links_and_references(
         use crate::inline::{Inline, ReferenceDestination};
         match inline {
             Inline::Link(link) => {
-                if !valid_unresolved_relative_target(&link.target)
-                    && !config
-                        .url_policy
-                        .allows(&link.target, crate::url::UrlContext::AuthoredLink)
-                {
+                if !config.authored_url_policy.allows(&link.target) {
                     push_diagnostic(
                         diagnostics,
                         config,
-                        LintRule::InvalidUrlScheme,
+                        INVALID_URL_SCHEME,
                         link.target_range,
                         "URL is rejected by the configured policy",
                         None,
@@ -516,14 +639,12 @@ fn lint_links_and_references(
                         | crate::inline::StandardMacroKind::Icon
                         | crate::inline::StandardMacroKind::Audio
                         | crate::inline::StandardMacroKind::Video
-                ) && !config
-                    .url_policy
-                    .allows(&node.target, crate::url::UrlContext::AuthoredLink) =>
+                ) && !config.authored_url_policy.allows(&node.target) =>
             {
                 push_diagnostic(
                     diagnostics,
                     config,
-                    LintRule::InvalidUrlScheme,
+                    INVALID_URL_SCHEME,
                     node.target_range,
                     "resource URL is rejected by the configured policy",
                     None,
@@ -535,7 +656,7 @@ fn lint_links_and_references(
                         push_diagnostic(
                             diagnostics,
                             config,
-                            LintRule::UnresolvedCrossReference,
+                            UNRESOLVED_CROSS_REFERENCE,
                             reference.target_range,
                             "local cross reference target does not exist",
                             None,
@@ -547,7 +668,7 @@ fn lint_links_and_references(
                         push_diagnostic(
                             diagnostics,
                             config,
-                            LintRule::InvalidCrossReference,
+                            INVALID_CROSS_REFERENCE,
                             reference.target_range,
                             "unsafe cross-document target",
                             None,
@@ -564,7 +685,7 @@ fn lint_links_and_references(
                         push_diagnostic(
                             diagnostics,
                             config,
-                            LintRule::InvalidCrossReference,
+                            INVALID_CROSS_REFERENCE,
                             reference.target_range,
                             "invalid scheme-based cross reference",
                             None,
@@ -574,7 +695,7 @@ fn lint_links_and_references(
                 ReferenceDestination::Invalid => push_diagnostic(
                     diagnostics,
                     config,
-                    LintRule::InvalidCrossReference,
+                    INVALID_CROSS_REFERENCE,
                     reference.target_range,
                     "invalid cross reference",
                     None,
@@ -606,21 +727,37 @@ fn valid_unresolved_relative_target(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('/')
         && !value.contains(['\\', ':'])
+        && !value.contains("//")
         && !value.chars().any(|character| {
             character.is_control()
                 || character.is_whitespace()
                 || matches!(character, '<' | '>' | '"' | '\'' | '`' | '{' | '}')
         })
-        && !value.as_bytes().windows(3).any(|window| {
-            window[0] == b'%'
-                && match (hex_digit(window[1]), hex_digit(window[2])) {
-                    (Some(high), Some(low)) => {
-                        let decoded = high * 16 + low;
-                        decoded <= 0x20 || decoded == 0x7f || matches!(decoded, b'.' | b'/' | b'\\')
-                    }
-                    _ => false,
-                }
-        })
+        && valid_relative_percent_escapes(value)
+}
+
+fn valid_relative_percent_escapes(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return false;
+        }
+        let (Some(high), Some(low)) = (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
+        else {
+            return false;
+        };
+        let decoded = high * 16 + low;
+        if decoded <= 0x20 || decoded == 0x7f || matches!(decoded, b'.' | b'/' | b'\\') {
+            return false;
+        }
+        index += 3;
+    }
+    true
 }
 
 const fn hex_digit(value: u8) -> Option<u8> {
@@ -643,7 +780,7 @@ fn lint_anchors(
             push_diagnostic(
                 diagnostics,
                 config,
-                LintRule::InvalidAnchor,
+                INVALID_ANCHOR,
                 anchor.range,
                 "invalid or unattached explicit anchor",
                 None,
@@ -652,16 +789,16 @@ fn lint_anchors(
     }
     for target in crate::document::reference_targets_ast(document) {
         if let Some(first) = ids.insert(target.id.clone(), target.id_range) {
-            let settings = config.rule(LintRule::DuplicateAnchor);
+            let settings = config.rule(DUPLICATE_ANCHOR);
             if settings.enabled && diagnostics.len() < config.max_diagnostics {
                 diagnostics.push(Diagnostic {
                     id: DiagnosticId::new(format!(
                         "{}@{}:{}",
-                        LintRule::DuplicateAnchor.code(),
+                        DUPLICATE_ANCHOR.as_str(),
                         target.id_range.start().to_u32(),
                         target.id_range.end().to_u32()
                     )),
-                    code: DiagnosticCode::new(LintRule::DuplicateAnchor.code()),
+                    code: DiagnosticCode::new(DUPLICATE_ANCHOR.as_str()),
                     severity: settings.severity,
                     message: format!("duplicate anchor ID `{}`", target.id),
                     range: target.id_range,
@@ -687,16 +824,16 @@ fn lint_attributes(
     let mut used = BTreeMap::<String, Vec<TextRange>>::new();
     for attribute in document.attributes() {
         if let Some(first) = definitions.insert(attribute.name.clone(), attribute.name_range) {
-            let settings = config.rule(LintRule::DuplicateAttribute);
+            let settings = config.rule(DUPLICATE_ATTRIBUTE);
             if settings.enabled && diagnostics.len() < config.max_diagnostics {
                 diagnostics.push(Diagnostic {
                     id: DiagnosticId::new(format!(
                         "{}@{}:{}",
-                        LintRule::DuplicateAttribute.code(),
+                        DUPLICATE_ATTRIBUTE.as_str(),
                         attribute.name_range.start().to_u32(),
                         attribute.name_range.end().to_u32()
                     )),
-                    code: DiagnosticCode::new(LintRule::DuplicateAttribute.code()),
+                    code: DiagnosticCode::new(DUPLICATE_ATTRIBUTE.as_str()),
                     severity: settings.severity,
                     message: format!("duplicate document attribute `{}`", attribute.name),
                     range: attribute.name_range,
@@ -714,17 +851,17 @@ fn lint_attributes(
                 DocumentAttributeOperation::Unset => true,
             };
             if changed
-                && config.rule(LintRule::ProtectedAttribute).enabled
+                && config.rule(PROTECTED_ATTRIBUTE).enabled
                 && diagnostics.len() < config.max_diagnostics
             {
                 diagnostics.push(Diagnostic {
                     id: DiagnosticId::new(format!(
                         "{}@{}:{}",
-                        LintRule::ProtectedAttribute.code(),
+                        PROTECTED_ATTRIBUTE.as_str(),
                         attribute.range.start().to_u32(),
                         attribute.range.end().to_u32()
                     )),
-                    code: DiagnosticCode::new(LintRule::ProtectedAttribute.code()),
+                    code: DiagnosticCode::new(PROTECTED_ATTRIBUTE.as_str()),
                     severity: config.protected_attribute_severity,
                     message: format!("protected attribute `{}` cannot be changed", attribute.name),
                     range: attribute.range,
@@ -741,7 +878,7 @@ fn lint_attributes(
                 push_diagnostic(
                     diagnostics,
                     config,
-                    LintRule::UndefinedAttribute,
+                    UNDEFINED_ATTRIBUTE,
                     *range,
                     &format!("undefined document attribute `{name}`"),
                     None,
@@ -783,7 +920,7 @@ fn lint_attributes(
         push_diagnostic(
             diagnostics,
             config,
-            LintRule::AttributeExpansion,
+            ATTRIBUTE_EXPANSION,
             range,
             message,
             None,
@@ -794,7 +931,7 @@ fn lint_attributes(
             push_diagnostic(
                 diagnostics,
                 config,
-                LintRule::UnusedAttribute,
+                UNUSED_ATTRIBUTE,
                 range,
                 &format!("unused document attribute `{name}`"),
                 None,
@@ -867,7 +1004,7 @@ fn lint_headings(
                     push_diagnostic(
                         diagnostics,
                         config,
-                        LintRule::InvalidHeadingLevel,
+                        INVALID_HEADING_LEVEL,
                         heading.marker_range,
                         "heading level skips the expected hierarchy",
                         None,
@@ -879,16 +1016,16 @@ fn lint_headings(
 
         let base = heading_id_base(&heading.text);
         if let Some(first_range) = ids.get(&base).copied() {
-            let settings = config.rule(LintRule::DuplicateHeadingId);
+            let settings = config.rule(DUPLICATE_HEADING_ID);
             if settings.enabled && diagnostics.len() < config.max_diagnostics {
                 diagnostics.push(Diagnostic {
                     id: DiagnosticId::new(format!(
                         "{}@{}:{}",
-                        LintRule::DuplicateHeadingId.code(),
+                        DUPLICATE_HEADING_ID.as_str(),
                         heading.text_range.start().to_u32(),
                         heading.text_range.end().to_u32()
                     )),
-                    code: DiagnosticCode::new(LintRule::DuplicateHeadingId.code()),
+                    code: DiagnosticCode::new(DUPLICATE_HEADING_ID.as_str()),
                     severity: settings.severity,
                     message: format!("duplicate generated heading ID `{base}`"),
                     range: heading.text_range,
@@ -908,7 +1045,7 @@ fn lint_headings(
 fn push_diagnostic(
     diagnostics: &mut Vec<Diagnostic>,
     config: &LintConfig,
-    rule: LintRule,
+    rule: LintRuleId,
     range: TextRange,
     message: &str,
     fix: Option<(&str, TextRange, &str)>,
@@ -938,11 +1075,11 @@ fn push_diagnostic(
     diagnostics.push(Diagnostic {
         id: DiagnosticId::new(format!(
             "{}@{}:{}",
-            rule.code(),
+            rule.as_str(),
             range.start().to_u32(),
             range.end().to_u32()
         )),
-        code: DiagnosticCode::new(rule.code()),
+        code: DiagnosticCode::new(rule.as_str()),
         severity: settings.severity,
         message: message.to_owned(),
         range,
@@ -957,8 +1094,40 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LintConfig, LintRule, RuleSettings, lint};
+    use super::{
+        LINE_TOO_LONG, LINT_RULES, LintConfig, RuleSettings, TRAILING_WHITESPACE, lint, lint_rule,
+        lint_with_analysis_limits, render_lint_rule_catalog_json,
+    };
     use crate::diagnostic::Severity;
+
+    #[test]
+    fn lint_rule_catalog_is_unique_resolvable_and_sorted_in_json() {
+        let mut codes = LINT_RULES
+            .iter()
+            .map(|descriptor| descriptor.id.as_str())
+            .collect::<Vec<_>>();
+        let original_len = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), original_len);
+        assert!(
+            LINT_RULES
+                .iter()
+                .all(|descriptor| lint_rule(descriptor.id.as_str()) == Some(descriptor))
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_str(&render_lint_rule_catalog_json()).expect("catalog JSON");
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["packageVersion"], crate::VERSION);
+        let json_codes = value["rules"]
+            .as_array()
+            .expect("rules")
+            .iter()
+            .map(|rule| rule["code"].as_str().expect("code"))
+            .collect::<Vec<_>>();
+        assert_eq!(json_codes, codes);
+    }
 
     #[test]
     fn lint_reports_trailing_whitespace_with_safe_fix() {
@@ -1006,14 +1175,14 @@ mod tests {
     fn lint_rules_can_be_disabled_and_change_severity() {
         let mut config = LintConfig::default();
         config.set_rule(
-            LintRule::TrailingWhitespace,
+            TRAILING_WHITESPACE,
             RuleSettings {
                 enabled: false,
                 severity: Severity::Error,
             },
         );
         config.set_rule(
-            LintRule::LineTooLong,
+            LINE_TOO_LONG,
             RuleSettings {
                 enabled: true,
                 severity: Severity::Error,
@@ -1227,11 +1396,12 @@ mod tests {
 
     #[test]
     fn inline_recovery_uses_dedicated_nesting_limit_code() {
-        let diagnostics = lint(
+        let diagnostics = lint_with_analysis_limits(
             "*nested*",
-            &LintConfig {
+            &LintConfig::default(),
+            crate::limits::AnalysisLimits {
                 max_inline_depth: 0,
-                ..LintConfig::default()
+                ..crate::limits::AnalysisLimits::default()
             },
         )
         .expect("valid source");
@@ -1347,6 +1517,7 @@ mod tests {
     fn relative_links_and_cross_document_targets_do_not_require_host_resolution() {
         let diagnostics = lint(
             "link:../release-manifest.json[release manifest]\n\
+             link:../%2e%2e/secret[encoded relative]\n\
              xref:../guide.adoc[guide]\n",
             &LintConfig::default(),
         )
@@ -1365,10 +1536,6 @@ mod tests {
         for (source, expected_code) in [
             (
                 "link://example.com/path[network path]",
-                "invalid-url-scheme",
-            ),
-            (
-                "link:../%2e%2e/secret[encoded traversal]",
                 "invalid-url-scheme",
             ),
             ("link:../line%0afeed[encoded control]", "invalid-url-scheme"),
@@ -1490,7 +1657,11 @@ mod tests {
     fn stem_size_limit_is_reported_without_evaluating_the_formula() {
         let source = format!(
             "stem:[{}]",
-            "x".repeat(LintConfig::default().max_formula_bytes + 1)
+            "x".repeat(
+                usize::try_from(crate::limits::AnalysisLimits::default().max_formula_bytes)
+                    .expect("u32 fits usize")
+                    + 1
+            )
         );
         let diagnostics = lint(&source, &LintConfig::default()).expect("lint");
 

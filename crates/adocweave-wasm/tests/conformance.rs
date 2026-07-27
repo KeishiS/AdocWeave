@@ -93,7 +93,18 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
         || entry["source"].as_str().expect("inline source").to_owned(),
         |file| fs::read_to_string(resolve(fixtures, file)).expect("fixture source"),
     );
-    let options = entry.get("options").cloned().unwrap_or_else(|| json!({}));
+    let analysis_options = entry
+        .get("analysisOptions")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let render_policy = entry
+        .get("renderPolicy")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let output_limits = entry
+        .get("outputLimits")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let render_inputs = entry
         .get("renderInputs")
         .cloned()
@@ -115,7 +126,9 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
             "projection": true,
         },
         "renderInputs": render_inputs,
-        "options": options,
+        "analysisOptions": analysis_options,
+        "renderPolicy": render_policy,
+        "outputLimits": output_limits,
     }))
     .expect("manifest produces a valid WASM request")
 }

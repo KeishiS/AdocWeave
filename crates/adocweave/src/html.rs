@@ -14,7 +14,7 @@ use crate::inline::{
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, ResolutionMatch};
 use crate::resource::{MediaFamily, ResolvedResource, ResourceOutcome};
-use crate::url::{UrlContext, UrlPolicy};
+use crate::url::{ActiveUrlPolicy, UrlProvenance};
 
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a",
@@ -210,7 +210,7 @@ pub enum StylesheetSource {
     /// CSS text emitted inside a `<style>` element.
     Inline(String),
     /// Stylesheet URL emitted as `<link rel="stylesheet">` after the
-    /// [`UrlPolicy`] revalidates it in the resolved-resource context.
+    /// [`ActiveUrlPolicy`] revalidates it in the resolved-resource context.
     External(String),
 }
 
@@ -244,7 +244,7 @@ pub struct RenderPolicy {
     pub render_document_title: bool,
     /// Enables the optional `kbd`, `btn`, and `menu` presentation macros.
     pub render_ui_macros: bool,
-    pub url_policy: UrlPolicy,
+    pub active_urls: ActiveUrlPolicy,
     pub external_links: ExternalLinkPresentation,
     pub source_languages: SourceLanguagePolicy,
     pub math_languages: MathLanguagePolicy,
@@ -259,7 +259,7 @@ impl Default for RenderPolicy {
             document_mode: HtmlDocumentMode::Fragment,
             render_document_title: true,
             render_ui_macros: false,
-            url_policy: UrlPolicy::default(),
+            active_urls: ActiveUrlPolicy::default(),
             external_links: ExternalLinkPresentation::default(),
             source_languages: SourceLanguagePolicy::default(),
             math_languages: MathLanguagePolicy::default(),
@@ -271,12 +271,12 @@ impl Default for RenderPolicy {
 }
 
 impl RenderPolicy {
-    pub fn allows_url(&self, value: &str, context: UrlContext) -> bool {
-        self.url_policy.allows(value, context)
+    pub fn allows_url(&self, value: &str, context: UrlProvenance) -> bool {
+        self.active_urls.allows(value, context)
     }
 
-    pub fn classify_url(&self, value: &str, context: UrlContext) -> crate::url::UrlDecision {
-        self.url_policy.classify(value, context)
+    pub fn classify_url(&self, value: &str, context: UrlProvenance) -> crate::url::UrlDecision {
+        self.active_urls.classify(value, context)
     }
 }
 
@@ -1302,7 +1302,7 @@ fn render_standard_macro(
     match node.kind {
         Kind::Email => {
             let href = format!("mailto:{}", node.target);
-            if !context.policy.allows_url(&href, UrlContext::AuthoredLink) {
+            if !context.policy.allows_url(&href, UrlProvenance::Authored) {
                 escape_inline_text(output, &node.target);
                 return;
             }
@@ -1496,7 +1496,7 @@ fn resolved_resource_href(
             ..
         }) if context
             .policy
-            .allows_url(&value.href, UrlContext::ResolvedResource) =>
+            .allows_url(&value.href, UrlProvenance::ResolvedResource) =>
         {
             if value.media_type.family() != expected_family {
                 context.diagnostics.push(render_diagnostic(
@@ -1677,7 +1677,7 @@ fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::Docum
 fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_, '_>) {
     if context
         .policy
-        .allows_url(&link.target, UrlContext::AuthoredLink)
+        .allows_url(&link.target, UrlProvenance::Authored)
     {
         output.push_str("<a href=\"");
         escape_html_into(output, &link.target);
@@ -1688,7 +1688,7 @@ fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderConte
         ) && matches!(
             context
                 .policy
-                .classify_url(&link.target, UrlContext::AuthoredLink),
+                .classify_url(&link.target, UrlProvenance::Authored),
             crate::url::UrlDecision::Allowed
         ) && link.target.split_once(':').is_some_and(|(scheme, _)| {
             scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
@@ -1747,7 +1747,7 @@ fn render_reference(
                         notices,
                     } if context
                         .policy
-                        .allows_url(href, UrlContext::ResolvedReference) =>
+                        .allows_url(href, UrlProvenance::ResolvedReference) =>
                     {
                         for notice in notices {
                             context.diagnostics.push(render_diagnostic(
@@ -1952,7 +1952,7 @@ fn render_stylesheets(policy: &RenderPolicy, diagnostics: &mut Vec<Diagnostic>) 
                     ));
                     continue;
                 }
-                if !policy.allows_url(url, UrlContext::ResolvedResource) {
+                if !policy.allows_url(url, UrlProvenance::ResolvedResource) {
                     diagnostics.push(stylesheet_diagnostic(
                         "invalid-stylesheet-url",
                         index,
@@ -2056,7 +2056,7 @@ mod tests {
     use crate::parser::parse;
     use crate::render::RenderInputs;
     use crate::resource::{MediaType, ResolvedResource};
-    use crate::url::{UrlContext, UrlDecision};
+    use crate::url::{UrlDecision, UrlProvenance};
 
     fn render(document: &crate::parser::AstDocument, policy: &RenderPolicy) -> super::HtmlOutput {
         super::render_with_inputs_ast(document, policy, &RenderInputs::default())
@@ -2431,7 +2431,7 @@ mod tests {
     }
 
     #[test]
-    fn stylesheet_urls_are_checked_by_the_url_policy_and_escaped() {
+    fn stylesheet_urls_are_checked_by_the_active_urls_and_escaped() {
         let parsed = parse("paragraph").expect("valid source");
         for url in [
             "javascript:alert(1)",
@@ -2518,42 +2518,42 @@ mod tests {
     fn render_policy_allows_only_configured_safe_schemes() {
         let mut policy = RenderPolicy::default();
         assert_eq!(
-            policy.classify_url("https://example.com", UrlContext::AuthoredLink),
+            policy.classify_url("https://example.com", UrlProvenance::Authored),
             UrlDecision::Allowed
         );
         assert_eq!(
-            policy.classify_url("HTTP://example.com", UrlContext::AuthoredLink),
+            policy.classify_url("HTTP://example.com", UrlProvenance::Authored),
             UrlDecision::Allowed
         );
         assert_eq!(
-            policy.classify_url("javascript:alert(1)", UrlContext::AuthoredLink),
+            policy.classify_url("javascript:alert(1)", UrlProvenance::Authored),
             UrlDecision::Rejected
         );
         assert_eq!(
-            policy.classify_url("java%0ascript:alert(1)", UrlContext::AuthoredLink),
+            policy.classify_url("java%0ascript:alert(1)", UrlProvenance::Authored),
             UrlDecision::Rejected
         );
         assert_eq!(
-            policy.classify_url("relative.adoc", UrlContext::AuthoredLink),
+            policy.classify_url("relative.adoc", UrlProvenance::Authored),
             UrlDecision::Rejected
         );
         assert_eq!(
-            policy.classify_url("/absolute", UrlContext::AuthoredLink),
+            policy.classify_url("/absolute", UrlProvenance::Authored),
             UrlDecision::Rejected
         );
         assert_eq!(
-            policy.classify_url("data:text/html,x", UrlContext::AuthoredLink),
+            policy.classify_url("data:text/html,x", UrlProvenance::Authored),
             UrlDecision::Rejected
         );
 
         policy
-            .url_policy
+            .active_urls
             .allowed_schemes
             .insert("mailto".to_owned());
-        policy.url_policy.allow_relative = true;
-        assert!(policy.allows_url("mailto:user@example.com", UrlContext::AuthoredLink));
-        assert!(policy.allows_url("relative.adoc", UrlContext::AuthoredLink));
-        assert!(!policy.allows_url("../outside.adoc", UrlContext::AuthoredLink));
+        policy.active_urls.allow_authored_relative = true;
+        assert!(policy.allows_url("mailto:user@example.com", UrlProvenance::Authored));
+        assert!(policy.allows_url("relative.adoc", UrlProvenance::Authored));
+        assert!(!policy.allows_url("../outside.adoc", UrlProvenance::Authored));
 
         let parsed = parse("link:relative.adoc[relative]").expect("parse");
         assert_eq!(
@@ -2564,7 +2564,7 @@ mod tests {
 
     #[test]
     fn external_link_attributes_are_fixed_and_do_not_apply_to_xrefs() {
-        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+        let analysis = crate::core::Engine::new(crate::core::AnalysisOptions::default())
             .analyze("https://example.com/[External] xref:note:123[Internal]")
             .expect("analysis");
         let policy = RenderPolicy {
@@ -2596,7 +2596,7 @@ mod tests {
     #[test]
     fn source_math_reference_and_resource_policies_fail_closed() {
         let source = "[source,python]\n----\nprint(1)\n----\n\nstem:[x] xref:note:secret[] image:https://example/x.png[alt]";
-        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+        let analysis = crate::core::Engine::new(crate::core::AnalysisOptions::default())
             .analyze(source)
             .expect("analysis");
         let image = analysis.resource_queries()[0].reference.range();
@@ -2645,7 +2645,7 @@ mod tests {
 
     #[test]
     fn resolved_reference_notices_are_projected_as_render_diagnostics() {
-        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+        let analysis = crate::core::Engine::new(crate::core::AnalysisOptions::default())
             .analyze("xref:note:123#missing[Note]")
             .expect("analysis");
         let output = render_with_inputs(
@@ -2673,7 +2673,7 @@ mod tests {
 
     #[test]
     fn kind_only_reference_failure_uses_a_fixed_diagnostic() {
-        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+        let analysis = crate::core::Engine::new(crate::core::AnalysisOptions::default())
             .analyze("xref:record:private[Public label]")
             .expect("analysis");
         let output = render_with_inputs(
@@ -2700,7 +2700,7 @@ mod tests {
 
     #[test]
     fn resolved_display_text_is_plain_text_and_only_fills_an_empty_label() {
-        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+        let analysis = crate::core::Engine::new(crate::core::AnalysisOptions::default())
             .analyze(
                 "xref:note:01800000-0000-7000-8000-000000000001[]\n\n\
                  xref:note:01800000-0000-7000-8000-000000000002[Authored *label*]",
@@ -2725,9 +2725,9 @@ mod tests {
         let output = render_with_inputs(
             analysis.ast(),
             &RenderPolicy {
-                url_policy: crate::url::UrlPolicy {
+                active_urls: crate::url::ActiveUrlPolicy {
                     allow_resolved_root_relative: true,
-                    ..crate::url::UrlPolicy::default()
+                    ..crate::url::ActiveUrlPolicy::default()
                 },
                 ..RenderPolicy::default()
             },
@@ -2743,7 +2743,7 @@ mod tests {
 
     #[test]
     fn failed_empty_label_hides_the_target_in_label_only_mode() {
-        let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
+        let analysis = crate::core::Engine::new(crate::core::AnalysisOptions::default())
             .analyze("xref:note:private[]")
             .expect("analysis");
         let inputs = RenderInputs::new(
@@ -2946,7 +2946,7 @@ mod tests {
     }
 
     #[test]
-    fn links_apply_attributes_labels_and_url_policy() {
+    fn links_apply_attributes_labels_and_active_urls() {
         let parsed = parse(
             "= Links\n:host: example.com\n\n\
              https://{host}[*safe*] javascript:alert(1)[unsafe]\n",

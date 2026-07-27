@@ -208,9 +208,9 @@ repositoryのcheckoutやworkspaceの`target`を`PATH`へ含めないclean環境�
 * [ ] 公開Zed archiveとmanaged LSPをoverrideなしで使用し、AsciiDoc認識とLSP起動前の基本構文色付けを確認しました。
       診断、Outline、Code Action、Format、Hover、補完、Definition、References、Document Linkおよび
       Semantic Tokensが編集後と再起動後にも更新されることを確認しました。
-* [ ] native利用側アプリでpackage versionを照合し、`ParseOptions`、`SourceId`、文書versionおよびgenerationを
+* [ ] native利用側アプリでpackage versionを照合し、`AnalysisOptions`、`SourceId`、文書versionおよびgenerationを
       明示しました。DB、network、file、権限および任意scheme Resolverをcoreの外へ置き、更新対象が
-      xref:docs/developer-guide/core-profile.adoc[対応範囲]と一致し、Resolverが返したURLを`UrlPolicy`で再検証しました。
+      xref:docs/developer-guide/core-profile.adoc[対応範囲]と一致し、Resolverが返したURLを`ActiveUrlPolicy`で再検証しました。
 * [ ] Nix flakeをtag commitへ固定し、Linux x86-64／ARM64で`nix run`、profileへの導入・rollback・削除、
       利用側flakeへの固定、NixOS package評価およびoverlayを確認しました。runtime closureにbrowser、Node.js、
       Rust compiler、Cargoまたはfuzz toolが含まれていないことも確認しました。

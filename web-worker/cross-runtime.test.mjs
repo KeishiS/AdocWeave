@@ -36,7 +36,9 @@ function requestFor(entry) {
       projection: true,
     },
     renderInputs: entry.renderInputs ?? {},
-    options: entry.options ?? {},
+    analysisOptions: entry.analysisOptions ?? {},
+    renderPolicy: entry.renderPolicy ?? {},
+    outputLimits: entry.outputLimits ?? {},
   };
 }
 

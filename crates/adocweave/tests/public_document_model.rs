@@ -1,9 +1,9 @@
 use adocweave::semantic::{Block, DocumentAttributeOperation};
-use adocweave::{Engine, ParseOptions};
+use adocweave::{AnalysisOptions, Engine};
 
 #[test]
 fn public_document_model_exposes_semantic_facts_without_parser_types() {
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze(
             "\
 = Guide
