@@ -18,7 +18,7 @@ use serde_json::Value;
 
 mod protocol_generated;
 mod render_inputs;
-pub use protocol_generated::WasmProductSet;
+pub use protocol_generated::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, WasmProductSet};
 pub use render_inputs::{
     WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,

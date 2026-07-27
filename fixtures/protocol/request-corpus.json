@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "defaultRequest": {
+    "packageVersion": "@PACKAGE_VERSION@",
+    "sourceId": null,
+    "version": 1,
+    "generation": 1,
+    "source": "text"
+  },
+  "responseProbe": {
+    "source": "= Probe\n:name: value\n\nimage:a.png[]\n\ntext \n"
+  },
+  "enumCases": [
+    { "enum": "Severity", "path": "/analysisOptions/diagnostics/rules/example/severity" },
+    { "enum": "SyntaxMode", "path": "/analysisOptions/syntax/syntaxMode" },
+    { "enum": "DocumentMode", "path": "/renderPolicy/documentMode" },
+    { "enum": "UnknownSourceLanguage", "path": "/renderPolicy/sourceLanguages/unknown" },
+    { "enum": "MathLanguage", "path": "/renderPolicy/mathLanguages/0" },
+    { "enum": "UnresolvedReferencePresentation", "path": "/renderPolicy/unresolvedReferences" },
+    { "enum": "StylesheetKind", "path": "/renderPolicy/stylesheets/0/kind", "templates": {
+      "inline": { "kind": "inline", "css": "p {}" },
+      "external": { "kind": "external", "url": "https://example.invalid/theme.css" }
+    } }
+  ],
+  "unknownFieldCases": [
+    { "path": "/unexpected", "value": true },
+    { "path": "/analysisOptions/unexpected", "value": true },
+    { "path": "/analysisOptions/syntax/unexpected", "value": true },
+    { "path": "/analysisOptions/diagnostics/unexpected", "value": true },
+    { "path": "/analysisOptions/diagnostics/rules/example/unexpected", "value": true },
+    { "path": "/renderPolicy/unexpected", "value": true },
+    { "path": "/outputLimits/unexpected", "value": true }
+  ],
+  "oldVersion": "0.10.0"
+}

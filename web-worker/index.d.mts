@@ -1,11 +1,11 @@
-import type { ProductSet } from "./protocol.generated.d.mts";
+import type { Diagnostic, ProductSet } from "./protocol.generated.d.mts";
 
-export type { ProductSet } from "./protocol.generated.d.mts";
+export type { Diagnostic, ProductSet } from "./protocol.generated.d.mts";
 
 export interface AdocWeaveResult {
   html: string;
-  diagnostics: unknown[];
-  renderDiagnostics: unknown[];
+  diagnostics: Diagnostic[];
+  renderDiagnostics: Diagnostic[];
   sourceVersion: number;
   generation: number;
   packageVersion: string;
@@ -38,6 +38,8 @@ export interface DocumentProjection {
   sourceId: string | null;
   sourceBlocks: SourceBlockProjection[];
   formulas: FormulaProjection[];
+  blockPresentations: unknown[];
+  orderedLists: unknown[];
   referenceEdges: unknown[];
   externalLinks: unknown[];
   searchableText: unknown;
@@ -81,8 +83,8 @@ export interface AdocWeaveWasmResponse {
   html: string;
   attributeOccurrences: DocumentAttributeOccurrence[];
   resourceQueries: ResourceQuery[];
-  diagnostics: unknown[];
-  renderDiagnostics: unknown[];
+  diagnostics: Diagnostic[];
+  renderDiagnostics: Diagnostic[];
   symbols: unknown[];
   projection: DocumentProjection;
 }

@@ -10,6 +10,26 @@ export interface ProductSet {
   projection?: boolean;
 }
 
+export type Severity = "error" | "warning" | "information" | "hint";
+
+export interface TextRange {
+  start: number;
+  end: number;
+}
+
+export interface Diagnostic {
+  id: string;
+  code: string;
+  severity: Severity;
+  message: string;
+  range: TextRange;
+  related: unknown[];
+  fixes: unknown[];
+}
+
 export declare const PROTOCOL_SCHEMA_VERSION: 3;
+export declare const WORKER_PROTOCOL_VERSION: 1;
 export declare const PACKAGE_VERSION: "0.11.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "resourceQueries", "diagnostics", "symbols", "projection"];
+export declare const REQUEST_FIELDS: readonly ["packageVersion", "sourceId", "version", "generation", "source", "products", "renderInputs", "analysisOptions", "renderPolicy", "outputLimits"];
+export declare const REQUEST_ENUMS: { readonly "Severity": readonly ["error", "warning", "information", "hint"]; readonly "SyntaxMode": readonly ["permissive", "strict"]; readonly "DocumentMode": readonly ["fragment", "complete"]; readonly "UnknownSourceLanguage": readonly ["preserve-sanitized", "omit-class", "diagnostic"]; readonly "MathLanguage": readonly ["latex", "typst"]; readonly "UnresolvedReferencePresentation": readonly ["target", "label-only", "hidden"]; readonly "StylesheetKind": readonly ["inline", "external"] };

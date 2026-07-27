@@ -2,6 +2,199 @@
   "schemaVersion": 3,
   "packageVersion": "0.11.0",
   "identityField": "packageVersion",
+  "workerProtocolVersion": 1,
+  "requestEnums": [
+    "Severity",
+    "SyntaxMode",
+    "DocumentMode",
+    "UnknownSourceLanguage",
+    "MathLanguage",
+    "UnresolvedReferencePresentation",
+    "StylesheetKind"
+  ],
+  "request": {
+    "unknownFields": "reject",
+    "fields": [
+      { "json": "packageVersion", "type": "string", "required": true },
+      { "json": "sourceId", "type": "string | null", "default": null },
+      { "json": "version", "type": "number", "required": true },
+      { "json": "generation", "type": "number", "required": true },
+      { "json": "source", "type": "string", "required": true },
+      { "json": "products", "type": "ProductSet", "default": "browser-default" },
+      { "json": "renderInputs", "type": "RenderInputs", "default": {} },
+      { "json": "analysisOptions", "type": "AnalysisOptions", "default": {} },
+      { "json": "renderPolicy", "type": "RenderPolicy", "default": {} },
+      { "json": "outputLimits", "type": "OutputLimits", "default": {} }
+    ]
+  },
+  "enums": {
+    "Severity": ["error", "warning", "information", "hint"],
+    "SyntaxMode": ["permissive", "strict"],
+    "DocumentMode": ["fragment", "complete"],
+    "UnknownSourceLanguage": ["preserve-sanitized", "omit-class", "diagnostic"],
+    "MathLanguage": ["latex", "typst"],
+    "UnresolvedReferencePresentation": ["target", "label-only", "hidden"],
+    "StylesheetKind": ["inline", "external"],
+    "ReferenceStatus": ["resolved", "failed"],
+    "ReferenceFailureKind": ["missing-target", "missing-anchor", "ambiguous-target", "outside-root", "resolver-failure"],
+    "ResourceStatus": ["resolved", "failed"],
+    "ResourceFailureKind": ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"],
+    "DocumentAttributeOperation": ["set", "unset"],
+    "ResourcePurpose": ["image", "icon", "audio", "video", "video-poster"],
+    "MacroForm": ["inline", "block"],
+    "FormulaKind": ["inline", "block"]
+  },
+  "settings": {
+    "AnalysisOptions": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "syntax", "type": "SyntaxOptions", "default": {} },
+        { "json": "diagnostics", "type": "DiagnosticProfile", "default": {} }
+      ]
+    },
+    "SyntaxOptions": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "syntaxMode", "type": "SyntaxMode", "default": "permissive" },
+        { "json": "limits", "type": "AnalysisLimits", "default": "core-default" }
+      ]
+    },
+    "DiagnosticProfile": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "protectedAttributes", "type": "Record<string, string>", "default": {} },
+        { "json": "authoredUrls", "type": "AuthoredUrlPolicy", "default": "core-default" },
+        { "json": "maxDiagnostics", "type": "number", "default": 1000 },
+        { "json": "rules", "type": "Record<string, RuleSettings>", "default": {} }
+      ]
+    },
+    "RuleSettings": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "enabled", "type": "boolean", "default": true },
+        { "json": "severity", "type": "Severity", "default": "warning" }
+      ]
+    },
+    "RenderPolicy": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "activeUrls", "type": "ActiveUrlPolicy", "default": "core-default" },
+        { "json": "externalLinks", "type": "ExternalLinkPolicy", "default": {} },
+        { "json": "sourceLanguages", "type": "SourceLanguagePolicy", "default": "core-default" },
+        { "json": "mathLanguages", "type": "MathLanguage[]", "default": ["latex", "typst"] },
+        { "json": "unresolvedReferences", "type": "UnresolvedReferencePresentation", "default": "target" },
+        { "json": "resources", "type": "ResourceCapabilities", "default": { "images": true, "media": true } },
+        { "json": "documentMode", "type": "DocumentMode", "default": "fragment" },
+        { "json": "stylesheets", "type": "Stylesheet[]", "default": [] }
+      ]
+    },
+    "OutputLimits": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "maxOutputBytes", "type": "number", "default": "core-default" }
+      ]
+    }
+  },
+  "taggedUnions": {
+    "Stylesheet": {
+      "tag": "kind",
+      "unknownFields": "reject",
+      "variants": {
+        "inline": ["css"],
+        "external": ["url"]
+      }
+    },
+    "ResolvedReferenceOutcome": {
+      "tag": "status",
+      "unknownFields": "reject",
+      "variants": {
+        "resolved": ["href"],
+        "failed": ["kind"]
+      }
+    },
+    "ResolvedResourceOutcome": {
+      "tag": "status",
+      "unknownFields": "reject",
+      "variants": {
+        "resolved": ["href", "mediaType", "byteLength"],
+        "failed": ["kind"]
+      }
+    }
+  },
+  "response": {
+    "fields": [
+      { "json": "packageVersion", "type": "string" },
+      { "json": "version", "type": "number" },
+      { "json": "generation", "type": "number" },
+      { "json": "products", "type": "Required<ProductSet>" },
+      { "json": "parse", "type": "ParseSummary" },
+      { "json": "syntax", "type": "string" },
+      { "json": "ast", "type": "string" },
+      { "json": "html", "type": "string" },
+      { "json": "attributeOccurrences", "type": "DocumentAttributeOccurrence[]" },
+      { "json": "resourceQueries", "type": "ResourceQuery[]" },
+      { "json": "diagnostics", "type": "Diagnostic[]" },
+      { "json": "renderDiagnostics", "type": "Diagnostic[]" },
+      { "json": "symbols", "type": "unknown[]" },
+      { "json": "projection", "type": "DocumentProjection" }
+    ]
+  },
+  "dtos": {
+    "TextRange": {
+      "fields": [
+        { "json": "start", "type": "number" },
+        { "json": "end", "type": "number" }
+      ]
+    },
+    "Diagnostic": {
+      "fields": [
+        { "json": "id", "type": "string" },
+        { "json": "code", "type": "string" },
+        { "json": "severity", "type": "Severity" },
+        { "json": "message", "type": "string" },
+        { "json": "range", "type": "TextRange" },
+        { "json": "related", "type": "unknown[]" },
+        { "json": "fixes", "type": "unknown[]" }
+      ]
+    },
+    "DocumentProjection": {
+      "fields": [
+        { "json": "packageVersion", "type": "string" },
+        { "json": "sourceId", "type": "string | null" },
+        { "json": "sourceBlocks", "type": "SourceBlockProjection[]" },
+        { "json": "formulas", "type": "FormulaProjection[]" },
+        { "json": "blockPresentations", "type": "unknown[]" },
+        { "json": "orderedLists", "type": "unknown[]" },
+        { "json": "referenceEdges", "type": "unknown[]" },
+        { "json": "externalLinks", "type": "unknown[]" },
+        { "json": "searchableText", "type": "unknown" },
+        { "json": "structure", "type": "unknown" },
+        { "json": "catalogs", "type": "unknown" },
+        { "json": "targets", "type": "unknown[]" },
+        { "json": "title", "type": "unknown" }
+      ]
+    },
+    "DocumentAttributeOccurrence": {
+      "fields": [
+        { "json": "range", "type": "TextRange" },
+        { "json": "nameRange", "type": "TextRange" },
+        { "json": "valueRange", "type": "TextRange" },
+        { "json": "name", "type": "string" },
+        { "json": "rawValue", "type": "string" },
+        { "json": "operation", "type": "DocumentAttributeOperation" }
+      ]
+    },
+    "ResourceQuery": {
+      "fields": [
+        { "json": "purpose", "type": "ResourcePurpose" },
+        { "json": "form", "type": "MacroForm" },
+        { "json": "ownerRange", "type": "TextRange" },
+        { "json": "range", "type": "TextRange" },
+        { "json": "targetRange", "type": "TextRange" },
+        { "json": "target", "type": "string" }
+      ]
+    }
+  },
   "products": [
     { "json": "syntax", "rust": "syntax" },
     { "json": "canonicalAst", "rust": "canonical_ast" },

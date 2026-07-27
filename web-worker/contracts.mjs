@@ -1,4 +1,4 @@
-import { PACKAGE_VERSION } from "./protocol.generated.mjs";
+import { PACKAGE_VERSION, WORKER_PROTOCOL_VERSION } from "./protocol.generated.mjs";
 
-export { PACKAGE_VERSION };
+export { PACKAGE_VERSION, WORKER_PROTOCOL_VERSION };
 export const BROWSER_PACKAGE_VERSION = PACKAGE_VERSION;
