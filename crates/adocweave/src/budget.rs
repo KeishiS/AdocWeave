@@ -1,6 +1,6 @@
 //! Construction-time resource accounting shared by syntax and semantic builders.
 
-use crate::limits::ProcessingLimits;
+use crate::limits::AnalysisLimits;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct BudgetExceeded {
@@ -11,7 +11,7 @@ pub(crate) struct BudgetExceeded {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ParseBudget {
-    limits: ProcessingLimits,
+    limits: AnalysisLimits,
     blocks: u32,
     nodes: u32,
     references: u32,
@@ -20,7 +20,7 @@ pub(crate) struct ParseBudget {
 }
 
 impl ParseBudget {
-    pub(crate) fn new(limits: ProcessingLimits) -> Result<Self, BudgetExceeded> {
+    pub(crate) fn new(limits: AnalysisLimits) -> Result<Self, BudgetExceeded> {
         let mut budget = Self {
             limits,
             blocks: 0,
@@ -35,12 +35,12 @@ impl ParseBudget {
 
     #[cfg(test)]
     pub(crate) fn unlimited() -> Self {
-        Self::new(ProcessingLimits {
+        Self::new(AnalysisLimits {
             max_blocks: u32::MAX,
             max_nodes: u32::MAX,
             max_references: u32::MAX,
             max_attributes: u32::MAX,
-            ..ProcessingLimits::default()
+            ..AnalysisLimits::default()
         })
         .expect("an unlimited budget accepts the document node")
     }

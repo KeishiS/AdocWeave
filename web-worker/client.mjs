@@ -39,7 +39,16 @@ export class AdocWeaveClient {
     }
   }
 
-  update({ sourceId = null, version, source, products, renderInputs, options = {} }) {
+  update({
+    sourceId = null,
+    version,
+    source,
+    products,
+    renderInputs,
+    analysisOptions = {},
+    renderPolicy = {},
+    outputLimits = {},
+  }) {
     this.#assertActive();
     const generation = ++this.#generation;
     if (this.#options.sharedCancellation) {
@@ -56,7 +65,9 @@ export class AdocWeaveClient {
       version,
       generation,
       source,
-      options,
+      analysisOptions,
+      renderPolicy,
+      outputLimits,
     };
     if (products !== undefined) payload.products = products;
     if (renderInputs !== undefined) payload.renderInputs = renderInputs;

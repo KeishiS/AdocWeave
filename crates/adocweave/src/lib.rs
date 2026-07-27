@@ -113,11 +113,11 @@ pub mod text {
 
 pub use conformance::{DocumentProducts, ProductSet};
 pub use core::{
-    Analysis, CancellationCheck, CancellationToken, Engine, NeverCancel, ParseError, ParseOptions,
-    SourceId,
+    Analysis, AnalysisOptions, CancellationCheck, CancellationToken, DiagnosticProfile, Engine,
+    NeverCancel, ParseError, SourceId, SyntaxOptions,
 };
 pub use execution::{AnalysisRequest, AnalysisResult, DocumentRevision};
-pub use limits::{ProcessingLimits, SyntaxMode};
+pub use limits::{AnalysisLimits, OutputLimits, SyntaxMode};
 
 pub const PRODUCT_NAME: &str = "AdocWeave";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

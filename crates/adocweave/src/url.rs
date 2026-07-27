@@ -1,24 +1,60 @@
-//! Output-neutral URL security policy shared by lint and renderers.
+//! URL policies for source diagnostics and active output.
 
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UrlPolicy {
+pub struct AuthoredUrlPolicy {
     pub allowed_schemes: BTreeSet<String>,
-    /// Allows non-root relative URLs authored in the document.
     pub allow_relative: bool,
-    /// Allows non-root relative URLs returned by a host resolver.
+}
+
+impl Default for AuthoredUrlPolicy {
+    fn default() -> Self {
+        Self {
+            allowed_schemes: default_allowed_schemes(),
+            allow_relative: true,
+        }
+    }
+}
+
+impl AuthoredUrlPolicy {
+    pub fn allows(&self, value: &str) -> bool {
+        self.classify(value) == UrlDecision::Allowed
+    }
+
+    pub fn classify(&self, value: &str) -> UrlDecision {
+        if invalid_url_text(value) {
+            return UrlDecision::Rejected;
+        }
+        let Some(colon) = value.find(':') else {
+            return if self.allow_relative && !value.starts_with('/') && !value.contains('\\') {
+                UrlDecision::Allowed
+            } else {
+                UrlDecision::Rejected
+            };
+        };
+        classify_scheme(value, colon, &self.allowed_schemes, false)
+    }
+}
+
+/// Security policy applied immediately before a URL becomes active output.
+///
+/// Resolver output is untrusted and is checked separately from URLs authored
+/// in the source document.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActiveUrlPolicy {
+    pub allowed_schemes: BTreeSet<String>,
+    pub allow_authored_relative: bool,
     pub allow_resolved_relative: bool,
-    /// Allows single-slash root-relative URLs returned by a host resolver.
     pub allow_resolved_root_relative: bool,
     pub allow_data_uris: bool,
 }
 
-impl Default for UrlPolicy {
+impl Default for ActiveUrlPolicy {
     fn default() -> Self {
         Self {
-            allowed_schemes: ["http", "https"].map(String::from).into_iter().collect(),
-            allow_relative: false,
+            allowed_schemes: default_allowed_schemes(),
+            allow_authored_relative: false,
             allow_resolved_relative: false,
             allow_resolved_root_relative: false,
             allow_data_uris: false,
@@ -26,73 +62,102 @@ impl Default for UrlPolicy {
     }
 }
 
-impl UrlPolicy {
-    pub fn allows(&self, value: &str, context: UrlContext) -> bool {
-        self.classify(value, context) == UrlDecision::Allowed
+impl ActiveUrlPolicy {
+    pub fn allows(&self, value: &str, provenance: UrlProvenance) -> bool {
+        self.classify(value, provenance) == UrlDecision::Allowed
     }
 
-    pub fn classify(&self, value: &str, context: UrlContext) -> UrlDecision {
-        if value.is_empty()
-            || value.chars().any(|character| {
-                character.is_control()
-                    || character.is_whitespace()
-                    || matches!(character, '<' | '>' | '"' | '\'' | '`' | '{' | '}')
-            })
-            || contains_encoded_control(value)
-        {
-            return UrlDecision::Rejected;
-        }
-        let Some(colon) = value.find(':') else {
-            return self.classify_relative(value, context);
-        };
-        let scheme = &value[..colon];
-        if scheme.is_empty()
-            || !scheme.bytes().enumerate().all(|(index, byte)| {
-                byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
-            })
-            || !scheme.as_bytes()[0].is_ascii_alphabetic()
-        {
-            return UrlDecision::Rejected;
-        }
-        let normalized = scheme.to_ascii_lowercase();
-        if normalized == "data" && !self.allow_data_uris {
-            return UrlDecision::Rejected;
-        }
-        if self.allowed_schemes.contains(&normalized) {
-            UrlDecision::Allowed
-        } else {
-            UrlDecision::Rejected
-        }
-    }
-
-    fn classify_relative(&self, value: &str, context: UrlContext) -> UrlDecision {
-        if value.contains('\\')
-            || value.split('/').any(|segment| segment == "..")
-            || contains_encoded_path_metacharacter(value)
-        {
-            return UrlDecision::Rejected;
-        }
-        if value.starts_with('/') {
-            return if context.is_resolved()
-                && self.allow_resolved_root_relative
-                && !value.starts_with("//")
-            {
-                UrlDecision::Allowed
-            } else {
-                UrlDecision::Rejected
-            };
-        }
-        let allowed = match context {
-            UrlContext::AuthoredLink => self.allow_relative,
-            UrlContext::ResolvedReference | UrlContext::ResolvedResource => {
+    pub fn classify(&self, value: &str, provenance: UrlProvenance) -> UrlDecision {
+        let allow_relative = match provenance {
+            UrlProvenance::Authored => self.allow_authored_relative,
+            UrlProvenance::ResolvedReference | UrlProvenance::ResolvedResource => {
                 self.allow_resolved_relative
             }
         };
-        if allowed {
+        classify_url(
+            value,
+            &self.allowed_schemes,
+            allow_relative,
+            provenance.is_resolved() && self.allow_resolved_root_relative,
+            self.allow_data_uris,
+        )
+    }
+}
+
+fn default_allowed_schemes() -> BTreeSet<String> {
+    ["http", "https"].map(String::from).into_iter().collect()
+}
+
+fn classify_url(
+    value: &str,
+    allowed_schemes: &BTreeSet<String>,
+    allow_relative: bool,
+    allow_root_relative: bool,
+    allow_data_uris: bool,
+) -> UrlDecision {
+    if invalid_url_text(value) {
+        return UrlDecision::Rejected;
+    }
+    let Some(colon) = value.find(':') else {
+        return classify_relative(value, allow_relative, allow_root_relative);
+    };
+    classify_scheme(value, colon, allowed_schemes, allow_data_uris)
+}
+
+fn classify_scheme(
+    value: &str,
+    colon: usize,
+    allowed_schemes: &BTreeSet<String>,
+    allow_data_uris: bool,
+) -> UrlDecision {
+    let scheme = &value[..colon];
+    if scheme.is_empty()
+        || !scheme.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
+        })
+        || !scheme.as_bytes()[0].is_ascii_alphabetic()
+    {
+        return UrlDecision::Rejected;
+    }
+    let normalized = scheme.to_ascii_lowercase();
+    if normalized == "data" && !allow_data_uris {
+        return UrlDecision::Rejected;
+    }
+    if allowed_schemes.contains(&normalized) {
+        UrlDecision::Allowed
+    } else {
+        UrlDecision::Rejected
+    }
+}
+
+fn invalid_url_text(value: &str) -> bool {
+    value.is_empty()
+        || value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '<' | '>' | '"' | '\'' | '`' | '{' | '}')
+        })
+        || contains_encoded_control(value)
+}
+
+fn classify_relative(value: &str, allow_relative: bool, allow_root_relative: bool) -> UrlDecision {
+    if value.contains('\\')
+        || value.split('/').any(|segment| segment == "..")
+        || contains_encoded_path_metacharacter(value)
+    {
+        return UrlDecision::Rejected;
+    }
+    if value.starts_with('/') {
+        return if allow_root_relative && !value.starts_with("//") {
             UrlDecision::Allowed
         } else {
             UrlDecision::Rejected
-        }
+        };
+    }
+    if allow_relative {
+        UrlDecision::Allowed
+    } else {
+        UrlDecision::Rejected
     }
 }
 
@@ -109,13 +174,13 @@ fn contains_encoded_path_metacharacter(value: &str) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UrlContext {
-    AuthoredLink,
+pub enum UrlProvenance {
+    Authored,
     ResolvedReference,
     ResolvedResource,
 }
 
-impl UrlContext {
+impl UrlProvenance {
     const fn is_resolved(self) -> bool {
         matches!(self, Self::ResolvedReference | Self::ResolvedResource)
     }
@@ -151,37 +216,50 @@ pub enum UrlDecision {
 
 #[cfg(test)]
 mod tests {
-    use super::{UrlContext, UrlDecision, UrlPolicy};
+    use super::{ActiveUrlPolicy, AuthoredUrlPolicy, UrlDecision, UrlProvenance};
 
     #[test]
-    fn root_relative_urls_are_allowed_only_for_resolver_contexts() {
-        let policy = UrlPolicy {
+    fn authored_and_active_policies_are_independent() {
+        let authored = AuthoredUrlPolicy::default();
+        let active = ActiveUrlPolicy::default();
+
+        assert_eq!(authored.classify("guide.adoc"), UrlDecision::Allowed);
+        assert_eq!(authored.classify("../guide.adoc"), UrlDecision::Allowed);
+        assert_eq!(
+            active.classify("guide.adoc", UrlProvenance::Authored),
+            UrlDecision::Rejected
+        );
+    }
+
+    #[test]
+    fn root_relative_urls_are_allowed_only_for_resolver_output() {
+        let policy = ActiveUrlPolicy {
             allow_resolved_root_relative: true,
-            ..UrlPolicy::default()
+            ..ActiveUrlPolicy::default()
         };
 
         assert_eq!(
-            policy.classify("/notes/123", UrlContext::AuthoredLink),
+            policy.classify("/notes/123", UrlProvenance::Authored),
             UrlDecision::Rejected
         );
         assert_eq!(
-            policy.classify("/notes/123", UrlContext::ResolvedReference),
+            policy.classify("/notes/123", UrlProvenance::ResolvedReference),
             UrlDecision::Allowed
         );
         assert_eq!(
-            policy.classify("/assets/image.png", UrlContext::ResolvedResource),
+            policy.classify("/assets/image.png", UrlProvenance::ResolvedResource),
             UrlDecision::Allowed
         );
         assert_eq!(
-            policy.classify("//evil.example/path", UrlContext::ResolvedReference),
+            policy.classify("//evil.example/path", UrlProvenance::ResolvedReference),
             UrlDecision::Rejected
         );
         assert_eq!(
-            policy.classify("/../secret", UrlContext::ResolvedReference),
+            policy.classify("/../secret", UrlProvenance::ResolvedReference),
             UrlDecision::Rejected
         );
         assert_eq!(
-            policy.classify("/%2e%2e/secret", UrlContext::ResolvedReference),
+            policy.classify("/%2e%2e/secret", UrlProvenance::ResolvedReference),
             UrlDecision::Rejected
         );
     }

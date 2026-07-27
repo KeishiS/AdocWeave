@@ -6,8 +6,8 @@ use std::sync::Arc;
 use adocweave::preprocess::{AnalysisProjection, PreprocessedDocument};
 use adocweave::text::TextRange;
 use adocweave::{
-    Analysis, AnalysisRequest, AnalysisResult, CancellationCheck, CancellationToken,
-    DocumentRevision, ParseOptions, SourceId,
+    Analysis, AnalysisOptions, AnalysisRequest, AnalysisResult, CancellationCheck,
+    CancellationToken, DocumentRevision, SourceId,
 };
 
 use crate::workspace::WorkspaceInput;
@@ -303,7 +303,7 @@ impl DocumentStore {
             i64::from(version),
             self.next_generation,
             text,
-            ParseOptions::default(),
+            AnalysisOptions::default(),
         );
         AnalysisJob {
             uri,

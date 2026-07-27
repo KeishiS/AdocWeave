@@ -45,7 +45,7 @@ Zedまたは他のLSP client
 
 * AsciiDocのsyntax tree、AST、診断、Formatterおよびprojection
 * UTF-8ソース範囲とスナップショット固有の`SourceDocument`
-* `ProcessingLimits`と協調的な`CancellationCheck`
+* `AnalysisLimits`と協調的な`CancellationCheck`
 * 外部I/Oを行わない決定的な`Engine::analyze`
 
 `async-lsp`、TokioおよびLSP型をコアcrateの依存関係または公開APIへ持ち込んではなりません。

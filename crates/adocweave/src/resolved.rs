@@ -4,7 +4,7 @@
 //! between derived views are passed explicitly so no consumer can observe a
 //! partially resolved document.
 
-use crate::limits::ProcessingLimits;
+use crate::limits::AnalysisLimits;
 use crate::parser::AstDocument;
 use crate::presentation::ResolvedDocumentAttributes;
 
@@ -73,7 +73,7 @@ impl ResolvedDocument {
     pub(crate) fn build(
         document: &AstDocument,
         attributes: ResolvedDocumentAttributes,
-        catalog_limits: ProcessingLimits,
+        catalog_limits: AnalysisLimits,
     ) -> Result<Self, crate::catalog::CatalogLimitExceeded> {
         let facts = DocumentFacts::build(document);
         let identifiers = crate::document::build_identifiers(document);

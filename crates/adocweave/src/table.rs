@@ -1438,7 +1438,7 @@ COip&t
 >===
 :Rc{;h
 >e>:Rc{he}";
-        crate::Engine::new(crate::ParseOptions::default())
+        crate::Engine::new(crate::AnalysisOptions::default())
             .analyze(fuzz_regression)
             .expect("custom separator input must analyze without a panic");
     }

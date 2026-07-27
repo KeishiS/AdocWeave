@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
 
-use adocweave::{Engine, ParseOptions};
+use adocweave::{AnalysisOptions, Engine};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -113,7 +113,7 @@ fn repository_root() -> std::path::PathBuf {
 fn analyze(path: &str) -> adocweave::Analysis {
     let source = fs::read_to_string(repository_root().join(path))
         .unwrap_or_else(|error| panic!("{path}: {error}"));
-    Engine::new(ParseOptions::default())
+    Engine::new(AnalysisOptions::default())
         .analyze(&source)
         .unwrap_or_else(|error| panic!("{path}: {error}"))
 }

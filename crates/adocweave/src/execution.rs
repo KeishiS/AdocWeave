@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use crate::{Analysis, CancellationCheck, Engine, ParseError, ParseOptions, SourceId};
+use crate::{Analysis, AnalysisOptions, CancellationCheck, Engine, ParseError, SourceId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentRevision {
@@ -18,7 +18,7 @@ pub struct DocumentRevision {
 pub struct AnalysisRequest {
     pub revision: DocumentRevision,
     pub source: Arc<str>,
-    pub options: ParseOptions,
+    pub options: AnalysisOptions,
 }
 
 impl AnalysisRequest {
@@ -27,9 +27,9 @@ impl AnalysisRequest {
         version: i64,
         generation: u64,
         source: impl Into<Arc<str>>,
-        mut options: ParseOptions,
+        mut options: AnalysisOptions,
     ) -> Self {
-        options.source_id = source_id.clone();
+        options.syntax.source_id = source_id.clone();
         Self {
             revision: DocumentRevision {
                 source_id,
@@ -64,17 +64,14 @@ impl AnalysisRequest {
 pub struct AnalysisCacheKey([u8; 32]);
 
 impl AnalysisCacheKey {
-    pub fn new(source: &str, options: &ParseOptions) -> Self {
-        let ParseOptions {
+    pub fn new(source: &str, options: &AnalysisOptions) -> Self {
+        let crate::core::SyntaxOptions {
             source_id,
             syntax_mode,
             limits,
-            protected_attributes,
-            url_policy,
-        } = options;
-        let crate::limits::ProcessingLimits {
+        } = &options.syntax;
+        let crate::limits::AnalysisLimits {
             max_input_bytes,
-            max_output_bytes,
             max_line_bytes,
             max_list_depth,
             max_list_continuations,
@@ -93,15 +90,12 @@ impl AnalysisCacheKey {
             max_attributes,
             max_attribute_expansion_depth,
             max_attribute_expansion_bytes,
-            max_diagnostics,
         } = *limits;
-        let crate::url::UrlPolicy {
+        let config = &options.diagnostics.lint;
+        let crate::url::AuthoredUrlPolicy {
             allowed_schemes,
             allow_relative,
-            allow_resolved_relative,
-            allow_resolved_root_relative,
-            allow_data_uris,
-        } = url_policy;
+        } = &config.authored_url_policy;
         let mut hasher = Sha256::new();
         hash_bytes(&mut hasher, crate::VERSION.as_bytes());
         hash_bytes(&mut hasher, source.as_bytes());
@@ -115,7 +109,6 @@ impl AnalysisCacheKey {
         );
         for value in [
             max_input_bytes,
-            max_output_bytes,
             max_line_bytes,
             max_list_depth,
             max_list_continuations,
@@ -134,22 +127,40 @@ impl AnalysisCacheKey {
             max_attributes,
             max_attribute_expansion_depth,
             max_attribute_expansion_bytes,
-            max_diagnostics,
         ] {
             hash_u64(&mut hasher, u64::from(value));
         }
+        for value in [
+            config.max_line_length,
+            config.max_consecutive_blank_lines,
+            config.max_diagnostics,
+            config.max_inline_depth,
+            config.max_list_depth,
+            config.max_formula_bytes,
+        ] {
+            hash_u64(
+                &mut hasher,
+                u64::try_from(value).expect("diagnostic limit fits u64"),
+            );
+        }
         hash_u64(
             &mut hasher,
-            u64::try_from(protected_attributes.len()).expect("attribute count fits u64"),
+            u64::try_from(config.protected_attributes.len()).expect("attribute count fits u64"),
         );
-        for (name, value) in protected_attributes {
+        for (name, value) in &config.protected_attributes {
             hash_bytes(&mut hasher, name.as_bytes());
             hash_bytes(&mut hasher, value.as_bytes());
         }
+        hash_u8(
+            &mut hasher,
+            severity_tag(config.protected_attribute_severity),
+        );
+        for (rule, settings) in config.configured_rules() {
+            hash_bytes(&mut hasher, rule.as_str().as_bytes());
+            hash_bool(&mut hasher, settings.enabled);
+            hash_u8(&mut hasher, severity_tag(settings.severity));
+        }
         hash_bool(&mut hasher, *allow_relative);
-        hash_bool(&mut hasher, *allow_resolved_relative);
-        hash_bool(&mut hasher, *allow_resolved_root_relative);
-        hash_bool(&mut hasher, *allow_data_uris);
         hash_u64(
             &mut hasher,
             u64::try_from(allowed_schemes.len()).expect("scheme count fits u64"),
@@ -172,6 +183,15 @@ impl AnalysisCacheKey {
             output.push(HEX[usize::from(byte & 0x0f)] as char);
         }
         output
+    }
+}
+
+const fn severity_tag(severity: crate::output::diagnostics::Severity) -> u8 {
+    match severity {
+        crate::output::diagnostics::Severity::Error => 0,
+        crate::output::diagnostics::Severity::Warning => 1,
+        crate::output::diagnostics::Severity::Information => 2,
+        crate::output::diagnostics::Severity::Hint => 3,
     }
 }
 
@@ -245,40 +265,44 @@ mod tests {
             1,
             1,
             Arc::<str>::from(source),
-            ParseOptions::default(),
+            AnalysisOptions::default(),
         )
     }
 
     #[test]
-    fn cache_key_is_stable_and_covers_every_parse_option() {
+    fn cache_key_is_stable_and_covers_every_analysis_option() {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "c3ed00413aa09a8483b5a891351375e21fcbe3bdf3746c2e6fdec7bc60450cb6"
+            "d65659454465ef9c20d95eb128ead896ee82b44924ecdd8e5b176116b6ff4740"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());
 
         let mut variants = Vec::new();
-        let options = ParseOptions {
-            syntax_mode: crate::limits::SyntaxMode::Strict,
-            ..ParseOptions::default()
+        let options = AnalysisOptions {
+            syntax: crate::core::SyntaxOptions {
+                syntax_mode: crate::limits::SyntaxMode::Strict,
+                ..crate::core::SyntaxOptions::default()
+            },
+            ..AnalysisOptions::default()
         };
         variants.push(options);
-        let mut options = ParseOptions::default();
-        options.limits.max_nodes += 1;
+        let mut options = AnalysisOptions::default();
+        options.syntax.limits.max_nodes += 1;
         variants.push(options);
-        let options = ParseOptions {
-            protected_attributes: BTreeMap::from([("host".to_owned(), "value".to_owned())]),
-            ..ParseOptions::default()
-        };
+        let mut options = AnalysisOptions::default();
+        options.diagnostics.lint.protected_attributes =
+            BTreeMap::from([("host".to_owned(), "value".to_owned())]);
         variants.push(options);
-        let mut options = ParseOptions::default();
-        options.url_policy.allow_relative = true;
+        let mut options = AnalysisOptions::default();
+        options.diagnostics.lint.authored_url_policy.allow_relative = false;
         variants.push(options);
-        let mut options = ParseOptions::default();
+        let mut options = AnalysisOptions::default();
         options
-            .url_policy
+            .diagnostics
+            .lint
+            .authored_url_policy
             .allowed_schemes
             .insert("mailto".to_owned());
         variants.push(options);

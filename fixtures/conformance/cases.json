@@ -1,5 +1,5 @@
 {
-  "packageVersion": "0.10.1",
+  "packageVersion": "0.11.0",
   "cases": [
     {
       "name": "release-lf",
@@ -195,7 +195,7 @@
       "name": "html5-complete-document",
       "sourceFile": "full.adoc",
       "expectedHtmlFile": "full.complete.html",
-      "options": {
+      "renderPolicy": {
         "documentMode": "complete"
       },
       "compatibility": "approved-adocweave-output",
@@ -354,8 +354,8 @@
           }
         ]
       },
-      "options": {
-        "urlPolicy": { "allowResolvedRootRelative": true },
+      "renderPolicy": {
+        "activeUrls": { "allowResolvedRootRelative": true },
         "externalLinks": { "openInNewContext": true, "noreferrer": true },
         "sourceLanguages": { "allowed": ["rust"], "unknown": "diagnostic" },
         "mathLanguages": ["latex"],
@@ -381,7 +381,7 @@
           }
         ]
       },
-      "options": { "unresolvedReferences": "label-only" },
+      "renderPolicy": { "unresolvedReferences": "label-only" },
       "compatibility": "host-safety-contract",
       "rationale": "解決失敗は安定kindだけを保持し、自由形式のACL・DB・非公開タイトル情報をruntime境界へ渡さない",
       "contractImpact": "core-api,projection,conformance,wasm-api"
@@ -389,7 +389,7 @@
     {
       "name": "strict-unsupported",
       "source": "[role=raw]\n",
-      "options": { "syntaxMode": "strict" },
+      "analysisOptions": { "syntax": { "syntaxMode": "strict" } },
       "expectedErrorCode": "invalid-input",
       "compatibility": "intentional-difference",
       "rationale": "Core profileのstrict modeは未対応ブロックを明示的に拒否する",
@@ -398,7 +398,7 @@
     {
       "name": "input-limit",
       "source": "12345",
-      "options": { "limits": { "maxInputBytes": 4 } },
+      "analysisOptions": { "syntax": { "limits": { "maxInputBytes": 4 } } },
       "expectedErrorCode": "limit-exceeded",
       "compatibility": "host-safety-contract",
       "rationale": "処理上限はAsciiDoc意味論ではなく全runtime共通のホスト安全仕様である",
@@ -407,7 +407,7 @@
     {
       "name": "aggregate-output-limit",
       "source": "text",
-      "options": { "limits": { "maxOutputBytes": 1 } },
+      "outputLimits": { "maxOutputBytes": 1 },
       "expectedErrorCode": "limit-exceeded",
       "compatibility": "host-safety-contract",
       "rationale": "WASM応答全体にもnative公開処理と同じ出力上限を適用する",
@@ -416,9 +416,11 @@
     {
       "name": "protected-attribute-and-relative-url",
       "source": "= Options\n:name: source\n\n{name} link.adoc[relative]\n",
-      "options": {
-        "protectedAttributes": { "name": "host" },
-        "urlPolicy": { "allowRelative": true }
+      "analysisOptions": {
+        "diagnostics": {
+          "protectedAttributes": { "name": "host" },
+          "authoredUrls": { "allowRelative": true }
+        }
       },
       "compatibility": "host-extension-contract",
       "rationale": "保護属性とURL policyは標準構文から独立した明示的ホスト設定である",

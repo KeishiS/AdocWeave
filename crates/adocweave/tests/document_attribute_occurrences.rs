@@ -1,10 +1,10 @@
 use adocweave::semantic::{DocumentAttributeOccurrence, DocumentAttributeOperation};
-use adocweave::{Engine, ParseOptions};
+use adocweave::{AnalysisOptions, Engine};
 
 #[test]
 fn public_occurrences_preserve_standard_attribute_source_facts() {
     let source = include_str!("../../../fixtures/attributes/public-occurrences.adoc");
-    let analysis = Engine::new(ParseOptions::default())
+    let analysis = Engine::new(AnalysisOptions::default())
         .analyze(source)
         .expect("analysis");
 

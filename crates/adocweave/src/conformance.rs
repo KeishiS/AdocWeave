@@ -616,13 +616,13 @@ fn canonical_syntax(analysis: &Analysis) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Engine, ParseOptions};
+    use crate::{AnalysisOptions, Engine};
 
     use super::*;
 
     #[test]
     fn snapshot_is_deterministic_and_owns_every_product() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze("= Title\n\n[[target]]\n== Section\n\n<<target,Here>>\n")
             .expect("analysis");
         let first = snapshot(
@@ -647,7 +647,7 @@ mod tests {
 
     #[test]
     fn canonical_ast_exposes_backend_neutral_block_metadata() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(".Title\n[#item.role%collapsible,kind=demo]\nText\n")
             .expect("analysis");
         let value: serde_json::Value =
@@ -663,7 +663,7 @@ mod tests {
 
     #[test]
     fn canonical_ast_distinguishes_delimited_content_models() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze("====\ninside\n====\n\n++++\n<tag>\n++++\n")
             .expect("analysis");
         let value: serde_json::Value =
@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn canonical_ast_exposes_typed_table_presentation() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(".Caption\n[frame=ends,grid=rows,stripes=odd,width=75%]\n|===\n|cell\n|===\n")
             .expect("analysis");
         let value: serde_json::Value =

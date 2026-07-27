@@ -11,9 +11,8 @@ pub enum SyntaxMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProcessingLimits {
+pub struct AnalysisLimits {
     pub max_input_bytes: u32,
-    pub max_output_bytes: u32,
     pub max_line_bytes: u32,
     pub max_list_depth: u32,
     pub max_list_continuations: u32,
@@ -32,14 +31,12 @@ pub struct ProcessingLimits {
     pub max_attributes: u32,
     pub max_attribute_expansion_depth: u32,
     pub max_attribute_expansion_bytes: u32,
-    pub max_diagnostics: u32,
 }
 
-impl Default for ProcessingLimits {
+impl Default for AnalysisLimits {
     fn default() -> Self {
         Self {
             max_input_bytes: 10 * 1024 * 1024,
-            max_output_bytes: 50 * 1024 * 1024,
             max_line_bytes: 1024 * 1024,
             max_list_depth: 8,
             max_list_continuations: 10_000,
@@ -58,7 +55,19 @@ impl Default for ProcessingLimits {
             max_attributes: 1_000,
             max_attribute_expansion_depth: 32,
             max_attribute_expansion_bytes: 1024 * 1024,
-            max_diagnostics: 1_000,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OutputLimits {
+    pub max_output_bytes: u32,
+}
+
+impl Default for OutputLimits {
+    fn default() -> Self {
+        Self {
+            max_output_bytes: 50 * 1024 * 1024,
         }
     }
 }

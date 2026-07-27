@@ -1,0 +1,46 @@
+= ADR 0009: 公開設定と検査ポリシーの責務分離
+
+== 状態
+
+採用
+
+== 背景
+
+従来の`ParseOptions`は構文解析の設定、処理上限、保護属性およびURL検査ポリシーを保持していました。
+また、同じ`UrlPolicy`を文書中のURL診断とHTML出力時の再検査に使用していました。この構造では、
+出力だけに影響する設定も解析cache keyへ入り、Lintルールやローカル対象検査の追加時に既存の設定型へ
+異なる責務を加える必要がありました。
+
+Lintルールは公開enum、全ルール一覧およびルールコードを別々に管理していました。公開enumへのvariant追加は
+利用側の網羅的な`match`を破壊し、一覧とmetadataの更新漏れも検出しにくい構造でした。
+
+== 決定
+
+公開する解析設定を`AnalysisOptions`とし、次の設定へ分けます。
+
+* ソース識別子、構文modeおよび処理上限を保持する`SyntaxOptions`
+* Lintルール、保護属性および入力URL検査を保持する`DiagnosticProfile`
+
+Lintルールの公開識別子には閉じたenumではなく`LintRuleId`を使用します。組み込みルールのID、
+既定severity、有効状態、説明および修正可否は単一の`LintRuleDescriptor`一覧を基準とします。
+利用側の設定はIDをキーとして上書きします。文字列からIDを解決する境界では未知のIDを設定エラーとして扱います。
+
+URL検査は次の責務へ分けます。
+
+* 文書に記述された対象を診断する`AuthoredUrlPolicy`
+* HTMLへ出力する記述値およびresolver出力を再検査する`ActiveUrlPolicy`
+* filesystem上のroot、symlinkおよび実在性を検査するホスト側のlocal path policy
+
+解析cache keyは`AnalysisOptions`だけから生成します。HTMLの表示設定と`ActiveUrlPolicy`は含めません。
+WASM protocolでは解析設定と描画設定を別のobjectとして表し、同じ境界を維持します。
+
+== 結果
+
+Lintルールと出力機能を追加しても構文解析設定を変更する必要がなくなります。出力設定の変更によって解析cacheを
+無効化せず、local filesystemの権限とURL文字列の安全性を別々に判断できます。
+
+v0.11.0ではRust APIとWASM protocolに破壊的変更が発生します。移行時は旧`ParseOptions`、
+`LintRule`、`UrlPolicy`および平坦なWASM `options`を新しい責務別の型へ置き換えます。
+
+単一の不変な`Analysis`、コアからの外部I/O排除、ホストによるresolver出力の再検査および
+package version完全一致の要件は変更しません。
