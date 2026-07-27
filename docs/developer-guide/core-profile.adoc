@@ -113,6 +113,8 @@ Rustからは`Engine`、`AnalysisOptions`、`Analysis`が主な入口です。�
 `Analysis::attribute_environment().final_values()`から取得します。属性を記述した順番と
 source rangeは`Analysis::document_attribute_occurrences()`から取得します。同じexpanded offsetに
 複数の読込eventがある場合は`resolve_at_event()`でevent IDを指定します。
+属性fixtureと保証対象の対応は link:../../fixtures/attributes/manifest.json[属性契約manifest]を基準とし、
+repository検査でfixture一覧とこの文書体系の同期を確認します。
 
 [source,rust]
 ----

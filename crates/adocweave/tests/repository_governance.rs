@@ -50,6 +50,22 @@ struct SyntaxSupportFeature {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AttributeContractManifest {
+    schema_version: u8,
+    contracts: Vec<AttributeContract>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AttributeContract {
+    name: String,
+    documentation: String,
+    documentation_needle: String,
+    fixtures: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ConformanceConsumers {
     schema_version: u8,
     fixture: String,
@@ -172,6 +188,65 @@ fn syntax_support_manifest_keeps_docs_and_fixtures_in_sync() {
             feature.name
         );
     }
+}
+
+#[test]
+fn attribute_contract_manifest_keeps_docs_and_fixtures_in_sync() {
+    let root = repository_root();
+    let source = fs::read_to_string(root.join("fixtures/attributes/manifest.json"))
+        .expect("attribute contract manifest");
+    let manifest: AttributeContractManifest =
+        serde_json::from_str(&source).expect("valid attribute contract manifest");
+    assert_eq!(manifest.schema_version, 1);
+
+    let mut listed = BTreeSet::new();
+    let mut contract_names = BTreeSet::new();
+    for contract in manifest.contracts {
+        assert!(
+            contract_names.insert(contract.name.clone()),
+            "duplicate attribute contract: {}",
+            contract.name
+        );
+        let documentation = fs::read_to_string(root.join(&contract.documentation))
+            .unwrap_or_else(|error| panic!("{}: {error}", contract.documentation));
+        assert!(
+            documentation.contains(&contract.documentation_needle),
+            "{}: missing documentation needle for {}",
+            contract.documentation,
+            contract.name
+        );
+        assert!(
+            !contract.fixtures.is_empty(),
+            "{}: contract has no fixtures",
+            contract.name
+        );
+        for fixture in contract.fixtures {
+            assert!(
+                listed.insert(fixture.clone()),
+                "attribute fixture listed more than once: {fixture}"
+            );
+            assert!(
+                root.join("fixtures/attributes").join(&fixture).is_file(),
+                "missing attribute fixture: {fixture}"
+            );
+        }
+    }
+
+    let actual: BTreeSet<_> = fs::read_dir(root.join("fixtures/attributes"))
+        .expect("attribute fixture directory")
+        .map(|entry| entry.expect("attribute fixture entry").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "adoc")
+        })
+        .map(|path| {
+            path.file_name()
+                .expect("attribute fixture name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(listed, actual, "attribute fixture manifest is stale");
 }
 
 fn validate_table_delimiters(path: &str, source: &str) -> Result<(), String> {
