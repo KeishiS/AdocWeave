@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::inline::{ReferenceDestination, StandardMacro, StandardMacroKind};
-use crate::limits::ProcessingLimits;
+use crate::limits::AnalysisLimits;
 use crate::source::TextRange;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -103,7 +103,7 @@ pub(crate) struct CatalogLimitExceeded {
 pub(crate) fn build(
     facts: &crate::resolved::DocumentFacts,
     document_index: &crate::presentation::DocumentIndex,
-    limits: ProcessingLimits,
+    limits: AnalysisLimits,
 ) -> Result<DocumentCatalogs, CatalogLimitExceeded> {
     let mut catalogs = DocumentCatalogs::default();
     let mut named_footnotes = BTreeMap::<String, usize>::new();
@@ -321,7 +321,7 @@ fn push_footnote(
 
 #[cfg(test)]
 mod tests {
-    use crate::{Engine, ParseError, ParseOptions};
+    use crate::{AnalysisOptions, Engine, ParseError};
 
     #[test]
     fn catalogs_number_reuse_and_sort_document_wide_facts_once() {
@@ -329,7 +329,7 @@ mod tests {
             "footnote:n[] footnote:[anonymous] footnote:n[named] footnote:n[]\n\n",
             "<<ref>> bibanchor:ref[] indexterm:[Rust,Ownership] indexterm:[Rust,Ownership]",
         );
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(source)
             .expect("analyze");
         let catalogs = analysis.ast().catalogs();
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn catalogs_retain_missing_and_duplicate_source_ranges() {
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze("footnote:missing[] footnote:n[one] footnote:n[two] bibanchor:b[] bibanchor:b[] indexterm:[]")
             .expect("analyze");
         let problems = analysis.ast().catalogs().problems();
@@ -363,8 +363,8 @@ mod tests {
 
     #[test]
     fn catalog_limits_include_duplicate_occurrences_and_output_text() {
-        let mut options = ParseOptions::default();
-        options.limits.max_catalog_entries = 2;
+        let mut options = AnalysisOptions::default();
+        options.syntax.limits.max_catalog_entries = 2;
         assert!(matches!(
             Engine::new(options.clone()).analyze("indexterm:[one] indexterm:[one] indexterm:[one]"),
             Err(ParseError::LimitExceeded {
@@ -372,8 +372,8 @@ mod tests {
                 ..
             })
         ));
-        options.limits.max_catalog_entries = 100;
-        options.limits.max_catalog_bytes = 4;
+        options.syntax.limits.max_catalog_entries = 100;
+        options.syntax.limits.max_catalog_bytes = 4;
         assert!(matches!(
             Engine::new(options).analyze("footnote:[long text]"),
             Err(ParseError::LimitExceeded {

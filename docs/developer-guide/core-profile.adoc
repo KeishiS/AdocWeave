@@ -84,7 +84,7 @@ Literal blockとsource blockはcodeとして区別します。数式、文書属
 == 処理の上限
 
 大きすぎる入力で処理が止まらないように、既定の上限を設けています。次は主な上限であり、
-完全な一覧は`ProcessingLimits`のAPI documentationを基準とします。
+完全な一覧は`AnalysisLimits`のAPI documentationを基準とします。
 
 [cols="2,1",options="header"]
 |===
@@ -108,14 +108,14 @@ Literal blockとsource blockはcodeとして区別します。数式、文書属
 
 == APIの利用
 
-Rustからは`Engine`、`ParseOptions`、`Analysis`が主な入口です。属性の最終値は
+Rustからは`Engine`、`AnalysisOptions`、`Analysis`が主な入口です。属性の最終値は
 `Analysis::presentation().attributes()`から、属性を記述した順番や位置は
 `Analysis::document_attribute_occurrences()`から取得します。
 
 [source,rust]
 ----
 use adocweave::output::html::{RenderPolicy, render};
-use adocweave::{Engine, ParseError, ParseOptions};
+use adocweave::{AnalysisOptions, Engine, ParseError};
 
 fn convert() -> Result<String, ParseError> {
     let source = "\
@@ -125,7 +125,7 @@ fn convert() -> Result<String, ParseError> {
 
 == 節
 ";
-    let analysis = Engine::new(ParseOptions::default()).analyze(source)?;
+    let analysis = Engine::new(AnalysisOptions::default()).analyze(source)?;
     Ok(render(analysis.document(), &RenderPolicy::default()).html)
 }
 ----
@@ -142,8 +142,9 @@ fn convert() -> Result<String, ParseError> {
 package versionが一致しない要求や未知のfieldは拒否します。versionとgenerationは`u32`の範囲に制限します。
 
 出力はsyntax tree、AST、HTML、文書属性の出現箇所、resource query、診断、symbolおよび構造情報から選択できます。
-省略時はHTML、resource query、診断および構造情報を返します。設定はnativeの`ParseOptions`、`RenderPolicy`および
-`RenderInputs`に対応し、省略したfieldにはコアの既定値を使用します。参照とresourceのJSON表現および
+省略時はHTML、resource query、診断および構造情報を返します。`analysisOptions`、`renderPolicy`、
+`outputLimits`および`renderInputs`を責務別に渡し、省略したfieldにはコアの既定値を使用します。
+参照とresourceのJSON表現および
 安全性の規則はxref:server-execution.adoc#render-inputs[変換入力]を基準とします。
 
 応答には入力のversionとgeneration、package version、解析結果の概要および要求した出力を含めます。

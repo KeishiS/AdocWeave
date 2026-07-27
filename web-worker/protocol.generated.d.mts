@@ -10,6 +10,6 @@ export interface ProductSet {
   projection?: boolean;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 2;
-export declare const PACKAGE_VERSION: "0.10.1";
+export declare const PROTOCOL_SCHEMA_VERSION: 3;
+export declare const PACKAGE_VERSION: "0.11.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "resourceQueries", "diagnostics", "symbols", "projection"];

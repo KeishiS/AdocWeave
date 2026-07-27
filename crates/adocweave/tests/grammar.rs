@@ -1,12 +1,12 @@
 use adocweave::semantic::{Block, VerbatimKind};
 use adocweave::semantic::{Inline, InlineLiteralKind, InlineStyle};
 use adocweave::text::{SyntaxIssueClass, SyntaxKind};
-use adocweave::{Analysis, Engine, ParseOptions};
+use adocweave::{Analysis, AnalysisOptions, Engine};
 
 const SOURCE: &str = include_str!("../../../fixtures/grammar/ambiguous.adoc");
 
 fn parse(source: &str) -> Analysis {
-    Engine::new(ParseOptions::default())
+    Engine::new(AnalysisOptions::default())
         .analyze(source)
         .expect("fixture analyzes")
 }

@@ -316,7 +316,7 @@ pub trait ResourceResolver: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::{MediaFamily, MediaType, ResourcePurpose};
-    use crate::{Engine, ParseOptions};
+    use crate::{AnalysisOptions, Engine};
 
     #[test]
     fn media_type_requires_a_concrete_ascii_essence() {
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn poster_query_uses_the_unquoted_utf8_value_range() {
         let source = "video:demo.mp4[Demo, poster = \"ポスター.jpg\"]";
-        let analysis = Engine::new(ParseOptions::default())
+        let analysis = Engine::new(AnalysisOptions::default())
             .analyze(source)
             .expect("analysis");
         let poster = analysis
@@ -365,12 +365,12 @@ mod tests {
 
     #[test]
     fn empty_or_shadowed_poster_does_not_create_an_ambiguous_query() {
-        let empty = Engine::new(ParseOptions::default())
+        let empty = Engine::new(AnalysisOptions::default())
             .analyze("video:demo.mp4[poster=]")
             .expect("analysis");
         assert_eq!(empty.resources().len(), 1);
 
-        let duplicate = Engine::new(ParseOptions::default())
+        let duplicate = Engine::new(AnalysisOptions::default())
             .analyze("video:demo.mp4[poster=first.jpg,poster=second.jpg]")
             .expect("analysis");
         let posters = duplicate

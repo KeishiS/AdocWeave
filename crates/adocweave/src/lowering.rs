@@ -13,7 +13,7 @@ pub(crate) struct ParsedFacts {
     pub anchors: Vec<ExplicitAnchor>,
     pub header: DocumentHeader,
     pub attribute_expansion_limits: AttributeExpansionLimits,
-    pub processing_limits: crate::limits::ProcessingLimits,
+    pub processing_limits: crate::limits::AnalysisLimits,
 }
 
 pub(crate) fn lower(

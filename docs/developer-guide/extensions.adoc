@@ -33,8 +33,9 @@ let host_result = host_extension.analyze(&analysis, host_context).await?;
 * 原値を保持するための正規化値と原値の区別
 * DB、時刻等を必要とする検証と純粋な構文・型検証の分離
 
-利用側アプリが変更を許可しない属性値は、`ParseOptions.protected_attributes`へ渡します。文書内の定義や解除が
-その値を変更する場合、コアは寛容modeで警告、厳格modeでエラーとなる`protected-attribute`診断を返します。
+利用側アプリが変更を許可しない属性値は、
+`AnalysisOptions.diagnostics.lint.protected_attributes`へ渡します。文書内の定義や解除が
+その値を変更する場合、コアは`protected-attribute`診断を返します。severityは同じ診断profileで指定します。
 コア自身は属性値をDB、環境変数または外部commandから取得しません。
 
 == xrefスキーム拡張

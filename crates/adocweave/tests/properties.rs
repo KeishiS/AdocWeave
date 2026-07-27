@@ -2,10 +2,10 @@ use adocweave::output::formatter::{FormatConfig, format_analysis};
 use adocweave::output::html::{RenderPolicy, render};
 use adocweave::output::projection::{project, searchable_text};
 use adocweave::resolution::ReferenceKey;
-use adocweave::resolution::{UrlContext, UrlDecision, UrlPolicy};
+use adocweave::resolution::{AuthoredUrlPolicy, UrlDecision};
 use adocweave::semantic::{generate_heading_ids, reference_targets};
 use adocweave::text::{PositionEncoding, SourceDocument, TextSize};
-use adocweave::{Engine, ParseOptions};
+use adocweave::{AnalysisOptions, Engine};
 
 fn corpus() -> Vec<String> {
     let alphabet = [
@@ -43,7 +43,7 @@ fn corpus() -> Vec<String> {
 
 #[test]
 fn arbitrary_utf8_like_corpus_is_lossless_and_has_valid_ranges() {
-    let engine = Engine::new(ParseOptions::default());
+    let engine = Engine::new(AnalysisOptions::default());
     for source in corpus() {
         let analysis = engine
             .analyze(&source)
@@ -66,7 +66,7 @@ fn arbitrary_utf8_like_corpus_is_lossless_and_has_valid_ranges() {
 
 #[test]
 fn formatter_is_idempotent_over_generated_corpus() {
-    let engine = Engine::new(ParseOptions::default());
+    let engine = Engine::new(AnalysisOptions::default());
     for source in corpus() {
         let first_analysis = engine.analyze(&source).expect("first analysis");
         let first = format_analysis(&first_analysis, &FormatConfig::default()).expect("format");
@@ -80,7 +80,7 @@ fn formatter_is_idempotent_over_generated_corpus() {
 
 #[test]
 fn formatter_preserves_semantics_and_protected_source_regions() {
-    let engine = Engine::new(ParseOptions::default());
+    let engine = Engine::new(AnalysisOptions::default());
     for source in corpus() {
         let before = engine.analyze(&source).expect("analysis before format");
         let formatted =
@@ -116,7 +116,7 @@ fn positions_round_trip_at_every_character_boundary() {
 
 #[test]
 fn renderer_and_projections_are_deterministic_for_generated_input() {
-    let engine = Engine::new(ParseOptions::default());
+    let engine = Engine::new(AnalysisOptions::default());
     for source in corpus() {
         let analysis = engine.analyze(&source).expect("analysis");
         let first_html = render(analysis.document(), &RenderPolicy::default());
@@ -133,7 +133,7 @@ fn renderer_and_projections_are_deterministic_for_generated_input() {
 
 #[test]
 fn generated_reference_keys_and_targets_are_stable_and_bounded() {
-    let engine = Engine::new(ParseOptions::default());
+    let engine = Engine::new(AnalysisOptions::default());
     for source in corpus() {
         let analysis = engine.analyze(&source).expect("analysis");
         assert_eq!(
@@ -158,21 +158,15 @@ fn generated_reference_keys_and_targets_are_stable_and_bounded() {
 
 #[test]
 fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
-    let policy = UrlPolicy::default();
+    let policy = AuthoredUrlPolicy::default();
     let safe = [
         "https://example.com",
         "HTTP://example.com",
         "https://例.example/道",
     ];
     for value in safe {
-        assert_eq!(
-            policy.classify(value, UrlContext::AuthoredLink),
-            UrlDecision::Allowed
-        );
-        assert_eq!(
-            policy.classify(value, UrlContext::AuthoredLink),
-            policy.classify(value, UrlContext::AuthoredLink)
-        );
+        assert_eq!(policy.classify(value), UrlDecision::Allowed);
+        assert_eq!(policy.classify(value), policy.classify(value));
     }
 
     let unsafe_values = [
@@ -187,11 +181,7 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
         "\\\\server\\share",
     ];
     for value in unsafe_values {
-        assert_eq!(
-            policy.classify(value, UrlContext::AuthoredLink),
-            UrlDecision::Rejected,
-            "{value}"
-        );
+        assert_eq!(policy.classify(value), UrlDecision::Rejected, "{value}");
     }
 }
 

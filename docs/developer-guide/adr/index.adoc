@@ -11,3 +11,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0006-direct-stable-releases.adoc[ADR 0006: stable tagへの直接公開]
 * xref:0007-host-supplied-stylesheets.adoc[ADR 0007: ホスト供給スタイルシートの完全文書限定出力]
 * xref:0008-minimal-documentation-management.adoc[ADR 0008: 現行情報に限定した文書管理]
+* xref:0009-public-configuration-boundaries.adoc[ADR 0009: 公開設定と検査ポリシーの責務分離]

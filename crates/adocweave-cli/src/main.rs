@@ -13,7 +13,7 @@ use adocweave::output::html::{
 };
 use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits};
 use adocweave::text::{PositionEncoding, SourceDocument};
-use adocweave::{Engine, ParseError, ParseOptions};
+use adocweave::{AnalysisOptions, Engine, OutputLimits, ParseError};
 
 mod local_include;
 
@@ -35,6 +35,7 @@ Arguments:
 
 Options:
   --json      Emit check diagnostics as JSON
+  --list-rules  List available check rules; requires --json
   --check     Check formatting without writing formatted text
   --include   Enable bounded local include processing
   --base-dir DIR    Resolve root document includes from DIR
@@ -132,6 +133,7 @@ struct Arguments {
     operation: Operation,
     input: Option<PathBuf>,
     json: bool,
+    list_rules: bool,
     format_check: bool,
     include: bool,
     base_dir: Option<PathBuf>,
@@ -178,6 +180,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut input = None;
     let mut stdin_selected = false;
     let mut json = false;
+    let mut list_rules = false;
     let mut format_check = false;
     let mut include = false;
     let mut base_dir = None;
@@ -188,6 +191,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         match argument.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
             "--json" if operation == Operation::Check => json = true,
+            "--list-rules" if operation == Operation::Check => list_rules = true,
             "--check" if operation == Operation::Format => format_check = true,
             "--include" => include = true,
             "--complete" if operation == Operation::Convert => complete = true,
@@ -234,11 +238,27 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "--css and --css-url require --complete".to_owned(),
         ));
     }
+    if list_rules {
+        if !json {
+            return Err(CliError::Usage("--list-rules requires --json".to_owned()));
+        }
+        if input.is_some()
+            || stdin_selected
+            || include
+            || base_dir.is_some()
+            || !allowed_roots.is_empty()
+        {
+            return Err(CliError::Usage(
+                "--list-rules cannot be combined with document input or include options".to_owned(),
+            ));
+        }
+    }
 
     Ok(Action::Run(Arguments {
         operation,
         input,
         json,
+        list_rules,
         format_check,
         include,
         base_dir,
@@ -274,13 +294,13 @@ fn decode_input(input: &[u8]) -> Result<&str, CliError> {
 }
 
 fn analyze(source: &str) -> Result<adocweave::Analysis, CliError> {
-    Engine::new(ParseOptions::default())
+    Engine::new(AnalysisOptions::default())
         .analyze(source)
         .map_err(CliError::Analysis)
 }
 
 fn finish_output(output: String) -> Result<String, CliError> {
-    let limit = ParseOptions::default().limits.max_output_bytes;
+    let limit = OutputLimits::default().max_output_bytes;
     if output.len() > usize::try_from(limit).expect("u32 fits usize on supported targets") {
         return Err(CliError::OutputLimit {
             limit,
@@ -396,6 +416,12 @@ fn run() -> Result<(), CliError> {
             Ok(())
         }
         Action::Run(arguments) => {
+            if arguments.list_rules {
+                let output = diagnostic::render_lint_rule_catalog_json();
+                return io::stdout()
+                    .write_all(output.as_bytes())
+                    .map_err(CliError::Write);
+            }
             let input_path = arguments.input.clone();
             let input = read_input(arguments.input)?;
             let mut prepared = None;
@@ -469,7 +495,7 @@ fn check_preprocessed(
     prepared: &local_include::PreparedInput,
     json: bool,
 ) -> Result<String, local_include::LocalIncludeError> {
-    let engine = adocweave::Engine::new(adocweave::ParseOptions::default());
+    let engine = adocweave::Engine::new(adocweave::AnalysisOptions::default());
     let analysis = engine
         .analyze(&prepared.document.source)
         .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;

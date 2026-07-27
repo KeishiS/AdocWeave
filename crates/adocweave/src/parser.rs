@@ -19,7 +19,7 @@ use crate::delimiter::{DelimitedContentModel, DelimiterSpec};
 use crate::document_header::DocumentHeaderState;
 use crate::inline::{Inline, InlineParseConfig};
 use crate::inline_grammar::parse as parse_inlines;
-use crate::limits::ProcessingLimits;
+use crate::limits::AnalysisLimits;
 use crate::list_parser::{FlatListItem, ParsedListMarker};
 use crate::parser_support::{ParseFailure, ParseState};
 use crate::source::{PositionError, TextRange, TextSize};
@@ -425,18 +425,18 @@ pub(crate) struct ParseConfig {
     pub max_list_depth: usize,
     pub max_block_depth: usize,
     pub max_formula_bytes: usize,
-    pub limits: ProcessingLimits,
+    pub limits: AnalysisLimits,
 }
 
 impl Default for ParseConfig {
     fn default() -> Self {
-        let limits = ProcessingLimits {
+        let limits = AnalysisLimits {
             max_line_bytes: u32::MAX,
             max_blocks: u32::MAX,
             max_nodes: u32::MAX,
             max_references: u32::MAX,
             max_attributes: u32::MAX,
-            ..ProcessingLimits::default()
+            ..AnalysisLimits::default()
         };
         Self {
             max_inline_depth: 32,

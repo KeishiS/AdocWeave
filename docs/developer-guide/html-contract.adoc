@@ -34,7 +34,7 @@ UTF-8 encodingと非空タイトルを持つ`head`および`body`を常に出力
 最初の一件だけを採用します。`Fragment`では出力せず、診断を返します。
 
 埋め込みCSSでは、`style`要素を終了できる文字列、HTML comment開始文字列および不正な制御文字を拒否します。
-外部URLは`UrlPolicy`で検査してから属性値としてescapeします。件数とbyte数には`ProcessingLimits`を適用し、
+外部URLは`ActiveUrlPolicy`で検査してから属性値としてescapeします。件数とbyte数には`StylesheetPolicy`を適用し、
 拒否した値をHTMLや診断messageへ出力しません。
 
 文書入力に由来する任意の`style`、classまたはraw HTMLは、stylesheet設定の有無にかかわらず拒否します。

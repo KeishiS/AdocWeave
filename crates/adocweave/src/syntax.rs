@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn structured_nodes_expose_macros_delimiters_attributes_and_recovery() {
-        let link = crate::Engine::new(crate::ParseOptions::default())
+        let link = crate::Engine::new(crate::AnalysisOptions::default())
             .analyze("https://example.test[*label*]\n")
             .expect("link source");
         assert_eq!(link.syntax().nodes(SyntaxKind::Macro).count(), 1);
@@ -414,7 +414,7 @@ mod tests {
             "https://example.test[*label*]\n"
         );
 
-        let unclosed = crate::Engine::new(crate::ParseOptions::default())
+        let unclosed = crate::Engine::new(crate::AnalysisOptions::default())
             .analyze("[source,rust]\n----\nfn main() {}\n")
             .expect("unclosed source block");
         assert_eq!(
@@ -432,7 +432,7 @@ mod tests {
             SyntaxIssueClass::UnclosedBlock
         );
 
-        let unknown = crate::Engine::new(crate::ParseOptions::default())
+        let unknown = crate::Engine::new(crate::AnalysisOptions::default())
             .analyze("[quote]\n")
             .expect("unsupported block attribute");
         assert_eq!(unknown.syntax().nodes(SyntaxKind::Unknown).count(), 1);
