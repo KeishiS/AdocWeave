@@ -70,6 +70,7 @@ export type ProjectedReferenceFailureKind = "missing-reference-target" | "missin
 export interface AnalysisOptions {
   syntax?: SyntaxOptions;
   diagnostics?: DiagnosticProfile;
+  attributes?: Record<string, string | null>;
 }
 
 export interface SyntaxOptions {
@@ -78,7 +79,7 @@ export interface SyntaxOptions {
 }
 
 export interface DiagnosticProfile {
-  protectedAttributes?: Record<string, string>;
+  protectedAttributes?: Record<string, string | null>;
   authoredUrls?: AuthoredUrlPolicy;
   maxDiagnostics?: number;
   rules?: Record<string, RuleSettings>;
@@ -333,7 +334,7 @@ export interface PreprocessOptions {
   baseUri?: string | null;
   safeMode?: SafeMode;
   allowedSchemes?: string[];
-  attributes?: Record<string, string>;
+  attributes?: Record<string, string | null>;
   enableIncludes?: boolean;
   maxIncludeDepth?: number;
   maxIncludes?: number;

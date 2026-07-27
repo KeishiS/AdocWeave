@@ -56,7 +56,7 @@ pub struct WasmPreprocessOptions {
     pub base_uri: Option<String>,
     pub safe_mode: WasmSafeMode,
     pub allowed_schemes: BTreeSet<String>,
-    pub attributes: BTreeMap<String, String>,
+    pub attributes: BTreeMap<String, Option<String>>,
     pub enable_includes: bool,
     pub max_include_depth: u32,
     pub max_includes: u32,
@@ -242,6 +242,7 @@ pub struct WasmRequest {
 pub struct WasmAnalysisOptions {
     pub syntax: WasmSyntaxOptions,
     pub diagnostics: WasmDiagnosticProfile,
+    pub attributes: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -263,7 +264,7 @@ impl Default for WasmSyntaxOptions {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDiagnosticProfile {
-    pub protected_attributes: BTreeMap<String, String>,
+    pub protected_attributes: BTreeMap<String, Option<String>>,
     pub authored_urls: WasmAuthoredUrlPolicy,
     pub max_diagnostics: u32,
     pub rules: BTreeMap<String, WasmRuleSettings>,
@@ -728,7 +729,22 @@ pub fn process_request(
     let analysis_options = request.analysis_options;
     let render_options = request.render_policy;
     let output_limits = request.output_limits;
-    let preprocess_input = request.preprocess;
+    let mut preprocess_input = request.preprocess;
+    let mut external_attributes = analysis_options.attributes.clone();
+    if let Some(input) = &mut preprocess_input {
+        if external_attributes.is_empty() {
+            external_attributes.clone_from(&input.options.attributes);
+        } else if !input.options.attributes.is_empty()
+            && input.options.attributes != external_attributes
+        {
+            return Err(WasmError {
+                code: "invalid-options".to_owned(),
+                message: "analysisOptions.attributes and preprocess.options.attributes must agree"
+                    .to_owned(),
+            });
+        }
+        input.options.attributes.clone_from(&external_attributes);
+    }
     render_inputs::validate(
         &render_inputs,
         &analysis_options.syntax.limits,
@@ -793,6 +809,7 @@ pub fn process_request(
             limits: analysis_options.syntax.limits.into(),
         },
         diagnostics: DiagnosticProfile { lint },
+        attributes: external_attributes,
     });
     let preprocessed = if let Some(input) = preprocess_input {
         let snapshot = resource_snapshot(input.resources);
@@ -1994,5 +2011,24 @@ mod tests {
             response.source_map[0].source_end,
             native.source_map()[0].origin.range.end().to_u32()
         );
+    }
+
+    #[test]
+    fn analysis_and_preprocess_attribute_inputs_cannot_diverge() {
+        let mut request = request("text");
+        request
+            .analysis_options
+            .attributes
+            .insert("locked".to_owned(), Some("analysis".to_owned()));
+        request.preprocess = Some(WasmAnalysisPreprocessInput {
+            resources: BTreeMap::new(),
+            options: WasmPreprocessOptions {
+                attributes: BTreeMap::from([("locked".to_owned(), Some("preprocess".to_owned()))]),
+                ..WasmPreprocessOptions::default()
+            },
+        });
+
+        let error = process_request(request, &NeverCancel).expect_err("conflicting attributes");
+        assert_eq!(error.code, "invalid-options");
     }
 }

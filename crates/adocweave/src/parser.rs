@@ -1,5 +1,6 @@
 //! Lossless concrete syntax and HTML-independent semantic syntax.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -476,7 +477,7 @@ pub(crate) fn parse_shared(
     source: Arc<str>,
     config: &ParseConfig,
 ) -> Result<ParsedDocument, PositionError> {
-    match parse_shared_cancellable(source, config, &|| false) {
+    match parse_shared_cancellable(source, config, &BTreeMap::new(), &|| false) {
         Ok(document) => Ok(document),
         Err(ParseFailure::Position(error)) => Err(error),
         Err(
@@ -502,6 +503,7 @@ fn commit_block(
 pub(crate) fn parse_shared_cancellable(
     source: Arc<str>,
     config: &ParseConfig,
+    external_attributes: &BTreeMap<String, Option<String>>,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<ParsedDocument, ParseFailure> {
     let mut budget = ParseBudget::new(config.limits)?;
@@ -530,7 +532,7 @@ pub(crate) fn parse_shared_cancellable(
         &mut budget,
         BlockContext::root(),
     )?;
-    finish_document(sequence, source_document, config)
+    finish_document(sequence, source_document, config, external_attributes)
 }
 
 fn parse_block_sequence(
@@ -1091,6 +1093,7 @@ fn finish_document(
     sequence: BlockSequenceOutput,
     source_document: SourceDocument,
     config: &ParseConfig,
+    external_attributes: &BTreeMap<String, Option<String>>,
 ) -> Result<ParsedDocument, ParseFailure> {
     let BlockSequenceOutput::Root(sequence) = sequence else {
         return Err(ParseFailure::InternalInvariant);
@@ -1104,6 +1107,7 @@ fn finish_document(
         header_attribute_count,
         anchors: sequence.common.anchors,
         header: sequence.header,
+        external_attributes,
         attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
             max_depth: config.limits.max_attribute_expansion_depth,
             max_bytes: config.limits.max_attribute_expansion_bytes,

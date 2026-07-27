@@ -87,6 +87,27 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                 Some("root"),
                 "{name}: header value"
             );
+            let locked = response
+                .attribute_queries
+                .references
+                .iter()
+                .find(|reference| reference.name == "locked")
+                .expect("locked reference");
+            assert_eq!(locked.binding_id, None, "{name}: external binding");
+            assert_eq!(
+                locked.effective_value.as_deref(),
+                Some("host"),
+                "{name}: external value"
+            );
+            assert!(
+                response
+                    .attribute_queries
+                    .bindings
+                    .iter()
+                    .all(|binding| binding.occurrence.name != "locked"
+                        && binding.occurrence.name != "absent"),
+                "{name}: rejected authored bindings"
+            );
         }
         if let Some(file) = entry["expectedHtmlFile"].as_str() {
             assert_eq!(

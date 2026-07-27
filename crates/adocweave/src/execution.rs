@@ -147,11 +147,25 @@ impl AnalysisCacheKey {
         }
         hash_u64(
             &mut hasher,
+            u64::try_from(options.attributes.len()).expect("attribute count fits u64"),
+        );
+        for (name, value) in &options.attributes {
+            hash_bytes(&mut hasher, name.as_bytes());
+            hash_u8(&mut hasher, u8::from(value.is_some()));
+            if let Some(value) = value {
+                hash_bytes(&mut hasher, value.as_bytes());
+            }
+        }
+        hash_u64(
+            &mut hasher,
             u64::try_from(config.protected_attributes.len()).expect("attribute count fits u64"),
         );
         for (name, value) in &config.protected_attributes {
             hash_bytes(&mut hasher, name.as_bytes());
-            hash_bytes(&mut hasher, value.as_bytes());
+            hash_u8(&mut hasher, u8::from(value.is_some()));
+            if let Some(value) = value {
+                hash_bytes(&mut hasher, value.as_bytes());
+            }
         }
         hash_u8(
             &mut hasher,
@@ -276,7 +290,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "e2736fa18b1e6405a4d758fcf12b504b663db69b28f6b5b7008d40c04d82e850"
+            "32c08bcc3cf44c286fd3fca8594b2501b94a0bde46701d3c13ae93ba04855eff"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());
@@ -294,8 +308,13 @@ mod tests {
         options.syntax.limits.max_nodes += 1;
         variants.push(options);
         let mut options = AnalysisOptions::default();
+        options
+            .attributes
+            .insert("host".to_owned(), Some("value".to_owned()));
+        variants.push(options);
+        let mut options = AnalysisOptions::default();
         options.diagnostics.lint.protected_attributes =
-            BTreeMap::from([("host".to_owned(), "value".to_owned())]);
+            BTreeMap::from([("host".to_owned(), Some("value".to_owned()))]);
         variants.push(options);
         let mut options = AnalysisOptions::default();
         options.diagnostics.lint.authored_url_policy.allow_relative = false;

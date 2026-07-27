@@ -276,7 +276,11 @@ impl Backend {
                             "workspace analysis was cancelled",
                         ));
                     }
-                    let analysis = Engine::new(worker_job.request.options.clone())
+                    let mut analysis_options = worker_job.request.options.clone();
+                    analysis_options
+                        .attributes
+                        .clone_from(&input.options.attributes);
+                    let analysis = Engine::new(analysis_options)
                         .analyze_cancellable(&document.source, worker_job.cancellation.as_ref())
                         .map_err(|error| {
                             workspace_problem(

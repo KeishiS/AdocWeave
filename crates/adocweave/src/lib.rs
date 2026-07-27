@@ -54,7 +54,7 @@ pub mod semantic {
         AttributeBinding, AttributeBindingId, AttributeEnvironment, AttributeEventId,
         AttributePosition, AttributeQueryProduct, AttributeReference, AttributeValueContinuation,
         DocumentAttributeContinuation, DocumentAttributeOccurrence, DocumentAttributeOperation,
-        DocumentAttributeValue, DocumentAttributeValueLine, ResolvedAttribute,
+        DocumentAttributeValue, DocumentAttributeValueLine, ExternalAttributes, ResolvedAttribute,
     };
     pub use crate::block_model::{
         AdmonitionKind, AdmonitionPresentation, Author, Block, BlockMetadata, BlockProblem,

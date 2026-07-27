@@ -57,7 +57,7 @@ pub struct PreprocessOptions {
     pub base_uri: Option<String>,
     pub safe_mode: SafeMode,
     pub allowed_schemes: BTreeSet<String>,
-    pub attributes: BTreeMap<String, String>,
+    pub attributes: crate::attributes::ExternalAttributes,
     /// Expands include directives only from the caller-provided snapshot.
     pub enable_includes: bool,
     pub max_include_depth: u32,
@@ -969,7 +969,7 @@ pub fn preprocess_and_analyze(
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
     let document =
         preprocess(source, snapshot, options).map_err(PreprocessedAnalysisError::Preprocess)?;
-    let analysis = engine
+    let analysis = Engine::new(engine.options_with_attributes(&options.attributes))
         .analyze(&document.source)
         .map_err(PreprocessedAnalysisError::Parse)?;
     Ok(PreprocessedAnalysis { document, analysis })
@@ -1925,7 +1925,7 @@ mod tests {
         };
         options
             .attributes
-            .insert("enabled".to_owned(), "".to_owned());
+            .insert("enabled".to_owned(), Some("".to_owned()));
         let source = "ifdef::enabled[]\ninclude::part.adoc[tag=keep,lines=2..3,leveloffset=+1,indent=2]\nendif::[]\n";
         let result = preprocess(source, &snapshot, &options).expect("preprocess");
         assert_eq!(result.source, "  == Included\n  line one\n");
@@ -2039,8 +2039,10 @@ mod tests {
         let mut options = PreprocessOptions::default();
         options
             .attributes
-            .insert("edition".to_owned(), "2".to_owned());
-        options.attributes.insert("web".to_owned(), String::new());
+            .insert("edition".to_owned(), Some("2".to_owned()));
+        options
+            .attributes
+            .insert("web".to_owned(), Some(String::new()));
         let source = concat!(
             "ifdef::web[inline]\n",
             "ifndef::print[also inline]\n",
@@ -2144,7 +2146,7 @@ recovered definition is visible
 endif::[]
 ";
         let options = PreprocessOptions {
-            attributes: BTreeMap::from([("locked".to_owned(), "host".to_owned())]),
+            attributes: BTreeMap::from([("locked".to_owned(), Some("host".to_owned()))]),
             ..PreprocessOptions::default()
         };
 
@@ -2168,6 +2170,24 @@ endif::[]
                 .collect::<Vec<_>>(),
             ["host.adoc", "folded- value.adoc"]
         );
+
+        let analyzed = preprocess_and_analyze(
+            &Engine::new(crate::AnalysisOptions::default()),
+            source,
+            &snapshot,
+            &options,
+        )
+        .expect("preprocessed analysis");
+        let locked = analyzed
+            .analysis
+            .attribute_environment()
+            .resolve_at(
+                "locked",
+                TextSize::new(analyzed.document.source.len()).expect("offset"),
+            )
+            .expect("locked attribute");
+        assert_eq!(locked.value, Ok(Some("host")));
+        assert_eq!(locked.binding, None);
     }
 
     #[test]

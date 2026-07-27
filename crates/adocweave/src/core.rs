@@ -57,6 +57,7 @@ impl Default for DiagnosticProfile {
 pub struct AnalysisOptions {
     pub syntax: SyntaxOptions,
     pub diagnostics: DiagnosticProfile,
+    pub attributes: crate::attributes::ExternalAttributes,
 }
 
 /// Cooperative cancellation checked at deterministic parsing checkpoints.
@@ -314,6 +315,15 @@ impl Engine {
         Self { options }
     }
 
+    pub(crate) fn options_with_attributes(
+        &self,
+        attributes: &crate::attributes::ExternalAttributes,
+    ) -> AnalysisOptions {
+        let mut options = self.options.clone();
+        options.attributes.clone_from(attributes);
+        options
+    }
+
     pub fn analyze(&self, source: &str) -> Result<Analysis, ParseError> {
         analyze(source, &self.options)
     }
@@ -384,6 +394,7 @@ fn analyze_cancellable_with_source_id(
             max_formula_bytes: limit_to_usize(options.syntax.limits.max_formula_bytes),
             limits: options.syntax.limits,
         },
+        &options.attributes,
         &|| cancellation.is_cancelled(),
     )
     .map_err(|failure| match failure {
@@ -408,7 +419,10 @@ fn analyze_cancellable_with_source_id(
         return Err(ParseError::Cancelled);
     }
 
-    let lint_config = options.diagnostics.lint.clone();
+    let mut lint_config = options.diagnostics.lint.clone();
+    lint_config
+        .protected_attributes
+        .extend(options.attributes.clone());
     let diagnostics =
         lint::lint_syntax(&syntax, &ast, &lint_config).map_err(ParseError::Position)?;
     if cancellation.is_cancelled() {
@@ -610,7 +624,7 @@ mod tests {
         options.diagnostics.lint.protected_attribute_severity = crate::diagnostic::Severity::Error;
         options.diagnostics.lint.protected_attributes.insert(
             "note-id".to_owned(),
-            "123e4567-e89b-12d3-a456-426614174000".to_owned(),
+            Some("123e4567-e89b-12d3-a456-426614174000".to_owned()),
         );
         let result = analyze(
             "= Note\n:note-id: 00000000-0000-0000-0000-000000000000\n",

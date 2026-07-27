@@ -7,7 +7,7 @@ use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
 use crate::substitution::AttributeExpansionLimits;
 
-pub(crate) struct ParsedFacts {
+pub(crate) struct ParsedFacts<'a> {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttributeOccurrence>,
     pub header_attribute_count: usize,
@@ -15,13 +15,15 @@ pub(crate) struct ParsedFacts {
     pub header: DocumentHeader,
     pub attribute_expansion_limits: AttributeExpansionLimits,
     pub processing_limits: crate::limits::AnalysisLimits,
+    pub external_attributes: &'a std::collections::BTreeMap<String, Option<String>>,
 }
 
 pub(crate) fn lower(
-    mut facts: ParsedFacts,
+    mut facts: ParsedFacts<'_>,
 ) -> Result<AstDocument, crate::catalog::CatalogLimitExceeded> {
     let attribute_environment = crate::attributes::AttributeEnvironment::build(
         &facts.attributes,
+        facts.external_attributes,
         facts.attribute_expansion_limits,
     );
     facts.blocks = normalize_verbatim_blocks(facts.blocks, &attribute_environment);

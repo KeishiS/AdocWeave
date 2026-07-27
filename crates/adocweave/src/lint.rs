@@ -264,7 +264,7 @@ pub struct LintConfig {
     pub max_line_length: usize,
     pub max_consecutive_blank_lines: usize,
     pub max_diagnostics: usize,
-    pub protected_attributes: BTreeMap<String, String>,
+    pub protected_attributes: BTreeMap<String, Option<String>>,
     pub protected_attribute_severity: Severity,
     pub authored_url_policy: crate::url::AuthoredUrlPolicy,
 }
@@ -955,8 +955,10 @@ fn lint_attributes(
     for attribute in document.attributes() {
         if let Some(expected) = config.protected_attributes.get(&attribute.name) {
             let changed = match &attribute.operation {
-                DocumentAttributeOperation::Set => &attribute.value.folded_text != expected,
-                DocumentAttributeOperation::Unset => true,
+                DocumentAttributeOperation::Set => expected
+                    .as_ref()
+                    .is_none_or(|expected| &attribute.value.folded_text != expected),
+                DocumentAttributeOperation::Unset => expected.is_some(),
             };
             if changed
                 && config.rule(PROTECTED_ATTRIBUTE).enabled
@@ -1012,7 +1014,7 @@ fn lint_attributes(
         if let Err(error) = binding.value() {
             let range = references.first().map_or_else(
                 || binding.occurrence().value.source_range,
-                |reference| reference.range,
+                |reference| reference.name_range,
             );
             let (rule, message) =
                 if error == crate::substitution::AttributeExpansionError::Undefined {
@@ -1069,7 +1071,7 @@ fn lint_attribute_reference_uses(
                     diagnostics,
                     config,
                     UNDEFINED_ATTRIBUTE,
-                    reference.range,
+                    reference.name_range,
                     &format!("undefined document attribute `{}`", reference.name),
                     None,
                 );

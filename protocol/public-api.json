@@ -98,7 +98,8 @@
       "unknownFields": "reject",
       "fields": [
         { "json": "syntax", "type": "SyntaxOptions", "default": {} },
-        { "json": "diagnostics", "type": "DiagnosticProfile", "default": {} }
+        { "json": "diagnostics", "type": "DiagnosticProfile", "default": {} },
+        { "json": "attributes", "type": "Record<string, string | null>", "default": {} }
       ]
     },
     "SyntaxOptions": {
@@ -111,7 +112,7 @@
     "DiagnosticProfile": {
       "unknownFields": "reject",
       "fields": [
-        { "json": "protectedAttributes", "type": "Record<string, string>", "default": {} },
+        { "json": "protectedAttributes", "type": "Record<string, string | null>", "default": {} },
         { "json": "authoredUrls", "type": "AuthoredUrlPolicy", "default": {} },
         { "json": "maxDiagnostics", "type": "u32", "default": 1000 },
         { "json": "rules", "type": "Record<string, RuleSettings>", "default": {} }
@@ -509,7 +510,7 @@
         { "json": "baseUri", "type": "string | null", "default": null },
         { "json": "safeMode", "type": "SafeMode", "default": "secure" },
         { "json": "allowedSchemes", "type": "string[]", "default": [] },
-        { "json": "attributes", "type": "Record<string, string>", "default": {} },
+        { "json": "attributes", "type": "Record<string, string | null>", "default": {} },
         { "json": "enableIncludes", "type": "boolean", "default": true },
         { "json": "maxIncludeDepth", "type": "u32", "default": 16 },
         { "json": "maxIncludes", "type": "u32", "default": 10000 },

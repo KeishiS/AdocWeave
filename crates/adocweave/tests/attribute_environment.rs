@@ -21,46 +21,54 @@ fn set_redefine_and_unset_are_selected_by_position() {
     let alice = environment
         .resolve_at("name", offset(source, "最初は"))
         .expect("first binding");
+    let alice_binding = alice.binding.expect("authored binding");
     assert_eq!(alice.value, Ok(Some("Alice")));
-    assert_eq!(alice.binding.id().get(), 0);
-    assert_eq!(alice.binding.event_id().get(), 0);
-    assert_eq!(alice.binding.operation(), DocumentAttributeOperation::Set);
-    assert_eq!(alice.binding.source_text(), "Alice");
+    assert_eq!(alice_binding.id().get(), 0);
+    assert_eq!(alice_binding.event_id().get(), 0);
+    assert_eq!(alice_binding.operation(), DocumentAttributeOperation::Set);
+    assert_eq!(alice_binding.source_text(), "Alice");
     assert_eq!(
-        alice.binding.evaluation_at(),
-        alice.binding.occurrence().value.source_range.start()
+        alice_binding.evaluation_at(),
+        alice_binding.occurrence().value.source_range.start()
     );
     assert_eq!(
-        alice.binding.visible_at(),
-        alice.binding.occurrence().range.end()
+        alice_binding.visible_at(),
+        alice_binding.occurrence().range.end()
     );
-    let before_visible = TextSize::new(alice.binding.visible_at().to_usize() - 1).expect("before");
+    let before_visible = TextSize::new(alice_binding.visible_at().to_usize() - 1).expect("before");
     assert!(environment.resolve_at("name", before_visible).is_none());
     assert!(
         environment
-            .resolve_at_event("name", alice.binding.visible_position())
+            .resolve_at_event("name", alice_binding.visible_position())
             .is_none()
     );
     assert_eq!(
         environment
-            .resolve_at("name", alice.binding.visible_at())
+            .resolve_at("name", alice_binding.visible_at())
             .expect("visible at half-open end")
             .binding
+            .expect("authored binding")
             .id(),
-        alice.binding.id()
+        alice_binding.id()
     );
 
     let bob = environment
         .resolve_at("name", offset(source, "次は"))
         .expect("replacement binding");
     assert_eq!(bob.value, Ok(Some("Bob")));
-    assert_ne!(bob.binding.id(), alice.binding.id());
+    assert_ne!(
+        bob.binding.expect("authored binding").id(),
+        alice_binding.id()
+    );
 
     let unset = environment
         .resolve_at("name", offset(source, "最後は"))
         .expect("unset binding");
     assert_eq!(unset.value, Ok(None));
-    assert_eq!(unset.binding.operation(), DocumentAttributeOperation::Unset);
+    assert_eq!(
+        unset.binding.expect("authored binding").operation(),
+        DocumentAttributeOperation::Unset
+    );
     assert!(!environment.final_values().contains_key("name"));
     assert_eq!(
         environment
@@ -68,6 +76,49 @@ fn set_redefine_and_unset_are_selected_by_position() {
             .map(|binding| binding.id().get())
             .collect::<Vec<_>>(),
         [0, 1, 2]
+    );
+}
+
+#[test]
+fn external_set_and_unset_are_locked_without_authored_bindings() {
+    let source = ":locked: document\n:absent: document\n\n{locked} {absent}\n";
+    let analysis = Engine::new(AnalysisOptions {
+        attributes: [
+            ("locked".to_owned(), Some("host".to_owned())),
+            ("absent".to_owned(), None),
+        ]
+        .into(),
+        ..AnalysisOptions::default()
+    })
+    .analyze(source)
+    .expect("analysis");
+    let environment = analysis.attribute_environment();
+    let content = offset(source, "{locked}");
+
+    let locked = environment
+        .resolve_at("locked", content)
+        .expect("external set");
+    assert_eq!(locked.value, Ok(Some("host")));
+    assert_eq!(locked.binding, None);
+    let absent = environment
+        .resolve_at("absent", content)
+        .expect("external unset");
+    assert_eq!(absent.value, Ok(None));
+    assert_eq!(absent.binding, None);
+    assert!(environment.bindings().is_empty());
+    assert_eq!(analysis.document_attribute_occurrences().len(), 2);
+    assert_eq!(
+        environment.final_values().get("locked").map(String::as_str),
+        Some("host")
+    );
+    assert!(!environment.final_values().contains_key("absent"));
+    assert_eq!(
+        analysis
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "protected-attribute")
+            .count(),
+        2
     );
 }
 
@@ -225,6 +276,7 @@ fn multiline_definitions_use_folded_values_at_definition_time() {
             .resolve_at("soft", content)
             .expect("soft binding")
             .binding
+            .expect("authored binding")
             .folded_value(),
         "first {base} second"
     );

@@ -7,6 +7,11 @@ use crate::substitution::{
     AttributeExpansionError, AttributeExpansionLimits, expand_attribute_text,
 };
 
+/// Hard-locked document-external attributes.
+///
+/// `Some(value)` is a set operation and `None` is an unset operation.
+pub type ExternalAttributes = BTreeMap<String, Option<String>>;
+
 /// The standard AsciiDoc operation represented by a document attribute line.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DocumentAttributeOperation {
@@ -170,11 +175,11 @@ impl AttributeBinding {
     }
 }
 
-/// Value selected at a source position and the binding which selected it.
+/// Value selected at a source position and its authored binding, when present.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResolvedAttribute<'a> {
     pub value: Result<Option<&'a str>, AttributeExpansionError>,
-    pub binding: &'a AttributeBinding,
+    pub binding: Option<&'a AttributeBinding>,
 }
 
 /// One attribute reference and its position-dependent resolution.
@@ -204,6 +209,7 @@ pub struct AttributeEnvironment {
     bindings: Vec<AttributeBinding>,
     histories: BTreeMap<String, Vec<usize>>,
     final_values: BTreeMap<String, String>,
+    external_values: ExternalAttributes,
     limits: AttributeExpansionLimits,
 }
 
@@ -218,27 +224,22 @@ pub(crate) struct SequentialAttributeState {
 }
 
 impl SequentialAttributeState {
-    pub(crate) fn empty(limits: AttributeExpansionLimits) -> Self {
-        Self {
-            values: BTreeMap::new(),
-            depths: BTreeMap::new(),
-            failures: BTreeMap::new(),
-            locked: BTreeSet::new(),
-            limits,
-        }
-    }
-
     pub(crate) fn with_locked_values(
-        values: &BTreeMap<String, String>,
+        values: &ExternalAttributes,
         limits: AttributeExpansionLimits,
     ) -> Self {
+        let locked = values.keys().map(|name| canonical_name(name)).collect();
         let values = values
             .iter()
-            .map(|(name, value)| (canonical_name(name), value.clone()))
+            .filter_map(|(name, value)| {
+                value
+                    .as_ref()
+                    .map(|value| (canonical_name(name), value.clone()))
+            })
             .collect::<BTreeMap<_, _>>();
         Self {
             depths: values.keys().map(|name| (name.clone(), 0)).collect(),
-            locked: values.keys().cloned().collect(),
+            locked,
             values,
             failures: BTreeMap::new(),
             limits,
@@ -291,6 +292,10 @@ impl SequentialAttributeState {
     pub(crate) const fn values(&self) -> &BTreeMap<String, String> {
         &self.values
     }
+
+    pub(crate) fn is_locked(&self, name: &str) -> bool {
+        self.locked.contains(&canonical_name(name))
+    }
 }
 
 impl Default for AttributeEnvironment {
@@ -299,6 +304,7 @@ impl Default for AttributeEnvironment {
             bindings: Vec::new(),
             histories: BTreeMap::new(),
             final_values: BTreeMap::new(),
+            external_values: BTreeMap::new(),
             limits: AttributeExpansionLimits {
                 max_depth: u32::MAX,
                 max_bytes: u32::MAX,
@@ -310,15 +316,21 @@ impl Default for AttributeEnvironment {
 impl AttributeEnvironment {
     pub(crate) fn build(
         occurrences: &[DocumentAttributeOccurrence],
+        external_values: &ExternalAttributes,
         limits: AttributeExpansionLimits,
     ) -> Self {
+        let external_values = external_values
+            .iter()
+            .map(|(name, value)| (canonical_name(name), value.clone()))
+            .collect::<BTreeMap<_, _>>();
         let mut environment = Self {
             limits,
+            external_values: external_values.clone(),
             ..Self::default()
         };
-        let mut state = SequentialAttributeState::empty(limits);
+        let mut state = SequentialAttributeState::with_locked_values(&external_values, limits);
         for (ordinal, occurrence) in occurrences.iter().enumerate() {
-            if !occurrence.valid {
+            if !occurrence.valid || state.is_locked(&occurrence.name) {
                 continue;
             }
             let canonical_name = canonical_name(&occurrence.name);
@@ -382,13 +394,19 @@ impl AttributeEnvironment {
         position: AttributePosition,
     ) -> Option<ResolvedAttribute<'_>> {
         let name = canonical_name(name);
+        if let Some(value) = self.external_values.get(&name) {
+            return Some(ResolvedAttribute {
+                value: Ok(value.as_deref()),
+                binding: None,
+            });
+        }
         let history = self.histories.get(&name)?;
         let visible =
             history.partition_point(|index| self.bindings[*index].visible_position() < position);
         let binding = &self.bindings[*history.get(visible.checked_sub(1)?)?];
         Some(ResolvedAttribute {
             value: binding.value(),
-            binding,
+            binding: Some(binding),
         })
     }
 
@@ -426,14 +444,21 @@ impl AttributeEnvironment {
     }
 
     pub fn values_at(&self, offset: TextSize) -> BTreeMap<String, String> {
-        self.histories
+        let mut values = self
+            .histories
             .keys()
             .filter_map(|name| {
                 self.resolve_at(name, offset)
                     .and_then(|resolved| resolved.value.ok().flatten())
                     .map(|value| (name.clone(), value.to_owned()))
             })
-            .collect()
+            .collect::<BTreeMap<_, _>>();
+        values.extend(
+            self.external_values.iter().filter_map(|(name, value)| {
+                value.as_ref().map(|value| (name.clone(), value.clone()))
+            }),
+        );
+        values
     }
 }
 
@@ -449,7 +474,7 @@ pub(crate) fn reference_at(
         range,
         name_range,
         name: name.to_owned(),
-        binding_id: resolved.map(|resolved| resolved.binding.id()),
+        binding_id: resolved.and_then(|resolved| resolved.binding.map(AttributeBinding::id)),
         value: resolved.map_or(Err(AttributeExpansionError::Undefined), |resolved| {
             resolved.value.map(|value| value.map(str::to_owned))
         }),
@@ -823,6 +848,7 @@ mod tests {
     fn event_id_breaks_ties_at_the_same_expanded_offset() {
         let environment = AttributeEnvironment::build(
             &[occurrence("first"), occurrence("second")],
+            &Default::default(),
             AttributeExpansionLimits {
                 max_depth: 8,
                 max_bytes: 128,
