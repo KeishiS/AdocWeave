@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 
 use crate::source::{TextRange, TextSize};
-use crate::substitution::{AttributeEvaluator, AttributeExpansionError, AttributeExpansionLimits};
+use crate::substitution::{
+    AttributeExpansionError, AttributeExpansionLimits, expand_attribute_text,
+};
 
 /// The standard AsciiDoc operation represented by a document attribute line.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,8 +45,33 @@ impl AttributeBindingId {
 pub struct AttributeEventId(u32);
 
 impl AttributeEventId {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
     pub const fn get(self) -> u32 {
         self.0
+    }
+}
+
+/// One point in expanded-source reading order.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct AttributePosition {
+    offset: TextSize,
+    event_id: AttributeEventId,
+}
+
+impl AttributePosition {
+    pub const fn new(offset: TextSize, event_id: AttributeEventId) -> Self {
+        Self { offset, event_id }
+    }
+
+    pub const fn offset(self) -> TextSize {
+        self.offset
+    }
+
+    pub const fn event_id(self) -> AttributeEventId {
+        self.event_id
     }
 }
 
@@ -73,6 +100,10 @@ impl AttributeBinding {
 
     pub const fn visible_at(&self) -> TextSize {
         self.visible_at
+    }
+
+    pub const fn visible_position(&self) -> AttributePosition {
+        AttributePosition::new(self.visible_at, self.event_id)
     }
 
     pub const fn evaluation_at(&self) -> TextSize {
@@ -153,48 +184,41 @@ impl AttributeEnvironment {
             if !occurrence.valid {
                 continue;
             }
+            let canonical_name = canonical_name(&occurrence.name);
             let id = AttributeBindingId(
                 u32::try_from(environment.bindings.len()).expect("attribute limit fits u32"),
             );
             let event_id =
                 AttributeEventId(u32::try_from(ordinal).expect("attribute limit fits u32"));
-            let value = match occurrence.operation {
-                DocumentAttributeOperation::Set => definition_depth(
-                    &occurrence.name,
+            let evaluated = match occurrence.operation {
+                DocumentAttributeOperation::Set => evaluate_definition(
+                    &canonical_name,
                     &occurrence.raw_value,
+                    &current,
                     &current_depths,
                     &current_failures,
-                    limits.max_depth,
+                    limits,
                 )
-                .and_then(|_| {
-                    AttributeEvaluator::new(&current, limits).expand_text(&occurrence.raw_value)
-                })
-                .map(Some),
-                DocumentAttributeOperation::Unset => Ok(None),
+                .map(|(value, depth)| (Some(value), depth)),
+                DocumentAttributeOperation::Unset => Ok((None, 0)),
             };
-            let expansion_depth = definition_depth(
-                &occurrence.name,
-                &occurrence.raw_value,
-                &current_depths,
-                &current_failures,
-                limits.max_depth,
-            )
-            .unwrap_or(0);
+            let expansion_depth = evaluated.as_ref().map_or(0, |(_, depth)| *depth);
+            let value = evaluated.map(|(value, _)| value);
             match &value {
                 Ok(Some(value)) => {
-                    current.insert(occurrence.name.clone(), value.clone());
-                    current_depths.insert(occurrence.name.clone(), expansion_depth);
-                    current_failures.remove(&occurrence.name);
+                    current.insert(canonical_name.clone(), value.clone());
+                    current_depths.insert(canonical_name.clone(), expansion_depth);
+                    current_failures.remove(&canonical_name);
                 }
                 Ok(None) => {
-                    current.remove(&occurrence.name);
-                    current_depths.remove(&occurrence.name);
-                    current_failures.remove(&occurrence.name);
+                    current.remove(&canonical_name);
+                    current_depths.remove(&canonical_name);
+                    current_failures.remove(&canonical_name);
                 }
                 Err(error) => {
-                    current.remove(&occurrence.name);
-                    current_depths.remove(&occurrence.name);
-                    current_failures.insert(occurrence.name.clone(), *error);
+                    current.remove(&canonical_name);
+                    current_depths.remove(&canonical_name);
+                    current_failures.insert(canonical_name.clone(), *error);
                 }
             }
             let binding = AttributeBinding {
@@ -211,7 +235,7 @@ impl AttributeEnvironment {
             let index = environment.bindings.len();
             environment
                 .histories
-                .entry(occurrence.name.clone())
+                .entry(canonical_name)
                 .or_default()
                 .push(index);
             environment.bindings.push(binding);
@@ -225,16 +249,30 @@ impl AttributeEnvironment {
     }
 
     pub fn history(&self, name: &str) -> impl DoubleEndedIterator<Item = &AttributeBinding> {
+        let name = canonical_name(name);
         self.histories
-            .get(name)
+            .get(&name)
             .into_iter()
             .flatten()
             .map(|index| &self.bindings[*index])
     }
 
     pub fn resolve_at(&self, name: &str, offset: TextSize) -> Option<ResolvedAttribute<'_>> {
-        let history = self.histories.get(name)?;
-        let visible = history.partition_point(|index| self.bindings[*index].visible_at <= offset);
+        self.resolve_at_event(
+            name,
+            AttributePosition::new(offset, AttributeEventId(u32::MAX)),
+        )
+    }
+
+    pub fn resolve_at_event(
+        &self,
+        name: &str,
+        position: AttributePosition,
+    ) -> Option<ResolvedAttribute<'_>> {
+        let name = canonical_name(name);
+        let history = self.histories.get(&name)?;
+        let visible =
+            history.partition_point(|index| self.bindings[*index].visible_position() < position);
         let binding = &self.bindings[*history.get(visible.checked_sub(1)?)?];
         Some(ResolvedAttribute {
             value: binding.value(),
@@ -242,44 +280,33 @@ impl AttributeEnvironment {
         })
     }
 
+    pub fn expand_at_event(
+        &self,
+        text: &str,
+        position: AttributePosition,
+    ) -> Result<String, AttributeExpansionError> {
+        self.expand_with(text, |name| self.resolve_at_event(name, position))
+    }
+
     pub fn expand_at(
         &self,
         text: &str,
         offset: TextSize,
     ) -> Result<String, AttributeExpansionError> {
-        let mut output = String::new();
-        let mut cursor = 0;
-        while cursor < text.len() {
-            let rest = &text[cursor..];
-            if rest.starts_with("\\{") {
-                output.push('{');
-                cursor += 2;
-            } else if rest.starts_with('{') {
-                let Some(close) = rest.find('}') else {
-                    output.push_str(rest);
-                    break;
-                };
-                let name = &rest[1..close];
-                if name.is_empty() {
-                    output.push_str("{}");
-                } else {
-                    let resolved = self
-                        .resolve_at(name, offset)
-                        .ok_or(AttributeExpansionError::Undefined)?;
-                    let value = resolved.value?.ok_or(AttributeExpansionError::Undefined)?;
-                    output.push_str(value);
-                }
-                cursor += close + 1;
-            } else {
-                let character = rest.chars().next().expect("non-empty remainder");
-                output.push(character);
-                cursor += character.len_utf8();
-            }
-            if output.len() > self.limits.max_bytes as usize {
-                return Err(AttributeExpansionError::SizeLimitExceeded);
-            }
-        }
-        Ok(output)
+        self.expand_with(text, |name| self.resolve_at(name, offset))
+    }
+
+    fn expand_with<'a>(
+        &'a self,
+        text: &str,
+        mut resolve: impl FnMut(&str) -> Option<ResolvedAttribute<'a>>,
+    ) -> Result<String, AttributeExpansionError> {
+        expand_attribute_text(text, self.limits, |name| {
+            let resolved = resolve(name).ok_or(AttributeExpansionError::Undefined)?;
+            let value = resolved.value?.ok_or(AttributeExpansionError::Undefined)?;
+            Ok((value.to_owned(), 0))
+        })
+        .map(|(value, _)| value)
     }
 
     pub fn final_values(&self) -> &BTreeMap<String, String> {
@@ -298,46 +325,34 @@ impl AttributeEnvironment {
     }
 }
 
-fn definition_depth(
+fn canonical_name(name: &str) -> String {
+    name.to_ascii_lowercase()
+}
+
+fn evaluate_definition(
     binding_name: &str,
     raw_value: &str,
+    values: &BTreeMap<String, String>,
     depths: &BTreeMap<String, u32>,
     failures: &BTreeMap<String, AttributeExpansionError>,
-    max_depth: u32,
-) -> Result<u32, AttributeExpansionError> {
-    let mut depth = 0_u32;
-    let mut cursor = 0;
-    while cursor < raw_value.len() {
-        let rest = &raw_value[cursor..];
-        if rest.starts_with("\\{") {
-            cursor += 2;
-        } else if rest.starts_with('{') {
-            let Some(close) = rest.find('}') else {
-                break;
-            };
-            let name = &rest[1..close];
-            if !name.is_empty() {
-                let referenced = depths.get(name).copied().ok_or_else(|| {
-                    if let Some(error) = failures.get(name) {
-                        *error
-                    } else if name == binding_name {
-                        AttributeExpansionError::Cycle
-                    } else {
-                        AttributeExpansionError::Undefined
-                    }
-                })?;
-                depth = depth.max(referenced.saturating_add(1));
-                if depth > max_depth {
-                    return Err(AttributeExpansionError::DepthLimitExceeded);
-                }
+    limits: AttributeExpansionLimits,
+) -> Result<(String, u32), AttributeExpansionError> {
+    expand_attribute_text(raw_value, limits, |name| {
+        let name = canonical_name(name);
+        let value = values.get(&name).ok_or_else(|| {
+            if let Some(error) = failures.get(&name) {
+                *error
+            } else if name == binding_name {
+                AttributeExpansionError::Cycle
+            } else {
+                AttributeExpansionError::Undefined
             }
-            cursor += close + 1;
-        } else {
-            let character = rest.chars().next().expect("non-empty remainder");
-            cursor += character.len_utf8();
-        }
-    }
-    Ok(depth)
+        })?;
+        Ok((
+            value.clone(),
+            depths.get(&name).copied().expect("value depth exists"),
+        ))
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -440,4 +455,64 @@ fn range(start: usize, end: usize) -> TextRange {
         TextSize::new(end).expect("attribute offset fits"),
     )
     .expect("attribute range is ordered")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AttributeEnvironment, AttributeEventId, AttributePosition, DocumentAttributeOccurrence,
+        DocumentAttributeOperation,
+    };
+    use crate::source::{TextRange, TextSize};
+    use crate::substitution::AttributeExpansionLimits;
+
+    fn occurrence(value: &str) -> DocumentAttributeOccurrence {
+        DocumentAttributeOccurrence {
+            range: range(0, 4),
+            name_range: range(1, 2),
+            value_range: range(3, 4),
+            name: "Name".to_owned(),
+            raw_value: value.to_owned(),
+            operation: DocumentAttributeOperation::Set,
+            valid: true,
+        }
+    }
+
+    fn range(start: u32, end: u32) -> TextRange {
+        TextRange::new(
+            TextSize::new(start as usize).expect("start"),
+            TextSize::new(end as usize).expect("end"),
+        )
+        .expect("range")
+    }
+
+    #[test]
+    fn event_id_breaks_ties_at_the_same_expanded_offset() {
+        let environment = AttributeEnvironment::build(
+            &[occurrence("first"), occurrence("second")],
+            AttributeExpansionLimits {
+                max_depth: 8,
+                max_bytes: 128,
+            },
+        );
+        let at = |event| {
+            environment
+                .resolve_at_event(
+                    "name",
+                    AttributePosition::new(
+                        TextSize::new(4).expect("offset"),
+                        AttributeEventId::new(event),
+                    ),
+                )
+                .map(|resolved| resolved.value)
+        };
+
+        assert_eq!(at(0), None);
+        assert_eq!(at(1), Some(Ok(Some("first"))));
+        assert_eq!(at(2), Some(Ok(Some("second"))));
+        assert_eq!(
+            environment.resolve_at("NAME", TextSize::new(4).expect("offset")),
+            environment.resolve_at("name", TextSize::new(4).expect("offset"))
+        );
+    }
 }

@@ -1,4 +1,4 @@
-use adocweave::semantic::{Block, DocumentAttributeOperation, DocumentType, VerbatimKind};
+use adocweave::semantic::{Block, DocumentAttributeOperation, DocumentType, Inline, VerbatimKind};
 use adocweave::text::TextSize;
 use adocweave::{Analysis, AnalysisOptions, Engine};
 
@@ -25,9 +25,29 @@ fn set_redefine_and_unset_are_selected_by_position() {
     assert_eq!(alice.binding.id().get(), 0);
     assert_eq!(alice.binding.event_id().get(), 0);
     assert_eq!(alice.binding.operation(), DocumentAttributeOperation::Set);
+    assert_eq!(alice.binding.raw_value(), "Alice");
+    assert_eq!(
+        alice.binding.evaluation_at(),
+        alice.binding.occurrence().value_range.start()
+    );
     assert_eq!(
         alice.binding.visible_at(),
         alice.binding.occurrence().range.end()
+    );
+    let before_visible = TextSize::new(alice.binding.visible_at().to_usize() - 1).expect("before");
+    assert!(environment.resolve_at("name", before_visible).is_none());
+    assert!(
+        environment
+            .resolve_at_event("name", alice.binding.visible_position())
+            .is_none()
+    );
+    assert_eq!(
+        environment
+            .resolve_at("name", alice.binding.visible_at())
+            .expect("visible at half-open end")
+            .binding
+            .id(),
+        alice.binding.id()
     );
 
     let bob = environment
@@ -42,6 +62,13 @@ fn set_redefine_and_unset_are_selected_by_position() {
     assert_eq!(unset.value, Ok(None));
     assert_eq!(unset.binding.operation(), DocumentAttributeOperation::Unset);
     assert!(!environment.final_values().contains_key("name"));
+    assert_eq!(
+        environment
+            .history("NAME")
+            .map(|binding| binding.id().get())
+            .collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
 }
 
 #[test]
@@ -77,6 +104,14 @@ fn forward_references_are_not_rebound_and_definition_values_are_snapshots() {
     assert_eq!(
         environment.expand_at("{snapshot}", content),
         Ok("古い値".to_owned())
+    );
+    assert_eq!(
+        environment.expand_at("{camelcase}", content),
+        Ok("正規化".to_owned())
+    );
+    assert_eq!(
+        environment.expand_at("{CAMELCASE}", content),
+        Ok("正規化".to_owned())
     );
 }
 
@@ -226,4 +261,49 @@ fn semantic_consumers_use_their_own_source_positions() {
 
     // `doctype` is header-only in the supported profile.
     assert_eq!(analysis.document().header().doctype, DocumentType::Article);
+}
+
+#[test]
+fn inline_references_follow_set_redefine_and_unset_positions() {
+    let source = include_str!("../../../fixtures/attributes/environment-set-redefine-unset.adoc");
+    let analysis = analyze(source);
+    let values = analysis
+        .document()
+        .blocks()
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph(paragraph) => Some(&paragraph.inlines),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|inline| match inline {
+            Inline::AttributeReference {
+                name,
+                value,
+                expansion_error,
+                ..
+            } if name == "name" => Some((value.as_deref(), *expansion_error)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        values,
+        [
+            (Some("Alice"), None),
+            (Some("Bob"), None),
+            (
+                None,
+                Some(adocweave::semantic::AttributeExpansionError::Undefined)
+            ),
+        ]
+    );
+    let html = adocweave::output::html::render(
+        analysis.document(),
+        &adocweave::output::html::RenderPolicy::default(),
+    )
+    .html;
+    assert!(html.contains("最初はAliceです。"));
+    assert!(html.contains("次はBobです。"));
+    assert!(html.contains("最後は{name}です。"));
 }
