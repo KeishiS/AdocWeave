@@ -6,6 +6,7 @@ use crate::core::{AnalysisOptions, ParseError, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::LineEnding;
+use crate::syntax::SyntaxKind;
 use crate::syntax::SyntaxTree;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,6 +73,10 @@ fn format_syntax(
     let source = syntax.source();
     let source_document = syntax.source_document();
     let protected = syntax.formatting_protected_ranges();
+    let attribute_starts = syntax
+        .nodes(SyntaxKind::DocumentAttribute)
+        .map(|node| node.range().start())
+        .collect::<std::collections::BTreeSet<_>>();
     let last_real_line = source_document
         .lines()
         .iter()
@@ -93,10 +98,12 @@ fn format_syntax(
             .expect("line ranges are valid");
         let virtual_final = line.full_range().is_empty() && line.ending() == LineEnding::None;
         let blank = content.trim_matches([' ', '\t']).is_empty();
+        let required_attribute_offset =
+            blank && blank_offsets_document_attribute(source_document, index, &attribute_starts);
 
         if blank && !virtual_final {
             blank_count += 1;
-            if blank_count > config.max_consecutive_blank_lines {
+            if blank_count > config.max_consecutive_blank_lines && !required_attribute_offset {
                 edits.push(TextEdit {
                     range: line.full_range(),
                     replacement: String::new(),
@@ -159,6 +166,23 @@ fn format_syntax(
     let edits = fix.edits().to_vec();
     let formatted = apply_edits(source, &edits);
     Ok(FormatOutput { formatted, edits })
+}
+
+fn blank_offsets_document_attribute(
+    document: &crate::source_document::SourceDocument,
+    blank_index: usize,
+    attribute_starts: &std::collections::BTreeSet<TextSize>,
+) -> bool {
+    for line in &document.lines()[blank_index + 1..] {
+        let content = document
+            .text(line.content_range())
+            .expect("line ranges are valid");
+        if content.starts_with("//") {
+            continue;
+        }
+        return attribute_starts.contains(&line.full_range().start());
+    }
+    false
 }
 
 fn apply_edits(source: &str, edits: &[TextEdit]) -> String {

@@ -95,11 +95,19 @@ fn invalid_body_occurrences_remain_lossless_and_report_problems() {
     let analysis = analyze(source);
     let occurrences = analysis.document_attribute_occurrences();
 
-    assert_eq!(occurrences.len(), 3);
+    assert_eq!(occurrences.len(), 7);
     assert_eq!(occurrences[0].name, "bad name");
     assert_eq!(occurrences[1].name, "bad.name");
-    assert_eq!(occurrences[2].operation, DocumentAttributeOperation::Unset);
-    assert_eq!(occurrences[2].raw_value, "unexpected");
+    assert_eq!(occurrences[2].name, "-bad");
+    assert_eq!(occurrences[3].name, "--");
+    assert_eq!(occurrences[4].name, "foo");
+    assert_eq!(occurrences[4].raw_value, "value");
+    assert!(!occurrences[4].valid);
+    assert_eq!(occurrences[5].name, "CamelCase");
+    assert_eq!(occurrences[5].raw_value, "ok");
+    assert!(occurrences[5].valid);
+    assert_eq!(occurrences[6].operation, DocumentAttributeOperation::Unset);
+    assert_eq!(occurrences[6].raw_value, "unexpected");
     assert_eq!(
         analysis
             .syntax()
@@ -107,7 +115,7 @@ fn invalid_body_occurrences_remain_lossless_and_report_problems() {
             .iter()
             .filter(|issue| issue.class == SyntaxIssueClass::InvalidAttribute)
             .count(),
-        3
+        6
     );
     assert_eq!(analysis.syntax().reconstruct(), source);
 }
@@ -137,6 +145,10 @@ fn delimited_block_attributes_are_not_promoted_to_document_occurrences() {
         "--\n:inside: value\n--\n\n:outside: value\n",
         "****\n:inside: value\n****\n\n:outside: value\n",
         "====\n:inside: value\n====\n\n:outside: value\n",
+        "////\n:inside: value\n////\n\n:outside: value\n",
+        "....\n:inside: value\n....\n\n:outside: value\n",
+        "++++\n:inside: value\n++++\n\n:outside: value\n",
+        "____\n:inside: value\n____\n\n:outside: value\n",
         "|===\na|\n:inside: value\n|===\n\n:outside: value\n",
         "* item\n+\n--\n:inside: value\n--\n\n:outside: value\n",
     ] {
@@ -180,6 +192,73 @@ fn leading_attributes_form_the_header_with_or_without_a_title() {
 }
 
 #[test]
+fn leading_blank_lines_and_comments_do_not_close_an_empty_header() {
+    for source in [
+        include_str!("../../../fixtures/attributes/header-after-leading-blank.adoc"),
+        include_str!("../../../fixtures/attributes/header-after-leading-comments.adoc"),
+    ] {
+        let analysis = analyze(source);
+        let occurrence = &analysis.header_attribute_occurrences()[0];
+        assert_eq!(occurrence.name, "foo");
+        assert_eq!(
+            analysis.document_attribute_occurrences(),
+            std::slice::from_ref(occurrence)
+        );
+        let header_range = analysis.document().header().range.expect("header range");
+        assert_eq!(header_range, occurrence.range);
+        assert_eq!(slice(source, header_range), ":foo: bar\n");
+        assert_eq!(analysis.syntax().reconstruct(), source);
+    }
+}
+
+#[test]
+fn body_attribute_offset_may_contain_line_comments() {
+    let source = include_str!("../../../fixtures/attributes/body-after-comment.adoc");
+    let analysis = analyze(source);
+
+    assert_eq!(analysis.document_attribute_occurrences().len(), 1);
+    assert!(analysis.header_attribute_occurrences().is_empty());
+    assert_eq!(analysis.document_attribute_occurrences()[0].name, "foo");
+    assert_eq!(
+        analysis
+            .syntax()
+            .nodes(adocweave::text::SyntaxKind::CommentLine)
+            .count(),
+        1
+    );
+    assert_eq!(analysis.document().blocks().len(), 2);
+    assert_eq!(analysis.syntax().reconstruct(), source);
+}
+
+#[test]
+fn body_may_start_with_an_attribute_after_the_header_boundary() {
+    let source = include_str!("../../../fixtures/attributes/header-then-body-attribute.adoc");
+    let analysis = analyze(source);
+
+    assert_eq!(
+        analysis
+            .document_attribute_occurrences()
+            .iter()
+            .map(|attribute| attribute.name.as_str())
+            .collect::<Vec<_>>(),
+        ["header", "body"]
+    );
+    assert_eq!(
+        analysis
+            .header_attribute_occurrences()
+            .iter()
+            .map(|attribute| attribute.name.as_str())
+            .collect::<Vec<_>>(),
+        ["header"]
+    );
+    assert_eq!(analysis.document().blocks().len(), 1);
+    assert_eq!(
+        analysis.document().blocks()[0].range().start().to_usize(),
+        source.find("Body").unwrap()
+    );
+}
+
+#[test]
 fn formatter_preserves_attribute_bytes_and_is_idempotent() {
     let source = include_str!("../../../fixtures/attributes/body-crlf.adoc");
     let analysis = analyze(source);
@@ -211,6 +290,28 @@ fn formatter_preserves_valid_lf_body_attribute_fixture() {
 
     assert_eq!(first.formatted, source);
     assert_eq!(second.formatted, source);
+}
+
+#[test]
+fn formatter_keeps_the_required_body_attribute_offset_when_blank_limit_is_zero() {
+    let source = include_str!("../../../fixtures/attributes/formatter-body-offset.adoc");
+    let before = analyze(source);
+    let formatted = format_analysis(
+        &before,
+        &FormatConfig {
+            max_consecutive_blank_lines: 0,
+            ..FormatConfig::default()
+        },
+    )
+    .expect("format");
+    let after = analyze(&formatted.formatted);
+
+    assert_eq!(formatted.formatted, source);
+    assert_eq!(
+        before.document_attribute_occurrences(),
+        after.document_attribute_occurrences()
+    );
+    assert_eq!(after.document_attribute_occurrences()[0].name, "foo");
 }
 
 fn analyze(source: &str) -> adocweave::Analysis {

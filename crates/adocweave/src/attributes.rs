@@ -22,6 +22,7 @@ pub struct DocumentAttributeOccurrence {
     pub name: String,
     pub raw_value: String,
     pub operation: DocumentAttributeOperation,
+    pub valid: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,10 +65,14 @@ pub(crate) fn parse_line(
     let value_start = absolute_start + 1 + delimiter + 1 + leading;
     let value_range = range(value_start, value_start + raw_value.len());
 
-    let valid_name = !name.is_empty()
+    let valid_name = name
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
+    let valid_set_separator = after.is_empty() || after.starts_with([' ', '\t']);
     let (operation, problem) = if !valid_name {
         (
             DocumentAttributeOperation::Set,
@@ -86,10 +91,20 @@ pub(crate) fn parse_line(
                 name: name.to_owned(),
             }),
         )
+    } else if !valid_set_separator {
+        (
+            DocumentAttributeOperation::Set,
+            Some(AttributeProblem {
+                kind: AttributeProblemKind::InvalidValue,
+                range: value_range,
+                name: name.to_owned(),
+            }),
+        )
     } else {
         (DocumentAttributeOperation::Set, None)
     };
 
+    let valid = problem.is_none();
     Some((
         DocumentAttributeOccurrence {
             range: full_range,
@@ -98,6 +113,7 @@ pub(crate) fn parse_line(
             name: name.to_owned(),
             raw_value: raw_value.to_owned(),
             operation,
+            valid,
         },
         problem,
     ))

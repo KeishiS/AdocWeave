@@ -1,0 +1,6 @@
+// leading comment
+
+// another comment
+:foo: bar
+
+Body

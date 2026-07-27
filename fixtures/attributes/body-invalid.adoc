@@ -4,5 +4,9 @@
 
 :bad name: value
 :bad.name: value
+:-bad: value
+:--: value
+:foo:value
+:CamelCase: ok
 :valid!: unexpected
 後の段落です。

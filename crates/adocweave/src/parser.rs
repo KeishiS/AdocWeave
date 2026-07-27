@@ -607,7 +607,11 @@ fn parse_block_sequence(
 
         let document_attribute_position = root.as_ref().is_some_and(|state| {
             state.attributes_open
-                || body_attribute_has_blank_offset(source_document, line_index, saw_content)
+                || body_attribute_has_blank_offset(
+                    source_document,
+                    line_index,
+                    saw_content || !state.attributes_open,
+                )
         });
         let recognition = recognize_line(
             content,
@@ -845,7 +849,10 @@ fn parse_block_sequence(
                 budget,
             )?;
             blocks.push(SyntaxNode::leaf(SyntaxKind::BlankLine, line.full_range()));
-            if root.as_ref().is_some_and(|state| state.attributes_open) {
+            if root
+                .as_ref()
+                .is_some_and(|state| state.attributes_open && state.header.range.is_some())
+            {
                 let root = root.as_mut().expect("root state exists");
                 root.attributes_open = false;
                 root.header.end = line.full_range().start();
@@ -1033,9 +1040,13 @@ fn parse_block_sequence(
             }));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         } else {
             paragraph_lines.push((line, content.to_owned()));
             saw_content = true;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         }
         cursor.commit(BlockRecognition::OneLine)?;
     }
@@ -1126,6 +1137,9 @@ fn body_attribute_has_blank_offset(
             .expect("line content has valid UTF-8 boundaries");
         if content.trim_matches([' ', '\t']).is_empty() {
             return true;
+        }
+        if content.starts_with("//") {
+            continue;
         }
         if crate::attributes::parse_line(
             content,
