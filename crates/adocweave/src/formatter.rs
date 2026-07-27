@@ -362,6 +362,51 @@ mod tests {
     }
 
     #[test]
+    fn formatter_preserves_implicit_and_explicit_table_header_semantics() {
+        let source = "\
+|===
+|Name |Value
+
+|alpha |one
+|===
+
+[%noheader]
+|===
+|Name |Value
+
+|alpha |one
+|===
+";
+        let before = parse(source).expect("parse source");
+        let formatted = format(source, &FormatConfig::default()).expect("format");
+        let after = parse(&formatted.formatted).expect("parse formatted");
+        assert_eq!(formatted.formatted, source);
+
+        let sections = |document: &crate::parser::ParsedDocument| {
+            document
+                .ast
+                .blocks()
+                .iter()
+                .filter_map(|block| match block {
+                    AstBlock::Delimited(crate::parser::DelimitedBlock {
+                        content: crate::parser::DelimitedContent::Table(table),
+                        ..
+                    }) => Some(table.rows[0].section),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(sections(&before), sections(&after));
+        assert_eq!(
+            sections(&after),
+            [
+                crate::table::TableSection::Header,
+                crate::table::TableSection::Body
+            ]
+        );
+    }
+
+    #[test]
     fn formatter_preserves_table_presentation_metadata_byte_for_byte() {
         let source = include_str!("../../../fixtures/format/table-presentation.adoc");
         let formatted = format(source, &FormatConfig::default()).expect("format");

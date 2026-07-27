@@ -1707,7 +1707,13 @@ fn parse_table(
         input.delimiter_range,
         input.metadata,
     );
-    let raw = crate::table::scan(input.value, input.content_range, input_spec);
+    let raw = crate::table::scan_with_metadata(
+        input.value,
+        input.content_range,
+        input_spec,
+        input.metadata,
+    );
+    let implicit_header_candidate = raw.implicit_header_candidate;
     table_problems.extend(raw.problems.iter().copied());
     let cell_count = raw
         .cells
@@ -1800,7 +1806,7 @@ fn parse_table(
         problems: table_problems,
     };
     crate::table::layout_rows(&mut table);
-    crate::table::configure(&mut table, input.metadata);
+    crate::table::configure(&mut table, input.metadata, implicit_header_candidate);
     let mut nested_syntax = Vec::new();
     for row in &mut table.rows {
         for cell in &mut row.cells {
@@ -3120,6 +3126,269 @@ mod tests {
         assert_eq!(tables[1].format, crate::table::TableFormat::Tsv);
         assert_eq!(tables[1].separator, '\t');
         assert_eq!(tables[2].rows[0].cells.len(), 3);
+    }
+
+    #[test]
+    fn tables_infer_header_from_the_first_two_physical_lines() {
+        let source = "\
+|===
+|Name |Value
+
+|alpha |one
+|===
+
+[format=csv]
+|===
+name,value
+
+alpha,one
+|===
+
+[format=dsv]
+|===
+name:value
+
+alpha:one
+|===
+
+[format=tsv]
+|===
+name\tvalue
+
+alpha\tone
+|===
+";
+        let parsed = parse(source).expect("parse");
+        let tables = parsed
+            .ast
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                AstBlock::Delimited(crate::parser::DelimitedBlock {
+                    content: DelimitedContent::Table(table),
+                    ..
+                }) => Some(table),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tables.len(), 4);
+        for table in tables {
+            assert_eq!(table.rows.len(), 2);
+            assert_eq!(table.rows[0].section, crate::table::TableSection::Header);
+            assert_eq!(table.rows[1].section, crate::table::TableSection::Body);
+        }
+    }
+
+    #[test]
+    fn explicit_table_header_options_override_automatic_inference() {
+        let source = "\
+[%noheader]
+|===
+|Name |Value
+
+|alpha |one
+|===
+
+[%header,cols=2]
+|===
+|Name
+|Value
+|alpha
+|one
+|===
+
+[cols=2]
+|===
+|Name
+|Value
+
+|alpha
+|one
+|===
+
+[%header%noheader]
+|===
+|Name |Value
+
+|alpha |one
+|===
+";
+        let parsed = parse(source).expect("parse");
+        let tables = parsed
+            .ast
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                AstBlock::Delimited(crate::parser::DelimitedBlock {
+                    content: DelimitedContent::Table(table),
+                    ..
+                }) => Some(table),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tables.len(), 4);
+        assert_eq!(tables[0].rows[0].section, crate::table::TableSection::Body);
+        assert_eq!(
+            tables[1].rows[0].section,
+            crate::table::TableSection::Header
+        );
+        assert_eq!(tables[2].rows[0].section, crate::table::TableSection::Body);
+        assert_eq!(
+            tables[3].rows[0].section,
+            crate::table::TableSection::Header
+        );
+    }
+
+    #[test]
+    fn table_header_inference_ignores_comments_and_later_wider_rows() {
+        let source = "\
+|===
+   // before the header
+|H1 |H2
+/// between the header and separator
+
+|a |b |c
+|===
+
+[format=csv]
+|===
+	// before the header
+h1,h2
+/// between the header and separator
+
+a,b
+|===
+";
+        let parsed = parse(source).expect("parse");
+        let tables = parsed
+            .ast
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                AstBlock::Delimited(crate::parser::DelimitedBlock {
+                    content: DelimitedContent::Table(table),
+                    ..
+                }) => Some(table),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables[0].columns.len(), 2);
+        assert_eq!(
+            tables[0].rows[0].section,
+            crate::table::TableSection::Header
+        );
+        assert_eq!(tables[0].rows[0].cells[0].raw, "H1");
+        assert_eq!(tables[0].rows[0].cells[1].raw, "H2");
+        assert_eq!(
+            tables[1].rows[0].section,
+            crate::table::TableSection::Header
+        );
+        assert_eq!(tables[1].rows[0].cells[0].raw, "h1");
+        assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
+    fn separated_table_blank_records_do_not_shift_later_rows() {
+        let source = "\
+[format=csv]
+|===
+name,value
+alpha,one
+
+beta,two
+|===
+";
+        let parsed = parse(source).expect("parse");
+        let table = parsed
+            .ast
+            .blocks()
+            .iter()
+            .find_map(|block| match block {
+                AstBlock::Delimited(crate::parser::DelimitedBlock {
+                    content: DelimitedContent::Table(table),
+                    ..
+                }) => Some(table),
+                _ => None,
+            })
+            .expect("table");
+        assert_eq!(table.rows.len(), 3);
+        assert_eq!(table.rows[2].cells[0].raw, "beta");
+        assert_eq!(table.rows[2].cells[1].raw, "two");
+    }
+
+    #[test]
+    fn noheader_keeps_standard_first_record_column_inference() {
+        let source = "\
+[%noheader,format=csv]
+|===
+h1,h2
+
+a,b,c
+|===
+";
+        let parsed = parse(source).expect("parse");
+        let table = parsed
+            .ast
+            .blocks()
+            .iter()
+            .find_map(|block| match block {
+                AstBlock::Delimited(crate::parser::DelimitedBlock {
+                    content: DelimitedContent::Table(table),
+                    ..
+                }) => Some(table),
+                _ => None,
+            })
+            .expect("table");
+        assert_eq!(table.columns.len(), 2);
+        assert_eq!(table.rows[0].section, crate::table::TableSection::Body);
+        assert_eq!(table.rows[0].cells[0].raw, "h1");
+        assert_eq!(table.rows[0].cells[1].raw, "h2");
+    }
+
+    #[test]
+    fn header_comment_handling_uses_the_effective_psv_column_style() {
+        let source = "\
+[cols=\"a,d\"]
+|===
+|H1 |H2
+// table comment
+
+|a |b
+|===
+
+[cols=\"d,a\"]
+|===
+|H1 |H2
+// AsciiDoc cell content
+
+|a |b
+|===
+";
+        let parsed = parse(source).expect("parse");
+        let tables = parsed
+            .ast
+            .blocks()
+            .iter()
+            .filter_map(|block| match block {
+                AstBlock::Delimited(crate::parser::DelimitedBlock {
+                    content: DelimitedContent::Table(table),
+                    ..
+                }) => Some(table),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tables.len(), 2);
+        assert_eq!(
+            tables[0].rows[0].section,
+            crate::table::TableSection::Header
+        );
+        assert_eq!(tables[0].rows[0].cells[1].raw, "H2");
+        assert_eq!(tables[1].rows[0].section, crate::table::TableSection::Body);
+        assert_eq!(
+            tables[1].rows[0].cells[1].raw,
+            "H2\n// AsciiDoc cell content"
+        );
     }
 
     #[test]

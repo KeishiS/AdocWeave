@@ -541,6 +541,35 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_table_header_candidate_recovers_in_both_syntax_modes() {
+        let source = "[format=csv]\n|===\nname,\"open\n\ncontinued\n|===\n";
+        for syntax_mode in [
+            crate::limits::SyntaxMode::Permissive,
+            crate::limits::SyntaxMode::Strict,
+        ] {
+            let analysis = analyze(
+                source,
+                &ParseOptions {
+                    syntax_mode,
+                    ..ParseOptions::default()
+                },
+            )
+            .expect("analysis recovers from an unclosed quoted cell");
+            let crate::parser::AstBlock::Delimited(block) = &analysis.ast().blocks()[0] else {
+                panic!("expected table");
+            };
+            let crate::parser::DelimitedContent::Table(table) = &block.content else {
+                panic!("expected typed table");
+            };
+            assert_eq!(table.rows[0].section, crate::table::TableSection::Body);
+            assert!(analysis.diagnostics().iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "invalid-table"
+                    && diagnostic.message == "unclosed quoted table cell"
+            }));
+        }
+    }
+
+    #[test]
     fn public_api_extracts_cross_references_without_resolving_them() {
         let parsed = analyze(
             "[[local]]\n== Local\n\n<<local>> xref:other.adoc#part[] xref:note:123#part[]",

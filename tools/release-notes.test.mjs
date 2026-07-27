@@ -9,8 +9,9 @@ test("release notes always contain the acceptance contract", () => {
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /sha256sum --check/);
-  assert.match(notes, /reorganizes the documentation/);
-  assert.match(notes, /public contracts are unchanged/);
+  assert.match(notes, /Constrained monospace/);
+  assert.match(notes, /infer a header/);
+  assert.match(notes, /Public JSON schema versions are unchanged/);
   assert.match(notes, /nix run github:KeishiS\/AdocWeave/);
   assert.match(notes, new RegExp(`unified package version: ${manifest.packageVersion}`));
   assert.match(notes, new RegExp(`Supported Rust toolchain: ${manifest.rustVersion}`));

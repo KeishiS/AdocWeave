@@ -1,5 +1,5 @@
 {
-  "packageVersion": "0.8.1",
+  "packageVersion": "0.9.0",
   "cases": [
     {
       "name": "release-lf",
@@ -60,6 +60,14 @@
       "compatibility": "supported-subset",
       "rationale": "二重マーカーは単語、CJKおよびemoji境界に依存せずstrong、emphasis、monospaceを表す",
       "contractImpact": "core-profile"
+    },
+    {
+      "name": "monospace-boundaries",
+      "sourceFile": "monospace-boundaries.adoc",
+      "expectedHtmlFile": "monospace-boundaries.html",
+      "compatibility": "supported-subset",
+      "rationale": "単一backtickは標準の語境界と開始punctuation境界に従い、二重backtickは単語、CJKおよびemoji境界に依存しない",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {
       "name": "multiline-inline-spans-crlf",
@@ -152,6 +160,14 @@
       "compatibility": "supported-subset",
       "rationale": "format別scannerとAsciiDoc cellのblock解析はnativeとWASMで同じsemantic treeとHTMLを生成する",
       "contractImpact": "core-profile,core-api,html,conformance"
+    },
+    {
+      "name": "automatic-table-headers",
+      "sourceFile": "automatic-table-headers.adoc",
+      "expectedHtmlFile": "automatic-table-headers.html",
+      "compatibility": "supported-subset",
+      "rationale": "先頭row直後の空行によるheader推論とnoheader抑止をPSV、CSV、DSVおよびTSVで同じsemanticへ確定する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {
       "name": "table-presentation-attributes",

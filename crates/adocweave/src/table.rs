@@ -186,6 +186,7 @@ pub(crate) struct RawTable {
     pub separator: char,
     pub content_range: TextRange,
     pub inferred_columns: usize,
+    pub implicit_header_candidate: bool,
     pub cells: Vec<RawCell>,
     pub problems: Vec<TableProblem>,
 }
@@ -314,36 +315,91 @@ fn resolve_input(
     (TableInputSpec { format, separator }, problems)
 }
 
+#[cfg(test)]
 pub(crate) fn scan(value: &str, range: TextRange, input: TableInputSpec) -> RawTable {
+    scan_with_psv_context(value, range, input, &[])
+}
+
+pub(crate) fn scan_with_metadata(
+    value: &str,
+    range: TextRange,
+    input: TableInputSpec,
+    metadata: &crate::parser::BlockMetadata,
+) -> RawTable {
+    let column_styles = metadata_column_styles(metadata);
+    scan_with_psv_context(value, range, input, &column_styles)
+}
+
+fn scan_with_psv_context(
+    value: &str,
+    range: TextRange,
+    input: TableInputSpec,
+    column_styles: &[TableCellStyle],
+) -> RawTable {
+    let implicit_header_layout = implicit_header_layout(value);
     match input.format {
-        TableFormat::Psv => scan_psv_with_separator(value, range, input.separator),
+        TableFormat::Psv => {
+            let mut table = scan_psv_with_separator(
+                value,
+                range,
+                input.separator,
+                &implicit_header_layout,
+                column_styles,
+            );
+            table.implicit_header_candidate =
+                table.implicit_header_candidate && first_psv_row_is_single_line(&table);
+            table
+        }
         TableFormat::Csv | TableFormat::Dsv | TableFormat::Tsv => {
-            scan_delimited(value, range, input)
+            scan_delimited(value, range, input, implicit_header_layout)
         }
     }
 }
 
 #[cfg(test)]
 pub(crate) fn scan_psv(value: &str, range: TextRange) -> RawTable {
-    scan_psv_with_separator(value, range, '|')
+    scan_psv_with_separator(value, range, '|', &ImplicitHeaderLayout::default(), &[])
 }
 
-fn scan_psv_with_separator(value: &str, range: TextRange, separator: char) -> RawTable {
+fn scan_psv_with_separator(
+    value: &str,
+    range: TextRange,
+    separator: char,
+    header_layout: &ImplicitHeaderLayout,
+    column_styles: &[TableCellStyle],
+) -> RawTable {
     let mut cells = Vec::<RawCell>::new();
     let mut offset = 0;
-    let mut inferred_columns = 0;
+    let mut maximum_columns = 0;
+    let mut first_record_columns = 0;
+    let mut last_cell_start_column = 0_usize;
+    let mut next_cell_start_column = 0_usize;
+    let mut ignored_comment_lines = header_layout.ignored_comment_lines.iter().peekable();
     for line_with_ending in value.split_inclusive('\n') {
         let line = line_with_ending
             .strip_suffix('\n')
             .unwrap_or(line_with_ending);
         let line = line.strip_suffix('\r').unwrap_or(line);
+        if ignored_comment_lines.next_if_eq(&&offset).is_some() {
+            let continues_asciidoc_cell = cells.last().is_some_and(|cell| {
+                cell_uses_asciidoc_style(cell, last_cell_start_column, column_styles)
+            });
+            if !continues_asciidoc_cell {
+                offset += line_with_ending.len();
+                continue;
+            }
+        }
         let markers = marker_positions(line, separator);
-        inferred_columns = inferred_columns.max(
-            markers
-                .iter()
-                .map(|(start, separator)| parse_cell_spec(&line[*start..*separator]).duplication)
-                .sum::<u32>() as usize,
-        );
+        let line_columns = markers
+            .iter()
+            .map(|(start, separator)| {
+                parse_cell_spec(&line[*start..*separator]).duplication as usize
+            })
+            .fold(0_usize, usize::saturating_add);
+        maximum_columns = maximum_columns.max(line_columns);
+        if offset == header_layout.first_record_start.unwrap_or(usize::MAX) {
+            first_record_columns = line_columns;
+        }
         if markers.is_empty() {
             if let Some(previous) = cells.last_mut() {
                 previous.raw.push('\n');
@@ -366,6 +422,14 @@ fn scan_psv_with_separator(value: &str, range: TextRange, separator: char) -> Ra
             let raw_end = line[..end].trim_end_matches([' ', '\t']).len();
             let raw = &line[content_start.min(raw_end)..raw_end];
             let spec = parse_cell_spec(&line[marker_start..pipe]);
+            last_cell_start_column = next_cell_start_column;
+            if !column_styles.is_empty() {
+                let contribution = (spec.column_span as usize % column_styles.len())
+                    .saturating_mul(spec.duplication as usize % column_styles.len())
+                    % column_styles.len();
+                next_cell_start_column =
+                    (next_cell_start_column + contribution) % column_styles.len();
+            }
             let marker_range = absolute_range(range, offset + marker_start, offset + pipe + 1);
             let content_range = absolute_range(range, offset + content_start, offset + raw_end);
             cells.push(RawCell {
@@ -403,10 +467,106 @@ fn scan_psv_with_separator(value: &str, range: TextRange, separator: char) -> Ra
         format: TableFormat::Psv,
         separator,
         content_range: range,
-        inferred_columns: inferred_columns.max(1),
+        inferred_columns: if header_layout.candidate && first_record_columns != 0 {
+            first_record_columns
+        } else {
+            maximum_columns
+        }
+        .max(1),
+        implicit_header_candidate: header_layout.candidate && first_record_columns != 0,
         cells,
         problems: Vec::new(),
     }
+}
+
+#[derive(Default)]
+struct ImplicitHeaderLayout {
+    candidate: bool,
+    first_record_start: Option<usize>,
+    ignored_comment_lines: Vec<usize>,
+}
+
+fn implicit_header_layout(value: &str) -> ImplicitHeaderLayout {
+    let mut layout = ImplicitHeaderLayout::default();
+    let mut offset = 0;
+    for line_with_ending in value.split_inclusive('\n') {
+        let line = line_with_ending
+            .trim_end_matches('\n')
+            .trim_end_matches('\r');
+        if is_line_comment(line) {
+            layout.ignored_comment_lines.push(offset);
+        } else if layout.first_record_start.is_none() {
+            if line.is_empty() {
+                return ImplicitHeaderLayout::default();
+            }
+            layout.first_record_start = Some(offset);
+        } else {
+            if line.is_empty() {
+                layout.candidate = true;
+                return layout;
+            }
+            return ImplicitHeaderLayout::default();
+        }
+        offset += line_with_ending.len();
+    }
+    ImplicitHeaderLayout::default()
+}
+
+fn is_line_comment(line: &str) -> bool {
+    line.trim_start_matches([' ', '\t']).starts_with("//")
+}
+
+fn metadata_column_styles(metadata: &crate::parser::BlockMetadata) -> Vec<TableCellStyle> {
+    metadata
+        .attributes
+        .iter()
+        .rev()
+        .find(|attribute| attribute.name.as_deref() == Some("cols"))
+        .map(|attribute| attribute.value.trim_matches('"'))
+        .map(|columns| {
+            columns
+                .split(',')
+                .filter(|value| !value.trim().is_empty())
+                .flat_map(|value| expand_column(value.trim()))
+                .map(|column| column.style)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn cell_uses_asciidoc_style(
+    cell: &RawCell,
+    start_column: usize,
+    column_styles: &[TableCellStyle],
+) -> bool {
+    if cell.style_is_explicit {
+        return cell.style == TableCellStyle::AsciiDoc;
+    }
+    if column_styles.is_empty() {
+        return false;
+    }
+    let checks = (cell.duplication as usize).min(column_styles.len());
+    (0..checks).any(|duplicate| {
+        let column = start_column
+            .saturating_add(duplicate.saturating_mul(cell.column_span as usize))
+            % column_styles.len();
+        column_styles[column] == TableCellStyle::AsciiDoc
+    })
+}
+
+fn first_psv_row_is_single_line(table: &RawTable) -> bool {
+    let mut columns = 0_usize;
+    for cell in &table.cells {
+        if cell.raw.contains('\n') {
+            return false;
+        }
+        columns = columns
+            .saturating_add((cell.column_span as usize).saturating_mul(cell.duplication as usize));
+        if columns >= table.inferred_columns {
+            return true;
+        }
+    }
+    false
 }
 
 fn marker_positions(line: &str, separator: char) -> Vec<(usize, usize)> {
@@ -501,7 +661,13 @@ fn parse_cell_spec(value: &str) -> CellSpec {
     }
 }
 
-fn scan_delimited(value: &str, range: TextRange, input: TableInputSpec) -> RawTable {
+fn scan_delimited(
+    value: &str,
+    range: TextRange,
+    input: TableInputSpec,
+    header_layout: ImplicitHeaderLayout,
+) -> RawTable {
+    let mut implicit_header_candidate = header_layout.candidate;
     let mut cells = Vec::new();
     let mut problems = Vec::new();
     let mut field_start = 0;
@@ -509,10 +675,27 @@ fn scan_delimited(value: &str, range: TextRange, input: TableInputSpec) -> RawTa
     let mut raw = String::new();
     let mut quoted = false;
     let mut quote_closed = false;
-    let mut columns = 0_usize;
+    let mut maximum_columns = 0_usize;
+    let mut first_record_columns = 0_usize;
     let mut row_columns = 0_usize;
+    let mut completed_rows = 0_usize;
+    let mut ignored_comment_lines = header_layout.ignored_comment_lines.iter().peekable();
     let mut chars = value.char_indices().peekable();
     while let Some((offset, character)) = chars.next() {
+        if !quoted && ignored_comment_lines.next_if_eq(&&offset).is_some() {
+            let mut next_line = value.len();
+            for (comment_offset, comment_character) in chars.by_ref() {
+                if comment_character == '\n' {
+                    next_line = comment_offset + comment_character.len_utf8();
+                    break;
+                }
+            }
+            field_start = next_line;
+            content_start = next_line;
+            raw.clear();
+            quote_closed = false;
+            continue;
+        }
         if quoted {
             if character == '"' {
                 if chars.peek().is_some_and(|(_, next)| *next == '"') {
@@ -524,6 +707,9 @@ fn scan_delimited(value: &str, range: TextRange, input: TableInputSpec) -> RawTa
                 }
             } else {
                 raw.push(character);
+                if character == '\n' && completed_rows == 0 {
+                    implicit_header_candidate = false;
+                }
             }
             continue;
         }
@@ -534,6 +720,17 @@ fn scan_delimited(value: &str, range: TextRange, input: TableInputSpec) -> RawTa
         }
         let row_end = character == '\n';
         if character == input.separator || row_end {
+            if row_end
+                && row_columns == 0
+                && raw.trim_end_matches('\r').is_empty()
+                && field_start == content_start
+            {
+                field_start = offset + character.len_utf8();
+                content_start = field_start;
+                raw.clear();
+                quote_closed = false;
+                continue;
+            }
             push_delimited_cell(
                 &mut cells,
                 range,
@@ -544,8 +741,12 @@ fn scan_delimited(value: &str, range: TextRange, input: TableInputSpec) -> RawTa
             );
             row_columns += 1;
             if row_end {
-                columns = columns.max(row_columns);
+                if completed_rows == 0 {
+                    first_record_columns = row_columns;
+                }
+                maximum_columns = maximum_columns.max(row_columns);
                 row_columns = 0;
+                completed_rows += 1;
             }
             field_start = offset + character.len_utf8();
             content_start = field_start;
@@ -577,7 +778,13 @@ fn scan_delimited(value: &str, range: TextRange, input: TableInputSpec) -> RawTa
         format: input.format,
         separator: input.separator,
         content_range: range,
-        inferred_columns: columns.max(row_columns).max(1),
+        inferred_columns: if implicit_header_candidate && first_record_columns != 0 {
+            first_record_columns
+        } else {
+            maximum_columns.max(row_columns)
+        }
+        .max(1),
+        implicit_header_candidate,
         cells,
         problems,
     }
@@ -628,7 +835,11 @@ fn absolute_range(parent: TextRange, start: usize, end: usize) -> TextRange {
     .expect("table range is ordered")
 }
 
-pub(crate) fn configure(table: &mut Table, metadata: &crate::parser::BlockMetadata) {
+pub(crate) fn configure(
+    table: &mut Table,
+    metadata: &crate::parser::BlockMetadata,
+    implicit_header_candidate: bool,
+) {
     table.presentation = resolve_presentation(metadata, &mut table.problems);
     let cols = metadata
         .attributes
@@ -664,7 +875,9 @@ pub(crate) fn configure(table: &mut Table, metadata: &crate::parser::BlockMetada
                         .any(|option| option.trim() == name)
             })
     };
-    if has_option("header")
+    let explicit_header = has_option("header");
+    let explicit_noheader = has_option("noheader");
+    if (explicit_header || (!explicit_noheader && implicit_header_candidate))
         && let Some(row) = table.rows.first_mut()
     {
         row.section = TableSection::Header;
@@ -961,6 +1174,141 @@ mod tests {
     }
 
     #[test]
+    fn separated_scanner_skips_blank_records_without_shifting_later_rows() {
+        let source = "name,value\r\n\r\nalpha,one\r\n";
+        let table = scan(
+            source,
+            range(source),
+            TableInputSpec {
+                format: TableFormat::Csv,
+                separator: ',',
+            },
+        );
+        assert_eq!(table.inferred_columns, 2);
+        assert_eq!(table.cells.len(), 4);
+        assert_eq!(table.cells[2].raw, "alpha");
+        assert!(table.implicit_header_candidate);
+
+        let multiline = "name,\"line one\n\nline two\"\n\nalpha,one\n";
+        let table = scan(
+            multiline,
+            range(multiline),
+            TableInputSpec {
+                format: TableFormat::Csv,
+                separator: ',',
+            },
+        );
+        assert!(!table.implicit_header_candidate);
+        assert_eq!(table.cells[1].raw, "line one\n\nline two");
+
+        let middle_blank = "name,value\nalpha,one\n\nbeta,two\n";
+        let table = scan(
+            middle_blank,
+            range(middle_blank),
+            TableInputSpec {
+                format: TableFormat::Csv,
+                separator: ',',
+            },
+        );
+        assert!(!table.implicit_header_candidate);
+        assert_eq!(table.cells.len(), 6);
+        assert_eq!(table.cells[4].raw, "beta");
+        assert_eq!(table.cells[5].raw, "two");
+    }
+
+    #[test]
+    fn scanners_use_the_first_record_for_the_implicit_column_count() {
+        let psv = "|h1 |h2\r\n\r\n|a |b |c";
+        let table = scan(
+            psv,
+            range(psv),
+            TableInputSpec {
+                format: TableFormat::Psv,
+                separator: '|',
+            },
+        );
+        assert_eq!(table.inferred_columns, 2);
+        assert!(table.implicit_header_candidate);
+
+        let csv = "h1,h2\n\na,b,c\n";
+        let table = scan(
+            csv,
+            range(csv),
+            TableInputSpec {
+                format: TableFormat::Csv,
+                separator: ',',
+            },
+        );
+        assert_eq!(table.inferred_columns, 2);
+        assert!(table.implicit_header_candidate);
+
+        let ordinary = "a,b\nc,d,e\n";
+        let table = scan(
+            ordinary,
+            range(ordinary),
+            TableInputSpec {
+                format: TableFormat::Csv,
+                separator: ',',
+            },
+        );
+        assert_eq!(table.inferred_columns, 3);
+        assert!(!table.implicit_header_candidate);
+    }
+
+    #[test]
+    fn header_comments_match_lossless_line_comment_classification() {
+        for source in [
+            "   // leading\n|h1 |h2\n/// separator comment\n\n|a |b\n",
+            "\t// leading\r\n|h1 |h2\r\n   /// separator comment\r\n\r\n|a |b\r\n",
+        ] {
+            let table = scan(
+                source,
+                range(source),
+                TableInputSpec {
+                    format: TableFormat::Psv,
+                    separator: '|',
+                },
+            );
+            assert!(table.implicit_header_candidate, "{source:?}");
+            assert_eq!(table.cells[0].raw, "h1");
+            assert_eq!(table.cells[1].raw, "h2");
+        }
+
+        let asciidoc_cell = "a|....\n// literal must remain\n\n....\n";
+        let table = scan(
+            asciidoc_cell,
+            range(asciidoc_cell),
+            TableInputSpec {
+                format: TableFormat::Psv,
+                separator: '|',
+            },
+        );
+        assert!(!table.implicit_header_candidate);
+        assert_eq!(table.cells[0].raw, "....\n// literal must remain\n\n....");
+    }
+
+    #[test]
+    fn unclosed_first_delimited_record_never_becomes_an_implicit_header() {
+        let source = "name,\"open\n\ncontinued";
+        let table = scan(
+            source,
+            range(source),
+            TableInputSpec {
+                format: TableFormat::Csv,
+                separator: ',',
+            },
+        );
+        assert!(!table.implicit_header_candidate);
+        assert_eq!(
+            table.problems,
+            [TableProblem {
+                kind: TableProblemKind::UnclosedQuotedCell,
+                range: absolute_range(range(source), 5, source.len()),
+            }]
+        );
+    }
+
+    #[test]
     fn table_input_spec_resolves_delimiter_format_and_separator_precedence() {
         let range = range("[format=tsv,separator=;]");
         let metadata = crate::parser::BlockMetadata {
@@ -1045,6 +1393,23 @@ mod tests {
         let table = scan_psv(source, range(source));
         assert_eq!(table.cells[0].duplication, 3);
         assert_eq!(table.cells[1].duplication, 1);
+    }
+
+    #[test]
+    fn asciidoc_style_lookup_is_bounded_for_large_duplication() {
+        let source = "4294967295*|H\n// cell content\n\n|body";
+        let table = scan_with_psv_context(
+            source,
+            range(source),
+            TableInputSpec {
+                format: TableFormat::Psv,
+                separator: '|',
+            },
+            &[TableCellStyle::AsciiDoc, TableCellStyle::Default],
+        );
+        assert!(!table.implicit_header_candidate);
+        assert_eq!(table.cells[0].duplication, u32::MAX);
+        assert_eq!(table.cells[0].raw, "H\n// cell content");
     }
 
     #[test]

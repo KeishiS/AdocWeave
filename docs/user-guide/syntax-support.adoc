@@ -150,6 +150,9 @@ caption、`frame`、`grid`、`stripes`、1から100までの百分率`width`お�
 |等幅（pass:[`text`]）
 |対応
 |constrainedな単一マーカーとunconstrainedな二重マーカーを認識し、内容を不透明として扱います。
+単語やCJK文字の内部、単一マーカーの外側に`_`がある位置、または`:`、`;`、`}`の直後から
+等幅を開始する位置では二重マーカーを使用します。
+二重マーカーは絵文字を含む外側の文字にかかわらず認識します。
 
 |強調と斜体の入れ子
 |対応
@@ -254,7 +257,8 @@ manpageのname／section／purpose構造に対応します。
 |Table
 |対応
 |PSV／CSV／DSV／TSV、separator、quoted multiline cell、duplication、列指定、header／footer、
-cell span、cell styleおよびPSVのAsciiDoc block cellに対応しています。
+cell span、cell styleおよびPSVのAsciiDoc block cellに対応しています。先頭rowを単一物理行に置き、
+直後に空行を置く形式でもheaderを推論します。`header`は明示的に有効化し、`noheader`は推論を抑止します。
 
 |Inline macro
 |対応

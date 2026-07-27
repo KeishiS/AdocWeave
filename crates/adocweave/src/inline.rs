@@ -1798,14 +1798,21 @@ fn is_open_boundary(value: &str, offset: usize, marker: char) -> bool {
     let previous = value[..offset].chars().next_back();
     let next = value[offset + marker.len_utf8()..].chars().next();
     next.is_some_and(|character| !character.is_whitespace() && character != marker)
-        && previous.is_none_or(|character| !character.is_alphanumeric())
+        && previous.is_none_or(|character| {
+            !is_constrained_word_character(marker, character)
+                && !(marker == '`' && matches!(character, ':' | ';' | '}'))
+        })
 }
 
 fn is_close_boundary(value: &str, offset: usize, marker: char) -> bool {
     let previous = value[..offset].chars().next_back();
     let next = value[offset + marker.len_utf8()..].chars().next();
     previous.is_some_and(|character| !character.is_whitespace() && character != marker)
-        && next.is_none_or(|character| !character.is_alphanumeric())
+        && next.is_none_or(|character| !is_constrained_word_character(marker, character))
+}
+
+fn is_constrained_word_character(marker: char, character: char) -> bool {
+    character.is_alphanumeric() || (marker == '`' && character == '_')
 }
 
 fn push_text(
@@ -2349,6 +2356,90 @@ mod tests {
                 .iter()
                 .all(|inline| matches!(inline, Inline::Text(_)))
         );
+        assert!(output.problems.is_empty());
+    }
+
+    #[test]
+    fn constrained_monospace_rejects_standard_word_and_opening_boundaries() {
+        for source in [
+            "snake_`code`",
+            "key:`code`",
+            "key;`code`",
+            "x}`code`",
+            "日本`code`",
+            "１`code`",
+        ] {
+            let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+            assert!(
+                output
+                    .inlines
+                    .iter()
+                    .all(|inline| matches!(inline, Inline::Text(_))),
+                "{source:?} unexpectedly contained formatted inline content"
+            );
+            assert!(output.problems.is_empty(), "{source:?}");
+        }
+
+        let output = parse(
+            "`code`_tail",
+            range(0, "`code`_tail".len()),
+            InlineParseConfig::default(),
+        );
+        assert!(
+            output
+                .inlines
+                .iter()
+                .all(|inline| matches!(inline, Inline::Text(_)))
+        );
+        assert_eq!(output.problems.len(), 2);
+        assert_eq!(
+            output
+                .problems
+                .iter()
+                .map(|problem| (problem.kind, problem.range))
+                .collect::<Vec<_>>(),
+            [
+                (InlineProblemKind::UnclosedMonospace, range(0, 1)),
+                (InlineProblemKind::UnclosedEmphasis, range(6, 7)),
+            ]
+        );
+
+        let output = parse(
+            "`code`日本",
+            range(0, "`code`日本".len()),
+            InlineParseConfig::default(),
+        );
+        assert!(
+            output
+                .inlines
+                .iter()
+                .all(|inline| matches!(inline, Inline::Text(_)))
+        );
+        assert_eq!(output.problems.len(), 1);
+        assert_eq!(
+            (output.problems[0].kind, output.problems[0].range),
+            (InlineProblemKind::UnclosedMonospace, range(0, 1))
+        );
+    }
+
+    #[test]
+    fn constrained_monospace_accepts_punctuation_and_unconstrained_ignores_boundaries() {
+        let source =
+            "key-`code` snake_``under`` key:``colon`` x}``brace`` 日本``和文``日本 😀``emoji``😀";
+        let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+        let values = output
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Literal {
+                    kind: InlineLiteralKind::Monospace,
+                    value,
+                    ..
+                } => Some(value.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(values, ["code", "under", "colon", "brace", "和文", "emoji"]);
         assert!(output.problems.is_empty());
     }
 

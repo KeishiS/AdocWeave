@@ -1,0 +1,42 @@
+|===
+|Name |Value
+
+|alpha |one
+|===
+
+[%noheader]
+|===
+|Name |Value
+
+|alpha |one
+|===
+
+[format=csv]
+|===
+name,value
+
+alpha,one
+|===
+
+[format=dsv]
+|===
+name:value
+
+alpha:one
+|===
+
+[format=tsv]
+|===
+name	value
+
+alpha	one
+|===
+
+[cols="1,1"]
+|===
+|Name
+|Value
+
+|alpha
+|one
+|===

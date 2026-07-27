@@ -1,5 +1,5 @@
 = インライン等幅書式の境界規則
-:status: planned
+:status: completed
 :depends-on: 154
 
 == 目的

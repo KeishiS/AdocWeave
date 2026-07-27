@@ -1173,6 +1173,17 @@ mod tests {
     }
 
     #[test]
+    fn table_lint_reports_an_unclosed_quoted_header_candidate() {
+        let source = "[format=csv]\n|===\nname,\"open\n\ncontinued\n|===\n";
+        let diagnostics = lint(source, &LintConfig::default()).expect("valid source");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "invalid-table"
+                && diagnostic.message == "unclosed quoted table cell"
+        }));
+    }
+
+    #[test]
     fn strong_lint_reports_unclosed_span() {
         let diagnostics = lint("*open text", &LintConfig::default()).expect("valid source");
 

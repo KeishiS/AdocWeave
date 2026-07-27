@@ -35,7 +35,8 @@ AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としま�
 
 |表
 |PSV／CSV／DSV／TSVと対応する表示属性を扱います。AsciiDoc style cellのblock解析はPSVを対象とし、
-自動header推論には対応しません。
+開始delimiter直後の単一物理行と後続空行によるheader推論に対応します。複数物理行の先頭rowは
+`header` optionで明示します。
 
 |相互参照とresource
 |文書間xrefとmediaの実在確認、取得および権限検査を行わず、利用側アプリが解決結果を渡します。
