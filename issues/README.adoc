@@ -390,7 +390,7 @@ LSP 3.18を固定revisionで監査し、client capability、workspace通知購�
 MediaのMIME type検証、video posterの独立resource解決およびWASM resource query productを
 破壊的な公開契約変更としてminor releaseで配布する。
 
-* xref:175-v0-10-0-release-readiness.adoc[175: v0.10.0 release readiness]（計画）
+* xref:175-v0-10-0-release-readiness.adoc[175: v0.10.0 release readiness]（完了）
 
 === M49: 文書参照の完全性
 

@@ -1,5 +1,5 @@
 = v0.10.0 release readiness
-:status: planned
+:status: completed
 :depends-on: 165
 
 == 目的
@@ -27,5 +27,17 @@ mainの完全candidate成功commitへstable tagを一度だけ付ける。
 
 == 受け入れ結果
 
-公開後にtag commit、candidate run、publication run、Release URL、asset集合、checksumおよびprovenanceの
-検証結果を記録する。
+`v0.10.0`は、mainの`63fbf4c66cf371f7345441498df320956013a79e`へ付与した。
+https://github.com/KeishiS/AdocWeave/actions/runs/30239983039[main candidate]では、
+両Linux architectureのarchive build、native smoke、candidate metadata検証およびinstallation E2Eが成功した。
+https://github.com/KeishiS/AdocWeave/actions/runs/30240567118[publication run]は同じcandidateを再利用し、
+https://github.com/KeishiS/AdocWeave/releases/tag/v0.10.0[GitHub Release]を公開した。
+
+公開した9 assetは、CLIとLanguage Serverの2 architecture分、browser package、Zed拡張、
+distribution manifest、SPDX SBOMおよび`sha256.sum`である。公開assetを再取得し、次の検証が成功した。
+
+* `sha256.sum`による8 assetのchecksum検証
+* distribution manifestとcommit `63fbf4c66cf371f7345441498df320956013a79e`の整合性検証
+* 9 assetすべてのGitHub artifact attestation検証
+* x86_64公開archiveだけを使ったCLI、Language Server、browser packageおよびZed拡張のinstallation E2E
+* 公開tag `v0.10.0`を指定したNix flakeのbuildと`packageVersion`確認
