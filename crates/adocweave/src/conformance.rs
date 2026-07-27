@@ -53,6 +53,7 @@ pub struct ProductSet {
     pub canonical_ast: bool,
     pub html: bool,
     pub attribute_occurrences: bool,
+    pub resource_queries: bool,
     pub diagnostics: bool,
     pub symbols: bool,
     pub projection: bool,
@@ -65,6 +66,7 @@ impl ProductSet {
             canonical_ast: true,
             html: true,
             attribute_occurrences: true,
+            resource_queries: true,
             diagnostics: true,
             symbols: true,
             projection: true,
@@ -78,6 +80,7 @@ impl ProductSet {
             canonical_ast: false,
             html: true,
             attribute_occurrences: false,
+            resource_queries: true,
             diagnostics: true,
             symbols: false,
             projection: true,
@@ -97,6 +100,8 @@ pub struct DocumentProducts {
     pub syntax: Option<String>,
     pub canonical_ast: Option<String>,
     pub html: Option<String>,
+    pub attribute_occurrences: Option<Vec<crate::attributes::DocumentAttributeOccurrence>>,
+    pub resource_queries: Option<Vec<crate::resource::ResourceQuery>>,
     pub diagnostics_json: Option<String>,
     pub render_diagnostics_json: Option<String>,
     pub symbols_json: Option<String>,
@@ -117,6 +122,12 @@ pub fn products(
         canonical_ast: requested
             .canonical_ast
             .then(|| canonical_ast(analysis.ast())),
+        attribute_occurrences: requested
+            .attribute_occurrences
+            .then(|| analysis.document_attribute_occurrences().to_vec()),
+        resource_queries: requested
+            .resource_queries
+            .then(|| analysis.resource_queries()),
         diagnostics_json: requested
             .diagnostics
             .then(|| render_diagnostics_json(analysis.diagnostics())),

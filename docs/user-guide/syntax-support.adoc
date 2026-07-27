@@ -198,7 +198,10 @@ caption、`frame`、`grid`、`stripes`、1から100までの百分率`width`お�
 inline／block image、icon、audioおよびvideoを共通macro modelで扱います。footnoteの番号・再利用・back reference、
 bibliography entry／参照edgeおよび階層index catalogに対応します。UI macroは`render_ui_macros`を有効にした場合だけ
 専用HTMLを生成し、無効時も表示文字列を保持します。欠落・重複したcatalog定義と空index termは
-`invalid-catalog`として診断します。
+`invalid-catalog`として診断します。Mediaはhostが解決したURLとMIME typeを再検証し、image／iconには
+`image/*`、audioには`audio/*`、videoには`video/*`だけを使用します。Videoの`poster`は独立したimage resourceとして
+解決します。Imageの`alt`、寸法、title、iconのalt／title、audioのtitle、videoの寸法、poster、titleに対応します。
+Mediaのlink化、icon set固有のHTML、autoplay、loop、mutedおよびpreloadには対応していません。
 
 |Unconstrained書式（`**text**`、`__text__`、二重バッククォート）
 |対応

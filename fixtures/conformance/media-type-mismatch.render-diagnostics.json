@@ -1,0 +1,14 @@
+[
+  {
+    "id": "resource-media-type-mismatch@6:17",
+    "code": "resource-media-type-mismatch",
+    "severity": "warning",
+    "message": "resolved resource media type does not match the macro",
+    "range": {
+      "start": 6,
+      "end": 17
+    },
+    "related": [],
+    "fixes": []
+  }
+]

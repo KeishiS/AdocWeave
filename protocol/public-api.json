@@ -1,12 +1,13 @@
 {
-  "schemaVersion": 1,
-  "packageVersion": "0.9.0",
+  "schemaVersion": 2,
+  "packageVersion": "0.10.0",
   "identityField": "packageVersion",
   "products": [
     { "json": "syntax", "rust": "syntax" },
     { "json": "canonicalAst", "rust": "canonical_ast" },
     { "json": "html", "rust": "html" },
     { "json": "attributeOccurrences", "rust": "attribute_occurrences" },
+    { "json": "resourceQueries", "rust": "resource_queries" },
     { "json": "diagnostics", "rust": "diagnostics" },
     { "json": "symbols", "rust": "symbols" },
     { "json": "projection", "rust": "projection" }

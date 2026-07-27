@@ -141,8 +141,8 @@ fn convert() -> Result<String, ParseError> {
 `packageVersion`、`sourceId`、文書version、generation、source、必要な出力および設定を渡します。
 package versionが一致しない要求や未知のfieldは拒否します。versionとgenerationは`u32`の範囲に制限します。
 
-出力はsyntax tree、AST、HTML、文書属性の出現箇所、診断、symbolおよび構造情報から選択できます。
-省略時はHTML、診断および構造情報を返します。設定はnativeの`ParseOptions`、`RenderPolicy`および
+出力はsyntax tree、AST、HTML、文書属性の出現箇所、resource query、診断、symbolおよび構造情報から選択できます。
+省略時はHTML、resource query、診断および構造情報を返します。設定はnativeの`ParseOptions`、`RenderPolicy`および
 `RenderInputs`に対応し、省略したfieldにはコアの既定値を使用します。参照とresourceのJSON表現および
 安全性の規則はxref:server-execution.adoc#render-inputs[変換入力]を基準とします。
 

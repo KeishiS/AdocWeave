@@ -40,6 +40,8 @@ AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としま�
 
 |相互参照とresource
 |文書間xrefとmediaの実在確認、取得および権限検査を行わず、利用側アプリが解決結果を渡します。
+Mediaのactive要素にはmacro種別と一致するMIME typeを必須とし、video posterも独立したimage resourceとして
+解決します。Mediaのlink化とicon set固有の表示には対応していません。
 
 |Preprocessor
 |利用側アプリが渡す不変resource snapshotだけを展開します。wildcardとURI転送には対応しません。

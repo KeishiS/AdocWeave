@@ -71,7 +71,7 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
     let analysis = Engine::new(ParseOptions::default())
         .analyze("image:asset.png[safe]")
         .expect("analysis");
-    let range = analysis.resources()[0].range;
+    let range = analysis.resources()[0].range();
     let output = render_with_inputs(
         analysis.document(),
         &RenderPolicy::default(),
@@ -80,7 +80,7 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
             vec![ResolvedResource::resolved(
                 range,
                 "javascript:alert(1)",
-                Some("image/png".to_owned()),
+                "image/png".parse().expect("media type"),
                 Some(42),
             )],
         ),
@@ -88,6 +88,54 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
 
     assert_eq!(output.html, "<p>safe</p>\n");
     assert!(!output.html.contains("<img"));
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme")
+    );
+}
+
+#[test]
+fn hostile_video_poster_is_omitted_without_disabling_safe_video() {
+    let analysis = Engine::new(ParseOptions::default())
+        .analyze("video:demo.mp4[Demo,poster=poster.jpg]")
+        .expect("analysis");
+    let primary = analysis
+        .resources()
+        .iter()
+        .find(|resource| resource.purpose() == adocweave::resolution::ResourcePurpose::Video)
+        .expect("primary");
+    let poster = analysis
+        .resources()
+        .iter()
+        .find(|resource| resource.purpose() == adocweave::resolution::ResourcePurpose::VideoPoster)
+        .expect("poster");
+    let output = render_with_inputs(
+        analysis.document(),
+        &RenderPolicy::default(),
+        &RenderInputs::new(
+            vec![],
+            vec![
+                ResolvedResource::resolved(
+                    primary.range(),
+                    "https://cdn.example/demo.mp4",
+                    "video/mp4".parse().expect("media type"),
+                    Some(42),
+                ),
+                ResolvedResource::resolved(
+                    poster.range(),
+                    "javascript:alert(1)",
+                    "image/jpeg".parse().expect("media type"),
+                    Some(42),
+                ),
+            ],
+        ),
+    );
+
+    assert!(output.html.contains("<video "));
+    assert!(!output.html.contains(" poster="));
+    assert!(!output.html.contains("javascript"));
     assert!(
         output
             .diagnostics

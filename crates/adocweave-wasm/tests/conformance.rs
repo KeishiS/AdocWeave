@@ -60,6 +60,10 @@ fn native_adapter_accepts_every_shared_conformance_case() {
         }
         for (field, actual) in [
             ("expectedDiagnosticsFile", &response.diagnostics),
+            (
+                "expectedRenderDiagnosticsFile",
+                &response.render_diagnostics,
+            ),
             ("expectedProjectionFile", &response.projection),
             ("expectedSymbolsFile", &response.symbols),
         ] {
@@ -105,6 +109,7 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
             "canonicalAst": true,
             "html": true,
             "attributeOccurrences": true,
+            "resourceQueries": true,
             "diagnostics": true,
             "symbols": true,
             "projection": true,

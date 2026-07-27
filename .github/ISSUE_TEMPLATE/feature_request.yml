@@ -31,6 +31,29 @@ body:
     validations:
       required: true
 
+  - type: textarea
+    id: current-output
+    attributes:
+      label: 現在の動作・結果
+      description: 具体的な入力や操作を挙げ、それに対する現在の動作と結果を記載してください。
+      placeholder: |
+        入力または操作:
+        現在の動作:
+        現在の出力または結果:
+    validations:
+      required: true
+
+  - type: textarea
+    id: ideal-output
+    attributes:
+      label: 期待する動作・結果
+      description: 同じ入力や操作に対して期待する動作と結果を、具体例で記載してください。
+      placeholder: |
+        期待する動作:
+        期待する出力または結果:
+    validations:
+      required: true
+
   - type: dropdown
     id: component
     attributes:

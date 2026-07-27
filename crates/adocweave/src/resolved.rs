@@ -29,9 +29,9 @@ impl DocumentFacts {
             }
             crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(node)) => {
                 facts.macros.push(node.clone());
-                if let Some(resource) = crate::resource::ResourceReference::from_macro(node) {
-                    facts.resources.push(resource);
-                }
+                facts
+                    .resources
+                    .extend(crate::resource::ResourceReference::from_macro(node));
             }
             _ => {}
         });
@@ -41,7 +41,7 @@ impl DocumentFacts {
         facts.macros.sort_by_key(|node| node.range.start());
         facts
             .resources
-            .sort_by_key(|resource| resource.range.start());
+            .sort_by_key(|resource| resource.range().start());
         facts
     }
 

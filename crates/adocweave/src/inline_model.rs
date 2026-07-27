@@ -51,6 +51,7 @@ pub enum MacroForm {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MacroAttribute {
     pub range: TextRange,
+    pub value_range: TextRange,
     pub name: Option<String>,
     pub value: String,
 }

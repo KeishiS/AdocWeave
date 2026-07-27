@@ -238,7 +238,7 @@ mod tests {
             vec![ResolvedResource::resolved(
                 range,
                 "https://example/image.png",
-                Some("image/png".to_owned()),
+                "image/png".parse().expect("media type"),
                 Some(42),
             )],
         );
