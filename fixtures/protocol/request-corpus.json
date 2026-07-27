@@ -24,6 +24,11 @@
       "enableIncludes": true
     }
   },
+  "preprocessObjectCases": [
+    { "object": "PreprocessRequest", "path": "" },
+    { "object": "PreprocessResource", "path": "/resources/part.adoc" },
+    { "object": "PreprocessOptions", "path": "/options" }
+  ],
   "enumCases": [
     { "enum": "Severity", "path": "/analysisOptions/diagnostics/rules/example/severity" },
     { "enum": "SyntaxMode", "path": "/analysisOptions/syntax/syntaxMode" },

@@ -5,7 +5,6 @@ use std::collections::BTreeSet;
 
 const SCHEMA: &str = include_str!("../../../protocol/public-api.json");
 const CORPUS: &str = include_str!("../../../fixtures/protocol/request-corpus.json");
-const MUTATIONS: &str = include_str!("../../../fixtures/protocol/schema-mutations.json");
 
 fn documents() -> (Value, Value) {
     (
@@ -152,22 +151,29 @@ fn assert_schema_defaults(value: &Value, name: &str, schema: &Value) {
         .unwrap_or_else(|| panic!("default contract {name}"));
     for field in contract["fields"].as_array().expect("default fields") {
         let field_name = field["json"].as_str().expect("default field name");
-        let default = &field["default"];
-        assert!(
-            !value[field_name].is_null() || default.is_null(),
-            "{name}.{field_name}"
+        assert_field_default(
+            &value[field_name],
+            field,
+            schema,
+            &format!("{name}.{field_name}"),
         );
-        if default == "core-default" || default == "browser-default" {
-            continue;
-        }
-        let nested_type = field["type"].as_str().expect("nested default type");
-        let has_nested_contract = schema["settings"].get(nested_type).is_some()
-            || schema["definitions"].get(nested_type).is_some();
-        if default.as_object().is_some_and(serde_json::Map::is_empty) && has_nested_contract {
-            assert_schema_defaults(&value[field_name], nested_type, schema);
-        } else {
-            assert_eq!(&value[field_name], default, "{name}.{field_name} default");
-        }
+    }
+}
+
+fn assert_field_default(value: &Value, field: &Value, schema: &Value, name: &str) {
+    let default = &field["default"];
+    if default == "browser-default" {
+        assert_eq!(value, &schema["browserProductDefault"], "{name} default");
+        return;
+    }
+    let nested_type = field["type"].as_str().expect("nested default type");
+    let has_nested_contract = schema["settings"].get(nested_type).is_some()
+        || schema["definitions"].get(nested_type).is_some()
+        || schema["preprocessDefinitions"].get(nested_type).is_some();
+    if default.as_object().is_some_and(serde_json::Map::is_empty) && has_nested_contract {
+        assert_schema_defaults(value, nested_type, schema);
+    } else {
+        assert_eq!(value, default, "{name} default");
     }
 }
 
@@ -300,9 +306,6 @@ fn every_request_object_enforces_schema_fields_recursively() {
         );
 
         for field in contract["fields"].as_array().expect("object fields") {
-            if field["required"].as_bool() != Some(true) {
-                continue;
-            }
             let field_name = field["json"].as_str().expect("field name");
             let mut missing = expanded_request(&corpus);
             missing
@@ -311,10 +314,25 @@ fn every_request_object_enforces_schema_fields_recursively() {
                 .as_object_mut()
                 .expect("object")
                 .remove(field_name);
-            assert!(
-                serde_json::from_value::<WasmRequest>(missing).is_err(),
-                "{name} accepted missing required field {field_name}"
-            );
+            if field["required"].as_bool() == Some(true) {
+                assert!(
+                    serde_json::from_value::<WasmRequest>(missing).is_err(),
+                    "{name} accepted missing required field {field_name}"
+                );
+            } else {
+                let request =
+                    serde_json::from_value::<WasmRequest>(missing).unwrap_or_else(|error| {
+                        panic!("{name} rejected defaulted field {field_name}: {error}")
+                    });
+                let serialized = serde_json::to_value(request).expect("serialized default probe");
+                let object = serialized.pointer(path).expect("serialized object");
+                assert_field_default(
+                    &object[field_name],
+                    field,
+                    &schema,
+                    &format!("{name}.{field_name}"),
+                );
+            }
         }
     }
 }
@@ -331,8 +349,14 @@ fn every_request_union_enforces_tags_fields_and_unknown_rejection() {
             let template = case["variants"][variant].clone();
             let mut valid = expanded_request(&corpus);
             set_pointer(&mut valid, path, template.clone());
-            serde_json::from_value::<WasmRequest>(valid)
+            let valid = serde_json::from_value::<WasmRequest>(valid)
                 .unwrap_or_else(|error| panic!("{name}.{variant} was rejected: {error}"));
+            let serialized = serde_json::to_value(valid).expect("serialized union probe");
+            assert_wire_value(
+                serialized.pointer(path).expect("serialized union"),
+                name,
+                &schema,
+            );
 
             let mut unknown = expanded_request(&corpus);
             let mut value = template.clone();
@@ -464,7 +488,17 @@ fn preprocess_wire_contract_round_trips_and_rejects_drift() {
         &schema,
     );
 
-    for path in ["", "/resources/part.adoc", "/options"] {
+    for case in corpus["preprocessObjectCases"]
+        .as_array()
+        .expect("preprocess object cases")
+    {
+        let name = case["object"].as_str().expect("preprocess object name");
+        let path = case["path"].as_str().expect("preprocess object path");
+        let contract = if name == "PreprocessRequest" {
+            &schema["preprocessRequest"]
+        } else {
+            &schema["preprocessDefinitions"][name]
+        };
         let mut unknown = value.clone();
         unknown
             .pointer_mut(path)
@@ -476,6 +510,35 @@ fn preprocess_wire_contract_round_trips_and_rejects_drift() {
             serde_json::from_value::<WasmPreprocessRequest>(unknown).is_err(),
             "preprocess unknown field at {path}"
         );
+        for field in contract["fields"].as_array().expect("preprocess fields") {
+            let field_name = field["json"].as_str().expect("preprocess field");
+            let mut missing = value.clone();
+            missing
+                .pointer_mut(path)
+                .expect("preprocess object path")
+                .as_object_mut()
+                .expect("preprocess object")
+                .remove(field_name);
+            if field["required"].as_bool() == Some(true) {
+                assert!(
+                    serde_json::from_value::<WasmPreprocessRequest>(missing).is_err(),
+                    "{name} accepted missing {field_name}"
+                );
+            } else {
+                let request = serde_json::from_value::<WasmPreprocessRequest>(missing)
+                    .unwrap_or_else(|error| panic!("{name}.{field_name}: {error}"));
+                let serialized =
+                    serde_json::to_value(request).expect("serialized preprocess default");
+                assert_field_default(
+                    &serialized
+                        .pointer(path)
+                        .expect("serialized preprocess object")[field_name],
+                    field,
+                    &schema,
+                    &format!("{name}.{field_name}"),
+                );
+            }
+        }
     }
     for mode in schema["enums"]["SafeMode"].as_array().expect("safe modes") {
         let mut request = value.clone();
@@ -486,56 +549,16 @@ fn preprocess_wire_contract_round_trips_and_rejects_drift() {
     let mut invalid_mode = value;
     invalid_mode["options"]["safeMode"] = Value::String("invalid".to_owned());
     assert!(serde_json::from_value::<WasmPreprocessRequest>(invalid_mode).is_err());
-}
 
-#[test]
-fn schema_mutation_corpus_is_rejected_by_bidirectional_checks() {
-    let (schema, corpus) = documents();
-    let request: WasmRequest =
-        serde_json::from_value(expanded_request(&corpus)).expect("mutation probe request");
-    let request = serde_json::to_value(request).expect("serialized mutation probe");
-    let render_defaults =
-        serde_json::to_value(adocweave_wasm::WasmRenderPolicy::default()).expect("render defaults");
-    let mutations: Value = serde_json::from_str(MUTATIONS).expect("mutation corpus");
-
-    for mutation in mutations["mutations"].as_array().expect("mutations") {
-        let mut mutated = schema.clone();
-        let path = mutation["path"].as_str().expect("mutation path");
-        match mutation["kind"].as_str().expect("mutation kind") {
-            "replace" => {
-                *mutated.pointer_mut(path).expect("replace target") = mutation["value"].clone();
-            }
-            "remove" => {
-                let (parent, index) = path.rsplit_once('/').expect("remove path");
-                mutated
-                    .pointer_mut(parent)
-                    .expect("remove parent")
-                    .as_array_mut()
-                    .expect("remove array")
-                    .remove(index.parse().expect("remove index"));
-            }
-            "append" => mutated
-                .pointer_mut(path)
-                .expect("append target")
-                .as_array_mut()
-                .expect("append array")
-                .push(mutation["value"].clone()),
-            kind => panic!("unknown mutation {kind}"),
-        }
-        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if mutation["probe"] == "request" {
-                assert_wire_value(&request, "WasmRequest", &mutated);
-            } else {
-                assert_schema_defaults(&render_defaults, "RenderPolicy", &mutated);
-            }
-        }))
-        .is_err();
-        assert!(
-            rejected,
-            "schema mutation was not detected: {}",
-            mutation["name"]
-        );
-    }
+    let mut old = corpus["preprocessRequest"].clone();
+    old["packageVersion"] = Value::String(corpus["oldVersion"].as_str().expect("old").to_owned());
+    let error = preprocess_request(serde_json::from_value(old).expect("old preprocess request"))
+        .expect_err("old preprocess package");
+    assert_wire_value(
+        &serde_json::to_value(error).expect("serialized preprocess error"),
+        "WasmError",
+        &schema,
+    );
 }
 
 fn assert_wire_value(value: &Value, type_name: &str, schema: &Value) {

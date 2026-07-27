@@ -24,8 +24,21 @@ const workerMessageFields = Object.fromEntries(
       : [],
   ),
 );
-const mjs = `${header}export const PROTOCOL_SCHEMA_VERSION = ${schema.schemaVersion};\nexport const WORKER_PROTOCOL_VERSION = ${schema.workerProtocolVersion};\nexport const PACKAGE_VERSION = ${JSON.stringify(schema.packageVersion)};\nexport const PRODUCT_FIELDS = ${JSON.stringify(names)};\nexport const REQUEST_FIELDS = ${JSON.stringify(requestFields)};\nexport const REQUEST_ENUMS = ${JSON.stringify(requestEnums)};\nexport const WORKER_MESSAGE_FIELDS = ${JSON.stringify(workerMessageFields)};\n`;
-const dts = `${header}${objectDeclaration("ProductSet", schema.productSet)}\n\n${Object.entries(schema.enums).map(([name, values]) => enumDeclaration(name, values)).join("\n\n")}\n\n${Object.entries(schema.settings).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.definitions).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.preprocessDefinitions).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.taggedUnions).map(([name, contract]) => unionDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.dtos).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${objectDeclaration("WasmRequest", schema.request)}\n\n${objectDeclaration("PreprocessRequest", schema.preprocessRequest)}\n\n${updateRequestDeclaration()}\n\n${objectDeclaration("AdocWeaveWasmResponse", schema.response)}\n\n${unionDeclaration("WorkerRequest", schema.workerEnvelopes.requests)}\n\n${unionDeclaration("WorkerResponse", schema.workerEnvelopes.responses)}\n\n${objectDeclaration("AdocWeaveError", schema.workerEnvelopes.clientError)}\n\nexport declare const PROTOCOL_SCHEMA_VERSION: ${schema.schemaVersion};\nexport declare const WORKER_PROTOCOL_VERSION: ${schema.workerProtocolVersion};\nexport declare const PACKAGE_VERSION: ${JSON.stringify(schema.packageVersion)};\nexport declare const PRODUCT_FIELDS: readonly [${names.map(JSON.stringify).join(", ")}];\nexport declare const REQUEST_FIELDS: readonly [${requestFields.map(JSON.stringify).join(", ")}];\nexport declare const REQUEST_ENUMS: ${literalType(requestEnums)};\nexport declare const WORKER_MESSAGE_FIELDS: ${literalType(workerMessageFields)};\n`;
+const validationSchema = {
+  enums: schema.enums,
+  settings: schema.settings,
+  definitions: schema.definitions,
+  preprocessDefinitions: schema.preprocessDefinitions,
+  taggedUnions: schema.taggedUnions,
+  dtos: schema.dtos,
+  request: schema.request,
+  preprocessRequest: schema.preprocessRequest,
+  response: schema.response,
+  productSet: schema.productSet,
+  workerEnvelopes: schema.workerEnvelopes,
+};
+const mjs = `${header}export const PROTOCOL_SCHEMA_VERSION = ${schema.schemaVersion};\nexport const WORKER_PROTOCOL_VERSION = ${schema.workerProtocolVersion};\nexport const PACKAGE_VERSION = ${JSON.stringify(schema.packageVersion)};\nexport const PRODUCT_FIELDS = ${JSON.stringify(names)};\nexport const REQUEST_FIELDS = ${JSON.stringify(requestFields)};\nexport const REQUEST_ENUMS = ${JSON.stringify(requestEnums)};\nexport const WORKER_MESSAGE_FIELDS = ${JSON.stringify(workerMessageFields)};\nconst VALIDATION_SCHEMA = ${JSON.stringify(validationSchema)};\n${runtimeValidatorSource()}`;
+const dts = `${header}${objectDeclaration("ProductSet", schema.productSet)}\n\n${Object.entries(schema.enums).map(([name, values]) => enumDeclaration(name, values)).join("\n\n")}\n\n${Object.entries(schema.settings).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.definitions).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.preprocessDefinitions).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.taggedUnions).map(([name, contract]) => unionDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.dtos).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${objectDeclaration("WasmRequest", schema.request)}\n\n${objectDeclaration("PreprocessRequest", schema.preprocessRequest)}\n\n${updateRequestDeclaration()}\n\n${objectDeclaration("AdocWeaveWasmResponse", schema.response)}\n\n${unionDeclaration("WorkerRequest", schema.workerEnvelopes.requests)}\n\n${unionDeclaration("WorkerResponse", schema.workerEnvelopes.responses)}\n\n${objectDeclaration("AdocWeaveError", schema.workerEnvelopes.clientError)}\n\nexport declare const PROTOCOL_SCHEMA_VERSION: ${schema.schemaVersion};\nexport declare const WORKER_PROTOCOL_VERSION: ${schema.workerProtocolVersion};\nexport declare const PACKAGE_VERSION: ${JSON.stringify(schema.packageVersion)};\nexport declare const PRODUCT_FIELDS: readonly [${names.map(JSON.stringify).join(", ")}];\nexport declare const REQUEST_FIELDS: readonly [${requestFields.map(JSON.stringify).join(", ")}];\nexport declare const REQUEST_ENUMS: ${literalType(requestEnums)};\nexport declare const WORKER_MESSAGE_FIELDS: ${literalType(workerMessageFields)};\nexport declare function validateWorkerMessage(value: unknown, direction: "requests" | "responses"): value is WorkerRequest | WorkerResponse;\nexport declare function validateClientError(value: unknown): value is AdocWeaveError;\n`;
 const rust = `${header}\npub const PROTOCOL_SCHEMA_VERSION: u16 = ${schema.schemaVersion};\npub const WORKER_PROTOCOL_VERSION: u16 = ${schema.workerProtocolVersion};\n\n#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]\n#[serde(rename_all = "camelCase", deny_unknown_fields)]\npub struct WasmProductSet {\n${rustFields.map((name) => `    pub ${name}: bool,`).join("\n")}\n}\n\nimpl Default for WasmProductSet {\n    fn default() -> Self {\n        let products = adocweave::ProductSet::browser_default();\n        Self {\n${rustFields.map((name) => `            ${name}: products.${name},`).join("\n")}\n        }\n    }\n}\n\nimpl From<WasmProductSet> for adocweave::ProductSet {\n    fn from(value: WasmProductSet) -> Self {\n        Self {\n${rustFields.map((name) => `            ${name}: value.${name},`).join("\n")}\n        }\n    }\n}\n`;
 const outputs = [
   [new URL("web-worker/protocol.generated.mjs", root), mjs],
@@ -67,6 +80,7 @@ function validateSchema() {
   validateRuntimeBindings();
   validateRequestObjectCorpus();
   validateRequestUnionCorpus();
+  validatePreprocessCorpus();
   const covered = corpus.enumCases.map(({ enum: name }) => name).sort();
   const expected = [...schema.requestEnums].sort();
   if (JSON.stringify(covered) !== JSON.stringify(expected)) {
@@ -78,6 +92,55 @@ function validateSchema() {
     }
   }
   if (corpus.oldVersion === schema.packageVersion) throw new Error("old-version corpus uses the current version");
+}
+
+function validatePreprocessCorpus() {
+  const covered = corpus.preprocessObjectCases.map(({ object }) => object).sort();
+  const expected = [...schema.preprocessObjects].sort();
+  if (JSON.stringify(covered) !== JSON.stringify(expected)) {
+    throw new Error("protocol corpus does not cover every preprocess object exactly once");
+  }
+  for (const name of expected) {
+    const contract = name === "PreprocessRequest"
+      ? schema.preprocessRequest
+      : schema.preprocessDefinitions[name];
+    if (!contract || contract.unknownFields !== "reject") {
+      throw new Error(`${name} must exist and reject unknown fields`);
+    }
+    for (const field of contract.fields) {
+      if (field.required !== true && !Object.hasOwn(field, "default")) {
+        throw new Error(`${name}.${field.json} must be required or declare a default`);
+      }
+    }
+  }
+  const reachable = reachableTypes(
+    ["PreprocessRequest", "PreprocessResponse", "WasmError"],
+    (name) => name === "PreprocessRequest"
+      ? schema.preprocessRequest
+      : schema.preprocessDefinitions[name],
+  );
+  const definitions = Object.keys(schema.preprocessDefinitions).sort();
+  if (JSON.stringify([...reachable].filter((name) => name !== "PreprocessRequest").sort()) !== JSON.stringify(definitions)) {
+    throw new Error("preprocess definitions must exactly match the reachable type set");
+  }
+}
+
+function reachableTypes(roots, contractFor) {
+  const reached = new Set();
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (reached.has(name)) continue;
+    const contract = contractFor(name);
+    if (!contract) continue;
+    reached.add(name);
+    for (const field of contract.fields) {
+      for (const reference of field.type.match(/[A-Z][A-Za-z0-9]*/g) ?? []) {
+        if (contractFor(reference) && !reached.has(reference)) pending.push(reference);
+      }
+    }
+  }
+  return reached;
 }
 
 function validateRequestUnionCorpus() {
@@ -236,4 +299,55 @@ function updateRequestDeclaration() {
   return objectDeclaration("UpdateRequest", {
     fields: schema.request.fields.filter((field) => exposed.has(field.json)),
   });
+}
+
+function runtimeValidatorSource() {
+  return `export function validateWorkerMessage(value, direction) {
+  const contract = VALIDATION_SCHEMA.workerEnvelopes[direction];
+  return contract !== undefined && validateUnion(value, contract);
+}
+export function validateClientError(value) {
+  return validateObject(value, VALIDATION_SCHEMA.workerEnvelopes.clientError);
+}
+function validateValue(value, type) {
+  if (type === "string") return typeof value === "string";
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "boolean") return typeof value === "boolean";
+  if (type === "unknown") return true;
+  if (type.endsWith(" | null")) return value === null || validateValue(value, type.slice(0, -7));
+  if (type.endsWith("[]")) return Array.isArray(value) && value.every((item) => validateValue(item, type.slice(0, -2)));
+  if (type.startsWith("Record<string, ") && type.endsWith(">")) {
+    const itemType = type.slice(15, -1);
+    return isObject(value) && Object.values(value).every((item) => validateValue(item, itemType));
+  }
+  if (type === "Required<ProductSet>" || type === "ProductSet") return validateObject(value, VALIDATION_SCHEMA.productSet);
+  if (type === "SharedArrayBuffer") return typeof SharedArrayBuffer === "function" && value instanceof SharedArrayBuffer;
+  if (VALIDATION_SCHEMA.enums[type]) return VALIDATION_SCHEMA.enums[type].includes(value);
+  if (VALIDATION_SCHEMA.taggedUnions[type]) return validateUnion(value, VALIDATION_SCHEMA.taggedUnions[type]);
+  const contract = type === "WasmRequest" ? VALIDATION_SCHEMA.request
+    : type === "PreprocessRequest" ? VALIDATION_SCHEMA.preprocessRequest
+    : type === "AdocWeaveWasmResponse" ? VALIDATION_SCHEMA.response
+    : VALIDATION_SCHEMA.settings[type] ?? VALIDATION_SCHEMA.definitions[type]
+      ?? VALIDATION_SCHEMA.preprocessDefinitions[type] ?? VALIDATION_SCHEMA.dtos[type];
+  return contract !== undefined && validateObject(value, contract);
+}
+function validateObject(value, contract) {
+  if (!isObject(value)) return false;
+  const fields = new Map(contract.fields.map((field) => [field.json, field]));
+  if (Object.keys(value).some((name) => !fields.has(name))) return false;
+  return contract.fields.every((field) => {
+    if (!Object.hasOwn(value, field.json)) return Object.hasOwn(field, "default");
+    return validateValue(value[field.json], field.type);
+  });
+}
+function validateUnion(value, contract) {
+  if (!isObject(value) || typeof value[contract.tag] !== "string") return false;
+  const fields = contract.variants[value[contract.tag]];
+  if (!fields) return false;
+  return validateObject(value, { fields: [{ json: contract.tag, type: "string" }, ...fields] });
+}
+function isObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+`;
 }

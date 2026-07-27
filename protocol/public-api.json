@@ -41,6 +41,11 @@
     "ResolvedReferenceOutcome",
     "ResolvedResourceOutcome"
   ],
+  "preprocessObjects": [
+    "PreprocessRequest",
+    "PreprocessResource",
+    "PreprocessOptions"
+  ],
   "request": {
     "unknownFields": "reject",
     "fields": [

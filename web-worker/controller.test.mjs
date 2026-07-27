@@ -10,6 +10,8 @@ import { PACKAGE_VERSION } from "./contracts.mjs";
 import {
   WORKER_MESSAGE_FIELDS,
   WORKER_PROTOCOL_VERSION as GENERATED_WORKER_PROTOCOL_VERSION,
+  validateClientError,
+  validateWorkerMessage,
 } from "./protocol.generated.mjs";
 
 function harness(process = (request) => request) {
@@ -62,6 +64,44 @@ function assertMessageFields(message, contract) {
   assert.deepEqual(Object.keys(message).sort(), [...WORKER_MESSAGE_FIELDS[contract]].sort());
 }
 
+function assertWorkerContract(message, direction) {
+  assert.equal(validateWorkerMessage(message, direction), true);
+  assert.equal(validateWorkerMessage({ ...message, unexpected: true }, direction), false);
+  for (const field of Object.keys(message)) {
+    const missing = { ...message };
+    delete missing[field];
+    assert.equal(validateWorkerMessage(missing, direction), false, `missing ${field}`);
+  }
+  for (const [path, invalid] of invalidNestedValues(message)) {
+    const mutated = structuredClone(message);
+    let target = mutated;
+    for (const segment of path.slice(0, -1)) target = target[segment];
+    target[path.at(-1)] = invalid;
+    assert.equal(
+      validateWorkerMessage(mutated, direction),
+      false,
+      `invalid nested value at ${path.join(".")}`,
+    );
+  }
+}
+
+function invalidNestedValues(value, path = []) {
+  const mutations = [];
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = [...path, key];
+    if (typeof child === "string") mutations.push([childPath, false]);
+    else if (typeof child === "number") mutations.push([childPath, "invalid"]);
+    else if (typeof child === "boolean") mutations.push([childPath, "invalid"]);
+    else if (child === null) mutations.push([childPath, false]);
+    else if (Array.isArray(child)) mutations.push([childPath, "invalid"]);
+    else if (typeof child === "object") {
+      mutations.push([childPath, { ...child, unexpected: true }]);
+      mutations.push(...invalidNestedValues(child, childPath));
+    }
+  }
+  return mutations;
+}
+
 test("runtime uses the generated worker protocol version", () => {
   assert.equal(WORKER_PROTOCOL_VERSION, GENERATED_WORKER_PROTOCOL_VERSION);
 });
@@ -85,6 +125,7 @@ test("worker ready envelope matches the generated contract", async () => {
       },
     });
     assertMessageFields(messages[0], "responses.ready");
+    assertWorkerContract(messages[0], "responses");
   } finally {
     globalThis.self = previousSelf;
   }
@@ -128,6 +169,7 @@ test("protocol mismatch returns a stable error without executing WASM", () => {
 
   assert.equal(calls, 0);
   assertMessageFields(state.messages[0], "responses.error");
+  assertWorkerContract(state.messages[0], "responses");
   assert.equal(state.messages[0].error.code, "unsupported-worker-protocol");
 });
 
@@ -156,8 +198,60 @@ test("client sends the current WASM API version with responsibility-specific def
   assert.equal(messages[1].payload.packageVersion, PACKAGE_VERSION);
   assertMessageFields(messages[0], "requests.initialize");
   assertMessageFields(messages[1], "requests.analyze");
+  assertWorkerContract(messages[0], "requests");
+  assertWorkerContract(messages[1], "requests");
+  assert.equal(validateWorkerMessage({
+    ...messages[1],
+    protocolVersion: String(WORKER_PROTOCOL_VERSION),
+  }, "requests"), false);
+  assert.equal(validateWorkerMessage({
+    ...messages[1],
+    payload: { ...messages[1].payload, source: false },
+  }, "requests"), false);
   assert.deepEqual(messages[1].payload.analysisOptions, {});
   assert.deepEqual(messages[1].payload.renderPolicy, {});
   assert.deepEqual(messages[1].payload.outputLimits, {});
   client.dispose();
+});
+
+test("generated validators cover result and client error recursively", () => {
+  const result = {
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    type: "result",
+    version: 1,
+    generation: 1,
+    result: {
+      packageVersion: PACKAGE_VERSION,
+      version: 1,
+      generation: 1,
+      products: {
+        syntax: false, canonicalAst: false, html: true, attributeOccurrences: false,
+        resourceQueries: true, diagnostics: true, symbols: false, projection: true,
+      },
+      parse: { packageVersion: PACKAGE_VERSION, blockCount: 0, nodeCount: 0, referenceCount: 0 },
+      syntax: "", ast: "", html: "", attributeOccurrences: [], resourceQueries: [],
+      diagnostics: [], renderDiagnostics: [], symbols: [],
+      projection: {
+        packageVersion: PACKAGE_VERSION, sourceId: null, sourceBlocks: [], formulas: [],
+        blockPresentations: [], orderedLists: [], referenceEdges: [], externalLinks: [],
+        searchableText: { text: "", segments: [] },
+        structure: { headings: [], toc: [], manpage: null },
+        catalogs: { footnotes: [], bibliography: [], index: [] },
+        targets: [], title: null,
+      },
+    },
+  };
+  assertWorkerContract(result, "responses");
+  assert.equal(validateWorkerMessage({
+    ...result,
+    result: { ...result.result, version: "1" },
+  }, "responses"), false);
+
+  const error = { code: "worker-failed", message: "failed", sourceVersion: null, generation: 1 };
+  assert.equal(validateClientError(error), true);
+  assert.equal(validateClientError({ ...error, generation: "1" }), false);
+  assert.equal(validateClientError({ ...error, unexpected: true }), false);
+  const missing = { ...error };
+  delete missing.code;
+  assert.equal(validateClientError(missing), false);
 });
