@@ -776,9 +776,6 @@ fn check_preprocessed(
                     .source_id
                     .as_ref()
                     .map_or("<stdin>", adocweave::SourceId::as_str);
-                let Some(base) = prepared.source_bases.get(source_id) else {
-                    continue;
-                };
                 let directive = (target.value.kind == adocweave::LocalTargetKind::Include)
                     .then(|| {
                         projected.directives.iter().find(|directive| {
@@ -791,10 +788,18 @@ fn check_preprocessed(
                         })
                     })
                     .flatten();
+                let base = if directive.is_some() {
+                    prepared.include_bases.get(source_id)
+                } else {
+                    prepared.source_bases.get(source_id)
+                }
+                .ok_or_else(|| {
+                    local_include::LocalIncludeError::MissingSource(source_id.to_owned())
+                })?;
                 let optional = directive.is_some_and(|directive| directive.optional);
-                let Some(source) = prepared.sources.get(source_id) else {
-                    continue;
-                };
+                let source = prepared.sources.get(source_id).ok_or_else(|| {
+                    local_include::LocalIncludeError::MissingSource(source_id.to_owned())
+                })?;
                 if let Some(error) =
                     directive.and_then(|directive| prepared.include_errors.get(&directive.target))
                 {

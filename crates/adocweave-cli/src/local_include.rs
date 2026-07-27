@@ -37,6 +37,7 @@ pub struct PreparedInput {
     pub document: PreprocessedDocument,
     pub sources: BTreeMap<String, String>,
     pub source_bases: BTreeMap<String, PathBuf>,
+    pub include_bases: BTreeMap<String, PathBuf>,
     pub local_session: Option<LocalTargetSession>,
     pub include_errors: BTreeMap<String, adocweave_host::LocalTargetError>,
 }
@@ -164,6 +165,7 @@ pub fn prepare(
         document,
         sources,
         source_bases,
+        include_bases: BTreeMap::new(),
         local_session: None,
         include_errors: BTreeMap::new(),
     })
@@ -204,6 +206,7 @@ pub fn prepare_local(
                 source,
             })?;
     let mut source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
+    let mut include_bases = BTreeMap::from([(source_id.clone(), base_dir.clone())]);
     let mut snapshot_entries = Vec::new();
     let mut include_errors = BTreeMap::new();
     let mut pending = VecDeque::new();
@@ -234,6 +237,13 @@ pub fn prepare_local(
                 let resource_id = canonical.to_string_lossy().into_owned();
                 sources.insert(resource_id.clone(), text.clone());
                 source_bases.insert(
+                    resource_id.clone(),
+                    canonical
+                        .parent()
+                        .unwrap_or_else(|| Path::new(""))
+                        .to_owned(),
+                );
+                include_bases.insert(
                     resource_id.clone(),
                     canonical
                         .parent()
@@ -275,6 +285,7 @@ pub fn prepare_local(
         document,
         sources,
         source_bases,
+        include_bases,
         local_session: Some(session),
         include_errors,
     })

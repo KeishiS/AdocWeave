@@ -37,6 +37,7 @@ impl LocalTargetReference {
             link.target_range,
             &link.target,
             link.target_expansion_error.is_some(),
+            true,
         )
     }
 
@@ -54,6 +55,7 @@ impl LocalTargetReference {
             target_range,
             document,
             reference.target_expansion_error.is_some(),
+            true,
         )
     }
 
@@ -64,6 +66,7 @@ impl LocalTargetReference {
             reference.target_range(),
             reference.target(),
             reference.target_expansion_error().is_some(),
+            true,
         )
     }
 
@@ -74,6 +77,7 @@ impl LocalTargetReference {
             target_range,
             target,
             target.contains(['{', '}']),
+            false,
         )
     }
 }
@@ -84,10 +88,15 @@ fn from_target(
     target_range: TextRange,
     target: &str,
     expansion_failed: bool,
+    strip_url_suffix: bool,
 ) -> Option<LocalTargetReference> {
-    let path = target
-        .split_once(['?', '#'])
-        .map_or(target, |(path, _)| path);
+    let path = if strip_url_suffix {
+        target
+            .split_once(['?', '#'])
+            .map_or(target, |(path, _)| path)
+    } else {
+        target
+    };
     if expansion_failed {
         return Some(LocalTargetReference {
             kind,
@@ -185,13 +194,18 @@ mod tests {
             LocalTargetReference::from_include(range(), range(), "../guide.adoc?view=1#top")
                 .expect("local");
         assert_eq!(local.kind, LocalTargetKind::Include);
-        assert_eq!(local.path, "../guide.adoc");
+        assert_eq!(local.path, "../guide.adoc?view=1#top");
         assert_eq!(local.syntax, LocalTargetSyntax::Candidate);
 
         assert!(
             LocalTargetReference::from_include(range(), range(), "https://example.com").is_none()
         );
-        assert!(LocalTargetReference::from_include(range(), range(), "#local").is_none());
+        assert_eq!(
+            LocalTargetReference::from_include(range(), range(), "#local")
+                .expect("literal local filename")
+                .path,
+            "#local"
+        );
         assert_eq!(
             LocalTargetReference::from_include(range(), range(), "{missing}.adoc")
                 .expect("unverifiable")

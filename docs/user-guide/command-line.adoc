@@ -64,7 +64,8 @@ adocweave check --list-rules --json
 ----
 
 出力には`schemaVersion`、`packageVersion`およびcode順の`rules`を含めます。各規則の
-`code`、`defaultSeverity`、`enabledByDefault`および`fixable`は自動処理に使用できます。
+`code`、`defaultSeverity`、`enabledByDefault`、`userConfigurable`および`fixable`は
+自動処理に使用できます。
 `description`は表示用であり、判定条件には使用しません。
 
 既定で無効な規則は`--enable-rule CODE`で有効にできます。このoptionは反復して指定できます。
@@ -112,6 +113,7 @@ adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
 
 targetはbase directoryからの相対pathに限定します。
 絶対path、`..`、scheme付きtarget、制御文字および許可root外へ解決されるsymlinkを拒否します。
+通常linkと異なり、include targetの`?`と`#`はURL成分として分離せずfile名の一部として扱います。
 個別resourceは10 MiB、resource tree全体は50 MiB、file数は10,000件を上限とします。
 循環、include深さ、展開nodeおよび展開後byte数にはコアpreprocessorの上限も適用します。
 network resourceは取得しません。

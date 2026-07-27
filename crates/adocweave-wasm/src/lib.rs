@@ -1536,6 +1536,63 @@ mod tests {
     }
 
     #[test]
+    fn opt_in_macro_boundary_matches_the_native_diagnostic_contract() {
+        let source = "本文xref:guide.adoc[Guide]\n";
+        let default_response =
+            process_request(request(source), &NeverCancel).expect("default diagnostics");
+        assert!(
+            default_response
+                .diagnostics
+                .as_array()
+                .expect("diagnostics")
+                .iter()
+                .all(|diagnostic| diagnostic["code"] != "macro-boundary")
+        );
+
+        let mut configured = request(source);
+        configured.analysis_options.diagnostics.rules.insert(
+            "macro-boundary".to_owned(),
+            WasmRuleSettings {
+                enabled: true,
+                severity: WasmSeverity::Warning,
+            },
+        );
+        let wasm = process_request(configured, &NeverCancel).expect("opt-in diagnostics");
+        let wasm = wasm
+            .diagnostics
+            .as_array()
+            .expect("diagnostics")
+            .iter()
+            .find(|diagnostic| diagnostic["code"] == "macro-boundary")
+            .expect("macro-boundary diagnostic");
+
+        let mut lint = LintConfig::default();
+        lint.set_rule(
+            adocweave::output::diagnostics::MACRO_BOUNDARY,
+            RuleSettings {
+                enabled: true,
+                severity: Severity::Warning,
+            },
+        );
+        let native = Engine::new(AnalysisOptions {
+            diagnostics: DiagnosticProfile { lint },
+            ..AnalysisOptions::default()
+        })
+        .analyze(source)
+        .expect("native analysis");
+        let native = native
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "macro-boundary")
+            .expect("native macro-boundary diagnostic");
+
+        assert_eq!(wasm["code"], native.code.as_str());
+        assert_eq!(wasm["severity"], native.severity.as_str());
+        assert_eq!(wasm["range"]["start"], native.range.start().to_u32());
+        assert_eq!(wasm["range"]["end"], native.range.end().to_u32());
+    }
+
+    #[test]
     fn preprocessing_uses_the_same_snapshot_model_as_the_native_core() {
         let resources = BTreeMap::from([(
             "parts/intro.adoc".to_owned(),

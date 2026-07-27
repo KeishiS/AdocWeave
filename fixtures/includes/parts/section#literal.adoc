@@ -1,0 +1,3 @@
+== Literal suffix
+
+Included from a file whose name contains `#`.

@@ -251,6 +251,7 @@ pub fn render_lint_rule_catalog_json() -> String {
                 "enabledByDefault": descriptor.default_enabled,
                 "description": descriptor.description,
                 "fixable": descriptor.fixable,
+                "userConfigurable": descriptor.user_configurable,
             }))
             .collect::<Vec<_>>(),
     }))
@@ -1285,6 +1286,17 @@ mod tests {
             .map(|rule| rule["code"].as_str().expect("code"))
             .collect::<Vec<_>>();
         assert_eq!(json_codes, codes);
+    }
+
+    #[test]
+    fn every_disabled_rule_has_a_public_activation_path() {
+        for descriptor in LINT_RULES {
+            assert!(
+                descriptor.user_configurable != descriptor.default_enabled,
+                "{} must be either enabled by default or user configurable",
+                descriptor.id.as_str()
+            );
+        }
     }
 
     #[test]

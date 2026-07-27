@@ -105,6 +105,7 @@ pub enum Adoption {
 pub struct DocumentStore {
     documents: Arc<BTreeMap<String, DocumentState>>,
     next_generation: u64,
+    analysis_options: AnalysisOptions,
 }
 
 impl DocumentStore {
@@ -139,6 +140,10 @@ impl DocumentStore {
                 ))
             })
             .collect()
+    }
+
+    pub fn set_analysis_options(&mut self, options: AnalysisOptions) {
+        self.analysis_options = options;
     }
 
     pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
@@ -303,7 +308,7 @@ impl DocumentStore {
             i64::from(version),
             self.next_generation,
             text,
-            AnalysisOptions::default(),
+            self.analysis_options.clone(),
         );
         AnalysisJob {
             uri,

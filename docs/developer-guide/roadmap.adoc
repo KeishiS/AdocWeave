@@ -18,16 +18,6 @@ v0.10.xでは、公開API、WASM protocol、対応構文および既定のHTML�
 または優先度の高い不具合を修正した時点で準備します。未完了作業のないrelease追跡Issueや、
 版数を進めることだけを目的としたreleaseは作成しません。
 
-== v0.11.0
-
-=== Lint機能
-
-filesystemへ依存しないLintを追加します。
-
-. https://github.com/KeishiS/AdocWeave/issues/40[Macro境界のLint]
-
-Macro境界の検査は利用者が明示的に有効化する規則として追加します。
-
 == 後続の機能候補
 
 === 文書内属性
