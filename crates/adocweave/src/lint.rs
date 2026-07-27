@@ -1,6 +1,6 @@
 //! Output-independent lint rules over the original source.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{
     Applicability, Diagnostic, DiagnosticCode, DiagnosticId, Fix, RelatedInformation, Severity,
@@ -126,12 +126,6 @@ lint_rule_catalog!(
         INVALID_ATTRIBUTE,
         "invalid-attribute",
         "不正な文書属性",
-        false
-    ),
-    (
-        DUPLICATE_ATTRIBUTE,
-        "duplicate-attribute",
-        "重複する文書属性",
         false
     ),
     (
@@ -340,6 +334,11 @@ fn lint_with_analysis_limits(
                 .expect("u32 fits usize on supported targets"),
             max_formula_bytes: usize::try_from(limits.max_formula_bytes)
                 .expect("u32 fits usize on supported targets"),
+            limits: crate::limits::AnalysisLimits {
+                max_attribute_expansion_depth: limits.max_attribute_expansion_depth,
+                max_attribute_expansion_bytes: limits.max_attribute_expansion_bytes,
+                ..ParseConfig::default().limits
+            },
             ..ParseConfig::default()
         },
     )?;
@@ -951,33 +950,9 @@ fn lint_attributes(
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    use crate::attributes::DocumentAttributeOperation;
+    use crate::attributes::{AttributeBindingId, DocumentAttributeOperation};
 
-    let mut definitions = BTreeMap::<String, TextRange>::new();
-    let mut used = BTreeMap::<String, Vec<TextRange>>::new();
     for attribute in document.attributes() {
-        if let Some(first) = definitions.insert(attribute.name.clone(), attribute.name_range) {
-            let settings = config.rule(DUPLICATE_ATTRIBUTE);
-            if settings.enabled && diagnostics.len() < config.max_diagnostics {
-                diagnostics.push(Diagnostic {
-                    id: DiagnosticId::new(format!(
-                        "{}@{}:{}",
-                        DUPLICATE_ATTRIBUTE.as_str(),
-                        attribute.name_range.start().to_u32(),
-                        attribute.name_range.end().to_u32()
-                    )),
-                    code: DiagnosticCode::new(DUPLICATE_ATTRIBUTE.as_str()),
-                    severity: settings.severity,
-                    message: format!("duplicate document attribute `{}`", attribute.name),
-                    range: attribute.name_range,
-                    related: vec![RelatedInformation {
-                        message: "previous definition".to_owned(),
-                        range: first,
-                    }],
-                    fixes: Vec::new(),
-                });
-            }
-        }
         if let Some(expected) = config.protected_attributes.get(&attribute.name) {
             let changed = match &attribute.operation {
                 DocumentAttributeOperation::Set => &attribute.value.folded_text != expected,
@@ -1004,79 +979,127 @@ fn lint_attributes(
             }
         }
     }
-    collect_attribute_references(document, &mut used);
-    for (name, ranges) in &used {
-        if !definitions.contains_key(name) {
-            for range in ranges {
-                push_diagnostic(
-                    diagnostics,
-                    config,
-                    UNDEFINED_ATTRIBUTE,
-                    *range,
-                    &format!("undefined document attribute `{name}`"),
-                    None,
-                );
+
+    let environment = document.attribute_environment();
+    let references = collect_attribute_references(document);
+    let mut used_bindings = BTreeSet::<AttributeBindingId>::new();
+    lint_attribute_reference_uses(
+        environment,
+        references,
+        &mut used_bindings,
+        config,
+        diagnostics,
+    );
+    for binding in environment.bindings() {
+        let references = attribute_value_references(binding);
+        for reference in &references {
+            if let Some(resolved) =
+                environment.resolve_at_event(&reference.name, reference.position)
+            {
+                used_bindings.insert(resolved.binding.id());
             }
+        }
+        if let Err(error) = binding.value() {
+            let range = references.first().map_or_else(
+                || binding.occurrence().value.source_range,
+                |reference| reference.range,
+            );
+            let (rule, message) =
+                if error == crate::substitution::AttributeExpansionError::Undefined {
+                    if let Some(reference) = references.first() {
+                        (
+                            UNDEFINED_ATTRIBUTE,
+                            format!("undefined document attribute `{}`", reference.name),
+                        )
+                    } else {
+                        (
+                            ATTRIBUTE_EXPANSION,
+                            attribute_expansion_message(error).to_owned(),
+                        )
+                    }
+                } else {
+                    (
+                        ATTRIBUTE_EXPANSION,
+                        attribute_expansion_message(error).to_owned(),
+                    )
+                };
+            push_diagnostic(diagnostics, config, rule, range, &message, None);
         }
     }
-    crate::walker::walk_ast(document, |node| {
-        let crate::walker::SemanticNode::Inline(inline) = node else {
-            return;
-        };
-        let (error, range) = match inline {
-            crate::inline::Inline::AttributeReference {
-                expansion_error: Some(error),
-                name_range,
-                ..
-            } => (error, *name_range),
-            crate::inline::Inline::Link(link) => match &link.target_expansion_error {
-                Some(error) => (error, link.target_range),
-                None => return,
-            },
-            _ => return,
-        };
-        if *error == crate::substitution::AttributeExpansionError::Undefined {
-            return;
-        }
-        let message = match error {
-            crate::substitution::AttributeExpansionError::Undefined => unreachable!(),
-            crate::substitution::AttributeExpansionError::Cycle => {
-                "document attribute expansion contains a cycle"
-            }
-            crate::substitution::AttributeExpansionError::DepthLimitExceeded => {
-                "document attribute expansion exceeds the depth limit"
-            }
-            crate::substitution::AttributeExpansionError::SizeLimitExceeded => {
-                "document attribute expansion exceeds the size limit"
-            }
-        };
-        push_diagnostic(
-            diagnostics,
-            config,
-            ATTRIBUTE_EXPANSION,
-            range,
-            message,
-            None,
-        );
-    });
-    for (name, range) in definitions {
-        if !used.contains_key(&name) && !config.protected_attributes.contains_key(&name) {
+    for binding in environment.bindings() {
+        let occurrence = binding.occurrence();
+        if binding.operation() == DocumentAttributeOperation::Set
+            && !used_bindings.contains(&binding.id())
+            && !config.protected_attributes.contains_key(&occurrence.name)
+        {
             push_diagnostic(
                 diagnostics,
                 config,
                 UNUSED_ATTRIBUTE,
-                range,
-                &format!("unused document attribute `{name}`"),
+                occurrence.name_range,
+                &format!("unused document attribute `{}`", occurrence.name),
                 None,
             );
         }
     }
 }
 
+fn lint_attribute_reference_uses(
+    environment: &crate::attributes::AttributeEnvironment,
+    references: Vec<AttributeReferenceUse>,
+    used_bindings: &mut BTreeSet<crate::attributes::AttributeBindingId>,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for reference in references {
+        let resolved = environment.resolve_at_event(&reference.name, reference.position);
+        let Some(resolved) = resolved else {
+            push_diagnostic(
+                diagnostics,
+                config,
+                UNDEFINED_ATTRIBUTE,
+                reference.range,
+                &format!("undefined document attribute `{}`", reference.name),
+                None,
+            );
+            continue;
+        };
+        used_bindings.insert(resolved.binding.id());
+        match resolved.value {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(crate::substitution::AttributeExpansionError::Undefined) => {
+                push_diagnostic(
+                    diagnostics,
+                    config,
+                    UNDEFINED_ATTRIBUTE,
+                    reference.range,
+                    &format!("undefined document attribute `{}`", reference.name),
+                    None,
+                );
+            }
+            Err(error) => push_diagnostic(
+                diagnostics,
+                config,
+                ATTRIBUTE_EXPANSION,
+                reference.range,
+                attribute_expansion_message(error),
+                None,
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AttributeReferenceUse {
+    name: String,
+    range: TextRange,
+    position: crate::attributes::AttributePosition,
+}
+
 fn collect_attribute_references(
     document: &crate::parser::AstDocument,
-    used: &mut BTreeMap<String, Vec<TextRange>>,
-) {
+) -> Vec<AttributeReferenceUse> {
+    let mut references = Vec::new();
     crate::walker::walk_ast(document, |node| {
         let crate::walker::SemanticNode::Inline(inline) = node else {
             return;
@@ -1084,26 +1107,20 @@ fn collect_attribute_references(
         match inline {
             crate::inline::Inline::AttributeReference {
                 name, name_range, ..
-            } => used.entry(name.clone()).or_default().push(*name_range),
+            } => references.push(reference_use(name, *name_range)),
             crate::inline::Inline::Link(link) => {
                 for attribute in &link.target_attributes {
-                    used.entry(attribute.name.clone())
-                        .or_default()
-                        .push(attribute.name_range);
+                    references.push(reference_use(&attribute.name, attribute.name_range));
                 }
             }
             crate::inline::Inline::Reference(reference) => {
                 for attribute in &reference.target_attributes {
-                    used.entry(attribute.name.clone())
-                        .or_default()
-                        .push(attribute.name_range);
+                    references.push(reference_use(&attribute.name, attribute.name_range));
                 }
             }
             crate::inline::Inline::Macro(node) => {
                 for attribute in &node.target_attributes {
-                    used.entry(attribute.name.clone())
-                        .or_default()
-                        .push(attribute.name_range);
+                    references.push(reference_use(&attribute.name, attribute.name_range));
                 }
             }
             crate::inline::Inline::Text(_)
@@ -1114,6 +1131,93 @@ fn collect_attribute_references(
             | crate::inline::Inline::Formula(_) => {}
         }
     });
+    references
+}
+
+fn reference_use(name: &str, range: TextRange) -> AttributeReferenceUse {
+    AttributeReferenceUse {
+        name: name.to_owned(),
+        range,
+        position: crate::attributes::AttributePosition::new(
+            range.start(),
+            crate::attributes::AttributeEventId::new(u32::MAX),
+        ),
+    }
+}
+
+fn attribute_value_references(
+    binding: &crate::attributes::AttributeBinding,
+) -> Vec<AttributeReferenceUse> {
+    let occurrence = binding.occurrence();
+    scan_attribute_references(&occurrence.value.source_text)
+        .into_iter()
+        .filter_map(|(name, start, end)| {
+            let absolute_start = occurrence
+                .value
+                .source_range
+                .start()
+                .to_usize()
+                .checked_add(start)?;
+            let absolute_end = occurrence
+                .value
+                .source_range
+                .start()
+                .to_usize()
+                .checked_add(end)?;
+            Some(AttributeReferenceUse {
+                name,
+                range: text_range(absolute_start, absolute_end).ok()?,
+                position: crate::attributes::AttributePosition::new(
+                    binding.evaluation_at(),
+                    binding.event_id(),
+                ),
+            })
+        })
+        .collect()
+}
+
+fn scan_attribute_references(value: &str) -> Vec<(String, usize, usize)> {
+    let mut references = Vec::new();
+    let mut cursor = 0;
+    while cursor < value.len() {
+        let rest = &value[cursor..];
+        if rest.starts_with("\\{") {
+            cursor += 2;
+            continue;
+        }
+        if rest.starts_with('{') {
+            let Some(close) = rest.find('}') else {
+                break;
+            };
+            let name = &rest[1..close];
+            if !name.is_empty() {
+                references.push((name.to_owned(), cursor + 1, cursor + close));
+            }
+            cursor += close + 1;
+            continue;
+        }
+        cursor += rest.chars().next().expect("non-empty remainder").len_utf8();
+    }
+    references
+}
+
+fn attribute_expansion_message(
+    error: crate::substitution::AttributeExpansionError,
+) -> &'static str {
+    match error {
+        crate::substitution::AttributeExpansionError::Undefined => {
+            "document attribute expansion references an undefined attribute"
+        }
+        crate::substitution::AttributeExpansionError::Cycle => {
+            "document attribute expansion contains a cycle"
+        }
+        crate::substitution::AttributeExpansionError::DepthLimitExceeded => {
+            "document attribute expansion exceeds the depth limit"
+        }
+        crate::substitution::AttributeExpansionError::SizeLimitExceeded => {
+            "document attribute expansion exceeds the size limit"
+        }
+    }
 }
 
 fn lint_headings(
@@ -1600,7 +1704,7 @@ mod tests {
     }
 
     #[test]
-    fn document_attributes_report_duplicate_undefined_unused_and_invalid_names() {
+    fn document_attributes_allow_redefinition_and_report_dataflow_problems() {
         let diagnostics = lint(
             "= Note\n\
              :bad name: value\n\
@@ -1617,9 +1721,119 @@ mod tests {
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>();
         assert!(codes.contains(&"invalid-attribute"));
-        assert!(codes.contains(&"duplicate-attribute"));
+        assert!(!codes.contains(&"duplicate-attribute"));
         assert!(codes.contains(&"undefined-attribute"));
         assert!(codes.contains(&"unused-attribute"));
+    }
+
+    #[test]
+    fn attribute_lint_selects_bindings_at_each_reference_position() {
+        let source = "\
+:a: first
+
+{a}
+
+:a: second
+
+{a}
+
+:a!:
+
+{a}
+
+:future: {later}
+:later: value
+";
+        let diagnostics = lint(source, &LintConfig::default()).expect("lint");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "duplicate-attribute")
+        );
+
+        let unset_reference = source.rfind("{a}").expect("unset reference") + 1;
+        let future_reference = source.find("{later}").expect("future reference") + 1;
+        let undefined = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "undefined-attribute")
+            .collect::<Vec<_>>();
+        assert_eq!(undefined.len(), 2);
+        assert_eq!(
+            undefined
+                .iter()
+                .map(|diagnostic| diagnostic.range.start().to_usize())
+                .collect::<Vec<_>>(),
+            [unset_reference, future_reference]
+        );
+        for diagnostic in undefined {
+            assert_eq!(
+                diagnostic.id.as_str(),
+                format!(
+                    "undefined-attribute@{}:{}",
+                    diagnostic.range.start().to_u32(),
+                    diagnostic.range.end().to_u32()
+                )
+            );
+            assert_eq!(diagnostic.severity, Severity::Warning);
+            assert!(diagnostic.fixes.is_empty());
+        }
+
+        let unused = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "unused-attribute")
+            .collect::<Vec<_>>();
+        assert_eq!(unused.len(), 2);
+        assert_eq!(
+            unused
+                .iter()
+                .map(|diagnostic| {
+                    &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()]
+                })
+                .collect::<Vec<_>>(),
+            ["future", "later"]
+        );
+    }
+
+    #[test]
+    fn attribute_lint_reports_cycle_depth_and_size_at_the_failing_binding_reference() {
+        let source = "\
+:cycle: {cycle}
+:base: x
+:deep: {base}
+:large: xx
+
+{cycle} {deep} {large}
+";
+        let mut limits = crate::limits::AnalysisLimits::default();
+        limits.max_attribute_expansion_depth = 0;
+        limits.max_attribute_expansion_bytes = 1;
+        let diagnostics =
+            lint_with_analysis_limits(source, &LintConfig::default(), limits).expect("lint");
+        let expansion = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "attribute-expansion")
+            .collect::<Vec<_>>();
+
+        assert!(expansion.iter().any(|diagnostic| {
+            diagnostic.message == "document attribute expansion contains a cycle"
+                && &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()]
+                    == "cycle"
+        }));
+        assert!(expansion.iter().any(|diagnostic| {
+            diagnostic.message == "document attribute expansion exceeds the depth limit"
+                && &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()]
+                    == "base"
+        }));
+        assert!(expansion.iter().any(|diagnostic| {
+            diagnostic.message == "document attribute expansion exceeds the size limit"
+                && &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()]
+                    == "xx"
+        }));
+        assert!(
+            expansion
+                .iter()
+                .all(|diagnostic| diagnostic.fixes.is_empty())
+        );
     }
 
     #[test]

@@ -425,6 +425,13 @@
       "compatibility": "host-extension-contract",
       "rationale": "保護属性とURL policyは標準構文から独立した明示的ホスト設定である",
       "contractImpact": "none"
+    },
+    {
+      "name": "position-dependent-attribute-diagnostics",
+      "source": ":name: first\n\n{name}\n\n:name: second\n\n{name}\n\n:name!:\n\n{name}\n\n:forward: {later}\n:later: value\n",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "属性Lintは参照位置で有効なbindingを使用し、正当な再定義を重複とせず、unset後と前方参照を未定義としてnativeとWASMで一致させる",
+      "contractImpact": "core-profile,core-api,conformance,wasm-api"
     }
   ]
 }

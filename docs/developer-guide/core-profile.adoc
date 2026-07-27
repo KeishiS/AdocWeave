@@ -141,6 +141,11 @@ fn convert() -> Result<String, ParseError> {
 `:toclevels:`は1から5までの整数であり、省略時はlevel 1から5までを目次候補とします。不正な値は
 `invalid-attribute`診断となります。
 
+属性Lintは参照ごとに、その位置で有効なbindingを`AttributeEnvironment`から選択します。前方参照と
+unset後の参照は`undefined-attribute`、循環と展開上限超過は`attribute-expansion`として診断します。
+`unused-attribute`は名前全体ではなく個々のset bindingを対象とします。通常の再定義は有効な操作であり、
+重複診断を行いません。
+
 [#wasm-api]
 == WebAssembly API
 
