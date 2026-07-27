@@ -27,6 +27,55 @@ pub struct LocalResourcePolicy {
     limits: ResourceLimits,
 }
 
+/// Bytes captured after filesystem-policy validation and budget accounting.
+///
+/// The fields are private so a validated capability cannot be forged or
+/// combined with a different policy before decoding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedFilesystemTarget {
+    canonical_path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl ValidatedFilesystemTarget {
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+
+    pub fn into_loaded_utf8(self) -> Result<LoadedLocalResource, ResourceError> {
+        let source =
+            String::from_utf8(self.bytes).map_err(|source| ResourceError::InvalidUtf8 {
+                path: self.canonical_path.clone(),
+                source: source.to_string(),
+            })?;
+        Ok(LoadedLocalResource {
+            canonical_path: self.canonical_path,
+            source,
+        })
+    }
+}
+
+/// UTF-8 resource loaded through a [`LocalResourcePolicy`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedLocalResource {
+    canonical_path: PathBuf,
+    source: String,
+}
+
+impl LoadedLocalResource {
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn into_parts(self) -> (PathBuf, String) {
+        (self.canonical_path, self.source)
+    }
+}
+
 impl LocalResourcePolicy {
     pub fn new(
         roots: impl IntoIterator<Item = PathBuf>,
@@ -86,11 +135,11 @@ impl LocalResourcePolicy {
         self.canonical_file(&base.join(relative))
     }
 
-    pub fn read_utf8(
+    pub fn validate_file(
         &self,
         budget: &mut ResourceBudget,
         path: &Path,
-    ) -> Result<(PathBuf, String), ResourceError> {
+    ) -> Result<ValidatedFilesystemTarget, ResourceError> {
         let canonical = self.canonical_file(path)?;
         let file = fs::File::open(&canonical).map_err(|source| ResourceError::Read {
             path: canonical.clone(),
@@ -104,11 +153,10 @@ impl LocalResourcePolicy {
                 source: source.to_string(),
             })?;
         budget.charge(&canonical, bytes.len() as u64, self.limits)?;
-        let text = String::from_utf8(bytes).map_err(|source| ResourceError::InvalidUtf8 {
-            path: canonical.clone(),
-            source: source.to_string(),
-        })?;
-        Ok((canonical, text))
+        Ok(ValidatedFilesystemTarget {
+            canonical_path: canonical,
+            bytes,
+        })
     }
 }
 
@@ -341,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn read_utf8_enforces_encoding_and_per_resource_limit() {
+    fn validated_target_enforces_encoding_and_per_resource_limit() {
         let root = TestDir::new("read");
         let invalid = root.path().join("invalid.adoc");
         let oversized = root.path().join("oversized.adoc");
@@ -350,12 +398,37 @@ mod tests {
         let policy = policy(root.path(), 3);
 
         assert!(matches!(
-            policy.read_utf8(&mut ResourceBudget::default(), &invalid),
+            policy
+                .validate_file(&mut ResourceBudget::default(), &invalid)
+                .and_then(ValidatedFilesystemTarget::into_loaded_utf8),
             Err(ResourceError::InvalidUtf8 { .. })
         ));
         assert!(matches!(
-            policy.read_utf8(&mut ResourceBudget::default(), &oversized),
+            policy.validate_file(&mut ResourceBudget::default(), &oversized),
             Err(ResourceError::ResourceTooLarge(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validated_target_owns_the_bytes_captured_before_a_path_is_replaced() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("captured-root");
+        let outside = TestDir::new("captured-outside");
+        let candidate = root.path().join("part.adoc");
+        let outside_file = outside.path().join("outside.adoc");
+        fs::write(&candidate, "inside").expect("inside source");
+        fs::write(&outside_file, "outside").expect("outside source");
+        let validated = policy(root.path(), 100)
+            .validate_file(&mut ResourceBudget::default(), &candidate)
+            .expect("validated target");
+
+        fs::remove_file(&candidate).expect("replace candidate");
+        symlink(&outside_file, &candidate).expect("outside symlink");
+
+        let loaded = validated.into_loaded_utf8().expect("captured UTF-8");
+        assert_eq!(loaded.source(), "inside");
+        assert_eq!(loaded.canonical_path(), candidate);
     }
 }

@@ -708,6 +708,53 @@ fn local_includes_require_an_explicit_option_and_are_deterministic() {
 }
 
 #[test]
+fn include_loader_follows_runtime_attributes_and_skips_inactive_candidates() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-runtime-include-{unique}"));
+    std::fs::create_dir_all(&root).expect("directory");
+    std::fs::write(
+        root.join("root.adoc"),
+        "\
+:part: first
+:literal: retained \\
+include::not-a-request.adoc[]
+include::{part}.adoc[]
+include::{next}.adoc[]
+ifdef::missing[]
+include::inactive.adoc[]
+endif::[]
+",
+    )
+    .expect("root source");
+    std::fs::write(root.join("first.adoc"), ":next: second\nfirst\n").expect("first include");
+    std::fs::write(root.join("second.adoc"), "second\n").expect("second include");
+
+    let output = adocweave()
+        .args([
+            "convert",
+            "--include",
+            root.join("root.adoc").to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("conversion");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let html = String::from_utf8(output.stdout).expect("UTF-8 HTML");
+    assert!(html.contains("first"));
+    assert!(html.contains("second"));
+    assert!(!html.contains("inactive"));
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn local_include_with_literal_url_suffix_uses_the_shared_fixture() {
     let root = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -782,7 +829,7 @@ fn stdin_include_requires_a_base_and_rejects_traversal() {
         b"include::../plain/basic.adoc[]\n",
     );
     assert!(!traversal.status.success());
-    assert!(String::from_utf8_lossy(&traversal.stderr).contains("unsafe local resource target"));
+    assert!(String::from_utf8_lossy(&traversal.stderr).contains("unsafe include target"));
 
     let missing = run_with_stdin(
         &["format", "--include", "--base-dir", base, "-"],
@@ -832,12 +879,12 @@ fn include_check_projects_diagnostics_to_the_resource_file() {
         .output()
         .expect("opt-in JSON check");
     assert!(human.status.success());
-    assert!(String::from_utf8_lossy(&human.stdout).contains(&format!(
-        "{}:1:4: warning[trailing-whitespace]",
-        part.display()
-    )));
+    assert!(
+        String::from_utf8_lossy(&human.stdout)
+            .contains("include:part.adoc:1:4: warning[trailing-whitespace]")
+    );
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("JSON diagnostics");
-    assert_eq!(value[0]["sourceId"], part.to_string_lossy().as_ref());
+    assert_eq!(value[0]["sourceId"], "include:part.adoc");
     assert!(
         !value
             .as_array()
@@ -853,7 +900,7 @@ fn include_check_projects_diagnostics_to_the_resource_file() {
         .iter()
         .find(|diagnostic| diagnostic["code"] == "macro-boundary")
         .expect("macro-boundary diagnostic");
-    assert_eq!(boundary["sourceId"], part.to_string_lossy().as_ref());
+    assert_eq!(boundary["sourceId"], "include:part.adoc");
     assert_eq!(boundary["range"]["start"], 11);
     assert_eq!(boundary["range"]["end"], 15);
 
@@ -908,7 +955,7 @@ fn local_target_check_shares_include_resolution_and_honors_optional() {
         2
     );
     assert!(diagnostics.as_array().expect("array").iter().any(|value| {
-        value["sourceId"] == root.join("part.adoc").to_string_lossy().as_ref()
+        value["sourceId"] == "include:part.adoc"
             && value["target"] == "missing.adoc"
             && value["range"]["end"].as_u64().expect("end")
                 - value["range"]["start"].as_u64().expect("start")
@@ -1042,6 +1089,52 @@ fn include_provider_rejects_a_symlink_escape() {
 
     std::fs::remove_dir_all(root).expect("cleanup root");
     std::fs::remove_file(outside).expect("cleanup outside");
+}
+
+#[cfg(unix)]
+#[test]
+fn include_diagnostics_use_logical_ids_for_canonical_file_aliases() {
+    use std::os::unix::fs::symlink;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-cli-alias-{unique}"));
+    std::fs::create_dir_all(&root).expect("directory");
+    let document = root.join("root.adoc");
+    std::fs::write(&document, "include::part.adoc[]\ninclude::alias.adoc[]\n")
+        .expect("root source");
+    std::fs::write(root.join("part.adoc"), "bad \n").expect("part source");
+    symlink("part.adoc", root.join("alias.adoc")).expect("inside alias");
+
+    let output = adocweave()
+        .args([
+            "check",
+            "--include",
+            "--json",
+            document.to_str().expect("UTF-8 document"),
+        ])
+        .output()
+        .expect("alias check");
+    assert!(output.status.success());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    let source_ids = diagnostics
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == "trailing-whitespace")
+        .map(|diagnostic| diagnostic["sourceId"].as_str().expect("source ID"))
+        .collect::<Vec<_>>();
+    assert_eq!(source_ids, ["include:part.adoc", "include:alias.adoc"]);
+    assert!(
+        source_ids
+            .iter()
+            .all(|source_id| !source_id.contains(root.to_str().expect("UTF-8 root")))
+    );
+
+    std::fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]

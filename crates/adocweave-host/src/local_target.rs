@@ -101,6 +101,27 @@ pub struct LocalTargetSession {
     text: BTreeMap<PathBuf, Result<String, LocalTargetError>>,
 }
 
+/// UTF-8 local target returned by a bounded validation session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedLocalTarget {
+    canonical_path: PathBuf,
+    source: String,
+}
+
+impl LoadedLocalTarget {
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn into_parts(self) -> (PathBuf, String) {
+        (self.canonical_path, self.source)
+    }
+}
+
 impl LocalTargetSession {
     pub fn new(policy: LocalTargetPolicy, max_paths: usize, limits: ResourceLimits) -> Self {
         Self {
@@ -151,10 +172,13 @@ impl LocalTargetSession {
         &mut self,
         base: &Path,
         target: &str,
-    ) -> Result<(PathBuf, String), LocalTargetError> {
+    ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let canonical = self.inspect(base, target)?;
         if let Some(result) = self.text.get(&canonical) {
-            return result.clone().map(|text| (canonical, text));
+            return result.clone().map(|source| LoadedLocalTarget {
+                canonical_path: canonical,
+                source,
+            });
         }
         if self.read_files >= self.limits.max_files
             || self.read_bytes >= self.limits.max_total_bytes
@@ -190,11 +214,18 @@ impl LocalTargetSession {
                 })
             });
         self.text.insert(canonical.clone(), result.clone());
-        result.map(|text| (canonical, text))
+        result.map(|source| LoadedLocalTarget {
+            canonical_path: canonical,
+            source,
+        })
     }
 
     pub fn inspected_paths(&self) -> usize {
         self.inspections.len()
+    }
+
+    pub fn read_files(&self) -> usize {
+        self.read_files
     }
 }
 
@@ -574,6 +605,29 @@ mod tests {
             Err(LocalTargetError::ReadLimitExceeded)
         ));
         assert_eq!(session.read_files, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_preserves_logical_aliases_while_caching_canonical_file_reads() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        symlink("guide.adoc", root.0.join("docs/alias.adoc")).expect("inside alias");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, ResourceLimits::default());
+
+        let direct = session
+            .read_utf8(&root.0.join("docs"), "guide.adoc")
+            .expect("direct target");
+        let alias = session
+            .read_utf8(&root.0.join("docs"), "alias.adoc")
+            .expect("alias target");
+
+        assert_eq!(direct.canonical_path(), alias.canonical_path());
+        assert_eq!(direct.source(), alias.source());
+        assert_eq!(session.inspected_paths(), 2);
+        assert_eq!(session.read_files(), 1);
     }
 
     #[cfg(unix)]

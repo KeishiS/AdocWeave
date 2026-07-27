@@ -149,8 +149,9 @@ impl WorkspaceResources {
             .ok_or_else(|| "workspace resource policy is not initialized".to_owned())?;
         let mut budget = ResourceBudget::default();
         policy
-            .read_utf8(&mut budget, path)
-            .map(|(_, text)| text)
+            .validate_file(&mut budget, path)
+            .and_then(adocweave_host::ValidatedFilesystemTarget::into_loaded_utf8)
+            .map(|loaded| loaded.into_parts().1)
             .map_err(|error| error.to_string())
     }
 

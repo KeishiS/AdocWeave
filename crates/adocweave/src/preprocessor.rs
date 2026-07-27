@@ -11,6 +11,7 @@ use crate::inline::Reference;
 use crate::resource::ResourceReference;
 use crate::source::PositionError;
 use crate::source::{TextRange, TextSize};
+use crate::substitution::AttributeExpansionLimits;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SafeMode {
@@ -934,6 +935,10 @@ pub struct PreprocessError {
     pub kind: PreprocessErrorKind,
     pub source_id: Option<SourceId>,
     pub range: TextRange,
+    /// Expanded target before resolution against the current include base.
+    pub requested_target: Option<String>,
+    /// Snapshot key after resolution against the current include base.
+    pub target: Option<String>,
     pub message: String,
 }
 
@@ -950,6 +955,7 @@ pub fn preprocess(
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
 ) -> Result<PreprocessedDocument, PreprocessError> {
+    let analysis_limits = crate::limits::AnalysisLimits::default();
     let mut context = Context {
         snapshot,
         options,
@@ -960,6 +966,15 @@ pub fn preprocess(
         active: Vec::new(),
         expanded_nodes: 0,
         includes: 0,
+        attributes: crate::attributes::SequentialAttributeState::with_locked_values(
+            &options.attributes,
+            AttributeExpansionLimits {
+                max_depth: analysis_limits.max_attribute_expansion_depth,
+                max_bytes: analysis_limits.max_attribute_expansion_bytes,
+            },
+        ),
+        attribute_delimiters: Vec::new(),
+        attribute_position: true,
     };
     context.expand(
         source,
@@ -977,6 +992,8 @@ pub fn preprocess(
         kind: PreprocessErrorKind::InternalInvariant,
         source_id: options.source_id.clone(),
         range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
+        requested_target: None,
+        target: None,
         message: "source map segments are unsorted, overlapping, or outside expanded source"
             .to_owned(),
     })
@@ -992,6 +1009,9 @@ struct Context<'a> {
     active: Vec<String>,
     expanded_nodes: u64,
     includes: u64,
+    attributes: crate::attributes::SequentialAttributeState,
+    attribute_delimiters: Vec<String>,
+    attribute_position: bool,
 }
 
 impl Context<'_> {
@@ -1044,7 +1064,7 @@ impl Context<'_> {
             ));
         }
         self.bump_node(source_id.clone(), range)?;
-        let expanded_target = expand_attributes(&include.target, &self.options.attributes);
+        let expanded_target = expand_attributes(&include.target, self.attributes.values());
         let target = resolve_include_target(&expanded_target, base_uri);
         validate_target(&target, self.options).map_err(|message| {
             error(
@@ -1087,7 +1107,7 @@ impl Context<'_> {
             kind: DirectiveKind::Include,
             source_id: source_id.clone(),
             range,
-            authored_target: Some(expanded_target),
+            authored_target: Some(expanded_target.clone()),
             optional,
             target: target.clone(),
             target_range: relative_range(range, include.target_start, include.target_end),
@@ -1103,12 +1123,14 @@ impl Context<'_> {
                 });
                 return Ok(());
             }
-            return Err(error(
-                PreprocessErrorKind::MissingResource,
+            return Err(PreprocessError {
+                kind: PreprocessErrorKind::MissingResource,
                 source_id,
                 range,
-                format!("resource snapshot does not contain {target}"),
-            ));
+                requested_target: Some(expanded_target),
+                target: Some(target.clone()),
+                message: format!("resource snapshot does not contain {target}"),
+            });
         };
         let selected = select_lines(&document.source, &attributes);
         let transformed = transform_lines(selected, &attributes);
@@ -1131,10 +1153,40 @@ impl Context<'_> {
         depth: u32,
         base_uri: Option<&str>,
     ) -> Result<(), PreprocessError> {
+        let selected_source = lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<String>();
+        let selected_document = crate::source_document::SourceDocument::new(&selected_source)
+            .map_err(|_| {
+                error(
+                    PreprocessErrorKind::InternalInvariant,
+                    source_id.clone(),
+                    zero_range(),
+                    "selected source exceeds the supported position range",
+                )
+            })?;
+        if selected_document.lines().len() < lines.len() {
+            return Err(error(
+                PreprocessErrorKind::InternalInvariant,
+                source_id,
+                zero_range(),
+                "selected source lines do not preserve physical boundaries",
+            ));
+        }
         let mut conditions = Vec::<bool>::new();
-        for line in lines {
+        let mut attribute_value_through = None;
+        for (line_index, line) in lines.into_iter().enumerate() {
             let content = line.text.trim_end_matches(['\r', '\n']);
             let enabled = conditions.iter().all(|condition| *condition);
+            if attribute_value_through.is_some_and(|last_line| line_index <= last_line) {
+                self.bump_node(source_id.clone(), line.range)?;
+                self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                if attribute_value_through == Some(line_index) {
+                    attribute_value_through = None;
+                }
+                continue;
+            }
             if let Some(directive) = conditional_directive(content) {
                 self.bump_node(source_id.clone(), line.range)?;
                 self.directives.push(Directive {
@@ -1159,7 +1211,7 @@ impl Context<'_> {
                         if enabled
                             && conditional_attribute(
                                 &directive.target,
-                                &self.options.attributes,
+                                self.attributes.values(),
                                 present,
                             )
                         {
@@ -1170,13 +1222,14 @@ impl Context<'_> {
                                 line.range,
                                 SourceMapping::WholeOrigin,
                             )?;
+                            self.attribute_position = false;
                         }
                     }
                     DirectiveKind::Ifdef => conditions.push(
                         enabled
                             && conditional_attribute(
                                 &directive.target,
-                                &self.options.attributes,
+                                self.attributes.values(),
                                 true,
                             ),
                     ),
@@ -1184,7 +1237,7 @@ impl Context<'_> {
                         enabled
                             && conditional_attribute(
                                 &directive.target,
-                                &self.options.attributes,
+                                self.attributes.values(),
                                 false,
                             ),
                     ),
@@ -1192,7 +1245,7 @@ impl Context<'_> {
                         enabled
                             && evaluate_expression(&expand_attributes(
                                 &directive.attributes,
-                                &self.options.attributes,
+                                self.attributes.values(),
                             )),
                     ),
                     DirectiveKind::Endif => {
@@ -1208,6 +1261,18 @@ impl Context<'_> {
                     DirectiveKind::Include => unreachable!(),
                 }
             } else if enabled {
+                let delimiter = crate::delimiter::spec(content).is_some();
+                if delimiter {
+                    if self
+                        .attribute_delimiters
+                        .last()
+                        .is_some_and(|open| open == content)
+                    {
+                        self.attribute_delimiters.pop();
+                    } else {
+                        self.attribute_delimiters.push(content.to_owned());
+                    }
+                }
                 if let Some(include) = include_directive(content) {
                     if self.options.enable_includes {
                         self.expand_include(
@@ -1220,7 +1285,7 @@ impl Context<'_> {
                     } else {
                         self.bump_node(source_id.clone(), line.range)?;
                         let authored_target =
-                            expand_attributes(&include.target, &self.options.attributes);
+                            expand_attributes(&include.target, self.attributes.values());
                         let optional = parse_attributes(&include.attributes)
                             .is_ok_and(|attributes| attributes.contains_key("optional"));
                         self.directives.push(Directive {
@@ -1238,6 +1303,7 @@ impl Context<'_> {
                             resource_source_id: None,
                         });
                         self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                        self.attribute_position = false;
                     }
                 } else if let Some(literal) = escaped_directive(content) {
                     let ending = &line.text[content.len()..];
@@ -1247,9 +1313,45 @@ impl Context<'_> {
                         line.range,
                         SourceMapping::WholeOrigin,
                     )?;
+                    self.attribute_position = false;
                 } else {
+                    let mut document_attribute = false;
                     self.bump_node(source_id.clone(), line.range)?;
+                    if !delimiter
+                        && self.attribute_delimiters.is_empty()
+                        && self.attribute_position
+                        && crate::attributes::parse_line(
+                            content,
+                            selected_document.lines()[line_index]
+                                .content_range()
+                                .start()
+                                .to_usize(),
+                            selected_document.lines()[line_index].full_range(),
+                        )
+                        .is_some()
+                        && let Some((occurrence, _, last_line)) =
+                            crate::attributes::parse_lines(&selected_document, line_index, &|| {
+                                false
+                            })
+                            .map_err(|_| {
+                                error(
+                                    PreprocessErrorKind::InternalInvariant,
+                                    source_id.clone(),
+                                    line.range,
+                                    "attribute preprocessing failed",
+                                )
+                            })?
+                    {
+                        let _ = self.attributes.apply(&occurrence);
+                        document_attribute = true;
+                        if last_line > line_index {
+                            attribute_value_through = Some(last_line);
+                        }
+                    }
                     self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                    self.attribute_position = document_attribute
+                        || content.trim_matches([' ', '\t']).is_empty()
+                        || content.starts_with("//");
                 }
             }
         }
@@ -1696,6 +1798,8 @@ fn error(
         kind,
         source_id,
         range,
+        requested_target: None,
+        target: None,
         message: message.into(),
     }
 }
@@ -1869,6 +1973,120 @@ mod tests {
         assert_eq!(
             result.source,
             "inline\nalso inline\nselected\ninclude::literal.adoc[]\n"
+        );
+    }
+
+    #[test]
+    fn document_attributes_drive_includes_and_conditionals_in_read_order() {
+        let mut snapshot = ResourceSnapshot::default();
+        for (target, source_id, source) in [
+            (
+                "first.adoc",
+                "first",
+                include_str!("../../../fixtures/attributes/preprocessor-first.adoc"),
+            ),
+            (
+                "second.adoc",
+                "second",
+                include_str!("../../../fixtures/attributes/preprocessor-second.adoc"),
+            ),
+            (
+                "safe.adoc",
+                "safe",
+                include_str!("../../../fixtures/attributes/preprocessor-safe.adoc"),
+            ),
+            ("bad.adoc", "bad", "bad resource\n"),
+        ] {
+            snapshot.insert(
+                target,
+                ResourceDocument {
+                    source_id: SourceId::new(source_id),
+                    source: source.to_owned(),
+                },
+            );
+        }
+        let source = include_str!("../../../fixtures/attributes/preprocessor-read-order.adoc");
+
+        let result =
+            preprocess(source, &snapshot, &PreprocessOptions::default()).expect("preprocess");
+
+        assert!(result.source.contains("second resource"));
+        assert!(result.source.contains("included attribute is visible"));
+        assert!(result.source.contains("safe resource"));
+        assert!(result.source.contains("unset is visible"));
+        assert!(!result.source.contains("bad resource"));
+        assert_eq!(
+            result
+                .directives
+                .iter()
+                .filter(|directive| directive.kind == DirectiveKind::Include)
+                .map(|directive| directive.target.as_str())
+                .collect::<Vec<_>>(),
+            ["first.adoc", "second.adoc", "safe.adoc"]
+        );
+    }
+
+    #[test]
+    fn multiline_locked_failed_and_delimited_definitions_follow_shared_rules() {
+        let mut snapshot = ResourceSnapshot::default();
+        for target in ["host.adoc", "folded- value.adoc"] {
+            snapshot.insert(
+                target,
+                ResourceDocument {
+                    source_id: SourceId::new(target),
+                    source: format!("{target}\n"),
+                },
+            );
+        }
+        let source = "\
+:locked: document
+:part: folded- \\
+ value
+:literal: retained \\
+include::missing.adoc[]
+include::{locked}.adoc[]
+include::{part}.adoc[]
+
+:cycle: {cycle}
+ifdef::cycle[]
+cycle must stay hidden
+endif::[]
+----
+:inside: visible
+----
+ifdef::inside[]
+delimited attribute must stay hidden
+endif::[]
+
+:cycle: recovered
+ifdef::cycle[]
+recovered definition is visible
+endif::[]
+";
+        let options = PreprocessOptions {
+            attributes: BTreeMap::from([("locked".to_owned(), "host".to_owned())]),
+            ..PreprocessOptions::default()
+        };
+
+        let result = preprocess(source, &snapshot, &options).expect("preprocess");
+
+        assert!(result.source.contains("host.adoc"));
+        assert!(result.source.contains("folded- value.adoc"));
+        assert!(!result.source.contains("cycle must stay hidden"));
+        assert!(
+            !result
+                .source
+                .contains("delimited attribute must stay hidden")
+        );
+        assert!(result.source.contains("recovered definition is visible"));
+        assert_eq!(
+            result
+                .directives
+                .iter()
+                .filter(|directive| directive.kind == DirectiveKind::Include)
+                .map(|directive| directive.target.as_str())
+                .collect::<Vec<_>>(),
+            ["host.adoc", "folded- value.adoc"]
         );
     }
 

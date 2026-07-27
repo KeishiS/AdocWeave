@@ -1,6 +1,6 @@
 //! Standard AsciiDoc document attributes and their source-ordered environment.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::source::{TextRange, TextSize};
 use crate::substitution::{
@@ -190,6 +190,92 @@ pub struct AttributeEnvironment {
     limits: AttributeExpansionLimits,
 }
 
+/// Mutable source-order state shared by preprocessing and semantic lowering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SequentialAttributeState {
+    values: BTreeMap<String, String>,
+    depths: BTreeMap<String, u32>,
+    failures: BTreeMap<String, AttributeExpansionError>,
+    locked: BTreeSet<String>,
+    limits: AttributeExpansionLimits,
+}
+
+impl SequentialAttributeState {
+    pub(crate) fn empty(limits: AttributeExpansionLimits) -> Self {
+        Self {
+            values: BTreeMap::new(),
+            depths: BTreeMap::new(),
+            failures: BTreeMap::new(),
+            locked: BTreeSet::new(),
+            limits,
+        }
+    }
+
+    pub(crate) fn with_locked_values(
+        values: &BTreeMap<String, String>,
+        limits: AttributeExpansionLimits,
+    ) -> Self {
+        let values = values
+            .iter()
+            .map(|(name, value)| (canonical_name(name), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        Self {
+            depths: values.keys().map(|name| (name.clone(), 0)).collect(),
+            locked: values.keys().cloned().collect(),
+            values,
+            failures: BTreeMap::new(),
+            limits,
+        }
+    }
+
+    pub(crate) fn apply(
+        &mut self,
+        occurrence: &DocumentAttributeOccurrence,
+    ) -> Result<Option<String>, AttributeExpansionError> {
+        if !occurrence.valid {
+            return Ok(None);
+        }
+        let name = canonical_name(&occurrence.name);
+        if self.locked.contains(&name) {
+            return Ok(self.values.get(&name).cloned());
+        }
+        let evaluated = match occurrence.operation {
+            DocumentAttributeOperation::Set => evaluate_definition(
+                &name,
+                &occurrence.value.folded_text,
+                &self.values,
+                &self.depths,
+                &self.failures,
+                self.limits,
+            )
+            .map(|(value, depth)| (Some(value), depth)),
+            DocumentAttributeOperation::Unset => Ok((None, 0)),
+        };
+        match &evaluated {
+            Ok((Some(value), depth)) => {
+                self.values.insert(name.clone(), value.clone());
+                self.depths.insert(name.clone(), *depth);
+                self.failures.remove(&name);
+            }
+            Ok((None, _)) => {
+                self.values.remove(&name);
+                self.depths.remove(&name);
+                self.failures.remove(&name);
+            }
+            Err(error) => {
+                self.values.remove(&name);
+                self.depths.remove(&name);
+                self.failures.insert(name, *error);
+            }
+        }
+        evaluated.map(|(value, _)| value)
+    }
+
+    pub(crate) const fn values(&self) -> &BTreeMap<String, String> {
+        &self.values
+    }
+}
+
 impl Default for AttributeEnvironment {
     fn default() -> Self {
         Self {
@@ -213,9 +299,7 @@ impl AttributeEnvironment {
             limits,
             ..Self::default()
         };
-        let mut current = BTreeMap::new();
-        let mut current_depths = BTreeMap::new();
-        let mut current_failures = BTreeMap::new();
+        let mut state = SequentialAttributeState::empty(limits);
         for (ordinal, occurrence) in occurrences.iter().enumerate() {
             if !occurrence.valid {
                 continue;
@@ -226,37 +310,8 @@ impl AttributeEnvironment {
             );
             let event_id =
                 AttributeEventId(u32::try_from(ordinal).expect("attribute limit fits u32"));
-            let evaluated = match occurrence.operation {
-                DocumentAttributeOperation::Set => evaluate_definition(
-                    &canonical_name,
-                    &occurrence.value.folded_text,
-                    &current,
-                    &current_depths,
-                    &current_failures,
-                    limits,
-                )
-                .map(|(value, depth)| (Some(value), depth)),
-                DocumentAttributeOperation::Unset => Ok((None, 0)),
-            };
-            let expansion_depth = evaluated.as_ref().map_or(0, |(_, depth)| *depth);
-            let value = evaluated.map(|(value, _)| value);
-            match &value {
-                Ok(Some(value)) => {
-                    current.insert(canonical_name.clone(), value.clone());
-                    current_depths.insert(canonical_name.clone(), expansion_depth);
-                    current_failures.remove(&canonical_name);
-                }
-                Ok(None) => {
-                    current.remove(&canonical_name);
-                    current_depths.remove(&canonical_name);
-                    current_failures.remove(&canonical_name);
-                }
-                Err(error) => {
-                    current.remove(&canonical_name);
-                    current_depths.remove(&canonical_name);
-                    current_failures.insert(canonical_name.clone(), *error);
-                }
-            }
+            let value = state.apply(occurrence);
+            let expansion_depth = state.depths.get(&canonical_name).copied().unwrap_or(0);
             let binding = AttributeBinding {
                 id,
                 event_id,
@@ -276,7 +331,7 @@ impl AttributeEnvironment {
                 .push(index);
             environment.bindings.push(binding);
         }
-        environment.final_values = current;
+        environment.final_values = state.values;
         environment
     }
 

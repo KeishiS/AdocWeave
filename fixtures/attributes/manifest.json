@@ -33,7 +33,11 @@
         "environment-failed-redefine.adoc",
         "environment-forward-definition.adoc",
         "environment-limits.adoc",
-        "environment-set-redefine-unset.adoc"
+        "environment-set-redefine-unset.adoc",
+        "preprocessor-first.adoc",
+        "preprocessor-read-order.adoc",
+        "preprocessor-safe.adoc",
+        "preprocessor-second.adoc"
       ]
     },
     {
