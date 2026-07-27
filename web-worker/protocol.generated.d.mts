@@ -56,6 +56,10 @@ export type Applicability = "always" | "maybe";
 
 export type SymbolKind = "document-title" | "part" | "section" | "list-item";
 
+export type SafeMode = "unsafe" | "server" | "safe" | "secure";
+
+export type SourceMapping = "identity" | "whole-origin";
+
 export interface AnalysisOptions {
   syntax?: SyntaxOptions;
   diagnostics?: DiagnosticProfile;
@@ -308,6 +312,44 @@ export interface DocumentSymbol {
   children: DocumentSymbol[];
 }
 
+export interface PreprocessResource {
+  sourceId: string;
+  source: string;
+}
+
+export interface PreprocessOptions {
+  baseUri?: string | null;
+  safeMode?: SafeMode;
+  allowedSchemes?: string[];
+  attributes?: Record<string, string>;
+  enableIncludes?: boolean;
+  maxIncludeDepth?: number;
+  maxIncludes?: number;
+  maxTotalBytes?: number;
+  maxExpandedNodes?: number;
+  maxSourceMapSegments?: number;
+}
+
+export interface PreprocessResponse {
+  packageVersion: string;
+  source: string;
+  sourceMap: SourceMapSegment[];
+}
+
+export interface SourceMapSegment {
+  outputStart: number;
+  outputEnd: number;
+  sourceId: string | null;
+  sourceStart: number;
+  sourceEnd: number;
+  mapping: SourceMapping;
+}
+
+export interface WasmError {
+  code: string;
+  message: string;
+}
+
 export type Stylesheet =
   | { kind: "inline"; css: string }
   | { kind: "external"; url: string };
@@ -403,6 +445,14 @@ export interface WasmRequest {
   outputLimits?: OutputLimits;
 }
 
+export interface PreprocessRequest {
+  packageVersion: string;
+  sourceId?: string | null;
+  source: string;
+  resources?: Record<string, PreprocessResource>;
+  options?: PreprocessOptions;
+}
+
 export interface UpdateRequest {
   sourceId?: string | null;
   version: number;
@@ -431,9 +481,26 @@ export interface AdocWeaveWasmResponse {
   projection: DocumentProjection;
 }
 
+export type WorkerRequest =
+  | { type: "initialize"; protocolVersion: number; moduleUrl: string; wasmUrl: string; debounceMs: number; cancellationBuffer: SharedArrayBuffer | null }
+  | { type: "analyze"; protocolVersion: number; version: number; generation: number; payload: WasmRequest };
+
+export type WorkerResponse =
+  | { type: "ready"; protocolVersion: number }
+  | { type: "result"; protocolVersion: number; version: number; generation: number; result: AdocWeaveWasmResponse }
+  | { type: "error"; protocolVersion: number; version: number; generation: number; error: WasmError };
+
+export interface AdocWeaveError {
+  code: string;
+  message: string;
+  sourceVersion: number | null;
+  generation: number;
+}
+
 export declare const PROTOCOL_SCHEMA_VERSION: 3;
 export declare const WORKER_PROTOCOL_VERSION: 1;
 export declare const PACKAGE_VERSION: "0.11.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "resourceQueries", "diagnostics", "symbols", "projection"];
 export declare const REQUEST_FIELDS: readonly ["packageVersion", "sourceId", "version", "generation", "source", "products", "renderInputs", "analysisOptions", "renderPolicy", "outputLimits"];
 export declare const REQUEST_ENUMS: { readonly "Severity": readonly ["error", "warning", "information", "hint"]; readonly "SyntaxMode": readonly ["permissive", "strict"]; readonly "DocumentMode": readonly ["fragment", "complete"]; readonly "UnknownSourceLanguage": readonly ["preserve-sanitized", "omit-class", "diagnostic"]; readonly "MathLanguage": readonly ["latex", "typst"]; readonly "UnresolvedReferencePresentation": readonly ["target", "label-only", "hidden"]; readonly "StylesheetKind": readonly ["inline", "external"]; readonly "ReferenceStatus": readonly ["resolved", "failed"]; readonly "ReferenceFailureKind": readonly ["missing-target", "missing-anchor", "ambiguous-target", "outside-root", "resolver-failure"]; readonly "ReferenceNotice": readonly ["fallback"]; readonly "ResourceStatus": readonly ["resolved", "failed"]; readonly "ResourceFailureKind": readonly ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"] };
+export declare const WORKER_MESSAGE_FIELDS: { readonly "requests.initialize": readonly ["type", "protocolVersion", "moduleUrl", "wasmUrl", "debounceMs", "cancellationBuffer"]; readonly "requests.analyze": readonly ["type", "protocolVersion", "version", "generation", "payload"]; readonly "responses.ready": readonly ["type", "protocolVersion"]; readonly "responses.result": readonly ["type", "protocolVersion", "version", "generation", "result"]; readonly "responses.error": readonly ["type", "protocolVersion", "version", "generation", "error"] };

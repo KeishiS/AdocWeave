@@ -80,6 +80,8 @@
     ,"SearchTextKind": ["prose", "code"]
     ,"Applicability": ["always", "maybe"]
     ,"SymbolKind": ["document-title", "part", "section", "list-item"]
+    ,"SafeMode": ["unsafe", "server", "safe", "secure"]
+    ,"SourceMapping": ["identity", "whole-origin"]
   },
   "settings": {
     "AnalysisOptions": {
@@ -93,14 +95,14 @@
       "unknownFields": "reject",
       "fields": [
         { "json": "syntaxMode", "type": "SyntaxMode", "default": "permissive" },
-        { "json": "limits", "type": "AnalysisLimits", "default": "core-default" }
+        { "json": "limits", "type": "AnalysisLimits", "default": {} }
       ]
     },
     "DiagnosticProfile": {
       "unknownFields": "reject",
       "fields": [
         { "json": "protectedAttributes", "type": "Record<string, string>", "default": {} },
-        { "json": "authoredUrls", "type": "AuthoredUrlPolicy", "default": "core-default" },
+        { "json": "authoredUrls", "type": "AuthoredUrlPolicy", "default": {} },
         { "json": "maxDiagnostics", "type": "number", "default": 1000 },
         { "json": "rules", "type": "Record<string, RuleSettings>", "default": {} }
       ]
@@ -115,9 +117,9 @@
     "RenderPolicy": {
       "unknownFields": "reject",
       "fields": [
-        { "json": "activeUrls", "type": "ActiveUrlPolicy", "default": "core-default" },
+        { "json": "activeUrls", "type": "ActiveUrlPolicy", "default": {} },
         { "json": "externalLinks", "type": "ExternalLinkPolicy", "default": {} },
-        { "json": "sourceLanguages", "type": "SourceLanguagePolicy", "default": "core-default" },
+        { "json": "sourceLanguages", "type": "SourceLanguagePolicy", "default": {} },
         { "json": "mathLanguages", "type": "MathLanguage[]", "default": ["latex", "typst"] },
         { "json": "unresolvedReferences", "type": "UnresolvedReferencePresentation", "default": "target" },
         { "json": "resources", "type": "ResourceCapabilities", "default": { "images": true, "media": true } },
@@ -128,7 +130,7 @@
     "OutputLimits": {
       "unknownFields": "reject",
       "fields": [
-        { "json": "maxOutputBytes", "type": "number", "default": "core-default" }
+        { "json": "maxOutputBytes", "type": "number", "default": 52428800 }
       ]
     }
   },
@@ -159,42 +161,42 @@
     "AnalysisLimits": {
       "unknownFields": "reject",
       "fields": [
-        { "json": "maxInputBytes", "type": "number", "default": "core-default" },
-        { "json": "maxLineBytes", "type": "number", "default": "core-default" },
-        { "json": "maxListDepth", "type": "number", "default": "core-default" },
-        { "json": "maxListContinuations", "type": "number", "default": "core-default" },
-        { "json": "maxBlockDepth", "type": "number", "default": "core-default" },
-        { "json": "maxInlineDepth", "type": "number", "default": "core-default" },
-        { "json": "maxFormulaBytes", "type": "number", "default": "core-default" },
-        { "json": "maxTableBytes", "type": "number", "default": "core-default" },
-        { "json": "maxTableCells", "type": "number", "default": "core-default" },
-        { "json": "maxTableColumns", "type": "number", "default": "core-default" },
-        { "json": "maxTableDepth", "type": "number", "default": "core-default" },
-        { "json": "maxCatalogEntries", "type": "number", "default": "core-default" },
-        { "json": "maxCatalogBytes", "type": "number", "default": "core-default" },
-        { "json": "maxBlocks", "type": "number", "default": "core-default" },
-        { "json": "maxNodes", "type": "number", "default": "core-default" },
-        { "json": "maxReferences", "type": "number", "default": "core-default" },
-        { "json": "maxAttributes", "type": "number", "default": "core-default" },
-        { "json": "maxAttributeExpansionDepth", "type": "number", "default": "core-default" },
-        { "json": "maxAttributeExpansionBytes", "type": "number", "default": "core-default" }
+        { "json": "maxInputBytes", "type": "number", "default": 10485760 },
+        { "json": "maxLineBytes", "type": "number", "default": 1048576 },
+        { "json": "maxListDepth", "type": "number", "default": 8 },
+        { "json": "maxListContinuations", "type": "number", "default": 10000 },
+        { "json": "maxBlockDepth", "type": "number", "default": 32 },
+        { "json": "maxInlineDepth", "type": "number", "default": 32 },
+        { "json": "maxFormulaBytes", "type": "number", "default": 1048576 },
+        { "json": "maxTableBytes", "type": "number", "default": 5242880 },
+        { "json": "maxTableCells", "type": "number", "default": 100000 },
+        { "json": "maxTableColumns", "type": "number", "default": 1000 },
+        { "json": "maxTableDepth", "type": "number", "default": 8 },
+        { "json": "maxCatalogEntries", "type": "number", "default": 100000 },
+        { "json": "maxCatalogBytes", "type": "number", "default": 5242880 },
+        { "json": "maxBlocks", "type": "number", "default": 100000 },
+        { "json": "maxNodes", "type": "number", "default": 1000000 },
+        { "json": "maxReferences", "type": "number", "default": 100000 },
+        { "json": "maxAttributes", "type": "number", "default": 1000 },
+        { "json": "maxAttributeExpansionDepth", "type": "number", "default": 32 },
+        { "json": "maxAttributeExpansionBytes", "type": "number", "default": 1048576 }
       ]
     },
     "AuthoredUrlPolicy": {
       "unknownFields": "reject",
       "fields": [
-        { "json": "allowedSchemes", "type": "string[]", "default": "core-default" },
-        { "json": "allowRelative", "type": "boolean", "default": "core-default" }
+        { "json": "allowedSchemes", "type": "string[]", "default": ["http", "https"] },
+        { "json": "allowRelative", "type": "boolean", "default": true }
       ]
     },
     "ActiveUrlPolicy": {
       "unknownFields": "reject",
       "fields": [
-        { "json": "allowedSchemes", "type": "string[]", "default": "core-default" },
-        { "json": "allowAuthoredRelative", "type": "boolean", "default": "core-default" },
-        { "json": "allowResolvedRelative", "type": "boolean", "default": "core-default" },
-        { "json": "allowResolvedRootRelative", "type": "boolean", "default": "core-default" },
-        { "json": "allowDataUris", "type": "boolean", "default": "core-default" }
+        { "json": "allowedSchemes", "type": "string[]", "default": ["http", "https"] },
+        { "json": "allowAuthoredRelative", "type": "boolean", "default": false },
+        { "json": "allowResolvedRelative", "type": "boolean", "default": false },
+        { "json": "allowResolvedRootRelative", "type": "boolean", "default": false },
+        { "json": "allowDataUris", "type": "boolean", "default": false }
       ]
     },
     "ExternalLinkPolicy": {
@@ -454,6 +456,111 @@
       { "json": "projection", "type": "DocumentProjection" }
     ]
   },
+  "preprocessRequest": {
+    "unknownFields": "reject",
+    "fields": [
+      { "json": "packageVersion", "type": "string", "required": true },
+      { "json": "sourceId", "type": "string | null", "default": null },
+      { "json": "source", "type": "string", "required": true },
+      { "json": "resources", "type": "Record<string, PreprocessResource>", "default": {} },
+      { "json": "options", "type": "PreprocessOptions", "default": {} }
+    ]
+  },
+  "preprocessDefinitions": {
+    "PreprocessResource": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "sourceId", "type": "string", "required": true },
+        { "json": "source", "type": "string", "required": true }
+      ]
+    },
+    "PreprocessOptions": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "baseUri", "type": "string | null", "default": null },
+        { "json": "safeMode", "type": "SafeMode", "default": "secure" },
+        { "json": "allowedSchemes", "type": "string[]", "default": [] },
+        { "json": "attributes", "type": "Record<string, string>", "default": {} },
+        { "json": "enableIncludes", "type": "boolean", "default": true },
+        { "json": "maxIncludeDepth", "type": "number", "default": 16 },
+        { "json": "maxIncludes", "type": "number", "default": 10000 },
+        { "json": "maxTotalBytes", "type": "number", "default": 52428800 },
+        { "json": "maxExpandedNodes", "type": "number", "default": 1000000 },
+        { "json": "maxSourceMapSegments", "type": "number", "default": 1000000 }
+      ]
+    },
+    "PreprocessResponse": {
+      "fields": [
+        { "json": "packageVersion", "type": "string", "required": true },
+        { "json": "source", "type": "string", "required": true },
+        { "json": "sourceMap", "type": "SourceMapSegment[]", "required": true }
+      ]
+    },
+    "SourceMapSegment": {
+      "fields": [
+        { "json": "outputStart", "type": "number", "required": true },
+        { "json": "outputEnd", "type": "number", "required": true },
+        { "json": "sourceId", "type": "string | null", "required": true },
+        { "json": "sourceStart", "type": "number", "required": true },
+        { "json": "sourceEnd", "type": "number", "required": true },
+        { "json": "mapping", "type": "SourceMapping", "required": true }
+      ]
+    },
+    "WasmError": {
+      "fields": [
+        { "json": "code", "type": "string", "required": true },
+        { "json": "message", "type": "string", "required": true }
+      ]
+    }
+  },
+  "workerEnvelopes": {
+    "requests": {
+      "tag": "type",
+      "variants": {
+        "initialize": [
+          { "json": "protocolVersion", "type": "number", "required": true },
+          { "json": "moduleUrl", "type": "string", "required": true },
+          { "json": "wasmUrl", "type": "string", "required": true },
+          { "json": "debounceMs", "type": "number", "required": true },
+          { "json": "cancellationBuffer", "type": "SharedArrayBuffer | null", "required": true }
+        ],
+        "analyze": [
+          { "json": "protocolVersion", "type": "number", "required": true },
+          { "json": "version", "type": "number", "required": true },
+          { "json": "generation", "type": "number", "required": true },
+          { "json": "payload", "type": "WasmRequest", "required": true }
+        ]
+      }
+    },
+    "responses": {
+      "tag": "type",
+      "variants": {
+        "ready": [
+          { "json": "protocolVersion", "type": "number", "required": true }
+        ],
+        "result": [
+          { "json": "protocolVersion", "type": "number", "required": true },
+          { "json": "version", "type": "number", "required": true },
+          { "json": "generation", "type": "number", "required": true },
+          { "json": "result", "type": "AdocWeaveWasmResponse", "required": true }
+        ],
+        "error": [
+          { "json": "protocolVersion", "type": "number", "required": true },
+          { "json": "version", "type": "number", "required": true },
+          { "json": "generation", "type": "number", "required": true },
+          { "json": "error", "type": "WasmError", "required": true }
+        ]
+      }
+    },
+    "clientError": {
+      "fields": [
+        { "json": "code", "type": "string", "required": true },
+        { "json": "message", "type": "string", "required": true },
+        { "json": "sourceVersion", "type": "number | null", "required": true },
+        { "json": "generation", "type": "number", "required": true }
+      ]
+    }
+  },
   "dtos": {
     "TextRange": {
       "fields": [
@@ -551,5 +658,15 @@
       { "json": "symbols", "type": "boolean", "required": true },
       { "json": "projection", "type": "boolean", "required": true }
     ]
+  },
+  "browserProductDefault": {
+    "syntax": false,
+    "canonicalAst": false,
+    "html": true,
+    "attributeOccurrences": false,
+    "resourceQueries": true,
+    "diagnostics": true,
+    "symbols": false,
+    "projection": true
   }
 }

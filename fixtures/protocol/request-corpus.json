@@ -10,6 +10,20 @@
   "responseProbe": {
     "source": "= Probe\n:name: value\n\nimage:a.png[]\n\ntext \n"
   },
+  "preprocessRequest": {
+    "packageVersion": "@PACKAGE_VERSION@",
+    "sourceId": "main.adoc",
+    "source": "include::part.adoc[]\n",
+    "resources": {
+      "part.adoc": {
+        "sourceId": "part.adoc",
+        "source": "included\n"
+      }
+    },
+    "options": {
+      "enableIncludes": true
+    }
+  },
   "enumCases": [
     { "enum": "Severity", "path": "/analysisOptions/diagnostics/rules/example/severity" },
     { "enum": "SyntaxMode", "path": "/analysisOptions/syntax/syntaxMode" },

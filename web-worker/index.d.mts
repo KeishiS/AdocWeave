@@ -1,5 +1,6 @@
 import type {
   AdocWeaveWasmResponse,
+  AdocWeaveError,
   Diagnostic,
   UpdateRequest,
 } from "./protocol.generated.d.mts";
@@ -14,13 +15,6 @@ export interface AdocWeaveResult {
   generation: number;
   packageVersion: string;
   result: AdocWeaveWasmResponse;
-}
-
-export interface AdocWeaveError {
-  code: string;
-  message: string;
-  sourceVersion: number | null;
-  generation: number;
 }
 
 export interface AdocWeaveClientOptions {

@@ -1,10 +1,11 @@
 use adocweave::NeverCancel;
-use adocweave_wasm::{WasmRequest, process_request};
+use adocweave_wasm::{WasmPreprocessRequest, WasmRequest, preprocess_request, process_request};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 const SCHEMA: &str = include_str!("../../../protocol/public-api.json");
 const CORPUS: &str = include_str!("../../../fixtures/protocol/request-corpus.json");
+const MUTATIONS: &str = include_str!("../../../fixtures/protocol/schema-mutations.json");
 
 fn documents() -> (Value, Value) {
     (
@@ -83,14 +84,41 @@ fn default_request_uses_every_schema_default() {
     let (schema, corpus) = documents();
     let request: WasmRequest =
         serde_json::from_value(base_request(&corpus)).expect("default request is accepted");
+    let mut without_source_id = base_request(&corpus);
+    without_source_id
+        .as_object_mut()
+        .expect("request object")
+        .remove("sourceId");
+    assert_eq!(
+        serde_json::from_value::<WasmRequest>(without_source_id)
+            .expect("omitted source ID")
+            .source_id,
+        None
+    );
 
     assert_eq!(request.products, Default::default());
+    assert_eq!(
+        serde_json::to_value(request.products).expect("product defaults"),
+        schema["browserProductDefault"]
+    );
     assert_eq!(request.analysis_options, Default::default());
     assert_eq!(request.render_policy, Default::default());
     assert_eq!(request.output_limits, Default::default());
     assert_schema_defaults(
         &serde_json::to_value(&request.analysis_options).expect("analysis defaults"),
         "AnalysisOptions",
+        &schema,
+    );
+    assert_wire_value(
+        &serde_json::to_value(&request).expect("serializable default request"),
+        "WasmRequest",
+        &schema,
+    );
+    let expanded: WasmRequest =
+        serde_json::from_value(expanded_request(&corpus)).expect("expanded request");
+    assert_wire_value(
+        &serde_json::to_value(expanded).expect("serializable expanded request"),
+        "WasmRequest",
         &schema,
     );
     assert_schema_defaults(
@@ -120,6 +148,7 @@ fn assert_schema_defaults(value: &Value, name: &str, schema: &Value) {
     let contract = schema["settings"]
         .get(name)
         .or_else(|| schema["definitions"].get(name))
+        .or_else(|| schema["preprocessDefinitions"].get(name))
         .unwrap_or_else(|| panic!("default contract {name}"));
     for field in contract["fields"].as_array().expect("default fields") {
         let field_name = field["json"].as_str().expect("default field name");
@@ -405,12 +434,124 @@ fn response_and_projection_fields_match_the_schema() {
     }
 }
 
+#[test]
+fn preprocess_wire_contract_round_trips_and_rejects_drift() {
+    let (schema, corpus) = documents();
+    let mut value = corpus["preprocessRequest"].clone();
+    value["packageVersion"] = Value::String(adocweave::VERSION.to_owned());
+    let request: WasmPreprocessRequest =
+        serde_json::from_value(value.clone()).expect("preprocess request");
+    assert_wire_value(
+        &serde_json::to_value(&request).expect("serialized preprocess request"),
+        "PreprocessRequest",
+        &schema,
+    );
+    let defaults: WasmPreprocessRequest = serde_json::from_value(json!({
+        "packageVersion": adocweave::VERSION,
+        "source": "text"
+    }))
+    .expect("default preprocess request");
+    assert_eq!(defaults.source_id, None);
+    assert_schema_defaults(
+        &serde_json::to_value(&defaults.options).expect("preprocess defaults"),
+        "PreprocessOptions",
+        &schema,
+    );
+    let response = preprocess_request(request).expect("preprocess response");
+    assert_wire_value(
+        &serde_json::to_value(response).expect("serialized preprocess response"),
+        "PreprocessResponse",
+        &schema,
+    );
+
+    for path in ["", "/resources/part.adoc", "/options"] {
+        let mut unknown = value.clone();
+        unknown
+            .pointer_mut(path)
+            .expect("preprocess object")
+            .as_object_mut()
+            .expect("preprocess map")
+            .insert("unexpected".to_owned(), Value::Bool(true));
+        assert!(
+            serde_json::from_value::<WasmPreprocessRequest>(unknown).is_err(),
+            "preprocess unknown field at {path}"
+        );
+    }
+    for mode in schema["enums"]["SafeMode"].as_array().expect("safe modes") {
+        let mut request = value.clone();
+        request["options"]["safeMode"] = mode.clone();
+        serde_json::from_value::<WasmPreprocessRequest>(request)
+            .unwrap_or_else(|error| panic!("safe mode {mode}: {error}"));
+    }
+    let mut invalid_mode = value;
+    invalid_mode["options"]["safeMode"] = Value::String("invalid".to_owned());
+    assert!(serde_json::from_value::<WasmPreprocessRequest>(invalid_mode).is_err());
+}
+
+#[test]
+fn schema_mutation_corpus_is_rejected_by_bidirectional_checks() {
+    let (schema, corpus) = documents();
+    let request: WasmRequest =
+        serde_json::from_value(expanded_request(&corpus)).expect("mutation probe request");
+    let request = serde_json::to_value(request).expect("serialized mutation probe");
+    let render_defaults =
+        serde_json::to_value(adocweave_wasm::WasmRenderPolicy::default()).expect("render defaults");
+    let mutations: Value = serde_json::from_str(MUTATIONS).expect("mutation corpus");
+
+    for mutation in mutations["mutations"].as_array().expect("mutations") {
+        let mut mutated = schema.clone();
+        let path = mutation["path"].as_str().expect("mutation path");
+        match mutation["kind"].as_str().expect("mutation kind") {
+            "replace" => {
+                *mutated.pointer_mut(path).expect("replace target") = mutation["value"].clone();
+            }
+            "remove" => {
+                let (parent, index) = path.rsplit_once('/').expect("remove path");
+                mutated
+                    .pointer_mut(parent)
+                    .expect("remove parent")
+                    .as_array_mut()
+                    .expect("remove array")
+                    .remove(index.parse().expect("remove index"));
+            }
+            "append" => mutated
+                .pointer_mut(path)
+                .expect("append target")
+                .as_array_mut()
+                .expect("append array")
+                .push(mutation["value"].clone()),
+            kind => panic!("unknown mutation {kind}"),
+        }
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if mutation["probe"] == "request" {
+                assert_wire_value(&request, "WasmRequest", &mutated);
+            } else {
+                assert_schema_defaults(&render_defaults, "RenderPolicy", &mutated);
+            }
+        }))
+        .is_err();
+        assert!(
+            rejected,
+            "schema mutation was not detected: {}",
+            mutation["name"]
+        );
+    }
+}
+
 fn assert_wire_value(value: &Value, type_name: &str, schema: &Value) {
-    if type_name == "string"
-        || type_name == "number"
-        || type_name == "boolean"
-        || type_name == "unknown"
-    {
+    if type_name == "string" {
+        assert!(value.is_string(), "expected string, got {value}");
+        return;
+    }
+    if type_name == "number" {
+        assert!(value.is_number(), "expected number, got {value}");
+        return;
+    }
+    if type_name == "boolean" {
+        assert!(value.is_boolean(), "expected boolean, got {value}");
+        return;
+    }
+    if type_name == "unknown" {
         return;
     }
     if type_name.ends_with(" | null") {
@@ -423,6 +564,19 @@ fn assert_wire_value(value: &Value, type_name: &str, schema: &Value) {
         for value in value
             .as_array()
             .unwrap_or_else(|| panic!("{type_name} must be an array"))
+        {
+            assert_wire_value(value, element, schema);
+        }
+        return;
+    }
+    if let Some(element) = type_name
+        .strip_prefix("Record<string, ")
+        .and_then(|value| value.strip_suffix('>'))
+    {
+        for value in value
+            .as_object()
+            .unwrap_or_else(|| panic!("{type_name} must be an object"))
+            .values()
         {
             assert_wire_value(value, element, schema);
         }
@@ -466,9 +620,17 @@ fn assert_wire_value(value: &Value, type_name: &str, schema: &Value) {
     }
     let contract = if type_name == "AdocWeaveWasmResponse" {
         &schema["response"]
+    } else if type_name == "WasmRequest" {
+        &schema["request"]
+    } else if type_name == "ProductSet" {
+        &schema["productSet"]
+    } else if type_name == "PreprocessRequest" {
+        &schema["preprocessRequest"]
     } else {
-        schema["definitions"]
+        schema["settings"]
             .get(type_name)
+            .or_else(|| schema["definitions"].get(type_name))
+            .or_else(|| schema["preprocessDefinitions"].get(type_name))
             .or_else(|| schema["dtos"].get(type_name))
             .unwrap_or_else(|| panic!("unknown schema type {type_name}"))
     };

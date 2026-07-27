@@ -7,7 +7,10 @@ import {
 } from "./controller.mjs";
 import { AdocWeaveWorkerClient } from "./client.mjs";
 import { PACKAGE_VERSION } from "./contracts.mjs";
-import { WORKER_PROTOCOL_VERSION as GENERATED_WORKER_PROTOCOL_VERSION } from "./protocol.generated.mjs";
+import {
+  WORKER_MESSAGE_FIELDS,
+  WORKER_PROTOCOL_VERSION as GENERATED_WORKER_PROTOCOL_VERSION,
+} from "./protocol.generated.mjs";
 
 function harness(process = (request) => request) {
   const messages = [];
@@ -55,8 +58,36 @@ function request(version, generation) {
   };
 }
 
+function assertMessageFields(message, contract) {
+  assert.deepEqual(Object.keys(message).sort(), [...WORKER_MESSAGE_FIELDS[contract]].sort());
+}
+
 test("runtime uses the generated worker protocol version", () => {
   assert.equal(WORKER_PROTOCOL_VERSION, GENERATED_WORKER_PROTOCOL_VERSION);
+});
+
+test("worker ready envelope matches the generated contract", async () => {
+  const previousSelf = globalThis.self;
+  const messages = [];
+  globalThis.self = {
+    postMessage: (message) => messages.push(message),
+  };
+  try {
+    await import(`./worker.mjs?protocol-contract=${Date.now()}`);
+    await globalThis.self.onmessage({
+      data: {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "initialize",
+        moduleUrl: "data:text/javascript,export default async function init(){};export function process(){}",
+        wasmUrl: "unused.wasm",
+        debounceMs: 0,
+        cancellationBuffer: null,
+      },
+    });
+    assertMessageFields(messages[0], "responses.ready");
+  } finally {
+    globalThis.self = previousSelf;
+  }
 });
 
 test("debounce publishes only the latest document generation", () => {
@@ -68,6 +99,7 @@ test("debounce publishes only the latest document generation", () => {
   state.flush();
 
   assert.equal(state.messages.length, 1);
+  assertMessageFields(state.messages[0], "responses.result");
   assert.equal(state.messages[0].version, 2);
   assert.equal(state.messages[0].generation, 2);
 });
@@ -95,6 +127,7 @@ test("protocol mismatch returns a stable error without executing WASM", () => {
   state.controller.submit({ ...request(1, 1), protocolVersion: 2 });
 
   assert.equal(calls, 0);
+  assertMessageFields(state.messages[0], "responses.error");
   assert.equal(state.messages[0].error.code, "unsupported-worker-protocol");
 });
 
@@ -121,6 +154,8 @@ test("client sends the current WASM API version with responsibility-specific def
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(messages[1].payload.packageVersion, PACKAGE_VERSION);
+  assertMessageFields(messages[0], "requests.initialize");
+  assertMessageFields(messages[1], "requests.analyze");
   assert.deepEqual(messages[1].payload.analysisOptions, {});
   assert.deepEqual(messages[1].payload.renderPolicy, {});
   assert.deepEqual(messages[1].payload.outputLimits, {});

@@ -1,9 +1,9 @@
 use adocweave::Analysis;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{WasmError, WasmLimits};
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRenderInputs {
     #[serde(default)]
@@ -12,7 +12,7 @@ pub struct WasmRenderInputs {
     pub resources: Vec<WasmResolvedResource>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResolvedReference {
     pub source_start: u32,
@@ -20,7 +20,7 @@ pub struct WasmResolvedReference {
     pub outcome: WasmReferenceOutcome,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum WasmReferenceOutcome {
     Resolved {
@@ -35,13 +35,13 @@ pub enum WasmReferenceOutcome {
     },
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmReferenceNotice {
     Fallback,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmReferenceFailureKind {
     MissingTarget,
@@ -51,7 +51,7 @@ pub enum WasmReferenceFailureKind {
     ResolverFailure,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResolvedResource {
     pub source_start: u32,
@@ -59,7 +59,7 @@ pub struct WasmResolvedResource {
     pub outcome: WasmResourceOutcome,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum WasmResourceOutcome {
     Resolved {
@@ -74,7 +74,7 @@ pub enum WasmResourceOutcome {
     },
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmResourceFailureKind {
     Missing,
