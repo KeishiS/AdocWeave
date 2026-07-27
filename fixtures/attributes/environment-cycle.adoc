@@ -1,0 +1,5 @@
+= 循環参照
+:self: {self}
+:propagated: {self}
+
+値は{self}、伝播値は{propagated}です。

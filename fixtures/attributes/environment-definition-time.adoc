@@ -1,0 +1,6 @@
+= 定義時評価
+:base: 古い値
+:snapshot: {base}
+:base: 新しい値
+
+現在値は{base}、保存値は{snapshot}です。

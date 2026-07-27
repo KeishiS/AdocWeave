@@ -144,6 +144,11 @@ impl Analysis {
         self.ast().presentation()
     }
 
+    /// Returns the source-ordered document attribute environment.
+    pub const fn attribute_environment(&self) -> &crate::attributes::AttributeEnvironment {
+        self.ast().attribute_environment()
+    }
+
     pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
         self.ast().layout()
     }

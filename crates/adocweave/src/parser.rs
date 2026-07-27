@@ -142,6 +142,10 @@ impl AstDocument {
         self.resolved.presentation()
     }
 
+    pub(crate) const fn attribute_environment(&self) -> &crate::attributes::AttributeEnvironment {
+        self.resolved.attribute_environment()
+    }
+
     pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
         self.resolved.layout()
     }

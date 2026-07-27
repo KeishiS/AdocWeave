@@ -18,8 +18,12 @@ fn document_attributes_are_recognized_between_root_blocks() {
         "body-attribute"
     );
     assert_eq!(
-        analysis.presentation().attributes().get("body-attribute"),
-        None
+        analysis
+            .attribute_environment()
+            .final_values()
+            .get("body-attribute")
+            .map(String::as_str),
+        Some("value")
     );
     assert_eq!(analysis.document().blocks().len(), 2);
     assert_eq!(analysis.source(), source);

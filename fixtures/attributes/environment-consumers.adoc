@@ -1,0 +1,25 @@
+= 位置別consumer
+:target: first
+:toc:
+
+https://example.test/{target}[link] xref:{target}[xref] image:{target}.png[]
+
+:target: second
+
+https://example.test/{target}[link] xref:{target}[xref] image:{target}.png[]
+
+:source-language: rust
+
+----
+fn main() {}
+----
+
+:sectnums:
+
+== 番号あり
+
+:sectnums!:
+
+== 番号なし
+
+:doctype: book

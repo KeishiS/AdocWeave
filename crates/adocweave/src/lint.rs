@@ -1949,11 +1949,11 @@ mod tests {
     }
 
     #[test]
-    fn recursive_attribute_cycles_and_limits_have_stable_diagnostics() {
+    fn forward_attribute_references_are_not_rebound_later() {
         let diagnostics =
             lint("= T\n:a: {b}\n:b: {a}\n\n{a}", &LintConfig::default()).expect("lint");
         assert!(
-            diagnostics
+            !diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code.as_str() == "attribute-expansion")
         );

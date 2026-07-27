@@ -1,0 +1,8 @@
+= 前方参照
+:snapshot: {later}
+
+定義前は{later}です。保存値は{snapshot}です。
+
+:later: 到着
+
+定義後は{later}です。保存値は{snapshot}のままです。

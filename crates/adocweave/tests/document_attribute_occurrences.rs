@@ -54,9 +54,12 @@ fn public_occurrences_preserve_standard_attribute_source_facts() {
         assert_eq!(slice(source, occurrence.value_range), occurrence.raw_value);
     }
 
-    let attributes = analysis.presentation().attributes();
-    assert_eq!(attributes.get("duplicate"), Some("second"));
-    assert_eq!(attributes.get("empty"), Some(""));
+    let attributes = analysis.attribute_environment().final_values();
+    assert_eq!(
+        attributes.get("duplicate").map(String::as_str),
+        Some("second")
+    );
+    assert_eq!(attributes.get("empty").map(String::as_str), Some(""));
     assert_eq!(attributes.get("removed"), None);
     assert_eq!(attributes.get("alternate"), None);
 }
@@ -78,7 +81,14 @@ fn root_body_occurrences_cover_set_unset_and_adjacent_blocks() {
     assert_eq!(occurrences[1].name, "feature");
     assert_eq!(occurrences[1].operation, DocumentAttributeOperation::Unset);
     assert!(analysis.header_attribute_occurrences().is_empty());
-    assert_eq!(analysis.presentation().attributes().get("theme"), None);
+    assert_eq!(
+        analysis
+            .attribute_environment()
+            .final_values()
+            .get("theme")
+            .map(String::as_str),
+        Some("dark")
+    );
     assert!(
         analysis
             .document()
@@ -176,7 +186,14 @@ fn leading_attributes_form_the_header_with_or_without_a_title() {
         let analysis = analyze(source);
         assert_eq!(analysis.document_attribute_occurrences().len(), 1);
         assert_eq!(analysis.header_attribute_occurrences().len(), 1);
-        assert_eq!(analysis.presentation().attributes().get("foo"), Some("bar"));
+        assert_eq!(
+            analysis
+                .attribute_environment()
+                .values_at(analysis.document().header().end)
+                .get("foo")
+                .map(String::as_str),
+            Some("bar")
+        );
         let header_range = analysis.document().header().range.expect("header range");
         assert_eq!(header_range.start().to_usize(), 0);
         assert_eq!(

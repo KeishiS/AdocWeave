@@ -135,6 +135,7 @@ impl<'a> AttributeEvaluator<'a> {
         Self { values, limits }
     }
 
+    #[cfg(test)]
     pub(crate) fn expand_name(&self, name: &str) -> Result<String, AttributeExpansionError> {
         let mut active = BTreeSet::new();
         self.expand_named(name, 0, &mut active)

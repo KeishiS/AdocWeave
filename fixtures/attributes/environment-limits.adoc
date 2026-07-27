@@ -1,0 +1,7 @@
+= 属性上限
+:level-zero: 値
+:level-one: {level-zero}
+:level-two: {level-one}
+:large: 0123456789
+
+深さは{level-two}、大きさは{large}です。
