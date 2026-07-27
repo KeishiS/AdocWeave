@@ -108,6 +108,22 @@ fn native_adapter_accepts_every_shared_conformance_case() {
                         && binding.occurrence.name != "absent"),
                 "{name}: rejected authored bindings"
             );
+            let multiline = response
+                .attribute_queries
+                .bindings
+                .iter()
+                .find(|binding| binding.occurrence.name == "multi")
+                .expect("multiline binding");
+            let included_source = entry["preprocess"]["resources"]["part.adoc"]["source"]
+                .as_str()
+                .expect("included source");
+            let second_line = &multiline.occurrence.value.lines[1];
+            assert_eq!(
+                &included_source[second_line.content_range.start as usize
+                    ..second_line.content_range.end as usize],
+                "second",
+                "{name}: multiline line projection"
+            );
         }
         if let Some(file) = entry["expectedHtmlFile"].as_str() {
             assert_eq!(

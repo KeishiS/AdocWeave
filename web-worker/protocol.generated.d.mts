@@ -448,13 +448,9 @@ export interface AttributeQueryProduct {
 export interface AttributeBindingQuery {
   id: number;
   sourceId: string | null;
-  eventId: number;
-  visibleAt: number;
-  evaluationAt: number;
   operation: DocumentAttributeOperation;
   effectiveValue: string | null;
   error: AttributeExpansionError | null;
-  expansionDepth: number;
   occurrence: DocumentAttributeOccurrence;
 }
 

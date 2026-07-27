@@ -184,13 +184,9 @@ pub struct WasmAttributeQueryProduct {
 pub struct WasmAttributeBindingQuery {
     pub id: u32,
     pub source_id: Option<String>,
-    pub event_id: u32,
-    pub visible_at: u32,
-    pub evaluation_at: u32,
     pub operation: WasmDocumentAttributeOperation,
     pub effective_value: Option<String>,
     pub error: Option<WasmAttributeExpansionError>,
-    pub expansion_depth: u32,
     pub occurrence: WasmDocumentAttributeOccurrence,
 }
 
@@ -1123,6 +1119,17 @@ fn wasm_attribute_query_product(
                         .find(|candidate| candidate.value.id() == binding.id())
                 });
                 let mut occurrence = wasm_document_attribute_occurrence(binding.occurrence());
+                if let Some(projected_occurrence) = projection.and_then(|projection| {
+                    projection
+                        .attribute_occurrences
+                        .iter()
+                        .find(|candidate| candidate.value.range == binding.occurrence().range)
+                }) {
+                    wasm_project_document_attribute_occurrence(
+                        &mut occurrence,
+                        projected_occurrence,
+                    );
+                }
                 let (binding_source_id, range) = wasm_projected_range(
                     projected.map(|value| value.origins.as_slice()),
                     source_id.clone(),
@@ -1144,9 +1151,6 @@ fn wasm_attribute_query_product(
                 WasmAttributeBindingQuery {
                     id: binding.id().get(),
                     source_id: binding_source_id,
-                    event_id: binding.event_id().get(),
-                    visible_at: binding.visible_at().to_u32(),
-                    evaluation_at: binding.evaluation_at().to_u32(),
                     operation: match binding.operation() {
                         adocweave::semantic::DocumentAttributeOperation::Set => {
                             WasmDocumentAttributeOperation::Set
@@ -1157,7 +1161,6 @@ fn wasm_attribute_query_product(
                     },
                     effective_value,
                     error,
-                    expansion_depth: binding.expansion_depth(),
                     occurrence,
                 }
             })
@@ -1198,6 +1201,39 @@ fn wasm_attribute_query_product(
             })
             .collect(),
     }
+}
+
+fn wasm_project_document_attribute_occurrence(
+    output: &mut WasmDocumentAttributeOccurrence,
+    projected: &adocweave::preprocess::ProjectedDocumentAttribute,
+) {
+    output.range = wasm_first_origin_range(&projected.origins, output.range);
+    output.name_range = wasm_first_origin_range(&projected.name_origins, output.name_range);
+    output.value.source_range =
+        wasm_first_origin_range(&projected.value_origins, output.value.source_range);
+    for (line, projected_line) in output.value.lines.iter_mut().zip(&projected.value_lines) {
+        line.range = wasm_first_origin_range(&projected_line.origins, line.range);
+        line.indent_range =
+            wasm_first_origin_range(&projected_line.indent_origins, line.indent_range);
+        line.content_range =
+            wasm_first_origin_range(&projected_line.content_origins, line.content_range);
+        line.ending_range =
+            wasm_first_origin_range(&projected_line.ending_origins, line.ending_range);
+        if let Some(continuation) = &mut line.continuation {
+            continuation.range =
+                wasm_first_origin_range(&projected_line.continuation_origins, continuation.range);
+        }
+    }
+}
+
+fn wasm_first_origin_range(
+    origins: &[adocweave::preprocess::SourceOrigin],
+    fallback: WasmTextRange,
+) -> WasmTextRange {
+    origins.first().map_or(fallback, |origin| WasmTextRange {
+        start: origin.range.start().to_u32(),
+        end: origin.range.end().to_u32(),
+    })
 }
 
 fn wasm_projected_range(

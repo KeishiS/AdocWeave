@@ -665,13 +665,9 @@
       "fields": [
         { "json": "id", "type": "u32" },
         { "json": "sourceId", "type": "string | null" },
-        { "json": "eventId", "type": "u32" },
-        { "json": "visibleAt", "type": "u32" },
-        { "json": "evaluationAt", "type": "u32" },
         { "json": "operation", "type": "DocumentAttributeOperation" },
         { "json": "effectiveValue", "type": "string | null" },
         { "json": "error", "type": "AttributeExpansionError | null" },
-        { "json": "expansionDepth", "type": "u32" },
         { "json": "occurrence", "type": "DocumentAttributeOccurrence" }
       ]
     },

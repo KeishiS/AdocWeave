@@ -435,12 +435,12 @@
     },
     {
       "name": "position-dependent-attribute-queries-with-include-origin",
-      "source": "include::part.adoc[]\n\n{seen-first} {seen-second} {seen-unset} {forward} {header-only} {locked} {absent}\n",
+      "source": "include::part.adoc[]\n\n{seen-first} {seen-second} {seen-unset} {forward} {header-only} {multi} {locked} {absent}\n",
       "preprocess": {
         "resources": {
           "part.adoc": {
             "sourceId": "included:part.adoc",
-            "source": ":header-only: root\n:locked: document\n:absent: document\n:name: first\n:seen-first: {name}\n:name: second\n:seen-second: {name}\n:name!:\n:seen-unset: {name}\n:forward: {later}\n:later: later\n"
+            "source": ":header-only: root\n:locked: document\n:absent: document\n:multi: first \\\n second\n:name: first\n:seen-first: {name}\n:name: second\n:seen-second: {name}\n:name!:\n:seen-unset: {name}\n:forward: {later}\n:later: later\n"
           }
         },
         "options": {
