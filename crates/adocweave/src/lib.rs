@@ -52,8 +52,9 @@ mod walker;
 pub mod semantic {
     pub use crate::attributes::{
         AttributeBinding, AttributeBindingId, AttributeEnvironment, AttributeEventId,
-        AttributePosition, DocumentAttributeOccurrence, DocumentAttributeOperation,
-        ResolvedAttribute,
+        AttributePosition, AttributeValueContinuation, DocumentAttributeContinuation,
+        DocumentAttributeOccurrence, DocumentAttributeOperation, DocumentAttributeValue,
+        DocumentAttributeValueLine, ResolvedAttribute,
     };
     pub use crate::block_model::{
         AdmonitionKind, AdmonitionPresentation, Author, Block, BlockMetadata, BlockProblem,
@@ -155,10 +156,11 @@ pub mod preprocess {
         IncludeRequest, OriginRange, Originated, PreprocessError, PreprocessErrorKind,
         PreprocessNotice, PreprocessNoticeKind, PreprocessOptions, PreprocessedAnalysis,
         PreprocessedAnalysisError, PreprocessedDocument, ProjectedDiagnostic,
-        ProjectedDocumentAttribute, ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget,
-        ProjectedReference, ProjectedResource, ProjectionError, ProjectionLimits, ResourceDocument,
-        ResourceSnapshot, SafeMode, SourceMapSegment, SourceMapping, SourceOrigin,
-        discover_includes, preprocess, preprocess_and_analyze, resolve_include_target,
+        ProjectedDocumentAttribute, ProjectedDocumentAttributeValueLine, ProjectedDocumentSymbol,
+        ProjectedFix, ProjectedLocalTarget, ProjectedReference, ProjectedResource, ProjectionError,
+        ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode, SourceMapSegment,
+        SourceMapping, SourceOrigin, discover_includes, preprocess, preprocess_and_analyze,
+        resolve_include_target,
     };
 }
 

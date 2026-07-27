@@ -75,6 +75,7 @@
     "ResourceStatus": ["resolved", "failed"],
     "ResourceFailureKind": ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"],
     "DocumentAttributeOperation": ["set", "unset"],
+    "AttributeValueContinuation": ["soft", "hard"],
     "ResourcePurpose": ["image", "icon", "audio", "video", "video-poster"],
     "MacroForm": ["inline", "block"],
     "FormulaKind": ["inline", "block"]
@@ -636,10 +637,33 @@
       "fields": [
         { "json": "range", "type": "TextRange" },
         { "json": "nameRange", "type": "TextRange" },
-        { "json": "valueRange", "type": "TextRange" },
         { "json": "name", "type": "string" },
-        { "json": "rawValue", "type": "string" },
-        { "json": "operation", "type": "DocumentAttributeOperation" }
+        { "json": "value", "type": "DocumentAttributeValue" },
+        { "json": "operation", "type": "DocumentAttributeOperation" },
+        { "json": "valid", "type": "boolean" }
+      ]
+    },
+    "DocumentAttributeValue": {
+      "fields": [
+        { "json": "sourceRange", "type": "TextRange" },
+        { "json": "sourceText", "type": "string" },
+        { "json": "foldedText", "type": "string" },
+        { "json": "lines", "type": "DocumentAttributeValueLine[]" }
+      ]
+    },
+    "DocumentAttributeValueLine": {
+      "fields": [
+        { "json": "range", "type": "TextRange" },
+        { "json": "indentRange", "type": "TextRange" },
+        { "json": "contentRange", "type": "TextRange" },
+        { "json": "endingRange", "type": "TextRange" },
+        { "json": "continuation", "type": "DocumentAttributeContinuation | null" }
+      ]
+    },
+    "DocumentAttributeContinuation": {
+      "fields": [
+        { "json": "kind", "type": "AttributeValueContinuation" },
+        { "json": "range", "type": "TextRange" }
       ]
     },
     "ResourceQuery": {

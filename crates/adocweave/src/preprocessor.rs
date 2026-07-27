@@ -511,6 +511,17 @@ pub struct ProjectedDocumentAttribute {
     pub origins: Vec<SourceOrigin>,
     pub name_origins: Vec<SourceOrigin>,
     pub value_origins: Vec<SourceOrigin>,
+    pub value_lines: Vec<ProjectedDocumentAttributeValueLine>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedDocumentAttributeValueLine {
+    pub value: crate::attributes::DocumentAttributeValueLine,
+    pub origins: Vec<SourceOrigin>,
+    pub indent_origins: Vec<SourceOrigin>,
+    pub content_origins: Vec<SourceOrigin>,
+    pub ending_origins: Vec<SourceOrigin>,
+    pub continuation_origins: Vec<SourceOrigin>,
 }
 
 /// All editor-facing facts from an expanded analysis, projected to original sources.
@@ -592,16 +603,74 @@ impl PreprocessedAnalysis {
                 )?;
                 let value_origins = project_attribute_range(
                     map,
-                    value.value_range,
+                    value.value.source_range,
                     value.range,
                     &mut projected_segments,
                     limits,
                 )?;
+                let value_lines = value
+                    .value
+                    .lines
+                    .iter()
+                    .cloned()
+                    .map(|line| {
+                        let origins = project_attribute_range(
+                            map,
+                            line.range,
+                            value.range,
+                            &mut projected_segments,
+                            limits,
+                        )?;
+                        let indent_origins = project_attribute_range(
+                            map,
+                            line.indent_range,
+                            value.range,
+                            &mut projected_segments,
+                            limits,
+                        )?;
+                        let content_origins = project_attribute_range(
+                            map,
+                            line.content_range,
+                            value.range,
+                            &mut projected_segments,
+                            limits,
+                        )?;
+                        let ending_origins = project_attribute_range(
+                            map,
+                            line.ending_range,
+                            value.range,
+                            &mut projected_segments,
+                            limits,
+                        )?;
+                        let continuation_origins = line
+                            .continuation
+                            .map(|continuation| {
+                                project_attribute_range(
+                                    map,
+                                    continuation.range,
+                                    value.range,
+                                    &mut projected_segments,
+                                    limits,
+                                )
+                            })
+                            .transpose()?
+                            .unwrap_or_default();
+                        Ok(ProjectedDocumentAttributeValueLine {
+                            value: line,
+                            origins,
+                            indent_origins,
+                            content_origins,
+                            ending_origins,
+                            continuation_origins,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ProjectionError>>()?;
                 Ok(ProjectedDocumentAttribute {
                     value,
                     origins,
                     name_origins,
                     value_origins,
+                    value_lines,
                 })
             })
             .collect::<Result<Vec<_>, ProjectionError>>()?;
@@ -2039,6 +2108,59 @@ mod tests {
     }
 
     #[test]
+    fn analysis_projection_preserves_each_included_attribute_value_line() {
+        let included = include_str!("../../../fixtures/attributes/multiline-soft-hard.adoc");
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "multiline.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("included-multiline"),
+                source: included.to_owned(),
+            },
+        );
+        let engine = Engine::new(crate::core::AnalysisOptions::default());
+        let analysis = preprocess_and_analyze(
+            &engine,
+            "include::multiline.adoc[]\n",
+            &snapshot,
+            &PreprocessOptions {
+                source_id: Some(SourceId::new("root")),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("analysis");
+        let projection = analysis
+            .project_origins(ProjectionLimits::default())
+            .expect("projection");
+
+        let soft = &projection.attribute_occurrences[0];
+        assert_eq!(
+            soft.value.value.folded_text,
+            "first line 日本語🙂 third line"
+        );
+        assert_eq!(soft.value_lines.len(), 3);
+        for line in &soft.value_lines {
+            for origins in [&line.origins, &line.content_origins, &line.ending_origins] {
+                assert_eq!(origins.len(), 1);
+                assert_eq!(
+                    origins[0].source_id.as_ref().map(SourceId::as_str),
+                    Some("included-multiline")
+                );
+            }
+        }
+        assert_eq!(
+            soft.value_lines
+                .iter()
+                .map(|line| {
+                    let range = line.content_origins[0].range.text_range();
+                    &included[range.start().to_usize()..range.end().to_usize()]
+                })
+                .collect::<Vec<_>>(),
+            ["first line", "日本語🙂", "third line"]
+        );
+    }
+
+    #[test]
     fn empty_attribute_value_at_an_include_boundary_projects_to_the_include() {
         let included = include_str!("../../../fixtures/attributes/include-empty-no-newline.adoc");
         assert!(!included.ends_with('\n'));
@@ -2066,7 +2188,7 @@ mod tests {
 
         assert_eq!(projection.attribute_occurrences.len(), 1);
         let attribute = &projection.attribute_occurrences[0];
-        assert!(attribute.value.value_range.is_empty());
+        assert!(attribute.value.value.source_range.is_empty());
         assert_eq!(
             attribute.value_origins,
             vec![SourceOrigin {

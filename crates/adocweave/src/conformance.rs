@@ -216,7 +216,10 @@ fn canonical_ast(document: &AstDocument) -> String {
             .map(|attribute| CanonicalNode {
                 kind: "attribute",
                 range: range(attribute.range),
-                value: Some(format!("{}={}", attribute.name, attribute.raw_value)),
+                value: Some(format!(
+                    "{}={}",
+                    attribute.name, attribute.value.folded_text
+                )),
                 children: Vec::new(),
             })
             .collect(),

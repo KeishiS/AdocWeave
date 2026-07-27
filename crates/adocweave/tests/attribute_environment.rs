@@ -25,10 +25,10 @@ fn set_redefine_and_unset_are_selected_by_position() {
     assert_eq!(alice.binding.id().get(), 0);
     assert_eq!(alice.binding.event_id().get(), 0);
     assert_eq!(alice.binding.operation(), DocumentAttributeOperation::Set);
-    assert_eq!(alice.binding.raw_value(), "Alice");
+    assert_eq!(alice.binding.source_text(), "Alice");
     assert_eq!(
         alice.binding.evaluation_at(),
-        alice.binding.occurrence().value_range.start()
+        alice.binding.occurrence().value.source_range.start()
     );
     assert_eq!(
         alice.binding.visible_at(),
@@ -155,6 +155,39 @@ fn unicode_and_crlf_offsets_select_the_same_environment() {
             .attribute_environment()
             .expand_at("{line-ending}", offset(crlf, "後の段落")),
         Ok("crlf".to_owned())
+    );
+}
+
+#[test]
+fn multiline_definitions_use_folded_values_at_definition_time() {
+    let source = r#":base: old
+:soft: first {base} \
+  second
+:hard: one + \
+  two
+:base: new
+
+{soft}
+{hard}
+"#;
+    let analysis = analyze(source);
+    let content = offset(source, "{soft}");
+    let environment = analysis.attribute_environment();
+    assert_eq!(
+        environment.expand_at("{soft}", content),
+        Ok("first old second".to_owned())
+    );
+    assert_eq!(
+        environment.expand_at("{hard}", content),
+        Ok("one +\ntwo".to_owned())
+    );
+    assert_eq!(
+        environment
+            .resolve_at("soft", content)
+            .expect("soft binding")
+            .binding
+            .folded_value(),
+        "first {base} second"
     );
 }
 

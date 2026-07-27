@@ -36,6 +36,8 @@ export type ResourceFailureKind = "missing" | "outside-root" | "scheme-denied" |
 
 export type DocumentAttributeOperation = "set" | "unset";
 
+export type AttributeValueContinuation = "soft" | "hard";
+
 export type ResourcePurpose = "image" | "icon" | "audio" | "video" | "video-poster";
 
 export type MacroForm = "inline" | "block";
@@ -423,10 +425,30 @@ export interface DocumentProjection {
 export interface DocumentAttributeOccurrence {
   range: TextRange;
   nameRange: TextRange;
-  valueRange: TextRange;
   name: string;
-  rawValue: string;
+  value: DocumentAttributeValue;
   operation: DocumentAttributeOperation;
+  valid: boolean;
+}
+
+export interface DocumentAttributeValue {
+  sourceRange: TextRange;
+  sourceText: string;
+  foldedText: string;
+  lines: DocumentAttributeValueLine[];
+}
+
+export interface DocumentAttributeValueLine {
+  range: TextRange;
+  indentRange: TextRange;
+  contentRange: TextRange;
+  endingRange: TextRange;
+  continuation: DocumentAttributeContinuation | null;
+}
+
+export interface DocumentAttributeContinuation {
+  kind: AttributeValueContinuation;
+  range: TextRange;
 }
 
 export interface ResourceQuery {

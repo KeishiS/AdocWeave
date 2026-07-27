@@ -1,0 +1,16 @@
+= 複数行属性
+:soft: first line \
+  日本語🙂 \
+	third line
+:hard: first line + \
+  second line + \
+	third line
+:mixed: soft start \
+  hard middle + \
+  final line
+
+{soft}
+
+{hard}
+
+{mixed}

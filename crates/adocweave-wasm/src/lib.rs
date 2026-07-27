@@ -119,10 +119,43 @@ pub struct WasmTextRange {
 pub struct WasmDocumentAttributeOccurrence {
     pub range: WasmTextRange,
     pub name_range: WasmTextRange,
-    pub value_range: WasmTextRange,
     pub name: String,
-    pub raw_value: String,
+    pub value: WasmDocumentAttributeValue,
     pub operation: WasmDocumentAttributeOperation,
+    pub valid: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDocumentAttributeValue {
+    pub source_range: WasmTextRange,
+    pub source_text: String,
+    pub folded_text: String,
+    pub lines: Vec<WasmDocumentAttributeValueLine>,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDocumentAttributeValueLine {
+    pub range: WasmTextRange,
+    pub indent_range: WasmTextRange,
+    pub content_range: WasmTextRange,
+    pub ending_range: WasmTextRange,
+    pub continuation: Option<WasmDocumentAttributeContinuation>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDocumentAttributeContinuation {
+    pub kind: WasmAttributeValueContinuation,
+    pub range: WasmTextRange,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmAttributeValueContinuation {
+    Soft,
+    Hard,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
@@ -887,9 +920,36 @@ fn wasm_document_attribute_occurrence(
     WasmDocumentAttributeOccurrence {
         range: wasm_text_range(occurrence.range),
         name_range: wasm_text_range(occurrence.name_range),
-        value_range: wasm_text_range(occurrence.value_range),
         name: occurrence.name.clone(),
-        raw_value: occurrence.raw_value.clone(),
+        value: WasmDocumentAttributeValue {
+            source_range: wasm_text_range(occurrence.value.source_range),
+            source_text: occurrence.value.source_text.clone(),
+            folded_text: occurrence.value.folded_text.clone(),
+            lines: occurrence
+                .value
+                .lines
+                .iter()
+                .map(|line| WasmDocumentAttributeValueLine {
+                    range: wasm_text_range(line.range),
+                    indent_range: wasm_text_range(line.indent_range),
+                    content_range: wasm_text_range(line.content_range),
+                    ending_range: wasm_text_range(line.ending_range),
+                    continuation: line.continuation.map(|continuation| {
+                        WasmDocumentAttributeContinuation {
+                            kind: match continuation.kind {
+                                adocweave::semantic::AttributeValueContinuation::Soft => {
+                                    WasmAttributeValueContinuation::Soft
+                                }
+                                adocweave::semantic::AttributeValueContinuation::Hard => {
+                                    WasmAttributeValueContinuation::Hard
+                                }
+                            },
+                            range: wasm_text_range(continuation.range),
+                        }
+                    }),
+                })
+                .collect(),
+        },
         operation: match occurrence.operation {
             adocweave::semantic::DocumentAttributeOperation::Set => {
                 WasmDocumentAttributeOperation::Set
@@ -898,6 +958,7 @@ fn wasm_document_attribute_occurrence(
                 WasmDocumentAttributeOperation::Unset
             }
         },
+        valid: occurrence.valid,
     }
 }
 
@@ -1073,12 +1134,12 @@ mod tests {
 
         assert_eq!(response.attribute_occurrences.len(), 5);
         assert_eq!(response.attribute_occurrences[0].name, "duplicate");
-        assert_eq!(response.attribute_occurrences[0].raw_value, "first");
+        assert_eq!(response.attribute_occurrences[0].value.source_text, "first");
         assert_eq!(
             response.attribute_occurrences[1].operation,
             WasmDocumentAttributeOperation::Set
         );
-        assert_eq!(response.attribute_occurrences[2].raw_value, "");
+        assert_eq!(response.attribute_occurrences[2].value.source_text, "");
         assert_eq!(
             response.attribute_occurrences[3].operation,
             WasmDocumentAttributeOperation::Unset
@@ -1088,13 +1149,33 @@ mod tests {
             WasmDocumentAttributeOperation::Unset
         );
         assert!(
-            response.attribute_occurrences[2].value_range.start
-                == response.attribute_occurrences[2].value_range.end
+            response.attribute_occurrences[2].value.source_range.start
+                == response.attribute_occurrences[2].value.source_range.end
         );
         assert_eq!(
             &source[usize::try_from(response.attribute_occurrences[0].range.start).expect("offset")
                 ..usize::try_from(response.attribute_occurrences[0].range.end).expect("offset")],
             ":duplicate: first\n"
+        );
+
+        let multiline = process_request(
+            request(include_str!(
+                "../../../fixtures/attributes/multiline-soft-hard.adoc"
+            )),
+            &NeverCancel,
+        )
+        .expect("multiline response");
+        assert_eq!(
+            multiline.attribute_occurrences[1].value.folded_text,
+            "first line +\nsecond line +\nthird line"
+        );
+        assert_eq!(multiline.attribute_occurrences[1].value.lines.len(), 3);
+        assert_eq!(
+            multiline.attribute_occurrences[1].value.lines[0]
+                .continuation
+                .expect("continuation")
+                .kind,
+            WasmAttributeValueContinuation::Hard
         );
     }
 

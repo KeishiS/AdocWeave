@@ -504,7 +504,7 @@ fn inline_text_with_attributes(inlines: &[Inline], include_attribute_values: boo
             )),
             Inline::AttributeReference { value, .. } => {
                 if include_attribute_values {
-                    output.push_str(value.as_deref().unwrap_or_default());
+                    push_attribute_text(&mut output, value.as_deref().unwrap_or_default());
                 }
             }
             Inline::Formula(_) => {}
@@ -550,6 +550,16 @@ fn inline_text_with_attributes(inlines: &[Inline], include_attribute_values: boo
         }
     }
     output
+}
+
+fn push_attribute_text(output: &mut String, value: &str) {
+    let mut remaining = value;
+    while let Some(index) = remaining.find(" +\n") {
+        output.push_str(&remaining[..index]);
+        output.push('\n');
+        remaining = &remaining[index + 3..];
+    }
+    output.push_str(remaining);
 }
 
 fn fold_line_endings(value: &str) -> String {

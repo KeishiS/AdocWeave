@@ -1252,7 +1252,7 @@ fn render_inlines(
             }
             Inline::AttributeReference { name, value, .. } => {
                 if let Some(value) = value {
-                    escape_html_into(output, value);
+                    render_attribute_value(output, value);
                 } else {
                     output.push('{');
                     escape_html_into(output, name);
@@ -1288,6 +1288,16 @@ fn render_inlines(
             }
         }
     }
+}
+
+fn render_attribute_value(output: &mut String, value: &str) {
+    let mut remaining = value;
+    while let Some(index) = remaining.find(" +\n") {
+        escape_html_into(output, &remaining[..index]);
+        output.push_str("<br>\n");
+        remaining = &remaining[index + 3..];
+    }
+    escape_html_into(output, remaining);
 }
 
 fn render_standard_macro(

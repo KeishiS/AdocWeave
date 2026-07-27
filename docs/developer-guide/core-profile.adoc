@@ -112,7 +112,10 @@ Rustからは`Engine`、`AnalysisOptions`、`Analysis`が主な入口です。�
 その値を決めたbindingは`Analysis::attribute_environment().resolve_at()`から、最終値viewは
 `Analysis::attribute_environment().final_values()`から取得します。属性を記述した順番と
 source rangeは`Analysis::document_attribute_occurrences()`から取得します。同じexpanded offsetに
-複数の読込eventがある場合は`resolve_at_event()`でevent IDを指定します。
+複数の読込eventがある場合は`resolve_at_event()`でevent IDを指定します。属性値の
+`source_text`と`source_range`は記述どおりの複数物理行を保持し、`folded_text`は通常の継続を
+spaceへ畳み、hard breakのplusを残してmarkerを改行へ畳んだ意味評価用の値です。
+`lines`から各物理行と継続markerのrangeを取得できます。
 属性fixtureと保証対象の対応は link:../../fixtures/attributes/manifest.json[属性契約manifest]を基準とし、
 repository検査でfixture一覧とこの文書体系の同期を確認します。
 

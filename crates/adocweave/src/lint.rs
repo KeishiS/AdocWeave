@@ -980,7 +980,7 @@ fn lint_attributes(
         }
         if let Some(expected) = config.protected_attributes.get(&attribute.name) {
             let changed = match &attribute.operation {
-                DocumentAttributeOperation::Set => &attribute.raw_value != expected,
+                DocumentAttributeOperation::Set => &attribute.value.folded_text != expected,
                 DocumentAttributeOperation::Unset => true,
             };
             if changed

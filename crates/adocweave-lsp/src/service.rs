@@ -970,8 +970,10 @@ impl LanguageService {
         {
             return make_hover(
                 format!(
-                    "**document attribute**  \nName: `{}`  \nRaw value: `{}`",
-                    attribute.name, attribute.raw_value
+                    "**document attribute**  \nName: `{}`\n\nSource value:\n\n    {}\n\nFolded value:\n\n    {}",
+                    attribute.name,
+                    attribute.value.source_text.replace('\n', "\n    "),
+                    attribute.value.folded_text.replace('\n', "\n    ")
                 ),
                 attribute.range,
                 &document,

@@ -14,6 +14,39 @@ pub enum DocumentAttributeOperation {
     Unset,
 }
 
+/// How one physical attribute-value line continues onto the next line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttributeValueContinuation {
+    Soft,
+    Hard,
+}
+
+/// The marker which continues an attribute value onto the next physical line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DocumentAttributeContinuation {
+    pub kind: AttributeValueContinuation,
+    pub range: TextRange,
+}
+
+/// One physical line of a document attribute value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentAttributeValueLine {
+    pub range: TextRange,
+    pub indent_range: TextRange,
+    pub content_range: TextRange,
+    pub ending_range: TextRange,
+    pub continuation: Option<DocumentAttributeContinuation>,
+}
+
+/// Source and semantic forms of one document attribute value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentAttributeValue {
+    pub source_range: TextRange,
+    pub source_text: String,
+    pub folded_text: String,
+    pub lines: Vec<DocumentAttributeValueLine>,
+}
+
 /// One source-preserving standard document-attribute occurrence.
 ///
 /// This is a backend-independent syntax fact. Hosts may interpret attribute
@@ -23,9 +56,8 @@ pub enum DocumentAttributeOperation {
 pub struct DocumentAttributeOccurrence {
     pub range: TextRange,
     pub name_range: TextRange,
-    pub value_range: TextRange,
     pub name: String,
-    pub raw_value: String,
+    pub value: DocumentAttributeValue,
     pub operation: DocumentAttributeOperation,
     pub valid: bool,
 }
@@ -83,7 +115,7 @@ pub struct AttributeBinding {
     visible_at: TextSize,
     evaluation_at: TextSize,
     operation: DocumentAttributeOperation,
-    raw_value: String,
+    folded_value: String,
     expansion_depth: u32,
     value: Result<Option<String>, AttributeExpansionError>,
     occurrence: DocumentAttributeOccurrence,
@@ -114,8 +146,12 @@ impl AttributeBinding {
         self.operation
     }
 
-    pub fn raw_value(&self) -> &str {
-        &self.raw_value
+    pub fn source_text(&self) -> &str {
+        &self.occurrence.value.source_text
+    }
+
+    pub fn folded_value(&self) -> &str {
+        &self.folded_value
     }
 
     pub const fn expansion_depth(&self) -> u32 {
@@ -193,7 +229,7 @@ impl AttributeEnvironment {
             let evaluated = match occurrence.operation {
                 DocumentAttributeOperation::Set => evaluate_definition(
                     &canonical_name,
-                    &occurrence.raw_value,
+                    &occurrence.value.folded_text,
                     &current,
                     &current_depths,
                     &current_failures,
@@ -225,9 +261,9 @@ impl AttributeEnvironment {
                 id,
                 event_id,
                 visible_at: occurrence.range.end(),
-                evaluation_at: occurrence.value_range.start(),
+                evaluation_at: occurrence.value.source_range.start(),
                 operation: occurrence.operation,
-                raw_value: occurrence.raw_value.clone(),
+                folded_value: occurrence.value.folded_text.clone(),
                 expansion_depth,
                 value,
                 occurrence: occurrence.clone(),
@@ -394,6 +430,7 @@ pub(crate) fn parse_line(
     let raw_value = after.trim_matches([' ', '\t']);
     let value_start = absolute_start + 1 + delimiter + 1 + leading;
     let value_range = range(value_start, value_start + raw_value.len());
+    let content_end = absolute_start + content.len();
 
     let valid_name = name
         .bytes()
@@ -439,14 +476,154 @@ pub(crate) fn parse_line(
         DocumentAttributeOccurrence {
             range: full_range,
             name_range,
-            value_range,
             name: name.to_owned(),
-            raw_value: raw_value.to_owned(),
+            value: DocumentAttributeValue {
+                source_range: value_range,
+                source_text: raw_value.to_owned(),
+                folded_text: raw_value.to_owned(),
+                lines: vec![DocumentAttributeValueLine {
+                    range: range(value_start, full_range.end().to_usize()),
+                    indent_range: range(value_start, value_start),
+                    content_range: value_range,
+                    ending_range: range(content_end, full_range.end().to_usize()),
+                    continuation: None,
+                }],
+            },
             operation,
             valid,
         },
         problem,
     ))
+}
+
+pub(crate) fn parse_lines(
+    source_document: &crate::source_document::SourceDocument,
+    line_index: usize,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<
+    Option<(DocumentAttributeOccurrence, Option<AttributeProblem>, usize)>,
+    crate::parser_support::ParseFailure,
+> {
+    let lines = source_document.lines();
+    let Some(first_line) = lines.get(line_index).copied() else {
+        return Ok(None);
+    };
+    let Some(first_content) = source_document.text(first_line.content_range()) else {
+        return Ok(None);
+    };
+    let (mut occurrence, mut problem) = parse_line(
+        first_content,
+        first_line.content_range().start().to_usize(),
+        first_line.full_range(),
+    )
+    .ok_or(crate::parser_support::ParseFailure::InternalInvariant)?;
+    if occurrence.operation == DocumentAttributeOperation::Unset
+        || continuation_start(first_content).is_none()
+        || line_index + 1 == lines.len()
+    {
+        return Ok(Some((occurrence, problem, line_index)));
+    }
+
+    let parsed_value_start = occurrence.value.source_range.start().to_usize();
+    let first_continuation =
+        continuation_start(first_content).expect("the first line was checked for a continuation");
+    let value_start =
+        parsed_value_start.min(first_line.content_range().start().to_usize() + first_continuation);
+    let mut value_lines = Vec::new();
+    let mut folded = String::new();
+    let mut last_line = line_index;
+    let mut value_end = value_start;
+
+    for index in line_index..lines.len() {
+        if is_cancelled() {
+            return Err(crate::parser_support::ParseFailure::Cancelled);
+        }
+        let line = lines[index];
+        let content = source_document
+            .text(line.content_range())
+            .expect("source line range is valid");
+        let content_start = line.content_range().start().to_usize();
+        let indent_end = if index == line_index {
+            parsed_value_start
+        } else {
+            content_start + content.len() - content.trim_start_matches([' ', '\t']).len()
+        };
+        let continuation = continuation_start(content).filter(|_| index + 1 < lines.len());
+        let marker_start = continuation.map(|start| content_start + start);
+        let segment_start = marker_start.map_or(indent_end, |start| indent_end.min(start));
+        let untrimmed_end = marker_start.unwrap_or(content_start + content.len());
+        let segment_source = &source_document.source()[segment_start..untrimmed_end];
+        let segment_text = if continuation.is_some() {
+            segment_source
+        } else {
+            segment_source.trim_end_matches([' ', '\t'])
+        };
+        let segment_end = segment_start + segment_text.len();
+        let continuation_kind = continuation.map(|_| {
+            if segment_text.ends_with(" +") {
+                AttributeValueContinuation::Hard
+            } else {
+                AttributeValueContinuation::Soft
+            }
+        });
+        let continuation_range =
+            continuation.map(|start| range(content_start + start, content_start + content.len()));
+        folded.push_str(segment_text);
+        match continuation_kind {
+            Some(AttributeValueContinuation::Soft) => folded.push(' '),
+            Some(AttributeValueContinuation::Hard) => folded.push('\n'),
+            None => {}
+        }
+        value_lines.push(DocumentAttributeValueLine {
+            range: range(
+                if index == line_index {
+                    value_start
+                } else {
+                    content_start
+                },
+                line.full_range().end().to_usize(),
+            ),
+            indent_range: range(
+                if index == line_index {
+                    value_start
+                } else {
+                    content_start
+                },
+                segment_start,
+            ),
+            content_range: range(segment_start, segment_end),
+            ending_range: line.ending_range(),
+            continuation: continuation_kind
+                .zip(continuation_range)
+                .map(|(kind, range)| DocumentAttributeContinuation { kind, range }),
+        });
+        last_line = index;
+        value_end = segment_end;
+        if continuation.is_none() {
+            break;
+        }
+    }
+
+    occurrence.range = range(
+        first_line.full_range().start().to_usize(),
+        lines[last_line].full_range().end().to_usize(),
+    );
+    occurrence.value = DocumentAttributeValue {
+        source_range: range(value_start, value_end),
+        source_text: source_document.source()[value_start..value_end].to_owned(),
+        folded_text: folded,
+        lines: value_lines,
+    };
+    if let Some(problem) = &mut problem
+        && problem.kind == AttributeProblemKind::InvalidValue
+    {
+        problem.range = occurrence.value.source_range;
+    }
+    Ok(Some((occurrence, problem, last_line)))
+}
+
+fn continuation_start(content: &str) -> Option<usize> {
+    content.ends_with(" \\").then(|| content.len() - 2)
 }
 
 fn range(start: usize, end: usize) -> TextRange {
@@ -470,9 +647,19 @@ mod tests {
         DocumentAttributeOccurrence {
             range: range(0, 4),
             name_range: range(1, 2),
-            value_range: range(3, 4),
             name: "Name".to_owned(),
-            raw_value: value.to_owned(),
+            value: super::DocumentAttributeValue {
+                source_range: range(3, 4),
+                source_text: value.to_owned(),
+                folded_text: value.to_owned(),
+                lines: vec![super::DocumentAttributeValueLine {
+                    range: range(3, 4),
+                    indent_range: range(3, 3),
+                    content_range: range(3, 4),
+                    ending_range: range(4, 4),
+                    continuation: None,
+                }],
+            },
             operation: DocumentAttributeOperation::Set,
             valid: true,
         }
