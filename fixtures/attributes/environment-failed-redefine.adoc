@@ -1,0 +1,12 @@
+= 失敗する再定義
+:value: old
+
+最初は{value}です。
+
+:value: {missing}
+
+失敗後は{value}です。
+
+:value: recovered
+
+回復後は{value}です。

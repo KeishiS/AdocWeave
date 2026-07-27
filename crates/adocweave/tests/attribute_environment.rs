@@ -307,3 +307,58 @@ fn inline_references_follow_set_redefine_and_unset_positions() {
     assert!(html.contains("次はBobです。"));
     assert!(html.contains("最後は{name}です。"));
 }
+
+#[test]
+fn failed_redefinition_shadows_the_old_value_until_a_successful_binding() {
+    let source = include_str!("../../../fixtures/attributes/environment-failed-redefine.adoc");
+    let analysis = analyze(source);
+    let environment = analysis.attribute_environment();
+
+    assert_eq!(
+        environment.expand_at("{value}", offset(source, "最初は")),
+        Ok("old".to_owned())
+    );
+    assert_eq!(
+        environment.expand_at("{value}", offset(source, "失敗後は")),
+        Err(adocweave::semantic::AttributeExpansionError::Undefined)
+    );
+    assert_eq!(
+        environment.expand_at("{value}", offset(source, "回復後は")),
+        Ok("recovered".to_owned())
+    );
+    assert_eq!(
+        environment.final_values().get("value").map(String::as_str),
+        Some("recovered")
+    );
+
+    let values = analysis
+        .document()
+        .blocks()
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph(paragraph) => Some(&paragraph.inlines),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|inline| match inline {
+            Inline::AttributeReference {
+                name,
+                value,
+                expansion_error,
+                ..
+            } if name == "value" => Some((value.as_deref(), *expansion_error)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        values,
+        [
+            (Some("old"), None),
+            (
+                None,
+                Some(adocweave::semantic::AttributeExpansionError::Undefined)
+            ),
+            (Some("recovered"), None),
+        ]
+    );
+}
