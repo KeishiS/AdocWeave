@@ -7,6 +7,7 @@ import {
 } from "./controller.mjs";
 import { AdocWeaveWorkerClient } from "./client.mjs";
 import { PACKAGE_VERSION } from "./contracts.mjs";
+import { WORKER_PROTOCOL_VERSION as GENERATED_WORKER_PROTOCOL_VERSION } from "./protocol.generated.mjs";
 
 function harness(process = (request) => request) {
   const messages = [];
@@ -53,6 +54,10 @@ function request(version, generation) {
     },
   };
 }
+
+test("runtime uses the generated worker protocol version", () => {
+  assert.equal(WORKER_PROTOCOL_VERSION, GENERATED_WORKER_PROTOCOL_VERSION);
+});
 
 test("debounce publishes only the latest document generation", () => {
   const state = harness();

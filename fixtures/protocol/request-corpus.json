@@ -20,6 +20,52 @@
     { "enum": "StylesheetKind", "path": "/renderPolicy/stylesheets/0/kind", "templates": {
       "inline": { "kind": "inline", "css": "p {}" },
       "external": { "kind": "external", "url": "https://example.invalid/theme.css" }
+    } },
+    { "enum": "ReferenceStatus", "path": "/renderInputs/references/0/outcome/status", "templates": {
+      "resolved": { "status": "resolved", "href": "#target" },
+      "failed": { "status": "failed", "kind": "missing-target" }
+    } },
+    { "enum": "ReferenceFailureKind", "path": "/renderInputs/references/0/outcome/kind" },
+    { "enum": "ReferenceNotice", "path": "/renderInputs/references/0/outcome/notices/0", "setup": [
+      { "path": "/renderInputs/references/0/outcome", "value": { "status": "resolved", "href": "#target", "notices": ["fallback"] } }
+    ] },
+    { "enum": "ResourceStatus", "path": "/renderInputs/resources/0/outcome/status", "templates": {
+      "resolved": { "status": "resolved", "href": "a.png", "mediaType": "image/png", "byteLength": null },
+      "failed": { "status": "failed", "kind": "missing" }
+    } },
+    { "enum": "ResourceFailureKind", "path": "/renderInputs/resources/0/outcome/kind" }
+  ],
+  "objectCases": [
+    { "object": "WasmRequest", "path": "" },
+    { "object": "ProductSet", "path": "/products" },
+    { "object": "RenderInputs", "path": "/renderInputs" },
+    { "object": "ResolvedReference", "path": "/renderInputs/references/0" },
+    { "object": "ResolvedResource", "path": "/renderInputs/resources/0" },
+    { "object": "AnalysisOptions", "path": "/analysisOptions" },
+    { "object": "SyntaxOptions", "path": "/analysisOptions/syntax" },
+    { "object": "AnalysisLimits", "path": "/analysisOptions/syntax/limits" },
+    { "object": "DiagnosticProfile", "path": "/analysisOptions/diagnostics" },
+    { "object": "RuleSettings", "path": "/analysisOptions/diagnostics/rules/example" },
+    { "object": "AuthoredUrlPolicy", "path": "/analysisOptions/diagnostics/authoredUrls" },
+    { "object": "RenderPolicy", "path": "/renderPolicy" },
+    { "object": "ActiveUrlPolicy", "path": "/renderPolicy/activeUrls" },
+    { "object": "ExternalLinkPolicy", "path": "/renderPolicy/externalLinks" },
+    { "object": "SourceLanguagePolicy", "path": "/renderPolicy/sourceLanguages" },
+    { "object": "ResourceCapabilities", "path": "/renderPolicy/resources" },
+    { "object": "OutputLimits", "path": "/outputLimits" }
+  ],
+  "unionCases": [
+    { "union": "Stylesheet", "path": "/renderPolicy/stylesheets/0", "variants": {
+      "inline": { "kind": "inline", "css": "p {}" },
+      "external": { "kind": "external", "url": "https://example.invalid/theme.css" }
+    } },
+    { "union": "ResolvedReferenceOutcome", "path": "/renderInputs/references/0/outcome", "variants": {
+      "resolved": { "status": "resolved", "href": "#target" },
+      "failed": { "status": "failed", "kind": "missing-target" }
+    } },
+    { "union": "ResolvedResourceOutcome", "path": "/renderInputs/resources/0/outcome", "variants": {
+      "resolved": { "status": "resolved", "href": "a.png", "mediaType": "image/png", "byteLength": null },
+      "failed": { "status": "failed", "kind": "missing" }
     } }
   ],
   "unknownFieldCases": [

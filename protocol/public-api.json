@@ -10,7 +10,36 @@
     "UnknownSourceLanguage",
     "MathLanguage",
     "UnresolvedReferencePresentation",
-    "StylesheetKind"
+    "StylesheetKind",
+    "ReferenceStatus",
+    "ReferenceFailureKind",
+    "ReferenceNotice",
+    "ResourceStatus",
+    "ResourceFailureKind"
+  ],
+  "requestObjects": [
+    "WasmRequest",
+    "ProductSet",
+    "RenderInputs",
+    "ResolvedReference",
+    "ResolvedResource",
+    "AnalysisOptions",
+    "SyntaxOptions",
+    "AnalysisLimits",
+    "DiagnosticProfile",
+    "RuleSettings",
+    "AuthoredUrlPolicy",
+    "RenderPolicy",
+    "ActiveUrlPolicy",
+    "ExternalLinkPolicy",
+    "SourceLanguagePolicy",
+    "ResourceCapabilities",
+    "OutputLimits"
+  ],
+  "requestUnions": [
+    "Stylesheet",
+    "ResolvedReferenceOutcome",
+    "ResolvedResourceOutcome"
   ],
   "request": {
     "unknownFields": "reject",
@@ -37,12 +66,20 @@
     "StylesheetKind": ["inline", "external"],
     "ReferenceStatus": ["resolved", "failed"],
     "ReferenceFailureKind": ["missing-target", "missing-anchor", "ambiguous-target", "outside-root", "resolver-failure"],
+    "ReferenceNotice": ["fallback"],
     "ResourceStatus": ["resolved", "failed"],
     "ResourceFailureKind": ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"],
     "DocumentAttributeOperation": ["set", "unset"],
     "ResourcePurpose": ["image", "icon", "audio", "video", "video-poster"],
     "MacroForm": ["inline", "block"],
     "FormulaKind": ["inline", "block"]
+    ,"ReferenceTargetKind": ["document-title", "part", "section", "explicit-anchor", "inline-anchor"]
+    ,"OrderedListStyle": ["arabic", "decimal", "loweralpha", "upperalpha", "lowerroman", "upperroman", "lowergreek"]
+    ,"BlockPresentationKind": ["admonition", "quote", "verse"]
+    ,"SectionKind": ["document-title", "part", "section", "appendix", "discrete"]
+    ,"SearchTextKind": ["prose", "code"]
+    ,"Applicability": ["always", "maybe"]
+    ,"SymbolKind": ["document-title", "part", "section", "list-item"]
   },
   "settings": {
     "AnalysisOptions": {
@@ -95,29 +132,307 @@
       ]
     }
   },
+  "definitions": {
+    "RenderInputs": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "references", "type": "ResolvedReference[]", "default": [] },
+        { "json": "resources", "type": "ResolvedResource[]", "default": [] }
+      ]
+    },
+    "ResolvedReference": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "sourceStart", "type": "number", "required": true },
+        { "json": "sourceEnd", "type": "number", "required": true },
+        { "json": "outcome", "type": "ResolvedReferenceOutcome", "required": true }
+      ]
+    },
+    "ResolvedResource": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "sourceStart", "type": "number", "required": true },
+        { "json": "sourceEnd", "type": "number", "required": true },
+        { "json": "outcome", "type": "ResolvedResourceOutcome", "required": true }
+      ]
+    },
+    "AnalysisLimits": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "maxInputBytes", "type": "number", "default": "core-default" },
+        { "json": "maxLineBytes", "type": "number", "default": "core-default" },
+        { "json": "maxListDepth", "type": "number", "default": "core-default" },
+        { "json": "maxListContinuations", "type": "number", "default": "core-default" },
+        { "json": "maxBlockDepth", "type": "number", "default": "core-default" },
+        { "json": "maxInlineDepth", "type": "number", "default": "core-default" },
+        { "json": "maxFormulaBytes", "type": "number", "default": "core-default" },
+        { "json": "maxTableBytes", "type": "number", "default": "core-default" },
+        { "json": "maxTableCells", "type": "number", "default": "core-default" },
+        { "json": "maxTableColumns", "type": "number", "default": "core-default" },
+        { "json": "maxTableDepth", "type": "number", "default": "core-default" },
+        { "json": "maxCatalogEntries", "type": "number", "default": "core-default" },
+        { "json": "maxCatalogBytes", "type": "number", "default": "core-default" },
+        { "json": "maxBlocks", "type": "number", "default": "core-default" },
+        { "json": "maxNodes", "type": "number", "default": "core-default" },
+        { "json": "maxReferences", "type": "number", "default": "core-default" },
+        { "json": "maxAttributes", "type": "number", "default": "core-default" },
+        { "json": "maxAttributeExpansionDepth", "type": "number", "default": "core-default" },
+        { "json": "maxAttributeExpansionBytes", "type": "number", "default": "core-default" }
+      ]
+    },
+    "AuthoredUrlPolicy": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "allowedSchemes", "type": "string[]", "default": "core-default" },
+        { "json": "allowRelative", "type": "boolean", "default": "core-default" }
+      ]
+    },
+    "ActiveUrlPolicy": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "allowedSchemes", "type": "string[]", "default": "core-default" },
+        { "json": "allowAuthoredRelative", "type": "boolean", "default": "core-default" },
+        { "json": "allowResolvedRelative", "type": "boolean", "default": "core-default" },
+        { "json": "allowResolvedRootRelative", "type": "boolean", "default": "core-default" },
+        { "json": "allowDataUris", "type": "boolean", "default": "core-default" }
+      ]
+    },
+    "ExternalLinkPolicy": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "openInNewContext", "type": "boolean", "default": false },
+        { "json": "noreferrer", "type": "boolean", "default": false }
+      ]
+    },
+    "SourceLanguagePolicy": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "allowed", "type": "string[] | null", "default": null },
+        { "json": "unknown", "type": "UnknownSourceLanguage", "default": "preserve-sanitized" }
+      ]
+    },
+    "ResourceCapabilities": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "images", "type": "boolean", "default": true },
+        { "json": "media", "type": "boolean", "default": true }
+      ]
+    },
+    "ParseSummary": {
+      "fields": [
+        { "json": "packageVersion", "type": "string", "required": true },
+        { "json": "blockCount", "type": "number", "required": true },
+        { "json": "nodeCount", "type": "number", "required": true },
+        { "json": "referenceCount", "type": "number", "required": true }
+      ]
+    },
+    "SourceBlockProjection": {
+      "fields": [
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "contentRange", "type": "TextRange", "required": true },
+        { "json": "languageRange", "type": "TextRange | null", "required": true },
+        { "json": "language", "type": "string | null", "required": true },
+        { "json": "source", "type": "string", "required": true }
+      ]
+    },
+    "FormulaProjection": {
+      "fields": [
+        { "json": "kind", "type": "FormulaKind", "required": true },
+        { "json": "language", "type": "MathLanguage", "required": true },
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "contentRange", "type": "TextRange", "required": true },
+        { "json": "source", "type": "string", "required": true }
+      ]
+    },
+    "ProjectedText": {
+      "fields": [
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "text", "type": "string", "required": true }
+      ]
+    },
+    "ReferenceTarget": {
+      "fields": [
+        { "json": "kind", "type": "ReferenceTargetKind", "required": true },
+        { "json": "id", "type": "string", "required": true },
+        { "json": "label", "type": "string", "required": true },
+        { "json": "idRange", "type": "TextRange", "required": true },
+        { "json": "targetRange", "type": "TextRange", "required": true }
+      ]
+    },
+    "ExternalLink": {
+      "fields": [
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "targetRange", "type": "TextRange", "required": true },
+        { "json": "target", "type": "string", "required": true },
+        { "json": "label", "type": "string", "required": true }
+      ]
+    },
+    "ReferenceEdge": {
+      "fields": [
+        { "json": "sourceId", "type": "string | null", "required": true },
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "target", "type": "ReferenceKey", "required": true },
+        { "json": "resolution", "type": "ResolvedReferenceOutcome | null", "required": true }
+      ]
+    },
+    "OrderedListProjection": {
+      "fields": [
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "start", "type": "number | null", "required": true },
+        { "json": "reversed", "type": "boolean", "required": true },
+        { "json": "style", "type": "OrderedListStyle", "required": true }
+      ]
+    },
+    "BlockPresentationProjection": {
+      "fields": [
+        { "json": "kind", "type": "BlockPresentationKind", "required": true },
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "contentRange", "type": "TextRange", "required": true },
+        { "json": "title", "type": "string | null", "required": true },
+        { "json": "attribution", "type": "string | null", "required": true },
+        { "json": "citation", "type": "string | null", "required": true }
+      ]
+    },
+    "DocumentStructure": {
+      "fields": [
+        { "json": "headings", "type": "StructuredHeading[]", "required": true },
+        { "json": "toc", "type": "TocEntry[]", "required": true },
+        { "json": "manpage", "type": "Manpage | null", "required": true }
+      ]
+    },
+    "StructuredHeading": {
+      "fields": [
+        { "json": "kind", "type": "SectionKind", "required": true },
+        { "json": "level", "type": "number", "required": true },
+        { "json": "id", "type": "string", "required": true },
+        { "json": "idRange", "type": "TextRange", "required": true },
+        { "json": "title", "type": "string", "required": true },
+        { "json": "range", "type": "TextRange", "required": true },
+        { "json": "titleRange", "type": "TextRange", "required": true },
+        { "json": "number", "type": "number[]", "required": true },
+        { "json": "tocIncluded", "type": "boolean", "required": true }
+      ]
+    },
+    "TocEntry": {
+      "fields": [
+        { "json": "id", "type": "string", "required": true },
+        { "json": "title", "type": "string", "required": true },
+        { "json": "level", "type": "number", "required": true },
+        { "json": "number", "type": "number[]", "required": true },
+        { "json": "range", "type": "TextRange", "required": true },
+        { "json": "children", "type": "TocEntry[]", "required": true }
+      ]
+    },
+    "Manpage": {
+      "fields": [
+        { "json": "name", "type": "string", "required": true },
+        { "json": "section", "type": "string", "required": true },
+        { "json": "purpose", "type": "string", "required": true },
+        { "json": "titleRange", "type": "TextRange", "required": true },
+        { "json": "nameRange", "type": "TextRange", "required": true },
+        { "json": "purposeRange", "type": "TextRange", "required": true }
+      ]
+    },
+    "DocumentCatalogs": {
+      "fields": [
+        { "json": "footnotes", "type": "Footnote[]", "required": true },
+        { "json": "bibliography", "type": "BibliographyEntry[]", "required": true },
+        { "json": "index", "type": "IndexEntry[]", "required": true }
+      ]
+    },
+    "Footnote": {
+      "fields": [
+        { "json": "number", "type": "number", "required": true },
+        { "json": "id", "type": "string | null", "required": true },
+        { "json": "definitionRange", "type": "TextRange", "required": true },
+        { "json": "contentRange", "type": "TextRange", "required": true },
+        { "json": "text", "type": "string", "required": true },
+        { "json": "occurrences", "type": "TextRange[]", "required": true }
+      ]
+    },
+    "BibliographyEntry": {
+      "fields": [
+        { "json": "id", "type": "string", "required": true },
+        { "json": "definitionRange", "type": "TextRange", "required": true },
+        { "json": "references", "type": "TextRange[]", "required": true }
+      ]
+    },
+    "IndexEntry": {
+      "fields": [
+        { "json": "terms", "type": "string[]", "required": true },
+        { "json": "display", "type": "string", "required": true },
+        { "json": "occurrences", "type": "TextRange[]", "required": true }
+      ]
+    },
+    "SearchableText": {
+      "fields": [
+        { "json": "text", "type": "string", "required": true },
+        { "json": "segments", "type": "SearchTextSegment[]", "required": true }
+      ]
+    },
+    "SearchTextSegment": {
+      "fields": [
+        { "json": "kind", "type": "SearchTextKind", "required": true },
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "text", "type": "string", "required": true }
+      ]
+    },
+    "DocumentSymbol": {
+      "fields": [
+        { "json": "name", "type": "string", "required": true },
+        { "json": "kind", "type": "SymbolKind", "required": true },
+        { "json": "range", "type": "TextRange", "required": true },
+        { "json": "selectionRange", "type": "TextRange", "required": true },
+        { "json": "children", "type": "DocumentSymbol[]", "required": true }
+      ]
+    }
+  },
   "taggedUnions": {
     "Stylesheet": {
       "tag": "kind",
       "unknownFields": "reject",
       "variants": {
-        "inline": ["css"],
-        "external": ["url"]
+        "inline": [{ "json": "css", "type": "string", "required": true }],
+        "external": [{ "json": "url", "type": "string", "required": true }]
       }
     },
     "ResolvedReferenceOutcome": {
       "tag": "status",
       "unknownFields": "reject",
       "variants": {
-        "resolved": ["href"],
-        "failed": ["kind"]
+        "resolved": [
+          { "json": "href", "type": "string", "required": true },
+          { "json": "displayText", "type": "string | null", "default": null },
+          { "json": "notices", "type": "ReferenceNotice[]", "default": [] }
+        ],
+        "failed": [{ "json": "kind", "type": "ReferenceFailureKind", "required": true }]
       }
     },
     "ResolvedResourceOutcome": {
       "tag": "status",
       "unknownFields": "reject",
       "variants": {
-        "resolved": ["href", "mediaType", "byteLength"],
-        "failed": ["kind"]
+        "resolved": [
+          { "json": "href", "type": "string", "required": true },
+          { "json": "mediaType", "type": "string", "required": true },
+          { "json": "byteLength", "type": "number | null", "default": null }
+        ],
+        "failed": [{ "json": "kind", "type": "ResourceFailureKind", "required": true }]
+      }
+    },
+    "ReferenceKey": {
+      "tag": "kind",
+      "variants": {
+        "local": [{ "json": "anchor", "type": "string", "required": true }],
+        "document": [
+          { "json": "document", "type": "string", "required": true },
+          { "json": "anchor", "type": "string | null", "required": true }
+        ],
+        "scheme": [
+          { "json": "scheme", "type": "string", "required": true },
+          { "json": "locator", "type": "string", "required": true },
+          { "json": "anchor", "type": "string | null", "required": true }
+        ]
       }
     }
   },
@@ -135,7 +450,7 @@
       { "json": "resourceQueries", "type": "ResourceQuery[]" },
       { "json": "diagnostics", "type": "Diagnostic[]" },
       { "json": "renderDiagnostics", "type": "Diagnostic[]" },
-      { "json": "symbols", "type": "unknown[]" },
+      { "json": "symbols", "type": "DocumentSymbol[]" },
       { "json": "projection", "type": "DocumentProjection" }
     ]
   },
@@ -153,8 +468,27 @@
         { "json": "severity", "type": "Severity" },
         { "json": "message", "type": "string" },
         { "json": "range", "type": "TextRange" },
-        { "json": "related", "type": "unknown[]" },
-        { "json": "fixes", "type": "unknown[]" }
+        { "json": "related", "type": "RelatedInformation[]" },
+        { "json": "fixes", "type": "Fix[]" }
+      ]
+    },
+    "RelatedInformation": {
+      "fields": [
+        { "json": "range", "type": "TextRange" },
+        { "json": "message", "type": "string" }
+      ]
+    },
+    "TextEdit": {
+      "fields": [
+        { "json": "range", "type": "TextRange" },
+        { "json": "replacement", "type": "string" }
+      ]
+    },
+    "Fix": {
+      "fields": [
+        { "json": "title", "type": "string" },
+        { "json": "applicability", "type": "Applicability" },
+        { "json": "edits", "type": "TextEdit[]" }
       ]
     },
     "DocumentProjection": {
@@ -163,15 +497,15 @@
         { "json": "sourceId", "type": "string | null" },
         { "json": "sourceBlocks", "type": "SourceBlockProjection[]" },
         { "json": "formulas", "type": "FormulaProjection[]" },
-        { "json": "blockPresentations", "type": "unknown[]" },
-        { "json": "orderedLists", "type": "unknown[]" },
-        { "json": "referenceEdges", "type": "unknown[]" },
-        { "json": "externalLinks", "type": "unknown[]" },
-        { "json": "searchableText", "type": "unknown" },
-        { "json": "structure", "type": "unknown" },
-        { "json": "catalogs", "type": "unknown" },
-        { "json": "targets", "type": "unknown[]" },
-        { "json": "title", "type": "unknown" }
+        { "json": "blockPresentations", "type": "BlockPresentationProjection[]" },
+        { "json": "orderedLists", "type": "OrderedListProjection[]" },
+        { "json": "referenceEdges", "type": "ReferenceEdge[]" },
+        { "json": "externalLinks", "type": "ExternalLink[]" },
+        { "json": "searchableText", "type": "SearchableText" },
+        { "json": "structure", "type": "DocumentStructure" },
+        { "json": "catalogs", "type": "DocumentCatalogs" },
+        { "json": "targets", "type": "ReferenceTarget[]" },
+        { "json": "title", "type": "ProjectedText | null" }
       ]
     },
     "DocumentAttributeOccurrence": {
@@ -204,5 +538,18 @@
     { "json": "diagnostics", "rust": "diagnostics" },
     { "json": "symbols", "rust": "symbols" },
     { "json": "projection", "rust": "projection" }
-  ]
+  ],
+  "productSet": {
+    "unknownFields": "reject",
+    "fields": [
+      { "json": "syntax", "type": "boolean", "required": true },
+      { "json": "canonicalAst", "type": "boolean", "required": true },
+      { "json": "html", "type": "boolean", "required": true },
+      { "json": "attributeOccurrences", "type": "boolean", "required": true },
+      { "json": "resourceQueries", "type": "boolean", "required": true },
+      { "json": "diagnostics", "type": "boolean", "required": true },
+      { "json": "symbols", "type": "boolean", "required": true },
+      { "json": "projection", "type": "boolean", "required": true }
+    ]
+  }
 }

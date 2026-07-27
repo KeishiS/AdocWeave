@@ -1,4 +1,5 @@
-export const WORKER_PROTOCOL_VERSION = 1;
+export { WORKER_PROTOCOL_VERSION } from "./contracts.mjs";
+import { WORKER_PROTOCOL_VERSION } from "./contracts.mjs";
 
 export function createController({
   process,
