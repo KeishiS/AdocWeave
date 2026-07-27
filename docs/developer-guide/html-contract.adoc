@@ -9,13 +9,18 @@ DOM構造、属性順、空白またはbyte列が同一であることは保証�
 
 == 文書モード
 
-`Fragment`は本文要素だけを出力する既定のモードです。`Complete`は文書型、`html`および`body`を持つ
-完全なHTML文書を出力します。stylesheetを一件以上出力する場合だけ`head`を追加します。
+`Fragment`は本文要素だけを出力する既定のモードです。`Complete`は文書型、言語未確定の`html`、
+UTF-8 encodingと非空タイトルを持つ`head`および`body`を常に出力します。Stylesheetは同じ`head`へ
+追加します。
 
 [source,html]
 ----
 <!doctype html>
-<html>
+<html lang="">
+<head>
+<meta charset="utf-8">
+<title>AdocWeave document</title>
+</head>
 <body>
 ...
 </body>
