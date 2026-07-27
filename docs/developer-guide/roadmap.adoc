@@ -14,8 +14,7 @@ v0.10.xでは、公開API、WASM protocol、対応構文および既定のHTML�
 確認済みの不具合、文書、依存関係および検証基盤を修正します。新しいCLI機能、公開schema、
 既定診断および構文機能は次のminor release候補として扱います。
 
-* https://github.com/KeishiS/AdocWeave/issues/41[相対targetに対するLint誤判定の修正]
-* https://github.com/KeishiS/AdocWeave/issues/39[生成HTMLのHTML5適合性検査]
+* https://github.com/KeishiS/AdocWeave/issues/45[v0.10.1リリース準備]
 
 patch releaseは、確認済みの修正が揃った時点、または優先度の高い不具合を修正した時点で準備します。
 版数を進めることだけを目的としたreleaseは行いません。

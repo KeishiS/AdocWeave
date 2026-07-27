@@ -4,6 +4,7 @@ import process from "node:process";
 const ROOT = new URL("../", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", ROOT), "utf8"));
 const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", ROOT), "utf8"));
+const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROOT), "utf8"));
 
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## Supported targets",
@@ -13,25 +14,40 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## Upgrade and rollback",
 ];
 
+const highlights = [
+  "Normal lint accepts scheme-less relative links and inter-document xrefs, including parent-directory targets, without guessing whether local files exist.",
+  "HTML rendering still keeps unresolved relative links inactive and rejects dangerous schemes, encoded controls, and network-path references.",
+  "Generated fragments and complete documents are now checked with the pinned Nu HTML Checker in the verification pipeline.",
+  "Complete HTML output now includes the document structure required for HTML5 conformance.",
+];
+
+const contractNotes = [
+  `unified package version: ${manifest.packageVersion}`,
+  `WASM protocol schema version: ${protocol.schemaVersion}. This release does not change the public Rust API or protocol schema.`,
+  "Complete HTML documents now always contain a doctype, an html lang attribute, a UTF-8 meta element, and a non-empty title. This changes their serialized bytes and DOM shape.",
+];
+
+const knownConstraints = [
+  `Supported Rust toolchain: ${manifest.rustVersion}, fixed by this release's flake.lock.`,
+  "Native binaries are available only for Linux x86-64 and ARM64.",
+  "A relative link is activated in HTML only after a host resolves it to a URL accepted by the URL policy.",
+  "HTML5 validation checks standards conformance; it does not make generated markup a trusted DOM.",
+  "The Zed extension is installed as a development extension; it is not published to the Zed Extension Gallery.",
+  "Packages are not published to crates.io, npm, or OS package registries. The Nix package is built directly from this repository flake.",
+];
+
+function markdownList(items) {
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
 export function appendRequiredReleaseNotes(body, tag) {
   if (tag !== `v${manifest.packageVersion}`) throw new Error("release note tag does not match package version");
-  const contracts = `- unified package version: ${manifest.packageVersion}\n` +
-    "- WASM protocol schema version: 2. Resource queries are now a requested product and resolved resources require a concrete MIME type.\n" +
-    "- The Rust resource API now uses ResourcePurpose and validated MediaType values. This is an intentional breaking change.";
   const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
-  const notes = "## Highlights\n\n" +
-    "- Image, icon, audio, and video output now requires a host-resolved URL and a MIME type matching the macro. Missing, rejected, or mismatched primary resources fail closed with a typed render diagnostic and escaped fallback text.\n" +
-    "- Video poster resources are exposed as independent resource queries and are revalidated as images. A failed poster is omitted without disabling a safe video.\n" +
-    "- Media output applies only the documented alt, title, dimension, controls, and poster attributes. Input attributes are never passed through as arbitrary HTML.\n" +
-    "- The repository flake provides AdocWeave CLI and LSP packages for Linux x86-64 and ARM64. Run `nix run github:KeishiS/AdocWeave`.\n\n" +
+  const notes = `## Highlights\n\n${markdownList(highlights)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${contracts}\n\n` +
+    `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${markdownList(contractNotes)}\n\n` +
     "This release requires consumers to match the listed package version exactly. Do not mix CLI, LSP, browser, or Zed assets from different versions. Hosts must request `resourceQueries`, resolve every successful resource with a concrete MIME type, and rebuild `RenderInputs` after each document revision.\n\n" +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n` +
-    `- Supported Rust toolchain: ${manifest.rustVersion}, fixed by this release's flake.lock.\n` +
-    "- Native binaries are available only for Linux x86-64 and ARM64.\n" +
-    "- The Zed extension is installed as a development extension; it is not published to the Zed Extension Gallery.\n" +
-    "- Packages are not published to crates.io, npm, or OS package registries. The Nix package is built directly from this repository flake.\n\n" +
+    `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n${markdownList(knownConstraints)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n` +
     "Download all release assets, run `sha256sum --check sha256.sum`, then verify required assets with `gh attestation verify <asset> --repo KeishiS/AdocWeave`.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
