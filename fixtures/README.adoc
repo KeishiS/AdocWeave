@@ -19,3 +19,7 @@ LSPはこのmanifestまたは参照先の同じソースを使用し、別内容
 
 `syntax-support.json`は、対応表、互換性評価、文法および対応するfixtureの同期を検査するための
 manifestである。人向けの仕様は`docs/`に記載し、このファイルへ説明文を重複させない。
+
+`html/validation.json`はHTML5標準適合性検査の対象、固定validator設定およびnegative fixtureを管理します。
+断片出力は`html/validation-template.html`の一意なmarkerへ挿入し、完全HTML文書として検査します。
+検査時に生成する文書は`target/html5/`へ出力し、fixture directoryへ書き戻しません。

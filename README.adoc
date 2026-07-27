@@ -74,7 +74,8 @@ nix develop
 cargo make verify
 ----
 
-`cargo make verify`は、整形、型検査、テスト、ブラウザー向けテスト、文書検査を実行します。
+`cargo make verify`は、整形、型検査、テスト、ブラウザー向けテスト、HTML5標準適合性検査および文書検査を
+実行します。
 
 == 設計資料
 

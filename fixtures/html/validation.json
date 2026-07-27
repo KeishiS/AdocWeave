@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "validator": {
+    "package": "validator-nu",
+    "version": "25.12.12",
+    "options": ["--format", "json", "--Werror", "--no-langdetect"]
+  },
+  "template": {
+    "path": "fixtures/html/validation-template.html",
+    "marker": "<!-- ADOCWEAVE_HTML -->"
+  },
+  "cases": [
+    {
+      "name": "representative-fragment",
+      "kind": "cli-fragment",
+      "source": "fixtures/html/validation.adoc"
+    },
+    {
+      "name": "complete-document",
+      "kind": "cli-complete",
+      "source": "fixtures/html/validation.adoc"
+    },
+    {
+      "name": "complete-stylesheets",
+      "kind": "cli-complete",
+      "source": "fixtures/html/validation.adoc",
+      "args": [
+        "--css",
+        "fixtures/html/validation.css",
+        "--css-url",
+        "https://example.com/theme.css"
+      ]
+    },
+    {
+      "name": "resolved-resource",
+      "kind": "conformance-fragment",
+      "case": "resolved-render-inputs"
+    },
+    {
+      "name": "conformance-complete-document",
+      "kind": "conformance-complete",
+      "case": "html5-complete-document"
+    },
+    {
+      "name": "media-families",
+      "kind": "conformance-fragment",
+      "case": "media-families"
+    },
+    {
+      "name": "host-profile",
+      "kind": "conformance-fragment",
+      "case": "web-host-profile"
+    },
+    {
+      "name": "safe-resource-fallback",
+      "kind": "conformance-fragment",
+      "case": "media-type-mismatch"
+    }
+  ],
+  "negativeFixtures": [
+    {
+      "path": "fixtures/html/invalid-nesting.html",
+      "type": "error",
+      "messagePattern": "No .p. element in scope.*end tag"
+    },
+    {
+      "path": "fixtures/html/invalid-attribute.html",
+      "type": "error",
+      "messagePattern": "Attribute .bogus. not allowed"
+    },
+    {
+      "path": "fixtures/html/incomplete-document.html",
+      "type": "error",
+      "messagePattern": "Element .head. is missing.*element .title."
+    }
+  ]
+}

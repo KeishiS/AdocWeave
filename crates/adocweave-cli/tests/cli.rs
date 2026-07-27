@@ -438,8 +438,10 @@ fn complete_conversion_embeds_validated_stylesheets_in_order() {
         String::from_utf8(output.stdout).unwrap(),
         concat!(
             "<!doctype html>\n",
-            "<html>\n",
+            "<html lang=\"\">\n",
             "<head>\n",
+            "<meta charset=\"utf-8\">\n",
+            "<title>AdocWeave document</title>\n",
             "<style>\n",
             "p { color: red; }\n",
             "</style>\n",
