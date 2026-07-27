@@ -532,6 +532,69 @@ fn workspace_configuration_updates_and_caps_debounce() {
             .update_configuration(json!({"unknown": true}))
             .is_err()
     );
+    assert!(
+        service
+            .update_configuration(json!({"enabledRules": ["unknown-rule"]}))
+            .is_err()
+    );
+}
+
+#[test]
+fn workspace_configuration_reanalyzes_open_documents_with_enabled_rules() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///configured-rule.adoc",
+        1,
+        "日😀xref:guide.adoc[Guide]\n",
+    );
+    let document = uri("file:///configured-rule.adoc");
+    assert!(
+        service
+            .diagnostics(&document)
+            .expect("default diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| {
+                diagnostic.code != Some(lsp::NumberOrString::String("macro-boundary".to_owned()))
+            })
+    );
+
+    let jobs = service
+        .update_configuration(json!({"enabledRules": ["macro-boundary"]}))
+        .expect("configuration");
+    assert_eq!(jobs.len(), 1);
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document)
+            .expect("configured diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| {
+                diagnostic.code == Some(lsp::NumberOrString::String("macro-boundary".to_owned()))
+            })
+    );
+
+    let jobs = service
+        .update_configuration(json!({"enabledRules": []}))
+        .expect("disabled configuration");
+    assert_eq!(jobs.len(), 1);
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document)
+            .expect("disabled diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| {
+                diagnostic.code != Some(lsp::NumberOrString::String("macro-boundary".to_owned()))
+            })
+    );
 }
 
 #[test]
@@ -831,6 +894,9 @@ fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
 fn opt_in_macro_boundary_diagnostic_uses_lsp_positions() {
     let mut service = LanguageService::default();
     service.position_encoding = PositionEncoding::Utf16;
+    service
+        .update_configuration(json!({"enabledRules": ["macro-boundary"]}))
+        .expect("configuration");
     let mut jobs = service.begin_open(typed(json!({
         "textDocument": {
             "uri": "file:///macro-boundary.adoc",
@@ -839,20 +905,7 @@ fn opt_in_macro_boundary_diagnostic_uses_lsp_positions() {
             "text": "日😀xref:guide.adoc[Guide]\n"
         }
     })));
-    let mut job = jobs.pop().expect("analysis job");
-    let current = job
-        .request
-        .options
-        .diagnostics
-        .lint
-        .rule(adocweave::output::diagnostics::MACRO_BOUNDARY);
-    job.request.options.diagnostics.lint.set_rule(
-        adocweave::output::diagnostics::MACRO_BOUNDARY,
-        adocweave::output::diagnostics::RuleSettings {
-            enabled: true,
-            ..current
-        },
-    );
+    let job = jobs.pop().expect("analysis job");
     adopt(&mut service, job);
 
     let diagnostics = service

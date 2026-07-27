@@ -131,8 +131,9 @@ pub fn json_values(diagnostics: &[HostDiagnostic]) -> Vec<serde_json::Value> {
         .map(|diagnostic| {
             serde_json::json!({
                 "id": format!(
-                    "{}@{}:{}",
+                    "{}@{}:{}:{}",
                     diagnostic.code,
+                    diagnostic.source_id,
                     diagnostic.range.start().to_u32(),
                     diagnostic.range.end().to_u32()
                 ),

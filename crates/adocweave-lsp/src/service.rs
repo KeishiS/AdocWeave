@@ -3,7 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use adocweave::output::diagnostics::{Applicability, Severity};
+use adocweave::output::diagnostics::{Applicability, RuleSettings, Severity, lint_rule};
 use adocweave::output::formatter;
 use adocweave::output::projection::project;
 use adocweave::resolution::ReferenceKey;
@@ -246,15 +246,19 @@ impl Default for LanguageService {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 struct ServerSettings {
     debounce_ms: u64,
+    enabled_rules: Vec<String>,
 }
 
 impl Default for ServerSettings {
     fn default() -> Self {
-        Self { debounce_ms: 30 }
+        Self {
+            debounce_ms: 30,
+            enabled_rules: Vec::new(),
+        }
     }
 }
 
@@ -609,13 +613,48 @@ impl LanguageService {
         self.documents.cancellation(uri.as_str())
     }
 
-    pub fn update_configuration(&mut self, settings: serde_json::Value) -> Result<(), String> {
+    pub fn update_configuration(
+        &mut self,
+        settings: serde_json::Value,
+    ) -> Result<Vec<AnalysisJob>, String> {
         let settings = settings.get("adocweave").cloned().unwrap_or(settings);
         let mut settings: ServerSettings =
             serde_json::from_value(settings).map_err(|error| error.to_string())?;
         settings.debounce_ms = settings.debounce_ms.min(1_000);
+        let mut options = adocweave::AnalysisOptions::default();
+        for code in &settings.enabled_rules {
+            let descriptor =
+                lint_rule(code).ok_or_else(|| format!("unknown diagnostic rule: {code}"))?;
+            if !descriptor.user_configurable {
+                return Err(format!(
+                    "diagnostic rule cannot be enabled explicitly: {code}"
+                ));
+            }
+            options.diagnostics.lint.set_rule(
+                descriptor.id,
+                RuleSettings {
+                    enabled: true,
+                    severity: descriptor.default_severity,
+                },
+            );
+        }
+        let diagnostics_changed = self.settings.enabled_rules != settings.enabled_rules;
         self.settings = settings;
-        Ok(())
+        if !diagnostics_changed {
+            return Ok(Vec::new());
+        }
+        self.documents.set_analysis_options(options);
+        Ok(self
+            .documents
+            .open_sources()
+            .into_iter()
+            .filter_map(|(uri, _, _)| {
+                let parsed = uri.parse().ok()?;
+                let mut job = self.documents.begin_reanalysis(&uri)?;
+                job.workspace = self.workspace.input(&parsed).ok();
+                Some(job)
+            })
+            .collect())
     }
 
     pub const fn debounce_ms(&self) -> u64 {

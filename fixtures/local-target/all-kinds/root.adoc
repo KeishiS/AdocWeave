@@ -1,0 +1,9 @@
+link:manual.pdf[Manual]
+
+image::image.png[]
+
+icon:icon.png[]
+
+audio::audio.mp3[]
+
+video::video.mp4[poster=poster.png]

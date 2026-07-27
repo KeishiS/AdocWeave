@@ -102,7 +102,11 @@ impl Backend {
                 state.publish_current_diagnostics(params.text_document.uri)
             })
             .notification::<notification::DidChangeConfiguration>(|state, params| {
-                let _ = state.service.update_configuration(params.settings);
+                if let Ok(jobs) = state.service.update_configuration(params.settings) {
+                    for job in jobs {
+                        state.schedule_analysis(job);
+                    }
+                }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWatchedFiles>(|state, params| {

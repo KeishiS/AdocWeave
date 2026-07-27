@@ -236,6 +236,7 @@ fn check_rejects_unknown_default_and_catalog_rule_enabling() {
         .find(|rule| rule["code"] == "macro-boundary")
         .expect("macro-boundary rule");
     assert_eq!(rule["enabledByDefault"], false);
+    assert_eq!(rule["userConfigurable"], true);
     assert_eq!(rule["fixable"], true);
 }
 
@@ -339,6 +340,36 @@ endif::[]\n";
     assert_eq!(local[0]["line"], 1);
     assert_eq!(local[0]["column"], 6);
     assert_eq!(local[1]["target"], "missing-v011-include.adoc");
+}
+
+#[test]
+fn local_target_check_accepts_every_supported_fixture_kind() {
+    let root = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/local-target/all-kinds"
+    );
+    let document = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/local-target/all-kinds/root.adoc"
+    );
+    let output = adocweave()
+        .args([
+            "check",
+            "--local-targets",
+            "--project-root",
+            root,
+            "--json",
+            document,
+        ])
+        .output()
+        .expect("all local target kinds");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(output.stdout, b"[]");
 }
 
 #[test]
@@ -677,6 +708,69 @@ fn local_includes_require_an_explicit_option_and_are_deterministic() {
 }
 
 #[test]
+fn local_include_with_literal_url_suffix_uses_the_shared_fixture() {
+    let root = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/includes/literal-suffix-root.adoc"
+    );
+    let project_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let output = adocweave()
+        .args([
+            "check",
+            "--include",
+            "--local-targets",
+            "--project-root",
+            project_root,
+            "--json",
+            root,
+        ])
+        .output()
+        .expect("literal-suffix include check");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(output.stdout, b"[]");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn local_target_check_uses_the_explicit_include_base_fixture() {
+    let root = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/includes/separate-base/root.adoc"
+    );
+    let base = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/includes/separate-base/resources"
+    );
+    let project_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let output = adocweave()
+        .args([
+            "check",
+            "--include",
+            "--base-dir",
+            base,
+            "--local-targets",
+            "--project-root",
+            project_root,
+            "--json",
+            root,
+        ])
+        .output()
+        .expect("separate include base check");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(output.stdout, b"[]");
+}
+
+#[test]
 fn stdin_include_requires_a_base_and_rejects_traversal() {
     let missing_base = run_with_stdin(&["convert", "--include", "-"], b"text\n");
     assert!(!missing_base.status.success());
@@ -822,6 +916,43 @@ fn local_target_check_shares_include_resolution_and_honors_optional() {
     }));
 
     std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn local_target_diagnostic_ids_include_the_fixture_source() {
+    let document = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/local-target/diagnostic-id/root.adoc"
+    );
+    let project_root = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/local-target/diagnostic-id"
+    );
+    let output = adocweave()
+        .args([
+            "check",
+            "--include",
+            "--local-targets",
+            "--project-root",
+            project_root,
+            "--json",
+            document,
+        ])
+        .output()
+        .expect("diagnostic identity check");
+
+    assert!(!output.status.success());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    let missing = diagnostics
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == "local-target-missing")
+        .collect::<Vec<_>>();
+    assert_eq!(missing.len(), 2);
+    assert_ne!(missing[0]["id"], missing[1]["id"]);
+    assert_ne!(missing[0]["sourceId"], missing[1]["sourceId"]);
 }
 
 #[test]

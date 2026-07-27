@@ -206,8 +206,10 @@ Code Actionとして公開します。いずれも診断と同じ文書version�
 == ワークスペース設定と参照索引
 
 `workspace/didChangeConfiguration`は直下または`adocweave`オブジェクト内の
-`debounceMs`を受け付け、0から1,000 msへ制限します。不正設定は現在値を維持し、サーバを
-終了させません。既定は30 msです。
+`debounceMs`と`enabledRules`を受け付けます。`debounceMs`は0から1,000 msへ制限し、
+既定は30 msです。`enabledRules`には利用者が有効化できる診断codeを配列で指定し、既定は
+空配列です。`enabledRules`を変更するとopen文書を新しい解析設定で再解析します。不明な項目や診断codeを
+含む設定は現在値を維持し、サーバを終了させません。
 
 `workspace.workspaceFolders`を宣言したclientに対して、serverはworkspace folder対応と
 change notificationをinitialize結果で広告します。初期folder集合に加え、

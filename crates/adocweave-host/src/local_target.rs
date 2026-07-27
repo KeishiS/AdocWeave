@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -69,6 +69,7 @@ impl LocalTargetPolicy {
         let canonical = match candidate.canonicalize() {
             Ok(path) => path,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                reject_dangling_symlink_escape(&self.root, candidate)?;
                 ensure_existing_ancestor_is_inside(&self.root, candidate)?;
                 return Err(LocalTargetError::Missing(candidate.to_owned()));
             }
@@ -260,12 +261,81 @@ fn normalize_below_root(
     Ok(candidate)
 }
 
+fn reject_dangling_symlink_escape(root: &Path, candidate: &Path) -> Result<(), LocalTargetError> {
+    reject_dangling_symlink_escape_inner(root, candidate, &mut BTreeSet::new(), 0)
+}
+
+fn reject_dangling_symlink_escape_inner(
+    root: &Path,
+    candidate: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+    depth: usize,
+) -> Result<(), LocalTargetError> {
+    const MAX_SYMLINK_DEPTH: usize = 64;
+    if depth > MAX_SYMLINK_DEPTH {
+        return Err(LocalTargetError::Unverifiable(format!(
+            "local target symlink depth exceeds {MAX_SYMLINK_DEPTH}: {}",
+            candidate.display()
+        )));
+    }
+    if !candidate.starts_with(root) {
+        return Err(LocalTargetError::OutsideRoot(candidate.to_owned()));
+    }
+    let metadata = match fs::symlink_metadata(candidate) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return candidate.parent().map_or(Ok(()), |parent| {
+                reject_dangling_symlink_escape_inner(root, parent, visited, depth)
+            });
+        }
+        Err(source) => return Err(classify_io(candidate.to_owned(), source)),
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if !visited.insert(candidate.to_owned()) {
+        return Err(LocalTargetError::Unverifiable(format!(
+            "local target symlink cycle: {}",
+            candidate.display()
+        )));
+    }
+    let destination =
+        fs::read_link(candidate).map_err(|source| classify_io(candidate.to_owned(), source))?;
+    let resolved = if destination.is_absolute() {
+        destination
+    } else {
+        candidate
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(destination)
+    };
+    let normalized = normalize_absolute(&resolved);
+    reject_dangling_symlink_escape_inner(root, &normalized, visited, depth + 1)
+}
+
+fn normalize_absolute(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+        }
+    }
+    normalized
+}
+
 fn ensure_existing_ancestor_is_inside(
     root: &Path,
     candidate: &Path,
 ) -> Result<(), LocalTargetError> {
     let mut ancestor = candidate.parent();
     while let Some(path) = ancestor {
+        reject_dangling_symlink_escape(root, path)?;
         match path.canonicalize() {
             Ok(canonical) => {
                 return if canonical.starts_with(root) {
@@ -521,6 +591,35 @@ mod tests {
                 policy
                     .inspect(&root.0.join("docs"), target)
                     .expect_err("symlink escape")
+                    .diagnostic_code(),
+                "local-target-outside-root"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_leaf_symlink_escape_uses_the_shared_fixture() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        let destination =
+            include_str!("../../../fixtures/local-target/dangling-symlink.target").trim();
+        symlink(destination, root.0.join("docs/escape.adoc")).expect("dangling symlink");
+        symlink(destination, root.0.join("docs/escape-dir")).expect("dangling directory symlink");
+        symlink("inner", root.0.join("docs/escape-chain")).expect("first symlink");
+        symlink(destination, root.0.join("docs/inner")).expect("second symlink");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+
+        for target in [
+            "escape.adoc",
+            "escape-dir/child.adoc",
+            "escape-chain/child.adoc",
+        ] {
+            assert_eq!(
+                policy
+                    .inspect(&root.0.join("docs"), target)
+                    .expect_err("dangling symlink escape")
                     .diagnostic_code(),
                 "local-target-outside-root"
             );
