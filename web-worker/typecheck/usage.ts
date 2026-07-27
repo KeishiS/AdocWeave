@@ -17,8 +17,13 @@ const client = new AdocWeaveClient({
 client.update({
   version: 1,
   source: "= Typed",
-  options: {
-    urlPolicy: { allowResolvedRootRelative: true },
+  analysisOptions: {
+    syntax: {
+      limits: { maxInputBytes: 1024 * 1024 },
+    },
+  },
+  renderPolicy: {
+    activeUrls: { allowResolvedRootRelative: true },
     externalLinks: { openInNewContext: true, noreferrer: true },
     sourceLanguages: { allowed: ["rust"], unknown: "diagnostic" },
     mathLanguages: ["latex"],

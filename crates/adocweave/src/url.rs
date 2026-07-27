@@ -23,7 +23,7 @@ impl AuthoredUrlPolicy {
     }
 
     pub fn classify(&self, value: &str) -> UrlDecision {
-        if invalid_url_text(value) {
+        if invalid_url_text(value) || contains_incomplete_scheme(value, &self.allowed_schemes) {
             return UrlDecision::Rejected;
         }
         let Some(colon) = value.find(':') else {
@@ -95,7 +95,7 @@ fn classify_url(
     allow_root_relative: bool,
     allow_data_uris: bool,
 ) -> UrlDecision {
-    if invalid_url_text(value) {
+    if invalid_url_text(value) || contains_incomplete_scheme(value, allowed_schemes) {
         return UrlDecision::Rejected;
     }
     let Some(colon) = value.find(':') else {
@@ -123,7 +123,10 @@ fn classify_scheme(
     if normalized == "data" && !allow_data_uris {
         return UrlDecision::Rejected;
     }
-    if allowed_schemes.contains(&normalized) {
+    if allowed_schemes
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(&normalized))
+    {
         UrlDecision::Allowed
     } else {
         UrlDecision::Rejected
@@ -137,7 +140,42 @@ fn invalid_url_text(value: &str) -> bool {
                 || character.is_whitespace()
                 || matches!(character, '<' | '>' | '"' | '\'' | '`' | '{' | '}')
         })
+        || contains_invalid_percent_escape(value)
         || contains_encoded_control(value)
+}
+
+fn contains_invalid_percent_escape(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len()
+            || hex(bytes[index + 1]).is_none()
+            || hex(bytes[index + 2]).is_none()
+        {
+            return true;
+        }
+        index += 3;
+    }
+    false
+}
+
+fn contains_incomplete_scheme(value: &str, allowed_schemes: &BTreeSet<String>) -> bool {
+    let Some(separator) = value.find("//") else {
+        return false;
+    };
+    let prefix = &value[..separator];
+    !prefix.is_empty()
+        && prefix.as_bytes()[0].is_ascii_alphabetic()
+        && prefix.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
+        })
+        && allowed_schemes
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(prefix))
 }
 
 fn classify_relative(value: &str, allow_relative: bool, allow_root_relative: bool) -> UrlDecision {
@@ -260,6 +298,42 @@ mod tests {
         );
         assert_eq!(
             policy.classify("/%2e%2e/secret", UrlProvenance::ResolvedReference),
+            UrlDecision::Rejected
+        );
+    }
+
+    #[test]
+    fn malformed_url_syntax_is_rejected_by_both_policies() {
+        let authored = AuthoredUrlPolicy::default();
+        let active = ActiveUrlPolicy {
+            allow_authored_relative: true,
+            ..ActiveUrlPolicy::default()
+        };
+
+        for value in ["http//example.com", "bad%ZZpath", "trailing%", "short%0"] {
+            assert_eq!(authored.classify(value), UrlDecision::Rejected, "{value}");
+            assert_eq!(
+                active.classify(value, UrlProvenance::Authored),
+                UrlDecision::Rejected,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn relative_double_slashes_and_case_insensitive_configuration_are_supported() {
+        let authored = AuthoredUrlPolicy {
+            allowed_schemes: ["HTTPS".to_owned()].into_iter().collect(),
+            ..AuthoredUrlPolicy::default()
+        };
+
+        assert_eq!(authored.classify("images//logo.png"), UrlDecision::Allowed);
+        assert_eq!(
+            authored.classify("https://example.com/logo.png"),
+            UrlDecision::Allowed
+        );
+        assert_eq!(
+            authored.classify("https//example.com/logo.png"),
             UrlDecision::Rejected
         );
     }

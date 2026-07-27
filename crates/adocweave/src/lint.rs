@@ -235,9 +235,6 @@ pub struct LintConfig {
     pub max_line_length: usize,
     pub max_consecutive_blank_lines: usize,
     pub max_diagnostics: usize,
-    pub max_inline_depth: usize,
-    pub max_list_depth: usize,
-    pub max_formula_bytes: usize,
     pub protected_attributes: BTreeMap<String, String>,
     pub protected_attribute_severity: Severity,
     pub authored_url_policy: crate::url::AuthoredUrlPolicy,
@@ -261,9 +258,6 @@ impl Default for LintConfig {
             max_line_length: 100,
             max_consecutive_blank_lines: 2,
             max_diagnostics: 1_000,
-            max_inline_depth: 32,
-            max_list_depth: 8,
-            max_formula_bytes: 1024 * 1024,
             protected_attributes: BTreeMap::new(),
             protected_attribute_severity: Severity::Error,
             authored_url_policy: crate::url::AuthoredUrlPolicy::default(),
@@ -293,12 +287,24 @@ impl LintConfig {
 
 #[cfg(test)]
 fn lint(source: &str, config: &LintConfig) -> Result<Vec<Diagnostic>, PositionError> {
+    lint_with_analysis_limits(source, config, crate::limits::AnalysisLimits::default())
+}
+
+#[cfg(test)]
+fn lint_with_analysis_limits(
+    source: &str,
+    config: &LintConfig,
+    limits: crate::limits::AnalysisLimits,
+) -> Result<Vec<Diagnostic>, PositionError> {
     let parsed = parse_with_config(
         source,
         &ParseConfig {
-            max_inline_depth: config.max_inline_depth,
-            max_list_depth: config.max_list_depth,
-            max_formula_bytes: config.max_formula_bytes,
+            max_inline_depth: usize::try_from(limits.max_inline_depth)
+                .expect("u32 fits usize on supported targets"),
+            max_list_depth: usize::try_from(limits.max_list_depth)
+                .expect("u32 fits usize on supported targets"),
+            max_formula_bytes: usize::try_from(limits.max_formula_bytes)
+                .expect("u32 fits usize on supported targets"),
             ..ParseConfig::default()
         },
     )?;
@@ -615,9 +621,7 @@ fn lint_links_and_references(
         use crate::inline::{Inline, ReferenceDestination};
         match inline {
             Inline::Link(link) => {
-                if !valid_unresolved_relative_target(&link.target)
-                    && !config.authored_url_policy.allows(&link.target)
-                {
+                if !config.authored_url_policy.allows(&link.target) {
                     push_diagnostic(
                         diagnostics,
                         config,
@@ -723,21 +727,37 @@ fn valid_unresolved_relative_target(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('/')
         && !value.contains(['\\', ':'])
+        && !value.contains("//")
         && !value.chars().any(|character| {
             character.is_control()
                 || character.is_whitespace()
                 || matches!(character, '<' | '>' | '"' | '\'' | '`' | '{' | '}')
         })
-        && !value.as_bytes().windows(3).any(|window| {
-            window[0] == b'%'
-                && match (hex_digit(window[1]), hex_digit(window[2])) {
-                    (Some(high), Some(low)) => {
-                        let decoded = high * 16 + low;
-                        decoded <= 0x20 || decoded == 0x7f || matches!(decoded, b'.' | b'/' | b'\\')
-                    }
-                    _ => false,
-                }
-        })
+        && valid_relative_percent_escapes(value)
+}
+
+fn valid_relative_percent_escapes(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return false;
+        }
+        let (Some(high), Some(low)) = (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
+        else {
+            return false;
+        };
+        let decoded = high * 16 + low;
+        if decoded <= 0x20 || decoded == 0x7f || matches!(decoded, b'.' | b'/' | b'\\') {
+            return false;
+        }
+        index += 3;
+    }
+    true
 }
 
 const fn hex_digit(value: u8) -> Option<u8> {
@@ -1076,7 +1096,7 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 mod tests {
     use super::{
         LINE_TOO_LONG, LINT_RULES, LintConfig, RuleSettings, TRAILING_WHITESPACE, lint, lint_rule,
-        render_lint_rule_catalog_json,
+        lint_with_analysis_limits, render_lint_rule_catalog_json,
     };
     use crate::diagnostic::Severity;
 
@@ -1376,11 +1396,12 @@ mod tests {
 
     #[test]
     fn inline_recovery_uses_dedicated_nesting_limit_code() {
-        let diagnostics = lint(
+        let diagnostics = lint_with_analysis_limits(
             "*nested*",
-            &LintConfig {
+            &LintConfig::default(),
+            crate::limits::AnalysisLimits {
                 max_inline_depth: 0,
-                ..LintConfig::default()
+                ..crate::limits::AnalysisLimits::default()
             },
         )
         .expect("valid source");
@@ -1636,7 +1657,11 @@ mod tests {
     fn stem_size_limit_is_reported_without_evaluating_the_formula() {
         let source = format!(
             "stem:[{}]",
-            "x".repeat(LintConfig::default().max_formula_bytes + 1)
+            "x".repeat(
+                usize::try_from(crate::limits::AnalysisLimits::default().max_formula_bytes)
+                    .expect("u32 fits usize")
+                    + 1
+            )
         );
         let diagnostics = lint(&source, &LintConfig::default()).expect("lint");
 

@@ -27,9 +27,8 @@ impl AnalysisRequest {
         version: i64,
         generation: u64,
         source: impl Into<Arc<str>>,
-        mut options: AnalysisOptions,
+        options: AnalysisOptions,
     ) -> Self {
-        options.syntax.source_id = source_id.clone();
         Self {
             revision: DocumentRevision {
                 source_id,
@@ -42,7 +41,11 @@ impl AnalysisRequest {
     }
 
     pub fn cache_key(&self) -> AnalysisCacheKey {
-        AnalysisCacheKey::new(&self.source, &self.options)
+        AnalysisCacheKey::new(
+            &self.source,
+            self.revision.source_id.as_ref(),
+            &self.options,
+        )
     }
 
     pub fn analyze(
@@ -50,8 +53,11 @@ impl AnalysisRequest {
         cancellation: &dyn CancellationCheck,
     ) -> Result<AnalysisResult, ParseError> {
         let cache_key = self.cache_key();
-        let analysis =
-            Engine::new(self.options.clone()).analyze_cancellable(&self.source, cancellation)?;
+        let analysis = Engine::new(self.options.clone()).analyze_cancellable_with_source_id(
+            self.revision.source_id.as_ref(),
+            &self.source,
+            cancellation,
+        )?;
         Ok(AnalysisResult {
             revision: self.revision.clone(),
             cache_key,
@@ -64,9 +70,8 @@ impl AnalysisRequest {
 pub struct AnalysisCacheKey([u8; 32]);
 
 impl AnalysisCacheKey {
-    pub fn new(source: &str, options: &AnalysisOptions) -> Self {
+    pub fn new(source: &str, source_id: Option<&SourceId>, options: &AnalysisOptions) -> Self {
         let crate::core::SyntaxOptions {
-            source_id,
             syntax_mode,
             limits,
         } = &options.syntax;
@@ -99,7 +104,7 @@ impl AnalysisCacheKey {
         let mut hasher = Sha256::new();
         hash_bytes(&mut hasher, crate::VERSION.as_bytes());
         hash_bytes(&mut hasher, source.as_bytes());
-        hash_optional_string(&mut hasher, source_id.as_ref().map(SourceId::as_str));
+        hash_optional_string(&mut hasher, source_id.map(SourceId::as_str));
         hash_u8(
             &mut hasher,
             match syntax_mode {
@@ -134,9 +139,6 @@ impl AnalysisCacheKey {
             config.max_line_length,
             config.max_consecutive_blank_lines,
             config.max_diagnostics,
-            config.max_inline_depth,
-            config.max_list_depth,
-            config.max_formula_bytes,
         ] {
             hash_u64(
                 &mut hasher,
@@ -274,7 +276,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "d65659454465ef9c20d95eb128ead896ee82b44924ecdd8e5b176116b6ff4740"
+            "28cc429205d07cbc2d04c905fb3e788a048e6df3186ccf4e5a3b8bd970ec08b4"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());

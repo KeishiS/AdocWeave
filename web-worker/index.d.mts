@@ -151,7 +151,7 @@ export interface ResolvedResource {
 export interface AnalysisOptions {
   syntax?: {
     syntaxMode?: "permissive" | "strict";
-    limits?: Record<string, number>;
+    limits?: AnalysisLimits;
   };
   diagnostics?: {
     protectedAttributes?: Record<string, string>;
@@ -168,6 +168,28 @@ export interface AnalysisOptions {
       }
     >;
   };
+}
+
+export interface AnalysisLimits {
+  maxInputBytes?: number;
+  maxLineBytes?: number;
+  maxListDepth?: number;
+  maxListContinuations?: number;
+  maxBlockDepth?: number;
+  maxInlineDepth?: number;
+  maxFormulaBytes?: number;
+  maxTableBytes?: number;
+  maxTableCells?: number;
+  maxTableColumns?: number;
+  maxTableDepth?: number;
+  maxCatalogEntries?: number;
+  maxCatalogBytes?: number;
+  maxBlocks?: number;
+  maxNodes?: number;
+  maxReferences?: number;
+  maxAttributes?: number;
+  maxAttributeExpansionDepth?: number;
+  maxAttributeExpansionBytes?: number;
 }
 
 export interface RenderPolicy {

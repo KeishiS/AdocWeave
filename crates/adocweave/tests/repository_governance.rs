@@ -451,7 +451,7 @@ fn html5_validation_manifest_has_fixed_tools_and_complete_inputs() {
                     .as_str()
                     .expect("conformance case name")
                     .to_owned(),
-                case["options"]["documentMode"]
+                case["renderPolicy"]["documentMode"]
                     .as_str()
                     .unwrap_or("fragment")
                     .to_owned(),

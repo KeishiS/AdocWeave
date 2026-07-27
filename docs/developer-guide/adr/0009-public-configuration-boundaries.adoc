@@ -18,11 +18,14 @@ Lintルールは公開enum、全ルール一覧およびルールコードを別
 
 公開する解析設定を`AnalysisOptions`とし、次の設定へ分けます。
 
-* ソース識別子、構文modeおよび処理上限を保持する`SyntaxOptions`
+* 構文modeおよび解析処理上限を保持する`SyntaxOptions`
 * Lintルール、保護属性および入力URL検査を保持する`DiagnosticProfile`
+
+`SourceId`は設定ではなく解析要求と文書revisionが所有し、解析時にスナップショットへ渡します。
 
 Lintルールの公開識別子には閉じたenumではなく`LintRuleId`を使用します。組み込みルールのID、
 既定severity、有効状態、説明および修正可否は単一の`LintRuleDescriptor`一覧を基準とします。
+この構造は組み込みルール追加時の網羅matchの破壊を避けるものであり、外部pluginによる任意ルール登録は提供しません。
 利用側の設定はIDをキーとして上書きします。文字列からIDを解決する境界では未知のIDを設定エラーとして扱います。
 
 URL検査は次の責務へ分けます。
@@ -31,8 +34,13 @@ URL検査は次の責務へ分けます。
 * HTMLへ出力する記述値およびresolver出力を再検査する`ActiveUrlPolicy`
 * filesystem上のroot、symlinkおよび実在性を検査するホスト側のlocal path policy
 
-解析cache keyは`AnalysisOptions`だけから生成します。HTMLの表示設定と`ActiveUrlPolicy`は含めません。
+解析cache keyは入力本文、`SourceId`および`AnalysisOptions`から生成します。HTMLの表示設定と
+`ActiveUrlPolicy`は含めません。
 WASM protocolでは解析設定と描画設定を別のobjectとして表し、同じ境界を維持します。
+
+設定型はRustでの直接構築と補完を優先して公開fieldを維持します。このためfield追加や型変更は互換変更ではなく、
+v0.xのminor releaseで移行手順とともに行います。継続的な追加が見込まれるLintルールだけは
+`LintRuleId`とdescriptor一覧を拡張境界とし、公開enumの網羅matchへ依存させません。
 
 == 結果
 

@@ -1018,15 +1018,9 @@ fn main() {}
 
 stem:[x+y]
 ";
-        let analysis = Engine::new(AnalysisOptions {
-            syntax: crate::core::SyntaxOptions {
-                source_id: Some(SourceId::new("host:document")),
-                ..crate::core::SyntaxOptions::default()
-            },
-            ..AnalysisOptions::default()
-        })
-        .analyze(source)
-        .expect("analysis");
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze_with_source_id(Some(SourceId::new("host:document")), source)
+            .expect("analysis");
         let projected = project(&analysis, &RenderInputs::default());
         let html = crate::html::render(analysis.document(), &crate::html::RenderPolicy::default());
 

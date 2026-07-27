@@ -1,10 +1,10 @@
 #![no_main]
 
-use adocweave::{Engine, ParseOptions};
+use adocweave::{AnalysisOptions, Engine};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|source: &str| {
-    if let Ok(analysis) = Engine::new(ParseOptions::default()).analyze(source) {
+    if let Ok(analysis) = Engine::new(AnalysisOptions::default()).analyze(source) {
         assert_eq!(analysis.syntax().reconstruct(), source);
         for token in analysis.syntax().tokens() {
             let range = token.range;

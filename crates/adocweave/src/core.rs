@@ -34,7 +34,6 @@ impl SourceId {
 /// Deterministic settings for syntax recognition and resource budgets.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SyntaxOptions {
-    pub source_id: Option<SourceId>,
     pub syntax_mode: SyntaxMode,
     pub limits: AnalysisLimits,
 }
@@ -53,7 +52,7 @@ impl Default for DiagnosticProfile {
     }
 }
 
-/// Complete deterministic input to one analysis.
+/// Deterministic configuration shared by analyses.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AnalysisOptions {
     pub syntax: SyntaxOptions,
@@ -269,6 +268,14 @@ impl Engine {
         analyze(source, &self.options)
     }
 
+    pub fn analyze_with_source_id(
+        &self,
+        source_id: Option<SourceId>,
+        source: &str,
+    ) -> Result<Analysis, ParseError> {
+        analyze_cancellable_with_source_id(source, source_id.as_ref(), &self.options, &NeverCancel)
+    }
+
     pub fn analyze_cancellable(
         &self,
         source: &str,
@@ -276,11 +283,20 @@ impl Engine {
     ) -> Result<Analysis, ParseError> {
         analyze_cancellable(source, &self.options, cancellation)
     }
+
+    pub fn analyze_cancellable_with_source_id(
+        &self,
+        source_id: Option<&SourceId>,
+        source: &str,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<Analysis, ParseError> {
+        analyze_cancellable_with_source_id(source, source_id, &self.options, cancellation)
+    }
 }
 
 /// Analyzes with a cancellation token that never cancels.
 pub(crate) fn analyze(source: &str, options: &AnalysisOptions) -> Result<Analysis, ParseError> {
-    analyze_cancellable(source, options, &NeverCancel)
+    analyze_cancellable_with_source_id(source, None, options, &NeverCancel)
 }
 
 /// Analyzes caller-provided source without performing I/O or reference resolution.
@@ -289,11 +305,12 @@ pub(crate) fn analyze_cancellable(
     options: &AnalysisOptions,
     cancellation: &dyn CancellationCheck,
 ) -> Result<Analysis, ParseError> {
-    analyze_inner(source, options, cancellation)
+    analyze_cancellable_with_source_id(source, None, options, cancellation)
 }
 
-fn analyze_inner(
+fn analyze_cancellable_with_source_id(
     source: &str,
+    source_id: Option<&SourceId>,
     options: &AnalysisOptions,
     cancellation: &dyn CancellationCheck,
 ) -> Result<Analysis, ParseError> {
@@ -341,10 +358,7 @@ fn analyze_inner(
         return Err(ParseError::Cancelled);
     }
 
-    let mut lint_config = options.diagnostics.lint.clone();
-    lint_config.max_inline_depth = limit_to_usize(options.syntax.limits.max_inline_depth);
-    lint_config.max_list_depth = limit_to_usize(options.syntax.limits.max_list_depth);
-    lint_config.max_formula_bytes = limit_to_usize(options.syntax.limits.max_formula_bytes);
+    let lint_config = options.diagnostics.lint.clone();
     let diagnostics =
         lint::lint_syntax(&syntax, &ast, &lint_config).map_err(ParseError::Position)?;
     if cancellation.is_cancelled() {
@@ -352,7 +366,7 @@ fn analyze_inner(
     }
 
     Ok(Analysis {
-        source_id: options.syntax.source_id.clone(),
+        source_id: source_id.cloned(),
         package_version: crate::VERSION,
         syntax,
         document: crate::document::Document::from_ast(ast),
@@ -382,23 +396,21 @@ mod tests {
     use std::thread;
 
     use super::{
-        AnalysisOptions, CancellationCheck, CancellationToken, ParseError, SourceId, SyntaxOptions,
-        analyze, analyze_cancellable,
+        AnalysisOptions, CancellationCheck, CancellationToken, Engine, ParseError, SourceId,
+        SyntaxOptions, analyze, analyze_cancellable,
     };
 
     fn assert_send_sync<T: Send + Sync>() {}
 
     #[test]
     fn public_api_is_deterministic_and_source_id_is_opaque() {
-        let options = AnalysisOptions {
-            syntax: SyntaxOptions {
-                source_id: Some(SourceId::new("host:any/value")),
-                ..SyntaxOptions::default()
-            },
-            ..AnalysisOptions::default()
-        };
-        let first = analyze("== 日本語\n", &options).expect("analyze");
-        let second = analyze("== 日本語\n", &options).expect("analyze");
+        let engine = Engine::new(AnalysisOptions::default());
+        let first = engine
+            .analyze_with_source_id(Some(SourceId::new("host:any/value")), "== 日本語\n")
+            .expect("analyze");
+        let second = engine
+            .analyze_with_source_id(Some(SourceId::new("host:any/value")), "== 日本語\n")
+            .expect("analyze");
 
         assert_eq!(first.source_id, second.source_id);
         assert_eq!(first.syntax.snapshot(), second.syntax.snapshot());
@@ -659,18 +671,12 @@ mod tests {
 
     #[test]
     fn reference_resolution_queries_are_host_independent() {
-        let options = AnalysisOptions {
-            syntax: SyntaxOptions {
-                source_id: Some(SourceId::new("opaque:source")),
-                ..SyntaxOptions::default()
-            },
-            ..AnalysisOptions::default()
-        };
-        let parsed = analyze(
-            "xref:other.adoc#part[] xref:note:123e4567-e89b-12d3-a456-426614174000#part[]",
-            &options,
-        )
-        .expect("analyze");
+        let parsed = Engine::new(AnalysisOptions::default())
+            .analyze_with_source_id(
+                Some(SourceId::new("opaque:source")),
+                "xref:other.adoc#part[] xref:note:123e4567-e89b-12d3-a456-426614174000#part[]",
+            )
+            .expect("analyze");
         let queries = parsed.reference_queries();
 
         assert_eq!(queries.len(), 2);

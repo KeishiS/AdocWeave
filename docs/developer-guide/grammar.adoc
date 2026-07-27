@@ -39,8 +39,7 @@ line-ending = LF | CRLF ;
 ----
 document       = [ document-header ], { blank-line | [ block-metadata ],
                    (heading | break | source-block | literal-block | literal-paragraph | math-block
-                   | delimited-block | list | unsupported | paragraph)
-                 | document-attribute } ;
+                   | delimited-block | list | unsupported | paragraph) } ;
 document-header = document-title, [ author-line ], [ revision-line ],
                   { document-attribute }, blank-line ;
 blank-line     = { " " | TAB } ;

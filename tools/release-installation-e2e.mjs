@@ -200,8 +200,8 @@ async function verifyBrowserContract() {
         },
       ],
     },
-    options: {
-      urlPolicy: { allowResolvedRootRelative: true },
+    renderPolicy: {
+      activeUrls: { allowResolvedRootRelative: true },
       unresolvedReferences: "label-only",
     },
   });

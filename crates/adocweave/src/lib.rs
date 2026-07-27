@@ -61,54 +61,131 @@ pub mod semantic {
         Paragraph, QuoteKind, QuotePresentation, Revision, SourceBlock, SourceInfo, Unsupported,
         VerbatimBlock, VerbatimKind,
     };
-    pub use crate::catalog::*;
-    pub use crate::document::*;
-    pub use crate::inline::*;
-    pub use crate::presentation::*;
+    pub use crate::catalog::{
+        BibliographyEntry, BibliographyReference, CatalogProblem, CatalogProblemKind,
+        DocumentCatalogs, Footnote, FootnoteOccurrence, IndexEntry,
+    };
+    pub use crate::document::{
+        Document, DocumentElement, DocumentIdentifiers, DocumentSymbol, HeadingId, ReferenceTarget,
+        ReferenceTargetKind, SymbolKind, document_element_at, document_symbols,
+        generate_heading_ids, heading_id_base, reference_targets, render_symbols_json,
+        source_language_candidates,
+    };
+    pub use crate::inline::{
+        AttributeUse, Inline, InlineFormula, InlineLiteralKind, InlineProblem, InlineProblemKind,
+        InlineStyle, InlineText, Link, MacroAttribute, MacroForm, MathLanguage, PassthroughKind,
+        Reference, ReferenceDestination, StandardMacro, StandardMacroKind, inline_at,
+    };
+    pub use crate::presentation::{
+        BibliographySection, BlockId, DocumentIndex, DocumentLayout, DocumentPresentation,
+        GeneratedLayoutNode, HeadingPresentation, LayoutNode, LayoutScope,
+        ResolvedDocumentAttributes, TocPolicy,
+    };
     pub use crate::resolved::DocumentFacts;
-    pub use crate::structure::*;
-    pub use crate::substitution::*;
-    pub use crate::table::*;
-    pub use crate::walker::*;
+    pub use crate::structure::{
+        DocumentStructure, Manpage, Section, SectionKind, StructureProblem, StructureProblemKind,
+        StructuredHeading, TocEntry,
+    };
+    pub use crate::substitution::{
+        AttributeExpansionError, AttributeExpansionLimits, SubstitutionContext, SubstitutionStep,
+    };
+    pub use crate::table::{
+        HorizontalAlignment, Table, TableCell, TableCellContent, TableCellStyle, TableColumn,
+        TableFormat, TableFrame, TableGrid, TablePresentation, TableProblem, TableProblemKind,
+        TableRow, TableSection, TableStripes, VerticalAlignment,
+    };
+    pub use crate::walker::{SemanticNode, walk};
 }
 
 /// Deterministic document output and serialization backends.
 pub mod output {
     pub mod conformance {
-        pub use crate::conformance::*;
+        pub use crate::conformance::{
+            ConformanceSnapshot, DocumentProducts, ProductSet, fixture_source, products, snapshot,
+        };
     }
     pub mod diagnostics {
-        pub use crate::diagnostic::*;
-        pub use crate::lint::*;
+        pub use crate::diagnostic::{
+            Applicability, CoreErrorCode, Diagnostic, DiagnosticCode, DiagnosticId, EditConflict,
+            EditConflictKind, Fix, RelatedInformation, Severity, TextEdit, render_human,
+            render_json, sort_diagnostics,
+        };
+        pub use crate::lint::{
+            ATTRIBUTE_EXPANSION, DUPLICATE_ANCHOR, DUPLICATE_ATTRIBUTE, DUPLICATE_HEADING_ID,
+            EXCESSIVE_BLANK_LINES, HEADING_MARKER_SPACE, INCONSISTENT_LIST, INVALID_ANCHOR,
+            INVALID_ATTRIBUTE, INVALID_CATALOG, INVALID_CROSS_REFERENCE,
+            INVALID_DOCUMENT_STRUCTURE, INVALID_HEADING_LEVEL, INVALID_LIST_PRESENTATION,
+            INVALID_STEM, INVALID_TABLE, INVALID_URL_SCHEME, LINE_TOO_LONG, LINT_RULES, LintConfig,
+            LintRuleDescriptor, LintRuleId, MISSING_SOURCE_LANGUAGE, NESTING_LIMIT_EXCEEDED,
+            PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE, UNCLOSED_BLOCK,
+            UNCLOSED_INLINE, UNDEFINED_ATTRIBUTE, UNRESOLVED_CROSS_REFERENCE, UNUSED_ATTRIBUTE,
+            lint_analysis, lint_rule, render_lint_rule_catalog_json,
+        };
     }
     pub mod formatter {
-        pub use crate::formatter::*;
+        pub use crate::formatter::{FormatConfig, FormatOutput, NewlineStyle, format_analysis};
     }
     pub mod html {
-        pub use crate::html::*;
+        pub use crate::html::{
+            ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
+            HtmlDocumentMode, HtmlOutput, MathLanguagePolicy, RenderPolicy, ResolvedReference,
+            ResourceCapabilities, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
+            UnknownSourceLanguage, UnresolvedReferencePresentation, render, render_with_inputs,
+        };
     }
     pub mod projection {
-        pub use crate::projection::*;
+        pub use crate::projection::{
+            BlockPresentationKind, BlockPresentationProjection, DocumentProjection, ExternalLink,
+            FormulaKind, FormulaProjection, OrderedListProjection, ProjectedText, ReferenceEdge,
+            SearchTextKind, SearchTextSegment, SearchableText, SourceBlockProjection, project,
+            searchable_text,
+        };
     }
 }
 
 /// Deterministic preprocessing over caller-provided resource snapshots.
 pub mod preprocess {
-    pub use crate::preprocessor::*;
+    pub use crate::preprocessor::{
+        AnalysisProjection, Directive, DirectiveKind, ExpandedOffset, ExpandedRange,
+        IncludeRequest, OriginRange, Originated, PreprocessError, PreprocessErrorKind,
+        PreprocessNotice, PreprocessNoticeKind, PreprocessOptions, PreprocessedAnalysis,
+        PreprocessedAnalysisError, PreprocessedDocument, ProjectedDiagnostic,
+        ProjectedDocumentSymbol, ProjectedFix, ProjectedReference, ProjectedResource,
+        ProjectionError, ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode,
+        SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
+        preprocess_and_analyze,
+    };
 }
 
 /// Host-provided reference and resource resolution contracts.
 pub mod resolution {
-    pub use crate::reference::*;
-    pub use crate::render::*;
-    pub use crate::resource::*;
-    pub use crate::url::*;
+    pub use crate::reference::{
+        DocumentCandidate, ReferenceKey, ReferenceQuery, ReferenceResolver, ResolutionCacheKey,
+        ResolutionFailureKind, ResolutionNotice, ResolutionNoticeKind, ResolutionOutcome,
+        ResolvedReference, ResolverFailure, ResolverFuture, ReverseReference, query_from_reference,
+    };
+    pub use crate::render::{
+        RenderInputDomain, RenderInputProblem, RenderInputProblemKind, RenderInputUsage,
+        RenderInputs, ResolutionMatch,
+    };
+    pub use crate::resource::{
+        InvalidMediaType, MediaFamily, MediaType, ResolvedResource, ResourceFailure,
+        ResourceFailureKind, ResourceFuture, ResourceOutcome, ResourcePurpose, ResourceQuery,
+        ResourceReference, ResourceResolver, ResourceValue,
+    };
+    pub use crate::url::{ActiveUrlPolicy, AuthoredUrlPolicy, UrlDecision, UrlProvenance};
 }
 
 /// Source positions and the lossless syntax tree.
 pub mod text {
-    pub use crate::source::*;
-    pub use crate::syntax::*;
+    pub use crate::source::{
+        LineEnding, LosslessToken, LosslessTokenKind, Position, PositionEncoding, PositionError,
+        SourceDocument, SourceLine, TextRange, TextSize,
+    };
+    pub use crate::syntax::{
+        SyntaxDescendants, SyntaxFix, SyntaxIssue, SyntaxIssueClass, SyntaxKind, SyntaxNode,
+        SyntaxTree,
+    };
 }
 
 pub use conformance::{DocumentProducts, ProductSet};

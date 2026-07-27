@@ -5,6 +5,24 @@ use adocweave::{Analysis, AnalysisOptions, Engine};
 
 const SOURCE: &str = include_str!("../../../fixtures/grammar/ambiguous.adoc");
 
+#[test]
+fn document_attributes_are_recognized_only_in_the_document_header() {
+    let source = "= Title\n\nParagraph\n\n:body-attribute: value\n";
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze(source)
+        .expect("analysis");
+
+    assert!(analysis.document_attribute_occurrences().is_empty());
+    assert!(
+        !analysis
+            .presentation()
+            .attributes()
+            .values()
+            .contains_key("body-attribute")
+    );
+    assert_eq!(analysis.source(), source);
+}
+
 fn parse(source: &str) -> Analysis {
     Engine::new(AnalysisOptions::default())
         .analyze(source)
