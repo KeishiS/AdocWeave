@@ -30,7 +30,7 @@ pub(crate) fn recognize_line(
     next_content: Option<&str>,
     content_start: usize,
     full_range: TextRange,
-    header_attributes_open: bool,
+    document_root: bool,
 ) -> LineRecognition {
     if parse_source_attribute(content).is_some() && next_content == Some("----") {
         LineRecognition::Source
@@ -53,7 +53,7 @@ pub(crate) fn recognize_line(
         LineRecognition::Comment
     } else if content.trim_matches([' ', '\t']).is_empty() {
         LineRecognition::Blank
-    } else if header_attributes_open
+    } else if document_root
         && crate::attributes::parse_line(content, content_start, full_range).is_some()
     {
         LineRecognition::DocumentAttribute

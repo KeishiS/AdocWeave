@@ -474,9 +474,18 @@ pub struct ProjectedResource {
     pub target_origins: Vec<SourceOrigin>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedDocumentAttribute {
+    pub value: crate::attributes::DocumentAttributeOccurrence,
+    pub origins: Vec<SourceOrigin>,
+    pub name_origins: Vec<SourceOrigin>,
+    pub value_origins: Vec<SourceOrigin>,
+}
+
 /// All editor-facing facts from an expanded analysis, projected to original sources.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AnalysisProjection {
+    pub attribute_occurrences: Vec<ProjectedDocumentAttribute>,
     pub directives: Vec<Directive>,
     pub diagnostics: Vec<ProjectedDiagnostic>,
     pub local_targets: Vec<ProjectedLocalTarget>,
@@ -596,6 +605,20 @@ impl PreprocessedAnalysis {
                 })
             })
             .collect::<Result<Vec<_>, ProjectionError>>()?;
+        let attribute_occurrences = self
+            .analysis
+            .document_attribute_occurrences()
+            .iter()
+            .cloned()
+            .map(|value| {
+                Ok(ProjectedDocumentAttribute {
+                    origins: project(value.range)?,
+                    name_origins: project(value.name_range)?,
+                    value_origins: project(value.value_range)?,
+                    value,
+                })
+            })
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
         let mut local_targets = Vec::new();
         for link in self.analysis.links() {
             let Some(value) = crate::local_target::LocalTargetReference::from_link(link) else {
@@ -665,6 +688,7 @@ impl PreprocessedAnalysis {
             .map(|symbol| project_symbol(symbol, &mut project))
             .collect::<Result<Vec<_>, ProjectionError>>()?;
         Ok(AnalysisProjection {
+            attribute_occurrences,
             directives: self.document.directives.clone(),
             diagnostics,
             local_targets,
@@ -1869,6 +1893,76 @@ mod tests {
                 .map(SourceId::as_str),
             Some("part")
         );
+    }
+
+    #[test]
+    fn analysis_projection_maps_included_body_attribute_occurrences() {
+        let included = include_str!("../../../fixtures/attributes/body-set-unset.adoc");
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "attributes.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("included-attributes"),
+                source: included.to_owned(),
+            },
+        );
+        let engine = Engine::new(crate::core::AnalysisOptions::default());
+        let analysis = preprocess_and_analyze(
+            &engine,
+            "include::attributes.adoc[]\n",
+            &snapshot,
+            &PreprocessOptions {
+                source_id: Some(SourceId::new("root")),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("analysis");
+        let projection = analysis
+            .project_origins(ProjectionLimits::default())
+            .expect("projection");
+
+        assert_eq!(projection.attribute_occurrences.len(), 2);
+        for attribute in &projection.attribute_occurrences {
+            assert_eq!(
+                attribute.origins[0]
+                    .source_id
+                    .as_ref()
+                    .map(SourceId::as_str),
+                Some("included-attributes")
+            );
+            assert_eq!(
+                attribute.name_origins[0]
+                    .source_id
+                    .as_ref()
+                    .map(SourceId::as_str),
+                Some("included-attributes")
+            );
+            assert_eq!(
+                attribute.value_origins[0]
+                    .source_id
+                    .as_ref()
+                    .map(SourceId::as_str),
+                Some("included-attributes")
+            );
+        }
+        let theme = &projection.attribute_occurrences[0];
+        assert_eq!(
+            theme.origins[0].range.text_range(),
+            text_range_in(included, ":theme: dark\n")
+        );
+        assert_eq!(
+            theme.name_origins[0].range.text_range(),
+            text_range_in(included, "theme")
+        );
+        assert_eq!(
+            theme.value_origins[0].range.text_range(),
+            text_range_in(included, "dark")
+        );
+    }
+
+    fn text_range_in(source: &str, needle: &str) -> TextRange {
+        let start = source.find(needle).expect("fixture contains needle");
+        range(start, start + needle.len())
     }
 
     #[test]

@@ -1,4 +1,6 @@
+use adocweave::output::formatter::{FormatConfig, NewlineStyle, format_analysis};
 use adocweave::semantic::{DocumentAttributeOccurrence, DocumentAttributeOperation};
+use adocweave::text::SyntaxIssueClass;
 use adocweave::{AnalysisOptions, Engine};
 
 #[test]
@@ -61,4 +63,111 @@ fn public_occurrences_preserve_standard_attribute_source_facts() {
 
 fn slice(source: &str, range: adocweave::text::TextRange) -> &str {
     &source[range.start().to_usize()..range.end().to_usize()]
+}
+
+#[test]
+fn root_body_occurrences_cover_set_unset_and_adjacent_blocks() {
+    let source = include_str!("../../../fixtures/attributes/body-set-unset.adoc");
+    let analysis = analyze(source);
+    let occurrences = analysis.document_attribute_occurrences();
+
+    assert_eq!(occurrences.len(), 2);
+    assert_eq!(occurrences[0].name, "theme");
+    assert_eq!(occurrences[0].raw_value, "dark");
+    assert_eq!(occurrences[0].operation, DocumentAttributeOperation::Set);
+    assert_eq!(occurrences[1].name, "feature");
+    assert_eq!(occurrences[1].operation, DocumentAttributeOperation::Unset);
+    assert!(
+        analysis
+            .document()
+            .header()
+            .range
+            .is_some_and(|range| range.end() <= occurrences[0].range.start())
+    );
+    assert_eq!(analysis.document().blocks().len(), 3);
+
+    let adjacent = include_str!("../../../fixtures/attributes/body-adjacent-blocks.adoc");
+    let analysis = analyze(adjacent);
+    assert_eq!(analysis.document_attribute_occurrences().len(), 1);
+    assert_eq!(analysis.document_attribute_occurrences()[0].name, "between");
+    assert_eq!(analysis.document().blocks().len(), 4);
+    assert_eq!(analysis.syntax().reconstruct(), adjacent);
+}
+
+#[test]
+fn invalid_body_occurrences_remain_lossless_and_report_problems() {
+    let source = include_str!("../../../fixtures/attributes/body-invalid.adoc");
+    let analysis = analyze(source);
+    let occurrences = analysis.document_attribute_occurrences();
+
+    assert_eq!(occurrences.len(), 2);
+    assert_eq!(occurrences[0].name, "bad name");
+    assert_eq!(occurrences[1].operation, DocumentAttributeOperation::Unset);
+    assert_eq!(occurrences[1].raw_value, "unexpected");
+    assert_eq!(
+        analysis
+            .syntax()
+            .issues()
+            .iter()
+            .filter(|issue| issue.class == SyntaxIssueClass::InvalidAttribute)
+            .count(),
+        2
+    );
+    assert_eq!(analysis.syntax().reconstruct(), source);
+}
+
+#[test]
+fn unicode_and_crlf_body_occurrences_have_byte_accurate_ranges() {
+    for source in [
+        include_str!("../../../fixtures/attributes/body-unicode.adoc"),
+        include_str!("../../../fixtures/attributes/body-crlf.adoc"),
+    ] {
+        let analysis = analyze(source);
+        let occurrence = &analysis.document_attribute_occurrences()[0];
+        assert_eq!(slice(source, occurrence.name_range), occurrence.name);
+        assert_eq!(slice(source, occurrence.value_range), occurrence.raw_value);
+        assert_eq!(
+            slice(source, occurrence.range).trim_end(),
+            format!(":{}: {}", occurrence.name, occurrence.raw_value)
+        );
+        assert_eq!(analysis.syntax().reconstruct(), source);
+    }
+}
+
+#[test]
+fn delimited_block_attributes_are_not_promoted_to_document_occurrences() {
+    let source = "----\n:inside: value\n----\n\n:outside: value\n";
+    let analysis = analyze(source);
+
+    assert_eq!(analysis.document_attribute_occurrences().len(), 1);
+    assert_eq!(analysis.document_attribute_occurrences()[0].name, "outside");
+}
+
+#[test]
+fn formatter_preserves_attribute_bytes_and_is_idempotent() {
+    let source = include_str!("../../../fixtures/attributes/body-crlf.adoc");
+    let analysis = analyze(source);
+    let config = FormatConfig {
+        newline: NewlineStyle::CrLf,
+        final_newline: true,
+        ..FormatConfig::default()
+    };
+    let first = format_analysis(&analysis, &config).expect("format");
+    let second_analysis = analyze(&first.formatted);
+    let second = format_analysis(&second_analysis, &config).expect("format");
+
+    assert_eq!(first.formatted, source);
+    assert!(first.edits.is_empty());
+    assert_eq!(second.formatted, first.formatted);
+    assert!(second.edits.is_empty());
+    assert_eq!(
+        analysis.document_attribute_occurrences(),
+        second_analysis.document_attribute_occurrences()
+    );
+}
+
+fn analyze(source: &str) -> adocweave::Analysis {
+    Engine::new(AnalysisOptions::default())
+        .analyze(source)
+        .expect("fixture analyzes")
 }

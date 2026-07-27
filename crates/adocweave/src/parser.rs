@@ -604,7 +604,7 @@ fn parse_block_sequence(
             next_content,
             line.content_range().start().to_usize(),
             line.full_range(),
-            root.as_ref().is_some_and(|state| state.attributes_open),
+            root.is_some(),
         );
         if recognition == LineRecognition::Source {
             flush_paragraph(
@@ -864,9 +864,12 @@ fn parse_block_sequence(
             let root = root
                 .as_mut()
                 .expect("attribute recognition requires root state");
+            let in_header = root.attributes_open;
             root.attributes.push(attribute);
             root.attribute_problems.extend(problem);
-            root.extend_range(line.full_range());
+            if in_header {
+                root.extend_range(line.full_range());
+            }
         } else if recognition == LineRecognition::Break {
             flush_paragraph(
                 &mut blocks,
