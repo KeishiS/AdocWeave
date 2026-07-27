@@ -525,10 +525,27 @@ pub struct ProjectedDocumentAttributeValueLine {
     pub continuation_origins: Vec<SourceOrigin>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedAttributeBinding {
+    pub value: crate::attributes::AttributeBinding,
+    pub origins: Vec<SourceOrigin>,
+    pub name_origins: Vec<SourceOrigin>,
+    pub value_origins: Vec<SourceOrigin>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedAttributeReference {
+    pub value: crate::attributes::AttributeReference,
+    pub origins: Vec<SourceOrigin>,
+    pub name_origins: Vec<SourceOrigin>,
+}
+
 /// All editor-facing facts from an expanded analysis, projected to original sources.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AnalysisProjection {
+    pub attribute_bindings: Vec<ProjectedAttributeBinding>,
     pub attribute_occurrences: Vec<ProjectedDocumentAttribute>,
+    pub attribute_references: Vec<ProjectedAttributeReference>,
     pub directives: Vec<Directive>,
     pub diagnostics: Vec<ProjectedDiagnostic>,
     pub local_targets: Vec<ProjectedLocalTarget>,
@@ -675,6 +692,67 @@ impl PreprocessedAnalysis {
                 })
             })
             .collect::<Result<Vec<_>, ProjectionError>>()?;
+        let attribute_bindings = self
+            .analysis
+            .attribute_environment()
+            .bindings()
+            .iter()
+            .cloned()
+            .map(|value| {
+                let occurrence = value.occurrence();
+                Ok(ProjectedAttributeBinding {
+                    origins: project_attribute_range(
+                        map,
+                        occurrence.range,
+                        occurrence.range,
+                        &mut projected_segments,
+                        limits,
+                    )?,
+                    name_origins: project_attribute_range(
+                        map,
+                        occurrence.name_range,
+                        occurrence.range,
+                        &mut projected_segments,
+                        limits,
+                    )?,
+                    value_origins: project_attribute_range(
+                        map,
+                        occurrence.value.source_range,
+                        occurrence.range,
+                        &mut projected_segments,
+                        limits,
+                    )?,
+                    value,
+                })
+            })
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
+        let attribute_references = self
+            .analysis
+            .attribute_references()
+            .iter()
+            .cloned()
+            .map(|value| {
+                let origins = project_attribute_range(
+                    map,
+                    value.range,
+                    value.range,
+                    &mut projected_segments,
+                    limits,
+                )?;
+                let name_origins = project_attribute_range(
+                    map,
+                    value.name_range,
+                    value.range,
+                    &mut projected_segments,
+                    limits,
+                )?;
+                Ok(ProjectedAttributeReference {
+                    value,
+                    origins,
+                    name_origins,
+                })
+            })
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
         let mut project = |range| {
             let origins = map.origins_for_range(ExpandedRange::new(range));
             projected_segments = projected_segments.saturating_add(origins.len() as u64);
@@ -810,7 +888,9 @@ impl PreprocessedAnalysis {
             .map(|symbol| project_symbol(symbol, &mut project))
             .collect::<Result<Vec<_>, ProjectionError>>()?;
         Ok(AnalysisProjection {
+            attribute_bindings,
             attribute_occurrences,
+            attribute_references,
             directives: self.document.directives.clone(),
             diagnostics,
             local_targets,
@@ -2322,6 +2402,62 @@ endif::[]
         assert_eq!(
             theme.value_origins[0].range.text_range(),
             text_range_in(included, "dark")
+        );
+    }
+
+    #[test]
+    fn analysis_projection_connects_attribute_references_to_included_bindings() {
+        let included = ":shared: included\n";
+        let root = "include::attributes.adoc[]\n\n{shared}\n";
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "attributes.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("included-attributes"),
+                source: included.to_owned(),
+            },
+        );
+        let analysis = preprocess_and_analyze(
+            &Engine::new(crate::core::AnalysisOptions::default()),
+            root,
+            &snapshot,
+            &PreprocessOptions {
+                source_id: Some(SourceId::new("root")),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("analysis");
+        let projection = analysis
+            .project_origins(ProjectionLimits::default())
+            .expect("projection");
+
+        assert_eq!(projection.attribute_bindings.len(), 1);
+        assert_eq!(projection.attribute_references.len(), 1);
+        let binding = &projection.attribute_bindings[0];
+        let reference = &projection.attribute_references[0];
+        assert_eq!(reference.value.binding_id, Some(binding.value.id()));
+        assert_eq!(reference.value.value, Ok(Some("included".to_owned())));
+        assert_eq!(
+            binding.name_origins[0]
+                .source_id
+                .as_ref()
+                .map(SourceId::as_str),
+            Some("included-attributes")
+        );
+        assert_eq!(
+            reference.name_origins[0]
+                .source_id
+                .as_ref()
+                .map(SourceId::as_str),
+            Some("root")
+        );
+        assert_eq!(
+            binding.name_origins[0].range.text_range(),
+            text_range_in(included, "shared")
+        );
+        assert_eq!(
+            reference.name_origins[0].range.text_range(),
+            text_range_in(root, "shared")
         );
     }
 

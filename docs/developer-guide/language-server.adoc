@@ -240,6 +240,11 @@ Document Link、ReferencesおよびRenameを元`SourceId`とrangeへ投影しま
 mode違反および上限超過は`adocweave-project`診断となります。古いresource versionを含むjobはroot文書の
 generation gateで破棄します。
 
+属性参照のHoverはカーソル位置で有効な値を表示し、DefinitionとReferencesはその値を決めたbindingへ
+結び付けます。Completionはカーソル位置でsetされている属性だけを候補とし、future bindingとunset済みの
+名前を含めません。Include展開時も同じ`AttributeEnvironment`を使用し、参照rangeとbinding rangeを
+source mapで元URIへ投影します。UTF-8／UTF-16変換には投影先resourceの同一versionの本文を使用します。
+
 任意スキームおよび製品DBを扱うホストは`run_with_host_index`へ`HostReferenceIndex`を注入します。
 このtraitは事前構築済みのメモリ索引を問い合わせる境界であり、実装内で同期I/Oを行っては
 なりません。

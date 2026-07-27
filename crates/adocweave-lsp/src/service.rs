@@ -981,6 +981,33 @@ impl LanguageService {
                 self.client.hover,
             );
         }
+        for workspace in self.documents.workspace_analyses() {
+            if let Some((reference, origin)) =
+                projected_attribute_reference_at(workspace, uri, offset)
+            {
+                return make_hover(
+                    attribute_reference_hover(reference),
+                    origin.range.text_range(),
+                    &document,
+                    self.position_encoding,
+                    self.client.hover,
+                );
+            }
+        }
+        if let Some(reference) = document
+            .analysis
+            .attribute_references()
+            .iter()
+            .find(|reference| contains(reference.range, offset))
+        {
+            return make_hover(
+                attribute_reference_hover(reference),
+                reference.range,
+                &document,
+                self.position_encoding,
+                self.client.hover,
+            );
+        }
         if let Some(target) = document.analysis.reference_targets().iter().find(|target| {
             contains(target.id_range, offset)
                 && !document.analysis.document().blocks().iter().any(|block| {
@@ -1117,6 +1144,34 @@ impl LanguageService {
             return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
         };
         let offset = request_offset(&document, position, self.position_encoding)?;
+        if attribute_completion_context(document.analysis.source(), offset as usize) {
+            let values =
+                self.documents
+                    .workspace_analyses()
+                    .find_map(|workspace| {
+                        expanded_offset_for_origin(workspace, uri, offset).map(|expanded| {
+                            workspace
+                                .analysis
+                                .attribute_environment()
+                                .values_at(expanded)
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        document.analysis.attribute_environment().values_at(
+                            adocweave::text::TextSize::new(offset as usize).expect("offset"),
+                        )
+                    });
+            let items = values
+                .into_iter()
+                .map(|(name, value)| lsp::CompletionItem {
+                    label: name,
+                    detail: Some(value),
+                    kind: Some(lsp::CompletionItemKind::VARIABLE),
+                    ..lsp::CompletionItem::default()
+                })
+                .collect();
+            return Ok(Some(lsp::CompletionResponse::Array(items)));
+        }
         if document
             .analysis
             .references()
@@ -1238,6 +1293,41 @@ impl LanguageService {
         };
         let offset = request_offset(&document, position, self.position_encoding)?;
         for workspace in self.documents.workspace_analyses() {
+            if let Some((reference, _)) = projected_attribute_reference_at(workspace, uri, offset)
+                && let Some(binding_id) = reference.binding_id
+                && let Some(binding) = workspace
+                    .projection
+                    .attribute_bindings
+                    .iter()
+                    .find(|binding| binding.value.id() == binding_id)
+                && let Some(origin) = binding.name_origins.first()
+            {
+                return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                    self.attribute_origin_location(origin)?,
+                )));
+            }
+        }
+        if let Some(reference) = document
+            .analysis
+            .attribute_references()
+            .iter()
+            .find(|reference| contains(reference.range, offset))
+            && let Some(binding) = reference
+                .binding_id
+                .and_then(|id| document.analysis.attribute_environment().binding(id))
+        {
+            return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    uri.clone(),
+                    range_to_lsp(
+                        binding.occurrence().name_range,
+                        document.analysis.source_document(),
+                        self.position_encoding,
+                    )?,
+                ),
+            )));
+        }
+        for workspace in self.documents.workspace_analyses() {
             if let Some(directive) = workspace.projection.directives.iter().find(|directive| {
                 directive
                     .source_id
@@ -1288,6 +1378,113 @@ impl LanguageService {
             return Ok(Some(Vec::new()));
         };
         let offset = request_offset(&document, position, self.position_encoding)?;
+        let projected_binding_origin = self.documents.workspace_analyses().find_map(|workspace| {
+            let binding_id = projected_attribute_reference_at(workspace, uri, offset)
+                .and_then(|(reference, _)| reference.binding_id)
+                .or_else(|| projected_attribute_binding_at(workspace, uri, offset))?;
+            workspace
+                .projection
+                .attribute_bindings
+                .iter()
+                .find(|binding| binding.value.id() == binding_id)?
+                .name_origins
+                .first()
+                .cloned()
+        });
+        if let Some(binding_origin) = projected_binding_origin {
+            let mut locations = Vec::new();
+            for workspace in self.documents.workspace_analyses() {
+                let Some(binding) =
+                    workspace
+                        .projection
+                        .attribute_bindings
+                        .iter()
+                        .find(|binding| {
+                            binding
+                                .name_origins
+                                .iter()
+                                .any(|origin| same_origin(origin, &binding_origin))
+                        })
+                else {
+                    continue;
+                };
+                if include_declaration && let Some(origin) = binding.name_origins.first() {
+                    locations.push(self.attribute_origin_location(origin)?);
+                }
+                for reference in &workspace.projection.attribute_references {
+                    if reference.value.binding_id != Some(binding.value.id()) {
+                        continue;
+                    }
+                    for origin in &reference.name_origins {
+                        locations.push(self.attribute_origin_location(origin)?);
+                    }
+                }
+            }
+            locations.sort_by(|left, right| {
+                (
+                    left.uri.as_str(),
+                    left.range.start.line,
+                    left.range.start.character,
+                    left.range.end.line,
+                    left.range.end.character,
+                )
+                    .cmp(&(
+                        right.uri.as_str(),
+                        right.range.start.line,
+                        right.range.start.character,
+                        right.range.end.line,
+                        right.range.end.character,
+                    ))
+            });
+            locations.dedup();
+            return Ok(Some(locations));
+        }
+        let local_binding_id = document
+            .analysis
+            .attribute_references()
+            .iter()
+            .find(|reference| contains(reference.range, offset))
+            .and_then(|reference| reference.binding_id)
+            .or_else(|| {
+                document
+                    .analysis
+                    .attribute_environment()
+                    .bindings()
+                    .iter()
+                    .find(|binding| contains(binding.occurrence().name_range, offset))
+                    .map(adocweave::semantic::AttributeBinding::id)
+            });
+        if let Some(binding_id) = local_binding_id {
+            let mut locations = Vec::new();
+            if include_declaration
+                && let Some(binding) = document
+                    .analysis
+                    .attribute_environment()
+                    .binding(binding_id)
+            {
+                locations.push(lsp::Location::new(
+                    uri.clone(),
+                    range_to_lsp(
+                        binding.occurrence().name_range,
+                        document.analysis.source_document(),
+                        self.position_encoding,
+                    )?,
+                ));
+            }
+            for reference in document.analysis.attribute_references() {
+                if reference.binding_id == Some(binding_id) {
+                    locations.push(lsp::Location::new(
+                        uri.clone(),
+                        range_to_lsp(
+                            reference.name_range,
+                            document.analysis.source_document(),
+                            self.position_encoding,
+                        )?,
+                    ));
+                }
+            }
+            return Ok(Some(locations));
+        }
         let reference_at_position = document
             .analysis
             .references()
@@ -1584,6 +1781,29 @@ impl LanguageService {
         SourceDocument::new(source).map_err(|error| error.to_string())
     }
 
+    fn attribute_origin_location(
+        &self,
+        origin: &adocweave::preprocess::SourceOrigin,
+    ) -> Result<lsp::Location, String> {
+        let source_id = origin
+            .source_id
+            .as_ref()
+            .ok_or_else(|| "attribute origin has no source ID".to_owned())?;
+        let uri: lsp::Url = source_id
+            .as_str()
+            .parse()
+            .map_err(|error| format!("invalid attribute origin URI: {error}"))?;
+        let source_document = self.source_document(&uri)?;
+        Ok(lsp::Location::new(
+            uri,
+            range_to_lsp(
+                origin.range.text_range(),
+                &source_document,
+                self.position_encoding,
+            )?,
+        ))
+    }
+
     pub fn semantic_tokens(
         &self,
         uri: &lsp::Url,
@@ -1820,6 +2040,136 @@ fn hover_plain_text(markdown: &str) -> String {
         .replace("  \n", "\n")
         .replace("**", "")
         .replace('`', "")
+}
+
+fn attribute_reference_hover(reference: &adocweave::semantic::AttributeReference) -> String {
+    match &reference.value {
+        Ok(Some(value)) => format!(
+            "**attribute reference**  \nName: `{}`  \nValue: `{}`",
+            reference.name, value
+        ),
+        Ok(None) => format!(
+            "**attribute reference**  \nName: `{}`  \nValue: _unset_",
+            reference.name
+        ),
+        Err(error) => format!(
+            "**attribute reference**  \nName: `{}`  \nResolution: `{}`",
+            reference.name,
+            match error {
+                adocweave::semantic::AttributeExpansionError::Undefined => "undefined",
+                adocweave::semantic::AttributeExpansionError::Cycle => "cycle",
+                adocweave::semantic::AttributeExpansionError::DepthLimitExceeded => "depth limit",
+                adocweave::semantic::AttributeExpansionError::SizeLimitExceeded => "size limit",
+            }
+        ),
+    }
+}
+
+fn projected_attribute_reference_at<'a>(
+    workspace: &'a WorkspaceAnalysis,
+    uri: &lsp::Url,
+    offset: u32,
+) -> Option<(
+    &'a adocweave::semantic::AttributeReference,
+    &'a adocweave::preprocess::SourceOrigin,
+)> {
+    workspace
+        .projection
+        .attribute_references
+        .iter()
+        .find_map(|reference| {
+            reference
+                .origins
+                .iter()
+                .find(|origin| {
+                    origin
+                        .source_id
+                        .as_ref()
+                        .is_some_and(|source_id| source_id.as_str() == uri.as_str())
+                        && contains(origin.range.text_range(), offset)
+                })
+                .map(|origin| (&reference.value, origin))
+        })
+}
+
+fn projected_attribute_binding_at(
+    workspace: &WorkspaceAnalysis,
+    uri: &lsp::Url,
+    offset: u32,
+) -> Option<adocweave::semantic::AttributeBindingId> {
+    workspace
+        .projection
+        .attribute_bindings
+        .iter()
+        .find(|binding| {
+            binding.name_origins.iter().any(|origin| {
+                origin
+                    .source_id
+                    .as_ref()
+                    .is_some_and(|source_id| source_id.as_str() == uri.as_str())
+                    && contains(origin.range.text_range(), offset)
+            })
+        })
+        .map(|binding| binding.value.id())
+}
+
+fn same_origin(
+    left: &adocweave::preprocess::SourceOrigin,
+    right: &adocweave::preprocess::SourceOrigin,
+) -> bool {
+    left.source_id == right.source_id && left.range == right.range
+}
+
+fn expanded_offset_for_origin(
+    workspace: &WorkspaceAnalysis,
+    uri: &lsp::Url,
+    offset: u32,
+) -> Option<adocweave::text::TextSize> {
+    workspace.document.source_map().iter().find_map(|segment| {
+        if segment.mapping != adocweave::preprocess::SourceMapping::Identity
+            || segment
+                .origin
+                .source_id
+                .as_ref()
+                .is_none_or(|source_id| source_id.as_str() != uri.as_str())
+        {
+            return None;
+        }
+        let origin = segment.origin.range.text_range();
+        if !(origin.start().to_u32() <= offset && offset <= origin.end().to_u32()) {
+            return None;
+        }
+        let relative = offset.checked_sub(origin.start().to_u32())?;
+        adocweave::text::TextSize::new(segment.output_range.start().to_usize() + relative as usize)
+            .ok()
+    })
+}
+
+fn attribute_completion_context(source: &str, offset: usize) -> bool {
+    if offset > source.len() || !source.is_char_boundary(offset) {
+        return false;
+    }
+    let line_start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
+    let bytes = source[line_start..offset].as_bytes();
+    let mut open = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' && bytes.get(index + 1) == Some(&b'{') {
+            index += 2;
+            continue;
+        }
+        match bytes[index] {
+            b'{' => open = Some(index),
+            b'}' => open = None,
+            _ => {}
+        }
+        index += 1;
+    }
+    open.is_some_and(|open| {
+        bytes[open + 1..]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    })
 }
 
 fn inline_hover(

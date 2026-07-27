@@ -177,6 +177,16 @@ pub struct ResolvedAttribute<'a> {
     pub binding: &'a AttributeBinding,
 }
 
+/// One attribute reference and its position-dependent resolution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttributeReference {
+    pub range: TextRange,
+    pub name_range: TextRange,
+    pub name: String,
+    pub binding_id: Option<AttributeBindingId>,
+    pub value: Result<Option<String>, AttributeExpansionError>,
+}
+
 /// Immutable, source-ordered document attribute state.
 ///
 /// Bindings are stored once and indexed by name. Position lookups search only
@@ -339,6 +349,10 @@ impl AttributeEnvironment {
         &self.bindings
     }
 
+    pub fn binding(&self, id: AttributeBindingId) -> Option<&AttributeBinding> {
+        self.bindings.get(id.get() as usize)
+    }
+
     pub fn history(&self, name: &str) -> impl DoubleEndedIterator<Item = &AttributeBinding> {
         let name = canonical_name(name);
         self.histories
@@ -414,6 +428,76 @@ impl AttributeEnvironment {
             })
             .collect()
     }
+}
+
+pub(crate) fn reference_at(
+    name: &str,
+    range: TextRange,
+    name_range: TextRange,
+    position: AttributePosition,
+    environment: &AttributeEnvironment,
+) -> AttributeReference {
+    let resolved = environment.resolve_at_event(name, position);
+    AttributeReference {
+        range,
+        name_range,
+        name: name.to_owned(),
+        binding_id: resolved.map(|resolved| resolved.binding.id()),
+        value: resolved.map_or(Err(AttributeExpansionError::Undefined), |resolved| {
+            resolved.value.map(|value| value.map(str::to_owned))
+        }),
+    }
+}
+
+pub(crate) fn value_references(
+    binding: &AttributeBinding,
+    environment: &AttributeEnvironment,
+) -> Vec<AttributeReference> {
+    let occurrence = binding.occurrence();
+    scan_references(&occurrence.value.source_text)
+        .into_iter()
+        .filter_map(|(name, open, name_start, name_end, close)| {
+            let base = occurrence.value.source_range.start().to_usize();
+            Some(reference_at(
+                &name,
+                range(base.checked_add(open)?, base.checked_add(close)?),
+                range(base.checked_add(name_start)?, base.checked_add(name_end)?),
+                AttributePosition::new(binding.evaluation_at(), binding.event_id()),
+                environment,
+            ))
+        })
+        .collect()
+}
+
+fn scan_references(value: &str) -> Vec<(String, usize, usize, usize, usize)> {
+    let mut references = Vec::new();
+    let mut cursor = 0;
+    while cursor < value.len() {
+        let rest = &value[cursor..];
+        if rest.starts_with("\\{") {
+            cursor += 2;
+            continue;
+        }
+        if rest.starts_with('{') {
+            let Some(close) = rest.find('}') else {
+                break;
+            };
+            let name = &rest[1..close];
+            if !name.is_empty() {
+                references.push((
+                    name.to_owned(),
+                    cursor,
+                    cursor + 1,
+                    cursor + close,
+                    cursor + close + 1,
+                ));
+            }
+            cursor += close + 1;
+            continue;
+        }
+        cursor += rest.chars().next().expect("non-empty remainder").len_utf8();
+    }
+    references
 }
 
 fn canonical_name(name: &str) -> String {

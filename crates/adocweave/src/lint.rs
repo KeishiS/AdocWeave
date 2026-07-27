@@ -981,23 +981,33 @@ fn lint_attributes(
     }
 
     let environment = document.attribute_environment();
-    let references = collect_attribute_references(document);
+    let references = document.resolved.facts().attribute_references();
+    let inline_references = references
+        .iter()
+        .filter(|reference| {
+            !environment.bindings().iter().any(|binding| {
+                contains_range(
+                    binding.occurrence().value.source_range,
+                    reference.name_range,
+                )
+            })
+        })
+        .cloned()
+        .collect();
     let mut used_bindings = BTreeSet::<AttributeBindingId>::new();
-    lint_attribute_reference_uses(
-        environment,
-        references,
-        &mut used_bindings,
-        config,
-        diagnostics,
-    );
+    lint_attribute_reference_uses(inline_references, &mut used_bindings, config, diagnostics);
     for binding in environment.bindings() {
-        let references = attribute_value_references(binding);
+        let references = references
+            .iter()
+            .filter(|reference| {
+                contains_range(
+                    binding.occurrence().value.source_range,
+                    reference.name_range,
+                )
+            })
+            .collect::<Vec<_>>();
         for reference in &references {
-            if let Some(resolved) =
-                environment.resolve_at_event(&reference.name, reference.position)
-            {
-                used_bindings.insert(resolved.binding.id());
-            }
+            used_bindings.extend(reference.binding_id);
         }
         if let Err(error) = binding.value() {
             let range = references.first().map_or_else(
@@ -1045,27 +1055,14 @@ fn lint_attributes(
 }
 
 fn lint_attribute_reference_uses(
-    environment: &crate::attributes::AttributeEnvironment,
-    references: Vec<AttributeReferenceUse>,
+    references: Vec<crate::attributes::AttributeReference>,
     used_bindings: &mut BTreeSet<crate::attributes::AttributeBindingId>,
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     for reference in references {
-        let resolved = environment.resolve_at_event(&reference.name, reference.position);
-        let Some(resolved) = resolved else {
-            push_diagnostic(
-                diagnostics,
-                config,
-                UNDEFINED_ATTRIBUTE,
-                reference.range,
-                &format!("undefined document attribute `{}`", reference.name),
-                None,
-            );
-            continue;
-        };
-        used_bindings.insert(resolved.binding.id());
-        match resolved.value {
+        used_bindings.extend(reference.binding_id);
+        match reference.value {
             Ok(Some(_)) => {}
             Ok(None) | Err(crate::substitution::AttributeExpansionError::Undefined) => {
                 push_diagnostic(
@@ -1089,116 +1086,8 @@ fn lint_attribute_reference_uses(
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct AttributeReferenceUse {
-    name: String,
-    range: TextRange,
-    position: crate::attributes::AttributePosition,
-}
-
-fn collect_attribute_references(
-    document: &crate::parser::AstDocument,
-) -> Vec<AttributeReferenceUse> {
-    let mut references = Vec::new();
-    crate::walker::walk_ast(document, |node| {
-        let crate::walker::SemanticNode::Inline(inline) = node else {
-            return;
-        };
-        match inline {
-            crate::inline::Inline::AttributeReference {
-                name, name_range, ..
-            } => references.push(reference_use(name, *name_range)),
-            crate::inline::Inline::Link(link) => {
-                for attribute in &link.target_attributes {
-                    references.push(reference_use(&attribute.name, attribute.name_range));
-                }
-            }
-            crate::inline::Inline::Reference(reference) => {
-                for attribute in &reference.target_attributes {
-                    references.push(reference_use(&attribute.name, attribute.name_range));
-                }
-            }
-            crate::inline::Inline::Macro(node) => {
-                for attribute in &node.target_attributes {
-                    references.push(reference_use(&attribute.name, attribute.name_range));
-                }
-            }
-            crate::inline::Inline::Text(_)
-            | crate::inline::Inline::Literal { .. }
-            | crate::inline::Inline::Styled { .. }
-            | crate::inline::Inline::HardBreak { .. }
-            | crate::inline::Inline::Passthrough { .. }
-            | crate::inline::Inline::Formula(_) => {}
-        }
-    });
-    references
-}
-
-fn reference_use(name: &str, range: TextRange) -> AttributeReferenceUse {
-    AttributeReferenceUse {
-        name: name.to_owned(),
-        range,
-        position: crate::attributes::AttributePosition::new(
-            range.start(),
-            crate::attributes::AttributeEventId::new(u32::MAX),
-        ),
-    }
-}
-
-fn attribute_value_references(
-    binding: &crate::attributes::AttributeBinding,
-) -> Vec<AttributeReferenceUse> {
-    let occurrence = binding.occurrence();
-    scan_attribute_references(&occurrence.value.source_text)
-        .into_iter()
-        .filter_map(|(name, start, end)| {
-            let absolute_start = occurrence
-                .value
-                .source_range
-                .start()
-                .to_usize()
-                .checked_add(start)?;
-            let absolute_end = occurrence
-                .value
-                .source_range
-                .start()
-                .to_usize()
-                .checked_add(end)?;
-            Some(AttributeReferenceUse {
-                name,
-                range: text_range(absolute_start, absolute_end).ok()?,
-                position: crate::attributes::AttributePosition::new(
-                    binding.evaluation_at(),
-                    binding.event_id(),
-                ),
-            })
-        })
-        .collect()
-}
-
-fn scan_attribute_references(value: &str) -> Vec<(String, usize, usize)> {
-    let mut references = Vec::new();
-    let mut cursor = 0;
-    while cursor < value.len() {
-        let rest = &value[cursor..];
-        if rest.starts_with("\\{") {
-            cursor += 2;
-            continue;
-        }
-        if rest.starts_with('{') {
-            let Some(close) = rest.find('}') else {
-                break;
-            };
-            let name = &rest[1..close];
-            if !name.is_empty() {
-                references.push((name.to_owned(), cursor + 1, cursor + close));
-            }
-            cursor += close + 1;
-            continue;
-        }
-        cursor += rest.chars().next().expect("non-empty remainder").len_utf8();
-    }
-    references
+fn contains_range(outer: TextRange, inner: TextRange) -> bool {
+    outer.start() <= inner.start() && inner.end() <= outer.end()
 }
 
 fn attribute_expansion_message(

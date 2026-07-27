@@ -72,6 +72,45 @@ fn set_redefine_and_unset_are_selected_by_position() {
 }
 
 #[test]
+fn attribute_reference_query_identifies_the_selected_binding_and_value() {
+    let source = ":name: first\n\n{name}\n\n:name: second\n\n{name}\n\n:name!:\n\n{name}\n";
+    let analysis = analyze(source);
+    let references = analysis.attribute_references();
+    assert_eq!(references.len(), 3);
+    assert_eq!(
+        references
+            .iter()
+            .map(|reference| {
+                (
+                    reference.name.as_str(),
+                    reference.binding_id.map(|id| id.get()),
+                    reference.value.clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("name", Some(0), Ok(Some("first".to_owned()))),
+            ("name", Some(1), Ok(Some("second".to_owned()))),
+            ("name", Some(2), Ok(None)),
+        ]
+    );
+    for reference in references {
+        assert_eq!(
+            &source[reference.name_range.start().to_usize()..reference.name_range.end().to_usize()],
+            "name"
+        );
+        assert_eq!(
+            analysis
+                .attribute_environment()
+                .binding(reference.binding_id.expect("binding"))
+                .expect("binding by ID")
+                .id(),
+            reference.binding_id.expect("binding")
+        );
+    }
+}
+
+#[test]
 fn forward_references_are_not_rebound_and_definition_values_are_snapshots() {
     let forward = include_str!("../../../fixtures/attributes/environment-forward-definition.adoc");
     let analysis = analyze(forward);

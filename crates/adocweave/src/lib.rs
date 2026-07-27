@@ -52,9 +52,9 @@ mod walker;
 pub mod semantic {
     pub use crate::attributes::{
         AttributeBinding, AttributeBindingId, AttributeEnvironment, AttributeEventId,
-        AttributePosition, AttributeValueContinuation, DocumentAttributeContinuation,
-        DocumentAttributeOccurrence, DocumentAttributeOperation, DocumentAttributeValue,
-        DocumentAttributeValueLine, ResolvedAttribute,
+        AttributePosition, AttributeReference, AttributeValueContinuation,
+        DocumentAttributeContinuation, DocumentAttributeOccurrence, DocumentAttributeOperation,
+        DocumentAttributeValue, DocumentAttributeValueLine, ResolvedAttribute,
     };
     pub use crate::block_model::{
         AdmonitionKind, AdmonitionPresentation, Author, Block, BlockMetadata, BlockProblem,

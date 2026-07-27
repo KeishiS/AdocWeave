@@ -158,6 +158,11 @@ impl Analysis {
         self.ast().resolved.facts()
     }
 
+    /// Returns every attribute reference with its position-dependent binding.
+    pub fn attribute_references(&self) -> &[crate::attributes::AttributeReference] {
+        self.facts().attribute_references()
+    }
+
     /// Returns standard document-attribute occurrences in source order.
     ///
     /// Unlike [`Self::presentation`], this preserves duplicates, set/unset
