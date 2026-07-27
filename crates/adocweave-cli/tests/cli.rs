@@ -145,6 +145,21 @@ fn check_supports_human_and_json_diagnostics() {
 }
 
 #[test]
+fn check_accepts_relative_targets_without_activating_them_in_html() {
+    let source = b"link:../release-manifest.json[release manifest]\n\
+                   xref:../guide.adoc[guide]\n";
+    let checked = run_with_stdin(&["check", "--json", "-"], source);
+    let converted = run_with_stdin(&["convert", "-"], source);
+
+    assert!(checked.status.success());
+    assert_eq!(checked.stdout, b"[]");
+    assert!(checked.stderr.is_empty());
+    assert!(converted.status.success());
+    assert_eq!(converted.stdout, b"<p>release manifest guide</p>\n");
+    assert!(converted.stderr.is_empty());
+}
+
+#[test]
 fn check_reports_invalid_explicit_ordered_numbers_without_losing_the_list() {
     let source = b"4294967296. overflow\n0. zero\n";
     let output = run_with_stdin(&["check", "--json", "-"], source);
