@@ -71,6 +71,29 @@ fn relative_targets_are_valid_analysis_inputs_but_not_active_html_urls() {
 }
 
 #[test]
+fn malformed_url_syntax_is_diagnosed_and_never_activated() {
+    for target in ["http//example.com", "bad%ZZpath", "trailing%"] {
+        let source = format!("link:{target}[unsafe]");
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&source)
+            .expect("analysis");
+
+        assert!(
+            analysis
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "invalid-url-scheme"),
+            "{target}"
+        );
+        assert!(
+            !render(analysis.document(), &RenderPolicy::default())
+                .html
+                .contains("href=")
+        );
+    }
+}
+
+#[test]
 fn hostile_resolver_href_is_revalidated_by_the_renderer() {
     let source = "xref:note:item[unsafe]";
     let analysis = Engine::new(AnalysisOptions::default())

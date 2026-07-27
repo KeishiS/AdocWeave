@@ -1,13 +1,13 @@
 #![no_main]
 
-use adocweave::{Engine, ParseOptions};
+use adocweave::{AnalysisOptions, Engine};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|input: &[u8]| {
     let Ok(source) = std::str::from_utf8(input) else {
         return;
     };
-    if let Ok(analysis) = Engine::new(ParseOptions::default()).analyze(source) {
+    if let Ok(analysis) = Engine::new(AnalysisOptions::default()).analyze(source) {
         let _ = adocweave::output::html::render(
             analysis.document(),
             &adocweave::output::html::RenderPolicy::default(),

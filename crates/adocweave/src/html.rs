@@ -244,7 +244,7 @@ pub struct RenderPolicy {
     pub render_document_title: bool,
     /// Enables the optional `kbd`, `btn`, and `menu` presentation macros.
     pub render_ui_macros: bool,
-    pub url_policy: ActiveUrlPolicy,
+    pub active_urls: ActiveUrlPolicy,
     pub external_links: ExternalLinkPresentation,
     pub source_languages: SourceLanguagePolicy,
     pub math_languages: MathLanguagePolicy,
@@ -259,7 +259,7 @@ impl Default for RenderPolicy {
             document_mode: HtmlDocumentMode::Fragment,
             render_document_title: true,
             render_ui_macros: false,
-            url_policy: ActiveUrlPolicy::default(),
+            active_urls: ActiveUrlPolicy::default(),
             external_links: ExternalLinkPresentation::default(),
             source_languages: SourceLanguagePolicy::default(),
             math_languages: MathLanguagePolicy::default(),
@@ -272,11 +272,11 @@ impl Default for RenderPolicy {
 
 impl RenderPolicy {
     pub fn allows_url(&self, value: &str, context: UrlProvenance) -> bool {
-        self.url_policy.allows(value, context)
+        self.active_urls.allows(value, context)
     }
 
     pub fn classify_url(&self, value: &str, context: UrlProvenance) -> crate::url::UrlDecision {
-        self.url_policy.classify(value, context)
+        self.active_urls.classify(value, context)
     }
 }
 
@@ -2431,7 +2431,7 @@ mod tests {
     }
 
     #[test]
-    fn stylesheet_urls_are_checked_by_the_url_policy_and_escaped() {
+    fn stylesheet_urls_are_checked_by_the_active_urls_and_escaped() {
         let parsed = parse("paragraph").expect("valid source");
         for url in [
             "javascript:alert(1)",
@@ -2547,10 +2547,10 @@ mod tests {
         );
 
         policy
-            .url_policy
+            .active_urls
             .allowed_schemes
             .insert("mailto".to_owned());
-        policy.url_policy.allow_authored_relative = true;
+        policy.active_urls.allow_authored_relative = true;
         assert!(policy.allows_url("mailto:user@example.com", UrlProvenance::Authored));
         assert!(policy.allows_url("relative.adoc", UrlProvenance::Authored));
         assert!(!policy.allows_url("../outside.adoc", UrlProvenance::Authored));
@@ -2725,7 +2725,7 @@ mod tests {
         let output = render_with_inputs(
             analysis.ast(),
             &RenderPolicy {
-                url_policy: crate::url::ActiveUrlPolicy {
+                active_urls: crate::url::ActiveUrlPolicy {
                     allow_resolved_root_relative: true,
                     ..crate::url::ActiveUrlPolicy::default()
                 },
@@ -2946,7 +2946,7 @@ mod tests {
     }
 
     #[test]
-    fn links_apply_attributes_labels_and_url_policy() {
+    fn links_apply_attributes_labels_and_active_urls() {
         let parsed = parse(
             "= Links\n:host: example.com\n\n\
              https://{host}[*safe*] javascript:alert(1)[unsafe]\n",

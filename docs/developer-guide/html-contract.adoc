@@ -69,7 +69,8 @@ literal textとしてescapeし、inline書式や属性参照を再解析しま�
 
 == URLとリソース
 
-URLは由来を示すcontextとともに`RenderPolicy`の`UrlPolicy`で検査します。文書に記述されたlink、
+URLは由来を示すcontextとともに`RenderPolicy.active_urls`の`ActiveUrlPolicy`で検査します。
+文書に記述されたlink、
 解決済みxrefおよび解決済みresourceを区別し、利用側アプリが返したURLも信頼済みとして扱いません。
 
 制御文字、空白、不正なscheme、絶対filesystem path、backslash、network-path referenceおよびpath traversalを

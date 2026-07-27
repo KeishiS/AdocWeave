@@ -189,7 +189,7 @@ const client = new AdocWeaveClient({
 client.update({
   version: 1,
   source: "= Title\n\nText\n",
-  options: { documentMode: "fragment" },
+  renderPolicy: { documentMode: "fragment" },
 });
 ----
 

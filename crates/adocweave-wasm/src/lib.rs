@@ -152,20 +152,11 @@ pub struct WasmRequest {
     pub output_limits: WasmOutputLimits,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmAnalysisOptions {
     pub syntax: WasmSyntaxOptions,
     pub diagnostics: WasmDiagnosticProfile,
-}
-
-impl Default for WasmAnalysisOptions {
-    fn default() -> Self {
-        Self {
-            syntax: WasmSyntaxOptions::default(),
-            diagnostics: WasmDiagnosticProfile::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -698,9 +689,9 @@ pub fn process_request(
             },
         );
     }
+    let source_id = request.source_id.map(SourceId::new);
     let analysis = Engine::new(AnalysisOptions {
         syntax: SyntaxOptions {
-            source_id: request.source_id.map(SourceId::new),
             syntax_mode: match analysis_options.syntax.syntax_mode {
                 WasmSyntaxMode::Permissive => SyntaxMode::Permissive,
                 WasmSyntaxMode::Strict => SyntaxMode::Strict,
@@ -709,7 +700,7 @@ pub fn process_request(
         },
         diagnostics: DiagnosticProfile { lint },
     })
-    .analyze_cancellable(&request.source, cancellation)
+    .analyze_cancellable_with_source_id(source_id.as_ref(), &request.source, cancellation)
     .map_err(wasm_error)?;
     if cancellation.is_cancelled() {
         return Err(cancelled_error());
@@ -717,7 +708,7 @@ pub fn process_request(
 
     let render_inputs = render_inputs::convert(render_inputs, &analysis)?;
     let render_policy = RenderPolicy {
-        url_policy: active_url_policy,
+        active_urls: active_url_policy,
         external_links: if render_options.external_links.open_in_new_context {
             adocweave::output::html::ExternalLinkPresentation::NewContext {
                 noreferrer: render_options.external_links.noreferrer,
@@ -1220,6 +1211,26 @@ mod tests {
     }
 
     #[test]
+    fn wasm_rejects_malformed_authored_urls() {
+        for target in ["http//example.com", "bad%ZZpath", "trailing%"] {
+            let response =
+                process_request(request(&format!("link:{target}[unsafe]")), &NeverCancel)
+                    .expect("response");
+
+            assert!(
+                response
+                    .diagnostics
+                    .as_array()
+                    .expect("diagnostic array")
+                    .iter()
+                    .any(|diagnostic| diagnostic["code"] == "invalid-url-scheme"),
+                "{target}"
+            );
+            assert!(!response.html.contains("href="), "{target}");
+        }
+    }
+
+    #[test]
     fn wasm_api_exposes_primary_and_poster_resource_queries() {
         let source = "video:demo.mp4[Demo,poster=\"ポスター.jpg\"]";
         let response = process_request(request(source), &NeverCancel).expect("response");
@@ -1498,6 +1509,30 @@ mod tests {
         );
         let error = process_request(request, &NeverCancel).expect_err("output limit");
         assert_eq!(error.code, "limit-exceeded");
+    }
+
+    #[test]
+    fn wasm_diagnostic_profile_uses_the_typed_lint_registry() {
+        let mut configured = request("text \n");
+        configured.analysis_options.diagnostics.rules.insert(
+            "trailing-whitespace".to_owned(),
+            WasmRuleSettings {
+                enabled: true,
+                severity: WasmSeverity::Error,
+            },
+        );
+        let response = process_request(configured, &NeverCancel).expect("configured diagnostics");
+        assert_eq!(response.diagnostics[0]["code"], "trailing-whitespace");
+        assert_eq!(response.diagnostics[0]["severity"], "error");
+
+        let mut unknown = request("text");
+        unknown
+            .analysis_options
+            .diagnostics
+            .rules
+            .insert("unknown-rule".to_owned(), WasmRuleSettings::default());
+        let error = process_request(unknown, &NeverCancel).expect_err("unknown lint rule");
+        assert_eq!(error.code, "invalid-options");
     }
 
     #[test]

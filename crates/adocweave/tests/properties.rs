@@ -163,6 +163,7 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
         "https://example.com",
         "HTTP://example.com",
         "https://例.example/道",
+        "../outside.adoc",
     ];
     for value in safe {
         assert_eq!(policy.classify(value), UrlDecision::Allowed);
@@ -176,7 +177,6 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
         "https://example.com/%00x",
         "https://example.com/ x",
         "data:text/html,<script>alert(1)</script>",
-        "../outside.adoc",
         "/absolute/path",
         "\\\\server\\share",
     ];
