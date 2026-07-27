@@ -176,8 +176,8 @@ caption、`frame`、`grid`、`stripes`、1から100までの百分率`width`お�
 
 |URL単体と`URL[label]`
 |対応
-|URLポリシーで許可したスキームだけをリンクにします。ターゲットと表示文字列の範囲を
-分離して保持します。
+|Lintではschemeなし相対targetを外部resourceへアクセスせずに受理します。HTMLではURLポリシーで
+許可したtargetだけをリンクにします。ターゲットと表示文字列の範囲を分離して保持します。
 
 |文書内xref（`<<id,label>>`、`xref:#id[label]`）
 |対応
@@ -185,7 +185,8 @@ caption、`frame`、`grid`、`stripes`、1から100までの百分率`width`お�
 
 |文書間・スキーム付きxref
 |構文対応
-|Resolverなしで解析、整形、抽出できます。HTMLリンク化にはホストの安全な解決結果が必要です。
+|親directoryを含む相対targetもResolverなしで解析、検査、整形、抽出できます。
+HTMLリンク化にはホストの安全な解決結果が必要です。
 空labelには解決成功と同じrevisionの任意のプレーンテキスト表示名を渡せます。
 
 |インラインSTEM

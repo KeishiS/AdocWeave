@@ -494,9 +494,10 @@ fn lint_links_and_references(
         use crate::inline::{Inline, ReferenceDestination};
         match inline {
             Inline::Link(link) => {
-                if !config
-                    .url_policy
-                    .allows(&link.target, crate::url::UrlContext::AuthoredLink)
+                if !valid_unresolved_relative_target(&link.target)
+                    && !config
+                        .url_policy
+                        .allows(&link.target, crate::url::UrlContext::AuthoredLink)
                 {
                     push_diagnostic(
                         diagnostics,
@@ -542,7 +543,7 @@ fn lint_links_and_references(
                     }
                 }
                 ReferenceDestination::Document { document, .. } => {
-                    if !valid_document_target(document) {
+                    if !valid_unresolved_relative_target(document) {
                         push_diagnostic(
                             diagnostics,
                             config,
@@ -596,16 +597,39 @@ fn lint_links_and_references(
     });
 }
 
-fn valid_document_target(value: &str) -> bool {
+/// Checks only syntax that is safe to retain for later host resolution.
+///
+/// Parent segments are valid here because linting performs no filesystem
+/// access. Renderers and resource providers apply their own stricter policy
+/// before turning the target into an active URL or local path.
+fn valid_unresolved_relative_target(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('/')
-        && !value.starts_with('\\')
-        && !value.contains('\\')
-        && !value.contains("://")
-        && !value.split('/').any(|segment| segment == "..")
-        && !value
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
+        && !value.contains(['\\', ':'])
+        && !value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '<' | '>' | '"' | '\'' | '`' | '{' | '}')
+        })
+        && !value.as_bytes().windows(3).any(|window| {
+            window[0] == b'%'
+                && match (hex_digit(window[1]), hex_digit(window[2])) {
+                    (Some(high), Some(low)) => {
+                        let decoded = high * 16 + low;
+                        decoded <= 0x20 || decoded == 0x7f || matches!(decoded, b'.' | b'/' | b'\\')
+                    }
+                    _ => false,
+                }
+        })
+}
+
+const fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn lint_anchors(
@@ -1302,21 +1326,67 @@ mod tests {
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>();
 
-        assert!(
+        assert_eq!(
             codes
                 .iter()
                 .filter(|code| **code == "invalid-url-scheme")
-                .count()
-                >= 2
+                .count(),
+            2
         );
-        assert!(
+        assert_eq!(
             codes
                 .iter()
                 .filter(|code| **code == "invalid-cross-reference")
-                .count()
-                >= 2
+                .count(),
+            1
         );
         assert!(codes.contains(&"unresolved-cross-reference"));
+    }
+
+    #[test]
+    fn relative_links_and_cross_document_targets_do_not_require_host_resolution() {
+        let diagnostics = lint(
+            "link:../release-manifest.json[release manifest]\n\
+             xref:../guide.adoc[guide]\n",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+
+        assert!(!diagnostics.iter().any(|diagnostic| {
+            matches!(
+                diagnostic.code.as_str(),
+                "invalid-url-scheme" | "invalid-cross-reference"
+            )
+        }));
+    }
+
+    #[test]
+    fn relative_target_validation_remains_lexically_bounded() {
+        for (source, expected_code) in [
+            (
+                "link://example.com/path[network path]",
+                "invalid-url-scheme",
+            ),
+            (
+                "link:../%2e%2e/secret[encoded traversal]",
+                "invalid-url-scheme",
+            ),
+            ("link:../line%0afeed[encoded control]", "invalid-url-scheme"),
+            ("link:javascript:alert(1)[scheme]", "invalid-url-scheme"),
+            ("xref:/absolute.adoc[absolute]", "invalid-cross-reference"),
+            (
+                "xref:..\\\\secret.adoc[backslash]",
+                "invalid-cross-reference",
+            ),
+        ] {
+            let diagnostics = lint(source, &LintConfig::default()).expect("lint");
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code.as_str() == expected_code),
+                "missing {expected_code} diagnostic for {source}"
+            );
+        }
     }
 
     #[test]
@@ -1347,7 +1417,8 @@ mod tests {
     #[test]
     fn cross_references_resolve_local_targets_but_leave_documents_for_hosts() {
         let diagnostics = lint(
-            "[[target]]\n== Target\n\n<<target>> xref:#target[] xref:other.adoc#part[]",
+            "[[target]]\n== Target\n\n\
+             <<target>> xref:#target[] xref:other.adoc#part[] xref:../guide.adoc[]",
             &LintConfig::default(),
         )
         .expect("lint");
