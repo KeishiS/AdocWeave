@@ -4,11 +4,12 @@ export interface ProductSet {
   canonicalAst?: boolean;
   html?: boolean;
   attributeOccurrences?: boolean;
+  resourceQueries?: boolean;
   diagnostics?: boolean;
   symbols?: boolean;
   projection?: boolean;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 1;
-export declare const PACKAGE_VERSION: "0.9.0";
-export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "diagnostics", "symbols", "projection"];
+export declare const PROTOCOL_SCHEMA_VERSION: 2;
+export declare const PACKAGE_VERSION: "0.10.0";
+export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "resourceQueries", "diagnostics", "symbols", "projection"];

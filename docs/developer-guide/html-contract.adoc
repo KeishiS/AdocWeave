@@ -47,7 +47,7 @@ DOM構造、属性順、空白またはbyte列が同一であることは保証�
 * table：`table`、`caption`、`thead`、`tbody`、`tfoot`、`tr`、`th`、`td`
 * media：`img`、`audio`、`video`
 
-属性は`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、`target`、
+属性は`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、`poster`、`target`、
 `rel`、`colspan`および`rowspan`に限定します。classには実装が列挙する固定値だけを使用します。
 入力由来の任意属性、event handler、`script`、SVGおよびraw HTMLは生成しません。
 
@@ -71,8 +71,15 @@ escapeした非activeな内容として出力します。解決済み表示文�
 HTMLとして再解析しません。詳しいfallback規則はxref:server-execution.adoc#render-inputs[変換入力]を
 基準とします。
 
-画像、音声および動画は、解決済みURLと対応する`ResourceCapabilities`がある場合だけactive要素として
-出力します。寸法には10進整数だけを使用します。
+画像、音声および動画は、解決済みURL、macro種別と一致するMIME typeおよび対応する
+`ResourceCapabilities`がある場合だけactive要素として出力します。MIME typeはASCIIの大文字と小文字を
+区別せず、parameterを除いたtypeとsubtypeを検査します。拡張子からMIME typeを推測しません。
+
+Imageとiconには`image/*`、audioには`audio/*`、videoには`video/*`を要求します。Imageはalt、寸法、title、
+iconはaltとtitle、audioはtitle、videoは寸法、poster、titleを出力できます。寸法には10進整数だけを使用します。
+`controls`はaudioとvideoへ常に付与し、入力から無効化しません。Video posterは独立した`image/*` resourceとして
+URLとMIME typeを検査します。posterだけを利用できない場合は診断を返してposterを省略し、安全なvideo本体は
+維持します。Mediaのlink化、icon set固有の要素・classおよびその他の再生属性には対応しません。
 
 == ソースと数式
 

@@ -391,10 +391,39 @@ pub struct WasmResponse {
     pub ast: String,
     pub html: String,
     pub attribute_occurrences: Vec<WasmDocumentAttributeOccurrence>,
+    pub resource_queries: Vec<WasmResourceQuery>,
     pub diagnostics: Value,
     pub render_diagnostics: Value,
     pub symbols: Value,
     pub projection: Value,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmResourceQuery {
+    pub purpose: WasmResourcePurpose,
+    pub form: WasmMacroForm,
+    pub owner_range: WasmTextRange,
+    pub range: WasmTextRange,
+    pub target_range: WasmTextRange,
+    pub target: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmResourcePurpose {
+    Image,
+    Icon,
+    Audio,
+    Video,
+    VideoPoster,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmMacroForm {
+    Inline,
+    Block,
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
@@ -664,15 +693,39 @@ pub fn process_request(
         syntax: products.syntax.unwrap_or_default(),
         ast: products.canonical_ast.unwrap_or_default(),
         html: products.html.unwrap_or_default(),
-        attribute_occurrences: if requested_products.attribute_occurrences {
-            analysis
-                .document_attribute_occurrences()
-                .iter()
-                .map(wasm_document_attribute_occurrence)
-                .collect()
-        } else {
-            Vec::new()
-        },
+        attribute_occurrences: products
+            .attribute_occurrences
+            .unwrap_or_default()
+            .iter()
+            .map(wasm_document_attribute_occurrence)
+            .collect(),
+        resource_queries: products
+            .resource_queries
+            .unwrap_or_default()
+            .into_iter()
+            .map(|query| {
+                let reference = query.reference;
+                WasmResourceQuery {
+                    purpose: match reference.purpose() {
+                        adocweave::resolution::ResourcePurpose::Image => WasmResourcePurpose::Image,
+                        adocweave::resolution::ResourcePurpose::Icon => WasmResourcePurpose::Icon,
+                        adocweave::resolution::ResourcePurpose::Audio => WasmResourcePurpose::Audio,
+                        adocweave::resolution::ResourcePurpose::Video => WasmResourcePurpose::Video,
+                        adocweave::resolution::ResourcePurpose::VideoPoster => {
+                            WasmResourcePurpose::VideoPoster
+                        }
+                    },
+                    form: match reference.form() {
+                        adocweave::semantic::MacroForm::Inline => WasmMacroForm::Inline,
+                        adocweave::semantic::MacroForm::Block => WasmMacroForm::Block,
+                    },
+                    owner_range: wasm_text_range(reference.owner_range()),
+                    range: wasm_text_range(reference.range()),
+                    target_range: wasm_text_range(reference.target_range()),
+                    target: reference.target().to_owned(),
+                }
+            })
+            .collect(),
         diagnostics: diagnostics.unwrap_or_else(|| Value::Array(Vec::new())),
         render_diagnostics: render_diagnostics.unwrap_or_else(|| Value::Array(Vec::new())),
         symbols: symbols.unwrap_or_else(|| Value::Array(Vec::new())),
@@ -832,6 +885,7 @@ mod tests {
                 canonical_ast: true,
                 html: true,
                 attribute_occurrences: true,
+                resource_queries: true,
                 diagnostics: true,
                 symbols: true,
                 projection: true,
@@ -915,7 +969,7 @@ mod tests {
                 source_end: source.len() as u32,
                 outcome: WasmResourceOutcome::Resolved {
                     href: "https://cdn.example/image.png".to_owned(),
-                    media_type: Some("image/png".to_owned()),
+                    media_type: "image/png".to_owned(),
                     byte_length: Some(42),
                 },
             });
@@ -936,7 +990,7 @@ mod tests {
                 source_end: source.len() as u32,
                 outcome: WasmResourceOutcome::Resolved {
                     href: "javascript:alert(1)".to_owned(),
-                    media_type: None,
+                    media_type: "image/png".to_owned(),
                     byte_length: None,
                 },
             });
@@ -960,7 +1014,7 @@ mod tests {
                 source_end: source.len() as u32,
                 outcome: WasmResourceOutcome::Resolved {
                     href: "/assets/image.png".to_owned(),
-                    media_type: Some("image/png".to_owned()),
+                    media_type: "image/png".to_owned(),
                     byte_length: None,
                 },
             });
@@ -978,7 +1032,7 @@ mod tests {
             source_end: source.len() as u32,
             outcome: WasmResourceOutcome::Resolved {
                 href: "https://cdn.example/image.png".to_owned(),
-                media_type: None,
+                media_type: "image/png".to_owned(),
                 byte_length: None,
             },
         });
@@ -991,12 +1045,57 @@ mod tests {
             source_end: source.len() as u32 + 1,
             outcome: WasmResourceOutcome::Resolved {
                 href: "https://cdn.example/image.png".to_owned(),
-                media_type: None,
+                media_type: "image/png".to_owned(),
                 byte_length: None,
             },
         });
         let error = process_request(invalid, &NeverCancel).expect_err("outside source");
         assert_eq!(error.code, "invalid-render-input");
+        assert_eq!(error.message, "render input is invalid");
+
+        let mut invalid_media_type = request(source);
+        invalid_media_type
+            .render_inputs
+            .resources
+            .push(WasmResolvedResource {
+                source_start: 0,
+                source_end: source.len() as u32,
+                outcome: WasmResourceOutcome::Resolved {
+                    href: "https://cdn.example/image.png".to_owned(),
+                    media_type: "image/png; arbitrary garbage".to_owned(),
+                    byte_length: None,
+                },
+            });
+        let error =
+            process_request(invalid_media_type, &NeverCancel).expect_err("invalid media type");
+        assert_eq!(error.code, "invalid-render-input");
+        assert_eq!(error.message, "render input is invalid");
+    }
+
+    #[test]
+    fn wasm_api_exposes_primary_and_poster_resource_queries() {
+        let source = "video:demo.mp4[Demo,poster=\"ポスター.jpg\"]";
+        let response = process_request(request(source), &NeverCancel).expect("response");
+        assert_eq!(response.resource_queries.len(), 2);
+        assert_eq!(
+            response.resource_queries[0].purpose,
+            WasmResourcePurpose::Video
+        );
+        assert_eq!(
+            response.resource_queries[1].purpose,
+            WasmResourcePurpose::VideoPoster
+        );
+        assert_eq!(response.resource_queries[1].target, "ポスター.jpg");
+        let range = response.resource_queries[1].target_range;
+        assert_eq!(
+            &source[usize::try_from(range.start).expect("start")
+                ..usize::try_from(range.end).expect("end")],
+            "ポスター.jpg"
+        );
+        assert_eq!(
+            response.resource_queries[1].owner_range,
+            response.resource_queries[0].owner_range
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 = Mediaのbackend presentation
-:status: planned
+:status: completed
 :depends-on: 065, 075
 
 == 目的
@@ -7,6 +7,44 @@
 実装済みのblock／inline image、icon、audioおよびvideo resource modelを利用し、media typeと解決結果に
 応じたbackend presentationを定める。コアとrendererはI/Oを行わず、取得、権限判定および埋め込み判断を
 hostのresource resolverへ委譲する。
+
+== 現在の動作・結果
+
+`v0.9.0`まではresource resolverが返したmedia typeを表示要素の選択に使用せず、audioとvideoの表示属性も
+出力へ反映しない。たとえば次のvideo macroを安全なURLへ解決しても、寸法とposterを出力しない。
+
+[source,asciidoc]
+----
+video:demo.mp4[デモ,width=640,height=360,poster=poster.jpg]
+----
+
+[source,html]
+----
+<p><video src="https://cdn.example/demo.mp4" controls></video></p>
+----
+
+また、image resourceに`audio/mpeg`が返された場合も`img`を出力する。
+
+== 期待する動作・結果
+
+主resourceはmacro種別に適合するmedia typeを必須とする。imageに`audio/mpeg`が返された場合は`img`を生成せず、
+`resource-media-type-mismatch`診断と安全にescapeした代替文字列を返す。
+
+[source,html]
+----
+<p>構成図</p>
+----
+
+video本体とposterを別々のresource queryとして公開し、hostが両方を安全なURLと適合するmedia typeへ
+解決した場合は、規範化した属性だけを次の形で出力する。
+
+[source,html]
+----
+<p><video src="https://cdn.example/demo.mp4" controls width="640" height="360" poster="https://cdn.example/poster.jpg" title="デモ"></video></p>
+----
+
+posterだけを利用できない場合は診断を返してposterを省略し、安全なvideo本体は維持する。主resourceを
+利用できない場合はactive media要素を生成しない。
 
 == 作業
 

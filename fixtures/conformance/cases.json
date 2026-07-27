@@ -1,5 +1,5 @@
 {
-  "packageVersion": "0.9.0",
+  "packageVersion": "0.10.0",
   "cases": [
     {
       "name": "release-lf",
@@ -217,6 +217,113 @@
       },
       "compatibility": "approved-adocweave-output",
       "rationale": "host解決済みresource入力とURL再検証はnativeとWASMで同じ安全なHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "media-backend-presentation",
+      "sourceFile": "media-backend-presentation.adoc",
+      "expectedHtmlFile": "media-backend-presentation.html",
+      "renderInputs": {
+        "resources": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 65,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/demo.mp4",
+              "mediaType": "video/mp4",
+              "byteLength": 1024
+            }
+          },
+          {
+            "sourceStart": 35,
+            "sourceEnd": 45,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/poster.jpg",
+              "mediaType": "image/jpeg",
+              "byteLength": 512
+            }
+          }
+        ]
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "video本体とposterの独立解決、MIME type検査および属性allowlistをnativeとWASMで一致させる",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "media-families",
+      "source": "image:i[Image] icon:k[Icon] audio:a[Audio] video:v[Video]",
+      "expectedHtmlFile": "media-families.html",
+      "renderInputs": {
+        "resources": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 14,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/image.png",
+              "mediaType": "image/png",
+              "byteLength": 10
+            }
+          },
+          {
+            "sourceStart": 15,
+            "sourceEnd": 27,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/icon.svg",
+              "mediaType": "image/svg+xml",
+              "byteLength": 20
+            }
+          },
+          {
+            "sourceStart": 28,
+            "sourceEnd": 42,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/audio.ogg",
+              "mediaType": "audio/ogg",
+              "byteLength": 30
+            }
+          },
+          {
+            "sourceStart": 43,
+            "sourceEnd": 57,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/video.mp4",
+              "mediaType": "video/mp4",
+              "byteLength": 40
+            }
+          }
+        ]
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "image、icon、audioおよびvideoのMIME familyと安全なHTML presentationを全runtimeで一致させる",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "media-type-mismatch",
+      "source": "image:diagram.bin[Diagram]",
+      "expectedHtmlFile": "media-type-mismatch.html",
+      "expectedRenderDiagnosticsFile": "media-type-mismatch.render-diagnostics.json",
+      "renderInputs": {
+        "resources": [
+          {
+            "sourceStart": 0,
+            "sourceEnd": 26,
+            "outcome": {
+              "status": "resolved",
+              "href": "https://cdn.example/diagram.bin",
+              "mediaType": "audio/mpeg",
+              "byteLength": 42
+            }
+          }
+        ]
+      },
+      "compatibility": "host-safety-contract",
+      "rationale": "macroとMIME typeの不一致ではactive media要素を生成せず、型付き診断と安全な代替文字列を返す",
       "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {

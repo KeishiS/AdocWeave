@@ -1,0 +1,31 @@
+= v0.10.0 release readiness
+:status: planned
+:depends-on: 165
+
+== 目的
+
+Mediaのbackend presentation、検証済みMIME type、video posterの独立resource queryおよび
+WASMのresource query productを`v0.10.0`として配布する。版数、Release Notes、公開仕様、fixtureおよび
+release acceptanceを一つのrelease trainで同期する。文書内属性変更とM49の文書検査機能は含めない。
+
+== 設計判断
+
+Rust resource APIとWASM protocolを意図的に変更し、mediaのactive要素を安全側で生成するためminor releaseとする。
+WASM protocol schemaを`2`とし、resourceの成功結果には検証済みMIME typeを必須とする。
+release manifestの`packageVersion`を機械可読な基準とし、Rust 1.97.1を維持する。
+mainの完全candidate成功commitへstable tagを一度だけ付ける。
+
+== 完了条件
+
+* workspace、Zed、browser、protocol、release manifest、distribution planおよびfixtureが`0.10.0`で一致する。
+* Release Notesがresource query、MIME type必須化、poster、fallbackおよび移行手順を定義する。
+* image、icon、audio、videoおよびposterのnative／WASM同値fixtureとsecurity testが成功する。
+* `RELEASE_TAG=v0.10.0 cargo make release-gate`が成功する。
+* pull requestを最新の`origin/main`へrebaseし、必須check成功後にmergeする。
+* mainのcandidate成功後、`v0.10.0`を作成し、GitHub Releaseの9 asset、checksum、SBOMおよびprovenanceを受け入れる。
+* 公開assetだけを使用し、CLI、Language Server、browser package、Zed拡張およびNix packageを確認する。
+
+== 受け入れ結果
+
+公開後にtag commit、candidate run、publication run、Release URL、asset集合、checksumおよびprovenanceの
+検証結果を記録する。

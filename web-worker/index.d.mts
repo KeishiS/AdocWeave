@@ -56,6 +56,15 @@ export interface DocumentAttributeOccurrence {
   operation: "set" | "unset";
 }
 
+export interface ResourceQuery {
+  purpose: "image" | "icon" | "audio" | "video" | "video-poster";
+  form: "inline" | "block";
+  ownerRange: TextRange;
+  range: TextRange;
+  targetRange: TextRange;
+  target: string;
+}
+
 export interface AdocWeaveWasmResponse {
   packageVersion: string;
   version: number;
@@ -71,6 +80,7 @@ export interface AdocWeaveWasmResponse {
   ast: string;
   html: string;
   attributeOccurrences: DocumentAttributeOccurrence[];
+  resourceQueries: ResourceQuery[];
   diagnostics: unknown[];
   renderDiagnostics: unknown[];
   symbols: unknown[];
@@ -121,7 +131,7 @@ export interface ResolvedResource {
     | {
         status: "resolved";
         href: string;
-        mediaType: string | null;
+        mediaType: string;
         byteLength: number | null;
       }
     | {
@@ -131,6 +141,7 @@ export interface ResolvedResource {
           | "outside-root"
           | "scheme-denied"
           | "permission-denied"
+          | "media-type-unavailable"
           | "resolver-failure";
       };
 }

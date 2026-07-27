@@ -30,6 +30,7 @@ function requestFor(entry) {
       canonicalAst: true,
       html: true,
       attributeOccurrences: true,
+      resourceQueries: true,
       diagnostics: true,
       symbols: true,
       projection: true,
@@ -85,6 +86,7 @@ for (const entry of manifest.cases) {
     }
     for (const [field, product] of [
       ["expectedDiagnosticsFile", "diagnostics"],
+      ["expectedRenderDiagnosticsFile", "renderDiagnostics"],
       ["expectedProjectionFile", "projection"],
       ["expectedSymbolsFile", "symbols"],
     ]) {

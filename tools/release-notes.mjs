@@ -16,15 +16,17 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 export function appendRequiredReleaseNotes(body, tag) {
   if (tag !== `v${manifest.packageVersion}`) throw new Error("release note tag does not match package version");
   const contracts = `- unified package version: ${manifest.packageVersion}\n` +
-    "- Public JSON schema versions are unchanged. Parsing semantics change for constrained monospace boundaries and implicit table header rows.";
+    "- WASM protocol schema version: 2. Resource queries are now a requested product and resolved resources require a concrete MIME type.\n" +
+    "- The Rust resource API now uses ResourcePurpose and validated MediaType values. This is an intentional breaking change.";
   const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
   const notes = "## Highlights\n\n" +
-    "- Constrained monospace now follows the standard AsciiDoc word and punctuation boundaries. Use double backticks inside words or CJK text, when underscore is outside a single marker, or when monospace starts after a colon, semicolon, or closing brace; the unconstrained form also works next to emoji.\n" +
-    "- PSV, CSV, DSV, and TSV tables now infer a header when the first content row is on one physical line and is followed by an empty line. Use `noheader` to suppress inference or `header` to make it explicit.\n" +
+    "- Image, icon, audio, and video output now requires a host-resolved URL and a MIME type matching the macro. Missing, rejected, or mismatched primary resources fail closed with a typed render diagnostic and escaped fallback text.\n" +
+    "- Video poster resources are exposed as independent resource queries and are revalidated as images. A failed poster is omitted without disabling a safe video.\n" +
+    "- Media output applies only the documented alt, title, dimension, controls, and poster attributes. Input attributes are never passed through as arbitrary HTML.\n" +
     "- The repository flake provides AdocWeave CLI and LSP packages for Linux x86-64 and ARM64. Run `nix run github:KeishiS/AdocWeave`.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${contracts}\n\n` +
-    "This release requires consumers to match the listed package version exactly. Do not mix CLI, LSP, browser, or Zed assets from different versions. Review documents that relied on single-backtick formatting at newly restricted boundaries or on an unmarked first table row.\n\n" +
+    "This release requires consumers to match the listed package version exactly. Do not mix CLI, LSP, browser, or Zed assets from different versions. Hosts must request `resourceQueries`, resolve every successful resource with a concrete MIME type, and rebuild `RenderInputs` after each document revision.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n` +
     `- Supported Rust toolchain: ${manifest.rustVersion}, fixed by this release's flake.lock.\n` +
     "- Native binaries are available only for Linux x86-64 and ARM64.\n" +

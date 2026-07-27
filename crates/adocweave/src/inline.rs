@@ -1475,13 +1475,33 @@ fn parse_macro_attributes(value: &str, range: TextRange) -> Vec<MacroAttribute> 
         let item_end = offset.saturating_sub(trailing);
         if item_start < item_end {
             let item = &value[item_start..item_end];
-            let (name, item_value) = item.split_once('=').map_or((None, item), |(name, value)| {
-                (Some(name.trim().to_owned()), value.trim())
-            });
+            let (name, raw_value, raw_value_start) =
+                item.find('=').map_or((None, item, item_start), |equals| {
+                    (
+                        Some(item[..equals].trim().to_owned()),
+                        &item[equals + 1..],
+                        item_start + equals + 1,
+                    )
+                });
+            let value_leading = raw_value.len() - raw_value.trim_start().len();
+            let value_trailing = raw_value.len() - raw_value.trim_end().len();
+            let mut value_start = raw_value_start + value_leading;
+            let mut value_end = item_end.saturating_sub(value_trailing);
+            let mut item_value = &value[value_start..value_end];
+            if item_value.len() >= 2 {
+                let first = item_value.as_bytes()[0];
+                let last = item_value.as_bytes()[item_value.len() - 1];
+                if matches!(first, b'\'' | b'"') && first == last {
+                    value_start += 1;
+                    value_end -= 1;
+                    item_value = &value[value_start..value_end];
+                }
+            }
             attributes.push(MacroAttribute {
                 range: subrange(range, item_start, item_end),
+                value_range: subrange(range, value_start, value_end),
                 name,
-                value: item_value.trim_matches(['\'', '"']).to_owned(),
+                value: item_value.to_owned(),
             });
         }
         start = offset + 1;

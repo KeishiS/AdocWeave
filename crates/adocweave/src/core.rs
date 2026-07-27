@@ -584,17 +584,35 @@ mod tests {
     #[test]
     fn public_api_exposes_resource_queries_without_performing_io() {
         let analysis = analyze(
-            "image:https://example.org/a.png[Alt]",
+            "image:https://example.org/a.png[Alt]\n\n\
+             video:https://example.org/demo.mp4[Demo,poster=https://example.org/poster.jpg]",
             &ParseOptions::default(),
         )
         .expect("analysis");
-        assert_eq!(analysis.resources().len(), 1);
+        assert_eq!(analysis.resources().len(), 3);
         let queries = analysis.resource_queries();
         assert_eq!(
-            queries[0].reference.kind,
-            crate::resource::ResourceKind::Image
+            queries[0].reference.purpose(),
+            crate::resource::ResourcePurpose::Image
         );
-        assert_eq!(queries[0].reference.target, "https://example.org/a.png");
+        assert_eq!(queries[0].reference.target(), "https://example.org/a.png");
+        assert_eq!(
+            queries[1].reference.purpose(),
+            crate::resource::ResourcePurpose::Video
+        );
+        assert_eq!(
+            queries[2].reference.purpose(),
+            crate::resource::ResourcePurpose::VideoPoster
+        );
+        assert_eq!(
+            queries[2].reference.target(),
+            "https://example.org/poster.jpg"
+        );
+        assert_eq!(
+            queries[2].reference.owner_range(),
+            queries[1].reference.owner_range()
+        );
+        assert_ne!(queries[2].reference.range(), queries[1].reference.range());
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::inline::{
 };
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, ResolutionMatch};
-use crate::resource::{ResolvedResource, ResourceOutcome};
+use crate::resource::{MediaFamily, ResolvedResource, ResourceOutcome};
 use crate::url::{UrlContext, UrlPolicy};
 
 pub const ALLOWED_ELEMENTS: &[&str] = &[
@@ -62,8 +62,8 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "video",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &[
-    "alt", "class", "colspan", "controls", "height", "href", "id", "rel", "rowspan", "src",
-    "target", "title", "width",
+    "alt", "class", "colspan", "controls", "height", "href", "id", "poster", "rel", "rowspan",
+    "src", "target", "title", "width",
 ];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
@@ -1366,7 +1366,13 @@ fn render_image_macro(
     node: &crate::inline::StandardMacro,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
-    let alt = macro_attribute(node, "alt", 0).unwrap_or("");
+    let alt = if node.kind == crate::inline::StandardMacroKind::Icon {
+        macro_attribute(node, "alt", usize::MAX)
+            .or_else(|| macro_attribute(node, "title", usize::MAX))
+            .unwrap_or(&node.target)
+    } else {
+        macro_attribute(node, "alt", 0).unwrap_or("")
+    };
     if !context.policy.resources.images {
         escape_inline_text(output, alt);
         context.diagnostics.push(render_diagnostic(
@@ -1376,7 +1382,9 @@ fn render_image_macro(
         ));
         return;
     }
-    let Some(href) = resolved_resource_href(node, context) else {
+    let Some(href) =
+        resolved_resource_href(node.range, node.target_range, MediaFamily::Image, context)
+    else {
         escape_inline_text(output, alt);
         return;
     };
@@ -1385,8 +1393,9 @@ fn render_image_macro(
     output.push_str("\" alt=\"");
     escape_html_into(output, alt);
     output.push('"');
-    render_dimension(output, node, "width", 1);
-    render_dimension(output, node, "height", 2);
+    let positional_dimensions = node.kind == crate::inline::StandardMacroKind::Image;
+    render_dimension(output, node, "width", positional_dimensions.then_some(1));
+    render_dimension(output, node, "height", positional_dimensions.then_some(2));
     if let Some(title) = macro_attribute(node, "title", usize::MAX) {
         output.push_str(" title=\"");
         escape_html_into(output, title);
@@ -1400,8 +1409,10 @@ fn render_media_macro(
     node: &crate::inline::StandardMacro,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
+    let title = macro_attribute(node, "title", 0);
+    let fallback = title.unwrap_or(&node.target);
     if !context.policy.resources.media {
-        escape_inline_text(output, &node.target);
+        escape_inline_text(output, fallback);
         context.diagnostics.push(render_diagnostic(
             "resource-capability-disabled",
             "media rendering is disabled by the host capability profile",
@@ -1409,30 +1420,62 @@ fn render_media_macro(
         ));
         return;
     }
-    let Some(href) = resolved_resource_href(node, context) else {
-        escape_inline_text(output, &node.target);
-        return;
-    };
-    let tag = if node.kind == crate::inline::StandardMacroKind::Audio {
-        "audio"
+    let (tag, family) = if node.kind == crate::inline::StandardMacroKind::Audio {
+        ("audio", MediaFamily::Audio)
     } else {
-        "video"
+        ("video", MediaFamily::Video)
+    };
+    let Some(href) = resolved_resource_href(node.range, node.target_range, family, context) else {
+        escape_inline_text(output, fallback);
+        return;
     };
     output.push('<');
     output.push_str(tag);
     output.push_str(" src=\"");
     escape_html_into(output, &href);
-    output.push_str("\" controls>");
+    output.push_str("\" controls");
+    if node.kind == crate::inline::StandardMacroKind::Video {
+        render_dimension(output, node, "width", Some(1));
+        render_dimension(output, node, "height", Some(2));
+        if let Some(poster) =
+            macro_attribute_node(node, "poster").filter(|poster| !poster.value.is_empty())
+        {
+            if !context.policy.resources.images {
+                context.diagnostics.push(render_diagnostic(
+                    "resource-capability-disabled",
+                    "poster rendering is disabled by the host capability profile",
+                    poster.value_range,
+                ));
+            } else if let Some(href) = resolved_resource_href(
+                poster.value_range,
+                poster.value_range,
+                MediaFamily::Image,
+                context,
+            ) {
+                output.push_str(" poster=\"");
+                escape_html_into(output, &href);
+                output.push('"');
+            }
+        }
+    }
+    if let Some(title) = title {
+        output.push_str(" title=\"");
+        escape_html_into(output, title);
+        output.push('"');
+    }
+    output.push('>');
     output.push_str("</");
     output.push_str(tag);
     output.push('>');
 }
 
 fn resolved_resource_href(
-    node: &crate::inline::StandardMacro,
+    range: crate::source::TextRange,
+    target_range: crate::source::TextRange,
+    expected_family: MediaFamily,
     context: &mut InlineRenderContext<'_, '_>,
 ) -> Option<String> {
-    let resolution = context.input_usage.resource_at(node.range);
+    let resolution = context.input_usage.resource_at(range);
     match resolution {
         ResolutionMatch::Unique(ResolvedResource {
             outcome: ResourceOutcome::Resolved(value),
@@ -1441,7 +1484,16 @@ fn resolved_resource_href(
             .policy
             .allows_url(&value.href, UrlContext::ResolvedResource) =>
         {
-            Some(value.href.clone())
+            if value.media_type.family() != expected_family {
+                context.diagnostics.push(render_diagnostic(
+                    "resource-media-type-mismatch",
+                    "resolved resource media type does not match the macro",
+                    target_range,
+                ));
+                None
+            } else {
+                Some(value.href.clone())
+            }
         }
         ResolutionMatch::Unique(ResolvedResource {
             outcome: ResourceOutcome::Resolved(_),
@@ -1450,7 +1502,7 @@ fn resolved_resource_href(
             context.diagnostics.push(render_diagnostic(
                 "invalid-url-scheme",
                 "resolved resource URL is rejected by the render policy",
-                node.target_range,
+                target_range,
             ));
             None
         }
@@ -1461,7 +1513,7 @@ fn resolved_resource_href(
             context.diagnostics.push(render_diagnostic(
                 failure.kind.diagnostic_code(),
                 "resource resolution failed",
-                node.target_range,
+                target_range,
             ));
             None
         }
@@ -1469,12 +1521,21 @@ fn resolved_resource_href(
             context.diagnostics.push(render_diagnostic(
                 "unresolved-resource",
                 "resource requires host resolution",
-                node.target_range,
+                target_range,
             ));
             None
         }
         ResolutionMatch::Duplicate => None,
     }
+}
+
+fn macro_attribute_node<'a>(
+    node: &'a crate::inline::StandardMacro,
+    name: &str,
+) -> Option<&'a crate::inline::MacroAttribute> {
+    node.attributes
+        .iter()
+        .find(|attribute| attribute.name.as_deref() == Some(name))
 }
 
 fn macro_attribute<'a>(
@@ -1497,9 +1558,21 @@ fn render_dimension(
     output: &mut String,
     node: &crate::inline::StandardMacro,
     name: &str,
-    position: usize,
+    position: Option<usize>,
 ) {
-    if let Some(value) = macro_attribute(node, name, position)
+    let value = node
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.as_deref() == Some(name))
+        .or_else(|| {
+            position.and_then(|position| {
+                node.attributes
+                    .get(position)
+                    .filter(|attribute| attribute.name.is_none())
+            })
+        })
+        .map(|attribute| attribute.value.as_str());
+    if let Some(value) = value
         && !value.is_empty()
         && value.bytes().all(|byte| byte.is_ascii_digit())
     {
@@ -1968,7 +2041,7 @@ mod tests {
     use crate::parser::AstBlock;
     use crate::parser::parse;
     use crate::render::RenderInputs;
-    use crate::resource::ResolvedResource;
+    use crate::resource::{MediaType, ResolvedResource};
     use crate::url::{UrlContext, UrlDecision};
 
     fn render(document: &crate::parser::AstDocument, policy: &RenderPolicy) -> super::HtmlOutput {
@@ -1986,15 +2059,22 @@ mod tests {
     fn echo_resource_inputs(document: &crate::parser::AstDocument) -> RenderInputs {
         let mut resources = Vec::new();
         crate::walker::walk_ast(document, |node| {
-            if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node
-                && crate::resource::ResourceReference::from_macro(node).is_some()
-            {
-                resources.push(ResolvedResource::resolved(
-                    node.range,
-                    node.target.clone(),
-                    None,
-                    None,
-                ));
+            if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node {
+                for reference in crate::resource::ResourceReference::from_macro(node) {
+                    let media_type = match reference.purpose() {
+                        crate::resource::ResourcePurpose::Image
+                        | crate::resource::ResourcePurpose::Icon
+                        | crate::resource::ResourcePurpose::VideoPoster => "image/png",
+                        crate::resource::ResourcePurpose::Audio => "audio/ogg",
+                        crate::resource::ResourcePurpose::Video => "video/mp4",
+                    };
+                    resources.push(ResolvedResource::resolved(
+                        reference.range(),
+                        reference.target(),
+                        media_type.parse().expect("test media type"),
+                        None,
+                    ));
+                }
             }
         });
         RenderInputs::new(Vec::new(), resources)
@@ -2472,7 +2552,7 @@ mod tests {
         let analysis = crate::core::Engine::new(crate::core::ParseOptions::default())
             .analyze(source)
             .expect("analysis");
-        let image = analysis.resource_queries()[0].reference.range;
+        let image = analysis.resource_queries()[0].reference.range();
         let policy = RenderPolicy {
             source_languages: SourceLanguagePolicy {
                 allowed: Some(["rust".to_owned()].into_iter().collect()),
@@ -2496,7 +2576,7 @@ mod tests {
                 vec![ResolvedResource::resolved(
                     image,
                     "https://cdn.example/x.png",
-                    None,
+                    "image/png".parse().expect("media type"),
                     None,
                 )],
             ),
@@ -2696,8 +2776,8 @@ mod tests {
         assert_eq!(
             ALLOWED_ATTRIBUTES,
             [
-                "alt", "class", "colspan", "controls", "height", "href", "id", "rel", "rowspan",
-                "src", "target", "title", "width"
+                "alt", "class", "colspan", "controls", "height", "href", "id", "poster", "rel",
+                "rowspan", "src", "target", "title", "width"
             ]
         );
         assert_eq!(
@@ -3160,6 +3240,121 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_media_types_do_not_emit_active_elements() {
+        let parsed = parse("image:https://example.org/diagram.bin[Diagram]").expect("parse");
+        let range = crate::resource::ResourceReference::from_macro(
+            parsed
+                .ast
+                .blocks
+                .iter()
+                .find_map(|block| match block {
+                    AstBlock::Paragraph(paragraph) => paragraph.inlines.iter().find_map(|inline| {
+                        if let Inline::Macro(node) = inline {
+                            Some(node)
+                        } else {
+                            None
+                        }
+                    }),
+                    _ => None,
+                })
+                .expect("macro"),
+        )[0]
+        .range();
+        let output = render_with_inputs(
+            &parsed.ast,
+            &RenderPolicy::default(),
+            &RenderInputs::new(
+                vec![],
+                vec![ResolvedResource::resolved(
+                    range,
+                    "https://cdn.example/diagram.bin",
+                    MediaType::parse("audio/mpeg").expect("media type"),
+                    None,
+                )],
+            ),
+        );
+        assert_eq!(output.html, "<p>Diagram</p>\n");
+        assert_eq!(
+            output.diagnostics[0].code.as_str(),
+            "resource-media-type-mismatch"
+        );
+    }
+
+    #[test]
+    fn media_attributes_and_independently_resolved_poster_are_allowlisted() {
+        let parsed = parse(
+            "video:https://example.org/demo.mp4[Demo,640,360,poster=https://example.org/poster.jpg,title=Presentation]",
+        )
+        .expect("parse");
+        let inputs = echo_resource_inputs(&parsed.ast);
+        assert_eq!(inputs.resources().len(), 2);
+        let output = render_with_inputs(&parsed.ast, &RenderPolicy::default(), &inputs);
+        assert_eq!(
+            output.html,
+            "<p><video src=\"https://example.org/demo.mp4\" controls width=\"640\" height=\"360\" poster=\"https://example.org/poster.jpg\" title=\"Presentation\"></video></p>\n"
+        );
+        assert!(output.diagnostics.is_empty());
+
+        let primary_only = RenderInputs::new(vec![], vec![inputs.resources()[0].clone()]);
+        let output = render_with_inputs(&parsed.ast, &RenderPolicy::default(), &primary_only);
+        assert!(
+            output
+                .html
+                .contains("<video src=\"https://example.org/demo.mp4\" controls")
+        );
+        assert!(!output.html.contains(" poster="));
+        assert_eq!(output.diagnostics[0].code.as_str(), "unresolved-resource");
+
+        let poster_disabled = render_with_inputs(
+            &parsed.ast,
+            &RenderPolicy {
+                resources: ResourceCapabilities {
+                    images: false,
+                    media: true,
+                },
+                ..RenderPolicy::default()
+            },
+            &inputs,
+        );
+        assert!(poster_disabled.html.contains("<video "));
+        assert!(!poster_disabled.html.contains(" poster="));
+        assert_eq!(
+            poster_disabled.diagnostics[0].code.as_str(),
+            "resource-capability-disabled"
+        );
+
+        let mismatched_poster = RenderInputs::new(
+            vec![],
+            vec![
+                inputs.resources()[0].clone(),
+                ResolvedResource::resolved(
+                    inputs.resources()[1].source_range,
+                    "https://example.org/poster.mp3",
+                    "audio/mpeg".parse().expect("media type"),
+                    None,
+                ),
+            ],
+        );
+        let output = render_with_inputs(&parsed.ast, &RenderPolicy::default(), &mismatched_poster);
+        assert!(output.html.contains("<video "));
+        assert!(!output.html.contains(" poster="));
+        assert_eq!(
+            output.diagnostics[0].code.as_str(),
+            "resource-media-type-mismatch"
+        );
+
+        let empty = parse("video:https://example.org/demo.mp4[Demo,poster=]").expect("parse");
+        let output = render_with_inputs(
+            &empty.ast,
+            &RenderPolicy::default(),
+            &echo_resource_inputs(&empty.ast),
+        );
+        assert!(output.html.contains("<video "));
+        assert!(!output.html.contains(" poster="));
+        assert!(output.diagnostics.is_empty());
+    }
+
+    #[test]
     fn render_inputs_handle_missing_failed_duplicate_and_unused_resources_deterministically() {
         let parsed = parse("image:https://source.example/image.png[alt]").expect("parse");
         let resolved = echo_resource_inputs(&parsed.ast).resources()[0].clone();
@@ -3209,7 +3404,7 @@ mod tests {
                     ResolvedResource::resolved(
                         unused_range,
                         "https://unused.example/image.png",
-                        None,
+                        "image/png".parse().expect("media type"),
                         None,
                     ),
                 ],

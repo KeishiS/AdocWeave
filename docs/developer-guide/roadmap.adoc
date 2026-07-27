@@ -12,11 +12,13 @@ https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notes�
 
 === M48: 文書状態とメディア表示
 
-位置に応じた属性値とmediaのHTML表示は影響範囲が異なるため、個別の機能候補として扱います。
-同時実装を前提とせず、設計と変更範囲を受け入れられる状態になったものから進めます。
+位置に応じた属性値を後続の独立した機能候補として扱います。
 
 * xref:../../issues/164-document-scoped-attribute-changes.adoc[Issue 164: 文書内属性変更の評価]（計画）
-* xref:../../issues/165-media-backend-presentation.adoc[Issue 165: Mediaのbackend presentation]（計画）
+
+=== M51: v0.10.0 release train
+
+* xref:../../issues/175-v0-10-0-release-readiness.adoc[Issue 175: v0.10.0 release readiness]（計画）
 
 == 開発と保守
 

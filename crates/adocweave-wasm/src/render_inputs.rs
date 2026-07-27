@@ -65,7 +65,7 @@ pub enum WasmResourceOutcome {
     Resolved {
         href: String,
         #[serde(rename = "mediaType")]
-        media_type: Option<String>,
+        media_type: String,
         #[serde(rename = "byteLength")]
         byte_length: Option<u64>,
     },
@@ -81,6 +81,7 @@ pub enum WasmResourceFailureKind {
     OutsideRoot,
     SchemeDenied,
     PermissionDenied,
+    MediaTypeUnavailable,
     ResolverFailure,
 }
 
@@ -98,7 +99,7 @@ pub(crate) fn validate(inputs: &WasmRenderInputs, limits: &WasmLimits) -> Result
     let resource_bytes = inputs.resources.iter().map(|input| match &input.outcome {
         WasmResourceOutcome::Resolved {
             href, media_type, ..
-        } => href.len() as u64 + media_type.as_ref().map_or(0, |value| value.len() as u64),
+        } => href.len() as u64 + media_type.len() as u64,
         WasmResourceOutcome::Failed { .. } => 0,
     });
     let bytes = reference_bytes
@@ -185,7 +186,8 @@ pub(crate) fn convert(
                 } => adocweave::resolution::ResolvedResource::resolved(
                     range,
                     href,
-                    media_type,
+                    adocweave::resolution::MediaType::parse(&media_type)
+                        .map_err(|_| invalid_input())?,
                     byte_length,
                 ),
                 WasmResourceOutcome::Failed { kind } => {
@@ -204,6 +206,9 @@ pub(crate) fn convert(
                                 }
                                 WasmResourceFailureKind::PermissionDenied => {
                                     adocweave::resolution::ResourceFailureKind::PermissionDenied
+                                }
+                                WasmResourceFailureKind::MediaTypeUnavailable => {
+                                    adocweave::resolution::ResourceFailureKind::MediaTypeUnavailable
                                 }
                                 WasmResourceFailureKind::ResolverFailure => {
                                     adocweave::resolution::ResourceFailureKind::ResolverFailure
@@ -245,6 +250,6 @@ fn limit_error(resource: &str) -> WasmError {
 fn invalid_input() -> WasmError {
     WasmError {
         code: "invalid-render-input".to_owned(),
-        message: "render input range is not a valid source byte range".to_owned(),
+        message: "render input is invalid".to_owned(),
     }
 }

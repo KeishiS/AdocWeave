@@ -574,8 +574,8 @@ impl PreprocessedAnalysis {
             .iter()
             .map(|value| {
                 Ok(ProjectedResource {
-                    origins: project(value.range)?,
-                    target_origins: project(value.target_range)?,
+                    origins: project(value.range())?,
+                    target_origins: project(value.target_range())?,
                     value: value.clone(),
                 })
             })
