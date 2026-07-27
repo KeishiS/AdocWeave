@@ -180,7 +180,9 @@ test("client sends the current WASM API version with responsibility-specific def
     postMessage(message) {
       messages.push(message);
       if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({ data: { type: "ready" } }));
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
       }
     }
     addEventListener(type, listener) { this.listeners.set(type, listener); }

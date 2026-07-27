@@ -1,5 +1,6 @@
 import { WORKER_PROTOCOL_VERSION } from "./controller.mjs";
 import { PACKAGE_VERSION } from "./contracts.mjs";
+import { validateWorkerMessage } from "./protocol.generated.mjs";
 
 export class AdocWeaveClient {
   #options;
@@ -109,9 +110,33 @@ export class AdocWeaveClient {
     });
     this.#worker = worker;
     this.#ready = new Promise((resolve, reject) => {
+      let initialized = false;
       const onMessage = ({ data }) => {
         if (worker !== this.#worker || this.#disposed) return;
+        if (
+          !validateWorkerMessage(data, "responses") ||
+          data.protocolVersion !== WORKER_PROTOCOL_VERSION
+        ) {
+          const protocolMismatch = Number.isSafeInteger(data?.protocolVersion) &&
+            data.protocolVersion !== WORKER_PROTOCOL_VERSION;
+          const code = protocolMismatch
+            ? "unsupported-worker-protocol"
+            : "invalid-worker-response";
+          const message = protocolMismatch
+            ? `expected worker protocol ${WORKER_PROTOCOL_VERSION}`
+            : "worker returned a response outside the public protocol";
+          if (!initialized) reject(new Error(message));
+          this.#options.onError({
+            code,
+            message,
+            sourceVersion: null,
+            generation: this.#generation,
+          });
+          this.#terminateWorker();
+          return;
+        }
         if (data?.type === "ready") {
+          initialized = true;
           resolve();
         } else if (data?.type === "result" && data.generation === this.#generation) {
           const packageVersion = verifiedPackageVersion(data.result);
