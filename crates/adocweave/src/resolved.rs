@@ -4,9 +4,9 @@
 //! between derived views are passed explicitly so no consumer can observe a
 //! partially resolved document.
 
+use crate::attributes::AttributeEnvironment;
 use crate::limits::AnalysisLimits;
 use crate::parser::AstDocument;
-use crate::presentation::ResolvedDocumentAttributes;
 
 /// Immutable, source-ordered facts collected from a semantic document in one pass.
 ///
@@ -69,6 +69,7 @@ impl DocumentFacts {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ResolvedDocument {
+    attribute_environment: AttributeEnvironment,
     facts: DocumentFacts,
     catalogs: crate::catalog::DocumentCatalogs,
     identifiers: crate::document::DocumentIdentifiers,
@@ -81,7 +82,7 @@ pub(crate) struct ResolvedDocument {
 impl ResolvedDocument {
     pub(crate) fn build(
         document: &AstDocument,
-        attributes: ResolvedDocumentAttributes,
+        attributes: AttributeEnvironment,
         catalog_limits: AnalysisLimits,
     ) -> Result<Self, crate::catalog::CatalogLimitExceeded> {
         let facts = DocumentFacts::build(document);
@@ -89,10 +90,11 @@ impl ResolvedDocument {
         let structure = crate::structure::build(document, &identifiers);
         let index = crate::presentation::build_index(document);
         let presentation =
-            crate::presentation::build_presentation(document, &structure, &index, attributes);
+            crate::presentation::build_presentation(document, &structure, &index, &attributes);
         let layout = crate::presentation::build_layout(document, &index, &presentation);
         let catalogs = crate::catalog::build(&facts, &index, catalog_limits)?;
         Ok(Self {
+            attribute_environment: attributes,
             facts,
             catalogs,
             identifiers,
@@ -101,6 +103,10 @@ impl ResolvedDocument {
             presentation,
             layout,
         })
+    }
+
+    pub(crate) const fn attribute_environment(&self) -> &AttributeEnvironment {
+        &self.attribute_environment
     }
 
     pub(crate) const fn catalogs(&self) -> &crate::catalog::DocumentCatalogs {

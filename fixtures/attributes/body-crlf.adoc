@@ -1,0 +1,6 @@
+= CRLF
+
+前の段落です。
+
+:line-ending: crlf
+後の段落です。

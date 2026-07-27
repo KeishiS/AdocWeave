@@ -1,5 +1,6 @@
 //! Ordered, output-independent AsciiDoc substitution contexts and attribute evaluation.
 
+#[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,6 +74,7 @@ pub enum AttributeExpansionError {
     SizeLimitExceeded,
 }
 
+#[cfg(test)]
 pub(crate) struct AttributeEvaluator<'a> {
     values: &'a BTreeMap<String, String>,
     limits: AttributeExpansionLimits,
@@ -127,6 +129,7 @@ pub(crate) fn apply_replacements(value: &str) -> String {
     output
 }
 
+#[cfg(test)]
 impl<'a> AttributeEvaluator<'a> {
     pub(crate) const fn new(
         values: &'a BTreeMap<String, String>,
@@ -135,21 +138,22 @@ impl<'a> AttributeEvaluator<'a> {
         Self { values, limits }
     }
 
+    #[cfg(test)]
     pub(crate) fn expand_name(&self, name: &str) -> Result<String, AttributeExpansionError> {
         let mut active = BTreeSet::new();
-        self.expand_named(name, 0, &mut active)
+        self.expand_named(name, &mut active).map(|(value, _)| value)
     }
 
     pub(crate) fn expand_text(&self, value: &str) -> Result<String, AttributeExpansionError> {
-        self.expand(value, 0, &mut BTreeSet::new())
+        self.expand(value, &mut BTreeSet::new())
+            .map(|(value, _)| value)
     }
 
     fn expand_named(
         &self,
         name: &str,
-        depth: u32,
         active: &mut BTreeSet<String>,
-    ) -> Result<String, AttributeExpansionError> {
+    ) -> Result<(String, u32), AttributeExpansionError> {
         let value = self
             .values
             .get(name)
@@ -157,7 +161,7 @@ impl<'a> AttributeEvaluator<'a> {
         if !active.insert(name.to_owned()) {
             return Err(AttributeExpansionError::Cycle);
         }
-        let result = self.expand(value, depth.saturating_add(1), active);
+        let result = self.expand(value, active);
         active.remove(name);
         result
     }
@@ -165,42 +169,52 @@ impl<'a> AttributeEvaluator<'a> {
     fn expand(
         &self,
         value: &str,
-        depth: u32,
         active: &mut BTreeSet<String>,
-    ) -> Result<String, AttributeExpansionError> {
-        if depth > self.limits.max_depth {
-            return Err(AttributeExpansionError::DepthLimitExceeded);
-        }
-        let mut output = String::new();
-        let mut cursor = 0;
-        while cursor < value.len() {
-            let rest = &value[cursor..];
-            if rest.starts_with("\\{") {
-                output.push('{');
-                cursor += 2;
-            } else if rest.starts_with('{') {
-                let Some(close) = rest.find('}') else {
-                    output.push_str(rest);
-                    break;
-                };
-                let name = &rest[1..close];
-                if name.is_empty() {
-                    output.push_str("{}");
-                } else {
-                    output.push_str(&self.expand_named(name, depth, active)?);
-                }
-                cursor += close + 1;
-            } else {
-                let character = rest.chars().next().expect("non-empty remainder");
-                output.push(character);
-                cursor += character.len_utf8();
-            }
-            if output.len() > self.limits.max_bytes as usize {
-                return Err(AttributeExpansionError::SizeLimitExceeded);
-            }
-        }
-        Ok(output)
+    ) -> Result<(String, u32), AttributeExpansionError> {
+        expand_attribute_text(value, self.limits, |name| self.expand_named(name, active))
     }
+}
+
+pub(crate) fn expand_attribute_text(
+    value: &str,
+    limits: AttributeExpansionLimits,
+    mut resolve: impl FnMut(&str) -> Result<(String, u32), AttributeExpansionError>,
+) -> Result<(String, u32), AttributeExpansionError> {
+    let mut output = String::new();
+    let mut depth = 0_u32;
+    let mut cursor = 0;
+    while cursor < value.len() {
+        let rest = &value[cursor..];
+        if rest.starts_with("\\{") {
+            output.push('{');
+            cursor += 2;
+        } else if rest.starts_with('{') {
+            let Some(close) = rest.find('}') else {
+                output.push_str(rest);
+                break;
+            };
+            let name = &rest[1..close];
+            if name.is_empty() {
+                output.push_str("{}");
+            } else {
+                let (resolved, resolved_depth) = resolve(name)?;
+                output.push_str(&resolved);
+                depth = depth.max(resolved_depth.saturating_add(1));
+                if depth > limits.max_depth {
+                    return Err(AttributeExpansionError::DepthLimitExceeded);
+                }
+            }
+            cursor += close + 1;
+        } else {
+            let character = rest.chars().next().expect("non-empty remainder");
+            output.push(character);
+            cursor += character.len_utf8();
+        }
+        if output.len() > limits.max_bytes as usize {
+            return Err(AttributeExpansionError::SizeLimitExceeded);
+        }
+    }
+    Ok((output, depth))
 }
 
 #[cfg(test)]

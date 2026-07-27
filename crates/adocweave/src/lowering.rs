@@ -5,11 +5,12 @@ use std::collections::BTreeSet;
 use crate::attributes::DocumentAttributeOccurrence;
 use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
-use crate::substitution::{AttributeEvaluator, AttributeExpansionLimits};
+use crate::substitution::AttributeExpansionLimits;
 
 pub(crate) struct ParsedFacts {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttributeOccurrence>,
+    pub header_attribute_count: usize,
     pub anchors: Vec<ExplicitAnchor>,
     pub header: DocumentHeader,
     pub attribute_expansion_limits: AttributeExpansionLimits,
@@ -19,26 +20,26 @@ pub(crate) struct ParsedFacts {
 pub(crate) fn lower(
     mut facts: ParsedFacts,
 ) -> Result<AstDocument, crate::catalog::CatalogLimitExceeded> {
-    let resolved_attributes = crate::presentation::resolve_document_attributes(&facts.attributes);
-    let source_language = resolved_attributes
-        .get("source-language")
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    facts.blocks = normalize_verbatim_blocks(facts.blocks, source_language);
-    resolve_delimited_presentations(&mut facts.blocks);
-    attach_anchors(&mut facts.anchors, &facts.blocks);
-    facts.header.doctype = document_type(&facts.attributes);
-    let mut document =
-        AstDocument::new(facts.blocks, facts.attributes, facts.anchors, facts.header);
-    document.normalize_heading_kinds();
-    resolve_inline_attributes(
-        &mut document,
-        &resolved_attributes,
+    let attribute_environment = crate::attributes::AttributeEnvironment::build(
+        &facts.attributes,
         facts.attribute_expansion_limits,
     );
+    facts.blocks = normalize_verbatim_blocks(facts.blocks, &attribute_environment);
+    resolve_delimited_presentations(&mut facts.blocks);
+    attach_anchors(&mut facts.anchors, &facts.blocks);
+    facts.header.doctype = document_type(&attribute_environment, facts.header.end);
+    let mut document = AstDocument::new(
+        facts.blocks,
+        facts.attributes,
+        facts.header_attribute_count,
+        facts.anchors,
+        facts.header,
+    );
+    document.normalize_heading_kinds();
+    resolve_inline_attributes(&mut document, &attribute_environment);
     document.resolved = crate::resolved::ResolvedDocument::build(
         &document,
-        resolved_attributes,
+        attribute_environment,
         facts.processing_limits,
     )?;
     Ok(document)
@@ -114,15 +115,18 @@ fn resolve_delimited_presentation(block: &mut crate::parser::DelimitedBlock) {
 
 fn normalize_verbatim_blocks(
     blocks: Vec<AstBlock>,
-    source_language: Option<&str>,
+    attributes: &crate::attributes::AttributeEnvironment,
 ) -> Vec<AstBlock> {
     blocks
         .into_iter()
-        .map(|block| normalize_verbatim_block(block, source_language))
+        .map(|block| normalize_verbatim_block(block, attributes))
         .collect()
 }
 
-fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> AstBlock {
+fn normalize_verbatim_block(
+    block: AstBlock,
+    attributes: &crate::attributes::AttributeEnvironment,
+) -> AstBlock {
     match block {
         AstBlock::Source(source) => AstBlock::Verbatim(crate::parser::VerbatimBlock {
             metadata: source.metadata,
@@ -141,8 +145,7 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
         AstBlock::Delimited(mut block) => {
             match &mut block.content {
                 crate::parser::DelimitedContent::Compound(children) => {
-                    *children =
-                        normalize_verbatim_blocks(std::mem::take(children), source_language);
+                    *children = normalize_verbatim_blocks(std::mem::take(children), attributes);
                 }
                 crate::parser::DelimitedContent::Table(table) => {
                     for row in &mut table.rows {
@@ -150,10 +153,8 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
                             if let crate::table::TableCellContent::AsciiDoc(children) =
                                 &mut cell.content
                             {
-                                *children = normalize_verbatim_blocks(
-                                    std::mem::take(children),
-                                    source_language,
-                                );
+                                *children =
+                                    normalize_verbatim_blocks(std::mem::take(children), attributes);
                             }
                         }
                     }
@@ -168,7 +169,11 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
                     .iter()
                     .any(|attribute| attribute.name.is_none() && attribute.value == "listing");
             if implicit_listing
-                && let Some(language) = source_language
+                && let Some(language) = attributes
+                    .resolve_at("source-language", block.range.start())
+                    .and_then(|resolved| resolved.value.ok().flatten())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
                 && let crate::parser::DelimitedContent::Verbatim(value) = block.content
             {
                 let attribute_range = block
@@ -219,12 +224,10 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
             resolve_list_presentation(&mut list);
             for item in &mut list.items {
                 for child in &mut item.children {
-                    normalize_list(child, source_language);
+                    normalize_list(child, attributes);
                 }
-                item.continuations = normalize_verbatim_blocks(
-                    std::mem::take(&mut item.continuations),
-                    source_language,
-                );
+                item.continuations =
+                    normalize_verbatim_blocks(std::mem::take(&mut item.continuations), attributes);
             }
             AstBlock::List(list)
         }
@@ -232,14 +235,17 @@ fn normalize_verbatim_block(block: AstBlock, source_language: Option<&str>) -> A
     }
 }
 
-fn normalize_list(list: &mut crate::parser::ListBlock, source_language: Option<&str>) {
+fn normalize_list(
+    list: &mut crate::parser::ListBlock,
+    attributes: &crate::attributes::AttributeEnvironment,
+) {
     resolve_list_presentation(list);
     for item in &mut list.items {
         for child in &mut item.children {
-            normalize_list(child, source_language);
+            normalize_list(child, attributes);
         }
         item.continuations =
-            normalize_verbatim_blocks(std::mem::take(&mut item.continuations), source_language);
+            normalize_verbatim_blocks(std::mem::take(&mut item.continuations), attributes);
     }
 }
 
@@ -348,20 +354,19 @@ fn ordered_list_style(value: &str) -> Option<crate::parser::OrderedListStyle> {
     }
 }
 
-fn document_type(attributes: &[DocumentAttributeOccurrence]) -> DocumentType {
-    let mut doctype = DocumentType::Article;
-    for attribute in attributes
-        .iter()
-        .filter(|attribute| attribute.name == "doctype")
-    {
-        doctype = match attribute.raw_value.trim() {
+fn document_type(
+    attributes: &crate::attributes::AttributeEnvironment,
+    header_end: crate::source::TextSize,
+) -> DocumentType {
+    attributes
+        .resolve_at("doctype", header_end)
+        .and_then(|resolved| resolved.value.ok().flatten())
+        .map_or(DocumentType::Article, |value| match value.trim() {
             "book" => DocumentType::Book,
             "manpage" => DocumentType::Manpage,
             "inline" => DocumentType::Inline,
             _ => DocumentType::Article,
-        };
-    }
-    doctype
+        })
 }
 
 fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
@@ -394,18 +399,17 @@ fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
 
 fn resolve_inline_attributes(
     document: &mut AstDocument,
-    attributes: &crate::presentation::ResolvedDocumentAttributes,
-    limits: AttributeExpansionLimits,
+    attributes: &crate::attributes::AttributeEnvironment,
 ) {
-    let evaluator = AttributeEvaluator::new(attributes.values(), limits);
-    document.visit_inline_sequences_mut(|inlines| resolve_inlines(inlines, &evaluator));
+    document.visit_inline_sequences_mut(|inlines| resolve_inlines(inlines, attributes));
 }
 
-fn resolve_inlines(inlines: &mut [Inline], evaluator: &AttributeEvaluator<'_>) {
+fn resolve_inlines(inlines: &mut [Inline], attributes: &crate::attributes::AttributeEnvironment) {
     for inline in inlines {
+        let offset = inline.range().start();
         match inline {
             Inline::Link(link) => {
-                match evaluator.expand_text(&link.target_source) {
+                match attributes.expand_at(&link.target_source, link.target_range.start()) {
                     Ok(value) => {
                         link.target = value;
                         link.target_expansion_error = None;
@@ -415,10 +419,11 @@ fn resolve_inlines(inlines: &mut [Inline], evaluator: &AttributeEvaluator<'_>) {
                         link.target_expansion_error = Some(error);
                     }
                 }
-                resolve_inlines(&mut link.label, evaluator);
+                resolve_inlines(&mut link.label, attributes);
             }
             Inline::Reference(reference) => {
-                match evaluator.expand_text(&reference.target_source) {
+                match attributes.expand_at(&reference.target_source, reference.target_range.start())
+                {
                     Ok(value) => {
                         reference.expanded_target = value;
                         reference.target_expansion_error = None;
@@ -438,30 +443,40 @@ fn resolve_inlines(inlines: &mut [Inline], evaluator: &AttributeEvaluator<'_>) {
                         reference.target = None;
                     }
                 }
-                resolve_inlines(&mut reference.label, evaluator);
+                resolve_inlines(&mut reference.label, attributes);
             }
-            Inline::Macro(node) => match evaluator.expand_text(&node.target_source) {
-                Ok(value) => {
-                    node.target = value;
-                    node.target_expansion_error = None;
+            Inline::Macro(node) => {
+                match attributes.expand_at(&node.target_source, node.target_range.start()) {
+                    Ok(value) => {
+                        node.target = value;
+                        node.target_expansion_error = None;
+                    }
+                    Err(error) => {
+                        node.target = node.target_source.clone();
+                        node.target_expansion_error = Some(error);
+                    }
                 }
-                Err(error) => {
-                    node.target = node.target_source.clone();
-                    node.target_expansion_error = Some(error);
-                }
-            },
-            Inline::Styled { children, .. } => resolve_inlines(children, evaluator),
+            }
+            Inline::Styled { children, .. } => resolve_inlines(children, attributes),
             Inline::AttributeReference {
                 name,
                 value,
                 expansion_error,
                 ..
-            } => match evaluator.expand_name(name) {
-                Ok(resolved) => {
-                    *value = Some(resolved);
+            } => match attributes
+                .resolve_at(name, offset)
+                .map(|resolved| resolved.value)
+            {
+                Some(Ok(Some(resolved))) => {
+                    *value = Some(resolved.to_owned());
                     *expansion_error = None;
                 }
-                Err(error) => {
+                Some(Ok(None)) | None => {
+                    *value = None;
+                    *expansion_error =
+                        Some(crate::substitution::AttributeExpansionError::Undefined);
+                }
+                Some(Err(error)) => {
                     *value = None;
                     *expansion_error = Some(error);
                 }

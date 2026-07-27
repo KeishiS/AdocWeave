@@ -50,7 +50,11 @@ mod walker;
 
 /// Typed semantic document model and output-independent queries.
 pub mod semantic {
-    pub use crate::attributes::{DocumentAttributeOccurrence, DocumentAttributeOperation};
+    pub use crate::attributes::{
+        AttributeBinding, AttributeBindingId, AttributeEnvironment, AttributeEventId,
+        AttributePosition, DocumentAttributeOccurrence, DocumentAttributeOperation,
+        ResolvedAttribute,
+    };
     pub use crate::block_model::{
         AdmonitionKind, AdmonitionPresentation, Author, Block, BlockMetadata, BlockProblem,
         BlockProblemKind, BlockTitle, BreakBlock, BreakKind, CalloutMarker, ChecklistState,
@@ -79,8 +83,7 @@ pub mod semantic {
     };
     pub use crate::presentation::{
         BibliographySection, BlockId, DocumentIndex, DocumentLayout, DocumentPresentation,
-        GeneratedLayoutNode, HeadingPresentation, LayoutNode, LayoutScope,
-        ResolvedDocumentAttributes, TocPolicy,
+        GeneratedLayoutNode, HeadingPresentation, LayoutNode, LayoutScope, TocPolicy,
     };
     pub use crate::resolved::DocumentFacts;
     pub use crate::structure::{
@@ -152,10 +155,10 @@ pub mod preprocess {
         IncludeRequest, OriginRange, Originated, PreprocessError, PreprocessErrorKind,
         PreprocessNotice, PreprocessNoticeKind, PreprocessOptions, PreprocessedAnalysis,
         PreprocessedAnalysisError, PreprocessedDocument, ProjectedDiagnostic,
-        ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget, ProjectedReference,
-        ProjectedResource, ProjectionError, ProjectionLimits, ResourceDocument, ResourceSnapshot,
-        SafeMode, SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
-        preprocess_and_analyze, resolve_include_target,
+        ProjectedDocumentAttribute, ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget,
+        ProjectedReference, ProjectedResource, ProjectionError, ProjectionLimits, ResourceDocument,
+        ResourceSnapshot, SafeMode, SourceMapSegment, SourceMapping, SourceOrigin,
+        discover_includes, preprocess, preprocess_and_analyze, resolve_include_target,
     };
 }
 

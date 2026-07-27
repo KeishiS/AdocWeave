@@ -308,7 +308,9 @@ pub(crate) fn render_with_inputs_ast(
     inputs: &RenderInputs,
 ) -> HtmlOutput {
     let mut fragment = String::new();
-    let document_attributes = document.presentation().attributes().values().clone();
+    let document_attributes = document
+        .attribute_environment()
+        .values_at(document.header().end);
     let heading_ids = crate::document::generate_heading_ids_ast(document);
     let mut diagnostics = Vec::new();
     let mut input_usage = inputs.track_usage();
@@ -1145,8 +1147,8 @@ fn render_heading_level(
     output.push_str(" id=\"");
     escape_html_into(output, id);
     output.push_str("\">");
-    if context.presentation.section_numbers_enabled()
-        && let Some(presentation) = context.presentation.heading_at(heading.range)
+    if let Some(presentation) = context.presentation.heading_at(heading.range)
+        && presentation.numbered
     {
         render_section_number(output, &presentation.number);
     }
@@ -1618,7 +1620,7 @@ fn render_toc(output: &mut String, presentation: &crate::presentation::DocumentP
     fn render_entries(
         output: &mut String,
         entries: &[crate::structure::TocEntry],
-        section_numbers: bool,
+        presentation: &crate::presentation::DocumentPresentation,
     ) {
         if entries.is_empty() {
             return;
@@ -1628,12 +1630,15 @@ fn render_toc(output: &mut String, presentation: &crate::presentation::DocumentP
             output.push_str("<li><a href=\"#");
             escape_html_into(output, &entry.id);
             output.push_str("\">");
-            if section_numbers {
+            if presentation
+                .heading_at(entry.range)
+                .is_some_and(|heading| heading.numbered)
+            {
                 render_section_number(output, &entry.number);
             }
             escape_html_into(output, &entry.title);
             output.push_str("</a>");
-            render_entries(output, &entry.children, section_numbers);
+            render_entries(output, &entry.children, presentation);
             output.push_str("</li>\n");
         }
         output.push_str("</ul>\n");
@@ -1643,11 +1648,7 @@ fn render_toc(output: &mut String, presentation: &crate::presentation::DocumentP
         return;
     }
     output.push_str("<div class=\"toc\">\n");
-    render_entries(
-        output,
-        presentation.toc(),
-        presentation.section_numbers_enabled(),
-    );
+    render_entries(output, presentation.toc(), presentation);
     output.push_str("</div>\n");
 }
 
@@ -2971,7 +2972,7 @@ mod tests {
 
     #[test]
     fn link_target_attributes_expand_recursively() {
-        let parsed = parse("= Links\n:a: {b}\n:b: expanded\n\nhttps://example.com/{a}[target]\n")
+        let parsed = parse("= Links\n:b: expanded\n:a: {b}\n\nhttps://example.com/{a}[target]\n")
             .expect("parse");
         let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[1] else {
             panic!("paragraph");
@@ -2985,7 +2986,7 @@ mod tests {
 
     #[test]
     fn ordered_substitutions_render_styles_replacements_and_safe_passthroughs() {
-        let parsed = parse("= Pipeline\n:a: {b}\n:b: value\n\n{a} #mark# H~2~O E=mc^2^ \"`double`\" (C) ... +<b>*raw*</b>+\n\n++++\n<script>alert(1)</script>\n++++\n").expect("parse");
+        let parsed = parse("= Pipeline\n:b: value\n:a: {b}\n\n{a} #mark# H~2~O E=mc^2^ \"`double`\" (C) ... +<b>*raw*</b>+\n\n++++\n<script>alert(1)</script>\n++++\n").expect("parse");
         let html = render(&parsed.ast, &RenderPolicy::default()).html;
         assert!(html.contains("<p>value <mark>mark</mark> H<sub>2</sub>O E=mc<sup>2</sup> “double” © … &lt;b&gt;*raw*&lt;/b&gt;</p>"));
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));

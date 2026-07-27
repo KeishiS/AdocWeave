@@ -6,20 +6,26 @@ use adocweave::{Analysis, AnalysisOptions, Engine};
 const SOURCE: &str = include_str!("../../../fixtures/grammar/ambiguous.adoc");
 
 #[test]
-fn document_attributes_are_recognized_only_in_the_document_header() {
+fn document_attributes_are_recognized_between_root_blocks() {
     let source = "= Title\n\nParagraph\n\n:body-attribute: value\n";
     let analysis = Engine::new(AnalysisOptions::default())
         .analyze(source)
         .expect("analysis");
 
-    assert!(analysis.document_attribute_occurrences().is_empty());
-    assert!(
-        !analysis
-            .presentation()
-            .attributes()
-            .values()
-            .contains_key("body-attribute")
+    assert_eq!(analysis.document_attribute_occurrences().len(), 1);
+    assert_eq!(
+        analysis.document_attribute_occurrences()[0].name,
+        "body-attribute"
     );
+    assert_eq!(
+        analysis
+            .attribute_environment()
+            .final_values()
+            .get("body-attribute")
+            .map(String::as_str),
+        Some("value")
+    );
+    assert_eq!(analysis.document().blocks().len(), 2);
     assert_eq!(analysis.source(), source);
 }
 

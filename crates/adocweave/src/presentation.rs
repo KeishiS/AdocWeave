@@ -6,7 +6,6 @@
 
 use std::collections::BTreeMap;
 
-use crate::attributes::{DocumentAttributeOccurrence, DocumentAttributeOperation};
 use crate::parser::AstDocument;
 use crate::source::TextRange;
 
@@ -74,44 +73,9 @@ impl DocumentIndex {
     }
 }
 
-/// Final document-wide attribute state after applying set and unset operations.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ResolvedDocumentAttributes {
-    values: BTreeMap<String, String>,
-}
-
-impl ResolvedDocumentAttributes {
-    pub fn get(&self, name: &str) -> Option<&str> {
-        self.values.get(name).map(String::as_str)
-    }
-
-    pub fn values(&self) -> &BTreeMap<String, String> {
-        &self.values
-    }
-}
-
-/// Resolve document attribute set/unset operations once in source order.
-pub(crate) fn resolve_document_attributes(
-    attributes: &[DocumentAttributeOccurrence],
-) -> ResolvedDocumentAttributes {
-    let mut values = BTreeMap::new();
-    for attribute in attributes {
-        match attribute.operation {
-            DocumentAttributeOperation::Set => {
-                values.insert(attribute.name.clone(), attribute.raw_value.clone());
-            }
-            DocumentAttributeOperation::Unset => {
-                values.remove(&attribute.name);
-            }
-        }
-    }
-    ResolvedDocumentAttributes { values }
-}
-
 /// Document-wide facts that affect presentation but are not backend policy.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DocumentPresentation {
-    attributes: ResolvedDocumentAttributes,
     source_language: Option<String>,
     toc_policy: TocPolicy,
     section_numbers: bool,
@@ -123,10 +87,6 @@ pub struct DocumentPresentation {
 }
 
 impl DocumentPresentation {
-    pub const fn attributes(&self) -> &ResolvedDocumentAttributes {
-        &self.attributes
-    }
-
     pub fn headings(&self) -> &[HeadingPresentation] {
         &self.headings
     }
@@ -170,6 +130,7 @@ pub struct HeadingPresentation {
     pub block: BlockId,
     pub range: TextRange,
     pub number: Vec<u32>,
+    pub numbered: bool,
     pub toc_included: bool,
 }
 
@@ -305,14 +266,21 @@ pub(crate) fn build_presentation(
     document: &AstDocument,
     structure: &crate::structure::DocumentStructure,
     index: &DocumentIndex,
-    attributes: ResolvedDocumentAttributes,
+    attribute_environment: &crate::attributes::AttributeEnvironment,
 ) -> DocumentPresentation {
-    let source_language = attributes
-        .get("source-language")
+    // These document-wide presentation controls are header metadata. Body
+    // bindings remain queryable but do not retroactively reconfigure them.
+    let header_offset = document.header().end;
+    let header_values = |name: &str| {
+        attribute_environment
+            .resolve_at(name, header_offset)
+            .and_then(|resolved| resolved.value.ok().flatten())
+    };
+    let source_language = header_values("source-language")
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    let toclevels = attributes.get("toclevels");
+    let toclevels = header_values("toclevels");
     let max_level = toclevels
         .and_then(|value| value.trim().parse::<u8>().ok())
         .filter(|level| (1..=5).contains(level));
@@ -321,20 +289,27 @@ pub(crate) fn build_presentation(
             .attributes()
             .iter()
             .rev()
-            .find(|attribute| attribute.name == "toclevels")
+            .find(|attribute| {
+                attribute.name == "toclevels" && attribute.range.end() <= header_offset
+            })
             .map(|attribute| attribute.value_range)
     });
     let toc_policy = TocPolicy {
-        enabled: attributes.get("toc").is_some(),
+        enabled: header_values("toc").is_some(),
         max_level,
         invalid_level_range,
     };
-    let section_numbers = attributes.get("sectnums").is_some();
+    let mut section_numbers = header_values("sectnums").is_some();
     let mut counters = [0_u32; 6];
     let headings = structure
         .headings()
         .iter()
         .map(|heading| {
+            let numbered = attribute_environment
+                .resolve_at("sectnums", heading.range.start())
+                .and_then(|resolved| resolved.value.ok().flatten())
+                .is_some();
+            section_numbers |= numbered;
             let level_index = usize::from(heading.level.min(5));
             let number = if matches!(
                 heading.kind,
@@ -372,6 +347,7 @@ pub(crate) fn build_presentation(
                 block,
                 range: heading.range,
                 number,
+                numbered,
                 toc_included,
             }
         })
@@ -413,7 +389,6 @@ pub(crate) fn build_presentation(
         .map(|(ordinal, section)| (section.range, ordinal))
         .collect();
     DocumentPresentation {
-        attributes,
         source_language,
         toc_policy,
         section_numbers,
@@ -554,7 +529,10 @@ mod tests {
         let document = parsed.ast;
 
         assert_eq!(
-            document.presentation().attributes().get("source-language"),
+            document
+                .attribute_environment()
+                .final_values()
+                .get("source-language"),
             None
         );
         assert_eq!(document.presentation().source_language(), None);

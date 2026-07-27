@@ -469,6 +469,7 @@ pub enum AstBlock {
 pub struct AstDocument {
     pub(crate) blocks: Vec<AstBlock>,
     pub(crate) attributes: Vec<DocumentAttributeOccurrence>,
+    pub(crate) header_attribute_count: usize,
     pub(crate) anchors: Vec<ExplicitAnchor>,
     pub(crate) header: DocumentHeader,
     pub(crate) resolved: crate::resolved::ResolvedDocument,

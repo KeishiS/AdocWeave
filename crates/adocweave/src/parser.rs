@@ -80,12 +80,14 @@ impl AstDocument {
     pub(crate) fn new(
         blocks: Vec<AstBlock>,
         attributes: Vec<DocumentAttributeOccurrence>,
+        header_attribute_count: usize,
         anchors: Vec<ExplicitAnchor>,
         header: DocumentHeader,
     ) -> Self {
         Self {
             blocks,
             attributes,
+            header_attribute_count,
             anchors,
             header,
             resolved: crate::resolved::ResolvedDocument::default(),
@@ -105,6 +107,10 @@ impl AstDocument {
 
     pub(crate) fn attributes(&self) -> &[DocumentAttributeOccurrence] {
         &self.attributes
+    }
+
+    pub(crate) fn header_attributes(&self) -> &[DocumentAttributeOccurrence] {
+        &self.attributes[..self.header_attribute_count]
     }
 
     pub fn anchors(&self) -> &[ExplicitAnchor] {
@@ -134,6 +140,10 @@ impl AstDocument {
 
     pub const fn presentation(&self) -> &crate::presentation::DocumentPresentation {
         self.resolved.presentation()
+    }
+
+    pub(crate) const fn attribute_environment(&self) -> &crate::attributes::AttributeEnvironment {
+        self.resolved.attribute_environment()
     }
 
     pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
@@ -599,12 +609,20 @@ fn parse_block_sequence(
             }
         }
 
+        let document_attribute_position = root.as_ref().is_some_and(|state| {
+            state.attributes_open
+                || body_attribute_has_blank_offset(
+                    source_document,
+                    line_index,
+                    saw_content || !state.attributes_open,
+                )
+        });
         let recognition = recognize_line(
             content,
             next_content,
             line.content_range().start().to_usize(),
             line.full_range(),
-            root.as_ref().is_some_and(|state| state.attributes_open),
+            document_attribute_position,
         );
         if recognition == LineRecognition::Source {
             flush_paragraph(
@@ -835,7 +853,10 @@ fn parse_block_sequence(
                 budget,
             )?;
             blocks.push(SyntaxNode::leaf(SyntaxKind::BlankLine, line.full_range()));
-            if root.as_ref().is_some_and(|state| state.attributes_open) {
+            if root
+                .as_ref()
+                .is_some_and(|state| state.attributes_open && state.header.range.is_some())
+            {
                 let root = root.as_mut().expect("root state exists");
                 root.attributes_open = false;
                 root.header.end = line.full_range().start();
@@ -864,9 +885,12 @@ fn parse_block_sequence(
             let root = root
                 .as_mut()
                 .expect("attribute recognition requires root state");
+            let in_header = root.attributes_open;
             root.attributes.push(attribute);
             root.attribute_problems.extend(problem);
-            root.extend_range(line.full_range());
+            if in_header {
+                root.extend_range(line.full_range());
+            }
         } else if recognition == LineRecognition::Break {
             flush_paragraph(
                 &mut blocks,
@@ -1020,9 +1044,13 @@ fn parse_block_sequence(
             }));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
             saw_content = true;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         } else {
             paragraph_lines.push((line, content.to_owned()));
             saw_content = true;
+            root.iter_mut()
+                .for_each(DocumentHeaderState::close_attributes);
         }
         cursor.commit(BlockRecognition::OneLine)?;
     }
@@ -1065,9 +1093,13 @@ fn finish_document(
     let BlockSequenceOutput::Root(sequence) = sequence else {
         return Err(ParseFailure::InternalInvariant);
     };
+    let header_attribute_count = sequence
+        .attributes
+        .partition_point(|attribute| attribute.range.end() <= sequence.header.end);
     let mut ast = crate::lowering::lower(crate::lowering::ParsedFacts {
         blocks: sequence.common.blocks,
         attributes: sequence.attributes,
+        header_attribute_count,
         anchors: sequence.common.anchors,
         header: sequence.header,
         attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
@@ -1090,6 +1122,40 @@ fn finish_document(
         syntax: SyntaxTree::from_blocks(source_document, sequence.common.syntax, syntax_issues),
         ast,
     })
+}
+
+fn body_attribute_has_blank_offset(
+    document: &SourceDocument,
+    line_index: usize,
+    saw_content: bool,
+) -> bool {
+    if !saw_content {
+        return false;
+    }
+    let mut preceding = line_index;
+    while preceding > 0 {
+        preceding -= 1;
+        let line = document.lines()[preceding];
+        let content = document
+            .text(line.content_range())
+            .expect("line content has valid UTF-8 boundaries");
+        if content.trim_matches([' ', '\t']).is_empty() {
+            return true;
+        }
+        if content.starts_with("//") {
+            return true;
+        }
+        if crate::attributes::parse_line(
+            content,
+            line.content_range().start().to_usize(),
+            line.full_range(),
+        )
+        .is_none()
+        {
+            return false;
+        }
+    }
+    false
 }
 
 fn parse_block_title(

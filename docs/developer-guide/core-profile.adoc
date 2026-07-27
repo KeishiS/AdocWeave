@@ -108,9 +108,11 @@ Literal blockとsource blockはcodeとして区別します。数式、文書属
 
 == APIの利用
 
-Rustからは`Engine`、`AnalysisOptions`、`Analysis`が主な入口です。属性の最終値は
-`Analysis::presentation().attributes()`から、属性を記述した順番や位置は
-`Analysis::document_attribute_occurrences()`から取得します。
+Rustからは`Engine`、`AnalysisOptions`、`Analysis`が主な入口です。位置ごとの属性値と
+その値を決めたbindingは`Analysis::attribute_environment().resolve_at()`から、最終値viewは
+`Analysis::attribute_environment().final_values()`から取得します。属性を記述した順番と
+source rangeは`Analysis::document_attribute_occurrences()`から取得します。同じexpanded offsetに
+複数の読込eventがある場合は`resolve_at_event()`でevent IDを指定します。
 
 [source,rust]
 ----

@@ -1,0 +1,7 @@
+= 定義時評価
+:base: 古い値
+:snapshot: {base}
+:base: 新しい値
+:CamelCase: 正規化
+
+現在値は{base}、保存値は{snapshot}、属性名は{camelcase}です。

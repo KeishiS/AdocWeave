@@ -1,0 +1,12 @@
+= 不正な本文属性
+
+前の段落です。
+
+:bad name: value
+:bad.name: value
+:-bad: value
+:--: value
+:foo:value
+:CamelCase: ok
+:valid!: unexpected
+後の段落です。

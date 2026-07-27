@@ -1,0 +1,4 @@
+= Unicode値
+
+:greeting: こんにちは🙂
+{greeting}

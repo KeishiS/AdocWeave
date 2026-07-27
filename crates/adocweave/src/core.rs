@@ -144,6 +144,11 @@ impl Analysis {
         self.ast().presentation()
     }
 
+    /// Returns the source-ordered document attribute environment.
+    pub const fn attribute_environment(&self) -> &crate::attributes::AttributeEnvironment {
+        self.ast().attribute_environment()
+    }
+
     pub const fn layout(&self) -> &crate::presentation::DocumentLayout {
         self.ast().layout()
     }
@@ -162,6 +167,13 @@ impl Analysis {
         &self,
     ) -> &[crate::attributes::DocumentAttributeOccurrence] {
         self.document.attribute_occurrences()
+    }
+
+    /// Returns leading document-header attribute occurrences in source order.
+    pub fn header_attribute_occurrences(
+        &self,
+    ) -> &[crate::attributes::DocumentAttributeOccurrence] {
+        self.document.header_attribute_occurrences()
     }
 
     pub fn references(&self) -> &[crate::inline::Reference] {

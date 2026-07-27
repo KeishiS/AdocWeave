@@ -1,0 +1,12 @@
+= 属性environment
+:name: Alice
+
+最初は{name}です。
+
+:name: Bob
+
+次は{name}です。
+
+:name!:
+
+最後は{name}です。
