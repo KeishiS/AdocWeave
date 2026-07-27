@@ -60,6 +60,8 @@ export type SafeMode = "unsafe" | "server" | "safe" | "secure";
 
 export type SourceMapping = "identity" | "whole-origin";
 
+export type ProjectedReferenceFailureKind = "missing-reference-target" | "missing-reference-anchor" | "ambiguous-reference-target" | "reference-outside-root" | "reference-resolver-failure";
+
 export interface AnalysisOptions {
   syntax?: SyntaxOptions;
   diagnostics?: DiagnosticProfile;
@@ -211,7 +213,7 @@ export interface ReferenceEdge {
   sourceId: string | null;
   sourceRange: TextRange;
   target: ReferenceKey;
-  resolution: ResolvedReferenceOutcome | null;
+  resolution: ProjectedResolutionOutcome | null;
 }
 
 export interface OrderedListProjection {
@@ -366,6 +368,10 @@ export type ReferenceKey =
   | { kind: "local"; anchor: string }
   | { kind: "document"; document: string; anchor: string | null }
   | { kind: "scheme"; scheme: string; locator: string; anchor: string | null };
+
+export type ProjectedResolutionOutcome =
+  | { status: "resolved"; href: string; displayText: string | null; notices: ReferenceNotice[] }
+  | { status: "failed"; kind: ProjectedReferenceFailureKind };
 
 export interface TextRange {
   start: number;

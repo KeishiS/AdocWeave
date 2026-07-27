@@ -8,7 +8,7 @@
     "source": "text"
   },
   "responseProbe": {
-    "source": "= Probe\n:name: value\n\nimage:a.png[]\n\ntext \n"
+    "source": "= Probe\n:name: value\n\n== Section\n\n. item\n\n[source,rust]\n----\nfn main() {}\n----\n\nNOTE: note\n\nhttps://example.com[link]\n\nxref:first[] and xref:second[]\n\nstem:[x]\n\nfootnote:f[Note]\n\nindexterm:[term]\n\nimage:a.png[]\n\ntext \n"
   },
   "preprocessRequest": {
     "packageVersion": "@PACKAGE_VERSION@",

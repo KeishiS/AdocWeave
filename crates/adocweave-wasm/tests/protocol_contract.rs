@@ -307,6 +307,21 @@ fn every_request_object_enforces_schema_fields_recursively() {
 
         for field in contract["fields"].as_array().expect("object fields") {
             let field_name = field["json"].as_str().expect("field name");
+            if field["type"] == "u32" {
+                for invalid in [json!(-1), json!(1.5), json!(4_294_967_296_u64)] {
+                    let mut request = expanded_request(&corpus);
+                    request
+                        .pointer_mut(path)
+                        .expect("numeric object")
+                        .as_object_mut()
+                        .expect("numeric map")
+                        .insert(field_name.to_owned(), invalid.clone());
+                    assert!(
+                        serde_json::from_value::<WasmRequest>(request).is_err(),
+                        "{name}.{field_name} accepted {invalid}"
+                    );
+                }
+            }
             let mut missing = expanded_request(&corpus);
             missing
                 .pointer_mut(path)
@@ -437,7 +452,8 @@ fn response_and_projection_fields_match_the_schema() {
         "symbols": true,
         "projection": true
     });
-    let request: WasmRequest = serde_json::from_value(value).expect("response probe request");
+    let request: WasmRequest =
+        serde_json::from_value(value.clone()).expect("response probe request");
     let response =
         serde_json::to_value(process_request(request, &NeverCancel).expect("response probe"))
             .expect("serializable response");
@@ -450,12 +466,56 @@ fn response_and_projection_fields_match_the_schema() {
         "/projection/title",
         "/projection/targets/0",
         "/projection/structure/headings/0",
+        "/projection/sourceBlocks/0",
+        "/projection/formulas/0",
+        "/projection/orderedLists/0",
+        "/projection/blockPresentations/0",
+        "/projection/externalLinks/0",
+        "/projection/referenceEdges/0",
+        "/projection/searchableText/segments/0",
+        "/projection/catalogs/footnotes/0",
+        "/projection/catalogs/index/0",
+        "/symbols/0",
     ] {
         assert!(
             response.pointer(path).is_some(),
             "response probe must cover {path}"
         );
     }
+
+    let edges = response["projection"]["referenceEdges"]
+        .as_array()
+        .expect("reference edges");
+    assert!(edges.len() >= 2, "union witness reference edges");
+    value["renderInputs"] = json!({
+        "references": [
+            {
+                "sourceStart": edges[0]["sourceRange"]["start"],
+                "sourceEnd": edges[0]["sourceRange"]["end"],
+                "outcome": { "status": "resolved", "href": "#first" }
+            },
+            {
+                "sourceStart": edges[1]["sourceRange"]["start"],
+                "sourceEnd": edges[1]["sourceRange"]["end"],
+                "outcome": { "status": "failed", "kind": "missing-target" }
+            }
+        ]
+    });
+    let resolved = process_request(
+        serde_json::from_value(value).expect("resolved response probe"),
+        &NeverCancel,
+    )
+    .expect("resolved response");
+    let resolved = serde_json::to_value(resolved).expect("serialized resolved response");
+    assert_wire_value(&resolved, "AdocWeaveWasmResponse", &schema);
+    assert_eq!(
+        resolved["projection"]["referenceEdges"][0]["resolution"]["status"],
+        "resolved"
+    );
+    assert_eq!(
+        resolved["projection"]["referenceEdges"][1]["resolution"]["status"],
+        "failed"
+    );
 }
 
 #[test]
@@ -512,6 +572,21 @@ fn preprocess_wire_contract_round_trips_and_rejects_drift() {
         );
         for field in contract["fields"].as_array().expect("preprocess fields") {
             let field_name = field["json"].as_str().expect("preprocess field");
+            if field["type"] == "u32" {
+                for invalid in [json!(-1), json!(1.5), json!(4_294_967_296_u64)] {
+                    let mut request = value.clone();
+                    request
+                        .pointer_mut(path)
+                        .expect("preprocess numeric object")
+                        .as_object_mut()
+                        .expect("preprocess numeric map")
+                        .insert(field_name.to_owned(), invalid.clone());
+                    assert!(
+                        serde_json::from_value::<WasmPreprocessRequest>(request).is_err(),
+                        "{name}.{field_name} accepted {invalid}"
+                    );
+                }
+            }
             let mut missing = value.clone();
             missing
                 .pointer_mut(path)
@@ -568,6 +643,24 @@ fn assert_wire_value(value: &Value, type_name: &str, schema: &Value) {
     }
     if type_name == "number" {
         assert!(value.is_number(), "expected number, got {value}");
+        return;
+    }
+    if type_name == "u32" {
+        assert!(
+            value
+                .as_u64()
+                .is_some_and(|value| value <= u64::from(u32::MAX)),
+            "expected u32, got {value}"
+        );
+        return;
+    }
+    if type_name == "safeInteger" {
+        assert!(
+            value
+                .as_u64()
+                .is_some_and(|value| value <= 9_007_199_254_740_991),
+            "expected safe integer, got {value}"
+        );
         return;
     }
     if type_name == "boolean" {

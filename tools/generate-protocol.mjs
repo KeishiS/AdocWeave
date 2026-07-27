@@ -81,6 +81,7 @@ function validateSchema() {
   validateRequestObjectCorpus();
   validateRequestUnionCorpus();
   validatePreprocessCorpus();
+  validateOutputContracts();
   const covered = corpus.enumCases.map(({ enum: name }) => name).sort();
   const expected = [...schema.requestEnums].sort();
   if (JSON.stringify(covered) !== JSON.stringify(expected)) {
@@ -92,6 +93,51 @@ function validateSchema() {
     }
   }
   if (corpus.oldVersion === schema.packageVersion) throw new Error("old-version corpus uses the current version");
+}
+
+function validateOutputContracts() {
+  const visited = new Set();
+  const visitType = (type) => {
+    for (const reference of type.match(/[A-Z][A-Za-z0-9]*/g) ?? []) {
+      if (reference === "ProductSet") {
+        visitObject("ProductSet", schema.productSet);
+      } else if (reference === "AdocWeaveWasmResponse") {
+        visitObject(reference, schema.response);
+      } else if (schema.taggedUnions[reference]) {
+        visitUnion(reference, schema.taggedUnions[reference]);
+      } else {
+        const contract = schema.definitions[reference]
+          ?? schema.dtos[reference] ?? schema.preprocessDefinitions[reference];
+        if (contract) visitObject(reference, contract);
+      }
+    }
+  };
+  const visitObject = (name, contract) => {
+    if (visited.has(name)) return;
+    visited.add(name);
+    for (const field of contract.fields) {
+      if (Object.hasOwn(field, "default")) {
+        throw new Error(`output field ${name}.${field.json} must be required`);
+      }
+      visitType(field.type);
+    }
+  };
+  const visitUnion = (name, contract) => {
+    if (visited.has(name)) return;
+    visited.add(name);
+    for (const fields of Object.values(contract.variants)) {
+      for (const field of fields) {
+        if (Object.hasOwn(field, "default")) {
+          throw new Error(`output union field ${name}.${field.json} must be required`);
+        }
+        visitType(field.type);
+      }
+    }
+  };
+  visitObject("AdocWeaveWasmResponse", schema.response);
+  visitObject("PreprocessResponse", schema.preprocessDefinitions.PreprocessResponse);
+  visitObject("WasmError", schema.preprocessDefinitions.WasmError);
+  visitObject("AdocWeaveError", schema.workerEnvelopes.clientError);
 }
 
 function validatePreprocessCorpus() {
@@ -199,7 +245,7 @@ function validateTypeReferences() {
     "WasmRequest",
     "AdocWeaveWasmResponse",
   ]);
-  const builtins = new Set(["string", "number", "boolean", "null", "unknown", "Record", "Required", "SharedArrayBuffer"]);
+  const builtins = new Set(["string", "number", "u32", "safeInteger", "boolean", "null", "unknown", "Record", "Required", "SharedArrayBuffer"]);
   const contracts = [
     schema.request,
     schema.response,
@@ -274,13 +320,13 @@ function objectDeclaration(name, contract) {
 
 function fieldDeclaration(field) {
   const optional = Object.hasOwn(field, "default") ? "?" : "";
-  return `  ${field.json}${optional}: ${field.type};`;
+  return `  ${field.json}${optional}: ${typescriptType(field.type)};`;
 }
 
 function unionDeclaration(name, contract) {
   const variants = Object.entries(contract.variants).map(([tag, fields]) => {
     const declarations = [{ json: contract.tag, type: JSON.stringify(tag), required: true }, ...fields];
-    return `{ ${declarations.map((field) => `${field.json}${Object.hasOwn(field, "default") ? "?" : ""}: ${field.type}`).join("; ")} }`;
+    return `{ ${declarations.map((field) => `${field.json}${Object.hasOwn(field, "default") ? "?" : ""}: ${typescriptType(field.type)}`).join("; ")} }`;
   });
   return `export type ${name} =\n  | ${variants.join("\n  | ")};`;
 }
@@ -301,6 +347,10 @@ function updateRequestDeclaration() {
   });
 }
 
+function typescriptType(type) {
+  return type.replace(/\bu32\b|\bsafeInteger\b/g, "number");
+}
+
 function runtimeValidatorSource() {
   return `export function validateWorkerMessage(value, direction) {
   const contract = VALIDATION_SCHEMA.workerEnvelopes[direction];
@@ -312,6 +362,8 @@ export function validateClientError(value) {
 function validateValue(value, type) {
   if (type === "string") return typeof value === "string";
   if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "u32") return Number.isInteger(value) && value >= 0 && value <= 4294967295;
+  if (type === "safeInteger") return Number.isSafeInteger(value) && value >= 0;
   if (type === "boolean") return typeof value === "boolean";
   if (type === "unknown") return true;
   if (type.endsWith(" | null")) return value === null || validateValue(value, type.slice(0, -7));

@@ -204,6 +204,12 @@ test("client sends the current WASM API version with responsibility-specific def
     ...messages[1],
     protocolVersion: String(WORKER_PROTOCOL_VERSION),
   }, "requests"), false);
+  for (const invalid of [-1, 1.5, 4294967296, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(validateWorkerMessage({
+      ...messages[1],
+      protocolVersion: invalid,
+    }, "requests"), false);
+  }
   assert.equal(validateWorkerMessage({
     ...messages[1],
     payload: { ...messages[1].payload, source: false },
