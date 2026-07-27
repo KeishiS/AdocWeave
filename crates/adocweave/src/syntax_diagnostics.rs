@@ -44,6 +44,7 @@ fn issue(class: SyntaxIssueClass, range: TextRange, message: &'static str) -> Sy
         class,
         range,
         message,
+        detail: crate::syntax::SyntaxIssueDetail::None,
         fix: None,
     }
 }
@@ -98,6 +99,16 @@ fn inline_issues(problems: &mut Vec<InlineProblem>, output: &mut Vec<SyntaxIssue
                 SyntaxIssueClass::InvalidStem,
                 "inline STEM exceeds the size limit",
             ),
+            InlineProblemKind::MacroBoundary { name } => {
+                output.push(SyntaxIssue {
+                    class: SyntaxIssueClass::MacroBoundary,
+                    range: problem.range,
+                    message: "inline macro must start at a token boundary",
+                    detail: crate::syntax::SyntaxIssueDetail::MacroBoundary { name },
+                    fix: None,
+                });
+                continue;
+            }
         };
         output.push(issue(class, problem.range, message));
     }
@@ -120,6 +131,7 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
                             class: SyntaxIssueClass::HeadingMarkerSpace,
                             range,
                             message: "heading marker must be followed by a space",
+                            detail: crate::syntax::SyntaxIssueDetail::None,
                             fix: Some(SyntaxFix {
                                 label: "insert a space after heading marker",
                                 range,
@@ -226,6 +238,7 @@ fn list_issues(list: &mut ListBlock, output: &mut Vec<SyntaxIssue>) {
                 class: SyntaxIssueClass::InconsistentList,
                 range: problem.range,
                 message,
+                detail: crate::syntax::SyntaxIssueDetail::None,
                 fix,
             });
         }

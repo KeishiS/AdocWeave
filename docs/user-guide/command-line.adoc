@@ -67,6 +67,20 @@ adocweave check --list-rules --json
 `code`、`defaultSeverity`、`enabledByDefault`および`fixable`は自動処理に使用できます。
 `description`は表示用であり、判定条件には使用しません。
 
+既定で無効な規則は`--enable-rule CODE`で有効にできます。このoptionは反復して指定できます。
+`macro-boundary`は、対応するinline macroが開始境界だけを満たさず通常のtextとして扱われた場合に
+warningを返します。
+
+[source,console]
+----
+adocweave check --enable-rule macro-boundary document.adoc
+----
+
+対象は`xref`、`link`、数式、passthrough、標準inline macro、URLおよびemailの完全な構文です。
+診断はmacro名を示し、直前がASCII英数字の場合だけ、空白を挿入する確実ではない修正候補を返します。
+短縮xref、block macro、不完全またはescapeされた構文、comment、sourceおよびliteral block、
+ほかの不透明なinline構文の内部は対象外です。任意の`subs`属性による置換設定は現在対応していません。
+
 [#formatting]
 == 整形
 

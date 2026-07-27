@@ -171,6 +171,75 @@ fn check_reports_link_and_xref_usage_consistently() {
 }
 
 #[test]
+fn check_enables_macro_boundary_as_an_opt_in_rule() {
+    let source = "本文xref:guide.adoc[Guide]\n".as_bytes();
+    let default = run_with_stdin(&["check", "--json", "-"], source);
+    let human = run_with_stdin(
+        &[
+            "check",
+            "--enable-rule",
+            "macro-boundary",
+            "--enable-rule",
+            "macro-boundary",
+            "-",
+        ],
+        source,
+    );
+    let json = run_with_stdin(
+        &["check", "--json", "--enable-rule", "macro-boundary", "-"],
+        source,
+    );
+
+    assert!(default.status.success());
+    assert!(!String::from_utf8_lossy(&default.stdout).contains("macro-boundary"));
+    assert!(human.status.success());
+    assert!(
+        String::from_utf8_lossy(&human.stdout)
+            .contains("1:7: warning[macro-boundary]: xref inline macro")
+    );
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("diagnostic JSON");
+    assert_eq!(diagnostics.as_array().expect("diagnostics").len(), 1);
+    assert_eq!(diagnostics[0]["code"], "macro-boundary");
+    assert_eq!(diagnostics[0]["severity"], "warning");
+    assert_eq!(diagnostics[0]["range"]["start"], 6);
+    assert_eq!(diagnostics[0]["range"]["end"], 10);
+}
+
+#[test]
+fn check_rejects_unknown_default_and_catalog_rule_enabling() {
+    for arguments in [
+        vec!["check", "--enable-rule", "unknown-rule", "-"],
+        vec!["check", "--enable-rule", "trailing-whitespace", "-"],
+        vec![
+            "check",
+            "--list-rules",
+            "--json",
+            "--enable-rule",
+            "macro-boundary",
+        ],
+    ] {
+        let output = run_with_stdin(&arguments, b"");
+        assert!(!output.status.success(), "{arguments:?}");
+        assert!(output.stdout.is_empty());
+    }
+
+    let output = adocweave()
+        .args(["check", "--list-rules", "--json"])
+        .output()
+        .expect("catalog");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("catalog JSON");
+    let rule = value["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .find(|rule| rule["code"] == "macro-boundary")
+        .expect("macro-boundary rule");
+    assert_eq!(rule["enabledByDefault"], false);
+    assert_eq!(rule["fixable"], true);
+}
+
+#[test]
 fn check_lists_the_typed_rule_catalog_without_reading_input() {
     let output = adocweave()
         .args(["check", "--list-rules", "--json"])
@@ -642,7 +711,7 @@ fn include_check_projects_diagnostics_to_the_resource_file() {
     let document = root.join("root.adoc");
     let part = root.join("part.adoc");
     std::fs::write(&document, "include::part.adoc[]\n").expect("root source");
-    std::fs::write(&part, "bad \n").expect("part source");
+    std::fs::write(&part, "bad \n本文xref:guide.adoc[Guide]\n").expect("part source");
 
     let human = adocweave()
         .args(["check", "--include", document.to_str().expect("UTF-8 path")])
@@ -657,6 +726,17 @@ fn include_check_projects_diagnostics_to_the_resource_file() {
         ])
         .output()
         .expect("JSON check");
+    let opt_in = adocweave()
+        .args([
+            "check",
+            "--include",
+            "--enable-rule",
+            "macro-boundary",
+            "--json",
+            document.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("opt-in JSON check");
     assert!(human.status.success());
     assert!(String::from_utf8_lossy(&human.stdout).contains(&format!(
         "{}:1:4: warning[trailing-whitespace]",
@@ -664,6 +744,24 @@ fn include_check_projects_diagnostics_to_the_resource_file() {
     )));
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("JSON diagnostics");
     assert_eq!(value[0]["sourceId"], part.to_string_lossy().as_ref());
+    assert!(
+        !value
+            .as_array()
+            .expect("diagnostics")
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "macro-boundary")
+    );
+    let opt_in: serde_json::Value =
+        serde_json::from_slice(&opt_in.stdout).expect("opt-in JSON diagnostics");
+    let boundary = opt_in
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "macro-boundary")
+        .expect("macro-boundary diagnostic");
+    assert_eq!(boundary["sourceId"], part.to_string_lossy().as_ref());
+    assert_eq!(boundary["range"]["start"], 11);
+    assert_eq!(boundary["range"]["end"], 15);
 
     std::fs::remove_dir_all(root).expect("cleanup");
 }

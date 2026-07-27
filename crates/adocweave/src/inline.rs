@@ -156,6 +156,19 @@ fn parse_segment(
                 }
                 cursor = next_char_boundary(value, open);
             }
+            InlineCandidate::MacroBoundary { open } => {
+                if let MacroRecognition::Complete(token) = scanner.recognize_macro(value, open)
+                    && let Some((name_end, name)) = macro_boundary_subject(value, token)
+                {
+                    output.problems.push(InlineProblem {
+                        kind: InlineProblemKind::MacroBoundary { name },
+                        range: subrange(range, open, name_end),
+                    });
+                    cursor = token.end();
+                } else {
+                    cursor = next_char_boundary(value, open);
+                }
+            }
             InlineCandidate::Marker {
                 open,
                 marker,
@@ -285,6 +298,9 @@ enum InlineCandidate {
     Macro {
         open: usize,
     },
+    MacroBoundary {
+        open: usize,
+    },
     Marker {
         open: usize,
         marker: char,
@@ -325,6 +341,7 @@ impl MarkerForm {
 struct InlineScanner {
     candidates: Vec<InlineCandidate>,
     delimiters: DelimiterIndex,
+    url_candidates: UrlCandidateIndex,
     next: usize,
     _inspected_positions: usize,
 }
@@ -334,6 +351,8 @@ impl InlineScanner {
         let (mut candidates, mut preparsed_markers, mut inspected_positions) =
             preparsed_candidates(value);
         let unconstrained_pairs = index_unconstrained_pairs(value, &mut inspected_positions);
+        let url_candidates = UrlCandidateIndex::new(value, &mut inspected_positions);
+        let mut rejected_macro_boundaries = Vec::new();
         for (open, marker) in value.char_indices() {
             inspected_positions += 1;
             let rest = &value[open..];
@@ -357,18 +376,14 @@ impl InlineScanner {
                 continue;
             }
             let boundary = is_macro_boundary(value, open);
-            let is_macro = rest.starts_with("<<")
-                || rest.starts_with("[[")
-                || boundary
-                    && (starts_ascii_case_insensitive(rest, "xref:")
-                        || starts_ascii_case_insensitive(rest, "stem:[")
-                        || starts_ascii_case_insensitive(rest, "latexmath:[")
-                        || starts_ascii_case_insensitive(rest, "pass:[")
-                        || standard_macro_prefix(rest).is_some()
-                        || email_address_end(rest).is_some()
-                        || url_link_candidate(rest));
+            let boundary_macro =
+                macro_candidate(value, open, &url_candidates, &mut inspected_positions);
+            let is_macro =
+                rest.starts_with("<<") || rest.starts_with("[[") || boundary && boundary_macro;
             if is_macro {
                 candidates.push(InlineCandidate::Macro { open });
+            } else if boundary_macro && !is_escaped(value, open) {
+                rejected_macro_boundaries.push(open);
             } else if matches!(marker, '`' | '*' | '_' | '#') && unconstrained_pairs[open] {
                 candidates.push(InlineCandidate::Marker {
                     open,
@@ -398,11 +413,15 @@ impl InlineScanner {
             &mut candidates,
             &mut inspected_positions,
         );
-        candidates.sort_by_key(|candidate| candidate.open());
         let delimiters = DelimiterIndex::new_counted(value, &mut inspected_positions);
+        for open in rejected_macro_boundaries {
+            candidates.push(InlineCandidate::MacroBoundary { open });
+        }
+        candidates.sort_by_key(|candidate| candidate.open());
         Self {
             candidates,
             delimiters,
+            url_candidates,
             next: 0,
             _inspected_positions: inspected_positions,
         }
@@ -422,7 +441,7 @@ impl InlineScanner {
     }
 
     fn recognize_macro(&self, value: &str, open: usize) -> MacroRecognition {
-        recognize_macro_with_index(value, open, &self.delimiters)
+        recognize_macro_with_index(value, open, &self.delimiters, Some(&self.url_candidates))
     }
 
     #[cfg(test)]
@@ -630,6 +649,7 @@ impl InlineCandidate {
         match self {
             Self::EscapedAnchor { slash } => slash,
             Self::Macro { open }
+            | Self::MacroBoundary { open }
             | Self::Marker { open, .. }
             | Self::TypographicQuote { open, .. }
             | Self::Passthrough { open, .. } => open,
@@ -935,6 +955,64 @@ impl MacroToken {
     }
 }
 
+fn macro_boundary_subject(value: &str, token: MacroToken) -> Option<(usize, &'static str)> {
+    match token {
+        MacroToken::Formula(token) => {
+            let name = if starts_ascii_case_insensitive(&value[token.open..], "latexmath:[") {
+                "latexmath"
+            } else {
+                "stem"
+            };
+            Some((token.content_start - 2, name))
+        }
+        MacroToken::Passthrough(token) => Some((token.content_start - 2, "pass")),
+        MacroToken::Reference(ReferenceToken::Xref { target_start, .. }) => {
+            Some((target_start - 1, "xref"))
+        }
+        MacroToken::Link(LinkToken::Explicit { target_start, .. }) => {
+            Some((target_start - 1, "link"))
+        }
+        MacroToken::Link(LinkToken::Url { open, .. }) => {
+            if starts_ascii_case_insensitive(&value[open..], "include::") {
+                return None;
+            }
+            let scheme_end = url_scheme_end(&value[open..])?;
+            Some((open + scheme_end - 1, "URL"))
+        }
+        MacroToken::Standard(StandardMacroToken {
+            kind,
+            form: MacroForm::Inline,
+            target_start,
+            ..
+        }) => Some((target_start - 1, standard_macro_name(kind))),
+        MacroToken::Email(token) => Some((token.end, "email")),
+        MacroToken::Reference(ReferenceToken::Short { .. })
+        | MacroToken::Standard(StandardMacroToken {
+            form: MacroForm::Block,
+            ..
+        })
+        | MacroToken::ShorthandAnchor(_) => None,
+    }
+}
+
+const fn standard_macro_name(kind: StandardMacroKind) -> &'static str {
+    use StandardMacroKind as Kind;
+    match kind {
+        Kind::Email => "email",
+        Kind::Footnote => "footnote",
+        Kind::Anchor => "anchor",
+        Kind::BibliographyAnchor => "bibanchor",
+        Kind::IndexTerm => "indexterm",
+        Kind::Keyboard => "kbd",
+        Kind::Button => "btn",
+        Kind::Menu => "menu",
+        Kind::Image => "image",
+        Kind::Icon => "icon",
+        Kind::Audio => "audio",
+        Kind::Video => "video",
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MacroRecognition {
     Complete(MacroToken),
@@ -1049,27 +1127,21 @@ fn standard_macro_prefix(value: &str) -> Option<(StandardMacroKind, MacroForm, u
 }
 
 fn email_address_end(value: &str) -> Option<usize> {
-    let token_end = value
-        .char_indices()
-        .find_map(|(offset, character)| character.is_whitespace().then_some(offset))
-        .unwrap_or(value.len());
-    let candidate = value[..token_end].trim_end_matches(['.', ',', ';', ':']);
-    let at = candidate.find('@')?;
-    if at == 0
-        || !candidate[..at]
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-'))
-    {
+    let at = value
+        .bytes()
+        .position(|byte| !email_local_part_byte(byte))
+        .filter(|at| value.as_bytes()[*at] == b'@')?;
+    if at == 0 {
         return None;
     }
-    let domain_end = candidate[at + 1..]
-        .char_indices()
-        .find_map(|(offset, character)| {
-            (!character.is_ascii_alphanumeric() && !matches!(character, '.' | '-'))
-                .then_some(at + 1 + offset)
-        })
-        .unwrap_or(candidate.len());
-    let domain = &candidate[at + 1..domain_end];
+    let mut domain_end = value[at + 1..]
+        .bytes()
+        .position(|byte| !(byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-')))
+        .map_or(value.len(), |offset| at + 1 + offset);
+    while value.as_bytes().get(domain_end.saturating_sub(1)) == Some(&b'.') {
+        domain_end -= 1;
+    }
+    let domain = &value[at + 1..domain_end];
     (domain.contains('.')
         && !domain.starts_with('.')
         && !domain.ends_with('.')
@@ -1081,6 +1153,7 @@ fn recognize_macro_with_index(
     value: &str,
     open: usize,
     delimiters: &DelimiterIndex,
+    url_candidates: Option<&UrlCandidateIndex>,
 ) -> MacroRecognition {
     let rest = &value[open..];
     if let Some(content) = rest.strip_prefix("[[[")
@@ -1107,14 +1180,8 @@ fn recognize_macro_with_index(
             end: target_end + 2,
         }));
     }
-    let formula_prefix = if starts_ascii_case_insensitive(rest, "stem:[") {
-        Some("stem:[".len())
-    } else if starts_ascii_case_insensitive(rest, "latexmath:[") {
-        Some("latexmath:[".len())
-    } else {
-        None
-    };
-    if let Some(prefix_len) = formula_prefix {
+    let named_prefix = named_macro_prefix(rest);
+    if let Some(NamedMacroPrefix::Formula { prefix_len }) = named_prefix {
         let close = delimiters.next_close_bracket(open + prefix_len);
         return MacroRecognition::Complete(MacroToken::Formula(FormulaToken {
             open,
@@ -1124,8 +1191,8 @@ fn recognize_macro_with_index(
             closed: close.is_some(),
         }));
     }
-    if starts_ascii_case_insensitive(rest, "pass:[") {
-        let content_start = open + "pass:[".len();
+    if let Some(NamedMacroPrefix::Passthrough { prefix_len }) = named_prefix {
+        let content_start = open + prefix_len;
         let Some(close) = delimiters.next_close_bracket(content_start) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::UnclosedPassthrough,
@@ -1153,8 +1220,8 @@ fn recognize_macro_with_index(
             end: close + 2,
         }));
     }
-    if starts_ascii_case_insensitive(rest, "xref:") {
-        let target_start = open + 5;
+    if let Some(NamedMacroPrefix::Xref { prefix_len }) = named_prefix {
+        let target_start = open + prefix_len;
         let Some(bracket) = delimiters.next_open_bracket(target_start) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteCrossReference,
@@ -1183,8 +1250,8 @@ fn recognize_macro_with_index(
             end: close + 1,
         }));
     }
-    if starts_ascii_case_insensitive(rest, "link:") {
-        let target_start = open + 5;
+    if let Some(NamedMacroPrefix::Link { prefix_len }) = named_prefix {
+        let target_start = open + prefix_len;
         let Some(bracket) = delimiters.next_open_bracket(target_start) else {
             return MacroRecognition::Incomplete {
                 kind: InlineProblemKind::IncompleteLink,
@@ -1214,7 +1281,12 @@ fn recognize_macro_with_index(
         }));
     }
 
-    if let Some((kind, form, prefix_len)) = standard_macro_prefix(rest) {
+    if let Some(NamedMacroPrefix::Standard {
+        kind,
+        form,
+        prefix_len,
+    }) = named_prefix
+    {
         let target_start = open + prefix_len;
         let Some(bracket) = delimiters.next_open_bracket(target_start) else {
             return MacroRecognition::Incomplete {
@@ -1259,14 +1331,18 @@ fn recognize_macro_with_index(
             next: next_char_boundary(value, open),
         };
     };
-    let relative_target_end = rest
-        .char_indices()
-        .find_map(|(offset, character)| {
-            (offset > scheme_end && (character.is_whitespace() || character == '['))
-                .then_some(offset)
-        })
-        .unwrap_or(rest.len());
-    let mut target_end = open + relative_target_end;
+    let mut target_end = url_candidates.map_or_else(
+        || {
+            open + rest
+                .char_indices()
+                .find_map(|(offset, character)| {
+                    (offset > scheme_end && (character.is_whitespace() || character == '['))
+                        .then_some(offset)
+                })
+                .unwrap_or(rest.len())
+        },
+        |index| index.next_label_or_whitespace(open + scheme_end),
+    );
     while target_end > open
         && matches!(
             value[..target_end].chars().next_back(),
@@ -1301,7 +1377,7 @@ fn recognize_macro_with_index(
 
 #[cfg(test)]
 fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
-    recognize_macro_with_index(value, open, &DelimiterIndex::new(value))
+    recognize_macro_with_index(value, open, &DelimiterIndex::new(value), None)
 }
 
 fn build_macro(
@@ -1764,7 +1840,8 @@ fn url_scheme_end(value: &str) -> Option<usize> {
     let colon = value.char_indices().find_map(|(offset, character)| {
         if character == ':' {
             Some(Some(offset))
-        } else if character.is_whitespace() || matches!(character, '[' | ']' | '<' | '>') {
+        } else if !character.is_ascii_alphanumeric() && !matches!(character, '+' | '-' | '.' | '%')
+        {
             Some(None)
         } else {
             None
@@ -1784,20 +1861,186 @@ fn url_scheme_end(value: &str) -> Option<usize> {
     }
 }
 
-fn url_link_candidate(value: &str) -> bool {
-    let Some(scheme_end) = url_scheme_end(value) else {
+struct UrlCandidateIndex {
+    next_label_or_whitespace: Vec<u32>,
+}
+
+impl UrlCandidateIndex {
+    fn new(value: &str, inspected_positions: &mut usize) -> Self {
+        let mut next_label_or_whitespace = vec![value.len() as u32; value.len() + 1];
+        let mut next = value.len();
+        for (offset, character) in value.char_indices().rev() {
+            *inspected_positions = inspected_positions.saturating_add(1);
+            if character == '[' || character.is_whitespace() {
+                next = offset;
+            }
+            next_label_or_whitespace[offset] =
+                u32::try_from(next).expect("source length is bounded by TextSize");
+        }
+        Self {
+            next_label_or_whitespace,
+        }
+    }
+
+    fn has_label_before_whitespace(&self, value: &str, start: usize) -> bool {
+        let next = self.next_label_or_whitespace(start);
+        value.as_bytes().get(next) == Some(&b'[')
+    }
+
+    fn next_label_or_whitespace(&self, start: usize) -> usize {
+        self.next_label_or_whitespace[start] as usize
+    }
+}
+
+fn url_link_candidate(value: &str, open: usize, index: &UrlCandidateIndex) -> bool {
+    let candidate = &value[open..];
+    let Some(scheme_end) = url_scheme_end(candidate) else {
         return false;
     };
-    let remainder = &value[scheme_end..];
+    let remainder = &candidate[scheme_end..];
     remainder.starts_with("//")
-        || starts_ascii_case_insensitive(value, "mailto:")
+        || starts_ascii_case_insensitive(candidate, "mailto:")
         // An explicit label marks an intentional link even for an opaque scheme.
-        // The scan ends at this token's first whitespace, so every input byte is
-        // inspected only within its own candidate token.
-        || remainder
-            .chars()
-            .take_while(|character| !character.is_whitespace())
-            .any(|character| character == '[')
+        || index.has_label_before_whitespace(value, open + scheme_end)
+}
+
+fn macro_candidate(
+    value: &str,
+    open: usize,
+    url_candidates: &UrlCandidateIndex,
+    inspected_positions: &mut usize,
+) -> bool {
+    let candidate = &value[open..];
+    if named_macro_candidate(candidate) {
+        return true;
+    }
+    if email_candidate_start(value, open) {
+        *inspected_positions = inspected_positions.saturating_add(email_scan_len(candidate));
+        if email_address_end(candidate).is_some() {
+            return true;
+        }
+    }
+    if url_candidate_start(value, open) {
+        *inspected_positions = inspected_positions.saturating_add(url_scan_len(candidate));
+        return url_link_candidate(value, open, url_candidates);
+    }
+    false
+}
+
+fn email_scan_len(value: &str) -> usize {
+    let local = value
+        .bytes()
+        .position(|byte| !email_local_part_byte(byte))
+        .map_or(value.len(), |offset| offset + 1);
+    if value.as_bytes().get(local.saturating_sub(1)) != Some(&b'@') {
+        return local;
+    }
+    local
+        + value[local..]
+            .bytes()
+            .position(|byte| !(byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-')))
+            .unwrap_or(value.len() - local)
+}
+
+fn url_scan_len(value: &str) -> usize {
+    value
+        .char_indices()
+        .find_map(|(offset, character)| {
+            (character == ':'
+                || !character.is_ascii_alphanumeric()
+                    && !matches!(character, '+' | '-' | '.' | '%'))
+            .then_some(offset + character.len_utf8())
+        })
+        .unwrap_or(value.len())
+}
+
+fn named_macro_candidate(value: &str) -> bool {
+    named_macro_prefix(value).is_some_and(NamedMacroPrefix::is_inline)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NamedMacroPrefix {
+    Formula {
+        prefix_len: usize,
+    },
+    Passthrough {
+        prefix_len: usize,
+    },
+    Xref {
+        prefix_len: usize,
+    },
+    Link {
+        prefix_len: usize,
+    },
+    Standard {
+        kind: StandardMacroKind,
+        form: MacroForm,
+        prefix_len: usize,
+    },
+}
+
+impl NamedMacroPrefix {
+    const fn is_inline(self) -> bool {
+        !matches!(
+            self,
+            Self::Standard {
+                form: MacroForm::Block,
+                ..
+            }
+        )
+    }
+}
+
+fn named_macro_prefix(value: &str) -> Option<NamedMacroPrefix> {
+    if starts_ascii_case_insensitive(value, "stem:[") {
+        Some(NamedMacroPrefix::Formula {
+            prefix_len: "stem:[".len(),
+        })
+    } else if starts_ascii_case_insensitive(value, "latexmath:[") {
+        Some(NamedMacroPrefix::Formula {
+            prefix_len: "latexmath:[".len(),
+        })
+    } else if starts_ascii_case_insensitive(value, "pass:[") {
+        Some(NamedMacroPrefix::Passthrough {
+            prefix_len: "pass:[".len(),
+        })
+    } else if starts_ascii_case_insensitive(value, "xref:") {
+        Some(NamedMacroPrefix::Xref {
+            prefix_len: "xref:".len(),
+        })
+    } else if starts_ascii_case_insensitive(value, "link:") {
+        Some(NamedMacroPrefix::Link {
+            prefix_len: "link:".len(),
+        })
+    } else {
+        standard_macro_prefix(value).map(|(kind, form, prefix_len)| NamedMacroPrefix::Standard {
+            kind,
+            form,
+            prefix_len,
+        })
+    }
+}
+
+const fn email_local_part_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-')
+}
+
+fn email_candidate_start(value: &str, open: usize) -> bool {
+    value.as_bytes()[open].is_ascii()
+        && email_local_part_byte(value.as_bytes()[open])
+        && open
+            .checked_sub(1)
+            .is_none_or(|previous| !email_local_part_byte(value.as_bytes()[previous]))
+}
+
+fn url_candidate_start(value: &str, open: usize) -> bool {
+    value.as_bytes()[open].is_ascii_alphabetic()
+        && open.checked_sub(1).is_none_or(|previous| {
+            !matches!(
+                value.as_bytes()[previous],
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.' | b'%'
+            )
+        })
 }
 
 fn is_macro_boundary(value: &str, offset: usize) -> bool {
@@ -1964,18 +2207,18 @@ mod tests {
 
     #[test]
     fn scanner_has_a_fixed_linear_inspection_budget() {
-        assert_eq!(InlineScanner::new("abc").inspected_positions(), 17);
+        assert_eq!(InlineScanner::new("abc").inspected_positions(), 26);
 
         let source = "日本語 *open xref:broken[ https://example.org[label] _tail";
         let scanner = InlineScanner::new(source);
 
         assert!(scanner.inspected_positions() > source.len());
-        assert!(scanner.inspected_positions() <= source.len() * 8);
+        assert!(scanner.inspected_positions() <= source.len() * 12);
 
         for repetitions in 1..128 {
             let hostile = "xref:".repeat(repetitions) + "target[open";
             let scanner = InlineScanner::new(&hostile);
-            assert!(scanner.inspected_positions() <= hostile.len() * 8);
+            assert!(scanner.inspected_positions() <= hostile.len() * 12);
             let output = parse(
                 &hostile,
                 range(0, hostile.len()),
@@ -1987,10 +2230,17 @@ mod tests {
             let hostile = "\"`x ".repeat(repetitions);
             let scanner = InlineScanner::new(&hostile);
             assert!(
-                scanner.inspected_positions() <= hostile.len() * 8,
+                scanner.inspected_positions() <= hostile.len() * 12,
                 "preparsed quote indexing must remain linear"
             );
         }
+        let seed = include_str!("../../../fixtures/lint/macro-boundary-adversarial.adoc");
+        let hostile = seed.repeat(256);
+        let scanner = InlineScanner::new(&hostile);
+        assert!(
+            scanner.inspected_positions() <= hostile.len() * 12,
+            "macro candidate inspection must remain linear"
+        );
     }
 
     #[test]
