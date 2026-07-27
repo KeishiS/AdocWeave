@@ -1,5 +1,5 @@
 = Tableの自動header推論
-:status: planned
+:status: completed
 :depends-on: 093
 
 == 目的
@@ -22,3 +22,10 @@
 * 明示`header`／`noheader`が自動推論より優先される。
 * native、WASM、HTML、Lintおよびformatterで同じtable semanticを共有する。
 * strict／tolerant modeの不完全入力で決定的な診断または回復結果を返す。
+
+== 検証記録
+
+Asciidoctor 2.0.26を参照実装として、PSV／CSV／DSV／TSVの基本例、`header`／`noheader`、
+先頭および区切り前のline comment、quoted multiline cell、AsciiDoc cell、明示`cols`と後続の
+列数が多いrowを比較した。共通conformance fixtureでは同じ入力についてnativeとWASMのsemantic、
+HTMLのheader／body sectionを固定する。

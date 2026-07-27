@@ -3093,6 +3093,19 @@ mod tests {
     }
 
     #[test]
+    fn asciidoc_table_cells_preserve_comment_like_verbatim_lines() {
+        let source = "[cols=a]\n|===\na|....\n// literal must remain\n\n....\n|===\n";
+        let parsed = parse(source).expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert!(
+            output
+                .html
+                .contains("<pre>// literal must remain\n\n</pre>")
+        );
+    }
+
+    #[test]
     fn asciidoc_cells_lower_block_presentations_like_root_blocks() {
         let source = "[cols=a]\n|===\na|[TIP]\n====\ncell *tip*.\n====\n|===\n\n[cols=a]\n|===\na|[quote,Author,Work]\n____\ncell *quote*.\n____\n|===\n\n[cols=a]\n|===\na|[verse,Poet,Poem]\n____\nline one\nline two\n____\n|===\n";
         let parsed = parse(source).expect("parse");

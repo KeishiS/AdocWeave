@@ -10,14 +10,6 @@ https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notes�
 
 == 次期機能
 
-=== M47: 標準構文の互換性
-
-既存の意味情報を小さく拡張できるインライン等幅書式とtable header推論を扱います。
-`v0.8.1`の公開後に着手し、公開versionは実際の変更内容に基づいて決定します。
-
-* xref:../../issues/156-inline-monospace-boundaries.adoc[Issue 156: インライン等幅書式の境界規則]（計画）
-* xref:../../issues/163-table-automatic-header-inference.adoc[Issue 163: Tableの自動header推論]（計画）
-
 === M48: 文書状態とメディア表示
 
 位置に応じた属性値とmediaのHTML表示は影響範囲が異なるため、個別の機能候補として扱います。

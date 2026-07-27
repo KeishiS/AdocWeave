@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { renderThirdPartyNotices, thirdPartyPackages } from "./generate-third-party-notices.mjs";
 
-const workspace = { id: "adocweave 0.8.1 (path+file:///workspace)", name: "adocweave", version: "0.8.1" };
+const workspace = { id: "adocweave 0.9.0 (path+file:///workspace)", name: "adocweave", version: "0.9.0" };
 const packageOf = (name, version, license) => ({ id: `${name} ${version} (registry+https://example.invalid)`, name, version, license });
 
 test("notice rendering groups root dependencies and leaves shared Zed dependencies out of the extension section", () => {
