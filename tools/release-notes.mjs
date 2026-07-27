@@ -15,24 +15,22 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "Public analysis, diagnostics, active URL rendering, and output limits now use responsibility-specific configuration types.",
-  "The CLI can emit the complete typed lint rule catalog, including activation capability, with `adocweave check --list-rules --json`.",
-  "The CLI can validate local xref, link, media, and include targets below an explicit project root without moving filesystem access into the core analyzer.",
-  "Default lint now reports `asciidoc-file-link` and `non-asciidoc-xref` when link and xref macro choice disagrees with the target type, and offers fixes only when the rewrite is unambiguous.",
-  "Authored and active URL policies now reject malformed percent encoding, encoded controls, and network-path references while normal relative document targets remain valid authored input.",
-  "The opt-in `macro-boundary` rule detects complete inline macros that fail only their start-boundary requirement while leaving existing default diagnostics unchanged.",
+  "Document attributes can now be set, redefined, and unset in source order; later definitions do not affect earlier references.",
+  "Multiline soft and hard attribute-value continuations preserve their source ranges while exposing a folded evaluation value.",
+  "Include targets and conditional directives use the attribute state visible when each directive is read, including changes made by included documents.",
+  "Lint, Language Server features, native analysis, and WASM now share the same positioned attribute bindings and references.",
+  "WASM attribute queries include effective values, selected binding IDs, and original source IDs and ranges for included content.",
 ];
 
 const contractNotes = [
   `unified package version: ${manifest.packageVersion}`,
-  `WASM protocol schema version: ${protocol.schemaVersion}. The request now separates analysisOptions, renderPolicy, and outputLimits; the previous flat options object is rejected.`,
-  "The Rust API replaces ParseOptions with AnalysisOptions, SyntaxOptions, and DiagnosticProfile; ProcessingLimits becomes AnalysisLimits plus OutputLimits.",
-  "LintRule is replaced by stable LintRuleId values and the LINT_RULES descriptor catalog.",
-  "UrlPolicy and UrlContext are replaced by AuthoredUrlPolicy, ActiveUrlPolicy, and UrlProvenance.",
-  "Authored URL validation, active rendered URL validation, and local filesystem target inspection are separate policies owned by the analyzer, renderer, and host adapter respectively.",
-  "Local target validation is opt-in through `adocweave check --local-targets --project-root <DIR>` and rejects missing targets, root escapes, and symlink escapes.",
-  "The `macro-boundary` rule is opt-in through repeatable `--enable-rule` options and is published with `enabledByDefault: false`.",
-  "Language Server clients can enable opt-in diagnostics through `adocweave.enabledRules`; changing the setting reanalyzes open documents.",
+  `WASM protocol schema version: ${protocol.schemaVersion}; Worker protocol version: ${protocol.workerProtocolVersion}. Older requests and Worker envelopes are rejected.`,
+  "WASM requests can select `attributeQueries` and optionally provide a preprocessing resource snapshot. Responses return typed bindings, references, effective values, errors, and source provenance.",
+  "The Rust API exposes `AttributeEnvironment`, `AttributeQueryProduct`, binding histories, final values, and position-dependent resolution.",
+  "`ResolvedAttribute.binding` is optional because a hard-locked external attribute has no authored source occurrence.",
+  "`AnalysisOptions.attributes` accepts hard-locked set values and hard-locked unset values. Authored operations cannot override them.",
+  "The `duplicate-attribute` lint rule is removed. Valid redefinitions are not diagnostics; undefined, unused, cycle, depth, and size checks operate on positioned bindings.",
+  "Attribute Hover, Definition, References, and Completion use the binding visible at the cursor and project included definitions to their original documents.",
 ];
 
 const knownConstraints = [
@@ -60,22 +58,14 @@ export function appendRequiredReleaseNotes(body, tag) {
     `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n` +
     "Download all release assets, run `sha256sum --check sha256.sum`, then verify required assets with `gh attestation verify <asset> --repo KeishiS/AdocWeave`.\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
-    "Update Rust integrations to configure authored URLs through `AnalysisOptions.diagnostics.lint.authored_url_policy` and active output through `RenderPolicy.active_urls`.\n\n" +
-    "```rust\nlet mut lint = adocweave::output::diagnostics::LintConfig::default();\n" +
-    "lint.authored_url_policy.allow_relative = true;\n" +
-    "let engine = adocweave::Engine::new(adocweave::AnalysisOptions {\n" +
-    "    diagnostics: adocweave::DiagnosticProfile { lint },\n" +
-    "    ..adocweave::AnalysisOptions::default()\n" +
-    "});\n" +
-    "let policy = adocweave::output::html::RenderPolicy {\n" +
-    "    active_urls: adocweave::resolution::ActiveUrlPolicy {\n" +
-    "        allow_authored_relative: true,\n" +
-    "        ..adocweave::resolution::ActiveUrlPolicy::default()\n" +
-    "    },\n" +
-    "    ..adocweave::output::html::RenderPolicy::default()\n" +
-    "};\n```\n\n" +
-    "Update browser requests from the removed flat `options` object as follows.\n\n" +
-    "```js\nclient.update({\n  version: 1,\n  source,\n  analysisOptions: { syntax: { syntaxMode: \"strict\" } },\n  renderPolicy: { activeUrls: { allowResolvedRelative: true } },\n  outputLimits: { maxOutputBytes: 1048576 },\n});\n```\n\n" +
+    "Update Rust integrations to resolve attributes at the consumer's source position. Treat a missing binding as an external value rather than a missing attribute.\n\n" +
+    "```rust\nlet resolved = analysis.attribute_environment().resolve_at(\"name\", offset);\n" +
+    "if let Some(resolved) = resolved {\n" +
+    "    let value = resolved.value?;\n" +
+    "    let authored_definition = resolved.binding;\n" +
+    "}\n```\n\n" +
+    "Browser integrations must request the new product explicitly and provide already-fetched include resources when preprocessing is required.\n\n" +
+    "```js\nclient.update({\n  version: 1,\n  source,\n  products: { ...products, attributeQueries: true },\n  preprocess: { resources },\n  analysisOptions: { attributes: { locked: \"value\", absent: null } },\n});\n```\n\n" +
     "Install into a versioned directory and switch the `current` symlink only after verification. Keep the previous version until acceptance succeeds; rollback by restoring that symlink. See `docs/user-guide/release-installation.adoc`.\n";
   return `${body.trim()}\n\n${notes}`;
 }
