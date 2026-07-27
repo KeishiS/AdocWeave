@@ -98,10 +98,27 @@ pub struct Directive {
     pub kind: DirectiveKind,
     pub source_id: Option<SourceId>,
     pub range: TextRange,
+    /// Source-relative include target after attribute expansion.
+    pub authored_target: Option<String>,
+    /// Whether a missing include resource is explicitly optional.
+    pub optional: bool,
     pub target: String,
     pub target_range: TextRange,
     /// Definition target for an include; absent for conditionals.
     pub resource_source_id: Option<SourceId>,
+}
+
+impl Directive {
+    pub fn local_target(&self) -> Option<crate::local_target::LocalTargetReference> {
+        if self.kind != DirectiveKind::Include {
+            return None;
+        }
+        crate::local_target::LocalTargetReference::from_include(
+            self.range,
+            self.target_range,
+            self.authored_target.as_deref().unwrap_or(&self.target),
+        )
+    }
 }
 
 /// A non-fatal preprocessing event with a stable source range.
@@ -123,6 +140,21 @@ impl PreprocessNoticeKind {
         match self {
             Self::OptionalResourceMissing => "optional-resource-missing",
         }
+    }
+}
+
+impl IncludeRequest {
+    pub fn local_target(&self) -> Option<crate::local_target::LocalTargetReference> {
+        crate::local_target::LocalTargetReference::from_include(
+            self.range,
+            self.target_range,
+            &self.target,
+        )
+    }
+
+    pub fn is_optional(&self) -> bool {
+        parse_attributes(&self.attributes)
+            .is_ok_and(|attributes| attributes.contains_key("optional"))
     }
 }
 
@@ -429,6 +461,13 @@ pub struct ProjectedReference {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedLocalTarget {
+    pub value: crate::local_target::LocalTargetReference,
+    pub origins: Vec<SourceOrigin>,
+    pub target_origins: Vec<SourceOrigin>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectedResource {
     pub value: ResourceReference,
     pub origins: Vec<SourceOrigin>,
@@ -440,6 +479,7 @@ pub struct ProjectedResource {
 pub struct AnalysisProjection {
     pub directives: Vec<Directive>,
     pub diagnostics: Vec<ProjectedDiagnostic>,
+    pub local_targets: Vec<ProjectedLocalTarget>,
     pub references: Vec<ProjectedReference>,
     pub resources: Vec<ProjectedResource>,
     pub symbols: Vec<ProjectedDocumentSymbol>,
@@ -556,30 +596,69 @@ impl PreprocessedAnalysis {
                 })
             })
             .collect::<Result<Vec<_>, ProjectionError>>()?;
-        let references = self
-            .analysis
-            .references()
-            .iter()
-            .map(|value| {
-                Ok(ProjectedReference {
-                    origins: project(value.range)?,
-                    target_origins: project(value.target_range)?,
-                    value: value.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, ProjectionError>>()?;
-        let resources = self
-            .analysis
-            .resources()
-            .iter()
-            .map(|value| {
-                Ok(ProjectedResource {
-                    origins: project(value.range())?,
-                    target_origins: project(value.target_range())?,
-                    value: value.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, ProjectionError>>()?;
+        let mut local_targets = Vec::new();
+        for link in self.analysis.links() {
+            let Some(value) = crate::local_target::LocalTargetReference::from_link(link) else {
+                continue;
+            };
+            local_targets.push(ProjectedLocalTarget {
+                origins: project(value.range)?,
+                target_origins: project(value.target_range)?,
+                value,
+            });
+        }
+        let mut references = Vec::new();
+        for value in self.analysis.references() {
+            let origins = project(value.range)?;
+            let target_origins = project(value.target_range)?;
+            if let Some(local) = crate::local_target::LocalTargetReference::from_reference(value) {
+                local_targets.push(ProjectedLocalTarget {
+                    value: local,
+                    origins: origins.clone(),
+                    target_origins: target_origins.clone(),
+                });
+            }
+            references.push(ProjectedReference {
+                origins,
+                target_origins,
+                value: value.clone(),
+            });
+        }
+        let mut resources = Vec::new();
+        for value in self.analysis.resources() {
+            let origins = project(value.range())?;
+            let target_origins = project(value.target_range())?;
+            if let Some(local) = crate::local_target::LocalTargetReference::from_resource(value) {
+                local_targets.push(ProjectedLocalTarget {
+                    value: local,
+                    origins: origins.clone(),
+                    target_origins: target_origins.clone(),
+                });
+            }
+            resources.push(ProjectedResource {
+                origins,
+                target_origins,
+                value: value.clone(),
+            });
+        }
+        for directive in &self.document.directives {
+            let Some(value) = directive.local_target() else {
+                continue;
+            };
+            let origin = SourceOrigin {
+                source_id: directive.source_id.clone(),
+                range: OriginRange::new(directive.range),
+            };
+            let target_origin = SourceOrigin {
+                source_id: directive.source_id.clone(),
+                range: OriginRange::new(directive.target_range),
+            };
+            local_targets.push(ProjectedLocalTarget {
+                value,
+                origins: vec![origin],
+                target_origins: vec![target_origin],
+            });
+        }
         let symbols = crate::document::document_symbols(self.analysis.document())
             .into_iter()
             .map(|symbol| project_symbol(symbol, &mut project))
@@ -587,6 +666,7 @@ impl PreprocessedAnalysis {
         Ok(AnalysisProjection {
             directives: self.document.directives.clone(),
             diagnostics,
+            local_targets,
             references,
             resources,
             symbols,
@@ -793,7 +873,7 @@ impl Context<'_> {
         }
         self.bump_node(source_id.clone(), range)?;
         let expanded_target = expand_attributes(&include.target, &self.options.attributes);
-        let target = resolve_target(&expanded_target, base_uri);
+        let target = resolve_include_target(&expanded_target, base_uri);
         validate_target(&target, self.options).map_err(|message| {
             error(
                 PreprocessErrorKind::UnsafeTarget,
@@ -835,6 +915,8 @@ impl Context<'_> {
             kind: DirectiveKind::Include,
             source_id: source_id.clone(),
             range,
+            authored_target: Some(expanded_target),
+            optional,
             target: target.clone(),
             target_range: relative_range(range, include.target_start, include.target_end),
             resource_source_id: document.map(|document| document.source_id.clone()),
@@ -887,6 +969,8 @@ impl Context<'_> {
                     kind: directive.kind,
                     source_id: source_id.clone(),
                     range: line.range,
+                    authored_target: None,
+                    optional: false,
                     target: directive.target.clone(),
                     target_range: relative_range(
                         line.range,
@@ -963,10 +1047,16 @@ impl Context<'_> {
                         )?;
                     } else {
                         self.bump_node(source_id.clone(), line.range)?;
+                        let authored_target =
+                            expand_attributes(&include.target, &self.options.attributes);
+                        let optional = parse_attributes(&include.attributes)
+                            .is_ok_and(|attributes| attributes.contains_key("optional"));
                         self.directives.push(Directive {
                             kind: DirectiveKind::Include,
                             source_id: source_id.clone(),
                             range: line.range,
+                            authored_target: Some(authored_target),
+                            optional,
                             target: include.target,
                             target_range: relative_range(
                                 line.range,
@@ -1378,6 +1468,7 @@ fn validate_target(target: &str, options: &PreprocessOptions) -> Result<(), &'st
         || target.chars().any(|character| character.is_control())
         || target.starts_with('/')
         || target.starts_with('\\')
+        || target.contains('\\')
         || target.split('/').any(|segment| segment == "..")
     {
         return Err("unsafe include target");
@@ -1393,14 +1484,27 @@ fn validate_target(target: &str, options: &PreprocessOptions) -> Result<(), &'st
     Ok(())
 }
 
-fn resolve_target(target: &str, base_uri: Option<&str>) -> String {
+pub fn resolve_include_target(target: &str, base_uri: Option<&str>) -> String {
     if target.contains(':') || target.starts_with('/') || target.starts_with('\\') {
         return target.to_owned();
     }
-    let Some(base_uri) = base_uri.filter(|base| !base.is_empty()) else {
-        return target.to_owned();
-    };
-    format!("{}/{target}", base_uri.trim_end_matches('/'))
+    if let Some(base_uri) = base_uri.filter(|base| base.contains(':')) {
+        return format!("{}/{target}", base_uri.trim_end_matches('/'));
+    }
+    let combined = base_uri
+        .filter(|base| !base.is_empty())
+        .map_or_else(|| target.to_owned(), |base| format!("{base}/{target}"));
+    let mut segments = Vec::new();
+    for segment in combined.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." if segments.last().is_some_and(|segment| *segment != "..") => {
+                segments.pop();
+            }
+            _ => segments.push(segment),
+        }
+    }
+    segments.join("/")
 }
 
 fn target_base(target: &str) -> Option<String> {
@@ -1612,6 +1716,14 @@ mod tests {
         };
         let result = preprocess("include::one.adoc[]\n", &snapshot, &options).expect("result");
         assert_eq!(result.source, "chapter\n");
+    }
+
+    #[test]
+    fn uri_base_preserves_snapshot_key_spelling() {
+        assert_eq!(
+            resolve_include_target("part.adoc", Some("file:///book")),
+            "file:///book/part.adoc"
+        );
     }
 
     #[test]

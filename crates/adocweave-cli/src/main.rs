@@ -16,6 +16,7 @@ use adocweave::text::{PositionEncoding, SourceDocument};
 use adocweave::{AnalysisOptions, Engine, OutputLimits, ParseError};
 
 mod local_include;
+mod local_target;
 
 const HELP: &str = "\
 AdocWeave command-line interface
@@ -40,6 +41,8 @@ Options:
   --include   Enable bounded local include processing
   --base-dir DIR    Resolve root document includes from DIR
   --allow-root DIR  Permit include resources below DIR; repeatable
+  --local-targets     Check local file targets; check only
+  --project-root DIR  Restrict local targets below DIR; requires --local-targets
   --complete  Convert to a complete HTML document instead of a fragment
   --css FILE      Embed CSS from FILE into the complete document; repeatable
   --css-url URL   Link an allowed stylesheet URL; repeatable
@@ -65,6 +68,7 @@ enum CliError {
         actual: u64,
     },
     Include(local_include::LocalIncludeError),
+    LocalTarget(adocweave_host::LocalTargetError),
     FormattingRequired,
     Stylesheet(String),
 }
@@ -91,6 +95,7 @@ impl fmt::Display for CliError {
                 )
             }
             Self::Include(source) => source.fmt(formatter),
+            Self::LocalTarget(source) => source.fmt(formatter),
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
             Self::Stylesheet(message) => formatter.write_str(message),
         }
@@ -104,6 +109,7 @@ impl Error for CliError {
             Self::Analysis(source) => Some(source),
             Self::Position(source) => Some(source),
             Self::Include(source) => Some(source),
+            Self::LocalTarget(source) => Some(source),
             Self::Usage(_)
             | Self::InvalidUtf8 { .. }
             | Self::OutputLimit { .. }
@@ -195,6 +201,7 @@ struct Arguments {
     include: bool,
     base_dir: Option<PathBuf>,
     allowed_roots: Vec<PathBuf>,
+    project_root: Option<PathBuf>,
 }
 
 enum Action {
@@ -240,6 +247,8 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut include = false;
     let mut base_dir = None;
     let mut allowed_roots = Vec::new();
+    let mut local_targets = false;
+    let mut project_root = None;
     let mut complete = false;
     let mut css = Vec::new();
     while let Some(argument) = arguments.next() {
@@ -249,6 +258,13 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "--list-rules" if operation == Operation::Check => list_rules = true,
             "--check" if operation == Operation::Format => format_check = true,
             "--include" => include = true,
+            "--local-targets" if operation == Operation::Check => local_targets = true,
+            "--project-root" if operation == Operation::Check => {
+                let value = arguments.next().ok_or_else(|| {
+                    CliError::Usage("--project-root requires a directory".to_owned())
+                })?;
+                project_root = Some(PathBuf::from(value));
+            }
             "--complete" if operation == Operation::Convert => complete = true,
             "--css" if operation == Operation::Convert => {
                 let value = arguments
@@ -288,6 +304,17 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "--base-dir and --allow-root require --include".to_owned(),
         ));
     }
+    if local_targets != project_root.is_some() {
+        return Err(CliError::Usage(
+            "--local-targets and --project-root must be used together".to_owned(),
+        ));
+    }
+    if local_targets && !allowed_roots.is_empty() {
+        return Err(CliError::Usage(
+            "--allow-root cannot be combined with --local-targets; --project-root is the boundary"
+                .to_owned(),
+        ));
+    }
     if !complete && !css.is_empty() {
         return Err(CliError::Usage(
             "--css and --css-url require --complete".to_owned(),
@@ -302,6 +329,8 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             || include
             || base_dir.is_some()
             || !allowed_roots.is_empty()
+            || local_targets
+            || project_root.is_some()
         {
             return Err(CliError::Usage(
                 "--list-rules cannot be combined with document input or include options".to_owned(),
@@ -330,6 +359,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         include,
         base_dir,
         allowed_roots,
+        project_root,
     }))
 }
 
@@ -435,19 +465,90 @@ fn process_convert(input: &[u8], render_policy: &RenderPolicy) -> Result<String,
     Ok(output.html)
 }
 
-fn process_check(input: &[u8], format: DiagnosticFormat) -> Result<CheckOutcome, CliError> {
+fn process_check(
+    input: &[u8],
+    format: DiagnosticFormat,
+    local: Option<(&std::path::Path, &std::path::Path, &str)>,
+) -> Result<CheckOutcome, CliError> {
     let source = decode_input(input)?;
     let analysis = analyze(source)?;
-    let output = match format {
-        DiagnosticFormat::Json => diagnostic::render_json(analysis.diagnostics()),
-        DiagnosticFormat::Human => diagnostic::render_human(
-            analysis.diagnostics(),
-            analysis.source_document(),
-            PositionEncoding::Utf16,
+    let mut host = if let Some((base, root, source_id)) = local {
+        let mut targets = analysis.local_targets();
+        let snapshot =
+            std::iter::empty::<(String, adocweave::preprocess::ResourceDocument)>().collect();
+        let include_document = adocweave::preprocess::preprocess(
+            source,
+            &snapshot,
+            &adocweave::preprocess::PreprocessOptions {
+                source_id: Some(adocweave::SourceId::new(source_id)),
+                enable_includes: false,
+                ..adocweave::preprocess::PreprocessOptions::default()
+            },
         )
-        .map_err(CliError::Position)?,
+        .map_err(|error| CliError::Include(local_include::LocalIncludeError::Preprocess(error)))?;
+        let includes = include_document
+            .directives
+            .iter()
+            .filter(|directive| directive.kind == adocweave::preprocess::DirectiveKind::Include)
+            .collect::<Vec<_>>();
+        let optional_ranges = includes
+            .iter()
+            .filter(|include| include.optional)
+            .map(|include| include.target_range)
+            .collect::<Vec<_>>();
+        targets.extend(includes.iter().filter_map(|include| include.local_target()));
+        let mut diagnostics = local_target::validate(&targets, base, root, source_id, source)
+            .map_err(CliError::LocalTarget)?;
+        diagnostics.retain(|diagnostic| {
+            diagnostic.code != "local-target-missing"
+                || !optional_ranges.contains(&diagnostic.range)
+        });
+        diagnostics
+    } else {
+        Vec::new()
     };
-    Ok(CheckOutcome::success(output))
+    host.sort_by(|left, right| {
+        (
+            left.range.start(),
+            left.range.end(),
+            left.code,
+            left.target.as_str(),
+        )
+            .cmp(&(
+                right.range.start(),
+                right.range.end(),
+                right.code,
+                right.target.as_str(),
+            ))
+    });
+    let output = match format {
+        DiagnosticFormat::Json => {
+            if host.is_empty() {
+                return Ok(CheckOutcome::success(diagnostic::render_json(
+                    analysis.diagnostics(),
+                )));
+            }
+            let mut values = serde_json::from_str::<Vec<serde_json::Value>>(
+                &diagnostic::render_json(analysis.diagnostics()),
+            )
+            .expect("core diagnostic renderer returns a JSON array");
+            values.extend(local_target::json_values(&host));
+            serde_json::to_string(&values).expect("diagnostics are serializable")
+        }
+        DiagnosticFormat::Human => {
+            diagnostic::render_human(
+                analysis.diagnostics(),
+                analysis.source_document(),
+                PositionEncoding::Utf8,
+            )
+            .map_err(CliError::Position)?
+                + &local_target::render_human(&host, source).map_err(CliError::Position)?
+        }
+    };
+    Ok(CheckOutcome {
+        output,
+        has_host_errors: !host.is_empty(),
+    })
 }
 
 fn process_format(input: &[u8]) -> Result<String, CliError> {
@@ -502,6 +603,20 @@ fn run() -> Result<ExitCode, CliError> {
                 return Ok(ExitCode::SUCCESS);
             }
             let input_path = arguments.input.clone();
+            let local_context = arguments.project_root.as_ref().map(|project_root| {
+                let canonical_input = input_path
+                    .as_ref()
+                    .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()));
+                let source_id = canonical_input.as_ref().map_or_else(
+                    || "<stdin>".to_owned(),
+                    |path| path.to_string_lossy().into_owned(),
+                );
+                let base = canonical_input
+                    .as_deref()
+                    .and_then(std::path::Path::parent)
+                    .map_or_else(|| project_root.clone(), PathBuf::from);
+                (base, project_root.clone(), source_id)
+            });
             let input = read_input(arguments.input)?;
             let mut prepared = None;
             let processed = if arguments.include {
@@ -509,10 +624,9 @@ fn run() -> Result<ExitCode, CliError> {
                 let base_dir = match arguments.base_dir {
                     Some(base_dir) => base_dir,
                     None => input_path
-                        .as_deref()
-                        .and_then(std::path::Path::parent)
-                        .filter(|path| !path.as_os_str().is_empty())
-                        .map(PathBuf::from)
+                        .as_ref()
+                        .and_then(|path| path.canonicalize().ok())
+                        .and_then(|path| path.parent().map(PathBuf::from))
                         .ok_or_else(|| {
                             CliError::Usage(
                                 "--include with standard input requires --base-dir".to_owned(),
@@ -528,12 +642,16 @@ fn run() -> Result<ExitCode, CliError> {
                             .into_owned()
                     },
                 );
-                let include_input = local_include::prepare(
-                    source,
-                    Some(source_id),
-                    &base_dir,
-                    &arguments.allowed_roots,
-                )
+                let include_input = if let Some(project_root) = &arguments.project_root {
+                    local_include::prepare_local(source, source_id, &base_dir, project_root)
+                } else {
+                    local_include::prepare(
+                        source,
+                        Some(source_id),
+                        &base_dir,
+                        &arguments.allowed_roots,
+                    )
+                }
                 .map_err(CliError::Include)?;
                 let processed = if operation == Operation::Format {
                     input.clone()
@@ -546,12 +664,16 @@ fn run() -> Result<ExitCode, CliError> {
                 input.clone()
             };
             let (output, exit_code) = if let CommandOptions::Check(check) = &arguments.command {
-                let outcome = if let Some(prepared) = prepared.as_ref() {
-                    check_preprocessed(prepared, check.format)
-                        .map(CheckOutcome::success)
-                        .map_err(CliError::Include)
+                let outcome = if let Some(prepared) = prepared.as_mut() {
+                    check_preprocessed(prepared, check.format).map_err(CliError::Include)
                 } else {
-                    process_check(&processed, check.format)
+                    process_check(
+                        &processed,
+                        check.format,
+                        local_context.as_ref().map(|(base, root, source_id)| {
+                            (base.as_path(), root.as_path(), source_id.as_str())
+                        }),
+                    )
                 }?;
                 let exit_code = outcome.exit_code();
                 Ok((outcome.output, exit_code))
@@ -583,9 +705,9 @@ fn run() -> Result<ExitCode, CliError> {
 }
 
 fn check_preprocessed(
-    prepared: &local_include::PreparedInput,
+    prepared: &mut local_include::PreparedInput,
     format: DiagnosticFormat,
-) -> Result<String, local_include::LocalIncludeError> {
+) -> Result<CheckOutcome, local_include::LocalIncludeError> {
     let engine = adocweave::Engine::new(adocweave::AnalysisOptions::default());
     let analysis = engine
         .analyze(&prepared.document.source)
@@ -596,8 +718,84 @@ fn check_preprocessed(
     }
     .project_origins(ProjectionLimits::default())
     .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
+    let mut host = Vec::new();
+    if let Some(session) = prepared.local_session.as_mut() {
+        for target in &projected.local_targets {
+            for origin in &target.target_origins {
+                let source_id = origin
+                    .source_id
+                    .as_ref()
+                    .map_or("<stdin>", adocweave::SourceId::as_str);
+                let Some(base) = prepared.source_bases.get(source_id) else {
+                    continue;
+                };
+                let directive = (target.value.kind == adocweave::LocalTargetKind::Include)
+                    .then(|| {
+                        projected.directives.iter().find(|directive| {
+                            directive
+                                .source_id
+                                .as_ref()
+                                .map(adocweave::SourceId::as_str)
+                                == Some(source_id)
+                                && directive.target_range == origin.range.text_range()
+                        })
+                    })
+                    .flatten();
+                let optional = directive.is_some_and(|directive| directive.optional);
+                let Some(source) = prepared.sources.get(source_id) else {
+                    continue;
+                };
+                if let Some(error) =
+                    directive.and_then(|directive| prepared.include_errors.get(&directive.target))
+                {
+                    if optional && matches!(error, adocweave_host::LocalTargetError::Missing(_)) {
+                        continue;
+                    }
+                    host.push(local_target::diagnostic_from_error(
+                        error,
+                        source_id,
+                        source,
+                        origin.range.text_range(),
+                        &target.value.target,
+                    ));
+                    continue;
+                }
+                if optional && target.value.syntax == adocweave::LocalTargetSyntax::Candidate {
+                    match session.inspect(base, &target.value.path) {
+                        Ok(_) | Err(adocweave_host::LocalTargetError::Missing(_)) => continue,
+                        Err(_) => {}
+                    }
+                }
+                let mut value = target.value.clone();
+                value.target_range = origin.range.text_range();
+                host.extend(local_target::validate_with_session(
+                    std::slice::from_ref(&value),
+                    base,
+                    source_id,
+                    source,
+                    session,
+                ));
+            }
+        }
+        host.sort_by(|left, right| {
+            (
+                left.source_id.as_str(),
+                left.range.start(),
+                left.range.end(),
+                left.code,
+                left.target.as_str(),
+            )
+                .cmp(&(
+                    right.source_id.as_str(),
+                    right.range.start(),
+                    right.range.end(),
+                    right.code,
+                    right.target.as_str(),
+                ))
+        });
+    }
     if format == DiagnosticFormat::Json {
-        let values = projected
+        let mut values = projected
             .diagnostics
             .iter()
             .flat_map(|diagnostic| {
@@ -616,7 +814,12 @@ fn check_preprocessed(
                 })
             })
             .collect::<Vec<_>>();
+        values.extend(local_target::json_values(&host));
         return serde_json::to_string(&values)
+            .map(|output| CheckOutcome {
+                output,
+                has_host_errors: !host.is_empty(),
+            })
             .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()));
     }
 
@@ -649,7 +852,19 @@ fn check_preprocessed(
             .expect("writing to a String cannot fail");
         }
     }
-    Ok(output)
+    for diagnostic in &host {
+        let source = prepared.sources.get(&diagnostic.source_id).ok_or_else(|| {
+            local_include::LocalIncludeError::MissingSource(diagnostic.source_id.clone())
+        })?;
+        output.push_str(
+            &local_target::render_human(std::slice::from_ref(diagnostic), source)
+                .map_err(local_include::LocalIncludeError::Position)?,
+        );
+    }
+    Ok(CheckOutcome {
+        output,
+        has_host_errors: !host.is_empty(),
+    })
 }
 
 fn main() -> ExitCode {

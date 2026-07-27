@@ -5,8 +5,10 @@
 
 mod dependency_graph;
 mod local_resource;
+mod local_target;
 
 pub use dependency_graph::DependencyGraph;
 pub use local_resource::{
     LocalResourcePolicy, ResourceBudget, ResourceError, ResourceLimits, normalize_relative,
 };
+pub use local_target::{LocalTargetError, LocalTargetPolicy, LocalTargetSession};

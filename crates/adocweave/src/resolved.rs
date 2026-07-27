@@ -15,6 +15,7 @@ use crate::presentation::ResolvedDocumentAttributes;
 /// index instead of traversing the document tree again.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DocumentFacts {
+    links: Vec<crate::inline::Link>,
     references: Vec<crate::inline::Reference>,
     macros: Vec<crate::inline::StandardMacro>,
     resources: Vec<crate::resource::ResourceReference>,
@@ -24,6 +25,9 @@ impl DocumentFacts {
     fn build(document: &AstDocument) -> Self {
         let mut facts = Self::default();
         crate::walker::walk_ast(document, |node| match node {
+            crate::walker::SemanticNode::Inline(crate::inline::Inline::Link(link)) => {
+                facts.links.push(link.clone());
+            }
             crate::walker::SemanticNode::Inline(crate::inline::Inline::Reference(reference)) => {
                 facts.references.push(reference.clone());
             }
@@ -35,6 +39,7 @@ impl DocumentFacts {
             }
             _ => {}
         });
+        facts.links.sort_by_key(|link| link.range.start());
         facts
             .references
             .sort_by_key(|reference| reference.range.start());
@@ -43,6 +48,10 @@ impl DocumentFacts {
             .resources
             .sort_by_key(|resource| resource.range().start());
         facts
+    }
+
+    pub fn links(&self) -> &[crate::inline::Link] {
+        &self.links
     }
 
     pub fn references(&self) -> &[crate::inline::Reference] {

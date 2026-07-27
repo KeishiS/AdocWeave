@@ -8,10 +8,11 @@ use std::path::{Component, Path, PathBuf};
 use adocweave::SourceId;
 use adocweave::preprocess::{
     PreprocessError, PreprocessOptions, PreprocessedDocument, ResourceDocument, ResourceSnapshot,
-    discover_includes, preprocess,
+    discover_includes, preprocess, resolve_include_target,
 };
 use adocweave_host::{
-    LocalResourcePolicy, ResourceBudget, ResourceError, ResourceLimits, normalize_relative,
+    LocalResourcePolicy, LocalTargetPolicy, LocalTargetSession, ResourceBudget, ResourceError,
+    ResourceLimits, normalize_relative,
 };
 
 #[derive(Debug)]
@@ -35,6 +36,9 @@ pub enum LocalIncludeError {
 pub struct PreparedInput {
     pub document: PreprocessedDocument,
     pub sources: BTreeMap<String, String>,
+    pub source_bases: BTreeMap<String, PathBuf>,
+    pub local_session: Option<LocalTargetSession>,
+    pub include_errors: BTreeMap<String, adocweave_host::LocalTargetError>,
 }
 
 impl fmt::Display for LocalIncludeError {
@@ -108,8 +112,10 @@ pub fn prepare(
 
     let mut snapshot_entries = Vec::new();
     let mut sources = BTreeMap::new();
+    let mut source_bases = BTreeMap::new();
     if let Some(source_id) = &source_id {
         sources.insert(source_id.clone(), source.to_owned());
+        source_bases.insert(source_id.clone(), base_dir.clone());
     }
     let mut pending = VecDeque::new();
     enqueue(source, Path::new(""), &mut pending)?;
@@ -127,6 +133,13 @@ pub fn prepare(
         enqueue(&text, parent, &mut pending)?;
         let source_id = canonical.to_string_lossy().into_owned();
         sources.insert(source_id.clone(), text.clone());
+        source_bases.insert(
+            source_id.clone(),
+            canonical
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_owned(),
+        );
         snapshot_entries.push((
             logical_key(&target),
             ResourceDocument {
@@ -147,7 +160,113 @@ pub fn prepare(
         },
     )
     .map_err(LocalIncludeError::Preprocess)?;
-    Ok(PreparedInput { document, sources })
+    Ok(PreparedInput {
+        document,
+        sources,
+        source_bases,
+        local_session: None,
+        include_errors: BTreeMap::new(),
+    })
+}
+
+pub fn prepare_local(
+    source: &str,
+    source_id: String,
+    base_dir: &Path,
+    project_root: &Path,
+) -> Result<PreparedInput, LocalIncludeError> {
+    let base_dir = base_dir
+        .canonicalize()
+        .map_err(|source| LocalIncludeError::InvalidBase {
+            path: base_dir.to_owned(),
+            source,
+        })?;
+    let policy = LocalTargetPolicy::new(project_root)
+        .map_err(|error| LocalIncludeError::Analysis(format!("invalid project root: {error}")))?;
+    if !base_dir.starts_with(policy.root()) {
+        return Err(LocalIncludeError::OutsideRoot(base_dir));
+    }
+    let root = policy.root().to_owned();
+    let mut session = LocalTargetSession::new(policy, 10_000, ResourceLimits::default());
+    let base_key = logical_key(
+        base_dir
+            .strip_prefix(&root)
+            .expect("base checked below root"),
+    );
+
+    let mut sources = BTreeMap::from([(source_id.clone(), source.to_owned())]);
+    let mut source_bases = BTreeMap::from([(source_id.clone(), base_dir)]);
+    let mut snapshot_entries = Vec::new();
+    let mut include_errors = BTreeMap::new();
+    let mut pending = VecDeque::new();
+    enqueue_local(source, &base_key, &mut pending)?;
+    let mut visited = BTreeSet::new();
+    while let Some(target) = pending.pop_front() {
+        if !visited.insert(target.clone()) {
+            continue;
+        }
+        match session.read_utf8(&root, &target) {
+            Ok((canonical, text)) => {
+                let parent = target.rsplit_once('/').map_or("", |(parent, _)| parent);
+                enqueue_local(&text, parent, &mut pending)?;
+                let resource_id = canonical.to_string_lossy().into_owned();
+                sources.insert(resource_id.clone(), text.clone());
+                source_bases.insert(
+                    resource_id.clone(),
+                    canonical
+                        .parent()
+                        .unwrap_or_else(|| Path::new(""))
+                        .to_owned(),
+                );
+                snapshot_entries.push((
+                    target,
+                    ResourceDocument {
+                        source_id: SourceId::new(resource_id),
+                        source: text,
+                    },
+                ));
+            }
+            Err(error) => {
+                include_errors.insert(target.clone(), error);
+                snapshot_entries.push((
+                    target.clone(),
+                    ResourceDocument {
+                        source_id: SourceId::new(format!("<unavailable:{target}>")),
+                        source: String::new(),
+                    },
+                ));
+            }
+        }
+    }
+    let snapshot: ResourceSnapshot = snapshot_entries.into_iter().collect();
+    let document = preprocess(
+        source,
+        &snapshot,
+        &PreprocessOptions {
+            source_id: Some(SourceId::new(source_id)),
+            base_uri: (!base_key.is_empty()).then_some(base_key),
+            ..PreprocessOptions::default()
+        },
+    )
+    .map_err(LocalIncludeError::Preprocess)?;
+    Ok(PreparedInput {
+        document,
+        sources,
+        source_bases,
+        local_session: Some(session),
+        include_errors,
+    })
+}
+
+fn enqueue_local(
+    source: &str,
+    parent: &str,
+    pending: &mut VecDeque<String>,
+) -> Result<(), LocalIncludeError> {
+    for include in discover_includes(source).map_err(LocalIncludeError::Position)? {
+        pending.push_back(resolve_include_target(&include.target, Some(parent)));
+    }
+    Ok(())
 }
 
 fn enqueue(

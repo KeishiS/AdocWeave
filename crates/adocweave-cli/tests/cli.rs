@@ -205,6 +205,193 @@ fn check_accepts_relative_targets_without_activating_them_in_html() {
 }
 
 #[test]
+fn local_target_check_is_explicit_and_fails_for_missing_files() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = b"xref:missing-v011-target.adoc[missing]\n\
+include::missing-v011-include.adoc[]\n\
+include::missing-v011-optional.adoc[optional]\n\
+ifdef::never[]\n\
+include::missing-v011-inactive.adoc[]\n\
+endif::[]\n";
+
+    let default = run_with_stdin(&["check", "--json", "-"], source);
+    let checked = run_with_stdin(
+        &[
+            "check",
+            "--json",
+            "--local-targets",
+            "--project-root",
+            root.to_str().expect("UTF-8 root"),
+            "-",
+        ],
+        source,
+    );
+
+    assert!(default.status.success());
+    assert!(!String::from_utf8_lossy(&default.stdout).contains("local-target-"));
+    assert!(!checked.status.success());
+    assert!(checked.stderr.is_empty());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&checked.stdout).expect("local target JSON");
+    let local = diagnostics
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter(|value| value["code"] == "local-target-missing")
+        .collect::<Vec<_>>();
+    assert_eq!(local.len(), 2);
+    assert_eq!(local[0]["target"], "missing-v011-target.adoc");
+    assert_eq!(local[0]["line"], 1);
+    assert_eq!(local[0]["column"], 6);
+    assert_eq!(local[1]["target"], "missing-v011-include.adoc");
+}
+
+#[test]
+fn local_target_check_classifies_paths_and_ignores_external_targets() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-local-paths-{unique}"));
+    std::fs::create_dir_all(root.join("directory")).expect("directory");
+    let document = root.join("root.adoc");
+    std::fs::write(
+        &document,
+        "xref:directory[dir]\nxref:../outside.adoc[out]\nlink:bad%0Aname[bad]\nlink:http//example.com[incomplete]\nlink:https://example.com[web]\n",
+    )
+    .expect("source");
+
+    let output = adocweave()
+        .args([
+            "check",
+            "--local-targets",
+            "--project-root",
+            root.to_str().expect("UTF-8 root"),
+            "--json",
+            document.to_str().expect("UTF-8 document"),
+        ])
+        .output()
+        .expect("local target check");
+    assert!(!output.status.success());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    let codes = diagnostics
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|value| value["code"].as_str().expect("code"))
+        .filter(|code| code.starts_with("local-target-"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        codes,
+        vec![
+            "local-target-not-file",
+            "local-target-outside-root",
+            "local-target-unverifiable",
+            "local-target-unverifiable"
+        ]
+    );
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn local_target_human_output_escapes_control_characters() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = run_with_stdin(
+        &[
+            "check",
+            "--local-targets",
+            "--project-root",
+            root.to_str().expect("UTF-8 root"),
+            "-",
+        ],
+        b"link:bad\x1bname[target]\n",
+    );
+
+    assert!(!output.status.success());
+    assert!(!output.stdout.contains(&0x1b));
+    assert!(String::from_utf8_lossy(&output.stdout).contains(r"bad\u{1b}name"));
+}
+
+#[test]
+fn local_target_file_base_uses_the_invocation_directory_for_bare_paths() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-local-base-{unique}"));
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).expect("docs");
+    std::fs::write(docs.join("root.adoc"), "xref:target.adoc[target]\n").expect("source");
+    std::fs::write(docs.join("target.adoc"), "= Target\n").expect("target");
+
+    let output = adocweave()
+        .current_dir(&docs)
+        .args([
+            "check",
+            "--local-targets",
+            "--project-root",
+            "..",
+            "root.adoc",
+        ])
+        .output()
+        .expect("local target check");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn local_target_check_rejects_symlink_escape_and_keeps_duplicate_positions() {
+    use std::os::unix::fs::symlink;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-local-root-{unique}"));
+    let outside = std::env::temp_dir().join(format!("adocweave-local-outside-{unique}"));
+    std::fs::create_dir_all(&root).expect("root");
+    std::fs::create_dir_all(&outside).expect("outside");
+    std::fs::write(outside.join("target.adoc"), "outside\n").expect("outside target");
+    symlink(&outside, root.join("escape")).expect("symlink");
+    let document = root.join("root.adoc");
+    std::fs::write(
+        &document,
+        "xref:escape/target.adoc[first]\nxref:escape/target.adoc[second]\n",
+    )
+    .expect("source");
+
+    let output = adocweave()
+        .args([
+            "check",
+            "--local-targets",
+            "--project-root",
+            root.to_str().expect("UTF-8 root"),
+            "--json",
+            document.to_str().expect("UTF-8 document"),
+        ])
+        .output()
+        .expect("local target check");
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    assert!(!output.status.success());
+    assert_eq!(diagnostics.as_array().expect("array").len(), 2);
+    assert_eq!(diagnostics[0]["code"], "local-target-outside-root");
+    assert_eq!(diagnostics[0]["line"], 1);
+    assert_eq!(diagnostics[1]["line"], 2);
+
+    std::fs::remove_dir_all(root).expect("root cleanup");
+    std::fs::remove_dir_all(outside).expect("outside cleanup");
+}
+
+#[test]
 fn check_reports_invalid_explicit_ordered_numbers_without_losing_the_list() {
     let source = b"4294967296. overflow\n0. zero\n";
     let output = run_with_stdin(&["check", "--json", "-"], source);
@@ -421,6 +608,91 @@ fn include_check_projects_diagnostics_to_the_resource_file() {
     )));
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("JSON diagnostics");
     assert_eq!(value[0]["sourceId"], part.to_string_lossy().as_ref());
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn local_target_check_shares_include_resolution_and_honors_optional() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-local-include-{unique}"));
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).expect("directory");
+    let document = docs.join("root.adoc");
+    std::fs::write(
+        &document,
+        "include::../part.adoc[]\ninclude::missing-part.adoc[]\ninclude::optional.adoc[optional]\n",
+    )
+    .expect("root source");
+    std::fs::write(root.join("part.adoc"), "xref:missing.adoc[missing]\n").expect("part source");
+
+    let output = adocweave()
+        .args([
+            "check",
+            "--include",
+            "--local-targets",
+            "--project-root",
+            root.to_str().expect("UTF-8 root"),
+            "--json",
+            document.to_str().expect("UTF-8 document"),
+        ])
+        .output()
+        .expect("local include check");
+
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    assert_eq!(
+        diagnostics
+            .as_array()
+            .expect("array")
+            .iter()
+            .filter(|value| value["code"] == "local-target-missing")
+            .count(),
+        2
+    );
+    assert!(diagnostics.as_array().expect("array").iter().any(|value| {
+        value["sourceId"] == root.join("part.adoc").to_string_lossy().as_ref()
+            && value["target"] == "missing.adoc"
+    }));
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn local_target_check_reports_include_read_failures() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-local-read-{unique}"));
+    std::fs::create_dir_all(&root).expect("directory");
+    let document = root.join("root.adoc");
+    std::fs::write(&document, "include::invalid.adoc[]\n").expect("root source");
+    std::fs::write(root.join("invalid.adoc"), [0xff]).expect("invalid UTF-8");
+
+    let output = adocweave()
+        .args([
+            "check",
+            "--include",
+            "--local-targets",
+            "--project-root",
+            root.to_str().expect("UTF-8 root"),
+            "--json",
+            document.to_str().expect("UTF-8 document"),
+        ])
+        .output()
+        .expect("local include check");
+    assert!(!output.status.success());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    assert!(diagnostics.as_array().expect("array").iter().any(|value| {
+        value["code"] == "local-target-unverifiable" && value["target"] == "invalid.adoc"
+    }));
 
     std::fs::remove_dir_all(root).expect("cleanup");
 }

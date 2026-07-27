@@ -168,6 +168,11 @@ impl Analysis {
         self.facts().references()
     }
 
+    /// Returns source-ordered authored links without resolving local files or URLs.
+    pub fn links(&self) -> &[crate::inline::Link] {
+        self.facts().links()
+    }
+
     pub fn source(&self) -> &str {
         self.syntax.source()
     }
@@ -202,6 +207,27 @@ impl Analysis {
                 reference,
             })
             .collect()
+    }
+
+    /// Returns source-ordered relative file candidates without performing I/O.
+    pub fn local_targets(&self) -> Vec<crate::local_target::LocalTargetReference> {
+        let mut targets = self
+            .links()
+            .iter()
+            .filter_map(crate::local_target::LocalTargetReference::from_link)
+            .chain(
+                self.references()
+                    .iter()
+                    .filter_map(crate::local_target::LocalTargetReference::from_reference),
+            )
+            .chain(
+                self.resources()
+                    .iter()
+                    .filter_map(crate::local_target::LocalTargetReference::from_resource),
+            )
+            .collect::<Vec<_>>();
+        targets.sort_by_key(|target| target.range.start());
+        targets
     }
 }
 
