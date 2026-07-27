@@ -20,8 +20,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-        with:
-          determinate: false
       - name: Dependency boundary audit
         run: nix develop .#ci -c cargo make dependency-governance
 
@@ -33,8 +31,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-        with:
-          determinate: false
       - name: Source quality gate execution
         run: nix develop .#ci -c cargo make quality
 
@@ -46,8 +42,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-        with:
-          determinate: false
       - name: Fuzz target compilation and exploration
         run: nix develop .#ci -c cargo make fuzz
 
@@ -60,7 +54,5 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-        with:
-          determinate: false
       - name: Nix package build and execution
         run: nix develop .#ci -c cargo make nix-package-check

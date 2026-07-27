@@ -37,8 +37,6 @@ jobs:
           git fetch origin main:refs/remotes/origin/main
           test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-        with:
-          determinate: false
       - id: candidate
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -93,8 +91,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-        with:
-          determinate: false
       - name: Native build linker installation
         run: |
           sudo apt-get update
@@ -132,8 +128,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-        with:
-          determinate: false
       - name: Browser and Zed archive build and verification
         run: nix develop .#ci -c cargo make release-global-artifacts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -190,8 +184,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-        with:
-          determinate: false
       - name: Nix package build and execution
         run: >-
           nix build
