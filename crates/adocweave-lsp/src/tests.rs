@@ -775,6 +775,59 @@ fn diagnostics_use_current_version_codes_and_unicode_positions() {
 }
 
 #[test]
+fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
+    let mut service = LanguageService::default();
+    initialize(&mut service, &["utf-16"]);
+    open(
+        &mut service,
+        "file:///references.adoc",
+        2,
+        "日😀 link:guide.adoc[Guide]\nxref:data.json[Data]\n",
+    );
+
+    let diagnostics = service
+        .diagnostics(&uri("file:///references.adoc"))
+        .expect("diagnostics");
+    assert_eq!(diagnostics.version, Some(2));
+    assert_eq!(diagnostics.diagnostics.len(), 2);
+    assert_eq!(
+        diagnostics.diagnostics[0].code,
+        Some(lsp::NumberOrString::String("asciidoc-file-link".to_owned()))
+    );
+    assert_eq!(
+        diagnostics.diagnostics[0].severity,
+        Some(lsp::DiagnosticSeverity::WARNING)
+    );
+    assert_eq!(
+        diagnostics.diagnostics[0].range,
+        lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 8))
+    );
+    assert_eq!(
+        diagnostics.diagnostics[1].code,
+        Some(lsp::NumberOrString::String("non-asciidoc-xref".to_owned()))
+    );
+    assert_eq!(
+        diagnostics.diagnostics[1].range,
+        lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 4))
+    );
+
+    let actions = serde_json::to_value(
+        all_code_actions(&service, &uri("file:///references.adoc"))
+            .expect("actions")
+            .expect("response"),
+    )
+    .expect("serialize");
+    let replacements = actions
+        .as_array()
+        .expect("actions")
+        .iter()
+        .filter_map(|action| action["edit"]["documentChanges"][0]["edits"][0]["newText"].as_str())
+        .collect::<Vec<_>>();
+    assert!(replacements.contains(&"xref"));
+    assert!(replacements.contains(&"link"));
+}
+
+#[test]
 fn diagnostics_preserve_invalid_explicit_ordered_number_ranges() {
     let mut service = LanguageService::default();
     open(

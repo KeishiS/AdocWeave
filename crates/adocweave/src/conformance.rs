@@ -6,9 +6,10 @@ use crate::Analysis;
 use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, render_with_inputs};
-use crate::inline::{Inline, ReferenceDestination};
+use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::projection::project;
+use crate::reference::ReferenceKey;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
 
@@ -558,11 +559,11 @@ fn inline_node(inline: &Inline) -> CanonicalNode {
             children: inline_nodes(&node.label),
         },
         Inline::Reference(node) => CanonicalNode {
-            kind: match node.destination {
-                ReferenceDestination::Local { .. } => "local-reference",
-                ReferenceDestination::Document { .. } => "document-reference",
-                ReferenceDestination::Scheme { .. } => "scheme-reference",
-                ReferenceDestination::Invalid => "invalid-reference",
+            kind: match node.target {
+                Some(ReferenceKey::Local { .. }) => "local-reference",
+                Some(ReferenceKey::Document { .. }) => "document-reference",
+                Some(ReferenceKey::Scheme { .. }) => "scheme-reference",
+                None => "invalid-reference",
             },
             range: range(node.range),
             value: Some(node.target_source.clone()),

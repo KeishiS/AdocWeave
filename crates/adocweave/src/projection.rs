@@ -190,7 +190,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         .references()
         .iter()
         .filter_map(|reference| {
-            let target = ReferenceKey::from_destination(&reference.destination)?;
+            let target = reference.target.clone()?;
             let resolution = match inputs.reference_at(reference.range) {
                 ResolutionMatch::Unique(resolution) => Some(resolution.outcome.clone()),
                 ResolutionMatch::Missing | ResolutionMatch::Duplicate => None,

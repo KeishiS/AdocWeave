@@ -721,6 +721,35 @@ mod tests {
     }
 
     #[test]
+    fn reference_queries_use_the_expanded_semantic_target() {
+        let analysis = analyze(
+            "= Title\n:document: other\n\nxref:{document}.adoc#part[]",
+            &AnalysisOptions::default(),
+        )
+        .expect("analyze");
+        let reference = &analysis.references()[0];
+
+        assert!(matches!(
+            reference.authored_destination,
+            crate::inline::ReferenceDestination::Document {
+                ref document,
+                ..
+            } if document == "{document}.adoc"
+        ));
+        assert!(matches!(
+            reference.target,
+            Some(crate::reference::ReferenceKey::Document {
+                ref document,
+                anchor: Some(ref anchor),
+            }) if document == "other.adoc" && anchor == "part"
+        ));
+        assert_eq!(
+            analysis.reference_queries()[0].target,
+            reference.target.clone().expect("semantic target")
+        );
+    }
+
+    #[test]
     fn public_api_accepts_host_configured_url_schemes() {
         let mut options = AnalysisOptions::default();
         options

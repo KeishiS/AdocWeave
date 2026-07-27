@@ -13,7 +13,7 @@ use adocweave::semantic::{
     SymbolKind as CoreSymbolKind, document_element_at, document_symbols, generate_heading_ids,
     source_language_candidates,
 };
-use adocweave::semantic::{Inline, MathLanguage, ReferenceDestination};
+use adocweave::semantic::{Inline, MathLanguage};
 use adocweave::text::{
     PositionEncoding as CorePositionEncoding, SourceDocument, TextRange as CoreTextRange,
 };
@@ -1222,10 +1222,10 @@ impl LanguageService {
         else {
             return Ok(None);
         };
-        let Some(key) = ReferenceKey::from_destination(&reference.destination) else {
+        let Some(key) = reference.target.clone() else {
             return Ok(None);
         };
-        if let Some(identity) = reference_identity(uri, &reference.destination)
+        if let Some(identity) = reference_identity(uri, reference.target.as_ref())
             && let Some(location) =
                 self.target_location(&identity.uri, identity.anchor.as_deref())?
         {
@@ -1253,7 +1253,7 @@ impl LanguageService {
             .iter()
             .find(|reference| contains(reference.range, offset));
         let key = reference_at_position
-            .and_then(|reference| ReferenceKey::from_destination(&reference.destination))
+            .and_then(|reference| reference.target.clone())
             .or_else(|| {
                 document
                     .analysis
@@ -1276,7 +1276,7 @@ impl LanguageService {
             return Ok(Some(locations));
         }
         let identity = reference_at_position
-            .and_then(|reference| reference_identity(uri, &reference.destination))
+            .and_then(|reference| reference_identity(uri, reference.target.as_ref()))
             .or_else(|| match &key {
                 ReferenceKey::Local { anchor } => Some(TargetIdentity {
                     uri: uri.clone(),
@@ -1307,7 +1307,7 @@ impl LanguageService {
                 .parse()
                 .map_err(|error| format!("invalid open document URI {}: {error}", candidate.uri))?;
             for reference in candidate.analysis.references() {
-                if reference_identity(&candidate_uri, &reference.destination).as_ref()
+                if reference_identity(&candidate_uri, reference.target.as_ref()).as_ref()
                     == Some(&identity)
                 {
                     locations.push(lsp::Location::new(
@@ -1333,7 +1333,7 @@ impl LanguageService {
                     .as_str()
                     .parse()
                     .map_err(|error| format!("invalid projected reference URI: {error}"))?;
-                if reference_identity(&source_uri, &reference.value.destination).as_ref()
+                if reference_identity(&source_uri, reference.value.target.as_ref()).as_ref()
                     != Some(&identity)
                 {
                     continue;
@@ -1454,11 +1454,12 @@ impl LanguageService {
             });
         }
         for reference in document.analysis.references() {
-            let target = if let Some(identity) = reference_identity(uri, &reference.destination) {
+            let target = if let Some(identity) = reference_identity(uri, reference.target.as_ref())
+            {
                 let mut target = identity.uri;
                 target.set_fragment(identity.anchor.as_deref());
                 Some(target)
-            } else if let Some(key) = ReferenceKey::from_destination(&reference.destination) {
+            } else if let Some(key) = reference.target.clone() {
                 let host_request =
                     host_reference_request(&document, uri, key, self.position_encoding);
                 self.host_index
@@ -1925,20 +1926,20 @@ struct TargetIdentity {
 
 fn reference_identity(
     source_uri: &lsp::Url,
-    destination: &ReferenceDestination,
+    destination: Option<&ReferenceKey>,
 ) -> Option<TargetIdentity> {
     match destination {
-        ReferenceDestination::Local { anchor, .. } => Some(TargetIdentity {
+        Some(ReferenceKey::Local { anchor }) => Some(TargetIdentity {
             uri: source_uri.clone(),
             anchor: Some(anchor.clone()),
         }),
-        ReferenceDestination::Document {
-            document, anchor, ..
-        } => source_uri.join(document).ok().map(|uri| TargetIdentity {
-            uri,
-            anchor: anchor.clone(),
-        }),
-        ReferenceDestination::Scheme { .. } | ReferenceDestination::Invalid => None,
+        Some(ReferenceKey::Document { document, anchor }) => {
+            source_uri.join(document).ok().map(|uri| TargetIdentity {
+                uri,
+                anchor: anchor.clone(),
+            })
+        }
+        Some(ReferenceKey::Scheme { .. }) | None => None,
     }
 }
 

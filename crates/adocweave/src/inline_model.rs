@@ -11,6 +11,7 @@ pub struct InlineText {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Link {
     pub range: TextRange,
+    pub macro_name_range: Option<TextRange>,
     pub target_range: TextRange,
     pub target_source: String,
     pub target: String,
@@ -88,9 +89,14 @@ pub struct InlineFormula {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reference {
     pub range: TextRange,
+    pub macro_name_range: Option<TextRange>,
     pub target_range: TextRange,
     pub target_source: String,
-    pub destination: ReferenceDestination,
+    pub expanded_target: String,
+    pub target_attributes: Vec<AttributeUse>,
+    pub target_expansion_error: Option<crate::substitution::AttributeExpansionError>,
+    pub authored_destination: ReferenceDestination,
+    pub target: Option<crate::reference::ReferenceKey>,
     pub label_range: Option<TextRange>,
     pub label: Vec<Inline>,
 }

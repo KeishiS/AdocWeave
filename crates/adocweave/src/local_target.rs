@@ -1,6 +1,7 @@
 //! Typed, I/O-free discovery of authored local-file candidates.
 
 use crate::inline::{Link, Reference, ReferenceDestination};
+use crate::reference::ReferenceKey;
 use crate::resource::{ResourcePurpose, ResourceReference};
 use crate::source::TextRange;
 
@@ -40,20 +41,19 @@ impl LocalTargetReference {
     }
 
     pub fn from_reference(reference: &Reference) -> Option<Self> {
-        let ReferenceDestination::Document {
-            document,
-            document_range,
-            ..
-        } = &reference.destination
-        else {
+        let Some(ReferenceKey::Document { document, .. }) = &reference.target else {
             return None;
+        };
+        let target_range = match &reference.authored_destination {
+            ReferenceDestination::Document { document_range, .. } => *document_range,
+            _ => reference.target_range,
         };
         from_target(
             LocalTargetKind::CrossReference,
             reference.range,
-            *document_range,
+            target_range,
             document,
-            false,
+            reference.target_expansion_error.is_some(),
         )
     }
 

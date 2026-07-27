@@ -31,6 +31,13 @@
 `--include`を使用した場合も、問題の位置は展開後の仮想文書ではなく、
 問題がある元fileのpath、行およびcolumnとして表示します。
 
+`asciidoc-file-link`は、`.adoc`または`.asciidoc`で終わる文書を`link`で参照した場合に、
+`xref`の使用を提案します。`non-asciidoc-xref`は、`.json`、`.toml`、`.pdf`など、
+AsciiDoc以外の拡張子を持つfileを`xref`で参照した場合に、`link`の使用を提案します。
+拡張子は大文字小文字を区別せず、queryとfragmentを除いて判定します。対象fileの実在性は検査しません。
+schemeのない相対targetを明示macroで記述し、targetに属性参照がない場合に限り、
+macro名だけを置換する自動修正を提示します。
+
 通常の`check`はファイルシステムへアクセスせず、`../guide.adoc`のような相対リンクと文書間参照を
 有効な対象として扱います。HTMLへ変換する際は、記述されたURLと解決済みURLを出力用ポリシーで
 改めて検査します。

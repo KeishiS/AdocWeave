@@ -145,6 +145,32 @@ fn check_supports_human_and_json_diagnostics() {
 }
 
 #[test]
+fn check_reports_link_and_xref_usage_consistently() {
+    let source = b"link:guide.adoc[Guide]\nxref:data.json[Data]\n";
+    let human = run_with_stdin(&["check", "-"], source);
+    let json = run_with_stdin(&["check", "--json", "-"], source);
+
+    assert!(human.status.success());
+    let human = String::from_utf8_lossy(&human.stdout);
+    assert!(human.contains("1:1: warning[asciidoc-file-link]"));
+    assert!(human.contains("2:1: warning[non-asciidoc-xref]"));
+
+    assert!(json.status.success());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("diagnostic JSON");
+    let diagnostics = diagnostics.as_array().expect("diagnostics");
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0]["code"], "asciidoc-file-link");
+    assert_eq!(diagnostics[0]["severity"], "warning");
+    assert_eq!(diagnostics[0]["range"]["start"], 0);
+    assert_eq!(diagnostics[0]["range"]["end"], 4);
+    assert_eq!(diagnostics[1]["code"], "non-asciidoc-xref");
+    assert_eq!(diagnostics[1]["severity"], "warning");
+    assert_eq!(diagnostics[1]["range"]["start"], 23);
+    assert_eq!(diagnostics[1]["range"]["end"], 27);
+}
+
+#[test]
 fn check_lists_the_typed_rule_catalog_without_reading_input() {
     let output = adocweave()
         .args(["check", "--list-rules", "--json"])

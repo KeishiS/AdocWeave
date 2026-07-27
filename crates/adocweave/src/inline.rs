@@ -1548,9 +1548,13 @@ fn build_reference_macro(
             Ok(BuiltInline {
                 inline: Inline::Reference(Reference {
                     range: subrange(range, open, end),
+                    macro_name_range: None,
                     target_range,
                     target_source: anchor.to_owned(),
-                    destination: if anchor.is_empty() {
+                    expanded_target: anchor.to_owned(),
+                    target_attributes: attribute_uses(anchor, target_range),
+                    target_expansion_error: None,
+                    authored_destination: if anchor.is_empty() {
                         ReferenceDestination::Invalid
                     } else {
                         ReferenceDestination::Local {
@@ -1558,6 +1562,9 @@ fn build_reference_macro(
                             anchor_range: target_range,
                         }
                     },
+                    target: (!anchor.is_empty()).then(|| crate::reference::ReferenceKey::Local {
+                        anchor: anchor.to_owned(),
+                    }),
                     label_range,
                     label: label_inlines,
                 }),
@@ -1580,9 +1587,14 @@ fn build_reference_macro(
             Ok(BuiltInline {
                 inline: Inline::Reference(Reference {
                     range: subrange(range, open, end),
+                    macro_name_range: Some(subrange(range, open, target_start - 1)),
                     target_range,
                     target_source: target.to_owned(),
-                    destination: parse_reference_destination(target, target_range),
+                    expanded_target: target.to_owned(),
+                    target_attributes: attribute_uses(target, target_range),
+                    target_expansion_error: None,
+                    authored_destination: parse_reference_destination(target, target_range),
+                    target: crate::reference::ReferenceKey::parse(target),
                     label_range: Some(label_range),
                     label: label.inlines,
                 }),
@@ -1622,6 +1634,7 @@ fn build_link_macro(
             Ok(BuiltInline {
                 inline: Inline::Link(Link {
                     range: subrange(range, open, end),
+                    macro_name_range: Some(subrange(range, open, target_start - 1)),
                     target_range,
                     target_attributes: attribute_uses(&target, target_range),
                     target_expansion_error: None,
@@ -1658,6 +1671,7 @@ fn build_link_macro(
             Ok(BuiltInline {
                 inline: Inline::Link(Link {
                     range: subrange(range, open, end),
+                    macro_name_range: None,
                     target_range,
                     target_source: value[open..target_end].to_owned(),
                     target: value[open..target_end].to_owned(),
@@ -2249,16 +2263,16 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(references.len(), 4);
         assert!(matches!(
-            references[0].destination,
+            references[0].authored_destination,
             ReferenceDestination::Local { ref anchor, .. } if anchor == "local"
         ));
         assert!(matches!(
-            references[2].destination,
+            references[2].authored_destination,
             ReferenceDestination::Document { ref document, ref anchor, .. }
                 if document == "other.adoc" && anchor.as_deref() == Some("part")
         ));
         assert!(matches!(
-            references[3].destination,
+            references[3].authored_destination,
             ReferenceDestination::Scheme { ref scheme, ref locator, .. }
                 if scheme == "note" && locator == "123"
         ));
