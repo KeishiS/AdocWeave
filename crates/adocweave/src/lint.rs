@@ -12,7 +12,7 @@ use crate::parser::{AstBlock, HeadingKind};
 use crate::parser::{ParseConfig, parse_with_config};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::LineEnding;
-use crate::syntax::{SyntaxIssueClass, SyntaxTree};
+use crate::syntax::{SyntaxIssueClass, SyntaxIssueDetail, SyntaxTree};
 
 /// Stable identifier for a lint rule.
 ///
@@ -34,19 +34,33 @@ pub struct LintRuleDescriptor {
     pub default_severity: Severity,
     pub description: &'static str,
     pub fixable: bool,
+    pub user_configurable: bool,
 }
 
 macro_rules! lint_rule_catalog {
-    ($(($constant:ident, $code:literal, $description:literal, $fixable:literal)),+ $(,)?) => {
+    (@enabled) => {
+        true
+    };
+    (@enabled $enabled:literal) => {
+        $enabled
+    };
+    (@configurable) => {
+        false
+    };
+    (@configurable $configurable:literal) => {
+        $configurable
+    };
+    ($(($constant:ident, $code:literal, $description:literal, $fixable:literal $(, $default_enabled:literal, $user_configurable:literal)?)),+ $(,)?) => {
         $(pub const $constant: LintRuleId = LintRuleId($code);)+
 
         pub const LINT_RULES: &[LintRuleDescriptor] = &[
             $(LintRuleDescriptor {
                 id: $constant,
-                default_enabled: true,
+                default_enabled: lint_rule_catalog!(@enabled $($default_enabled)?),
                 default_severity: Severity::Warning,
                 description: $description,
                 fixable: $fixable,
+                user_configurable: lint_rule_catalog!(@configurable $($user_configurable)?),
             }),+
         ];
     };
@@ -179,6 +193,14 @@ lint_rule_catalog!(
         NON_ASCIIDOC_XREF,
         "non-asciidoc-xref",
         "AsciiDoc以外のファイルへの相互参照",
+        true
+    ),
+    (
+        MACRO_BOUNDARY,
+        "macro-boundary",
+        "inline macroの開始境界違反",
+        true,
+        false,
         true
     ),
     (
@@ -612,7 +634,34 @@ fn lint_syntax_issues(syntax: &SyntaxTree, config: &LintConfig, diagnostics: &mu
             SyntaxIssueClass::InvalidCrossReference => INVALID_CROSS_REFERENCE,
             SyntaxIssueClass::InconsistentList => INCONSISTENT_LIST,
             SyntaxIssueClass::InvalidStem => INVALID_STEM,
+            SyntaxIssueClass::MacroBoundary => MACRO_BOUNDARY,
         };
+        if issue.class == SyntaxIssueClass::MacroBoundary {
+            let SyntaxIssueDetail::MacroBoundary { name } = issue.detail else {
+                continue;
+            };
+            let source = syntax.source_document().source();
+            let start = issue.range.start().to_usize();
+            let fix = source[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| character.is_ascii_alphanumeric())
+                .then(|| {
+                    let range = TextRange::new(issue.range.start(), issue.range.start())
+                        .expect("empty insertion range is ordered");
+                    ("insert a space before the inline macro", range, " ")
+                });
+            push_diagnostic_with_applicability(
+                diagnostics,
+                config,
+                rule,
+                issue.range,
+                &format!("{name} inline macro must start at a token boundary"),
+                fix,
+                Applicability::Maybe,
+            );
+            continue;
+        }
         let fix = issue.fix.map(|fix| (fix.label, fix.range, fix.replacement));
         push_diagnostic(diagnostics, config, rule, issue.range, issue.message, fix);
     }
@@ -1139,6 +1188,26 @@ fn push_diagnostic(
     message: &str,
     fix: Option<(&str, TextRange, &str)>,
 ) {
+    push_diagnostic_with_applicability(
+        diagnostics,
+        config,
+        rule,
+        range,
+        message,
+        fix,
+        Applicability::Always,
+    );
+}
+
+fn push_diagnostic_with_applicability(
+    diagnostics: &mut Vec<Diagnostic>,
+    config: &LintConfig,
+    rule: LintRuleId,
+    range: TextRange,
+    message: &str,
+    fix: Option<(&str, TextRange, &str)>,
+    applicability: Applicability,
+) {
     if diagnostics.len() >= config.max_diagnostics {
         return;
     }
@@ -1151,7 +1220,7 @@ fn push_diagnostic(
             vec![
                 Fix::new(
                     title,
-                    Applicability::Always,
+                    applicability,
                     vec![TextEdit {
                         range: edit_range,
                         replacement: replacement.to_owned(),
@@ -1184,8 +1253,8 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        LINE_TOO_LONG, LINT_RULES, LintConfig, RuleSettings, TRAILING_WHITESPACE, lint, lint_rule,
-        lint_with_analysis_limits, render_lint_rule_catalog_json,
+        LINE_TOO_LONG, LINT_RULES, LintConfig, MACRO_BOUNDARY, RuleSettings, TRAILING_WHITESPACE,
+        lint, lint_rule, lint_with_analysis_limits, render_lint_rule_catalog_json,
     };
     use crate::diagnostic::Severity;
 
@@ -1699,6 +1768,98 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn macro_boundary_rule_is_opt_in_and_uses_recognized_complete_macros() {
+        let source = include_str!("../../../fixtures/lint/macro-boundary.adoc");
+        let default = lint(source, &LintConfig::default()).expect("lint");
+        assert!(
+            default
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "macro-boundary")
+        );
+
+        let mut config = LintConfig::default();
+        config.set_rule(
+            MACRO_BOUNDARY,
+            RuleSettings {
+                enabled: true,
+                severity: Severity::Warning,
+            },
+        );
+        let diagnostics = lint(source, &config).expect("lint");
+        let boundary = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "macro-boundary")
+            .collect::<Vec<_>>();
+        assert_eq!(boundary.len(), 23, "{boundary:#?}");
+        assert_eq!(
+            boundary
+                .iter()
+                .map(|diagnostic| {
+                    &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()]
+                })
+                .collect::<Vec<_>>(),
+            [
+                "xref",
+                "link",
+                "image",
+                "footnote",
+                "anchor",
+                "bibanchor",
+                "indexterm",
+                "kbd",
+                "btn",
+                "menu",
+                "icon",
+                "audio",
+                "video",
+                "stem",
+                "latexmath",
+                "pass",
+                "https",
+                "user@example.test",
+                "user@example.test",
+                "user@example.test",
+                "user@example.test",
+                "xref",
+                "https"
+            ]
+        );
+        assert!(
+            boundary
+                .iter()
+                .enumerate()
+                .all(|(index, diagnostic)| if index == 21 {
+                    diagnostic.fixes.len() == 1
+                        && diagnostic.fixes[0].applicability == super::Applicability::Maybe
+                        && diagnostic.fixes[0].edits()[0].replacement == " "
+                } else {
+                    diagnostic.fixes.is_empty()
+                })
+        );
+    }
+
+    #[test]
+    fn macro_boundary_rule_honors_severity_and_diagnostic_limit() {
+        let mut config = LintConfig {
+            max_diagnostics: 1,
+            ..LintConfig::default()
+        };
+        config.set_rule(
+            MACRO_BOUNDARY,
+            RuleSettings {
+                enabled: true,
+                severity: Severity::Error,
+            },
+        );
+        let diagnostics =
+            lint("本文xref:one.adoc[]\n本文link:two.json[]\n", &config).expect("lint");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code.as_str(), "macro-boundary");
+        assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
     #[test]

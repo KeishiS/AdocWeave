@@ -37,6 +37,7 @@ Arguments:
 Options:
   --json      Emit check diagnostics as JSON
   --list-rules  List available check rules; requires --json
+  --enable-rule CODE  Enable an opt-in check rule; repeatable
   --check     Check formatting without writing formatted text
   --include   Enable bounded local include processing
   --base-dir DIR    Resolve root document includes from DIR
@@ -141,10 +142,11 @@ enum DiagnosticFormat {
     Json,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct CheckOptions {
     format: DiagnosticFormat,
     list_rules: bool,
+    enabled_rules: Vec<diagnostic::LintRuleId>,
 }
 
 struct CheckOutcome {
@@ -243,6 +245,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut stdin_selected = false;
     let mut json = false;
     let mut list_rules = false;
+    let mut enabled_rules = Vec::new();
     let mut format_check = false;
     let mut include = false;
     let mut base_dir = None;
@@ -256,6 +259,22 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "-h" | "--help" => return Ok(Action::Help),
             "--json" if operation == Operation::Check => json = true,
             "--list-rules" if operation == Operation::Check => list_rules = true,
+            "--enable-rule" if operation == Operation::Check => {
+                let code = arguments
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--enable-rule requires a code".to_owned()))?;
+                let descriptor = diagnostic::lint_rule(&code).ok_or_else(|| {
+                    CliError::Usage(format!("unknown or non-enableable rule: {code}"))
+                })?;
+                if !descriptor.user_configurable {
+                    return Err(CliError::Usage(format!(
+                        "rule is already enabled by default: {code}"
+                    )));
+                }
+                if !enabled_rules.contains(&descriptor.id) {
+                    enabled_rules.push(descriptor.id);
+                }
+            }
             "--check" if operation == Operation::Format => format_check = true,
             "--include" => include = true,
             "--local-targets" if operation == Operation::Check => local_targets = true,
@@ -331,6 +350,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             || !allowed_roots.is_empty()
             || local_targets
             || project_root.is_some()
+            || !enabled_rules.is_empty()
         {
             return Err(CliError::Usage(
                 "--list-rules cannot be combined with document input or include options".to_owned(),
@@ -347,6 +367,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                 DiagnosticFormat::Human
             },
             list_rules,
+            enabled_rules,
         }),
         Operation::Format => CommandOptions::Format {
             check: format_check,
@@ -392,6 +413,21 @@ fn analyze(source: &str) -> Result<adocweave::Analysis, CliError> {
     Engine::new(AnalysisOptions::default())
         .analyze(source)
         .map_err(CliError::Analysis)
+}
+
+fn check_analysis_options(enabled_rules: &[diagnostic::LintRuleId]) -> AnalysisOptions {
+    let mut options = AnalysisOptions::default();
+    for rule in enabled_rules {
+        let current = options.diagnostics.lint.rule(*rule);
+        options.diagnostics.lint.set_rule(
+            *rule,
+            diagnostic::RuleSettings {
+                enabled: true,
+                ..current
+            },
+        );
+    }
+    options
 }
 
 fn finish_output(output: String) -> Result<String, CliError> {
@@ -468,10 +504,13 @@ fn process_convert(input: &[u8], render_policy: &RenderPolicy) -> Result<String,
 fn process_check(
     input: &[u8],
     format: DiagnosticFormat,
+    enabled_rules: &[diagnostic::LintRuleId],
     local: Option<(&std::path::Path, &std::path::Path, &str)>,
 ) -> Result<CheckOutcome, CliError> {
     let source = decode_input(input)?;
-    let analysis = analyze(source)?;
+    let analysis = Engine::new(check_analysis_options(enabled_rules))
+        .analyze(source)
+        .map_err(CliError::Analysis)?;
     let mut host = if let Some((base, root, source_id)) = local {
         let mut targets = analysis.local_targets();
         let snapshot =
@@ -675,11 +714,12 @@ fn run() -> Result<ExitCode, CliError> {
             };
             let (output, exit_code) = if let CommandOptions::Check(check) = &arguments.command {
                 let outcome = if let Some(prepared) = prepared.as_mut() {
-                    check_preprocessed(prepared, check.format).map_err(CliError::Include)
+                    check_preprocessed(prepared, check).map_err(CliError::Include)
                 } else {
                     process_check(
                         &processed,
                         check.format,
+                        &check.enabled_rules,
                         local_context.as_ref().map(|(base, root, source_id)| {
                             (base.as_path(), root.as_path(), source_id.as_str())
                         }),
@@ -716,9 +756,9 @@ fn run() -> Result<ExitCode, CliError> {
 
 fn check_preprocessed(
     prepared: &mut local_include::PreparedInput,
-    format: DiagnosticFormat,
+    check: &CheckOptions,
 ) -> Result<CheckOutcome, local_include::LocalIncludeError> {
-    let engine = adocweave::Engine::new(adocweave::AnalysisOptions::default());
+    let engine = adocweave::Engine::new(check_analysis_options(&check.enabled_rules));
     let analysis = engine
         .analyze(&prepared.document.source)
         .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
@@ -804,7 +844,7 @@ fn check_preprocessed(
                 ))
         });
     }
-    if format == DiagnosticFormat::Json {
+    if check.format == DiagnosticFormat::Json {
         let mut values = projected
             .diagnostics
             .iter()

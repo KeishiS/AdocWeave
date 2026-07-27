@@ -219,6 +219,7 @@ pub enum InlineProblemKind {
     UnclosedStem,
     EmptyStem,
     StemSizeLimitExceeded,
+    MacroBoundary { name: &'static str },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

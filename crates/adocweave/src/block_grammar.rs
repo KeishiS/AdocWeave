@@ -13,6 +13,7 @@ pub(crate) enum LineRecognition {
     Anchor,
     BlockTitle,
     BlockMetadata,
+    Comment,
     Blank,
     DocumentAttribute,
     Break,
@@ -48,6 +49,8 @@ pub(crate) fn recognize_line(
         LineRecognition::BlockTitle
     } else if parse_block_attributes(content, content_start).is_some() {
         LineRecognition::BlockMetadata
+    } else if content.starts_with("//") {
+        LineRecognition::Comment
     } else if content.trim_matches([' ', '\t']).is_empty() {
         LineRecognition::Blank
     } else if header_attributes_open

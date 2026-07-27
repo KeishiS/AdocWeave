@@ -19,6 +19,7 @@ pub enum SyntaxKind {
     LiteralBlock,
     SourceBlock,
     DelimitedBlock,
+    CommentLine,
     BlankLine,
     Unsupported,
     DocumentAttribute,
@@ -55,6 +56,7 @@ pub enum SyntaxIssueClass {
     InvalidCrossReference,
     InconsistentList,
     InvalidStem,
+    MacroBoundary,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,7 +71,14 @@ pub struct SyntaxIssue {
     pub class: SyntaxIssueClass,
     pub range: TextRange,
     pub message: &'static str,
+    pub detail: SyntaxIssueDetail,
     pub fix: Option<SyntaxFix>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SyntaxIssueDetail {
+    None,
+    MacroBoundary { name: &'static str },
 }
 
 impl SyntaxKind {
@@ -87,6 +96,7 @@ impl SyntaxKind {
                 | Self::LiteralBlock
                 | Self::SourceBlock
                 | Self::DelimitedBlock
+                | Self::CommentLine
                 | Self::BlankLine
                 | Self::Unsupported
                 | Self::DocumentAttribute

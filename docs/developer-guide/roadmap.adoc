@@ -24,11 +24,9 @@ v0.10.xでは、公開API、WASM protocol、対応構文および既定のHTML�
 
 filesystemへ依存しないLintを追加します。
 
-. https://github.com/KeishiS/AdocWeave/issues/37[linkとxrefの使い分けに対するLint]
 . https://github.com/KeishiS/AdocWeave/issues/40[Macro境界のLint]
 
-既定のwarningを先に追加し、その後にruleの個別有効化を必要とするMacro境界の検査を追加します。
-ruleの個別有効化基盤とMacro境界の検査は、review可能な単位へ分けます。
+Macro境界の検査は利用者が明示的に有効化する規則として追加します。
 
 == 後続の機能候補
 

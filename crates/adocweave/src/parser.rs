@@ -804,6 +804,18 @@ fn parse_block_sequence(
             pending_metadata.push_attributes(metadata, line.full_range());
             root.iter_mut()
                 .for_each(DocumentHeaderState::close_attributes);
+        } else if recognition == LineRecognition::Comment {
+            root.iter_mut()
+                .for_each(DocumentHeaderState::stop_author_revision);
+            flush_paragraph(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut paragraph_lines,
+                config,
+                budget,
+                &mut pending_metadata,
+            )?;
+            blocks.push(SyntaxNode::leaf(SyntaxKind::CommentLine, line.full_range()));
         } else if recognition == LineRecognition::Blank {
             root.iter_mut()
                 .for_each(DocumentHeaderState::stop_author_revision);

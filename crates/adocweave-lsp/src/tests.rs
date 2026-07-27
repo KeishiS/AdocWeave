@@ -828,6 +828,51 @@ fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
 }
 
 #[test]
+fn opt_in_macro_boundary_diagnostic_uses_lsp_positions() {
+    let mut service = LanguageService::default();
+    service.position_encoding = PositionEncoding::Utf16;
+    let mut jobs = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": "file:///macro-boundary.adoc",
+            "languageId": "asciidoc",
+            "version": 4,
+            "text": "日😀xref:guide.adoc[Guide]\n"
+        }
+    })));
+    let mut job = jobs.pop().expect("analysis job");
+    let current = job
+        .request
+        .options
+        .diagnostics
+        .lint
+        .rule(adocweave::output::diagnostics::MACRO_BOUNDARY);
+    job.request.options.diagnostics.lint.set_rule(
+        adocweave::output::diagnostics::MACRO_BOUNDARY,
+        adocweave::output::diagnostics::RuleSettings {
+            enabled: true,
+            ..current
+        },
+    );
+    adopt(&mut service, job);
+
+    let diagnostics = service
+        .diagnostics(&uri("file:///macro-boundary.adoc"))
+        .expect("diagnostics");
+    let boundary = diagnostics
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == Some(lsp::NumberOrString::String("macro-boundary".to_owned()))
+        })
+        .expect("macro-boundary diagnostic");
+    assert_eq!(boundary.severity, Some(lsp::DiagnosticSeverity::WARNING));
+    assert_eq!(
+        boundary.range,
+        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 7))
+    );
+}
+
+#[test]
 fn diagnostics_preserve_invalid_explicit_ordered_number_ranges() {
     let mut service = LanguageService::default();
     open(
