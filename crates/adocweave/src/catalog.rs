@@ -2,8 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::inline::{ReferenceDestination, StandardMacro, StandardMacroKind};
+use crate::inline::{StandardMacro, StandardMacroKind};
 use crate::limits::AnalysisLimits;
+use crate::reference::ReferenceKey;
 use crate::source::TextRange;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -204,7 +205,7 @@ pub(crate) fn build(
         }
     }
     for reference in facts.references() {
-        let ReferenceDestination::Local { anchor, .. } = &reference.destination else {
+        let Some(ReferenceKey::Local { anchor }) = &reference.target else {
             continue;
         };
         bibliography_references.push((

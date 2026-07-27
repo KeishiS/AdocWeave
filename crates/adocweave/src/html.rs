@@ -8,10 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
 use crate::document::HeadingId;
-use crate::inline::{
-    Inline, InlineLiteralKind, InlineStyle, Link, Reference, ReferenceDestination,
-};
+use crate::inline::{Inline, InlineLiteralKind, InlineStyle, Link, Reference};
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
+use crate::reference::ReferenceKey;
 use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, ResolutionMatch};
 use crate::resource::{MediaFamily, ResolvedResource, ResourceOutcome};
 use crate::url::{ActiveUrlPolicy, UrlProvenance};
@@ -1720,8 +1719,8 @@ fn render_reference(
     reference: &Reference,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
-    let (href, fallback, diagnostic) = match &reference.destination {
-        ReferenceDestination::Local { anchor, .. } => {
+    let (href, fallback, diagnostic) = match &reference.target {
+        Some(ReferenceKey::Local { anchor }) => {
             if let Some(target) = context.identifiers.target_by_id(anchor) {
                 (Some(format!("#{anchor}")), target.label.clone(), None)
             } else {
@@ -1732,12 +1731,12 @@ fn render_reference(
                 )
             }
         }
-        ReferenceDestination::Invalid => (
+        None => (
             None,
             reference_text(reference),
             Some(("invalid-cross-reference", "invalid cross reference target")),
         ),
-        ReferenceDestination::Document { .. } | ReferenceDestination::Scheme { .. } => {
+        Some(ReferenceKey::Document { .. }) | Some(ReferenceKey::Scheme { .. }) => {
             let resolution = context.input_usage.reference_at(reference.range);
             if let ResolutionMatch::Unique(resolution) = resolution {
                 match &resolution.outcome {
@@ -2051,9 +2050,10 @@ mod tests {
         ResourceCapabilities, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
         UnknownSourceLanguage, UnresolvedReferencePresentation,
     };
-    use crate::inline::{Inline, ReferenceDestination};
+    use crate::inline::Inline;
     use crate::parser::AstBlock;
     use crate::parser::parse;
+    use crate::reference::ReferenceKey;
     use crate::render::RenderInputs;
     use crate::resource::{MediaType, ResolvedResource};
     use crate::url::{UrlDecision, UrlProvenance};
@@ -3004,10 +3004,7 @@ mod tests {
                 AstBlock::Paragraph(paragraph) => {
                     paragraph.inlines.iter().find_map(|inline| match inline {
                         Inline::Reference(reference)
-                            if matches!(
-                                reference.destination,
-                                ReferenceDestination::Document { .. }
-                            ) =>
+                            if matches!(reference.target, Some(ReferenceKey::Document { .. })) =>
                         {
                             Some(reference.range)
                         }

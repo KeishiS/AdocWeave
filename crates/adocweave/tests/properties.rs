@@ -145,11 +145,8 @@ fn generated_reference_keys_and_targets_are_stable_and_bounded() {
             analysis.reference_targets()
         );
         for reference in analysis.references() {
-            if let Some(key) = ReferenceKey::from_destination(&reference.destination) {
-                assert_eq!(
-                    Some(key.clone()),
-                    ReferenceKey::from_destination(&reference.destination)
-                );
+            if let Some(key) = reference.target.clone() {
+                assert_eq!(Some(key.clone()), reference.target.clone());
                 assert!(reference.range.end().to_usize() <= source.len());
             }
         }
@@ -195,7 +192,7 @@ fn semantic_signature(analysis: &adocweave::Analysis) -> (String, Vec<String>, V
         analysis
             .references()
             .iter()
-            .filter_map(|reference| ReferenceKey::from_destination(&reference.destination))
+            .filter_map(|reference| reference.target.clone())
             .collect(),
     )
 }

@@ -170,6 +170,18 @@ lint_rule_catalog!(
         false
     ),
     (
+        ASCIIDOC_FILE_LINK,
+        "asciidoc-file-link",
+        "AsciiDoc文書への通常リンク",
+        true
+    ),
+    (
+        NON_ASCIIDOC_XREF,
+        "non-asciidoc-xref",
+        "AsciiDoc以外のファイルへの相互参照",
+        true
+    ),
+    (
         INCONSISTENT_LIST,
         "inconsistent-list",
         "一貫しないリスト構造",
@@ -618,7 +630,8 @@ fn lint_links_and_references(
         config: &LintConfig,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        use crate::inline::{Inline, ReferenceDestination};
+        use crate::inline::Inline;
+        use crate::reference::ReferenceKey;
         match inline {
             Inline::Link(link) => {
                 if !config.authored_url_policy.allows(&link.target) {
@@ -629,6 +642,23 @@ fn lint_links_and_references(
                         link.target_range,
                         "URL is rejected by the configured policy",
                         None,
+                    );
+                }
+                if link.target_expansion_error.is_none()
+                    && classify_file_target(&link.target)
+                        .is_some_and(|target| is_asciidoc_extension(target.extension))
+                    && let Some(range) = link.macro_name_range
+                {
+                    let fix = (link.target_attributes.is_empty()
+                        && is_fixable_relative_target(&link.target))
+                    .then_some(("replace link with xref", range, "xref"));
+                    push_diagnostic(
+                        diagnostics,
+                        config,
+                        ASCIIDOC_FILE_LINK,
+                        range,
+                        "use xref for an AsciiDoc document target",
+                        fix,
                     );
                 }
             }
@@ -650,8 +680,8 @@ fn lint_links_and_references(
                     None,
                 );
             }
-            Inline::Reference(reference) => match &reference.destination {
-                ReferenceDestination::Local { anchor, .. } => {
+            Inline::Reference(reference) => match &reference.target {
+                Some(ReferenceKey::Local { anchor }) => {
                     if !targets.iter().any(|target| target.id == *anchor) {
                         push_diagnostic(
                             diagnostics,
@@ -663,7 +693,7 @@ fn lint_links_and_references(
                         );
                     }
                 }
-                ReferenceDestination::Document { document, .. } => {
+                Some(ReferenceKey::Document { document, .. }) => {
                     if !valid_unresolved_relative_target(document) {
                         push_diagnostic(
                             diagnostics,
@@ -674,10 +704,27 @@ fn lint_links_and_references(
                             None,
                         );
                     }
+                    if reference.target_expansion_error.is_none()
+                        && classify_file_target(&reference.expanded_target)
+                            .is_some_and(|target| !is_asciidoc_extension(target.extension))
+                        && let Some(range) = reference.macro_name_range
+                    {
+                        let fix = (reference.target_attributes.is_empty()
+                            && is_fixable_relative_target(&reference.expanded_target))
+                        .then_some(("replace xref with link", range, "link"));
+                        push_diagnostic(
+                            diagnostics,
+                            config,
+                            NON_ASCIIDOC_XREF,
+                            range,
+                            "use link for a non-AsciiDoc file target",
+                            fix,
+                        );
+                    }
                 }
-                ReferenceDestination::Scheme {
+                Some(ReferenceKey::Scheme {
                     scheme, locator, ..
-                } => {
+                }) => {
                     if scheme.is_empty()
                         || locator.is_empty()
                         || locator.chars().any(char::is_control)
@@ -692,7 +739,7 @@ fn lint_links_and_references(
                         );
                     }
                 }
-                ReferenceDestination::Invalid => push_diagnostic(
+                None => push_diagnostic(
                     diagnostics,
                     config,
                     INVALID_CROSS_REFERENCE,
@@ -716,6 +763,42 @@ fn lint_links_and_references(
             inspect(inline, &targets, config, diagnostics);
         }
     });
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileTarget<'a> {
+    extension: &'a str,
+}
+
+fn classify_file_target(target: &str) -> Option<FileTarget<'_>> {
+    let path_end = target.find(['?', '#']).unwrap_or(target.len());
+    let path = &target[..path_end];
+    if path.starts_with("//")
+        || path.contains([
+            '\\', '\0', '\r', '\n', '\t', ' ', '[', ']', '<', '>', '"', '\'',
+        ])
+        || has_scheme(path)
+    {
+        return None;
+    }
+    let name = path.rsplit('/').next()?;
+    let (stem, extension) = name.rsplit_once('.')?;
+    if stem.is_empty() || extension.is_empty() {
+        return None;
+    }
+    Some(FileTarget { extension })
+}
+
+fn is_asciidoc_extension(extension: &str) -> bool {
+    extension.eq_ignore_ascii_case("adoc") || extension.eq_ignore_ascii_case("asciidoc")
+}
+
+fn is_fixable_relative_target(target: &str) -> bool {
+    classify_file_target(target).is_some() && valid_unresolved_relative_target(target)
+}
+
+fn has_scheme(target: &str) -> bool {
+    target.find(':').is_some()
 }
 
 /// Checks only syntax that is safe to retain for later host resolution.
@@ -959,6 +1042,13 @@ fn collect_attribute_references(
                         .push(attribute.name_range);
                 }
             }
+            crate::inline::Inline::Reference(reference) => {
+                for attribute in &reference.target_attributes {
+                    used.entry(attribute.name.clone())
+                        .or_default()
+                        .push(attribute.name_range);
+                }
+            }
             crate::inline::Inline::Macro(node) => {
                 for attribute in &node.target_attributes {
                     used.entry(attribute.name.clone())
@@ -969,7 +1059,6 @@ fn collect_attribute_references(
             crate::inline::Inline::Text(_)
             | crate::inline::Inline::Literal { .. }
             | crate::inline::Inline::Styled { .. }
-            | crate::inline::Inline::Reference(_)
             | crate::inline::Inline::HardBreak { .. }
             | crate::inline::Inline::Passthrough { .. }
             | crate::inline::Inline::Formula(_) => {}
@@ -1511,6 +1600,122 @@ mod tests {
             1
         );
         assert!(codes.contains(&"unresolved-cross-reference"));
+    }
+
+    #[test]
+    fn link_and_xref_rules_use_extensions_without_filesystem_access() {
+        let source = "= Title\n:doc: guide\n:asset: data\n\n\
+            link:guide.adoc[guide]\n\
+            link:GUIDE.ASCIIDOC?view=1#top[guide]\n\
+            link:guide.adoc?next=https://example.test[query]\n\
+            link:bad%ZZ.adoc[invalid escape]\n\
+            link:https://example.com/guide.adoc[external]\n\
+            link:{doc}.adoc[attribute]\n\
+            link:{missing}.adoc[missing]\n\
+            link:/root/manual.adoc[root]\n\
+            link:.adoc[hidden]\n\
+            link:empty.[empty]\n\
+            xref:data.json?download=1#top[data]\n\
+            xref:manual.PDF[pdf]\n\
+            xref:{asset}.toml[attribute]\n\
+            xref:{missing}.pdf[missing]\n\
+            xref:/root/data.json[root]\n\
+            xref:README[extensionless]\n\
+            xref:guide.ADOC[guide]\n\
+            xref:note:asset.pdf[scheme]\n\
+            <<local>>\n";
+        let diagnostics = lint(source, &LintConfig::default()).expect("lint");
+        let relevant = diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                matches!(
+                    diagnostic.code.as_str(),
+                    "asciidoc-file-link" | "non-asciidoc-xref"
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            relevant.len(),
+            10,
+            "{:?}",
+            relevant
+                .iter()
+                .map(|diagnostic| (
+                    diagnostic.code.as_str(),
+                    &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()]
+                ))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            relevant
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "asciidoc-file-link",
+                "asciidoc-file-link",
+                "asciidoc-file-link",
+                "asciidoc-file-link",
+                "asciidoc-file-link",
+                "asciidoc-file-link",
+                "non-asciidoc-xref",
+                "non-asciidoc-xref",
+                "non-asciidoc-xref",
+                "non-asciidoc-xref"
+            ]
+        );
+        for diagnostic in relevant {
+            let macro_name =
+                &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()];
+            let (expected_name, expected_replacement) =
+                if diagnostic.code.as_str() == "asciidoc-file-link" {
+                    ("link", "xref")
+                } else {
+                    ("xref", "link")
+                };
+            assert_eq!(macro_name, expected_name);
+            assert_eq!(diagnostic.severity, Severity::Warning);
+            let target_line = source[diagnostic.range.end().to_usize()..]
+                .lines()
+                .next()
+                .expect("diagnostic line");
+            if target_line.starts_with(":{")
+                || target_line.starts_with(":/")
+                || target_line.contains("https:")
+                || target_line.contains("%ZZ")
+            {
+                assert!(diagnostic.fixes.is_empty());
+            } else {
+                assert_eq!(diagnostic.fixes.len(), 1);
+                assert_eq!(
+                    diagnostic.fixes[0].applicability,
+                    super::Applicability::Always
+                );
+                assert_eq!(diagnostic.fixes[0].edits()[0].range, diagnostic.range);
+                assert_eq!(
+                    diagnostic.fixes[0].edits()[0].replacement,
+                    expected_replacement
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn expanded_xref_target_does_not_keep_the_authored_safety_diagnostic() {
+        let diagnostics = lint(
+            "= Title\n:asset: data\n\nxref:{asset}.toml[Data]\n",
+            &LintConfig::default(),
+        )
+        .expect("lint");
+        let codes = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(codes.contains(&"non-asciidoc-xref"), "{codes:?}");
+        assert!(!codes.contains(&"invalid-cross-reference"));
+        assert!(!codes.contains(&"unused-attribute"));
     }
 
     #[test]

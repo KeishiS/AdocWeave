@@ -417,7 +417,29 @@ fn resolve_inlines(inlines: &mut [Inline], evaluator: &AttributeEvaluator<'_>) {
                 }
                 resolve_inlines(&mut link.label, evaluator);
             }
-            Inline::Reference(reference) => resolve_inlines(&mut reference.label, evaluator),
+            Inline::Reference(reference) => {
+                match evaluator.expand_text(&reference.target_source) {
+                    Ok(value) => {
+                        reference.expanded_target = value;
+                        reference.target_expansion_error = None;
+                        reference.target = if reference.macro_name_range.is_none() {
+                            (!reference.expanded_target.is_empty()).then(|| {
+                                crate::reference::ReferenceKey::Local {
+                                    anchor: reference.expanded_target.clone(),
+                                }
+                            })
+                        } else {
+                            crate::reference::ReferenceKey::parse(&reference.expanded_target)
+                        };
+                    }
+                    Err(error) => {
+                        reference.expanded_target = reference.target_source.clone();
+                        reference.target_expansion_error = Some(error);
+                        reference.target = None;
+                    }
+                }
+                resolve_inlines(&mut reference.label, evaluator);
+            }
             Inline::Macro(node) => match evaluator.expand_text(&node.target_source) {
                 Ok(value) => {
                     node.target = value;

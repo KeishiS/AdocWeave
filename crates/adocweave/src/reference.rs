@@ -29,30 +29,39 @@ pub enum ReferenceKey {
 }
 
 impl ReferenceKey {
-    pub fn from_destination(destination: &crate::inline::ReferenceDestination) -> Option<Self> {
-        use crate::inline::ReferenceDestination;
-        match destination {
-            ReferenceDestination::Local { anchor, .. } => Some(Self::Local {
-                anchor: anchor.clone(),
-            }),
-            ReferenceDestination::Document {
-                document, anchor, ..
-            } => Some(Self::Document {
-                document: document.clone(),
-                anchor: anchor.clone(),
-            }),
-            ReferenceDestination::Scheme {
-                scheme,
-                locator,
-                anchor,
-                ..
-            } => Some(Self::Scheme {
-                scheme: scheme.clone(),
-                locator: locator.clone(),
-                anchor: anchor.clone(),
-            }),
-            ReferenceDestination::Invalid => None,
+    pub fn parse(target: &str) -> Option<Self> {
+        if let Some(anchor) = target.strip_prefix('#') {
+            return (!anchor.is_empty()).then(|| Self::Local {
+                anchor: anchor.to_owned(),
+            });
         }
+        if let Some(colon) = target.find(':') {
+            let scheme = &target[..colon];
+            if scheme.bytes().enumerate().all(|(index, byte)| {
+                byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
+            }) {
+                let remainder = &target[colon + 1..];
+                let (locator, anchor) = remainder
+                    .split_once('#')
+                    .map_or((remainder, None), |(locator, anchor)| {
+                        (locator, Some(anchor))
+                    });
+                return Some(Self::Scheme {
+                    scheme: scheme.to_ascii_lowercase(),
+                    locator: locator.to_owned(),
+                    anchor: anchor.map(str::to_owned),
+                });
+            }
+        }
+        let (document, anchor) = target
+            .split_once('#')
+            .map_or((target, None), |(document, anchor)| {
+                (document, Some(anchor))
+            });
+        (!document.is_empty()).then(|| Self::Document {
+            document: document.to_owned(),
+            anchor: anchor.map(str::to_owned),
+        })
     }
 }
 
@@ -219,7 +228,7 @@ pub fn query_from_reference(
     source_id: Option<SourceId>,
     reference: &crate::inline::Reference,
 ) -> Option<ReferenceQuery> {
-    let target = ReferenceKey::from_destination(&reference.destination)?;
+    let target = reference.target.clone()?;
     Some(ReferenceQuery {
         source_id,
         source_range: reference.range,
