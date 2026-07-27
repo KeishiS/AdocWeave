@@ -16,10 +16,6 @@ https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notes�
 
 * xref:../../issues/164-document-scoped-attribute-changes.adoc[Issue 164: 文書内属性変更の評価]（計画）
 
-=== M51: v0.10.0 release train
-
-* xref:../../issues/175-v0-10-0-release-readiness.adoc[Issue 175: v0.10.0 release readiness]（計画）
-
 == 開発と保守
 
 製品機能のmilestoneとは独立して、文書検査と依存更新の運用を改善します。
