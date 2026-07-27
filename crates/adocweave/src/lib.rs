@@ -26,6 +26,7 @@ mod json;
 mod limits;
 mod lint;
 mod list_parser;
+mod local_target;
 mod lowering;
 mod parser;
 mod parser_support;
@@ -150,10 +151,10 @@ pub mod preprocess {
         IncludeRequest, OriginRange, Originated, PreprocessError, PreprocessErrorKind,
         PreprocessNotice, PreprocessNoticeKind, PreprocessOptions, PreprocessedAnalysis,
         PreprocessedAnalysisError, PreprocessedDocument, ProjectedDiagnostic,
-        ProjectedDocumentSymbol, ProjectedFix, ProjectedReference, ProjectedResource,
-        ProjectionError, ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode,
-        SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
-        preprocess_and_analyze,
+        ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget, ProjectedReference,
+        ProjectedResource, ProjectionError, ProjectionLimits, ResourceDocument, ResourceSnapshot,
+        SafeMode, SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
+        preprocess_and_analyze, resolve_include_target,
     };
 }
 
@@ -195,6 +196,7 @@ pub use core::{
 };
 pub use execution::{AnalysisRequest, AnalysisResult, DocumentRevision};
 pub use limits::{AnalysisLimits, OutputLimits, SyntaxMode};
+pub use local_target::{LocalTargetKind, LocalTargetReference, LocalTargetSyntax};
 
 pub const PRODUCT_NAME: &str = "AdocWeave";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -26,6 +26,7 @@ pub struct ResourceReference {
     range: TextRange,
     target_range: TextRange,
     target: String,
+    target_expansion_error: Option<crate::substitution::AttributeExpansionError>,
     attributes: Vec<MacroAttribute>,
 }
 
@@ -45,6 +46,7 @@ impl ResourceReference {
             range: node.range,
             target_range: node.target_range,
             target: node.target.clone(),
+            target_expansion_error: node.target_expansion_error,
             attributes: node.attributes.clone(),
         }];
         if node.kind == StandardMacroKind::Video
@@ -61,6 +63,7 @@ impl ResourceReference {
                 range: poster.value_range,
                 target_range: poster.value_range,
                 target: poster.value.clone(),
+                target_expansion_error: None,
                 attributes: Vec::new(),
             });
         }
@@ -89,6 +92,10 @@ impl ResourceReference {
 
     pub fn target(&self) -> &str {
         &self.target
+    }
+
+    pub fn target_expansion_error(&self) -> Option<&crate::substitution::AttributeExpansionError> {
+        self.target_expansion_error.as_ref()
     }
 
     pub fn attributes(&self) -> &[MacroAttribute] {

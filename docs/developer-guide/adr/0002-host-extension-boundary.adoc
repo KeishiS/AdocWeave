@@ -11,7 +11,13 @@
 コアは標準構文、汎用属性、通常リンクおよび型付きxrefを解析します。任意スキームの意味、
 永続化、アクセス制御および解決済みURLはホストが解析後に付加します。
 
+コアはlocal file候補を型付きqueryとして公開しますが、filesystemへアクセスしません。
+project root、path正規化、symlink解決、実在性、file種別および読み取り上限はホストが所有します。
+一つのcommandまたはrequestでは、include読込とlocal target検査が同じsessionを使用し、
+正規化済みpathごとの成功・失敗とUTF-8本文を共有します。
+
 == 帰結
 
 製品拡張は別リポジトリで実装できます。Parserへ任意コードを注入するplug-in ABIは提供せず、
 拡張は公開Analysis、projectionおよびResolver仕様だけを利用します。
+同じtargetが複数回現れる場合も位置は個別に保持し、filesystemへの問い合わせだけを共有します。
