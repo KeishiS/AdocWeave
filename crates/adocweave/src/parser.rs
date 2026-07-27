@@ -1139,7 +1139,7 @@ fn body_attribute_has_blank_offset(
             return true;
         }
         if content.starts_with("//") {
-            continue;
+            return true;
         }
         if crate::attributes::parse_line(
             content,

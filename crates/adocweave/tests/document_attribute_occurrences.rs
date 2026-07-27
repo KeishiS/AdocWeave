@@ -216,17 +216,24 @@ fn body_attribute_offset_may_contain_line_comments() {
     let source = include_str!("../../../fixtures/attributes/body-after-comment.adoc");
     let analysis = analyze(source);
 
-    assert_eq!(analysis.document_attribute_occurrences().len(), 1);
+    assert_eq!(analysis.document_attribute_occurrences().len(), 2);
     assert!(analysis.header_attribute_occurrences().is_empty());
-    assert_eq!(analysis.document_attribute_occurrences()[0].name, "foo");
+    assert_eq!(
+        analysis
+            .document_attribute_occurrences()
+            .iter()
+            .map(|attribute| attribute.name.as_str())
+            .collect::<Vec<_>>(),
+        ["foo", "bar"]
+    );
     assert_eq!(
         analysis
             .syntax()
             .nodes(adocweave::text::SyntaxKind::CommentLine)
             .count(),
-        1
+        2
     );
-    assert_eq!(analysis.document().blocks().len(), 2);
+    assert_eq!(analysis.document().blocks().len(), 4);
     assert_eq!(analysis.syntax().reconstruct(), source);
 }
 

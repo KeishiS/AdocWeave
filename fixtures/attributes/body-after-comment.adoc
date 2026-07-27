@@ -1,6 +1,9 @@
 Paragraph
-
-// comment
+//
 :foo: bar
-
 Next
+
+Another
+// comment
+:bar: baz
+End
