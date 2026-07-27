@@ -1,0 +1,85 @@
+= ADR 0010: 読込順に従う文書属性environment
+
+== 状態
+
+採用
+
+== 背景
+
+AsciiDoc pre-specでは、一般の属性エントリを文書headerだけでなく本文のblock間にも記述できます。
+属性の定義、再定義および解除は記述位置より後の内容へ作用し、属性値中の参照は代入時に
+解決されます。includeとconditional directiveも、読込時点で有効な属性を参照します。
+
+従来のAdocWeaveは文書headerの属性だけを認識し、すべての属性操作を一つの最終値mapへ
+畳んでから全文を展開していました。この構造では、前方参照、再定義、解除およびincludeを
+またぐ変更を表現できません。また、parser後の置換だけを位置依存にしても、先に動作する
+preprocessorのincludeとconditional directiveが異なる属性状態を参照します。
+
+位置ごとに完全なmapを保持すると、文書規模と属性変更数に応じて同じ値を複製します。
+元sourceのoffsetだけでは、複数のincludeを平坦化した後の意味上の順序も決定できません。
+
+== 決定
+
+属性の意味上の順序は、preprocessorが生成するexpanded sourceの読込順とします。
+元sourceの`SourceId`とrangeは順序の決定には使用せず、診断と公開queryへ投影する
+provenanceとして保持します。
+
+解析結果は文書ごとに一つの`AttributeEnvironment`を所有します。environmentは属性名ごとの
+binding履歴と最終値viewを保持し、任意のexpanded source位置について、その位置より前で
+有効になった直近のbindingを検索します。blockやinlineごとに属性mapを複製しません。
+expanded byte offsetが同じeventは単調増加する読込event IDで順序付けます。
+
+各bindingは次の情報を保持します。
+
+* 安定した解析内ID
+* setまたはunsetの操作
+* raw値
+* 属性エントリ全体の終端より後から参照可能になる位置と読込event ID
+* 値中の属性参照を評価する位置
+* 対応するsource occurrence
+
+属性値中の参照は、そのbindingを定義した時点のenvironmentで解決します。後から同名属性を
+再定義しても、以前に代入した値を遡及的に変更しません。定義時点で未定義の参照は、後の
+bindingへ結び直さず、その時点の未定義参照規則を適用します。cycleと処理上限も、参照した
+bindingの連鎖に対して検査します。
+
+preprocessorは読込中の現在値を表す逐次状態を使用します。include target、`ifdef`、`ifndef`
+および`ifeval`はdirectiveへ到達した時点の状態で評価します。選択されなかったbranchの
+属性操作は存在しないものとして扱います。preprocessorの逐次状態と解析結果のenvironmentは、
+set、unset、代入時展開および処理上限の共通規則を使用します。
+
+文書外から渡された属性、文書headerのmetadata、本文のbindingおよび組み込み既定値は
+別の役割として表します。v0.12.0で文書外から渡す属性はhard-lockedなsetまたはunsetとし、
+文書中の操作で変更できません。拒否された文書中の操作もsource occurrenceとして保持し、
+有効なbindingにはせず診断対象とします。soft-set、soft-unsetおよび`@`優先度modifierは
+対応profileに含めず、暗黙に受理しません。
+
+headerでのみ意味を持つ組み込み属性は本文のbindingによって文書全体の設定を変更しません。
+本文の一般属性はdocument metadataへ混在させず、位置queryと最終値viewから取得します。
+組み込み既定値より文書中のbindingを優先し、hard-lockedな外部入力を最優先とします。
+
+公開queryは、位置ごとの解決値、その値を決めたbindingおよびsource occurrenceを返します。
+最終属性値はenvironmentから導出するviewとし、位置依存の意味情報の正本にはしません。
+includeを含む解析では、expanded rangeと元sourceのoriginを型で区別します。
+
+属性エントリは、root文書とinclude文書を平坦化したexpanded sourceのroot block列で認識します。
+同じ元sourceを複数回includeした場合は、それぞれを別の読込eventとして扱います。
+delimited block内部の属性エントリはAsciiDoc pre-specで動作が定義されていないため、
+対応profileへ追加しません。inline属性代入記法もこの決定の対象外とします。
+
+== 結果
+
+本文中のset、unset、再定義、前方参照、includeおよびconditional directiveを、同じ読込順と
+属性評価規則で処理できます。Lint、HTML、Language ServerおよびWASMは独自の属性mapや
+再解析を持たず、同じenvironmentとsource projectionを利用します。
+
+属性検索は名前ごとの履歴に対する検索となり、保存量はnode数ではなく属性binding数に
+比例します。include元の同じsourceが複数回展開された場合も、expanded source上のbindingを
+別の出来事として扱い、元source occurrenceへ投影できます。
+
+`ResolvedDocumentAttributes`を中心とする公開APIと、属性queryを追加するWASM protocolには
+破壊的変更が発生します。v0.xではpackage versionの完全一致を要求しているため、v0.12.0の
+Release Notesで移行方法を示し、旧protocolを明示的に拒否します。
+
+単一の不変な`Analysis`、coreからの外部I/O排除、hostによるresource取得と権限検査、
+nativeとWASMの意味情報一致という既存の不変条件は変更しません。

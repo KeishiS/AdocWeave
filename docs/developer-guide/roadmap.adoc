@@ -8,9 +8,9 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== v0.10.xの保守
+== v0.11.xの保守
 
-v0.10.xでは、公開API、WASM protocol、対応構文および既定のHTML出力契約を維持しながら、
+v0.11.xでは、公開API、WASM protocol、対応構文および既定のHTML出力契約を維持しながら、
 確認済みの不具合、文書、依存関係および検証基盤を修正します。新しいCLI機能、公開schema、
 既定診断および構文機能は次のminor release候補として扱います。
 
@@ -18,16 +18,18 @@ v0.10.xでは、公開API、WASM protocol、対応構文および既定のHTML�
 または優先度の高い不具合を修正した時点で準備します。未完了作業のないrelease追跡Issueや、
 版数を進めることだけを目的としたreleaseは作成しません。
 
-== 後続の機能候補
+== v0.12.0
 
-=== 文書内属性
+v0.12.0では、AdocWeaveの対応profileにおいて、AsciiDoc pre-specに沿った本文中の属性定義、
+再定義および解除に対応します。属性は文書の読込順に従って後続内容へ作用し、includeと
+conditional directiveを含むすべての利用側が同じ属性environmentを使用します。
 
-位置に応じた属性environmentはparser、substitution、公開query、HTML、Lint、LSPおよびWASMへ
-影響するため、ほかの機能と混ぜず独立したminor release候補として扱います。
+* https://github.com/KeishiS/AdocWeave/issues/35[本文中の属性定義・再定義・解除]
+* https://github.com/KeishiS/AdocWeave/issues/61[属性の仕様・ADR・共有fixture]
 
-* https://github.com/KeishiS/AdocWeave/issues/35[文書内属性変更の評価]
-
-仕様と長期的な設計判断、coreと公開query、consumer統合の単位へ分けて検討します。
+parser、preprocessor、substitution、公開query、HTML、Lint、LSPおよびWASMを段階的に移行します。
+公開Rust APIとWASM protocolの破壊的変更を許容し、位置ごとの値と定義元を明示できる契約へ
+整理します。ほかの構文機能は同じreleaseへ追加しません。
 
 == 継続運用
 
