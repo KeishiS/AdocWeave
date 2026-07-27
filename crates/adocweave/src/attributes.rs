@@ -67,7 +67,7 @@ pub(crate) fn parse_line(
     let valid_name = !name.is_empty()
         && name
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'));
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
     let (operation, problem) = if !valid_name {
         (
             DocumentAttributeOperation::Set,

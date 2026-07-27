@@ -19,7 +19,7 @@ fn document_attributes_are_recognized_between_root_blocks() {
     );
     assert_eq!(
         analysis.presentation().attributes().get("body-attribute"),
-        Some("value")
+        None
     );
     assert_eq!(analysis.document().blocks().len(), 2);
     assert_eq!(analysis.source(), source);

@@ -39,6 +39,13 @@ impl Document {
         self.inner.attributes()
     }
 
+    /// Returns the leading document-header attribute occurrences.
+    pub fn header_attribute_occurrences(
+        &self,
+    ) -> &[crate::attributes::DocumentAttributeOccurrence] {
+        self.inner.header_attributes()
+    }
+
     pub const fn header(&self) -> &crate::block_model::DocumentHeader {
         self.inner.header()
     }

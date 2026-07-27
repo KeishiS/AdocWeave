@@ -8,7 +8,6 @@ use crate::block_model::{Author, DocumentHeader, MetadataValue, Revision};
 use crate::source::{PositionError, TextRange, TextSize};
 use crate::source_document::SourceLine;
 
-#[derive(Default)]
 pub(super) struct DocumentHeaderState {
     pub(super) attributes_open: bool,
     pub(super) expect_author: bool,
@@ -16,6 +15,19 @@ pub(super) struct DocumentHeaderState {
     pub(super) header: DocumentHeader,
     pub(super) attributes: Vec<DocumentAttributeOccurrence>,
     pub(super) attribute_problems: Vec<AttributeProblem>,
+}
+
+impl Default for DocumentHeaderState {
+    fn default() -> Self {
+        Self {
+            attributes_open: true,
+            expect_author: false,
+            expect_revision: false,
+            header: DocumentHeader::default(),
+            attributes: Vec::new(),
+            attribute_problems: Vec::new(),
+        }
+    }
 }
 
 impl DocumentHeaderState {

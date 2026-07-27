@@ -405,6 +405,37 @@ impl PreprocessedDocument {
         origins
     }
 
+    fn origins_for_empty_range_within(
+        &self,
+        output_range: ExpandedRange,
+        containing_range: ExpandedRange,
+    ) -> Vec<SourceOrigin> {
+        debug_assert!(output_range.is_empty());
+        let Some(segment) = self.source_map.iter().find(|segment| {
+            segment.output_range.start() <= output_range.start()
+                && output_range.start() <= segment.output_range.end()
+                && segment.output_range.start() < containing_range.end()
+                && containing_range.start() < segment.output_range.end()
+        }) else {
+            return self.origins_for_range(output_range);
+        };
+        let range = if segment.mapping == SourceMapping::Identity {
+            let relative = output_range
+                .start()
+                .to_u32()
+                .saturating_sub(segment.output_range.start().to_u32());
+            let offset = TextSize::new(segment.origin.range.start().to_usize() + relative as usize)
+                .expect("projected source offset is bounded");
+            TextRange::new(offset, offset).expect("zero source range is ordered")
+        } else {
+            segment.origin.range.text_range()
+        };
+        vec![SourceOrigin {
+            source_id: segment.origin.source_id.clone(),
+            range: OriginRange::new(range),
+        }]
+    }
+
     fn mapping_is_identity(&self, output_range: ExpandedRange) -> bool {
         if output_range.is_empty() {
             return false;
@@ -539,6 +570,41 @@ impl PreprocessedAnalysis {
     ) -> Result<AnalysisProjection, ProjectionError> {
         let map = &self.document;
         let mut projected_segments = 0_u64;
+        let attribute_occurrences = self
+            .analysis
+            .document_attribute_occurrences()
+            .iter()
+            .cloned()
+            .map(|value| {
+                let origins = project_attribute_range(
+                    map,
+                    value.range,
+                    value.range,
+                    &mut projected_segments,
+                    limits,
+                )?;
+                let name_origins = project_attribute_range(
+                    map,
+                    value.name_range,
+                    value.range,
+                    &mut projected_segments,
+                    limits,
+                )?;
+                let value_origins = project_attribute_range(
+                    map,
+                    value.value_range,
+                    value.range,
+                    &mut projected_segments,
+                    limits,
+                )?;
+                Ok(ProjectedDocumentAttribute {
+                    value,
+                    origins,
+                    name_origins,
+                    value_origins,
+                })
+            })
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
         let mut project = |range| {
             let origins = map.origins_for_range(ExpandedRange::new(range));
             projected_segments = projected_segments.saturating_add(origins.len() as u64);
@@ -602,20 +668,6 @@ impl PreprocessedAnalysis {
                     origins,
                     related,
                     fixes,
-                })
-            })
-            .collect::<Result<Vec<_>, ProjectionError>>()?;
-        let attribute_occurrences = self
-            .analysis
-            .document_attribute_occurrences()
-            .iter()
-            .cloned()
-            .map(|value| {
-                Ok(ProjectedDocumentAttribute {
-                    origins: project(value.range)?,
-                    name_origins: project(value.name_range)?,
-                    value_origins: project(value.value_range)?,
-                    value,
                 })
             })
             .collect::<Result<Vec<_>, ProjectionError>>()?;
@@ -696,6 +748,32 @@ impl PreprocessedAnalysis {
             resources,
             symbols,
         })
+    }
+}
+
+fn project_attribute_range(
+    map: &PreprocessedDocument,
+    range: TextRange,
+    occurrence_range: TextRange,
+    projected_segments: &mut u64,
+    limits: ProjectionLimits,
+) -> Result<Vec<SourceOrigin>, ProjectionError> {
+    let origins = if range.is_empty() {
+        map.origins_for_empty_range_within(
+            ExpandedRange::new(range),
+            ExpandedRange::new(occurrence_range),
+        )
+    } else {
+        map.origins_for_range(ExpandedRange::new(range))
+    };
+    *projected_segments = projected_segments.saturating_add(origins.len() as u64);
+    if *projected_segments > u64::from(limits.max_origin_segments) {
+        Err(ProjectionError {
+            limit: limits.max_origin_segments,
+            actual: *projected_segments,
+        })
+    } else {
+        Ok(origins)
     }
 }
 
@@ -1957,6 +2035,49 @@ mod tests {
         assert_eq!(
             theme.value_origins[0].range.text_range(),
             text_range_in(included, "dark")
+        );
+    }
+
+    #[test]
+    fn empty_attribute_value_at_an_include_boundary_projects_to_the_include() {
+        let included = include_str!("../../../fixtures/attributes/include-empty-no-newline.adoc");
+        assert!(!included.ends_with('\n'));
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "empty.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("empty-include"),
+                source: included.to_owned(),
+            },
+        );
+        let analysis = preprocess_and_analyze(
+            &Engine::new(crate::core::AnalysisOptions::default()),
+            "include::empty.adoc[]\n\nBody\n",
+            &snapshot,
+            &PreprocessOptions {
+                source_id: Some(SourceId::new("root")),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("analysis");
+        let projection = analysis
+            .project_origins(ProjectionLimits::default())
+            .expect("projection");
+
+        assert_eq!(projection.attribute_occurrences.len(), 1);
+        let attribute = &projection.attribute_occurrences[0];
+        assert!(attribute.value.value_range.is_empty());
+        assert_eq!(
+            attribute.value_origins,
+            vec![SourceOrigin {
+                source_id: Some(SourceId::new("empty-include")),
+                range: OriginRange::new(range(included.len(), included.len())),
+            }]
+        );
+        assert_eq!(
+            attribute.origins.len(),
+            2,
+            "the line ending originates in the root segment"
         );
     }
 

@@ -80,12 +80,14 @@ impl AstDocument {
     pub(crate) fn new(
         blocks: Vec<AstBlock>,
         attributes: Vec<DocumentAttributeOccurrence>,
+        header_attribute_count: usize,
         anchors: Vec<ExplicitAnchor>,
         header: DocumentHeader,
     ) -> Self {
         Self {
             blocks,
             attributes,
+            header_attribute_count,
             anchors,
             header,
             resolved: crate::resolved::ResolvedDocument::default(),
@@ -105,6 +107,10 @@ impl AstDocument {
 
     pub(crate) fn attributes(&self) -> &[DocumentAttributeOccurrence] {
         &self.attributes
+    }
+
+    pub(crate) fn header_attributes(&self) -> &[DocumentAttributeOccurrence] {
+        &self.attributes[..self.header_attribute_count]
     }
 
     pub fn anchors(&self) -> &[ExplicitAnchor] {
@@ -599,12 +605,16 @@ fn parse_block_sequence(
             }
         }
 
+        let document_attribute_position = root.as_ref().is_some_and(|state| {
+            state.attributes_open
+                || body_attribute_has_blank_offset(source_document, line_index, saw_content)
+        });
         let recognition = recognize_line(
             content,
             next_content,
             line.content_range().start().to_usize(),
             line.full_range(),
-            root.is_some(),
+            document_attribute_position,
         );
         if recognition == LineRecognition::Source {
             flush_paragraph(
@@ -1068,9 +1078,13 @@ fn finish_document(
     let BlockSequenceOutput::Root(sequence) = sequence else {
         return Err(ParseFailure::InternalInvariant);
     };
+    let header_attribute_count = sequence
+        .attributes
+        .partition_point(|attribute| attribute.range.end() <= sequence.header.end);
     let mut ast = crate::lowering::lower(crate::lowering::ParsedFacts {
         blocks: sequence.common.blocks,
         attributes: sequence.attributes,
+        header_attribute_count,
         anchors: sequence.common.anchors,
         header: sequence.header,
         attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
@@ -1093,6 +1107,37 @@ fn finish_document(
         syntax: SyntaxTree::from_blocks(source_document, sequence.common.syntax, syntax_issues),
         ast,
     })
+}
+
+fn body_attribute_has_blank_offset(
+    document: &SourceDocument,
+    line_index: usize,
+    saw_content: bool,
+) -> bool {
+    if !saw_content {
+        return false;
+    }
+    let mut preceding = line_index;
+    while preceding > 0 {
+        preceding -= 1;
+        let line = document.lines()[preceding];
+        let content = document
+            .text(line.content_range())
+            .expect("line content has valid UTF-8 boundaries");
+        if content.trim_matches([' ', '\t']).is_empty() {
+            return true;
+        }
+        if crate::attributes::parse_line(
+            content,
+            line.content_range().start().to_usize(),
+            line.full_range(),
+        )
+        .is_none()
+        {
+            return false;
+        }
+    }
+    false
 }
 
 fn parse_block_title(

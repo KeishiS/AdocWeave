@@ -164,6 +164,13 @@ impl Analysis {
         self.document.attribute_occurrences()
     }
 
+    /// Returns leading document-header attribute occurrences in source order.
+    pub fn header_attribute_occurrences(
+        &self,
+    ) -> &[crate::attributes::DocumentAttributeOccurrence] {
+        self.document.header_attribute_occurrences()
+    }
+
     pub fn references(&self) -> &[crate::inline::Reference] {
         self.facts().references()
     }

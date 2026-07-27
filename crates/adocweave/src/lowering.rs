@@ -10,6 +10,7 @@ use crate::substitution::{AttributeEvaluator, AttributeExpansionLimits};
 pub(crate) struct ParsedFacts {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttributeOccurrence>,
+    pub header_attribute_count: usize,
     pub anchors: Vec<ExplicitAnchor>,
     pub header: DocumentHeader,
     pub attribute_expansion_limits: AttributeExpansionLimits,
@@ -19,7 +20,8 @@ pub(crate) struct ParsedFacts {
 pub(crate) fn lower(
     mut facts: ParsedFacts,
 ) -> Result<AstDocument, crate::catalog::CatalogLimitExceeded> {
-    let resolved_attributes = crate::presentation::resolve_document_attributes(&facts.attributes);
+    let header_attributes = &facts.attributes[..facts.header_attribute_count];
+    let resolved_attributes = crate::presentation::resolve_document_attributes(header_attributes);
     let source_language = resolved_attributes
         .get("source-language")
         .map(str::trim)
@@ -27,9 +29,14 @@ pub(crate) fn lower(
     facts.blocks = normalize_verbatim_blocks(facts.blocks, source_language);
     resolve_delimited_presentations(&mut facts.blocks);
     attach_anchors(&mut facts.anchors, &facts.blocks);
-    facts.header.doctype = document_type(&facts.attributes);
-    let mut document =
-        AstDocument::new(facts.blocks, facts.attributes, facts.anchors, facts.header);
+    facts.header.doctype = document_type(header_attributes);
+    let mut document = AstDocument::new(
+        facts.blocks,
+        facts.attributes,
+        facts.header_attribute_count,
+        facts.anchors,
+        facts.header,
+    );
     document.normalize_heading_kinds();
     resolve_inline_attributes(
         &mut document,

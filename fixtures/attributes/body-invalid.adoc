@@ -1,6 +1,8 @@
 = 不正な本文属性
 
 前の段落です。
+
 :bad name: value
+:bad.name: value
 :valid!: unexpected
 後の段落です。
