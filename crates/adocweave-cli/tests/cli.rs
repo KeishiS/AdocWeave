@@ -709,8 +709,18 @@ fn local_target_check_reports_include_read_failures() {
     let root = std::env::temp_dir().join(format!("adocweave-local-read-{unique}"));
     std::fs::create_dir_all(&root).expect("directory");
     let document = root.join("root.adoc");
-    std::fs::write(&document, "include::invalid.adoc[]\n").expect("root source");
+    std::fs::write(
+        &document,
+        "include::invalid.adoc[]\ninclude::http//bad.adoc[]\n",
+    )
+    .expect("root source");
     std::fs::write(root.join("invalid.adoc"), [0xff]).expect("invalid UTF-8");
+    std::fs::create_dir_all(root.join("http")).expect("incomplete target directory");
+    std::fs::write(
+        root.join("http/bad.adoc"),
+        "xref:nested-missing.adoc[nested]\n",
+    )
+    .expect("incomplete target file");
 
     let output = adocweave()
         .args([
@@ -730,6 +740,20 @@ fn local_target_check_reports_include_read_failures() {
     assert!(diagnostics.as_array().expect("array").iter().any(|value| {
         value["code"] == "local-target-unverifiable" && value["target"] == "invalid.adoc"
     }));
+    assert!(
+        diagnostics
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|value| value["target"] == "http//bad.adoc")
+    );
+    assert!(
+        !diagnostics
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|value| value["target"] == "nested-missing.adoc")
+    );
 
     std::fs::remove_dir_all(root).expect("cleanup");
 }

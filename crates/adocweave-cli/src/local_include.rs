@@ -209,8 +209,22 @@ pub fn prepare_local(
     let mut pending = VecDeque::new();
     enqueue_local(source, &base_key, &mut pending)?;
     let mut visited = BTreeSet::new();
-    while let Some(target) = pending.pop_front() {
+    while let Some((target, inspect)) = pending.pop_front() {
         if !visited.insert(target.clone()) {
+            continue;
+        }
+        if !inspect {
+            include_errors.insert(
+                target.clone(),
+                adocweave_host::LocalTargetError::Unverifiable(target.clone()),
+            );
+            snapshot_entries.push((
+                target.clone(),
+                ResourceDocument {
+                    source_id: SourceId::new(format!("<unavailable:{target}>")),
+                    source: String::new(),
+                },
+            ));
             continue;
         }
         match session.read_utf8(&root, &target) {
@@ -269,10 +283,16 @@ pub fn prepare_local(
 fn enqueue_local(
     source: &str,
     parent: &str,
-    pending: &mut VecDeque<String>,
+    pending: &mut VecDeque<(String, bool)>,
 ) -> Result<(), LocalIncludeError> {
     for include in discover_includes(source).map_err(LocalIncludeError::Position)? {
-        pending.push_back(resolve_include_target(&include.target, Some(parent)));
+        let Some(local) = include.local_target() else {
+            continue;
+        };
+        pending.push_back((
+            resolve_include_target(&include.target, Some(parent)),
+            local.syntax == adocweave::LocalTargetSyntax::Candidate,
+        ));
     }
     Ok(())
 }
