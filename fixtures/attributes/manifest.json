@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "contracts": [
+    {
+      "name": "root-attribute-syntax",
+      "documentation": "docs/user-guide/syntax-support.adoc",
+      "documentationNeedle": "root block間の定義、再定義および解除",
+      "fixtures": [
+        "body-adjacent-blocks.adoc",
+        "body-after-comment.adoc",
+        "body-crlf.adoc",
+        "body-invalid.adoc",
+        "body-set-unset.adoc",
+        "body-unicode.adoc",
+        "formatter-body-offset.adoc",
+        "header-after-leading-blank.adoc",
+        "header-after-leading-comments.adoc",
+        "header-before-title.adoc",
+        "header-then-body-attribute.adoc",
+        "header-without-title.adoc",
+        "public-occurrences.adoc"
+      ]
+    },
+    {
+      "name": "position-dependent-environment",
+      "documentation": "docs/developer-guide/grammar.adoc",
+      "documentationNeedle": "属性値中の参照は定義時点で確定",
+      "fixtures": [
+        "environment-consumers.adoc",
+        "environment-cycle.adoc",
+        "environment-definition-time.adoc",
+        "environment-failed-redefine.adoc",
+        "environment-forward-definition.adoc",
+        "environment-limits.adoc",
+        "environment-set-redefine-unset.adoc"
+      ]
+    },
+    {
+      "name": "include-source-projection",
+      "documentation": "docs/developer-guide/core-profile.adoc",
+      "documentationNeedle": "document_attribute_occurrences()",
+      "fixtures": [
+        "include-empty-no-newline.adoc"
+      ]
+    }
+  ]
+}
