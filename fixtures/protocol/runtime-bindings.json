@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "bindings": [
+    {
+      "consumer": "web-worker/controller.mjs",
+      "source": "./contracts.mjs",
+      "name": "WORKER_PROTOCOL_VERSION"
+    },
+    {
+      "consumer": "web-worker/contracts.mjs",
+      "source": "./protocol.generated.mjs",
+      "name": "WORKER_PROTOCOL_VERSION"
+    }
+  ]
+}

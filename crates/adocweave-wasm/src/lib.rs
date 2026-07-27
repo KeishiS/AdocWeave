@@ -18,13 +18,13 @@ use serde_json::Value;
 
 mod protocol_generated;
 mod render_inputs;
-pub use protocol_generated::WasmProductSet;
+pub use protocol_generated::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, WasmProductSet};
 pub use render_inputs::{
     WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessRequest {
     pub package_version: String,
@@ -36,14 +36,14 @@ pub struct WasmPreprocessRequest {
     pub options: WasmPreprocessOptions,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResource {
     pub source_id: String,
     pub source: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessOptions {
     pub base_uri: Option<String>,
@@ -76,7 +76,7 @@ impl Default for WasmPreprocessOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmSafeMode {
     Unsafe,
@@ -132,7 +132,7 @@ pub enum WasmDocumentAttributeOperation {
     Unset,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRequest {
     pub package_version: String,
@@ -950,6 +950,7 @@ fn serialize_error(error: &WasmError) -> String {
 #[cfg(target_arch = "wasm32")]
 mod bindings {
     use js_sys::Function;
+    use serde::de::DeserializeOwned;
     use wasm_bindgen::prelude::*;
 
     use super::*;
@@ -973,12 +974,7 @@ mod bindings {
         request: JsValue,
         cancellation: Option<Function>,
     ) -> Result<JsValue, JsValue> {
-        let request = serde_wasm_bindgen::from_value(request).map_err(|error| {
-            JsValue::from_str(&serialize_error(&WasmError {
-                code: "invalid-request".to_owned(),
-                message: error.to_string(),
-            }))
-        })?;
+        let request = deserialize_request(request)?;
         let response = process_request(request, &JsCancellation(cancellation))
             .map_err(|error| JsValue::from_str(&serialize_error(&error)))?;
         response
@@ -988,17 +984,24 @@ mod bindings {
 
     #[wasm_bindgen(js_name = preprocess)]
     pub fn preprocess_js(request: JsValue) -> Result<JsValue, JsValue> {
-        let request = serde_wasm_bindgen::from_value(request).map_err(|error| {
-            JsValue::from_str(&serialize_error(&WasmError {
-                code: "invalid-request".to_owned(),
-                message: error.to_string(),
-            }))
-        })?;
+        let request = deserialize_request(request)?;
         let response = preprocess_request(request)
             .map_err(|error| JsValue::from_str(&serialize_error(&error)))?;
         response
             .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
             .map_err(|error| JsValue::from_str(&serialize_error(&serialization_error(error))))
+    }
+
+    fn deserialize_request<T: DeserializeOwned>(request: JsValue) -> Result<T, JsValue> {
+        let value: Value = serde_wasm_bindgen::from_value(request).map_err(invalid_request)?;
+        serde_json::from_value(value).map_err(invalid_request)
+    }
+
+    fn invalid_request(error: impl std::fmt::Display) -> JsValue {
+        JsValue::from_str(&serialize_error(&WasmError {
+            code: "invalid-request".to_owned(),
+            message: error.to_string(),
+        }))
     }
 }
 

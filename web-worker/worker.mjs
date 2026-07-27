@@ -1,13 +1,15 @@
 import { createController, WORKER_PROTOCOL_VERSION } from "./controller.mjs";
+import { validateWorkerMessage } from "./protocol.generated.mjs";
 
 let controller;
 let currentGeneration = 0;
 
 self.onmessage = async ({ data }) => {
+  if (!validateWorkerMessage(data, "requests")) {
+    throw new Error("invalid AdocWeave worker request");
+  }
   if (data?.type === "initialize") {
-    if (
-      data.protocolVersion !== WORKER_PROTOCOL_VERSION
-    ) {
+    if (data.protocolVersion !== WORKER_PROTOCOL_VERSION) {
       throw new Error("invalid AdocWeave worker initialization");
     }
     const wasm = await import(data.moduleUrl);
@@ -17,13 +19,13 @@ self.onmessage = async ({ data }) => {
       : new Int32Array(data.cancellationBuffer);
     controller = createController({
       process: wasm.process,
-      publish: (message) => self.postMessage(message),
+      publish,
       isCurrent: (generation) => cancellation === null
         ? currentGeneration === generation
         : Atomics.load(cancellation, 0) === generation,
       debounceMs: data.debounceMs,
     });
-    self.postMessage({
+    publish({
       protocolVersion: WORKER_PROTOCOL_VERSION,
       type: "ready",
     });
@@ -36,3 +38,10 @@ self.onmessage = async ({ data }) => {
   }
   controller?.submit(data);
 };
+
+function publish(message) {
+  if (!validateWorkerMessage(message, "responses")) {
+    throw new Error("invalid AdocWeave worker response");
+  }
+  self.postMessage(message);
+}

@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "defaultRequest": {
+    "packageVersion": "@PACKAGE_VERSION@",
+    "sourceId": null,
+    "version": 1,
+    "generation": 1,
+    "source": "text"
+  },
+  "responseProbe": {
+    "source": "= Probe\n:name: value\n\n== Section\n\n. item\n\n[source,rust]\n----\nfn main() {}\n----\n\nNOTE: note\n\nhttps://example.com[link]\n\nxref:first[] and xref:second[]\n\nstem:[x]\n\nfootnote:f[Note]\n\nindexterm:[term]\n\nimage:a.png[]\n\ntext \n"
+  },
+  "preprocessRequest": {
+    "packageVersion": "@PACKAGE_VERSION@",
+    "sourceId": "main.adoc",
+    "source": "include::part.adoc[]\n",
+    "resources": {
+      "part.adoc": {
+        "sourceId": "part.adoc",
+        "source": "included\n"
+      }
+    },
+    "options": {
+      "enableIncludes": true
+    }
+  },
+  "preprocessObjectCases": [
+    { "object": "PreprocessRequest", "path": "" },
+    { "object": "PreprocessResource", "path": "/resources/part.adoc" },
+    { "object": "PreprocessOptions", "path": "/options" }
+  ],
+  "enumCases": [
+    { "enum": "Severity", "path": "/analysisOptions/diagnostics/rules/example/severity" },
+    { "enum": "SyntaxMode", "path": "/analysisOptions/syntax/syntaxMode" },
+    { "enum": "DocumentMode", "path": "/renderPolicy/documentMode" },
+    { "enum": "UnknownSourceLanguage", "path": "/renderPolicy/sourceLanguages/unknown" },
+    { "enum": "MathLanguage", "path": "/renderPolicy/mathLanguages/0" },
+    { "enum": "UnresolvedReferencePresentation", "path": "/renderPolicy/unresolvedReferences" },
+    { "enum": "StylesheetKind", "path": "/renderPolicy/stylesheets/0/kind", "templates": {
+      "inline": { "kind": "inline", "css": "p {}" },
+      "external": { "kind": "external", "url": "https://example.invalid/theme.css" }
+    } },
+    { "enum": "ReferenceStatus", "path": "/renderInputs/references/0/outcome/status", "templates": {
+      "resolved": { "status": "resolved", "href": "#target" },
+      "failed": { "status": "failed", "kind": "missing-target" }
+    } },
+    { "enum": "ReferenceFailureKind", "path": "/renderInputs/references/0/outcome/kind" },
+    { "enum": "ReferenceNotice", "path": "/renderInputs/references/0/outcome/notices/0", "setup": [
+      { "path": "/renderInputs/references/0/outcome", "value": { "status": "resolved", "href": "#target", "notices": ["fallback"] } }
+    ] },
+    { "enum": "ResourceStatus", "path": "/renderInputs/resources/0/outcome/status", "templates": {
+      "resolved": { "status": "resolved", "href": "a.png", "mediaType": "image/png", "byteLength": null },
+      "failed": { "status": "failed", "kind": "missing" }
+    } },
+    { "enum": "ResourceFailureKind", "path": "/renderInputs/resources/0/outcome/kind" }
+  ],
+  "objectCases": [
+    { "object": "WasmRequest", "path": "" },
+    { "object": "ProductSet", "path": "/products" },
+    { "object": "RenderInputs", "path": "/renderInputs" },
+    { "object": "ResolvedReference", "path": "/renderInputs/references/0" },
+    { "object": "ResolvedResource", "path": "/renderInputs/resources/0" },
+    { "object": "AnalysisOptions", "path": "/analysisOptions" },
+    { "object": "SyntaxOptions", "path": "/analysisOptions/syntax" },
+    { "object": "AnalysisLimits", "path": "/analysisOptions/syntax/limits" },
+    { "object": "DiagnosticProfile", "path": "/analysisOptions/diagnostics" },
+    { "object": "RuleSettings", "path": "/analysisOptions/diagnostics/rules/example" },
+    { "object": "AuthoredUrlPolicy", "path": "/analysisOptions/diagnostics/authoredUrls" },
+    { "object": "RenderPolicy", "path": "/renderPolicy" },
+    { "object": "ActiveUrlPolicy", "path": "/renderPolicy/activeUrls" },
+    { "object": "ExternalLinkPolicy", "path": "/renderPolicy/externalLinks" },
+    { "object": "SourceLanguagePolicy", "path": "/renderPolicy/sourceLanguages" },
+    { "object": "ResourceCapabilities", "path": "/renderPolicy/resources" },
+    { "object": "OutputLimits", "path": "/outputLimits" }
+  ],
+  "unionCases": [
+    { "union": "Stylesheet", "path": "/renderPolicy/stylesheets/0", "variants": {
+      "inline": { "kind": "inline", "css": "p {}" },
+      "external": { "kind": "external", "url": "https://example.invalid/theme.css" }
+    } },
+    { "union": "ResolvedReferenceOutcome", "path": "/renderInputs/references/0/outcome", "variants": {
+      "resolved": { "status": "resolved", "href": "#target" },
+      "failed": { "status": "failed", "kind": "missing-target" }
+    } },
+    { "union": "ResolvedResourceOutcome", "path": "/renderInputs/resources/0/outcome", "variants": {
+      "resolved": { "status": "resolved", "href": "a.png", "mediaType": "image/png", "byteLength": null },
+      "failed": { "status": "failed", "kind": "missing" }
+    } }
+  ],
+  "unknownFieldCases": [
+    { "path": "/unexpected", "value": true },
+    { "path": "/analysisOptions/unexpected", "value": true },
+    { "path": "/analysisOptions/syntax/unexpected", "value": true },
+    { "path": "/analysisOptions/diagnostics/unexpected", "value": true },
+    { "path": "/analysisOptions/diagnostics/rules/example/unexpected", "value": true },
+    { "path": "/renderPolicy/unexpected", "value": true },
+    { "path": "/outputLimits/unexpected", "value": true }
+  ],
+  "oldVersion": "0.10.0"
+}

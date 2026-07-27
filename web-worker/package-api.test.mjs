@@ -7,6 +7,7 @@ import {
   BROWSER_PACKAGE_VERSION,
   defaultAssetUrls,
 } from "./index.mjs";
+import { WORKER_PROTOCOL_VERSION } from "./contracts.mjs";
 
 test("public entry owns worker and WASM asset resolution", () => {
   const urls = defaultAssetUrls("https://example.test/pkg/worker/index.mjs");
@@ -35,7 +36,9 @@ test("fallback mode recreates workers and never publishes stale results", async 
     addEventListener(type, callback) { this.listeners.set(type, callback); }
     postMessage(message) {
       if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({ data: { type: "ready" } }));
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
       }
       this.lastMessage = message;
     }
@@ -54,10 +57,8 @@ test("fallback mode recreates workers and never publishes stale results", async 
   const currentWorker = workers.at(-1);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(oldWorker.terminated, true);
-  oldWorker.publish({ type: "result", version: 1, generation: 1, result: { html: "old" } });
-  currentWorker.publish({ type: "result", version: 2, generation: 2, result: {
-    packageVersion: BROWSER_PACKAGE_VERSION, html: "new", diagnostics: [], renderDiagnostics: [],
-  } });
+  oldWorker.publish(responseEnvelope(1, 1, BROWSER_PACKAGE_VERSION, "old"));
+  currentWorker.publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "new"));
   assert.equal(results.length, 1);
   assert.equal(results[0].html, "new");
   assert.equal(results[0].sourceVersion, 2);
@@ -73,7 +74,9 @@ test("client rejects a WASM result with a different contract version", async () 
     addEventListener(type, callback) { this.listeners.set(type, callback); }
     postMessage(message) {
       if (message.type === "initialize") {
-        queueMicrotask(() => this.listeners.get("message")?.({ data: { type: "ready" } }));
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
       }
       this.lastMessage = message;
     }
@@ -87,12 +90,7 @@ test("client rejects a WASM result with a different contract version", async () 
   });
   client.update({ version: 1, source: "text" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  workers.at(-1).publish({
-    type: "result",
-    version: 1,
-    generation: 1,
-    result: { packageVersion: "0.0.1" },
-  });
+  workers.at(-1).publish(responseEnvelope(1, 1, "0.0.1", ""));
   assert.deepEqual(errors, [{
     code: "unsupported-package-version",
     message: `expected package version ${BROWSER_PACKAGE_VERSION}`,
@@ -101,3 +99,98 @@ test("client rejects a WASM result with a different contract version", async () 
   }]);
   client.dispose();
 });
+
+test("client rejects and terminates an obsolete worker protocol during initialization", async () => {
+  const errors = [];
+  const messages = [];
+  class FakeWorker {
+    listeners = new Map();
+    terminated = false;
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      messages.push(message);
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION - 1, type: "ready" },
+        }));
+      }
+    }
+    terminate() { this.terminated = true; }
+  }
+  const worker = new FakeWorker();
+  const client = new AdocWeaveClient({
+    workerUrl: "worker.mjs",
+    moduleUrl: "wasm.js",
+    wasmUrl: "wasm.wasm",
+    Worker: class {
+      constructor() { return worker; }
+    },
+    sharedCancellation: true,
+    onError: (error) => errors.push(error),
+  });
+  client.update({ version: 1, source: "text" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(worker.terminated, true);
+  assert.equal(messages.length, 1);
+  assert.deepEqual(errors, [{
+    code: "unsupported-worker-protocol",
+    message: `expected worker protocol ${WORKER_PROTOCOL_VERSION}`,
+    sourceVersion: null,
+    generation: 1,
+  }]);
+  client.dispose();
+});
+
+function responseEnvelope(version, generation, packageVersion, html) {
+  return {
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    type: "result",
+    version,
+    generation,
+    result: {
+      packageVersion,
+      version,
+      generation,
+      products: {
+        syntax: false,
+        canonicalAst: false,
+        html: true,
+        attributeOccurrences: false,
+        resourceQueries: false,
+        diagnostics: true,
+        symbols: false,
+        projection: false,
+      },
+      parse: {
+        packageVersion,
+        blockCount: 0,
+        nodeCount: 0,
+        referenceCount: 0,
+      },
+      syntax: "",
+      ast: "",
+      html,
+      attributeOccurrences: [],
+      resourceQueries: [],
+      diagnostics: [],
+      renderDiagnostics: [],
+      symbols: [],
+      projection: {
+        packageVersion,
+        sourceId: null,
+        sourceBlocks: [],
+        formulas: [],
+        blockPresentations: [],
+        orderedLists: [],
+        referenceEdges: [],
+        externalLinks: [],
+        searchableText: { text: "", segments: [] },
+        structure: { headings: [], toc: [], manpage: null },
+        catalogs: { footnotes: [], bibliography: [], index: [] },
+        targets: [],
+        title: null,
+      },
+    },
+  };
+}

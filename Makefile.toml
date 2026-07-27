@@ -96,9 +96,27 @@ command = "npm"
 args = ["test", "--prefix", "web-worker"]
 
 [tasks.protocol-check]
-description = "Verify generated Web Worker protocol files are current"
+description = "Verify generated protocol files and the real WASM accept/reject contract"
+dependencies = [
+  "protocol-generated-check",
+  "protocol-corpus-check",
+  "protocol-wasm-corpus-check",
+  "test-browser-types",
+]
+
+[tasks.protocol-generated-check]
 command = "node"
 args = ["tools/generate-protocol.mjs", "--check"]
+
+[tasks.protocol-corpus-check]
+command = "cargo"
+args = ["test", "-p", "adocweave-wasm", "--test", "protocol_contract"]
+
+[tasks.protocol-wasm-corpus-check]
+description = "Verify the request corpus through the generated wasm-bindgen boundary"
+dependencies = ["build-wasm-node"]
+command = "node"
+args = ["--test", "web-worker/protocol-wasm.test.mjs"]
 
 [tasks.release-contract]
 description = "Verify release train versions, targets, tags, and distribution manifest schema"
