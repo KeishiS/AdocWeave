@@ -14,35 +14,65 @@ v0.10.xでは、公開API、WASM protocol、対応構文および既定のHTML�
 確認済みの不具合、文書、依存関係および検証基盤を修正します。新しいCLI機能、公開schema、
 既定診断および構文機能は次のminor release候補として扱います。
 
-patch releaseは、確認済みの修正が揃った時点、または優先度の高い不具合を修正した時点で準備します。
-版数を進めることだけを目的としたreleaseは行いません。
+直近の変更は実利用の結果を確認します。patch releaseは、確認済みの修正が複数揃った時点、
+または優先度の高い不具合を修正した時点で準備します。未完了作業のないrelease追跡Issueや、
+版数を進めることだけを目的としたreleaseは作成しません。
 
-== 次期機能
+== 次期minor release候補
+
+=== 公開設定と検査基盤
+
+後続機能のたびに公開設定を変更しないよう、解析、診断、HTML出力およびlocal pathの責務を
+先に分離します。必要な破壊的変更はv0.10.xへ入れず、同じminor releaseへまとめます。
+
+想定する実装順は次のとおりです。
+
+. https://github.com/KeishiS/AdocWeave/issues/49[v0.11公開設定・拡張境界の再設計]
+. https://github.com/KeishiS/AdocWeave/issues/32[Lint rule一覧のJSON出力]
+. https://github.com/KeishiS/AdocWeave/issues/38[URL検査の責務分割]
+
+単一のAnalysis、host非依存core、明示的なresolver境界およびpackage version完全一致は
+維持します。公開Lint ruleを拡張可能なcatalogへ変更し、URL構文、authored target、
+resolver出力、active HTMLおよびlocal pathのpolicyを別の型と所有者へ分けます。
+
+== 後続の機能候補
+
+=== Lint機能
+
+検査基盤の公開後、filesystemへ依存しないLintを追加します。
+
+. https://github.com/KeishiS/AdocWeave/issues/37[linkとxrefの使い分けに対するLint]
+. https://github.com/KeishiS/AdocWeave/issues/40[Macro境界のLint]
+
+既定のwarningを先に追加し、その後にruleの個別有効化を必要とするMacro境界の検査を追加します。
+ruleの個別有効化基盤とMacro境界の検査は、review可能な単位へ分けます。
+
+=== Local target検査
+
+URLの構文・出力安全性とlocal filesystemの検査を分離した後、CLIへ明示的な実在検査を追加します。
+
+* https://github.com/KeishiS/AdocWeave/issues/36[CLIによるlocal targetの実在検査]
+
+project root、symlinkおよびfileの実在性はCLI adapterで扱います。外部URLへのnetwork requestは
+対象外とします。
 
 === 文書内属性
 
-位置に応じた属性値を後続の独立した機能候補として扱います。
+位置に応じた属性environmentはparser、substitution、公開query、HTML、Lint、LSPおよびWASMへ
+影響するため、ほかの機能と混ぜず独立したminor release候補として扱います。
 
 * https://github.com/KeishiS/AdocWeave/issues/35[文書内属性変更の評価]
 
-== 開発と保守
+仕様と長期的な設計判断、coreと公開query、consumer統合の単位へ分けて検討します。
 
-製品機能のmilestoneとは独立して、文書検査と依存更新の運用を改善します。
+== 継続運用
 
-* https://github.com/KeishiS/AdocWeave/issues/36[CLIによるlocal targetの実在検査]
-* https://github.com/KeishiS/AdocWeave/issues/37[linkとxrefの使い分けに対するLint]
-* https://github.com/KeishiS/AdocWeave/issues/32[Lint rule一覧のJSON出力]
-* https://github.com/KeishiS/AdocWeave/issues/38[URL検査の責務分割]
-* https://github.com/KeishiS/AdocWeave/issues/40[Macro境界のLint]
+製品versionとは独立して、依存更新の安全な運用を改善します。
+
 * https://github.com/KeishiS/AdocWeave/issues/19[Dependabot PRの安全な自動merge]
 
-local targetの実在検査では、`xref`、通常のlink、mediaおよび`include::`が参照するfileの削除・移動漏れを
-CIで検出できるようにします。linkとxrefのLintでは、AsciiDoc文書とその他のfileに対するmacroの
-使い分けを検査します。Lint rule一覧では、利用可能なruleを実装からJSONで取得できるようにします。
-URL検査の責務分割では、URL構文、HTML出力、local file境界および実在性を分離します。
-Macro境界のLintでは、対応済みmacroに見える記述の境界誤りをopt-inで検出します。
-Dependabotの運用改善では、必須検査とbranch protectionを維持したまま、対象を限定した依存更新だけを
-自動mergeできるか検討します。
+必須検査とbranch protectionを維持したまま、対象を限定した依存更新だけを段階的に
+自動mergeできるか検証します。
 
 == 条件付き候補
 
