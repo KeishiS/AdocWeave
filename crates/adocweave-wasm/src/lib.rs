@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
 use adocweave::output::html::RenderPolicy;
 use adocweave::preprocess::{
-    PreprocessOptions, ResourceDocument, ResourceSnapshot, SafeMode, preprocess,
+    PreprocessOptions, ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode, preprocess,
 };
 use adocweave::resolution::{ActiveUrlPolicy, AuthoredUrlPolicy};
 use adocweave::{AnalysisLimits, SyntaxMode};
@@ -41,6 +41,13 @@ pub struct WasmPreprocessRequest {
 pub struct WasmResource {
     pub source_id: String,
     pub source: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmAnalysisPreprocessInput {
+    pub resources: BTreeMap<String, WasmResource>,
+    pub options: WasmPreprocessOptions,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -165,6 +172,49 @@ pub enum WasmDocumentAttributeOperation {
     Unset,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmAttributeQueryProduct {
+    pub bindings: Vec<WasmAttributeBindingQuery>,
+    pub references: Vec<WasmAttributeReferenceQuery>,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmAttributeBindingQuery {
+    pub id: u32,
+    pub source_id: Option<String>,
+    pub event_id: u32,
+    pub visible_at: u32,
+    pub evaluation_at: u32,
+    pub operation: WasmDocumentAttributeOperation,
+    pub effective_value: Option<String>,
+    pub error: Option<WasmAttributeExpansionError>,
+    pub expansion_depth: u32,
+    pub occurrence: WasmDocumentAttributeOccurrence,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmAttributeReferenceQuery {
+    pub source_id: Option<String>,
+    pub range: WasmTextRange,
+    pub name_range: WasmTextRange,
+    pub name: String,
+    pub binding_id: Option<u32>,
+    pub effective_value: Option<String>,
+    pub error: Option<WasmAttributeExpansionError>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmAttributeExpansionError {
+    Undefined,
+    Cycle,
+    DepthLimitExceeded,
+    SizeLimitExceeded,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRequest {
@@ -173,6 +223,8 @@ pub struct WasmRequest {
     pub version: u32,
     pub generation: u32,
     pub source: String,
+    #[serde(default)]
+    pub preprocess: Option<WasmAnalysisPreprocessInput>,
     #[serde(default)]
     pub products: WasmProductSet,
     #[serde(default)]
@@ -518,6 +570,7 @@ pub struct WasmResponse {
     pub ast: String,
     pub html: String,
     pub attribute_occurrences: Vec<WasmDocumentAttributeOccurrence>,
+    pub attribute_queries: WasmAttributeQueryProduct,
     pub resource_queries: Vec<WasmResourceQuery>,
     pub diagnostics: Value,
     pub render_diagnostics: Value,
@@ -581,44 +634,9 @@ pub fn preprocess_request(
             ),
         });
     }
-    let mut snapshot = ResourceSnapshot::default();
-    for (target, resource) in request.resources {
-        snapshot.insert(
-            target,
-            ResourceDocument {
-                source_id: SourceId::new(resource.source_id),
-                source: resource.source,
-            },
-        );
-    }
-    let options = request.options;
-    let document = preprocess(
-        &request.source,
-        &snapshot,
-        &PreprocessOptions {
-            source_id: request.source_id.map(SourceId::new),
-            base_uri: options.base_uri,
-            safe_mode: match options.safe_mode {
-                WasmSafeMode::Unsafe => SafeMode::Unsafe,
-                WasmSafeMode::Server => SafeMode::Server,
-                WasmSafeMode::Safe => SafeMode::Safe,
-                WasmSafeMode::Secure => SafeMode::Secure,
-            },
-            allowed_schemes: options
-                .allowed_schemes
-                .into_iter()
-                .map(|scheme| scheme.to_ascii_lowercase())
-                .collect(),
-            attributes: options.attributes,
-            enable_includes: options.enable_includes,
-            max_include_depth: options.max_include_depth,
-            max_includes: options.max_includes,
-            max_total_bytes: options.max_total_bytes,
-            max_expanded_nodes: options.max_expanded_nodes,
-            max_source_map_segments: options.max_source_map_segments,
-        },
-    )
-    .map_err(|error| WasmError {
+    let snapshot = resource_snapshot(request.resources);
+    let options = preprocess_options(request.source_id.map(SourceId::new), request.options);
+    let document = preprocess(&request.source, &snapshot, &options).map_err(|error| WasmError {
         code: error.kind.as_str().to_owned(),
         message: error.to_string(),
     })?;
@@ -649,6 +667,48 @@ pub fn preprocess_request(
     })
 }
 
+fn resource_snapshot(resources: BTreeMap<String, WasmResource>) -> ResourceSnapshot {
+    let mut snapshot = ResourceSnapshot::default();
+    for (target, resource) in resources {
+        snapshot.insert(
+            target,
+            ResourceDocument {
+                source_id: SourceId::new(resource.source_id),
+                source: resource.source,
+            },
+        );
+    }
+    snapshot
+}
+
+fn preprocess_options(
+    source_id: Option<SourceId>,
+    options: WasmPreprocessOptions,
+) -> PreprocessOptions {
+    PreprocessOptions {
+        source_id,
+        base_uri: options.base_uri,
+        safe_mode: match options.safe_mode {
+            WasmSafeMode::Unsafe => SafeMode::Unsafe,
+            WasmSafeMode::Server => SafeMode::Server,
+            WasmSafeMode::Safe => SafeMode::Safe,
+            WasmSafeMode::Secure => SafeMode::Secure,
+        },
+        allowed_schemes: options
+            .allowed_schemes
+            .into_iter()
+            .map(|scheme| scheme.to_ascii_lowercase())
+            .collect(),
+        attributes: options.attributes,
+        enable_includes: options.enable_includes,
+        max_include_depth: options.max_include_depth,
+        max_includes: options.max_includes,
+        max_total_bytes: options.max_total_bytes,
+        max_expanded_nodes: options.max_expanded_nodes,
+        max_source_map_segments: options.max_source_map_segments,
+    }
+}
+
 pub fn process_request(
     request: WasmRequest,
     cancellation: &dyn CancellationCheck,
@@ -668,6 +728,7 @@ pub fn process_request(
     let analysis_options = request.analysis_options;
     let render_options = request.render_policy;
     let output_limits = request.output_limits;
+    let preprocess_input = request.preprocess;
     render_inputs::validate(
         &render_inputs,
         &analysis_options.syntax.limits,
@@ -723,7 +784,7 @@ pub fn process_request(
         );
     }
     let source_id = request.source_id.map(SourceId::new);
-    let analysis = Engine::new(AnalysisOptions {
+    let engine = Engine::new(AnalysisOptions {
         syntax: SyntaxOptions {
             syntax_mode: match analysis_options.syntax.syntax_mode {
                 WasmSyntaxMode::Permissive => SyntaxMode::Permissive,
@@ -732,14 +793,68 @@ pub fn process_request(
             limits: analysis_options.syntax.limits.into(),
         },
         diagnostics: DiagnosticProfile { lint },
-    })
-    .analyze_cancellable_with_source_id(source_id.as_ref(), &request.source, cancellation)
-    .map_err(wasm_error)?;
+    });
+    let preprocessed = if let Some(input) = preprocess_input {
+        let snapshot = resource_snapshot(input.resources);
+        let options = preprocess_options(source_id.clone(), input.options);
+        Some(
+            preprocess(&request.source, &snapshot, &options).map_err(|error| WasmError {
+                code: error.kind.as_str().to_owned(),
+                message: error.to_string(),
+            })?,
+        )
+    } else {
+        None
+    };
+    let preprocessed_analysis = if let Some(document) = preprocessed {
+        let expanded = engine
+            .analyze_cancellable_with_source_id(source_id.as_ref(), &document.source, cancellation)
+            .map_err(wasm_error)?;
+        Some(adocweave::preprocess::PreprocessedAnalysis {
+            document,
+            analysis: expanded,
+        })
+    } else {
+        None
+    };
+    let standalone_analysis = if preprocessed_analysis.is_none() {
+        Some(
+            engine
+                .analyze_cancellable_with_source_id(
+                    source_id.as_ref(),
+                    &request.source,
+                    cancellation,
+                )
+                .map_err(wasm_error)?,
+        )
+    } else {
+        None
+    };
+    let analysis = preprocessed_analysis
+        .as_ref()
+        .map(|analysis| &analysis.analysis)
+        .or(standalone_analysis.as_ref())
+        .expect("exactly one analysis variant is assigned");
+    let attribute_projection = if requested_products.attribute_queries {
+        preprocessed_analysis
+            .as_ref()
+            .map(|analysis| {
+                analysis
+                    .project_origins(ProjectionLimits::default())
+                    .map_err(|error| WasmError {
+                        code: "limit-exceeded".to_owned(),
+                        message: error.to_string(),
+                    })
+            })
+            .transpose()?
+    } else {
+        None
+    };
     if cancellation.is_cancelled() {
         return Err(cancelled_error());
     }
 
-    let render_inputs = render_inputs::convert(render_inputs, &analysis)?;
+    let render_inputs = render_inputs::convert(render_inputs, analysis)?;
     let render_policy = RenderPolicy {
         active_urls: active_url_policy,
         external_links: if render_options.external_links.open_in_new_context {
@@ -815,7 +930,7 @@ pub fn process_request(
         ..RenderPolicy::default()
     };
     let products = adocweave::output::conformance::products(
-        &analysis,
+        analysis,
         &render_policy,
         &render_inputs,
         products,
@@ -868,6 +983,16 @@ pub fn process_request(
             .iter()
             .map(wasm_document_attribute_occurrence)
             .collect(),
+        attribute_queries: products
+            .attribute_queries
+            .map(|queries| {
+                wasm_attribute_query_product(
+                    &queries,
+                    source_id.as_ref(),
+                    attribute_projection.as_ref(),
+                )
+            })
+            .unwrap_or_default(),
         resource_queries: products
             .resource_queries
             .unwrap_or_default()
@@ -959,6 +1084,146 @@ fn wasm_document_attribute_occurrence(
             }
         },
         valid: occurrence.valid,
+    }
+}
+
+fn wasm_attribute_query_product(
+    product: &adocweave::semantic::AttributeQueryProduct,
+    source_id: Option<&SourceId>,
+    projection: Option<&adocweave::preprocess::AnalysisProjection>,
+) -> WasmAttributeQueryProduct {
+    let source_id = source_id.map(|source_id| source_id.as_str().to_owned());
+    WasmAttributeQueryProduct {
+        bindings: product
+            .bindings
+            .iter()
+            .map(|binding| {
+                let (effective_value, error) = wasm_attribute_resolution(binding.value());
+                let projected = projection.and_then(|projection| {
+                    projection
+                        .attribute_bindings
+                        .iter()
+                        .find(|candidate| candidate.value.id() == binding.id())
+                });
+                let mut occurrence = wasm_document_attribute_occurrence(binding.occurrence());
+                let (binding_source_id, range) = wasm_projected_range(
+                    projected.map(|value| value.origins.as_slice()),
+                    source_id.clone(),
+                    binding.occurrence().range,
+                );
+                occurrence.range = range;
+                occurrence.name_range = wasm_projected_range(
+                    projected.map(|value| value.name_origins.as_slice()),
+                    binding_source_id.clone(),
+                    binding.occurrence().name_range,
+                )
+                .1;
+                occurrence.value.source_range = wasm_projected_range(
+                    projected.map(|value| value.value_origins.as_slice()),
+                    binding_source_id.clone(),
+                    binding.occurrence().value.source_range,
+                )
+                .1;
+                WasmAttributeBindingQuery {
+                    id: binding.id().get(),
+                    source_id: binding_source_id,
+                    event_id: binding.event_id().get(),
+                    visible_at: binding.visible_at().to_u32(),
+                    evaluation_at: binding.evaluation_at().to_u32(),
+                    operation: match binding.operation() {
+                        adocweave::semantic::DocumentAttributeOperation::Set => {
+                            WasmDocumentAttributeOperation::Set
+                        }
+                        adocweave::semantic::DocumentAttributeOperation::Unset => {
+                            WasmDocumentAttributeOperation::Unset
+                        }
+                    },
+                    effective_value,
+                    error,
+                    expansion_depth: binding.expansion_depth(),
+                    occurrence,
+                }
+            })
+            .collect(),
+        references: product
+            .references
+            .iter()
+            .enumerate()
+            .map(|(index, reference)| {
+                let (effective_value, error) = wasm_attribute_resolution(
+                    reference
+                        .value
+                        .as_ref()
+                        .map(|value| value.as_deref())
+                        .map_err(|error| *error),
+                );
+                let projected =
+                    projection.and_then(|projection| projection.attribute_references.get(index));
+                let (reference_source_id, range) = wasm_projected_range(
+                    projected.map(|value| value.origins.as_slice()),
+                    source_id.clone(),
+                    reference.range,
+                );
+                WasmAttributeReferenceQuery {
+                    source_id: reference_source_id.clone(),
+                    range,
+                    name_range: wasm_projected_range(
+                        projected.map(|value| value.name_origins.as_slice()),
+                        reference_source_id,
+                        reference.name_range,
+                    )
+                    .1,
+                    name: reference.name.clone(),
+                    binding_id: reference.binding_id.map(|id| id.get()),
+                    effective_value,
+                    error,
+                }
+            })
+            .collect(),
+    }
+}
+
+fn wasm_projected_range(
+    origins: Option<&[adocweave::preprocess::SourceOrigin]>,
+    fallback_source_id: Option<String>,
+    fallback_range: adocweave::text::TextRange,
+) -> (Option<String>, WasmTextRange) {
+    origins.and_then(|origins| origins.first()).map_or_else(
+        || (fallback_source_id, wasm_text_range(fallback_range)),
+        |origin| {
+            (
+                origin
+                    .source_id
+                    .as_ref()
+                    .map(|source_id| source_id.as_str().to_owned()),
+                wasm_text_range(origin.range.text_range()),
+            )
+        },
+    )
+}
+
+fn wasm_attribute_resolution(
+    value: Result<Option<&str>, adocweave::semantic::AttributeExpansionError>,
+) -> (Option<String>, Option<WasmAttributeExpansionError>) {
+    match value {
+        Ok(value) => (value.map(str::to_owned), None),
+        Err(error) => (
+            None,
+            Some(match error {
+                adocweave::semantic::AttributeExpansionError::Undefined => {
+                    WasmAttributeExpansionError::Undefined
+                }
+                adocweave::semantic::AttributeExpansionError::Cycle => {
+                    WasmAttributeExpansionError::Cycle
+                }
+                adocweave::semantic::AttributeExpansionError::DepthLimitExceeded => {
+                    WasmAttributeExpansionError::DepthLimitExceeded
+                }
+                adocweave::semantic::AttributeExpansionError::SizeLimitExceeded => {
+                    WasmAttributeExpansionError::SizeLimitExceeded
+                }
+            }),
+        ),
     }
 }
 
@@ -1080,11 +1345,13 @@ mod tests {
             version: 3,
             generation: 7,
             source: source.to_owned(),
+            preprocess: None,
             products: WasmProductSet {
                 syntax: true,
                 canonical_ast: true,
                 html: true,
                 attribute_occurrences: true,
+                attribute_queries: true,
                 resource_queries: true,
                 diagnostics: true,
                 symbols: true,

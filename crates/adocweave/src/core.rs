@@ -163,6 +163,13 @@ impl Analysis {
         self.facts().attribute_references()
     }
 
+    pub fn attribute_query_product(&self) -> crate::attributes::AttributeQueryProduct {
+        crate::attributes::AttributeQueryProduct {
+            bindings: self.attribute_environment().bindings().to_vec(),
+            references: self.attribute_references().to_vec(),
+        }
+    }
+
     /// Returns standard document-attribute occurrences in source order.
     ///
     /// Unlike [`Self::presentation`], this preserves duplicates, set/unset

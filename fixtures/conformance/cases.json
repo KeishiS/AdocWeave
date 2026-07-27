@@ -432,6 +432,21 @@
       "compatibility": "approved-adocweave-output",
       "rationale": "属性Lintは参照位置で有効なbindingを使用し、正当な再定義を重複とせず、unset後と前方参照を未定義としてnativeとWASMで一致させる",
       "contractImpact": "core-profile,core-api,conformance,wasm-api"
+    },
+    {
+      "name": "position-dependent-attribute-queries-with-include-origin",
+      "source": "include::part.adoc[]\n\n{seen-first} {seen-second} {seen-unset} {forward} {header-only}\n",
+      "preprocess": {
+        "resources": {
+          "part.adoc": {
+            "sourceId": "included:part.adoc",
+            "source": ":header-only: root\n:name: first\n:seen-first: {name}\n:name: second\n:seen-second: {name}\n:name!:\n:seen-unset: {name}\n:forward: {later}\n:later: later\n"
+          }
+        }
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "位置依存属性queryはset、再定義、unset、前方参照およびheader属性を区別し、include由来のrangeへsource IDを付与する",
+      "contractImpact": "core-api,conformance,wasm-api"
     }
   ]
 }

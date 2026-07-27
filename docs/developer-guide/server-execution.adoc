@@ -56,6 +56,10 @@ Mapとsetは規範順に並べるため、挿入順は結果へ影響しませ�
 `ResourceSnapshot`を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じsnapshotと
 設定から同じ展開結果を生成します。
 
+WASMの解析requestでincludeを展開する場合は、`preprocess.resources`へ取得済みresourceを、
+`preprocess.options`へ前処理設定を指定します。`preprocess`を省略した場合は入力sourceをそのまま解析し、
+暗黙のresource取得やinclude展開を行いません。
+
 `discover_includes`は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
 
@@ -79,6 +83,9 @@ CLIとLanguage Serverは、同一のpath検査、上限付きUTF-8読み取り�
 変換されたsegmentにまたがる修正候補は適用不可とします。Include directiveの記述位置と参照先resourceの
 位置を区別するため、Document LinkとDefinitionは展開後offsetを推測しません。WASMも同じmapping情報を
 公開します。
+
+WASMの`attributeQueries`は、各bindingの操作、有効値、決定bindingおよび属性参照を返します。
+前処理を指定したrequestでは、bindingと参照の`sourceId`およびrangeを元resourceへ投影します。
 
 [#render-inputs]
 == 変換入力

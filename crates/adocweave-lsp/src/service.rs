@@ -2150,7 +2150,7 @@ fn attribute_completion_context(source: &str, offset: usize) -> bool {
         return false;
     }
     let line_start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
-    let bytes = source[line_start..offset].as_bytes();
+    let bytes = &source.as_bytes()[line_start..offset];
     let mut open = None;
     let mut index = 0;
     while index < bytes.len() {

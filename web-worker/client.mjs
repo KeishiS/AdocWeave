@@ -44,6 +44,7 @@ export class AdocWeaveClient {
     sourceId = null,
     version,
     source,
+    preprocess,
     products,
     renderInputs,
     analysisOptions = {},
@@ -71,6 +72,7 @@ export class AdocWeaveClient {
       outputLimits,
     };
     if (products !== undefined) payload.products = products;
+    if (preprocess !== undefined) payload.preprocess = preprocess;
     if (renderInputs !== undefined) payload.renderInputs = renderInputs;
     this.#ready.then(() => {
       if (!this.#disposed && generation === this.#generation) {

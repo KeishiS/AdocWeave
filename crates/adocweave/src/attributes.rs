@@ -187,6 +187,13 @@ pub struct AttributeReference {
     pub value: Result<Option<String>, AttributeExpansionError>,
 }
 
+/// Complete position-dependent attribute data-flow product for one analysis.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AttributeQueryProduct {
+    pub bindings: Vec<AttributeBinding>,
+    pub references: Vec<AttributeReference>,
+}
+
 /// Immutable, source-ordered document attribute state.
 ///
 /// Bindings are stored once and indexed by name. Position lookups search only

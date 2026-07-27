@@ -336,6 +336,7 @@ function updateRequestDeclaration() {
     "sourceId",
     "version",
     "source",
+    "preprocess",
     "products",
     "renderInputs",
     "analysisOptions",

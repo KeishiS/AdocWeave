@@ -1,8 +1,8 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "packageVersion": "0.11.0",
   "identityField": "packageVersion",
-  "workerProtocolVersion": 1,
+  "workerProtocolVersion": 2,
   "requestEnums": [
     "Severity",
     "SyntaxMode",
@@ -23,6 +23,7 @@
     "RenderInputs",
     "ResolvedReference",
     "ResolvedResource",
+    "AnalysisPreprocessInput",
     "AnalysisOptions",
     "SyntaxOptions",
     "AnalysisLimits",
@@ -54,6 +55,7 @@
       { "json": "version", "type": "u32", "required": true },
       { "json": "generation", "type": "u32", "required": true },
       { "json": "source", "type": "string", "required": true },
+      { "json": "preprocess", "type": "AnalysisPreprocessInput | null", "default": null },
       { "json": "products", "type": "ProductSet", "default": "browser-default" },
       { "json": "renderInputs", "type": "RenderInputs", "default": {} },
       { "json": "analysisOptions", "type": "AnalysisOptions", "default": {} },
@@ -75,6 +77,7 @@
     "ResourceStatus": ["resolved", "failed"],
     "ResourceFailureKind": ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"],
     "DocumentAttributeOperation": ["set", "unset"],
+    "AttributeExpansionError": ["undefined", "cycle", "depth-limit-exceeded", "size-limit-exceeded"],
     "AttributeValueContinuation": ["soft", "hard"],
     "ResourcePurpose": ["image", "icon", "audio", "video", "video-poster"],
     "MacroForm": ["inline", "block"],
@@ -142,6 +145,13 @@
     }
   },
   "definitions": {
+    "AnalysisPreprocessInput": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "resources", "type": "Record<string, PreprocessResource>", "default": {} },
+        { "json": "options", "type": "PreprocessOptions", "default": {} }
+      ]
+    },
     "RenderInputs": {
       "unknownFields": "reject",
       "fields": [
@@ -467,6 +477,7 @@
       { "json": "ast", "type": "string" },
       { "json": "html", "type": "string" },
       { "json": "attributeOccurrences", "type": "DocumentAttributeOccurrence[]" },
+      { "json": "attributeQueries", "type": "AttributeQueryProduct" },
       { "json": "resourceQueries", "type": "ResourceQuery[]" },
       { "json": "diagnostics", "type": "Diagnostic[]" },
       { "json": "renderDiagnostics", "type": "Diagnostic[]" },
@@ -643,6 +654,37 @@
         { "json": "valid", "type": "boolean" }
       ]
     },
+    "AttributeQueryProduct": {
+      "fields": [
+        { "json": "bindings", "type": "AttributeBindingQuery[]" },
+        { "json": "references", "type": "AttributeReferenceQuery[]" }
+      ]
+    },
+    "AttributeBindingQuery": {
+      "fields": [
+        { "json": "id", "type": "u32" },
+        { "json": "sourceId", "type": "string | null" },
+        { "json": "eventId", "type": "u32" },
+        { "json": "visibleAt", "type": "u32" },
+        { "json": "evaluationAt", "type": "u32" },
+        { "json": "operation", "type": "DocumentAttributeOperation" },
+        { "json": "effectiveValue", "type": "string | null" },
+        { "json": "error", "type": "AttributeExpansionError | null" },
+        { "json": "expansionDepth", "type": "u32" },
+        { "json": "occurrence", "type": "DocumentAttributeOccurrence" }
+      ]
+    },
+    "AttributeReferenceQuery": {
+      "fields": [
+        { "json": "sourceId", "type": "string | null" },
+        { "json": "range", "type": "TextRange" },
+        { "json": "nameRange", "type": "TextRange" },
+        { "json": "name", "type": "string" },
+        { "json": "bindingId", "type": "u32 | null" },
+        { "json": "effectiveValue", "type": "string | null" },
+        { "json": "error", "type": "AttributeExpansionError | null" }
+      ]
+    },
     "DocumentAttributeValue": {
       "fields": [
         { "json": "sourceRange", "type": "TextRange" },
@@ -682,6 +724,7 @@
     { "json": "canonicalAst", "rust": "canonical_ast" },
     { "json": "html", "rust": "html" },
     { "json": "attributeOccurrences", "rust": "attribute_occurrences" },
+    { "json": "attributeQueries", "rust": "attribute_queries" },
     { "json": "resourceQueries", "rust": "resource_queries" },
     { "json": "diagnostics", "rust": "diagnostics" },
     { "json": "symbols", "rust": "symbols" },
@@ -694,6 +737,7 @@
       { "json": "canonicalAst", "type": "boolean", "required": true },
       { "json": "html", "type": "boolean", "required": true },
       { "json": "attributeOccurrences", "type": "boolean", "required": true },
+      { "json": "attributeQueries", "type": "boolean", "required": true },
       { "json": "resourceQueries", "type": "boolean", "required": true },
       { "json": "diagnostics", "type": "boolean", "required": true },
       { "json": "symbols", "type": "boolean", "required": true },
@@ -705,6 +749,7 @@
     "canonicalAst": false,
     "html": true,
     "attributeOccurrences": false,
+    "attributeQueries": false,
     "resourceQueries": true,
     "diagnostics": true,
     "symbols": false,

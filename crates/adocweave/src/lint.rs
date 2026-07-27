@@ -1693,9 +1693,11 @@ mod tests {
 
 {cycle} {deep} {large}
 ";
-        let mut limits = crate::limits::AnalysisLimits::default();
-        limits.max_attribute_expansion_depth = 0;
-        limits.max_attribute_expansion_bytes = 1;
+        let limits = crate::limits::AnalysisLimits {
+            max_attribute_expansion_depth: 0,
+            max_attribute_expansion_bytes: 1,
+            ..crate::limits::AnalysisLimits::default()
+        };
         let diagnostics =
             lint_with_analysis_limits(source, &LintConfig::default(), limits).expect("lint");
         let expansion = diagnostics

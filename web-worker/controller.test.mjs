@@ -165,7 +165,10 @@ test("protocol mismatch returns a stable error without executing WASM", () => {
   const state = harness(() => {
     calls += 1;
   });
-  state.controller.submit({ ...request(1, 1), protocolVersion: 2 });
+  state.controller.submit({
+    ...request(1, 1),
+    protocolVersion: WORKER_PROTOCOL_VERSION + 1,
+  });
 
   assert.equal(calls, 0);
   assertMessageFields(state.messages[0], "responses.error");
@@ -193,7 +196,15 @@ test("client sends the current WASM API version with responsibility-specific def
     moduleUrl: "module.js", wasmUrl: "module.wasm", Worker: FakeWorker,
     sharedCancellation: true,
   });
-  client.update({ version: 1, source: "text" });
+  client.update({
+    version: 1,
+    source: "include::part.adoc[]",
+    preprocess: {
+      resources: {
+        "part.adoc": { sourceId: "part.adoc", source: "text" },
+      },
+    },
+  });
 
   await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -219,6 +230,10 @@ test("client sends the current WASM API version with responsibility-specific def
   assert.deepEqual(messages[1].payload.analysisOptions, {});
   assert.deepEqual(messages[1].payload.renderPolicy, {});
   assert.deepEqual(messages[1].payload.outputLimits, {});
+  assert.equal(
+    messages[1].payload.preprocess.resources["part.adoc"].sourceId,
+    "part.adoc",
+  );
   client.dispose();
 });
 
@@ -234,10 +249,12 @@ test("generated validators cover result and client error recursively", () => {
       generation: 1,
       products: {
         syntax: false, canonicalAst: false, html: true, attributeOccurrences: false,
+        attributeQueries: false,
         resourceQueries: true, diagnostics: true, symbols: false, projection: true,
       },
       parse: { packageVersion: PACKAGE_VERSION, blockCount: 0, nodeCount: 0, referenceCount: 0 },
-      syntax: "", ast: "", html: "", attributeOccurrences: [], resourceQueries: [],
+      syntax: "", ast: "", html: "", attributeOccurrences: [],
+      attributeQueries: { bindings: [], references: [] }, resourceQueries: [],
       diagnostics: [], renderDiagnostics: [], symbols: [],
       projection: {
         packageVersion: PACKAGE_VERSION, sourceId: null, sourceBlocks: [], formulas: [],

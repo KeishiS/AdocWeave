@@ -52,7 +52,7 @@ mod walker;
 pub mod semantic {
     pub use crate::attributes::{
         AttributeBinding, AttributeBindingId, AttributeEnvironment, AttributeEventId,
-        AttributePosition, AttributeReference, AttributeValueContinuation,
+        AttributePosition, AttributeQueryProduct, AttributeReference, AttributeValueContinuation,
         DocumentAttributeContinuation, DocumentAttributeOccurrence, DocumentAttributeOperation,
         DocumentAttributeValue, DocumentAttributeValueLine, ResolvedAttribute,
     };
