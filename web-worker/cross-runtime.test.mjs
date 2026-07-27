@@ -25,11 +25,13 @@ function requestFor(entry) {
     version: 1,
     generation: 1,
     source,
+    preprocess: entry.preprocess ?? null,
     products: {
       syntax: true,
       canonicalAst: true,
       html: true,
       attributeOccurrences: true,
+      attributeQueries: true,
       resourceQueries: true,
       diagnostics: true,
       symbols: true,

@@ -199,6 +199,7 @@ function conformanceRequest(name, expectedMode) {
       canonicalAst: false,
       html: true,
       attributeOccurrences: false,
+      attributeQueries: false,
       resourceQueries: false,
       diagnostics: true,
       symbols: false,

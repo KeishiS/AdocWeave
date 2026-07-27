@@ -4,6 +4,7 @@ export interface ProductSet {
   canonicalAst: boolean;
   html: boolean;
   attributeOccurrences: boolean;
+  attributeQueries: boolean;
   resourceQueries: boolean;
   diagnostics: boolean;
   symbols: boolean;
@@ -36,6 +37,10 @@ export type ResourceFailureKind = "missing" | "outside-root" | "scheme-denied" |
 
 export type DocumentAttributeOperation = "set" | "unset";
 
+export type AttributeExpansionError = "undefined" | "cycle" | "depth-limit-exceeded" | "size-limit-exceeded";
+
+export type AttributeValueContinuation = "soft" | "hard";
+
 export type ResourcePurpose = "image" | "icon" | "audio" | "video" | "video-poster";
 
 export type MacroForm = "inline" | "block";
@@ -65,6 +70,7 @@ export type ProjectedReferenceFailureKind = "missing-reference-target" | "missin
 export interface AnalysisOptions {
   syntax?: SyntaxOptions;
   diagnostics?: DiagnosticProfile;
+  attributes?: Record<string, string | null>;
 }
 
 export interface SyntaxOptions {
@@ -73,7 +79,7 @@ export interface SyntaxOptions {
 }
 
 export interface DiagnosticProfile {
-  protectedAttributes?: Record<string, string>;
+  protectedAttributes?: Record<string, string | null>;
   authoredUrls?: AuthoredUrlPolicy;
   maxDiagnostics?: number;
   rules?: Record<string, RuleSettings>;
@@ -97,6 +103,11 @@ export interface RenderPolicy {
 
 export interface OutputLimits {
   maxOutputBytes?: number;
+}
+
+export interface AnalysisPreprocessInput {
+  resources?: Record<string, PreprocessResource>;
+  options?: PreprocessOptions;
 }
 
 export interface RenderInputs {
@@ -323,7 +334,7 @@ export interface PreprocessOptions {
   baseUri?: string | null;
   safeMode?: SafeMode;
   allowedSchemes?: string[];
-  attributes?: Record<string, string>;
+  attributes?: Record<string, string | null>;
   enableIncludes?: boolean;
   maxIncludeDepth?: number;
   maxIncludes?: number;
@@ -423,10 +434,54 @@ export interface DocumentProjection {
 export interface DocumentAttributeOccurrence {
   range: TextRange;
   nameRange: TextRange;
-  valueRange: TextRange;
   name: string;
-  rawValue: string;
+  value: DocumentAttributeValue;
   operation: DocumentAttributeOperation;
+  valid: boolean;
+}
+
+export interface AttributeQueryProduct {
+  bindings: AttributeBindingQuery[];
+  references: AttributeReferenceQuery[];
+}
+
+export interface AttributeBindingQuery {
+  id: number;
+  sourceId: string | null;
+  operation: DocumentAttributeOperation;
+  effectiveValue: string | null;
+  error: AttributeExpansionError | null;
+  occurrence: DocumentAttributeOccurrence;
+}
+
+export interface AttributeReferenceQuery {
+  sourceId: string | null;
+  range: TextRange;
+  nameRange: TextRange;
+  name: string;
+  bindingId: number | null;
+  effectiveValue: string | null;
+  error: AttributeExpansionError | null;
+}
+
+export interface DocumentAttributeValue {
+  sourceRange: TextRange;
+  sourceText: string;
+  foldedText: string;
+  lines: DocumentAttributeValueLine[];
+}
+
+export interface DocumentAttributeValueLine {
+  range: TextRange;
+  indentRange: TextRange;
+  contentRange: TextRange;
+  endingRange: TextRange;
+  continuation: DocumentAttributeContinuation | null;
+}
+
+export interface DocumentAttributeContinuation {
+  kind: AttributeValueContinuation;
+  range: TextRange;
 }
 
 export interface ResourceQuery {
@@ -444,6 +499,7 @@ export interface WasmRequest {
   version: number;
   generation: number;
   source: string;
+  preprocess?: AnalysisPreprocessInput | null;
   products?: ProductSet;
   renderInputs?: RenderInputs;
   analysisOptions?: AnalysisOptions;
@@ -463,6 +519,7 @@ export interface UpdateRequest {
   sourceId?: string | null;
   version: number;
   source: string;
+  preprocess?: AnalysisPreprocessInput | null;
   products?: ProductSet;
   renderInputs?: RenderInputs;
   analysisOptions?: AnalysisOptions;
@@ -480,6 +537,7 @@ export interface AdocWeaveWasmResponse {
   ast: string;
   html: string;
   attributeOccurrences: DocumentAttributeOccurrence[];
+  attributeQueries: AttributeQueryProduct;
   resourceQueries: ResourceQuery[];
   diagnostics: Diagnostic[];
   renderDiagnostics: Diagnostic[];
@@ -503,11 +561,11 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 3;
-export declare const WORKER_PROTOCOL_VERSION: 1;
-export declare const PACKAGE_VERSION: "0.11.0";
-export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "resourceQueries", "diagnostics", "symbols", "projection"];
-export declare const REQUEST_FIELDS: readonly ["packageVersion", "sourceId", "version", "generation", "source", "products", "renderInputs", "analysisOptions", "renderPolicy", "outputLimits"];
+export declare const PROTOCOL_SCHEMA_VERSION: 4;
+export declare const WORKER_PROTOCOL_VERSION: 2;
+export declare const PACKAGE_VERSION: "0.12.0";
+export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];
+export declare const REQUEST_FIELDS: readonly ["packageVersion", "sourceId", "version", "generation", "source", "preprocess", "products", "renderInputs", "analysisOptions", "renderPolicy", "outputLimits"];
 export declare const REQUEST_ENUMS: { readonly "Severity": readonly ["error", "warning", "information", "hint"]; readonly "SyntaxMode": readonly ["permissive", "strict"]; readonly "DocumentMode": readonly ["fragment", "complete"]; readonly "UnknownSourceLanguage": readonly ["preserve-sanitized", "omit-class", "diagnostic"]; readonly "MathLanguage": readonly ["latex", "typst"]; readonly "UnresolvedReferencePresentation": readonly ["target", "label-only", "hidden"]; readonly "StylesheetKind": readonly ["inline", "external"]; readonly "ReferenceStatus": readonly ["resolved", "failed"]; readonly "ReferenceFailureKind": readonly ["missing-target", "missing-anchor", "ambiguous-target", "outside-root", "resolver-failure"]; readonly "ReferenceNotice": readonly ["fallback"]; readonly "ResourceStatus": readonly ["resolved", "failed"]; readonly "ResourceFailureKind": readonly ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"] };
 export declare const WORKER_MESSAGE_FIELDS: { readonly "requests.initialize": readonly ["type", "protocolVersion", "moduleUrl", "wasmUrl", "debounceMs", "cancellationBuffer"]; readonly "requests.analyze": readonly ["type", "protocolVersion", "version", "generation", "payload"]; readonly "responses.ready": readonly ["type", "protocolVersion"]; readonly "responses.result": readonly ["type", "protocolVersion", "version", "generation", "result"]; readonly "responses.error": readonly ["type", "protocolVersion", "version", "generation", "error"] };
 export declare function validateWorkerMessage(value: unknown, direction: "requests" | "responses"): value is WorkerRequest | WorkerResponse;

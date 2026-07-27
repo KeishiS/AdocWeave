@@ -13,6 +13,7 @@ fn responsibility_specific_configuration_is_publicly_importable() {
             ..SyntaxOptions::default()
         },
         diagnostics: DiagnosticProfile::default(),
+        attributes: Default::default(),
     };
     let analysis = Engine::new(analysis_options)
         .analyze("link:https://example.com[example]")

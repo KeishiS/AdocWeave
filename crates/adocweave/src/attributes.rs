@@ -1,17 +1,55 @@
 //! Standard AsciiDoc document attributes and their source-ordered environment.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::source::{TextRange, TextSize};
 use crate::substitution::{
     AttributeExpansionError, AttributeExpansionLimits, expand_attribute_text,
 };
 
+/// Hard-locked document-external attributes.
+///
+/// `Some(value)` is a set operation and `None` is an unset operation.
+pub type ExternalAttributes = BTreeMap<String, Option<String>>;
+
 /// The standard AsciiDoc operation represented by a document attribute line.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DocumentAttributeOperation {
     Set,
     Unset,
+}
+
+/// How one physical attribute-value line continues onto the next line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttributeValueContinuation {
+    Soft,
+    Hard,
+}
+
+/// The marker which continues an attribute value onto the next physical line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DocumentAttributeContinuation {
+    pub kind: AttributeValueContinuation,
+    pub range: TextRange,
+}
+
+/// One physical line of a document attribute value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentAttributeValueLine {
+    pub range: TextRange,
+    pub indent_range: TextRange,
+    pub content_range: TextRange,
+    pub ending_range: TextRange,
+    pub continuation: Option<DocumentAttributeContinuation>,
+}
+
+/// Source and semantic forms of one document attribute value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentAttributeValue {
+    pub source_range: TextRange,
+    pub source_text: String,
+    pub folded_text: String,
+    pub lines: Vec<DocumentAttributeValueLine>,
 }
 
 /// One source-preserving standard document-attribute occurrence.
@@ -23,9 +61,8 @@ pub enum DocumentAttributeOperation {
 pub struct DocumentAttributeOccurrence {
     pub range: TextRange,
     pub name_range: TextRange,
-    pub value_range: TextRange,
     pub name: String,
-    pub raw_value: String,
+    pub value: DocumentAttributeValue,
     pub operation: DocumentAttributeOperation,
     pub valid: bool,
 }
@@ -83,7 +120,7 @@ pub struct AttributeBinding {
     visible_at: TextSize,
     evaluation_at: TextSize,
     operation: DocumentAttributeOperation,
-    raw_value: String,
+    folded_value: String,
     expansion_depth: u32,
     value: Result<Option<String>, AttributeExpansionError>,
     occurrence: DocumentAttributeOccurrence,
@@ -114,8 +151,12 @@ impl AttributeBinding {
         self.operation
     }
 
-    pub fn raw_value(&self) -> &str {
-        &self.raw_value
+    pub fn source_text(&self) -> &str {
+        &self.occurrence.value.source_text
+    }
+
+    pub fn folded_value(&self) -> &str {
+        &self.folded_value
     }
 
     pub const fn expansion_depth(&self) -> u32 {
@@ -134,11 +175,28 @@ impl AttributeBinding {
     }
 }
 
-/// Value selected at a source position and the binding which selected it.
+/// Value selected at a source position and its authored binding, when present.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResolvedAttribute<'a> {
     pub value: Result<Option<&'a str>, AttributeExpansionError>,
-    pub binding: &'a AttributeBinding,
+    pub binding: Option<&'a AttributeBinding>,
+}
+
+/// One attribute reference and its position-dependent resolution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttributeReference {
+    pub range: TextRange,
+    pub name_range: TextRange,
+    pub name: String,
+    pub binding_id: Option<AttributeBindingId>,
+    pub value: Result<Option<String>, AttributeExpansionError>,
+}
+
+/// Complete position-dependent attribute data-flow product for one analysis.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AttributeQueryProduct {
+    pub bindings: Vec<AttributeBinding>,
+    pub references: Vec<AttributeReference>,
 }
 
 /// Immutable, source-ordered document attribute state.
@@ -151,7 +209,93 @@ pub struct AttributeEnvironment {
     bindings: Vec<AttributeBinding>,
     histories: BTreeMap<String, Vec<usize>>,
     final_values: BTreeMap<String, String>,
+    external_values: ExternalAttributes,
     limits: AttributeExpansionLimits,
+}
+
+/// Mutable source-order state shared by preprocessing and semantic lowering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SequentialAttributeState {
+    values: BTreeMap<String, String>,
+    depths: BTreeMap<String, u32>,
+    failures: BTreeMap<String, AttributeExpansionError>,
+    locked: BTreeSet<String>,
+    limits: AttributeExpansionLimits,
+}
+
+impl SequentialAttributeState {
+    pub(crate) fn with_locked_values(
+        values: &ExternalAttributes,
+        limits: AttributeExpansionLimits,
+    ) -> Self {
+        let locked = values.keys().map(|name| canonical_name(name)).collect();
+        let values = values
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .as_ref()
+                    .map(|value| (canonical_name(name), value.clone()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        Self {
+            depths: values.keys().map(|name| (name.clone(), 0)).collect(),
+            locked,
+            values,
+            failures: BTreeMap::new(),
+            limits,
+        }
+    }
+
+    pub(crate) fn apply(
+        &mut self,
+        occurrence: &DocumentAttributeOccurrence,
+    ) -> Result<Option<String>, AttributeExpansionError> {
+        if !occurrence.valid {
+            return Ok(None);
+        }
+        let name = canonical_name(&occurrence.name);
+        if self.locked.contains(&name) {
+            return Ok(self.values.get(&name).cloned());
+        }
+        let evaluated = match occurrence.operation {
+            DocumentAttributeOperation::Set => evaluate_definition(
+                &name,
+                &occurrence.value.folded_text,
+                &self.values,
+                &self.depths,
+                &self.failures,
+                self.limits,
+            )
+            .map(|(value, depth)| (Some(value), depth)),
+            DocumentAttributeOperation::Unset => Ok((None, 0)),
+        };
+        match &evaluated {
+            Ok((Some(value), depth)) => {
+                self.values.insert(name.clone(), value.clone());
+                self.depths.insert(name.clone(), *depth);
+                self.failures.remove(&name);
+            }
+            Ok((None, _)) => {
+                self.values.remove(&name);
+                self.depths.remove(&name);
+                self.failures.remove(&name);
+            }
+            Err(error) => {
+                self.values.remove(&name);
+                self.depths.remove(&name);
+                self.failures.insert(name, *error);
+            }
+        }
+        evaluated.map(|(value, _)| value)
+    }
+
+    pub(crate) const fn values(&self) -> &BTreeMap<String, String> {
+        &self.values
+    }
+
+    pub(crate) fn is_locked(&self, name: &str) -> bool {
+        self.locked.contains(&canonical_name(name))
+    }
 }
 
 impl Default for AttributeEnvironment {
@@ -160,6 +304,7 @@ impl Default for AttributeEnvironment {
             bindings: Vec::new(),
             histories: BTreeMap::new(),
             final_values: BTreeMap::new(),
+            external_values: BTreeMap::new(),
             limits: AttributeExpansionLimits {
                 max_depth: u32::MAX,
                 max_bytes: u32::MAX,
@@ -171,17 +316,21 @@ impl Default for AttributeEnvironment {
 impl AttributeEnvironment {
     pub(crate) fn build(
         occurrences: &[DocumentAttributeOccurrence],
+        external_values: &ExternalAttributes,
         limits: AttributeExpansionLimits,
     ) -> Self {
+        let external_values = external_values
+            .iter()
+            .map(|(name, value)| (canonical_name(name), value.clone()))
+            .collect::<BTreeMap<_, _>>();
         let mut environment = Self {
             limits,
+            external_values: external_values.clone(),
             ..Self::default()
         };
-        let mut current = BTreeMap::new();
-        let mut current_depths = BTreeMap::new();
-        let mut current_failures = BTreeMap::new();
+        let mut state = SequentialAttributeState::with_locked_values(&external_values, limits);
         for (ordinal, occurrence) in occurrences.iter().enumerate() {
-            if !occurrence.valid {
+            if !occurrence.valid || state.is_locked(&occurrence.name) {
                 continue;
             }
             let canonical_name = canonical_name(&occurrence.name);
@@ -190,44 +339,15 @@ impl AttributeEnvironment {
             );
             let event_id =
                 AttributeEventId(u32::try_from(ordinal).expect("attribute limit fits u32"));
-            let evaluated = match occurrence.operation {
-                DocumentAttributeOperation::Set => evaluate_definition(
-                    &canonical_name,
-                    &occurrence.raw_value,
-                    &current,
-                    &current_depths,
-                    &current_failures,
-                    limits,
-                )
-                .map(|(value, depth)| (Some(value), depth)),
-                DocumentAttributeOperation::Unset => Ok((None, 0)),
-            };
-            let expansion_depth = evaluated.as_ref().map_or(0, |(_, depth)| *depth);
-            let value = evaluated.map(|(value, _)| value);
-            match &value {
-                Ok(Some(value)) => {
-                    current.insert(canonical_name.clone(), value.clone());
-                    current_depths.insert(canonical_name.clone(), expansion_depth);
-                    current_failures.remove(&canonical_name);
-                }
-                Ok(None) => {
-                    current.remove(&canonical_name);
-                    current_depths.remove(&canonical_name);
-                    current_failures.remove(&canonical_name);
-                }
-                Err(error) => {
-                    current.remove(&canonical_name);
-                    current_depths.remove(&canonical_name);
-                    current_failures.insert(canonical_name.clone(), *error);
-                }
-            }
+            let value = state.apply(occurrence);
+            let expansion_depth = state.depths.get(&canonical_name).copied().unwrap_or(0);
             let binding = AttributeBinding {
                 id,
                 event_id,
                 visible_at: occurrence.range.end(),
-                evaluation_at: occurrence.value_range.start(),
+                evaluation_at: occurrence.value.source_range.start(),
                 operation: occurrence.operation,
-                raw_value: occurrence.raw_value.clone(),
+                folded_value: occurrence.value.folded_text.clone(),
                 expansion_depth,
                 value,
                 occurrence: occurrence.clone(),
@@ -240,12 +360,16 @@ impl AttributeEnvironment {
                 .push(index);
             environment.bindings.push(binding);
         }
-        environment.final_values = current;
+        environment.final_values = state.values;
         environment
     }
 
     pub fn bindings(&self) -> &[AttributeBinding] {
         &self.bindings
+    }
+
+    pub fn binding(&self, id: AttributeBindingId) -> Option<&AttributeBinding> {
+        self.bindings.get(id.get() as usize)
     }
 
     pub fn history(&self, name: &str) -> impl DoubleEndedIterator<Item = &AttributeBinding> {
@@ -270,13 +394,19 @@ impl AttributeEnvironment {
         position: AttributePosition,
     ) -> Option<ResolvedAttribute<'_>> {
         let name = canonical_name(name);
+        if let Some(value) = self.external_values.get(&name) {
+            return Some(ResolvedAttribute {
+                value: Ok(value.as_deref()),
+                binding: None,
+            });
+        }
         let history = self.histories.get(&name)?;
         let visible =
             history.partition_point(|index| self.bindings[*index].visible_position() < position);
         let binding = &self.bindings[*history.get(visible.checked_sub(1)?)?];
         Some(ResolvedAttribute {
             value: binding.value(),
-            binding,
+            binding: Some(binding),
         })
     }
 
@@ -314,15 +444,92 @@ impl AttributeEnvironment {
     }
 
     pub fn values_at(&self, offset: TextSize) -> BTreeMap<String, String> {
-        self.histories
+        let mut values = self
+            .histories
             .keys()
             .filter_map(|name| {
                 self.resolve_at(name, offset)
                     .and_then(|resolved| resolved.value.ok().flatten())
                     .map(|value| (name.clone(), value.to_owned()))
             })
-            .collect()
+            .collect::<BTreeMap<_, _>>();
+        values.extend(
+            self.external_values.iter().filter_map(|(name, value)| {
+                value.as_ref().map(|value| (name.clone(), value.clone()))
+            }),
+        );
+        values
     }
+}
+
+pub(crate) fn reference_at(
+    name: &str,
+    range: TextRange,
+    name_range: TextRange,
+    position: AttributePosition,
+    environment: &AttributeEnvironment,
+) -> AttributeReference {
+    let resolved = environment.resolve_at_event(name, position);
+    AttributeReference {
+        range,
+        name_range,
+        name: name.to_owned(),
+        binding_id: resolved.and_then(|resolved| resolved.binding.map(AttributeBinding::id)),
+        value: resolved.map_or(Err(AttributeExpansionError::Undefined), |resolved| {
+            resolved.value.map(|value| value.map(str::to_owned))
+        }),
+    }
+}
+
+pub(crate) fn value_references(
+    binding: &AttributeBinding,
+    environment: &AttributeEnvironment,
+) -> Vec<AttributeReference> {
+    let occurrence = binding.occurrence();
+    scan_references(&occurrence.value.source_text)
+        .into_iter()
+        .filter_map(|(name, open, name_start, name_end, close)| {
+            let base = occurrence.value.source_range.start().to_usize();
+            Some(reference_at(
+                &name,
+                range(base.checked_add(open)?, base.checked_add(close)?),
+                range(base.checked_add(name_start)?, base.checked_add(name_end)?),
+                AttributePosition::new(binding.evaluation_at(), binding.event_id()),
+                environment,
+            ))
+        })
+        .collect()
+}
+
+fn scan_references(value: &str) -> Vec<(String, usize, usize, usize, usize)> {
+    let mut references = Vec::new();
+    let mut cursor = 0;
+    while cursor < value.len() {
+        let rest = &value[cursor..];
+        if rest.starts_with("\\{") {
+            cursor += 2;
+            continue;
+        }
+        if rest.starts_with('{') {
+            let Some(close) = rest.find('}') else {
+                break;
+            };
+            let name = &rest[1..close];
+            if !name.is_empty() {
+                references.push((
+                    name.to_owned(),
+                    cursor,
+                    cursor + 1,
+                    cursor + close,
+                    cursor + close + 1,
+                ));
+            }
+            cursor += close + 1;
+            continue;
+        }
+        cursor += rest.chars().next().expect("non-empty remainder").len_utf8();
+    }
+    references
 }
 
 fn canonical_name(name: &str) -> String {
@@ -394,6 +601,7 @@ pub(crate) fn parse_line(
     let raw_value = after.trim_matches([' ', '\t']);
     let value_start = absolute_start + 1 + delimiter + 1 + leading;
     let value_range = range(value_start, value_start + raw_value.len());
+    let content_end = absolute_start + content.len();
 
     let valid_name = name
         .bytes()
@@ -439,14 +647,154 @@ pub(crate) fn parse_line(
         DocumentAttributeOccurrence {
             range: full_range,
             name_range,
-            value_range,
             name: name.to_owned(),
-            raw_value: raw_value.to_owned(),
+            value: DocumentAttributeValue {
+                source_range: value_range,
+                source_text: raw_value.to_owned(),
+                folded_text: raw_value.to_owned(),
+                lines: vec![DocumentAttributeValueLine {
+                    range: range(value_start, full_range.end().to_usize()),
+                    indent_range: range(value_start, value_start),
+                    content_range: value_range,
+                    ending_range: range(content_end, full_range.end().to_usize()),
+                    continuation: None,
+                }],
+            },
             operation,
             valid,
         },
         problem,
     ))
+}
+
+pub(crate) fn parse_lines(
+    source_document: &crate::source_document::SourceDocument,
+    line_index: usize,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<
+    Option<(DocumentAttributeOccurrence, Option<AttributeProblem>, usize)>,
+    crate::parser_support::ParseFailure,
+> {
+    let lines = source_document.lines();
+    let Some(first_line) = lines.get(line_index).copied() else {
+        return Ok(None);
+    };
+    let Some(first_content) = source_document.text(first_line.content_range()) else {
+        return Ok(None);
+    };
+    let (mut occurrence, mut problem) = parse_line(
+        first_content,
+        first_line.content_range().start().to_usize(),
+        first_line.full_range(),
+    )
+    .ok_or(crate::parser_support::ParseFailure::InternalInvariant)?;
+    if occurrence.operation == DocumentAttributeOperation::Unset
+        || continuation_start(first_content).is_none()
+        || line_index + 1 == lines.len()
+    {
+        return Ok(Some((occurrence, problem, line_index)));
+    }
+
+    let parsed_value_start = occurrence.value.source_range.start().to_usize();
+    let first_continuation =
+        continuation_start(first_content).expect("the first line was checked for a continuation");
+    let value_start =
+        parsed_value_start.min(first_line.content_range().start().to_usize() + first_continuation);
+    let mut value_lines = Vec::new();
+    let mut folded = String::new();
+    let mut last_line = line_index;
+    let mut value_end = value_start;
+
+    for index in line_index..lines.len() {
+        if is_cancelled() {
+            return Err(crate::parser_support::ParseFailure::Cancelled);
+        }
+        let line = lines[index];
+        let content = source_document
+            .text(line.content_range())
+            .expect("source line range is valid");
+        let content_start = line.content_range().start().to_usize();
+        let indent_end = if index == line_index {
+            parsed_value_start
+        } else {
+            content_start + content.len() - content.trim_start_matches([' ', '\t']).len()
+        };
+        let continuation = continuation_start(content).filter(|_| index + 1 < lines.len());
+        let marker_start = continuation.map(|start| content_start + start);
+        let segment_start = marker_start.map_or(indent_end, |start| indent_end.min(start));
+        let untrimmed_end = marker_start.unwrap_or(content_start + content.len());
+        let segment_source = &source_document.source()[segment_start..untrimmed_end];
+        let segment_text = if continuation.is_some() {
+            segment_source
+        } else {
+            segment_source.trim_end_matches([' ', '\t'])
+        };
+        let segment_end = segment_start + segment_text.len();
+        let continuation_kind = continuation.map(|_| {
+            if segment_text.ends_with(" +") {
+                AttributeValueContinuation::Hard
+            } else {
+                AttributeValueContinuation::Soft
+            }
+        });
+        let continuation_range =
+            continuation.map(|start| range(content_start + start, content_start + content.len()));
+        folded.push_str(segment_text);
+        match continuation_kind {
+            Some(AttributeValueContinuation::Soft) => folded.push(' '),
+            Some(AttributeValueContinuation::Hard) => folded.push('\n'),
+            None => {}
+        }
+        value_lines.push(DocumentAttributeValueLine {
+            range: range(
+                if index == line_index {
+                    value_start
+                } else {
+                    content_start
+                },
+                line.full_range().end().to_usize(),
+            ),
+            indent_range: range(
+                if index == line_index {
+                    value_start
+                } else {
+                    content_start
+                },
+                segment_start,
+            ),
+            content_range: range(segment_start, segment_end),
+            ending_range: line.ending_range(),
+            continuation: continuation_kind
+                .zip(continuation_range)
+                .map(|(kind, range)| DocumentAttributeContinuation { kind, range }),
+        });
+        last_line = index;
+        value_end = segment_end;
+        if continuation.is_none() {
+            break;
+        }
+    }
+
+    occurrence.range = range(
+        first_line.full_range().start().to_usize(),
+        lines[last_line].full_range().end().to_usize(),
+    );
+    occurrence.value = DocumentAttributeValue {
+        source_range: range(value_start, value_end),
+        source_text: source_document.source()[value_start..value_end].to_owned(),
+        folded_text: folded,
+        lines: value_lines,
+    };
+    if let Some(problem) = &mut problem
+        && problem.kind == AttributeProblemKind::InvalidValue
+    {
+        problem.range = occurrence.value.source_range;
+    }
+    Ok(Some((occurrence, problem, last_line)))
+}
+
+fn continuation_start(content: &str) -> Option<usize> {
+    content.ends_with(" \\").then(|| content.len() - 2)
 }
 
 fn range(start: usize, end: usize) -> TextRange {
@@ -470,9 +818,19 @@ mod tests {
         DocumentAttributeOccurrence {
             range: range(0, 4),
             name_range: range(1, 2),
-            value_range: range(3, 4),
             name: "Name".to_owned(),
-            raw_value: value.to_owned(),
+            value: super::DocumentAttributeValue {
+                source_range: range(3, 4),
+                source_text: value.to_owned(),
+                folded_text: value.to_owned(),
+                lines: vec![super::DocumentAttributeValueLine {
+                    range: range(3, 4),
+                    indent_range: range(3, 3),
+                    content_range: range(3, 4),
+                    ending_range: range(4, 4),
+                    continuation: None,
+                }],
+            },
             operation: DocumentAttributeOperation::Set,
             valid: true,
         }
@@ -490,6 +848,7 @@ mod tests {
     fn event_id_breaks_ties_at_the_same_expanded_offset() {
         let environment = AttributeEnvironment::build(
             &[occurrence("first"), occurrence("second")],
+            &Default::default(),
             AttributeExpansionLimits {
                 max_depth: 8,
                 max_bytes: 128,

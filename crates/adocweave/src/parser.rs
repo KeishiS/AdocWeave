@@ -1,9 +1,10 @@
 //! Lossless concrete syntax and HTML-independent semantic syntax.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use crate::attributes::{DocumentAttributeOccurrence, parse_line as parse_attribute_line};
+use crate::attributes::{DocumentAttributeOccurrence, parse_lines as parse_attribute_lines};
 use crate::block_grammar::{
     LineRecognition, is_block_title, parse_block_attributes, parse_explicit_anchor,
     parse_math_attribute, parse_source_attribute, recognize_line, unsupported_reason,
@@ -476,7 +477,7 @@ pub(crate) fn parse_shared(
     source: Arc<str>,
     config: &ParseConfig,
 ) -> Result<ParsedDocument, PositionError> {
-    match parse_shared_cancellable(source, config, &|| false) {
+    match parse_shared_cancellable(source, config, &BTreeMap::new(), &|| false) {
         Ok(document) => Ok(document),
         Err(ParseFailure::Position(error)) => Err(error),
         Err(
@@ -502,6 +503,7 @@ fn commit_block(
 pub(crate) fn parse_shared_cancellable(
     source: Arc<str>,
     config: &ParseConfig,
+    external_attributes: &BTreeMap<String, Option<String>>,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<ParsedDocument, ParseFailure> {
     let mut budget = ParseBudget::new(config.limits)?;
@@ -530,7 +532,7 @@ pub(crate) fn parse_shared_cancellable(
         &mut budget,
         BlockContext::root(),
     )?;
-    finish_document(sequence, source_document, config)
+    finish_document(sequence, source_document, config, external_attributes)
 }
 
 fn parse_block_sequence(
@@ -862,12 +864,9 @@ fn parse_block_sequence(
                 root.header.end = line.full_range().start();
             }
         } else if recognition == LineRecognition::DocumentAttribute {
-            let (attribute, problem) = parse_attribute_line(
-                content,
-                line.content_range().start().to_usize(),
-                line.full_range(),
-            )
-            .expect("recognizer verified document attribute");
+            let (attribute, problem, last_line) =
+                parse_attribute_lines(source_document, line_index, is_cancelled)?
+                    .expect("recognizer verified document attribute");
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -878,9 +877,10 @@ fn parse_block_sequence(
             )?;
             budget.consume_attribute()?;
             budget.consume_node()?;
+            let attribute_range = attribute.range;
             blocks.push(SyntaxNode::leaf(
                 SyntaxKind::DocumentAttribute,
-                line.full_range(),
+                attribute_range,
             ));
             let root = root
                 .as_mut()
@@ -889,7 +889,11 @@ fn parse_block_sequence(
             root.attributes.push(attribute);
             root.attribute_problems.extend(problem);
             if in_header {
-                root.extend_range(line.full_range());
+                root.extend_range(attribute_range);
+            }
+            if last_line > line_index {
+                cursor.commit(BlockRecognition::Through(last_line + 1))?;
+                continue;
             }
         } else if recognition == LineRecognition::Break {
             flush_paragraph(
@@ -1089,6 +1093,7 @@ fn finish_document(
     sequence: BlockSequenceOutput,
     source_document: SourceDocument,
     config: &ParseConfig,
+    external_attributes: &BTreeMap<String, Option<String>>,
 ) -> Result<ParsedDocument, ParseFailure> {
     let BlockSequenceOutput::Root(sequence) = sequence else {
         return Err(ParseFailure::InternalInvariant);
@@ -1102,6 +1107,7 @@ fn finish_document(
         header_attribute_count,
         anchors: sequence.common.anchors,
         header: sequence.header,
+        external_attributes,
         attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
             max_depth: config.limits.max_attribute_expansion_depth,
             max_bytes: config.limits.max_attribute_expansion_bytes,
@@ -2415,11 +2421,11 @@ mod tests {
             DocumentAttributeOperation::Set
         );
         assert_eq!(
-            parsed.ast.attributes[0].raw_value,
+            parsed.ast.attributes[0].value.source_text,
             "123E4567-E89B-12D3-A456-426614174000"
         );
-        assert_eq!(parsed.ast.attributes[2].raw_value, "rust, AsciiDoc");
-        assert_eq!(parsed.ast.attributes[3].raw_value, "latexmath");
+        assert_eq!(parsed.ast.attributes[2].value.source_text, "rust, AsciiDoc");
+        assert_eq!(parsed.ast.attributes[3].value.source_text, "latexmath");
         assert_eq!(
             parsed.ast.attributes[4].operation,
             DocumentAttributeOperation::Unset

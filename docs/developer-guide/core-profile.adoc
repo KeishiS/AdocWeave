@@ -112,7 +112,13 @@ Rustからは`Engine`、`AnalysisOptions`、`Analysis`が主な入口です。�
 その値を決めたbindingは`Analysis::attribute_environment().resolve_at()`から、最終値viewは
 `Analysis::attribute_environment().final_values()`から取得します。属性を記述した順番と
 source rangeは`Analysis::document_attribute_occurrences()`から取得します。同じexpanded offsetに
-複数の読込eventがある場合は`resolve_at_event()`でevent IDを指定します。
+複数の読込eventがある場合は`resolve_at_event()`でevent IDを指定します。属性値の
+`source_text`と`source_range`は記述どおりの複数物理行を保持し、`folded_text`は通常の継続を
+spaceへ畳み、hard breakのplusを残してmarkerを改行へ畳んだ意味評価用の値です。
+`lines`から各物理行と継続markerのrangeを取得できます。
+`Analysis::attribute_references()`は各参照の名前、range、有効値および決定binding IDを返します。
+Binding IDは同じ解析snapshot内だけで有効であり、`AttributeEnvironment::binding()`で対応する
+source occurrenceを取得します。
 属性fixtureと保証対象の対応は link:../../fixtures/attributes/manifest.json[属性契約manifest]を基準とし、
 repository検査でfixture一覧とこの文書体系の同期を確認します。
 
@@ -137,6 +143,11 @@ fn convert() -> Result<String, ParseError> {
 `:toc:`と`:sectnums:`はRust側のflagではなく、文書ヘッダーの属性によって有効になります。
 `:toclevels:`は1から5までの整数であり、省略時はlevel 1から5までを目次候補とします。不正な値は
 `invalid-attribute`診断となります。
+
+属性Lintは参照ごとに、その位置で有効なbindingを`AttributeEnvironment`から選択します。前方参照と
+unset後の参照は`undefined-attribute`、循環と展開上限超過は`attribute-expansion`として診断します。
+`unused-attribute`は名前全体ではなく個々のset bindingを対象とします。通常の再定義は有効な操作であり、
+重複診断を行いません。
 
 [#wasm-api]
 == WebAssembly API

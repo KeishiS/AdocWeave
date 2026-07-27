@@ -33,7 +33,8 @@ expanded byte offsetが同じeventは単調増加する読込event IDで順序�
 
 * 安定した解析内ID
 * setまたはunsetの操作
-* raw値
+* source表現と畳み込み後の値
+* 各物理行、indent、内容、行末および継続markerのrange
 * 属性エントリ全体の終端より後から参照可能になる位置と読込event ID
 * 値中の属性参照を評価する位置
 * 対応するsource occurrence
@@ -42,6 +43,11 @@ expanded byte offsetが同じeventは単調増加する読込event IDで順序�
 再定義しても、以前に代入した値を遡及的に変更しません。定義時点で未定義の参照は、後の
 bindingへ結び直さず、その時点の未定義参照規則を適用します。cycleと処理上限も、参照した
 bindingの連鎖に対して検査します。
+
+複数物理行の属性値は、source表現と意味評価用の畳み込み後の値を同じ値objectへ保持します。
+通常の継続markerは1個のspaceへ畳みます。hard breakではplusを残してmarkerを改行へ畳み、
+後段の置換処理が` +`と改行をhard breakとして認識します。Formatterとsource projectionは
+物理行ごとのrangeを使用し、属性評価は畳み込み後の値だけを使用します。
 
 preprocessorは読込中の現在値を表す逐次状態を使用します。include target、`ifdef`、`ifndef`
 および`ifeval`はdirectiveへ到達した時点の状態で評価します。選択されなかったbranchの

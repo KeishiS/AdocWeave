@@ -1,0 +1,17 @@
+:part: first
+include::{part}.adoc[]
+include::{part}.adoc[]
+ifdef::from-include[]
+included attribute is visible
+endif::[]
+
+:guard: enabled
+ifdef::missing[]
+:part: bad
+endif::[]
+include::safe.adoc[]
+
+:guard!:
+ifndef::guard[]
+unset is visible
+endif::[]

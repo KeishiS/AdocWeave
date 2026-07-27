@@ -54,6 +54,7 @@ pub struct ProductSet {
     pub canonical_ast: bool,
     pub html: bool,
     pub attribute_occurrences: bool,
+    pub attribute_queries: bool,
     pub resource_queries: bool,
     pub diagnostics: bool,
     pub symbols: bool,
@@ -67,6 +68,7 @@ impl ProductSet {
             canonical_ast: true,
             html: true,
             attribute_occurrences: true,
+            attribute_queries: true,
             resource_queries: true,
             diagnostics: true,
             symbols: true,
@@ -81,6 +83,7 @@ impl ProductSet {
             canonical_ast: false,
             html: true,
             attribute_occurrences: false,
+            attribute_queries: false,
             resource_queries: true,
             diagnostics: true,
             symbols: false,
@@ -102,6 +105,7 @@ pub struct DocumentProducts {
     pub canonical_ast: Option<String>,
     pub html: Option<String>,
     pub attribute_occurrences: Option<Vec<crate::attributes::DocumentAttributeOccurrence>>,
+    pub attribute_queries: Option<crate::attributes::AttributeQueryProduct>,
     pub resource_queries: Option<Vec<crate::resource::ResourceQuery>>,
     pub diagnostics_json: Option<String>,
     pub render_diagnostics_json: Option<String>,
@@ -126,6 +130,9 @@ pub fn products(
         attribute_occurrences: requested
             .attribute_occurrences
             .then(|| analysis.document_attribute_occurrences().to_vec()),
+        attribute_queries: requested
+            .attribute_queries
+            .then(|| analysis.attribute_query_product()),
         resource_queries: requested
             .resource_queries
             .then(|| analysis.resource_queries()),
@@ -216,7 +223,10 @@ fn canonical_ast(document: &AstDocument) -> String {
             .map(|attribute| CanonicalNode {
                 kind: "attribute",
                 range: range(attribute.range),
-                value: Some(format!("{}={}", attribute.name, attribute.raw_value)),
+                value: Some(format!(
+                    "{}={}",
+                    attribute.name, attribute.value.folded_text
+                )),
                 children: Vec::new(),
             })
             .collect(),

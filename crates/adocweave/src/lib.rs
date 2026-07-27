@@ -52,8 +52,9 @@ mod walker;
 pub mod semantic {
     pub use crate::attributes::{
         AttributeBinding, AttributeBindingId, AttributeEnvironment, AttributeEventId,
-        AttributePosition, DocumentAttributeOccurrence, DocumentAttributeOperation,
-        ResolvedAttribute,
+        AttributePosition, AttributeQueryProduct, AttributeReference, AttributeValueContinuation,
+        DocumentAttributeContinuation, DocumentAttributeOccurrence, DocumentAttributeOperation,
+        DocumentAttributeValue, DocumentAttributeValueLine, ExternalAttributes, ResolvedAttribute,
     };
     pub use crate::block_model::{
         AdmonitionKind, AdmonitionPresentation, Author, Block, BlockMetadata, BlockProblem,
@@ -115,9 +116,9 @@ pub mod output {
             render_json, sort_diagnostics,
         };
         pub use crate::lint::{
-            ASCIIDOC_FILE_LINK, ATTRIBUTE_EXPANSION, DUPLICATE_ANCHOR, DUPLICATE_ATTRIBUTE,
-            DUPLICATE_HEADING_ID, EXCESSIVE_BLANK_LINES, HEADING_MARKER_SPACE, INCONSISTENT_LIST,
-            INVALID_ANCHOR, INVALID_ATTRIBUTE, INVALID_CATALOG, INVALID_CROSS_REFERENCE,
+            ASCIIDOC_FILE_LINK, ATTRIBUTE_EXPANSION, DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID,
+            EXCESSIVE_BLANK_LINES, HEADING_MARKER_SPACE, INCONSISTENT_LIST, INVALID_ANCHOR,
+            INVALID_ATTRIBUTE, INVALID_CATALOG, INVALID_CROSS_REFERENCE,
             INVALID_DOCUMENT_STRUCTURE, INVALID_HEADING_LEVEL, INVALID_LIST_PRESENTATION,
             INVALID_STEM, INVALID_TABLE, INVALID_URL_SCHEME, LINE_TOO_LONG, LINT_RULES, LintConfig,
             LintRuleDescriptor, LintRuleId, MACRO_BOUNDARY, MISSING_SOURCE_LANGUAGE,
@@ -155,10 +156,11 @@ pub mod preprocess {
         IncludeRequest, OriginRange, Originated, PreprocessError, PreprocessErrorKind,
         PreprocessNotice, PreprocessNoticeKind, PreprocessOptions, PreprocessedAnalysis,
         PreprocessedAnalysisError, PreprocessedDocument, ProjectedDiagnostic,
-        ProjectedDocumentAttribute, ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget,
-        ProjectedReference, ProjectedResource, ProjectionError, ProjectionLimits, ResourceDocument,
-        ResourceSnapshot, SafeMode, SourceMapSegment, SourceMapping, SourceOrigin,
-        discover_includes, preprocess, preprocess_and_analyze, resolve_include_target,
+        ProjectedDocumentAttribute, ProjectedDocumentAttributeValueLine, ProjectedDocumentSymbol,
+        ProjectedFix, ProjectedLocalTarget, ProjectedReference, ProjectedResource, ProjectionError,
+        ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode, SourceMapSegment,
+        SourceMapping, SourceOrigin, discover_includes, preprocess, preprocess_and_analyze,
+        resolve_include_target,
     };
 }
 

@@ -292,7 +292,7 @@ pub(crate) fn build_presentation(
             .find(|attribute| {
                 attribute.name == "toclevels" && attribute.range.end() <= header_offset
             })
-            .map(|attribute| attribute.value_range)
+            .map(|attribute| attribute.value.source_range)
     });
     let toc_policy = TocPolicy {
         enabled: header_values("toc").is_some(),

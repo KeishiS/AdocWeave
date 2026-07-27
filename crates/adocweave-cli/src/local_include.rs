@@ -1,18 +1,18 @@
 //! Explicit, bounded local resource provider owned by the CLI binary.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 use adocweave::SourceId;
 use adocweave::preprocess::{
-    PreprocessError, PreprocessOptions, PreprocessedDocument, ResourceDocument, ResourceSnapshot,
-    discover_includes, preprocess, resolve_include_target,
+    PreprocessError, PreprocessErrorKind, PreprocessOptions, PreprocessedDocument,
+    ResourceDocument, ResourceSnapshot, preprocess,
 };
 use adocweave_host::{
     LocalResourcePolicy, LocalTargetPolicy, LocalTargetSession, ResourceBudget, ResourceError,
-    ResourceLimits, normalize_relative,
+    ResourceLimits,
 };
 
 #[derive(Debug)]
@@ -111,56 +111,52 @@ pub fn prepare(
     let policy = LocalResourcePolicy::new(roots, ResourceLimits::default())
         .map_err(LocalIncludeError::Host)?;
 
-    let mut snapshot_entries = Vec::new();
+    let mut snapshot = ResourceSnapshot::default();
     let mut sources = BTreeMap::new();
     let mut source_bases = BTreeMap::new();
     if let Some(source_id) = &source_id {
         sources.insert(source_id.clone(), source.to_owned());
         source_bases.insert(source_id.clone(), base_dir.clone());
     }
-    let mut pending = VecDeque::new();
-    enqueue(source, Path::new(""), &mut pending)?;
-    let mut visited = BTreeSet::new();
     let mut budget = ResourceBudget::default();
-    while let Some(target) = pending.pop_front() {
-        if !visited.insert(target.clone()) {
-            continue;
+    let preprocess_options = PreprocessOptions {
+        source_id: source_id.clone().map(SourceId::new),
+        ..PreprocessOptions::default()
+    };
+    let document = loop {
+        match preprocess(source, &snapshot, &preprocess_options) {
+            Ok(document) => break document,
+            Err(error) if error.kind == PreprocessErrorKind::MissingResource => {
+                let target = error
+                    .target
+                    .clone()
+                    .ok_or_else(|| LocalIncludeError::Preprocess(error.clone()))?;
+                let path = base_dir.join(&target);
+                let loaded = policy
+                    .validate_file(&mut budget, &path)
+                    .and_then(adocweave_host::ValidatedFilesystemTarget::into_loaded_utf8)
+                    .map_err(LocalIncludeError::Host)?;
+                let (canonical, text) = loaded.into_parts();
+                let resource_id = include_source_id(&target);
+                sources.insert(resource_id.clone(), text.clone());
+                source_bases.insert(
+                    resource_id.clone(),
+                    canonical
+                        .parent()
+                        .unwrap_or_else(|| Path::new(""))
+                        .to_owned(),
+                );
+                snapshot.insert(
+                    target,
+                    ResourceDocument {
+                        source_id: SourceId::new(resource_id),
+                        source: text,
+                    },
+                );
+            }
+            Err(error) => return Err(LocalIncludeError::Preprocess(error)),
         }
-        let path = base_dir.join(&target);
-        let (canonical, text) = policy
-            .read_utf8(&mut budget, &path)
-            .map_err(LocalIncludeError::Host)?;
-        let parent = target.parent().unwrap_or_else(|| Path::new(""));
-        enqueue(&text, parent, &mut pending)?;
-        let source_id = canonical.to_string_lossy().into_owned();
-        sources.insert(source_id.clone(), text.clone());
-        source_bases.insert(
-            source_id.clone(),
-            canonical
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .to_owned(),
-        );
-        snapshot_entries.push((
-            logical_key(&target),
-            ResourceDocument {
-                source_id: SourceId::new(source_id),
-                source: text,
-            },
-        ));
-    }
-
-    let snapshot: ResourceSnapshot = snapshot_entries.into_iter().collect();
-
-    let document = preprocess(
-        source,
-        &snapshot,
-        &PreprocessOptions {
-            source_id: source_id.map(SourceId::new),
-            ..PreprocessOptions::default()
-        },
-    )
-    .map_err(LocalIncludeError::Preprocess)?;
+    };
     Ok(PreparedInput {
         document,
         sources,
@@ -207,80 +203,86 @@ pub fn prepare_local(
             })?;
     let mut source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
     let mut include_bases = BTreeMap::from([(source_id.clone(), base_dir.clone())]);
-    let mut snapshot_entries = Vec::new();
+    let mut snapshot = ResourceSnapshot::default();
     let mut include_errors = BTreeMap::new();
-    let mut pending = VecDeque::new();
-    enqueue_local(source, &base_key, &mut pending)?;
-    let mut visited = BTreeSet::new();
-    while let Some((target, inspect)) = pending.pop_front() {
-        if !visited.insert(target.clone()) {
-            continue;
-        }
-        if !inspect {
-            include_errors.insert(
-                target.clone(),
-                adocweave_host::LocalTargetError::Unverifiable(target.clone()),
-            );
-            snapshot_entries.push((
-                target.clone(),
-                ResourceDocument {
-                    source_id: SourceId::new(format!("<unavailable:{target}>")),
-                    source: String::new(),
-                },
-            ));
-            continue;
-        }
-        match session.read_utf8(&root, &target) {
-            Ok((canonical, text)) => {
-                let parent = target.rsplit_once('/').map_or("", |(parent, _)| parent);
-                enqueue_local(&text, parent, &mut pending)?;
-                let resource_id = canonical.to_string_lossy().into_owned();
-                sources.insert(resource_id.clone(), text.clone());
-                source_bases.insert(
-                    resource_id.clone(),
-                    canonical
-                        .parent()
-                        .unwrap_or_else(|| Path::new(""))
-                        .to_owned(),
-                );
-                include_bases.insert(
-                    resource_id.clone(),
-                    canonical
-                        .parent()
-                        .unwrap_or_else(|| Path::new(""))
-                        .to_owned(),
-                );
-                snapshot_entries.push((
-                    target,
-                    ResourceDocument {
-                        source_id: SourceId::new(resource_id),
-                        source: text,
-                    },
-                ));
+    let preprocess_options = PreprocessOptions {
+        source_id: Some(SourceId::new(source_id.clone())),
+        base_uri: (!base_key.is_empty()).then_some(base_key),
+        ..PreprocessOptions::default()
+    };
+    let document = loop {
+        match preprocess(source, &snapshot, &preprocess_options) {
+            Ok(document) => break document,
+            Err(error) if error.kind == PreprocessErrorKind::MissingResource => {
+                let target = error
+                    .target
+                    .clone()
+                    .ok_or_else(|| LocalIncludeError::Preprocess(error.clone()))?;
+                let requested_target = error.requested_target.as_deref().unwrap_or(target.as_str());
+                let resource_id = include_source_id(&target);
+                let inspect = adocweave::LocalTargetReference::from_include(
+                    error.range,
+                    error.range,
+                    requested_target,
+                )
+                .is_some_and(|reference| {
+                    reference.syntax == adocweave::LocalTargetSyntax::Candidate
+                });
+                if !inspect {
+                    include_errors.insert(
+                        target.clone(),
+                        adocweave_host::LocalTargetError::Unverifiable(target.clone()),
+                    );
+                    snapshot.insert(
+                        target,
+                        ResourceDocument {
+                            source_id: SourceId::new(resource_id),
+                            source: String::new(),
+                        },
+                    );
+                    continue;
+                }
+                match session.read_utf8(&root, &target) {
+                    Ok(loaded) => {
+                        let (canonical, text) = loaded.into_parts();
+                        sources.insert(resource_id.clone(), text.clone());
+                        source_bases.insert(
+                            resource_id.clone(),
+                            canonical
+                                .parent()
+                                .unwrap_or_else(|| Path::new(""))
+                                .to_owned(),
+                        );
+                        include_bases.insert(
+                            resource_id.clone(),
+                            canonical
+                                .parent()
+                                .unwrap_or_else(|| Path::new(""))
+                                .to_owned(),
+                        );
+                        snapshot.insert(
+                            target,
+                            ResourceDocument {
+                                source_id: SourceId::new(resource_id),
+                                source: text,
+                            },
+                        );
+                    }
+                    Err(read_error) => {
+                        include_errors.insert(target.clone(), read_error);
+                        snapshot.insert(
+                            target,
+                            ResourceDocument {
+                                source_id: SourceId::new(resource_id),
+                                source: String::new(),
+                            },
+                        );
+                    }
+                }
             }
-            Err(error) => {
-                include_errors.insert(target.clone(), error);
-                snapshot_entries.push((
-                    target.clone(),
-                    ResourceDocument {
-                        source_id: SourceId::new(format!("<unavailable:{target}>")),
-                        source: String::new(),
-                    },
-                ));
-            }
+            Err(error) => return Err(LocalIncludeError::Preprocess(error)),
         }
-    }
-    let snapshot: ResourceSnapshot = snapshot_entries.into_iter().collect();
-    let document = preprocess(
-        source,
-        &snapshot,
-        &PreprocessOptions {
-            source_id: Some(SourceId::new(source_id)),
-            base_uri: (!base_key.is_empty()).then_some(base_key),
-            ..PreprocessOptions::default()
-        },
-    )
-    .map_err(LocalIncludeError::Preprocess)?;
+    };
     Ok(PreparedInput {
         document,
         sources,
@@ -291,35 +293,6 @@ pub fn prepare_local(
     })
 }
 
-fn enqueue_local(
-    source: &str,
-    parent: &str,
-    pending: &mut VecDeque<(String, bool)>,
-) -> Result<(), LocalIncludeError> {
-    for include in discover_includes(source).map_err(LocalIncludeError::Position)? {
-        let Some(local) = include.local_target() else {
-            continue;
-        };
-        pending.push_back((
-            resolve_include_target(&include.target, Some(parent)),
-            local.syntax == adocweave::LocalTargetSyntax::Candidate,
-        ));
-    }
-    Ok(())
-}
-
-fn enqueue(
-    source: &str,
-    parent: &Path,
-    pending: &mut VecDeque<PathBuf>,
-) -> Result<(), LocalIncludeError> {
-    for include in discover_includes(source).map_err(LocalIncludeError::Position)? {
-        let relative = normalize_relative(&include.target).map_err(LocalIncludeError::Host)?;
-        pending.push_back(parent.join(relative));
-    }
-    Ok(())
-}
-
 fn logical_key(path: &Path) -> String {
     path.components()
         .filter_map(|component| match component {
@@ -328,4 +301,8 @@ fn logical_key(path: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn include_source_id(logical_target: &str) -> String {
+    format!("include:{logical_target}")
 }

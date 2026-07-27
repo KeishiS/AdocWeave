@@ -26,6 +26,7 @@ fn expanded_request(corpus: &Value) -> Value {
         "canonicalAst": true,
         "html": true,
         "attributeOccurrences": true,
+        "attributeQueries": true,
         "resourceQueries": true,
         "diagnostics": true,
         "symbols": true,
@@ -37,6 +38,10 @@ fn expanded_request(corpus: &Value) -> Value {
             "rules": { "example": {} },
             "authoredUrls": {}
         }
+    });
+    request["preprocess"] = json!({
+        "resources": {},
+        "options": {}
     });
     request["renderPolicy"] = json!({
         "activeUrls": {},
@@ -447,6 +452,7 @@ fn response_and_projection_fields_match_the_schema() {
         "canonicalAst": true,
         "html": true,
         "attributeOccurrences": true,
+        "attributeQueries": true,
         "resourceQueries": true,
         "diagnostics": true,
         "symbols": true,
@@ -461,6 +467,8 @@ fn response_and_projection_fields_match_the_schema() {
     assert_wire_value(&response, "AdocWeaveWasmResponse", &schema);
     for path in [
         "/attributeOccurrences/0",
+        "/attributeQueries/bindings/0",
+        "/attributeQueries/references/0",
         "/resourceQueries/0",
         "/diagnostics/0",
         "/projection/title",

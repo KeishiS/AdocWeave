@@ -119,7 +119,8 @@ targetはbase directoryからの相対pathに限定します。
 network resourceは取得しません。
 
 `convert`、`check`および`symbols`は同じ展開snapshotを使用します。
-`check`の診断は元resourceのpath、行、columnへ投影します。
+`check`の診断は元resourceの論理的な`SourceId`、行、columnへ投影します。Include resourceには
+`include:`で始まるIDを使用し、canonical pathは診断へ公開しません。
 `format`はinclude treeを安全性検査しますが、展開結果をroot fileへ書き戻さずroot入力だけを整形します。
 
 `check --include --local-targets --project-root DIR`では、includeの読み取りとほかのlocal targetの

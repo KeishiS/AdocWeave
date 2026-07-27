@@ -42,6 +42,89 @@ fn native_adapter_accepts_every_shared_conformance_case() {
         assert_eq!(response.package_version, adocweave::VERSION, "{name}");
         assert!(!response.syntax.is_empty(), "{name}: syntax tree");
         assert!(!response.ast.is_empty(), "{name}: AST");
+        if name == "position-dependent-attribute-queries-with-include-origin" {
+            let included_bindings = response
+                .attribute_queries
+                .bindings
+                .iter()
+                .filter(|binding| binding.occurrence.name == "name")
+                .collect::<Vec<_>>();
+            assert_eq!(included_bindings.len(), 3, "{name}: included bindings");
+            assert!(
+                included_bindings
+                    .iter()
+                    .all(|binding| binding.source_id.as_deref() == Some("included:part.adoc")),
+                "{name}: binding provenance"
+            );
+            let included_references = response
+                .attribute_queries
+                .references
+                .iter()
+                .filter(|reference| reference.name == "name")
+                .collect::<Vec<_>>();
+            assert_eq!(included_references.len(), 3, "{name}: included references");
+            assert!(
+                included_references
+                    .iter()
+                    .all(|reference| reference.source_id.as_deref() == Some("included:part.adoc")),
+                "{name}: reference provenance"
+            );
+            let forward = response
+                .attribute_queries
+                .references
+                .iter()
+                .find(|reference| reference.name == "later")
+                .expect("forward reference");
+            assert_eq!(forward.binding_id, None, "{name}: forward binding");
+            let header = response
+                .attribute_queries
+                .references
+                .iter()
+                .find(|reference| reference.name == "header-only")
+                .expect("header reference");
+            assert_eq!(
+                header.effective_value.as_deref(),
+                Some("root"),
+                "{name}: header value"
+            );
+            let locked = response
+                .attribute_queries
+                .references
+                .iter()
+                .find(|reference| reference.name == "locked")
+                .expect("locked reference");
+            assert_eq!(locked.binding_id, None, "{name}: external binding");
+            assert_eq!(
+                locked.effective_value.as_deref(),
+                Some("host"),
+                "{name}: external value"
+            );
+            assert!(
+                response
+                    .attribute_queries
+                    .bindings
+                    .iter()
+                    .all(|binding| binding.occurrence.name != "locked"
+                        && binding.occurrence.name != "absent"),
+                "{name}: rejected authored bindings"
+            );
+            let multiline = response
+                .attribute_queries
+                .bindings
+                .iter()
+                .find(|binding| binding.occurrence.name == "multi")
+                .expect("multiline binding");
+            let included_source = entry["preprocess"]["resources"]["part.adoc"]["source"]
+                .as_str()
+                .expect("included source");
+            let second_line = &multiline.occurrence.value.lines[1];
+            assert_eq!(
+                &included_source[second_line.content_range.start as usize
+                    ..second_line.content_range.end as usize],
+                "second",
+                "{name}: multiline line projection"
+            );
+        }
         if let Some(file) = entry["expectedHtmlFile"].as_str() {
             assert_eq!(
                 response.html,
@@ -109,17 +192,20 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
         .get("renderInputs")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let preprocess = entry.get("preprocess").cloned().unwrap_or(Value::Null);
     serde_json::from_value(json!({
         "packageVersion": adocweave::VERSION,
         "sourceId": format!("conformance:{}", entry["name"].as_str().expect("name")),
         "version": 1,
         "generation": 1,
         "source": source,
+        "preprocess": preprocess,
         "products": {
             "syntax": true,
             "canonicalAst": true,
             "html": true,
             "attributeOccurrences": true,
+            "attributeQueries": true,
             "resourceQueries": true,
             "diagnostics": true,
             "symbols": true,

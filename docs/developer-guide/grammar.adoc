@@ -20,6 +20,12 @@
 `optional`は参照先がsnapshotにない場合だけ空展開します。安全でないtarget、循環、不正なencoding、
 構文エラーまたは処理上限の超過は省略しません。WildcardとURI転送は扱いません。
 
+文書属性のset、unsetおよび再定義は、root文書とinclude文書を展開する読込順に適用します。
+Include targetとconditional directiveは到達時点の属性状態で評価します。選択されなかったbranchと
+区切り付きblock内部の属性操作は状態を変更しません。複数行の属性値全体を一つの操作として扱い、
+継続行がdirectiveの形で始まってもプリプロセッサ命令として解釈しません。文書外から渡した属性は
+固定値とし、文書中の操作では変更しません。
+
 == 字句モデル
 
 入力は正しいUTF-8でなければなりません。行を次のように定義します。
@@ -68,8 +74,13 @@ math-block     = ("[stem]" | "[latexmath]"), line-ending,
                  "++++", [ line-ending ], opaque-math,
                  "++++", [ line-ending ] ;
 document-attribute = ":", attribute-name, [ "!" ], ":",
-                     [ horizontal-space, attribute-value ]
+                     [ horizontal-space,
+                       { continued-attribute-value-line },
+                       attribute-value-line ]
                    | ":!", attribute-name, ":" ;
+continued-attribute-value-line = attribute-value,
+                                 (" " | " + "), "\", line-ending ;
+attribute-value-line = attribute-value ;
 block-anchor   = "[[", anchor-id, [ ",", reference-text ], "]]"
                | "[#", anchor-id, "]" ;
 block-metadata = { block-title | block-anchor | element-attribute-list } ;
@@ -99,7 +110,13 @@ header終端から最初のsectionまたはpartまでのblock列をpreambleと�
 付与した見出しノードとして保持し、利用側がソースを破棄せず回復できるようにします。
 
 ソース属性の直後には正確な`----`行が必要であり、間に空行を許可しません。インデントした
-属性と区切りは認識しません。文書タイトル直後の連続する文書属性だけを認識します。
+属性と区切りは認識しません。文書属性は文書headerおよびrootのblock間で認識します。
+
+文書属性値の物理行が正確なspaceとbackslashで終わる場合だけ、次の物理行を同じ値として
+取り込みます。通常の継続marker、改行および次行の先頭空白は1個のspaceへ畳みます。
+space、plus、space、backslashで終わるhard breakは、plusを値へ残して改行へ畳みます。
+source表現、畳み込み後の値、各物理行、indent、内容、行末および継続markerのbyte rangeを
+区別して保持します。
 
 ブロックメタデータ行は空行を挟まず直後のブロックへ結合します。複数行のソース順と
 各値のUTF-8バイト範囲はsyntax treeから復元可能でなければなりません。二重引用符内のcommaは

@@ -21,14 +21,14 @@ let host_result = host_extension.analyze(&analysis, host_context).await?;
 == 属性拡張
 
 利用側アプリは`Analysis::document_attribute_occurrences()`が返す
-`DocumentAttributeOccurrence`の名前、`raw_value`、操作および範囲を使用します。
+`DocumentAttributeOccurrence`の名前、`value.source_text`、`value.folded_text`、操作および範囲を使用します。
 たとえばノートアプリは`note-id`をUUIDとして検証できますが、コアASTへノート専用variantを
 追加してはいけません。
 
 属性検証は次の条件を満たします。
 
 * 同一の入力、設定およびホストスキーマに対する結果の再現性
-* `name_range`または`value_range`への診断範囲の限定
+* `name_range`または`value.source_range`への診断範囲の限定
 * 未知属性の暗黙的な削除または書換えの禁止
 * 原値を保持するための正規化値と原値の区別
 * DB、時刻等を必要とする検証と純粋な構文・型検証の分離

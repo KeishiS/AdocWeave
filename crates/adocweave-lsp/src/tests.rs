@@ -1191,6 +1191,220 @@ fn hover_and_completion_cover_attributes_references_links_and_math() {
 }
 
 #[test]
+fn attribute_features_follow_the_binding_visible_at_the_cursor() {
+    let source = "\
+:name: first
+
+{name}
+
+:name: second
+
+{name}
+
+:name!:
+
+{name}
+";
+    let mut service = LanguageService::default();
+    open(&mut service, "file:///attributes.adoc", 1, source);
+    let document = uri("file:///attributes.adoc");
+
+    for (line, expected) in [(2, "Value: `first`"), (6, "Value: `second`"), (10, "unset")] {
+        let hover = service
+            .hover(&document, lsp::Position::new(line, 2))
+            .expect("hover")
+            .expect("attribute hover");
+        let value = serde_json::to_value(hover).expect("serialize");
+        assert!(
+            value["contents"]["value"]
+                .as_str()
+                .expect("hover text")
+                .contains(expected),
+            "{value}"
+        );
+    }
+
+    let first_definition = service
+        .definition(&document, lsp::Position::new(2, 2))
+        .expect("definition")
+        .expect("first binding");
+    let second_definition = service
+        .definition(&document, lsp::Position::new(6, 2))
+        .expect("definition")
+        .expect("second binding");
+    let lsp::GotoDefinitionResponse::Scalar(first_definition) = first_definition else {
+        panic!("scalar definition");
+    };
+    let lsp::GotoDefinitionResponse::Scalar(second_definition) = second_definition else {
+        panic!("scalar definition");
+    };
+    assert_eq!(first_definition.range.start, lsp::Position::new(0, 1));
+    assert_eq!(second_definition.range.start, lsp::Position::new(4, 1));
+
+    let first_references = service
+        .references(&document, lsp::Position::new(0, 2), true)
+        .expect("references")
+        .expect("locations");
+    assert_eq!(
+        first_references
+            .iter()
+            .map(|location| location.range.start)
+            .collect::<Vec<_>>(),
+        [lsp::Position::new(0, 1), lsp::Position::new(2, 1)]
+    );
+
+    let before_unset = service
+        .completion(&document, lsp::Position::new(6, 3))
+        .expect("completion")
+        .expect("items");
+    assert!(
+        serde_json::to_value(before_unset)
+            .expect("serialize")
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|item| item["label"] == "name" && item["detail"] == "second")
+    );
+    let after_unset = service
+        .completion(&document, lsp::Position::new(10, 3))
+        .expect("completion")
+        .expect("items");
+    assert!(
+        serde_json::to_value(after_unset)
+            .expect("serialize")
+            .as_array()
+            .expect("array")
+            .iter()
+            .all(|item| item["label"] != "name")
+    );
+}
+
+#[test]
+fn attribute_definition_and_references_project_through_includes() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///book/part.adoc",
+        1,
+        ":shared: included\n",
+    );
+    open(
+        &mut service,
+        "file:///book/root.adoc",
+        1,
+        "include::part.adoc[]\n\n😀 {shared}\n",
+    );
+    let root = uri("file:///book/root.adoc");
+    let part = uri("file:///book/part.adoc");
+
+    let hover = service
+        .hover(&root, lsp::Position::new(2, 4))
+        .expect("hover")
+        .expect("attribute hover");
+    assert!(
+        serde_json::to_value(hover).expect("serialize")["contents"]["value"]
+            .as_str()
+            .expect("hover text")
+            .contains("Value: `included`")
+    );
+    let definition = service
+        .definition(&root, lsp::Position::new(2, 4))
+        .expect("definition")
+        .expect("included binding");
+    let lsp::GotoDefinitionResponse::Scalar(definition) = definition else {
+        panic!("scalar definition");
+    };
+    assert_eq!(definition.uri, part);
+    assert_eq!(definition.range.start, lsp::Position::new(0, 1));
+
+    let references = service
+        .references(&part, lsp::Position::new(0, 2), true)
+        .expect("references")
+        .expect("locations");
+    assert!(
+        references.iter().any(|location| {
+            location.uri == root && location.range.start == lsp::Position::new(2, 4)
+        }),
+        "{references:#?}"
+    );
+
+    assert!(
+        change(
+            &mut service,
+            "file:///book/part.adoc",
+            2,
+            json!([{"text": ":shared: changed\n"}])
+        )
+        .expect("included edit")
+    );
+    let updated = service
+        .hover(&root, lsp::Position::new(2, 4))
+        .expect("updated hover")
+        .expect("attribute hover");
+    assert!(
+        serde_json::to_value(updated).expect("serialize")["contents"]["value"]
+            .as_str()
+            .expect("hover text")
+            .contains("Value: `changed`")
+    );
+
+    let mut restarted = LanguageService::default();
+    open(
+        &mut restarted,
+        "file:///book/part.adoc",
+        2,
+        ":shared: changed\n",
+    );
+    open(
+        &mut restarted,
+        "file:///book/root.adoc",
+        1,
+        "include::part.adoc[]\n\n😀 {shared}\n",
+    );
+    let restarted_hover = restarted
+        .hover(&root, lsp::Position::new(2, 4))
+        .expect("restarted hover")
+        .expect("attribute hover");
+    assert!(
+        serde_json::to_value(restarted_hover).expect("serialize")["contents"]["value"]
+            .as_str()
+            .expect("hover text")
+            .contains("Value: `changed`")
+    );
+}
+
+#[test]
+fn attribute_features_use_the_negotiated_utf8_position_encoding() {
+    let mut service = LanguageService::default();
+    initialize(&mut service, &["utf-8"]);
+    open(
+        &mut service,
+        "file:///utf8-attribute.adoc",
+        1,
+        ":name: 値\n\n😀 {name}\n",
+    );
+    let document = uri("file:///utf8-attribute.adoc");
+    let hover = service
+        .hover(&document, lsp::Position::new(2, 6))
+        .expect("hover")
+        .expect("attribute hover");
+    assert!(
+        serde_json::to_value(hover).expect("serialize")["contents"]["value"]
+            .as_str()
+            .expect("hover text")
+            .contains("Value: `値`")
+    );
+    let definition = service
+        .definition(&document, lsp::Position::new(2, 6))
+        .expect("definition")
+        .expect("binding");
+    let lsp::GotoDefinitionResponse::Scalar(definition) = definition else {
+        panic!("scalar definition");
+    };
+    assert_eq!(definition.range.start, lsp::Position::new(0, 1));
+}
+
+#[test]
 fn hover_and_completion_cover_common_block_metadata() {
     let mut service = LanguageService::default();
     open(

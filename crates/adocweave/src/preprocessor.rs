@@ -11,6 +11,7 @@ use crate::inline::Reference;
 use crate::resource::ResourceReference;
 use crate::source::PositionError;
 use crate::source::{TextRange, TextSize};
+use crate::substitution::AttributeExpansionLimits;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SafeMode {
@@ -56,7 +57,7 @@ pub struct PreprocessOptions {
     pub base_uri: Option<String>,
     pub safe_mode: SafeMode,
     pub allowed_schemes: BTreeSet<String>,
-    pub attributes: BTreeMap<String, String>,
+    pub attributes: crate::attributes::ExternalAttributes,
     /// Expands include directives only from the caller-provided snapshot.
     pub enable_includes: bool,
     pub max_include_depth: u32,
@@ -511,12 +512,40 @@ pub struct ProjectedDocumentAttribute {
     pub origins: Vec<SourceOrigin>,
     pub name_origins: Vec<SourceOrigin>,
     pub value_origins: Vec<SourceOrigin>,
+    pub value_lines: Vec<ProjectedDocumentAttributeValueLine>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedDocumentAttributeValueLine {
+    pub value: crate::attributes::DocumentAttributeValueLine,
+    pub origins: Vec<SourceOrigin>,
+    pub indent_origins: Vec<SourceOrigin>,
+    pub content_origins: Vec<SourceOrigin>,
+    pub ending_origins: Vec<SourceOrigin>,
+    pub continuation_origins: Vec<SourceOrigin>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedAttributeBinding {
+    pub value: crate::attributes::AttributeBinding,
+    pub origins: Vec<SourceOrigin>,
+    pub name_origins: Vec<SourceOrigin>,
+    pub value_origins: Vec<SourceOrigin>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectedAttributeReference {
+    pub value: crate::attributes::AttributeReference,
+    pub origins: Vec<SourceOrigin>,
+    pub name_origins: Vec<SourceOrigin>,
 }
 
 /// All editor-facing facts from an expanded analysis, projected to original sources.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AnalysisProjection {
+    pub attribute_bindings: Vec<ProjectedAttributeBinding>,
     pub attribute_occurrences: Vec<ProjectedDocumentAttribute>,
+    pub attribute_references: Vec<ProjectedAttributeReference>,
     pub directives: Vec<Directive>,
     pub diagnostics: Vec<ProjectedDiagnostic>,
     pub local_targets: Vec<ProjectedLocalTarget>,
@@ -592,16 +621,135 @@ impl PreprocessedAnalysis {
                 )?;
                 let value_origins = project_attribute_range(
                     map,
-                    value.value_range,
+                    value.value.source_range,
                     value.range,
                     &mut projected_segments,
                     limits,
                 )?;
+                let value_lines = value
+                    .value
+                    .lines
+                    .iter()
+                    .cloned()
+                    .map(|line| {
+                        let origins = project_attribute_range(
+                            map,
+                            line.range,
+                            value.range,
+                            &mut projected_segments,
+                            limits,
+                        )?;
+                        let indent_origins = project_attribute_range(
+                            map,
+                            line.indent_range,
+                            value.range,
+                            &mut projected_segments,
+                            limits,
+                        )?;
+                        let content_origins = project_attribute_range(
+                            map,
+                            line.content_range,
+                            value.range,
+                            &mut projected_segments,
+                            limits,
+                        )?;
+                        let ending_origins = project_attribute_range(
+                            map,
+                            line.ending_range,
+                            value.range,
+                            &mut projected_segments,
+                            limits,
+                        )?;
+                        let continuation_origins = line
+                            .continuation
+                            .map(|continuation| {
+                                project_attribute_range(
+                                    map,
+                                    continuation.range,
+                                    value.range,
+                                    &mut projected_segments,
+                                    limits,
+                                )
+                            })
+                            .transpose()?
+                            .unwrap_or_default();
+                        Ok(ProjectedDocumentAttributeValueLine {
+                            value: line,
+                            origins,
+                            indent_origins,
+                            content_origins,
+                            ending_origins,
+                            continuation_origins,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ProjectionError>>()?;
                 Ok(ProjectedDocumentAttribute {
                     value,
                     origins,
                     name_origins,
                     value_origins,
+                    value_lines,
+                })
+            })
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
+        let attribute_bindings = self
+            .analysis
+            .attribute_environment()
+            .bindings()
+            .iter()
+            .cloned()
+            .map(|value| {
+                let occurrence = value.occurrence();
+                Ok(ProjectedAttributeBinding {
+                    origins: project_attribute_range(
+                        map,
+                        occurrence.range,
+                        occurrence.range,
+                        &mut projected_segments,
+                        limits,
+                    )?,
+                    name_origins: project_attribute_range(
+                        map,
+                        occurrence.name_range,
+                        occurrence.range,
+                        &mut projected_segments,
+                        limits,
+                    )?,
+                    value_origins: project_attribute_range(
+                        map,
+                        occurrence.value.source_range,
+                        occurrence.range,
+                        &mut projected_segments,
+                        limits,
+                    )?,
+                    value,
+                })
+            })
+            .collect::<Result<Vec<_>, ProjectionError>>()?;
+        let attribute_references = self
+            .analysis
+            .attribute_references()
+            .iter()
+            .cloned()
+            .map(|value| {
+                let origins = project_attribute_range(
+                    map,
+                    value.range,
+                    value.range,
+                    &mut projected_segments,
+                    limits,
+                )?;
+                let name_origins = project_attribute_range(
+                    map,
+                    value.name_range,
+                    value.range,
+                    &mut projected_segments,
+                    limits,
+                )?;
+                Ok(ProjectedAttributeReference {
+                    value,
+                    origins,
+                    name_origins,
                 })
             })
             .collect::<Result<Vec<_>, ProjectionError>>()?;
@@ -740,7 +888,9 @@ impl PreprocessedAnalysis {
             .map(|symbol| project_symbol(symbol, &mut project))
             .collect::<Result<Vec<_>, ProjectionError>>()?;
         Ok(AnalysisProjection {
+            attribute_bindings,
             attribute_occurrences,
+            attribute_references,
             directives: self.document.directives.clone(),
             diagnostics,
             local_targets,
@@ -819,7 +969,7 @@ pub fn preprocess_and_analyze(
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
     let document =
         preprocess(source, snapshot, options).map_err(PreprocessedAnalysisError::Preprocess)?;
-    let analysis = engine
+    let analysis = Engine::new(engine.options_with_attributes(&options.attributes))
         .analyze(&document.source)
         .map_err(PreprocessedAnalysisError::Parse)?;
     Ok(PreprocessedAnalysis { document, analysis })
@@ -865,6 +1015,10 @@ pub struct PreprocessError {
     pub kind: PreprocessErrorKind,
     pub source_id: Option<SourceId>,
     pub range: TextRange,
+    /// Expanded target before resolution against the current include base.
+    pub requested_target: Option<String>,
+    /// Snapshot key after resolution against the current include base.
+    pub target: Option<String>,
     pub message: String,
 }
 
@@ -881,6 +1035,7 @@ pub fn preprocess(
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
 ) -> Result<PreprocessedDocument, PreprocessError> {
+    let analysis_limits = crate::limits::AnalysisLimits::default();
     let mut context = Context {
         snapshot,
         options,
@@ -891,6 +1046,15 @@ pub fn preprocess(
         active: Vec::new(),
         expanded_nodes: 0,
         includes: 0,
+        attributes: crate::attributes::SequentialAttributeState::with_locked_values(
+            &options.attributes,
+            AttributeExpansionLimits {
+                max_depth: analysis_limits.max_attribute_expansion_depth,
+                max_bytes: analysis_limits.max_attribute_expansion_bytes,
+            },
+        ),
+        attribute_delimiters: Vec::new(),
+        attribute_position: true,
     };
     context.expand(
         source,
@@ -908,6 +1072,8 @@ pub fn preprocess(
         kind: PreprocessErrorKind::InternalInvariant,
         source_id: options.source_id.clone(),
         range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
+        requested_target: None,
+        target: None,
         message: "source map segments are unsorted, overlapping, or outside expanded source"
             .to_owned(),
     })
@@ -923,6 +1089,9 @@ struct Context<'a> {
     active: Vec<String>,
     expanded_nodes: u64,
     includes: u64,
+    attributes: crate::attributes::SequentialAttributeState,
+    attribute_delimiters: Vec<String>,
+    attribute_position: bool,
 }
 
 impl Context<'_> {
@@ -975,7 +1144,7 @@ impl Context<'_> {
             ));
         }
         self.bump_node(source_id.clone(), range)?;
-        let expanded_target = expand_attributes(&include.target, &self.options.attributes);
+        let expanded_target = expand_attributes(&include.target, self.attributes.values());
         let target = resolve_include_target(&expanded_target, base_uri);
         validate_target(&target, self.options).map_err(|message| {
             error(
@@ -1018,7 +1187,7 @@ impl Context<'_> {
             kind: DirectiveKind::Include,
             source_id: source_id.clone(),
             range,
-            authored_target: Some(expanded_target),
+            authored_target: Some(expanded_target.clone()),
             optional,
             target: target.clone(),
             target_range: relative_range(range, include.target_start, include.target_end),
@@ -1034,12 +1203,14 @@ impl Context<'_> {
                 });
                 return Ok(());
             }
-            return Err(error(
-                PreprocessErrorKind::MissingResource,
+            return Err(PreprocessError {
+                kind: PreprocessErrorKind::MissingResource,
                 source_id,
                 range,
-                format!("resource snapshot does not contain {target}"),
-            ));
+                requested_target: Some(expanded_target),
+                target: Some(target.clone()),
+                message: format!("resource snapshot does not contain {target}"),
+            });
         };
         let selected = select_lines(&document.source, &attributes);
         let transformed = transform_lines(selected, &attributes);
@@ -1062,10 +1233,40 @@ impl Context<'_> {
         depth: u32,
         base_uri: Option<&str>,
     ) -> Result<(), PreprocessError> {
+        let selected_source = lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<String>();
+        let selected_document = crate::source_document::SourceDocument::new(&selected_source)
+            .map_err(|_| {
+                error(
+                    PreprocessErrorKind::InternalInvariant,
+                    source_id.clone(),
+                    zero_range(),
+                    "selected source exceeds the supported position range",
+                )
+            })?;
+        if selected_document.lines().len() < lines.len() {
+            return Err(error(
+                PreprocessErrorKind::InternalInvariant,
+                source_id,
+                zero_range(),
+                "selected source lines do not preserve physical boundaries",
+            ));
+        }
         let mut conditions = Vec::<bool>::new();
-        for line in lines {
+        let mut attribute_value_through = None;
+        for (line_index, line) in lines.into_iter().enumerate() {
             let content = line.text.trim_end_matches(['\r', '\n']);
             let enabled = conditions.iter().all(|condition| *condition);
+            if attribute_value_through.is_some_and(|last_line| line_index <= last_line) {
+                self.bump_node(source_id.clone(), line.range)?;
+                self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                if attribute_value_through == Some(line_index) {
+                    attribute_value_through = None;
+                }
+                continue;
+            }
             if let Some(directive) = conditional_directive(content) {
                 self.bump_node(source_id.clone(), line.range)?;
                 self.directives.push(Directive {
@@ -1090,7 +1291,7 @@ impl Context<'_> {
                         if enabled
                             && conditional_attribute(
                                 &directive.target,
-                                &self.options.attributes,
+                                self.attributes.values(),
                                 present,
                             )
                         {
@@ -1101,13 +1302,14 @@ impl Context<'_> {
                                 line.range,
                                 SourceMapping::WholeOrigin,
                             )?;
+                            self.attribute_position = false;
                         }
                     }
                     DirectiveKind::Ifdef => conditions.push(
                         enabled
                             && conditional_attribute(
                                 &directive.target,
-                                &self.options.attributes,
+                                self.attributes.values(),
                                 true,
                             ),
                     ),
@@ -1115,7 +1317,7 @@ impl Context<'_> {
                         enabled
                             && conditional_attribute(
                                 &directive.target,
-                                &self.options.attributes,
+                                self.attributes.values(),
                                 false,
                             ),
                     ),
@@ -1123,7 +1325,7 @@ impl Context<'_> {
                         enabled
                             && evaluate_expression(&expand_attributes(
                                 &directive.attributes,
-                                &self.options.attributes,
+                                self.attributes.values(),
                             )),
                     ),
                     DirectiveKind::Endif => {
@@ -1139,6 +1341,18 @@ impl Context<'_> {
                     DirectiveKind::Include => unreachable!(),
                 }
             } else if enabled {
+                let delimiter = crate::delimiter::spec(content).is_some();
+                if delimiter {
+                    if self
+                        .attribute_delimiters
+                        .last()
+                        .is_some_and(|open| open == content)
+                    {
+                        self.attribute_delimiters.pop();
+                    } else {
+                        self.attribute_delimiters.push(content.to_owned());
+                    }
+                }
                 if let Some(include) = include_directive(content) {
                     if self.options.enable_includes {
                         self.expand_include(
@@ -1151,7 +1365,7 @@ impl Context<'_> {
                     } else {
                         self.bump_node(source_id.clone(), line.range)?;
                         let authored_target =
-                            expand_attributes(&include.target, &self.options.attributes);
+                            expand_attributes(&include.target, self.attributes.values());
                         let optional = parse_attributes(&include.attributes)
                             .is_ok_and(|attributes| attributes.contains_key("optional"));
                         self.directives.push(Directive {
@@ -1169,6 +1383,7 @@ impl Context<'_> {
                             resource_source_id: None,
                         });
                         self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                        self.attribute_position = false;
                     }
                 } else if let Some(literal) = escaped_directive(content) {
                     let ending = &line.text[content.len()..];
@@ -1178,9 +1393,45 @@ impl Context<'_> {
                         line.range,
                         SourceMapping::WholeOrigin,
                     )?;
+                    self.attribute_position = false;
                 } else {
+                    let mut document_attribute = false;
                     self.bump_node(source_id.clone(), line.range)?;
+                    if !delimiter
+                        && self.attribute_delimiters.is_empty()
+                        && self.attribute_position
+                        && crate::attributes::parse_line(
+                            content,
+                            selected_document.lines()[line_index]
+                                .content_range()
+                                .start()
+                                .to_usize(),
+                            selected_document.lines()[line_index].full_range(),
+                        )
+                        .is_some()
+                        && let Some((occurrence, _, last_line)) =
+                            crate::attributes::parse_lines(&selected_document, line_index, &|| {
+                                false
+                            })
+                            .map_err(|_| {
+                                error(
+                                    PreprocessErrorKind::InternalInvariant,
+                                    source_id.clone(),
+                                    line.range,
+                                    "attribute preprocessing failed",
+                                )
+                            })?
+                    {
+                        let _ = self.attributes.apply(&occurrence);
+                        document_attribute = true;
+                        if last_line > line_index {
+                            attribute_value_through = Some(last_line);
+                        }
+                    }
                     self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                    self.attribute_position = document_attribute
+                        || content.trim_matches([' ', '\t']).is_empty()
+                        || content.starts_with("//");
                 }
             }
         }
@@ -1627,6 +1878,8 @@ fn error(
         kind,
         source_id,
         range,
+        requested_target: None,
+        target: None,
         message: message.into(),
     }
 }
@@ -1672,7 +1925,7 @@ mod tests {
         };
         options
             .attributes
-            .insert("enabled".to_owned(), "".to_owned());
+            .insert("enabled".to_owned(), Some("".to_owned()));
         let source = "ifdef::enabled[]\ninclude::part.adoc[tag=keep,lines=2..3,leveloffset=+1,indent=2]\nendif::[]\n";
         let result = preprocess(source, &snapshot, &options).expect("preprocess");
         assert_eq!(result.source, "  == Included\n  line one\n");
@@ -1786,8 +2039,10 @@ mod tests {
         let mut options = PreprocessOptions::default();
         options
             .attributes
-            .insert("edition".to_owned(), "2".to_owned());
-        options.attributes.insert("web".to_owned(), String::new());
+            .insert("edition".to_owned(), Some("2".to_owned()));
+        options
+            .attributes
+            .insert("web".to_owned(), Some(String::new()));
         let source = concat!(
             "ifdef::web[inline]\n",
             "ifndef::print[also inline]\n",
@@ -1801,6 +2056,138 @@ mod tests {
             result.source,
             "inline\nalso inline\nselected\ninclude::literal.adoc[]\n"
         );
+    }
+
+    #[test]
+    fn document_attributes_drive_includes_and_conditionals_in_read_order() {
+        let mut snapshot = ResourceSnapshot::default();
+        for (target, source_id, source) in [
+            (
+                "first.adoc",
+                "first",
+                include_str!("../../../fixtures/attributes/preprocessor-first.adoc"),
+            ),
+            (
+                "second.adoc",
+                "second",
+                include_str!("../../../fixtures/attributes/preprocessor-second.adoc"),
+            ),
+            (
+                "safe.adoc",
+                "safe",
+                include_str!("../../../fixtures/attributes/preprocessor-safe.adoc"),
+            ),
+            ("bad.adoc", "bad", "bad resource\n"),
+        ] {
+            snapshot.insert(
+                target,
+                ResourceDocument {
+                    source_id: SourceId::new(source_id),
+                    source: source.to_owned(),
+                },
+            );
+        }
+        let source = include_str!("../../../fixtures/attributes/preprocessor-read-order.adoc");
+
+        let result =
+            preprocess(source, &snapshot, &PreprocessOptions::default()).expect("preprocess");
+
+        assert!(result.source.contains("second resource"));
+        assert!(result.source.contains("included attribute is visible"));
+        assert!(result.source.contains("safe resource"));
+        assert!(result.source.contains("unset is visible"));
+        assert!(!result.source.contains("bad resource"));
+        assert_eq!(
+            result
+                .directives
+                .iter()
+                .filter(|directive| directive.kind == DirectiveKind::Include)
+                .map(|directive| directive.target.as_str())
+                .collect::<Vec<_>>(),
+            ["first.adoc", "second.adoc", "safe.adoc"]
+        );
+    }
+
+    #[test]
+    fn multiline_locked_failed_and_delimited_definitions_follow_shared_rules() {
+        let mut snapshot = ResourceSnapshot::default();
+        for target in ["host.adoc", "folded- value.adoc"] {
+            snapshot.insert(
+                target,
+                ResourceDocument {
+                    source_id: SourceId::new(target),
+                    source: format!("{target}\n"),
+                },
+            );
+        }
+        let source = "\
+:locked: document
+:part: folded- \\
+ value
+:literal: retained \\
+include::missing.adoc[]
+include::{locked}.adoc[]
+include::{part}.adoc[]
+
+:cycle: {cycle}
+ifdef::cycle[]
+cycle must stay hidden
+endif::[]
+----
+:inside: visible
+----
+ifdef::inside[]
+delimited attribute must stay hidden
+endif::[]
+
+:cycle: recovered
+ifdef::cycle[]
+recovered definition is visible
+endif::[]
+";
+        let options = PreprocessOptions {
+            attributes: BTreeMap::from([("locked".to_owned(), Some("host".to_owned()))]),
+            ..PreprocessOptions::default()
+        };
+
+        let result = preprocess(source, &snapshot, &options).expect("preprocess");
+
+        assert!(result.source.contains("host.adoc"));
+        assert!(result.source.contains("folded- value.adoc"));
+        assert!(!result.source.contains("cycle must stay hidden"));
+        assert!(
+            !result
+                .source
+                .contains("delimited attribute must stay hidden")
+        );
+        assert!(result.source.contains("recovered definition is visible"));
+        assert_eq!(
+            result
+                .directives
+                .iter()
+                .filter(|directive| directive.kind == DirectiveKind::Include)
+                .map(|directive| directive.target.as_str())
+                .collect::<Vec<_>>(),
+            ["host.adoc", "folded- value.adoc"]
+        );
+
+        let analyzed = preprocess_and_analyze(
+            &Engine::new(crate::AnalysisOptions::default()),
+            source,
+            &snapshot,
+            &options,
+        )
+        .expect("preprocessed analysis");
+        let locked = analyzed
+            .analysis
+            .attribute_environment()
+            .resolve_at(
+                "locked",
+                TextSize::new(analyzed.document.source.len()).expect("offset"),
+            )
+            .expect("locked attribute");
+        assert_eq!(locked.value, Ok(Some("host")));
+        assert_eq!(locked.binding, None);
     }
 
     #[test]
@@ -2039,6 +2426,115 @@ mod tests {
     }
 
     #[test]
+    fn analysis_projection_connects_attribute_references_to_included_bindings() {
+        let included = ":shared: included\n";
+        let root = "include::attributes.adoc[]\n\n{shared}\n";
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "attributes.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("included-attributes"),
+                source: included.to_owned(),
+            },
+        );
+        let analysis = preprocess_and_analyze(
+            &Engine::new(crate::core::AnalysisOptions::default()),
+            root,
+            &snapshot,
+            &PreprocessOptions {
+                source_id: Some(SourceId::new("root")),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("analysis");
+        let projection = analysis
+            .project_origins(ProjectionLimits::default())
+            .expect("projection");
+
+        assert_eq!(projection.attribute_bindings.len(), 1);
+        assert_eq!(projection.attribute_references.len(), 1);
+        let binding = &projection.attribute_bindings[0];
+        let reference = &projection.attribute_references[0];
+        assert_eq!(reference.value.binding_id, Some(binding.value.id()));
+        assert_eq!(reference.value.value, Ok(Some("included".to_owned())));
+        assert_eq!(
+            binding.name_origins[0]
+                .source_id
+                .as_ref()
+                .map(SourceId::as_str),
+            Some("included-attributes")
+        );
+        assert_eq!(
+            reference.name_origins[0]
+                .source_id
+                .as_ref()
+                .map(SourceId::as_str),
+            Some("root")
+        );
+        assert_eq!(
+            binding.name_origins[0].range.text_range(),
+            text_range_in(included, "shared")
+        );
+        assert_eq!(
+            reference.name_origins[0].range.text_range(),
+            text_range_in(root, "shared")
+        );
+    }
+
+    #[test]
+    fn analysis_projection_preserves_each_included_attribute_value_line() {
+        let included = include_str!("../../../fixtures/attributes/multiline-soft-hard.adoc");
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "multiline.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("included-multiline"),
+                source: included.to_owned(),
+            },
+        );
+        let engine = Engine::new(crate::core::AnalysisOptions::default());
+        let analysis = preprocess_and_analyze(
+            &engine,
+            "include::multiline.adoc[]\n",
+            &snapshot,
+            &PreprocessOptions {
+                source_id: Some(SourceId::new("root")),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("analysis");
+        let projection = analysis
+            .project_origins(ProjectionLimits::default())
+            .expect("projection");
+
+        let soft = &projection.attribute_occurrences[0];
+        assert_eq!(
+            soft.value.value.folded_text,
+            "first line 日本語🙂 third line"
+        );
+        assert_eq!(soft.value_lines.len(), 3);
+        for line in &soft.value_lines {
+            for origins in [&line.origins, &line.content_origins, &line.ending_origins] {
+                assert_eq!(origins.len(), 1);
+                assert_eq!(
+                    origins[0].source_id.as_ref().map(SourceId::as_str),
+                    Some("included-multiline")
+                );
+            }
+        }
+        assert_eq!(
+            soft.value_lines
+                .iter()
+                .map(|line| {
+                    let range = line.content_origins[0].range.text_range();
+                    &included[range.start().to_usize()..range.end().to_usize()]
+                })
+                .collect::<Vec<_>>(),
+            ["first line", "日本語🙂", "third line"]
+        );
+    }
+
+    #[test]
     fn empty_attribute_value_at_an_include_boundary_projects_to_the_include() {
         let included = include_str!("../../../fixtures/attributes/include-empty-no-newline.adoc");
         assert!(!included.ends_with('\n'));
@@ -2066,7 +2562,7 @@ mod tests {
 
         assert_eq!(projection.attribute_occurrences.len(), 1);
         let attribute = &projection.attribute_occurrences[0];
-        assert!(attribute.value.value_range.is_empty());
+        assert!(attribute.value.value.source_range.is_empty());
         assert_eq!(
             attribute.value_origins,
             vec![SourceOrigin {

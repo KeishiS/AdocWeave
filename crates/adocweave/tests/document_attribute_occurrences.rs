@@ -1,5 +1,7 @@
 use adocweave::output::formatter::{FormatConfig, NewlineStyle, format_analysis};
-use adocweave::semantic::{DocumentAttributeOccurrence, DocumentAttributeOperation};
+use adocweave::semantic::{
+    AttributeValueContinuation, DocumentAttributeOccurrence, DocumentAttributeOperation,
+};
 use adocweave::text::SyntaxIssueClass;
 use adocweave::{AnalysisOptions, Engine};
 
@@ -32,17 +34,17 @@ fn public_occurrences_preserve_standard_attribute_source_facts() {
             DocumentAttributeOperation::Unset,
         ]
     );
-    assert_eq!(occurrences[0].raw_value, "first");
-    assert_eq!(occurrences[1].raw_value, "second");
-    assert!(occurrences[2].value_range.is_empty());
-    assert!(occurrences[3].value_range.is_empty());
-    assert!(occurrences[4].value_range.is_empty());
+    assert_eq!(occurrences[0].value.source_text, "first");
+    assert_eq!(occurrences[1].value.source_text, "second");
+    assert!(occurrences[2].value.source_range.is_empty());
+    assert!(occurrences[3].value.source_range.is_empty());
+    assert!(occurrences[4].value.source_range.is_empty());
 
     for occurrence in occurrences {
         assert_eq!(
             slice(source, occurrence.range),
             match occurrence.name.as_str() {
-                "duplicate" if occurrence.raw_value == "first" => ":duplicate: first\n",
+                "duplicate" if occurrence.value.source_text == "first" => ":duplicate: first\n",
                 "duplicate" => ":duplicate: second\n",
                 "empty" => ":empty:\n",
                 "removed" => ":removed!:\n",
@@ -51,7 +53,10 @@ fn public_occurrences_preserve_standard_attribute_source_facts() {
             }
         );
         assert_eq!(slice(source, occurrence.name_range), occurrence.name);
-        assert_eq!(slice(source, occurrence.value_range), occurrence.raw_value);
+        assert_eq!(
+            slice(source, occurrence.value.source_range),
+            occurrence.value.source_text
+        );
     }
 
     let attributes = analysis.attribute_environment().final_values();
@@ -76,7 +81,7 @@ fn root_body_occurrences_cover_set_unset_and_adjacent_blocks() {
 
     assert_eq!(occurrences.len(), 2);
     assert_eq!(occurrences[0].name, "theme");
-    assert_eq!(occurrences[0].raw_value, "dark");
+    assert_eq!(occurrences[0].value.source_text, "dark");
     assert_eq!(occurrences[0].operation, DocumentAttributeOperation::Set);
     assert_eq!(occurrences[1].name, "feature");
     assert_eq!(occurrences[1].operation, DocumentAttributeOperation::Unset);
@@ -111,13 +116,13 @@ fn invalid_body_occurrences_remain_lossless_and_report_problems() {
     assert_eq!(occurrences[2].name, "-bad");
     assert_eq!(occurrences[3].name, "--");
     assert_eq!(occurrences[4].name, "foo");
-    assert_eq!(occurrences[4].raw_value, "value");
+    assert_eq!(occurrences[4].value.source_text, "value");
     assert!(!occurrences[4].valid);
     assert_eq!(occurrences[5].name, "CamelCase");
-    assert_eq!(occurrences[5].raw_value, "ok");
+    assert_eq!(occurrences[5].value.source_text, "ok");
     assert!(occurrences[5].valid);
     assert_eq!(occurrences[6].operation, DocumentAttributeOperation::Unset);
-    assert_eq!(occurrences[6].raw_value, "unexpected");
+    assert_eq!(occurrences[6].value.source_text, "unexpected");
     assert_eq!(
         analysis
             .syntax()
@@ -139,11 +144,204 @@ fn unicode_and_crlf_body_occurrences_have_byte_accurate_ranges() {
         let analysis = analyze(source);
         let occurrence = &analysis.document_attribute_occurrences()[0];
         assert_eq!(slice(source, occurrence.name_range), occurrence.name);
-        assert_eq!(slice(source, occurrence.value_range), occurrence.raw_value);
+        assert_eq!(
+            slice(source, occurrence.value.source_range),
+            occurrence.value.source_text
+        );
         assert_eq!(
             slice(source, occurrence.range).trim_end(),
-            format!(":{}: {}", occurrence.name, occurrence.raw_value)
+            format!(":{}: {}", occurrence.name, occurrence.value.source_text)
         );
+        assert_eq!(analysis.syntax().reconstruct(), source);
+    }
+}
+
+#[test]
+fn multiline_values_preserve_source_lines_and_fold_soft_and_hard_wraps() {
+    let source = include_str!("../../../fixtures/attributes/multiline-soft-hard.adoc");
+    let analysis = analyze(source);
+    let occurrences = analysis.document_attribute_occurrences();
+    assert_eq!(occurrences.len(), 3);
+
+    let soft = &occurrences[0];
+    assert_eq!(soft.value.folded_text, "first line 日本語🙂 third line");
+    assert_eq!(soft.value.lines.len(), 3);
+    assert_eq!(
+        soft.value
+            .lines
+            .iter()
+            .map(|line| line.continuation.map(|continuation| continuation.kind))
+            .collect::<Vec<_>>(),
+        [
+            Some(AttributeValueContinuation::Soft),
+            Some(AttributeValueContinuation::Soft),
+            None,
+        ]
+    );
+    assert_eq!(
+        slice(source, soft.value.source_range),
+        soft.value.source_text
+    );
+    assert_eq!(
+        soft.value
+            .lines
+            .iter()
+            .map(|line| slice(source, line.content_range))
+            .collect::<Vec<_>>(),
+        ["first line", "日本語🙂", "third line"]
+    );
+    assert_eq!(
+        soft.value
+            .lines
+            .iter()
+            .map(|line| slice(source, line.indent_range))
+            .collect::<Vec<_>>(),
+        ["", "  ", "\t"]
+    );
+    assert_eq!(
+        soft.value
+            .lines
+            .iter()
+            .map(|line| slice(source, line.ending_range))
+            .collect::<Vec<_>>(),
+        ["\n", "\n", "\n"]
+    );
+
+    let hard = &occurrences[1];
+    assert_eq!(
+        hard.value.folded_text,
+        "first line +\nsecond line +\nthird line"
+    );
+    assert_eq!(
+        hard.value
+            .lines
+            .iter()
+            .map(|line| line.continuation.map(|continuation| continuation.kind))
+            .collect::<Vec<_>>(),
+        [
+            Some(AttributeValueContinuation::Hard),
+            Some(AttributeValueContinuation::Hard),
+            None,
+        ]
+    );
+    let html = adocweave::output::html::render(
+        analysis.document(),
+        &adocweave::output::html::RenderPolicy::default(),
+    )
+    .html;
+    assert!(html.contains("first line<br>\nsecond line<br>\nthird line"));
+    assert_eq!(analysis.syntax().reconstruct(), source);
+}
+
+#[test]
+fn only_space_backslash_at_physical_line_end_continues_an_attribute() {
+    for source in [
+        ":value: first\\\n second\n",
+        ":value: first\t\\\n second\n",
+        ":value: first \\\\ \n second\n",
+        ":value: first \\ \n second\n",
+        ":value: first \\",
+    ] {
+        let analysis = analyze(source);
+        let occurrence = &analysis.document_attribute_occurrences()[0];
+        assert_eq!(occurrence.value.lines.len(), 1, "{source:?}");
+        assert_eq!(
+            occurrence.range.end().to_usize(),
+            source
+                .find('\n')
+                .map_or(source.len(), |newline| newline + 1)
+        );
+        assert_eq!(analysis.syntax().reconstruct(), source);
+    }
+    let eof = analyze(":value: first \\");
+    assert_eq!(
+        eof.document_attribute_occurrences()[0].value.source_text,
+        "first \\"
+    );
+}
+
+#[test]
+fn multiline_attribute_preserves_empty_segments_and_marker_adjacent_spaces() {
+    for (source, folded, kinds) in [
+        (
+            ":value: \\\n next\n",
+            " next",
+            vec![AttributeValueContinuation::Soft],
+        ),
+        (
+            ":value: first \\\n  \\\n third\n",
+            "first  third",
+            vec![
+                AttributeValueContinuation::Soft,
+                AttributeValueContinuation::Soft,
+            ],
+        ),
+        (
+            ":value: first   \\\n next\n",
+            "first   next",
+            vec![AttributeValueContinuation::Soft],
+        ),
+        (
+            ":value: first +  \\\n next\n",
+            "first +  next",
+            vec![AttributeValueContinuation::Soft],
+        ),
+        (
+            ":value: first + \\\r\n next\n",
+            "first +\nnext",
+            vec![AttributeValueContinuation::Hard],
+        ),
+    ] {
+        let analysis = analyze(source);
+        let occurrence = &analysis.document_attribute_occurrences()[0];
+        assert_eq!(occurrence.value.folded_text, folded, "{source:?}");
+        assert_eq!(
+            occurrence
+                .value
+                .lines
+                .iter()
+                .filter_map(|line| line.continuation.map(|continuation| continuation.kind))
+                .collect::<Vec<_>>(),
+            kinds,
+            "{source:?}"
+        );
+        for line in &occurrence.value.lines {
+            assert!(
+                line.range.start() <= line.content_range.start()
+                    && line.content_range.end() <= line.range.end(),
+                "{source:?}"
+            );
+            if let Some(continuation) = line.continuation {
+                assert!(
+                    line.range.start() <= continuation.range.start()
+                        && continuation.range.end() <= line.range.end(),
+                    "{source:?}"
+                );
+                assert_eq!(slice(source, continuation.range), " \\", "{source:?}");
+            }
+        }
+        assert_eq!(analysis.syntax().reconstruct(), source);
+    }
+}
+
+#[test]
+fn multiline_attribute_handles_crlf_unicode_and_eof_without_a_final_newline() {
+    for source in [
+        ":value: 一行目🙂 \\\r\n  二行目e\u{301}",
+        ":value: first \\\n  second",
+    ] {
+        let analysis = analyze(source);
+        let occurrence = &analysis.document_attribute_occurrences()[0];
+        assert_eq!(occurrence.value.lines.len(), 2);
+        assert_eq!(
+            occurrence.value.folded_text,
+            if source.contains("一行目") {
+                "一行目🙂 二行目e\u{301}"
+            } else {
+                "first second"
+            }
+        );
+        assert_eq!(slice(source, occurrence.range), source);
         assert_eq!(analysis.syntax().reconstruct(), source);
     }
 }
@@ -314,6 +512,44 @@ fn formatter_preserves_valid_lf_body_attribute_fixture() {
 
     assert_eq!(first.formatted, source);
     assert_eq!(second.formatted, source);
+}
+
+#[test]
+fn formatter_preserves_multiline_attribute_bytes_and_meaning() {
+    let source = include_str!("../../../fixtures/attributes/multiline-soft-hard.adoc");
+    let before = analyze(source);
+    let first = format_analysis(
+        &before,
+        &FormatConfig {
+            newline: NewlineStyle::CrLf,
+            max_consecutive_blank_lines: 0,
+            ..FormatConfig::default()
+        },
+    )
+    .expect("format");
+    let after = analyze(&first.formatted);
+    let second = format_analysis(
+        &after,
+        &FormatConfig {
+            newline: NewlineStyle::CrLf,
+            max_consecutive_blank_lines: 0,
+            ..FormatConfig::default()
+        },
+    )
+    .expect("format");
+
+    for (before, after) in before
+        .document_attribute_occurrences()
+        .iter()
+        .zip(after.document_attribute_occurrences())
+    {
+        assert_eq!(
+            slice(source, before.range),
+            slice(&first.formatted, after.range)
+        );
+        assert_eq!(before.value.folded_text, after.value.folded_text);
+    }
+    assert_eq!(first.formatted, second.formatted);
 }
 
 #[test]

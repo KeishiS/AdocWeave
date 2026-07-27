@@ -18,8 +18,19 @@ project root、path正規化、symlink解決、実在性、file種別および�
 一つのcommandまたはrequestでは、include読込とlocal target検査が同じsessionを使用し、
 正規化済みpathごとの成功・失敗とUTF-8本文を共有します。
 
+Filesystemから本文を取得するAPIは、canonical pathと取得済みbyte列をprivate fieldへ保持する
+検証済みtargetを返します。UTF-8本文への変換はこの値を消費し、検証後にpathを再度開きません。
+これにより、別のpolicyで検証したpathの流用と、検証から読取りまでの間のpath差替えをAPI境界で
+防止します。利用側へ返す読取結果もprivate fieldを持つ型とし、未検証のpathと本文の組を
+検証済み結果として構築できないようにします。
+
+Canonical pathはfilesystemのcache keyと安全性検査にだけ使用します。Source map、診断および
+公開queryでは、include要求から導出した論理的な`SourceId`を保持し、OS上のpathを公開しません。
+複数の論理targetが同じcanonical fileを指す場合も、読取りは共有し、生成元の識別子は区別します。
+
 == 帰結
 
 製品拡張は別リポジトリで実装できます。Parserへ任意コードを注入するplug-in ABIは提供せず、
 拡張は公開Analysis、projectionおよびResolver仕様だけを利用します。
 同じtargetが複数回現れる場合も位置は個別に保持し、filesystemへの問い合わせだけを共有します。
+検証済みtargetは取得時点のbyte列を所有するため、後続処理はfilesystemの状態変化に依存しません。
