@@ -1,7 +1,5 @@
 {
-  "schemaVersion": 1,
-  "issue": "136",
-  "issueStatus": "completed",
+  "schemaVersion": 2,
   "features": [
     {"name": "highlight", "status": "supported", "syntaxNeedle": "highlight", "compatibilityNeedle": "highlight", "grammarNeedle": "置換", "fixture": "fixtures/conformance/full.adoc"},
     {"name": "subscript", "status": "supported", "syntaxNeedle": "subscript", "compatibilityNeedle": "subscript", "grammarNeedle": "置換", "fixture": "fixtures/conformance/full.adoc"},

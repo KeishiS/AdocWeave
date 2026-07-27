@@ -30,3 +30,7 @@ GitHub Release Notesを参照する必要があります。設計の経緯をす
 
 ADRはすべての変更について作成せず、長期的に参照する設計判断に限定します。現行仕様が変わった場合は
 該当する仕様文書を更新し、判断を置き換える必要がある場合は新しいADRから置換対象を明示します。
+
+ローカルIssue台帳を廃止する前の作業記録は、
+https://github.com/KeishiS/AdocWeave/tree/v0.10.0/issues[v0.10.0時点のissuesディレクトリ]と
+Git履歴から確認できます。未完了だった作業はGitHub Issuesへ移し、以後はrepository内へ台帳を複製しません。

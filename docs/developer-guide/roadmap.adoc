@@ -1,46 +1,58 @@
 = 今後の予定
 
 この文書では、現在進行中の作業と着手を予定している作業の方向を示します。実施時期や公開日を
-約束するものではありません。各作業の詳しい内容、依存関係および完了条件は
-xref:../../issues/README.adoc[Issue一覧]を参照してください。
+約束するものではありません。各作業の詳しい内容、依存関係および完了条件は、リンク先の
+GitHub Issueを参照してください。
 
 完了した作業の経緯はIssue、versionごとの変更は
 https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
+== v0.10.xの保守
+
+v0.10.xでは、公開API、WASM protocol、対応構文および既定のHTML出力契約を維持しながら、
+確認済みの不具合、文書、依存関係および検証基盤を修正します。新しいCLI機能、公開schema、
+既定診断および構文機能は次のminor release候補として扱います。
+
+* https://github.com/KeishiS/AdocWeave/issues/41[相対targetに対するLint誤判定の修正]
+* https://github.com/KeishiS/AdocWeave/issues/39[生成HTMLのHTML5適合性検査]
+
+patch releaseは、確認済みの修正が揃った時点、または優先度の高い不具合を修正した時点で準備します。
+版数を進めることだけを目的としたreleaseは行いません。
+
 == 次期機能
 
-=== M48: 文書状態とメディア表示
+=== 文書内属性
 
 位置に応じた属性値を後続の独立した機能候補として扱います。
 
-* xref:../../issues/164-document-scoped-attribute-changes.adoc[Issue 164: 文書内属性変更の評価]（計画）
+* https://github.com/KeishiS/AdocWeave/issues/35[文書内属性変更の評価]
 
 == 開発と保守
 
 製品機能のmilestoneとは独立して、文書検査と依存更新の運用を改善します。
 
-* xref:../../issues/168-cli-local-target-validation.adoc[Issue 168: CLIによるlocal targetの実在検査]（計画）
-* xref:../../issues/169-link-xref-lint.adoc[Issue 169: linkとxrefの使い分けに対するLint]（計画）
-* xref:../../issues/170-list-lint-rules-json.adoc[Issue 170: Lint rule一覧のJSON出力]（計画）
-* xref:../../issues/171-url-policy-responsibility-separation.adoc[Issue 171: URL検査の責務分割]（計画）
-* xref:../../issues/172-html5-validator-fixture.adoc[Issue 172: 生成HTMLのHTML5適合性検査]（計画）
-* xref:../../issues/166-dependabot-safe-auto-merge.adoc[Issue 166: Dependabot PRの安全な自動merge]（計画）
+* https://github.com/KeishiS/AdocWeave/issues/36[CLIによるlocal targetの実在検査]
+* https://github.com/KeishiS/AdocWeave/issues/37[linkとxrefの使い分けに対するLint]
+* https://github.com/KeishiS/AdocWeave/issues/32[Lint rule一覧のJSON出力]
+* https://github.com/KeishiS/AdocWeave/issues/38[URL検査の責務分割]
+* https://github.com/KeishiS/AdocWeave/issues/40[Macro境界のLint]
+* https://github.com/KeishiS/AdocWeave/issues/19[Dependabot PRの安全な自動merge]
 
-Issue 168では、`xref`、通常のlink、mediaおよび`include::`が参照するlocal fileの削除・移動漏れを
-CIで検出できるようにします。Issue 169では、AsciiDoc文書とその他のfileに対する`xref`とlinkの
-使い分けを通常のLintで検査します。Issue 170では、利用可能なLint ruleを実装からJSONで取得できるように
-します。Issue 171では、URL構文、HTML出力、local file境界および実在性の検査を分離します。
-Issue 172では、HTML断片を検証用テンプレートで包み、外部validatorによるHTML5適合性検査をCIへ
-追加します。Issue 166では、必須検査とbranch protectionを維持したまま、対象を限定した依存更新だけを
+local targetの実在検査では、`xref`、通常のlink、mediaおよび`include::`が参照するfileの削除・移動漏れを
+CIで検出できるようにします。linkとxrefのLintでは、AsciiDoc文書とその他のfileに対するmacroの
+使い分けを検査します。Lint rule一覧では、利用可能なruleを実装からJSONで取得できるようにします。
+URL検査の責務分割では、URL構文、HTML出力、local file境界および実在性を分離します。
+Macro境界のLintでは、対応済みmacroに見える記述の境界誤りをopt-inで検出します。
+Dependabotの運用改善では、必須検査とbranch protectionを維持したまま、対象を限定した依存更新だけを
 自動mergeできるか検討します。
 
 == 条件付き候補
 
 次の作業は具体的な需要や運用上の問題が確認されるまで着手しません。
 
-* xref:../../issues/139-standalone-cli-resource-profile-evaluation.adoc[Issue 139: 単体CLIのlocal resource profile評価]
-* xref:../../issues/158-renovate-nix-update-evaluation.adoc[Issue 158: RenovateによるNix依存更新の評価]
+* https://github.com/KeishiS/AdocWeave/issues/33[単体CLIのlocal resource profile評価]
+* https://github.com/KeishiS/AdocWeave/issues/34[RenovateによるNix依存更新の評価]
 
-Issue 139は、単体CLIで相対resourceを解決する需要が確認された場合に再評価します。Issue 158は、
-手動のNix依存更新が継続的な負担となった場合に再評価します。
+単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
+RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。

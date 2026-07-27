@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::process::Command;
 
@@ -31,11 +31,9 @@ struct ReleaseManifest {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SyntaxSupportManifest {
     schema_version: u8,
-    issue: String,
-    issue_status: String,
     features: Vec<SyntaxSupportFeature>,
 }
 
@@ -88,18 +86,20 @@ fn manifest() -> CorpusManifest {
 #[test]
 fn syntax_support_manifest_keeps_docs_and_fixtures_in_sync() {
     let root = repository_root();
-    let manifest: SyntaxSupportManifest = serde_json::from_str(
-        &fs::read_to_string(root.join("fixtures/syntax-support.json"))
-            .expect("syntax support manifest"),
-    )
-    .expect("valid syntax support manifest");
-    assert_eq!(manifest.schema_version, 1);
-    let issue = fs::read_to_string(root.join(format!(
-        "issues/{}-supported-syntax-documentation-contract.adoc",
-        manifest.issue
-    )))
-    .expect("syntax support issue");
-    assert!(issue.contains(&format!(":status: {}", manifest.issue_status)));
+    let source = fs::read_to_string(root.join("fixtures/syntax-support.json"))
+        .expect("syntax support manifest");
+    let manifest: SyntaxSupportManifest =
+        serde_json::from_str(&source).expect("valid syntax support manifest");
+    assert_eq!(manifest.schema_version, 2);
+    let legacy = source.replacen(
+        "\"features\"",
+        "\"issue\": \"136\", \"issueStatus\": \"completed\", \"features\"",
+        1,
+    );
+    assert!(
+        serde_json::from_str::<SyntaxSupportManifest>(&legacy).is_err(),
+        "schema v2 must reject retired local Issue fields"
+    );
     let syntax = fs::read_to_string(root.join("docs/user-guide/syntax-support.adoc"))
         .expect("syntax support");
     let compatibility =
@@ -129,52 +129,6 @@ fn syntax_support_manifest_keeps_docs_and_fixtures_in_sync() {
             feature.name
         );
     }
-}
-
-fn validate_issue_dependencies(
-    metadata: &BTreeMap<String, (String, Vec<String>)>,
-) -> Result<(), String> {
-    for (id, (status, dependencies)) in metadata {
-        for dependency in dependencies {
-            if !metadata.contains_key(dependency) {
-                return Err(format!("issue {id} depends on missing issue {dependency}"));
-            }
-            if status == "completed"
-                && metadata.get(dependency).map(|value| value.0.as_str()) != Some("completed")
-            {
-                return Err(format!(
-                    "completed issue {id} depends on unfinished issue {dependency}"
-                ));
-            }
-        }
-    }
-
-    fn visit(
-        id: &str,
-        metadata: &BTreeMap<String, (String, Vec<String>)>,
-        visiting: &mut BTreeSet<String>,
-        visited: &mut BTreeSet<String>,
-    ) -> Result<(), String> {
-        if visited.contains(id) {
-            return Ok(());
-        }
-        if !visiting.insert(id.to_owned()) {
-            return Err(format!("issue dependency cycle contains {id}"));
-        }
-        for dependency in &metadata[id].1 {
-            visit(dependency, metadata, visiting, visited)?;
-        }
-        visiting.remove(id);
-        visited.insert(id.to_owned());
-        Ok(())
-    }
-
-    let mut visiting = BTreeSet::new();
-    let mut visited = BTreeSet::new();
-    for id in metadata.keys() {
-        visit(id, metadata, &mut visiting, &mut visited)?;
-    }
-    Ok(())
 }
 
 fn validate_table_delimiters(path: &str, source: &str) -> Result<(), String> {
@@ -280,125 +234,60 @@ fn abnormal_fixtures_match_their_diagnostic_manifest() {
 }
 
 #[test]
-fn every_issue_header_status_dependency_and_roadmap_entry_is_consistent() {
-    let issue_dir = repository_root().join("issues");
-    let mut issues = BTreeMap::new();
-    for path in fs::read_dir(&issue_dir)
-        .expect("issues directory")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("adoc"))
-    {
-        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        let Some((id, _)) = file_name.split_once('-') else {
-            continue;
-        };
-        if id.parse::<u16>().is_ok() {
-            let id = id.to_owned();
-            assert!(
-                issues.insert(id.clone(), path).is_none(),
-                "duplicate issue {id}"
-            );
-        }
-    }
-    assert_eq!(
-        issues.first_key_value().map(|(id, _)| id.as_str()),
-        Some("001")
+fn local_issue_documents_are_not_tracked() {
+    let output = Command::new("git")
+        .args(["ls-files", "issues"])
+        .current_dir(repository_root())
+        .output()
+        .expect("git ls-files issues");
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "implementation plans and work records belong in GitHub Issues"
     );
-    for (expected, (id, _)) in (1_u16..).zip(&issues) {
-        assert_eq!(
-            id,
-            &format!("{expected:03}"),
-            "issue IDs must be contiguous"
-        );
-    }
-    let mut metadata = BTreeMap::new();
-    for (id, path) in &issues {
-        let source = fs::read_to_string(path).expect("issue source");
-        let status = source
-            .lines()
-            .find_map(|line| line.strip_prefix(":status: "))
-            .unwrap_or_else(|| panic!("issue {id} has no status"));
-        assert!(
-            matches!(status, "planned" | "in-progress" | "completed"),
-            "issue {id} has invalid status {status}"
-        );
-        let dependencies: Vec<_> = source
-            .lines()
-            .find_map(|line| line.strip_prefix(":depends-on:"))
-            .unwrap_or_else(|| panic!("issue {id} has no dependencies"))
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .map(str::to_owned)
-            .collect();
-        metadata.insert(id.clone(), (status.to_owned(), dependencies));
-    }
-    validate_issue_dependencies(&metadata).unwrap_or_else(|error| panic!("{error}"));
-
-    let roadmap = fs::read_to_string(issue_dir.join("README.adoc")).expect("issue roadmap");
-    for (id, (status, _)) in &metadata {
-        let marker = format!("xref:{id}-");
-        assert!(
-            roadmap.contains(&marker),
-            "issue {id} is absent from roadmap"
-        );
-        let expected = match status.as_str() {
-            "planned" => "（計画）",
-            "in-progress" => "（進行中）",
-            "completed" => "（完了）",
-            _ => unreachable!(),
-        };
-        for line in roadmap.lines().filter(|line| line.contains(&marker)) {
-            if ["（計画）", "（進行中）", "（完了）"]
-                .iter()
-                .any(|marker| line.contains(marker))
-            {
-                assert!(
-                    line.contains(expected),
-                    "issue {id} roadmap status differs: {line}"
-                );
-            }
-        }
-    }
 }
 
 #[test]
-fn issue_governance_validator_accepts_forward_dependencies_and_rejects_invalid_graphs() {
-    let mut metadata = BTreeMap::from([
-        ("001".to_owned(), ("completed".to_owned(), Vec::new())),
-        (
-            "002".to_owned(),
-            ("planned".to_owned(), vec!["003".to_owned()]),
-        ),
-        ("003".to_owned(), ("planned".to_owned(), Vec::new())),
-    ]);
-    assert!(validate_issue_dependencies(&metadata).is_ok());
+fn roadmap_uses_unique_github_issue_urls() {
+    let source = fs::read_to_string(repository_root().join("docs/developer-guide/roadmap.adoc"))
+        .expect("roadmap");
+    let prefix = "https://github.com/KeishiS/AdocWeave/issues/";
+    let mut numbers = BTreeSet::new();
+    for line in source.lines().filter(|line| line.contains(prefix)) {
+        let suffix = line.split_once(prefix).expect("GitHub Issue URL").1;
+        let number = suffix.split_once('[').expect("AsciiDoc link label").0;
+        assert!(
+            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()),
+            "invalid GitHub Issue URL: {line}"
+        );
+        assert!(
+            numbers.insert(number.to_owned()),
+            "duplicate GitHub Issue URL: {line}"
+        );
+    }
+    assert!(!numbers.is_empty(), "roadmap has no GitHub Issues");
+}
 
-    metadata.get_mut("003").expect("issue").1 = vec!["002".to_owned()];
+#[test]
+fn pull_request_template_covers_change_review_and_verification() {
+    let source = fs::read_to_string(repository_root().join(".github/pull_request_template.md"))
+        .expect("pull request template");
+    for heading in [
+        "## 目的",
+        "## 現在の動作・結果",
+        "## 期待する動作・結果",
+        "## 変更内容",
+        "## 影響範囲",
+        "## 互換性と安全性",
+        "## 検証",
+        "## ドキュメント",
+        "## 関連Issue",
+    ] {
+        assert!(source.contains(heading), "missing PR section: {heading}");
+    }
     assert!(
-        validate_issue_dependencies(&metadata)
-            .expect_err("dependency cycle")
-            .contains("cycle")
-    );
-
-    metadata.get_mut("003").expect("issue").1.clear();
-    metadata.get_mut("002").expect("issue").1 = vec!["999".to_owned()];
-    assert!(
-        validate_issue_dependencies(&metadata)
-            .expect_err("missing dependency")
-            .contains("missing")
-    );
-
-    metadata.get_mut("002").expect("issue").1 = vec!["001".to_owned()];
-    metadata.get_mut("002").expect("issue").0 = "completed".to_owned();
-    metadata.get_mut("001").expect("issue").0 = "planned".to_owned();
-    assert!(
-        validate_issue_dependencies(&metadata)
-            .expect_err("unfinished dependency")
-            .contains("unfinished")
+        source.contains("`cargo make verify`"),
+        "missing PR guidance: `cargo make verify`"
     );
 }
 
