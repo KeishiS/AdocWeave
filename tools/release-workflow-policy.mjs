@@ -105,20 +105,12 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   const releaseJobs = releaseDoc.jobs ?? {};
   const publishJob = publishDoc.jobs?.publish;
   const contractJobs = contractDoc.jobs ?? {};
-  const expectedNativePairs = plan.targets
-    .map(({ runner, triple }) => `${triple}:${runner}`)
-    .sort();
-  for (const [label, include] of [
-    ["native build", releaseJobs["build-native"]?.strategy?.matrix?.include],
-    ["installation E2E", releaseJobs["installation-e2e"]?.strategy?.matrix?.include],
-    ["native smoke", smokeDoc.jobs?.smoke?.strategy?.matrix?.include],
+  for (const [label, matrix, expected] of [
+    ["native build", releaseJobs["build-native"]?.strategy?.matrix, "${{ fromJSON(needs.plan.outputs.native_matrix) }}"],
+    ["installation E2E", releaseJobs["installation-e2e"]?.strategy?.matrix, "${{ fromJSON(needs.plan.outputs.native_matrix) }}"],
+    ["native smoke", smokeDoc.jobs?.smoke?.strategy?.matrix, "${{ fromJSON(inputs.matrix) }}"],
   ]) {
-    const actual = (include ?? [])
-      .map(({ runner, target }) => `${target}:${runner}`)
-      .sort();
-    if (JSON.stringify(actual) !== JSON.stringify(expectedNativePairs)) {
-      fail(`${label} matrix must exactly match the distribution plan`);
-    }
+    if (matrix !== expected) fail(`${label} must consume the planned native matrix`);
   }
 
   if (!Object.hasOwn(releaseDoc.on ?? {}, "pull_request") || !releaseDoc.on?.push) {
@@ -139,24 +131,27 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   if (releaseJobs.quality?.uses !== "./.github/workflows/quality.yml") {
     fail("pull requests and main pushes must pass the reusable quality gate");
   }
-  if (releaseJobs.plan?.if !== "github.event_name == 'push'") {
-    fail("main and tag pushes must create an explicit release plan");
+  if (releaseJobs.plan?.if !== "github.event_name == 'pull_request' || github.event_name == 'push'") {
+    fail("pull requests, main pushes, and tags must create an explicit release plan");
   }
   if (releaseJobs.quality?.if !== "github.event_name == 'pull_request' || github.ref == 'refs/heads/main'") {
     fail("release tags must reuse main quality rather than rerunning it");
   }
-  const mainOnly = Object.entries(releaseJobs)
-    .filter(([, job]) => job.if === "github.ref == 'refs/heads/main'")
-    .map(([name]) => name).sort();
-  const expectedPushOnly = ["build-global", "build-native", "installation-e2e", "native-smoke", "plan", "verify-candidate"];
-  if (JSON.stringify(["plan", ...mainOnly].sort()) !== JSON.stringify(expectedPushOnly)) {
-    fail("the plan and exactly five candidate jobs must be limited to main pushes");
+  const candidateCondition = "github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'";
+  for (const jobName of ["build-global", "build-native", "installation-e2e", "native-smoke", "verify-candidate"]) {
+    if (releaseJobs[jobName]?.if !== candidateCondition) {
+      fail(`${jobName} must run for main and native-affecting pull requests`);
+    }
   }
 
   requireNeeds(releaseJobs["build-native"], ["plan"], "native builds must start as soon as the release plan is available");
   requireNeeds(releaseJobs["build-global"], ["plan"], "global artifacts must start as soon as the release plan is available");
   requireNeeds(releaseJobs["verify-candidate"], ["plan", "native-smoke", "build-global"], "candidate verification dependency edge is incomplete");
-  requireNeeds(releaseJobs["installation-e2e"], ["verify-candidate"], "installation E2E must consume only a verified candidate");
+  requireNeeds(
+    releaseJobs["installation-e2e"],
+    ["plan", "verify-candidate"],
+    "installation E2E must consume the planned matrix and only a verified candidate",
+  );
   requireNeeds(releaseJobs["reuse-candidate"], ["plan"], "tag reuse must depend on the release plan");
   if (releaseJobs["reuse-candidate"]?.if !== "startsWith(github.ref, 'refs/tags/')") {
     fail("only version tags may reuse a main candidate");
@@ -172,6 +167,13 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   const planRun = step(releaseJobs.plan, (item) => item.id === "plan", "release plan step is missing").run;
   requireCommand(planRun, 'candidate_tag="v$(jq -r .packageVersion release-manifest.json)"', "non-tag candidate plans must use the release train version");
   requireCommand(planRun, 'tools/run-pinned-dist.sh plan --tag="$candidate_tag"', "every dist plan must use the locked cargo-dist closure");
+  const nativePlanRun = step(releaseJobs.plan, (item) => item.id === "native", "native pull request change planning is missing").run;
+  requireCommand(nativePlanRun, 'git diff --name-only "$BASE_SHA" "$GITHUB_SHA"', "native pull request planning must inspect the complete base diff");
+  requireCommand(
+    nativePlanRun,
+    'node tools/native-change-plan.mjs "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_OUTPUT"',
+    "native pull request planning must use the locally tested planner",
+  );
   const tagRun = step(releaseJobs.plan, (item) => item.name === "Publication tag verification against the current main commit", "publication tag check is missing").run;
   requireCommand(tagRun, 'test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"', "publication tags must identify the current main commit");
   const candidateLookup = step(releaseJobs.plan, (item) => item.id === "candidate", "successful main candidate lookup is missing").run;
@@ -236,6 +238,19 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   const aggregateRun = step(releaseJobs["verify-candidate"], (item) => item.name === "Complete candidate metadata generation and verification", "candidate metadata step is missing").run;
   requireCommand(aggregateRun, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");
   requireCommand(aggregateRun, "node tools/release-metadata.mjs verify artifacts", "the aggregate job must verify exact release metadata");
+  const pullRequestCandidate = step(
+    releaseJobs["verify-candidate"],
+    (item) => item.name === "Native pull request candidate verification",
+    "native pull request candidate verification is missing",
+  );
+  if (pullRequestCandidate.if !== "github.event_name == 'pull_request'") {
+    fail("partial native candidate verification must be limited to pull requests");
+  }
+  requireCommand(
+    pullRequestCandidate.run,
+    "node tools/verify-native-pr-candidate.mjs artifacts",
+    "native pull request candidates must have an exact artifact set",
+  );
   const globalStep = step(
     releaseJobs["build-global"],
     (item) => item.name === "Browser, Zed, and VS Code artifact build and verification",
@@ -243,13 +258,29 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   );
   const globalRun = globalStep.run;
   requireCommand(globalRun, "nix develop .#ci -c cargo make release-global-artifacts", "uploaded browser, Zed, and VS Code artifacts must pass their complete artifact gate");
-  const installRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Candidate installation and complete removal", "installation E2E step is missing").run;
-  requireCommand(installRun, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
+  const installStep = step(releaseJobs["installation-e2e"], (item) => item.name === "Candidate installation and complete removal", "installation E2E step is missing");
+  if (installStep.if !== "github.ref == 'refs/heads/main'") {
+    fail("complete candidate installation must run on main");
+  }
+  requireCommand(installStep.run, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
+  const pullRequestInstall = step(
+    releaseJobs["installation-e2e"],
+    (item) => item.name === "Pull request installation and complete removal",
+    "pull request installation E2E step is missing",
+  );
+  if (pullRequestInstall.if !== "github.event_name == 'pull_request'") {
+    fail("partial candidate installation must be limited to pull requests");
+  }
+  requireCommand(
+    pullRequestInstall.run,
+    "release-manifest.json",
+    "pull request installation must use source metadata for the partial candidate",
+  );
   step(releaseJobs["installation-e2e"], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), "installation E2E must install the locked Nix environment");
   const nixInstallRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Nix package build and execution", "Nix package acceptance step is missing").run;
-  requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.public-contract"', "candidate runners must verify the public flake output contract");
-  requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.package-smoke"', "both Linux architectures must build and run the Nix package");
-  requireCommand(nixInstallRun, '".#checks.${{ matrix.nix-system }}.nixos-package-evaluation"', "both Linux architectures must evaluate the NixOS installation contract");
+  requireCommand(nixInstallRun, '".#checks.${{ matrix.nixSystem }}.public-contract"', "candidate runners must verify the public flake output contract");
+  requireCommand(nixInstallRun, '".#checks.${{ matrix.nixSystem }}.package-smoke"', "both Linux architectures must build and run the Nix package");
+  requireCommand(nixInstallRun, '".#checks.${{ matrix.nixSystem }}.nixos-package-evaluation"', "both Linux architectures must evaluate the NixOS installation contract");
   const reusedDownload = step(releaseJobs["reuse-candidate"], (item) => item.uses?.startsWith("actions/download-artifact@"), "tag candidate download is missing");
   if (reusedDownload.with?.name !== "release-candidate" ||
       reusedDownload.with?.["github-token"] !== "${{ github.token }}" ||

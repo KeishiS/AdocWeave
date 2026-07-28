@@ -3,7 +3,7 @@ name: Native artifact smoke
 on:
   workflow_call:
     inputs:
-      plan:
+      matrix:
         required: true
         type: string
 
@@ -14,16 +14,7 @@ jobs:
   smoke:
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-          - target: aarch64-apple-darwin
-            runner: macos-15
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-24.04
-          - target: x86_64-pc-windows-msvc
-            runner: windows-2025
+      matrix: ${{ fromJSON(inputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:

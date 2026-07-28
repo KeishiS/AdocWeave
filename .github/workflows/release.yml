@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   plan:
-    if: github.event_name == 'push'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -26,6 +26,8 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       publishing: ${{ steps.plan.outputs.publishing }}
       candidate_run_id: ${{ steps.candidate.outputs.run_id }}
+      native_required: ${{ steps.native.outputs.native_required }}
+      native_matrix: ${{ steps.native.outputs.native_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,6 +39,16 @@ jobs:
           git fetch origin main:refs/remotes/origin/main
           test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - id: native
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff --name-only "$BASE_SHA" "$GITHUB_SHA" > changed-paths.txt
+          else
+            : > changed-paths.txt
+          fi
+          node tools/native-change-plan.mjs "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_OUTPUT" < changed-paths.txt
       - id: candidate
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -74,24 +86,11 @@ jobs:
       run_nix_package: ${{ github.event_name == 'pull_request' }}
 
   build-native:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
     needs: [plan]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-            build: nix
-          - target: aarch64-apple-darwin
-            runner: macos-15
-            build: nix
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-24.04
-            build: nix
-          - target: x86_64-pc-windows-msvc
-            runner: windows-2025
-            build: windows
+      matrix: ${{ fromJSON(needs.plan.outputs.native_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -151,14 +150,14 @@ jobs:
             target/distrib/adocweave-lsp-${{ matrix.target }}.zip
 
   native-smoke:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
     needs: [plan, build-native]
     uses: ./.github/workflows/native-artifact-smoke.yml
     with:
-      plan: ${{ needs.plan.outputs.manifest }}
+      matrix: ${{ needs.plan.outputs.native_matrix }}
 
   build-global:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
     needs: [plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -180,7 +179,7 @@ jobs:
             target/distrib/adocweave-vscode-*.vsix
 
   verify-candidate:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
     needs: [plan, native-smoke, build-global]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -194,9 +193,13 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Complete candidate metadata generation and verification
+        if: github.ref == 'refs/heads/main'
         run: |
           node tools/release-metadata.mjs generate artifacts "$GITHUB_SHA"
           node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
+      - name: Native pull request candidate verification
+        if: github.event_name == 'pull_request'
+        run: node tools/verify-native-pr-candidate.mjs artifacts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-candidate
@@ -205,26 +208,11 @@ jobs:
           path: artifacts/*
 
   installation-e2e:
-    if: github.ref == 'refs/heads/main'
-    needs: [verify-candidate]
+    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
+    needs: [plan, verify-candidate]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-            nix-system: aarch64-linux
-            nix: true
-          - target: aarch64-apple-darwin
-            runner: macos-15
-            nix: false
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-24.04
-            nix-system: x86_64-linux
-            nix: true
-          - target: x86_64-pc-windows-msvc
-            runner: windows-2025
-            nix: false
+      matrix: ${{ fromJSON(needs.plan.outputs.native_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
@@ -237,16 +225,24 @@ jobs:
         if: matrix.nix
         run: >-
           nix build
-          ".#checks.${{ matrix.nix-system }}.public-contract"
-          ".#checks.${{ matrix.nix-system }}.package-smoke"
-          ".#checks.${{ matrix.nix-system }}.nixos-package-evaluation"
+          ".#checks.${{ matrix.nixSystem }}.public-contract"
+          ".#checks.${{ matrix.nixSystem }}.package-smoke"
+          ".#checks.${{ matrix.nixSystem }}.nixos-package-evaluation"
           --no-link
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: release-candidate
           path: artifacts
       - name: Candidate installation and complete removal
+        if: github.ref == 'refs/heads/main'
         run: node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}"
+      - name: Pull request installation and complete removal
+        if: github.event_name == 'pull_request'
+        run: >-
+          node tools/release-installation-e2e.mjs
+          artifacts
+          "${{ matrix.target }}"
+          release-manifest.json
 
   reuse-candidate:
     if: startsWith(github.ref, 'refs/tags/')

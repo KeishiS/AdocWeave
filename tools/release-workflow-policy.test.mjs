@@ -65,7 +65,7 @@ test("quality and candidate jobs cannot infer or broaden their event scope", () 
       ...inputs,
       release: inputs.release.replace("if: github.ref == 'refs/heads/main'", "if: github.event_name == 'push'"),
     }),
-    /candidate jobs must be limited to main pushes/,
+    /must run for main and native-affecting pull requests/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
@@ -155,8 +155,8 @@ test("candidate acceptance cannot omit the Nix package contract", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        '".#checks.${{ matrix.nix-system }}.package-smoke"',
-        '".#checks.${{ matrix.nix-system }}.package"',
+        '".#checks.${{ matrix.nixSystem }}.package-smoke"',
+        '".#checks.${{ matrix.nixSystem }}.package"',
       ),
     }),
     /both Linux architectures must build and run the Nix package/,

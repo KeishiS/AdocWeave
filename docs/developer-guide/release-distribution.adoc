@@ -108,9 +108,25 @@ cargo make release-gate
 macOS deployment target、VSIX metadataおよび一時directory削除の再試行条件をfixtureで検証します。
 このtaskはhost OSに依存せず、pull requestとlocalで同じtestを実行します。
 
+``cross-native-check``はWindows MSVCとmacOS ARM64向けに``cargo check``を実行します。この検査は型検査と
+条件付きcompileだけを対象とし、linkと実行は行いません。
+
+対象OSでローカル成果物を検証する場合は、次のtaskを使用します。既定では``target/distrib``を読み、
+現在のOSとarchitectureに対応するtargetを配布計画から選択します。別directoryを使用する場合は
+``NATIVE_ARTIFACT_DIR``、candidate外のmanifestを使用する場合は``NATIVE_MANIFEST``を指定します。
+
+[source,console]
+----
+cargo make native-artifact-smoke
+cargo make installation-e2e
+----
+
 このfixtureは、MSVCでのlink、Windowsの実際のfile lock、macOS SDKでのlink、Mach-Oの実行、
 quarantine属性および各OSでのprocess lifecycleを再現しません。これらは対象OSのnative runnerで
 ``native-release-smoke``とinstallation E2Eを実行して確認します。
+
+Native成果物へ影響するpull requestでは、変更pathを``native-change-plan.mjs``で判定し、WindowsとmacOSの
+build、native smokeおよびinstallation E2Eを実行します。mainでは同じscriptを配布計画の全targetへ実行します。
 
 この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は
 xref:../../CONTRIBUTING.adoc[コントリビューションガイド]に従います。

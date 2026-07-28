@@ -187,7 +187,38 @@ dependencies = ["release-contract", "workflow-lint", "dist-plan"]
 [tasks.platform-contract]
 description = "Verify Windows and macOS release contracts without requiring the target operating system"
 command = "node"
-args = ["--test", "tools/platform-contract.test.mjs"]
+args = [
+  "--test",
+  "tools/platform-contract.test.mjs",
+  "tools/native-change-plan.test.mjs",
+  "tools/verify-native-pr-candidate.test.mjs",
+]
+
+[tasks.check-windows-target]
+description = "Type-check native crates for the supported Windows target without linking"
+command = "cargo"
+args = [
+  "check",
+  "--workspace",
+  "--all-features",
+  "--target",
+  "x86_64-pc-windows-msvc",
+]
+
+[tasks.check-macos-target]
+description = "Type-check native crates for the supported macOS target without linking"
+command = "cargo"
+args = [
+  "check",
+  "--workspace",
+  "--all-features",
+  "--target",
+  "aarch64-apple-darwin",
+]
+
+[tasks.cross-native-check]
+description = "Type-check supported Windows and macOS targets without linking or executing"
+dependencies = ["check-windows-target", "check-macos-target"]
 
 [tasks.dev-tools-check]
 description = "Verify that the flake development shell exposes every repository tool entry point"
@@ -223,6 +254,16 @@ if [ -z "${NATIVE_TARGET:-}" ] || [ -z "${NATIVE_ARTIFACT_DIR:-}" ]; then
 fi
 node tools/native-release-smoke.mjs "$NATIVE_ARTIFACT_DIR" "$NATIVE_TARGET"
 '''
+
+[tasks.native-artifact-smoke]
+description = "Smoke test local release archives for the current operating system"
+command = "node"
+args = ["tools/local-native-check.mjs", "smoke"]
+
+[tasks.installation-e2e]
+description = "Install and remove a local release candidate for the current operating system"
+command = "node"
+args = ["tools/local-native-check.mjs", "installation"]
 
 [tasks.native-release-smoke-host]
 description = "Exercise archive and binary smoke logic with local host binaries"
@@ -800,6 +841,7 @@ dependencies = [
   "check-zed",
   "check-zed-wasm",
   "check-vscode",
+  "cross-native-check",
   "clippy",
   "clippy-zed",
   "test",
