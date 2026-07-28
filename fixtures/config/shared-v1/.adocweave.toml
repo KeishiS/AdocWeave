@@ -1,0 +1,12 @@
+schema-version = 1
+
+[analysis]
+syntax-mode = "strict"
+
+[lint.rules.macro-boundary]
+enabled = true
+severity = "error"
+
+[format]
+newline = "cr-lf"
+final-newline = false

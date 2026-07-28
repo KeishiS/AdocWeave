@@ -26,20 +26,29 @@ Language Server Protocol 3.18]の固定revisionを使用します。
 Zedまたは他のLSP client
   -> async-lsp main loop
        -> protocol adapter
-            -> DocumentStore
+            -> URI・filesystem adapter
             -> LSP意味処理service
-                 -> adocweave::Engine
-                      -> 所有型Analysis
+                 -> adocweave-workspace::Workspace
+                      -> immutable WorkspaceSnapshot
+                           -> adocweave::Engine
+                                -> 所有型Analysis
 ----
 
 `adocweave-lsp`は次を所有します。
 
 * LSPのinitialize、shutdown、exitおよびstdio transport
 * URI、position encodingおよびLSP型とコア型の変換
-* 開いている文書とworkspace resourceのtext、version、generationおよび解析スナップショット
-* file URIに限定したinclude依存graph、逆依存索引および上限付きlocal resource読込
+* file URIとcanonical pathの対応、および上限付きlocal resource読込
 * 通知順序、要求並行数、CPU解析数、debounceおよび結果採用判定
 * clientへの診断、応答、通知および進捗報告
+
+`adocweave-workspace`は次を所有します。
+
+* disk resourceとopen overlay、および有効なresource snapshot
+* 文書revision、workspace generationおよび解析root
+* include依存graph、逆依存索引および影響root
+* runtime非依存のキャンセル可能な解析
+* source origin付き解析結果と古い結果の採用拒否
 
 `adocweave`コアは次を所有します。
 
@@ -50,6 +59,16 @@ Zedまたは他のLSP client
 
 `async-lsp`、TokioおよびLSP型をコアcrateの依存関係または公開APIへ持ち込んではなりません。
 xref:server-execution.adoc[利用側アプリの実行仕様]も特定async runtimeへ依存しません。
+
+== プロジェクト設定
+
+Language Serverは`adocweave-config`を使用し、workspace folderごとに探索境界を設定します。文書に最も近い
+`.adocweave.toml`を一つだけ読み込み、設定の作成、変更および削除をfile watcherから受け取るとopen文書を
+再解析します。設定本文と属性値をlogへ記録しません。
+
+設定snapshotには内容digestから得たgenerationを付けます。解析開始後に文書または設定のgenerationが
+変わった場合は結果を採用しません。エディターの`enabledRules`は共有設定の後に適用し、設定が与える
+filesystem境界やresource上限を拡張しません。
 
 == 通知と要求
 

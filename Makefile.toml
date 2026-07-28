@@ -649,6 +649,7 @@ CONTRIBUTING.adoc
 docs/README.adoc
 docs/user-guide/command-line.adoc
 docs/user-guide/compatibility.adoc
+docs/user-guide/project-configuration.adoc
 docs/user-guide/release-installation.adoc
 docs/user-guide/syntax-support.adoc
 docs/developer-guide/architecture.adoc
@@ -670,6 +671,9 @@ docs/developer-guide/adr/0006-direct-stable-releases.adoc
 docs/developer-guide/adr/0007-host-supplied-stylesheets.adoc
 docs/developer-guide/adr/0008-minimal-documentation-management.adoc
 docs/developer-guide/adr/0009-public-configuration-boundaries.adoc
+docs/developer-guide/adr/0010-position-dependent-document-attributes.adoc
+docs/developer-guide/adr/0011-versioned-project-configuration.adoc
+docs/developer-guide/adr/0012-workspace-analysis-boundary.adoc
 docs/developer-guide/adr/index.adoc
 editors/zed/README.adoc
 web-worker/README.adoc

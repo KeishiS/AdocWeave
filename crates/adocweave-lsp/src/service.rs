@@ -21,7 +21,10 @@ use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
 use crate::state::DocumentStore;
-use crate::state::{Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis, WorkspaceProblem};
+use crate::state::{
+    Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis as DocumentWorkspaceAnalysis,
+    WorkspaceProblem,
+};
 use crate::workspace::WorkspaceResources;
 use crate::{SERVER_NAME, VERSION};
 
@@ -262,6 +265,27 @@ impl Default for ServerSettings {
     }
 }
 
+fn attach_workspace(
+    job: &mut AnalysisJob,
+    input: Result<crate::workspace::WorkspaceInput, String>,
+) {
+    match input {
+        Ok(input) => job.workspace = Some(input),
+        Err(message) => {
+            job.workspace_problem = Some(WorkspaceProblem {
+                source_id: Some(job.uri.clone()),
+                range: adocweave::text::TextRange::new(
+                    adocweave::text::TextSize::ZERO,
+                    adocweave::text::TextSize::ZERO,
+                )
+                .expect("zero range"),
+                code: "workspace-input-error".to_owned(),
+                message,
+            });
+        }
+    }
+}
+
 impl LanguageService {
     pub fn with_host_index(host_index: Arc<dyn HostReferenceIndex>) -> Self {
         Self {
@@ -382,10 +406,15 @@ impl LanguageService {
                 document.text.clone(),
             )
             .unwrap_or_else(|_| std::collections::BTreeSet::from([document.uri.to_string()]));
-        let mut job =
-            self.documents
-                .begin_open(document.uri.to_string(), document.version, document.text);
-        job.workspace = self.workspace.input(&document.uri).ok();
+        let workspace = self.workspace.input(&document.uri);
+        let options = self.analysis_options_for(workspace.as_ref().ok());
+        let mut job = self.documents.begin_open_with_options(
+            document.uri.to_string(),
+            document.version,
+            document.text,
+            options,
+        );
+        attach_workspace(&mut job, workspace);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -438,7 +467,7 @@ impl LanguageService {
         ) else {
             return Ok(Vec::new());
         };
-        job.workspace = self.workspace.input(&params.text_document.uri).ok();
+        attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -457,9 +486,31 @@ impl LanguageService {
             let Some(mut job) = self.documents.begin_reanalysis(uri) else {
                 continue;
             };
-            job.workspace = self.workspace.input(&parsed).ok();
+            attach_workspace(&mut job, self.workspace.input(&parsed));
             jobs.push(job);
         }
+    }
+
+    fn analysis_options_for(
+        &self,
+        workspace: Option<&crate::workspace::WorkspaceInput>,
+    ) -> adocweave::AnalysisOptions {
+        let mut options = workspace.map_or_else(adocweave::AnalysisOptions::default, |input| {
+            input.project_config.analysis.clone()
+        });
+        for code in &self.settings.enabled_rules {
+            let Some(descriptor) = lint_rule(code) else {
+                continue;
+            };
+            options.diagnostics.lint.set_rule(
+                descriptor.id,
+                RuleSettings {
+                    enabled: true,
+                    severity: options.diagnostics.lint.rule(descriptor.id).severity,
+                },
+            );
+        }
+        options
     }
 
     pub fn workspace_files_changed(
@@ -467,7 +518,14 @@ impl LanguageService {
         params: lsp::DidChangeWatchedFilesParams,
     ) -> Vec<AnalysisJob> {
         let mut affected = std::collections::BTreeSet::new();
+        let mut configuration_changed = false;
         for change in params.changes {
+            if change.uri.path_segments().and_then(Iterator::last)
+                == Some(adocweave_config::FILE_NAME)
+            {
+                configuration_changed = true;
+                continue;
+            }
             if self.documents.get(change.uri.as_str()).is_some() {
                 continue;
             }
@@ -481,9 +539,44 @@ impl LanguageService {
                 Err(error) => self.workspace_error = Some(error),
             }
         }
+        if configuration_changed {
+            return self.reload_project_configuration();
+        }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, "", &mut jobs);
         jobs
+    }
+
+    fn reload_project_configuration(&mut self) -> Vec<AnalysisJob> {
+        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
+        let open_sources = self.documents.open_sources();
+        if let Err(error) = self.workspace.load_roots(&roots) {
+            self.workspace_error = Some(error);
+            return Vec::new();
+        }
+        for (uri, version, source) in &open_sources {
+            let Ok(uri) = uri.parse() else {
+                continue;
+            };
+            if let Err(error) = self
+                .workspace
+                .upsert_open(uri, i64::from(*version), source.clone())
+            {
+                self.workspace_error = Some(error);
+            }
+        }
+        self.workspace_error = None;
+        open_sources
+            .into_iter()
+            .filter_map(|(uri, _, _)| {
+                let parsed = uri.parse().ok()?;
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
+                let mut job = self.documents.reconfigure(&uri, options)?;
+                attach_workspace(&mut job, workspace);
+                Some(job)
+            })
+            .collect()
     }
 
     pub fn workspace_folders_changed(
@@ -523,8 +616,10 @@ impl LanguageService {
             .into_iter()
             .filter_map(|(uri, _, _)| {
                 let parsed = uri.parse().ok()?;
-                let mut job = self.documents.begin_reanalysis(&uri)?;
-                job.workspace = self.workspace.input(&parsed).ok();
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
+                let mut job = self.documents.reconfigure(&uri, options)?;
+                attach_workspace(&mut job, workspace);
                 Some(job)
             })
             .collect()
@@ -539,14 +634,27 @@ impl LanguageService {
                     method: "workspace/didChangeWatchedFiles".to_owned(),
                     register_options: Some(
                         serde_json::to_value(lsp::DidChangeWatchedFilesRegistrationOptions {
-                            watchers: vec![lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String("**/*.adoc".to_owned()),
-                                kind: Some(
-                                    lsp::WatchKind::Create
-                                        | lsp::WatchKind::Change
-                                        | lsp::WatchKind::Delete,
-                                ),
-                            }],
+                            watchers: vec![
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String("**/*.adoc".to_owned()),
+                                    kind: Some(
+                                        lsp::WatchKind::Create
+                                            | lsp::WatchKind::Change
+                                            | lsp::WatchKind::Delete,
+                                    ),
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(format!(
+                                        "**/{}",
+                                        adocweave_config::FILE_NAME
+                                    )),
+                                    kind: Some(
+                                        lsp::WatchKind::Create
+                                            | lsp::WatchKind::Change
+                                            | lsp::WatchKind::Delete,
+                                    ),
+                                },
+                            ],
                         })
                         .expect("watched file registration is serializable"),
                     ),
@@ -558,22 +666,48 @@ impl LanguageService {
         if job
             .workspace
             .as_ref()
-            .is_some_and(|input| input.generation != self.workspace.generation())
+            .is_some_and(|input| !self.workspace.input_is_current(input))
         {
             return Adoption::Stale;
         }
-        self.documents.adopt(job, result)
+        let format = job
+            .workspace
+            .as_ref()
+            .map_or_else(formatter::FormatConfig::default, |input| {
+                input.project_config.format
+            });
+        self.documents.adopt_with_format(job, result, format)
     }
 
-    pub fn adopt_workspace(&mut self, job: &AnalysisJob, analysis: WorkspaceAnalysis) -> Adoption {
+    pub fn adopt_workspace(
+        &mut self,
+        job: &AnalysisJob,
+        analysis: adocweave_workspace::WorkspaceAnalysis,
+    ) -> Adoption {
         if job
             .workspace
             .as_ref()
-            .is_none_or(|input| input.generation != self.workspace.generation())
+            .is_none_or(|input| !self.workspace.input_is_current(input))
         {
             return Adoption::Stale;
         }
-        self.documents.adopt_workspace(job, analysis)
+        if self.workspace.accept(&analysis).is_err() {
+            return Adoption::Stale;
+        }
+        let resource_versions = analysis
+            .resource_revisions
+            .iter()
+            .map(|(id, revision)| (id.to_string(), revision.get()))
+            .collect();
+        self.documents.adopt_workspace(
+            job,
+            DocumentWorkspaceAnalysis {
+                document: analysis.document,
+                analysis: analysis.analysis,
+                projection: analysis.projection,
+                resource_versions,
+            },
+        )
     }
 
     pub fn adopt_workspace_problem(
@@ -581,10 +715,11 @@ impl LanguageService {
         job: &AnalysisJob,
         problem: WorkspaceProblem,
     ) -> Adoption {
-        if job
-            .workspace
-            .as_ref()
-            .is_none_or(|input| input.generation != self.workspace.generation())
+        if job.workspace_problem.is_none()
+            && job
+                .workspace
+                .as_ref()
+                .is_none_or(|input| !self.workspace.input_is_current(input))
         {
             return Adoption::Stale;
         }
@@ -621,37 +756,30 @@ impl LanguageService {
         let mut settings: ServerSettings =
             serde_json::from_value(settings).map_err(|error| error.to_string())?;
         settings.debounce_ms = settings.debounce_ms.min(1_000);
-        let mut options = adocweave::AnalysisOptions::default();
         for code in &settings.enabled_rules {
             let descriptor =
                 lint_rule(code).ok_or_else(|| format!("unknown diagnostic rule: {code}"))?;
-            if !descriptor.user_configurable {
+            if descriptor.default_enabled {
                 return Err(format!(
                     "diagnostic rule cannot be enabled explicitly: {code}"
                 ));
             }
-            options.diagnostics.lint.set_rule(
-                descriptor.id,
-                RuleSettings {
-                    enabled: true,
-                    severity: descriptor.default_severity,
-                },
-            );
         }
         let diagnostics_changed = self.settings.enabled_rules != settings.enabled_rules;
         self.settings = settings;
         if !diagnostics_changed {
             return Ok(Vec::new());
         }
-        self.documents.set_analysis_options(options);
         Ok(self
             .documents
             .open_sources()
             .into_iter()
             .filter_map(|(uri, _, _)| {
                 let parsed = uri.parse().ok()?;
-                let mut job = self.documents.begin_reanalysis(&uri)?;
-                job.workspace = self.workspace.input(&parsed).ok();
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
+                let mut job = self.documents.reconfigure(&uri, options)?;
+                attach_workspace(&mut job, workspace);
                 Some(job)
             })
             .collect())
@@ -666,7 +794,7 @@ impl LanguageService {
         let resource = self.workspace.get(uri);
         let source = document
             .map(|document| document.request.source.as_ref())
-            .or_else(|| resource.map(|resource| resource.text.as_ref()));
+            .or_else(|| resource.map(|resource| resource.text().as_ref()));
         let Some(source) = source else {
             return Ok(lsp::PublishDiagnosticsParams::new(
                 uri.clone(),
@@ -681,7 +809,17 @@ impl LanguageService {
             .then(|| document.map(|document| revision_version_i32(&document.request.revision)))
             .flatten();
         let mut diagnostics = document
-            .and_then(|document| document.view.as_ref().map(|view| view.root.as_ref()))
+            .and_then(|document| {
+                if document
+                    .workspace_problem
+                    .as_ref()
+                    .is_some_and(|problem| problem.code == "workspace-input-error")
+                {
+                    None
+                } else {
+                    document.view.as_ref().map(|view| view.root.as_ref())
+                }
+            })
             .iter()
             .flat_map(|analysis| analysis.diagnostics().iter())
             .map(|diagnostic| {
@@ -724,11 +862,13 @@ impl LanguageService {
                 .analysis
                 .source_id()
                 .is_some_and(|source_id| source_id.as_str() == uri.as_str());
-            if !is_root
-                && current_version
-                    != document
-                        .map(|document| document.request.revision.version)
-                        .or_else(|| resource.map(|resource| resource.version))
+            if is_root {
+                continue;
+            }
+            if current_version
+                != document
+                    .map(|document| document.request.revision.version)
+                    .or_else(|| resource.map(|resource| resource.revision().get()))
             {
                 continue;
             }
@@ -933,9 +1073,8 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        let output =
-            formatter::format_analysis(&document.analysis, &formatter::FormatConfig::default())
-                .map_err(|error| error.to_string())?;
+        let output = formatter::format_analysis(&document.analysis, &document.format)
+            .map_err(|error| error.to_string())?;
         let edits = output
             .edits
             .iter()
@@ -1775,7 +1914,7 @@ impl LanguageService {
             .or_else(|| {
                 self.workspace
                     .get(uri)
-                    .map(|resource| resource.text.as_ref())
+                    .map(|resource| resource.text().as_ref())
             })
             .ok_or_else(|| format!("projected source is missing: {uri}"))?;
         SourceDocument::new(source).map_err(|error| error.to_string())
@@ -2066,7 +2205,7 @@ fn attribute_reference_hover(reference: &adocweave::semantic::AttributeReference
 }
 
 fn projected_attribute_reference_at<'a>(
-    workspace: &'a WorkspaceAnalysis,
+    workspace: &'a DocumentWorkspaceAnalysis,
     uri: &lsp::Url,
     offset: u32,
 ) -> Option<(
@@ -2093,7 +2232,7 @@ fn projected_attribute_reference_at<'a>(
 }
 
 fn projected_attribute_binding_at(
-    workspace: &WorkspaceAnalysis,
+    workspace: &DocumentWorkspaceAnalysis,
     uri: &lsp::Url,
     offset: u32,
 ) -> Option<adocweave::semantic::AttributeBindingId> {
@@ -2121,7 +2260,7 @@ fn same_origin(
 }
 
 fn expanded_offset_for_origin(
-    workspace: &WorkspaceAnalysis,
+    workspace: &DocumentWorkspaceAnalysis,
     uri: &lsp::Url,
     offset: u32,
 ) -> Option<adocweave::text::TextSize> {

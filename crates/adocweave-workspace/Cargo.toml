@@ -1,5 +1,5 @@
 [package]
-name = "adocweave-cli"
+name = "adocweave-workspace"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,21 +7,11 @@ homepage.workspace = true
 publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Command-line adapter for AdocWeave"
+description = "Runtime-independent workspace analysis for AdocWeave"
 
 [dependencies]
 adocweave = { path = "../adocweave" }
-adocweave-config = { path = "../adocweave-config" }
 adocweave-host = { path = "../adocweave-host" }
-glob = "0.3"
-serde_json = "1.0"
-similar = "2"
-tempfile = "3"
 
-[[bin]]
-name = "adocweave"
-path = "src/main.rs"
-doc = false
-
-[package.metadata.dist]
-dist = true
+[lib]
+path = "src/lib.rs"

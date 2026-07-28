@@ -18,6 +18,7 @@ pub struct AnalysisJob {
     pub request: AnalysisRequest,
     pub cancellation: Arc<CancellationToken>,
     pub workspace: Option<WorkspaceInput>,
+    pub workspace_problem: Option<WorkspaceProblem>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +34,7 @@ pub struct DocumentState {
 pub struct DocumentView {
     pub root: Arc<Analysis>,
     pub expanded: Option<Arc<WorkspaceAnalysis>>,
+    pub format: adocweave::output::formatter::FormatConfig,
 }
 
 #[cfg(test)]
@@ -62,36 +64,12 @@ pub struct WorkspaceAnalysis {
     pub resource_versions: BTreeMap<String, i64>,
 }
 
-impl WorkspaceAnalysis {
-    pub fn source_uris(&self) -> std::collections::BTreeSet<String> {
-        let mut uris = std::collections::BTreeSet::new();
-        for directive in &self.projection.directives {
-            uris.extend(
-                directive
-                    .source_id
-                    .iter()
-                    .chain(directive.resource_source_id.iter())
-                    .map(|source_id| source_id.as_str().to_owned()),
-            );
-        }
-        for diagnostic in &self.projection.diagnostics {
-            uris.extend(
-                diagnostic
-                    .origins
-                    .iter()
-                    .filter_map(|origin| origin.source_id.as_ref())
-                    .map(|source_id| source_id.as_str().to_owned()),
-            );
-        }
-        uris
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct DocumentSnapshot {
     pub uri: String,
     pub revision: DocumentRevision,
     pub analysis: Arc<Analysis>,
+    pub format: adocweave::output::formatter::FormatConfig,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -105,7 +83,6 @@ pub enum Adoption {
 pub struct DocumentStore {
     documents: Arc<BTreeMap<String, DocumentState>>,
     next_generation: u64,
-    analysis_options: AnalysisOptions,
 }
 
 impl DocumentStore {
@@ -115,10 +92,18 @@ impl DocumentStore {
 
     pub fn snapshot(&self, uri: &str) -> Option<DocumentSnapshot> {
         let document = self.documents.get(uri)?;
+        if document
+            .workspace_problem
+            .as_ref()
+            .is_some_and(|problem| problem.code == "workspace-input-error")
+        {
+            return None;
+        }
         Some(DocumentSnapshot {
             uri: document.uri.clone(),
             revision: document.request.revision.clone(),
             analysis: document.view.as_ref()?.root.clone(),
+            format: document.view.as_ref()?.format,
         })
     }
 
@@ -142,10 +127,6 @@ impl DocumentStore {
             .collect()
     }
 
-    pub fn set_analysis_options(&mut self, options: AnalysisOptions) {
-        self.analysis_options = options;
-    }
-
     pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
         self.documents
             .values()
@@ -164,11 +145,22 @@ impl DocumentStore {
             .map(|document| document.cancellation.clone())
     }
 
+    #[cfg(test)]
     pub fn begin_open(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
+        self.begin_open_with_options(uri, version, text, AnalysisOptions::default())
+    }
+
+    pub fn begin_open_with_options(
+        &mut self,
+        uri: String,
+        version: i32,
+        text: String,
+        options: AnalysisOptions,
+    ) -> AnalysisJob {
         if let Some(previous) = self.documents.get(&uri) {
             previous.cancellation.cancel();
         }
-        let job = self.new_job(uri.clone(), version, text);
+        let job = self.new_job(uri.clone(), version, text, options);
         Arc::make_mut(&mut self.documents).insert(
             uri.clone(),
             DocumentState {
@@ -187,8 +179,9 @@ impl DocumentStore {
         if i64::from(version) <= current.request.revision.version {
             return None;
         }
+        let options = current.request.options.clone();
         current.cancellation.cancel();
-        let job = self.new_job(uri.to_owned(), version, text);
+        let job = self.new_job(uri.to_owned(), version, text, options);
         self.install_job(uri, &job);
         Some(job)
     }
@@ -198,7 +191,18 @@ impl DocumentStore {
         current.cancellation.cancel();
         let version = i32::try_from(current.request.revision.version).ok()?;
         let text = current.request.source.to_string();
-        let job = self.new_job(uri.to_owned(), version, text);
+        let options = current.request.options.clone();
+        let job = self.new_job(uri.to_owned(), version, text, options);
+        self.install_job(uri, &job);
+        Some(job)
+    }
+
+    pub fn reconfigure(&mut self, uri: &str, options: AnalysisOptions) -> Option<AnalysisJob> {
+        let current = self.documents.get(uri)?;
+        current.cancellation.cancel();
+        let version = i32::try_from(current.request.revision.version).ok()?;
+        let text = current.request.source.to_string();
+        let job = self.new_job(uri.to_owned(), version, text, options);
         self.install_job(uri, &job);
         Some(job)
     }
@@ -215,7 +219,21 @@ impl DocumentStore {
         current.cancellation = job.cancellation.clone();
     }
 
+    #[cfg(test)]
     pub fn adopt(&mut self, job: &AnalysisJob, result: AnalysisResult) -> Adoption {
+        self.adopt_with_format(
+            job,
+            result,
+            adocweave::output::formatter::FormatConfig::default(),
+        )
+    }
+
+    pub fn adopt_with_format(
+        &mut self,
+        job: &AnalysisJob,
+        result: AnalysisResult,
+        format: adocweave::output::formatter::FormatConfig,
+    ) -> Adoption {
         let Some(document) = self.documents.get(&job.uri) else {
             return Adoption::Closed;
         };
@@ -228,6 +246,7 @@ impl DocumentStore {
         document.view = Some(Arc::new(DocumentView {
             root: Arc::new(result.analysis),
             expanded: None,
+            format,
         }));
         Adoption::Adopted
     }
@@ -258,6 +277,7 @@ impl DocumentStore {
         document.view = Some(Arc::new(DocumentView {
             root: view.root.clone(),
             expanded: Some(Arc::new(analysis)),
+            format: view.format,
         }));
         document.workspace_problem = None;
         Adoption::Adopted
@@ -278,6 +298,7 @@ impl DocumentStore {
             document.view = Some(Arc::new(DocumentView {
                 root: view.root.clone(),
                 expanded: None,
+                format: view.format,
             }));
         }
         document.workspace_problem = Some(problem);
@@ -301,20 +322,27 @@ impl DocumentStore {
         }
     }
 
-    fn new_job(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
+    fn new_job(
+        &mut self,
+        uri: String,
+        version: i32,
+        text: String,
+        options: AnalysisOptions,
+    ) -> AnalysisJob {
         self.next_generation = self.next_generation.saturating_add(1);
         let request = AnalysisRequest::new(
             Some(SourceId::new(uri.clone())),
             i64::from(version),
             self.next_generation,
             text,
-            self.analysis_options.clone(),
+            options,
         );
         AnalysisJob {
             uri,
             request,
             cancellation: Arc::new(CancellationToken::new()),
             workspace: None,
+            workspace_problem: None,
         }
     }
 }

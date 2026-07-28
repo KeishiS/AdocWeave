@@ -1,0 +1,47 @@
+= ADR 0011: version付きプロジェクト設定と権限境界
+
+== 状態
+
+採用
+
+== 背景
+
+CLI、Language Serverおよびエディターadapterは、解析、Lint、include、整形およびHTML出力の設定を
+別々の入力から構築しています。この構造では同じworkspaceで利用側ごとに結果が変わり、設定field、
+既定値および検証規則の追加も重複します。
+
+設定fileがfilesystem rootやnetwork accessを無条件に許可すると、repositoryを開くだけでhost権限が
+拡張されます。設定の利便性と、利用者またはhostが明示的に与えるauthorityを区別する必要があります。
+
+== 決定
+
+設定のwire形式、検証済み設定、探索およびconsumer向け変換は独立した`adocweave-config` crateが
+所有します。コアcrateはTOML、filesystemおよび設定探索へ依存しません。設定は解析、preprocess、
+resource、local target、formatterおよびHTMLの責務別sectionを持ち、変換後もADR 0009の境界を
+維持します。
+
+プロジェクト設定名は`.adocweave.toml`とし、`schema-version = 1`を必須にします。すべての階層で
+未知field、未知schema version、重複keyおよび不正なLint ruleを拒否します。v1では継承、環境変数展開、
+home directory展開、command置換およびremote設定を提供しません。
+
+設定の優先順位は、組み込み既定値、単一のプロジェクト設定、明示的なconsumer overrideの順です。
+CLIは入力fileの親から現在directoryまで、Language Serverは文書の親から所属workspace rootまでを
+探索境界とします。境界を越えて親設定を探索せず、include先ごとにも再探索しません。明示設定pathは
+自動探索を停止し、設定を無効にする操作も提供します。相対pathは設定fileのdirectoryを基準にします。
+
+プロジェクト設定はpolicy入力でありauthorityではありません。設定からworkspace外のroot、network、
+組み込み上限を超えるresource budgetまたは任意commandの実行を許可しません。追加authorityはCLI引数、
+editor trustまたは埋込みhost APIから明示的に与えます。外部属性値、CSS本文および文書断片はerrorや
+通常logへ含めず、設定表示でも既定で伏せます。
+
+設定を`ConfigSnapshot`としてversion、canonical path、content identityおよび検証済み値とともに保持します。
+設定変更はgenerationを進め、以前のsnapshotを使う解析をキャンセルします。不正な新設定を以前の設定へ
+暗黙fallbackせず、影響する結果を無効化して設定診断を公開します。
+
+== 結果
+
+公式consumerは同じ設定fixtureと検証器を共有し、追加fieldの意味と既定値を一か所で管理できます。
+設定探索と権限付与を分離するため、信頼していないrepositoryを開く操作だけではhost権限が増えません。
+
+独立crate、strict schemaおよびgeneration管理の保守責務が増えます。設定形式の変更はv0.xでも
+schema versionと移行手順を伴う破壊的変更として扱います。

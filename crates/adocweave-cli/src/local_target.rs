@@ -23,9 +23,10 @@ pub fn validate(
     project_root: &Path,
     source_id: &str,
     source: &str,
+    limits: ResourceLimits,
 ) -> Result<Vec<HostDiagnostic>, LocalTargetError> {
     let policy = LocalTargetPolicy::new(project_root)?;
-    let mut session = LocalTargetSession::new(policy, 4_096, ResourceLimits::default());
+    let mut session = LocalTargetSession::new(policy, limits.max_files, limits);
     Ok(validate_with_session(
         targets,
         base,

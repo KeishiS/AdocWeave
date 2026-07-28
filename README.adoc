@@ -26,11 +26,15 @@ Nix環境での実行と導入もxref:docs/user-guide/release-installation.adoc#
 # HTMLへ変換する
 adocweave convert manual.adoc > manual.html
 
-# 問題を確認する
-adocweave check manual.adoc
+# CIでdirectory全体を確認する
+adocweave check --fail-on warning --format github --summary docs
 
 # 整形が必要かだけを確認する
-adocweave format --check manual.adoc
+adocweave format --check docs
+
+# 確認後に複数fileを安全に整形する
+adocweave format --diff docs
+adocweave format --write docs
 ----
 
 全オプション、標準入力、`include::`の扱いはxref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
@@ -43,6 +47,7 @@ adocweave format --check manual.adoc
 
 * xref:docs/user-guide/syntax-support.adoc[対応している書式] — 見出し、リスト、表、リンクなどの対応状況を説明します。
 * xref:docs/user-guide/command-line.adoc[コマンドライン] — 変換、確認、整形の実行方法を説明します。
+* xref:docs/user-guide/project-configuration.adoc[プロジェクト設定] — CLIとLanguage Serverで共有する設定です。
 * xref:docs/user-guide/command-line.adoc#diagnostics[問題の確認] — 表示される問題と機械判定用code。
 
 === エディター統合

@@ -4,8 +4,6 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf};
 
-use adocweave::Engine;
-use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits, preprocess};
 use adocweave::resolution::ReferenceKey;
 use async_lsp::lsp_types as lsp;
 use serde::de::DeserializeOwned;
@@ -14,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use super::{HostReferenceIndex, HostReferenceRequest, PositionEncoding, run};
 use crate::service::LanguageService;
-use crate::state::{Adoption, AnalysisJob, WorkspaceAnalysis, WorkspaceProblem};
+use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
 
 fn typed<T: DeserializeOwned>(value: Value) -> T {
     serde_json::from_value(value).expect("valid LSP value")
@@ -146,20 +144,32 @@ fn adopt(service: &mut LanguageService, job: AnalysisJob) {
         .analyze(job.cancellation.as_ref())
         .expect("analysis");
     assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
+    if let Some(problem) = &job.workspace_problem {
+        assert_eq!(
+            service.adopt_workspace_problem(&job, problem.clone()),
+            Adoption::Adopted
+        );
+        return;
+    }
     if let Some(input) = &job.workspace {
-        let document = match preprocess(&input.root.text, &input.snapshot, &input.options) {
-            Ok(document) => document,
+        let mut options = job.request.options.clone();
+        options.attributes.clone_from(&input.options.attributes);
+        let analysis = match input.analyze(&options, job.cancellation.as_ref()) {
+            Ok(analysis) => analysis,
             Err(error) => {
                 assert_eq!(
                     service.adopt_workspace_problem(
                         &job,
                         WorkspaceProblem {
-                            source_id: error
-                                .source_id
-                                .as_ref()
-                                .map(|source_id| source_id.as_str().to_owned()),
-                            range: error.range,
-                            code: error.kind.as_str().to_owned(),
+                            source_id: error.source_id.as_ref().map(ToString::to_string),
+                            range: error.range.unwrap_or_else(|| {
+                                adocweave::text::TextRange::new(
+                                    adocweave::text::TextSize::ZERO,
+                                    adocweave::text::TextSize::ZERO,
+                                )
+                                .expect("zero range")
+                            }),
+                            code: error.diagnostic_code().to_owned(),
                             message: error.to_string(),
                         }
                     ),
@@ -168,25 +178,7 @@ fn adopt(service: &mut LanguageService, job: AnalysisJob) {
                 return;
             }
         };
-        let analysis = Engine::new(job.request.options.clone())
-            .analyze(&document.source)
-            .expect("workspace analysis");
-        let preprocessed = PreprocessedAnalysis { document, analysis };
-        let projection = preprocessed
-            .project_origins(ProjectionLimits::default())
-            .expect("workspace projection");
-        assert_eq!(
-            service.adopt_workspace(
-                &job,
-                WorkspaceAnalysis {
-                    document: Arc::new(preprocessed.document),
-                    analysis: Arc::new(preprocessed.analysis),
-                    projection: Arc::new(projection),
-                    resource_versions: input.resource_versions.clone(),
-                }
-            ),
-            Adoption::Adopted
-        );
+        assert_eq!(service.adopt_workspace(&job, analysis), Adoption::Adopted);
     }
 }
 
@@ -507,8 +499,8 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
             .workspace
             .as_ref()
             .expect("retained workspace")
-            .root
-            .text
+            .root_text()
+            .expect("root resource")
             .as_ref(),
         "include::part.adoc[]\n\noverlay\n"
     );
@@ -537,6 +529,177 @@ fn workspace_configuration_updates_and_caps_debounce() {
             .update_configuration(json!({"enabledRules": ["unknown-rule"]}))
             .is_err()
     );
+}
+
+#[test]
+fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-lsp-config-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    let config_path = root.join(adocweave_config::FILE_NAME);
+    let source = "日😀xref:guide.adoc[Guide]\n\nSecond\n";
+    fs::write(&document_path, source).expect("document");
+    fs::write(
+        &config_path,
+        include_str!("../../../fixtures/config/shared-v1/.adocweave.toml"),
+    )
+    .expect("configuration");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    })));
+    open(&mut service, document_uri.as_str(), 1, source);
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == Some(lsp::NumberOrString::String("macro-boundary".to_owned()))
+            && diagnostic.severity == Some(lsp::DiagnosticSeverity::ERROR)
+    }));
+    let edits = service
+        .formatting(&document_uri)
+        .expect("formatting")
+        .expect("formatting response");
+    assert_eq!(
+        apply_edits(source, &edits),
+        "日😀xref:guide.adoc[Guide]\r\n\r\nSecond"
+    );
+
+    fs::write(
+        &config_path,
+        "schema-version = 1\n[lint.rules.macro-boundary]\nenabled = false\n",
+    )
+    .expect("updated configuration");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": config_uri, "type": 2}]
+    })));
+    assert_eq!(jobs.len(), 1);
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code != Some(lsp::NumberOrString::String("macro-boundary".to_owned()))
+    }));
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn each_workspace_folder_uses_its_own_project_configuration() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("adocweave-lsp-multi-config-{unique}"));
+    let enabled_root = base.join("enabled");
+    let disabled_root = base.join("disabled");
+    fs::create_dir_all(&enabled_root).expect("enabled workspace");
+    fs::create_dir_all(&disabled_root).expect("disabled workspace");
+    fs::write(
+        enabled_root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[lint.rules.macro-boundary]\nenabled = true\nseverity = \"error\"\n",
+    )
+    .expect("enabled configuration");
+    fs::write(
+        disabled_root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[lint.rules.macro-boundary]\nenabled = false\n",
+    )
+    .expect("disabled configuration");
+    let source = "日😀xref:guide.adoc[Guide]\n";
+    let enabled_path = enabled_root.join("root.adoc");
+    let disabled_path = disabled_root.join("root.adoc");
+    fs::write(&enabled_path, source).expect("enabled document");
+    fs::write(&disabled_path, source).expect("disabled document");
+    let enabled_root_uri = lsp::Url::from_directory_path(&enabled_root).expect("enabled root URI");
+    let disabled_root_uri =
+        lsp::Url::from_directory_path(&disabled_root).expect("disabled root URI");
+    let enabled_uri = lsp::Url::from_file_path(&enabled_path).expect("enabled document URI");
+    let disabled_uri = lsp::Url::from_file_path(&disabled_path).expect("disabled document URI");
+
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "workspaceFolders": [
+            {"uri": enabled_root_uri, "name": "enabled"},
+            {"uri": disabled_root_uri, "name": "disabled"}
+        ],
+        "capabilities": {"workspace": {"workspaceFolders": true}}
+    })));
+    open(&mut service, enabled_uri.as_str(), 1, source);
+    open(&mut service, disabled_uri.as_str(), 1, source);
+
+    let enabled = service
+        .diagnostics(&enabled_uri)
+        .expect("enabled diagnostics");
+    assert!(enabled.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == Some(lsp::NumberOrString::String("macro-boundary".to_owned()))
+            && diagnostic.severity == Some(lsp::DiagnosticSeverity::ERROR)
+    }));
+    let disabled = service
+        .diagnostics(&disabled_uri)
+        .expect("disabled diagnostics");
+    assert!(disabled.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code != Some(lsp::NumberOrString::String("macro-boundary".to_owned()))
+    }));
+
+    fs::remove_dir_all(base).expect("cleanup");
+}
+
+#[test]
+fn invalid_project_configuration_does_not_fall_back_to_default_analysis() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-lsp-invalid-config-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 99\n",
+    )
+    .expect("configuration");
+    fs::write(&document_path, "trailing \n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    })));
+    open(&mut service, document_uri.as_str(), 1, "trailing \n");
+
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(lsp::NumberOrString::String(
+                "workspace-input-error".to_owned(),
+            ))
+    }));
+    assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code
+            != Some(lsp::NumberOrString::String(
+                "trailing-whitespace".to_owned(),
+            ))
+    }));
+    assert!(
+        service
+            .formatting(&document_uri)
+            .expect("formatting")
+            .expect("response")
+            .is_empty()
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]
@@ -852,7 +1015,12 @@ fn link_and_xref_diagnostics_share_ranges_and_quick_fixes() {
         .diagnostics(&uri("file:///references.adoc"))
         .expect("diagnostics");
     assert_eq!(diagnostics.version, Some(2));
-    assert_eq!(diagnostics.diagnostics.len(), 2);
+    assert_eq!(
+        diagnostics.diagnostics.len(),
+        2,
+        "{:#?}",
+        diagnostics.diagnostics
+    );
     assert_eq!(
         diagnostics.diagnostics[0].code,
         Some(lsp::NumberOrString::String("asciidoc-file-link".to_owned()))

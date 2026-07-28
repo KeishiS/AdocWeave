@@ -5,9 +5,8 @@ use std::num::NonZeroUsize;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use adocweave::Engine;
-use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits, preprocess};
 use adocweave::{CancellationCheck, CancellationToken};
+use adocweave_workspace::WorkspaceAnalysis;
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
 use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
@@ -21,7 +20,7 @@ use tower::ServiceBuilder;
 
 use crate::lifecycle::ProtocolLifecycleLayer;
 use crate::service::LanguageService;
-use crate::state::{Adoption, AnalysisJob, WorkspaceAnalysis, WorkspaceProblem};
+use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
 use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
 const MAX_CONCURRENT_REQUESTS: usize = 16;
@@ -258,50 +257,23 @@ impl Backend {
                     .request
                     .analyze(worker_job.cancellation.as_ref())
                     .map_err(|error| error.to_string());
-                let workspace_result = worker_job.workspace.as_ref().map(|input| {
-                    let document = preprocess(&input.root.text, &input.snapshot, &input.options)
-                        .map_err(|error| WorkspaceProblem {
-                            source_id: error
-                                .source_id
-                                .as_ref()
-                                .map(|source_id| source_id.as_str().to_owned()),
-                            range: error.range,
-                            code: error.kind.as_str().to_owned(),
-                            message: error.to_string(),
-                        })?;
-                    if worker_job.cancellation.is_cancelled() {
-                        return Err(workspace_problem(
-                            &worker_job,
-                            "cancelled",
-                            "workspace analysis was cancelled",
-                        ));
-                    }
-                    let mut analysis_options = worker_job.request.options.clone();
-                    analysis_options
-                        .attributes
-                        .clone_from(&input.options.attributes);
-                    let analysis = Engine::new(analysis_options)
-                        .analyze_cancellable(&document.source, worker_job.cancellation.as_ref())
-                        .map_err(|error| {
-                            workspace_problem(
-                                &worker_job,
-                                error.code().as_str(),
-                                &error.to_string(),
-                            )
-                        })?;
-                    let preprocessed = PreprocessedAnalysis { document, analysis };
-                    let projection = preprocessed
-                        .project_origins(ProjectionLimits::default())
-                        .map_err(|error| {
-                            workspace_problem(&worker_job, "projection-limit", &error.to_string())
-                        })?;
-                    Ok(WorkspaceAnalysis {
-                        document: Arc::new(preprocessed.document),
-                        analysis: Arc::new(preprocessed.analysis),
-                        projection: Arc::new(projection),
-                        resource_versions: input.resource_versions.clone(),
-                    })
-                });
+                let workspace_result =
+                    worker_job.workspace_problem.clone().map(Err).or_else(|| {
+                        worker_job.workspace.as_ref().map(|input| {
+                            let mut analysis_options = worker_job.request.options.clone();
+                            analysis_options
+                                .attributes
+                                .clone_from(&input.options.attributes);
+                            input
+                                .analyze(&analysis_options, worker_job.cancellation.as_ref())
+                                .map_err(|error| WorkspaceProblem {
+                                    source_id: error.source_id.as_ref().map(ToString::to_string),
+                                    range: error.range.unwrap_or_else(zero_range),
+                                    code: error.diagnostic_code().to_owned(),
+                                    message: error.to_string(),
+                                })
+                        })
+                    });
                 (result, workspace_result)
             })
             .await
@@ -337,7 +309,12 @@ impl Backend {
         if let Some(workspace) = completed.workspace_result {
             match workspace {
                 Ok(workspace) => {
-                    publish_uris.extend(workspace.source_uris());
+                    publish_uris.extend(
+                        workspace
+                            .source_ids()
+                            .into_iter()
+                            .map(|source_id| source_id.to_string()),
+                    );
                     let _ = self.service.adopt_workspace(&completed.job, workspace);
                 }
                 Err(problem) => {
@@ -390,17 +367,12 @@ impl Backend {
     }
 }
 
-fn workspace_problem(job: &AnalysisJob, code: &str, message: &str) -> WorkspaceProblem {
-    WorkspaceProblem {
-        source_id: Some(job.uri.clone()),
-        range: adocweave::text::TextRange::new(
-            adocweave::text::TextSize::ZERO,
-            adocweave::text::TextSize::ZERO,
-        )
-        .expect("zero range is ordered"),
-        code: code.to_owned(),
-        message: message.to_owned(),
-    }
+fn zero_range() -> adocweave::text::TextRange {
+    adocweave::text::TextRange::new(
+        adocweave::text::TextSize::ZERO,
+        adocweave::text::TextSize::ZERO,
+    )
+    .expect("zero range is ordered")
 }
 
 struct CancelWorkerOnDrop(Arc<CancellationToken>);

@@ -7,80 +7,82 @@ const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", R
 const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROOT), "utf8"));
 
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
-  "## Supported targets",
-  "## Public contracts and breaking changes",
-  "## Known constraints",
-  "## Asset verification",
-  "## Upgrade and rollback",
+  "## 対応環境",
+  "## 公開契約と破壊的変更",
+  "## 既知の制約",
+  "## 配布物の検証",
+  "## 更新とロールバック",
 ];
 
 const highlights = [
-  "Document attributes can now be set, redefined, and unset in source order; later definitions do not affect earlier references.",
-  "Multiline soft and hard attribute-value continuations preserve their source ranges while exposing a folded evaluation value.",
-  "Include targets and conditional directives use the attribute state visible when each directive is read, including changes made by included documents.",
-  "Lint, Language Server features, native analysis, and WASM now share the same positioned attribute bindings and references.",
-  "WASM attribute queries include effective values, selected binding IDs, and original source IDs and ranges for included content.",
+  "CLIとLanguage Serverが、厳密なschema version付きの`.adocweave.toml`を共通のプロジェクト設定として読み込むようになりました。",
+  "`adocweave check`へCI用の失敗閾値、安定したJSON・GitHub Actions・SARIF出力、重要度別summaryを追加しました。",
+  "runtimeに依存しない`adocweave-workspace` crateを追加し、上限付きdisk resource、editor overlay、immutable snapshot、依存関係追跡および古い解析結果の拒否を提供します。",
+  "CLIが複数file、directoryおよびglobを決定的な順序で処理します。整形と一部の自動修正では、同じdirectory内で検証付きの原子的置換を利用できます。",
+  "Bash、Zsh、FishおよびPowerShellの補完scriptをCLIから生成できます。",
 ];
 
 const contractNotes = [
-  `unified package version: ${manifest.packageVersion}`,
-  `WASM protocol schema version: ${protocol.schemaVersion}; Worker protocol version: ${protocol.workerProtocolVersion}. Older requests and Worker envelopes are rejected.`,
-  "WASM requests can select `attributeQueries` and optionally provide a preprocessing resource snapshot. Responses return typed bindings, references, effective values, errors, and source provenance.",
-  "The Rust API exposes `AttributeEnvironment`, `AttributeQueryProduct`, binding histories, final values, and position-dependent resolution.",
-  "`ResolvedAttribute.binding` is optional because a hard-locked external attribute has no authored source occurrence.",
-  "`AnalysisOptions.attributes` accepts hard-locked set values and hard-locked unset values. Authored operations cannot override them.",
-  "The `duplicate-attribute` lint rule is removed. Valid redefinitions are not diagnostics; undefined, unused, cycle, depth, and size checks operate on positioned bindings.",
-  "Attribute Hover, Definition, References, and Completion use the binding visible at the cursor and project included definitions to their original documents.",
+  `統一package version：${manifest.packageVersion}`,
+  `WASM protocol schema version：${protocol.schemaVersion}、Worker protocol version：${protocol.workerProtocolVersion}。古いrequestとWorker envelopeは拒否されます。`,
+  "プロジェクト設定schema version 1は、不明なfieldと未対応のschema versionを拒否します。設定によってfilesystemまたはnetworkへの権限が付与されることはありません。",
+  "`adocweave check`の既定値は`--fail-on error`です。coreのerror診断でもprocessが失敗するようになりました。より厳格なgateには`--fail-on warning`、報告だけを行う場合は`--fail-on never`を使用してください。",
+  "human、JSON、GitHub ActionsおよびSARIFの各形式では、診断集合、順序および終了状態が一致します。`--summary`は件数をstderrへ出力します。",
+  "`format --write`と`check --fix`は置換前にすべての入力を検査し、symlinkと同時変更を拒否します。明示的に設定しない限り、modeと既存の改行規則を維持します。",
+  "`check --fix`は`Applicability::Always`の修正だけを適用し、重複するeditを拒否します。",
+  "Rust workspace APIでは型付きresource ID、revisionおよびgenerationを使用します。完了した解析結果は、現在のworkspace状態に対してacceptする必要があります。",
+  "`ResourceDocument.source`を`String`から`Arc<str>`へ変更しました。呼出側では共有されたimmutableなsource storageを使用してください。",
+  "新しい`adocweave-config`と`adocweave-workspace` crateはrepository内専用であり、crates.ioへは公開しません。",
 ];
 
 const knownConstraints = [
-  `Supported Rust toolchain: ${manifest.rustVersion}, fixed by this release's flake.lock.`,
-  "Native binaries are available only for Linux x86-64 and ARM64.",
-  "By default, a relative link remains inactive in HTML until a host resolves it to a URL accepted by the active URL policy. Hosts may explicitly allow authored relative URLs.",
-  "Local target validation assumes that the filesystem does not change during one command. Hardening against concurrent symlink replacement is tracked in issue #56.",
-  "HTML5 validation checks standards conformance; it does not make generated markup a trusted DOM.",
-  "The Zed extension is installed as a development extension; it is not published to the Zed Extension Gallery.",
-  "Packages are not published to crates.io, npm, or OS package registries. The Nix package is built directly from this repository flake.",
+  `対応Rust toolchain：${manifest.rustVersion}。このreleaseのflake.lockで固定しています。`,
+  "native binaryの対応環境はLinux x86-64とARM64だけです。",
+  "既定では、相対linkはhostが有効なURL policyで許可されたURLへ解決するまでHTMLで無効です。hostは文書に記述された相対URLを明示的に許可できます。",
+  "local targetの検証では、一つのcommandの実行中にfilesystemが変化しないことを仮定します。symlinkの同時置換に対する強化はIssue #56で追跡しています。",
+  "HTML5検証は標準適合性を確認しますが、生成したmarkupを信頼済みDOMにするものではありません。",
+  "Zed拡張はdevelopment extensionとして導入します。Zed Extension Galleryへは公開しません。",
+  "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
 ];
 
 function markdownList(items) {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
-export function appendRequiredReleaseNotes(body, tag) {
-  if (tag !== `v${manifest.packageVersion}`) throw new Error("release note tag does not match package version");
+export function buildReleaseNotes(tag) {
+  if (tag !== `v${manifest.packageVersion}`) throw new Error("Release Notesのtagがpackage versionと一致しません");
   const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
-  const notes = `## Highlights\n\n${markdownList(highlights)}\n\n` +
+  const notes = `## 主な変更\n\n${markdownList(highlights)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${markdownList(contractNotes)}\n\n` +
-    "This release requires consumers to match the listed package version exactly. Do not mix CLI, LSP, browser, or Zed assets from different versions. Hosts must request `resourceQueries`, resolve every successful resource with a concrete MIME type, and rebuild `RenderInputs` after each document revision.\n\n" +
+    "consumerは記載されたpackage versionを厳密に一致させる必要があります。異なるversionのCLI、LSP、browserまたはZed向け配布物を混在させないでください。hostは`resourceQueries`を要求し、取得に成功した各resourceを具体的なMIME typeで解決し、文書のrevisionごとに`RenderInputs`を再構築する必要があります。\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n${markdownList(knownConstraints)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n` +
-    "Download all release assets, run `sha256sum --check sha256.sum`, then verify required assets with `gh attestation verify <asset> --repo KeishiS/AdocWeave`.\n\n" +
+    "すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/AdocWeave`で検証してください。\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
-    "Update Rust integrations to resolve attributes at the consumer's source position. Treat a missing binding as an external value rather than a missing attribute.\n\n" +
-    "```rust\nlet resolved = analysis.attribute_environment().resolve_at(\"name\", offset);\n" +
-    "if let Some(resolved) = resolved {\n" +
-    "    let value = resolved.value?;\n" +
-    "    let authored_definition = resolved.binding;\n" +
-    "}\n```\n\n" +
-    "Browser integrations must request the new product explicitly and provide already-fetched include resources when preprocessing is required.\n\n" +
-    "```js\nclient.update({\n  version: 1,\n  source,\n  products: { ...products, attributeQueries: true },\n  preprocess: { resources },\n  analysisOptions: { attributes: { locked: \"value\", absent: null } },\n});\n```\n\n" +
-    "Install into a versioned directory and switch the `current` symlink only after verification. Keep the previous version until acceptance succeeds; rollback by restoring that symlink. See `docs/user-guide/release-installation.adoc`.\n";
-  return `${body.trim()}\n\n${notes}`;
+    "更新前に既存のCIを確認してください。coreのerror診断が既定の終了状態へ影響するようになりました。従来の報告のみの動作を一時的に維持するには`adocweave check --fail-on never`を使用し、その後プロジェクトの閾値を明示してください。\n\n" +
+    "共通policyが必要な場合だけプロジェクト設定を作成してください。schema versionは必須です。\n\n" +
+    "```toml\nschema-version = 1\n\n[lint]\nmax-diagnostics = 1000\n```\n\n" +
+    "CIではv0.13.0のCLIを固定し、機械可読なstdoutとsummaryを分離してください。\n\n" +
+    "```sh\nadocweave check --fail-on warning --format json --summary docs\n```\n\n" +
+    "preprocess snapshotを構築するRust consumerは、所有するtextを`Arc<str>`へ変換してください。複数文書を管理するconsumerはresourceとoverlayの状態を`adocweave-workspace`へ移行できます。単一文書向けの`Engine`は引き続き利用できます。\n\n" +
+    "version別directoryへ導入し、検証後にだけ`current` symlinkを切り替えてください。受入確認が成功するまで以前のversionを残し、rollback時はそのsymlinkを元へ戻してください。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
+  return notes;
 }
 
 export function validateReleaseNotes(body) {
   for (const heading of REQUIRED_RELEASE_NOTE_HEADINGS) {
-    if (!body.includes(heading)) throw new Error(`release notes are missing: ${heading}`);
+    if (!body.includes(heading)) throw new Error(`Release Notesに必須見出しがありません：${heading}`);
   }
 }
 
 if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
   const tag = process.argv[2];
-  let input = "";
-  for await (const chunk of process.stdin) input += chunk;
-  const output = appendRequiredReleaseNotes(input, tag);
+  // cargo-distの自動生成本文は英語であるため読み捨て、単一の日本語本文を生成します。
+  for await (const _chunk of process.stdin) {
+    // 標準入力を最後まで読み、呼出側のpipeを正常に終了させます。
+  }
+  const output = buildReleaseNotes(tag);
   validateReleaseNotes(output);
   process.stdout.write(output);
 }

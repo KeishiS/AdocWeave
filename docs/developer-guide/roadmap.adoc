@@ -8,28 +8,37 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== v0.11.xの保守
+== v0.13.0
 
-v0.11.xでは、公開API、WASM protocol、対応構文および既定のHTML出力契約を維持しながら、
-確認済みの不具合、文書、依存関係および検証基盤を修正します。新しいCLI機能、公開schema、
-既定診断および構文機能は次のminor release候補として扱います。
+v0.13.0では、既存の解析機能をteamのCI、CLIおよびeditor hostから同じ設定とworkspace状態で
+利用できるようにします。新しいAsciiDoc構文は追加せず、導入後の日常操作と組込み境界を改善します。
 
-直近の変更は実利用の結果を確認します。patch releaseは、確認済みの修正が複数揃った時点、
-または優先度の高い不具合を修正した時点で準備します。未完了作業のないrelease追跡Issueや、
-版数を進めることだけを目的としたreleaseは作成しません。
+* https://github.com/KeishiS/AdocWeave/issues/77[CLI・LSP・エディターで共有するプロジェクト設定]
+* https://github.com/KeishiS/AdocWeave/issues/76[CI向けcheck終了状態と機械可読形式]
+* https://github.com/KeishiS/AdocWeave/issues/80[再利用可能な高水準Workspace API]
+* https://github.com/KeishiS/AdocWeave/issues/79[複数ファイル処理・安全な書換え・shell completion]
 
-== v0.12.0
+設定契約を先に固定し、CI終了状態とWorkspace APIを同じ設定型へ統合します。複数fileのscan、
+整形および修正はこのresource identityとpolicyを再利用します。
 
-v0.12.0では、AdocWeaveの対応profileにおいて、AsciiDoc pre-specに沿った本文中の属性定義、
-再定義および解除に対応します。属性は文書の読込順に従って後続内容へ作用し、includeと
-conditional directiveを含むすべての利用側が同じ属性environmentを使用します。
+== v0.14.0
 
-* https://github.com/KeishiS/AdocWeave/issues/35[本文中の属性定義・再定義・解除]
-* https://github.com/KeishiS/AdocWeave/issues/61[属性の仕様・ADR・共有fixture]
+v0.14.0では、v0.13.0の共有設定とWorkspace APIを利用し、desktop editorで導入しやすい
+cross-platform環境を整えます。
 
-parser、preprocessor、substitution、公開query、HTML、Lint、LSPおよびWASMを段階的に移行します。
-公開Rust APIとWASM protocolの破壊的変更を許容し、位置ごとの値と定義元を明示できる契約へ
-整理します。ほかの構文機能は同じreleaseへ追加しません。
+* https://github.com/KeishiS/AdocWeave/issues/78[macOS・Windows向けCLIとLanguage Server]
+* https://github.com/KeishiS/AdocWeave/issues/75[VS Code拡張]
+
+macOS・Windowsのmanaged Language Serverを先に検証し、その配布契約をVS Code拡張から利用します。
+registry公開はこのversionの完了条件に含めず、手動配布で導入、更新および削除を検証します。
+
+== その後の利用環境
+
+desktop向け導線の後に、browserと対話的な確認経路を拡大します。
+
+* https://github.com/KeishiS/AdocWeave/issues/81[Browser Promise APIとbundler統合]
+* https://github.com/KeishiS/AdocWeave/issues/84[公式Playground]
+* https://github.com/KeishiS/AdocWeave/issues/85[local preview・watch mode]
 
 == 継続運用
 
@@ -46,6 +55,11 @@ parser、preprocessor、substitution、公開query、HTML、Lint、LSPおよびW
 
 * https://github.com/KeishiS/AdocWeave/issues/33[単体CLIのlocal resource profile評価]
 * https://github.com/KeishiS/AdocWeave/issues/34[RenovateによるNix依存更新の評価]
+* https://github.com/KeishiS/AdocWeave/issues/86[Homebrew・WinGet・Scoopの評価]
+* https://github.com/KeishiS/AdocWeave/issues/83[crates.io・npm公開の評価]
+* https://github.com/KeishiS/AdocWeave/issues/82[公式extension registry]
 
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
+標準package managerおよびpublic package registryは、公式binaryとeditor導線を先に安定させ、
+具体的な導入需要と長期保守責務が確認できた場合だけ採用を判断します。

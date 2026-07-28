@@ -45,6 +45,24 @@ fn every_subcommand_displays_help() {
 }
 
 #[test]
+fn completion_scripts_cover_every_supported_shell() {
+    for (shell, marker) in [
+        ("bash", "complete -F"),
+        ("zsh", "compdef"),
+        ("fish", "complete -c adocweave"),
+        ("powershell", "Register-ArgumentCompleter"),
+    ] {
+        let output = adocweave()
+            .args(["completion", shell])
+            .output()
+            .expect("completion");
+        assert!(output.status.success(), "{shell}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains(marker));
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
 fn cli_reports_release_name_and_version() {
     let output = adocweave()
         .arg("--version")
@@ -142,6 +160,487 @@ fn check_supports_human_and_json_diagnostics() {
     assert!(
         String::from_utf8_lossy(&json.stdout).starts_with("[{\"id\":\"trailing-whitespace@8:9\"")
     );
+}
+
+#[test]
+fn check_uses_one_failure_threshold_for_every_output_format() {
+    let source = b"trailing \n";
+    for format in ["human", "json", "github", "sarif"] {
+        let failed = run_with_stdin(
+            &["check", "--format", format, "--fail-on", "warning", "-"],
+            source,
+        );
+        assert!(!failed.status.success(), "{format} should fail on warnings");
+
+        let passed = run_with_stdin(
+            &["check", "--format", format, "--fail-on", "never", "-"],
+            source,
+        );
+        assert!(passed.status.success(), "{format} should honor never");
+    }
+}
+
+#[test]
+fn invalid_project_config_fails_regardless_of_threshold_and_output_format() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-invalid-config-ci-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    std::fs::write(root.join(".adocweave.toml"), "schema-version = 99\n")
+        .expect("write invalid config");
+    std::fs::write(root.join("document.adoc"), "content\n").expect("write document");
+
+    for format in ["human", "json", "github", "sarif"] {
+        let output = adocweave()
+            .current_dir(&root)
+            .args([
+                "check",
+                "--format",
+                format,
+                "--fail-on",
+                "never",
+                "document.adoc",
+            ])
+            .output()
+            .expect("configuration failure");
+        assert!(
+            !output.status.success(),
+            "{format} must not suppress an input failure"
+        );
+        assert!(output.stdout.is_empty(), "{format}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("schema-version"),
+            "{format}"
+        );
+    }
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
+fn check_emits_sarif_with_stable_rule_and_source_location() {
+    let output = run_with_stdin(
+        &["check", "--format", "sarif", "--summary", "-"],
+        b"trailing \n",
+    );
+
+    assert!(output.status.success());
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid SARIF JSON");
+    assert_eq!(value["version"], "2.1.0");
+    assert_eq!(value["runs"][0]["tool"]["driver"]["name"], "AdocWeave");
+    assert_eq!(
+        value["runs"][0]["results"][0]["ruleId"],
+        "trailing-whitespace"
+    );
+    assert_eq!(
+        value["runs"][0]["results"][0]["partialFingerprints"]["adocweaveDiagnosticId"],
+        "trailing-whitespace@8:9"
+    );
+    assert_eq!(
+        value["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        "<stdin>"
+    );
+    assert_eq!(
+        value["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]["startColumn"],
+        9
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "adocweave check: errors=0, warnings=1, information=0, hints=0\n"
+    );
+}
+
+#[test]
+fn multi_file_sarif_is_one_log_with_one_run() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-sarif-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    std::fs::write(root.join("a.adoc"), "a \n").expect("first");
+    std::fs::write(root.join("b.adoc"), "b \n").expect("second");
+
+    let output = adocweave()
+        .args(["check", "--format", "sarif", "--fail-on", "never"])
+        .arg(&root)
+        .output()
+        .expect("SARIF check");
+    assert!(output.status.success());
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one SARIF document");
+    assert_eq!(value["runs"].as_array().expect("runs").len(), 1);
+    assert_eq!(
+        value["runs"][0]["results"]
+            .as_array()
+            .expect("results")
+            .len(),
+        2
+    );
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
+fn check_emits_github_annotations_and_an_opt_in_stderr_summary() {
+    let output = run_with_stdin(
+        &["check", "--format", "github", "--summary", "-"],
+        b"trailing \n",
+    );
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with(
+        "::warning file=<stdin>,line=1,col=9,title=trailing-whitespace::trailing whitespace\n"
+    ));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "adocweave check: errors=0, warnings=1, information=0, hints=0\n"
+    );
+}
+
+#[test]
+fn check_rejects_unknown_ci_contract_values() {
+    for arguments in [
+        ["check", "--format", "yaml", "-"],
+        ["check", "--fail-on", "information", "-"],
+    ] {
+        let output = run_with_stdin(&arguments, b"");
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn project_config_is_discovered_and_can_be_disabled_explicitly() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-config-cli-{unique}"));
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).expect("create project");
+    std::fs::write(
+        root.join(".adocweave.toml"),
+        include_str!("../../../fixtures/config/shared-v1/.adocweave.toml"),
+    )
+    .expect("write config");
+    std::fs::write(docs.join("manual.adoc"), "One\n\nTwo\n").expect("write document");
+
+    let configured = adocweave()
+        .current_dir(&root)
+        .args(["format", "docs/manual.adoc"])
+        .output()
+        .expect("run configured formatter");
+    assert!(configured.status.success());
+    assert_eq!(configured.stdout, b"One\r\n\r\nTwo");
+
+    let defaults = adocweave()
+        .current_dir(&root)
+        .args(["format", "--no-config", "docs/manual.adoc"])
+        .output()
+        .expect("run default formatter");
+    assert!(defaults.status.success());
+    assert_eq!(defaults.stdout, b"One\n\nTwo\n");
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
+fn commands_validate_only_the_configuration_paths_they_consume() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-config-scope-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    std::fs::write(
+        root.join(".adocweave.toml"),
+        "schema-version = 1\n[html]\ncomplete = true\nstylesheet-files = [\"missing.css\"]\n",
+    )
+    .expect("write config");
+    std::fs::write(root.join("manual.adoc"), "text\n").expect("write document");
+
+    let checked = adocweave()
+        .current_dir(&root)
+        .args(["check", "manual.adoc"])
+        .output()
+        .expect("check");
+    assert!(checked.status.success());
+
+    let converted = adocweave()
+        .current_dir(&root)
+        .args(["convert", "manual.adoc"])
+        .output()
+        .expect("convert");
+    assert!(!converted.status.success());
+    assert!(String::from_utf8_lossy(&converted.stderr).contains("missing.css"));
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
+fn configured_include_accepts_explicit_roots_without_a_redundant_flag() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-config-include-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    std::fs::write(
+        root.join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\n",
+    )
+    .expect("write config");
+    std::fs::write(root.join("manual.adoc"), "include::part.adoc[]\n").expect("root");
+    std::fs::write(root.join("part.adoc"), "included\n").expect("part");
+
+    let output = adocweave()
+        .current_dir(&root)
+        .args(["convert", "--allow-root", ".", "manual.adoc"])
+        .output()
+        .expect("configured include");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("included"));
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
+fn config_show_reports_source_and_redacts_attribute_values() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-config-show-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    let config = root.join("project.toml");
+    std::fs::write(
+        &config,
+        "schema-version = 1\n[analysis.attributes.token]\nvalue = \"do-not-print\"\n",
+    )
+    .expect("write config");
+
+    let output = adocweave()
+        .current_dir(&root)
+        .args(["config", "show", "--config", "project.toml"])
+        .output()
+        .expect("show config");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 JSON");
+    assert!(!stdout.contains("do-not-print"));
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("config JSON");
+    assert_eq!(
+        value["source"],
+        config.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(value["analysis"]["attributes"]["token"]["state"], "set");
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
+fn format_write_recurses_deterministically_and_preserves_file_mode() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-format-write-{unique}"));
+    let nested = root.join("nested");
+    std::fs::create_dir_all(&nested).expect("create project");
+    let first = root.join("a.adoc");
+    let second = nested.join("b.adoc");
+    std::fs::write(&first, "a  \n").expect("first");
+    std::fs::write(&second, "b  \r\nline").expect("second");
+    std::fs::write(root.join("ignored.txt"), "ignored  \n").expect("ignored");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&first, std::fs::Permissions::from_mode(0o640))
+            .expect("permissions");
+    }
+
+    let output = adocweave()
+        .args(["format", "--write", "--summary"])
+        .arg(&root)
+        .output()
+        .expect("format directory");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "a\n");
+    assert_eq!(std::fs::read_to_string(&second).unwrap(), "b\r\nline");
+    assert_eq!(
+        std::fs::read_to_string(root.join("ignored.txt")).unwrap(),
+        "ignored  \n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "adocweave format: files=2, changed=2\n"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&first).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+    }
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn format_diff_and_dry_run_do_not_modify_inputs() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-format-diff-{unique}"));
+    std::fs::create_dir(&root).expect("project");
+    let document = root.join("manual.adoc");
+    std::fs::write(&document, "text  \n").expect("document");
+
+    let diff = adocweave()
+        .args(["format", "--diff"])
+        .arg(&document)
+        .output()
+        .expect("diff");
+    assert!(diff.status.success());
+    let stdout = String::from_utf8_lossy(&diff.stdout);
+    assert!(stdout.contains("--- a/"));
+    assert!(stdout.contains("-text  "));
+    assert!(stdout.contains("+text"));
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), "text  \n");
+
+    let dry_run = adocweave()
+        .args(["format", "--write", "--dry-run"])
+        .arg(&document)
+        .output()
+        .expect("dry run");
+    assert!(dry_run.status.success());
+    assert_eq!(std::fs::read_to_string(&document).unwrap(), "text  \n");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn check_fix_applies_only_always_safe_non_conflicting_edits() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-check-fix-{unique}"));
+    std::fs::create_dir(&root).expect("project");
+    let first = root.join("a.adoc");
+    let second = root.join("b.adoc");
+    std::fs::write(&first, "first  \n").expect("first");
+    std::fs::write(&second, "second  \n").expect("second");
+
+    let dry_run = adocweave()
+        .args(["check", "--fix", "--dry-run", "--summary"])
+        .args([&first, &second])
+        .output()
+        .expect("dry-run fix");
+    assert!(dry_run.status.success());
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "first  \n");
+    assert_eq!(
+        String::from_utf8_lossy(&dry_run.stderr),
+        "adocweave check: errors=0, warnings=0, information=0, hints=0, changed=2\n"
+    );
+
+    let output = adocweave()
+        .args(["check", "--fix", "--summary"])
+        .args([&first, &second])
+        .output()
+        .expect("fix");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "first\n");
+    assert_eq!(std::fs::read_to_string(&second).unwrap(), "second\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "adocweave check: errors=0, warnings=0, information=0, hints=0, changed=2\n"
+    );
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn check_glob_deduplicates_files_and_emits_source_ids() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-check-glob-{unique}"));
+    let nested = root.join("nested");
+    std::fs::create_dir_all(&nested).expect("project");
+    let first = root.join("a.adoc");
+    let second = nested.join("b.adoc");
+    std::fs::write(&first, "first  \n").expect("first");
+    std::fs::write(&second, "second  \n").expect("second");
+
+    let output = adocweave()
+        .current_dir(&root)
+        .args(["check", "--format", "json", "--glob", "**/*.adoc", "a.adoc"])
+        .output()
+        .expect("glob");
+    assert!(output.status.success());
+    let diagnostics: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("diagnostic JSON");
+    assert_eq!(diagnostics.len(), 2);
+    let source_ids = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["sourceId"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(source_ids.len(), 2);
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn color_never_is_plain_and_color_always_is_explicit() {
+    let plain = run_with_stdin(&["check", "--color", "never", "-"], b"text  \n");
+    let colored = run_with_stdin(&["check", "--color", "always", "-"], b"text  \n");
+    assert!(!plain.stdout.contains(&0x1b));
+    assert!(colored.stdout.contains(&0x1b));
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_symlink_inputs_are_rejected_without_modifying_the_target() {
+    use std::os::unix::fs::symlink;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-format-symlink-{unique}"));
+    std::fs::create_dir(&root).expect("project");
+    let target = root.join("target.adoc");
+    let link = root.join("link.adoc");
+    std::fs::write(&target, "target  \n").expect("target");
+    symlink(&target, &link).expect("symlink");
+
+    let output = adocweave()
+        .args(["format", "--write"])
+        .arg(&link)
+        .output()
+        .expect("format");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("symbolic links"));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "target  \n");
+    std::fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]
@@ -298,6 +797,39 @@ fn check_accepts_relative_targets_without_activating_them_in_html() {
     assert!(converted.status.success());
     assert_eq!(converted.stdout, b"<p>release manifest guide</p>\n");
     assert!(converted.stderr.is_empty());
+}
+
+#[test]
+fn multi_file_format_preflights_configured_includes_before_writing() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-format-include-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    std::fs::write(
+        root.join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+    )
+    .expect("write config");
+    let first = root.join("a.adoc");
+    let second = root.join("b.adoc");
+    std::fs::write(&first, "a  \n").expect("first");
+    std::fs::write(&second, "include::missing.adoc[]\nb  \n").expect("second");
+
+    let output = adocweave()
+        .current_dir(&root)
+        .args(["format", "--write", "."])
+        .output()
+        .expect("format directory");
+    assert!(!output.status.success());
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "a  \n");
+    assert_eq!(
+        std::fs::read_to_string(&second).unwrap(),
+        "include::missing.adoc[]\nb  \n"
+    );
+
+    std::fs::remove_dir_all(root).expect("remove project");
 }
 
 #[test]
