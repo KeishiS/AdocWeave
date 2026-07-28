@@ -135,6 +135,20 @@ test("quality cannot omit dependency governance or the source gate", () => {
   );
 });
 
+test("native smoke cannot repeat source adapter tests", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      smoke: inputs.smoke.replace(
+        "      - name: Extracted release binary smoke tests",
+        "      - run: npm test --prefix editors/vscode\n      - name: Extracted release binary smoke tests",
+      ),
+    }),
+    /must not repeat editor adapter tests/,
+  );
+});
+
 test("candidate acceptance cannot omit the Nix package contract", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(

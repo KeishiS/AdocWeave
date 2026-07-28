@@ -219,6 +219,19 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   if (dumpbin.if !== "runner.os == 'Windows'" || !dumpbin.run?.includes("ADOCWEAVE_DUMPBIN")) {
     fail("Windows smoke must resolve dumpbin only on Windows");
   }
+  if (smoke.includes("npm ci") || smoke.includes("npm test")) {
+    fail("native artifact smoke must not repeat editor adapter tests from the source quality gate");
+  }
+  const nativeSmokeRun = step(
+    smokeDoc.jobs?.smoke,
+    (item) => item.name === "Extracted release binary smoke tests",
+    "native release binary smoke step is missing",
+  ).run;
+  requireCommand(
+    nativeSmokeRun,
+    'node tools/native-release-smoke.mjs target/distrib "${{ matrix.target }}"',
+    "native artifact smoke must verify only the extracted release binaries",
+  );
 
   const aggregateRun = step(releaseJobs["verify-candidate"], (item) => item.name === "Complete candidate metadata generation and verification", "candidate metadata step is missing").run;
   requireCommand(aggregateRun, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");

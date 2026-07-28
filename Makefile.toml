@@ -209,7 +209,7 @@ command = "nix"
 args = ["flake", "check", "--no-build"]
 
 [tasks.native-release-smoke]
-description = "Smoke test extracted CLI and LSP release archives for NATIVE_TARGET"
+description = "Smoke test only the extracted CLI and LSP release archives for NATIVE_TARGET"
 script_runner = "@shell"
 script = '''
 if [ -z "${NATIVE_TARGET:-}" ] || [ -z "${NATIVE_ARTIFACT_DIR:-}" ]; then
@@ -787,7 +787,7 @@ nix run . -- --version --json | jq -e --arg version "$version" '.packageVersion 
 '''
 
 [tasks.quality]
-description = "Run the merge-time source quality gate without release-candidate work"
+description = "Run the merge-time source quality gate, including editor adapter tests, without release-candidate work"
 dependencies = [
   "fmt-check",
   "check",

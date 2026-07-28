@@ -280,5 +280,9 @@ try {
   await smokeForcedProcessLifecycle(lsp);
   process.stdout.write(`native release smoke passed: ${target}\n`);
 } finally {
-  rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  try {
+    rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error) {
+    process.stderr.write(`warning: native smokeの一時ディレクトリを削除できませんでした: ${error.message}\n`);
+  }
 }
