@@ -676,7 +676,7 @@ while IFS= read -r path; do
   documents=$((documents + 1))
   fail_on=warning
   case "$path" in
-    fixtures/*|fuzz/*) fail_on=error ;;
+    fixtures/*|fuzz/*|editors/vscode/test/fixtures/*) fail_on=error ;;
   esac
   if output="$(target/debug/adocweave check --fail-on "$fail_on" "$path" 2>&1)"; then
     if [ -n "$output" ]; then
