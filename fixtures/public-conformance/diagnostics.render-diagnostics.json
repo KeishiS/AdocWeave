@@ -1,0 +1,1 @@
+[{"id":"invalid-url-scheme@0:19","code":"invalid-url-scheme","severity":"warning","range":{"start":0,"end":19},"message":"URL is rejected by the render policy","related":[],"fixes":[]}]

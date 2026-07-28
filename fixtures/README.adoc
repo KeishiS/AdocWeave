@@ -17,6 +17,17 @@ fixtureは担当機能ごとに分類する。各機能ディレクトリには�
 差分理由および仕様versionへの影響判断を記録しなければならない。native、WASMおよび
 LSPはこのmanifestまたは参照先の同じソースを使用し、別内容の複製fixtureを作らない。
 
+`public-conformance.json`は、利用側の適合性試験で再利用する公開fixtureのmanifestである。
+各caseで入力、投影、HTML、解析診断、描画診断、適用profileおよび対象構文を一つの対応として示し、
+manifest全体で出力契約versionとlicenseを示す。各caseの`stableContract`だけを利用側が依存できる
+契約とし、比較用file全体のbyte列、`implementationDetails`および
+`globalImplementationDetails`に列挙した表現はrepository内の回帰検査に限定する。
+
+`schemaVersion`はmanifest形式の非互換変更、`outputContractVersion`は`stableContract`の
+非互換変更で更新する。公開契約を変更するときは、manifest、参照する期待出力およびRelease Notesを
+同じ変更で更新する。契約外の空白、属性順または未選択の投影fieldだけを変更する場合は
+`outputContractVersion`を更新しない。
+
 `syntax-support.json`は、対応表、互換性評価、文法および対応するfixtureの同期を検査するための
 manifestである。人向けの仕様は`docs/`に記載し、このファイルへ説明文を重複させない。
 

@@ -131,3 +131,27 @@ JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexm
 同じpackage version、解析結果、``RenderPolicy``および``RenderInputs``からは同じHTMLを生成します。
 属性順、改行、空白および末尾改行はテスト用の期待出力で固定し、変更時は意図した差分であることを
 確認します。
+
+== 公開適合性fixture
+
+利用側はlink:../../fixtures/public-conformance.json[公開適合性fixture]で、入力AsciiDoc、投影、
+HTML、解析診断および描画診断の対応を検査できます。各caseに記録したanalysis profileとrender profileを
+適用し、`stableContract`のJSON pointer、HTML断片および診断codeを比較します。
+
+公開fixtureは次の構文を分離して扱います。
+
+* 文書タイトル、TOCおよび節番号
+* block titleとsource language optionを記述したsource block
+* inline数式およびblock数式
+* table、quoteおよびlist
+* 安全でないURLの解析診断、描画診断および非active HTML fallback
+
+公開契約は`stableContract`に列挙した意味上の値とHTML構造だけです。期待出力file全体はAdocWeave内の
+決定性とruntime間の一致を検査するgolden fileであり、JSONのkey順と空白、HTMLの属性順、字下げ、
+空白、末尾改行および未選択の投影fieldは利用側の安定APIではありません。利用側はこれらのbyte列を
+固定せず、必要な契約項目だけを選択して検査します。
+
+Source blockのblock title、追加optionおよび行番号の意味やmarkupはIssue #108で追跡する将来の
+projection fieldであり、現行契約ではsource languageとsource本文だけを保証します。Tableのcell構造、
+quoteの追加presentationおよびlist itemを表す将来のprojection fieldはIssue #109で追跡し、現行契約では
+tableとlistのHTML断片、およびquoteの既存`blockPresentations`だけを保証します。

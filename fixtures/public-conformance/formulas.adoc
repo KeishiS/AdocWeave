@@ -1,0 +1,9 @@
+= Formula Contract
+:stem: latexmath
+
+Inline stem:[x < y].
+
+[stem]
+++++
+x^2 < y
+++++
