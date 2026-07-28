@@ -143,8 +143,8 @@ pub mod output {
         pub use crate::projection::{
             BlockPresentationKind, BlockPresentationProjection, DocumentProjection, ExternalLink,
             FormulaKind, FormulaProjection, OrderedListProjection, ProjectedText, ReferenceEdge,
-            SearchTextKind, SearchTextSegment, SearchableText, SourceBlockProjection, project,
-            searchable_text,
+            RenderingFeatures, SearchTextKind, SearchTextSegment, SearchableText,
+            SourceBlockProjection, project, searchable_text,
         };
     }
 }

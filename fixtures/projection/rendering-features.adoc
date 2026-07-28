@@ -1,0 +1,33 @@
+= Rendering features
+:toc:
+
+== Visible section
+
+[source,RUST]
+----
+fn main() {}
+----
+
+[source,JavaScript]
+----
+console.log("hello");
+----
+
+[source,rust]
+----
+fn duplicate() {}
+----
+
+[source,C++]
+----
+int main() {}
+----
+
+latexmath:[x + y]
+
+latexmath:[x - y]
+
+[latexmath]
+++++
+x * y
+++++

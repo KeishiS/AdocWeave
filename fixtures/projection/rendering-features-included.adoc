@@ -1,0 +1,15 @@
+[source,kotlin]
+----
+fun main() {}
+----
+
+ifdef::excluded[]
+[source,swift]
+----
+print("excluded")
+----
+
+latexmath:[excluded]
+endif::[]
+
+latexmath:[x^2]

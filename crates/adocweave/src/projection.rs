@@ -1,5 +1,6 @@
 //! Deterministic, host-independent projections derived from one [`Analysis`].
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use crate::core::{Analysis, SourceId};
@@ -26,6 +27,18 @@ pub struct DocumentProjection {
     pub catalogs: crate::catalog::DocumentCatalogs,
     pub structure: crate::structure::DocumentStructure,
     pub presentation: crate::presentation::DocumentPresentation,
+}
+
+/// Semantic features that a host may need to render a document.
+///
+/// The values describe document content only. They do not select renderer
+/// implementations, JavaScript libraries, themes, or asset URLs.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RenderingFeatures {
+    pub math_languages: Vec<String>,
+    pub source_languages: Vec<String>,
+    pub table_of_contents: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -594,6 +607,37 @@ fn fold_line_endings(value: &str) -> String {
 }
 
 impl DocumentProjection {
+    /// Returns normalized rendering requirements for this projected document.
+    ///
+    /// Languages are canonicalized, unique, and returned in their documented
+    /// stable order.
+    /// The TOC value reports whether the projected TOC has any entries.
+    pub fn rendering_features(&self) -> RenderingFeatures {
+        let math_languages = self
+            .formulas
+            .iter()
+            .map(|formula| math_language_feature(formula.language))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|(_, name)| name.to_owned())
+            .collect();
+        let source_languages = self
+            .source_blocks
+            .iter()
+            .filter_map(|source| source.language.as_deref())
+            .map(canonical_source_language)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        RenderingFeatures {
+            math_languages,
+            source_languages,
+            table_of_contents: self.presentation.toc_policy().enabled
+                && !self.presentation.toc().is_empty(),
+        }
+    }
+
     /// Stable JSON without relying on a host serialization framework.
     pub fn render_json(&self) -> String {
         let mut output = String::new();
@@ -751,6 +795,26 @@ impl DocumentProjection {
         }
         output.push_str("]}}");
         output
+    }
+}
+
+pub(crate) fn canonical_source_language(language: &str) -> String {
+    language
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+const fn math_language_feature(language: crate::inline::MathLanguage) -> (u8, &'static str) {
+    match language {
+        crate::inline::MathLanguage::Latex => (0, "latexmath"),
+        crate::inline::MathLanguage::Typst => (1, "typst"),
     }
 }
 
@@ -1042,10 +1106,114 @@ fn json_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::inline::MathLanguage;
+    use crate::preprocessor::{
+        PreprocessOptions, ResourceDocument, ResourceSnapshot, preprocess_and_analyze,
+    };
     use crate::reference::ResolvedReference;
     use crate::{AnalysisOptions, Engine, SourceId};
 
     use super::*;
+
+    #[test]
+    fn rendering_features_are_typed_unique_and_deterministically_sorted() {
+        let source = include_str!("../../../fixtures/projection/rendering-features.adoc");
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(source)
+            .expect("analysis");
+        let mut projected = project(&analysis, &RenderInputs::default());
+        assert_eq!(
+            projected
+                .formulas
+                .iter()
+                .map(|formula| formula.kind)
+                .collect::<Vec<_>>(),
+            [FormulaKind::Inline, FormulaKind::Inline, FormulaKind::Block]
+        );
+        let latex = projected.formulas[0].clone();
+        let mut typst = latex.clone();
+        typst.language = MathLanguage::Typst;
+        projected.formulas.extend([typst, latex]);
+
+        assert_eq!(
+            projected.rendering_features(),
+            RenderingFeatures {
+                math_languages: vec!["latexmath".to_owned(), "typst".to_owned()],
+                source_languages: vec![
+                    "c--".to_owned(),
+                    "javascript".to_owned(),
+                    "rust".to_owned()
+                ],
+                table_of_contents: true,
+            }
+        );
+        assert!(!projected.presentation.toc().is_empty());
+    }
+
+    #[test]
+    fn rendering_features_reflect_preprocessed_includes() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "features.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("included:features.adoc"),
+                source: include_str!(
+                    "../../../fixtures/projection/rendering-features-included.adoc"
+                )
+                .into(),
+            },
+        );
+        let options = PreprocessOptions {
+            enable_includes: true,
+            ..PreprocessOptions::default()
+        };
+        let preprocessed = preprocess_and_analyze(
+            &Engine::new(AnalysisOptions::default()),
+            "include::features.adoc[]\n",
+            &snapshot,
+            &options,
+        )
+        .expect("preprocessed analysis");
+
+        assert_eq!(
+            project(&preprocessed.analysis, &RenderInputs::default()).rendering_features(),
+            RenderingFeatures {
+                math_languages: vec!["latexmath".to_owned()],
+                source_languages: vec!["kotlin".to_owned()],
+                table_of_contents: false,
+            }
+        );
+    }
+
+    #[test]
+    fn rendering_features_are_empty_when_document_needs_no_optional_rendering() {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze("Plain paragraph.\n")
+            .expect("analysis");
+
+        assert_eq!(
+            project(&analysis, &RenderInputs::default()).rendering_features(),
+            RenderingFeatures::default()
+        );
+
+        let section_without_toc = Engine::new(AnalysisOptions::default())
+            .analyze("= Title\n\n== Section\n")
+            .expect("analysis");
+        assert!(
+            !project(&section_without_toc, &RenderInputs::default())
+                .rendering_features()
+                .table_of_contents
+        );
+
+        let toc_without_entries = Engine::new(AnalysisOptions::default())
+            .analyze("= Title\n:toc:\n")
+            .expect("analysis");
+        assert!(
+            !project(&toc_without_entries, &RenderInputs::default())
+                .rendering_features()
+                .table_of_contents
+        );
+    }
 
     #[test]
     fn projections_are_stable_and_keep_links_and_reference_kinds_distinct() {
