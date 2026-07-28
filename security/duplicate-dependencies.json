@@ -16,11 +16,6 @@
         "crate": "windows-sys",
         "versions": ["0.59.0", "0.61.2"],
         "reason": "async-lspのclient-monitorが使うwaitpid-anyとTokio・rustixがWindows向けに異なるminor versionを要求するため"
-      },
-      {
-        "crate": "winnow",
-        "versions": ["0.7.15", "1.0.4"],
-        "reason": "toml 0.9の公開parserと内部toml_parserが移行中の異なるmajor versionを要求するため"
       }
     ],
     "zed-extension": [
