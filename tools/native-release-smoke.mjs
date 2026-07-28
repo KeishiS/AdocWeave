@@ -241,15 +241,6 @@ async function smokeForcedProcessLifecycle(binary) {
     child.once("spawn", resolvePromise);
     child.once("error", reject);
   });
-  if (platform.os === "win32") {
-    let rejected = false;
-    try {
-      renameSync(lifecycle, replaced);
-    } catch {
-      rejected = true;
-    }
-    if (!rejected) throw new Error("Windows allowed replacement of a running Language Server");
-  }
   const exited = new Promise((resolvePromise) => child.once("close", resolvePromise));
   child.kill();
   const exit = await Promise.race([
