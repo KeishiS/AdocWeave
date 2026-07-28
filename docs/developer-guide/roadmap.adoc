@@ -8,13 +8,39 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 次の利用環境
+== v0.15.0：local targetとinclude境界
 
-desktop向け導線の後に、browserと対話的な確認経路を拡大します。
+次のrelease trainでは、filesystemを扱う検査とinclude読込みの安全性境界を安定させます。
+
+* https://github.com/KeishiS/adocweave/issues/60[論理ID・filesystem path・読込結果の型分離]
+* https://github.com/KeishiS/adocweave/issues/56[filesystem競合耐性の設計]
+
+型分離の不変条件を踏まえ、filesystem競合耐性の設計で脅威モデル、
+platformごとの保証差および非目標を定めます。
+
+== 将来：解析結果とHTMLの公開契約
+
+v0.15.0の後は、利用側が生成HTMLの偶然の構造へ依存しないよう、公開fixtureと意味情報を
+順に整備します。
+
+. https://github.com/KeishiS/adocweave/issues/111[解析結果とHTML出力の適合性fixture]
+. https://github.com/KeishiS/adocweave/issues/108[ソースブロックのタイトルと行番号指定]
+. https://github.com/KeishiS/adocweave/issues/109[数式の言語と表示形式]
+. https://github.com/KeishiS/adocweave/issues/110[描画に必要な機能の構造化query]
+
+描画機能queryはソースブロックと数式で保持した意味情報を集約します。各機能の追加時には
+公開fixtureも更新します。
+
+== 利用環境
+
+公開契約と安全性境界を再利用し、browserと対話的な確認経路を拡大します。
 
 * https://github.com/KeishiS/adocweave/issues/81[Browser Promise APIとbundler統合]
 * https://github.com/KeishiS/adocweave/issues/84[公式Playground]
 * https://github.com/KeishiS/adocweave/issues/85[local preview・watch mode]
+
+PlaygroundはBrowser APIを利用します。previewにはlocal target、includeおよび監視対象の境界を
+反映します。
 
 == 継続運用
 
@@ -37,5 +63,6 @@ desktop向け導線の後に、browserと対話的な確認経路を拡大しま
 
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
-標準package managerおよびpublic package registryは、公式binaryとeditor導線を先に安定させ、
-具体的な導入需要と長期保守責務が確認できた場合だけ採用を判断します。
+extension registry、public package registryおよび標準package managerは低優先度とし、
+他の施策の前提にしません。公式binaryとeditor導線を先に安定させ、具体的な導入需要と
+長期保守責務が確認できた場合だけ採用を判断します。
