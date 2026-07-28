@@ -13,7 +13,7 @@
       "architecture": "arm64",
       "archive": "zip",
       "executable": "adocweave-lsp",
-      "minimumOsVersion": "13.0",
+      "minimumOsVersion": "14.0",
       "os": "darwin",
       "target": "aarch64-apple-darwin"
     },
