@@ -1,0 +1,5 @@
+.Example <source>
+[source,rust,linenums,start=7]
+----
+fn main() {}
+----

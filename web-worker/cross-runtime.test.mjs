@@ -21,7 +21,7 @@ function requestFor(entry) {
     : entry.source;
   return {
     packageVersion: release.packageVersion,
-    sourceId: `conformance:${entry.name}`,
+    sourceId: entry.sourceId ?? `conformance:${entry.name}`,
     version: 1,
     generation: 1,
     source,

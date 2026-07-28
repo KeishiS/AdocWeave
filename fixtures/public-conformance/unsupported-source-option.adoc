@@ -1,0 +1,4 @@
+[source,rust,options=unknown]
+----
+unsupported();
+----

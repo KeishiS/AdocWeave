@@ -180,7 +180,15 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
             };
             block_problem_issues(&mut block.problems, block_name, output);
         }
-        AstBlock::Unsupported(_) => {}
+        AstBlock::Unsupported(block) => {
+            if block.reason == "invalid source block attribute" {
+                output.push(issue(
+                    SyntaxIssueClass::InvalidAttribute,
+                    block.range,
+                    "unsupported source block option",
+                ));
+            }
+        }
     }
 }
 
