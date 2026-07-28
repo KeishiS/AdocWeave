@@ -67,6 +67,12 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 ``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
 
+CLIのinclude loaderは処理段階を型で区別します。コアが所有する``IncludeRequest``は論理targetと
+source rangeだけを持ちます。Filesystem policyとsymlink検査を通過した場合だけ、loaderがprivate fieldを持つ
+``ValidatedFilesystemTarget``を構築します。この値を同じsessionの読込処理が消費した場合だけ、
+論理的な``source_id``、取得済みbyte列およびfilesystem provenanceを持つ``LoadedSource``を構築します。
+未検証pathから読込結果を構築するAPIや、別targetの``source_id``とbyte列を組み合わせるAPIは公開しません。
+
 ``base_uri``はroot文書の相対targetへ前置する論理的なsnapshot keyであり、実在するpathを意味しません。
 Include先の相対targetは、そのresource keyの親を基準に解決します。取得方法、cache、認証、timeout、
 redirect、response size、content typeおよびnetwork addressの制限は利用側アプリが管理します。
@@ -77,6 +83,8 @@ Includeを無効にした場合はdirectiveを展開せず、snapshotも参照�
 
 CLIとLanguage Serverは、同一のpath検査、上限付きUTF-8読み取り、byte数集計および
 依存関係構築規則を使用します。各adapterで異なる上限やsymlink判定を設けません。
+Canonical pathは検査、cacheおよびprovenanceに限定し、診断とsource mapにはinclude要求から導出した
+論理的な``SourceId``を使用します。Aliasが同じcanonical fileを指す場合も論理IDは統合しません。
 
 === ソースマップ
 
