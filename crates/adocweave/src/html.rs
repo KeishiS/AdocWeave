@@ -555,7 +555,10 @@ fn render_block(
             if let Some(language) = &block.language {
                 if policy.source_languages.allows(language) {
                     output.push_str(" class=\"language-");
-                    escape_html_into(output, &safe_language_class(language));
+                    escape_html_into(
+                        output,
+                        &crate::projection::canonical_source_language(language),
+                    );
                     output.push('"');
                 } else if policy.source_languages.unknown == UnknownSourceLanguage::Diagnostic {
                     context.diagnostics.push(render_diagnostic(
@@ -606,7 +609,10 @@ fn render_block(
                 if let Some(language) = &source.language {
                     if policy.source_languages.allows(language) {
                         output.push_str(" class=\"language-");
-                        escape_html_into(output, &safe_language_class(language));
+                        escape_html_into(
+                            output,
+                            &crate::projection::canonical_source_language(language),
+                        );
                         output.push('"');
                     } else if policy.source_languages.unknown == UnknownSourceLanguage::Diagnostic {
                         context.diagnostics.push(render_diagnostic(
@@ -1103,19 +1109,6 @@ fn render_list(
     output.push_str("</");
     output.push_str(tag);
     output.push_str(">\n");
-}
-
-fn safe_language_class(language: &str) -> String {
-    language
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect()
 }
 
 fn bibliography_entry_for_item<'a>(

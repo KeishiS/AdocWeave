@@ -53,6 +53,20 @@ DBまたはアプリ固有のschemaへアクセスしません。
 ``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON／WASM protocolの既存enum値は
 互換性のため``latex``を維持し、AsciiDoc構文名やHTMLの``data-math-language``と混同しません。
 
+``DocumentProjection::rendering_features()``は、描画に追加対応が必要な数式言語、Source block言語および
+TOC出力の有無を``RenderingFeatures``として返します。言語は重複を除きます。数式言語は固定順の
+``latexmath``、``typst``で返し、将来の言語はこの順序表へ追加します。Source block言語はHTMLの言語classと
+同じ規則でASCII英字を小文字化し、ASCII英数字、``-``および``_``以外を``-``へ置き換えてから文字列の
+昇順で返します。言語指定のないSource blockは含めません。TOCは有効化され、かつ実際の投影結果に
+一つ以上の項目がある場合にだけ``true``です。
+
+このqueryはpreprocess後の``Analysis``から作ったprojectionを対象とし、展開されたincludeの内容も反映します。
+返す値は文書が持つ意味上の機能だけであり、HTML構造、renderer、JavaScriptライブラリ、themeおよび資産URLを
+選択しません。``RenderingFeatures``は非網羅的な公開型です。将来fieldを追加する場合や返す言語名を増やす
+場合はminor versionの変更としてRelease Notesに記録します。既存の``MathLanguage``へvariantを追加すると
+利用側の網羅的なmatchへ影響するため、このqueryは同enumを公開fieldとして保持せず、安定したAsciiDoc向け
+言語名を返します。
+
 解決失敗は安定した種類だけを保持し、自由形式のmessageや表示名を含めません。権限拒否、対象不在または
 内部障害から、非公開のタイトル、DB情報または内部例外を構造情報へ漏らしません。
 
