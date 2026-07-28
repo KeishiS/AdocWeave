@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
   archiveEntries,
+  createRuntimeAdapters,
   executableNames,
   importedWindowsDlls,
   installationLayout,
@@ -94,4 +95,27 @@ test("Windowsの一時directory削除だけを規定回数再試行する", () =
 test("VSIXのmanifest metadataを検査する", () => {
   assert.equal(vscodePackageContract({ version: "0.14.0", main: "./dist/extension.cjs" }, "0.14.0"), true);
   assert.equal(vscodePackageContract({ version: "0.14.0", main: "./src/extension.js" }, "0.14.0"), false);
+});
+
+test("filesystem・process・時刻・platformをruntime adapterとして注入する", () => {
+  const fileSystem = { readFile() {} };
+  const processControl = { spawn() {} };
+  const time = { now: () => 42 };
+  const platform = { os: "win32", architecture: "x64", environment: {} };
+  const adapters = createRuntimeAdapters({
+    fileSystem,
+    processControl,
+    time,
+    platform,
+    pathApi: path.win32,
+  });
+  assert.equal(adapters.fileSystem, fileSystem);
+  assert.equal(adapters.processControl, processControl);
+  assert.equal(adapters.time.now(), 42);
+  assert.equal(adapters.platform, platform);
+  assert.equal(adapters.pathApi, path.win32);
+  assert.throws(
+    () => createRuntimeAdapters({ fileSystem, processControl, time, platform: {}, pathApi: path.win32 }),
+    /requires os and architecture/,
+  );
 });

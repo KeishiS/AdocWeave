@@ -1,5 +1,32 @@
-import { execFileSync } from "node:child_process";
+import * as nodeProcessControl from "node:child_process";
+import * as nodeFileSystem from "node:fs";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
+import process from "node:process";
+import { pathToFileURL } from "node:url";
 import {
+  TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
+  archiveEntries,
+  createRuntimeAdapters,
+  executableNames,
+  installationLayout,
+  isPathInside,
+  validateArchiveEntries,
+  vscodePackageContract,
+} from "./platform-contract.mjs";
+
+const runtime = createRuntimeAdapters({
+  fileSystem: nodeFileSystem,
+  processControl: nodeProcessControl,
+  time: { clearTimeout, now: Date.now, setTimeout },
+  platform: {
+    architecture: process.arch,
+    environment: process.env,
+    os: process.platform,
+  },
+  pathApi: nodePath,
+});
+const {
   copyFileSync,
   cpSync,
   existsSync,
@@ -14,20 +41,9 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import path, { basename, delimiter, dirname, join, resolve } from "node:path";
-import process from "node:process";
-import { pathToFileURL } from "node:url";
-import {
-  TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
-  archiveEntries,
-  executableNames,
-  installationLayout,
-  isPathInside,
-  validateArchiveEntries,
-  vscodePackageContract,
-} from "./platform-contract.mjs";
+} = runtime.fileSystem;
+const { execFileSync } = runtime.processControl;
+const { basename, delimiter, dirname, join, resolve } = runtime.pathApi;
 
 const [candidateArgument, target, manifestArgument] = process.argv.slice(2);
 if (!candidateArgument || !target) {
@@ -42,8 +58,8 @@ const distributionPlan = JSON.parse(
 );
 const platform = distributionPlan.targets.find(({ triple }) => triple === target);
 if (!platform) throw new Error(`unsupported installation target: ${target}`);
-if (process.platform !== platform.os || process.arch !== platform.architecture) {
-  throw new Error(`installation host ${process.arch} does not match ${target}`);
+if (runtime.platform.os !== platform.os || runtime.platform.architecture !== platform.architecture) {
+  throw new Error(`installation host ${runtime.platform.architecture} does not match ${target}`);
 }
 
 const candidate = realpathSync(resolve(candidateArgument));
@@ -65,7 +81,7 @@ const {
   versionRoot,
   vscodeRoot,
   zedRoot,
-} = installationLayout(prefix, version, path);
+} = installationLayout(prefix, version, runtime.pathApi);
 const previousRoot = join(prefix, "lib", "adocweave", `${version}-previous-fixture`);
 
 function files(directory) {
@@ -80,7 +96,7 @@ function files(directory) {
 function assertInside(root, candidatePath) {
   const resolvedRoot = realpathSync(root);
   const resolvedPath = realpathSync(candidatePath);
-  if (!isPathInside(resolvedRoot, resolvedPath, path)) {
+  if (!isPathInside(resolvedRoot, resolvedPath, runtime.pathApi)) {
     throw new Error(`${candidatePath} escapes ${root}`);
   }
 }
@@ -127,8 +143,8 @@ function command(name, args = []) {
     encoding: "utf8",
     env: {
       HOME: home,
-      PATH: [binDirectory, process.env.PATH].filter(Boolean).join(delimiter),
-      SystemRoot: process.env.SystemRoot,
+      PATH: [binDirectory, runtime.platform.environment.PATH].filter(Boolean).join(delimiter),
+      SystemRoot: runtime.platform.environment.SystemRoot,
       XDG_CACHE_HOME: join(home, ".cache"),
       XDG_CONFIG_HOME: join(home, ".config"),
       XDG_DATA_HOME: join(home, ".local", "share"),
@@ -142,7 +158,7 @@ function activateNative(root, label, executables) {
       throw new Error(`cannot activate incomplete native version: ${label}`);
     }
   }
-  if (process.platform === "win32") {
+  if (runtime.platform.os === "win32") {
     mkdirSync(binDirectory, { recursive: true });
     for (const executable of executables) {
       const destination = join(binDirectory, executable);
@@ -182,7 +198,7 @@ function installNative(packageName, executable) {
   const destination = join(versionRoot, "bin", executable);
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(join(extracted, executable), destination);
-  if (process.platform !== "win32") execFileSync("chmod", ["755", destination]);
+  if (runtime.platform.os !== "win32") execFileSync("chmod", ["755", destination]);
 }
 
 function installBrowser() {
@@ -303,7 +319,7 @@ try {
   const executables = executableNames(platform.executableSuffix);
   cpSync(versionRoot, previousRoot, { recursive: true });
   activateNative(versionRoot, version, executables);
-  if (process.platform !== "win32" && readlinkSync(currentLink) !== versionRoot) {
+  if (runtime.platform.os !== "win32" && readlinkSync(currentLink) !== versionRoot) {
     throw new Error("current version link is not pinned");
   }
 
@@ -337,7 +353,7 @@ try {
   await verifyBrowserContract();
 
   for (const executable of executables) rmSync(join(binDirectory, executable));
-  if (process.platform !== "win32") rmSync(currentLink);
+  if (runtime.platform.os !== "win32") rmSync(currentLink);
   rmSync(activeMarker);
   rmSync(versionRoot, { recursive: true });
   rmSync(previousRoot, { recursive: true });
