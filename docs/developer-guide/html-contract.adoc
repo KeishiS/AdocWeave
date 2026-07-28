@@ -54,7 +54,8 @@ UTF-8 encodingと非空タイトルを持つ``head``および``body``を常に�
 
 属性は``lang``、`charset`、`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、
 `poster`、`target`、`rel`、``colspan``、``rowspan``、``data-language``、``data-line-numbers``および
-``data-line-start``に限定します。classには実装が列挙する固定値だけを使用します。
+``data-line-start``、``data-math-language``および``data-math-display``に限定します。
+classには実装が列挙する固定値だけを使用します。
 入力由来の任意属性、event handler、`script`、SVGおよびraw HTMLは生成しません。
 
 ``target``と``rel``は外部HTTP(S) linkの固定表示と外部stylesheetだけに使用します。入力に書かれた同名属性を
@@ -118,8 +119,12 @@ inline装飾を除いた解決済みplain textとして安全に出力します�
 projectionと同じ言語、行番号指定および開始行を表します。行番号要素、構文強調、themeおよび操作buttonは
 生成しません。Titleも行番号指定もない従来のsource blockは既存の``pre > code.language-*``構造を維持します。
 
-数式engineは内蔵しません。許可した数式言語だけに固定classを付け、内容は常にescapeします。Inline数式は
-`code`、block数式は``pre``内の``code``として出力します。
+数式engineは内蔵しません。許可した数式言語だけに固定class、``data-math-language``および
+``data-math-display``を付け、内容は常にescapeします。LaTeXは``latexmath``、表示形式は``inline``または
+``block``です。Inline数式は`code`、block数式は``pre``内の``code``として出力します。利用側は要素名や
+親子関係を推測せず、この二つの属性とescape済みのtext contentを数式描画adapterへ渡せます。
+JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexmath``はAsciiDoc構文とHTML属性の名前に
+限定します。
 
 == 決定性
 

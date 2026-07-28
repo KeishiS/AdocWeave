@@ -60,6 +60,11 @@
       "name": "safe-resource-fallback",
       "kind": "conformance-fragment",
       "case": "media-type-mismatch"
+    },
+    {
+      "name": "math-public-contract",
+      "kind": "conformance-fragment",
+      "case": "math-public-contract"
     }
   ],
   "negativeFixtures": [

@@ -1,0 +1,62 @@
+{
+  "blockPresentations": [],
+  "catalogs": {
+    "bibliography": [],
+    "footnotes": [],
+    "index": []
+  },
+  "externalLinks": [],
+  "formulas": [
+    {
+      "contentRange": {
+        "end": 59,
+        "start": 18
+      },
+      "kind": "inline",
+      "language": "latex",
+      "source": "x < y & \"</code><script>alert(1)</script>",
+      "sourceRange": {
+        "end": 60,
+        "start": 7
+      }
+    },
+    {
+      "contentRange": {
+        "end": 130,
+        "start": 80
+      },
+      "kind": "block",
+      "language": "latex",
+      "source": "\\int_0^1 x^2 \\, dx < <img src=x onerror=alert(1)>\n",
+      "sourceRange": {
+        "end": 135,
+        "start": 63
+      }
+    }
+  ],
+  "orderedLists": [],
+  "packageVersion": "0.15.0",
+  "referenceEdges": [],
+  "searchableText": {
+    "segments": [
+      {
+        "kind": "prose",
+        "sourceRange": {
+          "end": 61,
+          "start": 0
+        },
+        "text": "Inline ."
+      }
+    ],
+    "text": "Inline ."
+  },
+  "sourceBlocks": [],
+  "sourceId": "conformance:math-public-contract",
+  "structure": {
+    "headings": [],
+    "manpage": null,
+    "toc": []
+  },
+  "targets": [],
+  "title": null
+}

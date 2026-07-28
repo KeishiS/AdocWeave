@@ -46,6 +46,16 @@
       "contractImpact": "none"
     },
     {
+      "name": "math-public-contract",
+      "sourceFile": "math-public-contract.adoc",
+      "expectedHtmlFile": "math-public-contract.html",
+      "expectedDiagnosticsFile": "math-public-contract.diagnostics.json",
+      "expectedProjectionFile": "math-public-contract.projection.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "inlineとblockの数式は同じ言語・表示形式・source・range契約を共有し、hostileなsourceを実行しない",
+      "contractImpact": "core-api,html,conformance,wasm-api"
+    },
+    {
       "name": "general-backslash-escapes",
       "sourceFile": "escapes.adoc",
       "expectedHtmlFile": "escapes.html",

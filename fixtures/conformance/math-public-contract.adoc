@@ -1,0 +1,6 @@
+Inline latexmath:[x < y & "</code><script>alert(1)</script>].
+
+[latexmath]
+++++
+\int_0^1 x^2 \, dx < <img src=x onerror=alert(1)>
+++++
