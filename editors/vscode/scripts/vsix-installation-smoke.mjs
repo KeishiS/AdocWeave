@@ -9,6 +9,10 @@ import {
 } from "@vscode/test-electron";
 import { unzipSync, zipSync } from "fflate";
 
+if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
+  delete process.env.LD_LIBRARY_PATH;
+}
+
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const baseline = resolve("../../target/distrib", `adocweave-vscode-${packageJson.version}.vsix`);
 const extensionId = `${packageJson.publisher}.${packageJson.name}`;

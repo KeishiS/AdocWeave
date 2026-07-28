@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import { runTests } from "@vscode/test-electron";
 
+if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
+  delete process.env.LD_LIBRARY_PATH;
+}
+
 const extensionRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const repositoryRoot = resolve(extensionRoot, "../..");
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-vscode-host-"));
