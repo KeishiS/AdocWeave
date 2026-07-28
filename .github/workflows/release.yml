@@ -89,9 +89,6 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
             build: nix
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
-            build: nix
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
             build: windows
@@ -111,12 +108,15 @@ jobs:
       - name: Target archive builds
         if: matrix.build == 'nix'
         env:
-          MACOSX_DEPLOYMENT_TARGET: '13.0'
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           args=()
           if [ -n "$RELEASE_TAG" ]; then args+=("--tag=$RELEASE_TAG"); fi
           nix develop .#ci -c tools/run-pinned-dist.sh build "${args[@]}" --artifacts=local --target="${{ matrix.target }}" --output-format=json > dist-manifest.json
+      - name: Darwin archive portability normalization
+        if: endsWith(matrix.target, '-apple-darwin')
+        run: tools/normalize-darwin-archives.sh target/distrib "${{ matrix.target }}"
       - name: Fixed Windows Rust and cargo-dist installation
         if: matrix.build == 'windows'
         shell: pwsh
@@ -222,9 +222,6 @@ jobs:
             runner: ubuntu-24.04
             nix-system: x86_64-linux
             nix: true
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
-            nix: false
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
             nix: false

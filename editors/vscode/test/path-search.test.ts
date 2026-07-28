@@ -21,7 +21,9 @@ test("Windowsではshell scriptを候補にせずexeだけを選択します", a
   }
 });
 
-test("Unixでは実行権限のあるfileだけを選択します", async () => {
+test("Unixでは実行権限のあるfileだけを選択します", {
+  skip: process.platform === "win32",
+}, async () => {
   const directory = await mkdtemp(join(tmpdir(), "adocweave-path-"));
   const executable = join(directory, "adocweave-lsp");
   try {

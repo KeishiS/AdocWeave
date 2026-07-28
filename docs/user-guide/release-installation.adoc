@@ -63,10 +63,11 @@ runtime closureへ含めません。
 |===
 
 targetはLinux ARM64の``aarch64-unknown-linux-musl``、Linux x86-64の``x86_64-unknown-linux-musl``、
-macOS ARM64の``aarch64-apple-darwin``、macOS x86-64の``x86_64-apple-darwin``、Windows x86-64の
+macOS ARM64の``aarch64-apple-darwin``、Windows x86-64の
 ``x86_64-pc-windows-msvc``です。32-bit環境とWindows ARM64にはmanaged binaryを配布しません。
+Intel macOSも対応対象外です。
 
-Linux musl binaryは静的linkします。macOSは13.0以降、WindowsはWindows 10 version 1809以降を対象とし、
+Linux musl binaryは静的linkします。macOSは14.0以降、WindowsはWindows 10 version 1809以降を対象とし、
 system libraryへ動的linkします。macOSとWindowsのbinaryにはOS code signingを行っていないため、
 download元に応じてOSの警告が表示される場合があります。
 
