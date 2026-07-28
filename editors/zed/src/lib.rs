@@ -307,9 +307,9 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("adocweave-zed-stale-{}", unique_operation_id()));
         fs::create_dir_all(&root).unwrap();
-        let cache = root.join("adocweave-lsp-0.15.0-x86_64-unknown-linux-musl");
+        let cache = root.join("adocweave-lsp-0.16.0-x86_64-unknown-linux-musl");
         let path = lock_path(&cache);
-        assert!(path.ends_with("adocweave-lsp-0.15.0-x86_64-unknown-linux-musl.lock"));
+        assert!(path.ends_with("adocweave-lsp-0.16.0-x86_64-unknown-linux-musl.lock"));
         fs::write(&path, "0\n").unwrap();
         let lock = InstallLock::acquire(&path).unwrap();
         assert!(path.exists());

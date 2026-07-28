@@ -43,6 +43,6 @@ test("main pushでは配布計画の全targetを検証する", () => {
 });
 
 test("version tagではmain candidateを再構築しない", () => {
-  const plan = nativeChangePlan("push", [], distributionPlan, "refs/tags/v0.15.0");
+  const plan = nativeChangePlan("push", [], distributionPlan, "refs/tags/v0.16.0");
   assert.equal(plan.required, false);
 });

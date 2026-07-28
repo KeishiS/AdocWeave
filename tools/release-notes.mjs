@@ -15,20 +15,25 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "local target検査でpermission不足と検査件数上限の診断、終了codeおよびJSON出力を共通fixtureへ固定しました。",
-  "Linuxではlocal targetを検証済みdirectory handleから読み込み、検査後のsymlink差し替えでroot外を読まないようにしました。",
-  "include処理の論理source ID、検証対象pathおよび読込済みsourceを別の型へ分離し、診断とsource mapへOS pathを漏らしません。",
-  "追跡するAsciiDoc文書を自動的に検査対象へ含め、追加文書の検査漏れと重複した列挙を拒否します。",
-  "native成果物へ影響するPull RequestでWindows・macOS smokeを実行し、OS依存のpath、DLL、archiveおよび導入契約を共通fixtureで検査します。",
+  "#108：ソースブロックのタイトル、言語、`linenums`および開始行を解析結果へ保持し、安全なHTML表示契約を追加しました。",
+  "#109：インライン数式とブロック数式の表示形式、言語、未加工sourceおよび入力範囲を公開し、HTMLへ描画adapter向け属性を追加しました。",
+  "#111：解析結果、HTML、解析診断および描画診断を対応付ける公開適合性fixtureを追加しました。",
+  "#110：`rendering_features()`で数式言語、正規化済みソース言語および実際の目次出力の有無を決定的に取得できるようにしました。",
+  "#81：Browser clientへPromise形式の`analyze()`と`analyzeOnce()`、初期化状態、型付きlifecycle errorおよびbundler向けasset URL契約を追加しました。",
 ];
 
 const contractNotes = [
   `統一package version：${manifest.packageVersion}`,
-  `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。v0.14.0からschema形状を変更していません。`,
-  `WASM protocol schema version：${protocol.schemaVersion}、Worker protocol version：${protocol.workerProtocolVersion}。v0.14.0のrequestとWorker envelopeの形状を維持します。`,
-  "CLI option、診断codeおよびJSON schemaに破壊的変更はありません。",
-  "Linuxのlocal target検査は静的なworkspace snapshotを前提とせず、同じdirectory handle系列から検査と読込みを行います。macOS、Windowsおよび汎用Rustのportable adapterは、静的snapshot向けのbest effortであり、敵対的な同時変更への耐性を宣言しません。",
-  "includeのsource identityは利用者が指定した論理IDを維持します。権限検査に使用したcanonical filesystem pathは公開診断とsource mapへ含めません。",
+  `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。これらのschema形状はv0.15.0から変更していません。`,
+  `WASM protocol schema version：${protocol.schemaVersion}、Worker protocol version：${protocol.workerProtocolVersion}。WASM protocolはschema 4から5へ更新し、Worker envelopeはversion 2を維持します。`,
+  "schema 5では`SourceBlockProjection`へ必須fieldの`title`、`lineNumbers`および`startLine`を追加しました。schema 4の保存済みprojectionを読むconsumerは、schema versionを検査して型とfixtureを更新してください。",
+  "ソースブロックは必要な場合だけ`figure.source-block`と`figcaption`を生成し、`pre`の`data-language`、`data-line-numbers`および`data-line-start`で表示情報を公開します。タイトルと行番号指定がない従来の`pre > code`構造は維持します。",
+  "数式HTMLは`data-math-language=\"latexmath\"`と`data-math-display=\"inline|block\"`を公開します。JSONとWASMの言語値は互換性のため`latex`を維持します。",
+  "`rendering_features()`は追加描画が必要な数式言語、正規化済みソース言語および空でない目次の有無だけを返します。renderer、theme、JavaScript libraryまたはasset URLは選択しません。",
+  "Browser clientの従来の`update()`、`onResult`および`onError`は維持します。新しい`ready`、`analyze()`および`analyzeOnce()`は、cancel、dispose、世代の上書き、package不一致およびWorker障害を型付きerrorとしてrejectします。",
+  "`defaultAssetUrls()`はmodule URLを基準にWorkerとWASMを解決します。bundler利用時もWorkerとWASMを別assetとして配備し、JavaScript bundleへinline化しないでください。",
+  "公開適合性fixtureの安定契約はmanifestの`stableContract`に列挙したJSON pointer、HTML断片および診断codeです。期待出力file全体の空白、key順および属性順はconsumer向け契約ではありません。",
+  "HTMLは入力由来のraw HTML、任意属性、event handler、`script`およびSVGを生成しません。構文強調、行番号の見た目、数式engine、themeおよび操作buttonは利用側が安全なadapterとして提供します。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
