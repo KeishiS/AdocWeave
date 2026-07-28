@@ -700,99 +700,16 @@ private = true
 command = "cargo"
 args = ["build", "-p", "adocweave-cli", "--bin", "adocweave"]
 
+[tasks.adoc-check-targets]
+private = true
+command = "node"
+args = ["--test", "tools/adoc-check.test.mjs"]
+
 [tasks.adoc-check]
 description = "Check every tracked AsciiDoc file for crashes, losslessness, and valid ranges"
-dependencies = ["build-adoc-check", "adoc-invariants"]
-script_runner = "@shell"
-script = '''
-manifest="$(mktemp "${TMPDIR:-/tmp}/adocweave-adoc-check.XXXXXX")"
-trap 'rm -f "$manifest"' EXIT
-git ls-files '*.adoc' | LC_ALL=C sort > "$manifest"
-diagnostics_log="target/adoc-check-diagnostics.log"
-: > "$diagnostics_log"
-
-target/debug/adocweave config show --config .adocweave.toml >/dev/null
-target/debug/adocweave config show --config fixtures/.adocweave.toml >/dev/null
-target/debug/adocweave config show --config fuzz/.adocweave.toml >/dev/null
-
-documents=0
-diagnostics=0
-failed=0
-while IFS= read -r path; do
-  documents=$((documents + 1))
-  fail_on=warning
-  case "$path" in
-    fixtures/*|fuzz/*|editors/vscode/test/fixtures/*) fail_on=error ;;
-  esac
-  if output="$(target/debug/adocweave check --fail-on "$fail_on" "$path" 2>&1)"; then
-    if [ -n "$output" ]; then
-      echo "[$path]" >> "$diagnostics_log"
-      echo "$output" >> "$diagnostics_log"
-      count="$(printf '%s\n' "$output" | wc -l)"
-      diagnostics=$((diagnostics + count))
-    fi
-  else
-    echo "[$path]" >&2
-    echo "$output" >&2
-    failed=1
-  fi
-done < "$manifest"
-
-if [ "$failed" -ne 0 ]; then
-  echo "adoc-check failed: $documents documents" >&2
-  exit 1
-fi
-
-local_documents=0
-while IFS= read -r path; do
-  local_documents=$((local_documents + 1))
-  if ! output="$(target/debug/adocweave check --fail-on warning --local-targets --project-root . "$path" 2>&1)"; then
-    echo "[$path] local target check failed" >&2
-    echo "$output" >&2
-    failed=1
-  fi
-done <<'EOF'
-README.adoc
-CONTRIBUTING.adoc
-docs/README.adoc
-docs/user-guide/command-line.adoc
-docs/user-guide/compatibility.adoc
-docs/user-guide/project-configuration.adoc
-docs/user-guide/release-installation.adoc
-docs/user-guide/syntax-support.adoc
-docs/developer-guide/architecture.adoc
-docs/developer-guide/core-profile.adoc
-docs/developer-guide/extensions.adoc
-docs/developer-guide/grammar.adoc
-docs/developer-guide/html-contract.adoc
-docs/developer-guide/language-server.adoc
-docs/developer-guide/release-distribution.adoc
-docs/developer-guide/roadmap.adoc
-docs/developer-guide/server-execution.adoc
-docs/developer-guide/zed-development.adoc
-docs/developer-guide/adr/0001-single-analysis-pipeline.adoc
-docs/developer-guide/adr/0002-host-extension-boundary.adoc
-docs/developer-guide/adr/0003-runtime-adapters.adoc
-docs/developer-guide/adr/0004-joint-syntax-and-fact-recognition.adoc
-docs/developer-guide/adr/0005-zed-lsp-monorepo.adoc
-docs/developer-guide/adr/0006-direct-stable-releases.adoc
-docs/developer-guide/adr/0007-host-supplied-stylesheets.adoc
-docs/developer-guide/adr/0008-minimal-documentation-management.adoc
-docs/developer-guide/adr/0009-public-configuration-boundaries.adoc
-docs/developer-guide/adr/0010-position-dependent-document-attributes.adoc
-docs/developer-guide/adr/0011-versioned-project-configuration.adoc
-docs/developer-guide/adr/0012-workspace-analysis-boundary.adoc
-docs/developer-guide/adr/index.adoc
-editors/zed/README.adoc
-web-worker/README.adoc
-EOF
-
-if [ "$failed" -ne 0 ]; then
-  echo "adoc-check failed: local target pass checked $local_documents normative documents" >&2
-  exit 1
-fi
-echo "adoc-check passed: $documents documents, $diagnostics expected diagnostics recorded in $diagnostics_log"
-'''
+dependencies = ["build-adoc-check", "adoc-invariants", "adoc-check-targets"]
+command = "node"
+args = ["tools/adoc-check.mjs"]
 
 [tasks.adoc-invariants]
 private = true
