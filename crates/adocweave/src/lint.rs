@@ -44,13 +44,7 @@ macro_rules! lint_rule_catalog {
     (@enabled $enabled:literal) => {
         $enabled
     };
-    (@configurable) => {
-        false
-    };
-    (@configurable $configurable:literal) => {
-        $configurable
-    };
-    ($(($constant:ident, $code:literal, $description:literal, $fixable:literal $(, $default_enabled:literal, $user_configurable:literal)?)),+ $(,)?) => {
+    ($(($constant:ident, $code:literal, $description:literal, $fixable:literal $(, $default_enabled:literal)?)),+ $(,)?) => {
         $(pub const $constant: LintRuleId = LintRuleId($code);)+
 
         pub const LINT_RULES: &[LintRuleDescriptor] = &[
@@ -60,7 +54,7 @@ macro_rules! lint_rule_catalog {
                 default_severity: Severity::Warning,
                 description: $description,
                 fixable: $fixable,
-                user_configurable: lint_rule_catalog!(@configurable $($user_configurable)?),
+                user_configurable: true,
             }),+
         ];
     };
@@ -194,8 +188,7 @@ lint_rule_catalog!(
         "macro-boundary",
         "inline macroの開始境界違反",
         true,
-        false,
-        true
+        false
     ),
     (
         INCONSISTENT_LIST,
@@ -1284,11 +1277,11 @@ mod tests {
     }
 
     #[test]
-    fn every_disabled_rule_has_a_public_activation_path() {
+    fn every_rule_is_project_configurable() {
         for descriptor in LINT_RULES {
             assert!(
-                descriptor.user_configurable != descriptor.default_enabled,
-                "{} must be either enabled by default or user configurable",
+                descriptor.user_configurable,
+                "{} must be configurable",
                 descriptor.id.as_str()
             );
         }

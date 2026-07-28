@@ -265,6 +265,27 @@ impl Default for ServerSettings {
     }
 }
 
+fn attach_workspace(
+    job: &mut AnalysisJob,
+    input: Result<crate::workspace::WorkspaceInput, String>,
+) {
+    match input {
+        Ok(input) => job.workspace = Some(input),
+        Err(message) => {
+            job.workspace_problem = Some(WorkspaceProblem {
+                source_id: Some(job.uri.clone()),
+                range: adocweave::text::TextRange::new(
+                    adocweave::text::TextSize::ZERO,
+                    adocweave::text::TextSize::ZERO,
+                )
+                .expect("zero range"),
+                code: "workspace-input-error".to_owned(),
+                message,
+            });
+        }
+    }
+}
+
 impl LanguageService {
     pub fn with_host_index(host_index: Arc<dyn HostReferenceIndex>) -> Self {
         Self {
@@ -385,15 +406,15 @@ impl LanguageService {
                 document.text.clone(),
             )
             .unwrap_or_else(|_| std::collections::BTreeSet::from([document.uri.to_string()]));
-        let workspace = self.workspace.input(&document.uri).ok();
-        let options = self.analysis_options_for(workspace.as_ref());
+        let workspace = self.workspace.input(&document.uri);
+        let options = self.analysis_options_for(workspace.as_ref().ok());
         let mut job = self.documents.begin_open_with_options(
             document.uri.to_string(),
             document.version,
             document.text,
             options,
         );
-        job.workspace = workspace;
+        attach_workspace(&mut job, workspace);
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -446,7 +467,7 @@ impl LanguageService {
         ) else {
             return Ok(Vec::new());
         };
-        job.workspace = self.workspace.input(&params.text_document.uri).ok();
+        attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -465,7 +486,7 @@ impl LanguageService {
             let Some(mut job) = self.documents.begin_reanalysis(uri) else {
                 continue;
             };
-            job.workspace = self.workspace.input(&parsed).ok();
+            attach_workspace(&mut job, self.workspace.input(&parsed));
             jobs.push(job);
         }
     }
@@ -549,10 +570,10 @@ impl LanguageService {
             .into_iter()
             .filter_map(|(uri, _, _)| {
                 let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed).ok();
-                let options = self.analysis_options_for(workspace.as_ref());
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
                 let mut job = self.documents.reconfigure(&uri, options)?;
-                job.workspace = workspace;
+                attach_workspace(&mut job, workspace);
                 Some(job)
             })
             .collect()
@@ -595,10 +616,10 @@ impl LanguageService {
             .into_iter()
             .filter_map(|(uri, _, _)| {
                 let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed).ok();
-                let options = self.analysis_options_for(workspace.as_ref());
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
                 let mut job = self.documents.reconfigure(&uri, options)?;
-                job.workspace = workspace;
+                attach_workspace(&mut job, workspace);
                 Some(job)
             })
             .collect()
@@ -649,7 +670,13 @@ impl LanguageService {
         {
             return Adoption::Stale;
         }
-        self.documents.adopt(job, result)
+        let format = job
+            .workspace
+            .as_ref()
+            .map_or_else(formatter::FormatConfig::default, |input| {
+                input.project_config.format
+            });
+        self.documents.adopt_with_format(job, result, format)
     }
 
     pub fn adopt_workspace(
@@ -688,10 +715,11 @@ impl LanguageService {
         job: &AnalysisJob,
         problem: WorkspaceProblem,
     ) -> Adoption {
-        if job
-            .workspace
-            .as_ref()
-            .is_none_or(|input| !self.workspace.input_is_current(input))
+        if job.workspace_problem.is_none()
+            && job
+                .workspace
+                .as_ref()
+                .is_none_or(|input| !self.workspace.input_is_current(input))
         {
             return Adoption::Stale;
         }
@@ -731,7 +759,7 @@ impl LanguageService {
         for code in &settings.enabled_rules {
             let descriptor =
                 lint_rule(code).ok_or_else(|| format!("unknown diagnostic rule: {code}"))?;
-            if !descriptor.user_configurable {
+            if descriptor.default_enabled {
                 return Err(format!(
                     "diagnostic rule cannot be enabled explicitly: {code}"
                 ));
@@ -748,10 +776,10 @@ impl LanguageService {
             .into_iter()
             .filter_map(|(uri, _, _)| {
                 let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed).ok();
-                let options = self.analysis_options_for(workspace.as_ref());
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
                 let mut job = self.documents.reconfigure(&uri, options)?;
-                job.workspace = workspace;
+                attach_workspace(&mut job, workspace);
                 Some(job)
             })
             .collect())
@@ -781,7 +809,17 @@ impl LanguageService {
             .then(|| document.map(|document| revision_version_i32(&document.request.revision)))
             .flatten();
         let mut diagnostics = document
-            .and_then(|document| document.view.as_ref().map(|view| view.root.as_ref()))
+            .and_then(|document| {
+                if document
+                    .workspace_problem
+                    .as_ref()
+                    .is_some_and(|problem| problem.code == "workspace-input-error")
+                {
+                    None
+                } else {
+                    document.view.as_ref().map(|view| view.root.as_ref())
+                }
+            })
             .iter()
             .flat_map(|analysis| analysis.diagnostics().iter())
             .map(|diagnostic| {
@@ -1035,9 +1073,8 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        let output =
-            formatter::format_analysis(&document.analysis, &formatter::FormatConfig::default())
-                .map_err(|error| error.to_string())?;
+        let output = formatter::format_analysis(&document.analysis, &document.format)
+            .map_err(|error| error.to_string())?;
         let edits = output
             .edits
             .iter()

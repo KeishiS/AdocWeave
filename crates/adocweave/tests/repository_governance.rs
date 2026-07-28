@@ -466,6 +466,28 @@ fn release_manifest_is_the_single_release_identity_catalog() {
 }
 
 #[test]
+fn project_config_schema_lists_every_lint_rule() {
+    let root = repository_root();
+    let schema: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("config/adocweave.schema.json"))
+            .expect("project configuration schema"),
+    )
+    .expect("valid project configuration schema");
+    let schema_rules = schema["properties"]["lint"]["properties"]["rules"]["propertyNames"]["enum"]
+        .as_array()
+        .expect("lint rule name enum")
+        .iter()
+        .map(|value| value.as_str().expect("lint rule name"))
+        .collect::<BTreeSet<_>>();
+    let catalog_rules = adocweave::output::diagnostics::LINT_RULES
+        .iter()
+        .map(|rule| rule.id.as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(schema_rules, catalog_rules);
+}
+
+#[test]
 fn conformance_fixture_has_every_declared_consumer() {
     let root = repository_root();
     let manifest: ConformanceConsumers = serde_json::from_str(

@@ -1,0 +1,102 @@
+= プロジェクト設定
+
+AdocWeaveは、CLIとLanguage Serverで共通の`.adocweave.toml`を使用します。設定fileは処理対象の
+directoryから親へ探索し、起動時のworkspace rootまたはCLIの作業directoryで探索を停止します。
+近い設定fileを一つだけ使用し、複数fileを処理する場合はfileごとに探索します。設定の継承、
+環境変数・チルダの展開、外部fileの読込およびnetwork accessは行いません。
+
+最小の設定は次のとおりです。
+
+[source,toml]
+----
+schema-version = 1
+----
+
+不明な項目、未対応の`schema-version`、絶対path、親directoryへ移動するpathおよび上限を超える値は
+errorになります。設定内の相対pathは設定fileのdirectoryを基準にします。設定fileはworkspace外への
+filesystem権限を与えず、CLIとLanguage Serverが独立して定めたworkspace境界内でだけ使用できます。
+
+[#project-configuration-example]
+== 設定例
+
+[source,toml]
+----
+schema-version = 1
+
+[analysis]
+syntax-mode = "strict"
+
+[analysis.attributes.release]
+value = "draft"
+
+[analysis.attributes.private]
+unset = true
+
+[lint.rules.macro-boundary]
+enabled = true
+severity = "error"
+
+[lint]
+max-line-length = 100
+max-consecutive-blank-lines = 1
+max-diagnostics = 1000
+
+[resources]
+include = true
+roots = ["docs"]
+max-files = 1000
+max-total-bytes = 52428800
+max-resource-bytes = 10485760
+
+[local-targets]
+enabled = true
+project-root = "docs"
+
+[format]
+newline = "lf"
+final-newline = true
+max-consecutive-blank-lines = 1
+
+[html]
+complete = true
+stylesheet-files = ["styles/manual.css"]
+stylesheet-urls = ["https://example.com/manual.css"]
+----
+
+属性は`value`または`unset = true`のどちらか一方を指定します。値は解析とinclude前処理の両方へ
+同じhard-locked属性として渡されます。`config show`は属性値を表示せず、setまたはunsetの状態だけを
+表示します。
+
+`lint.rules.CODE`では、組込み規則ごとに`enabled`と`severity`を指定できます。既定で有効な規則の
+無効化と重要度変更、および既定で無効な規則の有効化を同じ形式で行います。不明なcodeはerrorです。
+
+resource上限は組込み上限以下にだけ設定できます。`roots`、`project-root`およびstylesheet fileは
+設定directory内の相対pathに限定されます。network includeは設定できません。
+
+JSON Schemaはlink:../../config/adocweave.schema.json[`config/adocweave.schema.json`]です。
+
+== CLIでの選択
+
+通常は設定を自動探索します。明示的な設定fileを使う場合は`--config FILE`、探索を停止して既定値を
+使う場合は`--no-config`を指定します。この二つは同時に指定できません。解決済み設定は次のcommandで
+確認できます。
+
+[source,console]
+----
+adocweave config show
+adocweave config show --config config/ci.toml
+----
+
+優先順位は組込み既定値、プロジェクト設定、明示的なCLI optionの順です。例えば`--allow-root`を
+指定すると設定の`resources.roots`ではなくCLIのroot集合を使用し、`--complete`は設定にかかわらず
+完全なHTML文書を選択します。
+
+== Language Serverでの使用
+
+Language Serverはworkspace folderごとに設定探索を停止し、文書ごとに最も近い設定を使用します。
+`.adocweave.toml`の作成、変更または削除を監視し、open文書を新しい設定generationで再解析します。
+解析中に設定が変わった場合、古い結果は採用しません。不正な設定を既定値へ置き換えず、設定errorが
+解消するまで、その設定に依存する診断、整形および問い合わせ結果を公開しません。
+
+エディターの`enabledRules`はプロジェクト設定の後に適用します。これにより、共有設定を維持したまま
+個別のエディターで追加のopt-in規則を有効にできます。

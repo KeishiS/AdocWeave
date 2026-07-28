@@ -134,7 +134,8 @@ adocweave --version --json
 adocweave-lsp --version --json
 ----
 
-CLIはshell completion生成機能を提供しないため、completion fileはインストールしません。
+配布archiveはcompletion fileを自動配置しません。必要なshellでは
+xref:command-line.adoc[コマンドライン]の`adocweave completion`で生成してください。
 
 == システム全体への導入
 

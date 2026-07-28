@@ -3,6 +3,7 @@
 //! Parsing a project file never grants filesystem or network authority. The
 //! resolved paths and limits remain inputs to a host policy that must restrict
 //! them to an independently trusted workspace boundary.
+#![warn(missing_docs)]
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -19,22 +20,34 @@ use adocweave_host::ResourceLimits;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+/// Conventional project configuration filename.
 pub const FILE_NAME: &str = ".adocweave.toml";
+/// Configuration schema version accepted by this package.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Stable category for configuration failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfigErrorCode {
+    /// Configuration or search path could not be read safely.
     ReadFailed,
+    /// Search start lies outside its trusted boundary.
     OutsideBoundary,
+    /// TOML is malformed or contains an unknown field.
     InvalidToml,
+    /// Schema version is not supported.
     UnsupportedSchema,
+    /// Lint rule identifier is unknown.
     InvalidRule,
+    /// External attribute has an ambiguous value.
     InvalidAttribute,
+    /// Configured processing limit is invalid.
     InvalidLimit,
+    /// Configured path is absolute or escapes its configuration directory.
     InvalidPath,
 }
 
 impl ConfigErrorCode {
+    /// Returns the stable kebab-case code.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReadFailed => "read-failed",
@@ -49,9 +62,12 @@ impl ConfigErrorCode {
     }
 }
 
+/// Configuration error that never contains authored attribute values.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigError {
+    /// Stable error category.
     pub code: ConfigErrorCode,
+    /// Schema field associated with the error, when available.
     pub field: Option<String>,
     message: &'static str,
 }
@@ -96,8 +112,11 @@ impl Error for ConfigError {}
 /// One immutable, content-addressed view of a project configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigSnapshot {
+    /// Canonical path of the selected configuration.
     pub path: PathBuf,
+    /// SHA-256 digest of the exact UTF-8 configuration content.
     pub content_sha256: [u8; 32],
+    /// Fully resolved typed configuration.
     pub config: ResolvedProjectConfig,
 }
 
@@ -165,7 +184,13 @@ pub fn discover(start: &Path, boundary: &Path) -> Result<Option<PathBuf>, Config
 
     loop {
         let candidate = directory.join(FILE_NAME);
-        match fs::metadata(&candidate) {
+        match fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(ConfigError::new(
+                    ConfigErrorCode::ReadFailed,
+                    "the discovered project configuration cannot be a symbolic link",
+                ));
+            }
             Ok(metadata) if metadata.is_file() => return Ok(Some(candidate)),
             Ok(_) => {
                 return Err(ConfigError::new(
@@ -200,63 +225,66 @@ pub fn discover_and_load(
         .transpose()
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Include policy and bounded local resource settings.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResourceSettings {
+    /// Whether include preprocessing is enabled.
     pub include: bool,
+    /// Configuration-relative roots proposed to the host policy.
     pub roots: Vec<PathBuf>,
+    /// Resource limits no greater than built-in ceilings.
     pub limits: ResourceLimits,
 }
 
-impl Default for ResourceSettings {
-    fn default() -> Self {
-        Self {
-            include: false,
-            roots: Vec::new(),
-            limits: ResourceLimits::default(),
-        }
-    }
-}
-
+/// Local target validation settings.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LocalTargetSettings {
+    /// Whether local target validation is enabled.
     pub enabled: bool,
+    /// Configuration-relative project root proposed to the host policy.
     pub project_root: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Complete-document rendering and stylesheet settings.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HtmlSettings {
+    /// Deterministic HTML rendering policy.
     pub policy: RenderPolicy,
+    /// Configuration-relative stylesheet files.
     pub stylesheet_files: Vec<PathBuf>,
+    /// Authored stylesheet URLs, subject to the active URL policy.
     pub stylesheet_urls: Vec<String>,
 }
 
-impl Default for HtmlSettings {
-    fn default() -> Self {
-        Self {
-            policy: RenderPolicy::default(),
-            stylesheet_files: Vec::new(),
-            stylesheet_urls: Vec::new(),
-        }
-    }
-}
-
+/// Fully typed schema-version-1 project configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedProjectConfig {
+    /// Parsed schema version.
     pub schema_version: u32,
+    /// Core syntax, attribute, and diagnostic options.
     pub analysis: AnalysisOptions,
+    /// Include preprocessing options shared with analysis attributes.
     pub preprocess: PreprocessOptions,
+    /// Local resource settings.
     pub resources: ResourceSettings,
+    /// Local target validation settings.
     pub local_targets: LocalTargetSettings,
+    /// Formatter settings.
     pub format: FormatConfig,
+    /// Whether `format.newline` was present in the project file.
     pub format_newline_explicit: bool,
+    /// Whether `format.final-newline` was present in the project file.
     pub format_final_newline_explicit: bool,
+    /// HTML and stylesheet settings.
     pub html: HtmlSettings,
 }
 
 impl Default for ResolvedProjectConfig {
     fn default() -> Self {
-        let mut preprocess = PreprocessOptions::default();
-        preprocess.enable_includes = false;
+        let preprocess = PreprocessOptions {
+            enable_includes: false,
+            ..PreprocessOptions::default()
+        };
         Self {
             schema_version: SCHEMA_VERSION,
             analysis: AnalysisOptions::default(),
@@ -272,6 +300,7 @@ impl Default for ResolvedProjectConfig {
 }
 
 impl ResolvedProjectConfig {
+    /// Parses strict TOML and resolves relative paths against `directory`.
     pub fn parse(source: &str, directory: &Path) -> Result<Self, ConfigError> {
         let wire: ProjectConfigWire = toml::from_str(source).map_err(|_| {
             ConfigError::new(
@@ -413,13 +442,6 @@ impl LintWire {
                         .at(format!("lint.rules.{name}")),
                 );
             };
-            if !descriptor.user_configurable {
-                return Err(ConfigError::new(
-                    ConfigErrorCode::InvalidRule,
-                    "lint rule is not user configurable",
-                )
-                .at(format!("lint.rules.{name}")));
-            }
             let current = config.rule(descriptor.id);
             config.set_rule(
                 descriptor.id,
@@ -736,6 +758,10 @@ unset = true
 enabled = true
 severity = "error"
 
+[lint.rules.trailing-whitespace]
+enabled = false
+severity = "hint"
+
 [resources]
 include = true
 roots = ["docs"]
@@ -776,6 +802,13 @@ stylesheet-urls = ["https://example.test/manual.css"]
                 .rule(lint_rule("macro-boundary").expect("known rule").id)
                 .enabled
         );
+        let trailing = config
+            .analysis
+            .diagnostics
+            .lint
+            .rule(lint_rule("trailing-whitespace").expect("known rule").id);
+        assert!(!trailing.enabled);
+        assert_eq!(trailing.severity, Severity::Hint);
         assert_eq!(config.resources.roots, [PathBuf::from("/workspace/docs")]);
         assert_eq!(
             config.local_targets.project_root,
@@ -870,5 +903,19 @@ stylesheet-urls = ["https://example.test/manual.css"]
                 .code,
             ConfigErrorCode::OutsideBoundary
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn discovery_rejects_a_symbolic_linked_project_file() {
+        use std::os::unix::fs::symlink;
+
+        let project = TestDirectory::new();
+        let outside = TestDirectory::new();
+        fs::write(outside.0.join("config.toml"), "schema-version = 1\n").expect("outside config");
+        symlink(outside.0.join("config.toml"), project.0.join(FILE_NAME)).expect("config symlink");
+
+        let error = discover_and_load(&project.0, &project.0).expect_err("symlink rejected");
+        assert_eq!(error.code, ConfigErrorCode::ReadFailed);
     }
 }

@@ -18,6 +18,7 @@ pub struct AnalysisJob {
     pub request: AnalysisRequest,
     pub cancellation: Arc<CancellationToken>,
     pub workspace: Option<WorkspaceInput>,
+    pub workspace_problem: Option<WorkspaceProblem>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +34,7 @@ pub struct DocumentState {
 pub struct DocumentView {
     pub root: Arc<Analysis>,
     pub expanded: Option<Arc<WorkspaceAnalysis>>,
+    pub format: adocweave::output::formatter::FormatConfig,
 }
 
 #[cfg(test)]
@@ -67,6 +69,7 @@ pub struct DocumentSnapshot {
     pub uri: String,
     pub revision: DocumentRevision,
     pub analysis: Arc<Analysis>,
+    pub format: adocweave::output::formatter::FormatConfig,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,10 +92,18 @@ impl DocumentStore {
 
     pub fn snapshot(&self, uri: &str) -> Option<DocumentSnapshot> {
         let document = self.documents.get(uri)?;
+        if document
+            .workspace_problem
+            .as_ref()
+            .is_some_and(|problem| problem.code == "workspace-input-error")
+        {
+            return None;
+        }
         Some(DocumentSnapshot {
             uri: document.uri.clone(),
             revision: document.request.revision.clone(),
             analysis: document.view.as_ref()?.root.clone(),
+            format: document.view.as_ref()?.format,
         })
     }
 
@@ -208,7 +219,21 @@ impl DocumentStore {
         current.cancellation = job.cancellation.clone();
     }
 
+    #[cfg(test)]
     pub fn adopt(&mut self, job: &AnalysisJob, result: AnalysisResult) -> Adoption {
+        self.adopt_with_format(
+            job,
+            result,
+            adocweave::output::formatter::FormatConfig::default(),
+        )
+    }
+
+    pub fn adopt_with_format(
+        &mut self,
+        job: &AnalysisJob,
+        result: AnalysisResult,
+        format: adocweave::output::formatter::FormatConfig,
+    ) -> Adoption {
         let Some(document) = self.documents.get(&job.uri) else {
             return Adoption::Closed;
         };
@@ -221,6 +246,7 @@ impl DocumentStore {
         document.view = Some(Arc::new(DocumentView {
             root: Arc::new(result.analysis),
             expanded: None,
+            format,
         }));
         Adoption::Adopted
     }
@@ -251,6 +277,7 @@ impl DocumentStore {
         document.view = Some(Arc::new(DocumentView {
             root: view.root.clone(),
             expanded: Some(Arc::new(analysis)),
+            format: view.format,
         }));
         document.workspace_problem = None;
         Adoption::Adopted
@@ -271,6 +298,7 @@ impl DocumentStore {
             document.view = Some(Arc::new(DocumentView {
                 root: view.root.clone(),
                 expanded: None,
+                format: view.format,
             }));
         }
         document.workspace_problem = Some(problem);
@@ -314,6 +342,7 @@ impl DocumentStore {
             request,
             cancellation: Arc::new(CancellationToken::new()),
             workspace: None,
+            workspace_problem: None,
         }
     }
 }

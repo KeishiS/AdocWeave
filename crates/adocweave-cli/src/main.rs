@@ -15,8 +15,18 @@ use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits};
 use adocweave::text::{PositionEncoding, SourceDocument};
 use adocweave::{AnalysisOptions, Engine, OutputLimits, ParseError};
 
+mod check_output;
+mod file_workflow;
 mod local_include;
 mod local_target;
+
+use check_output::{
+    CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, github_annotation,
+    prefix_human_source, sarif_log, sarif_result, sarif_results,
+};
+use file_workflow::{
+    PendingWrite, atomic_write_all, colorize_lines, safe_write_format_config, unified_diff,
+};
 
 const HELP: &str = "\
 AdocWeave command-line interface
@@ -37,7 +47,7 @@ Arguments:
   [FILE]   Input file; omit it or use '-' to read standard input
 
 Options:
-  --format FORMAT  Emit check diagnostics as human, json, or github
+  --format FORMAT  Emit check diagnostics as human, json, github, or sarif
   --json      Emit check diagnostics as JSON (deprecated alias)
   --fail-on LEVEL  Fail check on error, warning, or never (default: error)
   --summary   Emit check diagnostic counts to standard error
@@ -173,97 +183,12 @@ enum CssArgument {
     Url(String),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DiagnosticFormat {
-    Human,
-    Json,
-    Github,
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ColorChoice {
     #[default]
     Auto,
     Always,
     Never,
-}
-
-impl DiagnosticFormat {
-    fn parse(value: &str) -> Result<Self, CliError> {
-        match value {
-            "human" => Ok(Self::Human),
-            "json" => Ok(Self::Json),
-            "github" => Ok(Self::Github),
-            _ => Err(CliError::Usage(format!(
-                "unknown diagnostic format: {value}"
-            ))),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FailOn {
-    Error,
-    Warning,
-    Never,
-}
-
-impl FailOn {
-    fn parse(value: &str) -> Result<Self, CliError> {
-        match value {
-            "error" => Ok(Self::Error),
-            "warning" => Ok(Self::Warning),
-            "never" => Ok(Self::Never),
-            _ => Err(CliError::Usage(format!(
-                "unknown failure threshold: {value}"
-            ))),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct DiagnosticCounts {
-    errors: usize,
-    warnings: usize,
-    information: usize,
-    hints: usize,
-}
-
-impl DiagnosticCounts {
-    fn add(&mut self, severity: diagnostic::Severity) {
-        match severity {
-            diagnostic::Severity::Error => self.errors += 1,
-            diagnostic::Severity::Warning => self.warnings += 1,
-            diagnostic::Severity::Information => self.information += 1,
-            diagnostic::Severity::Hint => self.hints += 1,
-        }
-    }
-
-    fn add_host_errors(&mut self, count: usize) {
-        self.errors += count;
-    }
-
-    const fn fails(self, threshold: FailOn) -> bool {
-        match threshold {
-            FailOn::Error => self.errors > 0,
-            FailOn::Warning => self.errors > 0 || self.warnings > 0,
-            FailOn::Never => false,
-        }
-    }
-
-    fn summary(self) -> String {
-        format!(
-            "errors={}, warnings={}, information={}, hints={}",
-            self.errors, self.warnings, self.information, self.hints
-        )
-    }
-
-    fn merge(&mut self, other: Self) {
-        self.errors += other.errors;
-        self.warnings += other.warnings;
-        self.information += other.information;
-        self.hints += other.hints;
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -275,22 +200,6 @@ struct CheckOptions {
     dry_run: bool,
     list_rules: bool,
     enabled_rules: Vec<diagnostic::LintRuleId>,
-}
-
-struct CheckOutcome {
-    output: String,
-    counts: DiagnosticCounts,
-    fail_on: FailOn,
-}
-
-impl CheckOutcome {
-    const fn exit_code(&self) -> ExitCode {
-        if self.counts.fails(self.fail_on) {
-            ExitCode::FAILURE
-        } else {
-            ExitCode::SUCCESS
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -338,7 +247,7 @@ struct Arguments {
 }
 
 enum Action {
-    Run(Arguments),
+    Run(Box<Arguments>),
     Help { operation: Option<Operation> },
     Version { json: bool },
     Completion { shell: CompletionShell },
@@ -521,7 +430,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                 let descriptor = diagnostic::lint_rule(&code).ok_or_else(|| {
                     CliError::Usage(format!("unknown or non-enableable rule: {code}"))
                 })?;
-                if !descriptor.user_configurable {
+                if descriptor.default_enabled {
                     return Err(CliError::Usage(format!(
                         "rule is already enabled by default: {code}"
                     )));
@@ -604,11 +513,6 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "--dry-run requires format --write or check --fix".to_owned(),
         ));
     }
-    if !include && (base_dir.is_some() || !allowed_roots.is_empty()) {
-        return Err(CliError::Usage(
-            "--base-dir and --allow-root require --include".to_owned(),
-        ));
-    }
     if local_targets != project_root.is_some() {
         return Err(CliError::Usage(
             "--local-targets and --project-root must be used together".to_owned(),
@@ -630,7 +534,8 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             || !allowed_roots.is_empty()
             || project_root.is_some()
             || complete
-            || !css.is_empty())
+            || !css.is_empty()
+            || color != ColorChoice::Auto)
     {
         return Err(CliError::Usage(
             "config show only accepts --config or --no-config".to_owned(),
@@ -680,7 +585,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         Operation::Symbols => CommandOptions::Symbols,
         Operation::ConfigShow => CommandOptions::ConfigShow,
     };
-    Ok(Action::Run(Arguments {
+    Ok(Action::Run(Box::new(Arguments {
         command,
         input,
         additional_inputs,
@@ -692,7 +597,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         config_path,
         no_config,
         color,
-    }))
+    })))
 }
 
 fn read_input(path: Option<PathBuf>) -> Result<Vec<u8>, CliError> {
@@ -941,12 +846,13 @@ fn process_check(
             }
         }
         DiagnosticFormat::Human => {
-            diagnostic::render_human(
+            let core = diagnostic::render_human(
                 analysis.diagnostics(),
                 analysis.source_document(),
                 PositionEncoding::Utf8,
             )
-            .map_err(CliError::Position)?
+            .map_err(CliError::Position)?;
+            prefix_human_source(&core, source_id)
                 + &local_target::render_human(&host, source).map_err(CliError::Position)?
         }
         DiagnosticFormat::Github => {
@@ -977,46 +883,49 @@ fn process_check(
             }
             output
         }
+        DiagnosticFormat::Sarif => {
+            let document = SourceDocument::new(source).map_err(CliError::Position)?;
+            let mut results = Vec::new();
+            for item in analysis.diagnostics() {
+                let position = document
+                    .offset_to_position(item.range.start(), PositionEncoding::Utf8)
+                    .map_err(CliError::Position)?;
+                results.push(sarif_result(
+                    item.id.as_str(),
+                    item.severity,
+                    item.code.as_str(),
+                    &item.message,
+                    source_id,
+                    position.line + 1,
+                    position.character + 1,
+                ));
+            }
+            results.extend(host.iter().map(|item| {
+                let id = format!(
+                    "{}@{}:{}:{}",
+                    item.code,
+                    item.source_id,
+                    item.range.start().to_u32(),
+                    item.range.end().to_u32()
+                );
+                sarif_result(
+                    &id,
+                    diagnostic::Severity::Error,
+                    item.code,
+                    item.message,
+                    &item.source_id,
+                    item.line,
+                    item.column,
+                )
+            }));
+            sarif_log(results)
+        }
     };
     Ok(CheckOutcome {
         output,
         counts,
         fail_on: check.fail_on,
     })
-}
-
-fn github_annotation(
-    severity: diagnostic::Severity,
-    code: &str,
-    message: &str,
-    source_id: &str,
-    line: u32,
-    column: u32,
-) -> String {
-    let command = match severity {
-        diagnostic::Severity::Error => "error",
-        diagnostic::Severity::Warning => "warning",
-        diagnostic::Severity::Information | diagnostic::Severity::Hint => "notice",
-    };
-    format!(
-        "::{command} file={},line={line},col={column},title={}::{}\n",
-        github_property(source_id),
-        github_property(code),
-        github_message(message)
-    )
-}
-
-fn github_message(value: &str) -> String {
-    value
-        .replace('%', "%25")
-        .replace('\r', "%0D")
-        .replace('\n', "%0A")
-}
-
-fn github_property(value: &str) -> String {
-    github_message(value)
-        .replace(':', "%3A")
-        .replace(',', "%2C")
 }
 
 fn process_format(
@@ -1149,6 +1058,9 @@ fn resolved_config_json(
 
 fn validate_project_config_authority(
     config: &adocweave_config::ResolvedProjectConfig,
+    resources: bool,
+    local_targets: bool,
+    stylesheets: bool,
 ) -> Result<(), CliError> {
     let boundary = env::current_dir()
         .and_then(fs::canonicalize)
@@ -1160,8 +1072,15 @@ fn validate_project_config_authority(
         .resources
         .roots
         .iter()
-        .chain(config.local_targets.project_root.iter())
-        .chain(config.html.stylesheet_files.iter());
+        .filter(|_| resources)
+        .chain(
+            config
+                .local_targets
+                .project_root
+                .iter()
+                .filter(|_| local_targets),
+        )
+        .chain(config.html.stylesheet_files.iter().filter(|_| stylesheets));
     for path in paths {
         let canonical = fs::canonicalize(path).map_err(|source| CliError::Read {
             source_name: path.display().to_string(),
@@ -1175,6 +1094,8 @@ fn validate_project_config_authority(
 }
 
 fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> {
+    const MAX_SCAN_ENTRIES: usize = 100_000;
+
     let mut pending = arguments
         .input
         .iter()
@@ -1192,6 +1113,7 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
     }
     pending.sort();
     let mut files = std::collections::BTreeSet::new();
+    let mut scanned_entries = 0_usize;
     while let Some(path) = pending.pop() {
         let metadata = fs::symlink_metadata(&path).map_err(|source| CliError::Read {
             source_name: path.display().to_string(),
@@ -1204,30 +1126,37 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
             )));
         }
         if metadata.is_dir() {
-            let mut children = fs::read_dir(&path)
-                .map_err(|source| CliError::Read {
+            let mut children = Vec::new();
+            for child in fs::read_dir(&path).map_err(|source| CliError::Read {
+                source_name: path.display().to_string(),
+                source,
+            })? {
+                children.push(child.map_err(|source| CliError::Read {
                     source_name: path.display().to_string(),
                     source,
-                })?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|source| CliError::Read {
+                })?);
+                scanned_entries += 1;
+                if scanned_entries > MAX_SCAN_ENTRIES {
+                    return Err(CliError::Path(
+                        "directory scan entry limit exceeded".to_owned(),
+                    ));
+                }
+            }
+            children.sort_by_key(fs::DirEntry::file_name);
+            for entry in children.into_iter().rev() {
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path).map_err(|source| CliError::Read {
                     source_name: path.display().to_string(),
                     source,
                 })?;
-            children.sort_by_key(fs::DirEntry::file_name);
-            pending.extend(children.into_iter().rev().filter_map(|entry| {
-                let path = entry.path();
-                let metadata = fs::symlink_metadata(&path).ok()?;
                 if metadata.file_type().is_symlink() {
-                    None
+                    continue;
                 } else if metadata.is_dir()
                     || path.extension().and_then(|value| value.to_str()) == Some("adoc")
                 {
-                    Some(path)
-                } else {
-                    None
+                    pending.push(path);
                 }
-            }));
+            }
             continue;
         }
         if !metadata.is_file() {
@@ -1274,139 +1203,6 @@ fn apply_safe_fixes(input: &[u8], analysis_options: &AnalysisOptions) -> Result<
         );
     }
     Ok(fixed.into_bytes())
-}
-
-struct PendingWrite {
-    path: PathBuf,
-    original: Vec<u8>,
-    replacement: Vec<u8>,
-}
-
-fn atomic_write_all(writes: Vec<PendingWrite>) -> Result<(), CliError> {
-    let mut prepared = Vec::new();
-    for write in writes {
-        let metadata = fs::symlink_metadata(&write.path).map_err(|source| CliError::Read {
-            source_name: write.path.display().to_string(),
-            source,
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(CliError::Path(format!(
-                "write target is not a regular non-symlink file: {}",
-                write.path.display()
-            )));
-        }
-        if fs::read(&write.path).map_err(|source| CliError::Read {
-            source_name: write.path.display().to_string(),
-            source,
-        })? != write.original
-        {
-            return Err(CliError::ConcurrentModification(write.path));
-        }
-        let parent = write
-            .path
-            .parent()
-            .ok_or_else(|| CliError::Path("write target has no parent directory".to_owned()))?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(CliError::Write)?;
-        temporary
-            .as_file()
-            .set_permissions(metadata.permissions())
-            .map_err(CliError::Write)?;
-        temporary
-            .write_all(&write.replacement)
-            .map_err(CliError::Write)?;
-        temporary.as_file().sync_all().map_err(CliError::Write)?;
-        prepared.push((write, temporary));
-    }
-    for (write, temporary) in prepared {
-        if fs::read(&write.path).map_err(|source| CliError::Read {
-            source_name: write.path.display().to_string(),
-            source,
-        })? != write.original
-        {
-            return Err(CliError::ConcurrentModification(write.path));
-        }
-        temporary
-            .persist(&write.path)
-            .map_err(|error| CliError::Write(error.error))?;
-        #[cfg(unix)]
-        if let Some(parent) = write.path.parent() {
-            fs::File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .map_err(CliError::Write)?;
-        }
-    }
-    Ok(())
-}
-
-fn unified_diff(path: &std::path::Path, original: &str, formatted: &str) -> String {
-    similar::TextDiff::from_lines(original, formatted)
-        .unified_diff()
-        .header(
-            &format!("a/{}", path.display()),
-            &format!("b/{}", path.display()),
-        )
-        .to_string()
-}
-
-fn safe_write_format_config(
-    original: &[u8],
-    project: &adocweave_config::ResolvedProjectConfig,
-) -> FormatConfig {
-    let mut format = project.format;
-    if !project.format_newline_explicit {
-        let crlf = original
-            .windows(2)
-            .filter(|window| *window == b"\r\n")
-            .count();
-        let lf = original.iter().filter(|byte| **byte == b'\n').count();
-        format.newline = if crlf > 0 && crlf.saturating_mul(2) >= lf {
-            adocweave::output::formatter::NewlineStyle::CrLf
-        } else {
-            adocweave::output::formatter::NewlineStyle::Lf
-        };
-    }
-    if !project.format_final_newline_explicit {
-        format.final_newline = original.ends_with(b"\n");
-    }
-    format
-}
-
-fn colorize_lines(output: &str, choice: ColorChoice) -> String {
-    use std::io::IsTerminal as _;
-
-    let enabled = match choice {
-        ColorChoice::Always => true,
-        ColorChoice::Never => false,
-        ColorChoice::Auto => io::stdout().is_terminal(),
-    };
-    if !enabled {
-        return output.to_owned();
-    }
-    let mut colored = String::new();
-    for line in output.split_inclusive('\n') {
-        let color = if line.starts_with('+') || line.contains(": hint[") {
-            Some("\u{1b}[32m")
-        } else if line.starts_with('-') || line.contains(": error[") {
-            Some("\u{1b}[31m")
-        } else if line.contains(": warning[") {
-            Some("\u{1b}[33m")
-        } else if line.contains(": information[") {
-            Some("\u{1b}[36m")
-        } else {
-            None
-        };
-        if let Some(color) = color {
-            colored.push_str(color);
-            colored.push_str(line.trim_end_matches('\n'));
-            colored.push_str("\u{1b}[0m");
-            if line.ends_with('\n') {
-                colored.push('\n');
-            }
-        } else {
-            colored.push_str(line);
-        }
-    }
-    colored
 }
 
 fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
@@ -1458,11 +1254,42 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     adocweave_config::ResolvedProjectConfig::default,
                     |snapshot| snapshot.config.clone(),
                 );
-                validate_project_config_authority(&config)?;
                 let original = fs::read(path).map_err(|source| CliError::Read {
                     source_name: path.display().to_string(),
                     source,
                 })?;
+                let include = arguments.include || config.resources.include;
+                if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
+                {
+                    return Err(CliError::Usage(
+                        "--base-dir and --allow-root require include processing".to_owned(),
+                    ));
+                }
+                if include {
+                    validate_project_config_authority(
+                        &config,
+                        arguments.allowed_roots.is_empty(),
+                        false,
+                        false,
+                    )?;
+                    let source = decode_input(&original)?;
+                    let source_base = path.parent().expect("canonical input path has a parent");
+                    let base_dir = arguments.base_dir.as_deref().unwrap_or(source_base);
+                    let allowed_roots = if arguments.allowed_roots.is_empty() {
+                        &config.resources.roots
+                    } else {
+                        &arguments.allowed_roots
+                    };
+                    local_include::prepare(
+                        source,
+                        Some(path.to_string_lossy().into_owned()),
+                        base_dir,
+                        allowed_roots,
+                        config.resources.limits,
+                        &config.preprocess,
+                    )
+                    .map_err(CliError::Include)?;
+                }
                 let format_config = if *write {
                     safe_write_format_config(&original, &config)
                 } else {
@@ -1510,16 +1337,16 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
         }
         CommandOptions::Check(check) => {
             let mut output = String::new();
-            let mut json = Vec::new();
+            let mut machine_results = Vec::new();
             let mut counts = DiagnosticCounts::default();
             let mut pending = Vec::new();
+            let mut changed = 0_usize;
             for path in &paths {
                 let snapshot = load_project_config_at(arguments, path, &boundary)?;
                 let config = snapshot.as_ref().map_or_else(
                     adocweave_config::ResolvedProjectConfig::default,
                     |snapshot| snapshot.config.clone(),
                 );
-                validate_project_config_authority(&config)?;
                 let original = fs::read(path).map_err(|source| CliError::Read {
                     source_name: path.display().to_string(),
                     source,
@@ -1532,12 +1359,15 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 } else {
                     original.clone()
                 };
-                if check.fix && !check.dry_run && checked != original {
-                    pending.push(PendingWrite {
-                        path: path.clone(),
-                        original,
-                        replacement: checked.clone(),
-                    });
+                if check.fix && checked != original {
+                    changed += 1;
+                    if !check.dry_run {
+                        pending.push(PendingWrite {
+                            path: path.clone(),
+                            original,
+                            replacement: checked.clone(),
+                        });
+                    }
                 }
                 let source_id = path.to_string_lossy();
                 let project_root = arguments.project_root.clone().or_else(|| {
@@ -1547,6 +1377,19 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         .then(|| config.local_targets.project_root.clone())
                         .flatten()
                 });
+                let include = arguments.include || config.resources.include;
+                if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
+                {
+                    return Err(CliError::Usage(
+                        "--base-dir and --allow-root require include processing".to_owned(),
+                    ));
+                }
+                validate_project_config_authority(
+                    &config,
+                    include && arguments.allowed_roots.is_empty(),
+                    project_root.is_some() && arguments.project_root.is_none(),
+                    false,
+                )?;
                 let source_base = path
                     .parent()
                     .expect("canonical input path has a parent")
@@ -1554,7 +1397,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 let local_context = project_root
                     .as_ref()
                     .map(|root| (source_base.as_path(), root.as_path(), source_id.as_ref()));
-                let include = arguments.include || config.resources.include;
                 let outcome = if include {
                     let source = decode_input(&checked)?;
                     let base_dir = arguments
@@ -1612,13 +1454,9 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                             });
                         }
                     }
-                    json.extend(values);
-                } else if check.format == DiagnosticFormat::Human {
-                    for line in outcome.output.lines() {
-                        use std::fmt::Write as _;
-                        writeln!(output, "{}:{line}", path.display())
-                            .expect("writing to a String cannot fail");
-                    }
+                    machine_results.extend(values);
+                } else if check.format == DiagnosticFormat::Sarif {
+                    machine_results.extend(sarif_results(&outcome.output));
                 } else {
                     output.push_str(&outcome.output);
                 }
@@ -1627,7 +1465,10 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 atomic_write_all(pending)?;
             }
             if check.format == DiagnosticFormat::Json {
-                output = serde_json::to_string(&json).expect("diagnostics are serializable");
+                output =
+                    serde_json::to_string(&machine_results).expect("diagnostics are serializable");
+            } else if check.format == DiagnosticFormat::Sarif {
+                output = sarif_log(machine_results);
             }
             if check.format == DiagnosticFormat::Human {
                 let output = finish_output(colorize_lines(&output, arguments.color))?;
@@ -1637,7 +1478,11 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 print!("{output}");
             }
             if check.summary {
-                eprintln!("adocweave check: {}", counts.summary());
+                if check.fix {
+                    eprintln!("adocweave check: {}, changed={changed}", counts.summary());
+                } else {
+                    eprintln!("adocweave check: {}", counts.summary());
+                }
             }
             Ok(Some(if counts.fails(check.fail_on) {
                 ExitCode::FAILURE
@@ -1682,7 +1527,7 @@ compdef _adocweave adocweave
         }
         CompletionShell::Fish => {
             r#"complete -c adocweave -f -n '__fish_use_subcommand' -a 'convert check format symbols config completion help'
-complete -c adocweave -l format -x -a 'human json github'
+complete -c adocweave -l format -x -a 'human json github sarif'
 complete -c adocweave -l fail-on -x -a 'error warning never'
 complete -c adocweave -l config -r
 complete -c adocweave -l write
@@ -1710,7 +1555,7 @@ fn command_help(operation: Operation) -> &'static str {
             "Usage:\n  adocweave convert [OPTIONS] [FILE]\n\nExample:\n  adocweave convert --complete manual.adoc\n"
         }
         Operation::Check => {
-            "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format github --summary manual.adoc\n  adocweave check --fix docs\n"
+            "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format github --summary manual.adoc\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n"
         }
         Operation::Format => {
             "Usage:\n  adocweave format [OPTIONS] [FILE...]\n\nExamples:\n  adocweave format --check docs\n  adocweave format --diff manual.adoc\n  adocweave format --write docs\n"
@@ -1766,9 +1611,13 @@ fn run() -> Result<ExitCode, CliError> {
                 println!("{output}");
                 return Ok(ExitCode::SUCCESS);
             }
-            validate_project_config_authority(&project_config)?;
             let operation = arguments.command.operation();
             let include = arguments.include || project_config.resources.include;
+            if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty()) {
+                return Err(CliError::Usage(
+                    "--base-dir and --allow-root require include processing".to_owned(),
+                ));
+            }
             let allowed_roots = if arguments.allowed_roots.is_empty() {
                 project_config.resources.roots.clone()
             } else {
@@ -1781,6 +1630,12 @@ fn run() -> Result<ExitCode, CliError> {
                     .then(|| project_config.local_targets.project_root.clone())
                     .flatten()
             });
+            validate_project_config_authority(
+                &project_config,
+                include && arguments.allowed_roots.is_empty(),
+                project_root.is_some() && arguments.project_root.is_none(),
+                operation == Operation::Convert,
+            )?;
             if matches!(
                 &arguments.command,
                 CommandOptions::Check(CheckOptions {
@@ -2076,6 +1931,63 @@ fn check_preprocessed(
                 fail_on: check.fail_on,
             })
             .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()));
+    }
+    if check.format == DiagnosticFormat::Sarif {
+        let mut results = Vec::new();
+        for diagnostic in &projected.diagnostics {
+            for origin in &diagnostic.origins {
+                let source_id = origin
+                    .source_id
+                    .as_ref()
+                    .map_or("<unknown>", adocweave::SourceId::as_str);
+                let source = prepared.sources.get(source_id).ok_or_else(|| {
+                    local_include::LocalIncludeError::MissingSource(source_id.to_owned())
+                })?;
+                let index = SourceDocument::new(source)
+                    .map_err(local_include::LocalIncludeError::Position)?;
+                let position = index
+                    .offset_to_position(origin.range.start(), PositionEncoding::Utf8)
+                    .map_err(local_include::LocalIncludeError::Position)?;
+                results.push(sarif_result(
+                    &format!(
+                        "{}@{}:{}:{}",
+                        diagnostic.diagnostic.code.as_str(),
+                        source_id,
+                        origin.range.start().to_u32(),
+                        origin.range.end().to_u32()
+                    ),
+                    diagnostic.diagnostic.severity,
+                    diagnostic.diagnostic.code.as_str(),
+                    &diagnostic.diagnostic.message,
+                    source_id,
+                    position.line + 1,
+                    position.character + 1,
+                ));
+            }
+        }
+        results.extend(host.iter().map(|diagnostic| {
+            let id = format!(
+                "{}@{}:{}:{}",
+                diagnostic.code,
+                diagnostic.source_id,
+                diagnostic.range.start().to_u32(),
+                diagnostic.range.end().to_u32()
+            );
+            sarif_result(
+                &id,
+                diagnostic::Severity::Error,
+                diagnostic.code,
+                diagnostic.message,
+                &diagnostic.source_id,
+                diagnostic.line,
+                diagnostic.column,
+            )
+        }));
+        return Ok(CheckOutcome {
+            output: sarif_log(results),
+            counts,
+            fail_on: check.fail_on,
+        });
     }
 
     let mut output = String::new();

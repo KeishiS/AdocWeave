@@ -4,6 +4,7 @@
 //! [`WorkspaceSnapshot`] is immutable and can safely move to a worker thread.
 //! Callers accept completed analysis through [`Workspace::accept`] so results
 //! from an older generation cannot replace current dependency information.
+#![warn(missing_docs)]
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
@@ -20,10 +21,12 @@ use adocweave::preprocess::{
 use adocweave::{AnalysisOptions, Engine, SourceId};
 use adocweave_host::{DependencyGraph, LocalResourcePolicy, ResourceBudget, ResourceLimits};
 
+/// Stable, host-defined identity for one workspace resource.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ResourceId(String);
 
 impl ResourceId {
+    /// Creates an identity after rejecting empty values and control characters.
     pub fn new(value: impl Into<String>) -> Result<Self, WorkspaceError> {
         let value = value.into();
         if value.is_empty() || value.chars().any(char::is_control) {
@@ -35,6 +38,7 @@ impl ResourceId {
         Ok(Self(value))
     }
 
+    /// Returns the identity as supplied by the host.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -46,27 +50,33 @@ impl fmt::Display for ResourceId {
     }
 }
 
+/// Monotonic revision assigned by the host within one resource layer.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Revision(i64);
 
 impl Revision {
+    /// Creates a revision from a host-defined monotonic value.
     pub const fn new(value: i64) -> Self {
         Self(value)
     }
 
+    /// Returns the underlying host revision.
     pub const fn get(self) -> i64 {
         self.0
     }
 }
 
+/// Monotonic generation of the effective workspace state.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Generation(u64);
 
 impl Generation {
+    /// Creates a generation, for example when rebuilding adapter state.
     pub const fn new(value: u64) -> Self {
         Self(value)
     }
 
+    /// Returns the underlying generation.
     pub const fn get(self) -> u64 {
         self.0
     }
@@ -76,12 +86,16 @@ impl Generation {
     }
 }
 
+/// Storage layer supplying the effective resource text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResourceLayer {
+    /// Text read from persistent host storage.
     Disk,
+    /// Text supplied by an open editor or another transient host.
     Overlay,
 }
 
+/// Immutable effective resource stored in a workspace snapshot.
 #[derive(Clone, Debug)]
 pub struct Resource {
     id: ResourceId,
@@ -91,26 +105,33 @@ pub struct Resource {
 }
 
 impl Resource {
+    /// Returns the stable resource identity.
     pub fn id(&self) -> &ResourceId {
         &self.id
     }
 
+    /// Returns the revision of the effective layer.
     pub const fn revision(&self) -> Revision {
         self.revision
     }
 
+    /// Returns shared immutable UTF-8 text.
     pub fn text(&self) -> &Arc<str> {
         &self.text
     }
 
+    /// Returns the layer supplying the effective text.
     pub const fn layer(&self) -> ResourceLayer {
         self.layer
     }
 }
 
+/// Bounds applied before resources or analysis roots enter workspace state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkspaceLimits {
+    /// Resource count and byte limits shared with host filesystem policy.
     pub resources: ResourceLimits,
+    /// Maximum number of registered analysis roots.
     pub max_roots: usize,
 }
 
@@ -123,24 +144,39 @@ impl Default for WorkspaceLimits {
     }
 }
 
+/// Stable category for workspace state and analysis failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkspaceErrorCode {
+    /// Invalid host resource identity.
     InvalidResourceId,
+    /// Required resource or registered root not present.
     MissingResource,
+    /// Update or result older than current resource state.
     StaleRevision,
+    /// Analysis result from an older workspace state.
     StaleGeneration,
+    /// Configured resource or root limit exceeded.
     ResourceLimit,
+    /// Cooperatively cancelled analysis.
     Cancelled,
+    /// Include preprocessing failure.
     Preprocess,
+    /// Core analysis failure.
     Analysis,
+    /// Source-origin projection failure.
     Projection,
+    /// Filesystem adapter failure.
     Filesystem,
 }
 
+/// Workspace error with an optional source origin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceError {
+    /// Stable high-level error category.
     pub code: WorkspaceErrorCode,
+    /// Logical source identity when preprocessing supplied one.
     pub source_id: Option<ResourceId>,
+    /// Source byte range when preprocessing supplied one.
     pub range: Option<adocweave::text::TextRange>,
     detail_code: Option<&'static str>,
     message: String,
@@ -169,6 +205,7 @@ impl WorkspaceError {
         self
     }
 
+    /// Returns the most specific stable diagnostic code.
     pub const fn diagnostic_code(&self) -> &'static str {
         match self.detail_code {
             Some(code) => code,
@@ -195,6 +232,7 @@ impl fmt::Display for WorkspaceError {
 impl Error for WorkspaceError {}
 
 impl WorkspaceErrorCode {
+    /// Returns the stable kebab-case code.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidResourceId => "invalid-resource-id",
@@ -211,25 +249,25 @@ impl WorkspaceErrorCode {
     }
 }
 
-pub trait Cancellation {
-    fn is_cancelled(&self) -> bool;
-}
+/// Runtime-independent cancellation accepted by workspace analysis.
+pub trait Cancellation: adocweave::CancellationCheck {}
 
+impl<T: adocweave::CancellationCheck + ?Sized> Cancellation for T {}
+
+/// Cancellation implementation for synchronous calls that always complete.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NeverCancelled;
 
-impl Cancellation for NeverCancelled {
+impl adocweave::CancellationCheck for NeverCancelled {
     fn is_cancelled(&self) -> bool {
         false
     }
 }
 
-impl Cancellation for adocweave::CancellationToken {
-    fn is_cancelled(&self) -> bool {
-        adocweave::CancellationCheck::is_cancelled(self)
-    }
-}
-
+/// Mutable bounded workspace state.
+///
+/// Mutations are atomic with respect to validation: a rejected update leaves
+/// the prior effective snapshot unchanged.
 #[derive(Clone, Debug)]
 pub struct Workspace {
     generation: Generation,
@@ -248,10 +286,12 @@ impl Default for Workspace {
 }
 
 impl Workspace {
+    /// Creates an empty workspace with explicit limits.
     pub fn new(limits: WorkspaceLimits) -> Self {
         Self::new_at_generation(limits, Generation::default())
     }
 
+    /// Creates an empty workspace starting at a host-selected generation.
     pub fn new_at_generation(limits: WorkspaceLimits, generation: Generation) -> Self {
         Self {
             generation,
@@ -264,18 +304,22 @@ impl Workspace {
         }
     }
 
+    /// Returns the current effective-state generation.
     pub const fn generation(&self) -> Generation {
         self.generation
     }
 
+    /// Returns the effective resource, preferring an overlay over disk text.
     pub fn get(&self, id: &ResourceId) -> Option<&Resource> {
         self.effective.get(id)
     }
 
+    /// Returns explicitly registered analysis roots.
     pub fn roots(&self) -> &BTreeSet<ResourceId> {
         &self.roots
     }
 
+    /// Registers an existing resource as an analysis root.
     pub fn register_root(&mut self, id: ResourceId) -> Result<(), WorkspaceError> {
         if !self.effective.contains_key(&id) {
             return Err(WorkspaceError::new(
@@ -295,12 +339,14 @@ impl Workspace {
         Ok(())
     }
 
+    /// Removes an analysis root without removing its resource.
     pub fn unregister_root(&mut self, id: &ResourceId) {
         if self.roots.remove(id) {
             self.generation = self.generation.next();
         }
     }
 
+    /// Inserts or replaces disk text and returns roots affected by the change.
     pub fn upsert_disk(
         &mut self,
         id: ResourceId,
@@ -322,6 +368,7 @@ impl Workspace {
         self.refresh_effective(id)
     }
 
+    /// Inserts or replaces open overlay text and returns affected roots.
     pub fn upsert_overlay(
         &mut self,
         id: ResourceId,
@@ -340,6 +387,7 @@ impl Workspace {
         self.refresh_effective(id)
     }
 
+    /// Closes an overlay, restoring disk text when present.
     pub fn close_overlay(
         &mut self,
         id: &ResourceId,
@@ -350,6 +398,9 @@ impl Workspace {
         self.refresh_effective(id.clone())
     }
 
+    /// Removes disk text and returns affected roots.
+    ///
+    /// An open overlay remains effective until it is closed.
     pub fn remove_disk(&mut self, id: &ResourceId) -> BTreeSet<ResourceId> {
         if self.disk.remove(id).is_none() || self.overlays.contains_key(id) {
             return BTreeSet::new();
@@ -357,6 +408,7 @@ impl Workspace {
         self.remove_effective(id)
     }
 
+    /// Returns registered roots transitively depending on a resource.
     pub fn affected_roots(&self, id: &ResourceId) -> BTreeSet<ResourceId> {
         self.dependencies
             .affected(id)
@@ -365,6 +417,7 @@ impl Workspace {
             .collect()
     }
 
+    /// Captures an immutable copy-on-write analysis input.
     pub fn snapshot(&self) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
             generation: self.generation,
@@ -373,6 +426,7 @@ impl Workspace {
         }
     }
 
+    /// Adopts dependency information from a result that is still current.
     pub fn accept(&mut self, analysis: &WorkspaceAnalysis) -> Result<(), WorkspaceError> {
         if analysis.generation != self.generation {
             return Err(WorkspaceError::new(
@@ -506,6 +560,7 @@ impl Workspace {
     }
 }
 
+/// Immutable workspace state safe to move to a worker thread.
 #[derive(Clone, Debug)]
 pub struct WorkspaceSnapshot {
     generation: Generation,
@@ -514,18 +569,25 @@ pub struct WorkspaceSnapshot {
 }
 
 impl WorkspaceSnapshot {
+    /// Returns the captured workspace generation.
     pub const fn generation(&self) -> Generation {
         self.generation
     }
 
+    /// Returns a captured effective resource.
     pub fn get(&self, id: &ResourceId) -> Option<&Resource> {
         self.resources.get(id)
     }
 
+    /// Iterates over captured resources in identity order.
     pub fn resources(&self) -> impl Iterator<Item = (&ResourceId, &Resource)> {
         self.resources.iter()
     }
 
+    /// Produces a snapshot containing only resources accepted by `retain`.
+    ///
+    /// Registered roots excluded by the predicate are removed from the
+    /// returned root set.
     pub fn filter_resources(&self, mut retain: impl FnMut(&ResourceId, &Resource) -> bool) -> Self {
         let resources: BTreeMap<ResourceId, Resource> = self
             .resources
@@ -546,6 +608,11 @@ impl WorkspaceSnapshot {
         }
     }
 
+    /// Preprocesses, analyzes, and projects one registered root.
+    ///
+    /// Cancellation is checked before and between stages and inside the core
+    /// parser. The returned result is not current until [`Workspace::accept`]
+    /// succeeds against mutable workspace state.
     pub fn analyze(
         &self,
         root: &ResourceId,
@@ -590,10 +657,16 @@ impl WorkspaceSnapshot {
             })?;
         check_cancelled(cancellation)?;
         let dependencies = actual_dependencies(&document, root);
+        let source_id = SourceId::new(root.to_string());
         let analysis = Engine::new(analysis_options.clone())
-            .analyze_with_source_id(Some(SourceId::new(root.to_string())), &document.source)
+            .analyze_cancellable_with_source_id(Some(&source_id), &document.source, cancellation)
             .map_err(|error| {
-                WorkspaceError::new(WorkspaceErrorCode::Analysis, error.to_string())
+                let code = if error == adocweave::ParseError::Cancelled {
+                    WorkspaceErrorCode::Cancelled
+                } else {
+                    WorkspaceErrorCode::Analysis
+                };
+                WorkspaceError::new(code, error.to_string())
             })?;
         check_cancelled(cancellation)?;
         let preprocessed = PreprocessedAnalysis { document, analysis };
@@ -623,11 +696,16 @@ impl WorkspaceSnapshot {
     }
 }
 
+/// Severity totals after source-origin projection.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DiagnosticCounts {
+    /// Error occurrences.
     pub errors: usize,
+    /// Warning occurrences.
     pub warnings: usize,
+    /// Information occurrences.
     pub information: usize,
+    /// Hint occurrences.
     pub hints: usize,
 }
 
@@ -647,28 +725,37 @@ impl DiagnosticCounts {
     }
 }
 
+/// Immutable result for one root and workspace generation.
 #[derive(Debug)]
 pub struct WorkspaceAnalysis {
     generation: Generation,
     root: ResourceId,
     root_revision: Revision,
     dependencies: BTreeMap<ResourceId, BTreeSet<ResourceId>>,
+    /// Preprocessed document and source map.
     pub document: Arc<adocweave::preprocess::PreprocessedDocument>,
+    /// Core analysis over the expanded source.
     pub analysis: Arc<adocweave::Analysis>,
+    /// Diagnostics and queries projected to resource origins.
     pub projection: Arc<AnalysisProjection>,
+    /// Revisions captured for all resources in the snapshot.
     pub resource_revisions: BTreeMap<ResourceId, Revision>,
+    /// Projected diagnostic totals.
     pub counts: DiagnosticCounts,
 }
 
 impl WorkspaceAnalysis {
+    /// Returns the captured workspace generation.
     pub const fn generation(&self) -> Generation {
         self.generation
     }
 
+    /// Returns the analyzed root identity.
     pub fn root(&self) -> &ResourceId {
         &self.root
     }
 
+    /// Returns source identities present in directives or diagnostic origins.
     pub fn source_ids(&self) -> BTreeSet<ResourceId> {
         let mut ids = BTreeSet::new();
         for directive in &self.projection.directives {
@@ -698,7 +785,7 @@ impl WorkspaceAnalysis {
 }
 
 fn check_cancelled(cancellation: &impl Cancellation) -> Result<(), WorkspaceError> {
-    if cancellation.is_cancelled() {
+    if adocweave::CancellationCheck::is_cancelled(cancellation) {
         Err(WorkspaceError::new(
             WorkspaceErrorCode::Cancelled,
             "analysis was cancelled",
@@ -739,18 +826,27 @@ fn actual_dependencies(
     dependencies
 }
 
+/// UTF-8 resource loaded by [`scan_filesystem`].
 #[derive(Clone, Debug)]
 pub struct FilesystemResource {
+    /// Canonical filesystem path.
     pub path: PathBuf,
+    /// Shared immutable UTF-8 text.
     pub text: Arc<str>,
 }
 
 /// Scans `.adoc` files below canonical roots without following symlinks.
+///
+/// Roots are canonicalized and deduplicated. The scan rejects more than
+/// 100,000 directory entries before loading candidates, then applies the
+/// supplied file and byte limits.
 pub fn scan_filesystem(
     roots: &[PathBuf],
     limits: ResourceLimits,
 ) -> Result<Vec<FilesystemResource>, WorkspaceError> {
-    let canonical_roots = roots
+    const MAX_SCAN_ENTRIES: usize = 100_000;
+
+    let mut canonical_roots = roots
         .iter()
         .map(|root| {
             root.canonicalize().map_err(|error| {
@@ -758,9 +854,12 @@ pub fn scan_filesystem(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    canonical_roots.sort();
+    canonical_roots.dedup();
     let policy = LocalResourcePolicy::new(canonical_roots.clone(), limits)
         .map_err(|error| WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string()))?;
     let mut paths = Vec::new();
+    let mut scanned_entries = 0_usize;
     for root in &canonical_roots {
         if !root.is_dir() {
             return Err(WorkspaceError::new(
@@ -777,14 +876,21 @@ pub fn scan_filesystem(
                 continue;
             }
             if metadata.is_dir() {
-                let mut children = fs::read_dir(&path)
-                    .map_err(|error| {
+                let mut children = Vec::new();
+                for child in fs::read_dir(&path).map_err(|error| {
+                    WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
+                })? {
+                    children.push(child.map_err(|error| {
                         WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
-                    })?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|error| {
-                        WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
-                    })?;
+                    })?);
+                    scanned_entries += 1;
+                    if scanned_entries > MAX_SCAN_ENTRIES {
+                        return Err(WorkspaceError::new(
+                            WorkspaceErrorCode::ResourceLimit,
+                            "filesystem scan entry limit exceeded",
+                        ));
+                    }
+                }
                 children.sort_by_key(fs::DirEntry::file_name);
                 pending.extend(children.into_iter().map(|entry| entry.path()));
             } else if path.extension().and_then(|value| value.to_str()) == Some("adoc") {
@@ -823,6 +929,9 @@ pub fn scan_filesystem(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
 
     fn id(value: &str) -> ResourceId {
@@ -975,6 +1084,69 @@ mod tests {
             workspace.accept(&result).expect_err("stale").code,
             WorkspaceErrorCode::StaleGeneration
         );
+    }
+
+    #[test]
+    fn cancellation_reaches_the_core_parser() {
+        struct CancelDuringCore(AtomicUsize);
+
+        impl adocweave::CancellationCheck for CancelDuringCore {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 2
+            }
+        }
+
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        workspace
+            .upsert_disk(root.clone(), Revision::new(1), "paragraph\n".repeat(10_000))
+            .expect("disk");
+        workspace.register_root(root.clone()).expect("root");
+        let error = workspace
+            .snapshot()
+            .analyze(
+                &root,
+                &AnalysisOptions::default(),
+                &options(),
+                ProjectionLimits::default(),
+                &CancelDuringCore(AtomicUsize::new(0)),
+            )
+            .expect_err("cancelled");
+        assert_eq!(error.code, WorkspaceErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn filesystem_scan_deduplicates_roots_before_applying_limits() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("adocweave-workspace-scan-{unique}"));
+        fs::create_dir(&root).expect("root");
+        fs::write(root.join("root.adoc"), "text\n").expect("resource");
+        let limits = ResourceLimits {
+            max_files: 1,
+            ..ResourceLimits::default()
+        };
+
+        let resources =
+            scan_filesystem(&[root.clone(), root.clone()], limits).expect("deduplicated scan");
+        assert_eq!(resources.len(), 1);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn filesystem_scan_reports_missing_roots_as_filesystem_errors() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let missing = std::env::temp_dir().join(format!("adocweave-workspace-missing-{unique}"));
+
+        let error = scan_filesystem(&[missing], ResourceLimits::default())
+            .expect_err("missing root must fail");
+        assert_eq!(error.code, WorkspaceErrorCode::Filesystem);
     }
 
     #[test]

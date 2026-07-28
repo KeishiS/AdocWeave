@@ -45,23 +45,12 @@ impl WorkspaceInput {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct WorkspaceResources {
     inner: Workspace,
     roots: Vec<PathBuf>,
     policy: Option<LocalResourcePolicy>,
     next_disk_version: i64,
-}
-
-impl Default for WorkspaceResources {
-    fn default() -> Self {
-        Self {
-            inner: Workspace::default(),
-            roots: Vec::new(),
-            policy: None,
-            next_disk_version: 0,
-        }
-    }
 }
 
 impl WorkspaceResources {
@@ -203,29 +192,39 @@ impl WorkspaceResources {
         options.base_uri = parent_uri(root);
         options.safe_mode = SafeMode::Server;
         options.allowed_schemes = allowed_schemes;
-        let allowed_roots = project_config
-            .resources
-            .roots
-            .iter()
-            .map(|root| {
-                let canonical = root
-                    .canonicalize()
-                    .map_err(|error| format!("cannot canonicalize configured root: {error}"))?;
-                if !self
-                    .roots
-                    .iter()
-                    .any(|workspace_root| canonical.starts_with(workspace_root))
-                {
-                    return Err(format!(
-                        "configured root is outside the workspace: {}",
-                        root.display()
-                    ));
-                }
-                Ok(canonical)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let allowed_roots = if options.enable_includes {
+            project_config
+                .resources
+                .roots
+                .iter()
+                .map(|root| {
+                    let canonical = root
+                        .canonicalize()
+                        .map_err(|error| format!("cannot canonicalize configured root: {error}"))?;
+                    if !self
+                        .roots
+                        .iter()
+                        .any(|workspace_root| canonical.starts_with(workspace_root))
+                    {
+                        return Err(format!(
+                            "configured root is outside the workspace: {}",
+                            root.display()
+                        ));
+                    }
+                    Ok(canonical)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
         let snapshot = snapshot.filter_resources(|id, _| {
-            if id == &root_id || allowed_roots.is_empty() {
+            if id == &root_id {
+                return true;
+            }
+            if !options.enable_includes {
+                return false;
+            }
+            if allowed_roots.is_empty() {
                 return true;
             }
             Url::parse(id.as_str())
@@ -239,7 +238,11 @@ impl WorkspaceResources {
             .try_fold(0_u64, |total, (_, resource)| {
                 total.checked_add(resource.text().len() as u64)
             });
+        let oversized_resource = snapshot.resources().any(|(_, resource)| {
+            resource.text().len() as u64 > project_config.resources.limits.max_resource_bytes
+        });
         if retained_files > project_config.resources.limits.max_files
+            || oversized_resource
             || retained_bytes
                 .is_none_or(|bytes| bytes > project_config.resources.limits.max_total_bytes)
         {

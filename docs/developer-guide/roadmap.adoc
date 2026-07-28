@@ -21,14 +21,22 @@ v0.13.0では、既存の解析機能をteamのCI、CLIおよびeditor hostか�
 設定契約を先に固定し、CI終了状態とWorkspace APIを同じ設定型へ統合します。複数fileのscan、
 整形および修正はこのresource identityとpolicyを再利用します。
 
-== 次段階の利用環境
+== v0.14.0
 
-v0.13.0の基盤を利用して、native配布、editorおよびbrowserの導入経路を拡大します。
+v0.14.0では、v0.13.0の共有設定とWorkspace APIを利用し、desktop editorで導入しやすい
+cross-platform環境を整えます。
 
 * https://github.com/KeishiS/AdocWeave/issues/78[macOS・Windows向けCLIとLanguage Server]
 * https://github.com/KeishiS/AdocWeave/issues/75[VS Code拡張]
+
+macOS・Windowsのmanaged Language Serverを先に検証し、その配布契約をVS Code拡張から利用します。
+registry公開はこのversionの完了条件に含めず、手動配布で導入、更新および削除を検証します。
+
+== その後の利用環境
+
+desktop向け導線の後に、browserと対話的な確認経路を拡大します。
+
 * https://github.com/KeishiS/AdocWeave/issues/81[Browser Promise APIとbundler統合]
-* https://github.com/KeishiS/AdocWeave/issues/82[公式extension registry]
 * https://github.com/KeishiS/AdocWeave/issues/84[公式Playground]
 * https://github.com/KeishiS/AdocWeave/issues/85[local preview・watch mode]
 
@@ -49,6 +57,7 @@ v0.13.0の基盤を利用して、native配布、editorおよびbrowserの導入
 * https://github.com/KeishiS/AdocWeave/issues/34[RenovateによるNix依存更新の評価]
 * https://github.com/KeishiS/AdocWeave/issues/86[Homebrew・WinGet・Scoopの評価]
 * https://github.com/KeishiS/AdocWeave/issues/83[crates.io・npm公開の評価]
+* https://github.com/KeishiS/AdocWeave/issues/82[公式extension registry]
 
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。

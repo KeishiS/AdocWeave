@@ -26,7 +26,8 @@
 == 診断
 
 `check`は文書の問題を位置、重要度、安定したcodeおよびmessageとともに表示します。
-自動処理では`--json`を指定し、変更される可能性があるmessageではなくcodeを判定に使用してください。
+自動処理では`--format json`、`--format github`または`--format sarif`を指定し、変更される可能性があるmessageではなく
+codeを判定に使用してください。`--json`は`--format json`の互換aliasです。
 同じ入力、設定およびpackage versionからは同じ順序で問題を返します。
 `--include`を使用した場合も、問題の位置は展開後の仮想文書ではなく、
 問題がある元fileのpath、行およびcolumnとして表示します。
@@ -41,6 +42,27 @@ macro名だけを置換する自動修正を提示します。
 通常の`check`はファイルシステムへアクセスせず、`../guide.adoc`のような相対リンクと文書間参照を
 有効な対象として扱います。HTMLへ変換する際は、記述されたURLと解決済みURLを出力用ポリシーで
 改めて検査します。
+
+[#check-exit-status]
+=== 終了状態
+
+`--fail-on error`はerrorが一件以上、`--fail-on warning`はerrorまたはwarningが一件以上ある場合に
+終了コードを0以外にします。既定値は`error`です。`--fail-on never`は診断の重要度によって失敗させず、
+入力、設定またはI/Oのerrorだけを失敗として扱います。human、JSON、GitHub Actions annotationおよびSARIFの
+形式を変えても診断集合と終了状態は変わりません。
+
+`--summary`は重要度別件数を標準エラー出力へ書きます。診断本体は標準出力のままなので、JSONを
+壊しません。
+
+[source,console]
+----
+adocweave check --fail-on warning --format json --summary docs
+adocweave check --fail-on warning --format github docs
+adocweave check --fail-on warning --format sarif docs > adocweave.sarif
+----
+
+GitHub ActionsではRelease assetのversionを固定し、`--format github`を使用します。更新時は新しい
+versionを別directoryで検証してから切り替えてください。
 
 相対リンク、文書間参照、画像などのresourceおよびincludeの実在性を検査する場合は、
 `--local-targets`と`--project-root DIR`を指定します。
@@ -88,9 +110,62 @@ adocweave check --enable-rule macro-boundary document.adoc
 `format`は整形後の内容を標準出力へ書き、入力fileを直接変更しません。
 `--check`を指定すると内容を出力せず、変更が不要なら終了コード0、必要ならそれ以外を返します。
 
+複数file、directoryまたは`--glob PATTERN`を指定すると、canonical path順に重複なく処理します。
+directoryでは`.adoc`だけを再帰的に選び、symlinkはたどりません。複数入力の整形では
+`--check`、`--diff`または`--write`のいずれか一つが必須です。
+
+[source,console]
+----
+adocweave format --check docs
+adocweave format --diff --glob 'docs/**/*.adoc'
+adocweave format --write docs README.adoc
+----
+
+`--write`は全fileを読込・解析した後、元fileと同じdirectoryに一時fileを作り、内容を同期してから
+置換します。書換え直前に元のbyte列が変わっていた場合は置換しません。file mode、既存の主な改行形式
+および最終改行は、プロジェクト設定で明示的に変更していない限り保持します。一時fileの準備前に
+errorが発生した場合は一件も変更しません。置換開始後のI/O errorでは、それ以前に置換済みのfileだけが
+更新される可能性があります。各fileの置換自体はatomicです。
+
+`--dry-run`を`--write`と併用すると書換えません。`--summary`は対象数と変更数を標準エラー出力へ
+書きます。
+
 整形対象は、安全に意味を保持できる段落と空行に限定します。行末空白、連続空行、改行形式および
 最終改行を正規化する一方、literal、source、数式、macro、inline書式、見出し、属性、anchor、list、
 未対応構文および不完全な構文は元のbyte列を保持します。同じ入力を繰り返し整形しても結果は変わりません。
+
+== 安全な自動修正
+
+`check --fix`は、診断が`Applicability::Always`として提供する修正だけを適用します。全fileの
+修正候補を検証してから`format --write`と同じatomic置換を使用します。複数診断のeditが重複または
+交差する場合は、そのfileを書き換えずerrorにします。`Maybe`の修正はCode Actionや差分を確認して
+適用してください。`--dry-run --summary`では書換えず、修正対象file数を`changed`として表示します。
+
+[source,console]
+----
+adocweave check --fix docs
+adocweave check --fix --dry-run --summary docs
+----
+
+== 色とshell completion
+
+`--color auto|always|never`でhuman診断と差分のANSI色を制御します。既定の`auto`は標準出力がterminalの
+場合だけ色を付け、JSONとGitHub Actions annotationには常に色を付けません。
+
+completion scriptは標準出力からshellの設定へ保存します。
+
+[source,console]
+----
+adocweave completion bash
+adocweave completion zsh
+adocweave completion fish
+adocweave completion powershell
+----
+
+== プロジェクト設定
+
+CLIとLanguage Serverで共有する`.adocweave.toml`、`--config`、`--no-config`および`config show`は
+xref:project-configuration.adoc[プロジェクト設定]を参照してください。
 
 == ローカルファイルの展開
 
