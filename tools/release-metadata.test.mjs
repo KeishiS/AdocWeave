@@ -13,12 +13,16 @@ function fixture() {
   const artifacts = join(root, "artifacts");
   mkdirSync(artifacts);
   for (const asset of plan.assets) {
-    const archiveRoot = asset.name.slice(0, -".tar.xz".length);
+    const archiveRoot = asset.name.replace(/\.(?:tar\.xz|zip)$/, "");
     const stage = join(root, archiveRoot);
     mkdirSync(stage);
     writeFileSync(join(stage, asset.executable ?? "index.mjs"), `${asset.name}\n`);
-    execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner",
-      "-cJf", join(artifacts, asset.name), "-C", root, archiveRoot]);
+    if (asset.archive === "zip" || asset.archive === "vsix") {
+      execFileSync("zip", ["-X", "-q", "-r", join(artifacts, asset.name), archiveRoot], { cwd: root });
+    } else {
+      execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner",
+        "-cJf", join(artifacts, asset.name), "-C", root, archiveRoot]);
+    }
   }
   return { root, artifacts };
 }
@@ -52,6 +56,10 @@ test("actual archives produce canonical manifest, SPDX SBOM, and unified checksu
     assert.deepEqual(actualCargo, expectedCargo);
     assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
       reference.referenceLocator === `pkg:npm/%40adocweave/browser@${plan.packageVersion}`)));
+    assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
+      reference.referenceLocator === `pkg:npm/adocweave-vscode@${plan.packageVersion}`)));
+    assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
+      reference.referenceLocator === "pkg:npm/fflate@0.8.3")));
     assert.deepEqual(checksums.map((line) => line.slice(66)), [
       ...plan.assets.map((asset) => asset.name),
       "adocweave-dist-manifest.json",

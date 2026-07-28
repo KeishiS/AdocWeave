@@ -19,6 +19,7 @@ const expected = [
   `${packageName}/README.adoc`,
   `${packageName}/THIRD_PARTY_NOTICES.adoc`,
   `${packageName}/extension.toml`,
+  `${packageName}/platforms.json`,
   `${packageName}/languages/`,
   `${packageName}/languages/asciidoc/`,
   `${packageName}/languages/asciidoc/config.toml`,

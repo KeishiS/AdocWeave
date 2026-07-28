@@ -12,9 +12,20 @@ test("stable tags are exact and versioned", () => {
   }
 });
 
-test("initial asset matrix contains Linux native, browser, and Zed archives", () => {
+test("asset matrix contains every declared native target, browser, and Zed archives", () => {
   assert.deepEqual(expectedAssets(plan.packageVersion, plan.targets), plan.assets);
-  assert.deepEqual(plan.targets, ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]);
+  assert.deepEqual(
+    plan.targets.map(({ triple }) => triple),
+    [
+      "aarch64-unknown-linux-musl",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-musl",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+    ],
+  );
+  assert.equal(plan.targets.find(({ os }) => os === "win32").archive, "zip");
+  assert.ok(plan.targets.filter(({ os }) => os === "darwin").every(({ minimumOsVersion }) => minimumOsVersion === "13.0"));
   assert.deepEqual(plan.releaseMetadata, EXPECTED_RELEASE_METADATA);
 });
 

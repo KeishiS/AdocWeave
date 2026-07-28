@@ -1,0 +1,149 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AsciiDoc",
+  "scopeName": "text.asciidoc",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#delimited-blocks" },
+    { "include": "#headings" },
+    { "include": "#attributes" },
+    { "include": "#lists" },
+    { "include": "#macros" },
+    { "include": "#inline" }
+  ],
+  "repository": {
+    "attributes": {
+      "patterns": [
+        {
+          "match": "^(:)([A-Za-z0-9_-]+)(!?)(:)(?:\\s+(.*))?$",
+          "captures": {
+            "1": { "name": "punctuation.definition.attribute.begin.asciidoc" },
+            "2": { "name": "entity.other.attribute-name.asciidoc" },
+            "3": { "name": "keyword.operator.attribute-unset.asciidoc" },
+            "4": { "name": "punctuation.definition.attribute.end.asciidoc" },
+            "5": { "name": "string.unquoted.attribute-value.asciidoc" }
+          }
+        },
+        {
+          "match": "\\{[A-Za-z0-9_-]+\\}",
+          "name": "variable.other.attribute-reference.asciidoc"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "begin": "^////\\s*$",
+          "end": "^////\\s*$",
+          "name": "comment.block.asciidoc"
+        },
+        {
+          "match": "^//(?:\\s.*)?$",
+          "name": "comment.line.double-slash.asciidoc"
+        }
+      ]
+    },
+    "delimited-blocks": {
+      "patterns": [
+        {
+          "begin": "^(----|\\.\\.\\.\\.|====|\\*\\*\\*\\*|____|--|\\+\\+\\+\\+)\\s*$",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.block.begin.asciidoc" }
+          },
+          "end": "^\\1\\s*$",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.block.end.asciidoc" }
+          },
+          "name": "meta.block.asciidoc"
+        },
+        {
+          "match": "^\\[(?:source|listing|literal|quote|verse|example|sidebar|NOTE|TIP|IMPORTANT|WARNING|CAUTION)(?:,[^\\]]*)?\\]\\s*$",
+          "name": "meta.block.attribute-list.asciidoc"
+        }
+      ]
+    },
+    "headings": {
+      "patterns": [
+        {
+          "match": "^(={1,6})(\\s+)(.+)$",
+          "captures": {
+            "1": { "name": "punctuation.definition.heading.asciidoc" },
+            "3": { "name": "markup.heading.asciidoc" }
+          }
+        }
+      ]
+    },
+    "inline": {
+      "patterns": [
+        {
+          "begin": "(?<!\\w)(\\*{1,2})(?=\\S)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.bold.asciidoc" }
+          },
+          "end": "(?<=\\S)(\\1)(?!\\w)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.bold.asciidoc" }
+          },
+          "name": "markup.bold.asciidoc"
+        },
+        {
+          "begin": "(?<!\\w)(_{1,2})(?=\\S)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.italic.asciidoc" }
+          },
+          "end": "(?<=\\S)(\\1)(?!\\w)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.italic.asciidoc" }
+          },
+          "name": "markup.italic.asciidoc"
+        },
+        {
+          "begin": "(?<!\\w)(`{1,2})(?=\\S)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.raw.asciidoc" }
+          },
+          "end": "(?<=\\S)(\\1)(?!\\w)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.raw.asciidoc" }
+          },
+          "name": "markup.inline.raw.asciidoc"
+        }
+      ]
+    },
+    "lists": {
+      "patterns": [
+        {
+          "match": "^(\\s*)([*.-]+)(\\s+)(?:\\[([ xX*])\\]\\s+)?",
+          "captures": {
+            "2": { "name": "punctuation.definition.list.begin.asciidoc" },
+            "4": { "name": "markup.list.checkbox.asciidoc" }
+          },
+          "name": "markup.list.asciidoc"
+        },
+        {
+          "match": "^(\\s*)(.+?)(::+)(?:\\s+|$)",
+          "captures": {
+            "2": { "name": "markup.list.term.asciidoc" },
+            "3": { "name": "punctuation.definition.list.description.asciidoc" }
+          }
+        }
+      ]
+    },
+    "macros": {
+      "patterns": [
+        {
+          "match": "\\b(?:https?|mailto):[^\\s\\[]+\\[[^\\]]*\\]",
+          "name": "markup.underline.link.asciidoc"
+        },
+        {
+          "match": "\\b(?:xref|link|include|image|video|audio)::?[^\\s\\[]+\\[[^\\]]*\\]",
+          "name": "meta.macro.asciidoc"
+        },
+        {
+          "match": "<<[^>,]+(?:,[^>]+)?>>",
+          "name": "markup.underline.link.cross-reference.asciidoc"
+        }
+      ]
+    }
+  }
+}

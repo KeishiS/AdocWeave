@@ -8,7 +8,7 @@ AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツ�
 * AsciiDocを安全なHTMLへ変換します。
 * 文法やリンク、表などの問題を行番号付きで表示します。
 * 意味を変えずに、対応済みの範囲を整形します。
-* Zedなどのエディターで診断、補完、定義への移動を提供します。
+* VS CodeとZedで診断、補完、定義への移動を提供します。
 * ブラウザーや別のアプリケーションに組み込みます。
 
 対応状況はxref:docs/user-guide/syntax-support.adoc[対応している書式]を参照してください。AdocWeaveはAsciiDocの全機能を実装しません。
@@ -53,8 +53,10 @@ adocweave format --write docs
 === エディター統合
 
 * xref:docs/developer-guide/zed-development.adoc[Zedで開発版を導入する]。
+* xref:docs/developer-guide/vscode-development.adoc[VS Code拡張を開発・検証する]。
 * xref:docs/developer-guide/language-server.adoc[Language Serverの実行仕様] — 提供機能と設定方法を説明します。
 * xref:docs/user-guide/release-installation.adoc#zed-installation[ZedとLanguage Serverを導入する]。
+* xref:docs/user-guide/release-installation.adoc#vscode-installation[VS CodeとLanguage Serverを導入する]。
 
 === アプリケーション統合
 

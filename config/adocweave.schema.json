@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/KeishiS/AdocWeave/config/adocweave.schema.json",
+  "$id": "https://github.com/KeishiS/adocweave/config/adocweave.schema.json",
   "title": "AdocWeave project configuration",
   "type": "object",
   "additionalProperties": false,

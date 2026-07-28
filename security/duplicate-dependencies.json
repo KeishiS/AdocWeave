@@ -31,7 +31,7 @@
       },
       {
         "crate": "syn",
-        "versions": ["2.0.119", "3.0.2"],
+        "versions": ["2.0.119", "3.0.3"],
         "reason": "WIT・ICU macro群とserde 1.0.229が異なるmajor versionを要求するため"
       }
     ]

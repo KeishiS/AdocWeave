@@ -1,12 +1,15 @@
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Read, Write},
-    path::{Component, Path, PathBuf},
+    io::{self, BufReader, BufWriter, Read},
+    path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
-pub const REPOSITORY: &str = "KeishiS/AdocWeave";
+pub const REPOSITORY: &str = "KeishiS/adocweave";
 pub const MANIFEST_NAME: &str = "adocweave-dist-manifest.json";
+const PLATFORM_CONTRACT: &str = include_str!("../platforms.json");
 const MAX_DECOMPRESSED_ARCHIVE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_BINARY_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -15,6 +18,9 @@ pub struct ReleaseAsset {
     pub name: String,
     pub sha256: String,
     pub byte_size: u64,
+    pub archive: &'static str,
+    pub executable: &'static str,
+    pub source_commit: String,
 }
 
 pub fn target_for_platform(
@@ -23,15 +29,123 @@ pub fn target_for_platform(
 ) -> Result<&'static str, String> {
     use zed_extension_api::{Architecture, Os};
 
-    match (os, arch) {
-        (Os::Linux, Architecture::X8664) => Ok("x86_64-unknown-linux-musl"),
-        (Os::Linux, Architecture::Aarch64) => Ok("aarch64-unknown-linux-musl"),
-        (Os::Linux, Architecture::X86) => {
-            Err("AdocWeave LSP does not support 32-bit Linux".to_owned())
-        }
-        (Os::Mac, _) => Err("AdocWeave LSP for macOS is not published yet".to_owned()),
-        (Os::Windows, _) => Err("AdocWeave LSP for Windows is not published yet".to_owned()),
+    let (os, architecture) = match (os, arch) {
+        (Os::Linux, Architecture::X8664) => ("linux", "x64"),
+        (Os::Linux, Architecture::Aarch64) => ("linux", "arm64"),
+        (Os::Mac, Architecture::X8664) => ("darwin", "x64"),
+        (Os::Mac, Architecture::Aarch64) => ("darwin", "arm64"),
+        (Os::Windows, Architecture::X8664) => ("win32", "x64"),
+        (Os::Linux, Architecture::X86) => ("linux", "ia32"),
+        (Os::Mac, Architecture::X86) => ("darwin", "ia32"),
+        (Os::Windows, Architecture::X86) => ("win32", "ia32"),
+        (Os::Windows, Architecture::Aarch64) => ("win32", "arm64"),
+    };
+    platform_contract()?
+        .iter()
+        .find(|entry| entry.os == os && entry.architecture == architecture)
+        .map(|entry| entry.target.as_str())
+        .ok_or_else(|| format!("AdocWeave LSP does not support {os} {architecture}"))
+}
+
+fn target_asset_contract(target: &str) -> Result<(&'static str, &'static str), String> {
+    platform_contract()?
+        .iter()
+        .find(|entry| entry.target == target)
+        .map(|entry| (entry.archive.as_str(), entry.executable.as_str()))
+        .ok_or_else(|| format!("unsupported AdocWeave distribution target: {target}"))
+}
+
+struct PlatformContract {
+    architecture: String,
+    archive: String,
+    executable: String,
+    _minimum_os_version: Option<String>,
+    os: String,
+    target: String,
+}
+
+fn platform_contract() -> Result<&'static [PlatformContract], String> {
+    static CONTRACT: OnceLock<Result<Vec<PlatformContract>, String>> = OnceLock::new();
+    match CONTRACT.get_or_init(parse_platform_contract) {
+        Ok(entries) => Ok(entries),
+        Err(error) => Err(error.clone()),
     }
+}
+
+fn parse_platform_contract() -> Result<Vec<PlatformContract>, String> {
+    let root: zed_extension_api::serde_json::Value =
+        zed_extension_api::serde_json::from_str(PLATFORM_CONTRACT)
+            .map_err(|error| format!("invalid platform contract: {error}"))?;
+    let object = root
+        .as_object()
+        .ok_or_else(|| "platform contract root is not an object".to_owned())?;
+    if object.keys().map(String::as_str).collect::<HashSet<_>>()
+        != HashSet::from(["schemaVersion", "supported", "unsupported"])
+        || root.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1)
+    {
+        return Err("unsupported platform contract schema".to_owned());
+    }
+    let entries = root
+        .get("supported")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "platform contract has no supported list".to_owned())?
+        .iter()
+        .map(|entry| {
+            let object = entry
+                .as_object()
+                .ok_or_else(|| "platform contract entry is not an object".to_owned())?;
+            if object.keys().map(String::as_str).collect::<HashSet<_>>()
+                != HashSet::from([
+                    "architecture",
+                    "archive",
+                    "executable",
+                    "minimumOsVersion",
+                    "os",
+                    "target",
+                ])
+            {
+                return Err("platform contract entry has unsupported fields".to_owned());
+            }
+            let field = |name| {
+                entry
+                    .get(name)
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("platform contract entry has no {name}"))
+            };
+            Ok(PlatformContract {
+                architecture: field("architecture")?,
+                archive: field("archive")?,
+                executable: field("executable")?,
+                _minimum_os_version: match entry.get("minimumOsVersion") {
+                    Some(value) if value.is_null() => None,
+                    Some(value) => Some(
+                        value
+                            .as_str()
+                            .filter(|value| !value.is_empty())
+                            .ok_or_else(|| {
+                                "platform contract entry has invalid minimumOsVersion".to_owned()
+                            })?
+                            .to_owned(),
+                    ),
+                    None => {
+                        return Err("platform contract entry has no minimumOsVersion".to_owned())
+                    }
+                },
+                os: field("os")?,
+                target: field("target")?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut platform_keys = HashSet::new();
+    let mut targets = HashSet::new();
+    for entry in &entries {
+        if !platform_keys.insert((&entry.os, &entry.architecture)) || !targets.insert(&entry.target)
+        {
+            return Err("platform contract contains duplicate entries".to_owned());
+        }
+    }
+    Ok(entries)
 }
 
 pub fn select_lsp_asset(
@@ -42,7 +156,7 @@ pub fn select_lsp_asset(
     let root: zed_extension_api::serde_json::Value =
         zed_extension_api::serde_json::from_str(manifest)
             .map_err(|error| format!("invalid distribution manifest: {error}"))?;
-    if root.get("schemaVersion").and_then(|value| value.as_u64()) != Some(1) {
+    if root.get("schemaVersion").and_then(|value| value.as_u64()) != Some(2) {
         return Err("unsupported distribution manifest schema".to_owned());
     }
     if root.get("packageVersion").and_then(|value| value.as_str()) != Some(version) {
@@ -50,8 +164,15 @@ pub fn select_lsp_asset(
             "distribution manifest does not describe AdocWeave {version}"
         ));
     }
+    let source_commit = root
+        .get("sourceCommit")
+        .and_then(|value| value.as_str())
+        .filter(|value| value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| "distribution manifest has no valid source commit".to_owned())?
+        .to_ascii_lowercase();
 
-    let expected_name = format!("adocweave-lsp-{target}.tar.xz");
+    let (archive, executable) = target_asset_contract(target)?;
+    let expected_name = format!("adocweave-lsp-{target}.{archive}");
     let matches = root
         .get("assets")
         .and_then(|value| value.as_array())
@@ -68,8 +189,8 @@ pub fn select_lsp_asset(
         ));
     };
     if asset.get("name").and_then(|value| value.as_str()) != Some(expected_name.as_str())
-        || asset.get("archive").and_then(|value| value.as_str()) != Some("tar.xz")
-        || asset.get("executable").and_then(|value| value.as_str()) != Some("adocweave-lsp")
+        || asset.get("archive").and_then(|value| value.as_str()) != Some(archive)
+        || asset.get("executable").and_then(|value| value.as_str()) != Some(executable)
     {
         return Err(format!("invalid LSP asset contract for {target}"));
     }
@@ -89,6 +210,9 @@ pub fn select_lsp_asset(
         name: expected_name,
         sha256,
         byte_size,
+        archive,
+        executable,
+        source_commit,
     })
 }
 
@@ -136,49 +260,62 @@ pub fn verify_download(path: &Path, asset: &ReleaseAsset) -> Result<(), String> 
 
 pub fn extract_binary(
     archive_path: &Path,
-    tar_path: &Path,
     binary_path: &Path,
-    target: &str,
+    _target: &str,
+    asset: &ReleaseAsset,
+) -> Result<(), String> {
+    if asset.archive != "zip" {
+        return Err(format!("unsupported LSP archive format: {}", asset.archive));
+    }
+    extract_zip_binary(archive_path, binary_path, asset)
+}
+
+fn extract_zip_binary(
+    archive_path: &Path,
+    binary_path: &Path,
+    asset: &ReleaseAsset,
 ) -> Result<(), String> {
     let input = File::open(archive_path)
         .map(BufReader::new)
         .map_err(|error| format!("failed to open {}: {error}", archive_path.display()))?;
-    let output = File::create(tar_path)
-        .map(BufWriter::new)
-        .map_err(|error| format!("failed to create {}: {error}", tar_path.display()))?;
-    let mut limited = LimitedWriter::new(output, MAX_DECOMPRESSED_ARCHIVE_BYTES);
-    lzma_rs::xz_decompress(&mut BufReader::new(input), &mut limited)
-        .map_err(|error| format!("failed to decompress {}: {error}", archive_path.display()))?;
-    limited.finish()?;
-
-    let expected = PathBuf::from(format!("adocweave-lsp-{target}/adocweave-lsp"));
-    let tar_file =
-        File::open(tar_path).map_err(|error| format!("failed to open extracted tar: {error}"))?;
-    let mut archive = tar::Archive::new(BufReader::new(tar_file));
+    let mut archive =
+        zip::ZipArchive::new(input).map_err(|error| format!("invalid LSP zip archive: {error}"))?;
+    let expected = asset.executable;
     let mut found = false;
-    for entry in archive
-        .entries()
-        .map_err(|error| format!("invalid LSP tar archive: {error}"))?
-    {
-        let mut entry = entry.map_err(|error| format!("invalid LSP tar entry: {error}"))?;
-        let path = entry
-            .path()
-            .map_err(|error| format!("invalid LSP tar path: {error}"))?;
-        if path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
+    let mut total = 0_u64;
+    let mut names = HashSet::new();
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("invalid LSP zip entry: {error}"))?;
+        let name = entry.name().replace('\\', "/");
+        let normalized = name.trim_end_matches('/');
+        if name.starts_with('/')
+            || name.contains(':')
+            || normalized.is_empty()
+            || normalized
+                .split('/')
+                .any(|component| component.is_empty() || component == "." || component == "..")
+            || !names.insert(normalized.to_ascii_lowercase())
+            || entry
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 == 0o120000)
         {
-            return Err(format!("unsafe path in LSP archive: {}", path.display()));
+            return Err(format!("unsafe path in LSP archive: {name}"));
         }
-        if path == expected {
-            if found || !entry.header().entry_type().is_file() || entry.size() > MAX_BINARY_BYTES {
+        total = total
+            .checked_add(entry.size())
+            .filter(|value| *value <= MAX_DECOMPRESSED_ARCHIVE_BYTES)
+            .ok_or_else(|| "decompressed archive exceeds size limit".to_owned())?;
+        if name == expected {
+            if found || entry.is_dir() || entry.size() == 0 || entry.size() > MAX_BINARY_BYTES {
                 return Err("invalid adocweave-lsp entry in release archive".to_owned());
             }
             let output = File::create(binary_path)
                 .map_err(|error| format!("failed to create {}: {error}", binary_path.display()))?;
             let copied = io::copy(&mut entry, &mut BufWriter::new(output))
                 .map_err(|error| format!("failed to extract adocweave-lsp: {error}"))?;
-            if copied == 0 || copied != entry.size() {
+            if copied != entry.size() {
                 return Err("release archive contains an incomplete adocweave-lsp".to_owned());
             }
             found = true;
@@ -192,8 +329,11 @@ pub fn extract_binary(
 
 pub fn cache_paths(version: &str, target: &str) -> CachePaths {
     let key = format!("adocweave-lsp-{version}-{target}");
+    let executable = target_asset_contract(target)
+        .map(|(_, executable)| executable)
+        .unwrap_or("adocweave-lsp");
     CachePaths {
-        binary: PathBuf::from(&key).join("adocweave-lsp"),
+        binary: PathBuf::from(&key).join(executable),
         marker: PathBuf::from(&key).join("verified.json"),
         directory: PathBuf::from(key),
     }
@@ -218,8 +358,10 @@ pub fn write_marker(
         "packageVersion": version,
         "target": target,
         "asset": asset.name,
+        "assetByteSize": asset.byte_size,
         "assetSha256": asset.sha256,
         "binarySha256": binary_hash,
+        "sourceCommit": asset.source_commit,
     });
     fs::write(path, marker.to_string())
         .map_err(|error| format!("failed to write cache marker: {error}"))
@@ -237,63 +379,65 @@ pub fn verified_cache(paths: &CachePaths, version: &str, target: &str) -> bool {
     let Ok(binary_hash) = sha256_file(&paths.binary) else {
         return false;
     };
-    marker.get("schemaVersion").and_then(|value| value.as_u64()) == Some(1)
+    let expected_asset = format!("adocweave-lsp-{target}.zip");
+    marker.as_object().is_some_and(|fields| fields.len() == 8)
+        && marker.get("schemaVersion").and_then(|value| value.as_u64()) == Some(1)
         && marker
             .get("packageVersion")
             .and_then(|value| value.as_str())
             == Some(version)
         && marker.get("target").and_then(|value| value.as_str()) == Some(target)
+        && marker.get("asset").and_then(|value| value.as_str()) == Some(expected_asset.as_str())
+        && marker
+            .get("assetByteSize")
+            .and_then(|value| value.as_u64())
+            .is_some_and(|value| value > 0)
+        && marker
+            .get("assetSha256")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| {
+                value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        && marker
+            .get("sourceCommit")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| {
+                value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
         && marker.get("binarySha256").and_then(|value| value.as_str()) == Some(binary_hash.as_str())
-}
-
-struct LimitedWriter<W> {
-    inner: W,
-    remaining: u64,
-}
-
-impl<W> LimitedWriter<W> {
-    fn new(inner: W, limit: u64) -> Self {
-        Self {
-            inner,
-            remaining: limit,
-        }
-    }
-}
-
-impl<W: Write> LimitedWriter<W> {
-    fn finish(mut self) -> Result<(), String> {
-        self.inner
-            .flush()
-            .map_err(|error| format!("failed to flush decompressed archive: {error}"))
-    }
-}
-
-impl<W: Write> Write for LimitedWriter<W> {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        if buffer.len() as u64 > self.remaining {
-            return Err(io::Error::new(
-                io::ErrorKind::FileTooLarge,
-                "decompressed archive exceeds size limit",
-            ));
-        }
-        let written = self.inner.write(buffer)?;
-        self.remaining -= written as u64;
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+    use std::io::Write;
 
     fn manifest(sha256: &str, byte_size: u64) -> String {
         format!(
-            r#"{{"schemaVersion":1,"packageVersion":"0.1.0-rc.1","assets":[{{"archive":"tar.xz","byteSize":{byte_size},"executable":"adocweave-lsp","kind":"lsp","name":"adocweave-lsp-x86_64-unknown-linux-musl.tar.xz","sha256":"{sha256}","target":"x86_64-unknown-linux-musl"}}]}}"#
+            r#"{{"schemaVersion":2,"packageVersion":"0.1.0-rc.1","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","assets":[{{"archive":"zip","byteSize":{byte_size},"executable":"adocweave-lsp","kind":"lsp","name":"adocweave-lsp-x86_64-unknown-linux-musl.zip","sha256":"{sha256}","target":"x86_64-unknown-linux-musl"}}]}}"#
         )
+    }
+
+    #[test]
+    fn every_supported_zed_platform_has_a_distribution_target() {
+        use zed_extension_api::{Architecture, Os};
+
+        for (os, arch, target) in [
+            (
+                Os::Linux,
+                Architecture::Aarch64,
+                "aarch64-unknown-linux-musl",
+            ),
+            (Os::Linux, Architecture::X8664, "x86_64-unknown-linux-musl"),
+            (Os::Mac, Architecture::Aarch64, "aarch64-apple-darwin"),
+            (Os::Mac, Architecture::X8664, "x86_64-apple-darwin"),
+            (Os::Windows, Architecture::X8664, "x86_64-pc-windows-msvc"),
+        ] {
+            assert_eq!(target_for_platform(os, arch).unwrap(), target);
+            assert!(target_asset_contract(target).is_ok());
+        }
+        assert!(target_for_platform(Os::Windows, Architecture::Aarch64).is_err());
     }
 
     #[test]
@@ -305,7 +449,7 @@ mod tests {
             "x86_64-unknown-linux-musl",
         )
         .unwrap();
-        assert_eq!(asset.name, "adocweave-lsp-x86_64-unknown-linux-musl.tar.xz");
+        assert_eq!(asset.name, "adocweave-lsp-x86_64-unknown-linux-musl.zip");
         assert_eq!(asset.sha256, hash);
         assert!(select_lsp_asset(
             &manifest(&"b".repeat(63), 42),
@@ -333,9 +477,12 @@ mod tests {
         let _ = fs::remove_file(&root);
         fs::write(&root, b"archive").unwrap();
         let asset = ReleaseAsset {
-            name: "asset.tar.xz".to_owned(),
+            name: "asset.zip".to_owned(),
             sha256: "0".repeat(64),
             byte_size: 7,
+            archive: "zip",
+            executable: "adocweave-lsp",
+            source_commit: "a".repeat(40),
         };
         assert!(verify_download(&root, &asset)
             .unwrap_err()
@@ -368,9 +515,12 @@ mod tests {
         };
         fs::write(&paths.binary, b"binary").unwrap();
         let asset = ReleaseAsset {
-            name: "asset.tar.xz".to_owned(),
+            name: "adocweave-lsp-x86_64-unknown-linux-musl.zip".to_owned(),
             sha256: "a".repeat(64),
             byte_size: 1,
+            archive: "zip",
+            executable: "adocweave-lsp",
+            source_commit: "a".repeat(40),
         };
         let hash = sha256_file(&paths.binary).unwrap();
         write_marker(
@@ -396,36 +546,36 @@ mod tests {
     }
 
     #[test]
-    fn xz_tar_extraction_selects_only_the_expected_binary() {
+    fn zip_extraction_selects_the_windows_binary() {
         let root =
-            std::env::temp_dir().join(format!("adocweave-zed-extract-{}", std::process::id()));
+            std::env::temp_dir().join(format!("adocweave-zed-zip-extract-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let mut tar_bytes = Vec::new();
+        let archive_path = root.join("archive.zip");
+        let mut bytes = Cursor::new(Vec::new());
         {
-            let mut builder = tar::Builder::new(&mut tar_bytes);
-            let body = b"lsp-binary";
-            let mut header = tar::Header::new_gnu();
-            header.set_size(body.len() as u64);
-            header.set_mode(0o755);
-            header.set_cksum();
-            builder
-                .append_data(
-                    &mut header,
-                    "adocweave-lsp-x86_64-unknown-linux-musl/adocweave-lsp",
-                    &body[..],
+            let mut archive = zip::ZipWriter::new(&mut bytes);
+            archive
+                .start_file(
+                    "adocweave-lsp.exe",
+                    zip::write::SimpleFileOptions::default(),
                 )
                 .unwrap();
-            builder.finish().unwrap();
+            archive.write_all(b"windows-lsp").unwrap();
+            archive.finish().unwrap();
         }
-        let mut compressed = Vec::new();
-        lzma_rs::xz_compress(&mut BufReader::new(tar_bytes.as_slice()), &mut compressed).unwrap();
-        let archive = root.join("archive.tar.xz");
-        let tar = root.join("archive.tar");
-        let binary = root.join("adocweave-lsp");
-        fs::write(&archive, compressed).unwrap();
-        extract_binary(&archive, &tar, &binary, "x86_64-unknown-linux-musl").unwrap();
-        assert_eq!(fs::read(&binary).unwrap(), b"lsp-binary");
+        fs::write(&archive_path, bytes.into_inner()).unwrap();
+        let binary = root.join("adocweave-lsp.exe");
+        let asset = ReleaseAsset {
+            name: "adocweave-lsp-x86_64-pc-windows-msvc.zip".to_owned(),
+            sha256: "a".repeat(64),
+            byte_size: fs::metadata(&archive_path).unwrap().len(),
+            archive: "zip",
+            executable: "adocweave-lsp.exe",
+            source_commit: "a".repeat(40),
+        };
+        extract_binary(&archive_path, &binary, "x86_64-pc-windows-msvc", &asset).unwrap();
+        assert_eq!(fs::read(&binary).unwrap(), b"windows-lsp");
         fs::remove_dir_all(root).unwrap();
     }
 }

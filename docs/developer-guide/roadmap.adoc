@@ -5,46 +5,22 @@
 GitHub Issueを参照してください。
 
 完了した作業の経緯はIssue、versionごとの変更は
-https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notesに記録します。
+https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== v0.13.0
-
-v0.13.0では、既存の解析機能をteamのCI、CLIおよびeditor hostから同じ設定とworkspace状態で
-利用できるようにします。新しいAsciiDoc構文は追加せず、導入後の日常操作と組込み境界を改善します。
-
-* https://github.com/KeishiS/AdocWeave/issues/77[CLI・LSP・エディターで共有するプロジェクト設定]
-* https://github.com/KeishiS/AdocWeave/issues/76[CI向けcheck終了状態と機械可読形式]
-* https://github.com/KeishiS/AdocWeave/issues/80[再利用可能な高水準Workspace API]
-* https://github.com/KeishiS/AdocWeave/issues/79[複数ファイル処理・安全な書換え・shell completion]
-
-設定契約を先に固定し、CI終了状態とWorkspace APIを同じ設定型へ統合します。複数fileのscan、
-整形および修正はこのresource identityとpolicyを再利用します。
-
-== v0.14.0
-
-v0.14.0では、v0.13.0の共有設定とWorkspace APIを利用し、desktop editorで導入しやすい
-cross-platform環境を整えます。
-
-* https://github.com/KeishiS/AdocWeave/issues/78[macOS・Windows向けCLIとLanguage Server]
-* https://github.com/KeishiS/AdocWeave/issues/75[VS Code拡張]
-
-macOS・Windowsのmanaged Language Serverを先に検証し、その配布契約をVS Code拡張から利用します。
-registry公開はこのversionの完了条件に含めず、手動配布で導入、更新および削除を検証します。
-
-== その後の利用環境
+== 次の利用環境
 
 desktop向け導線の後に、browserと対話的な確認経路を拡大します。
 
-* https://github.com/KeishiS/AdocWeave/issues/81[Browser Promise APIとbundler統合]
-* https://github.com/KeishiS/AdocWeave/issues/84[公式Playground]
-* https://github.com/KeishiS/AdocWeave/issues/85[local preview・watch mode]
+* https://github.com/KeishiS/adocweave/issues/81[Browser Promise APIとbundler統合]
+* https://github.com/KeishiS/adocweave/issues/84[公式Playground]
+* https://github.com/KeishiS/adocweave/issues/85[local preview・watch mode]
 
 == 継続運用
 
 製品versionとは独立して、依存更新の安全な運用を改善します。
 
-* https://github.com/KeishiS/AdocWeave/issues/19[Dependabot PRの安全な自動merge]
+* https://github.com/KeishiS/adocweave/issues/19[Dependabot PRの安全な自動merge]
 
 必須検査とbranch protectionを維持したまま、対象を限定した依存更新だけを段階的に
 自動mergeできるか検証します。
@@ -53,11 +29,11 @@ desktop向け導線の後に、browserと対話的な確認経路を拡大しま
 
 次の作業は具体的な需要や運用上の問題が確認されるまで着手しません。
 
-* https://github.com/KeishiS/AdocWeave/issues/33[単体CLIのlocal resource profile評価]
-* https://github.com/KeishiS/AdocWeave/issues/34[RenovateによるNix依存更新の評価]
-* https://github.com/KeishiS/AdocWeave/issues/86[Homebrew・WinGet・Scoopの評価]
-* https://github.com/KeishiS/AdocWeave/issues/83[crates.io・npm公開の評価]
-* https://github.com/KeishiS/AdocWeave/issues/82[公式extension registry]
+* https://github.com/KeishiS/adocweave/issues/33[単体CLIのlocal resource profile評価]
+* https://github.com/KeishiS/adocweave/issues/34[RenovateによるNix依存更新の評価]
+* https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
+* https://github.com/KeishiS/adocweave/issues/83[crates.io・npm公開の評価]
+* https://github.com/KeishiS/adocweave/issues/82[公式extension registry]
 
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。

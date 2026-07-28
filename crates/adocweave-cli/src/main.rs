@@ -1290,7 +1290,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     )
                     .map_err(CliError::Include)?;
                 }
-                let format_config = if *write {
+                let format_config = if *write || *check || *diff {
                     safe_write_format_config(&original, &config)
                 } else {
                     config.format
@@ -1751,8 +1751,8 @@ fn run() -> Result<ExitCode, CliError> {
                 CommandOptions::Format { check: true, .. }
             ) {
                 let source = decode_input(&input)?;
-                let output =
-                    process_format(&input, &project_config.analysis, &project_config.format)?;
+                let format_config = safe_write_format_config(&input, &project_config);
+                let output = process_format(&input, &project_config.analysis, &format_config)?;
                 if output != source {
                     return Err(CliError::FormattingRequired);
                 }

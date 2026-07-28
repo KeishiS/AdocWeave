@@ -239,8 +239,12 @@ for package in adocweave-cli adocweave-lsp; do
   cp "target/debug/$executable" "$stage/$executable"
   cp README.adoc LICENSE-MIT LICENSE-APACHE "$stage/"
   node tools/generate-third-party-notices.mjs "$stage/THIRD_PARTY_NOTICES.adoc"
-  tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
-    -cJf "$artifacts/$archive_root.tar.xz" -C "$root" "$archive_root"
+  archive="$(pwd)/$artifacts/$archive_root.zip"
+  (
+    cd "$stage"
+    zip -X -q "$archive" \
+      "$executable" README.adoc LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.adoc
+  )
 done
 ADOCWEAVE_SMOKE_ALLOW_DYNAMIC=1 \
   node tools/native-release-smoke.mjs "$artifacts" x86_64-unknown-linux-musl
@@ -248,15 +252,21 @@ ADOCWEAVE_SMOKE_ALLOW_DYNAMIC=1 \
 
 [tasks.release-installation-e2e-host]
 description = "Install, select, and completely uninstall locally built release archives in an isolated home"
-dependencies = ["native-release-smoke-host", "package-browser-release", "package-zed-release"]
+dependencies = [
+  "native-release-smoke-host",
+  "package-browser-release",
+  "package-zed-release",
+  "test-vscode-release-package",
+]
 script_runner = "@shell"
 script = '''
 candidate="target/release-installation-e2e-host"
 rm -rf "$candidate"
 mkdir -p "$candidate"
-cp target/native-smoke-host/artifacts/*.tar.xz "$candidate/"
+cp target/native-smoke-host/artifacts/*.zip "$candidate/"
 cp target/distrib/adocweave-browser-*.tar.xz "$candidate/"
 cp target/distrib/adocweave-zed-*.tar.xz "$candidate/"
+cp target/distrib/adocweave-vscode-*.vsix "$candidate/"
 node tools/release-installation-e2e.mjs \
   "$candidate" x86_64-unknown-linux-musl release-manifest.json
 '''
@@ -414,11 +424,12 @@ node tools/browser-release-smoke.mjs "$archive" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
 [tasks.release-global-artifacts]
-description = "Build and statically verify the exact browser and Zed archives uploaded by release CI"
+description = "Build and statically verify the exact browser, Zed, and VS Code archives uploaded by release CI"
 dependencies = [
   "test-browser-release-package",
   "test-browser-types",
   "test-zed-release-package",
+  "test-vscode-release-package",
 ]
 
 [tasks.browser-runtime-check]
@@ -560,6 +571,49 @@ description = "Test release selection, integrity verification, extraction, and c
 command = "cargo"
 args = ["test", "--manifest-path", "editors/zed/Cargo.toml"]
 
+[tasks.vscode-dependencies]
+description = "Install the locked VS Code extension dependencies without lifecycle scripts"
+command = "npm"
+args = ["ci", "--ignore-scripts", "--prefix", "editors/vscode"]
+
+[tasks.check-vscode]
+description = "Type-check and validate the VS Code extension manifest and TextMate grammar"
+dependencies = ["vscode-dependencies"]
+command = "npm"
+args = ["run", "check", "--prefix", "editors/vscode"]
+
+[tasks.test-vscode]
+description = "Run the VS Code adapter, managed binary, and package contract tests"
+dependencies = ["vscode-dependencies"]
+command = "npm"
+args = ["test", "--prefix", "editors/vscode"]
+
+[tasks.test-vscode-extension-host]
+description = "Run the official VS Code extension host against the real AdocWeave Language Server"
+dependencies = ["build", "check-vscode", "test-vscode"]
+script_runner = "@shell"
+script = '''
+npm run build --prefix editors/vscode
+if [ "$(uname -s)" = Linux ]; then
+  Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+  xvfb_pid=$!
+  trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+  DISPLAY=:99 npm run test:extension --prefix editors/vscode
+else
+  npm run test:extension --prefix editors/vscode
+fi
+'''
+
+[tasks.test-vscode-release-package]
+description = "Build a deterministic VSIX and verify contents and installation lifecycle"
+dependencies = ["check-vscode", "test-vscode"]
+script_runner = "@shell"
+script = '''
+npm run package --prefix editors/vscode
+npm run test:vsix --prefix editors/vscode
+npm run test:vsix-installation --prefix editors/vscode
+'''
+
 [tasks.clippy-zed]
 description = "Run Clippy for the excluded Zed extension crate"
 command = "cargo"
@@ -622,7 +676,7 @@ while IFS= read -r path; do
   documents=$((documents + 1))
   fail_on=warning
   case "$path" in
-    fixtures/*|fuzz/*) fail_on=error ;;
+    fixtures/*|fuzz/*|editors/vscode/test/fixtures/*) fail_on=error ;;
   esac
   if output="$(target/debug/adocweave check --fail-on "$fail_on" "$path" 2>&1)"; then
     if [ -n "$output" ]; then
@@ -740,6 +794,7 @@ dependencies = [
   "check-wasm",
   "check-zed",
   "check-zed-wasm",
+  "check-vscode",
   "clippy",
   "clippy-zed",
   "test",
@@ -747,6 +802,9 @@ dependencies = [
   "protocol-check",
   "test-browser-types",
   "test-zed",
+  "test-vscode",
+  "test-vscode-extension-host",
+  "test-vscode-release-package",
   "release-contract",
   "workflow-lint",
   "test-cross-runtime",
@@ -777,6 +835,7 @@ dependencies = [
   "wasm-size",
   "test-browser-release-package",
   "test-zed-release-package",
+  "test-vscode-release-package",
   "release-installation-e2e-host",
   "dist-plan",
 ]

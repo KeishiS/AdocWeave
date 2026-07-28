@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -12,9 +13,10 @@ import {
   rmdirSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
@@ -26,12 +28,12 @@ if (!candidateArgument || !target) {
   process.exit(2);
 }
 
-const architectures = {
-  "aarch64-unknown-linux-musl": "arm64",
-  "x86_64-unknown-linux-musl": "x64",
-};
-if (!(target in architectures)) throw new Error(`unsupported installation target: ${target}`);
-if (process.arch !== architectures[target]) {
+const distributionPlan = JSON.parse(
+  readFileSync(new URL("../release/distribution-plan.json", import.meta.url), "utf8"),
+);
+const platform = distributionPlan.targets.find(({ triple }) => triple === target);
+if (!platform) throw new Error(`unsupported installation target: ${target}`);
+if (process.platform !== platform.os || process.arch !== platform.architecture) {
   throw new Error(`installation host ${process.arch} does not match ${target}`);
 }
 
@@ -48,9 +50,12 @@ const home = join(scratch, "home");
 const prefix = join(home, ".local");
 const binDirectory = join(prefix, "bin");
 const versionRoot = join(prefix, "lib", "adocweave", version);
+const previousRoot = join(prefix, "lib", "adocweave", `${version}-previous-fixture`);
 const currentLink = join(prefix, "lib", "adocweave", "current");
+const activeMarker = join(prefix, "lib", "adocweave", "active-version");
 const browserRoot = join(prefix, "share", "adocweave", version, "browser");
 const zedRoot = join(prefix, "share", "adocweave", version, "zed");
+const vscodeRoot = join(prefix, "share", "adocweave", version, "vscode");
 
 function files(directory) {
   if (!existsSync(directory)) return [];
@@ -76,8 +81,11 @@ function archive(name) {
   return path;
 }
 
-function extract(path, destination, expectedRoot) {
-  const entries = execFileSync("tar", ["-tJf", path], { encoding: "utf8" })
+function extract(path, destination, expectedRoot, archiveType = "tar.xz") {
+  const listing = archiveType === "zip"
+    ? execFileSync("unzip", ["-Z1", path], { encoding: "utf8" })
+    : execFileSync("tar", ["-tJf", path], { encoding: "utf8" });
+  const entries = listing
     .trim()
     .split("\n")
     .filter(Boolean);
@@ -87,14 +95,18 @@ function extract(path, destination, expectedRoot) {
       (entry) =>
         entry.startsWith("/") ||
         entry.split("/").includes("..") ||
-        (entry !== `${expectedRoot}/` && !entry.startsWith(`${expectedRoot}/`)),
+        (expectedRoot && entry !== `${expectedRoot}/` && !entry.startsWith(`${expectedRoot}/`)),
     )
   ) {
     throw new Error(`unsafe or unexpected archive path in ${basename(path)}`);
   }
   mkdirSync(destination, { recursive: true });
-  execFileSync("tar", ["-xJf", path, "-C", destination]);
-  const root = join(destination, expectedRoot);
+  if (archiveType === "zip") {
+    execFileSync("unzip", ["-q", path, "-d", destination]);
+  } else {
+    execFileSync("tar", ["-xJf", path, "-C", destination]);
+  }
+  const root = expectedRoot ? join(destination, expectedRoot) : destination;
   assertInside(destination, root);
   return root;
 }
@@ -112,7 +124,8 @@ function command(name, args = []) {
     encoding: "utf8",
     env: {
       HOME: home,
-      PATH: `${binDirectory}:/usr/bin:/bin`,
+      PATH: [binDirectory, process.env.PATH].filter(Boolean).join(delimiter),
+      SystemRoot: process.env.SystemRoot,
       XDG_CACHE_HOME: join(home, ".cache"),
       XDG_CONFIG_HOME: join(home, ".config"),
       XDG_DATA_HOME: join(home, ".local", "share"),
@@ -120,17 +133,53 @@ function command(name, args = []) {
   });
 }
 
+function activateNative(root, label, executables) {
+  for (const executable of executables) {
+    if (!existsSync(join(root, "bin", executable))) {
+      throw new Error(`cannot activate incomplete native version: ${label}`);
+    }
+  }
+  if (process.platform === "win32") {
+    mkdirSync(binDirectory, { recursive: true });
+    for (const executable of executables) {
+      const destination = join(binDirectory, executable);
+      const staging = `${destination}.new`;
+      const backup = `${destination}.previous`;
+      copyFileSync(join(root, "bin", executable), staging);
+      rmSync(backup, { force: true });
+      if (existsSync(destination)) renameSync(destination, backup);
+      try {
+        renameSync(staging, destination);
+      } catch (error) {
+        if (existsSync(backup)) renameSync(backup, destination);
+        throw error;
+      }
+      rmSync(backup, { force: true });
+    }
+  } else {
+    atomicLink(root, currentLink);
+    for (const executable of executables) {
+      const link = join(binDirectory, executable);
+      if (!existsSync(link)) atomicLink(join(currentLink, "bin", executable), link);
+    }
+  }
+  const markerStaging = `${activeMarker}.new`;
+  writeFileSync(markerStaging, `${label}\n`);
+  renameSync(markerStaging, activeMarker);
+}
+
 function installNative(packageName, executable) {
   const archiveRoot = `${packageName}-${target}`;
   const extracted = extract(
-    archive(`${archiveRoot}.tar.xz`),
+    archive(`${archiveRoot}.${platform.archive}`),
     join(scratch, "extract", packageName),
-    archiveRoot,
+    null,
+    platform.archive,
   );
   const destination = join(versionRoot, "bin", executable);
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(join(extracted, executable), destination);
-  execFileSync("chmod", ["755", destination]);
+  if (process.platform !== "win32") execFileSync("chmod", ["755", destination]);
 }
 
 function installBrowser() {
@@ -153,6 +202,20 @@ function installZed() {
   );
   mkdirSync(dirname(zedRoot), { recursive: true });
   renameSync(extracted, zedRoot);
+}
+
+function installVSCode() {
+  const name = `adocweave-vscode-${version}.vsix`;
+  const extracted = extract(
+    archive(name),
+    join(scratch, "extract", "vscode"),
+    null,
+    "zip",
+  );
+  const extension = join(extracted, "extension");
+  assertInside(extracted, extension);
+  mkdirSync(dirname(vscodeRoot), { recursive: true });
+  renameSync(extension, vscodeRoot);
 }
 
 async function verifyBrowserContract() {
@@ -229,30 +292,60 @@ try {
   mkdirSync(home);
   const before = files(home).map((path) => path.slice(home.length + 1));
 
-  installNative("adocweave-cli", "adocweave");
-  installNative("adocweave-lsp", "adocweave-lsp");
+  installNative("adocweave-cli", `adocweave${platform.executableSuffix}`);
+  installNative("adocweave-lsp", `adocweave-lsp${platform.executableSuffix}`);
   installBrowser();
   installZed();
-  atomicLink(versionRoot, currentLink);
-  atomicLink(join(currentLink, "bin", "adocweave"), join(binDirectory, "adocweave"));
-  atomicLink(join(currentLink, "bin", "adocweave-lsp"), join(binDirectory, "adocweave-lsp"));
+  installVSCode();
+  const executables = [
+    `adocweave${platform.executableSuffix}`,
+    `adocweave-lsp${platform.executableSuffix}`,
+  ];
+  cpSync(versionRoot, previousRoot, { recursive: true });
+  activateNative(versionRoot, version, executables);
+  if (process.platform !== "win32" && readlinkSync(currentLink) !== versionRoot) {
+    throw new Error("current version link is not pinned");
+  }
 
-  if (readlinkSync(currentLink) !== versionRoot) throw new Error("current version link is not pinned");
-  for (const executable of ["adocweave", "adocweave-lsp"]) {
-    const selected = command("sh", ["-c", `command -v ${executable}`]).trim();
-    if (selected !== join(binDirectory, executable)) throw new Error(`${executable} is not selected from the clean PATH`);
-    const actual = JSON.parse(command(executable, ["--version", "--json"]));
+  for (const executable of executables) {
+    const lookup = process.platform === "win32" ? "where.exe" : "which";
+    const selected = command(lookup, [executable]).trim().split(/\r?\n/, 1)[0];
+    if (resolve(selected).toLowerCase() !== resolve(join(binDirectory, executable)).toLowerCase()) {
+      throw new Error(`${executable} is not selected from the clean PATH`);
+    }
+    const actual = JSON.parse(command(join(binDirectory, executable), ["--version", "--json"]));
     if (actual.packageVersion !== version) throw new Error(`${executable} version mismatch`);
+  }
+  activateNative(previousRoot, `${version}-previous-fixture`, executables);
+  if (readFileSync(activeMarker, "utf8") !== `${version}-previous-fixture\n`) {
+    throw new Error("native rollback did not select the previous version");
+  }
+  activateNative(versionRoot, version, executables);
+  try {
+    activateNative(join(prefix, "lib", "adocweave", "incomplete"), "incomplete", executables);
+    throw new Error("incomplete native update was accepted");
+  } catch (error) {
+    if (error instanceof Error && error.message === "incomplete native update was accepted") {
+      throw error;
+    }
+  }
+  if (readFileSync(activeMarker, "utf8") !== `${version}\n`) {
+    throw new Error("failed native update changed the active version");
   }
   if (!existsSync(join(browserRoot, "worker", "index.mjs"))) throw new Error("browser public entry point is missing");
   if (!existsSync(join(browserRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("browser WASM is missing");
   if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
+  const vscodeManifest = JSON.parse(readFileSync(join(vscodeRoot, "package.json"), "utf8"));
+  if (vscodeManifest.version !== version || vscodeManifest.main !== "./dist/extension.cjs") {
+    throw new Error("VS Code extension manifest mismatch");
+  }
   await verifyBrowserContract();
 
-  rmSync(join(binDirectory, "adocweave"));
-  rmSync(join(binDirectory, "adocweave-lsp"));
-  rmSync(currentLink);
+  for (const executable of executables) rmSync(join(binDirectory, executable));
+  if (process.platform !== "win32") rmSync(currentLink);
+  rmSync(activeMarker);
   rmSync(versionRoot, { recursive: true });
+  rmSync(previousRoot, { recursive: true });
   rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
   for (const directory of [
     join(prefix, "share", "adocweave"),

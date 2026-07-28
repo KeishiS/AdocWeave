@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -24,6 +24,18 @@ export function thirdPartyPackages(metadata) {
     .sort((left, right) => packageKey(left).localeCompare(packageKey(right)));
 }
 
+export function npmRuntimePackages(packageManifest, packageLock) {
+  const dependencies = Object.keys(packageManifest.dependencies ?? {});
+  return dependencies
+    .map((name) => {
+      const entry = packageLock.packages?.[`node_modules/${name}`];
+      if (!entry?.version) fail(`${name} has no locked npm package`);
+      if (!entry.license) fail(`${name} ${entry.version} has no license metadata`);
+      return { name, version: entry.version, license: entry.license };
+    })
+    .sort((left, right) => packageKey(left).localeCompare(packageKey(right)));
+}
+
 function groupedRows(packages) {
   const grouped = new Map();
   for (const pkg of packages) {
@@ -37,16 +49,16 @@ function groupedRows(packages) {
     .join("\n\n");
 }
 
-function table(packages) {
+function table(packages, subject = "Crateとversion") {
   return `[cols="2,5",options="header"]
 |===
-|SPDX license expression |Crateとversion
+|SPDX license expression |${subject}
 
 ${groupedRows(packages)}
 |===`;
 }
 
-export function renderThirdPartyNotices(rootMetadata, zedMetadata) {
+export function renderThirdPartyNotices(rootMetadata, zedMetadata, vscodePackages = []) {
   const rootPackages = thirdPartyPackages(rootMetadata);
   const rootKeys = new Set(rootPackages.map(packageKey));
   const zedOnlyPackages = thirdPartyPackages(zedMetadata)
@@ -66,6 +78,12 @@ Zed開発拡張はsource archiveとして配布され、初回導入時にZedが
 name・version・licenseで含まれるcrateは重複記載しない。
 
 ${table(zedOnlyPackages)}
+
+== VS Code拡張の実行時依存
+
+VSIXへ同梱するnpm packageを記載する。開発時だけ使用するpackageは含めない。
+
+${table(vscodePackages, "npm packageとversion")}
 `;
 }
 
@@ -81,9 +99,12 @@ function cargoMetadata(args) {
 export function generateThirdPartyNotices(outputPath) {
   const rootMetadata = cargoMetadata([]);
   const zedMetadata = cargoMetadata(["--manifest-path", "editors/zed/Cargo.toml"]);
+  const vscodeManifest = JSON.parse(readFileSync(new URL("../editors/vscode/package.json", import.meta.url), "utf8"));
+  const vscodeLock = JSON.parse(readFileSync(new URL("../editors/vscode/package-lock.json", import.meta.url), "utf8"));
+  const vscodePackages = npmRuntimePackages(vscodeManifest, vscodeLock);
   const output = resolve(root, outputPath);
   mkdirSync(dirname(output), { recursive: true });
-  writeFileSync(output, renderThirdPartyNotices(rootMetadata, zedMetadata));
+  writeFileSync(output, renderThirdPartyNotices(rootMetadata, zedMetadata, vscodePackages));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

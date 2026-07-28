@@ -40,8 +40,10 @@ cargo audit "${audit_args[@]}" --file editors/zed/Cargo.lock
 
 cargo deny --config deny.toml --manifest-path Cargo.toml --all-features check licenses bans sources
 cargo deny --config deny.toml --manifest-path editors/zed/Cargo.toml --all-features check licenses bans sources
+npm audit --omit=dev --prefix editors/vscode
 
 node tools/verify-dependency-boundaries.mjs
+node tools/verify-vscode-dependencies.mjs
 cargo metadata --locked --format-version=1 > "$metadata"
 cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
 node tools/verify-duplicate-dependencies.mjs "$metadata" "$zed_metadata"

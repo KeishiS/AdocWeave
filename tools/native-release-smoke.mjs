@@ -1,8 +1,19 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const [artifactDirectory, target] = process.argv.slice(2);
 if (!artifactDirectory || !target) {
@@ -10,17 +21,15 @@ if (!artifactDirectory || !target) {
   process.exit(2);
 }
 
-const expectedArchitecture = {
-  "aarch64-unknown-linux-musl": { node: "arm64", elf: "AArch64" },
-  "x86_64-unknown-linux-musl": { node: "x64", elf: "Advanced Micro Devices X86-64" },
-}[target];
-if (!expectedArchitecture) throw new Error(`unsupported smoke target: ${target}`);
-if (process.arch !== expectedArchitecture.node) {
+const plan = JSON.parse(readFileSync(new URL("../release/distribution-plan.json", import.meta.url), "utf8"));
+const platform = plan.targets.find(({ triple }) => triple === target);
+if (!platform) throw new Error(`unsupported smoke target: ${target}`);
+if (process.platform !== platform.os || process.arch !== platform.architecture) {
   throw new Error(`smoke host ${process.arch} does not match ${target}`);
 }
 
 const manifest = JSON.parse(readFileSync(new URL("../release-manifest.json", import.meta.url), "utf8"));
-const workspaceRoot = realpathSync(new URL("../", import.meta.url).pathname);
+const workspaceRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-native-smoke-"));
 
 function filesRecursively(directory) {
@@ -31,22 +40,24 @@ function filesRecursively(directory) {
 }
 
 function archive(name) {
-  const expected = `${name}-${target}.tar.xz`;
+  const expected = `${name}-${target}.${platform.archive}`;
   const matches = filesRecursively(resolve(artifactDirectory)).filter((path) => basename(path) === expected);
   if (matches.length !== 1) throw new Error(`expected exactly one ${expected}, found ${matches.length}`);
   return matches[0];
 }
 
 function extract(archivePath, executable) {
-  const root = basename(archivePath, ".tar.xz");
-  const entries = execFileSync("tar", ["-tJf", archivePath], { encoding: "utf8" }).trim().split("\n");
+  const destination = join(scratch, `extract-${executable}`);
+  mkdirSync(destination);
+  const entries = platform.archive === "zip"
+    ? execFileSync("unzip", ["-Z1", archivePath], { encoding: "utf8" }).trim().split("\n")
+    : execFileSync("tar", ["-tJf", archivePath], { encoding: "utf8" }).trim().split("\n");
   const expectedEntries = [
-    `${root}/`,
-    `${root}/LICENSE-APACHE`,
-    `${root}/LICENSE-MIT`,
-    `${root}/README.adoc`,
-    `${root}/THIRD_PARTY_NOTICES.adoc`,
-    `${root}/${executable}`,
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "README.adoc",
+    "THIRD_PARTY_NOTICES.adoc",
+    executable,
   ].sort();
   if (JSON.stringify(entries.sort()) !== JSON.stringify(expectedEntries)) {
     throw new Error(`${basename(archivePath)} has an unexpected archive layout:\n${entries.join("\n")}`);
@@ -54,21 +65,92 @@ function extract(archivePath, executable) {
   if (entries.some((entry) => entry.startsWith("/") || entry.split("/").includes(".."))) {
     throw new Error(`${basename(archivePath)} contains an unsafe path`);
   }
-  execFileSync("tar", ["-xJf", archivePath, "-C", scratch]);
-  const binary = realpathSync(join(scratch, root, executable));
-  if (!binary.startsWith(`${realpathSync(scratch)}${sep}`) || binary.startsWith(`${workspaceRoot}${sep}`)) {
+  if (platform.archive === "zip") {
+    execFileSync("unzip", ["-q", archivePath, "-d", destination]);
+  } else {
+    execFileSync("tar", ["-xJf", archivePath, "-C", destination]);
+  }
+  const binary = realpathSync(join(destination, executable));
+  if (!binary.startsWith(`${realpathSync(destination)}${sep}`) || binary.startsWith(`${workspaceRoot}${sep}`)) {
     throw new Error(`smoke test selected a binary outside the extracted archive: ${binary}`);
   }
-  execFileSync("test", ["-x", binary]);
-  const header = execFileSync("readelf", ["-h", binary], { encoding: "utf8" });
-  if (!header.includes(`Machine:                           ${expectedArchitecture.elf}`)) {
-    throw new Error(`${executable} has the wrong ELF architecture`);
-  }
-  const dynamic = execFileSync("readelf", ["-d", binary], { encoding: "utf8" });
-  if (/\(NEEDED\)/.test(dynamic) && process.env.ADOCWEAVE_SMOKE_ALLOW_DYNAMIC !== "1") {
-    throw new Error(`${executable} has an unexpected dynamic dependency`);
-  }
+  verifyBinary(binary, executable);
   return binary;
+}
+
+function verifyBinary(binary, executable) {
+  const bytes = readFileSync(binary);
+  if (platform.os === "linux") {
+    execFileSync("test", ["-x", binary]);
+    const header = execFileSync("readelf", ["-h", binary], { encoding: "utf8" });
+    const machine = platform.architecture === "arm64" ? "AArch64" : "Advanced Micro Devices X86-64";
+    if (!header.includes(`Machine:                           ${machine}`)) {
+      throw new Error(`${executable} has the wrong ELF architecture`);
+    }
+    const dynamic = execFileSync("readelf", ["-d", binary], { encoding: "utf8" });
+    if (/\(NEEDED\)/.test(dynamic) && process.env.ADOCWEAVE_SMOKE_ALLOW_DYNAMIC !== "1") {
+      throw new Error(`${executable} has an unexpected dynamic dependency`);
+    }
+    return;
+  }
+  if (platform.os === "darwin") {
+    execFileSync("test", ["-x", binary]);
+    const description = execFileSync("file", ["-b", binary], { encoding: "utf8" });
+    const architecture = platform.architecture === "arm64" ? "arm64" : "x86_64";
+    if (!description.includes("Mach-O") || !description.includes(architecture)) {
+      throw new Error(`${executable} has the wrong Mach-O architecture`);
+    }
+    const dependencies = execFileSync("otool", ["-L", binary], { encoding: "utf8" });
+    if (dependencies.split("\n").slice(1).some((line) => line.trim() && !line.trim().startsWith("/usr/lib/") &&
+      !line.trim().startsWith("/System/Library/"))) {
+      throw new Error(`${executable} has a non-system dynamic dependency`);
+    }
+    const loadCommands = execFileSync("otool", ["-l", binary], { encoding: "utf8" });
+    const minimum = /cmd LC_BUILD_VERSION[\s\S]*?minos ([0-9.]+)/.exec(loadCommands)?.[1];
+    if (minimum !== platform.minimumOsVersion) {
+      throw new Error(`${executable} minimum macOS version is ${minimum ?? "unknown"}`);
+    }
+    execFileSync("xattr", ["-w", "com.apple.quarantine", "0081;00000000;AdocWeave;", binary]);
+    const quarantine = execFileSync("xattr", ["-p", "com.apple.quarantine", binary], { encoding: "utf8" });
+    if (!quarantine.includes("AdocWeave")) {
+      throw new Error(`${executable} quarantine attribute was not applied`);
+    }
+    return;
+  }
+  if (bytes.readUInt16LE(0) !== 0x5a4d) throw new Error(`${executable} has no PE header`);
+  const peOffset = bytes.readUInt32LE(0x3c);
+  if (bytes.toString("ascii", peOffset, peOffset + 4) !== "PE\0\0" || bytes.readUInt16LE(peOffset + 4) !== 0x8664) {
+    throw new Error(`${executable} has the wrong PE architecture`);
+  }
+  const optionalHeader = peOffset + 24;
+  if (bytes.readUInt16LE(optionalHeader) !== 0x20b) {
+    throw new Error(`${executable} is not a PE32+ executable`);
+  }
+  const dumpbin = process.env.ADOCWEAVE_DUMPBIN;
+  if (!dumpbin) throw new Error("ADOCWEAVE_DUMPBIN is required for Windows dependency verification");
+  const dependencies = execFileSync(dumpbin, ["/DEPENDENTS", binary], { encoding: "utf8" });
+  const imported = [...dependencies.matchAll(/^\s+([A-Za-z0-9_.-]+\.dll)\s*$/gim)]
+    .map((match) => match[1].toLowerCase());
+  const allowed = new Set([
+    "advapi32.dll",
+    "bcrypt.dll",
+    "crypt32.dll",
+    "iphlpapi.dll",
+    "kernel32.dll",
+    "normaliz.dll",
+    "ntdll.dll",
+    "ole32.dll",
+    "secur32.dll",
+    "shell32.dll",
+    "user32.dll",
+    "userenv.dll",
+    "ws2_32.dll",
+  ]);
+  const unexpected = imported.filter((name) =>
+    !allowed.has(name) && !name.startsWith("api-ms-win-") && !name.startsWith("ext-ms-win-"));
+  if (imported.length === 0 || unexpected.length > 0) {
+    throw new Error(`${executable} has unexpected Windows dependencies: ${unexpected.join(", ") || "none detected"}`);
+  }
 }
 
 function run(binary, args, options = {}) {
@@ -148,17 +230,53 @@ async function smokeLsp(binary) {
   if (exitCode !== 0) throw new Error(`LSP exited with ${exitCode}`);
 }
 
+async function smokeForcedProcessLifecycle(binary) {
+  const lifecycle = join(scratch, `lifecycle${platform.executableSuffix}`);
+  const replaced = `${lifecycle}.replaced`;
+  copyFileSync(binary, lifecycle);
+  if (platform.os !== "win32") execFileSync("chmod", ["755", lifecycle]);
+  const child = spawn(lifecycle, [], { stdio: ["pipe", "pipe", "pipe"] });
+  await new Promise((resolvePromise, reject) => {
+    child.once("spawn", resolvePromise);
+    child.once("error", reject);
+  });
+  if (platform.os === "win32") {
+    let rejected = false;
+    try {
+      renameSync(lifecycle, replaced);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error("Windows allowed replacement of a running Language Server");
+  }
+  const exited = new Promise((resolvePromise) => child.once("exit", resolvePromise));
+  child.kill();
+  const exit = await Promise.race([
+    exited,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("forced Language Server stop timed out")), 5_000)),
+  ]);
+  if (exit === undefined && child.exitCode === null && child.signalCode === null) {
+    throw new Error("forced Language Server stop did not report an exit");
+  }
+  renameSync(lifecycle, replaced);
+  rmSync(replaced);
+}
+
 try {
-  const cli = extract(archive("adocweave-cli"), "adocweave");
-  const lsp = extract(archive("adocweave-lsp"), "adocweave-lsp");
+  const cli = extract(archive("adocweave-cli"), `adocweave${platform.executableSuffix}`);
+  const lsp = extract(archive("adocweave-lsp"), `adocweave-lsp${platform.executableSuffix}`);
   version(cli);
   version(lsp);
-  const fixture = join(scratch, "fixture.adoc");
-  writeFileSync(fixture, "= Title\n\ntext\n");
+  const fixtureRoot = join(scratch, "space 日本語");
+  mkdirSync(fixtureRoot);
+  const fixture = join(fixtureRoot, "fixture.adoc");
+  writeFileSync(fixture, "= Title\r\n\r\ntext\r\n");
   run(cli, ["check", fixture]);
   if (!run(cli, ["convert", fixture]).includes("<h1")) throw new Error("CLI convert produced no heading");
   run(cli, ["format", "--check", fixture]);
   await smokeLsp(lsp);
+  await smokeForcedProcessLifecycle(lsp);
   process.stdout.write(`native release smoke passed: ${target}\n`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });

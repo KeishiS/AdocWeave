@@ -8,7 +8,7 @@
 link:../release-manifest.json[release manifest]
 
 version固有の変更内容と移行手順は
-https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]を参照してください。
+https://github.com/KeishiS/adocweave/releases[GitHub Releases]を参照してください。
 
 == ディレクトリの案内
 

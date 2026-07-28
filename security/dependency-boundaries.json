@@ -24,6 +24,14 @@
       "runtimeDependenciesAllowed": false
     },
     {
+      "id": "vscode-extension",
+      "kind": "npm",
+      "manifest": "editors/vscode/package.json",
+      "lockfile": "editors/vscode/package-lock.json",
+      "distributed": true,
+      "runtimeDependenciesAllowed": true
+    },
+    {
       "id": "ci-and-development-tools",
       "kind": "nix",
       "manifest": "flake.nix",

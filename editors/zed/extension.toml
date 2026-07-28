@@ -1,10 +1,10 @@
 id = "adocweave"
 name = "AdocWeave"
-version = "0.13.0"
+version = "0.14.0"
 schema_version = 1
 authors = ["AdocWeave contributors"]
 description = "AsciiDoc editing support powered by the AdocWeave Language Server"
-repository = "https://github.com/KeishiS/AdocWeave"
+repository = "https://github.com/KeishiS/adocweave"
 
 [language_servers.adocweave]
 name = "AdocWeave Language Server"

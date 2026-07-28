@@ -1,0 +1,30 @@
+[
+  {
+    "source": "= 見出し",
+    "scope": "markup.heading.asciidoc"
+  },
+  {
+    "source": ":name: 値",
+    "scope": "entity.other.attribute-name.asciidoc"
+  },
+  {
+    "source": "// コメント",
+    "scope": "comment.line.double-slash.asciidoc"
+  },
+  {
+    "source": "* 項目",
+    "scope": "punctuation.definition.list.begin.asciidoc"
+  },
+  {
+    "source": "include::chapter.adoc[]",
+    "scope": "meta.macro.asciidoc"
+  },
+  {
+    "source": "https://example.com[例]",
+    "scope": "markup.underline.link.asciidoc"
+  },
+  {
+    "source": "{name}",
+    "scope": "variable.other.attribute-reference.asciidoc"
+  }
+]

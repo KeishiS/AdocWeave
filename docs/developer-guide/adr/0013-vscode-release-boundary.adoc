@@ -1,0 +1,26 @@
+= ADR 0013: VSIXとLanguage Serverの同一release境界
+
+:status: accepted
+
+== 文脈
+
+VS Code拡張は`adocweave-lsp`を起動するadapterであり、意味解析を独自に実装しません。拡張とLanguage Serverを
+別々のversion系列で配布すると、互換範囲、managed binaryの取得先および障害時の責任境界が増えます。
+一方、Visual Studio MarketplaceやOpen VSXへ公開すると、GitHub Releaseとは別の資格情報、審査および
+更新経路を保守する必要があります。
+
+== 決定
+
+VSIX、CLI、Language Server、browser packageおよびZed拡張を同じpackage versionとGitHub Releaseへ含めます。
+VSIXは同じcandidate workflowで一度だけ構築し、配布manifest、SBOM、checksumおよびArtifact Attestationの
+対象にします。拡張は自身と完全に一致するversionのLanguage Serverだけを起動し、managed binaryは同じtagの
+配布manifestから選択します。
+
+Visual Studio MarketplaceおよびOpen VSXへは公開しません。VSIXはGitHub Releaseから取得して手動で導入します。
+registry公開を将来評価する場合も、managed Language Serverの互換契約とGitHub Releaseの正本性は変更しません。
+
+== 結果
+
+一つのcandidateとsource commitから全成果物を追跡でき、拡張独自の互換表が不要になります。VSIXだけを修正する
+場合も新しいpackage versionとreleaseが必要です。registry固有の自動更新は利用できませんが、資格情報と
+公開先の増加を避けられます。

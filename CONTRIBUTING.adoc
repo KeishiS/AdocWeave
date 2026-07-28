@@ -190,12 +190,12 @@ repositoryのcheckoutやworkspaceの``target``を``PATH``へ含めないclean環
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
 * [ ] 対象commitが現在の``origin/main``の先端であり、同じcommitのmain candidateが成功しています。
-* [ ] xref:docs/developer-guide/release-distribution.adoc[配布仕様]に定義したtarget、archive、metadataおよび9個のasset集合が
+* [ ] xref:docs/developer-guide/release-distribution.adoc[配布仕様]に定義したtarget、archive、metadataおよびasset集合が
       candidateと一致しています。
 
 === 公開後
 
-* [ ] GitHub Releaseがstableであり、計画した9個のassetだけを含み、各assetが非0 byteです。
+* [ ] GitHub Releaseがstableであり、配布planに記載したassetだけを含み、各assetが非0 byteです。
 * [ ] xref:docs/user-guide/release-installation.adoc[導入手順]に従い、download後のchecksumとattestationを別々に検証しました。
       main candidateにはattestationがなく、公開assetではattestationを必須とします。
 * [ ] 対応architectureごとにCLIとLSPをclean ``PATH``へ導入し、``--version --json``が対象versionを返します。
@@ -208,10 +208,14 @@ repositoryのcheckoutやworkspaceの``target``を``PATH``へ含めないclean環
 * [ ] 公開Zed archiveとmanaged LSPをoverrideなしで使用し、AsciiDoc認識とLSP起動前の基本構文色付けを確認しました。
       診断、Outline、Code Action、Format、Hover、補完、Definition、References、Document Linkおよび
       Semantic Tokensが編集後と再起動後にも更新されることを確認しました。
+* [ ] 公開VSIXを隔離profileへ導入し、AsciiDoc認識、基本構文色付け、managed LSPの取得、offline cache、
+      再起動および全LSP機能を確認しました。以前のVSIXへのrollback後にも起動でき、managed cacheの削除と
+      拡張のuninstall後に管理対象fileが残っていません。
 * [ ] native利用側アプリでpackage versionを照合し、`AnalysisOptions`、`SourceId`、文書versionおよびgenerationを
       明示しました。DB、network、file、権限および任意scheme Resolverをcoreの外へ置き、更新対象が
       xref:docs/developer-guide/core-profile.adoc[対応範囲]と一致し、Resolverが返したURLを``ActiveUrlPolicy``で再検証しました。
 * [ ] Nix flakeをtag commitへ固定し、Linux x86-64／ARM64で``nix run``、profileへの導入・rollback・削除、
       利用側flakeへの固定、NixOS package評価およびoverlayを確認しました。runtime closureにbrowser、Node.js、
       Rust compiler、Cargoまたはfuzz toolが含まれていないことも確認しました。
-* [ ] 導入前後のfile一覧を比較し、CLI、LSP、browser packageおよびZed拡張の削除後に管理対象fileが残っていないことを確認しました。
+* [ ] 導入前後のfile一覧を比較し、CLI、LSP、browser package、Zed拡張およびVS Code拡張の削除後に
+      管理対象fileが残っていないことを確認しました。

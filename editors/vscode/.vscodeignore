@@ -1,0 +1,6 @@
+**
+!dist/extension.cjs
+!language-configuration.json
+!syntaxes/asciidoc.tmLanguage.json
+!README.adoc
+!package.json

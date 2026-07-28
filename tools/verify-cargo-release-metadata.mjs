@@ -17,7 +17,7 @@ try {
   if (packages.length !== expectedNames.length) throw new Error("cargo metadata is missing a workspace package");
   for (const pkg of packages) {
     if (pkg.version !== releaseManifest.packageVersion) throw new Error(`${pkg.name}: cargo metadata version mismatch`);
-    if (pkg.repository !== "https://github.com/KeishiS/AdocWeave" || pkg.homepage !== pkg.repository) {
+    if (pkg.repository !== "https://github.com/KeishiS/adocweave" || pkg.homepage !== pkg.repository) {
       throw new Error(`${pkg.name}: cargo metadata repository mismatch`);
     }
     if (pkg.license !== "MIT OR Apache-2.0") throw new Error(`${pkg.name}: cargo metadata license mismatch`);
