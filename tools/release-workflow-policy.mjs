@@ -184,6 +184,19 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   }
   const nativeBuildRun = step(releaseJobs["build-native"], (item) => item.name === "Target archive builds", "native build step is missing").run;
   requireCommand(nativeBuildRun, "nix develop .#ci -c tools/run-pinned-dist.sh build", "native archives must use the locked cargo-dist closure and locked Nix toolchain");
+  const darwinNormalization = step(
+    releaseJobs["build-native"],
+    (item) => item.name === "Darwin archive portability normalization",
+    "Darwin archive portability normalization is missing",
+  );
+  if (darwinNormalization.if !== "endsWith(matrix.target, '-apple-darwin')") {
+    fail("Darwin archive portability normalization must be limited to Darwin targets");
+  }
+  requireCommand(
+    darwinNormalization.run,
+    'tools/normalize-darwin-archives.sh target/distrib "${{ matrix.target }}"',
+    "Darwin archives must replace Nix store runtime dependencies",
+  );
   if (release.includes("rustup target add")) {
     fail("release builds must not bypass the locked Nix Rust toolchain through rustup");
   }

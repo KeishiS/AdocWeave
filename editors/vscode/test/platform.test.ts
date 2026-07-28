@@ -3,11 +3,11 @@ import test from "node:test";
 
 import { platformForHost, supportedPlatforms } from "../src/platform.js";
 
-test("共有fixtureの5 platformだけを選択します", () => {
+test("共有fixtureの4 platformだけを選択します", () => {
   assert.equal(platformForHost("linux", "arm64", "6.12").target, "aarch64-unknown-linux-musl");
-  assert.equal(platformForHost("darwin", "x64", "22.0").target, "x86_64-apple-darwin");
+  assert.throws(() => platformForHost("darwin", "x64", "22.0"), /unsupported-platform/);
   assert.equal(platformForHost("win32", "x64", "10.0.17763").executable, "adocweave-lsp.exe");
-  assert.equal(supportedPlatforms().length, 5);
+  assert.equal(supportedPlatforms().length, 4);
 });
 
 test("未対応platformはdownload前に拒否します", () => {

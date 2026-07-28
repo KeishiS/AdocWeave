@@ -21,8 +21,11 @@ test("未知field、version不一致、重複assetを拒否します", () => {
     /invalid-manifest/,
   );
   assert.throws(() => parseDistributionManifest(fixture, "9.9.9"), /invalid-manifest/);
+  const windowsLsp = parsed.assets.find(
+    ({ name }: { name: string }) => name === "adocweave-lsp-x86_64-pc-windows-msvc.zip",
+  );
   const manifest = parseDistributionManifest(
-    JSON.stringify({ ...parsed, assets: [...parsed.assets, parsed.assets[9]] }),
+    JSON.stringify({ ...parsed, assets: [...parsed.assets, windowsLsp] }),
     "0.14.0",
   );
   assert.throws(

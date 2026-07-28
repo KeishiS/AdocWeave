@@ -149,6 +149,30 @@ test("candidate acceptance cannot omit the Nix package contract", () => {
   );
 });
 
+test("Darwin archive normalization cannot be omitted or broadened", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        'tools/normalize-darwin-archives.sh target/distrib "${{ matrix.target }}"',
+        "true",
+      ),
+    }),
+    /replace Nix store runtime dependencies/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "if: endsWith(matrix.target, '-apple-darwin')",
+        "if: always()",
+      ),
+    }),
+    /limited to Darwin targets/,
+  );
+});
+
 test("tag publication must reuse and verify the selected main candidate", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(

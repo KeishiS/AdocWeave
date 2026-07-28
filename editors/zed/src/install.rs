@@ -431,7 +431,6 @@ mod tests {
             ),
             (Os::Linux, Architecture::X8664, "x86_64-unknown-linux-musl"),
             (Os::Mac, Architecture::Aarch64, "aarch64-apple-darwin"),
-            (Os::Mac, Architecture::X8664, "x86_64-apple-darwin"),
             (Os::Windows, Architecture::X8664, "x86_64-pc-windows-msvc"),
         ] {
             assert_eq!(target_for_platform(os, arch).unwrap(), target);
