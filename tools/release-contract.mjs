@@ -278,8 +278,9 @@ function verifyRepository() {
   if (!releaseWorkflow.includes("nix develop .#ci -c cargo make release-global-artifacts")) {
     fail("release workflow must verify the exact global archives before upload");
   }
-  for (const runner of plan.targets.map((target) => target.runner)) {
-    if (!nativeSmokeWorkflow.includes(`runner: ${runner}`)) fail(`native smoke workflow is missing ${runner}`);
+  if (!nativeSmokeWorkflow.includes("matrix: ${{ fromJSON(inputs.matrix) }}") ||
+      !releaseWorkflow.includes("node tools/native-change-plan.mjs")) {
+    fail("native smoke workflow must consume the locally verified target plan");
   }
   for (const runner of [
     'global = "ubuntu-24.04"',
