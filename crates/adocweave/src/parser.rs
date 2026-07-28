@@ -2818,6 +2818,18 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_source_options_are_not_misinterpreted() {
+        let parsed = parse("[source,rust,unknown]\n----\ncode\n----\n").expect("lossless recovery");
+
+        assert!(matches!(parsed.ast.blocks()[0], AstBlock::Unsupported(_)));
+        assert!(matches!(
+            parsed.ast.blocks()[1],
+            AstBlock::Verbatim(ref block)
+                if matches!(block.kind, VerbatimKind::Listing)
+        ));
+    }
+
+    #[test]
     fn heading_parser_distinguishes_title_and_levels_one_to_five() {
         let source = "= Title\n\n== One\n=== Two\n==== Three\n===== Four\n====== Five\n";
         let parsed = parse(source).expect("valid source");

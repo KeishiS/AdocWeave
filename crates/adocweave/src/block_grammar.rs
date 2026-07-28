@@ -233,12 +233,28 @@ pub(crate) fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)
         let inner = text.strip_prefix('[')?.strip_suffix(']')?;
         (inner.strip_prefix(',')?, "[,".len())
     };
+    let (language, trailing) = language
+        .split_once(',')
+        .map_or((language, None), |(value, trailing)| {
+            (value, Some(trailing))
+        });
+    if trailing.is_some_and(|trailing| {
+        trailing.split(',').any(|value| {
+            let value = value.trim();
+            value != "linenums"
+                && value != "%linenums"
+                && !value.starts_with("start=")
+                && value != "options=linenums"
+        })
+    }) {
+        return None;
+    }
     let leading = language.len() - language.trim_start_matches([' ', '\t']).len();
     let trimmed = language.trim_matches([' ', '\t']);
     if trimmed.is_empty() {
         return Some(None);
     }
-    if trimmed.contains([',', ']']) {
+    if trimmed.contains(']') {
         return None;
     }
     let start = prefix_len + leading;

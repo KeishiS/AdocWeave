@@ -424,6 +424,8 @@ pub(crate) fn document_element_at_ast(
                     attribute_range: source.attribute_range,
                     language_range: source.language_range,
                     language: source.language.clone(),
+                    line_numbers: false,
+                    start_line: None,
                 }))
             }
             AstBlock::Source(source) if contains(source.attribute_range, offset, false) => {
@@ -431,6 +433,8 @@ pub(crate) fn document_element_at_ast(
                     attribute_range: source.attribute_range,
                     language_range: source.language_range,
                     language: source.language.clone(),
+                    line_numbers: false,
+                    start_line: None,
                 }))
             }
             AstBlock::Verbatim(block)

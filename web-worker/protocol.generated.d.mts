@@ -187,8 +187,11 @@ export interface ParseSummary {
 export interface SourceBlockProjection {
   sourceRange: TextRange;
   contentRange: TextRange;
+  title: ProjectedText | null;
   languageRange: TextRange | null;
   language: string | null;
+  lineNumbers: boolean;
+  startLine: number | null;
   source: string;
 }
 
@@ -561,7 +564,7 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 4;
+export declare const PROTOCOL_SCHEMA_VERSION: 5;
 export declare const WORKER_PROTOCOL_VERSION: 2;
 export declare const PACKAGE_VERSION: "0.15.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];

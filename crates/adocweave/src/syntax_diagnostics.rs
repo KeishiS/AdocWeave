@@ -204,6 +204,14 @@ fn block_problem_issues(
                 SyntaxIssueClass::MissingSourceLanguage,
                 "source block requires a language",
             ),
+            (BlockProblemKind::InvalidSourceOption, _) => (
+                SyntaxIssueClass::InvalidAttribute,
+                "unsupported source block option",
+            ),
+            (BlockProblemKind::InvalidSourceStart, _) => (
+                SyntaxIssueClass::InvalidAttribute,
+                "source block start must be a positive integer with linenums",
+            ),
         };
         output.push(issue(class, problem.range, message));
     }

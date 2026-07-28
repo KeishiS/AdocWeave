@@ -453,6 +453,16 @@
       "compatibility": "approved-adocweave-output",
       "rationale": "位置依存属性queryはset、再定義、unset、前方参照およびheader属性を区別し、include由来のrangeへsource IDを付与する",
       "contractImpact": "core-api,conformance,wasm-api"
+    },
+    {
+      "name": "source-block-presentation",
+      "sourceFile": "source-block-presentation.adoc",
+      "expectedHtmlFile": "source-block-presentation.html",
+      "expectedDiagnosticsFile": "source-block-presentation.diagnostics.json",
+      "expectedProjectionFile": "source-block-presentation.projection.json",
+      "compatibility": "supported-subset",
+      "rationale": "source blockのtitle、language、linenums、開始行および不正optionを公開projectionと安全なHTMLへ確定する",
+      "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
     }
   ]
 }
