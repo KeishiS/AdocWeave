@@ -1,10 +1,11 @@
 //! Explicit, bounded local resource provider owned by the CLI binary.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
+use crate::preview::Fingerprint;
 use adocweave::SourceId;
 use adocweave::preprocess::{
     IncludeRequest, PreprocessError, PreprocessErrorKind, PreprocessOptions, PreprocessedDocument,
@@ -40,6 +41,10 @@ pub struct PreparedInput {
     pub include_bases: BTreeMap<String, PathBuf>,
     pub local_session: Option<LocalTargetSession>,
     pub include_errors: BTreeMap<String, adocweave_host::LocalTargetError>,
+    /// Validated filesystem paths whose state can affect this document.
+    pub dependency_paths: BTreeSet<PathBuf>,
+    /// Snapshots captured immediately after each successful dependency load.
+    pub dependency_snapshots: BTreeMap<PathBuf, Fingerprint>,
 }
 
 /// Include target accepted by the filesystem policy but not yet loaded.
@@ -206,6 +211,8 @@ pub fn prepare(
     let mut snapshot = ResourceSnapshot::default();
     let mut sources = BTreeMap::new();
     let mut source_bases = BTreeMap::new();
+    let mut dependency_paths = BTreeSet::new();
+    let mut dependency_snapshots = BTreeMap::new();
     if let Some(source_id) = &source_id {
         sources.insert(source_id.clone(), source.to_owned());
         source_bases.insert(source_id.clone(), base_dir.clone());
@@ -228,6 +235,11 @@ pub fn prepare(
                     .and_then(adocweave_host::ValidatedFilesystemTarget::into_loaded_utf8)
                     .map_err(LocalIncludeError::Host)?;
                 let (canonical, text) = loaded.into_parts();
+                dependency_paths.insert(canonical.clone());
+                dependency_snapshots.insert(
+                    canonical.clone(),
+                    Fingerprint::from_loaded_bytes(&canonical, text.as_bytes()),
+                );
                 let resource_id = include_source_id(&target);
                 sources.insert(resource_id.clone(), text.clone());
                 source_bases.insert(
@@ -255,6 +267,8 @@ pub fn prepare(
         include_bases: BTreeMap::new(),
         local_session: None,
         include_errors: BTreeMap::new(),
+        dependency_paths,
+        dependency_snapshots,
     })
 }
 
@@ -298,6 +312,8 @@ pub fn prepare_local(
     let mut include_bases = BTreeMap::from([(source_id.clone(), base_dir.clone())]);
     let mut snapshot = ResourceSnapshot::default();
     let mut include_errors = BTreeMap::new();
+    let mut dependency_paths = BTreeSet::new();
+    let mut dependency_snapshots = BTreeMap::new();
     let mut preprocess_options = preprocess_options.clone();
     preprocess_options.source_id = Some(SourceId::new(source_id.clone()));
     preprocess_options.base_uri = (!base_key.is_empty()).then_some(base_key);
@@ -340,17 +356,27 @@ pub fn prepare_local(
                     target: target.clone(),
                     attributes: String::new(),
                 };
+                let candidates = dependency_candidates(&root, &target);
                 let loaded = {
                     let mut loader = IncludeLoader::new(&mut session);
                     loader
                         .validate(&root, request)
                         .and_then(|validated| loader.load(validated))
                 };
+                dependency_paths.extend(candidates);
                 match loaded {
                     Ok(loaded) => {
                         let (loaded_source_id, text, provenance) = loaded.into_utf8_parts();
                         debug_assert_eq!(loaded_source_id.as_str(), resource_id);
                         debug_assert_eq!(provenance.logical_target, target);
+                        dependency_paths.insert(provenance.canonical_path.clone());
+                        dependency_snapshots.insert(
+                            provenance.canonical_path.clone(),
+                            Fingerprint::from_loaded_bytes(
+                                &provenance.canonical_path,
+                                text.as_bytes(),
+                            ),
+                        );
                         sources.insert(loaded_source_id.as_str().to_owned(), text.clone());
                         source_bases.insert(
                             loaded_source_id.as_str().to_owned(),
@@ -398,7 +424,42 @@ pub fn prepare_local(
         include_bases,
         local_session: Some(session),
         include_errors,
+        dependency_paths,
+        dependency_snapshots,
     })
+}
+
+/// Returns the nearest existing canonical in-root path for monitoring a
+/// resource which may not exist yet. Watching the ancestor detects creation
+/// without following an unchecked missing path through a replaceable symlink.
+fn dependency_candidates(root: &Path, target: &str) -> BTreeSet<PathBuf> {
+    let target = Path::new(target);
+    if target.is_absolute()
+        || target.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return BTreeSet::new();
+    }
+    let mut paths = BTreeSet::from([root.to_owned()]);
+    let mut current = root.to_owned();
+    for component in target.components() {
+        let Component::Normal(component) = component else {
+            break;
+        };
+        current.push(component);
+        paths.insert(current.clone());
+        match current.symlink_metadata() {
+            Ok(metadata) if metadata.file_type().is_symlink() => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(_) => break,
+        }
+    }
+    paths
 }
 
 fn logical_key(path: &Path) -> String {
@@ -491,6 +552,17 @@ mod tests {
         assert_eq!(session.read_files(), 0);
     }
 
+    #[test]
+    fn missing_dependency_candidates_stay_inside_root() {
+        let root = TestDirectory::new();
+        assert_eq!(
+            dependency_candidates(&root.0, "chapters/new.adoc"),
+            BTreeSet::from([root.0.clone(), root.0.join("chapters")])
+        );
+        assert!(dependency_candidates(&root.0, "../secret.adoc").is_empty());
+        assert!(dependency_candidates(&root.0, "/etc/passwd").is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn aliases_keep_distinct_logical_ids_and_share_canonical_provenance() {
@@ -544,5 +616,19 @@ mod tests {
 
         assert_eq!(error.diagnostic_code(), "local-target-outside-root");
         assert_eq!(session.read_files(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn logical_ancestor_symlink_is_retained_separately_from_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDirectory::new();
+        fs::create_dir(root.0.join("dir-a")).expect("dir a");
+        symlink("dir-a", root.0.join("current")).expect("logical symlink");
+        let dependencies = dependency_candidates(&root.0, "current/part.adoc");
+        assert!(dependencies.contains(&root.0));
+        assert!(dependencies.contains(&root.0.join("current")));
+        assert!(!dependencies.contains(&root.0.join("current/part.adoc")));
     }
 }

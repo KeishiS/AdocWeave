@@ -1,6 +1,6 @@
 = コマンドライン
 
-この文書では、``adocweave``によるAsciiDocファイルの変換、確認および整形を説明します。
+この文書では、``adocweave``によるAsciiDocファイルの変換、プレビュー、確認および整形を説明します。
 入力ファイルを指定しない場合は標準入力を読み、結果を標準出力へ書きます。
 
 == よく使うコマンド
@@ -11,6 +11,9 @@
 
 |`adocweave convert manual.adoc`
 |HTMLへ変換します。
+
+|`adocweave preview manual.adoc`
+|ブラウザー向けのローカルプレビューを起動します。
 
 |`adocweave check manual.adoc`
 |書式やリンクなどの問題を確認します。
@@ -203,6 +206,30 @@ network resourceは取得しません。
 ``check --include --local-targets --project-root DIR``では、includeの読み取りとほかのlocal targetの
 実在検査が同じcacheと上限を使用します。この組み合わせでは、正規化後もproject root内に収まる``..``を
 許可し、``--allow-root``は使用しません。``optional``を指定したincludeの欠落はerrorにしません。
+
+== ローカルプレビュー
+
+``preview``は完全なHTML文書を生成し、既定では``127.0.0.1:4000``で配信します。
+表示されたURLをブラウザーで開き、終了する場合はプロセスを停止してください。
+
+[source,console]
+----
+adocweave preview --include manual.adoc
+adocweave preview --port 8080 --css theme.css manual.adoc
+----
+
+root文書、読み込み済みinclude、欠落しているinclude候補およびCSSの作成、変更、削除を監視します。
+変更は``--debounce-ms``で指定した時間だけまとめ、完了した最新世代を表示します。
+監視対象は解析済みの依存関係に限定され、filesystem全体を探索しません。
+
+配信routeはpreview shell、生成文書、更新世代、診断および固定client scriptだけです。
+任意fileの配信、directory一覧およびpath traversalは提供しません。
+responseにはCSP、``no-store``およびMIME sniffing禁止headerを付けます。
+``--css-url``で検証済みの``http``または``https`` URLを指定した場合は、そのoriginだけをCSPの
+``style-src``へ追加します。
+非loopback addressを使用する場合は``--bind ADDRESS --allow-external``を明示する必要があり、
+ほかのhostから生成内容を閲覧される可能性がある旨を警告します。
+includeとCSSには``convert``と同じproject root、resource上限およびHTML出力policyを適用します。
 
 == 完全なHTML文書とCSS
 

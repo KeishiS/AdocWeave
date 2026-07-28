@@ -19,9 +19,11 @@ dependencies = [
  "adocweave-config",
  "adocweave-host",
  "glob",
+ "libc",
  "serde_json",
  "similar",
  "tempfile",
+ "url",
 ]
 
 [[package]]
