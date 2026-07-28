@@ -3,8 +3,11 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::net::{IpAddr, Ipv4Addr};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use adocweave::output::diagnostics as diagnostic;
 use adocweave::output::formatter::{FormatConfig, format_analysis};
@@ -19,6 +22,26 @@ mod check_output;
 mod file_workflow;
 mod local_include;
 mod local_target;
+mod preview;
+
+static PREVIEW_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+fn install_preview_signal_handlers() {
+    extern "C" fn shutdown(_: libc::c_int) {
+        PREVIEW_SHUTDOWN.store(true, std::sync::atomic::Ordering::Release);
+    }
+    // SAFETY: the handler performs only a lock-free atomic store, and the
+    // process retains the static flag for its entire lifetime.
+    unsafe {
+        let handler = shutdown as *const () as libc::sighandler_t;
+        libc::signal(libc::SIGINT, handler);
+        libc::signal(libc::SIGTERM, handler);
+    }
+}
+
+#[cfg(not(unix))]
+fn install_preview_signal_handlers() {}
 
 use check_output::{
     CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, github_annotation,
@@ -36,6 +59,7 @@ Usage:
 
 Commands:
   convert  Convert an AsciiDoc document
+  preview  Serve a live, loopback-only document preview
   check    Check an AsciiDoc document
   format   Format an AsciiDoc document
   symbols  Print document symbols as JSON
@@ -70,6 +94,10 @@ Options:
   --complete  Convert to a complete HTML document instead of a fragment
   --css FILE      Embed CSS from FILE into the complete document; repeatable
   --css-url URL   Link an allowed stylesheet URL; repeatable
+  --bind ADDRESS  Preview listen address (default: 127.0.0.1)
+  --port PORT     Preview listen port (default: 4000)
+  --debounce-ms MILLISECONDS  Preview rebuild debounce (default: 100)
+  --allow-external  Permit an explicitly selected non-loopback address
   -V, --version  Print version
   -h, --help  Print help
 ";
@@ -100,6 +128,7 @@ enum CliError {
     Path(String),
     ConcurrentModification(PathBuf),
     FixConflict(adocweave::output::diagnostics::EditConflict),
+    Preview(preview::Error),
 }
 
 impl fmt::Display for CliError {
@@ -140,6 +169,7 @@ impl fmt::Display for CliError {
                 path.display()
             ),
             Self::FixConflict(source) => write!(formatter, "conflicting automatic fixes: {source}"),
+            Self::Preview(source) => source.fmt(formatter),
         }
     }
 }
@@ -154,6 +184,7 @@ impl Error for CliError {
             Self::LocalTarget(source) => Some(source),
             Self::Config(source) => Some(source),
             Self::FixConflict(source) => Some(source),
+            Self::Preview(source) => Some(source),
             Self::Usage(_)
             | Self::InvalidUtf8 { .. }
             | Self::OutputLimit { .. }
@@ -169,6 +200,7 @@ impl Error for CliError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Operation {
     Convert,
+    Preview,
     Check,
     Format,
     Symbols,
@@ -208,6 +240,12 @@ enum CommandOptions {
         complete: bool,
         css: Vec<CssArgument>,
     },
+    Preview {
+        css: Vec<CssArgument>,
+        bind: IpAddr,
+        port: u16,
+        debounce_ms: u64,
+    },
     Check(CheckOptions),
     Format {
         check: bool,
@@ -224,6 +262,7 @@ impl CommandOptions {
     const fn operation(&self) -> Operation {
         match self {
             Self::Convert { .. } => Operation::Convert,
+            Self::Preview { .. } => Operation::Preview,
             Self::Check(_) => Operation::Check,
             Self::Format { .. } => Operation::Format,
             Self::Symbols => Operation::Symbols,
@@ -304,6 +343,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
 
     let operation = match command.as_str() {
         "convert" => Operation::Convert,
+        "preview" => Operation::Preview,
         "check" => Operation::Check,
         "format" => Operation::Format,
         "symbols" => Operation::Symbols,
@@ -337,6 +377,10 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut project_root = None;
     let mut complete = false;
     let mut css = Vec::new();
+    let mut bind = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let mut port = 4000;
+    let mut debounce_ms = 100;
+    let mut allow_external = false;
     let mut config_path = None;
     let mut no_config = false;
     let mut color = ColorChoice::Auto;
@@ -451,18 +495,48 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                 project_root = Some(PathBuf::from(value));
             }
             "--complete" if operation == Operation::Convert => complete = true,
-            "--css" if operation == Operation::Convert => {
+            "--css" if matches!(operation, Operation::Convert | Operation::Preview) => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--css requires a file".to_owned()))?;
                 css.push(CssArgument::File(PathBuf::from(value)));
             }
-            "--css-url" if operation == Operation::Convert => {
+            "--css-url" if matches!(operation, Operation::Convert | Operation::Preview) => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--css-url requires a URL".to_owned()))?;
                 css.push(CssArgument::Url(value));
             }
+            "--bind" if operation == Operation::Preview => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--bind requires an address".to_owned()))?;
+                bind = value
+                    .parse()
+                    .map_err(|_| CliError::Usage(format!("invalid bind address: {value}")))?;
+            }
+            "--port" if operation == Operation::Preview => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--port requires a value".to_owned()))?;
+                port = value
+                    .parse()
+                    .map_err(|_| CliError::Usage(format!("invalid port: {value}")))?;
+            }
+            "--debounce-ms" if operation == Operation::Preview => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--debounce-ms requires a value".to_owned()))?;
+                debounce_ms = value
+                    .parse()
+                    .map_err(|_| CliError::Usage(format!("invalid debounce interval: {value}")))?;
+                if debounce_ms == 0 {
+                    return Err(CliError::Usage(
+                        "--debounce-ms must be greater than zero".to_owned(),
+                    ));
+                }
+            }
+            "--allow-external" if operation == Operation::Preview => allow_external = true,
             "--base-dir" => {
                 let value = arguments
                     .next()
@@ -518,6 +592,18 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "--local-targets and --project-root must be used together".to_owned(),
         ));
     }
+    if operation == Operation::Preview {
+        if stdin_selected || input.is_none() || !additional_inputs.is_empty() {
+            return Err(CliError::Usage(
+                "preview requires exactly one input file".to_owned(),
+            ));
+        }
+        if !bind.is_loopback() && !allow_external {
+            return Err(CliError::Usage(
+                "a non-loopback --bind requires --allow-external".to_owned(),
+            ));
+        }
+    }
     if local_targets && !allowed_roots.is_empty() {
         return Err(CliError::Usage(
             "--allow-root cannot be combined with --local-targets; --project-root is the boundary"
@@ -566,6 +652,12 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
 
     let command = match operation {
         Operation::Convert => CommandOptions::Convert { complete, css },
+        Operation::Preview => CommandOptions::Preview {
+            css,
+            bind,
+            port,
+            debounce_ms,
+        },
         Operation::Check => CommandOptions::Check(CheckOptions {
             format: diagnostic_format,
             fail_on,
@@ -667,14 +759,27 @@ fn convert_policy(
     project: &adocweave_config::HtmlSettings,
     complete: bool,
     css: &[CssArgument],
+    mut dependency_snapshots: Option<
+        &mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
+    >,
 ) -> Result<RenderPolicy, CliError> {
     let limits = StylesheetPolicy::default();
     let mut sources = Vec::new();
     for path in &project.stylesheet_files {
-        let bytes = fs::read(path).map_err(|source| CliError::Read {
-            source_name: path.display().to_string(),
-            source,
-        })?;
+        let bytes = if let Some(snapshots) = dependency_snapshots.as_deref_mut() {
+            let (bytes, fingerprint) =
+                preview::read_dependency(path).map_err(|source| CliError::Read {
+                    source_name: path.display().to_string(),
+                    source,
+                })?;
+            snapshots.insert(path.clone(), fingerprint);
+            bytes
+        } else {
+            fs::read(path).map_err(|source| CliError::Read {
+                source_name: path.display().to_string(),
+                source,
+            })?
+        };
         if bytes.len()
             > usize::try_from(limits.max_inline_bytes).expect("u32 fits usize on supported targets")
         {
@@ -699,10 +804,20 @@ fn convert_policy(
     for argument in css {
         match argument {
             CssArgument::File(path) => {
-                let bytes = fs::read(path).map_err(|source| CliError::Read {
-                    source_name: path.display().to_string(),
-                    source,
-                })?;
+                let bytes = if let Some(snapshots) = dependency_snapshots.as_deref_mut() {
+                    let (bytes, fingerprint) =
+                        preview::read_dependency(path).map_err(|source| CliError::Read {
+                            source_name: path.display().to_string(),
+                            source,
+                        })?;
+                    snapshots.insert(path.clone(), fingerprint);
+                    bytes
+                } else {
+                    fs::read(path).map_err(|source| CliError::Read {
+                        source_name: path.display().to_string(),
+                        source,
+                    })?
+                };
                 if bytes.len()
                     > usize::try_from(limits.max_inline_bytes)
                         .expect("u32 fits usize on supported targets")
@@ -762,6 +877,106 @@ fn process_convert(
         return Err(CliError::Stylesheet(diagnostic.message.clone()));
     }
     Ok(output.html)
+}
+
+fn preview_build(
+    input_path: &Path,
+    include: bool,
+    base_dir: &Path,
+    project_root: &Path,
+    project: &adocweave_config::ResolvedProjectConfig,
+    css: &[CssArgument],
+    cancellation: &adocweave::CancellationToken,
+) -> Result<preview::Build, CliError> {
+    let (input, input_fingerprint) =
+        preview::read_dependency(input_path).map_err(|source| CliError::Read {
+            source_name: input_path.display().to_string(),
+            source,
+        })?;
+    let source = decode_input(&input)?;
+    let source_id = input_path.to_string_lossy().into_owned();
+    let mut dependencies =
+        std::collections::BTreeMap::from([(input_path.to_owned(), input_fingerprint)]);
+
+    let (processed, include_diagnostics) = if include {
+        let prepared = local_include::prepare_local(
+            source,
+            source_id,
+            base_dir,
+            base_dir,
+            project_root,
+            project.resources.limits,
+            &project.preprocess,
+        )
+        .map_err(CliError::Include)?;
+        dependencies.extend(prepared.dependency_snapshots);
+        for path in prepared.dependency_paths {
+            dependencies
+                .entry(path.clone())
+                .or_insert_with(|| preview::Fingerprint::read(&path));
+        }
+        let include_diagnostics = prepared
+            .include_errors
+            .iter()
+            .map(|(target, error)| {
+                serde_json::json!({
+                    "code": error.diagnostic_code(),
+                    "message": error.to_string(),
+                    "target": target,
+                })
+            })
+            .collect::<Vec<_>>();
+        (prepared.document.source.to_string(), include_diagnostics)
+    } else {
+        (source.to_owned(), Vec::new())
+    };
+    let analysis = Engine::new(project.analysis.clone())
+        .analyze_cancellable(&processed, cancellation)
+        .map_err(CliError::Analysis)?;
+    let output = render(
+        analysis.document(),
+        &convert_policy(&project.html, true, css, Some(&mut dependencies))?,
+    );
+    if let Some(item) = output.diagnostics.iter().find(|item| {
+        matches!(
+            item.code.as_str(),
+            "invalid-stylesheet-url"
+                | "invalid-stylesheet-content"
+                | "stylesheet-limit-exceeded"
+                | "stylesheet-not-applicable"
+        )
+    }) {
+        return Err(CliError::Stylesheet(item.message.clone()));
+    }
+    let mut diagnostics = serde_json::from_str::<Vec<serde_json::Value>>(&diagnostic::render_json(
+        analysis.diagnostics(),
+    ))
+    .expect("core diagnostic renderer returns a JSON array");
+    diagnostics.extend(
+        serde_json::from_str::<Vec<serde_json::Value>>(&diagnostic::render_json(
+            &output.diagnostics,
+        ))
+        .expect("render diagnostic renderer returns a JSON array"),
+    );
+    diagnostics.extend(include_diagnostics);
+    let style_origins = project
+        .html
+        .stylesheet_urls
+        .iter()
+        .chain(css.iter().filter_map(|argument| match argument {
+            CssArgument::Url(url) => Some(url),
+            CssArgument::File(_) => None,
+        }))
+        .filter_map(|value| url::Url::parse(value).ok())
+        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .map(|url| url.origin().ascii_serialization())
+        .collect();
+    Ok(preview::Build::new(
+        output.html,
+        serde_json::to_string(&diagnostics).expect("diagnostics are serializable"),
+        dependencies,
+    )
+    .with_style_origins(style_origins))
 }
 
 fn process_check(
@@ -1500,8 +1715,8 @@ fn completion_script(shell: CompletionShell) -> &'static str {
     match shell {
         CompletionShell::Bash => {
             r#"_adocweave() {
-  local commands="convert check format symbols config completion help"
-  local options="--format --fail-on --summary --fix --check --write --diff --dry-run --config --no-config --include --base-dir --allow-root --local-targets --project-root --complete --css --css-url --help --version"
+  local commands="convert preview check format symbols config completion help"
+  local options="--format --fail-on --summary --fix --check --write --diff --dry-run --config --no-config --include --base-dir --allow-root --local-targets --project-root --complete --css --css-url --bind --port --debounce-ms --allow-external --help --version"
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${commands}" -- "${COMP_WORDS[COMP_CWORD]}") )
   else
@@ -1516,17 +1731,17 @@ complete -F _adocweave adocweave
 _adocweave() {
   _arguments '*:argument:->args'
   case $state in
-    args) _values 'arguments' convert check format symbols config completion help \
+    args) _values 'arguments' convert preview check format symbols config completion help \
       --format --fail-on --summary --fix --check --write --diff --dry-run \
       --config --no-config --include --base-dir --allow-root --local-targets \
-      --project-root --complete --css --css-url ;;
+      --project-root --complete --css --css-url --bind --port --debounce-ms --allow-external ;;
   esac
 }
 compdef _adocweave adocweave
 "#
         }
         CompletionShell::Fish => {
-            r#"complete -c adocweave -f -n '__fish_use_subcommand' -a 'convert check format symbols config completion help'
+            r#"complete -c adocweave -f -n '__fish_use_subcommand' -a 'convert preview check format symbols config completion help'
 complete -c adocweave -l format -x -a 'human json github sarif'
 complete -c adocweave -l fail-on -x -a 'error warning never'
 complete -c adocweave -l config -r
@@ -1538,9 +1753,10 @@ complete -c adocweave -l fix
         CompletionShell::PowerShell => {
             r#"Register-ArgumentCompleter -Native -CommandName adocweave -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
-  'convert','check','format','symbols','config','completion','help',
+  'convert','preview','check','format','symbols','config','completion','help',
   '--format','--fail-on','--summary','--fix','--check','--write','--diff',
-  '--dry-run','--config','--no-config','--include','--base-dir','--allow-root' |
+  '--dry-run','--config','--no-config','--include','--base-dir','--allow-root',
+  '--bind','--port','--debounce-ms','--allow-external' |
     Where-Object { $_ -like "$wordToComplete*" } |
     ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
 }
@@ -1553,6 +1769,9 @@ fn command_help(operation: Operation) -> &'static str {
     match operation {
         Operation::Convert => {
             "Usage:\n  adocweave convert [OPTIONS] [FILE]\n\nExample:\n  adocweave convert --complete manual.adoc\n"
+        }
+        Operation::Preview => {
+            "Usage:\n  adocweave preview [OPTIONS] FILE\n\nExample:\n  adocweave preview --include manual.adoc\n"
         }
         Operation::Check => {
             "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format github --summary manual.adoc\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n"
@@ -1634,7 +1853,7 @@ fn run() -> Result<ExitCode, CliError> {
                 &project_config,
                 include && arguments.allowed_roots.is_empty(),
                 project_root.is_some() && arguments.project_root.is_none(),
-                operation == Operation::Convert,
+                matches!(operation, Operation::Convert | Operation::Preview),
             )?;
             if matches!(
                 &arguments.command,
@@ -1647,6 +1866,107 @@ fn run() -> Result<ExitCode, CliError> {
                 io::stdout()
                     .write_all(output.as_bytes())
                     .map_err(CliError::Write)?;
+                return Ok(ExitCode::SUCCESS);
+            }
+            if let CommandOptions::Preview {
+                css,
+                bind,
+                port,
+                debounce_ms,
+            } = &arguments.command
+            {
+                let input_path = arguments
+                    .input
+                    .as_deref()
+                    .expect("preview parser requires an input path");
+                let metadata =
+                    fs::symlink_metadata(input_path).map_err(|source| CliError::Read {
+                        source_name: input_path.display().to_string(),
+                        source,
+                    })?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(CliError::Path(format!(
+                        "preview input must be a regular, non-symlink file: {}",
+                        input_path.display()
+                    )));
+                }
+                let canonical_input =
+                    input_path.canonicalize().map_err(|source| CliError::Read {
+                        source_name: input_path.display().to_string(),
+                        source,
+                    })?;
+                let base_dir = arguments
+                    .base_dir
+                    .clone()
+                    .or_else(|| canonical_input.parent().map(PathBuf::from))
+                    .expect("a file has a parent");
+                let configured_root = include.then(|| {
+                    allowed_roots.iter().find_map(|root| {
+                        root.canonicalize()
+                            .ok()
+                            .filter(|root| canonical_input.starts_with(root))
+                    })
+                });
+                let preview_root = project_root
+                    .clone()
+                    .or(configured_root.flatten())
+                    .unwrap_or_else(|| base_dir.clone())
+                    .canonicalize()
+                    .map_err(|source| CliError::Read {
+                        source_name: "preview project root".to_owned(),
+                        source,
+                    })?;
+                if !canonical_input.starts_with(&preview_root) {
+                    return Err(CliError::Path(format!(
+                        "preview input is outside the project root: {}",
+                        canonical_input.display()
+                    )));
+                }
+                if !bind.is_loopback() {
+                    eprintln!(
+                        "warning: preview is exposed on non-loopback address {bind}; rendered content may be visible to other hosts"
+                    );
+                }
+                PREVIEW_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
+                install_preview_signal_handlers();
+                preview::run(
+                    preview::Options {
+                        bind: *bind,
+                        port: *port,
+                        debounce: Duration::from_millis(*debounce_ms),
+                    },
+                    |cancellation| {
+                        let result = preview_build(
+                            &canonical_input,
+                            include,
+                            &base_dir,
+                            &preview_root,
+                            &project_config,
+                            css,
+                            cancellation,
+                        );
+                        match result {
+                            Ok(build) => Ok(build),
+                            Err(error) => {
+                                let paths = std::iter::once(canonical_input.clone())
+                                    .chain(project_config.html.stylesheet_files.iter().cloned())
+                                    .chain(css.iter().filter_map(|argument| match argument {
+                                        CssArgument::File(path) => Some(path.clone()),
+                                        CssArgument::Url(_) => None,
+                                    }));
+                                let dependencies = paths
+                                    .map(|path| {
+                                        let fingerprint = preview::Fingerprint::read(&path);
+                                        (path, fingerprint)
+                                    })
+                                    .collect();
+                                Ok(preview::Build::failure(error.to_string(), dependencies))
+                            }
+                        }
+                    },
+                    &PREVIEW_SHUTDOWN,
+                )
+                .map_err(CliError::Preview)?;
                 return Ok(ExitCode::SUCCESS);
             }
             let input_path = arguments.input.clone();
@@ -1757,7 +2077,7 @@ fn run() -> Result<ExitCode, CliError> {
                     CommandOptions::Convert { complete, css } => process_convert(
                         &processed,
                         &project_config.analysis,
-                        &convert_policy(&project_config.html, *complete, css)?,
+                        &convert_policy(&project_config.html, *complete, css, None)?,
                     )?,
                     CommandOptions::Format { .. } => process_format(
                         &processed,
@@ -1768,6 +2088,7 @@ fn run() -> Result<ExitCode, CliError> {
                         process_symbols(&processed, &project_config.analysis)?
                     }
                     CommandOptions::ConfigShow => unreachable!("config show handled above"),
+                    CommandOptions::Preview { .. } => unreachable!("preview handled above"),
                     CommandOptions::Check(_) => unreachable!("check handled above"),
                 };
                 Ok((output, ExitCode::SUCCESS))
@@ -2100,12 +2421,50 @@ mod tests {
 
     #[test]
     fn all_commands_support_help() {
-        for command in ["convert", "check", "format", "symbols"] {
+        for command in ["convert", "preview", "check", "format", "symbols"] {
             assert!(matches!(
                 parse_arguments(arguments(&[command, "--help"])),
                 Ok(Action::Help { .. })
             ));
         }
+    }
+
+    #[test]
+    fn preview_requires_a_file_and_explicit_external_authority() {
+        assert!(parse_arguments(arguments(&["preview"])).is_err());
+        assert!(parse_arguments(arguments(&["preview", "-"])).is_err());
+        assert!(
+            parse_arguments(arguments(&[
+                "preview",
+                "--bind",
+                "0.0.0.0",
+                "document.adoc"
+            ]))
+            .is_err()
+        );
+        let Action::Run(parsed) = parse_arguments(arguments(&[
+            "preview",
+            "--bind",
+            "0.0.0.0",
+            "--allow-external",
+            "--port",
+            "8080",
+            "--debounce-ms",
+            "25",
+            "document.adoc",
+        ]))
+        .expect("explicit external preview") else {
+            panic!("expected run action");
+        };
+        assert!(matches!(
+            parsed.command,
+            CommandOptions::Preview {
+                bind,
+                port: 8080,
+                debounce_ms: 25,
+                ..
+            } if bind == "0.0.0.0".parse::<std::net::IpAddr>().expect("address")
+        ));
     }
 
     #[test]
