@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(not(target_os = "linux"))]
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -6,6 +8,15 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use crate::local_resource::ResourceLimits;
+
+/// Concurrent-filesystem guarantee provided by the active platform adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FilesystemRaceResistance {
+    /// Resolution and use are confined to handles below the configured root.
+    HandleRelative,
+    /// Path checks assume the workspace is not modified concurrently.
+    StaticSnapshotOnly,
+}
 
 /// Filesystem boundary for checking an authored relative target.
 ///
@@ -15,6 +26,12 @@ use crate::local_resource::ResourceLimits;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalTargetPolicy {
     root: PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+struct OpenedTarget {
+    canonical_path: PathBuf,
+    file: fs::File,
 }
 
 impl LocalTargetPolicy {
@@ -30,6 +47,17 @@ impl LocalTargetPolicy {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub const fn race_resistance(&self) -> FilesystemRaceResistance {
+        #[cfg(target_os = "linux")]
+        {
+            FilesystemRaceResistance::HandleRelative
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            FilesystemRaceResistance::StaticSnapshotOnly
+        }
     }
 
     pub fn inspect(&self, base: &Path, target: &str) -> Result<PathBuf, LocalTargetError> {
@@ -62,6 +90,15 @@ impl LocalTargetPolicy {
         normalize_below_root(&self.root, base, &relative)
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn inspect_candidate(&self, candidate: &Path) -> Result<PathBuf, LocalTargetError> {
+        if !candidate.starts_with(&self.root) {
+            return Err(LocalTargetError::OutsideRoot(candidate.to_owned()));
+        }
+        Ok(self.open_confined(candidate)?.canonical_path)
+    }
+
+    #[cfg(not(target_os = "linux"))]
     pub fn inspect_candidate(&self, candidate: &Path) -> Result<PathBuf, LocalTargetError> {
         if !candidate.starts_with(&self.root) {
             return Err(LocalTargetError::OutsideRoot(candidate.to_owned()));
@@ -84,6 +121,78 @@ impl LocalTargetPolicy {
             return Err(LocalTargetError::NotFile(canonical));
         }
         Ok(canonical)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_confined(&self, candidate: &Path) -> Result<OpenedTarget, LocalTargetError> {
+        use std::os::fd::AsRawFd;
+
+        use rustix::fd::OwnedFd;
+        use rustix::fs::{Mode, OFlags, ResolveFlags, openat, openat2};
+
+        let relative = candidate
+            .strip_prefix(&self.root)
+            .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
+        let root =
+            fs::File::open(&self.root).map_err(|source| classify_io(self.root.clone(), source))?;
+        let flags = OFlags::RDONLY | OFlags::CLOEXEC;
+        let file = match openat2(
+            &root,
+            relative,
+            flags,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+        ) {
+            Ok(file) => fs::File::from(file),
+            Err(error)
+                if error == rustix::io::Errno::NOSYS || error == rustix::io::Errno::INVAL =>
+            {
+                let mut directory: OwnedFd = openat(
+                    &root,
+                    ".",
+                    OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|error| classify_errno(candidate, error))?;
+                let mut components = relative.components().peekable();
+                while let Some(component) = components.next() {
+                    let Component::Normal(name) = component else {
+                        return Err(LocalTargetError::Unverifiable(
+                            candidate.to_string_lossy().into_owned(),
+                        ));
+                    };
+                    let component_flags = if components.peek().is_some() {
+                        OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+                    } else {
+                        flags | OFlags::NOFOLLOW
+                    };
+                    directory = openat(&directory, name, component_flags, Mode::empty())
+                        .map_err(|error| classify_errno(candidate, error))?;
+                }
+                fs::File::from(directory)
+            }
+            Err(error) => return Err(classify_errno(candidate, error)),
+        };
+        if !file
+            .metadata()
+            .map_err(|source| classify_io(candidate.to_owned(), source))?
+            .is_file()
+        {
+            return Err(LocalTargetError::NotFile(candidate.to_owned()));
+        }
+        let descriptor_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+        let canonical_path = fs::read_link(&descriptor_path)
+            .map_err(|source| classify_io(candidate.to_owned(), source))?;
+        Ok(OpenedTarget {
+            canonical_path,
+            file,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn open_confined(&self, candidate: &Path) -> Result<fs::File, LocalTargetError> {
+        let canonical = self.inspect_candidate(candidate)?;
+        fs::File::open(&canonical).map_err(|source| classify_io(canonical, source))
     }
 }
 
@@ -142,18 +251,7 @@ impl LocalTargetSession {
     }
 
     pub fn inspect(&mut self, base: &Path, target: &str) -> Result<PathBuf, LocalTargetError> {
-        let canonical_base = if let Some(result) = self.bases.get(base) {
-            result.clone()?
-        } else {
-            let result = base
-                .canonicalize()
-                .map_err(|source| classify_io(base.to_owned(), source));
-            self.bases.insert(base.to_owned(), result.clone());
-            result?
-        };
-        let candidate = self
-            .policy
-            .candidate_from_canonical_base(&canonical_base, target)?;
+        let candidate = self.candidate(base, target)?;
         if let Some(result) = self.inspections.get(&candidate) {
             return result.clone();
         }
@@ -168,12 +266,57 @@ impl LocalTargetSession {
         result
     }
 
+    fn candidate(&mut self, base: &Path, target: &str) -> Result<PathBuf, LocalTargetError> {
+        let canonical_base = if let Some(result) = self.bases.get(base) {
+            result.clone()?
+        } else {
+            let result = base
+                .canonicalize()
+                .map_err(|source| classify_io(base.to_owned(), source));
+            self.bases.insert(base.to_owned(), result.clone());
+            result?
+        };
+        self.policy
+            .candidate_from_canonical_base(&canonical_base, target)
+    }
+
     pub fn read_utf8(
         &mut self,
         base: &Path,
         target: &str,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        let canonical = self.inspect(base, target)?;
+        self.read_utf8_after_open(base, target, || {})
+    }
+
+    fn read_utf8_after_open(
+        &mut self,
+        base: &Path,
+        target: &str,
+        after_open: impl FnOnce(),
+    ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        #[cfg(target_os = "linux")]
+        let (canonical, file) = {
+            let candidate = self.candidate(base, target)?;
+            if !self.inspections.contains_key(&candidate) {
+                if self.requests >= self.max_paths {
+                    return Err(LocalTargetError::LimitExceeded {
+                        limit: self.max_paths,
+                    });
+                }
+                self.requests += 1;
+            }
+            let opened = self.policy.open_confined(&candidate)?;
+            self.inspections
+                .insert(candidate, Ok(opened.canonical_path.clone()));
+            (opened.canonical_path, opened.file)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (canonical, file) = {
+            let canonical = self.inspect(base, target)?;
+            let file = self.policy.open_confined(&canonical)?;
+            (canonical, file)
+        };
+        after_open();
         if let Some(result) = self.text.get(&canonical) {
             return result.clone().map(|source| LoadedLocalTarget {
                 canonical_path: canonical,
@@ -191,28 +334,26 @@ impl LocalTargetSession {
             .max_resource_bytes
             .min(remaining)
             .saturating_add(1);
-        let result = fs::File::open(&canonical)
-            .map_err(|source| classify_io(canonical.clone(), source))
-            .and_then(|file| {
-                self.read_files += 1;
-                let mut bytes = Vec::new();
-                file.take(read_limit)
-                    .read_to_end(&mut bytes)
-                    .map_err(|source| classify_io(canonical.clone(), source))?;
-                self.read_bytes = self.read_bytes.saturating_add(bytes.len() as u64);
-                if self.read_bytes > self.limits.max_total_bytes {
-                    return Err(LocalTargetError::ReadLimitExceeded);
-                }
-                if bytes.len() as u64 > self.limits.max_resource_bytes {
-                    return Err(LocalTargetError::ResourceTooLarge(canonical.clone()));
-                }
-                String::from_utf8(bytes).map_err(|source| {
-                    LocalTargetError::Unverifiable(format!(
-                        "{} is not UTF-8: {source}",
-                        canonical.display()
-                    ))
-                })
-            });
+        let result = (|| {
+            self.read_files += 1;
+            let mut bytes = Vec::new();
+            file.take(read_limit)
+                .read_to_end(&mut bytes)
+                .map_err(|source| classify_io(canonical.clone(), source))?;
+            self.read_bytes = self.read_bytes.saturating_add(bytes.len() as u64);
+            if self.read_bytes > self.limits.max_total_bytes {
+                return Err(LocalTargetError::ReadLimitExceeded);
+            }
+            if bytes.len() as u64 > self.limits.max_resource_bytes {
+                return Err(LocalTargetError::ResourceTooLarge(canonical.clone()));
+            }
+            String::from_utf8(bytes).map_err(|source| {
+                LocalTargetError::Unverifiable(format!(
+                    "{} is not UTF-8: {source}",
+                    canonical.display()
+                ))
+            })
+        })();
         self.text.insert(canonical.clone(), result.clone());
         result.map(|source| LoadedLocalTarget {
             canonical_path: canonical,
@@ -227,6 +368,17 @@ impl LocalTargetSession {
     pub fn read_files(&self) -> usize {
         self.read_files
     }
+}
+
+#[cfg(target_os = "linux")]
+fn classify_errno(path: &Path, source: rustix::io::Errno) -> LocalTargetError {
+    if source == rustix::io::Errno::XDEV {
+        return LocalTargetError::OutsideRoot(path.to_owned());
+    }
+    classify_io(
+        path.to_owned(),
+        std::io::Error::from_raw_os_error(source.raw_os_error()),
+    )
 }
 
 fn decode_relative_path(target: &str) -> Result<PathBuf, LocalTargetError> {
@@ -292,10 +444,12 @@ fn normalize_below_root(
     Ok(candidate)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn reject_dangling_symlink_escape(root: &Path, candidate: &Path) -> Result<(), LocalTargetError> {
     reject_dangling_symlink_escape_inner(root, candidate, &mut BTreeSet::new(), 0)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn reject_dangling_symlink_escape_inner(
     root: &Path,
     candidate: &Path,
@@ -344,6 +498,7 @@ fn reject_dangling_symlink_escape_inner(
     reject_dangling_symlink_escape_inner(root, &normalized, visited, depth + 1)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn normalize_absolute(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -360,6 +515,7 @@ fn normalize_absolute(path: &Path) -> PathBuf {
     normalized
 }
 
+#[cfg(not(target_os = "linux"))]
 fn ensure_existing_ancestor_is_inside(
     root: &Path,
     candidate: &Path,
@@ -689,5 +845,53 @@ mod tests {
                 "local-target-outside-root"
             );
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn opened_file_is_stable_when_ancestor_is_replaced_with_outside_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        let outside = TestDir::new();
+        fs::write(outside.0.join("guide.adoc"), "= Outside").expect("outside file");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        assert_eq!(
+            policy.race_resistance(),
+            FilesystemRaceResistance::HandleRelative
+        );
+        let mut session = LocalTargetSession::new(policy, 1, ResourceLimits::default());
+        let docs = root.0.join("docs");
+        let displaced = root.0.join("displaced");
+
+        let loaded = session
+            .read_utf8_after_open(&docs, "guide.adoc", || {
+                fs::rename(&docs, &displaced).expect("rename inspected ancestor");
+                symlink(&outside.0, &docs).expect("replace ancestor with outside symlink");
+            })
+            .expect("read opened file");
+
+        assert_eq!(loaded.source(), "= Guide");
+        assert_ne!(loaded.source(), "= Outside");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn opened_file_is_stable_when_leaf_is_renamed_and_replaced() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 1, ResourceLimits::default());
+        let target = root.0.join("docs/guide.adoc");
+        let displaced = root.0.join("docs/original.adoc");
+
+        let loaded = session
+            .read_utf8_after_open(&root.0.join("docs"), "guide.adoc", || {
+                fs::rename(&target, &displaced).expect("rename inspected file");
+                fs::write(&target, "= Replacement").expect("replace inspected file");
+            })
+            .expect("read opened file");
+
+        assert_eq!(loaded.source(), "= Guide");
+        assert_ne!(loaded.source(), "= Replacement");
     }
 }

@@ -13,5 +13,6 @@ pub use local_resource::{
     ValidatedFilesystemTarget, normalize_relative,
 };
 pub use local_target::{
-    LoadedLocalTarget, LocalTargetError, LocalTargetPolicy, LocalTargetSession,
+    FilesystemRaceResistance, LoadedLocalTarget, LocalTargetError, LocalTargetPolicy,
+    LocalTargetSession,
 };
