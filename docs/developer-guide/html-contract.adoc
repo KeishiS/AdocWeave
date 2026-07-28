@@ -9,8 +9,8 @@ DOM構造、属性順、空白またはbyte列が同一であることは保証�
 
 == 文書モード
 
-`Fragment`は本文要素だけを出力する既定のモードです。`Complete`は文書型、言語未確定の`html`、
-UTF-8 encodingと非空タイトルを持つ`head`および`body`を常に出力します。Stylesheetは同じ`head`へ
+``Fragment``は本文要素だけを出力する既定のモードです。``Complete``は文書型、言語未確定の``html``、
+UTF-8 encodingと非空タイトルを持つ``head``および``body``を常に出力します。Stylesheetは同じ``head``へ
 追加します。
 
 [source,html]
@@ -29,15 +29,15 @@ UTF-8 encodingと非空タイトルを持つ`head`および`body`を常に出力
 
 == スタイルシート
 
-`RenderPolicy.stylesheets`は利用側アプリまたはCLIが明示的に渡す設定であり、文書入力からCSSへ到達する
-経路はありません。埋め込みCSSと外部stylesheet URLを`Complete`の`head`へ指定順に出力し、同じ内容は
-最初の一件だけを採用します。`Fragment`では出力せず、診断を返します。
+``RenderPolicy.stylesheets``は利用側アプリまたはCLIが明示的に渡す設定であり、文書入力からCSSへ到達する
+経路はありません。埋め込みCSSと外部stylesheet URLを``Complete``の``head``へ指定順に出力し、同じ内容は
+最初の一件だけを採用します。``Fragment``では出力せず、診断を返します。
 
-埋め込みCSSでは、`style`要素を終了できる文字列、HTML comment開始文字列および不正な制御文字を拒否します。
-外部URLは`ActiveUrlPolicy`で検査してから属性値としてescapeします。件数とbyte数には`StylesheetPolicy`を適用し、
+埋め込みCSSでは、``style``要素を終了できる文字列、HTML comment開始文字列および不正な制御文字を拒否します。
+外部URLは``ActiveUrlPolicy``で検査してから属性値としてescapeします。件数とbyte数には``StylesheetPolicy``を適用し、
 拒否した値をHTMLや診断messageへ出力しません。
 
-文書入力に由来する任意の`style`、classまたはraw HTMLは、stylesheet設定の有無にかかわらず拒否します。
+文書入力に由来する任意の``style``、classまたはraw HTMLは、stylesheet設定の有無にかかわらず拒否します。
 この境界を採用した理由はxref:adr/0007-host-supplied-stylesheets.adoc[ADR 0007]に記録しています。
 
 == 許可するHTML
@@ -45,31 +45,31 @@ UTF-8 encodingと非空タイトルを持つ`head`および`body`を常に出力
 生成する要素は次に限定します。
 
 * 文書構造：`html`、`head`、`meta`、`title`、`body`、`style`、`link`
-* 見出しと本文：`h1`から`h5`、`p`、`div`、`br`、`hr`
+* 見出しと本文：``h1``から``h5``、`p`、`div`、`br`、`hr`
 * インライン：`a`、`strong`、`em`、`code`、`mark`、`span`、`sub`、`sup`、`kbd`
 * ブロック：`pre`、`blockquote`、`cite`
 * list：`ul`、`ol`、`li`、`dl`、`dt`、`dd`
 * table：`table`、`caption`、`thead`、`tbody`、`tfoot`、`tr`、`th`、`td`
 * media：`img`、`audio`、`video`
 
-属性は`lang`、`charset`、`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、
-`poster`、`target`、`rel`、`colspan`および`rowspan`に限定します。classには実装が列挙する固定値だけを使用します。
+属性は``lang``、`charset`、`id`、`class`、`href`、`src`、`alt`、`width`、`height`、`title`、`controls`、
+`poster`、`target`、`rel`、``colspan``および``rowspan``に限定します。classには実装が列挙する固定値だけを使用します。
 入力由来の任意属性、event handler、`script`、SVGおよびraw HTMLは生成しません。
 
-`target`と`rel`は外部HTTP(S) linkの固定表示と外部stylesheetだけに使用します。入力に書かれた同名属性を
+``target``と``rel``は外部HTTP(S) linkの固定表示と外部stylesheetだけに使用します。入力に書かれた同名属性を
 そのまま通過させません。
 
-完全HTML文書には`doctype`、`html`、`head`、UTF-8の`meta`、非空の`title`および`body`を常に出力します。
-文書タイトルがある場合は構造モデルのタイトル文字列をinline記法として再解釈せず、escapeして`title`へ
-使用します。タイトルがない場合は固定の代替タイトルを使用します。言語を推測せず、`html`の`lang`には
+完全HTML文書には``doctype``、`html`、`head`、UTF-8の``meta``、非空の``title``および``body``を常に出力します。
+文書タイトルがある場合は構造モデルのタイトル文字列をinline記法として再解釈せず、escapeして``title``へ
+使用します。タイトルがない場合は固定の代替タイトルを使用します。言語を推測せず、``html``の``lang``には
 未知を表す空文字列を出力します。
 
-Tableの`width`は1から100までの値を百分率として正規化し、`%`付きで出力します。Captionは安全な
+Tableの``width``は1から100までの値を百分率として正規化し、``%``付きで出力します。Captionは安全な
 literal textとしてescapeし、inline書式や属性参照を再解析しません。
 
 == URLとリソース
 
-URLは由来を示すcontextとともに`RenderPolicy.active_urls`の`ActiveUrlPolicy`で検査します。
+URLは由来を示すcontextとともに``RenderPolicy.active_urls``の``ActiveUrlPolicy``で検査します。
 文書に記述されたlink、
 解決済みxrefおよび解決済みresourceを区別し、利用側アプリが返したURLも信頼済みとして扱いません。
 
@@ -83,22 +83,22 @@ HTMLとして再解析しません。詳しいfallback規則はxref:server-execu
 基準とします。
 
 画像、音声および動画は、解決済みURL、macro種別と一致するMIME typeおよび対応する
-`ResourceCapabilities`がある場合だけactive要素として出力します。MIME typeはASCIIの大文字と小文字を
+``ResourceCapabilities``がある場合だけactive要素として出力します。MIME typeはASCIIの大文字と小文字を
 区別せず、parameterを除いたtypeとsubtypeを検査します。拡張子からMIME typeを推測しません。
 
-Imageとiconには`image/*`、audioには`audio/*`、videoには`video/*`を要求します。Imageはalt、寸法、title、
+Imageとiconには``image/*``、audioには``audio/*``、videoには``video/*``を要求します。Imageはalt、寸法、title、
 iconはaltとtitle、audioはtitle、videoは寸法、poster、titleを出力できます。寸法には10進整数だけを使用します。
-`controls`はaudioとvideoへ常に付与し、入力から無効化しません。Video posterは独立した`image/*` resourceとして
+``controls``はaudioとvideoへ常に付与し、入力から無効化しません。Video posterは独立した``image/*`` resourceとして
 URLとMIME typeを検査します。posterだけを利用できない場合は診断を返してposterを省略し、安全なvideo本体は
 維持します。Mediaのlink化、icon set固有の要素・classおよびその他の再生属性には対応しません。
 
 == HTML5標準適合性検査
 
-生成HTMLの標準適合性は`cargo make html5-check`で検査します。検査対象は
-`fixtures/html/validation.json`で一意に管理し、断片出力は同directoryの固定テンプレートで完全HTML文書へ
-変換します。完全文書出力は包まず、そのまま検査します。生成物は`target/html5/`だけへ書き込みます。
+生成HTMLの標準適合性は``cargo make html5-check``で検査します。検査対象は
+``fixtures/html/validation.json``で一意に管理し、断片出力は同directoryの固定テンプレートで完全HTML文書へ
+変換します。完全文書出力は包まず、そのまま検査します。生成物は``target/html5/``だけへ書き込みます。
 
-Validatorには`flake.lock`で固定したNixpkgsのNu Html Checkerを使用し、manifestにversionと実行optionを
+Validatorには``flake.lock``で固定したNixpkgsのNu Html Checkerを使用し、manifestにversionと実行optionを
 記録します。errorとwarningをいずれも失敗として扱い、言語推定だけを無効にします。既知違反のallowlistは
 設けません。不正な入れ子、標準外属性および不完全な文書のnegative fixtureがvalidatorで拒否されることも
 同じtaskで確認します。
@@ -108,14 +108,14 @@ URL policy、安全性検査およびnativeとWASMの一致検査は引き続き
 
 == ソースと数式
 
-Source blockの言語classは`SourceLanguagePolicy`で許可した言語だけに付けます。未知の言語ではclassを
+Source blockの言語classは``SourceLanguagePolicy``で許可した言語だけに付けます。未知の言語ではclassを
 省略して診断を返します。
 
 数式engineは内蔵しません。許可した数式言語だけに固定classを付け、内容は常にescapeします。Inline数式は
-`code`、block数式は`pre`内の`code`として出力します。
+`code`、block数式は``pre``内の``code``として出力します。
 
 == 決定性
 
-同じpackage version、解析結果、`RenderPolicy`および`RenderInputs`からは同じHTMLを生成します。
+同じpackage version、解析結果、``RenderPolicy``および``RenderInputs``からは同じHTMLを生成します。
 属性順、改行、空白および末尾改行はテスト用の期待出力で固定し、変更時は意図した差分であることを
 確認します。

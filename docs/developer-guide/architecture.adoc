@@ -50,11 +50,11 @@ HTMLやエディター固有の表示規則をParserへ持ち込みません。
 コア解析はfilesystem、network、database、環境変数および非同期runtimeへ直接アクセスしません。
 外部resourceを必要とする処理は、利用側アプリが安全性と権限を確認したスナップショットをコアへ渡します。
 
-`adocweave-workspace`は、disk resource、open overlay、解析root、include依存graphおよび世代付き
+``adocweave-workspace``は、disk resource、open overlay、解析root、include依存graphおよび世代付き
 スナップショットをruntime非依存の状態機械として提供します。filesystem pathやURIの検査と読込は
 adapter側に残し、検証済みのresource IDと本文だけをWorkspaceへ渡します。
 
-`adocweave-config`は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
+``adocweave-config``は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
 設定は解析とI/O policyへの入力であり、workspace外へのアクセス権限を追加しません。
 
 利用側アプリは外部resourceの取得、pathやURLの検査、認証、cache、timeoutおよび利用者固有の

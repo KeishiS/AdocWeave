@@ -10,28 +10,28 @@
 
 === 所有権と実行順序
 
-利用側アプリは`AnalysisRequest`へ、不透明な`SourceId`、文書version、単調増加するgeneration、
-入力snapshotおよび完全な`AnalysisOptions`を所有値として渡します。
+利用側アプリは``AnalysisRequest``へ、不透明な``SourceId``、文書version、単調増加するgeneration、
+入力snapshotおよび完全な``AnalysisOptions``を所有値として渡します。
 
 推奨する実行順序は次のとおりです。
 
 . 文書の逐次更新処理で新しいgenerationとキャンセルtokenを作ります。
 . 上限を設けたCPU workerの実行枠を取得します。
-. `AnalysisRequest::analyze`へtokenを`CancellationCheck`として渡します。
-. 結果を共有状態へ入れる前に`AnalysisResult::is_current`を確認します。
+. ``AnalysisRequest::analyze``へtokenを``CancellationCheck``として渡します。
+. 結果を共有状態へ入れる前に``AnalysisResult::is_current``を確認します。
 . 文書revisionが一致し、tokenがキャンセルされていない場合だけ結果を採用します。
 
-Semaphore、`spawn_blocking`またはthread poolなどの具体的な投入方法は利用側アプリが選びます。待ち行列にも
+Semaphore、``spawn_blocking``またはthread poolなどの具体的な投入方法は利用側アプリが選びます。待ち行列にも
 明示的な上限を設け、runtime既定の無制限queueをAdocWeaveの処理上限として扱いません。
 
-`AnalysisRequest::analyze`はpanicを捕捉しません。通常入力の失敗は`ParseError`として扱い、panicの隔離と
+``AnalysisRequest::analyze``はpanicを捕捉しません。通常入力の失敗は``ParseError``として扱い、panicの隔離と
 workerの再起動はFFI、taskまたはthreadなどの利用側アプリの境界で行います。panicを構文診断へ変換しません。
 
 === キャッシュ
 
-`AnalysisCacheKey`は、package version、生入力、`SourceId`および解析結果・診断を変える
-`AnalysisOptions`から決定します。`RenderPolicy`と`OutputLimits`は含めません。
-Mapとsetは規範順に並べるため、挿入順は結果へ影響しません。`AnalysisOptions`または構成型へfieldを追加する
+``AnalysisCacheKey``は、package version、生入力、``SourceId``および解析結果・診断を変える
+``AnalysisOptions``から決定します。``RenderPolicy``と``OutputLimits``は含めません。
+Mapとsetは規範順に並べるため、挿入順は結果へ影響しません。``AnalysisOptions``または構成型へfieldを追加する
 場合は、キャッシュキーも同時に更新します。
 
 文書versionとgenerationはキャッシュキーへ含めません。同じ入力、設定および処理系なら解析結果を共有できます。
@@ -53,21 +53,21 @@ Mapとsetは規範順に並べるため、挿入順は結果へ影響しませ�
 == 外部ファイルの展開
 
 通常の解析はfilesystemやnetworkへアクセスしません。利用側アプリが必要なresourceを取得して
-`ResourceSnapshot`を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じsnapshotと
+``ResourceSnapshot``を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じsnapshotと
 設定から同じ展開結果を生成します。
 
-WASMの解析requestでincludeを展開する場合は、`preprocess.resources`へ取得済みresourceを、
-`preprocess.options`へ前処理設定を指定します。`preprocess`を省略した場合は入力sourceをそのまま解析し、
+WASMの解析requestでincludeを展開する場合は、``preprocess.resources``へ取得済みresourceを、
+``preprocess.options``へ前処理設定を指定します。``preprocess``を省略した場合は入力sourceをそのまま解析し、
 暗黙のresource取得やinclude展開を行いません。
 
-文書外属性は`AnalysisOptions.attributes`、WASMでは`analysisOptions.attributes`へ指定します。
-文字列はhard-lockedなset、`null`はhard-lockedなunsetを表します。前処理設定にも属性を指定する場合は
+文書外属性は``AnalysisOptions.attributes``、WASMでは``analysisOptions.attributes``へ指定します。
+文字列はhard-lockedなset、``null``はhard-lockedなunsetを表します。前処理設定にも属性を指定する場合は
 同じ値でなければならず、解析と前処理で異なる属性状態を使用できません。
 
-`discover_includes`は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
+``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
 
-`base_uri`はroot文書の相対targetへ前置する論理的なsnapshot keyであり、実在するpathを意味しません。
+``base_uri``はroot文書の相対targetへ前置する論理的なsnapshot keyであり、実在するpathを意味しません。
 Include先の相対targetは、そのresource keyの親を基準に解決します。取得方法、cache、認証、timeout、
 redirect、response size、content typeおよびnetwork addressの制限は利用側アプリが管理します。
 
@@ -80,7 +80,7 @@ CLIとLanguage Serverは、同一のpath検査、上限付きUTF-8読み取り�
 
 === ソースマップ
 
-展開後の半開byte rangeは、source mapによって元の`SourceId`とrangeへ対応付けます。展開後の座標と
+展開後の半開byte rangeは、source mapによって元の``SourceId``とrangeへ対応付けます。展開後の座標と
 元resourceの座標は別の型として扱い、複数segmentを横断するrangeは複数のoriginへ投影します。
 
 診断、関連情報、修正候補、参照、resourceおよび文書symbolは元の位置へ投影します。複数originまたは
@@ -88,25 +88,25 @@ CLIとLanguage Serverは、同一のpath検査、上限付きUTF-8読み取り�
 位置を区別するため、Document LinkとDefinitionは展開後offsetを推測しません。WASMも同じmapping情報を
 公開します。
 
-WASMの`attributeQueries`は、各bindingの操作、有効値、決定bindingおよび属性参照を返します。
-前処理を指定したrequestでは、bindingと参照の`sourceId`およびrangeを元resourceへ投影します。
+WASMの``attributeQueries``は、各bindingの操作、有効値、決定bindingおよび属性参照を返します。
+前処理を指定したrequestでは、bindingと参照の``sourceId``およびrangeを元resourceへ投影します。
 
 [#render-inputs]
 == 変換入力
 
-`RenderInputs`は、同じ`Analysis`から得たreference queryとresource queryに対する解決結果をまとめた、
+``RenderInputs``は、同じ``Analysis``から得たreference queryとresource queryに対する解決結果をまとめた、
 出力形式に依存しないsnapshotです。変換処理はこの値を読むだけであり、filesystem、network、DBまたは
 resolverを呼び出しません。
 
 === 照合
 
 参照と主resourceの解決結果は、元の構文node全体のUTF-8 byte rangeで照合します。Video posterは
-`poster`属性値のrangeで照合し、`ResourcePurpose::VideoPoster`として主videoと区別します。各resource queryは
+``poster``属性値のrangeで照合し、``ResourcePurpose::VideoPoster``として主videoと区別します。各resource queryは
 所有するmacroのrangeも保持します。target文字列による照合は、同じtargetの複数出現を区別できないため
 使用しません。
 
 一つのqueryには結果を一つだけ渡します。同じ種類とrangeに複数の結果がある場合はどれも採用せず、
-`duplicate-render-input`を返します。解析結果に対応しない入力は`unused-render-input`とします。
+``duplicate-render-input``を返します。解析結果に対応しない入力は``unused-render-input``とします。
 入力順へ依存せず、診断は共通の規範順に並べます。
 
 === 成功、失敗およびフォールバック
@@ -131,10 +131,10 @@ URL拒否またはmedia type不一致ではposterを省略してvideoを維持�
 
 === 処理順序
 
-. 同じrevisionの`Analysis`からreference queryとresource queryを取得します。
+. 同じrevisionの``Analysis``からreference queryとresource queryを取得します。
 . I/O、権限検査、実在確認およびURL生成を変換処理の外で完了します。
-. queryのrangeを変更せず、成功または型付き失敗を`RenderInputs`へ格納します。
-. 同じ`Analysis`、`RenderPolicy`および`RenderInputs`を変換処理へ渡します。
+. queryのrangeを変更せず、成功または型付き失敗を``RenderInputs``へ格納します。
+. 同じ``Analysis``、``RenderPolicy``および``RenderInputs``を変換処理へ渡します。
 . 文書revisionが変わった場合は、古い入力を再利用せず新しいqueryから作り直します。
 
 WASM APIは同じ構造をJSONで受け取り、rangeが入力sourceのUTF-8境界内であること、入力数および文字列の
@@ -143,18 +143,18 @@ WASM APIは同じ構造をJSONで受け取り、rangeが入力sourceのUTF-8境�
 
 == 診断の統合
 
-構文認識、意味解析および標準Lintの診断は`Analysis`の構築時に一度だけ統合します。利用側が構文木や
+構文認識、意味解析および標準Lintの診断は``Analysis``の構築時に一度だけ統合します。利用側が構文木や
 意味情報を再走査して同じ問題を生成しません。
 
-外部文書の存在、DB、権限およびアプリ固有の識別子に関する診断は、`Analysis`を書き換えず別の結果として
-生成します。`RenderPolicy`と`RenderInputs`に依存する問題も変換結果の診断として返します。解析診断、
+外部文書の存在、DB、権限およびアプリ固有の識別子に関する診断は、``Analysis``を書き換えず別の結果として
+生成します。``RenderPolicy``と``RenderInputs``に依存する問題も変換結果の診断として返します。解析診断、
 利用側アプリの診断および変換診断を表示するときは、source位置とcodeによる安定した順序へ統合します。
 
 診断codeは機械判定に使用できる安定した識別子とし、messageを判定条件にしません。診断IDはcodeとsource
 rangeから決定的に生成します。同じ入力、設定およびpackage versionからは、範囲、重要度、関連情報および
 修正候補を含めて同じ順序の診断を返します。
 
-修正候補は重複しない`TextEdit`だけを持ちます。`Always`は構文上安全に適用できる変更、`Maybe`は利用者の
+修正候補は重複しない``TextEdit``だけを持ちます。``Always``は構文上安全に適用できる変更、``Maybe``は利用者の
 判断を必要とする変更を表します。
 
 [#web-worker-execution]
@@ -164,7 +164,7 @@ rangeから決定的に生成します。同じ入力、設定およびpackage v
 直接利用しません。clientはgenerationを単調増加させ、現在のgenerationと一致する結果だけを通知します。
 sourceが変わった場合は古いquery、解決結果および表示結果を破棄します。
 
-`SharedArrayBuffer`を利用できる場合は、共有したgenerationを`CancellationCheck`から確認して同期WASMを
+``SharedArrayBuffer``を利用できる場合は、共有したgenerationを``CancellationCheck``から確認して同期WASMを
 協調停止します。利用できない場合は古いWorkerを終了して再生成します。message送信やJavaScriptの
 Promiseを破棄するだけで、実行中の同期WASMが停止したとはみなしません。
 

@@ -611,12 +611,20 @@ git ls-files '*.adoc' | LC_ALL=C sort > "$manifest"
 diagnostics_log="target/adoc-check-diagnostics.log"
 : > "$diagnostics_log"
 
+target/debug/adocweave config show --config .adocweave.toml >/dev/null
+target/debug/adocweave config show --config fixtures/.adocweave.toml >/dev/null
+target/debug/adocweave config show --config fuzz/.adocweave.toml >/dev/null
+
 documents=0
 diagnostics=0
 failed=0
 while IFS= read -r path; do
   documents=$((documents + 1))
-  if output="$(target/debug/adocweave check "$path" 2>&1)"; then
+  fail_on=warning
+  case "$path" in
+    fixtures/*|fuzz/*) fail_on=error ;;
+  esac
+  if output="$(target/debug/adocweave check --fail-on "$fail_on" "$path" 2>&1)"; then
     if [ -n "$output" ]; then
       echo "[$path]" >> "$diagnostics_log"
       echo "$output" >> "$diagnostics_log"
@@ -638,7 +646,7 @@ fi
 local_documents=0
 while IFS= read -r path; do
   local_documents=$((local_documents + 1))
-  if ! output="$(target/debug/adocweave check --local-targets --project-root . "$path" 2>&1)"; then
+  if ! output="$(target/debug/adocweave check --fail-on warning --local-targets --project-root . "$path" 2>&1)"; then
     echo "[$path] local target check failed" >&2
     echo "$output" >&2
     failed=1
@@ -683,7 +691,7 @@ if [ "$failed" -ne 0 ]; then
   echo "adoc-check failed: local target pass checked $local_documents normative documents" >&2
   exit 1
 fi
-echo "adoc-check passed: $documents documents, $diagnostics permissive diagnostics recorded in $diagnostics_log"
+echo "adoc-check passed: $documents documents, $diagnostics expected diagnostics recorded in $diagnostics_log"
 '''
 
 [tasks.adoc-invariants]

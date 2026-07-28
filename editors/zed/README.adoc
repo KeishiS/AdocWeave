@@ -6,22 +6,22 @@ xref:../../docs/developer-guide/zed-development.adoc[Zedへ開発版を導入す
 このdirectoryはZedが選択する拡張rootであり、`extension.toml`、Rust製WASM adapterおよび
 AsciiDoc言語設定を保持する。binaryの解決、公開Releaseからの安全な取得およびcache仕様は
 xref:../../docs/user-guide/release-installation.adoc#zed-installation[Zedへの導入]を参照する。開発時はworktreeの
-`PATH`にある`adocweave-lsp`がmanaged binaryより優先される。
+``PATH``にある``adocweave-lsp``がmanaged binaryより優先される。
 
-基本的な構文色付けは`languages/asciidoc`と`languages/asciidoc_inline`のTree-sitter queryが担当する。
+基本的な構文色付けは``languages/asciidoc``と``languages/asciidoc_inline``のTree-sitter queryが担当する。
 LSP Semantic Tokensはリンク、参照、anchor等の意味的補足であり、基本色付けの代替ではない。
 
 == 受け入れ確認
 
 2026-07-20にLinux版Zedで次を確認した。
 
-- AsciiDocの言語認識と`adocweave-lsp`の自動起動
+- AsciiDocの言語認識と``adocweave-lsp``の自動起動
 - Unicodeを含む診断と編集後の診断更新
 - LSP文書シンボルを使用したOutline
 - 見出し空白を挿入するCode Action
 - 通常テキストを整形し、ソースブロック本体を保持する冪等なFormat Document
 - 見出しレベル、生成IDおよび対象部分を表示するHover
-- ソース言語`ru`に対する`rust`補完
+- ソース言語``ru``に対する``rust``補完
 
 Tree-sitter queryを変更した場合は、
 xref:../../docs/developer-guide/zed-development.adoc[開発版の動作確認]に従って目視確認する。

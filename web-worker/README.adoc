@@ -5,12 +5,12 @@
 
 == 内容
 
-* `wasm/adocweave_wasm.js`と`wasm/adocweave_wasm_bg.wasm`：`wasm-bindgen`のweb向け成果物
+* ``wasm/adocweave_wasm.js``と``wasm/adocweave_wasm_bg.wasm``：``wasm-bindgen``のweb向け成果物
 * `wasm/adocweave_wasm.d.ts`：生成された場合のTypeScript declaration
-* `worker/index.mjs`と`worker/index.d.mts`：frontend向けの公開ES module入口と型定義
+* ``worker/index.mjs``と``worker/index.d.mts``：frontend向けの公開ES module入口と型定義
 * `worker/client.mjs`、`worker/controller.mjs`、`worker/worker.mjs`：最新generationだけを採用する内部実装
 * `worker/contracts.mjs`：公開パッケージ版
-* `worker/protocol.generated.mjs`と`worker/protocol.generated.d.mts`：生成された公開型と版数
+* ``worker/protocol.generated.mjs``と``worker/protocol.generated.d.mts``：生成された公開型と版数
 * `THIRD_PARTY_NOTICES.adoc`：rootとZedのlockfileから生成したthird-party package一覧
 
 == 最小例
@@ -33,6 +33,6 @@ client.update({ version: 1, source: "= Title\n\nAsciiDoc text" });
 ----
 
 公開入口がWorkerの生成、初期化、debounce、generation、cancelおよびdisposeを所有します。
-`SharedArrayBuffer`を利用できない場合はWorker再生成へ自動的に縮退します。DOMへの反映とUI stateは
-利用側が所有します。動作するtextarea例は`example/index.html`に含まれます。APIと返却値の詳細は
+``SharedArrayBuffer``を利用できない場合はWorker再生成へ自動的に縮退します。DOMへの反映とUI stateは
+利用側が所有します。動作するtextarea例は``example/index.html``に含まれます。APIと返却値の詳細は
 xref:../docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。

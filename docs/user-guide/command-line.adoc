@@ -1,6 +1,6 @@
 = コマンドライン
 
-この文書では、`adocweave`によるAsciiDocファイルの変換、確認および整形を説明します。
+この文書では、``adocweave``によるAsciiDocファイルの変換、確認および整形を説明します。
 入力ファイルを指定しない場合は標準入力を読み、結果を標準出力へ書きます。
 
 == よく使うコマンド
@@ -16,7 +16,7 @@
 |書式やリンクなどの問題を確認します。
 
 |`adocweave format manual.adoc`
-|整形後の内容を標準出力へ書きます。`--check`を付けると、変更が必要かだけを確認します。
+|整形後の内容を標準出力へ書きます。``--check``を付けると、変更が必要かだけを確認します。
 
 |`adocweave symbols manual.adoc`
 |見出しなどの構造をJSONで出力します。
@@ -25,33 +25,33 @@
 [#diagnostics]
 == 診断
 
-`check`は文書の問題を位置、重要度、安定したcodeおよびmessageとともに表示します。
-自動処理では`--format json`、`--format github`または`--format sarif`を指定し、変更される可能性があるmessageではなく
-codeを判定に使用してください。`--json`は`--format json`の互換aliasです。
+``check``は文書の問題を位置、重要度、安定したcodeおよびmessageとともに表示します。
+自動処理では``--format json``、``--format github``または``--format sarif``を指定し、変更される可能性があるmessageではなく
+codeを判定に使用してください。``--json``は``--format json``の互換aliasです。
 同じ入力、設定およびpackage versionからは同じ順序で問題を返します。
-`--include`を使用した場合も、問題の位置は展開後の仮想文書ではなく、
+``--include``を使用した場合も、問題の位置は展開後の仮想文書ではなく、
 問題がある元fileのpath、行およびcolumnとして表示します。
 
-`asciidoc-file-link`は、`.adoc`または`.asciidoc`で終わる文書を`link`で参照した場合に、
-`xref`の使用を提案します。`non-asciidoc-xref`は、`.json`、`.toml`、`.pdf`など、
-AsciiDoc以外の拡張子を持つfileを`xref`で参照した場合に、`link`の使用を提案します。
+``asciidoc-file-link``は、``.adoc``または``.asciidoc``で終わる文書を``link``で参照した場合に、
+``xref``の使用を提案します。``non-asciidoc-xref``は、`.json`、`.toml`、``.pdf``など、
+AsciiDoc以外の拡張子を持つfileを``xref``で参照した場合に、``link``の使用を提案します。
 拡張子は大文字小文字を区別せず、queryとfragmentを除いて判定します。対象fileの実在性は検査しません。
 schemeのない相対targetを明示macroで記述し、targetに属性参照がない場合に限り、
 macro名だけを置換する自動修正を提示します。
 
-通常の`check`はファイルシステムへアクセスせず、`../guide.adoc`のような相対リンクと文書間参照を
+通常の``check``はファイルシステムへアクセスせず、``../guide.adoc``のような相対リンクと文書間参照を
 有効な対象として扱います。HTMLへ変換する際は、記述されたURLと解決済みURLを出力用ポリシーで
 改めて検査します。
 
 [#check-exit-status]
 === 終了状態
 
-`--fail-on error`はerrorが一件以上、`--fail-on warning`はerrorまたはwarningが一件以上ある場合に
-終了コードを0以外にします。既定値は`error`です。`--fail-on never`は診断の重要度によって失敗させず、
+``--fail-on error``はerrorが一件以上、``--fail-on warning``はerrorまたはwarningが一件以上ある場合に
+終了コードを0以外にします。既定値は``error``です。``--fail-on never``は診断の重要度によって失敗させず、
 入力、設定またはI/Oのerrorだけを失敗として扱います。human、JSON、GitHub Actions annotationおよびSARIFの
 形式を変えても診断集合と終了状態は変わりません。
 
-`--summary`は重要度別件数を標準エラー出力へ書きます。診断本体は標準出力のままなので、JSONを
+``--summary``は重要度別件数を標準エラー出力へ書きます。診断本体は標準出力のままなので、JSONを
 壊しません。
 
 [source,console]
@@ -61,18 +61,18 @@ adocweave check --fail-on warning --format github docs
 adocweave check --fail-on warning --format sarif docs > adocweave.sarif
 ----
 
-GitHub ActionsではRelease assetのversionを固定し、`--format github`を使用します。更新時は新しい
+GitHub ActionsではRelease assetのversionを固定し、``--format github``を使用します。更新時は新しい
 versionを別directoryで検証してから切り替えてください。
 
 相対リンク、文書間参照、画像などのresourceおよびincludeの実在性を検査する場合は、
-`--local-targets`と`--project-root DIR`を指定します。
+``--local-targets``と``--project-root DIR``を指定します。
 
 [source,console]
 ----
 adocweave check --local-targets --project-root . docs/manual.adoc
 ----
 
-この検査は記述元fileの親directoryを基準にし、正規化後もproject root内にある`..`を許可します。
+この検査は記述元fileの親directoryを基準にし、正規化後もproject root内にある``..``を許可します。
 絶対path、外部URL、local anchorおよびscheme付きtargetは対象外です。欠落、project root外への移動、
 directory、権限不足および検査不能なtargetは安定したcodeを持つerrorとなり、終了コードは0以外になります。
 同じfileへの複数の参照は位置ごとに報告しますが、filesystemの検査結果はcommand内で共有します。
@@ -85,13 +85,13 @@ directory、権限不足および検査不能なtargetは安定したcodeを持�
 adocweave check --list-rules --json
 ----
 
-出力には`schemaVersion`、`packageVersion`およびcode順の`rules`を含めます。各規則の
-`code`、`defaultSeverity`、`enabledByDefault`、`userConfigurable`および`fixable`は
+出力には``schemaVersion``、``packageVersion``およびcode順の``rules``を含めます。各規則の
+`code`、`defaultSeverity`、`enabledByDefault`、``userConfigurable``および``fixable``は
 自動処理に使用できます。
-`description`は表示用であり、判定条件には使用しません。
+``description``は表示用であり、判定条件には使用しません。
 
-既定で無効な規則は`--enable-rule CODE`で有効にできます。このoptionは反復して指定できます。
-`macro-boundary`は、対応するinline macroが開始境界だけを満たさず通常のtextとして扱われた場合に
+既定で無効な規則は``--enable-rule CODE``で有効にできます。このoptionは反復して指定できます。
+``macro-boundary``は、対応するinline macroが開始境界だけを満たさず通常のtextとして扱われた場合に
 warningを返します。
 
 [source,console]
@@ -99,20 +99,20 @@ warningを返します。
 adocweave check --enable-rule macro-boundary document.adoc
 ----
 
-対象は`xref`、`link`、数式、passthrough、標準inline macro、URLおよびemailの完全な構文です。
+対象は``xref``、`link`、数式、passthrough、標準inline macro、URLおよびemailの完全な構文です。
 診断はmacro名を示し、直前がASCII英数字の場合だけ、空白を挿入する確実ではない修正候補を返します。
 短縮xref、block macro、不完全またはescapeされた構文、comment、sourceおよびliteral block、
-ほかの不透明なinline構文の内部は対象外です。任意の`subs`属性による置換設定は現在対応していません。
+ほかの不透明なinline構文の内部は対象外です。任意の``subs``属性による置換設定は現在対応していません。
 
 [#formatting]
 == 整形
 
-`format`は整形後の内容を標準出力へ書き、入力fileを直接変更しません。
-`--check`を指定すると内容を出力せず、変更が不要なら終了コード0、必要ならそれ以外を返します。
+``format``は整形後の内容を標準出力へ書き、入力fileを直接変更しません。
+``--check``を指定すると内容を出力せず、変更が不要なら終了コード0、必要ならそれ以外を返します。
 
-複数file、directoryまたは`--glob PATTERN`を指定すると、canonical path順に重複なく処理します。
-directoryでは`.adoc`だけを再帰的に選び、symlinkはたどりません。複数入力の整形では
-`--check`、`--diff`または`--write`のいずれか一つが必須です。
+複数file、directoryまたは``--glob PATTERN``を指定すると、canonical path順に重複なく処理します。
+directoryでは``.adoc``だけを再帰的に選び、symlinkはたどりません。複数入力の整形では
+`--check`、``--diff``または``--write``のいずれか一つが必須です。
 
 [source,console]
 ----
@@ -121,13 +121,13 @@ adocweave format --diff --glob 'docs/**/*.adoc'
 adocweave format --write docs README.adoc
 ----
 
-`--write`は全fileを読込・解析した後、元fileと同じdirectoryに一時fileを作り、内容を同期してから
+``--write``は全fileを読込・解析した後、元fileと同じdirectoryに一時fileを作り、内容を同期してから
 置換します。書換え直前に元のbyte列が変わっていた場合は置換しません。file mode、既存の主な改行形式
 および最終改行は、プロジェクト設定で明示的に変更していない限り保持します。一時fileの準備前に
 errorが発生した場合は一件も変更しません。置換開始後のI/O errorでは、それ以前に置換済みのfileだけが
 更新される可能性があります。各fileの置換自体はatomicです。
 
-`--dry-run`を`--write`と併用すると書換えません。`--summary`は対象数と変更数を標準エラー出力へ
+``--dry-run``を``--write``と併用すると書換えません。``--summary``は対象数と変更数を標準エラー出力へ
 書きます。
 
 整形対象は、安全に意味を保持できる段落と空行に限定します。行末空白、連続空行、改行形式および
@@ -136,10 +136,10 @@ errorが発生した場合は一件も変更しません。置換開始後のI/O
 
 == 安全な自動修正
 
-`check --fix`は、診断が`Applicability::Always`として提供する修正だけを適用します。全fileの
-修正候補を検証してから`format --write`と同じatomic置換を使用します。複数診断のeditが重複または
-交差する場合は、そのfileを書き換えずerrorにします。`Maybe`の修正はCode Actionや差分を確認して
-適用してください。`--dry-run --summary`では書換えず、修正対象file数を`changed`として表示します。
+``check --fix``は、診断が``Applicability::Always``として提供する修正だけを適用します。全fileの
+修正候補を検証してから``format --write``と同じatomic置換を使用します。複数診断のeditが重複または
+交差する場合は、そのfileを書き換えずerrorにします。``Maybe``の修正はCode Actionや差分を確認して
+適用してください。``--dry-run --summary``では書換えず、修正対象file数を``changed``として表示します。
 
 [source,console]
 ----
@@ -149,7 +149,7 @@ adocweave check --fix --dry-run --summary docs
 
 == 色とshell completion
 
-`--color auto|always|never`でhuman診断と差分のANSI色を制御します。既定の`auto`は標準出力がterminalの
+``--color auto|always|never``でhuman診断と差分のANSI色を制御します。既定の``auto``は標準出力がterminalの
 場合だけ色を付け、JSONとGitHub Actions annotationには常に色を付けません。
 
 completion scriptは標準出力からshellの設定へ保存します。
@@ -164,12 +164,12 @@ adocweave completion powershell
 
 == プロジェクト設定
 
-CLIとLanguage Serverで共有する`.adocweave.toml`、`--config`、`--no-config`および`config show`は
+CLIとLanguage Serverで共有する``.adocweave.toml``、`--config`、``--no-config``および``config show``は
 xref:project-configuration.adoc[プロジェクト設定]を参照してください。
 
 == ローカルファイルの展開
 
-ローカルファイルの展開は`--include`を指定した場合だけ有効になります。
+ローカルファイルの展開は``--include``を指定した場合だけ有効になります。
 
 [source,console]
 ----
@@ -177,9 +177,9 @@ adocweave convert --include docs/manual.adoc
 adocweave check --include docs/manual.adoc
 ----
 
-file入力では、`--base-dir`を省略するとroot文書の親directoryを基準にします。
-標準入力は位置を持たないため、`--include`と同時に`--base-dir DIR`が必須です。
-`--allow-root DIR`は複数指定でき、省略時はbase directoryだけを許可します。
+file入力では、``--base-dir``を省略するとroot文書の親directoryを基準にします。
+標準入力は位置を持たないため、``--include``と同時に``--base-dir DIR``が必須です。
+``--allow-root DIR``は複数指定でき、省略時はbase directoryだけを許可します。
 
 [source,console]
 ----
@@ -188,31 +188,31 @@ adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
 
 targetはbase directoryからの相対pathに限定します。
 絶対path、`..`、scheme付きtarget、制御文字および許可root外へ解決されるsymlinkを拒否します。
-通常linkと異なり、include targetの`?`と`#`はURL成分として分離せずfile名の一部として扱います。
+通常linkと異なり、include targetの``?``と``#``はURL成分として分離せずfile名の一部として扱います。
 個別resourceは10 MiB、resource tree全体は50 MiB、file数は10,000件を上限とします。
 循環、include深さ、展開nodeおよび展開後byte数にはコアpreprocessorの上限も適用します。
 network resourceは取得しません。
 
-`convert`、`check`および`symbols`は同じ展開snapshotを使用します。
-`check`の診断は元resourceの論理的な`SourceId`、行、columnへ投影します。Include resourceには
-`include:`で始まるIDを使用し、canonical pathは診断へ公開しません。
-`format`はinclude treeを安全性検査しますが、展開結果をroot fileへ書き戻さずroot入力だけを整形します。
+`convert`、``check``および``symbols``は同じ展開snapshotを使用します。
+``check``の診断は元resourceの論理的な``SourceId``、行、columnへ投影します。Include resourceには
+``include:``で始まるIDを使用し、canonical pathは診断へ公開しません。
+``format``はinclude treeを安全性検査しますが、展開結果をroot fileへ書き戻さずroot入力だけを整形します。
 
-`check --include --local-targets --project-root DIR`では、includeの読み取りとほかのlocal targetの
-実在検査が同じcacheと上限を使用します。この組み合わせでは、正規化後もproject root内に収まる`..`を
-許可し、`--allow-root`は使用しません。`optional`を指定したincludeの欠落はerrorにしません。
+``check --include --local-targets --project-root DIR``では、includeの読み取りとほかのlocal targetの
+実在検査が同じcacheと上限を使用します。この組み合わせでは、正規化後もproject root内に収まる``..``を
+許可し、``--allow-root``は使用しません。``optional``を指定したincludeの欠落はerrorにしません。
 
 == 完全なHTML文書とCSS
 
-`convert`は既定でHTML fragmentを出力します。`--complete`を指定すると完全なHTML文書を出力し、
-`--css FILE`と`--css-url URL`でstylesheetを`<head>`へ追加できます。どちらも複数回指定でき、
-指定順に出力します。CSSは出力設定であり、文書入力の`style`属性や任意classは引き続き拒否します。
+``convert``は既定でHTML fragmentを出力します。``--complete``を指定すると完全なHTML文書を出力し、
+``--css FILE``と``--css-url URL``でstylesheetを``<head>``へ追加できます。どちらも複数回指定でき、
+指定順に出力します。CSSは出力設定であり、文書入力の``style``属性や任意classは引き続き拒否します。
 
 [source,console]
 ----
 adocweave convert --complete --css theme.css --css-url https://example.com/print.css manual.adoc
 ----
 
-`--css`と`--css-url`は`--complete`が必須です。CSS fileはUTF-8で、1 sourceあたり1 MiBを上限とします。
-`</style`、`<!--`または改行・タブ以外の制御文字を含むCSS本文、URL policyが拒否するURL
-（既定は`http`と`https`だけ）および上限超過は、部分的なHTMLを出力せずエラーで終了します。
+``--css``と``--css-url``は``--complete``が必須です。CSS fileはUTF-8で、1 sourceあたり1 MiBを上限とします。
+`</style`、``<!--``または改行・タブ以外の制御文字を含むCSS本文、URL policyが拒否するURL
+（既定は``http``と``https``だけ）および上限超過は、部分的なHTMLを出力せずエラーで終了します。

@@ -138,6 +138,7 @@ lint_rule_catalog!(
         UNUSED_ATTRIBUTE,
         "unused-attribute",
         "使用されていない文書属性",
+        false,
         false
     ),
     (
@@ -1243,7 +1244,8 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 mod tests {
     use super::{
         LINE_TOO_LONG, LINT_RULES, LintConfig, MACRO_BOUNDARY, RuleSettings, TRAILING_WHITESPACE,
-        lint, lint_rule, lint_with_analysis_limits, render_lint_rule_catalog_json,
+        UNUSED_ATTRIBUTE, lint, lint_rule, lint_with_analysis_limits,
+        render_lint_rule_catalog_json,
     };
     use crate::diagnostic::Severity;
 
@@ -1589,6 +1591,14 @@ mod tests {
 
     #[test]
     fn document_attributes_allow_redefinition_and_report_dataflow_problems() {
+        let mut config = LintConfig::default();
+        config.set_rule(
+            UNUSED_ATTRIBUTE,
+            RuleSettings {
+                enabled: true,
+                severity: Severity::Warning,
+            },
+        );
         let diagnostics = lint(
             "= Note\n\
              :bad name: value\n\
@@ -1597,7 +1607,7 @@ mod tests {
              :name: second\n\
              \n\
              {name} {missing}\n",
-            &LintConfig::default(),
+            &config,
         )
         .expect("lint");
         let codes = diagnostics
@@ -1612,6 +1622,14 @@ mod tests {
 
     #[test]
     fn attribute_lint_selects_bindings_at_each_reference_position() {
+        let mut config = LintConfig::default();
+        config.set_rule(
+            UNUSED_ATTRIBUTE,
+            RuleSettings {
+                enabled: true,
+                severity: Severity::Warning,
+            },
+        );
         let source = "\
 :a: first
 
@@ -1628,7 +1646,7 @@ mod tests {
 :future: {later}
 :later: value
 ";
-        let diagnostics = lint(source, &LintConfig::default()).expect("lint");
+        let diagnostics = lint(source, &config).expect("lint");
         assert!(
             diagnostics
                 .iter()

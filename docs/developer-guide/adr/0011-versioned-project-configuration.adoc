@@ -15,12 +15,12 @@ CLI、Language Serverおよびエディターadapterは、解析、Lint、includ
 
 == 決定
 
-設定のwire形式、検証済み設定、探索およびconsumer向け変換は独立した`adocweave-config` crateが
+設定のwire形式、検証済み設定、探索およびconsumer向け変換は独立した``adocweave-config`` crateが
 所有します。コアcrateはTOML、filesystemおよび設定探索へ依存しません。設定は解析、preprocess、
 resource、local target、formatterおよびHTMLの責務別sectionを持ち、変換後もADR 0009の境界を
 維持します。
 
-プロジェクト設定名は`.adocweave.toml`とし、`schema-version = 1`を必須にします。すべての階層で
+プロジェクト設定名は``.adocweave.toml``とし、``schema-version = 1``を必須にします。すべての階層で
 未知field、未知schema version、重複keyおよび不正なLint ruleを拒否します。v1では継承、環境変数展開、
 home directory展開、command置換およびremote設定を提供しません。
 
@@ -34,7 +34,7 @@ CLIは入力fileの親から現在directoryまで、Language Serverは文書の�
 editor trustまたは埋込みhost APIから明示的に与えます。外部属性値、CSS本文および文書断片はerrorや
 通常logへ含めず、設定表示でも既定で伏せます。
 
-設定を`ConfigSnapshot`としてversion、canonical path、content identityおよび検証済み値とともに保持します。
+設定を``ConfigSnapshot``としてversion、canonical path、content identityおよび検証済み値とともに保持します。
 設定変更はgenerationを進め、以前のsnapshotを使う解析をキャンセルします。不正な新設定を以前の設定へ
 暗黙fallbackせず、影響する結果を無効化して設定診断を公開します。
 

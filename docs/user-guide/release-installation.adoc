@@ -27,12 +27,12 @@ nix profile rollback
 nix profile remove AdocWeave
 ----
 
-継続的に利用する構成では、flake inputを利用側の`flake.lock`へ固定し、
-`adocweave.packages.${system}.default`を使用します。同じpackageに`adocweave`と
-`adocweave-lsp`が含まれます。`adocweave.overlays.default`から`pkgs.adocweave`として参照することもできます。
+継続的に利用する構成では、flake inputを利用側の``flake.lock``へ固定し、
+``adocweave.packages.${system}.default``を使用します。同じpackageに``adocweave``と
+``adocweave-lsp``が含まれます。``adocweave.overlays.default``から``pkgs.adocweave``として参照することもできます。
 専用のNixOS service moduleは提供しません。
 
-Nix packageは`Cargo.lock`に固定されたsourceからbuildします。利用できるbinary cacheがない場合は利用側で
+Nix packageは``Cargo.lock``に固定されたsourceからbuildします。利用できるbinary cacheがない場合は利用側で
 Rust buildが実行されます。Rust compiler、Cargo、Node.js、Chromiumおよびfuzz toolは完成したpackageの
 runtime closureへ含めません。
 
@@ -57,13 +57,13 @@ runtime closureへ含めません。
 2+|`adocweave-zed-<version>.tar.xz`
 |===
 
-`uname -m`が`x86_64`ならx86-64、`aarch64`または`arm64`ならARM64を選びます。Linux musl binaryは静的リンクされ、
+``uname -m``が``x86_64``ならx86-64、``aarch64``または``arm64``ならARM64を選びます。Linux musl binaryは静的リンクされ、
 対応architectureのglibc／musl distributionで利用できます。macOS、Windowsおよび32-bit Linux向けassetは配布しません。
 
 == 取得と完全性の検証
 
-versionと利用するarchiveを固定し、同じReleaseの`sha256.sum`とともに空のdirectoryへdownloadします。
-GitHub CLIを使う例は次のとおりです。`VERSION`と`ASSET`を実際の値へ置き換えます。
+versionと利用するarchiveを固定し、同じReleaseの``sha256.sum``とともに空のdirectoryへdownloadします。
+GitHub CLIを使う例は次のとおりです。``VERSION``と``ASSET``を実際の値へ置き換えます。
 
 [source,console]
 ----
@@ -80,7 +80,7 @@ sha256sum --check --ignore-missing sha256.sum
 ----
 
 GitHub CLIを使わない場合は、Release画面から各assetを個別に保存します。HTMLをarchive名で保存する事故を避けるため、
-download後に`tar -tJf <archive>`も成功することを確認します。`curl | sh`形式のinstallerは提供しません。
+download後に``tar -tJf <archive>``も成功することを確認します。``curl | sh``形式のinstallerは提供しません。
 
 checksumとは別に、必要なassetのGitHub Artifact Attestationを検証します。
 
@@ -124,7 +124,7 @@ ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave" "$PREFIX/bin/adocweave"
 ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave-lsp" "$PREFIX/bin/adocweave-lsp"
 ----
 
-`$HOME/.local/bin`が`PATH`にない場合だけshellのstartup fileへ追加し、新しいshellで確認します。
+``$HOME/.local/bin``が``PATH``にない場合だけshellのstartup fileへ追加し、新しいshellで確認します。
 
 [source,console]
 ----
@@ -135,11 +135,11 @@ adocweave-lsp --version --json
 ----
 
 配布archiveはcompletion fileを自動配置しません。必要なshellでは
-xref:command-line.adoc[コマンドライン]の`adocweave completion`で生成してください。
+xref:command-line.adoc[コマンドライン]の``adocweave completion``で生成してください。
 
 == システム全体への導入
 
-複数利用者向けにはversion別rootを`/opt/adocweave/<version>`へ置き、`/usr/local/bin`からsymlinkします。archiveの
+複数利用者向けにはversion別rootを``/opt/adocweave/<version>``へ置き、``/usr/local/bin``からsymlinkします。archiveの
 検証と展開は通常利用者で行い、検証済みfileの配置だけを管理者権限で実行します。既存fileを上書きする前に、symlinkの
 参照先がAdocWeave管理下であることを確認します。
 
@@ -161,17 +161,17 @@ browser libraryとZed拡張は利用者ごとの設定を伴うため、原則�
 
 == 更新、バージョン固定およびロールバック
 
-新versionは既存directoryへ上書きせず、別のversion directoryへ展開・検証します。`current`を切り替えた後に
-`--version --json`を確認します。rollbackは`current`を以前のversion directoryへ戻すだけであり、動作確認が終わるまで
+新versionは既存directoryへ上書きせず、別のversion directoryへ展開・検証します。``current``を切り替えた後に
+``--version --json``を確認します。rollbackは``current``を以前のversion directoryへ戻すだけであり、動作確認が終わるまで
 旧directoryを削除しません。CLI、LSP、browser、Zed拡張は同じRelease versionを組み合わせ、異なるrelease trainを
 混在させません。
 
 [#browser-library-deployment]
 == ブラウザーライブラリーの配備
 
-`$HOME/.local/share/adocweave/<version>/browser`をそのまま静的hostingへ配置します。公開入口は
-`worker/index.mjs`だけです。`worker/worker.mjs`とWASM補助fileは内部用であり、直接importしません。
-TypeScriptの型定義は`worker/index.d.mts`にあります。
+``$HOME/.local/share/adocweave/<version>/browser``をそのまま静的hostingへ配置します。公開入口は
+``worker/index.mjs``だけです。``worker/worker.mjs``とWASM補助fileは内部用であり、直接importしません。
+TypeScriptの型定義は``worker/index.d.mts``にあります。
 
 [source,javascript]
 ----
@@ -194,9 +194,9 @@ client.update({
 });
 ----
 
-`update`は単調増加するgenerationを返します。`cancel`は現在の処理を無効化し、`dispose`はclientを
-終了します。bundlerから利用する場合は、配備した`worker/index.mjs`のbase URLを
-`defaultAssetUrls`へ渡します。WebAssembly APIの詳細は
+``update``は単調増加するgenerationを返します。``cancel``は現在の処理を無効化し、``dispose``はclientを
+終了します。bundlerから利用する場合は、配備した``worker/index.mjs``のbase URLを
+``defaultAssetUrls``へ渡します。WebAssembly APIの詳細は
 xref:../developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
 
 serverは少なくとも次を設定します。
@@ -215,39 +215,39 @@ serverは少なくとも次を設定します。
 |`text/html; charset=utf-8`
 |===
 
-協調cancelに`SharedArrayBuffer`を使う場合、main document、WorkerおよびWASMを含む同一contextへ
-`Cross-Origin-Opener-Policy: same-origin`と`Cross-Origin-Embedder-Policy: require-corp`を設定します。使えない環境では
-Worker再生成へ縮退します。CSPは`script-src 'self'`、`worker-src 'self'`を基本とし、inline scriptや`unsafe-eval`を
+協調cancelに``SharedArrayBuffer``を使う場合、main document、WorkerおよびWASMを含む同一contextへ
+``Cross-Origin-Opener-Policy: same-origin``と``Cross-Origin-Embedder-Policy: require-corp``を設定します。使えない環境では
+Worker再生成へ縮退します。CSPは``script-src 'self'``、``worker-src 'self'``を基本とし、inline scriptや``unsafe-eval``を
 要求しません。HTML結果はDOMへ無検証で挿入せず、ホストの表示sandboxとpolicyを適用します。
 
 URLにはversionまたはarchive digestを含め、WASMとJavaScriptへ同じcache keyを使います。更新時に既存URLの内容を
-置換せず、新URLへ切り替えます。配備前のarchiveは`sha256.sum`で検証し、配備後はserverから取得したfileのdigestを
-deploy記録へ残します。展開物の`example/index.html`と`example/app.mjs`はリアルタイム変換の最小例であり、同じserverから
+置換せず、新URLへ切り替えます。配備前のarchiveは``sha256.sum``で検証し、配備後はserverから取得したfileのdigestを
+deploy記録へ残します。展開物の``example/index.html``と``example/app.mjs``はリアルタイム変換の最小例であり、同じserverから
 配信して入力更新、最新generationだけの表示およびfallback動作を確認できます。
 
 [#zed-installation]
 == Zedへの導入
 
-Zed Extension Galleryへ公開しないため、展開済み`$HOME/.local/share/adocweave/<version>/zed`をdev extensionとして
-導入します。Extension Galleryの`Install Dev Extension`またはコマンドパレットの`zed: install dev extension`から、この
+Zed Extension Galleryへ公開しないため、展開済み``$HOME/.local/share/adocweave/<version>/zed``をdev extensionとして
+導入します。Extension Galleryの``Install Dev Extension``またはコマンドパレットの``zed: install dev extension``から、この
 directoryを選びます。source repositoryのcheckoutは不要です。
 
 === Language Serverの選択
 
-Zed拡張は、次の順序で最初に利用できる`adocweave-lsp`を選びます。
+Zed拡張は、次の順序で最初に利用できる``adocweave-lsp``を選びます。
 
-. Zedの`lsp.adocweave.binary.path`で明示した実行ファイル
-. Zed processから見える`PATH`上の実行ファイル
+. Zedの``lsp.adocweave.binary.path``で明示した実行ファイル
+. Zed processから見える``PATH``上の実行ファイル
 . 拡張と同じversionのGitHub Releaseから取得したmanaged binary
 
-複数の由来を混在させません。明示した実行ファイルでは、同じ`binary`設定にある`arguments`と`env`も
+複数の由来を混在させません。明示した実行ファイルでは、同じ``binary``設定にある``arguments``と``env``も
 使用します。
 
 === 管理対象バイナリー
 
 Managed binaryは拡張と同じversionのReleaseから取得します。拡張は配布manifestのschema、version、target、
 asset名、byte数およびSHA-256を確認してからarchiveを展開します。所定の通常fileだけを上限付きで取り出し、
-検証markerとともにZedの拡張用working directoryへ原子的に配置します。project、利用者の`PATH`および
+検証markerとともにZedの拡張用working directoryへ原子的に配置します。project、利用者の``PATH``および
 system directoryへ書き込みません。
 
 Cacheはpackage versionとtargetごとに分けます。起動時にmarkerとbinaryのSHA-256が一致すればnetworkへ接続せず
@@ -257,10 +257,10 @@ Cacheはpackage versionとtargetごとに分けます。起動時にmarkerとbin
 対応するmanaged binaryがないplatform、manifestの不一致、assetの欠落、byte数またはhashの不一致は、
 実行ファイルを起動する前にエラーとして表示します。
 
-初回buildではZedがRust extension用toolchainと、固定commitの`tree-sitter-asciidoc` grammarを取得します。初回build後は
+初回buildではZedがRust extension用toolchainと、固定commitの``tree-sitter-asciidoc`` grammarを取得します。初回build後は
 拡張のworking directoryにある検証済みLSP cacheをofflineでも利用できます。初回から完全offlineで導入できるという意味では
-ありません。Managed binaryを使用する場合は、Zed設定のbinary指定を外し、`PATH`上に別の
-`adocweave-lsp`がない状態でZedを起動します。
+ありません。Managed binaryを使用する場合は、Zed設定のbinary指定を外し、``PATH``上に別の
+``adocweave-lsp``がない状態でZedを起動します。
 
 更新時は新versionのZed directoryを別に展開し、dev extensionをそのdirectoryへ再設定します。旧directoryは、新versionの
 managed LSP取得とeditor機能を確認するまで保持します。
@@ -281,6 +281,6 @@ rm -rf "$PREFIX/share/adocweave/$VERSION"
 rmdir --ignore-fail-on-non-empty "$PREFIX/lib/adocweave" "$PREFIX/share/adocweave"
 ----
 
-`$PREFIX/bin`、Zed user data全体または共有親directoryを再帰削除してはいけません。別versionを保持する場合は`current`を
+`$PREFIX/bin`、Zed user data全体または共有親directoryを再帰削除してはいけません。別versionを保持する場合は``current``を
 先にそのversionへ切り替え、該当versionだけを削除します。通常profileに残るZedの一般cacheはZedが所有するため、場所を
 推測して削除せず、ZedのUIから拡張を削除します。完全に隔離したprofileで試験した場合だけprofile directory全体を削除します。

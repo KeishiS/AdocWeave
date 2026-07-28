@@ -27,8 +27,8 @@ AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としま�
 |置換を抑止する不透明nodeとして保持しますが、raw HTMLとして出力せずHTML escapeします。
 
 |Quoteとverse
-|styleなしの`____`はcompound blockとして扱い、`[quote,Author,Source]`だけを`blockquote`として出力します。
-`[verse]`は改行を保持し、内容のinline書式を解釈しません。
+|styleなしの``____``はcompound blockとして扱い、``[quote,Author,Source]``だけを``blockquote``として出力します。
+``[verse]``は改行を保持し、内容のinline書式を解釈しません。
 
 |Admonition
 |admonition paragraphとblockを型付き意味として扱い、未知のstyleは通常のblockとして保持します。

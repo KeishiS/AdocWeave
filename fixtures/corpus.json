@@ -3,6 +3,14 @@
     {
       "path": "docs/README.adoc",
       "ignoredCodes": []
+    },
+    {
+      "path": "fixtures/lint/description-list.adoc",
+      "ignoredCodes": []
+    },
+    {
+      "path": "fixtures/lint/metadata-attribute.adoc",
+      "ignoredCodes": []
     }
   ],
   "abnormal": [

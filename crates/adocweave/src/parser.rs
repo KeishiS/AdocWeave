@@ -1418,7 +1418,7 @@ fn parse_lists(
             state.budget,
         )?;
         let mut problems = Vec::new();
-        if text.is_empty() {
+        if text.is_empty() && kind != ListKind::Description {
             problems.push(ListProblem {
                 kind: ListProblemKind::EmptyItem,
                 range: item_text_range,
@@ -3002,6 +3002,7 @@ mod tests {
         assert_eq!(description.items[0].terms.len(), 2);
         assert_eq!(description.items[0].terms[0].text, "Alias");
         assert_eq!(description.items[0].terms[1].text, "Term");
+        assert!(description.items[0].problems.is_empty());
 
         let AstBlock::List(checklist) = &parsed.ast.blocks()[1] else {
             panic!("checklist");
