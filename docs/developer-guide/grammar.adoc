@@ -105,9 +105,9 @@ table-separator = any single Unicode scalar value except "=" ;
 matching-delimiter = exactly the same bytes as opening-delimiter ;
 ----
 
-`linenums`、`%linenums`および``options=linenums``は同じ行番号表示指定です。`start`は
-`linenums`と同時に指定した1以上の10進整数だけを開始行として採用します。不正な`start`は診断し、
-開始行1へ回復します。`start`を重複指定した場合は最初の値だけを採用し、その値が不正でも後続値へ
+``linenums``、``%linenums``および``options=linenums``は同じ行番号表示指定です。``start``は
+``linenums``と同時に指定した1以上の10進整数だけを開始行として採用します。不正な``start``は診断し、
+開始行1へ回復します。``start``を重複指定した場合は最初の値だけを採用し、その値が不正でも後続値へ
 切り替えません。行番号表示指定の重複と属性内の記述順序は意味を変えません。
 その他のsource optionを含む属性行はsource blockとして解釈せず、
 未対応構文として保持します。
