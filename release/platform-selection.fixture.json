@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "supported": [
+    {
+      "architecture": "arm64",
+      "archive": "zip",
+      "executable": "adocweave-lsp",
+      "minimumOsVersion": null,
+      "os": "linux",
+      "target": "aarch64-unknown-linux-musl"
+    },
+    {
+      "architecture": "arm64",
+      "archive": "zip",
+      "executable": "adocweave-lsp",
+      "minimumOsVersion": "13.0",
+      "os": "darwin",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "architecture": "x64",
+      "archive": "zip",
+      "executable": "adocweave-lsp",
+      "minimumOsVersion": null,
+      "os": "linux",
+      "target": "x86_64-unknown-linux-musl"
+    },
+    {
+      "architecture": "x64",
+      "archive": "zip",
+      "executable": "adocweave-lsp",
+      "minimumOsVersion": "13.0",
+      "os": "darwin",
+      "target": "x86_64-apple-darwin"
+    },
+    {
+      "architecture": "x64",
+      "archive": "zip",
+      "executable": "adocweave-lsp.exe",
+      "minimumOsVersion": "10.0.17763",
+      "os": "win32",
+      "target": "x86_64-pc-windows-msvc"
+    }
+  ],
+  "unsupported": [
+    {
+      "architecture": "ia32",
+      "os": "linux"
+    },
+    {
+      "architecture": "ia32",
+      "os": "darwin"
+    },
+    {
+      "architecture": "ia32",
+      "os": "win32"
+    },
+    {
+      "architecture": "arm64",
+      "os": "win32"
+    }
+  ]
+}

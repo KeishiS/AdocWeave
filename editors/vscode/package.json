@@ -1,0 +1,110 @@
+{
+  "name": "adocweave-vscode",
+  "displayName": "AdocWeave",
+  "description": "AdocWeave Language Server client and AsciiDoc syntax highlighting",
+  "version": "0.14.0",
+  "publisher": "adocweave",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/KeishiS/adocweave",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeishiS/adocweave.git"
+  },
+  "private": true,
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "keywords": [
+    "asciidoc",
+    "adoc",
+    "language-server"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onLanguage:asciidoc"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "adocweave.restartServer",
+        "title": "AdocWeave: Language Serverを再起動"
+      },
+      {
+        "command": "adocweave.clearManagedServer",
+        "title": "AdocWeave: 管理対象Language Serverを削除"
+      }
+    ],
+    "configuration": {
+      "title": "AdocWeave",
+      "properties": {
+        "adocweave.server.path": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "使用するadocweave-lsp実行ファイルの絶対path。未信頼workspaceではworkspace値を使用しません。"
+        },
+        "adocweave.server.download": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "設定pathとPATHに互換Language Serverがない場合に、検証済みmanaged binaryを使用します。"
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "asciidoc",
+        "aliases": [
+          "AsciiDoc",
+          "asciidoc"
+        ],
+        "extensions": [
+          ".adoc",
+          ".asciidoc",
+          ".asc"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "asciidoc",
+        "scopeName": "text.asciidoc",
+        "path": "./syntaxes/asciidoc.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "npm run format:check && npm run lint && tsc --noEmit && node scripts/validate-package.mjs",
+    "format": "biome format --write src test scripts",
+    "format:check": "biome format src test scripts",
+    "lint": "biome lint src test scripts",
+    "test": "npm run build:test && node --test dist-test/test/*.test.js",
+    "build:test": "node scripts/build-test.mjs",
+    "package": "node scripts/package.mjs",
+    "test:vsix": "node scripts/vsix-smoke.mjs",
+    "test:vsix-installation": "node scripts/vsix-installation-smoke.mjs",
+    "test:extension": "node scripts/run-extension-tests.mjs"
+  },
+  "dependencies": {
+    "fflate": "0.8.3",
+    "vscode-languageclient": "10.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.5",
+    "@types/node": "24.10.1",
+    "@types/vscode": "1.125.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
+  }
+}

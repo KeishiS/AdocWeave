@@ -15,3 +15,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0010-position-dependent-document-attributes.adoc[ADR 0010: 読込順に従う文書属性environment]
 * xref:0011-versioned-project-configuration.adoc[ADR 0011: version付きプロジェクト設定と権限境界]
 * xref:0012-workspace-analysis-boundary.adoc[ADR 0012: runtime非依存のWorkspace解析境界]
+* xref:0013-vscode-release-boundary.adoc[ADR 0013: VSIXとLanguage Serverの同一release境界]

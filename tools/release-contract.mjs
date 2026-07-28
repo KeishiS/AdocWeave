@@ -38,21 +38,23 @@ export function canonicalJson(value) {
 export function expectedAssets(version, targets) {
   const assets = [];
   for (const target of targets) {
+    const executable = `adocweave${target.executableSuffix}`;
     assets.push({
-      name: `adocweave-cli-${target}.tar.xz`,
+      name: `adocweave-cli-${target.triple}.${target.archive}`,
       kind: "cli",
-      target,
-      archive: "tar.xz",
-      executable: "adocweave",
+      target: target.triple,
+      archive: target.archive,
+      executable,
     });
   }
   for (const target of targets) {
+    const executable = `adocweave-lsp${target.executableSuffix}`;
     assets.push({
-      name: `adocweave-lsp-${target}.tar.xz`,
+      name: `adocweave-lsp-${target.triple}.${target.archive}`,
       kind: "lsp",
-      target,
-      archive: "tar.xz",
-      executable: "adocweave-lsp",
+      target: target.triple,
+      archive: target.archive,
+      executable,
     });
   }
   assets.push({
@@ -67,6 +69,13 @@ export function expectedAssets(version, targets) {
     kind: "zed",
     target: null,
     archive: "tar.xz",
+    executable: null,
+  });
+  assets.push({
+    name: `adocweave-vscode-${version}.vsix`,
+    kind: "vscode",
+    target: null,
+    archive: "vsix",
     executable: null,
   });
   return assets;
@@ -95,7 +104,7 @@ export function validateDistPlan(distPlan, plan, tag) {
   for (const [name, asset] of planned) {
     const actual = distPlan.artifacts[name];
     if (!actual) fail(`dist plan is missing public artifact: ${name}`);
-    if (asset.kind === "browser" || asset.kind === "zed") {
+    if (asset.kind === "browser" || asset.kind === "zed" || asset.kind === "vscode") {
       if (actual.kind !== "extra-artifact") fail(`${asset.kind} archive must be a dist extra artifact`);
       continue;
     }
@@ -103,7 +112,7 @@ export function validateDistPlan(distPlan, plan, tag) {
     if (JSON.stringify(actual.target_triples) !== JSON.stringify([asset.target])) {
       fail(`native archive target mismatch: ${name}`);
     }
-    const executables = actual.assets.filter((entry) => entry.kind === "executable").map((entry) => entry.name);
+    const executables = actual.assets.filter((entry) => entry.kind === "executable").map((entry) => entry.path);
     if (JSON.stringify(executables) !== JSON.stringify([asset.executable])) {
       fail(`native archive executable mismatch: ${name}`);
     }
@@ -124,12 +133,13 @@ export function validateDistPlan(distPlan, plan, tag) {
   const runnerByTarget = Object.fromEntries(
     distPlan.ci.github.artifacts_matrix.include.map((entry) => [entry.targets[0], entry.runner]),
   );
-  const expectedRunners = {
-    "aarch64-unknown-linux-musl": "ubuntu-24.04-arm",
-    "x86_64-unknown-linux-musl": "ubuntu-24.04",
-  };
+  const expectedRunners = Object.fromEntries(
+    plan.targets
+      .map((target) => [target.triple, target.runner])
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
   if (JSON.stringify(runnerByTarget) !== JSON.stringify(expectedRunners)) {
-    fail("dist plan runner matrix must use native Ubuntu 24.04 hosts");
+    fail("dist plan runner matrix must use the declared native hosts");
   }
 }
 
@@ -137,7 +147,7 @@ export function validateDistributionManifest(manifest, plan) {
   const keys = Object.keys(manifest).sort();
   const expectedKeys = ["assets", "packageVersion", "schemaVersion", "sourceCommit"];
   if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) fail("distribution manifest has unknown or missing fields");
-  if (manifest.schemaVersion !== 1) fail("distribution manifest schemaVersion must be 1");
+  if (manifest.schemaVersion !== 2) fail("distribution manifest schemaVersion must be 2");
   if (manifest.packageVersion !== plan.packageVersion) fail("distribution manifest package version mismatch");
   if (!/^[0-9a-f]{40}$/.test(manifest.sourceCommit)) fail("sourceCommit must be a lowercase 40-character Git commit");
   const expected = new Map(plan.assets.map((asset) => [asset.name, asset]));
@@ -166,6 +176,8 @@ function verifyRepository() {
   const cargo = read("Cargo.toml");
   const manifest = json("release-manifest.json");
   const plan = json("release/distribution-plan.json");
+  const platformFixture = json("release/platform-selection.fixture.json");
+  const vscodePlatforms = json("editors/vscode/resources/platforms.json");
   const worker = json("web-worker/package.json");
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
@@ -185,8 +197,38 @@ function verifyRepository() {
   }
 
   const planKeys = ["assets", "distVersion", "packageVersion", "releaseMetadata", "repository", "schemaVersion", "targets"];
-  if (JSON.stringify(Object.keys(plan).sort()) !== JSON.stringify(planKeys) || plan.schemaVersion !== 1) {
+  if (JSON.stringify(Object.keys(plan).sort()) !== JSON.stringify(planKeys) || plan.schemaVersion !== 2) {
     fail("distribution plan schema mismatch");
+  }
+  const targetKeys = [
+    "archive",
+    "architecture",
+    "executableSuffix",
+    "linkage",
+    "minimumOsVersion",
+    "os",
+    "runner",
+    "triple",
+  ].sort();
+  const triples = plan.targets.map((target) => target.triple);
+  if (new Set(triples).size !== triples.length) {
+    fail("distribution targets must have unique triples");
+  }
+  for (const target of plan.targets) {
+    if (JSON.stringify(Object.keys(target).sort()) !== JSON.stringify(targetKeys)) {
+      fail(`distribution target ${target.triple ?? "<unknown>"} has unknown or missing fields`);
+    }
+    if (!["linux", "darwin", "win32"].includes(target.os) ||
+        !["arm64", "x64"].includes(target.architecture) ||
+        !["tar.xz", "zip"].includes(target.archive) ||
+        !["", ".exe"].includes(target.executableSuffix) ||
+        !["static", "system"].includes(target.linkage)) {
+      fail(`distribution target ${target.triple} has an invalid platform contract`);
+    }
+    if (target.archive !== "zip" ||
+        (target.os === "win32") !== (target.executableSuffix === ".exe")) {
+      fail(`distribution target ${target.triple} has an invalid archive contract`);
+    }
   }
 
   for (const [name, actual] of [
@@ -207,6 +249,9 @@ function verifyRepository() {
   if (!dist.includes('checksum = "false"')) {
     fail("dist per-archive checksums must be disabled in favor of the canonical checksum list");
   }
+  if (!dist.includes('unix-archive = ".zip"') || !dist.includes('windows-archive = ".zip"')) {
+    fail("native archives must use one ZIP contract on every platform");
+  }
   const browserArchive = `target/distrib/adocweave-browser-${version}.tar.xz`;
   if (!dist.includes(`artifacts = ["${browserArchive}"]`) ||
       !dist.includes('build = ["bash", "tools/package-browser-release.sh"]')) {
@@ -216,6 +261,11 @@ function verifyRepository() {
   if (!dist.includes(`artifacts = ["${zedArchive}"]`) ||
       !dist.includes('build = ["bash", "tools/package-zed-release.sh"]')) {
     fail("Zed package must be connected as the versioned dist extra artifact");
+  }
+  const vscodeArchive = `target/distrib/adocweave-vscode-${version}.vsix`;
+  if (!dist.includes(`artifacts = ["${vscodeArchive}"]`) ||
+      !dist.includes('build = ["bash", "tools/package-vscode-release.sh"]')) {
+    fail("VS Code package must be connected as the versioned dist extra artifact");
   }
   if (!dist.includes('plan-jobs = ["./release-contract"]')) fail("release contract must run in the dist plan phase");
   if (!dist.includes('pr-run-mode = "plan"') || !dist.includes('global-artifacts-jobs = ["./native-artifact-smoke"]')) {
@@ -228,19 +278,34 @@ function verifyRepository() {
   if (!releaseWorkflow.includes("nix develop .#ci -c cargo make release-global-artifacts")) {
     fail("release workflow must verify the exact global archives before upload");
   }
-  for (const runner of ["ubuntu-24.04", "ubuntu-24.04-arm"]) {
+  for (const runner of plan.targets.map((target) => target.runner)) {
     if (!nativeSmokeWorkflow.includes(`runner: ${runner}`)) fail(`native smoke workflow is missing ${runner}`);
   }
   for (const runner of [
     'global = "ubuntu-24.04"',
-    'aarch64-unknown-linux-musl = "ubuntu-24.04-arm"',
-    'x86_64-unknown-linux-musl = "ubuntu-24.04"',
+    ...plan.targets.map((target) => `${target.triple} = "${target.runner}"`),
   ]) {
     if (!dist.includes(runner)) fail(`dist runner mapping is missing: ${runner}`);
   }
-  const targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"];
-  if (JSON.stringify(plan.targets) !== JSON.stringify(targets)) fail("initial target matrix must contain only two sorted Linux musl targets");
-  if (JSON.stringify(plan.assets) !== JSON.stringify(expectedAssets(version, targets))) fail("distribution asset plan is not canonical");
+  if (JSON.stringify(plan.assets) !== JSON.stringify(expectedAssets(version, plan.targets))) fail("distribution asset plan is not canonical");
+  const expectedPlatformSelection = plan.targets.map((target) => ({
+    architecture: target.architecture,
+    archive: target.archive,
+    executable: `adocweave-lsp${target.executableSuffix}`,
+    minimumOsVersion: target.minimumOsVersion,
+    os: target.os,
+    target: target.triple,
+  }));
+  if (platformFixture.schemaVersion !== 1 ||
+      JSON.stringify(platformFixture.supported) !== JSON.stringify(expectedPlatformSelection)) {
+    fail("managed client platform fixture does not match the distribution targets");
+  }
+  if (JSON.stringify(vscodePlatforms) !== JSON.stringify(platformFixture)) {
+    fail("VS Code managed platform resource does not match the shared fixture");
+  }
+  if (JSON.stringify(json("editors/zed/platforms.json")) !== JSON.stringify(platformFixture)) {
+    fail("Zed managed platform resource does not match the shared fixture");
+  }
   if (JSON.stringify(plan.releaseMetadata) !== JSON.stringify(EXPECTED_RELEASE_METADATA)) {
     fail("release metadata asset plan is not canonical");
   }

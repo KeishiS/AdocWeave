@@ -12,16 +12,16 @@ GitHub Release archiveとNix packageは別の配布経路であり、Nix package
 
 [source,console]
 ----
-nix run github:KeishiS/AdocWeave -- --version --json
-nix run 'github:KeishiS/AdocWeave?ref=vX.Y.Z' -- convert document.adoc
-nix run github:KeishiS/AdocWeave#adocweave-lsp
+nix run github:KeishiS/adocweave -- --version --json
+nix run 'github:KeishiS/adocweave?ref=vX.Y.Z' -- convert document.adoc
+nix run github:KeishiS/adocweave#adocweave-lsp
 ----
 
 利用者profileへ導入する場合は次のコマンドを使用します。
 
 [source,console]
 ----
-nix profile install github:KeishiS/AdocWeave
+nix profile install github:KeishiS/adocweave
 nix profile upgrade AdocWeave
 nix profile rollback
 nix profile remove AdocWeave
@@ -38,27 +38,55 @@ runtime closureへ含めません。
 
 == 配布物の選択
 
-[cols="2,2,3",options="header"]
+[cols="2,2,2,2",options="header"]
 |===
-|用途 |x86-64 |ARM64
+|用途 |Linux |macOS |Windows
 
 |CLI
-|`adocweave-cli-x86_64-unknown-linux-musl.tar.xz`
-|`adocweave-cli-aarch64-unknown-linux-musl.tar.xz`
+|`adocweave-cli-<target>.zip`
+|`adocweave-cli-<target>.zip`
+|`adocweave-cli-x86_64-pc-windows-msvc.zip`
 
 |Language Server
-|`adocweave-lsp-x86_64-unknown-linux-musl.tar.xz`
-|`adocweave-lsp-aarch64-unknown-linux-musl.tar.xz`
+|`adocweave-lsp-<target>.zip`
+|`adocweave-lsp-<target>.zip`
+|`adocweave-lsp-x86_64-pc-windows-msvc.zip`
 
 |browser library
-2+|`adocweave-browser-<version>.tar.xz`
+3+|`adocweave-browser-<version>.tar.xz`
 
 |Zed開発拡張
-2+|`adocweave-zed-<version>.tar.xz`
+3+|`adocweave-zed-<version>.tar.xz`
+
+|VS Code拡張
+3+|`adocweave-vscode-<version>.vsix`
 |===
 
-``uname -m``が``x86_64``ならx86-64、``aarch64``または``arm64``ならARM64を選びます。Linux musl binaryは静的リンクされ、
-対応architectureのglibc／musl distributionで利用できます。macOS、Windowsおよび32-bit Linux向けassetは配布しません。
+targetはLinux ARM64の``aarch64-unknown-linux-musl``、Linux x86-64の``x86_64-unknown-linux-musl``、
+macOS ARM64の``aarch64-apple-darwin``、macOS x86-64の``x86_64-apple-darwin``、Windows x86-64の
+``x86_64-pc-windows-msvc``です。32-bit環境とWindows ARM64にはmanaged binaryを配布しません。
+
+Linux musl binaryは静的linkします。macOSは13.0以降、WindowsはWindows 10 version 1809以降を対象とし、
+system libraryへ動的linkします。macOSとWindowsのbinaryにはOS code signingを行っていないため、
+download元に応じてOSの警告が表示される場合があります。
+
+macOSでは展開後にquarantine属性を確認できます。
+
+[source,console]
+----
+xattr -p com.apple.quarantine "$ROOT/bin/adocweave" || true
+xattr -p com.apple.quarantine "$ROOT/bin/adocweave-lsp" || true
+----
+
+実行がGatekeeperにより拒否された場合は、checksumとattestationが正しいことを先に確認します。そのうえで
+配布元を信頼すると判断した実行fileだけからquarantine属性を削除します。この操作はOSの保護を弱めるため、
+親directoryへ再帰的に適用しません。
+
+[source,console]
+----
+xattr -d com.apple.quarantine "$ROOT/bin/adocweave"
+xattr -d com.apple.quarantine "$ROOT/bin/adocweave-lsp"
+----
 
 == 取得と完全性の検証
 
@@ -68,10 +96,10 @@ GitHub CLIを使う例は次のとおりです。``VERSION``と``ASSET``を実�
 [source,console]
 ----
 VERSION=X.Y.Z
-ASSET=adocweave-cli-x86_64-unknown-linux-musl.tar.xz
+ASSET=adocweave-cli-x86_64-unknown-linux-musl.zip
 mkdir "adocweave-$VERSION"
 gh release download "v$VERSION" \
-  --repo KeishiS/AdocWeave \
+  --repo KeishiS/adocweave \
   --pattern "$ASSET" \
   --pattern sha256.sum \
   --dir "adocweave-$VERSION"
@@ -80,15 +108,16 @@ sha256sum --check --ignore-missing sha256.sum
 ----
 
 GitHub CLIを使わない場合は、Release画面から各assetを個別に保存します。HTMLをarchive名で保存する事故を避けるため、
-download後に``tar -tJf <archive>``も成功することを確認します。``curl | sh``形式のinstallerは提供しません。
+download後にnative archiveでは``unzip -t <archive>``、browserとZedのarchiveでは
+``tar -tJf <archive>``も成功することを確認します。``curl | sh``形式のinstallerは提供しません。
 
 checksumとは別に、必要なassetのGitHub Artifact Attestationを検証します。
 
 [source,console]
 ----
 gh attestation verify "$ASSET" \
-  --repo KeishiS/AdocWeave
-gh attestation verify sha256.sum --repo KeishiS/AdocWeave
+  --repo KeishiS/adocweave
+gh attestation verify sha256.sum --repo KeishiS/adocweave
 ----
 
 checksumは取得したbyte列が配布時の値と一致することを示します。attestationは、そのbyte列が対象repositoryの
@@ -107,10 +136,11 @@ PREFIX="$HOME/.local"
 ROOT="$PREFIX/lib/adocweave/$VERSION"
 
 mkdir -p "$ROOT/bin" "$PREFIX/bin" "$PREFIX/share/adocweave/$VERSION"
-tar -xJf "adocweave-cli-$TARGET.tar.xz"
-tar -xJf "adocweave-lsp-$TARGET.tar.xz"
-install -m 0755 "adocweave-cli-$TARGET/adocweave" "$ROOT/bin/adocweave"
-install -m 0755 "adocweave-lsp-$TARGET/adocweave-lsp" "$ROOT/bin/adocweave-lsp"
+mkdir "cli-$VERSION" "lsp-$VERSION"
+unzip "adocweave-cli-$TARGET.zip" -d "cli-$VERSION"
+unzip "adocweave-lsp-$TARGET.zip" -d "lsp-$VERSION"
+install -m 0755 "cli-$VERSION/adocweave" "$ROOT/bin/adocweave"
+install -m 0755 "lsp-$VERSION/adocweave-lsp" "$ROOT/bin/adocweave-lsp"
 tar -xJf "adocweave-browser-$VERSION.tar.xz" -C "$PREFIX/share/adocweave/$VERSION"
 mv "$PREFIX/share/adocweave/$VERSION/adocweave-browser-$VERSION" \
   "$PREFIX/share/adocweave/$VERSION/browser"
@@ -148,22 +178,63 @@ xref:command-line.adoc[コマンドライン]の``adocweave completion``で生�
 VERSION=X.Y.Z
 TARGET=x86_64-unknown-linux-musl
 sudo install -d "/opt/adocweave/$VERSION/bin"
-sudo install -m 0755 "adocweave-cli-$TARGET/adocweave" \
+sudo install -m 0755 "cli-$VERSION/adocweave" \
   "/opt/adocweave/$VERSION/bin/adocweave"
-sudo install -m 0755 "adocweave-lsp-$TARGET/adocweave-lsp" \
+sudo install -m 0755 "lsp-$VERSION/adocweave-lsp" \
   "/opt/adocweave/$VERSION/bin/adocweave-lsp"
 sudo ln -sfn "/opt/adocweave/$VERSION" /opt/adocweave/current
 sudo ln -sfn /opt/adocweave/current/bin/adocweave /usr/local/bin/adocweave
 sudo ln -sfn /opt/adocweave/current/bin/adocweave-lsp /usr/local/bin/adocweave-lsp
 ----
 
-browser libraryとZed拡張は利用者ごとの設定を伴うため、原則としてuser-local配置を使用します。
+browser library、Zed拡張およびVS Code拡張は利用者ごとの設定を伴うため、原則としてuser-local配置を使用します。
+
+=== Windowsへの導入
+
+PowerShellで検証済みZIPをversion別directoryへ展開し、そのdirectoryを利用者`PATH`へ追加します。
+
+[source,powershell]
+----
+$Version = "X.Y.Z"
+$Target = "x86_64-pc-windows-msvc"
+$Root = Join-Path $env:LOCALAPPDATA "AdocWeave\$Version"
+New-Item -ItemType Directory -Force $Root | Out-Null
+Expand-Archive "adocweave-cli-$Target.zip" (Join-Path $Root "cli")
+Expand-Archive "adocweave-lsp-$Target.zip" (Join-Path $Root "lsp")
+& (Join-Path $Root "cli\adocweave.exe") --version --json
+& (Join-Path $Root "lsp\adocweave-lsp.exe") --version --json
+
+$ManagedRoot = [Regex]::Escape((Join-Path $env:LOCALAPPDATA "AdocWeave\"))
+$Previous = [Environment]::GetEnvironmentVariable("Path", "User") -split ";" |
+  Where-Object { $_ -and $_ -notmatch "^$ManagedRoot.*\\(cli|lsp)$" }
+$Next = @((Join-Path $Root "cli"), (Join-Path $Root "lsp")) + $Previous
+[Environment]::SetEnvironmentVariable("Path", ($Next -join ";"), "User")
+$env:Path = $Next -join ";"
+Get-Command adocweave.exe
+Get-Command adocweave-lsp.exe
+----
+
+更新時は新しいversion directoryを作成して動作確認後に`PATH`を切り替えます。rollbackでは以前の
+versionを`$Version`へ指定して同じ`PATH`更新部分を再実行します。実行中の`.exe`を上書きせず、VS Codeと
+Zedを終了してから不要なversion directoryだけを削除します。
+
+Windowsから完全に削除する場合は、上記と同じ正規表現でAdocWeave管理下の2 entryだけを利用者`PATH`から
+除き、導入したversion directoryを削除します。
+
+[source,powershell]
+----
+$ManagedRoot = [Regex]::Escape((Join-Path $env:LOCALAPPDATA "AdocWeave\"))
+$Next = [Environment]::GetEnvironmentVariable("Path", "User") -split ";" |
+  Where-Object { $_ -and $_ -notmatch "^$ManagedRoot.*\\(cli|lsp)$" }
+[Environment]::SetEnvironmentVariable("Path", ($Next -join ";"), "User")
+Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
+----
 
 == 更新、バージョン固定およびロールバック
 
 新versionは既存directoryへ上書きせず、別のversion directoryへ展開・検証します。``current``を切り替えた後に
 ``--version --json``を確認します。rollbackは``current``を以前のversion directoryへ戻すだけであり、動作確認が終わるまで
-旧directoryを削除しません。CLI、LSP、browser、Zed拡張は同じRelease versionを組み合わせ、異なるrelease trainを
+旧directoryを削除しません。CLI、LSP、browser、Zed拡張およびVS Code拡張は同じRelease versionを組み合わせ、異なるrelease trainを
 混在させません。
 
 [#browser-library-deployment]
@@ -232,7 +303,8 @@ Zed Extension Galleryへ公開しないため、展開済み``$HOME/.local/share
 導入します。Extension Galleryの``Install Dev Extension``またはコマンドパレットの``zed: install dev extension``から、この
 directoryを選びます。source repositoryのcheckoutは不要です。
 
-=== Language Serverの選択
+[#zed-language-server-selection]
+=== ZedのLanguage Server選択
 
 Zed拡張は、次の順序で最初に利用できる``adocweave-lsp``を選びます。
 
@@ -257,6 +329,10 @@ Cacheはpackage versionとtargetごとに分けます。起動時にmarkerとbin
 対応するmanaged binaryがないplatform、manifestの不一致、assetの欠落、byte数またはhashの不一致は、
 実行ファイルを起動する前にエラーとして表示します。
 
+Zed extension APIからhost OSのversionは取得できません。そのためmacOSとWindowsの最小OS versionは
+download前には判定せず、配布binaryに設定したdeployment targetをOS loaderが強制します。最小version未満では
+binaryを起動できません。
+
 初回buildではZedがRust extension用toolchainと、固定commitの``tree-sitter-asciidoc`` grammarを取得します。初回build後は
 拡張のworking directoryにある検証済みLSP cacheをofflineでも利用できます。初回から完全offlineで導入できるという意味では
 ありません。Managed binaryを使用する場合は、Zed設定のbinary指定を外し、``PATH``上に別の
@@ -265,10 +341,56 @@ Cacheはpackage versionとtargetごとに分けます。起動時にmarkerとbin
 更新時は新versionのZed directoryを別に展開し、dev extensionをそのdirectoryへ再設定します。旧directoryは、新versionの
 managed LSP取得とeditor機能を確認するまで保持します。
 
+[#vscode-installation]
+== VS Codeへの導入
+
+Visual Studio MarketplaceとOpen VSXへ公開しないため、同じReleaseの
+``adocweave-vscode-<version>.vsix``を検証して手動で導入します。
+
+[source,console]
+----
+code --install-extension "adocweave-vscode-$VERSION.vsix" --force
+----
+
+VS CodeのExtensions viewにAdocWeaveと対象versionが表示されることを確認します。更新時は新versionの
+VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは以前のReleaseから検証済みVSIXを取得し、
+同じ方法で導入します。拡張とLanguage Serverのversionは完全一致が必要です。
+
+[#vscode-language-server-selection]
+=== VS CodeのLanguage Server選択
+
+VS Code拡張は次の順序でLanguage Serverを選びます。
+
+. ``adocweave.server.path``で明示した絶対path
+. VS Code extension hostの``PATH``上にある互換version
+. 拡張のglobal storageにある検証済みmanaged cache
+. 同じversionのGitHub Releaseにあるmanaged binary
+
+workspaceの``adocweave.server.path``は、VS Codeがそのworkspaceを信頼している
+場合だけ使用します。未信頼workspaceでは利用者scopeの値だけを使用します。明示pathのversionが一致しない
+場合は別のbinaryへfallbackしません。``PATH``上の不一致では警告を表示してmanaged binaryへ進みます。
+
+Managed binaryは配布manifest、archive byte数、SHA-256、展開後binaryおよび``--version --json``を検証してから
+起動します。対応platformがない場合はdownloadしません。検証済みcacheはofflineでも利用できます。
+自動取得を無効にする場合は``adocweave.server.download``を``false``にし、互換binaryを明示設定または``PATH``へ
+配置します。
+
+拡張の再起動には``AdocWeave: Language Serverを再起動``、managed cacheだけの削除には
+``AdocWeave: 管理対象Language Serverを削除``を使用します。後者はLanguage Serverを停止してから
+AdocWeave拡張のglobal storage内にあるmanaged server専用directoryだけを削除します。
+
 == 削除
 
-Zedでは最初にExtension GalleryからAdocWeave dev extensionを削除し、Zedを終了します。続いて、導入したversionを指定して
-AdocWeave管理対象だけを削除します。
+Zedでは最初にExtension GalleryからAdocWeave dev extensionを削除し、Zedを終了します。VS Codeでは先に
+``AdocWeave: 管理対象Language Serverを削除``を実行し、Extensions viewまたは次のcommandで拡張を削除して
+VS Codeを終了します。
+
+[source,console]
+----
+code --uninstall-extension adocweave.adocweave-vscode
+----
+
+続いて、導入したversionを指定してAdocWeave管理対象だけを削除します。
 
 [source,console]
 ----

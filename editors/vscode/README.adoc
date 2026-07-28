@@ -1,0 +1,10 @@
+= AdocWeave for Visual Studio Code
+
+この拡張はAsciiDocの基本構文色付けと、`adocweave-lsp`による診断、補完、移動、整形および
+Semantic Tokensを提供します。
+
+拡張は明示設定、`PATH`、検証済みmanaged binaryの順でLanguage Serverを選択します。
+workspaceの設定値は、Visual Studio Codeがそのworkspaceを信頼している場合だけ使用します。
+
+Visual Studio MarketplaceおよびOpen VSXへは公開しません。検証済みVSIXをGitHub Releasesから
+手動で導入します。

@@ -14,9 +14,10 @@ versionを本文へ重複して記載しません。
 
 == 配布境界
 
-CLI、Language Server、WebAssembly、browser packageおよびZed拡張は、一つのpackage versionとして
-GitHub Releasesへまとめて公開します。crates.io、npm、Homebrew、WinGetおよびZed Extension Registryには
-公開しません。GitHubが自動生成するsource archiveは、検証対象のbinary配布物に含めません。
+CLI、Language Server、WebAssembly、browser package、Zed拡張およびVS Code拡張は、一つのpackage versionとして
+GitHub Releasesへまとめて公開します。crates.io、npm、Homebrew、WinGet、Visual Studio Marketplace、
+Open VSXおよびZed Extension Registryには公開しません。GitHubが自動生成するsource archiveは、
+検証対象のbinary配布物に含めません。
 
 公開には``vX.Y.Z``形式のstable tagだけを使用します。tag、source commit、release manifestおよび各成果物の
 versionが一致しない場合は公開しません。異なるpackage versionの成果物を組み合わせて利用することも
@@ -27,8 +28,8 @@ archive、manifest、log、source codeまたは設定例へ埋め込みません
 
 == ネイティブアーカイブ
 
-CLIとLanguage Serverは別々の``.tar.xz`` archiveとして配布します。各archiveは同名のroot directoryを持ち、
-次のファイルだけを含めます。
+CLIとLanguage Serverは別々の``.zip`` archiveとして配布します。全platformで同じflatなarchive layoutを使用し、
+次のfileだけを含めます。
 
 * 対応する実行ファイル
 * `README.adoc`
@@ -36,22 +37,33 @@ CLIとLanguage Serverは別々の``.tar.xz`` archiveとして配布します。�
 * `LICENSE-APACHE`
 * `THIRD_PARTY_NOTICES.adoc`
 
-Native binaryはCargoの``dist`` profileで構築し、対応するLinux architectureの静的実行ファイルとして
-配布します。具体的なprofileとtargetはCargo設定と配布計画を基準とします。検証ではELF architectureを
-照合し、dynamic dependencyがないことと、実行ファイルにUnixの実行権限があることを確認します。
+Native binaryはCargoの``dist`` profileで対象OSとarchitectureのnative runner上に構築します。具体的な
+target、runner、最小OS version、linkage、archiveおよび実行file名は配布計画を基準とします。Linux musl
+binaryではELF architecture、静的linkおよび実行権限を検査します。macOS binaryではMach-O architecture、
+deployment target、system dynamic libraryだけへのlinkおよび実行権限を検査します。Windows binaryでは
+PE architecture、``.exe``名、CRLF入力、空白とUnicodeを含むpathおよびstdio process lifecycleを検査します。
 
-``THIRD_PARTY_NOTICES.adoc``はlockfileから生成し、配布対象crateの名前、versionおよびSPDX licenseを
-列挙します。license情報がないpackageは受理しません。
+Native binaryへDeveloper ID、notarizationまたはAuthenticodeによるOS code signingは行いません。GitHub Artifact
+Attestationはbuild provenanceであり、OS code signingの代替ではありません。macOSではdownload元に応じて
+quarantine確認が必要になる場合があり、Windowsでは発行元未署名の警告が表示される場合があります。
+
+``THIRD_PARTY_NOTICES.adoc``はCargoとVS Code拡張のlockfileから生成し、配布対象packageの名前、versionおよび
+SPDX licenseを列挙します。license情報がないpackageは受理しません。
 
 展開後のsmoke testは、workspaceの``target``にある実行ファイルを誤用しないよう、新しい一時directory内の
 実行ファイルだけを使用します。CLIではversion、文書検査、変換および整形を確認します。Language Serverでは
 versionに加え、初期化、文書open、診断、shutdownおよびexitをstdio経由で確認します。
 
-== ブラウザーパッケージとZed拡張
+== ブラウザーパッケージとエディター拡張
 
-Browser packageとZed拡張は、Native archiveと同じReleaseへ一度だけ追加します。Browser packageの内容と
-公開APIはxref:core-profile.adoc#wasm-api[WebAssembly API]、展開と配備は
+Browser package、Zed拡張およびVSIXは、Native archiveと同じReleaseへ一度だけ追加します。Browser packageの
+内容と公開APIはxref:core-profile.adoc#wasm-api[WebAssembly API]、展開と配備は
 xref:../user-guide/release-installation.adoc#browser-library-deployment[Browser libraryの配備]を基準とします。
+
+VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの`node_modules`とsource mapを同梱しません。
+許可file一覧、license、package size、機械固有pathの不在および同一sourceから2回構築したbyte列の一致を確認します。
+VSIXのmanaged Language Serverは同じversionの配布manifestだけを使用します。この判断の背景は
+xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]を参照してください。
 
 == 配布メタデータ
 

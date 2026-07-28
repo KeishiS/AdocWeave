@@ -30,7 +30,14 @@ export function validateDependencyBoundaries({ inventory, exceptions, exists, ma
     }
   }
 
-  const required = new Set(["native-and-wasm", "zed-extension", "browser-worker", "ci-and-development-tools", "fuzz-harness"]);
+  const required = new Set([
+    "native-and-wasm",
+    "zed-extension",
+    "browser-worker",
+    "vscode-extension",
+    "ci-and-development-tools",
+    "fuzz-harness",
+  ]);
   for (const id of required) if (!ids.has(id)) fail(`missing dependency boundary: ${id}`);
 
   for (const exception of exceptions.exceptions) {
@@ -45,7 +52,7 @@ export function validateDependencyBoundaries({ inventory, exceptions, exists, ma
     if (!/^\d{4}-\d{2}-\d{2}$/.test(exception.expires) || exception.expires < today) {
       fail(`dependency exception ${exception.id} is expired or has an invalid expiry`);
     }
-    if (!/^https:\/\/github\.com\/KeishiS\/AdocWeave\/issues\/\d+$/.test(exception.issue)) {
+    if (!/^https:\/\/github\.com\/KeishiS\/adocweave\/issues\/\d+$/.test(exception.issue)) {
       fail(`dependency exception ${exception.id} must reference a repository issue`);
     }
   }
@@ -57,6 +64,7 @@ export function validateDependabotConfig(config) {
     "cargo\u0000/",
     "cargo\u0000/editors/zed",
     "cargo\u0000/fuzz",
+    "npm\u0000/editors/vscode",
     "github-actions\u0000/",
   ]);
   const actual = new Set();

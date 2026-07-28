@@ -15,33 +15,31 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "CLIとLanguage Serverが、厳密なschema version付きの`.adocweave.toml`を共通のプロジェクト設定として読み込むようになりました。",
-  "`adocweave check`へCI用の失敗閾値、安定したJSON・GitHub Actions・SARIF出力、重要度別summaryを追加しました。",
-  "runtimeに依存しない`adocweave-workspace` crateを追加し、上限付きdisk resource、editor overlay、immutable snapshot、依存関係追跡および古い解析結果の拒否を提供します。",
-  "CLIが複数file、directoryおよびglobを決定的な順序で処理します。整形と一部の自動修正では、同じdirectory内で検証付きの原子的置換を利用できます。",
-  "Bash、Zsh、FishおよびPowerShellの補完scriptをCLIから生成できます。",
+  "Linux ARM64／x86-64、macOS ARM64／x86-64およびWindows x86-64向けに、CLIとLanguage Serverの検証済みZIPを提供します。",
+  "VS Code拡張を追加しました。基本構文色付けと、Language Serverによる診断、補完、定義移動、整形などを利用できます。",
+  "VS Code拡張とZed拡張は、配布manifestで対象platform、archive、byte数およびSHA-256を検証してmanaged Language Serverを導入します。",
+  "VSIXをCLI、Language Server、browser packageおよびZed拡張と同じGitHub Releaseへ統合しました。",
+  "配布物のchecksum、SBOM、Artifact Attestationおよびclean installation検査を全対象platformへ拡張しました。",
 ];
 
 const contractNotes = [
   `統一package version：${manifest.packageVersion}`,
+  `release manifest schemaをversion 2から${manifest.schemaVersion}、distribution plan schemaをversion 1から${plan.schemaVersion}、配布manifest schemaをversion 1から2へ更新しました。旧schemaを読むconsumerは、新しいVSIX asset、全platform共通ZIPおよびplatform選択情報へ対応してください。`,
   `WASM protocol schema version：${protocol.schemaVersion}、Worker protocol version：${protocol.workerProtocolVersion}。古いrequestとWorker envelopeは拒否されます。`,
-  "プロジェクト設定schema version 1は、不明なfieldと未対応のschema versionを拒否します。設定によってfilesystemまたはnetworkへの権限が付与されることはありません。",
-  "`adocweave check`の既定値は`--fail-on error`です。coreのerror診断でもprocessが失敗するようになりました。より厳格なgateには`--fail-on warning`、報告だけを行う場合は`--fail-on never`を使用してください。",
-  "human、JSON、GitHub ActionsおよびSARIFの各形式では、診断集合、順序および終了状態が一致します。`--summary`は件数をstderrへ出力します。",
-  "`format --write`と`check --fix`は置換前にすべての入力を検査し、symlinkと同時変更を拒否します。明示的に設定しない限り、modeと既存の改行規則を維持します。",
-  "`check --fix`は`Applicability::Always`の修正だけを適用し、重複するeditを拒否します。",
-  "Rust workspace APIでは型付きresource ID、revisionおよびgenerationを使用します。完了した解析結果は、現在のworkspace状態に対してacceptする必要があります。",
-  "`ResourceDocument.source`を`String`から`Arc<str>`へ変更しました。呼出側では共有されたimmutableなsource storageを使用してください。",
-  "新しい`adocweave-config`と`adocweave-workspace` crateはrepository内専用であり、crates.ioへは公開しません。",
+  "native archive形式を全platformでflatなZIPへ統一しました。従来のLinux向け`.tar.xz`を参照する導入scriptは更新が必要です。",
+  "VS Code拡張は、明示した絶対path、`PATH`、検証済みcache、managed downloadの順で同じversionのLanguage Serverを選択します。",
+  "未信頼workspaceのLanguage Server path設定は使用しません。任意の引数、環境変数またはshell commandをworkspace設定から受け取りません。",
+  "未対応platformではmanaged downloadを開始しません。同じversionの外部Language Serverを明示設定した場合だけ利用できます。",
+  "VSIXは決定的にbuildし、許可file、license、size、source mapおよび機械固有pathの不在を検査します。",
+  "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const knownConstraints = [
   `対応Rust toolchain：${manifest.rustVersion}。このreleaseのflake.lockで固定しています。`,
-  "native binaryの対応環境はLinux x86-64とARM64だけです。",
-  "既定では、相対linkはhostが有効なURL policyで許可されたURLへ解決するまでHTMLで無効です。hostは文書に記述された相対URLを明示的に許可できます。",
-  "local targetの検証では、一つのcommandの実行中にfilesystemが変化しないことを仮定します。symlinkの同時置換に対する強化はIssue #56で追跡しています。",
-  "HTML5検証は標準適合性を確認しますが、生成したmarkupを信頼済みDOMにするものではありません。",
-  "Zed拡張はdevelopment extensionとして導入します。Zed Extension Galleryへは公開しません。",
+  "native binaryは配布計画に定義したLinux、macOSおよびWindows環境へ提供します。macOSとWindowsのbinaryはOSのsystem libraryへ動的linkします。",
+  "macOS binaryへDeveloper ID署名とnotarizationを行わず、Windows binaryへAuthenticode署名を行いません。OSの警告が表示された場合はchecksumとattestationを確認してください。",
+  "Zed拡張はdevelopment extension、VS Code拡張はVSIXとして手動導入します。拡張registryへは公開しません。",
+  "Zed extension APIではhost OS versionを取得できないため、macOSとWindowsの最小versionはdownload前ではなく、配布binaryのdeployment targetをOS loaderが強制します。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
 ];
 
@@ -51,22 +49,21 @@ function markdownList(items) {
 
 export function buildReleaseNotes(tag) {
   if (tag !== `v${manifest.packageVersion}`) throw new Error("Release Notesのtagがpackage versionと一致しません");
-  const targets = plan.targets.map((target) => `- Linux ${target}`).join("\n");
+  const osNames = { darwin: "macOS", linux: "Linux", win32: "Windows" };
+  const targets = plan.targets
+    .map((target) => `- ${osNames[target.os]} ${target.architecture}（\`${target.triple}\`）`)
+    .join("\n");
   const notes = `## 主な変更\n\n${markdownList(highlights)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${markdownList(contractNotes)}\n\n` +
-    "consumerは記載されたpackage versionを厳密に一致させる必要があります。異なるversionのCLI、LSP、browserまたはZed向け配布物を混在させないでください。hostは`resourceQueries`を要求し、取得に成功した各resourceを具体的なMIME typeで解決し、文書のrevisionごとに`RenderInputs`を再構築する必要があります。\n\n" +
+    "consumerは記載されたpackage versionを厳密に一致させる必要があります。異なるversionのCLI、LSP、browser、ZedまたはVS Code向け配布物を混在させないでください。\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n${markdownList(knownConstraints)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n` +
-    "すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/AdocWeave`で検証してください。\n\n" +
+    "すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/adocweave`で検証してください。\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
-    "更新前に既存のCIを確認してください。coreのerror診断が既定の終了状態へ影響するようになりました。従来の報告のみの動作を一時的に維持するには`adocweave check --fail-on never`を使用し、その後プロジェクトの閾値を明示してください。\n\n" +
-    "共通policyが必要な場合だけプロジェクト設定を作成してください。schema versionは必須です。\n\n" +
-    "```toml\nschema-version = 1\n\n[lint]\nmax-diagnostics = 1000\n```\n\n" +
-    "CIではv0.13.0のCLIを固定し、機械可読なstdoutとsummaryを分離してください。\n\n" +
-    "```sh\nadocweave check --fail-on warning --format json --summary docs\n```\n\n" +
-    "preprocess snapshotを構築するRust consumerは、所有するtextを`Arc<str>`へ変換してください。複数文書を管理するconsumerはresourceとoverlayの状態を`adocweave-workspace`へ移行できます。単一文書向けの`Engine`は引き続き利用できます。\n\n" +
-    "version別directoryへ導入し、検証後にだけ`current` symlinkを切り替えてください。受入確認が成功するまで以前のversionを残し、rollback時はそのsymlinkを元へ戻してください。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
+    "Linuxの導入scriptではarchive拡張子を`.zip`へ変更し、flatなarchive rootから実行fileを配置してください。新versionは既存directoryへ上書きせず、検証後にだけ選択先を切り替えます。\n\n" +
+    "VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。\n\n" +
+    "rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
   return notes;
 }
 

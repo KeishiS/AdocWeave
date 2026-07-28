@@ -17,7 +17,7 @@ link:../../release-manifest.json[release manifest]
 公開結果を保存するアプリケーションは、AdocWeaveの更新時にHTMLおよび検索用情報を再構築してください。
 
 0.y.zの間はminor版で互換性のない変更を行う場合があります。更新前に
-https://github.com/KeishiS/AdocWeave/releases[GitHub Releases]のRelease Notesを確認してください。
+https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesを確認してください。
 
 == 対応する書式
 

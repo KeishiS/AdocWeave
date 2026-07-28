@@ -1,0 +1,15 @@
+= VS Code
+:name: first
+
+[#target]
+== Section
+
+{name}
+
+See <<target>> and https://example.com[Example].
+
+include::part.adoc[]
+
+text  
+
+*bold*

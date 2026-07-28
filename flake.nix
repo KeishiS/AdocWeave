@@ -13,6 +13,7 @@
       supportedSystems = [
         "aarch64-darwin"
         "aarch64-linux"
+        "x86_64-darwin"
         "x86_64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
@@ -37,7 +38,9 @@
         ];
         targets = [
           "aarch64-unknown-linux-musl"
+          "aarch64-apple-darwin"
           "x86_64-unknown-linux-musl"
+          "x86_64-apple-darwin"
           "wasm32-unknown-unknown"
           "wasm32-wasip2"
         ];
@@ -68,7 +71,7 @@
         '';
         meta = {
           description = "AsciiDoc converter and Language Server";
-          homepage = "https://github.com/KeishiS/AdocWeave";
+          homepage = "https://github.com/KeishiS/adocweave";
           license = with pkgs.lib.licenses; [ asl20 mit ];
           mainProgram = "adocweave";
           platforms = pkgs.lib.platforms.linux;
@@ -191,17 +194,46 @@
             wasm-bindgen-cli
             xz
             yq-go
+            zip
+            unzip
             adocweave-fuzz
           ];
-          shell = packages: pkgs.mkShell {
-            inherit packages;
-            ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
-            RUST_SRC_PATH = "${developmentRust pkgs}/lib/rustlib/src/rust/library";
-          };
+          vscodeRuntime = with pkgs; [
+            alsa-lib
+            at-spi2-atk
+            cairo
+            cups
+            dbus
+            expat
+            glib
+            gtk3
+            libgbm
+            libdrm
+            libxkbcommon
+            mesa
+            nspr
+            nss
+            pango
+            systemd
+            libx11
+            libxcomposite
+            libxdamage
+            libxext
+            libxfixes
+            libxrandr
+            libxcb
+          ];
+          shell = packages: pkgs.mkShell ({
+              inherit packages;
+              ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
+              RUST_SRC_PATH = "${developmentRust pkgs}/lib/rustlib/src/rust/library";
+            } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath vscodeRuntime;
+            });
         in
         {
-          default = shell (commonPackages ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.chromium ]);
-          ci = shell commonPackages;
+          default = shell (commonPackages ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.chromium pkgs.xvfb ]);
+          ci = shell (commonPackages ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.xvfb ]);
           html5 = pkgs.mkShell {
             packages = [
               pkgs.nodejs

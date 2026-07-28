@@ -27,7 +27,8 @@ function spdxId(prefix, value) {
 }
 
 function archiveFiles(path, archiveName) {
-  const members = execFileSync("tar", ["-tJf", path], { encoding: "utf8" })
+  const zip = archiveName.endsWith(".zip") || archiveName.endsWith(".vsix");
+  const members = execFileSync(zip ? "unzip" : "tar", zip ? ["-Z1", path] : ["-tJf", path], { encoding: "utf8" })
     .trimEnd()
     .split("\n")
     .filter(Boolean);
@@ -37,7 +38,9 @@ function archiveFiles(path, archiveName) {
       fail(`unsafe archive member in ${archiveName}: ${member}`);
     }
     if (member.endsWith("/")) continue;
-    const contents = execFileSync("tar", ["-xJOf", path, member], { maxBuffer: 64 * 1024 * 1024 });
+    const contents = execFileSync(zip ? "unzip" : "tar", zip ? ["-p", path, member] : ["-xJOf", path, member], {
+      maxBuffer: 64 * 1024 * 1024,
+    });
     files.push({
       SPDXID: spdxId("File", `${archiveName}\0${member}`),
       checksums: [
@@ -106,6 +109,45 @@ function frontendPackage() {
   };
 }
 
+function npmPackage(name, version, license = "NOASSERTION") {
+  const [namespace, packageName] = name.startsWith("@") ? name.split("/", 2) : [null, name];
+  const purlName = namespace
+    ? `${encodeURIComponent(namespace)}/${encodeURIComponent(packageName)}`
+    : encodeURIComponent(packageName);
+  return {
+    SPDXID: spdxId("NpmPackage", `${name}\0${version}`),
+    downloadLocation: "NOASSERTION",
+    copyrightText: "NOASSERTION",
+    externalRefs: [{
+      referenceCategory: "PACKAGE-MANAGER",
+      referenceLocator: `pkg:npm/${purlName}@${version}`,
+      referenceType: "purl",
+    }],
+    filesAnalyzed: false,
+    licenseConcluded: "NOASSERTION",
+    licenseDeclared: license,
+    name,
+    versionInfo: version,
+  };
+}
+
+function vscodePackages() {
+  const packageJson = readJson("editors/vscode/package.json");
+  const lock = readJson("editors/vscode/package-lock.json");
+  if (lock.lockfileVersion !== 3 || lock.packages?.[""]?.version !== packageJson.version) {
+    fail("VS Code package lock does not match its manifest");
+  }
+  const packages = [npmPackage(packageJson.name, packageJson.version, packageJson.license)];
+  for (const [path, entry] of Object.entries(lock.packages)) {
+    if (!path || entry.dev === true || typeof entry.version !== "string") continue;
+    const name = entry.name ?? path.split("node_modules/").at(-1);
+    if (!name) fail(`VS Code package lock entry has no name: ${path}`);
+    packages.push(npmPackage(name, entry.version, entry.license));
+  }
+  return [...new Map(packages.map((entry) => [entry.SPDXID, entry])).values()]
+    .sort((left, right) => compareText(left.SPDXID, right.SPDXID));
+}
+
 function commitTimestamp(commit) {
   const value = execFileSync("git", ["show", "-s", "--format=%cI", commit], {
     cwd: ROOT,
@@ -136,7 +178,7 @@ export function buildMetadata(directory, sourceCommit) {
   const distributionManifest = {
     assets: assets.map(({ path: _path, ...asset }) => asset),
     packageVersion: plan.packageVersion,
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceCommit,
   };
   validateDistributionManifest(distributionManifest, plan);
@@ -145,6 +187,7 @@ export function buildMetadata(directory, sourceCommit) {
   const zedCargo = cargoPackages("editors/zed/Cargo.toml");
   const allCargo = [...new Map([...cargo, ...zedCargo].map((entry) => [entry.SPDXID, entry])).values()];
   const frontend = frontendPackage();
+  const vscodeNpm = vscodePackages();
   const archivePackages = [];
   const files = [];
   const relationships = [];
@@ -178,12 +221,16 @@ export function buildMetadata(directory, sourceCommit) {
     }
     const dependencies = asset.kind === "browser"
       ? [...cargo, frontend]
-      : asset.kind === "zed" ? zedCargo : cargo;
+      : asset.kind === "zed"
+        ? zedCargo
+        : asset.kind === "vscode"
+          ? vscodeNpm
+          : cargo;
     for (const dependency of dependencies) {
       relationships.push({ spdxElementId: packageId, relationshipType: "DEPENDS_ON", relatedSpdxElement: dependency.SPDXID });
     }
   }
-  const packages = [...archivePackages, ...allCargo, frontend]
+  const packages = [...archivePackages, ...allCargo, frontend, ...vscodeNpm]
     .sort((left, right) => compareText(left.SPDXID, right.SPDXID));
   relationships.sort((left, right) =>
     compareText(

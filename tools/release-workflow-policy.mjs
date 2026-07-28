@@ -96,7 +96,7 @@ export function validatePinnedActions(workflows) {
   }
 }
 
-export function validateReleaseWorkflowPolicy({ release, publish, contract, smoke, dist }) {
+export function validateReleaseWorkflowPolicy({ release, publish, contract, smoke, dist, plan }) {
   const releaseDoc = parseWorkflow("release.yml", release);
   const publishDoc = parseWorkflow("release-publish.yml", publish);
   const contractDoc = parseWorkflow("quality.yml", contract);
@@ -105,6 +105,21 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   const releaseJobs = releaseDoc.jobs ?? {};
   const publishJob = publishDoc.jobs?.publish;
   const contractJobs = contractDoc.jobs ?? {};
+  const expectedNativePairs = plan.targets
+    .map(({ runner, triple }) => `${triple}:${runner}`)
+    .sort();
+  for (const [label, include] of [
+    ["native build", releaseJobs["build-native"]?.strategy?.matrix?.include],
+    ["installation E2E", releaseJobs["installation-e2e"]?.strategy?.matrix?.include],
+    ["native smoke", smokeDoc.jobs?.smoke?.strategy?.matrix?.include],
+  ]) {
+    const actual = (include ?? [])
+      .map(({ runner, target }) => `${target}:${runner}`)
+      .sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expectedNativePairs)) {
+      fail(`${label} matrix must exactly match the distribution plan`);
+    }
+  }
 
   if (!Object.hasOwn(releaseDoc.on ?? {}, "pull_request") || !releaseDoc.on?.push) {
     fail("release workflow must exercise pull requests and pushes");
@@ -175,13 +190,33 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   if (release.includes("cargo-dist-installer") || release.includes("curl | sh")) {
     fail("release workflow must not execute a network-fetched cargo-dist installer");
   }
+  const windowsTools = step(
+    releaseJobs["build-native"],
+    (item) => item.name === "Fixed Windows Rust and cargo-dist installation",
+    "Windows toolchain installation is missing",
+  ).run;
+  requireCommand(windowsTools, "release-manifest.json", "Windows Rust must use the release manifest version");
+  requireCommand(windowsTools, "distribution-plan.json", "Windows cargo-dist must use the distribution plan version");
+  requireCommand(windowsTools, 'cargo install cargo-dist --version "=$distVersion" --locked', "Windows cargo-dist must be exact and locked");
+  const dumpbin = step(
+    smokeDoc.jobs?.smoke,
+    (item) => item.name === "Resolve the Visual C++ dependency inspector",
+    "Windows dependency inspection is missing",
+  );
+  if (dumpbin.if !== "runner.os == 'Windows'" || !dumpbin.run?.includes("ADOCWEAVE_DUMPBIN")) {
+    fail("Windows smoke must resolve dumpbin only on Windows");
+  }
 
   const aggregateRun = step(releaseJobs["verify-candidate"], (item) => item.name === "Complete candidate metadata generation and verification", "candidate metadata step is missing").run;
   requireCommand(aggregateRun, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");
   requireCommand(aggregateRun, "node tools/release-metadata.mjs verify artifacts", "the aggregate job must verify exact release metadata");
-  const globalStep = step(releaseJobs["build-global"], (item) => item.name === "Browser and Zed archive build and verification", "global artifact step is missing");
+  const globalStep = step(
+    releaseJobs["build-global"],
+    (item) => item.name === "Browser, Zed, and VS Code artifact build and verification",
+    "global artifact step is missing",
+  );
   const globalRun = globalStep.run;
-  requireCommand(globalRun, "nix develop .#ci -c cargo make release-global-artifacts", "uploaded browser and Zed archives must pass their complete artifact gate");
+  requireCommand(globalRun, "nix develop .#ci -c cargo make release-global-artifacts", "uploaded browser, Zed, and VS Code artifacts must pass their complete artifact gate");
   const installRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Candidate installation and complete removal", "installation E2E step is missing").run;
   requireCommand(installRun, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
   step(releaseJobs["installation-e2e"], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), "installation E2E must install the locked Nix environment");
@@ -288,6 +323,7 @@ export function loadWorkflowPolicyInputs() {
     contract: workflows["quality.yml"],
     smoke: workflows["native-artifact-smoke.yml"],
     dist: read("dist-workspace.toml"),
+    plan: JSON.parse(read("release/distribution-plan.json")),
   };
 }
 

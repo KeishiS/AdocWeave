@@ -18,8 +18,14 @@ jobs:
         include:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     steps:
@@ -30,5 +36,25 @@ jobs:
         with:
           name: artifacts-build-local-${{ matrix.target }}
           path: target/distrib
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: VS Code adapter tests
+        run: |
+          npm ci --ignore-scripts --prefix editors/vscode
+          npm test --prefix editors/vscode
+      - name: Resolve the Visual C++ dependency inspector
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem "$installation\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe was not found" }
+          "ADOCWEAVE_DUMPBIN=$($dumpbin.FullName)" >> $env:GITHUB_ENV
       - name: Extracted release binary smoke tests
         run: node tools/native-release-smoke.mjs target/distrib "${{ matrix.target }}"

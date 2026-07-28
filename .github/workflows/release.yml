@@ -82,34 +82,73 @@ jobs:
         include:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
+            build: nix
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            build: nix
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
+            build: nix
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            build: nix
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            build: windows
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - if: matrix.build == 'nix'
+        uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
       - name: Native build linker installation
+        if: startsWith(matrix.runner, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
       - name: Target archive builds
+        if: matrix.build == 'nix'
         env:
+          MACOSX_DEPLOYMENT_TARGET: '13.0'
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           args=()
           if [ -n "$RELEASE_TAG" ]; then args+=("--tag=$RELEASE_TAG"); fi
           nix develop .#ci -c tools/run-pinned-dist.sh build "${args[@]}" --artifacts=local --target="${{ matrix.target }}" --output-format=json > dist-manifest.json
+      - name: Fixed Windows Rust and cargo-dist installation
+        if: matrix.build == 'windows'
+        shell: pwsh
+        run: |
+          $rustVersion = (Get-Content release-manifest.json | ConvertFrom-Json).rustVersion
+          $distVersion = (Get-Content release/distribution-plan.json | ConvertFrom-Json).distVersion
+          rustup toolchain install $rustVersion --profile minimal --target "${{ matrix.target }}"
+          rustup override set $rustVersion
+          cargo install cargo-dist --version "=$distVersion" --locked
+          if ((dist --version) -ne "cargo-dist $distVersion") {
+            throw "cargo-dist version mismatch"
+          }
+      - name: Windows target archive builds
+        if: matrix.build == 'windows'
+        env:
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        shell: pwsh
+        run: |
+          node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
+          $arguments = @("build", "--artifacts=local", "--target=${{ matrix.target }}", "--output-format=json")
+          if ($env:RELEASE_TAG) {
+            $arguments += "--tag=$env:RELEASE_TAG"
+          }
+          dist @arguments | Out-File -Encoding utf8 dist-manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-local-${{ matrix.target }}
           if-no-files-found: error
           retention-days: 7
           path: |
-            target/distrib/adocweave-cli-${{ matrix.target }}.tar.xz
-            target/distrib/adocweave-lsp-${{ matrix.target }}.tar.xz
+            target/distrib/adocweave-cli-${{ matrix.target }}.zip
+            target/distrib/adocweave-lsp-${{ matrix.target }}.zip
 
   native-smoke:
     if: github.ref == 'refs/heads/main'
@@ -128,7 +167,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-      - name: Browser and Zed archive build and verification
+      - name: Browser, Zed, and VS Code artifact build and verification
         run: nix develop .#ci -c cargo make release-global-artifacts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -138,6 +177,7 @@ jobs:
           path: |
             target/distrib/adocweave-browser-*.tar.xz
             target/distrib/adocweave-zed-*.tar.xz
+            target/distrib/adocweave-vscode-*.vsix
 
   verify-candidate:
     if: github.ref == 'refs/heads/main'
@@ -174,17 +214,30 @@ jobs:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
             nix-system: aarch64-linux
+            nix: true
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            nix: false
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
             nix-system: x86_64-linux
+            nix: true
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            nix: false
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            nix: false
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - if: matrix.nix
+        uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
       - name: Nix package build and execution
+        if: matrix.nix
         run: >-
           nix build
           ".#checks.${{ matrix.nix-system }}.public-contract"

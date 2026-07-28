@@ -185,7 +185,7 @@ pub(crate) fn sarif_log(results: Vec<serde_json::Value>) -> String {
                 "driver": {
                     "name": "AdocWeave",
                     "version": adocweave::VERSION,
-                    "informationUri": "https://github.com/KeishiS/AdocWeave",
+                    "informationUri": "https://github.com/KeishiS/adocweave",
                 }
             },
             "results": results,

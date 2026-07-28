@@ -1,53 +1,150 @@
 {
-  "schemaVersion": 1,
-  "packageVersion": "0.13.0",
+  "schemaVersion": 2,
+  "packageVersion": "0.14.0",
   "distVersion": "0.32.0",
-  "repository": "https://github.com/KeishiS/AdocWeave",
+  "repository": "https://github.com/KeishiS/adocweave",
   "targets": [
-    "aarch64-unknown-linux-musl",
-    "x86_64-unknown-linux-musl"
+    {
+      "archive": "zip",
+      "architecture": "arm64",
+      "executableSuffix": "",
+      "linkage": "static",
+      "minimumOsVersion": null,
+      "os": "linux",
+      "runner": "ubuntu-24.04-arm",
+      "triple": "aarch64-unknown-linux-musl"
+    },
+    {
+      "archive": "zip",
+      "architecture": "arm64",
+      "executableSuffix": "",
+      "linkage": "system",
+      "minimumOsVersion": "13.0",
+      "os": "darwin",
+      "runner": "macos-15",
+      "triple": "aarch64-apple-darwin"
+    },
+    {
+      "archive": "zip",
+      "architecture": "x64",
+      "executableSuffix": "",
+      "linkage": "static",
+      "minimumOsVersion": null,
+      "os": "linux",
+      "runner": "ubuntu-24.04",
+      "triple": "x86_64-unknown-linux-musl"
+    },
+    {
+      "archive": "zip",
+      "architecture": "x64",
+      "executableSuffix": "",
+      "linkage": "system",
+      "minimumOsVersion": "13.0",
+      "os": "darwin",
+      "runner": "macos-15-intel",
+      "triple": "x86_64-apple-darwin"
+    },
+    {
+      "archive": "zip",
+      "architecture": "x64",
+      "executableSuffix": ".exe",
+      "linkage": "system",
+      "minimumOsVersion": "10.0.17763",
+      "os": "win32",
+      "runner": "windows-2025",
+      "triple": "x86_64-pc-windows-msvc"
+    }
   ],
   "assets": [
     {
-      "name": "adocweave-cli-aarch64-unknown-linux-musl.tar.xz",
+      "name": "adocweave-cli-aarch64-unknown-linux-musl.zip",
       "kind": "cli",
       "target": "aarch64-unknown-linux-musl",
-      "archive": "tar.xz",
+      "archive": "zip",
       "executable": "adocweave"
     },
     {
-      "name": "adocweave-cli-x86_64-unknown-linux-musl.tar.xz",
+      "name": "adocweave-cli-aarch64-apple-darwin.zip",
       "kind": "cli",
-      "target": "x86_64-unknown-linux-musl",
-      "archive": "tar.xz",
+      "target": "aarch64-apple-darwin",
+      "archive": "zip",
       "executable": "adocweave"
     },
     {
-      "name": "adocweave-lsp-aarch64-unknown-linux-musl.tar.xz",
+      "name": "adocweave-cli-x86_64-unknown-linux-musl.zip",
+      "kind": "cli",
+      "target": "x86_64-unknown-linux-musl",
+      "archive": "zip",
+      "executable": "adocweave"
+    },
+    {
+      "name": "adocweave-cli-x86_64-apple-darwin.zip",
+      "kind": "cli",
+      "target": "x86_64-apple-darwin",
+      "archive": "zip",
+      "executable": "adocweave"
+    },
+    {
+      "name": "adocweave-cli-x86_64-pc-windows-msvc.zip",
+      "kind": "cli",
+      "target": "x86_64-pc-windows-msvc",
+      "archive": "zip",
+      "executable": "adocweave.exe"
+    },
+    {
+      "name": "adocweave-lsp-aarch64-unknown-linux-musl.zip",
       "kind": "lsp",
       "target": "aarch64-unknown-linux-musl",
-      "archive": "tar.xz",
+      "archive": "zip",
       "executable": "adocweave-lsp"
     },
     {
-      "name": "adocweave-lsp-x86_64-unknown-linux-musl.tar.xz",
+      "name": "adocweave-lsp-aarch64-apple-darwin.zip",
+      "kind": "lsp",
+      "target": "aarch64-apple-darwin",
+      "archive": "zip",
+      "executable": "adocweave-lsp"
+    },
+    {
+      "name": "adocweave-lsp-x86_64-unknown-linux-musl.zip",
       "kind": "lsp",
       "target": "x86_64-unknown-linux-musl",
-      "archive": "tar.xz",
+      "archive": "zip",
       "executable": "adocweave-lsp"
     },
     {
-      "name": "adocweave-browser-0.13.0.tar.xz",
+      "name": "adocweave-lsp-x86_64-apple-darwin.zip",
+      "kind": "lsp",
+      "target": "x86_64-apple-darwin",
+      "archive": "zip",
+      "executable": "adocweave-lsp"
+    },
+    {
+      "name": "adocweave-lsp-x86_64-pc-windows-msvc.zip",
+      "kind": "lsp",
+      "target": "x86_64-pc-windows-msvc",
+      "archive": "zip",
+      "executable": "adocweave-lsp.exe"
+    },
+    {
+      "name": "adocweave-browser-0.14.0.tar.xz",
       "kind": "browser",
       "target": null,
       "archive": "tar.xz",
       "executable": null
     },
     {
-      "name": "adocweave-zed-0.13.0.tar.xz",
+      "name": "adocweave-zed-0.14.0.tar.xz",
       "kind": "zed",
       "target": null,
       "archive": "tar.xz",
+      "executable": null
+    },
+    {
+      "name": "adocweave-vscode-0.14.0.vsix",
+      "kind": "vscode",
+      "target": null,
+      "archive": "vsix",
       "executable": null
     }
   ],

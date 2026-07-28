@@ -369,7 +369,7 @@ fn local_issue_documents_are_not_tracked() {
 fn roadmap_uses_unique_github_issue_urls() {
     let source = fs::read_to_string(repository_root().join("docs/developer-guide/roadmap.adoc"))
         .expect("roadmap");
-    let prefix = "https://github.com/KeishiS/AdocWeave/issues/";
+    let prefix = "https://github.com/KeishiS/adocweave/issues/";
     let mut numbers = BTreeSet::new();
     for line in source.lines().filter(|line| line.contains(prefix)) {
         let suffix = line.split_once(prefix).expect("GitHub Issue URL").1;

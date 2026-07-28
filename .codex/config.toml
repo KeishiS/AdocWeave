@@ -5,4 +5,4 @@
 # network_access = false
 
 [shell_environment_policy.set]
-GH_REPO = "KeishiS/AdocWeave"
+GH_REPO = "KeishiS/adocweave"

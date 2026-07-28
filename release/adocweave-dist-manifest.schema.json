@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/KeishiS/AdocWeave/blob/main/release/adocweave-dist-manifest.schema.json",
+  "$id": "https://github.com/KeishiS/adocweave/blob/main/release/adocweave-dist-manifest.schema.json",
   "title": "AdocWeave distribution manifest",
   "type": "object",
   "additionalProperties": false,
@@ -11,12 +11,12 @@
     "assets"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "packageVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
     "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "assets": {
       "type": "array",
-      "minItems": 6,
+      "minItems": 1,
       "uniqueItems": true,
       "items": {
         "type": "object",
@@ -24,9 +24,9 @@
         "required": ["name", "kind", "target", "archive", "byteSize", "sha256", "executable"],
         "properties": {
           "name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
-          "kind": { "enum": ["cli", "lsp", "browser", "zed"] },
+          "kind": { "enum": ["cli", "lsp", "browser", "zed", "vscode"] },
           "target": { "type": ["string", "null"] },
-          "archive": { "const": "tar.xz" },
+          "archive": { "enum": ["tar.xz", "vsix", "zip"] },
           "byteSize": { "type": "integer", "minimum": 1 },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "executable": { "type": ["string", "null"] }

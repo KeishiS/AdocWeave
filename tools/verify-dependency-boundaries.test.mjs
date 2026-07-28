@@ -44,7 +44,7 @@ test("exceptions require a supported rule, owner, issue, and future expiry", () 
     owner: "repository-owner",
     reason: "affected API is unreachable",
     expires: "2026-01-01",
-    issue: "https://github.com/KeishiS/AdocWeave/issues/999",
+    issue: "https://github.com/KeishiS/adocweave/issues/999",
   };
   assert.throws(() => validateDependencyBoundaries({
     ...inputs,
