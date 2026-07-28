@@ -17,22 +17,29 @@
 
 [source,javascript]
 ----
-import { AdocWeaveClient, defaultAssetUrls } from "./worker/index.mjs";
+import { analyzeOnce, defaultAssetUrls } from "./worker/index.mjs";
 
-const client = new AdocWeaveClient({
-  ...defaultAssetUrls(),
-  onResult(result) {
-    // HTMLの信頼方針はホストが決めます。この例では文字列として表示します。
-    preview.textContent = result.html;
-  },
-  onError(error) {
-    console.error(error.code, error.message);
-  },
+const result = await analyzeOnce(defaultAssetUrls(), {
+  version: 1,
+  source: "= Title\n\nAsciiDoc text",
 });
-client.update({ version: 1, source: "= Title\n\nAsciiDoc text" });
+// HTMLの信頼方針はホストが決めます。この例では文字列として表示します。
+preview.textContent = result.html;
 ----
 
 公開入口がWorkerの生成、初期化、debounce、generation、cancelおよびdisposeを所有します。
 ``SharedArrayBuffer``を利用できない場合はWorker再生成へ自動的に縮退します。DOMへの反映とUI stateは
-利用側が所有します。動作するtextarea例は``example/index.html``に含まれます。APIと返却値の詳細は
+利用側が所有します。連続更新では従来どおり``update()``、``onResult``および``onError``を使用できます。
+``defaultAssetUrls()``は``import.meta.url``を基準にWorkerとWASMを解決するため、静的hostingとbundlerの
+どちらでも同じ公開入口を使用できます。moduleのimportだけではWorkerを生成しません。
+Clientの構築時にもWorkerやWASM network requestは開始せず、``ready``の参照または``analyze()``で初めて
+Workerを初期化します。Fallback modeで未完了の``ready``と``analyze()``を同時に開始した場合、
+``analyze()``側のWorkerを採用し、先に取得した``ready``は``superseded``でrejectします。
+動作するtextarea例は``example/index.html``に含まれます。APIと返却値の詳細は
 xref:../docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
+
+ViteまたはWebpackではbrowser release packageの``worker``と``wasm``を同じ公開directoryへ資産として
+コピーし、配備後の``worker/index.mjs`` URLを``defaultAssetUrls``へ渡します。WorkerとWASMをJavaScript
+bundleへinline化せず、返されたURLをそのまま使用します。この配置はcontent hash付きbase URLとCDN URLでも
+同じ相対関係を維持します。Release gateでは実packageをesbuildでbundleしたbrowser smoke、CSP、WASM size
+およびURL解決を検証します。

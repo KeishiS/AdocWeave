@@ -1,7 +1,10 @@
 import {
   AdocWeaveClient,
+  AdocWeaveClientError,
   AdocWeaveResult,
+  analyzeOnce,
   defaultAssetUrls,
+  isAdocWeaveClientLifecycleError,
 } from "../index.mjs";
 
 const client = new AdocWeaveClient({
@@ -14,6 +17,18 @@ const client = new AdocWeaveClient({
     console.log(html, version, formulaSource);
   },
 });
+await client.ready;
+try {
+  const result: AdocWeaveResult = await client.analyze({
+    version: 2,
+    source: "= Promise",
+  });
+  console.log(result.html);
+} catch (error) {
+  if (isAdocWeaveClientLifecycleError(error)) console.error(error.code);
+}
+const once = await analyzeOnce(defaultAssetUrls(), { version: 3, source: "= Once" });
+console.log(once.html, AdocWeaveClientError);
 client.update({
   version: 1,
   source: "= Typed",

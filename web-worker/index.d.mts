@@ -28,8 +28,35 @@ export interface AdocWeaveClientOptions {
   sharedCancellation?: boolean;
 }
 
+export type AdocWeaveClientLifecycleErrorCode =
+  | "cancelled"
+  | "disposed"
+  | "invalid-worker-response"
+  | "superseded"
+  | "unsupported-package-version"
+  | "unsupported-worker-protocol"
+  | "worker-failed";
+
+export declare class AdocWeaveClientError<Code extends string = string> extends Error {
+  constructor(error: {
+    code: Code;
+    message: string;
+    sourceVersion: number | null;
+    generation: number;
+  });
+  readonly code: Code;
+  readonly sourceVersion: number | null;
+  readonly generation: number;
+}
+
+export declare function isAdocWeaveClientLifecycleError(
+  error: unknown,
+): error is AdocWeaveClientError<AdocWeaveClientLifecycleErrorCode>;
+
 export declare class AdocWeaveClient {
   constructor(options: AdocWeaveClientOptions);
+  readonly ready: Promise<void>;
+  analyze(request: UpdateRequest): Promise<AdocWeaveResult>;
   update(request: UpdateRequest): number;
   cancel(): void;
   dispose(): void;
@@ -41,5 +68,9 @@ export declare function defaultAssetUrls(baseUrl?: string | URL): {
   moduleUrl: URL;
   wasmUrl: URL;
 };
+export declare function analyzeOnce(
+  clientOptions: AdocWeaveClientOptions,
+  request: UpdateRequest,
+): Promise<AdocWeaveResult>;
 export declare const BROWSER_PACKAGE_VERSION: string;
 export declare const PACKAGE_VERSION: string;
