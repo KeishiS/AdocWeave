@@ -366,6 +366,43 @@ fn local_issue_documents_are_not_tracked() {
 }
 
 #[test]
+fn adr_index_lists_every_record_once() {
+    let root = repository_root();
+    let directory = root.join("docs/developer-guide/adr");
+    let index = fs::read_to_string(directory.join("index.adoc")).expect("ADR index");
+    let records = fs::read_dir(&directory)
+        .expect("ADR directory")
+        .map(|entry| entry.expect("ADR entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name != "index.adoc" && name.ends_with(".adoc"))
+        })
+        .map(|path| {
+            path.file_name()
+                .expect("ADR file name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    let listed = index
+        .lines()
+        .filter_map(|line| line.strip_prefix("* xref:"))
+        .map(|reference| {
+            reference
+                .split_once('[')
+                .expect("ADR xref has a label")
+                .0
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    let unique = listed.iter().cloned().collect::<BTreeSet<_>>();
+
+    assert_eq!(listed.len(), unique.len(), "ADR index contains duplicates");
+    assert_eq!(unique, records, "ADR index and records differ");
+}
+
+#[test]
 fn roadmap_uses_unique_github_issue_urls() {
     let source = fs::read_to_string(repository_root().join("docs/developer-guide/roadmap.adoc"))
         .expect("roadmap");
