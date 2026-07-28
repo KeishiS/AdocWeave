@@ -90,7 +90,7 @@ jobs:
             runner: ubuntu-24.04
             build: nix
           - target: x86_64-apple-darwin
-            runner: macos-15-intel
+            runner: macos-15
             build: nix
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
@@ -223,7 +223,7 @@ jobs:
             nix-system: x86_64-linux
             nix: true
           - target: x86_64-apple-darwin
-            runner: macos-15-intel
+            runner: macos-15
             nix: false
           - target: x86_64-pc-windows-msvc
             runner: windows-2025

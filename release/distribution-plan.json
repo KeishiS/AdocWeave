@@ -41,7 +41,7 @@
       "linkage": "system",
       "minimumOsVersion": "13.0",
       "os": "darwin",
-      "runner": "macos-15-intel",
+      "runner": "macos-15",
       "triple": "x86_64-apple-darwin"
     },
     {
