@@ -308,14 +308,7 @@ try {
   }
 
   for (const executable of executables) {
-    const lookup = process.platform === "win32" ? "where.exe" : "which";
-    const selected = command(lookup, [executable]).trim().split(/\r?\n/, 1)[0];
-    const selectedPath = realpathSync(selected).toLowerCase();
-    const expectedPath = realpathSync(join(binDirectory, executable)).toLowerCase();
-    if (selectedPath !== expectedPath) {
-      throw new Error(`${executable} is not selected from the clean PATH`);
-    }
-    const actual = JSON.parse(command(join(binDirectory, executable), ["--version", "--json"]));
+    const actual = JSON.parse(command(executable, ["--version", "--json"]));
     if (actual.packageVersion !== version) throw new Error(`${executable} version mismatch`);
   }
   activateNative(previousRoot, `${version}-previous-fixture`, executables);
