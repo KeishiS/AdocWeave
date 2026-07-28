@@ -195,7 +195,10 @@ fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
     let preprocess = entry.get("preprocess").cloned().unwrap_or(Value::Null);
     serde_json::from_value(json!({
         "packageVersion": adocweave::VERSION,
-        "sourceId": format!("conformance:{}", entry["name"].as_str().expect("name")),
+        "sourceId": entry["sourceId"].as_str().map_or_else(
+            || format!("conformance:{}", entry["name"].as_str().expect("name")),
+            str::to_owned,
+        ),
         "version": 1,
         "generation": 1,
         "source": source,

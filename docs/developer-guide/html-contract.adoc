@@ -136,12 +136,12 @@ JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexm
 
 利用側はlink:../../fixtures/public-conformance.json[公開適合性fixture]で、入力AsciiDoc、投影、
 HTML、解析診断および描画診断の対応を検査できます。各caseに記録したanalysis profileとrender profileを
-適用し、`stableContract`のJSON pointer、HTML断片および診断codeを比較します。
+適用し、``stableContract``のJSON pointer、HTML断片および診断codeを比較します。
 
 公開fixtureは次の構文を分離して扱います。
 
 * 文書タイトル、TOCおよび節番号
-* block titleとsource language optionを記述したsource block
+* block title、source language option、linenumsおよび開始行を記述したsource block
 * inline数式およびblock数式
 * table、quoteおよびlist
 * 安全でないURLの解析診断、描画診断および非active HTML fallback
@@ -151,7 +151,8 @@ HTML、解析診断および描画診断の対応を検査できます。各case
 空白、末尾改行および未選択の投影fieldは利用側の安定APIではありません。利用側はこれらのbyte列を
 固定せず、必要な契約項目だけを選択して検査します。
 
-Source blockのblock title、追加optionおよび行番号の意味やmarkupはIssue #108で追跡する将来の
-projection fieldであり、現行契約ではsource languageとsource本文だけを保証します。Tableのcell構造、
-quoteの追加presentationおよびlist itemを表す将来のprojection fieldはIssue #109で追跡し、現行契約では
-tableとlistのHTML断片、およびquoteの既存`blockPresentations`だけを保証します。
+Source blockではtitle、language、option、linenums、開始行およびsource本文と、対応する安全なHTML構造を
+保証します。数式ではprojectionのlanguage `latex`、表示形式`inline`または`block`、source本文と、
+HTMLの``data-math-language="latexmath"``および``data-math-display``を保証します。Tableのcell構造、
+quoteの追加presentationおよびlist itemを表す未選択のprojection fieldは現行契約に含めず、tableとlistの
+HTML断片、およびquoteの既存`blockPresentations`だけを保証します。

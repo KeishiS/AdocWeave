@@ -34,7 +34,7 @@
     },
     {
       "name": "source-block-title-and-options",
-      "features": ["source-block", "block-title", "source-language-option"],
+      "features": ["source-block", "block-title", "source-language-option", "source-line-numbers", "source-start-line"],
       "profile": {"analysis": "default", "render": "default-fragment"},
       "sourceId": "public-conformance:source-block",
       "files": {
@@ -46,18 +46,21 @@
       },
       "stableContract": {
         "projectionAssertions": [
+          {"pointer": "/sourceBlocks/0/title/text", "value": "Example <source>"},
           {"pointer": "/sourceBlocks/0/language", "value": "rust"},
+          {"pointer": "/sourceBlocks/0/lineNumbers", "value": true},
+          {"pointer": "/sourceBlocks/0/startLine", "value": 7},
           {"pointer": "/sourceBlocks/0/source", "value": "fn main() {}\n"}
         ],
         "htmlContains": [
-          "<pre><code class=\"language-rust\">fn main() {}"
+          "<figure class=\"source-block\">",
+          "<figcaption>Example &lt;source&gt;</figcaption>",
+          "<pre data-language=\"rust\" data-line-numbers=\"true\" data-line-start=\"7\"><code class=\"language-rust\">fn main() {}"
         ],
         "diagnosticCodes": [],
         "renderDiagnosticCodes": []
       },
       "implementationDetails": [
-        "authored block title projection and presentation",
-        "linenums option semantics and line-number markup",
         "HTML whitespace and attribute order"
       ]
     },
@@ -76,13 +79,15 @@
       "stableContract": {
         "projectionAssertions": [
           {"pointer": "/formulas/0/kind", "value": "inline"},
+          {"pointer": "/formulas/0/language", "value": "latex"},
           {"pointer": "/formulas/0/source", "value": "x < y"},
           {"pointer": "/formulas/1/kind", "value": "block"},
+          {"pointer": "/formulas/1/language", "value": "latex"},
           {"pointer": "/formulas/1/source", "value": "x^2 < y\n"}
         ],
         "htmlContains": [
-          "<code class=\"math-latex\">x &lt; y</code>",
-          "<pre class=\"math-latex\"><code>x^2 &lt; y"
+          "<code class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"inline\">x &lt; y</code>",
+          "<pre class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"block\"><code>x^2 &lt; y"
         ],
         "diagnosticCodes": [],
         "renderDiagnosticCodes": []
@@ -143,8 +148,6 @@
   ],
   "globalImplementationDetails": [
     "JSON object key order and whitespace",
-    "HTML byte-for-byte equality outside stableContract",
-    "source block title, option, and line-number projection fields tracked by Issue #108",
-    "table, quote, and list projection fields tracked by Issue #109"
+    "HTML byte-for-byte equality outside stableContract"
   ]
 }

@@ -473,6 +473,66 @@
       "compatibility": "supported-subset",
       "rationale": "source blockのtitle、language、linenums、開始行および不正optionを公開projectionと安全なHTMLへ確定する",
       "contractImpact": "core-profile,core-api,html,projection,conformance,wasm-api"
+    },
+    {
+      "name": "public-document-structure",
+      "sourceId": "public-conformance:document-structure",
+      "sourceFile": "../public-conformance/document-structure.adoc",
+      "expectedHtmlFile": "../public-conformance/document-structure.html",
+      "expectedDiagnosticsFile": "../public-conformance/document-structure.diagnostics.json",
+      "expectedRenderDiagnosticsFile": "../public-conformance/document-structure.render-diagnostics.json",
+      "expectedProjectionFile": "../public-conformance/document-structure.projection.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureの文書title、TOCおよび節番号をnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api"
+    },
+    {
+      "name": "public-source-block",
+      "sourceId": "public-conformance:source-block",
+      "sourceFile": "../public-conformance/source-block.adoc",
+      "expectedHtmlFile": "../public-conformance/source-block.html",
+      "expectedDiagnosticsFile": "../public-conformance/source-block.diagnostics.json",
+      "expectedRenderDiagnosticsFile": "../public-conformance/source-block.render-diagnostics.json",
+      "expectedProjectionFile": "../public-conformance/source-block.projection.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureのsource title、linenumsおよび開始行をnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api"
+    },
+    {
+      "name": "public-formulas",
+      "sourceId": "public-conformance:formulas",
+      "sourceFile": "../public-conformance/formulas.adoc",
+      "expectedHtmlFile": "../public-conformance/formulas.html",
+      "expectedDiagnosticsFile": "../public-conformance/formulas.diagnostics.json",
+      "expectedRenderDiagnosticsFile": "../public-conformance/formulas.render-diagnostics.json",
+      "expectedProjectionFile": "../public-conformance/formulas.projection.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureの数式language、表示形式およびsourceをnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api"
+    },
+    {
+      "name": "public-blocks",
+      "sourceId": "public-conformance:blocks",
+      "sourceFile": "../public-conformance/blocks.adoc",
+      "expectedHtmlFile": "../public-conformance/blocks.html",
+      "expectedDiagnosticsFile": "../public-conformance/blocks.diagnostics.json",
+      "expectedRenderDiagnosticsFile": "../public-conformance/blocks.render-diagnostics.json",
+      "expectedProjectionFile": "../public-conformance/blocks.projection.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureのtable、quoteおよびlistをnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api"
+    },
+    {
+      "name": "public-diagnostics",
+      "sourceId": "public-conformance:diagnostics",
+      "sourceFile": "../public-conformance/diagnostics.adoc",
+      "expectedHtmlFile": "../public-conformance/diagnostics.html",
+      "expectedDiagnosticsFile": "../public-conformance/diagnostics.diagnostics.json",
+      "expectedRenderDiagnosticsFile": "../public-conformance/diagnostics.render-diagnostics.json",
+      "expectedProjectionFile": "../public-conformance/diagnostics.projection.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureの安全でないURL診断とfallbackをnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api"
     }
   ]
 }

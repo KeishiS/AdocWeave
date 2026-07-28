@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use adocweave::output::conformance::{ProductSet, products};
 use adocweave::output::html::RenderPolicy;
@@ -101,6 +101,75 @@ fn diagnostic_codes(value: &Value) -> Vec<&str> {
         .collect()
 }
 
+fn case_files(case: &Case) -> [&str; 5] {
+    [
+        &case.files.source,
+        &case.files.projection,
+        &case.files.html,
+        &case.files.diagnostics,
+        &case.files.render_diagnostics,
+    ]
+}
+
+fn assert_safe_fixture_path(path: &str) {
+    let path = Path::new(path);
+    assert!(
+        !path.is_absolute()
+            && path
+                .components()
+                .all(|component| matches!(component, Component::Normal(_))),
+        "unsafe fixture path: {}",
+        path.display()
+    );
+    assert!(
+        path.starts_with("fixtures/public-conformance"),
+        "fixture path outside public-conformance directory: {}",
+        path.display()
+    );
+}
+
+fn assert_manifest_inventory(manifest: &Manifest) {
+    let mut names = BTreeSet::new();
+    let mut source_ids = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    for case in &manifest.cases {
+        assert!(
+            names.insert(case.name.as_str()),
+            "duplicate case: {}",
+            case.name
+        );
+        assert!(
+            source_ids.insert(case.source_id.as_str()),
+            "duplicate sourceId: {}",
+            case.source_id
+        );
+        for path in case_files(case) {
+            assert_safe_fixture_path(path);
+            assert!(paths.insert(path), "duplicate fixture path: {path}");
+        }
+    }
+
+    let fixture_directory = root().join("fixtures/public-conformance");
+    let actual_paths: BTreeSet<String> = fs::read_dir(&fixture_directory)
+        .expect("public fixture directory")
+        .map(|entry| {
+            let entry = entry.expect("public fixture directory entry");
+            assert!(entry.file_type().expect("fixture file type").is_file());
+            entry
+                .path()
+                .strip_prefix(root())
+                .expect("fixture is below repository root")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    let declared_paths: BTreeSet<String> = paths.into_iter().map(str::to_owned).collect();
+    assert_eq!(
+        actual_paths, declared_paths,
+        "orphan or missing fixture file"
+    );
+}
+
 #[test]
 fn public_fixtures_match_declared_products_and_stable_contracts() {
     let manifest = manifest();
@@ -110,6 +179,7 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
     assert_eq!(manifest.license, "MIT OR Apache-2.0");
     assert_eq!(manifest.cases.len(), 5);
     assert!(!manifest.global_implementation_details.is_empty());
+    assert_manifest_inventory(&manifest);
     let features: BTreeSet<&str> = manifest
         .cases
         .iter()
@@ -122,6 +192,8 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
         "source-block",
         "block-title",
         "source-language-option",
+        "source-line-numbers",
+        "source-start-line",
         "inline-formula",
         "block-formula",
         "table",
@@ -132,19 +204,6 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
     ] {
         assert!(features.contains(required), "missing feature: {required}");
     }
-    assert!(
-        manifest
-            .global_implementation_details
-            .iter()
-            .any(|detail| detail.contains("Issue #108"))
-    );
-    assert!(
-        manifest
-            .global_implementation_details
-            .iter()
-            .any(|detail| detail.contains("Issue #109"))
-    );
-
     for case in &manifest.cases {
         assert!(!case.name.is_empty());
         assert!(!case.features.is_empty(), "{}: features", case.name);
@@ -244,6 +303,43 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
             "{}: render diagnostic codes",
             case.name
         );
+    }
+}
+
+#[test]
+fn public_fixture_regeneration_is_clean() {
+    for case in &manifest().cases {
+        let actual = generated(case);
+        assert_eq!(
+            actual.html.as_deref().expect("HTML was requested"),
+            read(&case.files.html),
+            "{}: regenerated HTML differs",
+            case.name
+        );
+        for (path, generated) in [
+            (
+                &case.files.projection,
+                actual.projection_json.expect("projection was requested"),
+            ),
+            (
+                &case.files.diagnostics,
+                actual.diagnostics_json.expect("diagnostics were requested"),
+            ),
+            (
+                &case.files.render_diagnostics,
+                actual
+                    .render_diagnostics_json
+                    .expect("render diagnostics were requested"),
+            ),
+        ] {
+            assert_eq!(
+                format!("{generated}\n"),
+                read(path),
+                "{}: regenerated {} differs",
+                case.name,
+                path
+            );
+        }
     }
 }
 
