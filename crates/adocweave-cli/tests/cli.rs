@@ -874,6 +874,143 @@ endif::[]\n";
     assert_eq!(local[1]["target"], "missing-v011-include.adoc");
 }
 
+#[cfg(unix)]
+fn run_permission_fixture(root: &std::path::Path, json: bool) -> Output {
+    fn command(root: &std::path::Path, json: bool) -> Command {
+        let mut command = adocweave();
+        command
+            .current_dir(root)
+            .args(["check", "--local-targets", "--project-root", "."]);
+        if json {
+            command.arg("--json");
+        }
+        command.arg("root.adoc");
+        command
+    }
+
+    let output = command(root, json).output().expect("permission fixture");
+    if !output.status.success() {
+        return output;
+    }
+
+    use std::os::unix::process::CommandExt;
+    command(root, json)
+        .uid(65_534)
+        .gid(65_534)
+        .output()
+        .expect("permission fixture as an unprivileged user")
+}
+
+#[cfg(unix)]
+#[test]
+fn local_target_permission_failure_has_stable_cli_contract() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-local-permission-{unique}"));
+    let blocked = root.join("blocked");
+    std::fs::create_dir_all(&blocked).expect("fixture directory");
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+        .expect("project root permissions");
+    std::fs::write(
+        root.join("root.adoc"),
+        include_str!("../../../fixtures/local-target/permission-limit/permission/root.adoc"),
+    )
+    .expect("root fixture");
+    std::fs::write(
+        blocked.join("target.adoc"),
+        include_str!(
+            "../../../fixtures/local-target/permission-limit/permission/blocked/target.adoc"
+        ),
+    )
+    .expect("target fixture");
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000))
+        .expect("blocked directory permissions");
+
+    let human = run_permission_fixture(&root, false);
+    assert!(!human.status.success());
+    assert!(human.stderr.is_empty());
+    assert_eq!(
+        human.stdout,
+        b"root.adoc:1:6: error[local-target-permission-denied]: local target cannot be read (target: blocked/target.adoc)\n"
+    );
+
+    let json = run_permission_fixture(&root, true);
+    assert!(!json.status.success());
+    assert!(json.stderr.is_empty());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("permission JSON");
+    assert_eq!(diagnostics.as_array().expect("array").len(), 1);
+    assert_eq!(
+        diagnostics[0]["id"],
+        "local-target-permission-denied@root.adoc:5:24"
+    );
+    assert_eq!(diagnostics[0]["code"], "local-target-permission-denied");
+    assert_eq!(diagnostics[0]["sourceId"], "root.adoc");
+    assert_eq!(
+        diagnostics[0]["range"],
+        serde_json::json!({ "start": 5, "end": 24 })
+    );
+    assert_eq!(diagnostics[0]["target"], "blocked/target.adoc");
+
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755))
+        .expect("restore directory permissions");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn local_target_inspection_limit_has_stable_cli_contract() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/local-target/permission-limit/limit");
+    let run = |json| {
+        let mut command = adocweave();
+        command.current_dir(&root).args([
+            "check",
+            "--config",
+            ".adocweave.toml",
+            "--local-targets",
+            "--project-root",
+            ".",
+        ]);
+        if json {
+            command.arg("--json");
+        }
+        command
+            .arg("root.adoc")
+            .output()
+            .expect("inspection limit fixture")
+    };
+
+    let human = run(false);
+    assert!(!human.status.success());
+    assert!(human.stderr.is_empty());
+    assert_eq!(
+        human.stdout,
+        b"root.adoc:2:6: error[local-target-limit-exceeded]: local target inspection limit exceeded (target: second.adoc)\n"
+    );
+
+    let json = run(true);
+    assert!(!json.status.success());
+    assert!(json.stderr.is_empty());
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("inspection limit JSON");
+    assert_eq!(diagnostics.as_array().expect("array").len(), 1);
+    assert_eq!(
+        diagnostics[0]["id"],
+        "local-target-limit-exceeded@root.adoc:28:39"
+    );
+    assert_eq!(diagnostics[0]["code"], "local-target-limit-exceeded");
+    assert_eq!(diagnostics[0]["sourceId"], "root.adoc");
+    assert_eq!(
+        diagnostics[0]["range"],
+        serde_json::json!({ "start": 28, "end": 39 })
+    );
+    assert_eq!(diagnostics[0]["target"], "second.adoc");
+}
+
 #[test]
 fn local_target_check_accepts_every_supported_fixture_kind() {
     let root = concat!(

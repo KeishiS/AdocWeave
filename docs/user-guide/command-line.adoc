@@ -76,6 +76,8 @@ adocweave check --local-targets --project-root . docs/manual.adoc
 絶対path、外部URL、local anchorおよびscheme付きtargetは対象外です。欠落、project root外への移動、
 directory、権限不足および検査不能なtargetは安定したcodeを持つerrorとなり、終了コードは0以外になります。
 同じfileへの複数の参照は位置ごとに報告しますが、filesystemの検査結果はcommand内で共有します。
+一意なtargetの検査件数は``resources.max-files``を上限とし、超過したtargetには
+``local-target-limit-exceeded``を報告して、それ以降のfilesystem検査を行いません。
 標準入力の基準directoryはproject rootです。
 
 利用可能な規則は文書を読み込まずにJSONで取得できます。

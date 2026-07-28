@@ -173,8 +173,8 @@ const fn message(error: &LocalTargetError) -> &'static str {
             "local target is not a regular file"
         }
         LocalTargetError::PermissionDenied(_) => "local target cannot be read",
+        LocalTargetError::LimitExceeded { .. } => "local target inspection limit exceeded",
         LocalTargetError::Unverifiable(_)
-        | LocalTargetError::LimitExceeded { .. }
         | LocalTargetError::ResourceTooLarge(_)
         | LocalTargetError::ReadLimitExceeded => "local target cannot be verified",
     }
