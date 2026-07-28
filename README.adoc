@@ -37,7 +37,7 @@ adocweave format --diff docs
 adocweave format --write docs
 ----
 
-全オプション、標準入力、`include::`の扱いはxref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
+全オプション、標準入力、``include::``の扱いはxref:docs/user-guide/command-line.adoc[コマンドライン]を参照してください。
 
 == 文書構成
 
@@ -79,9 +79,9 @@ nix develop
 cargo make verify
 ----
 
-`cargo make verify`は、整形、型検査、テスト、ブラウザー向けテスト、HTML5標準適合性検査および文書検査を
+``cargo make verify``は、整形、型検査、テスト、ブラウザー向けテスト、HTML5標準適合性検査および文書検査を
 実行します。
 
 == 設計資料
 
-文法の詳細、公開API、配布手順は`docs/`に置きます。これらはライブラリと配布物の保守者向け資料です。
+文法の詳細、公開API、配布手順は``docs/``に置きます。これらはライブラリと配布物の保守者向け資料です。

@@ -14,10 +14,10 @@
 * `ifeval::[expression]`
 * `endif::[]`
 
-行頭のbackslashはdirectiveをliteral化します。Include属性は`tag`、`tags`、`lines`、`leveloffset`、
-`indent`、UTF-8の`encoding`および`optional`を扱います。属性listでは引用符内のcommaを区切りとしません。
+行頭のbackslashはdirectiveをliteral化します。Include属性は``tag``、`tags`、`lines`、`leveloffset`、
+`indent`、UTF-8の``encoding``および``optional``を扱います。属性listでは引用符内のcommaを区切りとしません。
 
-`optional`は参照先がsnapshotにない場合だけ空展開します。安全でないtarget、循環、不正なencoding、
+``optional``は参照先がsnapshotにない場合だけ空展開します。安全でないtarget、循環、不正なencoding、
 構文エラーまたは処理上限の超過は省略しません。WildcardとURI転送は扱いません。
 
 文書属性のset、unsetおよび再定義は、root文書とinclude文書を展開する読込順に適用します。
@@ -101,15 +101,15 @@ matching-delimiter = exactly the same bytes as opening-delimiter ;
 ----
 
 文書headerは先頭の連続行だけであり、最初の空行で終了します。文書タイトル直後の著者行と
-改訂行を型付きmetadataとして保持します。`doctype`の既定値は`article`であり、`book`では本文中の
-level-0見出しをpartとします。`[discrete]`または`[float]`付き見出しはsection階層へ入れません。
+改訂行を型付きmetadataとして保持します。``doctype``の既定値は``article``であり、``book``では本文中の
+level-0見出しをpartとします。``[discrete]``または``[float]``付き見出しはsection階層へ入れません。
 header終端から最初のsectionまたはpartまでのblock列をpreambleとし、人工的なblock nodeは作りません。
 
 文書内容より前に現れる最初の1個マーカーの見出しは文書タイトルです。2個から6個の
 マーカーはセクションレベル1から5を表します。それ以外の位置または深さでも、問題情報を
 付与した見出しノードとして保持し、利用側がソースを破棄せず回復できるようにします。
 
-ソース属性の直後には正確な`----`行が必要であり、間に空行を許可しません。インデントした
+ソース属性の直後には正確な``----``行が必要であり、間に空行を許可しません。インデントした
 属性と区切りは認識しません。文書属性は文書headerおよびrootのblock間で認識します。
 
 文書属性値の物理行が正確なspaceとbackslashで終わる場合だけ、次の物理行を同じ値として
@@ -122,35 +122,35 @@ source表現、畳み込み後の値、各物理行、indent、内容、行末�
 各値のUTF-8バイト範囲はsyntax treeから復元可能でなければなりません。二重引用符内のcommaは
 属性区切りとしません。未知のstyle、role、optionおよびnamed属性は文字列として保持し、
 Parserが出力バックエンドの属性へ変換してはいけません。対象ブロックのないメタデータ列は
-`Unsupported`としてlosslessに回復します。
+``Unsupported``としてlosslessに回復します。
 
 delimiterはcomment、example、listing、literal、open、sidebar、pass、quoteまたはtableの
 container kindへ一意に分類します。example、open、sidebarおよびquoteはcompound、comment、listing、
 literalはverbatim、passはraw、tableはtable content modelです。rawは安全であることを意味せず、
 rendererが必ず明示的に扱う危険な入力型です。同じkindの入れ子には異なる長さのdelimiterを使い、
 閉じdelimiterは開始delimiterとbyte単位で一致しなければなりません。compoundの深さは
-`max_block_depth`で制限します。
+``max_block_depth``で制限します。
 
-`NOTE:`、`TIP:`、`IMPORTANT:`、`WARNING:`および`CAUTION:`で始まり、colonの後に空白と内容を持つ段落は
-admonition paragraphです。`[NOTE]`等の同じstyleをexampleまたはopen blockへ付けた場合も同じ意味を持ちます。
-`[quote,AUTHOR,CITATION]`または`[verse,AUTHOR,CITATION]`をquote delimiterへ付ける場合、最初の位置付き属性は
+`NOTE:`、`TIP:`、`IMPORTANT:`、``WARNING:``および``CAUTION:``で始まり、colonの後に空白と内容を持つ段落は
+admonition paragraphです。``[NOTE]``等の同じstyleをexampleまたはopen blockへ付けた場合も同じ意味を持ちます。
+``[quote,AUTHOR,CITATION]``または``[verse,AUTHOR,CITATION]``をquote delimiterへ付ける場合、最初の位置付き属性は
 style、二番目と三番目はそれぞれattributionとcitationです。未知styleは汎用metadataとして保持します。
 
-`[source,LANGUAGE]`と`[,LANGUAGE]`は同じsource verbatim blockを導きます。文書属性`source-language`が
-有効なlisting blockはその既定言語を用いますが、`[listing]`はこの変換を明示的に抑止します。
+``[source,LANGUAGE]``と``[,LANGUAGE]``は同じsource verbatim blockを導きます。文書属性``source-language``が
+有効なlisting blockはその既定言語を用いますが、``[listing]``はこの変換を明示的に抑止します。
 
-表delimiterの先頭文字はcell separatorです。既定は`|===`であり、AsciiDoc cell内の入れ子表では
-`!===`を使います。delimiterの先頭文字がその表のseparatorとなり、開始・終了delimiterは同じseparatorを
-使わなければなりません。separatorは空白、制御文字および`=`以外の単一Unicode scalarとします。`,`と`:`は
-明示`format`がない場合にそれぞれCSVとDSVを選ぶ短縮delimiterでもあります。
+表delimiterの先頭文字はcell separatorです。既定は``|===``であり、AsciiDoc cell内の入れ子表では
+``!===``を使います。delimiterの先頭文字がその表のseparatorとなり、開始・終了delimiterは同じseparatorを
+使わなければなりません。separatorは空白、制御文字および``=``以外の単一Unicode scalarとします。``,``と``:``は
+明示``format``がない場合にそれぞれCSVとDSVを選ぶ短縮delimiterでもあります。
 `header` optionは先頭rowをheaderへ、`noheader` optionは自動推論を抑止してbodyへ確定します。
-両方が指定された場合は`header`を優先します。
+両方が指定された場合は``header``を優先します。
 どちらもない場合、開始delimiter直後の最初の物理行が非空で、その直後の物理行が空なら先頭rowを
-headerとして推論します。先頭空白を除いて`//`で始まるline commentは、この2行を選ぶ前に除外します。
+headerとして推論します。先頭空白を除いて``//``で始まるline commentは、この2行を選ぶ前に除外します。
 PSVで空行後も先頭cellのAsciiDoc内容が継続する場合と、quote内で改行する区切り形式のrowは自動推論の
-対象にしません。明示`cols`がなく自動推論の候補となる場合は、最初の非comment recordのcell数を
+対象にしません。明示``cols``がなく自動推論の候補となる場合は、最初の非comment recordのcell数を
 列数とします。それ以外は最もcell数の多いrecordから列数を推論します。確定したsectionはtable semanticの
-`TableRow`だけが所有します。
+``TableRow``だけが所有します。
 
 リテラルおよびソースの内容は不透明です。開始区切りと等しい行がブロックを閉じます。
 より長い行やインデントした区切り状の行は内容として扱います。
@@ -188,17 +188,17 @@ EBNFには次の区切り記号条件を追加します。
   同順位におけるsource順の優先
 - 等幅内容の不透明性、および強調・斜体内容の再帰的な解析
 - 数式内容の不透明性、および属性、書式、linkその他のAsciiDoc置換の非適用
-- 所定のtoken境界に限定したURL、email、`link:`、`xref:`、`stem:`、`latexmath:`および
+- 所定のtoken境界に限定したURL、email、`link:`、`xref:`、`stem:`、``latexmath:``および
   標準macroの認識、escape用backslash直前の一つ前の文字による境界判定、ならびに
-  短縮xrefの`<<`に対する境界条件の非適用
+  短縮xrefの``<<``に対する境界条件の非適用
 - 既定の再帰深さ上限32、および上限到達spanのテキスト化と
-  `nesting-limit-exceeded`の報告
+  ``nesting-limit-exceeded``の報告
 
-unconstrained形式はstrongの`**`、emphasisの`__`およびmonospaceの二重バッククォートを
+unconstrained形式はstrongの``**``、emphasisの``__``およびmonospaceの二重バッククォートを
 境界に依存せず認識します。同種markerの連続runは左から2文字ずつpair候補へ分割し、最初の
 開始候補に対する最初の同種候補を終了記号とします。空pairは通常テキストとして保持します。
-単一バッククォートではUnicodeの文字・数字・`_`を語構成文字とし、開始記号の直前が
-`:`、`;`または`}`の場合も認識しません。これらの境界では二重バッククォートを使用します。
+単一バッククォートではUnicodeの文字・数字・``_``を語構成文字とし、開始記号の直前が
+`:`、``;``または``}``の場合も認識しません。これらの境界では二重バッククォートを使用します。
 対応する書式、属性参照、URL、macroおよびanchor開始記号の直前にある奇数個の
 連続バックスラッシュは、その最後の一つで認識を抑止し、最後の一つだけを表示値から除きます。
 偶数個の場合は認識を抑止せず、バックスラッシュをそのまま表示します。escapeされた二重
@@ -207,13 +207,13 @@ markerでは最後のバックスラッシュと開始markerだけをliteral化�
 バックスラッシュは通常テキストとして保持します。不透明context内ではescapeを解釈しません。
 
 リンクとxrefのターゲットは不透明な字句として解析し、表示文字列だけを
-`inline-sequence`として再帰解析します。認識優先順位は、ソース上で先に始まる
+``inline-sequence``として再帰解析します。認識優先順位は、ソース上で先に始まる
 リンク・xrefまたは書式spanを優先し、同じ位置ではリンク・xrefを優先します。
 
-標準macroは`name:target[attributes]`を共通形とし、mediaのblock formだけ
-`name::target[attributes]`を使用します。footnote、kbd、btnおよびindextermは空targetを許します。
-inline anchorの`[[id]]`とbibliography anchorの`[[[id]]]`は同じmacro modelへ正規化します。
-targetはinline解析せず、属性listはquote内のcommaを除くcommaで分割し、named属性の`name=value`を
+標準macroは``name:target[attributes]``を共通形とし、mediaのblock formだけ
+``name::target[attributes]``を使用します。footnote、kbd、btnおよびindextermは空targetを許します。
+inline anchorの``[[id]]``とbibliography anchorの``[[[id]]]``は同じmacro modelへ正規化します。
+targetはinline解析せず、属性listはquote内のcommaを除くcommaで分割し、named属性の``name=value``を
 位置付きで保持します。
 
 == 置換規則
@@ -223,12 +223,12 @@ targetはinline解析せず、属性listはquote内のcommaを除くcommaで分�
 
 置換は次の順序を基準とします。
 
-. `SpecialCharacters`で出力時に特別な意味を持つ文字を識別します。
-. `Quotes`で強調、斜体、等幅、highlight、subscript、superscriptおよび組版用引用符を意味nodeへ変換します。
-. `Attributes`で文書属性を再帰展開します。
-. `Replacements`で著作権記号、省略記号、矢印および語中apostropheを置換します。
-. `Macros`でlink、xref、anchor、数式および対応する標準macroを意味nodeへ変換します。
-. `PostReplacements`で改行など、inline構造の確定後に適用する置換を扱います。
+. ``SpecialCharacters``で出力時に特別な意味を持つ文字を識別します。
+. ``Quotes``で強調、斜体、等幅、highlight、subscript、superscriptおよび組版用引用符を意味nodeへ変換します。
+. ``Attributes``で文書属性を再帰展開します。
+. ``Replacements``で著作権記号、省略記号、矢印および語中apostropheを置換します。
+. ``Macros``でlink、xref、anchor、数式および対応する標準macroを意味nodeへ変換します。
+. ``PostReplacements``で改行など、inline構造の確定後に適用する置換を扱います。
 
 適用する段階はコンテキストごとに次のとおりです。
 
@@ -240,10 +240,10 @@ targetはinline解析せず、属性listはquote内のcommaを除くcommaで分�
 |全段階の上記順序による適用
 
 |`Header`
-|`SpecialCharacters`と`Attributes`のみの適用
+|``SpecialCharacters``と``Attributes``のみの適用
 
 |`Verbatim`
-|`SpecialCharacters`のみの適用と内容の不透明な保持
+|``SpecialCharacters``のみの適用と内容の不透明な保持
 
 |`Pass`
 |AsciiDoc置換の非適用
@@ -252,29 +252,29 @@ targetはinline解析せず、属性listはquote内のcommaを除くcommaで分�
 |置換の非適用
 |===
 
-段落、通常見出し、list項目、通常のtable cellおよびlink・xrefの表示文字列には`Normal`を使用します。
-文書headerには`Header`、等幅、literal、sourceおよびliteral・verse形式のtable cellには`Verbatim`を
-使用します。数式と未対応構文は`None`として不透明に保持します。AsciiDoc形式のtable cellは子blockごとの
+段落、通常見出し、list項目、通常のtable cellおよびlink・xrefの表示文字列には``Normal``を使用します。
+文書headerには``Header``、等幅、literal、sourceおよびliteral・verse形式のtable cellには``Verbatim``を
+使用します。数式と未対応構文は``None``として不透明に保持します。AsciiDoc形式のtable cellは子blockごとの
 コンテキストを使用し、cell全体をinlineとして再解析しません。
 
 属性参照は参照位置で有効なbindingに対して再帰評価します。属性値中の参照は定義時点で確定し、後の再定義を
-遡及適用しません。`\{name}`は参照を抑止し、前方参照と解除後の参照は未定義として扱います。循環、
+遡及適用しません。``\{name}``は参照を抑止し、前方参照と解除後の参照は未定義として扱います。循環、
 展開の深さ上限または生成byte数の上限に達した場合は入力表記を保持して診断を返します。
 Linkと標準macroのtargetは属性展開後の同じ値を検査と出力へ渡します。xref targetはコアで展開しません。
 
-`Pass`はAsciiDoc置換を行わない指定であり、raw HTMLの出力許可ではありません。出力側は通常テキスト、
+``Pass``はAsciiDoc置換を行わない指定であり、raw HTMLの出力許可ではありません。出力側は通常テキスト、
 不透明な内容、表示文字列および属性値をそれぞれの出力文脈でescapeし、URLはURL policyで再検査します。
 
 == 回復規則
 
-- 未閉鎖のinline開始記号のテキスト保持と`unclosed-inline`の報告、およびmarker直後からの
+- 未閉鎖のinline開始記号のテキスト保持と``unclosed-inline``の報告、およびmarker直後からの
   走査再開
 - 未閉鎖のlinkまたはxref表示文字列のテキスト保持、専用診断の付与、および後続inline走査の継続
 - 段落内の連続行を一つの列として扱うinline走査、LF／CRLFの内容・source rangeへの保持、
   および空行による段落境界・見出し境界の非横断
 - 未閉鎖の区切りblockに対するfile末尾までの内容化、列0の見出し候補からの回復、
-  候補の通常解析、および開始区切りへの`unclosed-block`の報告
-- 寛容modeにおける未対応構文の明示的な`Unsupported` node化、および厳格modeにおける
+  候補の通常解析、および開始区切りへの``unclosed-block``の報告
+- 寛容modeにおける未対応構文の明示的な``Unsupported`` node化、および厳格modeにおける
   同nodeを含む文書の拒否
 - 空入力、不完全入力および不正な見出しに対するpanicの回避と、回復可能なsyntax tree・ASTの返却
 

@@ -9,7 +9,7 @@
 
 == 決定
 
-release candidate tagを受理しません。mainの成功commitへ`vX.Y.Z`を一度だけ付け、同じworkflowでstable
+release candidate tagを受理しません。mainの成功commitへ``vX.Y.Z``を一度だけ付け、同じworkflowでstable
 GitHub Releaseを公開します。公開後の修正はtagを付け替えず、新しいstable versionとして公開します。
 
 == 帰結

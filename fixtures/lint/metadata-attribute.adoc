@@ -1,0 +1,4 @@
+= Decision
+:status: accepted
+
+Content.

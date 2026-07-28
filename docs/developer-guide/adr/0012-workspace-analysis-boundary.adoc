@@ -10,23 +10,23 @@
 Language Server内部にあります。desktopアプリ、server、indexerおよび別のeditor adapterが同じ機能を
 利用するには、LSP固有型とasync runtimeを含む実装を複製する必要があります。
 
-既存の`adocweave-host`はparserへ依存しないfilesystem policyを所有します。解析snapshotまで同じcrateへ
+既存の``adocweave-host``はparserへ依存しないfilesystem policyを所有します。解析snapshotまで同じcrateへ
 追加すると、低水準のresource authorityと高水準の解析orchestrationが循環しないまでも混在します。
 
 == 決定
 
-`adocweave-host`はresource identity、検証済みfilesystem access、budgetおよび依存graphを所有する
-低水準crateとして維持します。新しい`adocweave-workspace` crateを追加し、`adocweave`と
-`adocweave-host`へ一方向に依存させます。CLI、Language Serverおよび将来のadapterは高水準crateを
+``adocweave-host``はresource identity、検証済みfilesystem access、budgetおよび依存graphを所有する
+低水準crateとして維持します。新しい``adocweave-workspace`` crateを追加し、``adocweave``と
+``adocweave-host``へ一方向に依存させます。CLI、Language Serverおよび将来のadapterは高水準crateを
 利用します。
 
-公開APIはLSP `Url`やTokio型ではなく、`ResourceId`、`ResourceRevision`、`WorkspaceGeneration`、
-`WorkspaceChange`、mutableな`Workspace`、immutableな`WorkspaceSnapshot`および
-`WorkspaceAnalysisSnapshot`を使用します。open overlayとdisk revisionを区別し、すべての変更は
+公開APIはLSP ``Url``やTokio型ではなく、`ResourceId`、`ResourceRevision`、`WorkspaceGeneration`、
+`WorkspaceChange`、mutableな``Workspace``、immutableな``WorkspaceSnapshot``および
+``WorkspaceAnalysisSnapshot``を使用します。open overlayとdisk revisionを区別し、すべての変更は
 失敗時に以前のsnapshotを維持する原子的なstate transitionとします。
 
 初期filesystem scanとfile読込はhost adapterへ隔離し、Workspace state machineへ検証済み本文を
-明示的に渡します。解析はruntime非依存の`CancellationCheck`を受け取り、結果採用時にresource revision、
+明示的に渡します。解析はruntime非依存の``CancellationCheck``を受け取り、結果採用時にresource revision、
 workspace generationおよび設定generationを照合します。
 
 静的なinclude検出は保守的なprefetch hintに限定します。実際に使用した依存関係は、読み取り順の属性を
