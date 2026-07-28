@@ -1,0 +1,45 @@
+= ADR 0012: runtime非依存のWorkspace解析境界
+
+== 状態
+
+採用
+
+== 背景
+
+複数文書のscan、open buffer overlay、include依存graph、差分再解析および結果採用判定は
+Language Server内部にあります。desktopアプリ、server、indexerおよび別のeditor adapterが同じ機能を
+利用するには、LSP固有型とasync runtimeを含む実装を複製する必要があります。
+
+既存の`adocweave-host`はparserへ依存しないfilesystem policyを所有します。解析snapshotまで同じcrateへ
+追加すると、低水準のresource authorityと高水準の解析orchestrationが循環しないまでも混在します。
+
+== 決定
+
+`adocweave-host`はresource identity、検証済みfilesystem access、budgetおよび依存graphを所有する
+低水準crateとして維持します。新しい`adocweave-workspace` crateを追加し、`adocweave`と
+`adocweave-host`へ一方向に依存させます。CLI、Language Serverおよび将来のadapterは高水準crateを
+利用します。
+
+公開APIはLSP `Url`やTokio型ではなく、`ResourceId`、`ResourceRevision`、`WorkspaceGeneration`、
+`WorkspaceChange`、mutableな`Workspace`、immutableな`WorkspaceSnapshot`および
+`WorkspaceAnalysisSnapshot`を使用します。open overlayとdisk revisionを区別し、すべての変更は
+失敗時に以前のsnapshotを維持する原子的なstate transitionとします。
+
+初期filesystem scanとfile読込はhost adapterへ隔離し、Workspace state machineへ検証済み本文を
+明示的に渡します。解析はruntime非依存の`CancellationCheck`を受け取り、結果採用時にresource revision、
+workspace generationおよび設定generationを照合します。
+
+静的なinclude検出は保守的なprefetch hintに限定します。実際に使用した依存関係は、読み取り順の属性を
+適用したpreprocess結果から採用します。解析入力は上限付きのimmutable resource snapshotを使用し、
+属性展開前のtargetだけからresource集合を狭めません。
+
+Workspaceは解析rootを明示的に登録し、変更resourceから得た逆依存closureをroot集合へ絞って返します。
+disk、open overlayおよびeffective snapshotへ同じ件数・resource byte・合計byte上限を適用します。
+
+== 結果
+
+各consumerは同じ安全境界、依存判定、cancelおよび古い結果の不採用規則を再利用できます。
+Language Serverはprotocol、position変換、通知順序およびworker schedulingだけを所有します。
+
+crateが一つ増え、resource stateと解析snapshotの変換を明示する必要があります。一方で低水準host crateの
+parser非依存性を維持し、LSP固有実装が事実上の公開基盤になることを避けられます。
