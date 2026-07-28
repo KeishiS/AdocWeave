@@ -134,6 +134,7 @@ function verifyBinary(binary, executable) {
   const allowed = new Set([
     "advapi32.dll",
     "bcrypt.dll",
+    "bcryptprimitives.dll",
     "crypt32.dll",
     "iphlpapi.dll",
     "kernel32.dll",
