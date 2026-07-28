@@ -11,9 +11,9 @@ import {
 const platform = platformForHost("linux", "x64");
 const options: SelectionOptions = {
   allowDownload: true,
-  installer: { storagePath: "/cache", version: "0.14.0" },
+  installer: { storagePath: "/cache", version: "0.15.0" },
   platform,
-  version: "0.14.0",
+  version: "0.15.0",
 };
 
 function dependencies(overrides: Partial<SelectionDependencies> = {}): SelectionDependencies {

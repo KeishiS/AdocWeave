@@ -21,14 +21,14 @@ test("version probeはshellを介さず正しいJSONだけを採用します", {
   skip: process.platform === "win32",
 }, async () => {
   const server = await executable(
-    `printf '%s\\n' '{"name":"adocweave-lsp","packageVersion":"0.14.0"}'`,
+    `printf '%s\\n' '{"name":"adocweave-lsp","packageVersion":"0.15.0"}'`,
   );
   try {
     assert.deepEqual(await probeServerVersion(server.path), {
       name: "adocweave-lsp",
-      packageVersion: "0.14.0",
+      packageVersion: "0.15.0",
     });
-    await assert.doesNotReject(requireCompatibleServer(server.path, "0.14.0"));
+    await assert.doesNotReject(requireCompatibleServer(server.path, "0.15.0"));
     await assert.rejects(requireCompatibleServer(server.path, "9.9.9"), /server-version-mismatch/);
   } finally {
     await server.cleanup();

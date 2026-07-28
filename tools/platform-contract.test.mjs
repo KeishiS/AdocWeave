@@ -22,14 +22,14 @@ test("Windowsの実行ファイル名とインストール先を計算する", (
   const pathApi = pathImplementation("win32");
   assert.equal(pathApi, path.win32);
   assert.deepEqual(executableNames(".exe"), ["adocweave.exe", "adocweave-lsp.exe"]);
-  assert.deepEqual(installationLayout("C:\\Users\\tester\\.local", "0.14.0", pathApi), {
+  assert.deepEqual(installationLayout("C:\\Users\\tester\\.local", "0.15.0", pathApi), {
     binDirectory: "C:\\Users\\tester\\.local\\bin",
-    versionRoot: "C:\\Users\\tester\\.local\\lib\\adocweave\\0.14.0",
+    versionRoot: "C:\\Users\\tester\\.local\\lib\\adocweave\\0.15.0",
     currentLink: "C:\\Users\\tester\\.local\\lib\\adocweave\\current",
     activeMarker: "C:\\Users\\tester\\.local\\lib\\adocweave\\active-version",
-    browserRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.14.0\\browser",
-    zedRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.14.0\\zed",
-    vscodeRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.14.0\\vscode",
+    browserRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.15.0\\browser",
+    zedRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.15.0\\zed",
+    vscodeRoot: "C:\\Users\\tester\\.local\\share\\adocweave\\0.15.0\\vscode",
   });
 });
 
@@ -38,8 +38,8 @@ test("macOSの実行ファイル名とインストール先を計算する", () 
   assert.equal(pathApi, path.posix);
   assert.deepEqual(executableNames(""), ["adocweave", "adocweave-lsp"]);
   assert.equal(
-    installationLayout("/Users/tester/.local", "0.14.0", pathApi).versionRoot,
-    "/Users/tester/.local/lib/adocweave/0.14.0",
+    installationLayout("/Users/tester/.local", "0.15.0", pathApi).versionRoot,
+    "/Users/tester/.local/lib/adocweave/0.15.0",
   );
 });
 
@@ -93,8 +93,8 @@ test("Windowsの一時directory削除だけを規定回数再試行する", () =
 });
 
 test("VSIXのmanifest metadataを検査する", () => {
-  assert.equal(vscodePackageContract({ version: "0.14.0", main: "./dist/extension.cjs" }, "0.14.0"), true);
-  assert.equal(vscodePackageContract({ version: "0.14.0", main: "./src/extension.js" }, "0.14.0"), false);
+  assert.equal(vscodePackageContract({ version: "0.15.0", main: "./dist/extension.cjs" }, "0.15.0"), true);
+  assert.equal(vscodePackageContract({ version: "0.15.0", main: "./src/extension.js" }, "0.15.0"), false);
 });
 
 test("filesystem・process・時刻・platformをruntime adapterとして注入する", () => {

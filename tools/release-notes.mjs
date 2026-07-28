@@ -15,22 +15,20 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "Linux ARM64／x86-64、macOS ARM64／x86-64およびWindows x86-64向けに、CLIとLanguage Serverの検証済みZIPを提供します。",
-  "VS Code拡張を追加しました。基本構文色付けと、Language Serverによる診断、補完、定義移動、整形などを利用できます。",
-  "VS Code拡張とZed拡張は、配布manifestで対象platform、archive、byte数およびSHA-256を検証してmanaged Language Serverを導入します。",
-  "VSIXをCLI、Language Server、browser packageおよびZed拡張と同じGitHub Releaseへ統合しました。",
-  "配布物のchecksum、SBOM、Artifact Attestationおよびclean installation検査を全対象platformへ拡張しました。",
+  "local target検査でpermission不足と検査件数上限の診断、終了codeおよびJSON出力を共通fixtureへ固定しました。",
+  "Linuxではlocal targetを検証済みdirectory handleから読み込み、検査後のsymlink差し替えでroot外を読まないようにしました。",
+  "include処理の論理source ID、検証対象pathおよび読込済みsourceを別の型へ分離し、診断とsource mapへOS pathを漏らしません。",
+  "追跡するAsciiDoc文書を自動的に検査対象へ含め、追加文書の検査漏れと重複した列挙を拒否します。",
+  "native成果物へ影響するPull RequestでWindows・macOS smokeを実行し、OS依存のpath、DLL、archiveおよび導入契約を共通fixtureで検査します。",
 ];
 
 const contractNotes = [
   `統一package version：${manifest.packageVersion}`,
-  `release manifest schemaをversion 2から${manifest.schemaVersion}、distribution plan schemaをversion 1から${plan.schemaVersion}、配布manifest schemaをversion 1から2へ更新しました。旧schemaを読むconsumerは、新しいVSIX asset、全platform共通ZIPおよびplatform選択情報へ対応してください。`,
-  `WASM protocol schema version：${protocol.schemaVersion}、Worker protocol version：${protocol.workerProtocolVersion}。古いrequestとWorker envelopeは拒否されます。`,
-  "native archive形式を全platformでflatなZIPへ統一しました。従来のLinux向け`.tar.xz`を参照する導入scriptは更新が必要です。",
-  "VS Code拡張は、明示した絶対path、`PATH`、検証済みcache、managed downloadの順で同じversionのLanguage Serverを選択します。",
-  "未信頼workspaceのLanguage Server path設定は使用しません。任意の引数、環境変数またはshell commandをworkspace設定から受け取りません。",
-  "未対応platformではmanaged downloadを開始しません。同じversionの外部Language Serverを明示設定した場合だけ利用できます。",
-  "VSIXは決定的にbuildし、許可file、license、size、source mapおよび機械固有pathの不在を検査します。",
+  `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。v0.14.0からschema形状を変更していません。`,
+  `WASM protocol schema version：${protocol.schemaVersion}、Worker protocol version：${protocol.workerProtocolVersion}。v0.14.0のrequestとWorker envelopeの形状を維持します。`,
+  "CLI option、診断codeおよびJSON schemaに破壊的変更はありません。",
+  "Linuxのlocal target検査は静的なworkspace snapshotを前提とせず、同じdirectory handle系列から検査と読込みを行います。macOS、Windowsおよび汎用Rustのportable adapterは、静的snapshot向けのbest effortであり、敵対的な同時変更への耐性を宣言しません。",
+  "includeのsource identityは利用者が指定した論理IDを維持します。権限検査に使用したcanonical filesystem pathは公開診断とsource mapへ含めません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
@@ -61,7 +59,7 @@ export function buildReleaseNotes(tag) {
     `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n` +
     "すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/adocweave`で検証してください。\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
-    "Linuxの導入scriptではarchive拡張子を`.zip`へ変更し、flatなarchive rootから実行fileを配置してください。新versionは既存directoryへ上書きせず、検証後にだけ選択先を切り替えます。\n\n" +
+    "native archiveは従来どおりflatなZIPです。新versionは既存directoryへ上書きせず、検証後にだけ選択先を切り替えます。\n\n" +
     "VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。\n\n" +
     "rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
   return notes;

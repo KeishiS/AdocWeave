@@ -89,7 +89,7 @@ function releaseFetcher(
               target: platform.target,
             },
           ],
-    packageVersion: "0.14.0",
+    packageVersion: "0.15.0",
     schemaVersion: 2,
     sourceCommit: "a".repeat(40),
   };
@@ -113,10 +113,10 @@ test("managed binaryを検証して原子的cacheへ保存し、offlineでも再
     const installed = await installManagedServer(platform, {
       fetcher: releaseFetcher(archive),
       storagePath,
-      version: "0.14.0",
+      version: "0.15.0",
     });
     assert.equal(await readFile(installed, "utf8"), "server");
-    assert.equal(await findVerifiedCache(storagePath, "0.14.0", platform), installed);
+    assert.equal(await findVerifiedCache(storagePath, "0.15.0", platform), installed);
     assert.equal(
       (await readFile(join(installed, "..", "verified.json"), "utf8")).endsWith("\n"),
       true,
@@ -134,13 +134,13 @@ test("hash不一致と欠落assetは既存の検証済みcacheを破壊しませ
     const installed = await installManagedServer(platform, {
       fetcher: releaseFetcher(archive),
       storagePath,
-      version: "0.14.0",
+      version: "0.15.0",
     });
     await assert.rejects(
       installManagedServer(platform, {
         fetcher: releaseFetcher(archive, { archiveHash: "0".repeat(64) }),
         storagePath,
-        version: "0.14.0",
+        version: "0.15.0",
       }),
       /managed-download-hash-mismatch/,
     );
@@ -148,11 +148,11 @@ test("hash不一致と欠落assetは既存の検証済みcacheを破壊しませ
       installManagedServer(platform, {
         fetcher: releaseFetcher(archive, { includeAsset: false }),
         storagePath,
-        version: "0.14.0",
+        version: "0.15.0",
       }),
       /lsp-asset-count/,
     );
-    assert.equal(await findVerifiedCache(storagePath, "0.14.0", platform), installed);
+    assert.equal(await findVerifiedCache(storagePath, "0.15.0", platform), installed);
   } finally {
     await rm(storagePath, { force: true, recursive: true });
   }
@@ -165,10 +165,10 @@ test("改変cacheを採用せず、所有markerを確認して完全削除しま
   const installed = await installManagedServer(platform, {
     fetcher: releaseFetcher(archive),
     storagePath,
-    version: "0.14.0",
+    version: "0.15.0",
   });
   await writeFile(installed, "tampered");
-  assert.equal(await findVerifiedCache(storagePath, "0.14.0", platform), undefined);
+  assert.equal(await findVerifiedCache(storagePath, "0.15.0", platform), undefined);
   await clearManagedServers(storagePath);
   await assert.rejects(access(storagePath));
 
@@ -205,7 +205,7 @@ test("Content-Lengthがない巨大manifestを受信中の上限で拒否しま�
       installManagedServer(platform, {
         fetcher,
         storagePath,
-        version: "0.14.0",
+        version: "0.15.0",
       }),
       /managed-download-size-mismatch/,
     );
@@ -226,8 +226,8 @@ test("同時installはarchiveを一度だけ取得して同じcacheを返しま�
   }) as typeof fetch;
   try {
     const results = await Promise.all([
-      installManagedServer(platform, { fetcher, storagePath, version: "0.14.0" }),
-      installManagedServer(platform, { fetcher, storagePath, version: "0.14.0" }),
+      installManagedServer(platform, { fetcher, storagePath, version: "0.15.0" }),
+      installManagedServer(platform, { fetcher, storagePath, version: "0.15.0" }),
     ]);
     assert.equal(results[0], results[1]);
     assert.equal(archiveDownloads, 1);
@@ -249,7 +249,7 @@ test("書込み権限がないstorageでは既存内容を変更しません", {
       installManagedServer(platform, {
         fetcher: releaseFetcher(archive),
         storagePath,
-        version: "0.14.0",
+        version: "0.15.0",
       }),
     );
     assert.equal(await readFile(join(storagePath, "keep"), "utf8"), "user");
