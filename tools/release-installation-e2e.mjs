@@ -310,7 +310,9 @@ try {
   for (const executable of executables) {
     const lookup = process.platform === "win32" ? "where.exe" : "which";
     const selected = command(lookup, [executable]).trim().split(/\r?\n/, 1)[0];
-    if (resolve(selected).toLowerCase() !== resolve(join(binDirectory, executable)).toLowerCase()) {
+    const selectedPath = realpathSync(selected).toLowerCase();
+    const expectedPath = realpathSync(join(binDirectory, executable)).toLowerCase();
+    if (selectedPath !== expectedPath) {
       throw new Error(`${executable} is not selected from the clean PATH`);
     }
     const actual = JSON.parse(command(join(binDirectory, executable), ["--version", "--json"]));
