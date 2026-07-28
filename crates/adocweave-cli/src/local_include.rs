@@ -7,12 +7,12 @@ use std::path::{Component, Path, PathBuf};
 
 use adocweave::SourceId;
 use adocweave::preprocess::{
-    PreprocessError, PreprocessErrorKind, PreprocessOptions, PreprocessedDocument,
+    IncludeRequest, PreprocessError, PreprocessErrorKind, PreprocessOptions, PreprocessedDocument,
     ResourceDocument, ResourceSnapshot, preprocess,
 };
 use adocweave_host::{
-    LocalResourcePolicy, LocalTargetPolicy, LocalTargetSession, ResourceBudget, ResourceError,
-    ResourceLimits,
+    LoadedLocalTarget, LocalResourcePolicy, LocalTargetError, LocalTargetPolicy,
+    LocalTargetSession, ResourceBudget, ResourceError, ResourceLimits,
 };
 
 #[derive(Debug)]
@@ -40,6 +40,97 @@ pub struct PreparedInput {
     pub include_bases: BTreeMap<String, PathBuf>,
     pub local_session: Option<LocalTargetSession>,
     pub include_errors: BTreeMap<String, adocweave_host::LocalTargetError>,
+}
+
+/// Include target accepted by the filesystem policy but not yet loaded.
+///
+/// Construction is private so callers cannot attach an unchecked path to a
+/// logical source identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ValidatedFilesystemTarget {
+    request: IncludeRequest,
+    source_id: SourceId,
+    canonical_path: PathBuf,
+    base: PathBuf,
+}
+
+/// Filesystem provenance retained outside diagnostics and source maps.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoadedSourceProvenance {
+    logical_target: String,
+    canonical_path: PathBuf,
+}
+
+/// Bytes loaded only after target validation.
+///
+/// Its fields are private so a source identity cannot be combined with bytes
+/// from another filesystem target.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoadedSource {
+    source_id: SourceId,
+    bytes: Vec<u8>,
+    provenance: LoadedSourceProvenance,
+}
+
+struct IncludeLoader<'session> {
+    session: &'session mut LocalTargetSession,
+}
+
+impl<'session> IncludeLoader<'session> {
+    fn new(session: &'session mut LocalTargetSession) -> Self {
+        Self { session }
+    }
+
+    fn validate(
+        &mut self,
+        base: &Path,
+        request: IncludeRequest,
+    ) -> Result<ValidatedFilesystemTarget, LocalTargetError> {
+        let canonical_path = self.session.inspect(base, &request.target)?;
+        let source_id = SourceId::new(include_source_id(&request.target));
+        Ok(ValidatedFilesystemTarget {
+            request,
+            source_id,
+            canonical_path,
+            base: base.to_owned(),
+        })
+    }
+
+    fn load(
+        &mut self,
+        target: ValidatedFilesystemTarget,
+    ) -> Result<LoadedSource, LocalTargetError> {
+        let loaded = self
+            .session
+            .read_utf8(&target.base, &target.request.target)?;
+        if loaded.canonical_path() != target.canonical_path {
+            return Err(LocalTargetError::Unverifiable(
+                "validated include target changed before read".to_owned(),
+            ));
+        }
+        Ok(loaded_source(target, loaded))
+    }
+}
+
+fn loaded_source(target: ValidatedFilesystemTarget, loaded: LoadedLocalTarget) -> LoadedSource {
+    LoadedSource {
+        source_id: target.source_id,
+        bytes: loaded.source().as_bytes().to_vec(),
+        provenance: LoadedSourceProvenance {
+            logical_target: target.request.target,
+            canonical_path: target.canonical_path,
+        },
+    }
+}
+
+impl LoadedSource {
+    fn into_utf8_parts(self) -> (SourceId, String, LoadedSourceProvenance) {
+        // LocalTargetSession has already validated UTF-8. Keeping bytes in this
+        // boundary prevents a loaded result from being confused with source text
+        // before provenance is attached.
+        let source = String::from_utf8(self.bytes).expect("host returned validated UTF-8");
+        (self.source_id, source, self.provenance)
+    }
 }
 
 impl fmt::Display for LocalIncludeError {
@@ -243,20 +334,36 @@ pub fn prepare_local(
                     );
                     continue;
                 }
-                match session.read_utf8(&root, &target) {
+                let request = IncludeRequest {
+                    range: error.range,
+                    target_range: error.range,
+                    target: target.clone(),
+                    attributes: String::new(),
+                };
+                let loaded = {
+                    let mut loader = IncludeLoader::new(&mut session);
+                    loader
+                        .validate(&root, request)
+                        .and_then(|validated| loader.load(validated))
+                };
+                match loaded {
                     Ok(loaded) => {
-                        let (canonical, text) = loaded.into_parts();
-                        sources.insert(resource_id.clone(), text.clone());
+                        let (loaded_source_id, text, provenance) = loaded.into_utf8_parts();
+                        debug_assert_eq!(loaded_source_id.as_str(), resource_id);
+                        debug_assert_eq!(provenance.logical_target, target);
+                        sources.insert(loaded_source_id.as_str().to_owned(), text.clone());
                         source_bases.insert(
-                            resource_id.clone(),
-                            canonical
+                            loaded_source_id.as_str().to_owned(),
+                            provenance
+                                .canonical_path
                                 .parent()
                                 .unwrap_or_else(|| Path::new(""))
                                 .to_owned(),
                         );
                         include_bases.insert(
-                            resource_id.clone(),
-                            canonical
+                            loaded_source_id.as_str().to_owned(),
+                            provenance
+                                .canonical_path
                                 .parent()
                                 .unwrap_or_else(|| Path::new(""))
                                 .to_owned(),
@@ -264,7 +371,7 @@ pub fn prepare_local(
                         snapshot.insert(
                             target,
                             ResourceDocument {
-                                source_id: SourceId::new(resource_id),
+                                source_id: loaded_source_id,
                                 source: text.into(),
                             },
                         );
@@ -306,4 +413,136 @@ fn logical_key(path: &Path) -> String {
 
 fn include_source_id(logical_target: &str) -> String {
     format!("include:{logical_target}")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "adocweave-include-loader-{}-{id}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("test directory cleanup");
+        }
+    }
+
+    fn session(root: &Path) -> LocalTargetSession {
+        LocalTargetSession::new(
+            LocalTargetPolicy::new(root).expect("policy"),
+            16,
+            ResourceLimits::default(),
+        )
+    }
+
+    fn request(target: &str) -> IncludeRequest {
+        adocweave::preprocess::discover_includes(&format!("include::{target}[]\n"))
+            .expect("include discovery")
+            .pop()
+            .expect("include request")
+    }
+
+    #[test]
+    fn duplicate_requests_keep_logical_identity_and_share_one_read() {
+        let root = TestDirectory::new();
+        fs::write(root.0.join("part.adoc"), "part\n").expect("fixture");
+        let mut session = session(&root.0);
+
+        for _ in 0..2 {
+            let loaded = {
+                let mut loader = IncludeLoader::new(&mut session);
+                let validated = loader
+                    .validate(&root.0, request("part.adoc"))
+                    .expect("validated target");
+                loader.load(validated).expect("loaded source")
+            };
+            let (source_id, source, provenance) = loaded.into_utf8_parts();
+            assert_eq!(source_id.as_str(), "include:part.adoc");
+            assert_eq!(source, "part\n");
+            assert_eq!(provenance.logical_target, "part.adoc");
+        }
+        assert_eq!(session.read_files(), 1);
+    }
+
+    #[test]
+    fn failed_validation_cannot_produce_a_loaded_source() {
+        let root = TestDirectory::new();
+        let mut session = session(&root.0);
+        let result = IncludeLoader::new(&mut session).validate(&root.0, request("missing.adoc"));
+
+        assert!(result.is_err());
+        assert_eq!(session.read_files(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliases_keep_distinct_logical_ids_and_share_canonical_provenance() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDirectory::new();
+        fs::write(root.0.join("part.adoc"), "part\n").expect("fixture");
+        symlink("part.adoc", root.0.join("alias.adoc")).expect("alias");
+        let mut session = session(&root.0);
+
+        let direct = {
+            let mut loader = IncludeLoader::new(&mut session);
+            let target = loader
+                .validate(&root.0, request("part.adoc"))
+                .expect("direct validation");
+            loader.load(target).expect("direct load")
+        };
+        let alias = {
+            let mut loader = IncludeLoader::new(&mut session);
+            let target = loader
+                .validate(&root.0, request("alias.adoc"))
+                .expect("alias validation");
+            loader.load(target).expect("alias load")
+        };
+        let (direct_id, _, direct_provenance) = direct.into_utf8_parts();
+        let (alias_id, _, alias_provenance) = alias.into_utf8_parts();
+
+        assert_eq!(direct_id.as_str(), "include:part.adoc");
+        assert_eq!(alias_id.as_str(), "include:alias.adoc");
+        assert_ne!(direct_id, alias_id);
+        assert_eq!(
+            direct_provenance.canonical_path,
+            alias_provenance.canonical_path
+        );
+        assert_eq!(session.read_files(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escape_fails_before_loaded_source_construction() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDirectory::new();
+        let outside = TestDirectory::new();
+        fs::write(outside.0.join("outside.adoc"), "outside\n").expect("outside fixture");
+        symlink(outside.0.join("outside.adoc"), root.0.join("escape.adoc")).expect("escape");
+        let mut session = session(&root.0);
+        let error = IncludeLoader::new(&mut session)
+            .validate(&root.0, request("escape.adoc"))
+            .expect_err("symlink escape");
+
+        assert_eq!(error.diagnostic_code(), "local-target-outside-root");
+        assert_eq!(session.read_files(), 0);
+    }
 }
