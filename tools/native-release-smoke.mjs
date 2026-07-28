@@ -280,5 +280,5 @@ try {
   await smokeForcedProcessLifecycle(lsp);
   process.stdout.write(`native release smoke passed: ${target}\n`);
 } finally {
-  rmSync(scratch, { recursive: true, force: true });
+  rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
