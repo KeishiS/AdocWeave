@@ -98,10 +98,19 @@ tagの公開処理は、同じcommitに対する検証済みmain candidateを再
 
 [source,console]
 ----
+cargo make platform-contract
 cargo make release-contract
 cargo make dist-plan
 cargo make release-gate
 ----
+
+``platform-contract``は、WindowsとPOSIXのpath計算、実行file名、archive path、Windows DLL許可一覧、
+macOS deployment target、VSIX metadataおよび一時directory削除の再試行条件をfixtureで検証します。
+このtaskはhost OSに依存せず、pull requestとlocalで同じtestを実行します。
+
+このfixtureは、MSVCでのlink、Windowsの実際のfile lock、macOS SDKでのlink、Mach-Oの実行、
+quarantine属性および各OSでのprocess lifecycleを再現しません。これらは対象OSのnative runnerで
+``native-release-smoke``とinstallation E2Eを実行して確認します。
 
 この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は
 xref:../../CONTRIBUTING.adoc[コントリビューションガイド]に従います。

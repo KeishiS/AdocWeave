@@ -14,6 +14,15 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+  TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
+  archiveEntries,
+  macosMinimumVersion,
+  unexpectedMacosDependencies,
+  importedWindowsDlls,
+  unexpectedWindowsDlls,
+  validateArchiveEntries,
+} from "./platform-contract.mjs";
 
 const [artifactDirectory, target] = process.argv.slice(2);
 if (!artifactDirectory || !target) {
@@ -49,9 +58,9 @@ function archive(name) {
 function extract(archivePath, executable) {
   const destination = join(scratch, `extract-${executable}`);
   mkdirSync(destination);
-  const entries = platform.archive === "zip"
-    ? execFileSync("unzip", ["-Z1", archivePath], { encoding: "utf8" }).trim().split("\n")
-    : execFileSync("tar", ["-tJf", archivePath], { encoding: "utf8" }).trim().split("\n");
+  const entries = archiveEntries(platform.archive === "zip"
+    ? execFileSync("unzip", ["-Z1", archivePath], { encoding: "utf8" })
+    : execFileSync("tar", ["-tJf", archivePath], { encoding: "utf8" }));
   const expectedEntries = [
     "LICENSE-APACHE",
     "LICENSE-MIT",
@@ -62,7 +71,7 @@ function extract(archivePath, executable) {
   if (JSON.stringify(entries.sort()) !== JSON.stringify(expectedEntries)) {
     throw new Error(`${basename(archivePath)} has an unexpected archive layout:\n${entries.join("\n")}`);
   }
-  if (entries.some((entry) => entry.startsWith("/") || entry.split("/").includes(".."))) {
+  if (validateArchiveEntries(entries).length > 0) {
     throw new Error(`${basename(archivePath)} contains an unsafe path`);
   }
   if (platform.archive === "zip") {
@@ -101,12 +110,11 @@ function verifyBinary(binary, executable) {
       throw new Error(`${executable} has the wrong Mach-O architecture`);
     }
     const dependencies = execFileSync("otool", ["-L", binary], { encoding: "utf8" });
-    if (dependencies.split("\n").slice(1).some((line) => line.trim() && !line.trim().startsWith("/usr/lib/") &&
-      !line.trim().startsWith("/System/Library/"))) {
+    if (unexpectedMacosDependencies(dependencies).length > 0) {
       throw new Error(`${executable} has a non-system dynamic dependency`);
     }
     const loadCommands = execFileSync("otool", ["-l", binary], { encoding: "utf8" });
-    const minimum = /cmd LC_BUILD_VERSION[\s\S]*?minos ([0-9.]+)/.exec(loadCommands)?.[1];
+    const minimum = macosMinimumVersion(loadCommands);
     if (minimum !== platform.minimumOsVersion) {
       throw new Error(`${executable} minimum macOS version is ${minimum ?? "unknown"}`);
     }
@@ -129,26 +137,8 @@ function verifyBinary(binary, executable) {
   const dumpbin = process.env.ADOCWEAVE_DUMPBIN;
   if (!dumpbin) throw new Error("ADOCWEAVE_DUMPBIN is required for Windows dependency verification");
   const dependencies = execFileSync(dumpbin, ["/DEPENDENTS", binary], { encoding: "utf8" });
-  const imported = [...dependencies.matchAll(/^\s+([A-Za-z0-9_.-]+\.dll)\s*$/gim)]
-    .map((match) => match[1].toLowerCase());
-  const allowed = new Set([
-    "advapi32.dll",
-    "bcrypt.dll",
-    "bcryptprimitives.dll",
-    "crypt32.dll",
-    "iphlpapi.dll",
-    "kernel32.dll",
-    "normaliz.dll",
-    "ntdll.dll",
-    "ole32.dll",
-    "secur32.dll",
-    "shell32.dll",
-    "user32.dll",
-    "userenv.dll",
-    "ws2_32.dll",
-  ]);
-  const unexpected = imported.filter((name) =>
-    !allowed.has(name) && !name.startsWith("api-ms-win-") && !name.startsWith("ext-ms-win-"));
+  const imported = importedWindowsDlls(dependencies);
+  const unexpected = unexpectedWindowsDlls(imported);
   if (imported.length === 0 || unexpected.length > 0) {
     throw new Error(`${executable} has unexpected Windows dependencies: ${unexpected.join(", ") || "none detected"}`);
   }
@@ -272,7 +262,7 @@ try {
   process.stdout.write(`native release smoke passed: ${target}\n`);
 } finally {
   try {
-    rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(scratch, TEMPORARY_DIRECTORY_REMOVAL_OPTIONS);
   } catch (error) {
     process.stderr.write(`warning: native smokeの一時ディレクトリを削除できませんでした: ${error.message}\n`);
   }

@@ -16,9 +16,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
+import path, { basename, delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import {
+  TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
+  archiveEntries,
+  executableNames,
+  installationLayout,
+  isPathInside,
+  validateArchiveEntries,
+  vscodePackageContract,
+} from "./platform-contract.mjs";
 
 const [candidateArgument, target, manifestArgument] = process.argv.slice(2);
 if (!candidateArgument || !target) {
@@ -48,14 +57,16 @@ if (typeof version !== "string" || !version) throw new Error("manifest has no pa
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-installation-e2e-"));
 const home = join(scratch, "home");
 const prefix = join(home, ".local");
-const binDirectory = join(prefix, "bin");
-const versionRoot = join(prefix, "lib", "adocweave", version);
+const {
+  activeMarker,
+  binDirectory,
+  browserRoot,
+  currentLink,
+  versionRoot,
+  vscodeRoot,
+  zedRoot,
+} = installationLayout(prefix, version, path);
 const previousRoot = join(prefix, "lib", "adocweave", `${version}-previous-fixture`);
-const currentLink = join(prefix, "lib", "adocweave", "current");
-const activeMarker = join(prefix, "lib", "adocweave", "active-version");
-const browserRoot = join(prefix, "share", "adocweave", version, "browser");
-const zedRoot = join(prefix, "share", "adocweave", version, "zed");
-const vscodeRoot = join(prefix, "share", "adocweave", version, "vscode");
 
 function files(directory) {
   if (!existsSync(directory)) return [];
@@ -66,11 +77,11 @@ function files(directory) {
   });
 }
 
-function assertInside(root, path) {
+function assertInside(root, candidatePath) {
   const resolvedRoot = realpathSync(root);
-  const resolvedPath = realpathSync(path);
-  if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${sep}`)) {
-    throw new Error(`${path} escapes ${root}`);
+  const resolvedPath = realpathSync(candidatePath);
+  if (!isPathInside(resolvedRoot, resolvedPath, path)) {
+    throw new Error(`${candidatePath} escapes ${root}`);
   }
 }
 
@@ -85,18 +96,10 @@ function extract(path, destination, expectedRoot, archiveType = "tar.xz") {
   const listing = archiveType === "zip"
     ? execFileSync("unzip", ["-Z1", path], { encoding: "utf8" })
     : execFileSync("tar", ["-tJf", path], { encoding: "utf8" });
-  const entries = listing
-    .trim()
-    .split("\n")
-    .filter(Boolean);
+  const entries = archiveEntries(listing);
   if (entries.length === 0) throw new Error(`empty release archive: ${basename(path)}`);
   if (
-    entries.some(
-      (entry) =>
-        entry.startsWith("/") ||
-        entry.split("/").includes("..") ||
-        (expectedRoot && entry !== `${expectedRoot}/` && !entry.startsWith(`${expectedRoot}/`)),
-    )
+    validateArchiveEntries(entries, expectedRoot).length > 0
   ) {
     throw new Error(`unsafe or unexpected archive path in ${basename(path)}`);
   }
@@ -297,10 +300,7 @@ try {
   installBrowser();
   installZed();
   installVSCode();
-  const executables = [
-    `adocweave${platform.executableSuffix}`,
-    `adocweave-lsp${platform.executableSuffix}`,
-  ];
+  const executables = executableNames(platform.executableSuffix);
   cpSync(versionRoot, previousRoot, { recursive: true });
   activateNative(versionRoot, version, executables);
   if (process.platform !== "win32" && readlinkSync(currentLink) !== versionRoot) {
@@ -331,7 +331,7 @@ try {
   if (!existsSync(join(browserRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("browser WASM is missing");
   if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
   const vscodeManifest = JSON.parse(readFileSync(join(vscodeRoot, "package.json"), "utf8"));
-  if (vscodeManifest.version !== version || vscodeManifest.main !== "./dist/extension.cjs") {
+  if (!vscodePackageContract(vscodeManifest, version)) {
     throw new Error("VS Code extension manifest mismatch");
   }
   await verifyBrowserContract();
@@ -359,5 +359,5 @@ try {
   }
   process.stdout.write(`release installation E2E passed: ${version} ${target}\n`);
 } finally {
-  rmSync(scratch, { recursive: true, force: true });
+  rmSync(scratch, TEMPORARY_DIRECTORY_REMOVAL_OPTIONS);
 }

@@ -184,6 +184,11 @@ command = "actionlint"
 description = "Run the release contract, workflow lint, and cargo-dist plan used by pull requests"
 dependencies = ["release-contract", "workflow-lint", "dist-plan"]
 
+[tasks.platform-contract]
+description = "Verify Windows and macOS release contracts without requiring the target operating system"
+command = "node"
+args = ["--test", "tools/platform-contract.test.mjs"]
+
 [tasks.dev-tools-check]
 description = "Verify that the flake development shell exposes every repository tool entry point"
 script_runner = "@shell"
@@ -805,6 +810,7 @@ dependencies = [
   "test-vscode",
   "test-vscode-extension-host",
   "test-vscode-release-package",
+  "platform-contract",
   "release-contract",
   "workflow-lint",
   "test-cross-runtime",
