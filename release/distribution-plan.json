@@ -19,7 +19,7 @@
       "architecture": "arm64",
       "executableSuffix": "",
       "linkage": "system",
-      "minimumOsVersion": "13.0",
+      "minimumOsVersion": "14.0",
       "os": "darwin",
       "runner": "macos-15",
       "triple": "aarch64-apple-darwin"
@@ -33,16 +33,6 @@
       "os": "linux",
       "runner": "ubuntu-24.04",
       "triple": "x86_64-unknown-linux-musl"
-    },
-    {
-      "archive": "zip",
-      "architecture": "x64",
-      "executableSuffix": "",
-      "linkage": "system",
-      "minimumOsVersion": "13.0",
-      "os": "darwin",
-      "runner": "macos-15-intel",
-      "triple": "x86_64-apple-darwin"
     },
     {
       "archive": "zip",
@@ -78,13 +68,6 @@
       "executable": "adocweave"
     },
     {
-      "name": "adocweave-cli-x86_64-apple-darwin.zip",
-      "kind": "cli",
-      "target": "x86_64-apple-darwin",
-      "archive": "zip",
-      "executable": "adocweave"
-    },
-    {
       "name": "adocweave-cli-x86_64-pc-windows-msvc.zip",
       "kind": "cli",
       "target": "x86_64-pc-windows-msvc",
@@ -109,13 +92,6 @@
       "name": "adocweave-lsp-x86_64-unknown-linux-musl.zip",
       "kind": "lsp",
       "target": "x86_64-unknown-linux-musl",
-      "archive": "zip",
-      "executable": "adocweave-lsp"
-    },
-    {
-      "name": "adocweave-lsp-x86_64-apple-darwin.zip",
-      "kind": "lsp",
-      "target": "x86_64-apple-darwin",
       "archive": "zip",
       "executable": "adocweave-lsp"
     },

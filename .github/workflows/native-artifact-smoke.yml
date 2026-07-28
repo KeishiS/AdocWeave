@@ -22,8 +22,6 @@ jobs:
             runner: macos-15
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
@@ -36,7 +34,7 @@ jobs:
         with:
           name: artifacts-build-local-${{ matrix.target }}
           path: target/distrib
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm

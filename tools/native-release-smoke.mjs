@@ -134,6 +134,7 @@ function verifyBinary(binary, executable) {
   const allowed = new Set([
     "advapi32.dll",
     "bcrypt.dll",
+    "bcryptprimitives.dll",
     "crypt32.dll",
     "iphlpapi.dll",
     "kernel32.dll",
@@ -226,7 +227,7 @@ async function smokeLsp(binary) {
   await waitFor((message) => message.id === 2);
   send(child, { jsonrpc: "2.0", method: "exit", params: null });
   child.stdin.end();
-  const exitCode = await new Promise((resolvePromise) => child.once("exit", resolvePromise));
+  const exitCode = await new Promise((resolvePromise) => child.once("close", resolvePromise));
   if (exitCode !== 0) throw new Error(`LSP exited with ${exitCode}`);
 }
 
@@ -249,7 +250,7 @@ async function smokeForcedProcessLifecycle(binary) {
     }
     if (!rejected) throw new Error("Windows allowed replacement of a running Language Server");
   }
-  const exited = new Promise((resolvePromise) => child.once("exit", resolvePromise));
+  const exited = new Promise((resolvePromise) => child.once("close", resolvePromise));
   child.kill();
   const exit = await Promise.race([
     exited,

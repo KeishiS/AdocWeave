@@ -19,7 +19,6 @@ targets = [
   "aarch64-unknown-linux-musl",
   "aarch64-apple-darwin",
   "x86_64-unknown-linux-musl",
-  "x86_64-apple-darwin",
   "x86_64-pc-windows-msvc",
 ]
 # Where to host releases
@@ -52,5 +51,4 @@ global = "ubuntu-24.04"
 aarch64-unknown-linux-musl = "ubuntu-24.04-arm"
 aarch64-apple-darwin = "macos-15"
 x86_64-unknown-linux-musl = "ubuntu-24.04"
-x86_64-apple-darwin = "macos-15-intel"
 x86_64-pc-windows-msvc = "windows-2025"
