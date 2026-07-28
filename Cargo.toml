@@ -5,6 +5,7 @@ members = [
   "crates/adocweave-config",
   "crates/adocweave-host",
   "crates/adocweave-lsp",
+  "crates/adocweave-workspace",
   "crates/adocweave-wasm",
 ]
 exclude = ["editors/zed"]

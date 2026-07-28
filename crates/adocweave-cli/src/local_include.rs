@@ -150,7 +150,7 @@ pub fn prepare(
                     target,
                     ResourceDocument {
                         source_id: SourceId::new(resource_id),
-                        source: text,
+                        source: text.into(),
                     },
                 );
             }
@@ -238,7 +238,7 @@ pub fn prepare_local(
                         target,
                         ResourceDocument {
                             source_id: SourceId::new(resource_id),
-                            source: String::new(),
+                            source: String::new().into(),
                         },
                     );
                     continue;
@@ -265,7 +265,7 @@ pub fn prepare_local(
                             target,
                             ResourceDocument {
                                 source_id: SourceId::new(resource_id),
-                                source: text,
+                                source: text.into(),
                             },
                         );
                     }
@@ -275,7 +275,7 @@ pub fn prepare_local(
                             target,
                             ResourceDocument {
                                 source_id: SourceId::new(resource_id),
-                                source: String::new(),
+                                source: String::new().into(),
                             },
                         );
                     }

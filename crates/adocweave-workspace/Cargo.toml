@@ -1,0 +1,17 @@
+[package]
+name = "adocweave-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Runtime-independent workspace analysis for AdocWeave"
+
+[dependencies]
+adocweave = { path = "../adocweave" }
+adocweave-host = { path = "../adocweave-host" }
+
+[lib]
+path = "src/lib.rs"

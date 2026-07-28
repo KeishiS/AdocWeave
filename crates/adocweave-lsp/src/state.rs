@@ -62,31 +62,6 @@ pub struct WorkspaceAnalysis {
     pub resource_versions: BTreeMap<String, i64>,
 }
 
-impl WorkspaceAnalysis {
-    pub fn source_uris(&self) -> std::collections::BTreeSet<String> {
-        let mut uris = std::collections::BTreeSet::new();
-        for directive in &self.projection.directives {
-            uris.extend(
-                directive
-                    .source_id
-                    .iter()
-                    .chain(directive.resource_source_id.iter())
-                    .map(|source_id| source_id.as_str().to_owned()),
-            );
-        }
-        for diagnostic in &self.projection.diagnostics {
-            uris.extend(
-                diagnostic
-                    .origins
-                    .iter()
-                    .filter_map(|origin| origin.source_id.as_ref())
-                    .map(|source_id| source_id.as_str().to_owned()),
-            );
-        }
-        uris
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct DocumentSnapshot {
     pub uri: String,
@@ -105,7 +80,6 @@ pub enum Adoption {
 pub struct DocumentStore {
     documents: Arc<BTreeMap<String, DocumentState>>,
     next_generation: u64,
-    analysis_options: AnalysisOptions,
 }
 
 impl DocumentStore {
@@ -142,10 +116,6 @@ impl DocumentStore {
             .collect()
     }
 
-    pub fn set_analysis_options(&mut self, options: AnalysisOptions) {
-        self.analysis_options = options;
-    }
-
     pub fn workspace_analyses(&self) -> impl Iterator<Item = &WorkspaceAnalysis> {
         self.documents
             .values()
@@ -164,11 +134,22 @@ impl DocumentStore {
             .map(|document| document.cancellation.clone())
     }
 
+    #[cfg(test)]
     pub fn begin_open(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
+        self.begin_open_with_options(uri, version, text, AnalysisOptions::default())
+    }
+
+    pub fn begin_open_with_options(
+        &mut self,
+        uri: String,
+        version: i32,
+        text: String,
+        options: AnalysisOptions,
+    ) -> AnalysisJob {
         if let Some(previous) = self.documents.get(&uri) {
             previous.cancellation.cancel();
         }
-        let job = self.new_job(uri.clone(), version, text);
+        let job = self.new_job(uri.clone(), version, text, options);
         Arc::make_mut(&mut self.documents).insert(
             uri.clone(),
             DocumentState {
@@ -187,8 +168,9 @@ impl DocumentStore {
         if i64::from(version) <= current.request.revision.version {
             return None;
         }
+        let options = current.request.options.clone();
         current.cancellation.cancel();
-        let job = self.new_job(uri.to_owned(), version, text);
+        let job = self.new_job(uri.to_owned(), version, text, options);
         self.install_job(uri, &job);
         Some(job)
     }
@@ -198,7 +180,18 @@ impl DocumentStore {
         current.cancellation.cancel();
         let version = i32::try_from(current.request.revision.version).ok()?;
         let text = current.request.source.to_string();
-        let job = self.new_job(uri.to_owned(), version, text);
+        let options = current.request.options.clone();
+        let job = self.new_job(uri.to_owned(), version, text, options);
+        self.install_job(uri, &job);
+        Some(job)
+    }
+
+    pub fn reconfigure(&mut self, uri: &str, options: AnalysisOptions) -> Option<AnalysisJob> {
+        let current = self.documents.get(uri)?;
+        current.cancellation.cancel();
+        let version = i32::try_from(current.request.revision.version).ok()?;
+        let text = current.request.source.to_string();
+        let job = self.new_job(uri.to_owned(), version, text, options);
         self.install_job(uri, &job);
         Some(job)
     }
@@ -301,14 +294,20 @@ impl DocumentStore {
         }
     }
 
-    fn new_job(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
+    fn new_job(
+        &mut self,
+        uri: String,
+        version: i32,
+        text: String,
+        options: AnalysisOptions,
+    ) -> AnalysisJob {
         self.next_generation = self.next_generation.saturating_add(1);
         let request = AnalysisRequest::new(
             Some(SourceId::new(uri.clone())),
             i64::from(version),
             self.next_generation,
             text,
-            self.analysis_options.clone(),
+            options,
         );
         AnalysisJob {
             uri,

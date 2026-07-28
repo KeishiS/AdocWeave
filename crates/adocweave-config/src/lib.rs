@@ -253,10 +253,12 @@ pub struct ResolvedProjectConfig {
 
 impl Default for ResolvedProjectConfig {
     fn default() -> Self {
+        let mut preprocess = PreprocessOptions::default();
+        preprocess.enable_includes = false;
         Self {
             schema_version: SCHEMA_VERSION,
             analysis: AnalysisOptions::default(),
-            preprocess: PreprocessOptions::default(),
+            preprocess,
             resources: ResourceSettings::default(),
             local_targets: LocalTargetSettings::default(),
             format: FormatConfig::default(),

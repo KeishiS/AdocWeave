@@ -11,7 +11,9 @@ description = "Language Server for AdocWeave"
 
 [dependencies]
 adocweave = { path = "../adocweave" }
+adocweave-config = { path = "../adocweave-config" }
 adocweave-host = { path = "../adocweave-host" }
+adocweave-workspace = { path = "../adocweave-workspace" }
 async-lsp = { version = "0.2.4", default-features = false, features = [
   "client-monitor",
   "omni-trait",

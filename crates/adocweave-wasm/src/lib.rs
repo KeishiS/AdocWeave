@@ -671,7 +671,7 @@ fn resource_snapshot(resources: BTreeMap<String, WasmResource>) -> ResourceSnaps
             target,
             ResourceDocument {
                 source_id: SourceId::new(resource.source_id),
-                source: resource.source,
+                source: resource.source.into(),
             },
         );
     }
@@ -2002,7 +2002,7 @@ mod tests {
             "parts/intro.adoc".to_owned(),
             WasmResource {
                 source_id: "intro".to_owned(),
-                source: "== Intro\n".to_owned(),
+                source: "== Intro\n".into(),
             },
         )]);
         let response = preprocess_request(WasmPreprocessRequest {
@@ -2025,7 +2025,7 @@ mod tests {
             "parts/intro.adoc",
             ResourceDocument {
                 source_id: SourceId::new("intro"),
-                source: "== Intro\n".to_owned(),
+                source: "== Intro\n".into(),
             },
         );
         let native = preprocess(

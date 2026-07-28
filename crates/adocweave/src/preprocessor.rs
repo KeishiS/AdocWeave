@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::core::{Analysis, Engine, ParseError, SourceId};
 use crate::diagnostic::{Diagnostic, RelatedInformation, TextEdit};
@@ -25,7 +26,7 @@ pub enum SafeMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceDocument {
     pub source_id: SourceId,
-    pub source: String,
+    pub source: Arc<str>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1915,8 +1916,7 @@ mod tests {
             "part.adoc",
             ResourceDocument {
                 source_id: SourceId::new("part"),
-                source: "// tag::keep[]\n= Included\nline one\nline two\n// end::keep[]\n"
-                    .to_owned(),
+                source: "// tag::keep[]\n= Included\nline one\nline two\n// end::keep[]\n".into(),
             },
         );
         let mut options = PreprocessOptions {
@@ -1949,7 +1949,7 @@ mod tests {
             ResourceDocument {
                 source_id: SourceId::new("part"),
                 source: "// tag::one[]\none\n// end::one[]\n// tag::two[]\ntwo\n// end::two[]\n"
-                    .to_owned(),
+                    .into(),
             },
         );
 
@@ -1999,7 +1999,7 @@ mod tests {
             "cycle.adoc",
             ResourceDocument {
                 source_id: SourceId::new("cycle"),
-                source: "include::cycle.adoc[]\n".to_owned(),
+                source: "include::cycle.adoc[]\n".into(),
             },
         );
         assert_eq!(
@@ -2083,7 +2083,7 @@ mod tests {
                 target,
                 ResourceDocument {
                     source_id: SourceId::new(source_id),
-                    source: source.to_owned(),
+                    source: source.into(),
                 },
             );
         }
@@ -2116,7 +2116,7 @@ mod tests {
                 target,
                 ResourceDocument {
                     source_id: SourceId::new(target),
-                    source: format!("{target}\n"),
+                    source: format!("{target}\n").into(),
                 },
             );
         }
@@ -2197,7 +2197,7 @@ endif::[]
             "chapters/one.adoc",
             ResourceDocument {
                 source_id: SourceId::new("one"),
-                source: "chapter\n".to_owned(),
+                source: "chapter\n".into(),
             },
         );
         let options = PreprocessOptions {
@@ -2223,14 +2223,14 @@ endif::[]
             "book/chapters/one.adoc",
             ResourceDocument {
                 source_id: SourceId::new("one"),
-                source: "include::section.adoc[]\n".to_owned(),
+                source: "include::section.adoc[]\n".into(),
             },
         );
         snapshot.insert(
             "book/chapters/section.adoc",
             ResourceDocument {
                 source_id: SourceId::new("section"),
-                source: "nested\n".to_owned(),
+                source: "nested\n".into(),
             },
         );
         let options = PreprocessOptions {
@@ -2323,7 +2323,7 @@ endif::[]
             ResourceDocument {
                 source_id: SourceId::new("part"),
                 source: "== Included\nSee xref:other.adoc#target[] and image::cover.png[].\n"
-                    .to_owned(),
+                    .into(),
             },
         );
         let engine = Engine::new(crate::core::AnalysisOptions::default());
@@ -2368,7 +2368,7 @@ endif::[]
             "attributes.adoc",
             ResourceDocument {
                 source_id: SourceId::new("included-attributes"),
-                source: included.to_owned(),
+                source: included.into(),
             },
         );
         let engine = Engine::new(crate::core::AnalysisOptions::default());
@@ -2434,7 +2434,7 @@ endif::[]
             "attributes.adoc",
             ResourceDocument {
                 source_id: SourceId::new("included-attributes"),
-                source: included.to_owned(),
+                source: included.into(),
             },
         );
         let analysis = preprocess_and_analyze(
@@ -2489,7 +2489,7 @@ endif::[]
             "multiline.adoc",
             ResourceDocument {
                 source_id: SourceId::new("included-multiline"),
-                source: included.to_owned(),
+                source: included.into(),
             },
         );
         let engine = Engine::new(crate::core::AnalysisOptions::default());
@@ -2543,7 +2543,7 @@ endif::[]
             "empty.adoc",
             ResourceDocument {
                 source_id: SourceId::new("empty-include"),
-                source: included.to_owned(),
+                source: included.into(),
             },
         );
         let analysis = preprocess_and_analyze(
