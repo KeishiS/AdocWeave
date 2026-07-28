@@ -38,6 +38,9 @@ dependencies = [
 [[package]]
 name = "adocweave-host"
 version = "0.14.0"
+dependencies = [
+ "rustix",
+]
 
 [[package]]
 name = "adocweave-lsp"
