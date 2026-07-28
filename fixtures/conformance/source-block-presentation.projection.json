@@ -1,0 +1,94 @@
+{
+  "blockPresentations": [],
+  "catalogs": {
+    "bibliography": [],
+    "footnotes": [],
+    "index": []
+  },
+  "externalLinks": [],
+  "formulas": [],
+  "orderedLists": [],
+  "packageVersion": "0.15.0",
+  "referenceEdges": [],
+  "searchableText": {
+    "segments": [
+      {
+        "kind": "code",
+        "sourceRange": {
+          "end": 112,
+          "start": 75
+        },
+        "text": "fn main() {\n    println!(\"Hello\");\n}"
+      },
+      {
+        "kind": "code",
+        "sourceRange": {
+          "end": 180,
+          "start": 169
+        },
+        "text": "invalid();"
+      }
+    ],
+    "text": "fn main() {\n    println!(\"Hello\");\n}\ninvalid();"
+  },
+  "sourceBlocks": [
+    {
+      "contentRange": {
+        "end": 112,
+        "start": 75
+      },
+      "language": "rust",
+      "languageRange": {
+        "end": 51,
+        "start": 47
+      },
+      "lineNumbers": true,
+      "source": "fn main() {\n    println!(\"Hello\");\n}\n",
+      "sourceRange": {
+        "end": 117,
+        "start": 39
+      },
+      "startLine": 7,
+      "title": {
+        "sourceRange": {
+          "end": 38,
+          "start": 17
+        },
+        "text": "The main.rs <script>"
+      }
+    },
+    {
+      "contentRange": {
+        "end": 180,
+        "start": 169
+      },
+      "language": "rust",
+      "languageRange": {
+        "end": 142,
+        "start": 138
+      },
+      "lineNumbers": true,
+      "source": "invalid();\n",
+      "sourceRange": {
+        "end": 185,
+        "start": 130
+      },
+      "startLine": 1,
+      "title": {
+        "sourceRange": {
+          "end": 129,
+          "start": 119
+        },
+        "text": "invalid.rs"
+      }
+    }
+  ],
+  "sourceId": "conformance:source-block-presentation",
+  "structure": {
+    "headings": [],
+    "manpage": null,
+    "toc": []
+  },
+  "targets": [],
+  "title": null
+}

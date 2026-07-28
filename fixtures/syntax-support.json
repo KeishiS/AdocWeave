@@ -8,6 +8,7 @@
     {"name": "admonition", "status": "supported", "syntaxNeedle": "Admonition", "compatibilityNeedle": "admonition paragraph", "grammarNeedle": "admonition paragraph", "fixture": "fixtures/conformance/semantic-blocks.adoc"},
     {"name": "quote and verse", "status": "supported", "syntaxNeedle": "Quoteとverse", "compatibilityNeedle": "quote,Author,Source", "grammarNeedle": "quote,AUTHOR,CITATION", "fixture": "fixtures/conformance/semantic-blocks.adoc"},
     {"name": "monospace boundaries", "status": "supported", "syntaxNeedle": "二重マーカー", "compatibilityNeedle": "インライン書式", "grammarNeedle": "単一バッククォート", "fixture": "fixtures/conformance/monospace-boundaries.adoc"},
-    {"name": "automatic table headers", "status": "supported", "syntaxNeedle": "headerを推論", "compatibilityNeedle": "header推論", "grammarNeedle": "noheader", "fixture": "fixtures/conformance/automatic-table-headers.adoc"}
+    {"name": "automatic table headers", "status": "supported", "syntaxNeedle": "headerを推論", "compatibilityNeedle": "header推論", "grammarNeedle": "noheader", "fixture": "fixtures/conformance/automatic-table-headers.adoc"},
+    {"name": "source block presentation", "status": "supported", "syntaxNeedle": "linenums", "compatibilityNeedle": "linenums", "grammarNeedle": "source-option", "fixture": "fixtures/conformance/source-block-presentation.adoc"}
   ]
 }

@@ -1,0 +1,15 @@
+:file: main.rs
+
+.The *{file}* <script>
+[source,rust,linenums,start=7]
+----
+fn main() {
+    println!("Hello");
+}
+----
+
+.invalid.rs
+[source,rust,linenums,start=zero]
+----
+invalid();
+----

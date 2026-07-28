@@ -130,20 +130,25 @@ fn normalize_verbatim_block(
     attributes: &crate::attributes::AttributeEnvironment,
 ) -> AstBlock {
     match block {
-        AstBlock::Source(source) => AstBlock::Verbatim(crate::parser::VerbatimBlock {
-            metadata: source.metadata,
-            kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
-                attribute_range: source.attribute_range,
-                language_range: source.language_range,
-                language: source.language,
-            }),
-            range: source.range,
-            delimiter_range: source.delimiter_range,
-            content_range: source.content_range,
-            value: source.value,
-            callouts: source.callouts,
-            problems: source.problems,
-        }),
+        AstBlock::Source(mut source) => {
+            let info = source_info(
+                source.attribute_range,
+                source.language_range,
+                source.language,
+                &source.metadata,
+                &mut source.problems,
+            );
+            AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                metadata: source.metadata,
+                kind: crate::parser::VerbatimKind::Source(info),
+                range: source.range,
+                delimiter_range: source.delimiter_range,
+                content_range: source.content_range,
+                value: source.value,
+                callouts: source.callouts,
+                problems: source.problems,
+            })
+        }
         AstBlock::Delimited(mut block) => {
             match &mut block.content {
                 crate::parser::DelimitedContent::Compound(children) => {
@@ -188,6 +193,8 @@ fn normalize_verbatim_block(
                         attribute_range,
                         language_range: None,
                         language: Some(language.to_owned()),
+                        line_numbers: false,
+                        start_line: None,
                     }),
                     range: block.range,
                     delimiter_range: block.opening_delimiter_range,
@@ -234,6 +241,77 @@ fn normalize_verbatim_block(
             AstBlock::List(list)
         }
         other => other,
+    }
+}
+
+fn source_info(
+    attribute_range: crate::source::TextRange,
+    language_range: Option<crate::source::TextRange>,
+    language: Option<String>,
+    metadata: &crate::parser::BlockMetadata,
+    problems: &mut Vec<crate::parser::BlockProblem>,
+) -> crate::parser::SourceInfo {
+    let positional = metadata
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.name.is_none())
+        .collect::<Vec<_>>();
+    let mut line_numbers = false;
+    let mut accept_option = |value: &str, range| {
+        if value == "linenums" {
+            line_numbers = true;
+        } else {
+            problems.push(crate::parser::BlockProblem {
+                kind: crate::parser::BlockProblemKind::InvalidSourceOption,
+                range,
+            });
+        }
+    };
+    for attribute in positional.into_iter().skip(2) {
+        accept_option(&attribute.value, attribute.range);
+    }
+    for option in &metadata.options {
+        accept_option(&option.value, option.range);
+    }
+    for attribute in metadata
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.name.as_deref() == Some("options"))
+    {
+        for option in attribute
+            .value
+            .split(',')
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            accept_option(option, attribute.range);
+        }
+    }
+
+    let mut start_line = None;
+    if let Some(attribute) = metadata
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.as_deref() == Some("start"))
+    {
+        match attribute.value.parse::<u32>() {
+            Ok(value) if value > 0 && line_numbers => start_line = Some(value),
+            _ => problems.push(crate::parser::BlockProblem {
+                kind: crate::parser::BlockProblemKind::InvalidSourceStart,
+                range: attribute.range,
+            }),
+        }
+    }
+    if line_numbers && start_line.is_none() {
+        start_line = Some(1);
+    }
+
+    crate::parser::SourceInfo {
+        attribute_range,
+        language_range,
+        language,
+        line_numbers,
+        start_line,
     }
 }
 

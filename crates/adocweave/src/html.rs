@@ -29,6 +29,8 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "dl",
     "dt",
     "em",
+    "figcaption",
+    "figure",
     "h1",
     "h2",
     "h3",
@@ -63,8 +65,25 @@ pub const ALLOWED_ELEMENTS: &[&str] = &[
     "video",
 ];
 pub const ALLOWED_ATTRIBUTES: &[&str] = &[
-    "alt", "charset", "class", "colspan", "controls", "height", "href", "id", "lang", "poster",
-    "rel", "rowspan", "src", "target", "title", "width",
+    "alt",
+    "charset",
+    "class",
+    "colspan",
+    "controls",
+    "data-language",
+    "data-line-numbers",
+    "data-line-start",
+    "height",
+    "href",
+    "id",
+    "lang",
+    "poster",
+    "rel",
+    "rowspan",
+    "src",
+    "target",
+    "title",
+    "width",
 ];
 pub const ALLOWED_CLASSES: &[&str] = &[
     "author",
@@ -96,6 +115,7 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "page-break",
     "revision",
     "quote",
+    "source-block",
     "table-align-center",
     "table-align-left",
     "table-align-right",
@@ -549,8 +569,37 @@ fn render_block(
         }
         AstBlock::Verbatim(block) => match &block.kind {
             crate::parser::VerbatimKind::Source(source) => {
+                let has_presentation = block.metadata.title.is_some() || source.line_numbers;
+                if has_presentation {
+                    output.push_str("<figure class=\"source-block\"");
+                    render_optional_id(output, explicit_id);
+                    output.push_str(">\n");
+                    if let Some(title) = &block.metadata.title {
+                        output.push_str("<figcaption>");
+                        escape_html_into(
+                            output,
+                            &crate::projection::resolved_inline_text(&title.inlines),
+                        );
+                        output.push_str("</figcaption>\n");
+                    }
+                }
                 output.push_str("<pre");
-                render_optional_id(output, explicit_id);
+                if !has_presentation {
+                    render_optional_id(output, explicit_id);
+                }
+                if has_presentation
+                    && let Some(language) = &source.language
+                    && policy.source_languages.allows(language)
+                {
+                    output.push_str(" data-language=\"");
+                    escape_html_into(output, language);
+                    output.push('"');
+                }
+                if source.line_numbers {
+                    output.push_str(" data-line-numbers=\"true\" data-line-start=\"");
+                    output.push_str(&source.start_line.unwrap_or(1).to_string());
+                    output.push('"');
+                }
                 output.push_str("><code");
                 if let Some(language) = &source.language {
                     if policy.source_languages.allows(language) {
@@ -568,6 +617,9 @@ fn render_block(
                 output.push('>');
                 escape_html_into(output, &block.value);
                 output.push_str("</code></pre>\n");
+                if has_presentation {
+                    output.push_str("</figure>\n");
+                }
             }
             crate::parser::VerbatimKind::Listing | crate::parser::VerbatimKind::Literal => {
                 render_preformatted(output, explicit_id, None, &block.value);
@@ -2274,6 +2326,15 @@ mod tests {
     }
 
     #[test]
+    fn source_block_presentation_matches_the_shared_fixture() {
+        let source = include_str!("../../../fixtures/conformance/source-block-presentation.adoc");
+        let expected = include_str!("../../../fixtures/conformance/source-block-presentation.html");
+        let parsed = parse(source).expect("valid source");
+
+        assert_eq!(render(&parsed.ast, &RenderPolicy::default()).html, expected);
+    }
+
+    #[test]
     fn html_renderer_escapes_all_special_characters_and_raw_html() {
         let source = include_str!("../../../fixtures/plain/escaping.adoc");
         let parsed = parse(source).expect("valid source");
@@ -2799,6 +2860,8 @@ mod tests {
                 "dl",
                 "dt",
                 "em",
+                "figcaption",
+                "figure",
                 "h1",
                 "h2",
                 "h3",
@@ -2836,8 +2899,25 @@ mod tests {
         assert_eq!(
             ALLOWED_ATTRIBUTES,
             [
-                "alt", "charset", "class", "colspan", "controls", "height", "href", "id", "lang",
-                "poster", "rel", "rowspan", "src", "target", "title", "width"
+                "alt",
+                "charset",
+                "class",
+                "colspan",
+                "controls",
+                "data-language",
+                "data-line-numbers",
+                "data-line-start",
+                "height",
+                "href",
+                "id",
+                "lang",
+                "poster",
+                "rel",
+                "rowspan",
+                "src",
+                "target",
+                "title",
+                "width"
             ]
         );
         assert_eq!(
@@ -2872,6 +2952,7 @@ mod tests {
                 "page-break",
                 "revision",
                 "quote",
+                "source-block",
                 "table-align-center",
                 "table-align-left",
                 "table-align-right",

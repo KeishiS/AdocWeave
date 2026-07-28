@@ -54,6 +54,9 @@ DBまたはアプリ固有のschemaへアクセスしません。
 
 同じpackage version、``Analysis``および解決結果からは同じ順序のJSONを生成します。保存した構造情報は
 AdocWeaveの更新時に再生成してください。
+公開protocolへ必須fieldを追加する場合は``schemaVersion``を更新し、``workerProtocolVersion``はworker
+envelope自体を変更する場合だけ更新します。Package versionはリリース用Pull Requestでrelease manifestと
+公開protocolへ同時に反映します。
 
 === 識別子と文書構造
 

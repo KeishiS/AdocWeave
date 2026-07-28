@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "packageVersion": "0.15.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
@@ -250,8 +250,11 @@
       "fields": [
         { "json": "sourceRange", "type": "TextRange", "required": true },
         { "json": "contentRange", "type": "TextRange", "required": true },
+        { "json": "title", "type": "ProjectedText | null", "required": true },
         { "json": "languageRange", "type": "TextRange | null", "required": true },
         { "json": "language", "type": "string | null", "required": true },
+        { "json": "lineNumbers", "type": "boolean", "required": true },
+        { "json": "startLine", "type": "u32 | null", "required": true },
         { "json": "source", "type": "string", "required": true }
       ]
     },

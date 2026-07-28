@@ -1,0 +1,14 @@
+[
+  {
+    "code": "invalid-attribute",
+    "fixes": [],
+    "id": "invalid-attribute@152:162",
+    "message": "source block start must be a positive integer with linenums",
+    "range": {
+      "end": 162,
+      "start": 152
+    },
+    "related": [],
+    "severity": "warning"
+  }
+]

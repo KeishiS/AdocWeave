@@ -177,6 +177,8 @@ pub struct ExplicitAnchor {
 pub enum BlockProblemKind {
     UnclosedBlock,
     MissingSourceLanguage,
+    InvalidSourceOption,
+    InvalidSourceStart,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -204,6 +206,8 @@ pub struct SourceInfo {
     pub attribute_range: TextRange,
     pub language_range: Option<TextRange>,
     pub language: Option<String>,
+    pub line_numbers: bool,
+    pub start_line: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

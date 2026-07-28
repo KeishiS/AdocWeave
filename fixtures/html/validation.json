@@ -52,6 +52,11 @@
       "case": "web-host-profile"
     },
     {
+      "name": "source-block-presentation",
+      "kind": "conformance-fragment",
+      "case": "source-block-presentation"
+    },
+    {
       "name": "safe-resource-fallback",
       "kind": "conformance-fragment",
       "case": "media-type-mismatch"

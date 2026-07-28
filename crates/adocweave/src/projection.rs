@@ -32,8 +32,11 @@ pub struct DocumentProjection {
 pub struct SourceBlockProjection {
     pub source_range: TextRange,
     pub content_range: TextRange,
+    pub title: Option<ProjectedText>,
     pub language_range: Option<TextRange>,
     pub language: Option<String>,
+    pub line_numbers: bool,
+    pub start_line: Option<u32>,
     pub source: String,
 }
 
@@ -213,8 +216,14 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
             source_blocks.push(SourceBlockProjection {
                 source_range: source.range,
                 content_range: source.content_range,
+                title: source.metadata.title.as_ref().map(|title| ProjectedText {
+                    source_range: title.range,
+                    text: resolved_inline_text(&title.inlines),
+                }),
                 language_range: source.language_range,
                 language: source.language.clone(),
+                line_numbers: false,
+                start_line: None,
                 source: source.value.clone(),
             });
         }
@@ -227,8 +236,14 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
             source_blocks.push(SourceBlockProjection {
                 source_range: block.range,
                 content_range: block.content_range,
+                title: block.metadata.title.as_ref().map(|title| ProjectedText {
+                    source_range: title.range,
+                    text: resolved_inline_text(&title.inlines),
+                }),
                 language_range: source.language_range,
                 language: source.language.clone(),
+                line_numbers: source.line_numbers,
+                start_line: source.start_line,
                 source: block.value.clone(),
             });
         }
@@ -488,7 +503,7 @@ fn inline_text(inlines: &[Inline]) -> String {
     inline_text_with_attributes(inlines, false)
 }
 
-fn resolved_inline_text(inlines: &[Inline]) -> String {
+pub(crate) fn resolved_inline_text(inlines: &[Inline]) -> String {
     inline_text_with_attributes(inlines, true)
 }
 
@@ -631,9 +646,18 @@ impl DocumentProjection {
             }
             write!(
                 output,
-                "{{\"sourceRange\":{},\"contentRange\":{},\"languageRange\":{},\"language\":{},\"source\":{}}}",
+                "{{\"sourceRange\":{},\"contentRange\":{},\"title\":",
                 json_range(source.source_range),
                 json_range(source.content_range),
+            )
+            .expect("writing to String cannot fail");
+            match &source.title {
+                Some(title) => write_projected_text(&mut output, title),
+                None => output.push_str("null"),
+            }
+            write!(
+                output,
+                ",\"languageRange\":{},\"language\":{},\"lineNumbers\":{},\"startLine\":{},\"source\":{}}}",
                 source
                     .language_range
                     .map_or_else(|| "null".to_owned(), json_range),
@@ -641,6 +665,10 @@ impl DocumentProjection {
                     .language
                     .as_deref()
                     .map_or_else(|| "null".to_owned(), json_string),
+                source.line_numbers,
+                source
+                    .start_line
+                    .map_or_else(|| "null".to_owned(), |value| value.to_string()),
                 json_string(&source.source),
             )
             .expect("writing to String cannot fail");
@@ -1139,7 +1167,8 @@ a^2
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze(
                 "\
-[source,rust]
+.main.rs
+[source,rust,linenums,start=7]
 ----
 let x = 1;
 ----
@@ -1150,11 +1179,64 @@ let x = 1;
 
         assert_eq!(projected.source_blocks.len(), 1);
         let source = &projected.source_blocks[0];
+        assert_eq!(
+            source.title.as_ref().map(|title| title.text.as_str()),
+            Some("main.rs")
+        );
         assert_eq!(source.language.as_deref(), Some("rust"));
+        assert!(source.line_numbers);
+        assert_eq!(source.start_line, Some(7));
         assert_eq!(source.source, "let x = 1;\n");
         assert!(source.language_range.is_some());
         assert!(source.source_range.start() <= source.content_range.start());
         assert!(source.content_range.end() <= source.source_range.end());
+    }
+
+    #[test]
+    fn source_block_line_number_option_spellings_share_one_projection() {
+        for attribute in [
+            "[source,rust,linenums]",
+            "[source,rust,%linenums]",
+            "[source,rust,options=linenums]",
+        ] {
+            let analysis = Engine::new(AnalysisOptions::default())
+                .analyze(&format!("{attribute}\n----\ncode\n----\n"))
+                .expect("analysis");
+            let projected = project(&analysis, &RenderInputs::default());
+            let source = &projected.source_blocks[0];
+
+            assert!(source.line_numbers, "{attribute}");
+            assert_eq!(source.start_line, Some(1), "{attribute}");
+        }
+    }
+
+    #[test]
+    fn source_block_line_number_boundaries_and_duplicates_are_deterministic() {
+        let cases = [
+            ("[source,rust,start=8]", false, None),
+            ("[source,rust,linenums,start=0]", true, Some(1)),
+            ("[source,rust,linenums,start=4294967296]", true, Some(1)),
+            ("[source,rust,linenums,start=7,start=9]", true, Some(7)),
+            ("[source,rust,linenums,start=0,start=9]", true, Some(1)),
+            ("[source,rust,start=8,%linenums]", true, Some(8)),
+            ("[source,rust,start=8,options=linenums]", true, Some(8)),
+            (
+                "[source,rust,%linenums,options=linenums,start=8]",
+                true,
+                Some(8),
+            ),
+        ];
+
+        for (attribute, line_numbers, start_line) in cases {
+            let analysis = Engine::new(AnalysisOptions::default())
+                .analyze(&format!("{attribute}\n----\ncode\n----\n"))
+                .expect("analysis");
+            let projected = project(&analysis, &RenderInputs::default());
+            let source = &projected.source_blocks[0];
+
+            assert_eq!(source.line_numbers, line_numbers, "{attribute}");
+            assert_eq!(source.start_line, start_line, "{attribute}");
+        }
     }
 
     #[test]

@@ -115,7 +115,10 @@ caption、`frame`、`grid`、`stripes`、1から100までの百分率``width``�
 |ソースブロック（`[source,LANGUAGE]`、`[,LANGUAGE]`、`source-language`）
 |対応
 |標準形と短縮形を同じsource verbatim blockへ正規化します。``source-language``はlisting blockの既定言語となり、
-明示した``[listing]``は既定値を抑止します。言語と不透明な本体はHTML、projection、LSPで共有します。
+明示した``[listing]``は既定値を抑止します。Block title、言語、不透明な本体、`linenums` optionおよび
+1以上の``start``開始行はHTML、projection、LSPで共有します。`linenums`の見た目、構文強調、themeおよび
+copy操作は利用側アプリが提供します。不正な``start``は診断して1へ回復し、未対応optionをsource blockの
+意味として推測しません。
 
 |空行
 |対応
