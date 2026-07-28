@@ -108,7 +108,7 @@ jobs:
       - name: Target archive builds
         if: matrix.build == 'nix'
         env:
-          MACOSX_DEPLOYMENT_TARGET: '13.0'
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           args=()

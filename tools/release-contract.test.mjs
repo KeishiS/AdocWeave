@@ -24,7 +24,7 @@ test("asset matrix contains every declared native target, browser, and Zed archi
     ],
   );
   assert.equal(plan.targets.find(({ os }) => os === "win32").archive, "zip");
-  assert.ok(plan.targets.filter(({ os }) => os === "darwin").every(({ minimumOsVersion }) => minimumOsVersion === "13.0"));
+  assert.ok(plan.targets.filter(({ os }) => os === "darwin").every(({ minimumOsVersion }) => minimumOsVersion === "14.0"));
   assert.deepEqual(plan.releaseMetadata, EXPECTED_RELEASE_METADATA);
 });
 
