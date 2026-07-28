@@ -29,15 +29,6 @@
     },
     {
       "archive": "zip",
-      "byteSize": 104,
-      "executable": "adocweave",
-      "kind": "cli",
-      "name": "adocweave-cli-x86_64-apple-darwin.zip",
-      "sha256": "0404040404040404040404040404040404040404040404040404040404040404",
-      "target": "x86_64-apple-darwin"
-    },
-    {
-      "archive": "zip",
       "byteSize": 105,
       "executable": "adocweave.exe",
       "kind": "cli",
@@ -71,15 +62,6 @@
       "name": "adocweave-lsp-aarch64-unknown-linux-musl.zip",
       "sha256": "0808080808080808080808080808080808080808080808080808080808080808",
       "target": "aarch64-unknown-linux-musl"
-    },
-    {
-      "archive": "zip",
-      "byteSize": 109,
-      "executable": "adocweave-lsp",
-      "kind": "lsp",
-      "name": "adocweave-lsp-x86_64-apple-darwin.zip",
-      "sha256": "0909090909090909090909090909090909090909090909090909090909090909",
-      "target": "x86_64-apple-darwin"
     },
     {
       "archive": "zip",

@@ -13,7 +13,6 @@
       supportedSystems = [
         "aarch64-darwin"
         "aarch64-linux"
-        "x86_64-darwin"
         "x86_64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
@@ -40,7 +39,6 @@
           "aarch64-unknown-linux-musl"
           "aarch64-apple-darwin"
           "x86_64-unknown-linux-musl"
-          "x86_64-apple-darwin"
           "wasm32-unknown-unknown"
           "wasm32-wasip2"
         ];

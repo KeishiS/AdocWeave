@@ -28,14 +28,6 @@
     {
       "architecture": "x64",
       "archive": "zip",
-      "executable": "adocweave-lsp",
-      "minimumOsVersion": "13.0",
-      "os": "darwin",
-      "target": "x86_64-apple-darwin"
-    },
-    {
-      "architecture": "x64",
-      "archive": "zip",
       "executable": "adocweave-lsp.exe",
       "minimumOsVersion": "10.0.17763",
       "os": "win32",
@@ -54,6 +46,10 @@
     {
       "architecture": "ia32",
       "os": "win32"
+    },
+    {
+      "architecture": "x64",
+      "os": "darwin"
     },
     {
       "architecture": "arm64",
