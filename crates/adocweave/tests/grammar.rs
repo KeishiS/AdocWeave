@@ -222,7 +222,7 @@ fn substitutions_cover_every_supported_semantic_context() {
     ));
     assert!(html.contains(
         "<p><a href=\"https://example.test\">label</a> \
-         <code class=\"math-latex\">x &lt; y</code></p>"
+         <code class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"inline\">x &lt; y</code></p>"
     ));
     assert!(!html.contains("<tag>"));
     assert!(!html.contains("<unsafe>"));

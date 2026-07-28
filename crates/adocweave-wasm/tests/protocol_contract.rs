@@ -13,6 +13,17 @@ fn documents() -> (Value, Value) {
     )
 }
 
+#[test]
+fn latex_wire_value_remains_distinct_from_the_asciidoc_name() {
+    let (schema, _) = documents();
+    assert_eq!(schema["enums"]["MathLanguage"], json!(["latex", "typst"]));
+    assert_ne!(schema["enums"]["MathLanguage"][0], "latexmath");
+    assert_eq!(
+        adocweave::semantic::MathLanguage::Latex.as_asciidoc_name(),
+        "latexmath"
+    );
+}
+
 fn base_request(corpus: &Value) -> Value {
     let mut request = corpus["defaultRequest"].clone();
     request["packageVersion"] = Value::String(adocweave::VERSION.to_owned());

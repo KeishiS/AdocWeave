@@ -97,7 +97,8 @@ impl OrderedListProjection {
 }
 
 impl FormulaKind {
-    const fn as_str(self) -> &'static str {
+    /// Stable display-form name used by serialized and HTML contracts.
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Inline => "inline",
             Self::Block => "block",
@@ -112,6 +113,13 @@ pub struct FormulaProjection {
     pub source_range: TextRange,
     pub content_range: TextRange,
     pub source: String,
+}
+
+impl FormulaProjection {
+    /// Inline or block display form without inferring it from source syntax.
+    pub const fn display(&self) -> FormulaKind {
+        self.kind
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1154,11 +1162,36 @@ a^2
 
         assert_eq!(projected.formulas.len(), 2);
         assert_eq!(projected.formulas[0].kind, FormulaKind::Inline);
+        assert_eq!(projected.formulas[0].display(), FormulaKind::Inline);
+        assert_eq!(
+            projected.formulas[0].language,
+            crate::inline::MathLanguage::Latex
+        );
+        assert_eq!(
+            projected.formulas[0].language.as_asciidoc_name(),
+            "latexmath"
+        );
         assert_eq!(projected.formulas[0].source, "x + y");
+        assert_eq!(
+            &analysis.source()[projected.formulas[0].content_range.start().to_usize()
+                ..projected.formulas[0].content_range.end().to_usize()],
+            projected.formulas[0].source
+        );
         assert_eq!(projected.formulas[1].kind, FormulaKind::Block);
+        assert_eq!(projected.formulas[1].display(), FormulaKind::Block);
+        assert_eq!(
+            projected.formulas[1].language,
+            crate::inline::MathLanguage::Latex
+        );
         assert_eq!(projected.formulas[1].source, "a^2\n");
+        assert_eq!(
+            &analysis.source()[projected.formulas[1].content_range.start().to_usize()
+                ..projected.formulas[1].content_range.end().to_usize()],
+            projected.formulas[1].source
+        );
         let json = projected.render_json();
         assert!(json.contains("\"formulas\":["));
+        // The wire enum remains `latex`; the AsciiDoc syntax name is `latexmath`.
         assert!(json.contains("\"language\":\"latex\""));
     }
 

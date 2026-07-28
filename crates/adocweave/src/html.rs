@@ -73,6 +73,8 @@ pub const ALLOWED_ATTRIBUTES: &[&str] = &[
     "data-language",
     "data-line-numbers",
     "data-line-start",
+    "data-math-display",
+    "data-math-language",
     "height",
     "href",
     "id",
@@ -628,12 +630,12 @@ fn render_block(
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context, scope),
         AstBlock::Math(block) => {
             if policy.math_languages.allowed.contains(&block.language) {
-                render_preformatted(
-                    output,
-                    explicit_id,
-                    Some(math_class(block.language)),
-                    &block.value,
-                );
+                output.push_str("<pre");
+                render_optional_id(output, explicit_id);
+                render_math_attributes(output, block.language, "block");
+                output.push_str("><code>");
+                escape_html_into(output, &block.value);
+                output.push_str("</code></pre>\n");
             } else {
                 render_preformatted(output, explicit_id, None, &block.value);
                 context.diagnostics.push(render_diagnostic(
@@ -1324,9 +1326,7 @@ fn render_inlines(
                     .allowed
                     .contains(&formula.language)
                 {
-                    output.push_str(" class=\"");
-                    output.push_str(math_class(formula.language));
-                    output.push('"');
+                    render_math_attributes(output, formula.language, "inline");
                 } else {
                     context.diagnostics.push(render_diagnostic(
                         "math-language-not-allowed",
@@ -1666,6 +1666,20 @@ const fn math_class(language: crate::inline::MathLanguage) -> &'static str {
         crate::inline::MathLanguage::Latex => "math-latex",
         crate::inline::MathLanguage::Typst => "math-typst",
     }
+}
+
+fn render_math_attributes(
+    output: &mut String,
+    language: crate::inline::MathLanguage,
+    display: &str,
+) {
+    output.push_str(" class=\"");
+    output.push_str(math_class(language));
+    output.push_str("\" data-math-language=\"");
+    output.push_str(language.as_asciidoc_name());
+    output.push_str("\" data-math-display=\"");
+    output.push_str(display);
+    output.push('"');
 }
 
 struct InlineRenderContext<'inputs, 'render> {
@@ -2907,6 +2921,8 @@ mod tests {
                 "data-language",
                 "data-line-numbers",
                 "data-line-start",
+                "data-math-display",
+                "data-math-language",
                 "height",
                 "href",
                 "id",
@@ -3571,5 +3587,25 @@ mod tests {
             include_str!("../../../fixtures/stem/substitutions.html")
         );
         assert!(!output.html.contains("<z>"));
+    }
+
+    #[test]
+    fn math_contract_exposes_language_and_display_without_executing_source() {
+        let parsed = parse(
+            "latexmath:[<script>alert(1)</script>]\n\n[latexmath]\n++++\n<img src=x onerror=alert(1)>\n++++\n",
+        )
+        .expect("parse math contract fixture");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert!(output.html.contains(
+            "<code class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"inline\">"
+        ));
+        assert!(output.html.contains(
+            "<pre class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"block\"><code>"
+        ));
+        assert!(!output.html.contains("<script>"));
+        assert!(!output.html.contains("<img"));
+        assert!(output.html.contains("&lt;script&gt;"));
+        assert!(output.html.contains("&lt;img src=x onerror=alert(1)&gt;"));
     }
 }

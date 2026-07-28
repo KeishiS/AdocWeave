@@ -77,6 +77,16 @@ pub enum MathLanguage {
     Typst,
 }
 
+impl MathLanguage {
+    /// Stable AsciiDoc-facing language name used by renderer adapters.
+    pub const fn as_asciidoc_name(self) -> &'static str {
+        match self {
+            Self::Latex => "latexmath",
+            Self::Typst => "typst",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InlineFormula {
     pub range: TextRange,

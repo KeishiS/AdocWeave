@@ -39,7 +39,7 @@ DBまたはアプリ固有のschemaへアクセスしません。
 
 * 文書タイトル、見出し、明示anchorおよび文書構造
 * 通常の外部linkと、文書内・文書間・任意schemeのxref
-* Source block、数式およびmedia resource
+* Source block、数式の表示形式・言語・未加工source・rangeおよびmedia resource
 * Footnote、bibliographyおよび階層indexのcatalog
 * TOC、appendix、book partおよびmanpage header
 * 検索用文字列と元sourceのrange
@@ -48,6 +48,10 @@ DBまたはアプリ固有のschemaへアクセスしません。
 通常linkは``ExternalLink``、xrefは``ReferenceEdge``として区別します。xrefの参照先は文書内、別文書または
 任意schemeのいずれかです。``RenderInputs``を渡した場合はsource rangeが一致するedgeだけへ解決結果を
 追加し、構造情報の生成中には参照を解決しません。
+
+数式の``FormulaProjection.kind``は表示形式を表す``inline``または``block``です。Rust APIの
+``MathLanguage::Latex``は``as_asciidoc_name()``で``latexmath``を返します。JSON／WASM protocolの既存enum値は
+互換性のため``latex``を維持し、AsciiDoc構文名やHTMLの``data-math-language``と混同しません。
 
 解決失敗は安定した種類だけを保持し、自由形式のmessageや表示名を含めません。権限拒否、対象不在または
 内部障害から、非公開のタイトル、DB情報または内部例外を構造情報へ漏らしません。
