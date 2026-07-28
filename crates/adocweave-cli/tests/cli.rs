@@ -145,6 +145,122 @@ fn check_supports_human_and_json_diagnostics() {
 }
 
 #[test]
+fn check_uses_one_failure_threshold_for_every_output_format() {
+    let source = b"trailing \n";
+    for format in ["human", "json", "github"] {
+        let failed = run_with_stdin(
+            &["check", "--format", format, "--fail-on", "warning", "-"],
+            source,
+        );
+        assert!(!failed.status.success(), "{format} should fail on warnings");
+
+        let passed = run_with_stdin(
+            &["check", "--format", format, "--fail-on", "never", "-"],
+            source,
+        );
+        assert!(passed.status.success(), "{format} should honor never");
+    }
+}
+
+#[test]
+fn check_emits_github_annotations_and_an_opt_in_stderr_summary() {
+    let output = run_with_stdin(
+        &["check", "--format", "github", "--summary", "-"],
+        b"trailing \n",
+    );
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with(
+        "::warning file=<stdin>,line=1,col=9,title=trailing-whitespace::trailing whitespace\n"
+    ));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "adocweave check: errors=0, warnings=1, information=0, hints=0\n"
+    );
+}
+
+#[test]
+fn check_rejects_unknown_ci_contract_values() {
+    for arguments in [
+        ["check", "--format", "sarif", "-"],
+        ["check", "--fail-on", "information", "-"],
+    ] {
+        let output = run_with_stdin(&arguments, b"");
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn project_config_is_discovered_and_can_be_disabled_explicitly() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-config-cli-{unique}"));
+    let docs = root.join("docs");
+    std::fs::create_dir_all(&docs).expect("create project");
+    std::fs::write(
+        root.join(".adocweave.toml"),
+        "schema-version = 1\n[format]\nnewline = \"cr-lf\"\nfinal-newline = false\n",
+    )
+    .expect("write config");
+    std::fs::write(docs.join("manual.adoc"), "One\n\nTwo\n").expect("write document");
+
+    let configured = adocweave()
+        .current_dir(&root)
+        .args(["format", "docs/manual.adoc"])
+        .output()
+        .expect("run configured formatter");
+    assert!(configured.status.success());
+    assert_eq!(configured.stdout, b"One\r\n\r\nTwo");
+
+    let defaults = adocweave()
+        .current_dir(&root)
+        .args(["format", "--no-config", "docs/manual.adoc"])
+        .output()
+        .expect("run default formatter");
+    assert!(defaults.status.success());
+    assert_eq!(defaults.stdout, b"One\n\nTwo\n");
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
+fn config_show_reports_source_and_redacts_attribute_values() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-config-show-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    let config = root.join("project.toml");
+    std::fs::write(
+        &config,
+        "schema-version = 1\n[analysis.attributes.token]\nvalue = \"do-not-print\"\n",
+    )
+    .expect("write config");
+
+    let output = adocweave()
+        .current_dir(&root)
+        .args(["config", "show", "--config", "project.toml"])
+        .output()
+        .expect("show config");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 JSON");
+    assert!(!stdout.contains("do-not-print"));
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("config JSON");
+    assert_eq!(
+        value["source"],
+        config.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(value["analysis"]["attributes"]["token"]["state"], "set");
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
 fn check_reports_link_and_xref_usage_consistently() {
     let source = b"link:guide.adoc[Guide]\nxref:data.json[Data]\n";
     let human = run_with_stdin(&["check", "-"], source);

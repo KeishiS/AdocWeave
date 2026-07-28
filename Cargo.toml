@@ -2,6 +2,7 @@
 members = [
   "crates/adocweave",
   "crates/adocweave-cli",
+  "crates/adocweave-config",
   "crates/adocweave-host",
   "crates/adocweave-lsp",
   "crates/adocweave-wasm",

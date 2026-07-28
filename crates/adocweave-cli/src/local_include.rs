@@ -84,6 +84,8 @@ pub fn prepare(
     source_id: Option<String>,
     base_dir: &Path,
     allowed_roots: &[PathBuf],
+    limits: ResourceLimits,
+    preprocess_options: &PreprocessOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let base_dir = base_dir
         .canonicalize()
@@ -108,8 +110,7 @@ pub fn prepare(
     if !roots.iter().any(|root| base_dir.starts_with(root)) {
         return Err(LocalIncludeError::OutsideRoot(base_dir));
     }
-    let policy = LocalResourcePolicy::new(roots, ResourceLimits::default())
-        .map_err(LocalIncludeError::Host)?;
+    let policy = LocalResourcePolicy::new(roots, limits).map_err(LocalIncludeError::Host)?;
 
     let mut snapshot = ResourceSnapshot::default();
     let mut sources = BTreeMap::new();
@@ -119,10 +120,9 @@ pub fn prepare(
         source_bases.insert(source_id.clone(), base_dir.clone());
     }
     let mut budget = ResourceBudget::default();
-    let preprocess_options = PreprocessOptions {
-        source_id: source_id.clone().map(SourceId::new),
-        ..PreprocessOptions::default()
-    };
+    let mut preprocess_options = preprocess_options.clone();
+    preprocess_options.source_id = source_id.clone().map(SourceId::new);
+    preprocess_options.enable_includes = true;
     let document = loop {
         match preprocess(source, &snapshot, &preprocess_options) {
             Ok(document) => break document,
@@ -173,6 +173,8 @@ pub fn prepare_local(
     base_dir: &Path,
     source_base: &Path,
     project_root: &Path,
+    limits: ResourceLimits,
+    preprocess_options: &PreprocessOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let base_dir = base_dir
         .canonicalize()
@@ -186,7 +188,7 @@ pub fn prepare_local(
         return Err(LocalIncludeError::OutsideRoot(base_dir));
     }
     let root = policy.root().to_owned();
-    let mut session = LocalTargetSession::new(policy, 10_000, ResourceLimits::default());
+    let mut session = LocalTargetSession::new(policy, limits.max_files, limits);
     let base_key = logical_key(
         base_dir
             .strip_prefix(&root)
@@ -205,11 +207,10 @@ pub fn prepare_local(
     let mut include_bases = BTreeMap::from([(source_id.clone(), base_dir.clone())]);
     let mut snapshot = ResourceSnapshot::default();
     let mut include_errors = BTreeMap::new();
-    let preprocess_options = PreprocessOptions {
-        source_id: Some(SourceId::new(source_id.clone())),
-        base_uri: (!base_key.is_empty()).then_some(base_key),
-        ..PreprocessOptions::default()
-    };
+    let mut preprocess_options = preprocess_options.clone();
+    preprocess_options.source_id = Some(SourceId::new(source_id.clone()));
+    preprocess_options.base_uri = (!base_key.is_empty()).then_some(base_key);
+    preprocess_options.enable_includes = true;
     let document = loop {
         match preprocess(source, &snapshot, &preprocess_options) {
             Ok(document) => break document,

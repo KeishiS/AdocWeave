@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KeishiS/AdocWeave/config/adocweave.schema.json",
+  "title": "AdocWeave project configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema-version"],
+  "properties": {
+    "schema-version": { "const": 1 },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "syntax-mode": { "enum": ["permissive", "strict"] },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "required": ["value"],
+                "not": { "required": ["unset"] },
+                "properties": { "value": { "type": "string" } }
+              },
+              {
+                "required": ["unset"],
+                "not": { "required": ["value"] },
+                "properties": { "unset": { "const": true } }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "lint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max-line-length": { "type": "integer", "minimum": 1 },
+        "max-consecutive-blank-lines": { "type": "integer", "minimum": 1 },
+        "max-diagnostics": { "type": "integer", "minimum": 1 },
+        "rules": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "severity": {
+                "enum": ["error", "warning", "information", "hint"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": { "type": "boolean" },
+        "roots": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "max-files": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "max-total-bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 52428800
+        },
+        "max-resource-bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10485760
+        }
+      }
+    },
+    "local-targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "project-root": { "type": "string", "minLength": 1 }
+      }
+    },
+    "format": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "newline": { "enum": ["lf", "cr-lf"] },
+        "final-newline": { "type": "boolean" },
+        "max-consecutive-blank-lines": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "html": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "complete": { "type": "boolean" },
+        "stylesheet-files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "stylesheet-urls": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}
