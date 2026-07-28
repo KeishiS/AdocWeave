@@ -566,7 +566,7 @@ export interface AdocWeaveError {
 
 export declare const PROTOCOL_SCHEMA_VERSION: 5;
 export declare const WORKER_PROTOCOL_VERSION: 2;
-export declare const PACKAGE_VERSION: "0.15.0";
+export declare const PACKAGE_VERSION: "0.16.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];
 export declare const REQUEST_FIELDS: readonly ["packageVersion", "sourceId", "version", "generation", "source", "preprocess", "products", "renderInputs", "analysisOptions", "renderPolicy", "outputLimits"];
 export declare const REQUEST_ENUMS: { readonly "Severity": readonly ["error", "warning", "information", "hint"]; readonly "SyntaxMode": readonly ["permissive", "strict"]; readonly "DocumentMode": readonly ["fragment", "complete"]; readonly "UnknownSourceLanguage": readonly ["preserve-sanitized", "omit-class", "diagnostic"]; readonly "MathLanguage": readonly ["latex", "typst"]; readonly "UnresolvedReferencePresentation": readonly ["target", "label-only", "hidden"]; readonly "StylesheetKind": readonly ["inline", "external"]; readonly "ReferenceStatus": readonly ["resolved", "failed"]; readonly "ReferenceFailureKind": readonly ["missing-target", "missing-anchor", "ambiguous-target", "outside-root", "resolver-failure"]; readonly "ReferenceNotice": readonly ["fallback"]; readonly "ResourceStatus": readonly ["resolved", "failed"]; readonly "ResourceFailureKind": readonly ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"] };

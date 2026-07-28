@@ -13,16 +13,22 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
   assert.match(notes, /sha256sum --check/);
-  assert.match(notes, /permission不足と検査件数上限/);
-  assert.match(notes, /検証済みdirectory handle/);
-  assert.match(notes, /論理source ID/);
-  assert.match(notes, /AsciiDoc文書を自動的に検査対象/);
-  assert.match(notes, /Windows・macOS smoke/);
-  assert.match(notes, /CLI option、診断codeおよびJSON schemaに破壊的変更はありません/);
-  assert.match(notes, /v0\.14\.0からschema形状を変更していません/);
-  assert.match(notes, /v0\.14\.0のrequestとWorker envelopeの形状を維持/);
-  assert.match(notes, /portable adapterは、静的snapshot向けのbest effort/);
-  assert.match(notes, /canonical filesystem pathは公開診断とsource mapへ含めません/);
+  assert.match(notes, /ソースブロックのタイトル/);
+  assert.match(notes, /インライン数式とブロック数式/);
+  assert.match(notes, /公開適合性fixture/);
+  assert.match(notes, /rendering_features/);
+  assert.match(notes, /Promise形式の`analyze\(\)`/);
+  assert.match(notes, /WASM protocolはschema 4から5へ更新/);
+  assert.match(notes, /SourceBlockProjection/);
+  assert.match(notes, /figure\.source-block/);
+  assert.match(notes, /data-math-language/);
+  assert.match(notes, /defaultAssetUrls/);
+  assert.match(notes, /stableContract/);
+  assert.match(notes, /raw HTML/);
+  assert.match(notes, /数式engine/);
+  for (const issue of [108, 109, 111, 110, 81]) {
+    assert.match(notes, new RegExp(`#${issue}：`));
+  }
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
   assert.match(notes, /Authenticode署名を行いません/);

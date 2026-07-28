@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adocweave"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-cli"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "adocweave",
  "adocweave-config",
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-config"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "adocweave",
  "adocweave-host",
@@ -37,14 +37,14 @@ dependencies = [
 
 [[package]]
 name = "adocweave-host"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "rustix",
 ]
 
 [[package]]
 name = "adocweave-lsp"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "adocweave",
  "adocweave-config",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-wasm"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "adocweave",
  "js-sys",
@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-workspace"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "adocweave",
  "adocweave-host",
