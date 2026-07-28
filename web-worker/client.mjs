@@ -9,6 +9,8 @@ export class AdocWeaveClient {
   #generation = 0;
   #disposed = false;
   #ready = null;
+  #readyReject = null;
+  #pending = new Map();
 
   constructor({
     workerUrl,
@@ -21,9 +23,6 @@ export class AdocWeaveClient {
     sharedCancellation = globalThis.crossOriginIsolated === true &&
       typeof globalThis.SharedArrayBuffer === "function",
   }) {
-    if (typeof WorkerConstructor !== "function") {
-      throw new TypeError("a Worker constructor is required");
-    }
     this.#options = {
       workerUrl: String(workerUrl),
       moduleUrl: String(moduleUrl),
@@ -36,11 +35,40 @@ export class AdocWeaveClient {
     };
     if (sharedCancellation) {
       this.#cancellation = new Int32Array(new SharedArrayBuffer(4));
-      this.#spawnWorker();
     }
   }
 
-  update({
+  get ready() {
+    if (this.#disposed) return Promise.reject(this.#clientError(
+      "disposed", "AdocWeaveClient was disposed", this.#generation,
+    ));
+    return this.#ensureWorker();
+  }
+
+  analyze(request) {
+    return new Promise((resolve, reject) => {
+      if (this.#disposed) {
+        reject(this.#clientError(
+          "disposed", "AdocWeaveClient was disposed", this.#generation,
+        ));
+        return;
+      }
+      const generation = ++this.#generation;
+      this.#rejectPending("superseded", "analysis was superseded");
+      this.#pending.set(generation, { resolve, reject });
+      this.#dispatch(request, generation);
+    });
+  }
+
+  update(request) {
+    this.#assertActive();
+    const generation = ++this.#generation;
+    this.#rejectPending("superseded", "analysis was superseded");
+    this.#dispatch(request, generation);
+    return generation;
+  }
+
+  #dispatch({
     sourceId = null,
     version,
     source,
@@ -50,16 +78,21 @@ export class AdocWeaveClient {
     analysisOptions = {},
     renderPolicy = {},
     outputLimits = {},
-  }) {
-    this.#assertActive();
-    const generation = ++this.#generation;
+  }, generation) {
+    let ready;
     if (this.#options.sharedCancellation) {
       Atomics.store(this.#cancellation, 0, generation);
+      ready = this.#ensureWorker();
     } else {
       // Without SharedArrayBuffer, terminating the previous synchronous WASM
       // execution is the only reliable cancellation mechanism.
-      this.#terminateWorker();
-      this.#spawnWorker();
+      this.#terminateWorker(new AdocWeaveClientError({
+        code: "superseded",
+        message: "worker initialization was superseded",
+        sourceVersion: null,
+        generation,
+      }));
+      ready = this.#spawnWorker();
     }
     const payload = {
       packageVersion: PACKAGE_VERSION,
@@ -74,44 +107,74 @@ export class AdocWeaveClient {
     if (products !== undefined) payload.products = products;
     if (preprocess !== undefined) payload.preprocess = preprocess;
     if (renderInputs !== undefined) payload.renderInputs = renderInputs;
-    this.#ready.then(() => {
+    ready.then(() => {
       if (!this.#disposed && generation === this.#generation) {
-        this.#worker.postMessage({
-          protocolVersion: WORKER_PROTOCOL_VERSION,
-          type: "analyze",
-          version,
-          generation,
-          payload,
-        });
+        try {
+          this.#worker.postMessage({
+            protocolVersion: WORKER_PROTOCOL_VERSION,
+            type: "analyze",
+            version,
+            generation,
+            payload,
+          });
+        } catch (cause) {
+          this.#failWorker(cause, generation);
+        }
       }
     }).catch(() => {});
-    return generation;
   }
 
   cancel() {
     this.#assertActive();
+    this.#rejectPending("cancelled", "analysis was cancelled");
     ++this.#generation;
     if (this.#options.sharedCancellation) {
       Atomics.store(this.#cancellation, 0, this.#generation);
     } else {
-      this.#terminateWorker();
+      this.#terminateWorker(new AdocWeaveClientError({
+        code: "cancelled",
+        message: "worker initialization was cancelled",
+        sourceVersion: null,
+        generation: this.#generation,
+      }));
     }
   }
 
   dispose() {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#rejectPending("disposed", "AdocWeaveClient was disposed");
     ++this.#generation;
     if (this.#cancellation) Atomics.store(this.#cancellation, 0, this.#generation);
-    this.#terminateWorker();
+    this.#terminateWorker(new AdocWeaveClientError({
+      code: "disposed",
+      message: "AdocWeaveClient was disposed",
+      sourceVersion: null,
+      generation: this.#generation,
+    }));
   }
 
   #spawnWorker() {
-    const worker = new this.#options.WorkerConstructor(this.#options.workerUrl, {
-      type: "module",
-    });
+    let worker;
+    try {
+      if (typeof this.#options.WorkerConstructor !== "function") {
+        throw new TypeError("a Worker constructor is required");
+      }
+      worker = new this.#options.WorkerConstructor(this.#options.workerUrl, {
+        type: "module",
+      });
+    } catch (cause) {
+      const error = this.#workerError(cause, this.#generation);
+      const ready = Promise.reject(error);
+      ready.catch(() => {});
+      this.#ready = ready;
+      this.#rejectPendingError(error);
+      this.#notifyError(error);
+      return ready;
+    }
     this.#worker = worker;
-    this.#ready = new Promise((resolve, reject) => {
+    const ready = new Promise((resolve, reject) => {
+      this.#readyReject = reject;
       let initialized = false;
       const onMessage = ({ data }) => {
         if (worker !== this.#worker || this.#disposed) return;
@@ -127,31 +190,39 @@ export class AdocWeaveClient {
           const message = protocolMismatch
             ? `expected worker protocol ${WORKER_PROTOCOL_VERSION}`
             : "worker returned a response outside the public protocol";
-          if (!initialized) reject(new Error(message));
-          this.#options.onError({
+          const error = {
             code,
             message,
             sourceVersion: null,
             generation: this.#generation,
-          });
-          this.#terminateWorker();
+          };
+          this.#rejectPendingError(error);
+          try {
+            this.#options.onError(error);
+          } finally {
+            if (!initialized) reject(new AdocWeaveClientError(error));
+            this.#terminateWorker();
+          }
           return;
         }
         if (data?.type === "ready") {
           initialized = true;
+          this.#readyReject = null;
           resolve();
         } else if (data?.type === "result" && data.generation === this.#generation) {
           const packageVersion = verifiedPackageVersion(data.result);
           if (packageVersion === null) {
-            this.#options.onError({
+            const error = {
               code: "unsupported-package-version",
               message: `expected package version ${PACKAGE_VERSION}`,
               sourceVersion: data.version,
               generation: data.generation,
-            });
+            };
+            this.#rejectPendingError(error);
+            this.#options.onError(error);
             return;
           }
-          this.#options.onResult({
+          const result = {
             html: data.result.html,
             diagnostics: data.result.diagnostics,
             renderDiagnostics: data.result.renderDiagnostics,
@@ -159,49 +230,158 @@ export class AdocWeaveClient {
             generation: data.generation,
             packageVersion,
             result: data.result,
-          });
+          };
+          this.#resolvePending(data.generation, result);
+          this.#options.onResult(result);
         } else if (data?.type === "error" && data.generation === this.#generation) {
-          this.#options.onError({ ...data.error, sourceVersion: data.version, generation: data.generation });
+          const error = {
+            ...data.error,
+            sourceVersion: data.version,
+            generation: data.generation,
+          };
+          this.#rejectPendingError(error);
+          this.#options.onError(error);
         }
       };
       worker.addEventListener("message", onMessage);
       worker.addEventListener("error", (event) => {
         if (worker !== this.#worker || this.#disposed) return;
-        const error = new Error(event.message || "AdocWeave worker failed");
-        reject(error);
-        this.#publishError(error, null, this.#generation);
+        const error = {
+          code: "worker-failed",
+          message: event.message || "AdocWeave worker failed",
+          sourceVersion: null,
+          generation: this.#generation,
+        };
+        this.#rejectPendingError(error);
+        try {
+          this.#options.onError(error);
+        } finally {
+          reject(new AdocWeaveClientError(error));
+          this.#terminateWorker();
+        }
       }, { once: true });
     });
+    this.#ready = ready;
     this.#ready.catch(() => {});
-    worker.postMessage({
-      protocolVersion: WORKER_PROTOCOL_VERSION,
-      type: "initialize",
-      moduleUrl: this.#options.moduleUrl,
-      wasmUrl: this.#options.wasmUrl,
-      debounceMs: this.#options.debounceMs,
-      cancellationBuffer: this.#cancellation?.buffer ?? null,
-    });
+    try {
+      worker.postMessage({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        type: "initialize",
+        moduleUrl: this.#options.moduleUrl,
+        wasmUrl: this.#options.wasmUrl,
+        debounceMs: this.#options.debounceMs,
+        cancellationBuffer: this.#cancellation?.buffer ?? null,
+      });
+    } catch (cause) {
+      this.#failWorker(cause, this.#generation);
+    }
+    return ready;
   }
 
-  #terminateWorker() {
+  #terminateWorker(error = null) {
+    if (error !== null) this.#readyReject?.(error);
+    this.#readyReject = null;
     this.#worker?.terminate();
     this.#worker = null;
     this.#ready = null;
   }
 
-  #publishError(error, sourceVersion, generation) {
-    if (generation !== this.#generation || this.#disposed) return;
-    this.#options.onError({
-      code: "worker-failed",
-      message: error instanceof Error ? error.message : String(error),
-      sourceVersion,
-      generation,
-    });
+  #ensureWorker() {
+    if (this.#worker === null) return this.#spawnWorker();
+    return this.#ready;
+  }
+
+  #resolvePending(generation, result) {
+    const pending = this.#pending.get(generation);
+    if (pending === undefined) return;
+    this.#pending.delete(generation);
+    pending.resolve(result);
+  }
+
+  #rejectPending(code, message) {
+    for (const [generation, pending] of this.#pending) {
+      pending.reject(new AdocWeaveClientError({
+        code,
+        message,
+        sourceVersion: null,
+        generation,
+      }));
+    }
+    this.#pending.clear();
+  }
+
+  #rejectPendingError(error) {
+    const pending = this.#pending.get(error.generation);
+    if (pending === undefined) return;
+    this.#pending.delete(error.generation);
+    pending.reject(
+      error instanceof AdocWeaveClientError
+        ? error
+        : new AdocWeaveClientError(error),
+    );
   }
 
   #assertActive() {
     if (this.#disposed) throw new Error("AdocWeaveClient is disposed");
   }
+
+  #clientError(code, message, generation, sourceVersion = null) {
+    return new AdocWeaveClientError({ code, message, sourceVersion, generation });
+  }
+
+  #workerError(cause, generation) {
+    return this.#clientError(
+      "worker-failed",
+      cause instanceof Error ? cause.message : String(cause),
+      generation,
+    );
+  }
+
+  #notifyError(error) {
+    try {
+      this.#options.onError({
+        code: error.code,
+        message: error.message,
+        sourceVersion: error.sourceVersion,
+        generation: error.generation,
+      });
+    } catch {
+      // Promise settlement and lifecycle cleanup do not depend on callbacks.
+    }
+  }
+
+  #failWorker(cause, generation) {
+    const error = this.#workerError(cause, generation);
+    this.#rejectPendingError(error);
+    this.#readyReject?.(error);
+    this.#notifyError(error);
+    this.#terminateWorker();
+  }
+}
+
+export class AdocWeaveClientError extends Error {
+  constructor({ code, message, sourceVersion, generation }) {
+    super(message);
+    this.name = "AdocWeaveClientError";
+    this.code = code;
+    this.sourceVersion = sourceVersion;
+    this.generation = generation;
+  }
+}
+
+const LIFECYCLE_ERROR_CODES = new Set([
+  "cancelled",
+  "disposed",
+  "invalid-worker-response",
+  "superseded",
+  "unsupported-package-version",
+  "unsupported-worker-protocol",
+  "worker-failed",
+]);
+
+export function isAdocWeaveClientLifecycleError(error) {
+  return error instanceof AdocWeaveClientError &&
+    LIFECYCLE_ERROR_CODES.has(error.code);
 }
 
 function verifiedPackageVersion(result) {
