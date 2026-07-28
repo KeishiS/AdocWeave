@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-execFileSync("node_modules/.bin/tsc", ["-p", "tsconfig.test.json"], { stdio: "inherit" });
+const tsc = fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url));
+execFileSync(process.execPath, [tsc, "-p", "tsconfig.test.json"], { stdio: "inherit" });
 mkdirSync("dist-test/resources", { recursive: true });
 copyFileSync("resources/platforms.json", "dist-test/resources/platforms.json");
 mkdirSync("dist-test/syntaxes", { recursive: true });
