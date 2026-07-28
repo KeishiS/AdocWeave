@@ -2827,6 +2827,10 @@ mod tests {
             AstBlock::Verbatim(ref block)
                 if matches!(block.kind, VerbatimKind::Listing)
         ));
+        assert!(parsed.syntax.issues().iter().any(|issue| {
+            issue.class == crate::syntax::SyntaxIssueClass::InvalidAttribute
+                && issue.message == "unsupported source block option"
+        }));
     }
 
     #[test]

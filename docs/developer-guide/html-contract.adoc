@@ -142,6 +142,7 @@ HTML、解析診断および描画診断の対応を検査できます。各case
 
 * 文書タイトル、TOCおよび節番号
 * block title、source language option、linenumsおよび開始行を記述したsource block
+* 未対応source optionの診断と安全なlisting回復
 * inline数式およびblock数式
 * table、quoteおよびlist
 * 安全でないURLの解析診断、描画診断および非active HTML fallback

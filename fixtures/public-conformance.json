@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "outputContractVersion": 1,
-  "packageVersion": "0.14.0",
+  "packageVersion": "0.15.0",
   "license": "MIT OR Apache-2.0",
   "cases": [
     {
@@ -142,6 +142,31 @@
         "htmlContains": ["<p>unsafe</p>"],
         "diagnosticCodes": ["invalid-url-scheme"],
         "renderDiagnosticCodes": ["invalid-url-scheme"]
+      },
+      "implementationDetails": ["diagnostic message wording", "diagnostic IDs and source ranges"]
+    },
+    {
+      "name": "unsupported-source-option-diagnostic",
+      "features": ["source-block", "unsupported-source-option", "diagnostic"],
+      "profile": {"analysis": "default", "render": "default-fragment"},
+      "sourceId": "public-conformance:unsupported-source-option",
+      "files": {
+        "source": "fixtures/public-conformance/unsupported-source-option.adoc",
+        "projection": "fixtures/public-conformance/unsupported-source-option.projection.json",
+        "html": "fixtures/public-conformance/unsupported-source-option.html",
+        "diagnostics": "fixtures/public-conformance/unsupported-source-option.diagnostics.json",
+        "renderDiagnostics": "fixtures/public-conformance/unsupported-source-option.render-diagnostics.json"
+      },
+      "stableContract": {
+        "projectionAssertions": [
+          {"pointer": "/sourceBlocks", "value": []}
+        ],
+        "htmlContains": [
+          "<p>[source,rust,options=unknown]</p>",
+          "<pre>unsupported();"
+        ],
+        "diagnosticCodes": ["invalid-attribute"],
+        "renderDiagnosticCodes": []
       },
       "implementationDetails": ["diagnostic message wording", "diagnostic IDs and source ranges"]
     }

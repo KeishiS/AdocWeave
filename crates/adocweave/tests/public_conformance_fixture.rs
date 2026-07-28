@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -170,6 +170,91 @@ fn assert_manifest_inventory(manifest: &Manifest) {
     );
 }
 
+fn conformance_relative(path: &str) -> String {
+    format!(
+        "../{}",
+        path.strip_prefix("fixtures/")
+            .expect("public fixture path starts with fixtures/")
+    )
+}
+
+fn assert_cross_runtime_bijection(manifest: &Manifest) {
+    let expected: BTreeMap<String, [String; 5]> = manifest
+        .cases
+        .iter()
+        .map(|case| {
+            (
+                case.source_id.clone(),
+                [
+                    conformance_relative(&case.files.source),
+                    conformance_relative(&case.files.projection),
+                    conformance_relative(&case.files.html),
+                    conformance_relative(&case.files.diagnostics),
+                    conformance_relative(&case.files.render_diagnostics),
+                ],
+            )
+        })
+        .collect();
+    assert_eq!(
+        expected.len(),
+        manifest.cases.len(),
+        "duplicate public sourceId"
+    );
+
+    let cross_runtime: Value = serde_json::from_str(&read("fixtures/conformance/cases.json"))
+        .expect("valid cross-runtime manifest");
+    let public_entries: Vec<&Value> = cross_runtime["cases"]
+        .as_array()
+        .expect("cross-runtime cases")
+        .iter()
+        .filter(|entry| {
+            entry["sourceId"]
+                .as_str()
+                .is_some_and(|source_id| source_id.starts_with("public-conformance:"))
+        })
+        .collect();
+    let actual: BTreeMap<String, [String; 5]> = public_entries
+        .iter()
+        .map(|entry| {
+            let source_id = entry["sourceId"].as_str().expect("public sourceId");
+            (
+                source_id.to_owned(),
+                [
+                    entry["sourceFile"]
+                        .as_str()
+                        .expect("public sourceFile")
+                        .to_owned(),
+                    entry["expectedProjectionFile"]
+                        .as_str()
+                        .expect("public expectedProjectionFile")
+                        .to_owned(),
+                    entry["expectedHtmlFile"]
+                        .as_str()
+                        .expect("public expectedHtmlFile")
+                        .to_owned(),
+                    entry["expectedDiagnosticsFile"]
+                        .as_str()
+                        .expect("public expectedDiagnosticsFile")
+                        .to_owned(),
+                    entry["expectedRenderDiagnosticsFile"]
+                        .as_str()
+                        .expect("public expectedRenderDiagnosticsFile")
+                        .to_owned(),
+                ],
+            )
+        })
+        .collect();
+    assert_eq!(
+        actual.len(),
+        public_entries.len(),
+        "duplicate public sourceId in cross-runtime manifest"
+    );
+    assert_eq!(
+        actual, expected,
+        "public and cross-runtime fixture manifests must be bijective"
+    );
+}
+
 #[test]
 fn public_fixtures_match_declared_products_and_stable_contracts() {
     let manifest = manifest();
@@ -177,9 +262,10 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
     assert_eq!(manifest.output_contract_version, 1);
     assert_eq!(manifest.package_version, adocweave::VERSION);
     assert_eq!(manifest.license, "MIT OR Apache-2.0");
-    assert_eq!(manifest.cases.len(), 5);
+    assert_eq!(manifest.cases.len(), 6);
     assert!(!manifest.global_implementation_details.is_empty());
     assert_manifest_inventory(&manifest);
+    assert_cross_runtime_bijection(&manifest);
     let features: BTreeSet<&str> = manifest
         .cases
         .iter()
@@ -194,6 +280,7 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
         "source-language-option",
         "source-line-numbers",
         "source-start-line",
+        "unsupported-source-option",
         "inline-formula",
         "block-formula",
         "table",

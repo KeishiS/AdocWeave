@@ -533,6 +533,18 @@
       "compatibility": "approved-adocweave-output",
       "rationale": "公開fixtureの安全でないURL診断とfallbackをnativeとWASMで同じ出力契約へ固定する",
       "contractImpact": "conformance,wasm-api"
+    },
+    {
+      "name": "public-unsupported-source-option",
+      "sourceId": "public-conformance:unsupported-source-option",
+      "sourceFile": "../public-conformance/unsupported-source-option.adoc",
+      "expectedHtmlFile": "../public-conformance/unsupported-source-option.html",
+      "expectedDiagnosticsFile": "../public-conformance/unsupported-source-option.diagnostics.json",
+      "expectedRenderDiagnosticsFile": "../public-conformance/unsupported-source-option.render-diagnostics.json",
+      "expectedProjectionFile": "../public-conformance/unsupported-source-option.projection.json",
+      "compatibility": "approved-adocweave-output",
+      "rationale": "公開fixtureの未対応source option診断と安全なlisting回復をnativeとWASMで同じ出力契約へ固定する",
+      "contractImpact": "conformance,wasm-api"
     }
   ]
 }
