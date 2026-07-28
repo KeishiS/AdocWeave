@@ -1,5 +1,32 @@
-import { execFileSync, spawn } from "node:child_process";
+import * as nodeProcessControl from "node:child_process";
+import * as nodeFileSystem from "node:fs";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 import {
+  TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
+  archiveEntries,
+  createRuntimeAdapters,
+  macosMinimumVersion,
+  unexpectedMacosDependencies,
+  importedWindowsDlls,
+  unexpectedWindowsDlls,
+  validateArchiveEntries,
+} from "./platform-contract.mjs";
+
+const runtime = createRuntimeAdapters({
+  fileSystem: nodeFileSystem,
+  processControl: nodeProcessControl,
+  time: { clearTimeout, now: Date.now, setTimeout },
+  platform: {
+    architecture: process.arch,
+    environment: process.env,
+    os: process.platform,
+  },
+  pathApi: nodePath,
+});
+const {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
@@ -9,20 +36,10 @@ import {
   renameSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
-import process from "node:process";
-import { fileURLToPath } from "node:url";
-import {
-  TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
-  archiveEntries,
-  macosMinimumVersion,
-  unexpectedMacosDependencies,
-  importedWindowsDlls,
-  unexpectedWindowsDlls,
-  validateArchiveEntries,
-} from "./platform-contract.mjs";
+} = runtime.fileSystem;
+const { execFileSync, spawn } = runtime.processControl;
+const { clearTimeout: clearRuntimeTimeout, setTimeout: setRuntimeTimeout } = runtime.time;
+const { basename, join, resolve, sep } = runtime.pathApi;
 
 const [artifactDirectory, target] = process.argv.slice(2);
 if (!artifactDirectory || !target) {
@@ -33,8 +50,8 @@ if (!artifactDirectory || !target) {
 const plan = JSON.parse(readFileSync(new URL("../release/distribution-plan.json", import.meta.url), "utf8"));
 const platform = plan.targets.find(({ triple }) => triple === target);
 if (!platform) throw new Error(`unsupported smoke target: ${target}`);
-if (process.platform !== platform.os || process.arch !== platform.architecture) {
-  throw new Error(`smoke host ${process.arch} does not match ${target}`);
+if (runtime.platform.os !== platform.os || runtime.platform.architecture !== platform.architecture) {
+  throw new Error(`smoke host ${runtime.platform.architecture} does not match ${target}`);
 }
 
 const manifest = JSON.parse(readFileSync(new URL("../release-manifest.json", import.meta.url), "utf8"));
@@ -97,7 +114,7 @@ function verifyBinary(binary, executable) {
       throw new Error(`${executable} has the wrong ELF architecture`);
     }
     const dynamic = execFileSync("readelf", ["-d", binary], { encoding: "utf8" });
-    if (/\(NEEDED\)/.test(dynamic) && process.env.ADOCWEAVE_SMOKE_ALLOW_DYNAMIC !== "1") {
+    if (/\(NEEDED\)/.test(dynamic) && runtime.platform.environment.ADOCWEAVE_SMOKE_ALLOW_DYNAMIC !== "1") {
       throw new Error(`${executable} has an unexpected dynamic dependency`);
     }
     return;
@@ -134,7 +151,7 @@ function verifyBinary(binary, executable) {
   if (bytes.readUInt16LE(optionalHeader) !== 0x20b) {
     throw new Error(`${executable} is not a PE32+ executable`);
   }
-  const dumpbin = process.env.ADOCWEAVE_DUMPBIN;
+  const dumpbin = runtime.platform.environment.ADOCWEAVE_DUMPBIN;
   if (!dumpbin) throw new Error("ADOCWEAVE_DUMPBIN is required for Windows dependency verification");
   const dependencies = execFileSync(dumpbin, ["/DEPENDENTS", binary], { encoding: "utf8" });
   const imported = importedWindowsDlls(dependencies);
@@ -167,7 +184,7 @@ async function smokeLsp(binary) {
     messages.push(message);
     for (const waiter of [...waiters]) {
       if (waiter.predicate(message)) {
-        clearTimeout(waiter.timer);
+        clearRuntimeTimeout(waiter.timer);
         waiter.resolve(message);
         waiters.splice(waiters.indexOf(waiter), 1);
       }
@@ -193,7 +210,7 @@ async function smokeLsp(binary) {
     if (found) return resolvePromise(found);
     const waiter = { predicate, resolve: resolvePromise };
     waiters.push(waiter);
-    waiter.timer = setTimeout(() => {
+    waiter.timer = setRuntimeTimeout(() => {
       const index = waiters.indexOf(waiter);
       if (index >= 0) waiters.splice(index, 1);
       reject(new Error("timed out waiting for LSP response"));
@@ -236,7 +253,7 @@ async function smokeForcedProcessLifecycle(binary) {
   const exit = await Promise.race([
     exited,
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("forced Language Server stop timed out")), 5_000)),
+      setRuntimeTimeout(() => reject(new Error("forced Language Server stop timed out")), 5_000)),
   ]);
   if (exit === undefined && child.exitCode === null && child.signalCode === null) {
     throw new Error("forced Language Server stop did not report an exit");

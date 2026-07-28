@@ -24,6 +24,16 @@ export const TEMPORARY_DIRECTORY_REMOVAL_OPTIONS = Object.freeze({
   retryDelay: 100,
 });
 
+export function createRuntimeAdapters({ fileSystem, processControl, time, platform, pathApi }) {
+  for (const [name, value] of Object.entries({ fileSystem, processControl, time, platform, pathApi })) {
+    if (!value || typeof value !== "object") throw new TypeError(`${name} adapter is required`);
+  }
+  if (typeof platform.os !== "string" || typeof platform.architecture !== "string") {
+    throw new TypeError("platform adapter requires os and architecture");
+  }
+  return Object.freeze({ fileSystem, processControl, time, platform, pathApi });
+}
+
 export function pathImplementation(os) {
   return os === "win32" ? path.win32 : path.posix;
 }

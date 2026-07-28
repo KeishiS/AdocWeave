@@ -107,6 +107,8 @@ cargo make release-gate
 ``platform-contract``は、WindowsとPOSIXのpath計算、実行file名、archive path、Windows DLL許可一覧、
 macOS deployment target、VSIX metadataおよび一時directory削除の再試行条件をfixtureで検証します。
 このtaskはhost OSに依存せず、pull requestとlocalで同じtestを実行します。
+実OS操作ではfilesystem、process制御、時刻、platformおよびpath実装をruntime adapterとして注入し、
+契約判定からNode.jsのhost APIを分離します。
 
 ``cross-native-check``はWindows MSVCとmacOS ARM64向けに``cargo check``を実行します。この検査は型検査と
 条件付きcompileだけを対象とし、linkと実行は行いません。
