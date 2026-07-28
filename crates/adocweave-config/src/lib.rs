@@ -248,6 +248,8 @@ pub struct ResolvedProjectConfig {
     pub resources: ResourceSettings,
     pub local_targets: LocalTargetSettings,
     pub format: FormatConfig,
+    pub format_newline_explicit: bool,
+    pub format_final_newline_explicit: bool,
     pub html: HtmlSettings,
 }
 
@@ -262,6 +264,8 @@ impl Default for ResolvedProjectConfig {
             resources: ResourceSettings::default(),
             local_targets: LocalTargetSettings::default(),
             format: FormatConfig::default(),
+            format_newline_explicit: false,
+            format_final_newline_explicit: false,
             html: HtmlSettings::default(),
         }
     }
@@ -323,6 +327,8 @@ impl ProjectConfigWire {
                     .at("resources.max-total-bytes")
             })?;
         resolved.local_targets = self.local_targets.resolve(directory)?;
+        resolved.format_newline_explicit = self.format.newline.is_some();
+        resolved.format_final_newline_explicit = self.format.final_newline.is_some();
         resolved.format = self.format.resolve()?;
         resolved.html = self.html.resolve(directory)?;
         Ok(resolved)
@@ -547,10 +553,8 @@ enum NewlineWire {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct FormatWire {
-    #[serde(default)]
-    newline: NewlineWire,
-    #[serde(default = "default_true")]
-    final_newline: bool,
+    newline: Option<NewlineWire>,
+    final_newline: Option<bool>,
     #[serde(default = "default_blank_lines")]
     max_consecutive_blank_lines: usize,
 }
@@ -558,8 +562,8 @@ struct FormatWire {
 impl Default for FormatWire {
     fn default() -> Self {
         Self {
-            newline: NewlineWire::Lf,
-            final_newline: true,
+            newline: None,
+            final_newline: None,
             max_consecutive_blank_lines: default_blank_lines(),
         }
     }
@@ -572,11 +576,11 @@ impl FormatWire {
             "format.max-consecutive-blank-lines",
         )?;
         Ok(FormatConfig {
-            newline: match self.newline {
+            newline: match self.newline.unwrap_or_default() {
                 NewlineWire::Lf => NewlineStyle::Lf,
                 NewlineWire::CrLf => NewlineStyle::CrLf,
             },
-            final_newline: self.final_newline,
+            final_newline: self.final_newline.unwrap_or_else(default_true),
             max_consecutive_blank_lines: self.max_consecutive_blank_lines,
         })
     }

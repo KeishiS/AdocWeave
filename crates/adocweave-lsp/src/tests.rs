@@ -538,7 +538,7 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
     fs::write(&document_path, source).expect("document");
     fs::write(
         &config_path,
-        "schema-version = 1\n[lint.rules.macro-boundary]\nenabled = true\nseverity = \"error\"\n",
+        include_str!("../../../fixtures/config/shared-v1/.adocweave.toml"),
     )
     .expect("configuration");
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
