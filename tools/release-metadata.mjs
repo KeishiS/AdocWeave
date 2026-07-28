@@ -10,6 +10,7 @@ const ROOT = new URL("../", import.meta.url);
 const readJson = (path) => JSON.parse(readFileSync(new URL(path, ROOT), "utf8"));
 const plan = readJson("release/distribution-plan.json");
 const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+const escapeUnzipMember = (member) => member.replace(/[\\[\]*?]/g, "\\$&");
 
 function fail(message) {
   throw new Error(message);
@@ -38,7 +39,9 @@ function archiveFiles(path, archiveName) {
       fail(`unsafe archive member in ${archiveName}: ${member}`);
     }
     if (member.endsWith("/")) continue;
-    const contents = execFileSync(zip ? "unzip" : "tar", zip ? ["-p", path, member] : ["-xJOf", path, member], {
+    const contents = execFileSync(zip ? "unzip" : "tar", zip
+      ? ["-p", path, escapeUnzipMember(member)]
+      : ["-xJOf", path, member], {
       maxBuffer: 64 * 1024 * 1024,
     });
     files.push({

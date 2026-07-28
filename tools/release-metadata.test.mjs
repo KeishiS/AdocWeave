@@ -17,6 +17,9 @@ function fixture() {
     const stage = join(root, archiveRoot);
     mkdirSync(stage);
     writeFileSync(join(stage, asset.executable ?? "index.mjs"), `${asset.name}\n`);
+    if (asset.archive === "vsix") {
+      writeFileSync(join(stage, "[Content_Types].xml"), "<Types />\n");
+    }
     if (asset.archive === "zip" || asset.archive === "vsix") {
       execFileSync("zip", ["-X", "-q", "-r", join(artifacts, asset.name), archiveRoot], { cwd: root });
     } else {
@@ -38,7 +41,9 @@ test("actual archives produce canonical manifest, SPDX SBOM, and unified checksu
     const checksums = readFileSync(join(artifacts, "sha256.sum"), "utf8").trimEnd().split("\n");
     assert.equal(manifest.assets.length, plan.assets.length);
     assert.equal(sbom.spdxVersion, "SPDX-2.3");
-    assert.equal(sbom.files.length, plan.assets.length);
+    assert.equal(sbom.files.length, plan.assets.length + 1);
+    assert.ok(sbom.files.some((entry) =>
+      entry.fileName.endsWith("/[Content_Types].xml")));
     assert.ok(sbom.files.every((entry) => entry.copyrightText === "NOASSERTION" && entry.licenseConcluded === "NOASSERTION"));
     const archivePackages = sbom.packages.filter((entry) => entry.packageFileName);
     assert.equal(archivePackages.length, plan.assets.length);
