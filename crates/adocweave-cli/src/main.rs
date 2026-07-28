@@ -1653,7 +1653,7 @@ fn run() -> Result<ExitCode, CliError> {
             let canonical_input = input_path
                 .as_ref()
                 .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()));
-            let source_id = canonical_input.as_ref().map_or_else(
+            let source_id = input_path.as_ref().map_or_else(
                 || "<stdin>".to_owned(),
                 |path| path.to_string_lossy().into_owned(),
             );
@@ -1682,12 +1682,7 @@ fn run() -> Result<ExitCode, CliError> {
                 };
                 let source_id = input_path.as_ref().map_or_else(
                     || "<stdin>".to_owned(),
-                    |path| {
-                        path.canonicalize()
-                            .unwrap_or_else(|_| path.clone())
-                            .to_string_lossy()
-                            .into_owned()
-                    },
+                    |path| path.to_string_lossy().into_owned(),
                 );
                 let include_input = if let Some(project_root) = &project_root {
                     let source_base = local_context

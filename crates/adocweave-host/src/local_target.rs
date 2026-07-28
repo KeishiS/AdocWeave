@@ -424,9 +424,8 @@ impl LocalTargetError {
             Self::NotFile(_) | Self::NotDirectory(_) => "local-target-not-file",
             Self::PermissionDenied(_) => "local-target-permission-denied",
             Self::Unverifiable(_) => "local-target-unverifiable",
-            Self::LimitExceeded { .. } | Self::ResourceTooLarge(_) | Self::ReadLimitExceeded => {
-                "local-target-unverifiable"
-            }
+            Self::LimitExceeded { .. } => "local-target-limit-exceeded",
+            Self::ResourceTooLarge(_) | Self::ReadLimitExceeded => "local-target-unverifiable",
         }
     }
 }
@@ -578,6 +577,18 @@ mod tests {
             session.inspect(&root.0.join("docs"), "missing.adoc"),
             Err(LocalTargetError::LimitExceeded { limit: 1 })
         ));
+    }
+
+    #[test]
+    fn permission_and_inspection_limit_have_specific_diagnostic_codes() {
+        assert_eq!(
+            LocalTargetError::PermissionDenied(PathBuf::from("private")).diagnostic_code(),
+            "local-target-permission-denied"
+        );
+        assert_eq!(
+            LocalTargetError::LimitExceeded { limit: 1 }.diagnostic_code(),
+            "local-target-limit-exceeded"
+        );
     }
 
     #[test]

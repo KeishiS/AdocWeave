@@ -1,0 +1,11 @@
+= Local targetの権限と検査上限
+
+このfixtureは、local targetの権限不足と一意pathの検査件数上限に対するCLI出力を固定します。
+
+``permission/root.adoc``は、Unixで``blocked`` directoryの検索権限を除去した一時copyに対して検査します。
+test processがrootの場合は、CLI child processをUID・GID 65534で実行します。WindowsのACL継承や
+アクセス拒否ACLの作成は環境依存であるため、このfixtureでは再現しません。Windowsを含む全platformでは、
+host errorから公開診断への変換を通常の単体testで検査します。
+
+``limit/root.adoc``は、``resources.max-files = 1``の設定で異なる二つのtargetを参照します。
+最初のtargetだけをfilesystemで検査し、次のtargetには``local-target-limit-exceeded``診断を返します。
