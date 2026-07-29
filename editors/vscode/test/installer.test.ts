@@ -1,15 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import {
-  chmod,
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -295,9 +286,7 @@ test("内容のあるdirectory markerを所有証明として受け入れませ�
     await assert.rejects(clearManagedServers(storagePath), /managed-cache-owner-mismatch/);
     await assert.rejects(
       installManagedServer(platformForHost("linux", "x64"), {
-        fetcher: releaseFetcher(
-          zipSync({ "adocweave-lsp": new TextEncoder().encode("server") }),
-        ),
+        fetcher: releaseFetcher(zipSync({ "adocweave-lsp": new TextEncoder().encode("server") })),
         storagePath,
         version: "0.16.0",
       }),
