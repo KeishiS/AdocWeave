@@ -56,6 +56,14 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /`PermissionDenied`/);
   assert.match(notes, /別の許可root内にある場合も/);
   assert.match(notes, /`OutsideRoots`として拒否/);
+  assert.match(notes, /`HandleRelative`方式/);
+  assert.match(notes, /macOSとWindowsは`StaticSnapshotOnly`方式/);
+  assert.match(notes, /workspaceを同時変更しない、信頼済みのworkspace/);
+  assert.match(notes, /要求の`packageVersion`がBrowser packageと一致しない場合に解析を拒否/);
+  assert.match(notes, /staleな結果は`onResult`にも`onError`にも通知しません/);
+  assert.match(notes, /terminal errorでは未完了の解析Promiseをreject/);
+  assert.match(notes, /`onError`をmicrotaskで通知/);
+  assert.match(notes, /同期的な実行順には依存しない/);
   assert.doesNotMatch(notes, /Rust APIに破壊的変更はありません/);
   assert.doesNotMatch(notes, /移行するための設定変更は不要です/);
   assert.match(notes, /任意のファイルやディレクトリ一覧を配信せず/);

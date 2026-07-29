@@ -83,6 +83,11 @@ directory、権限不足および検査不能なtargetは安定したcodeを持�
 ``local-target-limit-exceeded``を報告して、それ以降のfilesystem検査を行いません。
 標準入力の基準directoryはproject rootです。
 
+Linuxでは、project rootのdirectory handleを基準に各path componentを開く``HandleRelative``方式を使用し、
+検証後のpathを名前から開き直す競合を避けます。macOSとWindowsでは``StaticSnapshotOnly``方式を使用します。
+この方式は、検査中にworkspaceを同時変更しない、信頼済みのworkspaceだけを対象とします。信頼できない入力を
+検査する場合は、書換え不能なsnapshotへコピーしてから実行してください。
+
 利用可能な規則は文書を読み込まずにJSONで取得できます。
 
 [source,console]

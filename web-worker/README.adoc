@@ -31,12 +31,16 @@ preview.textContent = result.html;
 projectionを一つの結果として返します。``result.result``は存在せず、すべてのWASM productを
 ``result.projection``のように結果直下から参照します。要求しなかった``projection``は``null``、
 要求しなかった配列productは空配列です。
+要求の``packageVersion``がこのBrowser packageのversionと一致しない場合は、解析せずに拒否します。
 
 公開入口がWorkerの生成、初期化、debounce、generation、cancelおよびdisposeを所有します。
 ``SharedArrayBuffer``を利用できない場合はWorker再生成へ自動的に縮退します。DOMへの反映とUI stateは
 利用側が所有します。連続更新では従来どおり``update()``、``onResult``および``onError``を使用できます。
+新しいgenerationに置き換えられたstaleな結果は、``onResult``と``onError``のどちらにも通知しません。
 ``onResult``または``onError``内で発生した例外は解析PromiseとWorkerへ伝播しません。例外の記録や
 画面表示が必要な場合は、callback内で処理します。
+Worker障害などのterminal errorでは、未完了のPromiseをrejectし、``onError``をmicrotaskで通知します。
+Promiseのrejectを処理するcallbackと``onError``の同期的な実行順には依存しないでください。
 ``defaultAssetUrls()``は``import.meta.url``を基準にWorkerとWASMを解決するため、静的hostingとbundlerの
 どちらでも同じ公開入口を使用できます。moduleのimportだけではWorkerを生成しません。
 Clientの構築時にもWorkerやWASM network requestは開始せず、``ready``の参照または``analyze()``で初めて
