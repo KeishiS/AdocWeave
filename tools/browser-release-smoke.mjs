@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { assertBrowserArtifactSizes } from "./browser-release-budget.mjs";
 import {
@@ -14,14 +15,17 @@ import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
 const BROWSER_STARTUP_TIMEOUT_MS = 20_000;
+const BROWSER_STARTUP_TOTAL_TIMEOUT_MS = 45_000;
+const BROWSER_STARTUP_ATTEMPTS = 2;
 const POLL_INTERVAL_MS = 25;
-const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
-if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
-const chromium = await resolveHostExecutable(chromiumCommand);
-const releaseManifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
 
-const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
-try {
+async function main() {
+  const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
+  if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
+  const chromium = await resolveHostExecutable(chromiumCommand);
+  const releaseManifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
+  const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
+  try {
   const { stdout: archiveList } = await run("tar", ["-tJf", resolve(archive)]);
   const members = archiveList.trimEnd().split("\n");
   const roots = new Set();
@@ -92,11 +96,36 @@ try {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
   console.log(`browser release smoke passed: archive=${archiveBytes} wasm=${wasmBytes}`);
-} finally {
-  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  await main();
 }
 
 async function inspectPage(chromium, url, temporaryRoot) {
+  return retryBrowserStartup(
+    ({ remainingMs }) => inspectPageAttempt(
+      chromium,
+      url,
+      temporaryRoot,
+      Math.min(BROWSER_STARTUP_TIMEOUT_MS, remainingMs),
+    ),
+    {
+      attempts: BROWSER_STARTUP_ATTEMPTS,
+      totalTimeoutMs: BROWSER_STARTUP_TOTAL_TIMEOUT_MS,
+      onFailure: ({ attempt, attempts, error }) => {
+        console.error(
+          `browser release smoke: startup attempt ${attempt}/${attempts} failed; retrying with a fresh profile:\n${error.message}`,
+        );
+      },
+    },
+  );
+}
+
+async function inspectPageAttempt(chromium, url, temporaryRoot, startupTimeoutMs) {
   const profile = join(temporaryRoot, `profile-${crypto.randomUUID()}`);
   const browser = spawn(chromium, [
     "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
@@ -119,16 +148,19 @@ async function inspectPage(chromium, url, temporaryRoot) {
         const contents = await readFile(join(profile, "DevToolsActivePort"), "utf8");
         const candidate = Number.parseInt(contents.split("\n", 1)[0], 10);
         return Number.isInteger(candidate) && candidate > 0 ? candidate : undefined;
-      }, () => browserFailure(browser, spawnError, stderr));
+      }, () => browserFailure(browser, spawnError, stderr), startupTimeoutMs);
     } catch (error) {
-      throw browserFailure(browser, spawnError, stderr) ?? new Error(
+      const fatal = browserFailure(browser, spawnError, stderr);
+      const failure = fatal ?? new Error(
         `browser did not create DevToolsActivePort: ${error.message}${stderr ? `\n${stderr}` : ""}`,
       );
+      failure.retryBrowserStartup = fatal === undefined;
+      throw failure;
     }
     const target = await poll(async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
       return (await response.json()).find((candidate) => candidate.type === "page");
-    }, () => browserFailure(browser, spawnError, stderr));
+    }, () => browserFailure(browser, spawnError, stderr), startupTimeoutMs);
     const socket = new WebSocket(target.webSocketDebuggerUrl);
     await withTimeout(once(socket, "open"), 5000, "DevTools WebSocket connection timeout");
     let id = 0;
@@ -192,9 +224,36 @@ async function inspectPage(chromium, url, temporaryRoot) {
   }
 }
 
-async function poll(operation, failure) {
+export async function retryBrowserStartup(
+  operation,
+  {
+    attempts = BROWSER_STARTUP_ATTEMPTS,
+    totalTimeoutMs = BROWSER_STARTUP_TOTAL_TIMEOUT_MS,
+    onFailure = () => {},
+    now = Date.now,
+  } = {},
+) {
+  const deadline = now() + totalTimeoutMs;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) break;
+    try {
+      return await operation({ attempt, remainingMs });
+    } catch (error) {
+      lastError = error;
+      if (!error.retryBrowserStartup || attempt === attempts || now() >= deadline) throw error;
+      onFailure({ attempt, attempts, error });
+    }
+  }
+  throw new Error(
+    `Chromium startup exhausted ${attempts} attempts within ${totalTimeoutMs} ms: ${lastError?.message ?? "total timeout"}`,
+  );
+}
+
+async function poll(operation, failure, timeoutMs = BROWSER_STARTUP_TIMEOUT_MS) {
   let error;
-  const deadline = Date.now() + BROWSER_STARTUP_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const fatal = failure?.();
     if (fatal) throw fatal;
@@ -207,7 +266,7 @@ async function poll(operation, failure) {
     await new Promise((resolveWait) => setTimeout(resolveWait, POLL_INTERVAL_MS));
   }
   throw error ?? new Error(
-    `Chromium did not become ready within ${BROWSER_STARTUP_TIMEOUT_MS} ms`,
+    `Chromium did not become ready within ${timeoutMs} ms`,
   );
 }
 

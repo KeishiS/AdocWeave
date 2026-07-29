@@ -6,6 +6,54 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { MAX_BROWSER_WASM_BYTES } from "./browser-release-budget.mjs";
+import { retryBrowserStartup } from "./browser-release-smoke.mjs";
+
+test("browser startup retries once with an attempt-specific diagnostic", async () => {
+  const attempts = [];
+  const failures = [];
+  const result = await retryBrowserStartup(
+    async ({ attempt }) => {
+      attempts.push(attempt);
+      if (attempt === 1) {
+        const error = new Error("DevToolsActivePort timeout");
+        error.retryBrowserStartup = true;
+        throw error;
+      }
+      return "ready";
+    },
+    {
+      attempts: 2,
+      totalTimeoutMs: 1000,
+      onFailure: (failure) => failures.push(failure),
+    },
+  );
+
+  assert.equal(result, "ready");
+  assert.deepEqual(attempts, [1, 2]);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].attempt, 1);
+  assert.equal(failures[0].attempts, 2);
+  assert.match(failures[0].error.message, /DevToolsActivePort timeout/);
+});
+
+test("browser startup retry respects the total deadline", async () => {
+  let clock = 0;
+  const error = await retryBrowserStartup(
+    async ({ remainingMs }) => {
+      assert.equal(remainingMs, 30);
+      clock = 30;
+      const failure = new Error("cold start");
+      failure.retryBrowserStartup = true;
+      throw failure;
+    },
+    { attempts: 2, totalTimeoutMs: 30, now: () => clock },
+  ).then(
+    () => undefined,
+    (failure) => failure,
+  );
+
+  assert.match(error.message, /cold start/);
+});
 
 test("browser smoke rejects an archive whose extracted raw WASM exceeds the budget", () => {
   const temporary = mkdtempSync(join(tmpdir(), "adocweave-browser-budget-"));
