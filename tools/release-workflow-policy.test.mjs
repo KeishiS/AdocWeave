@@ -176,11 +176,86 @@ test("release workflow cannot cache executable build tools", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        'cargo install cargo-dist --version "=$distVersion" --locked',
+        "./tools/install-pinned-cargo-dist.ps1",
         "cargo install cargo-dist",
       ),
     }),
-    /exact locked source installation/,
+    /reviewed bootstrap|registry build/,
+  );
+});
+
+test("Windows cargo-dist bootstrap pins the complete reviewed asset identity", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  for (const mutation of [
+    { url: "https://github.com/axodotdev/cargo-dist/releases/latest/download/cargo-dist-x86_64-pc-windows-msvc.zip" },
+    { sha256: "0".repeat(64) },
+    { asset: "cargo-dist-installer.ps1" },
+    { archiveEntries: [...inputs.windowsDistBootstrap.archiveEntries, "unexpected.exe"] },
+    { executable: "cargo-dist.exe" },
+  ]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        windowsDistBootstrap: { ...inputs.windowsDistBootstrap, ...mutation },
+      }),
+      /exactly pin the reviewed release asset/,
+    );
+  }
+});
+
+test("Windows cargo-dist bootstrap cannot omit bounded download and extraction", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  for (const argument of ["-DownloadTimeoutSeconds 60", "-ExtractionTimeoutSeconds 30"]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        release: inputs.release.replace(argument, ""),
+      }),
+      /must have a timeout/,
+    );
+  }
+});
+
+test("Windows cargo-dist bootstrap rejects unsafe extraction mutations", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  for (const [original, replacement] of [
+    ['$actualHash -cne $config.sha256', "$false"],
+    [
+      "Compare-Object -CaseSensitive $actualEntries $expectedEntries",
+      "Compare-Object -CaseSensitive $actualEntries $actualEntries",
+    ],
+    ["GetFileName($entryName) -cne $entryName", "$false"],
+    ["$archive.GetEntry($config.executable)", "$archive.Entries[0]"],
+    [
+      "Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force",
+      "Write-Output $temporaryDirectory",
+    ],
+  ]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        windowsDistInstaller: inputs.windowsDistInstaller.replace(original, replacement),
+      }),
+      /bootstrap must/,
+    );
+  }
+});
+
+test("Windows cargo-dist bootstrap verifies before opening and extracting", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  const installer = inputs.windowsDistInstaller
+    .replace(
+      "  $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)",
+      "  # archive opening moved",
+    )
+    .replace(
+      '  if ($actualHash -cne $config.sha256) {',
+      "  $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)\n" +
+      '  if ($actualHash -cne $config.sha256) {',
+    );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({ ...inputs, windowsDistInstaller: installer }),
+    /verify hash and entries before extraction/,
   );
 });
 

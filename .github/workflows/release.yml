@@ -157,8 +157,13 @@ jobs:
           $distVersion = (Get-Content release/distribution-plan.json | ConvertFrom-Json).distVersion
           rustup toolchain install $rustVersion --profile minimal --target "${{ matrix.target }}"
           rustup override set $rustVersion
-          cargo install cargo-dist --version "=$distVersion" --locked
-          if ((dist --version) -ne "cargo-dist $distVersion") {
+          $distDirectory = Join-Path $env:RUNNER_TEMP "cargo-dist-bin"
+          ./tools/install-pinned-cargo-dist.ps1 `
+            -DestinationDirectory $distDirectory `
+            -DownloadTimeoutSeconds 60 `
+            -ExtractionTimeoutSeconds 30
+          $distDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if ((& (Join-Path $distDirectory "dist.exe") --version) -ne "cargo-dist $distVersion") {
             throw "cargo-dist version mismatch"
           }
       - name: Windows target archive builds
