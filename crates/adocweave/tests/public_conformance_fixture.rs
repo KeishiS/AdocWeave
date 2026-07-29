@@ -21,6 +21,13 @@ struct Manifest {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConformanceConsumers {
+    manifest: String,
+    fixture_root: String,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Case {
     name: String,
@@ -201,8 +208,12 @@ fn assert_cross_runtime_bijection(manifest: &Manifest) {
         "duplicate public sourceId"
     );
 
-    let cross_runtime: Value = serde_json::from_str(&read("fixtures/conformance/cases.json"))
-        .expect("valid cross-runtime manifest");
+    let consumers: ConformanceConsumers =
+        serde_json::from_str(&read("fixtures/conformance/consumers.json"))
+            .expect("valid conformance consumers");
+    assert!(root().join(&consumers.fixture_root).is_dir());
+    let cross_runtime: Value =
+        serde_json::from_str(&read(&consumers.manifest)).expect("valid cross-runtime manifest");
     let public_entries: Vec<&Value> = cross_runtime["cases"]
         .as_array()
         .expect("cross-runtime cases")

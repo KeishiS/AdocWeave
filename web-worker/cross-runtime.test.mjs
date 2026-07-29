@@ -8,8 +8,13 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const fixtures = resolve(root, "fixtures/conformance");
-const manifest = JSON.parse(readFileSync(resolve(fixtures, "cases.json"), "utf8"));
+const consumers = JSON.parse(
+  readFileSync(resolve(root, "fixtures/conformance/consumers.json"), "utf8"),
+);
+const fixtureRoot = resolve(root, consumers.fixtureRoot);
+const manifest = JSON.parse(
+  readFileSync(resolve(root, consumers.manifest), "utf8"),
+);
 const require = createRequire(import.meta.url);
 const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js"));
 const native = resolve(root, "target/debug/adocweave-conformance-native");
@@ -17,7 +22,7 @@ const release = JSON.parse(readFileSync(resolve(root, "release-manifest.json"), 
 
 function requestFor(entry) {
   const source = entry.sourceFile
-    ? readFileSync(resolve(fixtures, entry.sourceFile), "utf8")
+    ? readFileSync(resolve(fixtureRoot, entry.sourceFile), "utf8")
     : entry.source;
   return {
     packageVersion: release.packageVersion,
@@ -79,13 +84,13 @@ for (const entry of manifest.cases) {
     if (entry.expectedHtmlFile) {
       assert.equal(
         actual.value.html,
-        readFileSync(resolve(fixtures, entry.expectedHtmlFile), "utf8"),
+        readFileSync(resolve(fixtureRoot, entry.expectedHtmlFile), "utf8"),
       );
     }
     if (entry.expectedAstFile) {
       assert.equal(
         actual.value.ast,
-        readFileSync(resolve(fixtures, entry.expectedAstFile), "utf8").trimEnd(),
+        readFileSync(resolve(fixtureRoot, entry.expectedAstFile), "utf8").trimEnd(),
       );
     }
     for (const [field, product] of [
@@ -97,7 +102,7 @@ for (const entry of manifest.cases) {
       if (entry[field]) {
         assert.deepEqual(
           actual.value[product],
-          JSON.parse(readFileSync(resolve(fixtures, entry[field]), "utf8")),
+          JSON.parse(readFileSync(resolve(fixtureRoot, entry[field]), "utf8")),
         );
       }
     }

@@ -7,6 +7,13 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConformanceConsumers {
+    manifest: PathBuf,
+    fixture_root: PathBuf,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReleaseManifest {
     schema_version: u16,
@@ -16,11 +23,17 @@ struct ReleaseManifest {
 
 #[test]
 fn native_adapter_accepts_every_shared_conformance_case() {
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/conformance");
-    let manifest: Value = serde_json::from_str(
-        &fs::read_to_string(fixtures.join("cases.json")).expect("conformance manifest"),
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let consumers: ConformanceConsumers = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/conformance/consumers.json"))
+            .expect("conformance consumers"),
     )
-    .expect("valid conformance manifest");
+    .expect("valid conformance consumers");
+    let fixtures = root.join(consumers.fixture_root);
+    let manifest_path = root.join(consumers.manifest);
+    let manifest: Value =
+        serde_json::from_str(&fs::read_to_string(manifest_path).expect("conformance manifest"))
+            .expect("valid conformance manifest");
     assert_eq!(manifest["packageVersion"], adocweave::VERSION);
 
     for entry in manifest["cases"].as_array().expect("cases") {

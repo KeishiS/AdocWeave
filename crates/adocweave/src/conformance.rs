@@ -13,10 +13,12 @@ use crate::reference::ReferenceKey;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
 
-/// Returns an inline source fixture from the shared cross-runtime manifest.
+/// Returns an inline source fixture from the shared cross-runtime manifest at
+/// the core crate's bundled runtime contract.
 /// File-backed fixtures deliberately return `None`: consumers should retain
 /// compile-time inclusion for those files, while inline cases can be reused
-/// without duplicating source text in every test suite.
+/// without duplicating source text in every test suite. Test consumers resolve
+/// those file names from the repository fixture root `fixtures/conformance`.
 #[doc(hidden)]
 pub fn fixture_source(name: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
@@ -33,9 +35,8 @@ pub fn fixture_source(name: &str) -> Option<String> {
         cases: Vec<FixtureCase>,
     }
 
-    let manifest: FixtureManifest =
-        serde_json::from_str(include_str!("../../../fixtures/conformance/cases.json"))
-            .expect("repository conformance fixture manifest is valid");
+    let manifest: FixtureManifest = serde_json::from_str(include_str!("../conformance/cases.json"))
+        .expect("repository conformance fixture manifest is valid");
     assert_eq!(manifest.package_version, crate::VERSION);
     manifest
         .cases

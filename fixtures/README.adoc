@@ -13,9 +13,21 @@ fixtureは担当機能ごとに分類する。各機能ディレクトリには�
 `release/core.adoc`は機能横断のコアリリースfixtureである。期待HTMLを同じディレクトリへ
 置き、CLI、Lint、Formatterのテストで同じソースを使う。
 
-`conformance/cases.json`はruntime横断fixtureのmanifestである。各caseには互換性分類、
-差分理由および仕様versionへの影響判断を記録しなければならない。native、WASMおよび
-LSPはこのmanifestまたは参照先の同じソースを使用し、別内容の複製fixtureを作らない。
+runtime横断fixtureのmanifestは、core crateが所有するruntime契約として
+`../crates/adocweave/conformance/cases.json`に置く。manifest内の`sourceFile`と
+`expectedFile`は、manifestの所在ではなくfixture rootである`fixtures/conformance/`を
+基準に解決する。
+各caseには互換性分類、差分理由および仕様versionへの影響判断を記録しなければならない。
+native、WASMおよびLSPはこのmanifestまたは参照先の同じソースを使用し、別内容の
+複製fixtureを作らない。個別のfixtureは、他のcaseの入力や期待出力へ依存せず、
+そのfixtureだけで一つの動作を検証できる内容にする。
+
+`conformance/consumers.json`は、repository内のreaderが使用するmanifest pathと
+fixture rootの単一の設定源であり、このruntime契約を直接読む処理の一覧でもある。
+`capabilities`は各readerがmanifestだけを使うか、参照先fixtureも読むかを示す。
+core crateはsource packageへ埋め込むmanifestだけを使い、その他のreaderはこの設定を
+読み込んでmanifestとfixture rootを別々に解決する。新しいreaderを追加するときは、
+同じ変更でこの一覧へpathとcapabilityを追加し、governance検査の期待一覧も更新する。
 
 `public-conformance.json`は、利用側の適合性試験で再利用する公開fixtureのmanifestである。
 各caseで入力、投影、HTML、解析診断、描画診断、適用profileおよび対象構文を一つの対応として示し、
