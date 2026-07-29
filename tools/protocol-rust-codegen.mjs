@@ -23,6 +23,22 @@ const SHARED_RUST_ENUMS = [
   "Severity",
 ];
 
+const REQUEST_RUST_ENUMS = [
+  "DocumentMode",
+  "SyntaxMode",
+  "UnknownSourceLanguage",
+  "UnresolvedReferencePresentation",
+];
+
+const EXTERNAL_REQUEST_RUST_ENUMS = [
+  "MathLanguage",
+  "ReferenceFailureKind",
+  "ReferenceNotice",
+  "ResourceFailureKind",
+  "SafeMode",
+  "Severity",
+];
+
 const RUST_KEYWORDS = new Set([
   "Self", "abstract", "as", "async", "await", "become", "box", "break", "const",
   "continue", "crate", "do", "dyn", "else", "enum", "extern", "false", "final",
@@ -76,6 +92,176 @@ export function generateRustSharedTypes(schema) {
       return rustSharedEnum(name, values, defaultValue);
     })
     .join("\n\n");
+}
+
+export function generateRustRequestEnums(schema) {
+  const contracts = collectRequestContracts(schema);
+  const reached = reachableRequestTypes(["WasmRequest"], contracts);
+  const reachedEnums = [...reached]
+    .filter((name) => Array.isArray(contracts[name]))
+    .sort();
+  const expectedEnums = [...REQUEST_RUST_ENUMS, ...EXTERNAL_REQUEST_RUST_ENUMS].sort();
+  if (JSON.stringify(reachedEnums) !== JSON.stringify(expectedEnums)) {
+    throw new Error(
+      `request Rust enum ownership must exactly match reachable enums: ${reachedEnums.join(", ")}`,
+    );
+  }
+
+  validateRequestRustEnumNames(reachedEnums);
+  return [...REQUEST_RUST_ENUMS]
+    .sort()
+    .map((name) => {
+      const values = contracts[name];
+      const defaultValue = requestEnumDefault(name, reached, contracts);
+      return rustRequestEnum(name, values, defaultValue);
+    })
+    .join("\n\n");
+}
+
+function collectRequestContracts(schema) {
+  const contracts = {
+    WasmRequest: schema.request,
+    ProductSet: schema.productSet,
+  };
+  for (const [namespace, entries] of [
+    ["enums", schema.enums],
+    ["settings", schema.settings],
+    ["definitions", schema.definitions],
+    ["preprocessDefinitions", schema.preprocessDefinitions],
+    ["taggedUnions", schema.taggedUnions],
+  ]) {
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+      throw new Error(`missing request Rust contract namespace ${namespace}`);
+    }
+    for (const [name, contract] of Object.entries(entries)) {
+      if (Object.hasOwn(contracts, name)) {
+        throw new Error(`duplicate request Rust contract ${name}`);
+      }
+      contracts[name] = contract;
+    }
+  }
+  if (!contracts.WasmRequest || !contracts.ProductSet) {
+    throw new Error("missing request Rust root contract");
+  }
+  return contracts;
+}
+
+function reachableRequestTypes(roots, contracts) {
+  const reached = new Set();
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (reached.has(name)) continue;
+    const contract = contracts[name];
+    if (!contract) {
+      throw new Error(`unsupported reachable request Rust type ${name}`);
+    }
+    reached.add(name);
+    const fields = contract.variants
+      ? Object.values(contract.variants).flat()
+      : Array.isArray(contract)
+        ? []
+        : contract.fields;
+    if (!Array.isArray(fields)) {
+      throw new Error(`invalid request Rust contract ${name}`);
+    }
+    for (const field of fields) {
+      if (!field || typeof field.type !== "string") {
+        throw new Error(`invalid request Rust field in ${name}`);
+      }
+      for (const reference of requestTypeReferences(field.type)) {
+        if (!contracts[reference]) {
+          throw new Error(`unsupported reachable request Rust type ${reference}`);
+        }
+        if (!reached.has(reference)) pending.push(reference);
+      }
+    }
+  }
+  return reached;
+}
+
+function requestTypeReferences(type) {
+  if (type !== type.trim()) {
+    throw new Error(`unsupported request Rust field type ${JSON.stringify(type)}`);
+  }
+  const references = type.match(/[A-Za-z][A-Za-z0-9]*/g) ?? [];
+  const builtins = new Set([
+    "Record",
+    "Required",
+    "SharedArrayBuffer",
+    "boolean",
+    "null",
+    "number",
+    "safeInteger",
+    "string",
+    "u32",
+    "unknown",
+  ]);
+  return references.filter((reference) => !builtins.has(reference));
+}
+
+function requestEnumDefault(name, reached, contracts) {
+  const defaults = [];
+  for (const owner of [...reached].sort()) {
+    const contract = contracts[owner];
+    if (Array.isArray(contract)) continue;
+    const fields = contract.variants
+      ? Object.values(contract.variants).flat()
+      : contract.fields;
+    for (const field of fields) {
+      if (field.type !== name || !Object.hasOwn(field, "default")) continue;
+      defaults.push(field.default);
+    }
+  }
+  if (defaults.length === 0
+      || defaults.some((value) => typeof value !== "string")
+      || new Set(defaults).size !== 1) {
+    throw new Error(`${name} must have one unambiguous request Rust default`);
+  }
+  const [defaultValue] = defaults;
+  if (!contracts[name].includes(defaultValue)) {
+    throw new Error(`${name} has an invalid request Rust default`);
+  }
+  return defaultValue;
+}
+
+function validateRequestRustEnumNames(names) {
+  const rustNames = new Set();
+  for (const name of names) {
+    const rustName = requestRustName(name);
+    validateRustIdentifier(rustName, `request enum type ${name}`);
+    if (rustNames.has(rustName)) {
+      throw new Error(`request enum types collide as Rust identifier ${rustName}`);
+    }
+    rustNames.add(rustName);
+  }
+}
+
+function requestRustName(name) {
+  return `Wasm${name}`;
+}
+
+function rustRequestEnum(name, values, defaultValue) {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error(`${name} must have at least one request Rust enum value`);
+  }
+  const identifiers = new Set();
+  const variants = values.map((value) => {
+    const variant = rustVariant(value);
+    validateRustIdentifier(variant, `${name} enum value ${JSON.stringify(value)}`);
+    if (identifiers.has(variant)) {
+      throw new Error(`${name} enum values collide as Rust identifier ${variant}`);
+    }
+    identifiers.add(variant);
+    return value === defaultValue
+      ? `    #[default]\n    ${variant},`
+      : `    ${variant},`;
+  });
+  return `#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ${requestRustName(name)} {
+${variants.join("\n")}
+}`;
 }
 
 function sharedEnumDefault(schema, name) {

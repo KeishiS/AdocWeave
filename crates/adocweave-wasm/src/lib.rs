@@ -19,6 +19,7 @@ mod preprocess_wire;
 mod preprocess_wire_generated;
 mod protocol_generated;
 mod render_inputs;
+mod request_enum_generated;
 mod response_projection;
 mod response_wire;
 mod response_wire_generated;
@@ -31,6 +32,10 @@ pub use protocol_generated::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, W
 pub use render_inputs::{
     WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
+};
+pub use request_enum_generated::{
+    WasmDocumentMode, WasmSyntaxMode, WasmUnknownSourceLanguage,
+    WasmUnresolvedReferencePresentation,
 };
 #[cfg(test)]
 use response_projection::parse_optional_product;
@@ -162,14 +167,6 @@ impl Default for WasmOutputLimits {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum WasmDocumentMode {
-    #[default]
-    Fragment,
-    Complete,
-}
-
 /// A host-supplied stylesheet forwarded to the core stylesheet policy.
 /// Rejected sources surface as `renderDiagnostics`, never as emitted CSS.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -202,24 +199,6 @@ impl Default for WasmSourceLanguagePolicy {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum WasmUnknownSourceLanguage {
-    #[default]
-    PreserveSanitized,
-    OmitClass,
-    Diagnostic,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum WasmUnresolvedReferencePresentation {
-    #[default]
-    Target,
-    LabelOnly,
-    Hidden,
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResourceCapabilities {
@@ -234,13 +213,6 @@ impl Default for WasmResourceCapabilities {
             media: true,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum WasmSyntaxMode {
-    Permissive,
-    Strict,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
