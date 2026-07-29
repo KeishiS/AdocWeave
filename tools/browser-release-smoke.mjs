@@ -13,6 +13,8 @@ import {
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
+const BROWSER_STARTUP_TIMEOUT_MS = 20_000;
+const POLL_INTERVAL_MS = 25;
 const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
 if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
 const chromium = await resolveHostExecutable(chromiumCommand);
@@ -192,7 +194,8 @@ async function inspectPage(chromium, url, temporaryRoot) {
 
 async function poll(operation, failure) {
   let error;
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  const deadline = Date.now() + BROWSER_STARTUP_TIMEOUT_MS;
+  while (Date.now() < deadline) {
     const fatal = failure?.();
     if (fatal) throw fatal;
     try {
@@ -201,9 +204,11 @@ async function poll(operation, failure) {
     } catch (caught) {
       error = caught;
     }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+    await new Promise((resolveWait) => setTimeout(resolveWait, POLL_INTERVAL_MS));
   }
-  throw error ?? new Error("Chromium did not start");
+  throw error ?? new Error(
+    `Chromium did not become ready within ${BROWSER_STARTUP_TIMEOUT_MS} ms`,
+  );
 }
 
 function browserFailure(browser, spawnError, stderr) {
