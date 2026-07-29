@@ -14,12 +14,13 @@ use adocweave::semantic::{
     source_language_candidates,
 };
 use adocweave::semantic::{Inline, MathLanguage};
-use adocweave::text::{
-    PositionEncoding as CorePositionEncoding, SourceDocument, TextRange as CoreTextRange,
-};
+use adocweave::text::{SourceDocument, TextRange as CoreTextRange};
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
+use crate::position::{
+    PositionEncoding, contains, negotiate_encoding, range_to_lsp, ranges_intersect, request_offset,
+};
 use crate::state::DocumentStore;
 use crate::state::{
     Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis as DocumentWorkspaceAnalysis,
@@ -27,12 +28,6 @@ use crate::state::{
 };
 use crate::workspace::WorkspaceResources;
 use crate::{SERVER_NAME, VERSION};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PositionEncoding {
-    Utf8,
-    Utf16,
-}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum HoverPresentation {
@@ -147,22 +142,6 @@ impl ClientProfile {
                 .and_then(|capabilities| capabilities.did_change_watched_files)
                 .and_then(|capabilities| capabilities.dynamic_registration)
                 == Some(true),
-        }
-    }
-}
-
-impl PositionEncoding {
-    const fn core(self) -> CorePositionEncoding {
-        match self {
-            Self::Utf8 => CorePositionEncoding::Utf8,
-            Self::Utf16 => CorePositionEncoding::Utf16,
-        }
-    }
-
-    fn lsp(self) -> lsp::PositionEncodingKind {
-        match self {
-            Self::Utf8 => lsp::PositionEncodingKind::UTF8,
-            Self::Utf16 => lsp::PositionEncodingKind::UTF16,
         }
     }
 }
@@ -1100,7 +1079,11 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
-        let offset = request_offset(&document, position, self.position_encoding)?;
+        let offset = request_offset(
+            document.analysis.source_document(),
+            position,
+            self.position_encoding,
+        )?;
         if let Some(attribute) = document
             .analysis
             .document_attribute_occurrences()
@@ -1282,7 +1265,11 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
         };
-        let offset = request_offset(&document, position, self.position_encoding)?;
+        let offset = request_offset(
+            document.analysis.source_document(),
+            position,
+            self.position_encoding,
+        )?;
         if attribute_completion_context(document.analysis.source(), offset as usize) {
             let values =
                 self.documents
@@ -1430,7 +1417,11 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
-        let offset = request_offset(&document, position, self.position_encoding)?;
+        let offset = request_offset(
+            document.analysis.source_document(),
+            position,
+            self.position_encoding,
+        )?;
         for workspace in self.documents.workspace_analyses() {
             if let Some((reference, _)) = projected_attribute_reference_at(workspace, uri, offset)
                 && let Some(binding_id) = reference.binding_id
@@ -1516,7 +1507,11 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        let offset = request_offset(&document, position, self.position_encoding)?;
+        let offset = request_offset(
+            document.analysis.source_document(),
+            position,
+            self.position_encoding,
+        )?;
         let projected_binding_origin = self.documents.workspace_analyses().find_map(|workspace| {
             let binding_id = projected_attribute_reference_at(workspace, uri, offset)
                 .and_then(|(reference, _)| reference.binding_id)
@@ -1765,7 +1760,11 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
-        let offset = request_offset(&document, position, self.position_encoding)?;
+        let offset = request_offset(
+            document.analysis.source_document(),
+            position,
+            self.position_encoding,
+        )?;
         let Some(target) = document
             .analysis
             .reference_targets()
@@ -2148,32 +2147,6 @@ fn code_action_kind_requested(
     })
 }
 
-fn ranges_intersect(left: lsp::Range, right: lsp::Range) -> bool {
-    if left.start == left.end {
-        return point_in_range(left.start, right);
-    }
-    if right.start == right.end {
-        return point_in_range(right.start, left);
-    }
-    position_lt(left.start, right.end) && position_lt(right.start, left.end)
-}
-
-fn point_in_range(point: lsp::Position, range: lsp::Range) -> bool {
-    if range.start == range.end {
-        point == range.start
-    } else {
-        position_le(range.start, point) && position_lt(point, range.end)
-    }
-}
-
-fn position_le(left: lsp::Position, right: lsp::Position) -> bool {
-    (left.line, left.character) <= (right.line, right.character)
-}
-
-fn position_lt(left: lsp::Position, right: lsp::Position) -> bool {
-    (left.line, left.character) < (right.line, right.character)
-}
-
 fn hover_plain_text(markdown: &str) -> String {
     markdown
         .replace("  \n", "\n")
@@ -2473,10 +2446,6 @@ fn reference_identity(
     }
 }
 
-fn contains(range: CoreTextRange, offset: u32) -> bool {
-    range.start().to_u32() <= offset && offset <= range.end().to_u32()
-}
-
 fn host_reference_request(
     document: &DocumentSnapshot,
     uri: &lsp::Url,
@@ -2531,28 +2500,6 @@ fn push_semantic_range(
         }
     }
     Ok(())
-}
-
-fn request_offset(
-    document: &DocumentSnapshot,
-    position: lsp::Position,
-    encoding: PositionEncoding,
-) -> Result<u32, String> {
-    if position.line >= document.analysis.source_document().line_count() {
-        return Err("position.line is outside the document".to_owned());
-    }
-    document
-        .analysis
-        .source_document()
-        .position_to_offset(
-            adocweave::text::Position {
-                line: position.line,
-                character: position.character,
-            },
-            encoding.core(),
-        )
-        .map(|offset| offset.to_u32())
-        .map_err(|error| error.to_string())
 }
 
 #[allow(deprecated)]
@@ -2623,36 +2570,5 @@ fn core_symbol_kind_to_lsp(kind: CoreSymbolKind) -> lsp::SymbolKind {
         CoreSymbolKind::Part => lsp::SymbolKind::MODULE,
         CoreSymbolKind::Section => lsp::SymbolKind::NAMESPACE,
         CoreSymbolKind::ListItem => lsp::SymbolKind::STRING,
-    }
-}
-
-fn range_to_lsp(
-    range: CoreTextRange,
-    source_document: &SourceDocument,
-    encoding: PositionEncoding,
-) -> Result<lsp::Range, String> {
-    let start = source_document
-        .offset_to_position(range.start(), encoding.core())
-        .map_err(|error| error.to_string())?;
-    let end = source_document
-        .offset_to_position(range.end(), encoding.core())
-        .map_err(|error| error.to_string())?;
-    Ok(lsp::Range::new(
-        lsp::Position::new(start.line, start.character),
-        lsp::Position::new(end.line, end.character),
-    ))
-}
-
-fn negotiate_encoding(params: &lsp::InitializeParams) -> PositionEncoding {
-    if params
-        .capabilities
-        .general
-        .as_ref()
-        .and_then(|general| general.position_encodings.as_ref())
-        .is_some_and(|encodings| encodings.contains(&lsp::PositionEncodingKind::UTF8))
-    {
-        PositionEncoding::Utf8
-    } else {
-        PositionEncoding::Utf16
     }
 }
