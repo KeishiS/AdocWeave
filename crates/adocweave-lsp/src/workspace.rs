@@ -264,8 +264,27 @@ impl WorkspaceResources {
         let path = uri
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        let (project, plan) = self.plan_for_path(&path)?;
         let id = uri_id(&uri)?;
+        let config = config_for_path(&self.roots, &path)?;
+        let (project, plan, allowed_roots) = config.map_or_else(
+            || {
+                (
+                    None,
+                    adocweave_config::ResolvedResourceLimitPlan::default(),
+                    Vec::new(),
+                )
+            },
+            |snapshot| {
+                (
+                    Some(snapshot.path),
+                    snapshot.config.resources.limit_plan,
+                    snapshot.config.resources.roots,
+                )
+            },
+        );
+        if !allowed_roots.is_empty() && !allowed_roots.iter().any(|root| path.starts_with(root)) {
+            return self.remove_outside_authority(&id, &path);
+        }
         if self
             .resource_projects
             .get(&id)
@@ -314,6 +333,45 @@ impl WorkspaceResources {
         self.project_plans.insert(project.clone(), plan);
         self.resource_projects.insert(id, project);
         Ok(strings(affected))
+    }
+
+    fn remove_outside_authority(
+        &mut self,
+        id: &ResourceId,
+        path: &Path,
+    ) -> Result<BTreeSet<String>, String> {
+        let Some(project) = self.resource_projects.get(id).cloned() else {
+            return Ok(BTreeSet::new());
+        };
+        let mut inner = self.inner.clone();
+        inner.unregister_root(id);
+        let mut affected = inner.close_overlay(id).map_err(|error| error.to_string())?;
+        affected.extend(inner.remove_disk(id));
+        let plan = self
+            .project_plans
+            .get(&project)
+            .copied()
+            .ok_or_else(|| "workspace resource limit plan is missing".to_owned())?;
+        let budget = self
+            .retained_layers
+            .get(&project)
+            .cloned()
+            .unwrap_or_default()
+            .with_overlay(id.clone(), None, plan.retained_layers)
+            .and_then(|budget| budget.with_disk(id.clone(), None, plan.retained_layers))
+            .map_err(|error| error.to_string())?;
+        if let Some(filesystem) = self.filesystems.get(&project) {
+            filesystem
+                .lock()
+                .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
+                .release(path);
+        }
+        self.inner = inner;
+        self.retained_layers.insert(project, budget);
+        self.resource_projects.remove(id);
+        let mut affected = strings(affected);
+        affected.insert(id.to_string());
+        Ok(affected)
     }
 
     fn read_workspace_file(
@@ -1198,6 +1256,94 @@ mod tests {
 
         assert!(resources.get(&document_uri).is_some());
         assert!(resources.get(&unrelated_uri).is_none());
+    }
+
+    #[test]
+    fn watched_new_resource_outside_configured_roots_is_ignored() {
+        let root = TestDirectory::new();
+        let docs = root.0.join("docs");
+        let other = root.0.join("other");
+        std::fs::create_dir(&docs).expect("docs");
+        std::fs::create_dir(&other).expect("other");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[resources]\nroots = [\"docs\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+        )
+        .expect("project configuration");
+        let document = docs.join("root.adoc");
+        std::fs::write(&document, "root").expect("document");
+        let outside = other.join("new.adoc");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let outside_uri = Url::from_file_path(&outside).expect("outside URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        std::fs::write(&outside, "outside").expect("outside document");
+
+        let affected = resources
+            .reload_file(outside_uri.clone())
+            .expect("ignored outside resource");
+
+        assert!(affected.is_empty());
+        assert!(resources.get(&outside_uri).is_none());
+        assert!(
+            !resources
+                .resource_projects
+                .contains_key(&uri_id(&outside_uri).expect("outside ID"))
+        );
+    }
+
+    #[test]
+    fn watched_resource_moved_outside_authority_releases_every_layer_and_root() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 1, 8, 8, false);
+        let document = root.0.join("document.adoc");
+        std::fs::write(&document, "disk").expect("document");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&document).expect("document URI");
+        let document_id = uri_id(&document_uri).expect("document ID");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("load workspace");
+        resources
+            .upsert_open(document_uri.clone(), 1, "open")
+            .expect("overlay");
+        let docs = root.0.join("docs");
+        std::fs::create_dir(&docs).expect("docs");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[resources]\nroots = [\"docs\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+        )
+        .expect("narrowed configuration");
+
+        let affected = resources
+            .reload_file(document_uri.clone())
+            .expect("remove outside resource");
+
+        assert!(affected.contains(document_uri.as_str()));
+        assert!(resources.get(&document_uri).is_none());
+        assert!(!resources.inner.roots().contains(&document_id));
+        assert!(!resources.resource_projects.contains_key(&document_id));
+        let project = Some(root.0.join(adocweave_config::FILE_NAME));
+        assert_eq!(
+            resources
+                .filesystems
+                .get(&project)
+                .expect("filesystem")
+                .lock()
+                .expect("session")
+                .budget()
+                .files(),
+            0
+        );
+
+        let accepted = docs.join("accepted.adoc");
+        let accepted_uri = Url::from_file_path(&accepted).expect("accepted URI");
+        std::fs::write(&accepted, "12345678").expect("accepted document");
+        resources
+            .reload_file(accepted_uri.clone())
+            .expect("released budgets accept replacement");
+        assert!(resources.get(&accepted_uri).is_some());
     }
 
     #[test]

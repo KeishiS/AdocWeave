@@ -752,31 +752,6 @@ impl WorkspaceSnapshot {
         }
     }
 
-    /// Produces a filtered snapshot while allowing the predicate to reject
-    /// before an accepted resource is cloned into the replacement map.
-    pub fn try_filter_resources<E>(
-        &self,
-        mut retain: impl FnMut(&ResourceId, &Resource) -> Result<bool, E>,
-    ) -> Result<Self, E> {
-        let mut resources = BTreeMap::new();
-        for (id, resource) in self.resources.iter() {
-            if retain(id, resource)? {
-                resources.insert(id.clone(), resource.clone());
-            }
-        }
-        let roots = self
-            .roots
-            .iter()
-            .filter(|root| resources.contains_key(*root))
-            .cloned()
-            .collect();
-        Ok(Self {
-            generation: self.generation,
-            roots,
-            resources: Arc::new(resources),
-        })
-    }
-
     /// Preprocesses, analyzes, and projects one registered root.
     ///
     /// Cancellation is checked before and between stages and inside the core
@@ -1382,33 +1357,6 @@ mod tests {
         let snapshot = workspace.snapshot();
         let after = Arc::clone(&snapshot.resources.get(&root).unwrap().text);
         assert!(Arc::ptr_eq(&before, &after));
-    }
-
-    #[test]
-    fn fallible_snapshot_filter_stops_before_later_resources_are_cloned() {
-        let mut workspace = Workspace::default();
-        for (revision, name) in ["a", "b", "c"].into_iter().enumerate() {
-            workspace
-                .upsert_disk(
-                    ResourceId::new(name).expect("resource ID"),
-                    Revision::new(revision as i64),
-                    name,
-                )
-                .expect("resource");
-        }
-        let snapshot = workspace.snapshot();
-        let mut visited = Vec::new();
-
-        let result = snapshot.try_filter_resources(|id, _| {
-            visited.push(id.to_string());
-            if visited.len() == 2 {
-                return Err("limit");
-            }
-            Ok(true)
-        });
-
-        assert!(matches!(result, Err("limit")));
-        assert_eq!(visited, ["a", "b"]);
     }
 
     #[test]

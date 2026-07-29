@@ -774,8 +774,19 @@ fn project_resource_plan_bounds_primary_and_root_include_aggregate() {
         .expect("oversized check");
     assert!(!oversized.status.success());
 
-    std::fs::write(&document, "include::part.adoc[]\n").expect("include root");
-    std::fs::write(root.path().join("part.adoc"), "x").expect("include");
+    let root_source = "include::part.adoc[]\n";
+    let include_source = "included\n";
+    let max_resource_bytes = root_source.len().max(include_source.len());
+    let max_total_bytes = root_source.len() + include_source.len() - 1;
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        format!(
+            "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = {max_total_bytes}\nmax-resource-bytes = {max_resource_bytes}\n"
+        ),
+    )
+    .expect("aggregate config");
+    std::fs::write(&document, root_source).expect("include root");
+    std::fs::write(root.path().join("part.adoc"), include_source).expect("include");
     let aggregate = adocweave()
         .current_dir(root.path())
         .args(["check", "manual.adoc"])
