@@ -126,10 +126,12 @@ filesystemの再読込後に保持上限またはWorkspace更新を拒否した�
 上限を超えた時点で後続resourceを複製せずに拒否します。許可範囲外のresourceはこの加算に含めません。
 
 workspace rootの再読込は、新しいfilesystem session、plan、保持予算およびWorkspaceを一時状態へ構築し、
-全て成功した後に置き換えます。一時的なfilesystem読込失敗や走査中の設定競合では、直前の正常なsnapshotを
-保持します。構文、schemaまたは設定値が不正なproject設定を検出した場合も、直前の状態は変更しません。
-ただし新しい解析入力は設定エラーとして拒否し、旧planまたは既定値へfallbackしません。disk、overlay、
-保持予算および解析rootのいずれかを更新できない場合は、同じ操作に含まれる全状態を更新前へ戻します。
+全て成功した後に置き換えます。``ConfigErrorCode::ReadFailed``による一時的な設定fileの読込失敗だけは、
+直前の正常なWorkspace snapshotとdocument viewを保持します。構文、schemaまたは設定値が不正なproject設定や、
+有効な設定の厳格化によって既存resourceを受け入れられない場合は、空のtrusted stateへ移行します。
+旧planまたは既定値へfallbackせず、open documentを再解析して``workspace-input-error``を設定し、
+古いdocument viewを破棄します。それ以外の通常のproject移行でdisk、overlay、保持予算および解析rootの
+いずれかを更新できない場合は、同じ操作に含まれる全状態を更新前へ戻します。
 
 複数rootは独立したfilesystem境界です。あるroot内のsymlinkが別の許可済みrootを指す場合も、
 読込開始時に選んだrootから外へ移動するため拒否します。同じfileを両方のrootから参照する必要がある場合は、
