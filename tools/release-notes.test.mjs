@@ -44,6 +44,8 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /`AdocWeaveResult\.result`/);
   assert.match(notes, /`result\.result\.projection`/);
   assert.match(notes, /`result\.projection`/);
+  assert.match(notes, /`notices: ProjectedReferenceNotice\[\]`/);
+  assert.match(notes, /`reference-resolution-fallback`/);
   assert.match(notes, /`AdocWeaveWorkerClient`も維持/);
   assert.match(notes, /callback内の例外/);
   assert.match(notes, /`projection`は`null`/);

@@ -8,6 +8,16 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
+== v0.17.0公開前の整合確認
+
+ローカルファイルの読込境界、プレビューの責務、BrowserとWASMの公開契約、CIおよび文書を
+一つのリリース候補として確認します。
+
+* https://github.com/KeishiS/adocweave/issues/132[v0.17.0前の安全性・公開契約・CIの再設計]
+
+この作業では各機能を追加で拡張せず、実装、検証、利用手順およびRelease Notesが同じ契約を
+説明していることを確認します。完了後はversion固有の結果をRelease Notesへ移し、この項目を削除します。
+
 == 保留中の対話的な確認環境
 
 公開済みのBrowser APIとHTML契約を利用し、Webブラウザーだけで文書を試せる環境を提供する案を

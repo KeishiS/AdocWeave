@@ -58,6 +58,7 @@ const browserApiMigration = `### Browser APIとWASM responseの移行
 | \`AdocWeaveResult.result\`内の\`AdocWeaveWasmResponse\` | \`AdocWeaveResult\`自体がWASM responseを表すflatな結果 |
 | \`result.result.projection\`など | \`result.projection\`など、すべてのWASM productを結果直下から参照 |
 | nested WASM responseの\`version\`とcallback adapterの\`sourceVersion\` | WASM wireでは\`version\`を維持。Browserのflatな結果では同じ値を\`sourceVersion\`として公開 |
+| 投影済み参照の\`notices: ReferenceNotice[]\`と値\`fallback\` | \`notices: ProjectedReferenceNotice[]\`と値\`reference-resolution-fallback\`。入力側の\`ReferenceNotice\`と区別 |
 
 \`result.html\`、\`result.diagnostics\`および\`result.renderDiagnostics\`など、従来から結果直下にあった主なfieldは同じ名前で利用できます。互換aliasの\`AdocWeaveWorkerClient\`も維持します。schema versionを検査する処理を6へ更新し、生成済みのbindings、型定義およびfixtureをschema 6から再生成してください。`;
 
