@@ -1588,7 +1588,14 @@ fn parse_table(
         input.metadata,
         maximum_columns,
     )
-    .map_err(|actual| reject("table columns", config.limits.max_table_columns, actual))?;
+    .map_err(|error| match error {
+        crate::table::TableConfigurationError::ColumnCount(actual) => {
+            reject("table columns", config.limits.max_table_columns, actual)
+        }
+        crate::table::TableConfigurationError::ColumnWidth(actual) => {
+            reject("table column width", u32::MAX, actual)
+        }
+    })?;
     let column_styles = configuration.column_styles().collect::<Vec<_>>();
     let scanned = crate::table::scan_with_configuration(
         input.value,
@@ -1612,11 +1619,22 @@ fn parse_table(
             widest,
         ));
     }
-    let laid_out = configuration.configure(scanned).layout();
+    if (context.is_cancelled)() {
+        return Err(ParseFailure::Cancelled);
+    }
+    state.budget.consume_nodes(cell_count)?;
+    let laid_out = configuration
+        .configure(scanned, || {
+            if (context.is_cancelled)() {
+                Err(ParseFailure::Cancelled)
+            } else {
+                Ok(())
+            }
+        })?
+        .layout();
     let mut nested_syntax = Vec::new();
     let table = laid_out.lower_content(
         |cell: &crate::table::ConfiguredCell| -> Result<TableCellContent, ParseFailure> {
-            state.budget.consume_node()?;
             match cell.style {
                 TableCellStyle::Literal | TableCellStyle::Verse => {
                     Ok(TableCellContent::Verbatim(cell.raw.clone()))

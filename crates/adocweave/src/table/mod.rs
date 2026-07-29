@@ -15,6 +15,6 @@ pub use model::{
     TableRow, TableSection, TableStripes, VerticalAlignment,
 };
 
-pub(crate) use configuration::ResolvedTableConfiguration;
+pub(crate) use configuration::{ResolvedTableConfiguration, TableConfigurationError};
 pub(crate) use model::ConfiguredCell;
 pub(crate) use scan::{is_table_delimiter, scan_with_configuration};

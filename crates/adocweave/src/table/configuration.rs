@@ -39,13 +39,19 @@ pub(crate) struct ResolvedTableConfiguration {
     footer: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TableConfigurationError {
+    ColumnCount(u64),
+    ColumnWidth(u64),
+}
+
 impl ResolvedTableConfiguration {
     pub(crate) fn resolve(
         delimiter: &str,
         delimiter_range: TextRange,
         metadata: &BlockMetadata,
         maximum_columns: usize,
-    ) -> Result<Self, u64> {
+    ) -> Result<Self, TableConfigurationError> {
         let (input, input_problems) = resolve_input(delimiter, delimiter_range, metadata);
         let columns = resolve_columns(metadata, maximum_columns)?;
         let (presentation, presentation_problems) = resolve_presentation(metadata);
@@ -69,18 +75,22 @@ impl ResolvedTableConfiguration {
         self.columns.iter().flatten().map(|column| column.style)
     }
 
-    pub(crate) fn configure(self, scanned: ScannedTable) -> ConfiguredTable {
+    pub(crate) fn configure<E>(
+        self,
+        scanned: ScannedTable,
+        mut checkpoint: impl FnMut() -> Result<(), E>,
+    ) -> Result<ConfiguredTable, E> {
         let columns = self
             .columns
             .unwrap_or_else(|| default_columns(scanned.inferred_columns));
         let mut problems = self.input_problems;
         problems.extend(scanned.problems);
         problems.extend(self.presentation_problems);
-        let cells = scanned
-            .cells
-            .into_iter()
-            .flat_map(|cell| {
-                (0..cell.duplication).map(move |_| ConfiguredCell {
+        let mut cells = Vec::with_capacity(scanned.cells.len());
+        for cell in scanned.cells {
+            for _ in 0..cell.duplication {
+                checkpoint()?;
+                cells.push(ConfiguredCell {
                     range: cell.range,
                     marker_range: cell.marker_range,
                     content_range: cell.content_range,
@@ -91,10 +101,10 @@ impl ResolvedTableConfiguration {
                     vertical_alignment: cell.vertical_alignment,
                     style: cell.style,
                     style_is_explicit: cell.style_is_explicit,
-                })
-            })
-            .collect();
-        ConfiguredTable {
+                });
+            }
+        }
+        Ok(ConfiguredTable {
             format: scanned.format,
             separator: scanned.separator,
             content_range: scanned.content_range,
@@ -105,7 +115,7 @@ impl ResolvedTableConfiguration {
             header: self.explicit_header
                 || (!self.explicit_noheader && scanned.implicit_header_candidate),
             footer: self.footer,
-        }
+        })
     }
 }
 
@@ -201,7 +211,7 @@ fn resolve_input(
 fn resolve_columns(
     metadata: &BlockMetadata,
     maximum_columns: usize,
-) -> Result<Option<Vec<TableColumn>>, u64> {
+) -> Result<Option<Vec<TableColumn>>, TableConfigurationError> {
     let Some(value) = metadata
         .attributes
         .iter()
@@ -220,13 +230,19 @@ fn resolve_columns(
         .filter(|value| !value.is_empty())
     {
         let (count, spec) = match value.split_once('*') {
-            Some((count, spec)) => (parse_unsigned(count)?, spec),
+            Some((count, spec)) => match parse_unsigned(count) {
+                Ok(count) => (count, spec),
+                Err(UnsignedError::Invalid) => (1, value),
+                Err(UnsignedError::Overflow) => {
+                    return Err(TableConfigurationError::ColumnCount(u64::MAX));
+                }
+            },
             None => (1, value),
         };
         let count = count.max(1);
         actual = actual.saturating_add(count);
         if actual > maximum_columns {
-            return Err(actual);
+            return Err(TableConfigurationError::ColumnCount(actual));
         }
         let column = parse_column(spec)?;
         columns.extend(std::iter::repeat_n(column, count as usize));
@@ -249,19 +265,25 @@ fn default_columns(count: usize) -> Vec<TableColumn> {
         .collect()
 }
 
-fn parse_unsigned(value: &str) -> Result<u64, u64> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UnsignedError {
+    Invalid,
+    Overflow,
+}
+
+fn parse_unsigned(value: &str) -> Result<u64, UnsignedError> {
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(u64::MAX);
+        return Err(UnsignedError::Invalid);
     }
     value.bytes().try_fold(0_u64, |current, byte| {
         current
             .checked_mul(10)
             .and_then(|current| current.checked_add(u64::from(byte - b'0')))
-            .ok_or(u64::MAX)
+            .ok_or(UnsignedError::Overflow)
     })
 }
 
-fn parse_column(value: &str) -> Result<TableColumn, u64> {
+fn parse_column(value: &str) -> Result<TableColumn, TableConfigurationError> {
     let width = value
         .bytes()
         .filter(u8::is_ascii_digit)
@@ -270,10 +292,10 @@ fn parse_column(value: &str) -> Result<TableColumn, u64> {
                 .unwrap_or(0_u64)
                 .checked_mul(10)
                 .and_then(|current| current.checked_add(u64::from(byte - b'0')))
-                .ok_or(u64::MAX)?;
-            Ok::<_, u64>(Some(width))
+                .ok_or(TableConfigurationError::ColumnWidth(u64::MAX))?;
+            Ok::<_, TableConfigurationError>(Some(width))
         })?
-        .map(|width| u32::try_from(width).map_err(|_| width))
+        .map(|width| u32::try_from(width).map_err(|_| TableConfigurationError::ColumnWidth(width)))
         .transpose()?;
     let horizontal_alignment = value.chars().find_map(|character| match character {
         '<' => Some(HorizontalAlignment::Left),
@@ -431,15 +453,21 @@ mod tests {
         };
         assert_eq!(
             ResolvedTableConfiguration::resolve("|===", range(source), &metadata, 4),
-            Err(1_000_000_000)
+            Err(TableConfigurationError::ColumnCount(1_000_000_000))
         );
     }
 
     #[test]
     fn unrepresentable_column_numbers_are_rejected() {
-        for (value, actual) in [
-            ("18446744073709551616*a", u64::MAX),
-            ("4294967296", 4_294_967_296),
+        for (value, expected) in [
+            (
+                "18446744073709551616*a",
+                TableConfigurationError::ColumnCount(u64::MAX),
+            ),
+            (
+                "4294967296",
+                TableConfigurationError::ColumnWidth(4_294_967_296),
+            ),
         ] {
             let source = format!("[cols=\"{value}\"]");
             let metadata = BlockMetadata {
@@ -452,8 +480,76 @@ mod tests {
             };
             assert_eq!(
                 ResolvedTableConfiguration::resolve("|===", range(&source), &metadata, 4),
-                Err(actual)
+                Err(expected)
             );
         }
+    }
+
+    #[test]
+    fn malformed_column_repetition_counts_keep_the_legacy_single_column_shape() {
+        for value in ["x*a", "*a"] {
+            let source = format!("[cols=\"{value}\"]");
+            let metadata = BlockMetadata {
+                attributes: vec![ElementAttribute {
+                    name: Some("cols".to_owned()),
+                    value: value.to_owned(),
+                    range: range(&source),
+                }],
+                ..Default::default()
+            };
+            let configuration =
+                ResolvedTableConfiguration::resolve("|===", range(&source), &metadata, 4)
+                    .expect("malformed repetition count recovers");
+            assert_eq!(configuration.columns.as_ref().map(Vec::len), Some(1));
+            assert_eq!(
+                configuration
+                    .columns
+                    .as_ref()
+                    .and_then(|columns| columns.first())
+                    .map(|column| column.style),
+                Some(TableCellStyle::AsciiDoc)
+            );
+        }
+    }
+
+    #[test]
+    fn cell_materialization_stops_at_the_cancellation_checkpoint() {
+        let configuration = ResolvedTableConfiguration::resolve(
+            "|===",
+            range("|==="),
+            &BlockMetadata::default(),
+            4,
+        )
+        .expect("configuration");
+        let cell_range = range("value");
+        let scanned = ScannedTable {
+            format: TableFormat::Psv,
+            separator: '|',
+            content_range: cell_range,
+            inferred_columns: 1,
+            implicit_header_candidate: false,
+            cells: vec![super::super::model::ScannedCell {
+                range: cell_range,
+                marker_range: TextRange::new(cell_range.start(), cell_range.start())
+                    .expect("marker range"),
+                content_range: cell_range,
+                raw: "value".to_owned(),
+                column_span: 1,
+                row_span: 1,
+                horizontal_alignment: None,
+                vertical_alignment: None,
+                style: TableCellStyle::Default,
+                style_is_explicit: false,
+                duplication: 100,
+            }],
+            problems: Vec::new(),
+        };
+        let mut checks = 0;
+        let result = configuration.configure(scanned, || {
+            checks += 1;
+            if checks == 4 { Err(()) } else { Ok(()) }
+        });
+        assert_eq!(result, Err(()));
+        assert_eq!(checks, 4);
     }
 }

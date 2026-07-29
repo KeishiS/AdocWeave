@@ -192,4 +192,55 @@ mod tests {
         assert_eq!(laid_out.rows[0].cells[1].cell.style, TableCellStyle::Strong);
         assert_eq!(laid_out.rows[1].cells[0].column_index, 1);
     }
+
+    #[test]
+    fn layout_terminates_when_row_spans_cover_every_column() {
+        let columns = vec![
+            TableColumn {
+                index: 0,
+                width: None,
+                horizontal_alignment: HorizontalAlignment::Left,
+                vertical_alignment: VerticalAlignment::Top,
+                style: TableCellStyle::Default,
+            },
+            TableColumn {
+                index: 1,
+                width: None,
+                horizontal_alignment: HorizontalAlignment::Left,
+                vertical_alignment: VerticalAlignment::Top,
+                style: TableCellStyle::Default,
+            },
+        ];
+        let rows = layout_rows(vec![cell(0, 2, u32::MAX), cell(1, 1, 1)], &columns);
+        assert_eq!(rows.iter().map(|row| row.cells.len()).sum::<usize>(), 2);
+        assert_eq!(rows[0].cells[0].column_index, 0);
+        assert_eq!(rows[1].cells[0].column_index, 0);
+    }
+
+    #[test]
+    fn layout_consumes_oversized_spans_and_duplicated_row_spans_once() {
+        let columns = vec![TableColumn {
+            index: 0,
+            width: None,
+            horizontal_alignment: HorizontalAlignment::Left,
+            vertical_alignment: VerticalAlignment::Top,
+            style: TableCellStyle::Default,
+        }];
+        let rows = layout_rows(
+            vec![cell(0, u32::MAX, 2), cell(1, u32::MAX, 2), cell(2, 1, 1)],
+            &columns,
+        );
+        assert_eq!(
+            rows.iter()
+                .flat_map(|row| &row.cells)
+                .map(|cell| cell.cell.raw.as_str())
+                .collect::<Vec<_>>(),
+            ["0", "1", "2"]
+        );
+        assert!(
+            rows.iter()
+                .flat_map(|row| &row.cells)
+                .all(|cell| cell.column_index == 0)
+        );
+    }
 }
