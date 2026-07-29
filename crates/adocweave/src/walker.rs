@@ -1,5 +1,7 @@
 //! Shared immutable traversal of the output-independent semantic tree.
 
+use std::ops::ControlFlow;
+
 use crate::attributes::DocumentAttributeOccurrence;
 use crate::inline::Inline;
 use crate::parser::{
@@ -28,29 +30,58 @@ pub enum SemanticNode<'document> {
 
 pub fn walk<'document>(
     document: &'document crate::document::Document,
-    visitor: impl FnMut(SemanticNode<'document>),
+    mut visitor: impl FnMut(SemanticNode<'document>),
 ) {
-    walk_ast(document.inner(), visitor);
+    let _: ControlFlow<()> = try_walk_ast(document.inner(), |node| {
+        visitor(node);
+        ControlFlow::Continue(())
+    });
 }
 
 pub(crate) fn walk_ast<'document>(
     document: &'document AstDocument,
     mut visitor: impl FnMut(SemanticNode<'document>),
 ) {
+    let _: ControlFlow<()> = try_walk_ast(document, |node| {
+        visitor(node);
+        ControlFlow::Continue(())
+    });
+}
+
+/// Traverses the immutable semantic tree until the visitor returns `Break`.
+///
+/// The node that returns `Break` is visited, but none of its descendants or
+/// following siblings are visited. The payload is preserved through every
+/// recursive traversal helper.
+pub(crate) fn try_walk_ast<'document, Break>(
+    document: &'document AstDocument,
+    mut visitor: impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
     for attribute in document.attributes() {
-        visitor(SemanticNode::Attribute(attribute));
+        visitor(SemanticNode::Attribute(attribute))?;
     }
     for anchor in document.anchors() {
-        visitor(SemanticNode::Anchor(anchor));
+        visitor(SemanticNode::Anchor(anchor))?;
     }
-    walk_blocks(document.blocks(), &mut visitor);
+    try_walk_blocks(document.blocks(), &mut visitor)
 }
 
 pub(crate) fn walk_block_slice<'document>(
     blocks: &'document [AstBlock],
     mut visitor: impl FnMut(SemanticNode<'document>),
 ) {
-    walk_blocks(blocks, &mut visitor);
+    let _: ControlFlow<()> = try_walk_block_slice(blocks, |node| {
+        visitor(node);
+        ControlFlow::Continue(())
+    });
+}
+
+/// Traverses only the supplied blocks, without document attributes or anchors.
+pub(crate) fn try_walk_block_slice<'document, Break>(
+    blocks: &'document [AstBlock],
+    mut visitor: impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
+    try_walk_blocks(blocks, &mut visitor)
 }
 
 pub(crate) trait BlockVisitorMut {
@@ -170,36 +201,36 @@ pub(crate) fn walk_inline_sequences_mut(
     }
 }
 
-fn walk_blocks<'document>(
+fn try_walk_blocks<'document, Break>(
     blocks: &'document [AstBlock],
-    visitor: &mut impl FnMut(SemanticNode<'document>),
-) {
+    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
     for block in blocks {
-        visitor(SemanticNode::Block(block));
-        walk_metadata(block.metadata(), visitor);
+        visitor(SemanticNode::Block(block))?;
+        try_walk_metadata(block.metadata(), visitor)?;
         match block {
-            AstBlock::Heading(heading) => walk_inlines(&heading.inlines, visitor),
-            AstBlock::Paragraph(paragraph) => walk_inlines(&paragraph.inlines, visitor),
+            AstBlock::Heading(heading) => try_walk_inlines(&heading.inlines, visitor)?,
+            AstBlock::Paragraph(paragraph) => try_walk_inlines(&paragraph.inlines, visitor)?,
             AstBlock::List(list) => {
-                visitor(SemanticNode::List(list));
-                walk_list_contents(list, visitor);
+                visitor(SemanticNode::List(list))?;
+                try_walk_list_contents(list, visitor)?;
             }
             AstBlock::Delimited(block) => match &block.content {
                 crate::parser::DelimitedContent::Compound(children) => {
-                    walk_blocks(children, visitor)
+                    try_walk_blocks(children, visitor)?;
                 }
                 crate::parser::DelimitedContent::Table(table) => {
-                    visitor(SemanticNode::Table(table));
+                    visitor(SemanticNode::Table(table))?;
                     for row in &table.rows {
-                        visitor(SemanticNode::TableRow(row));
+                        visitor(SemanticNode::TableRow(row))?;
                         for cell in &row.cells {
-                            visitor(SemanticNode::TableCell(cell));
+                            visitor(SemanticNode::TableCell(cell))?;
                             match &cell.content {
                                 crate::table::TableCellContent::Inlines(inlines) => {
-                                    walk_inlines(inlines, visitor)
+                                    try_walk_inlines(inlines, visitor)?;
                                 }
                                 crate::table::TableCellContent::AsciiDoc(blocks) => {
-                                    walk_blocks(blocks, visitor)
+                                    try_walk_blocks(blocks, visitor)?;
                                 }
                                 crate::table::TableCellContent::Verbatim(_) => {}
                             }
@@ -217,58 +248,61 @@ fn walk_blocks<'document>(
             | AstBlock::Unsupported(_) => {}
         }
     }
+    ControlFlow::Continue(())
 }
 
-fn walk_metadata<'document>(
+fn try_walk_metadata<'document, Break>(
     metadata: &'document BlockMetadata,
-    visitor: &mut impl FnMut(SemanticNode<'document>),
-) {
-    visitor(SemanticNode::Metadata(metadata));
+    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
+    visitor(SemanticNode::Metadata(metadata))?;
     if let Some(title) = &metadata.title {
-        visitor(SemanticNode::MetadataTitle(title));
+        visitor(SemanticNode::MetadataTitle(title))?;
     }
     if let Some(id) = &metadata.id {
-        visitor(SemanticNode::MetadataId(id));
+        visitor(SemanticNode::MetadataId(id))?;
     }
     for role in &metadata.roles {
-        visitor(SemanticNode::MetadataRole(role));
+        visitor(SemanticNode::MetadataRole(role))?;
     }
     for option in &metadata.options {
-        visitor(SemanticNode::MetadataOption(option));
+        visitor(SemanticNode::MetadataOption(option))?;
     }
     for attribute in &metadata.attributes {
-        visitor(SemanticNode::ElementAttribute(attribute));
+        visitor(SemanticNode::ElementAttribute(attribute))?;
     }
+    ControlFlow::Continue(())
 }
 
-fn walk_list_contents<'document>(
+fn try_walk_list_contents<'document, Break>(
     list: &'document ListBlock,
-    visitor: &mut impl FnMut(SemanticNode<'document>),
-) {
+    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
     for item in &list.items {
-        visitor(SemanticNode::ListItem(item));
+        visitor(SemanticNode::ListItem(item))?;
         for term in &item.terms {
-            walk_inlines(&term.inlines, visitor);
+            try_walk_inlines(&term.inlines, visitor)?;
         }
-        walk_inlines(&item.inlines, visitor);
+        try_walk_inlines(&item.inlines, visitor)?;
         for child in &item.children {
-            visitor(SemanticNode::List(child));
-            walk_list_contents(child, visitor);
+            visitor(SemanticNode::List(child))?;
+            try_walk_list_contents(child, visitor)?;
         }
-        walk_blocks(&item.continuations, visitor);
+        try_walk_blocks(&item.continuations, visitor)?;
     }
+    ControlFlow::Continue(())
 }
 
-fn walk_inlines<'document>(
+fn try_walk_inlines<'document, Break>(
     inlines: &'document [Inline],
-    visitor: &mut impl FnMut(SemanticNode<'document>),
-) {
+    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
     for inline in inlines {
-        visitor(SemanticNode::Inline(inline));
+        visitor(SemanticNode::Inline(inline))?;
         match inline {
-            Inline::Styled { children, .. } => walk_inlines(children, visitor),
-            Inline::Link(link) => walk_inlines(&link.label, visitor),
-            Inline::Reference(reference) => walk_inlines(&reference.label, visitor),
+            Inline::Styled { children, .. } => try_walk_inlines(children, visitor)?,
+            Inline::Link(link) => try_walk_inlines(&link.label, visitor)?,
+            Inline::Reference(reference) => try_walk_inlines(&reference.label, visitor)?,
             Inline::Macro(_) => {}
             Inline::Text(_)
             | Inline::Literal { .. }
@@ -278,12 +312,319 @@ fn walk_inlines<'document>(
             | Inline::Formula(_) => {}
         }
     }
+    ControlFlow::Continue(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockVisitorMut, SemanticNode, walk, walk_ast, walk_blocks_mut};
-    use crate::parser::AstBlock;
+    use std::ops::ControlFlow;
+
+    use super::{
+        BlockVisitorMut, SemanticNode, try_walk_ast, try_walk_block_slice, walk, walk_ast,
+        walk_block_slice, walk_blocks_mut,
+    };
+    use crate::{inline::Inline, parser::AstBlock};
+
+    type NodeIdentity = (&'static str, usize);
+
+    fn node_snapshot(node: SemanticNode<'_>) -> String {
+        fn ranged(kind: &str, range: crate::source::TextRange, detail: &str) -> String {
+            format!(
+                "{kind}@{}..{}:{detail}",
+                range.start().to_u32(),
+                range.end().to_u32()
+            )
+        }
+
+        match node {
+            SemanticNode::Block(value) => {
+                let kind = match value {
+                    AstBlock::Heading(_) => "block-heading",
+                    AstBlock::Paragraph(_) => "block-paragraph",
+                    AstBlock::LiteralParagraph(_) => "block-literal-paragraph",
+                    AstBlock::Break(_) => "block-break",
+                    AstBlock::Source(_) => "block-source",
+                    AstBlock::Verbatim(_) => "block-verbatim",
+                    AstBlock::List(_) => "block-list",
+                    AstBlock::Math(_) => "block-math",
+                    AstBlock::Delimited(_) => "block-delimited",
+                    AstBlock::Unsupported(_) => "block-unsupported",
+                };
+                ranged(kind, value.range(), "")
+            }
+            SemanticNode::List(value) => ranged("list", value.range, ""),
+            SemanticNode::ListItem(value) => ranged("list-item", value.range, &value.text),
+            SemanticNode::Table(value) => ranged("table", value.content_range, ""),
+            SemanticNode::TableRow(value) => ranged("table-row", value.range, ""),
+            SemanticNode::TableCell(value) => ranged("table-cell", value.range, &value.raw),
+            SemanticNode::Inline(value) => {
+                let (kind, detail) = match value {
+                    Inline::Text(value) => ("inline-text", value.value.as_str()),
+                    Inline::Literal { value, .. } => ("inline-literal", value.as_str()),
+                    Inline::Styled { style, .. } => {
+                        return ranged("inline-styled", value.range(), &format!("{style:?}"));
+                    }
+                    Inline::AttributeReference { name, .. } => {
+                        ("inline-attribute-reference", name.as_str())
+                    }
+                    Inline::Link(value) => ("inline-link", value.target.as_str()),
+                    Inline::Reference(value) => {
+                        ("inline-reference", value.expanded_target.as_str())
+                    }
+                    Inline::Formula(value) => ("inline-formula", value.value.as_str()),
+                    Inline::Macro(value) => ("inline-macro", value.target.as_str()),
+                    Inline::Passthrough { value, .. } => ("inline-passthrough", value.as_str()),
+                    Inline::HardBreak { .. } => ("inline-hard-break", ""),
+                };
+                ranged(kind, value.range(), detail)
+            }
+            SemanticNode::Attribute(value) => ranged("attribute", value.range, &value.name),
+            SemanticNode::Anchor(value) => ranged("anchor", value.range, &value.id),
+            SemanticNode::Metadata(value) => value.range.map_or_else(
+                || "metadata@none:".to_owned(),
+                |range| ranged("metadata", range, ""),
+            ),
+            SemanticNode::MetadataTitle(value) => {
+                ranged("metadata-title", value.range, &value.value)
+            }
+            SemanticNode::MetadataId(value) => ranged("metadata-id", value.range, &value.value),
+            SemanticNode::MetadataRole(value) => ranged("metadata-role", value.range, &value.value),
+            SemanticNode::MetadataOption(value) => {
+                ranged("metadata-option", value.range, &value.value)
+            }
+            SemanticNode::ElementAttribute(value) => ranged(
+                "element-attribute",
+                value.range,
+                &format!("{}={}", value.name.as_deref().unwrap_or(""), value.value),
+            ),
+        }
+    }
+
+    fn node_identity(node: SemanticNode<'_>) -> NodeIdentity {
+        fn address<T>(value: &T) -> usize {
+            value as *const T as usize
+        }
+
+        match node {
+            SemanticNode::Block(value) => ("block", address(value)),
+            SemanticNode::List(value) => ("list", address(value)),
+            SemanticNode::ListItem(value) => ("list-item", address(value)),
+            SemanticNode::Table(value) => ("table", address(value)),
+            SemanticNode::TableRow(value) => ("table-row", address(value)),
+            SemanticNode::TableCell(value) => ("table-cell", address(value)),
+            SemanticNode::Inline(value) => ("inline", address(value)),
+            SemanticNode::Attribute(value) => ("attribute", address(value)),
+            SemanticNode::Anchor(value) => ("anchor", address(value)),
+            SemanticNode::Metadata(value) => ("metadata", address(value)),
+            SemanticNode::MetadataTitle(value) => ("metadata-title", address(value)),
+            SemanticNode::MetadataId(value) => ("metadata-id", address(value)),
+            SemanticNode::MetadataRole(value) => ("metadata-role", address(value)),
+            SemanticNode::MetadataOption(value) => ("metadata-option", address(value)),
+            SemanticNode::ElementAttribute(value) => ("element-attribute", address(value)),
+        }
+    }
+
+    fn controlled_walk_fixture() -> crate::parser::ParsedDocument {
+        crate::parser::parse(concat!(
+            ":name: value\n",
+            "\n",
+            "[[document-anchor]]\n",
+            ".Block title\n",
+            "[#block-id.role%option,key=value]\n",
+            "paragraph https://example.test[*link*] xref:document.adoc[*reference*]\n",
+            "\n",
+            "term:: *description*\n",
+            "\n",
+            "* outer\n",
+            "** nested\n",
+            "+\n",
+            "continuation\n",
+            "\n",
+            "====\n",
+            "compound\n",
+            "====\n",
+            "\n",
+            "[cols=\"1,1a\"]\n",
+            "|===\n",
+            "|inline cell\n",
+            "|AsciiDoc *cell*\n",
+            "|===\n",
+            "\n",
+            "after\n",
+        ))
+        .expect("controlled walker fixture")
+    }
+
+    #[test]
+    fn controlled_walk_continue_matches_legacy_walk_exactly() {
+        let parsed = controlled_walk_fixture();
+        let mut legacy = Vec::new();
+        walk_ast(&parsed.ast, |node| legacy.push(node_identity(node)));
+        let mut controlled = Vec::new();
+        let mut snapshots = Vec::new();
+
+        let result = try_walk_ast(&parsed.ast, |node| {
+            controlled.push(node_identity(node));
+            snapshots.push(node_snapshot(node));
+            ControlFlow::<usize>::Continue(())
+        });
+
+        assert_eq!(result, ControlFlow::Continue(()));
+        assert_eq!(controlled, legacy);
+        assert_eq!(
+            snapshots,
+            [
+                "attribute@0..13:name",
+                "anchor@14..34:document-anchor",
+                "anchor@47..81:block-id",
+                "block-paragraph@81..152:",
+                "metadata@14..81:",
+                "metadata-title@35..46:Block title",
+                "metadata-id@49..57:block-id",
+                "metadata-role@58..62:role",
+                "metadata-option@63..69:option",
+                "element-attribute@70..79:key=value",
+                "inline-text@81..91:paragraph ",
+                "inline-link@91..119:https://example.test",
+                "inline-styled@112..118:Strong",
+                "inline-text@113..117:link",
+                "inline-text@119..120: ",
+                "inline-reference@120..151:document.adoc",
+                "inline-styled@139..150:Strong",
+                "inline-text@140..149:reference",
+                "block-list@153..174:",
+                "metadata@none:",
+                "list@153..174:",
+                "list-item@153..174:*description*",
+                "inline-text@153..157:term",
+                "inline-styled@160..173:Strong",
+                "inline-text@161..172:description",
+                "block-list@175..208:",
+                "metadata@none:",
+                "list@175..208:",
+                "list-item@175..208:outer",
+                "inline-text@177..182:outer",
+                "list@183..208:",
+                "list-item@183..208:nested",
+                "inline-text@186..192:nested",
+                "block-paragraph@195..208:",
+                "metadata@none:",
+                "inline-text@195..207:continuation",
+                "block-delimited@209..228:",
+                "metadata@none:",
+                "block-paragraph@214..223:",
+                "metadata@none:",
+                "inline-text@214..222:compound",
+                "block-delimited@243..283:",
+                "metadata@229..243:",
+                "element-attribute@230..241:cols=1,1a",
+                "table@248..278:",
+                "table-row@248..277:",
+                "table-cell@248..260:inline cell",
+                "inline-text@249..260:inline cell",
+                "table-cell@261..277:AsciiDoc *cell*",
+                "block-paragraph@262..277:",
+                "metadata@none:",
+                "inline-text@262..271:AsciiDoc ",
+                "inline-styled@271..277:Strong",
+                "inline-text@272..276:cell",
+                "block-paragraph@284..290:",
+                "metadata@none:",
+                "inline-text@284..289:after",
+            ]
+        );
+        for expected in [
+            "attribute",
+            "anchor",
+            "block",
+            "metadata",
+            "metadata-title",
+            "metadata-id",
+            "metadata-role",
+            "metadata-option",
+            "element-attribute",
+            "list",
+            "list-item",
+            "table",
+            "table-row",
+            "table-cell",
+            "inline",
+        ] {
+            assert!(
+                controlled.iter().any(|(kind, _)| *kind == expected),
+                "fixture did not exercise {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn controlled_walk_breaks_at_every_visited_prefix() {
+        let parsed = controlled_walk_fixture();
+        let mut complete = Vec::new();
+        walk_ast(&parsed.ast, |node| complete.push(node_identity(node)));
+        assert!(!complete.is_empty());
+
+        for break_at in 0..complete.len() {
+            let mut visited = Vec::new();
+            let result = try_walk_ast(&parsed.ast, |node| {
+                visited.push(node_identity(node));
+                if visited.len() - 1 == break_at {
+                    ControlFlow::Break(break_at)
+                } else {
+                    ControlFlow::Continue(())
+                }
+            });
+
+            assert_eq!(result, ControlFlow::Break(break_at));
+            assert_eq!(visited, complete[..=break_at]);
+        }
+    }
+
+    #[test]
+    fn controlled_block_slice_preserves_scope_and_nested_break_payload() {
+        let parsed = controlled_walk_fixture();
+        let mut legacy = Vec::new();
+        walk_block_slice(&parsed.ast.blocks, |node| {
+            legacy.push(node_identity(node));
+        });
+        assert!(
+            legacy
+                .iter()
+                .all(|(kind, _)| !matches!(*kind, "attribute" | "anchor"))
+        );
+
+        let mut controlled = Vec::new();
+        let result = try_walk_block_slice(&parsed.ast.blocks, |node| {
+            controlled.push(node_identity(node));
+            if matches!(
+                node,
+                SemanticNode::Inline(crate::inline::Inline::Text(text))
+                    if text.value.contains("AsciiDoc")
+            ) {
+                ControlFlow::Break("asciidoc-cell")
+            } else {
+                ControlFlow::Continue(())
+            }
+        });
+
+        assert_eq!(result, ControlFlow::Break("asciidoc-cell"));
+        assert_eq!(controlled, legacy[..controlled.len()]);
+        assert!(controlled.len() < legacy.len());
+    }
+
+    #[test]
+    fn controlled_walk_empty_document_continues_without_callbacks() {
+        let parsed = crate::parser::parse("").expect("empty source");
+        let callbacks = std::cell::Cell::new(0);
+
+        let result = try_walk_ast(&parsed.ast, |_| {
+            callbacks.set(callbacks.get() + 1);
+            ControlFlow::<()>::Continue(())
+        });
+
+        assert_eq!(result, ControlFlow::Continue(()));
+        assert_eq!(callbacks.get(), 0);
+    }
 
     #[test]
     fn walk_visits_nested_lists_continuations_and_inline_labels_once() {

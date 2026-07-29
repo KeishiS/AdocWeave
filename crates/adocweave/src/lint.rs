@@ -1,6 +1,7 @@
 //! Output-independent lint rules over the original source.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::ControlFlow;
 
 use crate::diagnostic::{
     Applicability, Diagnostic, DiagnosticCode, DiagnosticId, Fix, RelatedInformation, Severity,
@@ -599,12 +600,21 @@ fn lint_list_presentation(
     document: &crate::parser::AstDocument,
     sink: &mut LintDiagnosticSink<'_>,
 ) {
-    crate::walker::walk_ast(document, |node| {
+    lint_list_presentation_with_observer(document, sink, |_| {});
+}
+
+fn lint_list_presentation_with_observer<'document>(
+    document: &'document crate::parser::AstDocument,
+    sink: &mut LintDiagnosticSink<'_>,
+    mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
+) {
+    let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
         if sink.is_full() {
-            return;
+            return ControlFlow::Break(());
         }
+        observe(node);
         let crate::walker::SemanticNode::Block(AstBlock::List(list)) = node else {
-            return;
+            return ControlFlow::Continue(());
         };
         for problem in &list.presentation_problems {
             if sink.is_full() {
@@ -627,7 +637,11 @@ fn lint_list_presentation(
             sink.emit(INVALID_LIST_PRESENTATION, problem.range, || {
                 LintDiagnosticBody::new(message)
             });
+            if sink.is_full() {
+                return ControlFlow::Break(());
+            }
         }
+        ControlFlow::Continue(())
     });
 }
 
@@ -718,12 +732,21 @@ fn lint_catalogs(document: &crate::parser::AstDocument, sink: &mut LintDiagnosti
 }
 
 fn lint_tables(document: &crate::parser::AstDocument, sink: &mut LintDiagnosticSink<'_>) {
-    crate::walker::walk_ast(document, |node| {
+    lint_tables_with_observer(document, sink, |_| {});
+}
+
+fn lint_tables_with_observer<'document>(
+    document: &'document crate::parser::AstDocument,
+    sink: &mut LintDiagnosticSink<'_>,
+    mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
+) {
+    let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
         if sink.is_full() {
-            return;
+            return ControlFlow::Break(());
         }
+        observe(node);
         let crate::walker::SemanticNode::Table(table) = node else {
-            return;
+            return ControlFlow::Continue(());
         };
         for problem in &table.problems {
             if sink.is_full() {
@@ -742,7 +765,11 @@ fn lint_tables(document: &crate::parser::AstDocument, sink: &mut LintDiagnosticS
             sink.emit(INVALID_TABLE, problem.range, || {
                 LintDiagnosticBody::new(message)
             });
+            if sink.is_full() {
+                return ControlFlow::Break(());
+            }
         }
+        ControlFlow::Continue(())
     });
 }
 
@@ -800,15 +827,24 @@ fn lint_links_and_references(
     config: &LintConfig,
     sink: &mut LintDiagnosticSink<'_>,
 ) {
+    lint_links_and_references_with_observer(document, config, sink, |_| {});
+}
+
+fn lint_links_and_references_with_observer<'document>(
+    document: &'document crate::parser::AstDocument,
+    config: &LintConfig,
+    sink: &mut LintDiagnosticSink<'_>,
+    mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
+) {
     let targets = crate::document::reference_targets_ast(document);
     fn inspect(
         inline: &crate::inline::Inline,
         targets: &[crate::document::ReferenceTarget],
         config: &LintConfig,
         sink: &mut LintDiagnosticSink<'_>,
-    ) {
+    ) -> ControlFlow<()> {
         if sink.is_full() {
-            return;
+            return ControlFlow::Break(());
         }
         use crate::inline::Inline;
         use crate::reference::ReferenceKey;
@@ -818,6 +854,9 @@ fn lint_links_and_references(
                     sink.emit(INVALID_URL_SCHEME, link.target_range, || {
                         LintDiagnosticBody::new("URL is rejected by the configured policy")
                     });
+                }
+                if sink.is_full() {
+                    return ControlFlow::Break(());
                 }
                 if link.target_expansion_error.is_none()
                     && classify_file_target(&link.target)
@@ -860,6 +899,9 @@ fn lint_links_and_references(
                             LintDiagnosticBody::new("unsafe cross-document target")
                         });
                     }
+                    if sink.is_full() {
+                        return ControlFlow::Break(());
+                    }
                     if reference.target_expansion_error.is_none()
                         && classify_file_target(&reference.expanded_target)
                             .is_some_and(|target| !is_asciidoc_extension(target.extension))
@@ -901,13 +943,21 @@ fn lint_links_and_references(
             | Inline::Macro(_)
             | Inline::Formula(_) => {}
         }
-    }
-    crate::walker::walk_ast(document, |node| {
         if sink.is_full() {
-            return;
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
         }
+    }
+    let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
+        if sink.is_full() {
+            return ControlFlow::Break(());
+        }
+        observe(node);
         if let crate::walker::SemanticNode::Inline(inline) = node {
-            inspect(inline, &targets, config, sink);
+            inspect(inline, &targets, config, sink)
+        } else {
+            ControlFlow::Continue(())
         }
     });
 }
@@ -1248,13 +1298,15 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::{cell::Cell, ops::ControlFlow};
 
     use super::{
         DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID, INVALID_ANCHOR, INVALID_CATALOG, INVALID_TABLE,
         LINE_TOO_LONG, LINT_RULES, LintConfig, LintDiagnosticBody, LintDiagnosticSink, LintRuleId,
         MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE, UNUSED_ATTRIBUTE,
-        lint, lint_rule, lint_with_analysis_limits, render_lint_rule_catalog_json, text_range,
+        lint, lint_links_and_references_with_observer, lint_list_presentation_with_observer,
+        lint_rule, lint_tables_with_observer, lint_with_analysis_limits,
+        render_lint_rule_catalog_json, text_range,
     };
     use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
 
@@ -1378,6 +1430,157 @@ mod tests {
             LintDiagnosticBody::new("zero")
         });
         assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn semantic_phase_limit_is_applied_before_canonical_sort() {
+        let source = concat!(
+            "[format=unknown]\n",
+            "|===\n",
+            "|cell\n",
+            "|===\n",
+            "\n",
+            "[start=0]\n",
+            ". item\n",
+            "\n",
+            "link:guide.adoc[guide]\n",
+        );
+        for (max_diagnostics, expected) in [
+            (0, Vec::<&str>::new()),
+            (1, vec!["asciidoc-file-link"]),
+            (2, vec!["invalid-list-presentation", "asciidoc-file-link"]),
+            (
+                3,
+                vec![
+                    "invalid-table",
+                    "invalid-list-presentation",
+                    "asciidoc-file-link",
+                ],
+            ),
+        ] {
+            let config = LintConfig {
+                max_diagnostics,
+                ..LintConfig::default()
+            };
+
+            let diagnostics = lint(source, &config).expect("lint");
+            let codes = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>();
+
+            assert_eq!(codes, expected, "max_diagnostics={max_diagnostics}");
+        }
+    }
+
+    #[test]
+    fn link_phase_stops_immediately_when_a_node_fills_the_sink() {
+        let source = "link:first.adoc[first]\nlink:second.adoc[second]\n";
+        for (max_diagnostics, expected) in [
+            (1, vec!["invalid-url-scheme"]),
+            (2, vec!["asciidoc-file-link", "invalid-url-scheme"]),
+            (
+                3,
+                vec![
+                    "asciidoc-file-link",
+                    "invalid-url-scheme",
+                    "invalid-url-scheme",
+                ],
+            ),
+        ] {
+            let mut config = LintConfig {
+                max_diagnostics,
+                ..LintConfig::default()
+            };
+            config.authored_url_policy.allow_relative = false;
+
+            let diagnostics = lint(source, &config).expect("lint");
+            let codes = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>();
+
+            assert_eq!(codes, expected, "max_diagnostics={max_diagnostics}");
+        }
+    }
+
+    #[test]
+    fn semantic_lint_phases_stop_walking_when_the_sink_fills() {
+        fn node_kind(node: crate::walker::SemanticNode<'_>) -> &'static str {
+            match node {
+                crate::walker::SemanticNode::Block(crate::parser::AstBlock::List(_)) => {
+                    "block-list"
+                }
+                crate::walker::SemanticNode::Block(_) => "block",
+                crate::walker::SemanticNode::Table(_) => "table",
+                crate::walker::SemanticNode::Inline(crate::inline::Inline::Link(_)) => {
+                    "inline-link"
+                }
+                crate::walker::SemanticNode::Inline(_) => "inline",
+                crate::walker::SemanticNode::List(_) => "list",
+                crate::walker::SemanticNode::ListItem(_) => "list-item",
+                crate::walker::SemanticNode::TableRow(_) => "table-row",
+                crate::walker::SemanticNode::TableCell(_) => "table-cell",
+                crate::walker::SemanticNode::Attribute(_) => "attribute",
+                crate::walker::SemanticNode::Anchor(_) => "anchor",
+                crate::walker::SemanticNode::Metadata(_) => "metadata",
+                crate::walker::SemanticNode::MetadataTitle(_) => "metadata-title",
+                crate::walker::SemanticNode::MetadataId(_) => "metadata-id",
+                crate::walker::SemanticNode::MetadataRole(_) => "metadata-role",
+                crate::walker::SemanticNode::MetadataOption(_) => "metadata-option",
+                crate::walker::SemanticNode::ElementAttribute(_) => "element-attribute",
+            }
+        }
+
+        fn full_walk_len(document: &crate::parser::AstDocument) -> usize {
+            let mut count = 0;
+            let result = crate::walker::try_walk_ast(document, |_| {
+                count += 1;
+                ControlFlow::<()>::Continue(())
+            });
+            assert_eq!(result, ControlFlow::Continue(()));
+            count
+        }
+
+        let list =
+            crate::parser::parse("[start=0]\n. first\n\nparagraph after\n").expect("list source");
+        let config = LintConfig {
+            max_diagnostics: 1,
+            ..LintConfig::default()
+        };
+        let mut sink = LintDiagnosticSink::new(&config);
+        let mut visited = Vec::new();
+        lint_list_presentation_with_observer(&list.ast, &mut sink, |node| {
+            visited.push(node_kind(node));
+        });
+        assert_eq!(sink.finish().len(), 1);
+        assert_eq!(visited.last(), Some(&"block-list"));
+        assert!(visited.len() < full_walk_len(&list.ast));
+
+        let table =
+            crate::parser::parse("[format=unknown]\n|===\n|cell\n|===\n\nparagraph after\n")
+                .expect("table source");
+        let mut sink = LintDiagnosticSink::new(&config);
+        let mut visited = Vec::new();
+        lint_tables_with_observer(&table.ast, &mut sink, |node| {
+            visited.push(node_kind(node));
+        });
+        assert_eq!(sink.finish().len(), 1);
+        assert_eq!(visited.last(), Some(&"table"));
+        assert!(visited.len() < full_walk_len(&table.ast));
+
+        let links = crate::parser::parse("link:first.adoc[first]\nlink:second.adoc[second]\n")
+            .expect("link source");
+        let mut link_config = config.clone();
+        link_config.authored_url_policy.allow_relative = false;
+        let mut sink = LintDiagnosticSink::new(&link_config);
+        let mut visited = Vec::new();
+        lint_links_and_references_with_observer(&links.ast, &link_config, &mut sink, |node| {
+            visited.push(node_kind(node));
+        });
+        assert_eq!(sink.finish().len(), 1);
+        assert_eq!(visited.last(), Some(&"inline-link"));
+        assert!(visited.len() < full_walk_len(&links.ast));
     }
 
     #[test]

@@ -128,29 +128,33 @@ fn repository_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-#[test]
-fn lint_modules_construct_diagnostics_only_inside_the_sink() {
-    fn collect_rust_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
-        if !directory.exists() {
-            return;
-        }
-        for entry in fs::read_dir(directory).expect("lint module directory") {
-            let path = entry.expect("lint module entry").path();
-            if path.is_dir() {
-                collect_rust_files(&path, files);
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
-                files.push(path);
-            }
+fn collect_rust_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    if !directory.exists() {
+        return;
+    }
+    for entry in fs::read_dir(directory).expect("Rust module directory") {
+        let path = entry.expect("Rust module entry").path();
+        if path.is_dir() {
+            collect_rust_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
         }
     }
+}
 
+fn lint_implementation_files() -> Vec<std::path::PathBuf> {
     let source_root = repository_root().join("crates/adocweave/src");
     let mut files = vec![source_root.join("lint.rs")];
     collect_rust_files(&source_root.join("lint"), &mut files);
     files.sort();
+    files
+}
 
+#[test]
+fn lint_modules_construct_diagnostics_only_inside_the_sink() {
+    let source_root = repository_root().join("crates/adocweave/src");
     let mut diagnostic_constructions = Vec::new();
-    for path in files {
+    for path in lint_implementation_files() {
         let source = fs::read_to_string(&path).expect("lint implementation");
         for _ in source.match_indices(concat!("Diagnostic", " {")) {
             diagnostic_constructions.push(path.clone());
@@ -160,6 +164,39 @@ fn lint_modules_construct_diagnostics_only_inside_the_sink() {
         diagnostic_constructions,
         [source_root.join("lint.rs")],
         "Lint rule modules must emit through LintDiagnosticSink"
+    );
+}
+
+#[test]
+fn lint_modules_use_only_interruptible_semantic_traversal() {
+    let mut violations = Vec::new();
+    for path in lint_implementation_files() {
+        let source = fs::read_to_string(&path).expect("lint implementation");
+        for (offset, _) in source.match_indices("walk_ast") {
+            let is_identifier_character =
+                |character: char| character.is_ascii_alphanumeric() || character == '_';
+            let starts_identifier = source[..offset]
+                .chars()
+                .next_back()
+                .is_none_or(|character| !is_identifier_character(character));
+            let end = offset + "walk_ast".len();
+            let ends_identifier = source[end..]
+                .chars()
+                .next()
+                .is_none_or(|character| !is_identifier_character(character));
+            if starts_identifier && ends_identifier {
+                let line = source[..offset]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count()
+                    + 1;
+                violations.push(format!("{}:{line}", path.display()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "Lint semantic passes must use interruptible traversal: {violations:?}"
     );
 }
 
