@@ -113,7 +113,7 @@ pub struct WasmSourceMapSegment {
 
 /// A half-open UTF-8 byte range in the submitted source.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTextRange {
     pub start: u32,
     pub end: u32,
@@ -635,7 +635,7 @@ pub enum WasmSymbolKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentProjection {
     pub package_version: String,
     pub source_id: Option<String>,
@@ -653,14 +653,14 @@ pub struct WasmDocumentProjection {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmProjectedText {
     pub source_range: WasmTextRange,
     pub text: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSourceBlockProjection {
     pub source_range: WasmTextRange,
     pub content_range: WasmTextRange,
@@ -673,7 +673,7 @@ pub struct WasmSourceBlockProjection {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmFormulaProjection {
     pub kind: WasmFormulaKind,
     pub language: WasmMathLanguage,
@@ -690,7 +690,7 @@ pub enum WasmFormulaKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmOrderedListProjection {
     pub source_range: WasmTextRange,
     pub start: Option<u32>,
@@ -711,7 +711,7 @@ pub enum WasmOrderedListStyle {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmBlockPresentationProjection {
     pub kind: WasmBlockPresentationKind,
     pub source_range: WasmTextRange,
@@ -730,7 +730,7 @@ pub enum WasmBlockPresentationKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmExternalLink {
     pub source_range: WasmTextRange,
     pub target_range: WasmTextRange,
@@ -739,7 +739,7 @@ pub struct WasmExternalLink {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmReferenceTarget {
     pub kind: WasmReferenceTargetKind,
     pub id: String,
@@ -759,7 +759,7 @@ pub enum WasmReferenceTargetKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmReferenceEdge {
     pub source_id: Option<String>,
     pub source_range: WasmTextRange,
@@ -771,7 +771,8 @@ pub struct WasmReferenceEdge {
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub enum WasmReferenceKey {
     Local {
@@ -792,7 +793,8 @@ pub enum WasmReferenceKey {
 #[serde(
     tag = "status",
     rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub enum WasmProjectedResolutionOutcome {
     Resolved {
@@ -822,14 +824,14 @@ pub enum WasmProjectedReferenceNotice {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSearchableText {
     pub text: String,
     pub segments: Vec<WasmSearchTextSegment>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSearchTextSegment {
     pub kind: WasmSearchTextKind,
     pub source_range: WasmTextRange,
@@ -844,7 +846,7 @@ pub enum WasmSearchTextKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentStructure {
     pub headings: Vec<WasmStructuredHeading>,
     pub toc: Vec<WasmTocEntry>,
@@ -852,7 +854,7 @@ pub struct WasmDocumentStructure {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmStructuredHeading {
     pub kind: WasmSectionKind,
     pub level: u32,
@@ -876,7 +878,7 @@ pub enum WasmSectionKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTocEntry {
     pub id: String,
     pub title: String,
@@ -887,7 +889,7 @@ pub struct WasmTocEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmManpage {
     pub name: String,
     pub section: String,
@@ -898,7 +900,7 @@ pub struct WasmManpage {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentCatalogs {
     pub footnotes: Vec<WasmFootnote>,
     pub bibliography: Vec<WasmBibliographyEntry>,
@@ -906,7 +908,7 @@ pub struct WasmDocumentCatalogs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmFootnote {
     pub number: u32,
     pub id: Option<String>,
@@ -917,7 +919,7 @@ pub struct WasmFootnote {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmBibliographyEntry {
     pub id: String,
     pub definition_range: WasmTextRange,
@@ -925,7 +927,7 @@ pub struct WasmBibliographyEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmIndexEntry {
     pub terms: Vec<String>,
     pub display: String,
@@ -1822,6 +1824,44 @@ mod tests {
             VERSION
         );
         assert_eq!(response.parse.reference_count, 0);
+    }
+
+    #[test]
+    fn projection_json_rejects_unknown_fields_at_every_object_boundary() {
+        let response = process_request(
+            request("= Title\n\n[#target]\n== Target\n\nSee <<target>>.\n"),
+            &NeverCancel,
+        )
+        .expect("response");
+        let projection = response.projection.expect("projection");
+        assert!(
+            !projection.reference_edges.is_empty(),
+            "variant probe requires a reference edge"
+        );
+        let projection = serde_json::to_value(projection).expect("projection JSON");
+
+        for (name, pointer) in [
+            ("top-level projection", ""),
+            ("nested projection object", "/structure"),
+            ("tagged projection variant", "/referenceEdges/0/target"),
+        ] {
+            let mut mutated = projection.clone();
+            mutated
+                .pointer_mut(pointer)
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("object boundary")
+                .insert("unknownField".to_owned(), json!(true));
+            let source = serde_json::to_string(&mutated).expect("mutated projection JSON");
+
+            let error = parse_optional_product::<WasmDocumentProjection>(Some(&source))
+                .expect_err("unknown field must fail");
+            assert_eq!(error.code, "serialization-failed", "{name}");
+            assert!(
+                error.message.contains("unknown field `unknownField`"),
+                "{name}: {}",
+                error.message
+            );
+        }
     }
 
     #[test]
