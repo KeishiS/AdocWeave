@@ -334,9 +334,21 @@ test("Pull Requestのinstallation E2Eは選択されたcandidate familyだけを
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
+        '        run: node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}"',
+        '        run: node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}" release-manifest.json native-only',
+      ),
+    }),
+    /must retain the complete default scope/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
         "          release-manifest.json\n" +
           '          "native-only"',
-        "          release-manifest.json",
+        "          release-manifest.json\n" +
+          '          "complete"\n' +
+          '          # native-only',
       ),
     }),
     /must consume the selected candidate families/,
@@ -346,7 +358,8 @@ test("Pull Requestのinstallation E2Eは選択されたcandidate familyだけを
       ...inputs,
       release: inputs.release.replace(
         '          "global-only"',
-        '          "complete"',
+        '          "complete"\n' +
+          '          # global-only',
       ),
     }),
     /must use the global-only scope/,

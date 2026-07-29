@@ -22,6 +22,16 @@ function requireCommand(source, value, message) {
   requireText(executable, value, message);
 }
 
+function requireExactCommand(source, expected, message) {
+  if (typeof source !== "string") fail(message);
+  const actual = source.split("\n")
+    .map((line) => line.replace(/\s+#.*$/, ""))
+    .join(" ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (actual !== expected) fail(message);
+}
+
 function parseWorkflow(name, source) {
   const directory = mkdtempSync(join(tmpdir(), "adocweave-workflow-policy-"));
   const path = join(directory, "workflow.yml");
@@ -252,14 +262,24 @@ export function validateReleaseWorkflowPolicy({
   requireNeeds(releaseJobs["native-smoke"], ["changes", "build-native"], "native smoke must consume native builds");
   requireNeeds(releaseJobs["verify-candidate"], ["changes", "native-smoke", "build-global"], "partial candidate dependency edge is incomplete");
   requireNeeds(releaseJobs["installation-e2e"], ["changes", "verify-candidate"], "installation must consume a verified native candidate");
+  const completeInstallation = step(
+    releaseJobs["installation-e2e"],
+    (item) => item.name === "Candidate installation and complete removal",
+    "complete candidate installation E2E step is missing",
+  );
+  requireExactCommand(
+    completeInstallation.run,
+    'node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}"',
+    "complete candidate installation E2E must retain the complete default scope",
+  );
   const pullRequestInstallation = step(
     releaseJobs["installation-e2e"],
     (item) => item.name === "Pull request installation and complete removal",
     "pull request installation E2E step is missing",
   );
-  requireCommand(
+  requireExactCommand(
     pullRequestInstallation.run,
-    '"native-only"',
+    'node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}" release-manifest.json "native-only"',
     "pull request installation E2E must consume the selected candidate families",
   );
   const globalInstallation = releaseJobs["global-installation-e2e"];
@@ -272,13 +292,13 @@ export function validateReleaseWorkflowPolicy({
     ["changes", "verify-candidate"],
     "global installation must consume a verified global candidate",
   );
-  requireCommand(
+  requireExactCommand(
     step(
       globalInstallation,
       (item) => item.name === "Global installation and complete removal",
       "global installation E2E step is missing",
     ).run,
-    '"global-only"',
+    'node tools/release-installation-e2e.mjs artifacts x86_64-unknown-linux-musl release-manifest.json "global-only"',
     "global installation E2E must use the global-only scope",
   );
 
