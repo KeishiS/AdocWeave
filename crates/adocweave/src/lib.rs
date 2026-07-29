@@ -4,6 +4,7 @@
 //! and standard-stream I/O. Parsing, diagnostics, formatting, and rendering
 //! remain deterministic core operations over caller-provided input.
 
+mod ast_util;
 mod attributes;
 mod block_grammar;
 mod block_model;

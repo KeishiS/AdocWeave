@@ -37,7 +37,7 @@ pub(crate) fn lower(
         facts.anchors,
         facts.header,
     );
-    document.normalize_heading_kinds();
+    normalize_heading_kinds(&mut document);
     resolve_inline_attributes(&mut document, &attribute_environment);
     document.resolved = crate::resolved::ResolvedDocument::build(
         &document,
@@ -45,6 +45,48 @@ pub(crate) fn lower(
         facts.processing_limits,
     )?;
     Ok(document)
+}
+
+fn normalize_heading_kinds(document: &mut AstDocument) {
+    let doctype = document.header.doctype;
+    document.visit_blocks_mut(|block| {
+        let AstBlock::Heading(heading) = block else {
+            return;
+        };
+        let discrete = heading
+            .metadata
+            .roles
+            .iter()
+            .any(|value| value.value == "discrete")
+            || heading.metadata.attributes.iter().any(|attribute| {
+                attribute.name.is_none() && matches!(attribute.value.as_str(), "discrete" | "float")
+            });
+        if discrete {
+            let level = match heading.kind {
+                crate::parser::HeadingKind::DocumentTitle | crate::parser::HeadingKind::Part => 1,
+                crate::parser::HeadingKind::Section { level }
+                | crate::parser::HeadingKind::Discrete { level } => level,
+            };
+            heading.kind = crate::parser::HeadingKind::Discrete { level };
+            heading.problems.retain(|problem| {
+                *problem != crate::parser::HeadingProblem::MisplacedDocumentTitle
+            });
+            heading.well_formed = heading.problems.is_empty();
+            heading.hierarchy_valid = heading.well_formed;
+        } else if doctype == DocumentType::Book
+            && heading.kind == crate::parser::HeadingKind::DocumentTitle
+            && heading
+                .problems
+                .contains(&crate::parser::HeadingProblem::MisplacedDocumentTitle)
+        {
+            heading.kind = crate::parser::HeadingKind::Part;
+            heading.problems.retain(|problem| {
+                *problem != crate::parser::HeadingProblem::MisplacedDocumentTitle
+            });
+            heading.well_formed = heading.problems.is_empty();
+            heading.hierarchy_valid = heading.well_formed;
+        }
+    });
 }
 
 fn resolve_delimited_presentations(blocks: &mut [AstBlock]) {
@@ -569,5 +611,22 @@ fn resolve_inlines(inlines: &mut [Inline], attributes: &crate::attributes::Attri
             | Inline::Passthrough { .. }
             | Inline::Formula(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod responsibility_tests {
+    #[test]
+    fn parser_dispatch_does_not_own_ast_utilities_or_post_recognition_normalization() {
+        let parser = include_str!("parser.rs");
+        let ast_util = include_str!("ast_util.rs");
+        let lowering = include_str!("lowering.rs");
+
+        assert!(!parser.contains("impl AstDocument"));
+        assert!(!parser.contains("impl AstBlock"));
+        assert!(!parser.contains("fn normalize_heading_kinds"));
+        assert!(ast_util.contains("impl AstDocument"));
+        assert!(ast_util.contains("impl AstBlock"));
+        assert!(lowering.contains("fn normalize_heading_kinds"));
     }
 }
