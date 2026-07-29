@@ -189,9 +189,6 @@ fn preview_error(error: commands::preview::Error) -> CliError {
             source_name,
             source,
         },
-        commands::preview::Error::InvalidUtf8 { valid_up_to } => {
-            CliError::InvalidUtf8 { valid_up_to }
-        }
         commands::preview::Error::Analysis(source) => CliError::Analysis(source),
         commands::preview::Error::Include(source) => CliError::Include(source),
         commands::preview::Error::Html(source) => html_policy_error(source),
@@ -757,6 +754,53 @@ fn read_input(
     Ok(input)
 }
 
+fn read_primary_in_session(
+    path: &Path,
+    filesystem: &mut adocweave_host::LocalFilesystemSession,
+) -> Result<Vec<u8>, CliError> {
+    let budget_before_read = filesystem.budget();
+    let limits = filesystem.limits();
+    let loaded = filesystem
+        .read_utf8(
+            adocweave_host::LogicalSourceId::new(path.to_string_lossy())
+                .map_err(local_include::LocalIncludeError::Host)
+                .map_err(CliError::Include)?,
+            path,
+        )
+        .map_err(|error| match error {
+            adocweave_host::ResourceError::ResourceTooLarge(_) => CliError::ResourceLimit(
+                "analysis snapshot single-resource byte limit exceeded".to_owned(),
+            ),
+            adocweave_host::ResourceError::FileLimit { limit } => CliError::ResourceLimit(format!(
+                "filesystem resource count limit exceeded: {limit}"
+            )),
+            adocweave_host::ResourceError::ByteLimit
+                if budget_before_read.files() == 0
+                    && limits.max_resource_bytes <= limits.max_total_bytes =>
+            {
+                CliError::ResourceLimit(
+                    "analysis snapshot single-resource byte limit exceeded".to_owned(),
+                )
+            }
+            adocweave_host::ResourceError::ByteLimit => {
+                CliError::ResourceLimit("analysis snapshot total byte limit exceeded".to_owned())
+            }
+            error => CliError::Include(local_include::LocalIncludeError::Host(error)),
+        })?;
+    let (_, source) = loaded.into_parts();
+    Ok(source.as_bytes().to_vec())
+}
+
+fn filesystem_for_roots(
+    roots: Vec<PathBuf>,
+    limits: adocweave_host::FilesystemReadLimits,
+) -> Result<adocweave_host::LocalFilesystemSession, CliError> {
+    adocweave_host::LocalFilesystemPolicy::new(roots, limits)
+        .and_then(|policy| policy.session())
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(CliError::Include)
+}
+
 fn include_limits_after_root(
     plan: adocweave_config::ResolvedResourceLimitPlan,
     root_bytes: usize,
@@ -784,16 +828,42 @@ fn include_limits_after_root(
     })
 }
 
-fn validate_prepared_resources(
-    prepared: &local_include::PreparedInput,
-    limits: adocweave_config::AnalysisSnapshotLimits,
+fn validate_resource_plan(
+    sizes: impl IntoIterator<Item = u64>,
+    plan: adocweave_config::ResolvedResourceLimitPlan,
 ) -> Result<(), CliError> {
-    let mut budget = adocweave_config::AnalysisSnapshotBudget::new(limits);
-    for bytes in prepared.projection().resource_lengths() {
+    let mut budget = adocweave_config::AnalysisSnapshotBudget::new(plan.analysis_snapshot);
+    for size in sizes {
         budget
-            .charge(bytes)
+            .charge(size)
             .map_err(|error| CliError::ResourceLimit(error.to_string()))?;
     }
+    Ok(())
+}
+
+fn validate_project_retained_resources(
+    resources: impl IntoIterator<Item = (String, u64)>,
+    retained: &mut std::collections::BTreeMap<String, u64>,
+    max_files: usize,
+    max_total_bytes: u64,
+    max_resource_bytes: u64,
+) -> Result<(), CliError> {
+    let mut next = retained.clone();
+    for (id, bytes) in resources {
+        next.insert(id, bytes);
+    }
+    let total = next
+        .values()
+        .try_fold(0_u64, |total, bytes| total.checked_add(*bytes));
+    if next.len() > max_files
+        || next.values().any(|bytes| *bytes > max_resource_bytes)
+        || total.is_none_or(|total| total > max_total_bytes)
+    {
+        return Err(CliError::ResourceLimit(
+            "configured retained resource limit exceeded".to_owned(),
+        ));
+    }
+    *retained = next;
     Ok(())
 }
 
@@ -823,12 +893,25 @@ struct IncludePreparation<'request> {
     allowed_roots: &'request [PathBuf],
     limits: adocweave_host::FilesystemReadLimits,
     preprocess: &'request adocweave::preprocess::PreprocessOptions,
+    filesystem: Option<&'request mut adocweave_host::LocalFilesystemSession>,
 }
 
 fn prepare_includes(
-    request: IncludePreparation<'_>,
+    mut request: IncludePreparation<'_>,
 ) -> Result<local_include::PreparedInput, local_include::LocalIncludeError> {
-    if let Some(project_root) = request.project_root {
+    if let (Some(project_root), Some(filesystem)) =
+        (request.project_root, request.filesystem.as_deref_mut())
+    {
+        local_include::prepare_local_with_session(
+            request.source,
+            request.source_id,
+            request.base_dir,
+            request.source_base,
+            project_root,
+            request.preprocess,
+            filesystem,
+        )
+    } else if let Some(project_root) = request.project_root {
         local_include::prepare_local(
             request.source,
             request.source_id,
@@ -837,6 +920,15 @@ fn prepare_includes(
             project_root,
             request.limits,
             request.preprocess,
+        )
+    } else if let Some(filesystem) = request.filesystem.as_deref_mut() {
+        local_include::prepare_with_session(
+            request.source,
+            Some(request.source_id),
+            request.base_dir,
+            request.allowed_roots,
+            request.preprocess,
+            filesystem,
         )
     } else {
         local_include::prepare(
@@ -1114,6 +1206,13 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
         source,
     })?;
     validate_input_path_scopes(arguments, &paths, &boundary)?;
+    let mut project_filesystems =
+        std::collections::BTreeMap::<Option<PathBuf>, adocweave_host::LocalFilesystemSession>::new(
+        );
+    let mut project_retained = std::collections::BTreeMap::<
+        Option<PathBuf>,
+        std::collections::BTreeMap<String, u64>,
+    >::new();
     match &arguments.command {
         CommandOptions::Format(options) => {
             if !options.supports_multiple_inputs() {
@@ -1128,10 +1227,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     adocweave_config::ResolvedProjectConfig::default,
                     |snapshot| snapshot.config.clone(),
                 );
-                let original = read_input(
-                    Some(path.clone()),
-                    config.resources.limit_plan.analysis_snapshot,
-                )?;
                 let include = arguments.include || config.resources.include;
                 if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
                 {
@@ -1146,26 +1241,63 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         false,
                         false,
                     )?;
+                }
+                let source_base = path.parent().expect("canonical input path has a parent");
+                let base_dir = arguments.base_dir.as_deref().unwrap_or(source_base);
+                let allowed_roots = if arguments.allowed_roots.is_empty() {
+                    &config.resources.roots
+                } else {
+                    &arguments.allowed_roots
+                };
+                let project_key = snapshot.as_ref().map(|snapshot| snapshot.path.clone());
+                let filesystem = match project_filesystems.entry(project_key.clone()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        let mut roots = vec![boundary.clone()];
+                        roots.extend(
+                            paths
+                                .iter()
+                                .filter_map(|path| path.parent().map(Path::to_owned)),
+                        );
+                        roots.extend(allowed_roots.iter().cloned());
+                        entry.insert(filesystem_for_roots(
+                            roots,
+                            config.resources.limit_plan.filesystem_reads,
+                        )?)
+                    }
+                };
+                let original = read_primary_in_session(path, filesystem)?;
+                if include {
                     let source = decode_input(&original)?;
-                    let source_base = path.parent().expect("canonical input path has a parent");
-                    let base_dir = arguments.base_dir.as_deref().unwrap_or(source_base);
-                    let allowed_roots = if arguments.allowed_roots.is_empty() {
-                        &config.resources.roots
-                    } else {
-                        &arguments.allowed_roots
-                    };
-                    let prepared = local_include::prepare(
+                    let prepared = local_include::prepare_with_session(
                         source,
                         Some(path.to_string_lossy().into_owned()),
                         base_dir,
                         allowed_roots,
-                        include_limits_after_root(config.resources.limit_plan, original.len())?,
                         &config.preprocess,
+                        filesystem,
                     )
                     .map_err(CliError::Include)?;
-                    validate_prepared_resources(
-                        &prepared,
-                        config.resources.limit_plan.analysis_snapshot,
+                    validate_resource_plan(prepared.resource_sizes(), config.resources.limit_plan)?;
+                    let retained_limits = config.resources.limit_plan.retained_layers;
+                    validate_project_retained_resources(
+                        prepared
+                            .resource_entries()
+                            .map(|(id, bytes)| (id.to_owned(), bytes)),
+                        project_retained.entry(project_key).or_default(),
+                        retained_limits.max_files,
+                        retained_limits.max_total_bytes,
+                        retained_limits.max_resource_bytes,
+                    )?;
+                } else {
+                    validate_resource_plan([original.len() as u64], config.resources.limit_plan)?;
+                    let retained_limits = config.resources.limit_plan.retained_layers;
+                    validate_project_retained_resources(
+                        [(path.to_string_lossy().into_owned(), original.len() as u64)],
+                        project_retained.entry(project_key).or_default(),
+                        retained_limits.max_files,
+                        retained_limits.max_total_bytes,
+                        retained_limits.max_resource_bytes,
                     )?;
                 }
                 let format_config = commands::format::format_config(*options, &original, &config);
@@ -1217,25 +1349,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     adocweave_config::ResolvedProjectConfig::default,
                     |snapshot| snapshot.config.clone(),
                 );
-                let original = read_input(
-                    Some(path.clone()),
-                    config.resources.limit_plan.analysis_snapshot,
-                )?;
-                let checked = if check.fix {
-                    apply_safe_fixes(&original, check, &config.analysis)?
-                } else {
-                    original.clone()
-                };
-                if check.fix && checked != original {
-                    changed += 1;
-                    if !check.dry_run {
-                        pending.push(PendingWrite {
-                            path: path.clone(),
-                            original,
-                            replacement: checked.clone(),
-                        });
-                    }
-                }
                 let source_id = path.to_string_lossy();
                 let project_root = arguments.project_root.clone().or_else(|| {
                     config
@@ -1261,6 +1374,45 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .parent()
                     .expect("canonical input path has a parent")
                     .to_path_buf();
+                let allowed_roots = if arguments.allowed_roots.is_empty() {
+                    &config.resources.roots
+                } else {
+                    &arguments.allowed_roots
+                };
+                let project_key = snapshot.as_ref().map(|snapshot| snapshot.path.clone());
+                let filesystem = match project_filesystems.entry(project_key.clone()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        let mut roots = vec![boundary.clone()];
+                        roots.extend(
+                            paths
+                                .iter()
+                                .filter_map(|path| path.parent().map(Path::to_owned)),
+                        );
+                        roots.extend(allowed_roots.iter().cloned());
+                        roots.extend(project_root.iter().cloned());
+                        entry.insert(filesystem_for_roots(
+                            roots,
+                            config.resources.limit_plan.filesystem_reads,
+                        )?)
+                    }
+                };
+                let original = read_primary_in_session(path, filesystem)?;
+                let checked = if check.fix {
+                    apply_safe_fixes(&original, check, &config.analysis)?
+                } else {
+                    original.clone()
+                };
+                if check.fix && checked != original {
+                    changed += 1;
+                    if !check.dry_run {
+                        pending.push(PendingWrite {
+                            path: path.clone(),
+                            original,
+                            replacement: checked.clone(),
+                        });
+                    }
+                }
                 let local_context = project_root
                     .as_ref()
                     .map(|root| (source_base.as_path(), root.as_path(), source_id.as_ref()));
@@ -1270,11 +1422,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         .base_dir
                         .as_deref()
                         .unwrap_or(source_base.as_path());
-                    let allowed_roots = if arguments.allowed_roots.is_empty() {
-                        &config.resources.roots
-                    } else {
-                        &arguments.allowed_roots
-                    };
                     let mut prepared = prepare_includes(IncludePreparation {
                         source,
                         source_id: source_id.to_string(),
@@ -1282,19 +1429,33 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         source_base: &source_base,
                         project_root: project_root.as_deref(),
                         allowed_roots,
-                        limits: include_limits_after_root(
-                            config.resources.limit_plan,
-                            checked.len(),
-                        )?,
+                        limits: config.resources.limit_plan.filesystem_reads,
                         preprocess: &config.preprocess,
+                        filesystem: Some(filesystem),
                     })
                     .map_err(CliError::Include)?;
-                    validate_prepared_resources(
-                        &prepared,
-                        config.resources.limit_plan.analysis_snapshot,
+                    validate_resource_plan(prepared.resource_sizes(), config.resources.limit_plan)?;
+                    let retained_limits = config.resources.limit_plan.retained_layers;
+                    validate_project_retained_resources(
+                        prepared
+                            .resource_entries()
+                            .map(|(id, bytes)| (id.to_owned(), bytes)),
+                        project_retained.entry(project_key).or_default(),
+                        retained_limits.max_files,
+                        retained_limits.max_total_bytes,
+                        retained_limits.max_resource_bytes,
                     )?;
                     check_preprocessed(&mut prepared, check, &config.analysis)?
                 } else {
+                    validate_resource_plan([checked.len() as u64], config.resources.limit_plan)?;
+                    let retained_limits = config.resources.limit_plan.retained_layers;
+                    validate_project_retained_resources(
+                        [(path.to_string_lossy().into_owned(), checked.len() as u64)],
+                        project_retained.entry(project_key).or_default(),
+                        retained_limits.max_files,
+                        retained_limits.max_total_bytes,
+                        retained_limits.max_resource_bytes,
+                    )?;
                     process_check(
                         &checked,
                         check,
@@ -1833,10 +1994,31 @@ fn run() -> Result<ExitCode, CliError> {
                     .map_or_else(|| project_root.clone(), PathBuf::from);
                 (base, project_root.clone(), source_id.clone())
             });
-            let input = read_input(
-                arguments.input,
-                project_config.resources.limit_plan.analysis_snapshot,
-            )?;
+            let primary_base = canonical_input
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_owned);
+            let (input, mut primary_filesystem) = if let Some(path) = canonical_input.as_deref() {
+                let mut roots = vec![
+                    primary_base
+                        .clone()
+                        .expect("canonical input path has a parent"),
+                ];
+                roots.extend(allowed_roots.iter().cloned());
+                roots.extend(project_root.iter().cloned());
+                let mut filesystem = filesystem_for_roots(
+                    roots,
+                    project_config.resources.limit_plan.filesystem_reads,
+                )?;
+                let input = read_primary_in_session(path, &mut filesystem)?;
+                (input, Some(filesystem))
+            } else {
+                (
+                    read_input(None, project_config.resources.limit_plan.analysis_snapshot)?,
+                    None,
+                )
+            };
+            validate_resource_plan([input.len() as u64], project_config.resources.limit_plan)?;
             let mut prepared = None;
             let processed = if include {
                 let source = decode_input(&input)?;
@@ -1867,16 +2049,18 @@ fn run() -> Result<ExitCode, CliError> {
                     source_base,
                     project_root: project_root.as_deref(),
                     allowed_roots: &allowed_roots,
-                    limits: include_limits_after_root(
-                        project_config.resources.limit_plan,
-                        input.len(),
-                    )?,
+                    limits: if primary_filesystem.is_some() {
+                        project_config.resources.limit_plan.filesystem_reads
+                    } else {
+                        include_limits_after_root(project_config.resources.limit_plan, input.len())?
+                    },
                     preprocess: &project_config.preprocess,
+                    filesystem: primary_filesystem.as_mut(),
                 })
                 .map_err(CliError::Include)?;
-                validate_prepared_resources(
-                    &include_input,
-                    project_config.resources.limit_plan.analysis_snapshot,
+                validate_resource_plan(
+                    include_input.resource_sizes(),
+                    project_config.resources.limit_plan,
                 )?;
                 let processed = if command_id == CommandId::Format {
                     input.clone()
