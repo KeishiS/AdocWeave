@@ -44,20 +44,14 @@ macro_rules! lint_rule_catalog {
     (@enabled $enabled:literal) => {
         $enabled
     };
-    (@severity) => {
-        Severity::Warning
-    };
-    (@severity $severity:ident) => {
-        Severity::$severity
-    };
-    ($(($constant:ident, $code:literal, $description:literal, $fixable:literal $(, $default_enabled:literal)? $(; $default_severity:ident)?)),+ $(,)?) => {
+    ($(($constant:ident, $code:literal, $description:literal, $fixable:literal $(, $default_enabled:literal)?)),+ $(,)?) => {
         $(pub const $constant: LintRuleId = LintRuleId($code);)+
 
         pub const LINT_RULES: &[LintRuleDescriptor] = &[
             $(LintRuleDescriptor {
                 id: $constant,
                 default_enabled: lint_rule_catalog!(@enabled $($default_enabled)?),
-                default_severity: lint_rule_catalog!(@severity $($default_severity)?),
+                default_severity: Severity::Warning,
                 description: $description,
                 fixable: $fixable,
                 user_configurable: true,
@@ -151,9 +145,7 @@ lint_rule_catalog!(
         PROTECTED_ATTRIBUTE,
         "protected-attribute",
         "保護された文書属性の変更",
-        false,
-        true;
-        Error
+        false
     ),
     (INVALID_ANCHOR, "invalid-anchor", "不正なアンカー", false),
     (
@@ -272,19 +264,27 @@ pub struct LintConfig {
 
 impl Default for LintConfig {
     fn default() -> Self {
+        let mut rules = LINT_RULES
+            .iter()
+            .map(|descriptor| {
+                (
+                    descriptor.id,
+                    RuleSettings {
+                        enabled: descriptor.default_enabled,
+                        severity: descriptor.default_severity,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        rules.insert(
+            PROTECTED_ATTRIBUTE,
+            RuleSettings {
+                enabled: true,
+                severity: Severity::Error,
+            },
+        );
         Self {
-            rules: LINT_RULES
-                .iter()
-                .map(|descriptor| {
-                    (
-                        descriptor.id,
-                        RuleSettings {
-                            enabled: descriptor.default_enabled,
-                            severity: descriptor.default_severity,
-                        },
-                    )
-                })
-                .collect(),
+            rules,
             max_line_length: 100,
             max_consecutive_blank_lines: 2,
             max_diagnostics: 1_000,
@@ -322,7 +322,7 @@ struct LintDiagnosticSink<'a> {
 struct LintDiagnosticBody {
     message: String,
     related: Vec<RelatedInformation>,
-    fix: Option<LintFixSpec>,
+    fixes: Vec<LintFixSpec>,
 }
 
 impl LintDiagnosticBody {
@@ -330,7 +330,7 @@ impl LintDiagnosticBody {
         Self {
             message: message.into(),
             related: Vec::new(),
-            fix: None,
+            fixes: Vec::new(),
         }
     }
 
@@ -342,17 +342,32 @@ impl LintDiagnosticBody {
     fn with_fix(
         mut self,
         title: impl Into<String>,
+        applicability: Applicability,
+        edits: Vec<TextEdit>,
+    ) -> Self {
+        self.fixes.push(LintFixSpec {
+            title: title.into(),
+            applicability,
+            edits,
+        });
+        self
+    }
+
+    fn with_edit_fix(
+        self,
+        title: impl Into<String>,
         range: TextRange,
         replacement: impl Into<String>,
         applicability: Applicability,
     ) -> Self {
-        self.fix = Some(LintFixSpec {
-            title: title.into(),
-            range,
-            replacement: replacement.into(),
+        self.with_fix(
+            title,
             applicability,
-        });
-        self
+            vec![TextEdit {
+                range,
+                replacement: replacement.into(),
+            }],
+        )
     }
 
     fn with_optional_fix(
@@ -362,7 +377,7 @@ impl LintDiagnosticBody {
     ) -> Self {
         match fix {
             Some((title, range, replacement)) => {
-                self.with_fix(title, range, replacement, applicability)
+                self.with_edit_fix(title, range, replacement, applicability)
             }
             None => self,
         }
@@ -371,9 +386,8 @@ impl LintDiagnosticBody {
 
 struct LintFixSpec {
     title: String,
-    range: TextRange,
-    replacement: String,
     applicability: Applicability,
+    edits: Vec<TextEdit>,
 }
 
 impl<'a> LintDiagnosticSink<'a> {
@@ -393,37 +407,29 @@ impl<'a> LintDiagnosticSink<'a> {
         rule: LintRuleId,
         range: TextRange,
         body: impl FnOnce() -> LintDiagnosticBody,
-    ) -> bool {
+    ) {
+        let descriptor = lint_rule(rule.as_str()).expect("lint diagnostic rule is registered");
         if self.is_full() {
-            return false;
+            return;
         }
         let settings = self.config.rule(rule);
         if !settings.enabled {
-            return false;
+            return;
         }
         let body = body();
+        assert!(
+            body.fixes.is_empty() || descriptor.fixable,
+            "non-fixable lint rule emitted a fix: {}",
+            rule.as_str()
+        );
         let fixes = body
-            .fix
+            .fixes
+            .into_iter()
             .map(|fix| {
-                let descriptor = lint_rule(rule.as_str()).expect("enabled lint rule is registered");
-                assert!(
-                    descriptor.fixable,
-                    "non-fixable lint rule emitted a fix: {}",
-                    rule.as_str()
-                );
-                vec![
-                    Fix::new(
-                        fix.title,
-                        fix.applicability,
-                        vec![TextEdit {
-                            range: fix.range,
-                            replacement: fix.replacement,
-                        }],
-                    )
-                    .expect("a single edit cannot conflict"),
-                ]
+                Fix::new(fix.title, fix.applicability, fix.edits)
+                    .expect("lint fix edits cannot conflict")
             })
-            .unwrap_or_default();
+            .collect();
         self.diagnostics.push(Diagnostic {
             id: DiagnosticId::new(format!(
                 "{}@{}:{}",
@@ -438,7 +444,6 @@ impl<'a> LintDiagnosticSink<'a> {
             related: body.related,
             fixes,
         });
-        true
     }
 
     fn finish(mut self) -> Vec<Diagnostic> {
@@ -495,6 +500,9 @@ pub(crate) fn lint_syntax(
     let mut blank_count = 0;
 
     for line in source_document.lines() {
+        if sink.is_full() {
+            break;
+        }
         let content = source_document
             .text(line.content_range())
             .expect("line ranges are valid");
@@ -506,7 +514,7 @@ pub(crate) fn lint_syntax(
             blank_count += 1;
             if blank_count > config.max_consecutive_blank_lines {
                 sink.emit(EXCESSIVE_BLANK_LINES, line.full_range(), || {
-                    LintDiagnosticBody::new("excessive blank line").with_fix(
+                    LintDiagnosticBody::new("excessive blank line").with_edit_fix(
                         "remove excessive blank line",
                         line.full_range(),
                         "",
@@ -525,7 +533,7 @@ pub(crate) fn lint_syntax(
                 line.content_range().end().to_usize(),
             )?;
             sink.emit(TRAILING_WHITESPACE, range, || {
-                LintDiagnosticBody::new("trailing whitespace").with_fix(
+                LintDiagnosticBody::new("trailing whitespace").with_edit_fix(
                     "remove trailing whitespace",
                     range,
                     "",
@@ -554,16 +562,36 @@ pub(crate) fn lint_syntax(
         }
     }
 
-    lint_syntax_issues(syntax, &mut sink);
-    lint_headings(document, &mut sink);
-    lint_attributes(document, config, &mut sink);
-    lint_anchors(document, &mut sink);
-    lint_links_and_references(document, config, &mut sink);
-    lint_list_presentation(document, &mut sink);
-    lint_document_presentation(document, &mut sink);
-    lint_tables(document, &mut sink);
-    lint_catalogs(document, &mut sink);
-    lint_document_structure(document, &mut sink);
+    if !sink.is_full() {
+        lint_syntax_issues(syntax, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_headings(document, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_attributes(document, config, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_anchors(document, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_links_and_references(document, config, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_list_presentation(document, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_document_presentation(document, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_tables(document, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_catalogs(document, &mut sink);
+    }
+    if !sink.is_full() {
+        lint_document_structure(document, &mut sink);
+    }
     Ok(sink.finish())
 }
 
@@ -572,10 +600,16 @@ fn lint_list_presentation(
     sink: &mut LintDiagnosticSink<'_>,
 ) {
     crate::walker::walk_ast(document, |node| {
+        if sink.is_full() {
+            return;
+        }
         let crate::walker::SemanticNode::Block(AstBlock::List(list)) = node else {
             return;
         };
         for problem in &list.presentation_problems {
+            if sink.is_full() {
+                break;
+            }
             let message = match problem.kind {
                 crate::parser::ListPresentationProblemKind::InvalidStart => {
                     "ordered list start must be a positive integer"
@@ -613,6 +647,9 @@ fn lint_document_structure(
     sink: &mut LintDiagnosticSink<'_>,
 ) {
     for problem in document.structure().problems() {
+        if sink.is_full() {
+            break;
+        }
         let message = match problem.kind {
             crate::structure::StructureProblemKind::AppendixLevel => {
                 "appendix must be a level-one section"
@@ -682,10 +719,16 @@ fn lint_catalogs(document: &crate::parser::AstDocument, sink: &mut LintDiagnosti
 
 fn lint_tables(document: &crate::parser::AstDocument, sink: &mut LintDiagnosticSink<'_>) {
     crate::walker::walk_ast(document, |node| {
+        if sink.is_full() {
+            return;
+        }
         let crate::walker::SemanticNode::Table(table) = node else {
             return;
         };
         for problem in &table.problems {
+            if sink.is_full() {
+                break;
+            }
             let message = match problem.kind {
                 crate::table::TableProblemKind::InvalidFormat => "unsupported table format",
                 crate::table::TableProblemKind::InvalidSeparator => {
@@ -705,6 +748,9 @@ fn lint_tables(document: &crate::parser::AstDocument, sink: &mut LintDiagnosticS
 
 fn lint_syntax_issues(syntax: &SyntaxTree, sink: &mut LintDiagnosticSink<'_>) {
     for issue in syntax.issues() {
+        if sink.is_full() {
+            break;
+        }
         let rule = match issue.class {
             SyntaxIssueClass::HeadingMarkerSpace => HEADING_MARKER_SPACE,
             SyntaxIssueClass::InvalidHeadingLevel => INVALID_HEADING_LEVEL,
@@ -723,18 +769,18 @@ fn lint_syntax_issues(syntax: &SyntaxTree, sink: &mut LintDiagnosticSink<'_>) {
             let SyntaxIssueDetail::MacroBoundary { name } = issue.detail else {
                 continue;
             };
-            let source = syntax.source_document().source();
-            let start = issue.range.start().to_usize();
-            let fix = source[..start]
-                .chars()
-                .next_back()
-                .is_some_and(|character| character.is_ascii_alphanumeric())
-                .then(|| {
-                    let range = TextRange::new(issue.range.start(), issue.range.start())
-                        .expect("empty insertion range is ordered");
-                    ("insert a space before the inline macro", range, " ")
-                });
             sink.emit(rule, issue.range, || {
+                let source = syntax.source_document().source();
+                let start = issue.range.start().to_usize();
+                let fix = source[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|character| character.is_ascii_alphanumeric())
+                    .then(|| {
+                        let range = TextRange::new(issue.range.start(), issue.range.start())
+                            .expect("empty insertion range is ordered");
+                        ("insert a space before the inline macro", range, " ")
+                    });
                 LintDiagnosticBody::new(format!(
                     "{name} inline macro must start at a token boundary"
                 ))
@@ -742,8 +788,8 @@ fn lint_syntax_issues(syntax: &SyntaxTree, sink: &mut LintDiagnosticSink<'_>) {
             });
             continue;
         }
-        let fix = issue.fix.map(|fix| (fix.label, fix.range, fix.replacement));
         sink.emit(rule, issue.range, || {
+            let fix = issue.fix.map(|fix| (fix.label, fix.range, fix.replacement));
             LintDiagnosticBody::new(issue.message).with_optional_fix(fix, Applicability::Always)
         });
     }
@@ -761,6 +807,9 @@ fn lint_links_and_references(
         config: &LintConfig,
         sink: &mut LintDiagnosticSink<'_>,
     ) {
+        if sink.is_full() {
+            return;
+        }
         use crate::inline::Inline;
         use crate::reference::ReferenceKey;
         match inline {
@@ -775,10 +824,10 @@ fn lint_links_and_references(
                         .is_some_and(|target| is_asciidoc_extension(target.extension))
                     && let Some(range) = link.macro_name_range
                 {
-                    let fix = (link.target_attributes.is_empty()
-                        && is_fixable_relative_target(&link.target))
-                    .then_some(("replace link with xref", range, "xref"));
                     sink.emit(ASCIIDOC_FILE_LINK, range, || {
+                        let fix = (link.target_attributes.is_empty()
+                            && is_fixable_relative_target(&link.target))
+                        .then_some(("replace link with xref", range, "xref"));
                         LintDiagnosticBody::new("use xref for an AsciiDoc document target")
                             .with_optional_fix(fix, Applicability::Always)
                     });
@@ -816,10 +865,10 @@ fn lint_links_and_references(
                             .is_some_and(|target| !is_asciidoc_extension(target.extension))
                         && let Some(range) = reference.macro_name_range
                     {
-                        let fix = (reference.target_attributes.is_empty()
-                            && is_fixable_relative_target(&reference.expanded_target))
-                        .then_some(("replace xref with link", range, "link"));
                         sink.emit(NON_ASCIIDOC_XREF, range, || {
+                            let fix = (reference.target_attributes.is_empty()
+                                && is_fixable_relative_target(&reference.expanded_target))
+                            .then_some(("replace xref with link", range, "link"));
                             LintDiagnosticBody::new("use link for a non-AsciiDoc file target")
                                 .with_optional_fix(fix, Applicability::Always)
                         });
@@ -854,6 +903,9 @@ fn lint_links_and_references(
         }
     }
     crate::walker::walk_ast(document, |node| {
+        if sink.is_full() {
+            return;
+        }
         if let crate::walker::SemanticNode::Inline(inline) = node {
             inspect(inline, &targets, config, sink);
         }
@@ -950,13 +1002,22 @@ const fn hex_digit(value: u8) -> Option<u8> {
 fn lint_anchors(document: &crate::parser::AstDocument, sink: &mut LintDiagnosticSink<'_>) {
     let mut ids = BTreeMap::<String, TextRange>::new();
     for anchor in document.anchors() {
+        if sink.is_full() {
+            break;
+        }
         if !anchor.valid {
             sink.emit(INVALID_ANCHOR, anchor.range, || {
                 LintDiagnosticBody::new("invalid or unattached explicit anchor")
             });
         }
     }
+    if sink.is_full() {
+        return;
+    }
     for target in crate::document::reference_targets_ast(document) {
+        if sink.is_full() {
+            break;
+        }
         if let Some(first) = ids.insert(target.id.clone(), target.id_range) {
             sink.emit(DUPLICATE_ANCHOR, target.id_range, || {
                 LintDiagnosticBody::new(format!("duplicate anchor ID `{}`", target.id))
@@ -977,6 +1038,9 @@ fn lint_attributes(
     use crate::attributes::{AttributeBindingId, DocumentAttributeOperation};
 
     for attribute in document.attributes() {
+        if sink.is_full() {
+            break;
+        }
         if let Some(expected) = config.protected_attributes.get(&attribute.name) {
             let changed = match &attribute.operation {
                 DocumentAttributeOperation::Set => expected
@@ -995,6 +1059,9 @@ fn lint_attributes(
         }
     }
 
+    if sink.is_full() {
+        return;
+    }
     let environment = document.attribute_environment();
     let references = document.resolved.facts().attribute_references();
     let inline_references = references
@@ -1011,7 +1078,13 @@ fn lint_attributes(
         .collect();
     let mut used_bindings = BTreeSet::<AttributeBindingId>::new();
     lint_attribute_reference_uses(inline_references, &mut used_bindings, sink);
+    if sink.is_full() {
+        return;
+    }
     for binding in environment.bindings() {
+        if sink.is_full() {
+            break;
+        }
         let references = references
             .iter()
             .filter(|reference| {
@@ -1052,7 +1125,13 @@ fn lint_attributes(
             });
         }
     }
+    if sink.is_full() {
+        return;
+    }
     for binding in environment.bindings() {
+        if sink.is_full() {
+            break;
+        }
         let occurrence = binding.occurrence();
         if binding.operation() == DocumentAttributeOperation::Set
             && !used_bindings.contains(&binding.id())
@@ -1071,6 +1150,9 @@ fn lint_attribute_reference_uses(
     sink: &mut LintDiagnosticSink<'_>,
 ) {
     for reference in references {
+        if sink.is_full() {
+            break;
+        }
         used_bindings.extend(reference.binding_id);
         match reference.value {
             Ok(Some(_)) => {}
@@ -1119,6 +1201,9 @@ fn lint_headings(document: &crate::parser::AstDocument, sink: &mut LintDiagnosti
     let mut ids = BTreeMap::<String, TextRange>::new();
 
     for block in document.blocks() {
+        if sink.is_full() {
+            break;
+        }
         let AstBlock::Heading(heading) = block else {
             continue;
         };
@@ -1167,11 +1252,11 @@ mod tests {
 
     use super::{
         DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID, INVALID_ANCHOR, INVALID_CATALOG, INVALID_TABLE,
-        LINE_TOO_LONG, LINT_RULES, LintConfig, LintDiagnosticBody, LintDiagnosticSink,
+        LINE_TOO_LONG, LINT_RULES, LintConfig, LintDiagnosticBody, LintDiagnosticSink, LintRuleId,
         MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE, UNUSED_ATTRIBUTE,
         lint, lint_rule, lint_with_analysis_limits, render_lint_rule_catalog_json, text_range,
     };
-    use crate::diagnostic::{Applicability, RelatedInformation, Severity};
+    use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
 
     #[test]
     fn lint_rule_catalog_is_unique_resolvable_and_sorted_in_json() {
@@ -1219,7 +1304,7 @@ mod tests {
             lint_rule(PROTECTED_ATTRIBUTE.as_str())
                 .expect("registered rule")
                 .default_severity,
-            Severity::Error
+            Severity::Warning
         );
         assert_eq!(
             LintConfig::default().rule(PROTECTED_ATTRIBUTE).severity,
@@ -1233,18 +1318,16 @@ mod tests {
                 .severity,
             Severity::Warning
         );
-    }
 
-    #[test]
-    fn lint_rules_cannot_construct_diagnostics_outside_the_sink() {
-        let source = include_str!("lint.rs");
-        assert_eq!(source.matches(concat!("Diagnostic", " {")).count(), 1);
-        assert_eq!(
-            source
-                .matches(concat!("self.diagnostics.push", "(Diagnostic"))
-                .count(),
-            1
-        );
+        let mut config = LintConfig::default();
+        config
+            .protected_attributes
+            .insert("locked".to_owned(), Some("expected".to_owned()));
+        let diagnostics = lint(":locked: changed\n", &config).expect("lint");
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == PROTECTED_ATTRIBUTE.as_str()
+                && diagnostic.severity == Severity::Error
+        }));
     }
 
     #[test]
@@ -1264,25 +1347,25 @@ mod tests {
         let mut sink = LintDiagnosticSink::new(&config);
         let range = text_range(0, 1).expect("range");
 
-        assert!(!sink.emit(TRAILING_WHITESPACE, range, || {
+        sink.emit(TRAILING_WHITESPACE, range, || {
             calls.set(calls.get() + 1);
             LintDiagnosticBody::new("disabled")
-        }));
+        });
         assert_eq!(calls.get(), 0);
-        assert!(sink.emit(LINE_TOO_LONG, range, || {
+        sink.emit(LINE_TOO_LONG, range, || {
             calls.set(calls.get() + 1);
             LintDiagnosticBody::new("accepted")
-        }));
+        });
         assert_eq!(calls.get(), 1);
-        assert!(sink.emit(INVALID_ANCHOR, range, || {
+        sink.emit(INVALID_ANCHOR, range, || {
             calls.set(calls.get() + 1);
             LintDiagnosticBody::new("second")
-        }));
+        });
         assert_eq!(calls.get(), 2);
-        assert!(!sink.emit(INVALID_TABLE, range, || {
+        sink.emit(INVALID_TABLE, range, || {
             calls.set(calls.get() + 1);
             LintDiagnosticBody::new("full")
-        }));
+        });
         assert_eq!(calls.get(), 2);
 
         let zero = LintConfig {
@@ -1290,10 +1373,10 @@ mod tests {
             ..LintConfig::default()
         };
         let mut zero_sink = LintDiagnosticSink::new(&zero);
-        assert!(!zero_sink.emit(LINE_TOO_LONG, range, || {
+        zero_sink.emit(LINE_TOO_LONG, range, || {
             calls.set(calls.get() + 1);
             LintDiagnosticBody::new("zero")
-        }));
+        });
         assert_eq!(calls.get(), 2);
     }
 
@@ -1366,6 +1449,7 @@ mod tests {
         let mut sink = LintDiagnosticSink::new(&config);
         let first = text_range(0, 1).expect("first");
         let fix_range = text_range(4, 4).expect("fix");
+        let second_fix_range = text_range(6, 6).expect("second fix");
         let duplicate = text_range(8, 9).expect("duplicate");
 
         sink.emit(DUPLICATE_ANCHOR, duplicate, || {
@@ -1375,20 +1459,35 @@ mod tests {
             }])
         });
         sink.emit(MACRO_BOUNDARY, fix_range, || {
-            LintDiagnosticBody::new("boundary").with_fix(
-                "insert",
-                fix_range,
-                " ",
-                Applicability::Maybe,
-            )
+            LintDiagnosticBody::new("boundary")
+                .with_fix(
+                    "insert",
+                    Applicability::Maybe,
+                    vec![
+                        TextEdit {
+                            range: fix_range,
+                            replacement: " ".to_owned(),
+                        },
+                        TextEdit {
+                            range: second_fix_range,
+                            replacement: " ".to_owned(),
+                        },
+                    ],
+                )
+                .with_edit_fix("alternative", fix_range, "_", Applicability::Always)
         });
         let diagnostics = sink.finish();
 
         assert_eq!(diagnostics[0].code.as_str(), "macro-boundary");
+        assert_eq!(diagnostics[0].fixes.len(), 2);
         assert_eq!(diagnostics[0].fixes[0].title, "insert");
         assert_eq!(diagnostics[0].fixes[0].applicability, Applicability::Maybe);
+        assert_eq!(diagnostics[0].fixes[0].edits().len(), 2);
         assert_eq!(diagnostics[0].fixes[0].edits()[0].range, fix_range);
         assert_eq!(diagnostics[0].fixes[0].edits()[0].replacement, " ");
+        assert_eq!(diagnostics[0].fixes[0].edits()[1].range, second_fix_range);
+        assert_eq!(diagnostics[0].fixes[1].title, "alternative");
+        assert_eq!(diagnostics[0].fixes[1].applicability, Applicability::Always);
         assert_eq!(diagnostics[1].code.as_str(), "duplicate-anchor");
         assert_eq!(diagnostics[1].related.len(), 1);
         assert_eq!(diagnostics[1].related[0].message, "first");
@@ -1403,13 +1502,31 @@ mod tests {
         let range = text_range(0, 1).expect("range");
 
         sink.emit(LINE_TOO_LONG, range, || {
-            LintDiagnosticBody::new("too long").with_fix(
+            LintDiagnosticBody::new("too long").with_edit_fix(
                 "invalid",
                 range,
                 "",
                 Applicability::Always,
             )
         });
+    }
+
+    #[test]
+    #[should_panic(expected = "lint diagnostic rule is registered")]
+    fn diagnostic_sink_rejects_rules_missing_from_the_catalog() {
+        let rule = LintRuleId("missing-from-catalog");
+        let mut config = LintConfig::default();
+        config.set_rule(
+            rule,
+            RuleSettings {
+                enabled: true,
+                severity: Severity::Warning,
+            },
+        );
+        let mut sink = LintDiagnosticSink::new(&config);
+        let range = text_range(0, 1).expect("range");
+
+        sink.emit(rule, range, || LintDiagnosticBody::new("invalid rule"));
     }
 
     #[test]

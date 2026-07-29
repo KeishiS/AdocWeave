@@ -1579,6 +1579,20 @@ mod tests {
         assert_eq!(response.diagnostics[0].code, "trailing-whitespace");
         assert_eq!(response.diagnostics[0].severity, WasmSeverity::Error);
 
+        let mut protected = request(":locked: changed\n");
+        protected
+            .analysis_options
+            .diagnostics
+            .protected_attributes
+            .insert("locked".to_owned(), Some("expected".to_owned()));
+        let response = process_request(protected, &NeverCancel).expect("protected attribute");
+        let diagnostic = response
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "protected-attribute")
+            .expect("protected attribute diagnostic");
+        assert_eq!(diagnostic.severity, WasmSeverity::Error);
+
         let mut unknown = request("text");
         unknown
             .analysis_options
