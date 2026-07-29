@@ -10,31 +10,29 @@ import {
 import manifest from "../release-manifest.json" with { type: "json" };
 import protocol from "../protocol/public-api.json" with { type: "json" };
 
-test("Release Notesはv0.17.1の修正と受入契約を含む", () => {
+test("Release Notesはv0.18.0の互換性訂正と移行方法を含む", () => {
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /CST（入力を失わず保持する構文木）/);
-  assert.match(notes, /`SyntaxTree::reconstruct\(\)`/);
-  assert.match(notes, /byte単位で復元/);
-  assert.match(notes, /入れ子になった未閉じdelimiter/);
-  assert.match(notes, /親block内へ制限/);
-  assert.match(notes, /`InternalInvariant`/);
-  assert.match(notes, /`unclosed-block`診断/);
-  assert.match(notes, /HTTP 200と対象文書の応答/);
-  assert.match(notes, /製品のCLI動作は変更していません/);
-  assert.match(notes, /## 内部品質の改善/);
-  assert.match(notes, /Dependabot自動mergeのpolicyは停止状態/);
+  assert.match(notes, /互換性のないRust API変更/);
+  assert.match(notes, /v0\.17\.1からRust API.*追加で変更していません/);
+  assert.match(notes, /v0\.17\.1のtag、source commitおよびassetは置き換えず/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
-  assert.match(notes, /v0\.17\.0からschema、公開API、CLI引数、診断codeおよびHTML契約を変更していません/);
-  assert.match(notes, /誤ったnode順、重複範囲または親blockを越えた範囲に依存するsnapshotは更新が必要/);
+  assert.match(notes, /v0\.17\.1からJSON形式のWASM protocol、schema、CLI引数、診断codeおよびHTML契約を変更していません/);
+  assert.match(notes, /v0\.17\.1のRelease Notesで公開APIを変更していないと説明したことは誤り/);
+  assert.match(notes, /## v0\.18\.0への移行/);
+  assert.match(notes, /`WasmResponse::package_version`.*`String`/);
+  assert.match(notes, /`ParseSummary`.*`usize`から`u32`/);
+  assert.match(notes, /`serialization-failed`/);
+  assert.match(notes, /`LintConfig::protected_attribute_severity`は削除/);
+  assert.match(notes, /`LintConfig::set_rule\(PROTECTED_ATTRIBUTE, RuleSettings/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
-  assert.match(notes, /`--version --json`が`0\.17\.1`を返す/);
+  assert.match(notes, /`--version --json`が`0\.18\.0`を返す/);
   assert.match(notes, /以前のVSIXとnative directoryを保持/);
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
@@ -51,7 +49,7 @@ test("Release Notesはv0.17.1の修正と受入契約を含む", () => {
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.17.0"), /v0\.17\.1専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.17\.1専用/);
+  assert.throws(() => buildReleaseNotes("v0.17.1"), /v0\.18\.0専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.18\.0専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });

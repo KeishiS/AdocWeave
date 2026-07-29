@@ -16,29 +16,31 @@ export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERS
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## 対応環境",
   "## 公開契約と破壊的変更",
+  "## v0.18.0への移行",
   "## 既知の制約",
   "## 配布物の検証",
   "## 更新とロールバック",
 ];
 
 const highlights = [
-  "保留中のblock metadataとcommentを含む入力で、CST（入力を失わず保持する構文木）のnodeがsource順から外れる問題を修正しました。`SyntaxTree::reconstruct()`は解析に成功した入力をbyte単位で復元します。",
-  "入れ子になった未閉じdelimiterの回復範囲を親block内へ制限しました。回復可能な入力が`InternalInvariant`となる問題を修正し、既存の`unclosed-block`診断を返します。",
-  "`adocweave preview`のSIGTERM終了テストは、HTTP 200と対象文書の応答を確認してからsignalを送るようになりました。製品のCLI動作は変更していません。",
-];
-
-const internalChanges = [
-  "CLIのcommand定義、HTML変換workflow、Language Serverのposition・semantic token変換、WASMのwire型生成を責務ごとに分割しました。",
-  "Lint診断を共通sinkへ統合し、診断上限に達した時点でsemantic treeの走査を停止できるようにしました。",
-  "Pull Requestのcandidate family別導入検査とDependabot自動mergeの安全基盤を追加しました。Dependabot自動mergeのpolicyは停止状態を維持しています。",
+  "v0.17.1で先行して公開した互換性のないRust API変更を、プロジェクトの互換性方針に従うminor版として明示します。",
+  "v0.17.1からRust API、JSON形式のWASM protocol、CLI、診断、HTMLおよび実行時の動作を追加で変更していません。",
+  "v0.17.1のtag、source commitおよびassetは置き換えず、v0.18.0を新しいtag、asset、checksumおよびattestationで公開します。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.17.0からschema、公開API、CLI引数、診断codeおよびHTML契約を変更していません。`,
-  "CSTの孤立metadata、commentおよび未閉じblockの回復node配置は、source順と親block境界に合うよう修正されます。v0.17.0の誤ったnode順、重複範囲または親blockを越えた範囲に依存するsnapshotは更新が必要です。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.17.1からJSON形式のWASM protocol、schema、CLI引数、診断codeおよびHTML契約を変更していません。`,
+  "v0.17.0からは公開Rust APIに互換性のない変更があります。v0.17.1のRelease Notesで公開APIを変更していないと説明したことは誤りでした。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
+];
+
+const migrationNotes = [
+  "`WasmResponse::package_version`と`ParseSummary::package_version`は`&'static str`から`String`へ変わりました。文字列として借用する場合は`as_str()`を使用してください。",
+  "`ParseSummary`の`block_count`、`node_count`および`reference_count`は`usize`から`u32`へ変わりました。`usize`が必要な場合は明示的に変換してください。値が`u32`へ収まらない場合は切り詰めず`serialization-failed`を返します。",
+  "`LintConfig::protected_attribute_severity`は削除されました。`LintConfig::set_rule(PROTECTED_ATTRIBUTE, RuleSettings { enabled, severity })`を使用してください。現在の設定は`LintConfig::rule(PROTECTED_ATTRIBUTE)`で取得できます。",
+  "v0.17.1から更新する場合、これらのRust APIに追加の移行はありません。CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを0.18.0へそろえてください。",
 ];
 
 const knownConstraints = [
@@ -80,15 +82,15 @@ export function buildReleaseNotes(tag) {
     )
     .join("\n");
   const notes = `## 主な変更\n\n${markdownList(highlights)}\n\n` +
-    `## 内部品質の改善\n\n${markdownList(internalChanges)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${markdownList(contractNotes)}\n\n` +
     "consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、ZedまたはVS Code向け配布物を混在させないでください。\n\n" +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n${markdownList(knownConstraints)}\n\n` +
-    `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n` +
-    "すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/adocweave`で検証してください。\n\n" +
+    `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n${markdownList(migrationNotes)}\n\n` +
+    `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n${markdownList(knownConstraints)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
-    "native archiveはversion別directoryへ展開し、`--version --json`が`0.17.1`を返すことを確認してから選択先を切り替えてください。\n\n" +
+    "すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/adocweave`で検証してください。\n\n" +
+    `${REQUIRED_RELEASE_NOTE_HEADINGS[5]}\n\n` +
+    "native archiveはversion別directoryへ展開し、`--version --json`が`0.18.0`を返すことを確認してから選択先を切り替えてください。\n\n" +
     "VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。\n\n" +
     "rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
   return notes;
