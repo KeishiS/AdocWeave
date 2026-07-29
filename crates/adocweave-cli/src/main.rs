@@ -2129,9 +2129,16 @@ fn run() -> Result<ExitCode, CliError> {
                         &project_config.analysis,
                         &project_config.format,
                     )?,
-                    CommandOptions::Symbols => {
-                        commands::symbols::process(&processed, &project_config.analysis)?
-                    }
+                    CommandOptions::Symbols => commands::symbols::process(
+                        &processed,
+                        &project_config.analysis,
+                    )
+                    .map_err(|error| match error {
+                        commands::symbols::Error::InvalidUtf8 { valid_up_to } => {
+                            CliError::InvalidUtf8 { valid_up_to }
+                        }
+                        commands::symbols::Error::Analysis(source) => CliError::Analysis(source),
+                    })?,
                     CommandOptions::ConfigShow => unreachable!("config show handled above"),
                     CommandOptions::Preview { .. } => unreachable!("preview handled above"),
                     CommandOptions::Check(_) => unreachable!("check handled above"),
