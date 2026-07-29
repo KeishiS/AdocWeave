@@ -113,6 +113,10 @@ export function validatePinnedActions(workflows) {
   }
 }
 
+export function installationE2ESchedule({ nativeRequired, verifyCandidateResult }) {
+  return nativeRequired === true && verifyCandidateResult === "success" ? "run" : "skipped";
+}
+
 export function validateReleaseWorkflowPolicy({
   release,
   publish,
@@ -225,13 +229,16 @@ export function validateReleaseWorkflowPolicy({
   for (const [jobName, condition] of [
     ["build-native", "needs.changes.outputs.native_required == 'true'"],
     ["native-smoke", "needs.changes.outputs.native_required == 'true'"],
-    ["installation-e2e", "needs.changes.outputs.native_required == 'true'"],
     ["build-global", "needs.changes.outputs.global_required == 'true'"],
     ["verify-candidate", "always() && needs.changes.outputs.candidate_required == 'true'"],
   ]) {
     if (releaseJobs[jobName]?.if !== condition) {
       fail(`${jobName} must use the explicit candidate change plan`);
     }
+  }
+  if (releaseJobs["installation-e2e"]?.if !==
+      "always() && needs.changes.outputs.native_required == 'true' && needs.verify-candidate.result == 'success'") {
+    fail("installation-e2e must run only for a verified native candidate without inheriting unrelated skips");
   }
   for (const [label, matrix, expected] of [
     ["native build", releaseJobs["build-native"]?.strategy?.matrix, "${{ fromJSON(needs.changes.outputs.native_matrix) }}"],
