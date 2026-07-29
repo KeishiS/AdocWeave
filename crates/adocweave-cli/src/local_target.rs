@@ -174,7 +174,8 @@ const fn message(error: &LocalTargetError) -> &'static str {
         }
         LocalTargetError::PermissionDenied(_) => "local target cannot be read",
         LocalTargetError::LimitExceeded { .. } => "local target inspection limit exceeded",
-        LocalTargetError::Unverifiable(_)
+        LocalTargetError::InvalidUtf8(_)
+        | LocalTargetError::Unverifiable(_)
         | LocalTargetError::ResourceTooLarge(_)
         | LocalTargetError::ReadLimitExceeded => "local target cannot be verified",
     }

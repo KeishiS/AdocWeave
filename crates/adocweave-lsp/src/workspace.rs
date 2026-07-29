@@ -2,13 +2,13 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
-use adocweave_host::{LocalResourcePolicy, ResourceBudget};
+use adocweave_host::{LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId};
 use adocweave_workspace::{
     Generation, ResourceId, Revision, Workspace, WorkspaceAnalysis, WorkspaceLimits,
-    WorkspaceSnapshot, scan_filesystem,
+    WorkspaceSnapshot, scan_filesystem_with_session,
 };
 use async_lsp::lsp_types::Url;
 
@@ -49,12 +49,20 @@ impl WorkspaceInput {
 pub struct WorkspaceResources {
     inner: Workspace,
     roots: Vec<PathBuf>,
-    policy: Option<LocalResourcePolicy>,
+    filesystem: Option<Arc<Mutex<LocalFilesystemSession>>>,
     next_disk_version: i64,
 }
 
 impl WorkspaceResources {
     pub fn load_roots(&mut self, roots: &[Url]) -> Result<(), String> {
+        self.load_roots_with_limits(roots, WorkspaceLimits::default())
+    }
+
+    fn load_roots_with_limits(
+        &mut self,
+        roots: &[Url],
+        limits: WorkspaceLimits,
+    ) -> Result<(), String> {
         let mut paths = roots
             .iter()
             .map(|root| {
@@ -66,11 +74,18 @@ impl WorkspaceResources {
             .collect::<Result<Vec<_>, _>>()?;
         paths.sort();
         paths.dedup();
-        let limits = WorkspaceLimits::default();
-        let files = if paths.is_empty() {
-            Vec::new()
-        } else {
-            scan_filesystem(&paths, limits.resources).map_err(|error| error.to_string())?
+        let mut filesystem = (!paths.is_empty())
+            .then(|| LocalFilesystemPolicy::new(paths.clone(), limits.resources))
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .map(|policy| policy.session())
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let files = match filesystem.as_mut() {
+            Some(session) => {
+                scan_filesystem_with_session(session).map_err(|error| error.to_string())?
+            }
+            None => Vec::new(),
         };
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
         let mut inner = Workspace::new_at_generation(limits, seed);
@@ -83,13 +98,9 @@ impl WorkspaceResources {
                 .map_err(|error| error.to_string())?;
             inner.register_root(id).map_err(|error| error.to_string())?;
         }
-        let policy = (!paths.is_empty())
-            .then(|| LocalResourcePolicy::new(paths.clone(), limits.resources))
-            .transpose()
-            .map_err(|error| error.to_string())?;
         self.inner = inner;
         self.roots = paths;
-        self.policy = policy;
+        self.filesystem = filesystem.map(|session| Arc::new(Mutex::new(session)));
         self.next_disk_version = next_disk_version;
         Ok(())
     }
@@ -113,7 +124,7 @@ impl WorkspaceResources {
         Ok(strings(affected))
     }
 
-    fn read_workspace_file(&self, path: &Path) -> Result<Arc<str>, String> {
+    fn read_workspace_file(&mut self, path: &Path) -> Result<Arc<str>, String> {
         if path.extension().and_then(|value| value.to_str()) != Some("adoc") {
             return Err(format!(
                 "workspace resource is not an .adoc file: {}",
@@ -121,14 +132,18 @@ impl WorkspaceResources {
             ));
         }
         let policy = self
-            .policy
-            .as_ref()
+            .filesystem
+            .as_mut()
             .ok_or_else(|| "workspace resource policy is not initialized".to_owned())?;
-        let mut budget = ResourceBudget::default();
         policy
-            .validate_file(&mut budget, path)
-            .and_then(adocweave_host::ValidatedFilesystemTarget::into_loaded_utf8)
-            .map(|loaded| Arc::<str>::from(loaded.into_parts().1))
+            .lock()
+            .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
+            .reread_utf8(
+                LogicalSourceId::new(path.to_string_lossy().into_owned())
+                    .map_err(|error| error.to_string())?,
+                path,
+            )
+            .map(|loaded| loaded.into_parts().1)
             .map_err(|error| error.to_string())
     }
 
@@ -159,6 +174,12 @@ impl WorkspaceResources {
     }
 
     pub fn remove_disk(&mut self, uri: &Url) -> BTreeSet<String> {
+        if let Ok(path) = uri.to_file_path()
+            && let Some(filesystem) = &self.filesystem
+            && let Ok(mut session) = filesystem.lock()
+        {
+            session.release(&path);
+        }
         uri_id(uri)
             .map(|id| strings(self.inner.remove_disk(&id)))
             .unwrap_or_default()
@@ -325,4 +346,121 @@ fn strings(values: BTreeSet<ResourceId>) -> BTreeSet<String> {
 
 fn parent_uri(uri: &Url) -> Option<String> {
     uri.join(".").ok().map(|uri| uri.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "adocweave-lsp-filesystem-session-{}-{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&path).expect("workspace root");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn watched_file_reload_reads_the_new_filesystem_snapshot() {
+        let root = TestDirectory::new();
+        let path = root.0.join("document.adoc");
+        std::fs::write(&path, "first\n").expect("initial source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("initial resource")
+                .text()
+                .as_ref(),
+            "first\n"
+        );
+
+        std::fs::write(&path, "second\n").expect("updated source");
+        resources
+            .reload_file(document_uri.clone())
+            .expect("reload resource");
+
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("updated resource")
+                .text()
+                .as_ref(),
+            "second\n"
+        );
+    }
+
+    #[test]
+    fn watched_file_reloads_share_the_workspace_filesystem_budget() {
+        let root = TestDirectory::new();
+        let first = root.0.join("first.adoc");
+        let second = root.0.join("second.adoc");
+        std::fs::write(&first, "first\n").expect("initial source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let mut resources = WorkspaceResources::default();
+        let mut limits = WorkspaceLimits::default();
+        limits.resources.max_files = 1;
+        resources
+            .load_roots_with_limits(&[root_uri], limits)
+            .expect("load workspace");
+
+        std::fs::write(&second, "second\n").expect("new source");
+        let second_uri = Url::from_file_path(&second).expect("document URI");
+        let error = resources
+            .reload_file(second_uri)
+            .expect_err("shared file limit");
+
+        assert!(error.contains("file limit"), "{error}");
+    }
+
+    #[test]
+    fn removing_a_disk_resource_releases_its_filesystem_charge() {
+        let root = TestDirectory::new();
+        let first = root.0.join("first.adoc");
+        let second = root.0.join("second.adoc");
+        std::fs::write(&first, "first\n").expect("initial source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let first_uri = Url::from_file_path(&first).expect("first URI");
+        let mut resources = WorkspaceResources::default();
+        let mut limits = WorkspaceLimits::default();
+        limits.resources.max_files = 1;
+        resources
+            .load_roots_with_limits(&[root_uri], limits)
+            .expect("load workspace");
+
+        std::fs::remove_file(&first).expect("remove first");
+        resources.remove_disk(&first_uri);
+        std::fs::write(&second, "second\n").expect("new source");
+        let second_uri = Url::from_file_path(&second).expect("second URI");
+        resources
+            .reload_file(second_uri.clone())
+            .expect("released file charge");
+
+        assert_eq!(
+            resources
+                .get(&second_uri)
+                .expect("second resource")
+                .text()
+                .as_ref(),
+            "second\n"
+        );
+    }
 }

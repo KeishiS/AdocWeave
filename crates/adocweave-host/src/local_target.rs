@@ -285,19 +285,57 @@ impl LocalTargetSession {
         base: &Path,
         target: &str,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        self.read_utf8_after_open(base, target, || {})
+        let candidate = self.candidate(base, target)?;
+        self.read_candidate_utf8(&candidate)
     }
 
-    fn read_utf8_after_open(
+    /// Opens and reads an already normalized path below this session's root.
+    ///
+    /// The path is resolved from the root handle on platforms which advertise
+    /// [`FilesystemRaceResistance::HandleRelative`].
+    pub fn read_candidate_utf8(
+        &mut self,
+        candidate: &Path,
+    ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        self.read_candidate_utf8_with(candidate, true, || {})
+    }
+
+    /// Reopens an already normalized path without reusing cached text.
+    pub(crate) fn reread_candidate_utf8(
+        &mut self,
+        candidate: &Path,
+    ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        self.read_candidate_utf8_with(candidate, false, || {})
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_utf8_after_open(
         &mut self,
         base: &Path,
         target: &str,
         after_open: impl FnOnce(),
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        let candidate = self.candidate(base, target)?;
+        self.read_candidate_utf8_after_open(&candidate, after_open)
+    }
+
+    pub(crate) fn read_candidate_utf8_after_open(
+        &mut self,
+        candidate: &Path,
+        after_open: impl FnOnce(),
+    ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        self.read_candidate_utf8_with(candidate, true, after_open)
+    }
+
+    fn read_candidate_utf8_with(
+        &mut self,
+        candidate: &Path,
+        reuse_cached_text: bool,
+        after_open: impl FnOnce(),
+    ) -> Result<LoadedLocalTarget, LocalTargetError> {
         #[cfg(target_os = "linux")]
         let (canonical, file) = {
-            let candidate = self.candidate(base, target)?;
-            if !self.inspections.contains_key(&candidate) {
+            if !self.inspections.contains_key(candidate) {
                 if self.requests >= self.max_paths {
                     return Err(LocalTargetError::LimitExceeded {
                         limit: self.max_paths,
@@ -305,19 +343,19 @@ impl LocalTargetSession {
                 }
                 self.requests += 1;
             }
-            let opened = self.policy.open_confined(&candidate)?;
+            let opened = self.policy.open_confined(candidate)?;
             self.inspections
-                .insert(candidate, Ok(opened.canonical_path.clone()));
+                .insert(candidate.to_owned(), Ok(opened.canonical_path.clone()));
             (opened.canonical_path, opened.file)
         };
         #[cfg(not(target_os = "linux"))]
         let (canonical, file) = {
-            let canonical = self.inspect(base, target)?;
+            let canonical = self.policy.inspect_candidate(candidate)?;
             let file = self.policy.open_confined(&canonical)?;
             (canonical, file)
         };
         after_open();
-        if let Some(result) = self.text.get(&canonical) {
+        if reuse_cached_text && let Some(result) = self.text.get(&canonical) {
             return result.clone().map(|source| LoadedLocalTarget {
                 canonical_path: canonical,
                 source,
@@ -347,14 +385,11 @@ impl LocalTargetSession {
             if bytes.len() as u64 > self.limits.max_resource_bytes {
                 return Err(LocalTargetError::ResourceTooLarge(canonical.clone()));
             }
-            String::from_utf8(bytes).map_err(|source| {
-                LocalTargetError::Unverifiable(format!(
-                    "{} is not UTF-8: {source}",
-                    canonical.display()
-                ))
-            })
+            String::from_utf8(bytes).map_err(|_| LocalTargetError::InvalidUtf8(canonical.clone()))
         })();
-        self.text.insert(canonical.clone(), result.clone());
+        if reuse_cached_text {
+            self.text.insert(canonical.clone(), result.clone());
+        }
         result.map(|source| LoadedLocalTarget {
             canonical_path: canonical,
             source,
@@ -363,6 +398,15 @@ impl LocalTargetSession {
 
     pub fn inspected_paths(&self) -> usize {
         self.inspections.len()
+    }
+
+    pub(crate) fn release_candidate(&mut self, candidate: &Path) {
+        if let Some(result) = self.inspections.remove(candidate) {
+            self.requests = self.requests.saturating_sub(1);
+            if let Ok(canonical) = result {
+                self.text.remove(&canonical);
+            }
+        }
     }
 
     pub fn read_files(&self) -> usize {
@@ -566,6 +610,7 @@ pub enum LocalTargetError {
     NotFile(PathBuf),
     NotDirectory(PathBuf),
     PermissionDenied(PathBuf),
+    InvalidUtf8(PathBuf),
     Unverifiable(String),
     LimitExceeded { limit: usize },
     ResourceTooLarge(PathBuf),
@@ -579,7 +624,7 @@ impl LocalTargetError {
             Self::OutsideRoot(_) => "local-target-outside-root",
             Self::NotFile(_) | Self::NotDirectory(_) => "local-target-not-file",
             Self::PermissionDenied(_) => "local-target-permission-denied",
-            Self::Unverifiable(_) => "local-target-unverifiable",
+            Self::InvalidUtf8(_) | Self::Unverifiable(_) => "local-target-unverifiable",
             Self::LimitExceeded { .. } => "local-target-limit-exceeded",
             Self::ResourceTooLarge(_) | Self::ReadLimitExceeded => "local-target-unverifiable",
         }
@@ -611,6 +656,13 @@ impl fmt::Display for LocalTargetError {
                 write!(
                     formatter,
                     "permission denied for local target: {}",
+                    path.display()
+                )
+            }
+            Self::InvalidUtf8(path) => {
+                write!(
+                    formatter,
+                    "local target is not valid UTF-8: {}",
                     path.display()
                 )
             }

@@ -67,11 +67,22 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 ``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
 
-CLIのinclude loaderは処理段階を型で区別します。コアが所有する``IncludeRequest``は論理targetと
-source rangeだけを持ちます。Filesystem policyとsymlink検査を通過した場合だけ、loaderがprivate fieldを持つ
-``ValidatedFilesystemTarget``を構築します。この値を同じsessionの読込処理が消費した場合だけ、
-論理的な``source_id``、取得済みbyte列およびfilesystem provenanceを持つ``LoadedSource``を構築します。
-未検証pathから読込結果を構築するAPIや、別targetの``source_id``とbyte列を組み合わせるAPIは公開しません。
+Native側のfile読込は``LocalFilesystemSession``を経由します。このsessionは許可したrootごとの
+filesystem adapterと、全rootで共有するfile数・byte数の上限を所有します。呼出側は公開用の
+``LogicalSourceId``と絶対pathを同時に渡し、読込結果を``LoadedFilesystemSource``として受け取ります。
+この値は論理IDと不変な本文を一回の読込結果として保持します。検査に使ったcanonical pathはfieldとして
+直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
+相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
+
+Linuxでは、CLIのinclude、Language Serverのworkspace読込および``adocweave-workspace``のfile走査が
+同じhandle相対adapterを使用します。macOSとWindowsでは``StaticSnapshotOnly``を返し、同時に書き換えられる
+workspaceをsecurity境界として扱いません。
+Language Serverは初回走査とfile変更通知でworkspace単位のsessionを共有します。変更通知では本文cacheを
+使用せずに対象を再度openしますが、走査から継続するfile数・byte数の上限は初期化しません。
+
+複数rootは独立したfilesystem境界です。あるroot内のsymlinkが別の許可済みrootを指す場合も、
+読込開始時に選んだrootから外へ移動するため拒否します。同じfileを両方のrootから参照する必要がある場合は、
+symlinkではなく対象fileが属するroot以下の絶対pathを指定します。
 
 ``base_uri``はroot文書の相対targetへ前置する論理的なsnapshot keyであり、実在するpathを意味しません。
 Include先の相対targetは、そのresource keyの親を基準に解決します。取得方法、cache、認証、timeout、
@@ -81,8 +92,8 @@ redirect、response size、content typeおよびnetwork addressの制限は利�
 Includeを無効にした場合はdirectiveを展開せず、snapshotも参照しません。循環、絶対path、path traversal、
 制御文字および許可していないschemeを拒否します。
 
-CLIとLanguage Serverは、同一のpath検査、上限付きUTF-8読み取り、byte数集計および
-依存関係構築規則を使用します。各adapterで異なる上限やsymlink判定を設けません。
+CLI、Language Serverおよびworkspace走査は、同一のpath検査、上限付きUTF-8読み取り、byte数集計および
+filesystem競合耐性を使用します。各adapterで異なる読込処理やsymlink判定を設けません。
 Canonical pathは検査、cacheおよびprovenanceに限定し、診断とsource mapにはinclude要求から導出した
 論理的な``SourceId``を使用します。Aliasが同じcanonical fileを指す場合も論理IDは統合しません。
 

@@ -34,8 +34,9 @@ fn preview_get(address: std::net::SocketAddr, path: &str) -> String {
     use std::time::Duration;
 
     for _ in 0..200 {
-        if let Ok(mut stream) = TcpStream::connect(address) {
-            write!(stream, "GET {path} HTTP/1.1\r\nHost: {address}\r\n\r\n").expect("request");
+        if let Ok(mut stream) = TcpStream::connect(address)
+            && write!(stream, "GET {path} HTTP/1.1\r\nHost: {address}\r\n\r\n").is_ok()
+        {
             let mut response = String::new();
             if stream.read_to_string(&mut response).is_ok() {
                 return response;

@@ -44,15 +44,18 @@ best effortとして提供します。portable adapterは信頼していない�
 みなしません。consumerはadapterのcapabilityを確認し、敵対的な同時変更を境界に含める場合は未対応platformで
 local target検査とinclude読込を無効にするか、書換え不能なsnapshotへ入力をコピーします。
 
-検査だけのlocal targetと本文を読むincludeは同じfilesystem adapterとsessionを使用します。成功cacheは
+検査だけのlocal target、本文を読むinclude、Language Serverのworkspace読込およびworkspace走査は
+同じfilesystem adapterを使用します。本文を読む処理は、用途ごとに一つのsessionと処理上限を共有します。成功cacheは
 論理候補pathではなく、同じ解決操作で得たfile identityと取得済み結果を保持します。失敗もcommand内だけで
-cacheし、次のcommandでは再検査します。診断とsource mapには論理的な``SourceId``を使用し、OS pathや
+cacheし、次のcommandでは再検査します。Language Serverのfile変更通知では同じsessionと処理上限を維持したまま
+対象を再度openし、古い本文cacheを使用しません。診断とsource mapには論理的な``SourceId``を使用し、OS pathや
 handleを公開しません。
 
-ADR 0002およびIssue 60で定める型分離では、``FilesystemTarget``を単なるcanonical pathの印として扱いません。
-敵対的な同時変更へ耐えるadapterの検証済みtargetは、検査した同じopen file handleまたはそこから読み取った
-immutableなbyte列をprivate fieldに所有します。``LoadedSource``への変換でpathを再度openせず、論理的な
-source identityは別fieldとして関連付けます。これにより型の生成条件とfilesystemの原子性を同じ境界にします。
+``LocalFilesystemSession``はrootごとのadapterと全rootで共有する処理上限を所有します。
+``LoadedFilesystemSource``は``LogicalSourceId``と不変な本文を保持し、検査したfileのprovenanceを
+直接構築できないfieldに分離します。読込後にpathを再度openせず、論理ID、本文およびprovenanceを
+一回の読込結果として構築します。呼出側は監視用のcanonical pathをaccessorから参照できますが、
+診断とsource mapには論理IDを使用します。
 
 == 検証方針
 
@@ -73,3 +76,7 @@ Linux配布物では、検査と利用の間にpathを差し替えてroot外を�
 platform別adapter、OS errorの安定した分類および決定的な競合test用境界が必要になります。portable Rust APIは
 従来どおり広いplatformで利用できますが、capabilityを確認しないconsumerは敵対的な同時変更への耐性を
 仮定できません。
+
+複数の許可rootは独立した境界として扱います。あるroot内のsymlinkが別の許可rootを指していても、
+最初に選んだrootのhandleから外へ移動する解決は拒否します。読込APIは絶対pathを要求し、相対pathから
+rootを暗黙に選びません。
