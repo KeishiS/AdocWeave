@@ -660,10 +660,10 @@ mod tests {
 
     use super::{
         DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID, INVALID_ANCHOR, INVALID_CATALOG, INVALID_TABLE,
-        LINE_TOO_LONG, LINT_RULES, LintConfig, LintDiagnosticBody, LintDiagnosticSink, LintError,
-        LintRuleId, MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE,
-        UNUSED_ATTRIBUTE, lint, lint_analysis_cancellable, lint_rule, lint_with_analysis_limits,
-        render_lint_rule_catalog_json, text_range,
+        LINE_TOO_LONG, LINT_RULES, LintConfig, LintContext, LintDiagnosticBody, LintDiagnosticSink,
+        LintError, LintRuleId, MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings,
+        TRAILING_WHITESPACE, UNUSED_ATTRIBUTE, lint, lint_analysis, lint_analysis_cancellable,
+        lint_rule, lint_with_analysis_limits, render_lint_rule_catalog_json, text_range,
     };
     use crate::core::{AnalysisOptions, CancellationCheck, Engine};
     use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
@@ -689,6 +689,84 @@ mod tests {
 
         assert_eq!(error, LintError::Cancelled);
         assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn attribute_lint_checks_cancellation_inside_binding_reference_indexing() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let mut source = String::new();
+        for index in 0..160 {
+            source.push_str(&format!(":attribute-{index}: value\n"));
+        }
+        source.push('\n');
+        for index in 0..160 {
+            source.push_str(&format!("{{attribute-{index}}} "));
+        }
+        source.push('\n');
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&source)
+            .expect("analysis");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+        let config = LintConfig::default();
+        let mut sink = LintDiagnosticSink::new_cancellable(&config, &cancellation);
+
+        super::attributes::lint_attributes(
+            &LintContext::new(analysis.syntax(), analysis.ast()),
+            &mut sink,
+        );
+
+        assert!(sink.cancelled);
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn reference_target_index_construction_is_cancellable() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = (0..crate::cancellation::CHECKPOINT_INTERVAL * 2)
+            .map(|index| format!("[[target-{index}]]\nparagraph\n\n"))
+            .collect::<String>();
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&source)
+            .expect("analysis");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+        let config = LintConfig::default();
+        let mut sink = LintDiagnosticSink::new_cancellable(&config, &cancellation);
+
+        super::references::lint_links_and_references(
+            &LintContext::new(analysis.syntax(), analysis.ast()),
+            &mut sink,
+        );
+
+        assert!(sink.cancelled);
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn never_cancel_lint_api_preserves_diagnostics() {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze("paragraph  \n\nxref:missing[Missing]\n")
+            .expect("analysis");
+        let config = LintConfig::default();
+
+        assert_eq!(
+            lint_analysis_cancellable(&analysis, &config, &crate::core::NeverCancel)
+                .expect("cancellable lint"),
+            lint_analysis(&analysis, &config).expect("compatibility lint")
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::attributes::{AttributeBindingId, DocumentAttributeOperation};
 use crate::source::TextRange;
@@ -37,48 +37,64 @@ pub(super) fn lint_attributes(context: &LintContext<'_>, sink: &mut LintDiagnost
         return;
     }
     let environment = document.attribute_environment();
+    let bindings = environment.bindings();
+    let mut bindings_by_start = BTreeMap::<_, Vec<usize>>::new();
+    for (index, binding) in bindings.iter().enumerate() {
+        if sink.should_stop() {
+            return;
+        }
+        bindings_by_start
+            .entry(binding.occurrence().value.source_range.start())
+            .or_default()
+            .push(index);
+    }
     let references = document.resolved.facts().attribute_references();
-    let inline_references = references
-        .iter()
-        .filter(|reference| {
-            !environment.bindings().iter().any(|binding| {
-                contains_range(
-                    binding.occurrence().value.source_range,
-                    reference.name_range,
-                )
-            })
-        })
-        .cloned()
-        .collect();
+    let mut inline_references = Vec::new();
+    let mut binding_references = vec![Vec::new(); bindings.len()];
+    for reference in references {
+        if sink.should_stop() {
+            return;
+        }
+        let binding_index = bindings_by_start
+            .range(..=reference.name_range.start())
+            .next_back()
+            .and_then(|(_, candidates)| {
+                candidates.iter().rev().copied().find(|index| {
+                    contains_range(
+                        bindings[*index].occurrence().value.source_range,
+                        reference.name_range,
+                    )
+                })
+            });
+        if let Some(index) = binding_index {
+            binding_references[index].push(reference);
+        } else {
+            inline_references.push(reference.clone());
+        }
+    }
     let mut used_bindings = BTreeSet::<AttributeBindingId>::new();
     lint_attribute_reference_uses(inline_references, &mut used_bindings, sink);
     if sink.should_stop() {
         return;
     }
-    for binding in environment.bindings() {
+    for (binding, binding_references) in bindings.iter().zip(binding_references) {
         if sink.should_stop() {
             break;
         }
-        let references = references
-            .iter()
-            .filter(|reference| {
-                contains_range(
-                    binding.occurrence().value.source_range,
-                    reference.name_range,
-                )
-            })
-            .collect::<Vec<_>>();
-        for reference in &references {
+        for reference in &binding_references {
+            if sink.should_stop() {
+                return;
+            }
             used_bindings.extend(reference.binding_id);
         }
         if let Err(error) = binding.value() {
-            let range = references.first().map_or_else(
+            let range = binding_references.first().map_or_else(
                 || binding.occurrence().value.source_range,
                 |reference| reference.name_range,
             );
             let undefined_reference =
                 if error == crate::substitution::AttributeExpansionError::Undefined {
-                    references.first().copied()
+                    binding_references.first().copied()
                 } else {
                     None
                 };

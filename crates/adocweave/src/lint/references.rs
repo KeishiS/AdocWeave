@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
 
 use crate::diagnostic::{Applicability, RelatedInformation};
@@ -26,10 +26,16 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
     sink: &mut LintDiagnosticSink<'_>,
     mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
 ) {
-    let targets = crate::document::reference_targets_ast(document);
+    let mut targets = BTreeSet::new();
+    for target in document.identifiers().targets() {
+        if sink.should_stop() {
+            return;
+        }
+        targets.insert(target.id.clone());
+    }
     fn inspect(
         inline: &crate::inline::Inline,
-        targets: &[crate::document::ReferenceTarget],
+        targets: &BTreeSet<String>,
         authored_url_policy: &AuthoredUrlPolicy,
         sink: &mut LintDiagnosticSink<'_>,
     ) -> ControlFlow<()> {
@@ -77,7 +83,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
             }
             Inline::Reference(reference) => match &reference.target {
                 Some(ReferenceKey::Local { anchor }) => {
-                    if !targets.iter().any(|target| target.id == *anchor) {
+                    if !targets.contains(anchor.as_str()) {
                         sink.emit(UNRESOLVED_CROSS_REFERENCE, reference.target_range, || {
                             LintDiagnosticBody::new("local cross reference target does not exist")
                         });
@@ -255,7 +261,7 @@ pub(super) fn lint_anchors(context: &LintContext<'_>, sink: &mut LintDiagnosticS
     if sink.should_stop() {
         return;
     }
-    for target in crate::document::reference_targets_ast(document) {
+    for target in document.identifiers().targets() {
         if sink.should_stop() {
             break;
         }

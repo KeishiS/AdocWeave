@@ -485,10 +485,12 @@ fn project_origins(
             value: value.clone(),
         });
     }
+    let mut directives = Vec::with_capacity(input.document.directives.len());
     for directive in &input.document.directives {
         if cancellation.is_cancelled() {
             return Err(ProjectionFailure::Cancelled);
         }
+        directives.push(directive.clone());
         let Some(value) = directive.local_target() else {
             continue;
         };
@@ -506,15 +508,23 @@ fn project_origins(
             target_origins: vec![target_origin],
         });
     }
-    let symbols = crate::document::document_symbols(input.analysis.document())
-        .into_iter()
-        .map(|symbol| project_symbol(symbol, &mut project))
-        .collect::<Result<Vec<_>, ProjectionFailure>>()?;
+    let mut symbol_checkpoint = CancellationCheckpoint::new(cancellation);
+    let symbols = crate::document::document_symbols_cancellable(
+        input.analysis.document(),
+        &mut symbol_checkpoint,
+    )
+    .map_err(|()| ProjectionFailure::Cancelled)?
+    .into_iter()
+    .map(|symbol| project_symbol(symbol, &mut project))
+    .collect::<Result<Vec<_>, ProjectionFailure>>()?;
+    if cancellation.is_cancelled() {
+        return Err(ProjectionFailure::Cancelled);
+    }
     Ok(AnalysisProjection {
         attribute_bindings,
         attribute_occurrences,
         attribute_references,
-        directives: input.document.directives.clone(),
+        directives,
         diagnostics,
         local_targets,
         references,
@@ -609,6 +619,39 @@ mod tests {
 
         assert_eq!(failure, ProjectionFailure::Cancelled);
         assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn never_cancel_projection_preserves_success_and_limit_errors() {
+        let input = preprocess_and_analyze(
+            &Engine::new(AnalysisOptions::default()),
+            "== Section\n\nxref:missing[Missing]\n",
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+        )
+        .expect("analysis");
+
+        assert_eq!(
+            input
+                .project_origins_cancellable(ProjectionLimits::default(), &NeverCancel)
+                .expect("cancellable projection"),
+            input
+                .project_origins(ProjectionLimits::default())
+                .expect("compatibility projection")
+        );
+
+        let limits = ProjectionLimits {
+            max_origin_segments: 0,
+        };
+        let expected = input
+            .project_origins(limits)
+            .expect_err("compatibility projection limit");
+        assert_eq!(
+            input
+                .project_origins_cancellable(limits, &NeverCancel)
+                .expect_err("cancellable projection limit"),
+            ProjectionFailure::LimitExceeded(expected)
+        );
     }
 
     #[test]

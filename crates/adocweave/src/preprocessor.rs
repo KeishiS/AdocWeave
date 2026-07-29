@@ -349,6 +349,7 @@ pub struct PreprocessedDocument {
     pub notices: Vec<PreprocessNotice>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SourceMapInvariantError;
 
@@ -359,7 +360,7 @@ pub struct PreprocessedAnalysis {
     pub analysis: Analysis,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreprocessedAnalysisError {
     /// Combined processing settings are inconsistent.
     Options(ProcessingOptionsError),
@@ -566,19 +567,39 @@ pub fn preprocess_cancellable(
         source,
         IncludeFrame::root(options.source_id.clone(), options.base_uri.as_deref()),
     )?;
-    context
-        .source_map
-        .finish(context.directives, context.notices)
-        .map_err(|_| PreprocessError {
-            kind: PreprocessErrorKind::InternalInvariant,
-            source_id: options.source_id.clone(),
-            range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
-            requested_target: None,
-            target: None,
-            message: "source map segments are unsorted, overlapping, or outside expanded source"
-                .to_owned(),
-        })
-        .map_err(PreprocessFailure::from)
+    if cancellation.is_cancelled() {
+        return Err(PreprocessFailure::Cancelled);
+    }
+    let Context {
+        source_map,
+        directives,
+        notices,
+        mut checkpoint,
+        ..
+    } = context;
+    let document = source_map
+        .finish_cancellable(directives, notices, &mut checkpoint)
+        .map_err(|failure| match failure {
+            source_map::SourceMapFinishError::Cancelled => PreprocessFailure::Cancelled,
+            source_map::SourceMapFinishError::Invariant => {
+                PreprocessFailure::Error(PreprocessError {
+                    kind: PreprocessErrorKind::InternalInvariant,
+                    source_id: options.source_id.clone(),
+                    range: TextRange::new(TextSize::ZERO, TextSize::ZERO)
+                        .expect("zero range is ordered"),
+                    requested_target: None,
+                    target: None,
+                    message:
+                        "source map segments are unsorted, overlapping, or outside expanded source"
+                            .to_owned(),
+                })
+            }
+        })?;
+    if cancellation.is_cancelled() {
+        Err(PreprocessFailure::Cancelled)
+    } else {
+        Ok(document)
+    }
 }
 
 struct Context<'a> {
@@ -1140,7 +1161,7 @@ fn parse_line_selection(
     cancellation: &dyn CancellationCheck,
 ) -> Result<LineSelection, TextRange> {
     let mut checkpoint = CancellationCheckpoint::new(cancellation);
-    let mut ranges = Vec::new();
+    let mut ranges = BTreeMap::<usize, usize>::new();
     for item in value.split([';', ',']) {
         if checkpoint.is_cancelled() {
             return Err(zero_range());
@@ -1150,15 +1171,20 @@ fn parse_line_selection(
                 && start <= end
                 && start <= usize::MAX as u128
             {
-                ranges.push((start as usize, end.min(usize::MAX as u128) as usize));
+                let start = start as usize;
+                let end = end.min(usize::MAX as u128) as usize;
+                ranges
+                    .entry(start)
+                    .and_modify(|previous| *previous = (*previous).max(end))
+                    .or_insert(end);
             }
         } else if let Ok(line) = item.trim().parse::<u128>()
             && line <= usize::MAX as u128
         {
-            ranges.push((line as usize, line as usize));
+            let line = line as usize;
+            ranges.entry(line).or_insert(line);
         }
     }
-    ranges.sort_unstable();
     let mut normalized: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
     for (start, end) in ranges {
         if checkpoint.is_cancelled() {
@@ -1414,6 +1440,99 @@ mod tests {
             Err(zero_range())
         );
         assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn line_selection_normalizes_unordered_overlapping_and_boundary_ranges() {
+        assert_eq!(
+            parse_line_selection("5..8,1,2..4,7..10,12,12,11,20..19,not-a-line", &NeverCancel,)
+                .expect("line selection"),
+            LineSelection {
+                ranges: vec![(1, 12)]
+            }
+        );
+
+        let maximum = usize::MAX as u128;
+        assert_eq!(
+            parse_line_selection(
+                &format!("{}..{},{}", maximum - 1, u128::MAX, maximum),
+                &NeverCancel,
+            )
+            .expect("boundary line selection"),
+            LineSelection {
+                ranges: vec![(usize::MAX - 1, usize::MAX)]
+            }
+        );
+        assert_eq!(
+            parse_line_selection(&(maximum + 1).to_string(), &NeverCancel)
+                .expect("out-of-range line selection"),
+            LineSelection { ranges: Vec::new() }
+        );
+    }
+
+    #[test]
+    fn combined_processing_classifies_preprocess_cancellation_separately() {
+        let cancellation = crate::core::CancellationToken::new();
+        cancellation.cancel();
+
+        assert!(matches!(
+            preprocess_and_analyze_cancellable(
+                &Engine::new(crate::core::AnalysisOptions::default()),
+                "paragraph\n",
+                &ResourceSnapshot::default(),
+                &PreprocessOptions::default(),
+                &cancellation,
+            ),
+            Err(PreprocessedAnalysisError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn never_cancel_combined_processing_preserves_success_and_preprocess_errors() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("part"),
+                source: "included\n".into(),
+            },
+        );
+        let engine = Engine::new(crate::core::AnalysisOptions::default());
+        let options = PreprocessOptions::default();
+        let expected =
+            preprocess_and_analyze(&engine, "include::part.adoc[]\n", &snapshot, &options)
+                .expect("compatibility analysis");
+        let actual = preprocess_and_analyze_cancellable(
+            &engine,
+            "include::part.adoc[]\n",
+            &snapshot,
+            &options,
+            &NeverCancel,
+        )
+        .expect("cancellable analysis");
+
+        assert_eq!(actual.document, expected.document);
+        assert_eq!(
+            actual.analysis.document().snapshot(),
+            expected.analysis.document().snapshot()
+        );
+        assert_eq!(
+            actual.analysis.diagnostics(),
+            expected.analysis.diagnostics()
+        );
+
+        let expected_error =
+            preprocess_and_analyze(&engine, "include::missing.adoc[]\n", &snapshot, &options)
+                .expect_err("compatibility preprocessing error");
+        let actual_error = preprocess_and_analyze_cancellable(
+            &engine,
+            "include::missing.adoc[]\n",
+            &snapshot,
+            &options,
+            &NeverCancel,
+        )
+        .expect_err("cancellable preprocessing error");
+        assert_eq!(actual_error, expected_error);
     }
 
     #[test]

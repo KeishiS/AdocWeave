@@ -6,7 +6,7 @@ use adocweave::preprocess::{
     ProjectionLimits, ResourceDocument, ResourceSnapshot, SourceMapping, preprocess,
     preprocess_and_analyze_cancellable, preprocess_cancellable,
 };
-use adocweave::{AnalysisOptions, CancellationToken, Engine, ParseError};
+use adocweave::{AnalysisOptions, CancellationToken, Engine};
 use serde_json::Value;
 
 fn public_fixture() -> Value {
@@ -234,8 +234,6 @@ fn cancellable_preprocess_and_projection_apis_are_public() {
             &PreprocessOptions::default(),
             &cancellation,
         ),
-        Err(adocweave::preprocess::PreprocessedAnalysisError::Parse(
-            ParseError::Cancelled
-        ))
+        Err(adocweave::preprocess::PreprocessedAnalysisError::Cancelled)
     ));
 }

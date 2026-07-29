@@ -1,7 +1,8 @@
+#[cfg(test)]
+use super::SourceMapInvariantError;
 use super::{
     Directive, ExpandedOffset, ExpandedRange, OriginRange, PreprocessNotice, PreprocessedDocument,
-    SourceId, SourceMapInvariantError, SourceMapSegment, SourceMapping, SourceOrigin, TextRange,
-    TextSize,
+    SourceId, SourceMapSegment, SourceMapping, SourceOrigin, TextRange, TextSize,
 };
 
 pub(super) struct SourceMapBuilder {
@@ -15,6 +16,12 @@ pub(super) struct SourceMapBuilder {
 pub(super) enum SourceMapBuildError {
     ByteLimit,
     SegmentLimit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SourceMapFinishError {
+    Invariant,
+    Cancelled,
 }
 
 impl SourceMapBuilder {
@@ -57,6 +64,7 @@ impl SourceMapBuilder {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn finish(
         self,
         directives: Vec<Directive>,
@@ -64,18 +72,49 @@ impl SourceMapBuilder {
     ) -> Result<PreprocessedDocument, SourceMapInvariantError> {
         PreprocessedDocument::from_parts(self.source, self.segments, directives, notices)
     }
+
+    pub(super) fn finish_cancellable(
+        self,
+        directives: Vec<Directive>,
+        notices: Vec<PreprocessNotice>,
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<PreprocessedDocument, SourceMapFinishError> {
+        PreprocessedDocument::from_parts_checked(
+            self.source,
+            self.segments,
+            directives,
+            notices,
+            &mut || checkpoint.is_cancelled(),
+        )
+    }
 }
 
 impl PreprocessedDocument {
+    #[cfg(test)]
     pub(super) fn from_parts(
         source: String,
         source_map: Vec<SourceMapSegment>,
         directives: Vec<Directive>,
         notices: Vec<PreprocessNotice>,
     ) -> Result<Self, SourceMapInvariantError> {
-        let source_end = TextSize::new(source.len()).map_err(|_| SourceMapInvariantError)?;
+        Self::from_parts_checked(source, source_map, directives, notices, &mut || false)
+            .map_err(|_| SourceMapInvariantError)
+    }
+
+    fn from_parts_checked(
+        source: String,
+        source_map: Vec<SourceMapSegment>,
+        directives: Vec<Directive>,
+        notices: Vec<PreprocessNotice>,
+        is_cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Self, SourceMapFinishError> {
+        let source_end =
+            TextSize::new(source.len()).map_err(|_| SourceMapFinishError::Invariant)?;
         let mut previous_end = TextSize::ZERO;
         for segment in &source_map {
+            if is_cancelled() {
+                return Err(SourceMapFinishError::Cancelled);
+            }
             let output_range = segment.output_range;
             let output_length = output_range
                 .end()
@@ -92,7 +131,7 @@ impl PreprocessedDocument {
                 || output_range.end() > source_end
                 || (segment.mapping == SourceMapping::Identity && output_length != origin_length)
             {
-                return Err(SourceMapInvariantError);
+                return Err(SourceMapFinishError::Invariant);
             }
             previous_end = output_range.end();
         }
@@ -370,6 +409,38 @@ mod tests {
                 &mut checkpoint,
             ),
             Err(())
+        );
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn source_map_final_validation_is_cancellable() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl crate::core::CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let segment_count = crate::cancellation::CHECKPOINT_INTERVAL * 2;
+        let mut builder = SourceMapBuilder::new(segment_count as u32, segment_count as u32);
+        for offset in 0..segment_count {
+            builder
+                .append(
+                    "a",
+                    Some(SourceId::new(offset.to_string())),
+                    text_range(0, 1),
+                    SourceMapping::Identity,
+                )
+                .expect("segment");
+        }
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+        let mut checkpoint = crate::cancellation::CancellationCheckpoint::new(&cancellation);
+
+        assert_eq!(
+            builder.finish_cancellable(Vec::new(), Vec::new(), &mut checkpoint),
+            Err(SourceMapFinishError::Cancelled)
         );
         assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
     }
