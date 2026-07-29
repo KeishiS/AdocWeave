@@ -593,6 +593,32 @@ impl Workspace {
         }
     }
 
+    /// Captures only resources accepted by a fallible predicate.
+    ///
+    /// The predicate runs before each resource and registered root is cloned.
+    /// If it returns an error, later resources and roots are not visited or
+    /// copied into temporary snapshot state.
+    pub fn try_snapshot_resources<E>(
+        &self,
+        mut retain: impl FnMut(&ResourceId, &Resource) -> Result<bool, E>,
+    ) -> Result<WorkspaceSnapshot, E> {
+        let mut roots = BTreeSet::new();
+        let mut resources = BTreeMap::new();
+        for (id, resource) in self.effective.iter() {
+            if retain(id, resource)? {
+                if self.roots.contains(id) {
+                    roots.insert(id.clone());
+                }
+                resources.insert(id.clone(), resource.clone());
+            }
+        }
+        Ok(WorkspaceSnapshot {
+            generation: self.generation,
+            roots,
+            resources: Arc::new(resources),
+        })
+    }
+
     /// Adopts dependency information from a result that is still current.
     pub fn accept(&mut self, analysis: &WorkspaceAnalysis) -> Result<(), WorkspaceError> {
         if analysis.generation != self.generation {
@@ -773,31 +799,6 @@ impl WorkspaceSnapshot {
             roots,
             resources: Arc::new(resources),
         }
-    }
-
-    /// Produces a filtered snapshot while allowing the predicate to reject
-    /// before an accepted resource is cloned into the replacement map.
-    pub fn try_filter_resources<E>(
-        &self,
-        mut retain: impl FnMut(&ResourceId, &Resource) -> Result<bool, E>,
-    ) -> Result<Self, E> {
-        let mut resources = BTreeMap::new();
-        for (id, resource) in self.resources.iter() {
-            if retain(id, resource)? {
-                resources.insert(id.clone(), resource.clone());
-            }
-        }
-        let roots = self
-            .roots
-            .iter()
-            .filter(|root| resources.contains_key(*root))
-            .cloned()
-            .collect();
-        Ok(Self {
-            generation: self.generation,
-            roots,
-            resources: Arc::new(resources),
-        })
     }
 
     /// Preprocesses, analyzes, and projects one registered root.
@@ -1408,21 +1409,26 @@ mod tests {
     }
 
     #[test]
-    fn fallible_snapshot_filter_stops_before_later_resources_are_cloned() {
+    fn fallible_snapshot_stops_before_later_roots_and_resources_are_cloned() {
         let mut workspace = Workspace::default();
-        for (revision, name) in ["a", "b", "c"].into_iter().enumerate() {
+        let last_text: Arc<str> = Arc::from("last");
+        for revision in 0..128 {
+            let name = format!("resource-{revision:03}");
+            let id = ResourceId::new(name.clone()).expect("resource ID");
+            let text: Arc<str> = if revision == 127 {
+                Arc::clone(&last_text)
+            } else {
+                Arc::from(name)
+            };
             workspace
-                .upsert_disk(
-                    ResourceId::new(name).expect("resource ID"),
-                    Revision::new(revision as i64),
-                    name,
-                )
+                .upsert_disk(id.clone(), Revision::new(revision), text)
                 .expect("resource");
+            workspace.register_root(id).expect("root");
         }
-        let snapshot = workspace.snapshot();
         let mut visited = Vec::new();
+        let last_text_references = Arc::strong_count(&last_text);
 
-        let result = snapshot.try_filter_resources(|id, _| {
+        let result = workspace.try_snapshot_resources(|id, _| {
             visited.push(id.to_string());
             if visited.len() == 2 {
                 return Err("limit");
@@ -1431,6 +1437,35 @@ mod tests {
         });
 
         assert!(matches!(result, Err("limit")));
-        assert_eq!(visited, ["a", "b"]);
+        assert_eq!(visited, ["resource-000", "resource-001"]);
+        assert_eq!(Arc::strong_count(&last_text), last_text_references);
+    }
+
+    #[test]
+    fn direct_fallible_snapshot_registers_only_accepted_roots() {
+        let mut workspace = Workspace::default();
+        let accepted = id("accepted");
+        let rejected = id("rejected");
+        workspace
+            .upsert_disk(accepted.clone(), Revision::new(1), "accepted")
+            .expect("accepted resource");
+        workspace
+            .upsert_disk(rejected.clone(), Revision::new(1), "rejected")
+            .expect("rejected resource");
+        workspace
+            .register_root(accepted.clone())
+            .expect("accepted root");
+        workspace
+            .register_root(rejected.clone())
+            .expect("rejected root");
+
+        let snapshot = workspace
+            .try_snapshot_resources::<std::convert::Infallible>(|id, _| Ok(id == &accepted))
+            .expect("snapshot");
+
+        assert_eq!(snapshot.resources().count(), 1);
+        assert!(snapshot.get(&accepted).is_some());
+        assert!(snapshot.get(&rejected).is_none());
+        assert_eq!(snapshot.roots, BTreeSet::from([accepted]));
     }
 }

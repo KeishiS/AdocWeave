@@ -593,7 +593,6 @@ impl WorkspaceResources {
         }
         let mut allowed_schemes = BTreeSet::new();
         allowed_schemes.insert("file".to_owned());
-        let snapshot = self.inner.snapshot();
         let config_snapshot = self.config_for_uri(root)?;
         let project_config = config_snapshot.as_ref().map_or_else(
             adocweave_config::ResolvedProjectConfig::default,
@@ -633,7 +632,7 @@ impl WorkspaceResources {
         };
         let limits = project_config.resources.limit_plan.analysis_snapshot;
         let mut budget = adocweave_config::AnalysisSnapshotBudget::new(limits);
-        let snapshot = snapshot.try_filter_resources(|id, resource| {
+        let snapshot = self.inner.try_snapshot_resources(|id, resource| {
             let allowed = if id == &root_id {
                 true
             } else if !options.enable_includes {
