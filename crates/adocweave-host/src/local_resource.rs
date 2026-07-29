@@ -175,8 +175,11 @@ impl LocalFilesystemPolicy {
                     .map_err(ResourceError::from)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let session_id = NEXT_FILESYSTEM_SESSION_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, next_session_id)
+            .map_err(|_| ResourceError::SessionIdentityExhausted)?;
         Ok(LocalFilesystemSession {
-            session_id: NEXT_FILESYSTEM_SESSION_ID.fetch_add(1, Ordering::Relaxed),
+            session_id,
             next_generation: 1,
             roots: self.roots.clone(),
             sessions,
@@ -185,6 +188,10 @@ impl LocalFilesystemPolicy {
             charged: BTreeMap::new(),
         })
     }
+}
+
+const fn next_session_id(current: u64) -> Option<u64> {
+    current.checked_add(1)
 }
 
 impl LocalFilesystemSession {
@@ -650,6 +657,7 @@ pub enum ResourceError {
     NoRoots,
     InvalidRoot,
     InvalidSourceId,
+    SessionIdentityExhausted,
     InvalidRollback,
     Missing(PathBuf),
     PermissionDenied(PathBuf),
@@ -672,6 +680,9 @@ impl fmt::Display for ResourceError {
             Self::NoRoots => formatter.write_str("no local resource roots were configured"),
             Self::InvalidRoot => formatter.write_str("local resource root is not a directory"),
             Self::InvalidSourceId => formatter.write_str("local source ID is invalid"),
+            Self::SessionIdentityExhausted => {
+                formatter.write_str("filesystem session identity space is exhausted")
+            }
             Self::InvalidRollback => formatter
                 .write_str("filesystem reread rollback is stale or belongs to another session"),
             Self::Missing(path) => {
@@ -1275,6 +1286,12 @@ mod tests {
             Err(ResourceError::FileLimit { limit: 1 })
         );
         assert_eq!((budget.files(), budget.bytes()), (1, 3));
+    }
+
+    #[test]
+    fn filesystem_session_identity_never_wraps() {
+        assert_eq!(next_session_id(u64::MAX - 1), Some(u64::MAX));
+        assert_eq!(next_session_id(u64::MAX), None);
     }
 
     #[test]
