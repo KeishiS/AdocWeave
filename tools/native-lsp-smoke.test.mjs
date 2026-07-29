@@ -46,9 +46,11 @@ test("a stubborn process leaves no exit wait after the total deadline", async ()
   const deadline = createNativeSmokeDeadline(40);
   let activeWaits = 0;
   let waitCalls = 0;
+  const waitSignals = [];
   const waitForProcessExit = (_child, _milliseconds, { signal } = {}) => {
     waitCalls += 1;
-    assert.equal(signal, deadline.signal);
+    waitSignals.push(signal);
+    assert.notEqual(signal, deadline.signal);
     signal.throwIfAborted();
     activeWaits += 1;
     return new Promise((resolve, reject) => {
@@ -83,6 +85,7 @@ test("a stubborn process leaves no exit wait after the total deadline", async ()
   assert.match(error.message, /total deadline/);
   assert.deepEqual(child.kills, ["SIGTERM", "SIGKILL"]);
   assert.ok(waitCalls <= 2, waitCalls);
+  assert.ok(waitSignals.every((signal) => signal.aborted));
   assert.equal(activeWaits, 0);
   assert.equal(child.listenerCount("exit"), 0);
 });
@@ -208,6 +211,24 @@ test("a valid JSON-RPC exchange shuts down cleanly", async () => {
   assert.equal(child.stdin.destroyCount, 1);
 });
 
+test("the native smoke uses the platform-specific fixture URI", async () => {
+  const documentUri = "file:///D:/native%20smoke/fixture.adoc";
+  let openedUri;
+  const child = respondingChild({
+    onDidOpen(request) {
+      openedUri = request.params.textDocument.uri;
+    },
+  });
+  const deadline = createNativeSmokeDeadline(1000);
+  await smokeLsp("adocweave-lsp", TEST_PACKAGE_VERSION, deadline, {
+    documentUri,
+    spawnProcess: () => child,
+  });
+  deadline.dispose();
+
+  assert.equal(openedUri, documentUri);
+});
+
 test("Windows EPERM cleanup is retried inside the total deadline", async () => {
   const attempts = [];
   const deadline = createNativeSmokeDeadline(1000);
@@ -276,7 +297,7 @@ test("operation and cleanup errors are both retained", () => {
   assert.match(combined.message, /temporary directory remained/);
 });
 
-function respondingChild() {
+function respondingChild({ onDidOpen } = {}) {
   return new FakeChild({
     onRequest(request, child) {
       if (request.method === "initialize") {
@@ -286,6 +307,7 @@ function respondingChild() {
           result: { serverInfo: { version: TEST_PACKAGE_VERSION } },
         });
       } else if (request.method === "textDocument/didOpen") {
+        onDidOpen?.(request);
         child.respond({
           jsonrpc: "2.0",
           method: "textDocument/publishDiagnostics",

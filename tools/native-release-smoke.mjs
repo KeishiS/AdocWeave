@@ -3,7 +3,7 @@ import * as nodeFileSystem from "node:fs";
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   archiveEntries,
   createRuntimeAdapters,
@@ -219,7 +219,9 @@ try {
   if (!run(cli, ["convert", fixture]).includes("<h1")) throw new Error("CLI convert produced no heading");
   run(cli, ["format", "--check", fixture]);
   smokeDeadline = createNativeSmokeDeadline();
-  await smokeLsp(lsp, manifest.packageVersion, smokeDeadline);
+  await smokeLsp(lsp, manifest.packageVersion, smokeDeadline, {
+    documentUri: pathToFileURL(fixture).href,
+  });
   await smokeForcedProcessLifecycle(lsp, smokeDeadline);
 } catch (error) {
   operationError = error;
