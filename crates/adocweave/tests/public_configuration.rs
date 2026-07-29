@@ -51,3 +51,17 @@ fn release_note_configuration_example_uses_public_paths() {
 
     assert!(policy.active_urls.allow_authored_relative);
 }
+
+#[test]
+fn projection_product_field_types_are_publicly_nameable() {
+    let _: Option<adocweave::preprocess::ProjectedAttributeBinding> = None;
+    let _: Option<adocweave::preprocess::ProjectedAttributeReference> = None;
+    let _: Option<adocweave::preprocess::ProjectedDiagnostic> = None;
+    let _: Option<adocweave::preprocess::ProjectedDocumentAttribute> = None;
+    let _: Option<adocweave::preprocess::ProjectedDocumentAttributeValueLine> = None;
+    let _: Option<adocweave::preprocess::ProjectedDocumentSymbol> = None;
+    let _: Option<adocweave::preprocess::ProjectedFix> = None;
+    let _: Option<adocweave::preprocess::ProjectedLocalTarget> = None;
+    let _: Option<adocweave::preprocess::ProjectedReference> = None;
+    let _: Option<adocweave::preprocess::ProjectedResource> = None;
+}
