@@ -11,6 +11,7 @@ export class AdocWeaveClient {
   #ready = null;
   #readyReject = null;
   #pending = new Map();
+  #expectedVersions = new Map();
 
   constructor({
     workerUrl,
@@ -79,6 +80,8 @@ export class AdocWeaveClient {
     renderPolicy = {},
     outputLimits = {},
   }, generation) {
+    this.#expectedVersions.clear();
+    this.#expectedVersions.set(generation, version);
     let ready;
     if (this.#options.sharedCancellation) {
       Atomics.store(this.#cancellation, 0, generation);
@@ -118,7 +121,7 @@ export class AdocWeaveClient {
             payload,
           });
         } catch (cause) {
-          this.#failWorker(cause, generation);
+          this.#failWorker(cause, generation, this.#worker);
         }
       }
     }).catch(() => {});
@@ -128,6 +131,7 @@ export class AdocWeaveClient {
     this.#assertActive();
     this.#rejectPending("cancelled", "analysis was cancelled");
     ++this.#generation;
+    this.#expectedVersions.clear();
     if (this.#options.sharedCancellation) {
       Atomics.store(this.#cancellation, 0, this.#generation);
     } else {
@@ -145,6 +149,7 @@ export class AdocWeaveClient {
     this.#disposed = true;
     this.#rejectPending("disposed", "AdocWeaveClient was disposed");
     ++this.#generation;
+    this.#expectedVersions.clear();
     if (this.#cancellation) Atomics.store(this.#cancellation, 0, this.#generation);
     this.#terminateWorker(new AdocWeaveClientError({
       code: "disposed",
@@ -164,11 +169,13 @@ export class AdocWeaveClient {
         type: "module",
       });
     } catch (cause) {
-      const error = this.#workerError(cause, this.#generation);
+      const failedGeneration = this.#generation;
+      const error = this.#workerError(cause, failedGeneration);
       const ready = Promise.reject(error);
       ready.catch(() => {});
       this.#ready = ready;
       this.#rejectPendingError(error);
+      this.#expectedVersions.delete(failedGeneration);
       this.#notifyError(error);
       return ready;
     }
@@ -197,9 +204,12 @@ export class AdocWeaveClient {
             generation: this.#generation,
           };
           this.#rejectPendingError(error);
+          this.#expectedVersions.delete(error.generation);
+          this.#terminateWorker(
+            !initialized ? new AdocWeaveClientError(error) : null,
+            worker,
+          );
           this.#notifyError(error);
-          if (!initialized) reject(new AdocWeaveClientError(error));
-          this.#terminateWorker();
           return;
         }
         if (data?.type === "ready") {
@@ -207,16 +217,20 @@ export class AdocWeaveClient {
           this.#readyReject = null;
           resolve();
         } else if (data?.type === "result" && data.generation === this.#generation) {
-          if (!resultMatchesEnvelope(data)) {
+          if (
+            !resultMatchesEnvelope(data) ||
+            !this.#responseMatchesRequest(data)
+          ) {
             const error = {
               code: "invalid-worker-response",
-              message: "worker result identity does not match its envelope",
+              message: "worker result identity does not match its request",
               sourceVersion: data.version,
               generation: data.generation,
             };
             this.#rejectPendingError(error);
+            this.#expectedVersions.delete(error.generation);
+            this.#terminateWorker(null, worker);
             this.#notifyError(error);
-            this.#terminateWorker();
             return;
           }
           const packageVersion = verifiedPackageVersion(data.result);
@@ -229,18 +243,34 @@ export class AdocWeaveClient {
             };
             this.#rejectPendingError(error);
             this.#notifyError(error);
+            this.#expectedVersions.delete(data.generation);
             return;
           }
           const { version: sourceVersion, ...products } = data.result;
           const result = { sourceVersion, ...products };
+          this.#expectedVersions.delete(data.generation);
           this.#resolvePending(data.generation, result);
           this.#notifyResult(result);
         } else if (data?.type === "error" && data.generation === this.#generation) {
+          if (!this.#responseMatchesRequest(data)) {
+            const error = {
+              code: "invalid-worker-response",
+              message: "worker error identity does not match its request",
+              sourceVersion: data.version,
+              generation: data.generation,
+            };
+            this.#rejectPendingError(error);
+            this.#expectedVersions.delete(error.generation);
+            this.#terminateWorker(null, worker);
+            this.#notifyError(error);
+            return;
+          }
           const error = {
             ...data.error,
             sourceVersion: data.version,
             generation: data.generation,
           };
+          this.#expectedVersions.delete(data.generation);
           this.#rejectPendingError(error);
           this.#notifyError(error);
         }
@@ -255,9 +285,9 @@ export class AdocWeaveClient {
           generation: this.#generation,
         };
         this.#rejectPendingError(error);
+        this.#expectedVersions.delete(error.generation);
+        this.#terminateWorker(new AdocWeaveClientError(error), worker);
         this.#notifyError(error);
-        reject(new AdocWeaveClientError(error));
-        this.#terminateWorker();
       }, { once: true });
     });
     this.#ready = ready;
@@ -272,12 +302,16 @@ export class AdocWeaveClient {
         cancellationBuffer: this.#cancellation?.buffer ?? null,
       });
     } catch (cause) {
-      this.#failWorker(cause, this.#generation);
+      this.#failWorker(cause, this.#generation, worker);
     }
     return ready;
   }
 
-  #terminateWorker(error = null) {
+  #terminateWorker(error = null, worker = this.#worker) {
+    if (worker !== this.#worker) {
+      worker?.terminate();
+      return;
+    }
     if (error !== null) this.#readyReject?.(error);
     this.#readyReject = null;
     this.#worker?.terminate();
@@ -337,16 +371,19 @@ export class AdocWeaveClient {
   }
 
   #notifyError(error) {
-    try {
-      this.#options.onError({
-        code: error.code,
-        message: error.message,
-        sourceVersion: error.sourceVersion,
-        generation: error.generation,
-      });
-    } catch {
-      // Promise settlement and lifecycle cleanup do not depend on callbacks.
-    }
+    const notification = {
+      code: error.code,
+      message: error.message,
+      sourceVersion: error.sourceVersion,
+      generation: error.generation,
+    };
+    queueMicrotask(() => {
+      try {
+        this.#options.onError(notification);
+      } catch {
+        // Promise settlement and lifecycle cleanup do not depend on callbacks.
+      }
+    });
   }
 
   #notifyResult(result) {
@@ -357,12 +394,16 @@ export class AdocWeaveClient {
     }
   }
 
-  #failWorker(cause, generation) {
+  #responseMatchesRequest({ version, generation }) {
+    return this.#expectedVersions.get(generation) === version;
+  }
+
+  #failWorker(cause, generation, worker) {
     const error = this.#workerError(cause, generation);
     this.#rejectPendingError(error);
-    this.#readyReject?.(error);
+    this.#expectedVersions.delete(generation);
+    this.#terminateWorker(error, worker);
     this.#notifyError(error);
-    this.#terminateWorker();
   }
 }
 

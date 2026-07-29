@@ -239,6 +239,149 @@ test("synchronous worker failures reject the already registered analysis", async
   postMessageFailure.dispose();
 });
 
+test("constructor failure callbacks can retry without losing the new version contract", async () => {
+  const results = [];
+  const workers = [];
+  let attempts = 0;
+  class RetryWorker {
+    listeners = new Map();
+    constructor() {
+      ++attempts;
+      if (attempts === 1) throw new Error("constructor failed");
+      workers.push(this);
+    }
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
+      }
+    }
+    terminate() {}
+    publish(data) { this.listeners.get("message")?.({ data }); }
+  }
+  let client;
+  client = new AdocWeaveClient({
+    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+    Worker: RetryWorker, sharedCancellation: false,
+    onError(error) {
+      assert.equal(error.code, "worker-failed");
+      client.update({ version: 2, source: "retry" });
+    },
+    onResult: (result) => results.push(result),
+  });
+
+  const failed = client.analyze({ version: 1, source: "first" });
+  await assert.rejects(failed, errorWithCode("worker-failed"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  workers[0].publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "retried"));
+
+  assert.equal(results[0].html, "retried");
+  assert.equal(results[0].sourceVersion, 2);
+  assert.equal(results.length, 1);
+  client.dispose();
+});
+
+test("consecutive constructor failures retry without synchronous recursion", async () => {
+  const results = [];
+  const workers = [];
+  let attempts = 0;
+  class RetryWorker {
+    listeners = new Map();
+    constructor() {
+      ++attempts;
+      if (attempts <= 3) throw new Error(`constructor failed ${attempts}`);
+      workers.push(this);
+    }
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
+      }
+    }
+    terminate() {}
+    publish(data) { this.listeners.get("message")?.({ data }); }
+  }
+  let client;
+  client = new AdocWeaveClient({
+    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+    Worker: RetryWorker, sharedCancellation: false,
+    onError() {
+      if (attempts <= 3) {
+        client.update({ version: attempts + 1, source: "retry" });
+      }
+    },
+    onResult: (result) => results.push(result),
+  });
+
+  await assert.rejects(
+    client.analyze({ version: 1, source: "first" }),
+    errorWithCode("worker-failed"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(attempts, 4);
+  workers[0].publish(responseEnvelope(4, 4, BROWSER_PACKAGE_VERSION, "retried"));
+  assert.equal(results[0].sourceVersion, 4);
+  client.dispose();
+});
+
+test("terminal worker failures can retry without terminating the replacement worker", async () => {
+  for (const failure of ["identity", "worker-error"]) {
+    const results = [];
+    const workers = [];
+    class RetryWorker {
+      listeners = new Map();
+      terminated = false;
+      constructor() { workers.push(this); }
+      addEventListener(type, callback) { this.listeners.set(type, callback); }
+      postMessage(message) {
+        if (message.type === "initialize") {
+          queueMicrotask(() => this.listeners.get("message")?.({
+            data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+          }));
+        }
+      }
+      terminate() { this.terminated = true; }
+      publish(data) { this.listeners.get("message")?.({ data }); }
+      fail() { this.listeners.get("error")?.({ message: "worker failed" }); }
+    }
+    let client;
+    client = new AdocWeaveClient({
+      workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+      Worker: RetryWorker, sharedCancellation: false,
+      onError() {
+        client.update({ version: 2, source: "retry" });
+      },
+      onResult: (result) => results.push(result),
+    });
+
+    const first = client.analyze({ version: 1, source: "first" });
+    const rejected = assert.rejects(
+      first,
+      errorWithCode(failure === "identity"
+        ? "invalid-worker-response"
+        : "worker-failed"),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (failure === "identity") {
+      workers[0].publish(responseEnvelope(9, 1, BROWSER_PACKAGE_VERSION, "invalid"));
+    } else {
+      workers[0].fail();
+    }
+    await rejected;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(workers[0].terminated, true);
+    assert.equal(workers[1].terminated, false);
+    workers[1].publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "retried"));
+    assert.equal(results[0].sourceVersion, 2);
+    client.dispose();
+  }
+});
+
 test("disposed analyze is a typed rejected Promise", async () => {
   const client = new AdocWeaveClient({
     workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
@@ -412,6 +555,84 @@ test("client rejects result identities which disagree with the worker envelope",
     assert.equal(errors.at(-1).code, "invalid-worker-response", field);
     client.dispose();
   }
+});
+
+test("client rejects result and error versions which disagree with the request", async () => {
+  const workers = [];
+  class FakeWorker {
+    listeners = new Map();
+    constructor() { workers.push(this); }
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
+      }
+    }
+    terminate() {}
+    publish(data) { this.listeners.get("message")?.({ data }); }
+  }
+
+  for (const response of [
+    () => responseEnvelope(2, 1, BROWSER_PACKAGE_VERSION, ""),
+    () => ({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type: "error",
+      version: 2,
+      generation: 1,
+      error: { code: "cancelled", message: "cancelled" },
+    }),
+  ]) {
+    const client = new AdocWeaveClient({
+      workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+      Worker: FakeWorker, sharedCancellation: false,
+    });
+    const analysis = client.analyze({ version: 1, source: "text" });
+    const rejected = assert.rejects(analysis, errorWithCode("invalid-worker-response"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    workers.at(-1).publish(response());
+    await rejected;
+    client.dispose();
+  }
+});
+
+test("stale responses cannot disturb the current request version contract", async () => {
+  const results = [];
+  const errors = [];
+  let worker;
+  class FakeWorker {
+    listeners = new Map();
+    constructor() { worker = this; }
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
+      }
+    }
+    terminate() {}
+    publish(data) { this.listeners.get("message")?.({ data }); }
+  }
+  const client = new AdocWeaveClient({
+    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+    Worker: FakeWorker, sharedCancellation: true,
+    onResult: (result) => results.push(result),
+    onError: (error) => errors.push(error),
+  });
+  assert.equal(client.update({ version: 1, source: "old" }), 1);
+  assert.equal(client.update({ version: 2, source: "current" }), 2);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  worker.publish(responseEnvelope(99, 1, BROWSER_PACKAGE_VERSION, "stale"));
+  worker.publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "current"));
+
+  assert.equal(results[0].html, "current");
+  assert.equal(results[0].sourceVersion, 2);
+  assert.equal(results.length, 1);
+  assert.deepEqual(errors, []);
+  client.dispose();
 });
 
 test("client rejects and terminates an obsolete worker protocol during initialization", async () => {
