@@ -143,6 +143,7 @@ Cargoの直接依存関係とVS Code拡張の開発用npm依存関係のpatch更
 mergeしません。自動化はGitHubのauto-mergeへ、検証済みのhead commitを指定して登録します。
 workflow自身がPull Requestを直ちにmergeすることはありません。判定workflowはPull Request由来のcodeを
 checkoutまたは実行せず、write権限をauto-merge登録だけを行うjobへ限定します。
+同じPull Requestに対する判定は同時実行せず、実行中の判定を取り消さずに直列化します。
 CI成功後にreviewが提出または取り消された場合は、権限を持たないsignal workflowを起点として判定をやり直します。
 判定時には対象headと現在のbaseに対する成功済み``CI and Release`` runをAPIから再取得し、以前の別headや
 別baseの結果を利用しません。
@@ -159,6 +160,8 @@ rulesetのbypass actorは空にします。GitHub Actions integration、reposito
 個人用access tokenは使用しません。
 security updateの判定ではOPEN、FIXED、DISMISSEDおよびAUTO_DISMISSEDのalertをそれぞれ全ページ取得します。
 応答が空、欠落、不正または権限不足である場合は、security updateではないと推測せず停止します。
+auto-merge登録前の最終確認ではcheck、review、CIおよびrulesetを先に確認し、OPEN alertを最後に取得します。
+判定記録には対象headとbase、alertの観測完了時刻、controllerとrulesetの判定およびmutationの識別子を残します。
 
 activation前には実repositoryでintegration gateを実施します。Actions tokenで未解決Dependabot alertの全pageと
 有効なruleset詳細を取得できること、``main``向けrulesetの
@@ -180,7 +183,10 @@ npmの実行時依存関係およびminor以上の更新も、初期導入の対
 
 停止するときは、通常のPull Requestでpolicyの``enabled``を``false``へ変更します。policyまたは判定処理の変更を
 検知した場合は、既存のDependabot Pull Requestに登録されたauto-mergeを自動で解除します。Dependabot alertは
-5分間隔の監査で再確認し、未解決alertを検知した場合も解除します。手動監査でもpolicyとalertを再確認し、
+5分間隔の監査で再確認し、未解決alertを検知した場合も解除します。定期監査ではactiveなrulesetと、
+auto-mergeが登録された各Pull Requestのhead、base、check、review、変更fileおよび現在のbaseに対するCIも
+再確認し、不明な状態または不適格な状態を検知した場合は登録済みのauto-mergeを解除します。
+手動監査でもpolicyとalertを再確認し、
 設定を解釈できない場合、alertを取得できない場合または停止中は
 既存のauto-mergeを解除します。CIまたはreviewを契機とする再判定で不適格になった場合も同様です。
 

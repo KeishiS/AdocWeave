@@ -70,6 +70,7 @@ function controllerInput() {
       approvedCount: input.policy.requiredApprovals,
     },
     eligibilityCheck: {
+      id: 100,
       name: "dependabot / eligibility",
       headSha: SHA,
       conclusion: "success",
@@ -77,6 +78,7 @@ function controllerInput() {
       appId: input.policy.requiredCheckAppId,
     },
     checks: input.policy.requiredChecks.map((name, index) => ({
+      id: index + 1,
       name,
       headSha: SHA,
       conclusion: "success",
@@ -216,6 +218,9 @@ for (const [name, mutate, expected] of [
     input.review.approvedCount = 0;
   }, "review"],
   ["old eligibility", (input) => { input.eligibilityCheck.headSha = "5".repeat(40); }, "eligibility-attestation"],
+  ["missing eligibility ID", (input) => {
+    delete input.eligibilityCheck.id;
+  }, "eligibility-attestation"],
   ["neutral eligibility", (input) => { input.eligibilityCheck.conclusion = "neutral"; }, "eligibility-attestation"],
   ["wrong eligibility app", (input) => { input.eligibilityCheck.appSlug = "other"; }, "eligibility-attestation"],
   ["wrong eligibility app ID", (input) => { input.eligibilityCheck.appId = 1; }, "eligibility-attestation"],
@@ -224,6 +229,12 @@ for (const [name, mutate, expected] of [
   ["pending required check", (input) => { input.checks[1].conclusion = null; }, "required-check:quality / fuzz"],
   ["old required check", (input) => { input.checks[2].headSha = "6".repeat(40); }, "required-check:quality / nix-package"],
   ["missing required check", (input) => { input.checks.pop(); }, "required-check:quality / verify"],
+  ["malformed check inventory", (input) => {
+    input.checks.push({
+      ...input.checks[0],
+      id: null,
+    });
+  }, "check-inventory"],
 ]) {
   test(`controller rejects ${name}`, () => {
     const input = controllerInput();
@@ -236,6 +247,28 @@ for (const [name, mutate, expected] of [
 
 test("controller accepts only the current eligible SHA after every required check", () => {
   assert.deepEqual(evaluateController(controllerInput()), { eligible: true, reasons: [] });
+});
+
+test("controller rejects a newer pending check regardless of API order", () => {
+  for (const reverse of [false, true]) {
+    const input = controllerInput();
+    const oldSuccess = input.checks[0];
+    const newerPending = {
+      ...oldSuccess,
+      id: 1000,
+      conclusion: null,
+      completedAt: null,
+    };
+    input.checks = reverse
+      ? [newerPending, ...input.checks]
+      : [...input.checks, newerPending];
+    const result = evaluateController(input);
+    assert.equal(result.eligible, false);
+    assert.ok(
+      result.reasons.includes(`required-check:${oldSuccess.name}`),
+      result.reasons.join(","),
+    );
+  }
 });
 
 function strictRuleset(include = ["~DEFAULT_BRANCH"], exclude = []) {

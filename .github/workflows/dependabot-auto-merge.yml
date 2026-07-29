@@ -7,6 +7,13 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: >-
+    dependabot-auto-merge-${{
+      github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id
+    }}
+  cancel-in-progress: false
+
 jobs:
   decide:
     if: >-
@@ -139,16 +146,16 @@ jobs:
               eligibilityCheck: (
                 $checks[0]
                 | map(select(.name == "dependabot / eligibility"))
-                | sort_by(.completed_at)
+                | sort_by(.id)
                 | last
                 | if . == null then null else {
-                    name, headSha: .head_sha, conclusion,
+                    id, name, headSha: .head_sha, conclusion,
                     appSlug: .app.slug, appId: .app.id
                   } end
               ),
               checks: (
                 $checks[0] | map({
-                  name, headSha: .head_sha, conclusion,
+                  id, name, headSha: .head_sha, conclusion,
                   completedAt: .completed_at, appId: .app.id
                 })
               )
@@ -242,9 +249,6 @@ jobs:
             --jq '.check_runs' | jq -s 'add' > enable-checks.json
           gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
             | jq -s 'add' > enable-reviews.json
-          tools/dependabot-alert-snapshot.sh \
-            "$GITHUB_REPOSITORY" '[]' "$(cat enable-changed-files.json)" \
-            > enable-security-alert-snapshot.json
           gh api --paginate \
             "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$EXPECTED_HEAD_OID&status=success&per_page=100" \
             --jq '.workflow_runs' \
@@ -268,6 +272,33 @@ jobs:
                   | (last // error("no successful current-base CI run"))
                   | . + {verified_base_sha: $base_sha}
                 ' > enable-ci-run.json
+          ruleset_ids="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true&per_page=100" \
+              | jq -er -s '
+                  add
+                  | map(select(.target == "branch" and .enforcement == "active"))
+                  | .[].id
+                '
+          )"
+          test -n "$ruleset_ids"
+          : > active-rulesets.jsonl
+          while IFS= read -r ruleset_id; do
+            gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" \
+              >> active-rulesets.jsonl
+          done <<< "$ruleset_ids"
+          jq -s '{branch: "main", rulesets: .}' active-rulesets.jsonl \
+            > strict-ruleset-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            strict-rulesets .github/dependabot-auto-merge-policy.json \
+            strict-ruleset-input.json > strict-ruleset-decision.json
+          jq -e '.eligible == true' strict-ruleset-decision.json
+
+          # Observe open alerts after every remote check and immediately before
+          # the local final decision and auto-merge registration.
+          tools/dependabot-alert-snapshot.sh \
+            "$GITHUB_REPOSITORY" '[]' "$(cat enable-changed-files.json)" \
+            > enable-security-alert-snapshot.json
           jq -n \
             --arg current_base_sha "$(cat enable-base-sha.txt)" \
             --slurpfile pr enable-pr.json \
@@ -315,16 +346,16 @@ jobs:
               eligibilityCheck: (
                 $checks[0]
                 | map(select(.name == "dependabot / eligibility"))
-                | sort_by(.completed_at)
+                | sort_by(.id)
                 | last
                 | if . == null then null else {
-                    name, headSha: .head_sha, conclusion,
+                    id, name, headSha: .head_sha, conclusion,
                     appSlug: .app.slug, appId: .app.id
                   } end
               ),
               checks: (
                 $checks[0] | map({
-                  name, headSha: .head_sha, conclusion,
+                  id, name, headSha: .head_sha, conclusion,
                   completedAt: .completed_at, appId: .app.id
                 })
               )
@@ -333,44 +364,56 @@ jobs:
             controller .github/dependabot-auto-merge-policy.json \
             enable-controller-input.json > enable-controller-decision.json
           jq -e '.eligible == true' enable-controller-decision.json
-          ruleset_ids="$(
-            gh api --paginate \
-              "repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true&per_page=100" \
-              | jq -er -s '
-                  add
-                  | map(select(.target == "branch" and .enforcement == "active"))
-                  | .[].id
-                '
-          )"
-          test -n "$ruleset_ids"
-          : > active-rulesets.jsonl
-          while IFS= read -r ruleset_id; do
-            gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" \
-              >> active-rulesets.jsonl
-          done <<< "$ruleset_ids"
-          jq -s '{branch: "main", rulesets: .}' active-rulesets.jsonl \
-            > strict-ruleset-input.json
-          node tools/dependabot-auto-merge-policy.mjs \
-            strict-rulesets .github/dependabot-auto-merge-policy.json \
-            strict-ruleset-input.json > strict-ruleset-decision.json
-          jq -e '.eligible == true' strict-ruleset-decision.json
+          client_mutation_id="dependabot-auto-merge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$PR_NUMBER"
+          jq -n \
+            --arg workflowRunId "$GITHUB_RUN_ID" \
+            --arg workflowRunAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg pullRequestNumber "$PR_NUMBER" \
+            --arg clientMutationId "$client_mutation_id" \
+            --arg headSha "$EXPECTED_HEAD_OID" \
+            --arg baseSha "$EXPECTED_BASE_SHA" \
+            --slurpfile alerts enable-security-alert-snapshot.json \
+            --slurpfile controller enable-controller-decision.json \
+            --slurpfile ruleset strict-ruleset-decision.json \
+            '{
+              workflowRunId: $workflowRunId,
+              workflowRunAttempt: $workflowRunAttempt,
+              pullRequestNumber: ($pullRequestNumber | tonumber),
+              clientMutationId: $clientMutationId,
+              headSha: $headSha,
+              baseSha: $baseSha,
+              alertObservation: $alerts[0],
+              controllerDecision: $controller[0],
+              strictRulesetDecision: $ruleset[0]
+            }' > enable-audit-record.json
+          jq . enable-audit-record.json >> "$GITHUB_STEP_SUMMARY"
           # shellcheck disable=SC2016
           gh api graphql \
             -f query='
-              mutation($pullRequest: ID!, $head: GitObjectID!) {
+              mutation(
+                $pullRequest: ID!,
+                $head: GitObjectID!,
+                $clientMutationId: String!
+              ) {
                 enablePullRequestAutoMerge(input: {
                   pullRequestId: $pullRequest,
                   mergeMethod: SQUASH,
-                  expectedHeadOid: $head
+                  expectedHeadOid: $head,
+                  clientMutationId: $clientMutationId
                 }) {
+                  clientMutationId
                   pullRequest { number autoMergeRequest { enabledAt mergeMethod } }
                 }
               }' \
             -f pullRequest="$PULL_REQUEST_NODE_ID" \
             -f head="$EXPECTED_HEAD_OID" \
+            -f clientMutationId="$client_mutation_id" \
             > enable-auto-merge-result.json
-          jq -e --argjson pr_number "$PR_NUMBER" '
-            .data.enablePullRequestAutoMerge.pullRequest.number == $pr_number
+          jq -e \
+            --arg client_mutation_id "$client_mutation_id" \
+            --argjson pr_number "$PR_NUMBER" '
+            .data.enablePullRequestAutoMerge.clientMutationId == $client_mutation_id
+            and .data.enablePullRequestAutoMerge.pullRequest.number == $pr_number
             and (
               .data.enablePullRequestAutoMerge.pullRequest.autoMergeRequest.enabledAt
               | type

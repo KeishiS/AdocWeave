@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,12 +10,14 @@ const helper = new URL("./dependabot-alert-snapshot.sh", import.meta.url);
 async function runSnapshot(mode, dependencies = '["serde"]') {
   const directory = await mkdtemp(join(tmpdir(), "adocweave-alert-snapshot-"));
   const gh = join(directory, "gh");
+  const calls = join(directory, "calls");
   await writeFile(gh, `#!/usr/bin/env bash
 set -euo pipefail
 test "$1" = api
 test "$2" = --paginate
 state="\${3#*state=}"
 state="\${state%%&*}"
+printf '%s\\n' "$state" >> "$FAKE_GH_CALLS"
 if [[ "$FAKE_GH_MODE" == match-* ]]; then
   if [[ "$state" == "\${FAKE_GH_MODE#match-}" ]]; then
     jq -cn --arg state "$state" '[{
@@ -81,7 +83,7 @@ esac
 `);
   await chmod(gh, 0o755);
   try {
-    return spawnSync(
+    const result = spawnSync(
       "bash",
       [helper.pathname, "KeishiS/adocweave", dependencies, '["Cargo.toml","Cargo.lock"]'],
       {
@@ -89,10 +91,15 @@ esac
         env: {
           ...process.env,
           FAKE_GH_MODE: mode,
+          FAKE_GH_CALLS: calls,
           PATH: `${directory}${delimiter}${process.env.PATH}`,
         },
       },
     );
+    const callOrder = await readFile(calls, "utf8")
+      .then((value) => value.trim().split("\n"))
+      .catch(() => []);
+    return { ...result, callOrder };
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -101,7 +108,11 @@ esac
 test("alert snapshot reads every page and records every state", async () => {
   const result = await runSnapshot("pages");
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
+  const snapshot = JSON.parse(result.stdout);
+  assert.deepEqual(result.callOrder, ["fixed", "dismissed", "auto_dismissed", "open"]);
+  assert.match(snapshot.observedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  delete snapshot.observedAt;
+  assert.deepEqual(snapshot, {
     lookupCompleted: true,
     openCount: 101,
     securityUpdate: true,
@@ -126,7 +137,10 @@ test("alert snapshot may conservatively match every dependency in changed manife
 test("alert snapshot reports a completed empty lookup", async () => {
   const result = await runSnapshot("empty");
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
+  const snapshot = JSON.parse(result.stdout);
+  assert.match(snapshot.observedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  delete snapshot.observedAt;
+  assert.deepEqual(snapshot, {
     lookupCompleted: true,
     openCount: 0,
     securityUpdate: false,
