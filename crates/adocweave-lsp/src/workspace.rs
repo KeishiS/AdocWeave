@@ -124,17 +124,16 @@ impl WorkspaceResources {
                     return Err(error.to_string());
                 }
             };
-            if has_authority {
-                if let Err(error) =
+            if has_authority
+                && let Err(error) =
                     replacement.upsert_open(uri.clone(), *version, Arc::clone(source))
-                {
-                    replacement.fail_closed(
-                        replacement.roots.clone(),
-                        adapter_managed_workspace_limits(),
-                    );
-                    *self = replacement;
-                    return Err(error);
-                }
+            {
+                replacement.fail_closed(
+                    replacement.roots.clone(),
+                    adapter_managed_workspace_limits(),
+                );
+                *self = replacement;
+                return Err(error);
             }
         }
         *self = replacement;
@@ -157,7 +156,7 @@ impl WorkspaceResources {
     ) -> Result<(), String> {
         self.last_load_failed_closed = false;
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
-        let mut paths = match roots
+        let mut paths = roots
             .iter()
             .map(|root| {
                 root.to_file_path()
@@ -165,11 +164,7 @@ impl WorkspaceResources {
                     .canonicalize()
                     .map_err(|error| format!("cannot canonicalize workspace root: {error}"))
             })
-            .collect::<Result<Vec<_>, _>>()
-        {
-            Ok(paths) => paths,
-            Err(error) => return Err(error),
-        };
+            .collect::<Result<Vec<_>, _>>()?;
         paths.sort();
         paths.dedup();
         let fail_closed = std::cell::Cell::new(false);
