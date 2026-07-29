@@ -4,6 +4,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::local_target::{
     FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy, LocalTargetSession,
@@ -70,6 +71,7 @@ pub struct LoadedFilesystemSource {
 /// Opaque state used to undo one successfully charged filesystem reread.
 #[derive(Clone, Debug)]
 pub struct FilesystemReadRollback {
+    session_id: Option<u64>,
     canonical_path: PathBuf,
     candidate_path: PathBuf,
     session_index: usize,
@@ -112,6 +114,7 @@ impl LoadedFilesystemSource {
 /// one budget is enforced across every root.
 #[derive(Debug)]
 pub struct LocalFilesystemSession {
+    session_id: Option<u64>,
     roots: Vec<PathBuf>,
     sessions: Vec<LocalTargetSession>,
     limits: FilesystemReadLimits,
@@ -119,6 +122,8 @@ pub struct LocalFilesystemSession {
     charged: BTreeMap<PathBuf, u64>,
     rollback_generation: Option<u64>,
 }
+
+static NEXT_FILESYSTEM_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 impl LocalFilesystemPolicy {
     pub fn new(
@@ -175,6 +180,9 @@ impl LocalFilesystemPolicy {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(LocalFilesystemSession {
+            session_id: NEXT_FILESYSTEM_SESSION_ID
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .ok(),
             roots: self.roots.clone(),
             sessions,
             limits: self.limits,
@@ -332,6 +340,7 @@ impl LocalFilesystemSession {
             (
                 loaded,
                 FilesystemReadRollback {
+                    session_id: self.session_id,
                     canonical_path,
                     candidate_path: path.to_owned(),
                     session_index: index,
@@ -351,7 +360,10 @@ impl LocalFilesystemSession {
         &mut self,
         rollback: FilesystemReadRollback,
     ) -> FilesystemReadRollbackResult {
-        if rollback.committed_generation.is_none()
+        if rollback.session_id.is_none()
+            || rollback.session_id != self.session_id
+            || rollback.session_index >= self.sessions.len()
+            || rollback.committed_generation.is_none()
             || rollback.committed_generation != self.rollback_generation
         {
             return FilesystemReadRollbackResult::Stale;
@@ -1074,6 +1086,53 @@ mod tests {
         assert_eq!(
             session.rollback_reread(latest),
             FilesystemReadRollbackResult::Applied
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
+    }
+
+    #[test]
+    fn rollback_token_from_another_session_is_stale_before_index_access() {
+        let first_root = TestDir::new("rollback-session-first");
+        let second_root = TestDir::new("rollback-session-second");
+        let other_root = TestDir::new("rollback-session-other");
+        let path = second_root.path().join("document.adoc");
+        fs::write(&path, "a").expect("source");
+        let origin_policy = LocalFilesystemPolicy::new(
+            [first_root.path().to_owned(), second_root.path().to_owned()],
+            FilesystemReadLimits::default(),
+        )
+        .expect("origin policy");
+        let mut origin = origin_policy.session().expect("origin session");
+        let (_, token) = origin
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("origin reread");
+        let mut other = policy(other_root.path(), 4)
+            .session()
+            .expect("other session");
+        assert_eq!(
+            other.rollback_reread(token),
+            FilesystemReadRollbackResult::Stale
+        );
+        assert_eq!((other.budget().files(), other.budget().bytes()), (0, 0));
+        assert_eq!((origin.budget().files(), origin.budget().bytes()), (1, 1));
+    }
+
+    #[test]
+    fn rollback_token_with_an_invalid_session_index_is_stale() {
+        let root = TestDir::new("rollback-session-index");
+        let path = root.path().join("document.adoc");
+        fs::write(&path, "a").expect("source");
+        let mut session = policy(root.path(), 4).session().expect("session");
+        let (_, token) = session
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("reread");
+        let invalid = FilesystemReadRollback {
+            session_index: usize::MAX,
+            ..token
+        };
+        assert_eq!(
+            session.rollback_reread(invalid),
+            FilesystemReadRollbackResult::Stale
         );
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
     }

@@ -1,5 +1,6 @@
 //! Runtime-independent language features over owned document analyses.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -517,26 +518,41 @@ impl LanguageService {
         let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
         let open_sources = self.documents.open_sources();
         if let Err(error) = self.workspace.load_roots(&roots) {
-            self.workspace_error = Some(error);
-            return Vec::new();
+            let failed_closed = self.workspace.last_load_failed_closed();
+            self.workspace_error = Some(error.clone());
+            if !failed_closed {
+                return Vec::new();
+            }
+            return open_sources
+                .into_iter()
+                .filter_map(|(uri, _, _)| {
+                    let options = self.analysis_options_for(None);
+                    let mut job = self.documents.reconfigure(&uri, options)?;
+                    attach_workspace(&mut job, Err(error.clone()));
+                    Some(job)
+                })
+                .collect();
         }
+        let mut input_errors = BTreeMap::new();
         for (uri, version, source) in &open_sources {
-            let Ok(uri) = uri.parse() else {
+            let Ok(parsed) = uri.parse() else {
                 continue;
             };
-            if let Err(error) = self
-                .workspace
-                .upsert_open(uri, i64::from(*version), source.clone())
+            if let Err(error) =
+                self.workspace
+                    .upsert_open(parsed, i64::from(*version), source.clone())
             {
-                self.workspace_error = Some(error);
+                input_errors.insert(uri.clone(), error);
             }
         }
-        self.workspace_error = None;
+        self.workspace_error = input_errors.values().next().cloned();
         open_sources
             .into_iter()
             .filter_map(|(uri, _, _)| {
                 let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed);
+                let workspace = input_errors
+                    .remove(&uri)
+                    .map_or_else(|| self.workspace.input(&parsed), Err);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
                 let mut job = self.documents.reconfigure(&uri, options)?;
                 attach_workspace(&mut job, workspace);
@@ -562,27 +578,42 @@ impl LanguageService {
         let root_uris = roots.values().cloned().collect::<Vec<_>>();
         let open_sources = self.documents.open_sources();
         if let Err(error) = self.workspace.load_roots(&root_uris) {
-            self.workspace_error = Some(error);
-            return Vec::new();
+            let failed_closed = self.workspace.last_load_failed_closed();
+            self.workspace_error = Some(error.clone());
+            if !failed_closed {
+                return Vec::new();
+            }
+            return open_sources
+                .into_iter()
+                .filter_map(|(uri, _, _)| {
+                    let options = self.analysis_options_for(None);
+                    let mut job = self.documents.reconfigure(&uri, options)?;
+                    attach_workspace(&mut job, Err(error.clone()));
+                    Some(job)
+                })
+                .collect();
         }
         self.workspace_roots = roots;
-        self.workspace_error = None;
+        let mut input_errors = BTreeMap::new();
         for (uri, version, source) in &open_sources {
-            let Ok(uri) = uri.parse() else {
+            let Ok(parsed) = uri.parse() else {
                 continue;
             };
-            if let Err(error) = self
-                .workspace
-                .upsert_open(uri, i64::from(*version), source.clone())
+            if let Err(error) =
+                self.workspace
+                    .upsert_open(parsed, i64::from(*version), source.clone())
             {
-                self.workspace_error = Some(error);
+                input_errors.insert(uri.clone(), error);
             }
         }
+        self.workspace_error = input_errors.values().next().cloned();
         open_sources
             .into_iter()
             .filter_map(|(uri, _, _)| {
                 let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed);
+                let workspace = input_errors
+                    .remove(&uri)
+                    .map_or_else(|| self.workspace.input(&parsed), Err);
                 let options = self.analysis_options_for(workspace.as_ref().ok());
                 let mut job = self.documents.reconfigure(&uri, options)?;
                 attach_workspace(&mut job, workspace);

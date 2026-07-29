@@ -57,6 +57,7 @@ pub struct WorkspaceResources {
     resource_projects: BTreeMap<ResourceId, Option<PathBuf>>,
     retained_layers: BTreeMap<Option<PathBuf>, RetainedResourceBudget>,
     next_disk_version: i64,
+    last_load_failed_closed: bool,
 }
 
 struct PreparedWorkspaceRead {
@@ -87,6 +88,7 @@ impl WorkspaceResources {
         roots: &[Url],
         limits: WorkspaceLimits,
     ) -> Result<(), String> {
+        self.last_load_failed_closed = false;
         let mut paths = roots
             .iter()
             .map(|root| {
@@ -136,6 +138,7 @@ impl WorkspaceResources {
                     self.project_plans.clear();
                     self.resource_projects.clear();
                     self.retained_layers.clear();
+                    self.last_load_failed_closed = true;
                     return Err(error.to_string());
                 }
                 Err(error) => return Err(error.to_string()),
@@ -197,6 +200,10 @@ impl WorkspaceResources {
         self.retained_layers = retained_layers;
         self.next_disk_version = next_disk_version;
         Ok(())
+    }
+
+    pub(crate) const fn last_load_failed_closed(&self) -> bool {
+        self.last_load_failed_closed
     }
 
     pub fn reload_file(&mut self, uri: Url) -> Result<BTreeSet<String>, String> {
@@ -934,6 +941,58 @@ mod tests {
         resources
             .reload_file(second_uri)
             .expect("rejected reread did not consume the old session budget");
+    }
+
+    #[test]
+    fn changed_project_plan_is_rejected_before_an_open_overlay_mutates_state() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 8, 8, false);
+        let path = root.0.join("document.adoc");
+        std::fs::write(&path, "disk").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("workspace");
+        write_resource_config(&root.0, 1, 4, 4, false);
+        let error = resources
+            .upsert_open(document_uri.clone(), 1, "open")
+            .expect_err("changed plan");
+        assert!(error.contains("full reload"), "{error}");
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("unchanged disk resource")
+                .text()
+                .as_ref(),
+            "disk"
+        );
+    }
+
+    #[test]
+    fn changed_project_is_rejected_before_an_open_overlay_mutates_state() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 8, 8, false);
+        let nested = root.0.join("nested");
+        std::fs::create_dir(&nested).expect("nested project");
+        let path = nested.join("document.adoc");
+        std::fs::write(&path, "disk").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("workspace");
+        write_resource_config(&nested, 2, 8, 8, false);
+        let error = resources
+            .upsert_open(document_uri.clone(), 1, "open")
+            .expect_err("changed project");
+        assert!(error.contains("full reload"), "{error}");
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("unchanged disk resource")
+                .text()
+                .as_ref(),
+            "disk"
+        );
     }
 
     #[test]
