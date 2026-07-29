@@ -54,6 +54,13 @@ HTMLやエディター固有の表示規則をParserへ持ち込みません。
 スナップショットをruntime非依存かつI/O非依存の状態機械として提供します。filesystem関連crateへ依存せず、
 検証済みのresource IDと本文だけを受け取ります。
 
+project設定のresource上限は``ResolvedResourceLimitPlan``として一度だけ解決します。このplanは、
+filesystemから読む本文、Workspaceが保持するdiskとoverlayの層、および解析snapshotが参照する有効resourceを
+別々の型で制約します。Language Serverは各文書に最も近いproject設定からplanを選び、読込と保持では
+allocationまたは取り込みを始める前に上限を適用します。
+課金範囲はworkspace rootと最も近いproject設定の組で識別し、設定の新設や削除で範囲が変わる場合は、
+旧範囲の課金解放と新範囲への移行を一つの更新として確定します。
+
 Native adapterは``adocweave-host``の``LocalFilesystemSession``を共有します。Linuxではrootの
 directory handleを起点にfileを開いてから読み取り、path検査後に別のfileを開き直しません。
 初期directory列挙、symlink判定、UTF-8読込およびfile数・byte数の上限も同じsessionが担当します。

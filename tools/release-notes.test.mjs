@@ -19,6 +19,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /filesystemの列挙と読込をhostへ集約/);
   assert.match(notes, /文書外属性と属性展開上限を一つの検証済み処理契約へ統合/);
   assert.match(notes, /前処理、解析、Lintおよび生成元への位置投影へ協調キャンセルを伝播/);
+  assert.match(notes, /filesystem読込、Workspaceのdisk・overlay保持および解析snapshotの上限plan/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -52,6 +53,25 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /網羅的に`match`するRustコード/);
   assert.match(notes, /preprocess_and_analyze_cancellable_with_options/);
   assert.match(notes, /PreprocessedAnalysis::project_origins_cancellable/);
+  assert.match(notes, /`adocweave_host::ResourceLimits`は`FilesystemReadLimits`/);
+  assert.match(notes, /`adocweave_workspace::ResourceLimits`は`RetainedResourceLimits`/);
+  assert.match(notes, /`ResolvedResourceLimitPlan`/);
+  assert.match(notes, /`RetainedLayerCharge`、`RetainedResourceBudget`/);
+  assert.match(notes, /`RetainedResourceBudget::try_replace_layers`/);
+  assert.match(notes, /`AnalysisSnapshotLimitError`、`AnalysisSnapshotBudget`/);
+  assert.match(notes, /`Workspace::try_snapshot_resources`/);
+  assert.match(
+    notes,
+    /`LocalFilesystemSession::rollback_reread`は`Result<\(\), ResourceError>`を返します/,
+  );
+  assert.match(notes, /`ResourceError::InvalidRollback`/);
+  assert.match(notes, /標準入力はfilesystem読込へ課金しません/);
+  assert.match(notes, /設定なしの別folderは独立したscope/);
+  assert.match(notes, /全入力のproject設定を本文読込前に固定/);
+  assert.match(notes, /別workspace rootのresourceをsnapshotへ含めず/);
+  assert.match(notes, /`didOpen`も設定のresource root外URIを状態変更前に拒否/);
+  assert.match(notes, /`ConfigErrorCode::ReadFailed`だけが直前のWorkspaceとdocument viewを保持/);
+  assert.match(notes, /`workspace-input-error`/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(

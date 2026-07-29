@@ -65,6 +65,336 @@ fn stop_preview(child: &mut std::process::Child) {
     assert!(status.success(), "{:?}", status.signal());
 }
 
+#[test]
+fn configured_resource_limit_rejects_root_before_processing() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+    )
+    .expect("configuration");
+    std::fs::write(root.path().join("document.adoc"), "12345").expect("document");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["check", "document.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("single-resource byte limit"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn configured_resource_limit_bounds_standard_input_while_reading() {
+    let root = tempfile::tempdir().expect("root");
+    let config = root.path().join(".adocweave.toml");
+    std::fs::write(
+        &config,
+        "schema-version = 1\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+    )
+    .expect("configuration");
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args(["check", "--config", ".adocweave.toml", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("command");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"12345")
+        .expect("input");
+    let output = child.wait_with_output().expect("output");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("single-resource byte limit"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn explicit_primary_parent_does_not_expand_include_root_authority() {
+    let root = tempfile::tempdir().expect("root");
+    let includes = root.path().join("includes");
+    std::fs::create_dir(&includes).expect("include root");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\"includes\"]\nmax-files = 2\nmax-total-bytes = 128\nmax-resource-bytes = 128\n",
+    )
+    .expect("configuration");
+    std::fs::write(
+        root.path().join("document.adoc"),
+        "include::includes/part.adoc[]\n",
+    )
+    .expect("primary");
+    std::fs::write(includes.join("part.adoc"), "included\n").expect("include");
+    std::fs::write(root.path().join("outside.adoc"), "outside\n").expect("outside");
+
+    let accepted = adocweave()
+        .current_dir(root.path())
+        .args(["check", "document.adoc"])
+        .output()
+        .expect("authorized include");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    std::fs::write(
+        root.path().join("document.adoc"),
+        "include::outside.adoc[]\n",
+    )
+    .expect("outside include request");
+    let rejected = adocweave()
+        .current_dir(root.path())
+        .args(["check", "document.adoc"])
+        .output()
+        .expect("unauthorized include");
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("outside"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+}
+
+#[test]
+fn analysis_resource_count_includes_root_and_includes() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 1\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
+    )
+    .expect("configuration");
+    std::fs::write(
+        root.path().join("root.adoc"),
+        include_bytes!("../../../fixtures/resource-limits/root-with-include.adoc"),
+    )
+    .expect("root document");
+    std::fs::write(
+        root.path().join("part.adoc"),
+        include_bytes!("../../../fixtures/resource-limits/part.adoc"),
+    )
+    .expect("included document");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["check", "root.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("file limit"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn multi_project_scan_applies_file_limits_per_resolved_scope() {
+    const FILES_PER_PROJECT: usize = 6_000;
+
+    let root = tempfile::tempdir().expect("root");
+    for name in ["project-a", "project-b"] {
+        let project = root.path().join(name);
+        std::fs::create_dir(&project).expect("project directory");
+        std::fs::write(
+            project.join(".adocweave.toml"),
+            format!(
+                "schema-version = 1\n[resources]\nmax-files = {FILES_PER_PROJECT}\nmax-total-bytes = 1048576\nmax-resource-bytes = 1024\n"
+            ),
+        )
+        .expect("configuration");
+        for index in 0..FILES_PER_PROJECT {
+            std::fs::write(project.join(format!("{index:04}.adoc")), "").expect("document");
+        }
+    }
+
+    let accepted = adocweave()
+        .current_dir(root.path())
+        .args(["format", "--check", "project-a", "project-b"])
+        .output()
+        .expect("two-project command");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    std::fs::write(root.path().join("project-a/overflow.adoc"), "").expect("overflow document");
+    let rejected = adocweave()
+        .current_dir(root.path())
+        .args(["format", "--check", "project-a", "project-b"])
+        .output()
+        .expect("over-limit command");
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("filesystem resource count limit exceeded: 6000"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+}
+
+#[test]
+fn multi_path_byte_budget_is_shared_only_within_the_resolved_project() {
+    let root = tempfile::tempdir().expect("root");
+    let same = root.path().join("same");
+    std::fs::create_dir(&same).expect("same project");
+    std::fs::write(
+        same.join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\nmax-files = 4\nmax-total-bytes = 3\nmax-resource-bytes = 3\n",
+    )
+    .expect("same config");
+    std::fs::write(same.join("a.adoc"), "aa").expect("first");
+    std::fs::write(same.join("b.adoc"), "bb").expect("second");
+
+    let rejected = adocweave()
+        .current_dir(root.path())
+        .args(["format", "--check", "same/a.adoc", "same/b.adoc"])
+        .output()
+        .expect("same project");
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("total byte limit"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+
+    for name in ["one", "two"] {
+        let project = root.path().join(name);
+        std::fs::create_dir(&project).expect("project");
+        std::fs::write(
+            project.join(".adocweave.toml"),
+            "schema-version = 1\n[resources]\nmax-files = 2\nmax-total-bytes = 3\nmax-resource-bytes = 3\n",
+        )
+        .expect("config");
+        std::fs::write(project.join("document.adoc"), "xx").expect("document");
+    }
+    let accepted = adocweave()
+        .current_dir(root.path())
+        .args([
+            "format",
+            "--check",
+            "one/document.adoc",
+            "two/document.adoc",
+        ])
+        .output()
+        .expect("separate projects");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+}
+
+#[test]
+fn multi_path_include_budget_is_shared_only_within_the_resolved_project() {
+    const FIRST_SOURCE: &str = "include::first-part.adoc[]\n";
+    const SECOND_SOURCE: &str = "include::second-part.adoc[]\n";
+    const PART: &str = "part\n";
+
+    let root = tempfile::tempdir().expect("root");
+    let same_files = root.path().join("same-files");
+    std::fs::create_dir(&same_files).expect("file-limit project");
+    std::fs::write(
+        same_files.join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 3\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n",
+    )
+    .expect("file-limit config");
+    std::fs::write(same_files.join("a.adoc"), FIRST_SOURCE).expect("first primary");
+    std::fs::write(same_files.join("b.adoc"), SECOND_SOURCE).expect("second primary");
+    std::fs::write(same_files.join("first-part.adoc"), PART).expect("first include");
+    std::fs::write(same_files.join("second-part.adoc"), PART).expect("second include");
+
+    let file_rejected = adocweave()
+        .current_dir(root.path())
+        .args([
+            "format",
+            "--check",
+            "same-files/a.adoc",
+            "same-files/b.adoc",
+        ])
+        .output()
+        .expect("shared file budget");
+    assert!(!file_rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&file_rejected.stderr).contains("file limit exceeded: 3"),
+        "{}",
+        String::from_utf8_lossy(&file_rejected.stderr)
+    );
+
+    let same_bytes = root.path().join("same-bytes");
+    std::fs::create_dir(&same_bytes).expect("byte-limit project");
+    let byte_limit = FIRST_SOURCE.len() + PART.len() + SECOND_SOURCE.len();
+    std::fs::write(
+        same_bytes.join(".adocweave.toml"),
+        format!(
+            "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 4\nmax-total-bytes = {byte_limit}\nmax-resource-bytes = {byte_limit}\n"
+        ),
+    )
+    .expect("byte-limit config");
+    std::fs::write(same_bytes.join("a.adoc"), FIRST_SOURCE).expect("first primary");
+    std::fs::write(same_bytes.join("b.adoc"), SECOND_SOURCE).expect("second primary");
+    std::fs::write(same_bytes.join("first-part.adoc"), PART).expect("first include");
+    std::fs::write(same_bytes.join("second-part.adoc"), PART).expect("second include");
+
+    let byte_rejected = adocweave()
+        .current_dir(root.path())
+        .args([
+            "format",
+            "--check",
+            "same-bytes/a.adoc",
+            "same-bytes/b.adoc",
+        ])
+        .output()
+        .expect("shared byte budget");
+    assert!(!byte_rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&byte_rejected.stderr).contains("byte limit exceeded"),
+        "{}",
+        String::from_utf8_lossy(&byte_rejected.stderr)
+    );
+
+    const PROJECT_SOURCE: &str = "include::part.adoc[]\n";
+    for name in ["one", "two"] {
+        let project = root.path().join(name);
+        std::fs::create_dir(&project).expect("independent project");
+        let project_limit = PROJECT_SOURCE.len() + PART.len();
+        std::fs::write(
+            project.join(".adocweave.toml"),
+            format!(
+                "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = {project_limit}\nmax-resource-bytes = {project_limit}\n"
+            ),
+        )
+        .expect("independent config");
+        std::fs::write(project.join("root.adoc"), PROJECT_SOURCE).expect("primary");
+        std::fs::write(project.join("part.adoc"), PART).expect("include");
+    }
+    let accepted = adocweave()
+        .current_dir(root.path())
+        .args(["format", "--check", "one/root.adoc", "two/root.adoc"])
+        .output()
+        .expect("independent project budgets");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn preview_sigterm_exits_cleanly_and_releases_the_listener() {
@@ -1906,6 +2236,61 @@ fn stdin_include_requires_a_base_and_rejects_traversal() {
     assert!(
         !missing.status.success(),
         "format validates the include tree"
+    );
+}
+
+#[test]
+fn stdin_and_include_share_the_project_retained_and_total_byte_boundary() {
+    let root = tempfile::tempdir().expect("root");
+    let source = b"include::part.adoc[]\n";
+    let include = b"part";
+    std::fs::write(root.path().join("part.adoc"), include).expect("include");
+    let total = source.len() + include.len();
+    let config = root.path().join(".adocweave.toml");
+    let run = |max_files: usize, limit: usize| {
+        std::fs::write(
+            &config,
+            format!(
+                "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = {max_files}\nmax-total-bytes = {limit}\nmax-resource-bytes = {limit}\n"
+            ),
+        )
+        .expect("configuration");
+        let mut child = adocweave()
+            .current_dir(root.path())
+            .args(["check", "--base-dir", ".", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("command");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(source)
+            .expect("input");
+        child.wait_with_output().expect("output")
+    };
+
+    let accepted = run(2, total);
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let rejected = run(2, total - 1);
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("byte limit"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    let rejected = run(1, total);
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("file limit"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
     );
 }
 

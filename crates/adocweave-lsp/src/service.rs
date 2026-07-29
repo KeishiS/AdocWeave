@@ -186,6 +186,7 @@ pub(crate) struct LanguageService {
     workspace: WorkspaceResources,
     workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
     workspace_error: Option<String>,
+    workspace_input_error: Option<String>,
 }
 
 impl fmt::Debug for LanguageService {
@@ -212,6 +213,7 @@ impl Default for LanguageService {
             workspace: WorkspaceResources::default(),
             workspace_roots: std::collections::BTreeMap::new(),
             workspace_error: None,
+            workspace_input_error: None,
         }
     }
 }
@@ -251,6 +253,19 @@ fn attach_workspace(
             });
         }
     }
+}
+
+fn parse_open_sources(sources: &[(String, i32, String)]) -> Vec<(lsp::Url, i64, Arc<str>)> {
+    sources
+        .iter()
+        .filter_map(|(uri, version, source)| {
+            Some((
+                uri.parse().ok()?,
+                i64::from(*version),
+                Arc::<str>::from(source.as_str()),
+            ))
+        })
+        .collect()
 }
 
 impl LanguageService {
@@ -364,15 +379,22 @@ impl LanguageService {
     }
 
     pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Vec<AnalysisJob> {
+        if self.workspace_error.is_some() {
+            return Vec::new();
+        }
         let document = params.text_document;
-        let affected = self
-            .workspace
-            .upsert_open(
-                document.uri.clone(),
-                i64::from(document.version),
-                document.text.clone(),
-            )
-            .unwrap_or_else(|_| std::collections::BTreeSet::from([document.uri.to_string()]));
+        let affected = match self.workspace.upsert_open(
+            document.uri.clone(),
+            i64::from(document.version),
+            document.text.clone(),
+        ) {
+            Ok(affected) => affected,
+            Err(error) => {
+                self.workspace_input_error = Some(error);
+                return Vec::new();
+            }
+        };
+        self.workspace_input_error = None;
         let workspace = self.workspace.input(&document.uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
         let mut job = self.documents.begin_open_with_options(
@@ -486,20 +508,20 @@ impl LanguageService {
         &mut self,
         params: lsp::DidChangeWatchedFilesParams,
     ) -> Vec<AnalysisJob> {
+        if params.changes.iter().any(|change| {
+            change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
+        }) {
+            // A full reload selects the new plan before any changed document
+            // in the same notification is read.
+            return self.reload_project_configuration();
+        }
         let mut affected = std::collections::BTreeSet::new();
-        let mut configuration_changed = false;
         for change in params.changes {
-            if change.uri.path_segments().and_then(Iterator::last)
-                == Some(adocweave_config::FILE_NAME)
-            {
-                configuration_changed = true;
-                continue;
-            }
             if self.documents.get(change.uri.as_str()).is_some() {
                 continue;
             }
             let changed = if change.typ == lsp::FileChangeType::DELETED {
-                Ok(self.workspace.remove_disk(&change.uri))
+                self.workspace.remove_disk(&change.uri)
             } else {
                 self.workspace.reload_file(change.uri)
             };
@@ -507,9 +529,6 @@ impl LanguageService {
                 Ok(changed) => affected.extend(changed),
                 Err(error) => self.workspace_error = Some(error),
             }
-        }
-        if configuration_changed {
-            return self.reload_project_configuration();
         }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, "", &mut jobs);
@@ -519,20 +538,25 @@ impl LanguageService {
     fn reload_project_configuration(&mut self) -> Vec<AnalysisJob> {
         let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
         let open_sources = self.documents.open_sources();
-        if let Err(error) = self.workspace.load_roots(&roots) {
-            self.workspace_error = Some(error);
-            return Vec::new();
-        }
-        for (uri, version, source) in &open_sources {
-            let Ok(uri) = uri.parse() else {
-                continue;
-            };
-            if let Err(error) = self
-                .workspace
-                .upsert_open(uri, i64::from(*version), source.clone())
-            {
-                self.workspace_error = Some(error);
+        let parsed_open_sources = parse_open_sources(&open_sources);
+        if let Err(error) = self
+            .workspace
+            .reload_roots_with_open_sources(&roots, &parsed_open_sources)
+        {
+            let failed_closed = self.workspace.last_load_failed_closed();
+            self.workspace_error = Some(error.clone());
+            if !failed_closed {
+                return Vec::new();
             }
+            return open_sources
+                .into_iter()
+                .filter_map(|(uri, _, _)| {
+                    let options = self.analysis_options_for(None);
+                    let mut job = self.documents.reconfigure(&uri, options)?;
+                    attach_workspace(&mut job, Err(error.clone()));
+                    Some(job)
+                })
+                .collect();
         }
         self.workspace_error = None;
         open_sources
@@ -564,23 +588,29 @@ impl LanguageService {
         }
         let root_uris = roots.values().cloned().collect::<Vec<_>>();
         let open_sources = self.documents.open_sources();
-        if let Err(error) = self.workspace.load_roots(&root_uris) {
-            self.workspace_error = Some(error);
-            return Vec::new();
+        let parsed_open_sources = parse_open_sources(&open_sources);
+        if let Err(error) = self
+            .workspace
+            .reload_roots_with_open_sources(&root_uris, &parsed_open_sources)
+        {
+            let failed_closed = self.workspace.last_load_failed_closed();
+            self.workspace_error = Some(error.clone());
+            if !failed_closed {
+                return Vec::new();
+            }
+            self.workspace_roots = roots;
+            return open_sources
+                .into_iter()
+                .filter_map(|(uri, _, _)| {
+                    let options = self.analysis_options_for(None);
+                    let mut job = self.documents.reconfigure(&uri, options)?;
+                    attach_workspace(&mut job, Err(error.clone()));
+                    Some(job)
+                })
+                .collect();
         }
         self.workspace_roots = roots;
         self.workspace_error = None;
-        for (uri, version, source) in &open_sources {
-            let Ok(uri) = uri.parse() else {
-                continue;
-            };
-            if let Err(error) = self
-                .workspace
-                .upsert_open(uri, i64::from(*version), source.clone())
-            {
-                self.workspace_error = Some(error);
-            }
-        }
         open_sources
             .into_iter()
             .filter_map(|(uri, _, _)| {
@@ -767,7 +797,12 @@ impl LanguageService {
         let Some(source) = source else {
             return Ok(lsp::PublishDiagnosticsParams::new(
                 uri.clone(),
-                Vec::new(),
+                self.workspace_error
+                    .as_deref()
+                    .or(self.workspace_input_error.as_deref())
+                    .map(crate::diagnostics::workspace_error)
+                    .into_iter()
+                    .collect(),
                 None,
             ));
         };
@@ -801,6 +836,9 @@ impl LanguageService {
             })
             .collect::<Result<Vec<_>, String>>()?;
         if let Some(error) = &self.workspace_error {
+            diagnostics.push(crate::diagnostics::workspace_error(error));
+        }
+        if let Some(error) = &self.workspace_input_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         for workspace in self.documents.workspace_analyses() {

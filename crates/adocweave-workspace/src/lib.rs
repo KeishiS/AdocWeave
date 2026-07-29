@@ -129,9 +129,9 @@ impl Resource {
     }
 }
 
-/// Bounds applied to verified resources retained in workspace state.
+/// Bounds applied to disk and overlay layers retained in workspace state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ResourceLimits {
+pub struct RetainedResourceLimits {
     /// Maximum number of distinct resource identities.
     pub max_files: usize,
     /// Maximum combined bytes retained across disk and overlay layers.
@@ -140,7 +140,7 @@ pub struct ResourceLimits {
     pub max_resource_bytes: u64,
 }
 
-impl Default for ResourceLimits {
+impl Default for RetainedResourceLimits {
     fn default() -> Self {
         Self {
             max_files: 10_000,
@@ -150,11 +150,188 @@ impl Default for ResourceLimits {
     }
 }
 
+/// Byte charges retained for the two independently owned resource layers.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RetainedLayerCharge {
+    /// Bytes retained for the filesystem-backed layer.
+    disk_bytes: Option<u64>,
+    /// Bytes retained for the open-document layer.
+    overlay_bytes: Option<u64>,
+}
+
+impl RetainedLayerCharge {
+    /// Constructs one layer charge.
+    pub const fn new(disk_bytes: Option<u64>, overlay_bytes: Option<u64>) -> Self {
+        Self {
+            disk_bytes,
+            overlay_bytes,
+        }
+    }
+
+    /// Returns the disk-layer charge.
+    pub const fn disk_bytes(self) -> Option<u64> {
+        self.disk_bytes
+    }
+
+    /// Returns the overlay-layer charge.
+    pub const fn overlay_bytes(self) -> Option<u64> {
+        self.overlay_bytes
+    }
+}
+
+/// Transactional accounting for disk and overlay layers in one project scope.
+///
+/// The returned replacement budget is committed by the caller only after the
+/// corresponding workspace update succeeds.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RetainedResourceBudget {
+    resources: BTreeMap<ResourceId, RetainedLayerCharge>,
+    resource_count: usize,
+    total_bytes: u64,
+}
+
+impl RetainedResourceBudget {
+    /// Returns the layer charges for one resource identity.
+    pub fn charge(&self, id: &ResourceId) -> RetainedLayerCharge {
+        self.resources.get(id).copied().unwrap_or_default()
+    }
+
+    /// Returns whether this scope retains no resource layers.
+    pub fn is_empty(&self) -> bool {
+        self.resource_count == 0
+    }
+
+    /// Replaces both layer charges without cloning the previously committed map.
+    ///
+    /// Limit validation completes before the entry and cached totals change.
+    pub fn try_replace_layers(
+        &mut self,
+        id: ResourceId,
+        charge: RetainedLayerCharge,
+        limits: RetainedResourceLimits,
+    ) -> Result<(), WorkspaceError> {
+        let previous = self.resources.get(&id).copied().unwrap_or_default();
+        let previous_present = previous.disk_bytes.is_some() || previous.overlay_bytes.is_some();
+        let incoming_present = charge.disk_bytes.is_some() || charge.overlay_bytes.is_some();
+        let incoming_bytes = charge
+            .disk_bytes
+            .into_iter()
+            .chain(charge.overlay_bytes)
+            .try_fold(0_u64, |total, bytes| {
+                if bytes > limits.max_resource_bytes {
+                    return None;
+                }
+                total.checked_add(bytes)
+            })
+            .ok_or_else(|| {
+                WorkspaceError::new(
+                    WorkspaceErrorCode::ResourceLimit,
+                    "retained resource byte limit exceeded",
+                )
+            })?;
+        let previous_bytes = previous
+            .disk_bytes
+            .into_iter()
+            .chain(previous.overlay_bytes)
+            .sum::<u64>();
+        let resource_count = self
+            .resource_count
+            .checked_sub(usize::from(previous_present))
+            .and_then(|count| count.checked_add(usize::from(incoming_present)))
+            .ok_or_else(|| {
+                WorkspaceError::new(
+                    WorkspaceErrorCode::ResourceLimit,
+                    "retained resource count limit exceeded",
+                )
+            })?;
+        if resource_count > limits.max_files {
+            return Err(WorkspaceError::new(
+                WorkspaceErrorCode::ResourceLimit,
+                "retained resource count limit exceeded",
+            ));
+        }
+        let total_bytes = self
+            .total_bytes
+            .checked_sub(previous_bytes)
+            .and_then(|total| total.checked_add(incoming_bytes))
+            .filter(|total| *total <= limits.max_total_bytes)
+            .ok_or_else(|| {
+                WorkspaceError::new(
+                    WorkspaceErrorCode::ResourceLimit,
+                    "retained resource byte limit exceeded",
+                )
+            })?;
+        if incoming_present {
+            self.resources.insert(id, charge);
+        } else {
+            self.resources.remove(&id);
+        }
+        self.resource_count = resource_count;
+        self.total_bytes = total_bytes;
+        Ok(())
+    }
+
+    /// Returns a budget with both layers replaced atomically.
+    pub fn with_layers(
+        &self,
+        id: ResourceId,
+        charge: RetainedLayerCharge,
+        limits: RetainedResourceLimits,
+    ) -> Result<Self, WorkspaceError> {
+        let mut replacement = self.clone();
+        replacement.try_replace_layers(id, charge, limits)?;
+        Ok(replacement)
+    }
+
+    /// Returns a budget with both layers released.
+    pub fn without_resource(&self, id: &ResourceId) -> Self {
+        let mut replacement = self.clone();
+        let previous = replacement.resources.remove(id).unwrap_or_default();
+        if previous.disk_bytes.is_some() || previous.overlay_bytes.is_some() {
+            replacement.resource_count -= 1;
+            replacement.total_bytes -= previous
+                .disk_bytes
+                .into_iter()
+                .chain(previous.overlay_bytes)
+                .sum::<u64>();
+        }
+        replacement
+    }
+
+    /// Returns a budget with one disk layer inserted, replaced, or removed.
+    pub fn with_disk(
+        &self,
+        id: ResourceId,
+        bytes: Option<u64>,
+        limits: RetainedResourceLimits,
+    ) -> Result<Self, WorkspaceError> {
+        let mut replacement = self.clone();
+        let mut charge = replacement.charge(&id);
+        charge.disk_bytes = bytes;
+        replacement.try_replace_layers(id, charge, limits)?;
+        Ok(replacement)
+    }
+
+    /// Returns a budget with one overlay layer inserted, replaced, or removed.
+    pub fn with_overlay(
+        &self,
+        id: ResourceId,
+        bytes: Option<u64>,
+        limits: RetainedResourceLimits,
+    ) -> Result<Self, WorkspaceError> {
+        let mut replacement = self.clone();
+        let mut charge = replacement.charge(&id);
+        charge.overlay_bytes = bytes;
+        replacement.try_replace_layers(id, charge, limits)?;
+        Ok(replacement)
+    }
+}
+
 /// Bounds applied before resources or analysis roots enter workspace state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkspaceLimits {
     /// Resource count and byte limits for verified resources supplied by a host.
-    pub resources: ResourceLimits,
+    pub resources: RetainedResourceLimits,
     /// Maximum number of registered analysis roots.
     pub max_roots: usize,
 }
@@ -162,7 +339,7 @@ pub struct WorkspaceLimits {
 impl Default for WorkspaceLimits {
     fn default() -> Self {
         Self {
-            resources: ResourceLimits::default(),
+            resources: RetainedResourceLimits::default(),
             max_roots: 10_000,
         }
     }
@@ -299,6 +476,8 @@ pub struct Workspace {
     roots: BTreeSet<ResourceId>,
     disk: BTreeMap<ResourceId, Resource>,
     overlays: BTreeMap<ResourceId, Resource>,
+    retained_resource_count: usize,
+    retained_total_bytes: u64,
     effective: Arc<BTreeMap<ResourceId, Resource>>,
     dependencies: DependencyGraph<ResourceId>,
 }
@@ -323,6 +502,8 @@ impl Workspace {
             roots: BTreeSet::new(),
             disk: BTreeMap::new(),
             overlays: BTreeMap::new(),
+            retained_resource_count: 0,
+            retained_total_bytes: 0,
             effective: Arc::default(),
             dependencies: DependencyGraph::default(),
         }
@@ -384,8 +565,11 @@ impl Workspace {
             layer: ResourceLayer::Disk,
         };
         self.ensure_newer(self.disk.get(&id), &resource)?;
-        self.ensure_capacity(Some((&id, &resource)), None)?;
+        let (retained_resource_count, retained_total_bytes) =
+            self.ensure_capacity(Some((&id, &resource)), None)?;
         self.disk.insert(id.clone(), resource);
+        self.retained_resource_count = retained_resource_count;
+        self.retained_total_bytes = retained_total_bytes;
         if self.overlays.contains_key(&id) {
             return Ok(BTreeSet::new());
         }
@@ -406,8 +590,11 @@ impl Workspace {
             layer: ResourceLayer::Overlay,
         };
         self.ensure_newer(self.overlays.get(&id), &resource)?;
-        self.ensure_capacity(None, Some((&id, &resource)))?;
+        let (retained_resource_count, retained_total_bytes) =
+            self.ensure_capacity(None, Some((&id, &resource)))?;
         self.overlays.insert(id.clone(), resource);
+        self.retained_resource_count = retained_resource_count;
+        self.retained_total_bytes = retained_total_bytes;
         self.refresh_effective(id)
     }
 
@@ -416,8 +603,12 @@ impl Workspace {
         &mut self,
         id: &ResourceId,
     ) -> Result<BTreeSet<ResourceId>, WorkspaceError> {
-        if self.overlays.remove(id).is_none() {
+        let Some(overlay) = self.overlays.remove(id) else {
             return Ok(BTreeSet::new());
+        };
+        self.retained_total_bytes -= overlay.text.len() as u64;
+        if !self.disk.contains_key(id) {
+            self.retained_resource_count -= 1;
         }
         self.refresh_effective(id.clone())
     }
@@ -426,7 +617,14 @@ impl Workspace {
     ///
     /// An open overlay remains effective until it is closed.
     pub fn remove_disk(&mut self, id: &ResourceId) -> BTreeSet<ResourceId> {
-        if self.disk.remove(id).is_none() || self.overlays.contains_key(id) {
+        let Some(disk) = self.disk.remove(id) else {
+            return BTreeSet::new();
+        };
+        self.retained_total_bytes -= disk.text.len() as u64;
+        if !self.overlays.contains_key(id) {
+            self.retained_resource_count -= 1;
+        }
+        if self.overlays.contains_key(id) {
             return BTreeSet::new();
         }
         self.remove_effective(id)
@@ -448,6 +646,32 @@ impl Workspace {
             roots: self.roots.clone(),
             resources: Arc::clone(&self.effective),
         }
+    }
+
+    /// Captures only resources accepted by a fallible predicate.
+    ///
+    /// The predicate runs before each resource and registered root is cloned.
+    /// If it returns an error, later resources and roots are not visited or
+    /// copied into temporary snapshot state.
+    pub fn try_snapshot_resources<E>(
+        &self,
+        mut retain: impl FnMut(&ResourceId, &Resource) -> Result<bool, E>,
+    ) -> Result<WorkspaceSnapshot, E> {
+        let mut roots = BTreeSet::new();
+        let mut resources = BTreeMap::new();
+        for (id, resource) in self.effective.iter() {
+            if retain(id, resource)? {
+                if self.roots.contains(id) {
+                    roots.insert(id.clone());
+                }
+                resources.insert(id.clone(), resource.clone());
+            }
+        }
+        Ok(WorkspaceSnapshot {
+            generation: self.generation,
+            roots,
+            resources: Arc::new(resources),
+        })
     }
 
     /// Adopts dependency information from a result that is still current.
@@ -495,35 +719,22 @@ impl Workspace {
         &self,
         disk_replacement: Option<(&ResourceId, &Resource)>,
         overlay_replacement: Option<(&ResourceId, &Resource)>,
-    ) -> Result<(), WorkspaceError> {
-        let count = self
-            .disk
-            .keys()
-            .chain(self.overlays.keys())
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .len();
+    ) -> Result<(usize, u64), WorkspaceError> {
         let incoming_new = disk_replacement
             .or(overlay_replacement)
             .is_some_and(|(id, _)| !self.disk.contains_key(id) && !self.overlays.contains_key(id));
-        if count + usize::from(incoming_new) > self.limits.resources.max_files {
-            return Err(WorkspaceError::new(
-                WorkspaceErrorCode::ResourceLimit,
-                "file limit exceeded",
-            ));
-        }
-        let replaced_disk = disk_replacement.map(|(id, _)| id);
-        let replaced_overlay = overlay_replacement.map(|(id, _)| id);
-        let retained = self
-            .disk
-            .iter()
-            .filter(|(id, _)| Some(*id) != replaced_disk)
-            .chain(
-                self.overlays
-                    .iter()
-                    .filter(|(id, _)| Some(*id) != replaced_overlay),
-            )
-            .try_fold(0_u64, |total, (_, resource)| {
+        let count = self
+            .retained_resource_count
+            .checked_add(usize::from(incoming_new))
+            .filter(|count| *count <= self.limits.resources.max_files)
+            .ok_or_else(|| {
+                WorkspaceError::new(WorkspaceErrorCode::ResourceLimit, "file limit exceeded")
+            })?;
+        let replaced_bytes = disk_replacement
+            .and_then(|(id, _)| self.disk.get(id))
+            .into_iter()
+            .chain(overlay_replacement.and_then(|(id, _)| self.overlays.get(id)))
+            .try_fold(0_u64, |total, resource| {
                 total.checked_add(resource.text.len() as u64)
             })
             .ok_or_else(|| {
@@ -539,15 +750,27 @@ impl Workspace {
                         "resource byte limit exceeded",
                     ));
                 }
-                Ok(total + resource.text.len() as u64)
+                total
+                    .checked_add(resource.text.len() as u64)
+                    .ok_or_else(|| {
+                        WorkspaceError::new(
+                            WorkspaceErrorCode::ResourceLimit,
+                            "byte limit exceeded",
+                        )
+                    })
             })?;
-        if retained.saturating_add(incoming) > self.limits.resources.max_total_bytes {
-            return Err(WorkspaceError::new(
-                WorkspaceErrorCode::ResourceLimit,
-                "total byte limit exceeded",
-            ));
-        }
-        Ok(())
+        let total = self
+            .retained_total_bytes
+            .checked_sub(replaced_bytes)
+            .and_then(|total| total.checked_add(incoming))
+            .filter(|total| *total <= self.limits.resources.max_total_bytes)
+            .ok_or_else(|| {
+                WorkspaceError::new(
+                    WorkspaceErrorCode::ResourceLimit,
+                    "total byte limit exceeded",
+                )
+            })?;
+        Ok((count, total))
     }
 
     fn refresh_effective(
@@ -917,7 +1140,7 @@ mod tests {
     #[test]
     fn oversized_overlay_is_rejected_without_replacing_current_text() {
         let limits = WorkspaceLimits {
-            resources: ResourceLimits {
+            resources: RetainedResourceLimits {
                 max_files: 2,
                 max_total_bytes: 8,
                 max_resource_bytes: 8,
@@ -937,6 +1160,168 @@ mod tests {
             WorkspaceErrorCode::ResourceLimit
         );
         assert_eq!(workspace.get(&root).unwrap().text().as_ref(), "disk");
+    }
+
+    #[test]
+    fn retained_layer_budget_rejects_transactionally_and_releases_each_layer() {
+        let limits = RetainedResourceLimits {
+            max_files: 1,
+            max_total_bytes: 5,
+            max_resource_bytes: 4,
+        };
+        let root = id("file:///book/root.adoc");
+        let disk = RetainedResourceBudget::default()
+            .with_disk(root.clone(), Some(3), limits)
+            .expect("disk charge");
+
+        assert_eq!(
+            disk.with_overlay(root.clone(), Some(3), limits)
+                .expect_err("combined layer limit")
+                .code,
+            WorkspaceErrorCode::ResourceLimit
+        );
+        let overlay = disk
+            .with_disk(root.clone(), None, limits)
+            .expect("disk release")
+            .with_overlay(root.clone(), Some(4), limits)
+            .expect("overlay charge after release");
+        overlay
+            .with_overlay(root, None, limits)
+            .expect("overlay release");
+    }
+
+    #[test]
+    fn retained_budget_cached_totals_cover_layers_replacement_and_failure() {
+        let limits = RetainedResourceLimits {
+            max_files: 2,
+            max_total_bytes: 7,
+            max_resource_bytes: 5,
+        };
+        let first = id("file:///first.adoc");
+        let second = id("file:///second.adoc");
+        let mut budget = RetainedResourceBudget::default();
+        budget
+            .try_replace_layers(
+                first.clone(),
+                RetainedLayerCharge::new(Some(2), Some(3)),
+                limits,
+            )
+            .expect("two layers under one identity");
+        assert_eq!(budget.resource_count, 1);
+        assert_eq!(budget.total_bytes, 5);
+        budget
+            .try_replace_layers(
+                first.clone(),
+                RetainedLayerCharge::new(Some(1), None),
+                limits,
+            )
+            .expect("replace and remove overlay");
+        budget
+            .try_replace_layers(
+                second.clone(),
+                RetainedLayerCharge::new(None, Some(5)),
+                limits,
+            )
+            .expect("second identity");
+        assert_eq!(budget.resource_count, 2);
+        assert_eq!(budget.total_bytes, 6);
+
+        let before = budget.clone();
+        budget
+            .try_replace_layers(second, RetainedLayerCharge::new(Some(5), Some(5)), limits)
+            .expect_err("total limit");
+        assert_eq!(budget.resources, before.resources);
+        assert_eq!(budget.resource_count, before.resource_count);
+        assert_eq!(budget.total_bytes, before.total_bytes);
+
+        budget
+            .try_replace_layers(first, RetainedLayerCharge::default(), limits)
+            .expect("remove both layers");
+        assert_eq!(budget.resource_count, 1);
+        assert_eq!(budget.total_bytes, 5);
+    }
+
+    #[test]
+    fn mutable_budget_and_workspace_accept_the_ten_thousand_resource_boundary() {
+        let limits = RetainedResourceLimits {
+            max_files: 10_000,
+            max_total_bytes: 10_000,
+            max_resource_bytes: 1,
+        };
+        let mut budget = RetainedResourceBudget::default();
+        let mut workspace = Workspace::new(WorkspaceLimits {
+            resources: limits,
+            max_roots: 10_000,
+        });
+        for index in 0..10_000 {
+            let id = id(&format!("file:///{index}.adoc"));
+            budget
+                .try_replace_layers(id.clone(), RetainedLayerCharge::new(Some(1), None), limits)
+                .expect("budget boundary");
+            workspace
+                .upsert_disk(id, Revision::new(1), "x")
+                .expect("workspace boundary");
+        }
+        assert_eq!(budget.resource_count, 10_000);
+        assert_eq!(budget.total_bytes, 10_000);
+        assert_eq!(workspace.retained_resource_count, 10_000);
+        assert_eq!(workspace.retained_total_bytes, 10_000);
+
+        let rejected = id("file:///rejected.adoc");
+        budget
+            .try_replace_layers(
+                rejected.clone(),
+                RetainedLayerCharge::new(Some(1), None),
+                limits,
+            )
+            .expect_err("budget count boundary");
+        workspace
+            .upsert_disk(rejected, Revision::new(1), "x")
+            .expect_err("workspace count boundary");
+        assert_eq!(budget.resource_count, 10_000);
+        assert_eq!(workspace.retained_resource_count, 10_000);
+    }
+
+    #[test]
+    fn workspace_cached_totals_follow_same_id_layers_replacement_and_removal() {
+        let resource = id("file:///resource.adoc");
+        let mut workspace = Workspace::new(WorkspaceLimits {
+            resources: RetainedResourceLimits {
+                max_files: 1,
+                max_total_bytes: 6,
+                max_resource_bytes: 4,
+            },
+            max_roots: 1,
+        });
+        workspace
+            .upsert_disk(resource.clone(), Revision::new(1), "aa")
+            .expect("disk");
+        workspace
+            .upsert_overlay(resource.clone(), Revision::new(2), "bbb")
+            .expect("same identity overlay");
+        assert_eq!(workspace.retained_resource_count, 1);
+        assert_eq!(workspace.retained_total_bytes, 5);
+
+        let before = workspace.clone();
+        workspace
+            .upsert_disk(resource.clone(), Revision::new(3), "xxxx")
+            .expect_err("combined layer total");
+        assert_eq!(
+            workspace.retained_resource_count,
+            before.retained_resource_count
+        );
+        assert_eq!(workspace.retained_total_bytes, before.retained_total_bytes);
+        assert_eq!(
+            workspace.disk.get(&resource).map(Resource::text),
+            before.disk.get(&resource).map(Resource::text),
+        );
+
+        workspace.close_overlay(&resource).expect("close overlay");
+        assert_eq!(workspace.retained_resource_count, 1);
+        assert_eq!(workspace.retained_total_bytes, 2);
+        workspace.remove_disk(&resource);
+        assert_eq!(workspace.retained_resource_count, 0);
+        assert_eq!(workspace.retained_total_bytes, 0);
     }
 
     #[test]
@@ -1209,5 +1594,66 @@ mod tests {
         let snapshot = workspace.snapshot();
         let after = Arc::clone(&snapshot.resources.get(&root).unwrap().text);
         assert!(Arc::ptr_eq(&before, &after));
+    }
+
+    #[test]
+    fn fallible_snapshot_stops_before_later_roots_and_resources_are_cloned() {
+        let mut workspace = Workspace::default();
+        let last_text: Arc<str> = Arc::from("last");
+        for revision in 0..128 {
+            let name = format!("resource-{revision:03}");
+            let id = ResourceId::new(name.clone()).expect("resource ID");
+            let text: Arc<str> = if revision == 127 {
+                Arc::clone(&last_text)
+            } else {
+                Arc::from(name)
+            };
+            workspace
+                .upsert_disk(id.clone(), Revision::new(revision), text)
+                .expect("resource");
+            workspace.register_root(id).expect("root");
+        }
+        let mut visited = Vec::new();
+        let last_text_references = Arc::strong_count(&last_text);
+
+        let result = workspace.try_snapshot_resources(|id, _| {
+            visited.push(id.to_string());
+            if visited.len() == 2 {
+                return Err("limit");
+            }
+            Ok(true)
+        });
+
+        assert!(matches!(result, Err("limit")));
+        assert_eq!(visited, ["resource-000", "resource-001"]);
+        assert_eq!(Arc::strong_count(&last_text), last_text_references);
+    }
+
+    #[test]
+    fn direct_fallible_snapshot_registers_only_accepted_roots() {
+        let mut workspace = Workspace::default();
+        let accepted = id("accepted");
+        let rejected = id("rejected");
+        workspace
+            .upsert_disk(accepted.clone(), Revision::new(1), "accepted")
+            .expect("accepted resource");
+        workspace
+            .upsert_disk(rejected.clone(), Revision::new(1), "rejected")
+            .expect("rejected resource");
+        workspace
+            .register_root(accepted.clone())
+            .expect("accepted root");
+        workspace
+            .register_root(rejected.clone())
+            .expect("rejected root");
+
+        let snapshot = workspace
+            .try_snapshot_resources::<std::convert::Infallible>(|id, _| Ok(id == &accepted))
+            .expect("snapshot");
+
+        assert_eq!(snapshot.resources().count(), 1);
+        assert!(snapshot.get(&accepted).is_some());
+        assert!(snapshot.get(&rejected).is_none());
+        assert_eq!(snapshot.roots, BTreeSet::from([accepted]));
     }
 }

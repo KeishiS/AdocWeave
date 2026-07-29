@@ -12,8 +12,8 @@ use adocweave::preprocess::{
     ResourceDocument, ResourceSnapshot, preprocess,
 };
 use adocweave_host::{
-    LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError, LocalTargetPolicy,
-    LocalTargetSession, LogicalSourceId, ResourceError, ResourceLimits,
+    FilesystemReadLimits, LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError,
+    LocalTargetPolicy, LocalTargetSession, LogicalSourceId, ResourceError,
 };
 
 #[derive(Debug)]
@@ -83,6 +83,17 @@ impl PreparedInput {
     ) -> (&ProjectionInput, Option<&mut LocalValidationContext>) {
         (&self.projection, self.validation.as_mut())
     }
+
+    pub(crate) fn resource_sizes(&self) -> impl Iterator<Item = u64> + '_ {
+        self.projection.resource_lengths()
+    }
+
+    pub(crate) fn resource_entries(&self) -> impl Iterator<Item = (&str, u64)> + '_ {
+        self.projection
+            .sources
+            .iter()
+            .map(|(id, source)| (id.as_str(), source.len() as u64))
+    }
 }
 
 impl ProjectionInput {
@@ -100,6 +111,12 @@ impl ProjectionInput {
 
     pub fn include_base(&self, source_id: &str) -> Option<&Path> {
         self.include_bases.get(source_id).map(PathBuf::as_path)
+    }
+
+    pub fn resource_lengths(&self) -> impl Iterator<Item = u64> + '_ {
+        self.sources
+            .values()
+            .map(|source| u64::try_from(source.len()).unwrap_or(u64::MAX))
     }
 }
 
@@ -306,7 +323,7 @@ pub fn prepare(
     source_id: Option<String>,
     base_dir: &Path,
     allowed_roots: &[PathBuf],
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let base_dir = base_dir
@@ -315,8 +332,8 @@ pub fn prepare(
             path: base_dir.to_owned(),
             source,
         })?;
-    let roots = if allowed_roots.is_empty() {
-        vec![base_dir.clone()]
+    let allowed_roots = if allowed_roots.is_empty() {
+        Vec::new()
     } else {
         allowed_roots
             .iter()
@@ -329,17 +346,46 @@ pub fn prepare(
             })
             .collect::<Result<Vec<_>, _>>()?
     };
-    if !roots.iter().any(|root| base_dir.starts_with(root)) {
-        return Err(LocalIncludeError::OutsideRoot(base_dir));
+    let mut session_roots = allowed_roots.clone();
+    if !session_roots.contains(&base_dir) {
+        session_roots.push(base_dir.clone());
     }
-    let policy = LocalFilesystemPolicy::new(roots, limits).map_err(LocalIncludeError::Host)?;
+    let policy =
+        LocalFilesystemPolicy::new(session_roots, limits).map_err(LocalIncludeError::Host)?;
     let mut filesystem = policy.session().map_err(LocalIncludeError::Host)?;
+    prepare_with_session(
+        source,
+        source_id,
+        &base_dir,
+        &allowed_roots,
+        preprocess_options,
+        &mut filesystem,
+    )
+}
 
+pub(crate) fn prepare_with_session(
+    source: &str,
+    source_id: Option<String>,
+    base_dir: &Path,
+    allowed_roots: &[PathBuf],
+    preprocess_options: &PreprocessOptions,
+    filesystem: &mut LocalFilesystemSession,
+) -> Result<PreparedInput, LocalIncludeError> {
+    let allowed_roots = allowed_roots
+        .iter()
+        .map(|path| {
+            path.canonicalize()
+                .map_err(|source| LocalIncludeError::InvalidRoot {
+                    path: path.clone(),
+                    source,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut sources = BTreeMap::new();
     let mut source_bases = BTreeMap::new();
     if let Some(source_id) = &source_id {
         sources.insert(source_id.clone(), Arc::from(source));
-        source_bases.insert(source_id.clone(), base_dir.clone());
+        source_bases.insert(source_id.clone(), base_dir.to_owned());
     }
     let mut preprocess_options = preprocess_options.clone();
     preprocess_options.source_id = source_id.clone().map(SourceId::new);
@@ -352,6 +398,10 @@ pub fn prepare(
     let (projection, include_errors) =
         preprocess_with(source, preprocess_options, projection, |_, target| {
             let path = base_dir.join(target);
+            if !allowed_roots.is_empty() && !allowed_roots.iter().any(|root| path.starts_with(root))
+            {
+                return Err(LocalIncludeError::OutsideRoot(path));
+            }
             let resource_id = include_source_id(target);
             let loaded = filesystem
                 .read_utf8(
@@ -385,7 +435,7 @@ pub fn prepare_local(
     base_dir: &Path,
     source_base: &Path,
     project_root: &Path,
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
     prepare_local_tracking(
@@ -400,6 +450,64 @@ pub fn prepare_local(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_local_with_session(
+    source: &str,
+    source_id: String,
+    base_dir: &Path,
+    source_base: &Path,
+    project_root: &Path,
+    preprocess_options: &PreprocessOptions,
+    filesystem_session: &mut LocalFilesystemSession,
+) -> Result<PreparedInput, LocalIncludeError> {
+    prepare_local_tracking_with_existing_session(
+        source,
+        source_id,
+        base_dir,
+        source_base,
+        project_root,
+        preprocess_options,
+        &mut IgnoreDependencies,
+        filesystem_session,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_local_tracking_with_existing_session(
+    source: &str,
+    source_id: String,
+    base_dir: &Path,
+    source_base: &Path,
+    project_root: &Path,
+    preprocess_options: &PreprocessOptions,
+    observer: &mut dyn DependencyObserver,
+    filesystem_session: &mut LocalFilesystemSession,
+) -> Result<PreparedInput, LocalIncludeError> {
+    let base_dir = base_dir
+        .canonicalize()
+        .map_err(|source| LocalIncludeError::InvalidBase {
+            path: base_dir.to_owned(),
+            source,
+        })?;
+    let policy = LocalTargetPolicy::new(project_root)
+        .map_err(|error| LocalIncludeError::Analysis(format!("invalid project root: {error}")))?;
+    if !base_dir.starts_with(policy.root()) {
+        return Err(LocalIncludeError::OutsideRoot(base_dir));
+    }
+    let root = policy.root().to_owned();
+    prepare_local_tracking_with_session(
+        source,
+        source_id,
+        &base_dir,
+        source_base,
+        policy,
+        &root,
+        preprocess_options,
+        observer,
+        filesystem_session,
+    )
+}
+
 // Keep this adapter parallel to `prepare_local`; the final argument is an
 // out-parameter used by preview to retain dependencies after preprocessing errors.
 #[allow(clippy::too_many_arguments)]
@@ -409,7 +517,7 @@ pub(crate) fn prepare_local_tracking(
     base_dir: &Path,
     source_base: &Path,
     project_root: &Path,
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
     observer: &mut dyn DependencyObserver,
 ) -> Result<PreparedInput, LocalIncludeError> {
@@ -428,10 +536,36 @@ pub(crate) fn prepare_local_tracking(
     let mut filesystem_session = LocalFilesystemPolicy::new([root.clone()], limits)
         .and_then(|policy| policy.session())
         .map_err(LocalIncludeError::Host)?;
+    prepare_local_tracking_with_session(
+        source,
+        source_id,
+        &base_dir,
+        source_base,
+        policy,
+        &root,
+        preprocess_options,
+        observer,
+        &mut filesystem_session,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_local_tracking_with_session(
+    source: &str,
+    source_id: String,
+    base_dir: &Path,
+    source_base: &Path,
+    policy: LocalTargetPolicy,
+    root: &Path,
+    preprocess_options: &PreprocessOptions,
+    observer: &mut dyn DependencyObserver,
+    filesystem_session: &mut LocalFilesystemSession,
+) -> Result<PreparedInput, LocalIncludeError> {
+    let limits = filesystem_session.limits();
     let session = LocalTargetSession::new(policy, limits.max_files, limits);
     let base_key = logical_key(
         base_dir
-            .strip_prefix(&root)
+            .strip_prefix(root)
             .expect("base checked below root"),
     );
 
@@ -444,7 +578,7 @@ pub(crate) fn prepare_local_tracking(
                 source,
             })?;
     let source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
-    let include_bases = BTreeMap::from([(source_id.clone(), base_dir.clone())]);
+    let include_bases = BTreeMap::from([(source_id.clone(), base_dir.to_owned())]);
     let mut preprocess_options = preprocess_options.clone();
     preprocess_options.source_id = Some(SourceId::new(source_id.clone()));
     preprocess_options.base_uri = (!base_key.is_empty()).then_some(base_key);
@@ -476,13 +610,13 @@ pub(crate) fn prepare_local_tracking(
                 target: target.to_owned(),
                 attributes: String::new(),
             };
-            let candidates = dependency_candidates(&root, target);
+            let candidates = dependency_candidates(root, target);
             for candidate in &candidates {
                 observer.observe_path(candidate);
             }
             let loaded = {
-                IncludeLoader::new(&mut filesystem_session)
-                    .load(&root, request)
+                IncludeLoader::new(filesystem_session)
+                    .load(root, request)
                     .map_err(include_target_error)
             };
             match loaded {
@@ -595,7 +729,7 @@ mod tests {
     }
 
     fn session(root: &Path) -> LocalFilesystemSession {
-        LocalFilesystemPolicy::new([root.to_owned()], ResourceLimits::default())
+        LocalFilesystemPolicy::new([root.to_owned()], FilesystemReadLimits::default())
             .and_then(|policy| policy.session())
             .expect("session")
     }
@@ -669,7 +803,7 @@ mod tests {
             Some(source_id.clone()),
             &root.0,
             &[],
-            ResourceLimits::default(),
+            FilesystemReadLimits::default(),
             &PreprocessOptions::default(),
         )
         .expect("regular preparation");
@@ -696,7 +830,7 @@ mod tests {
             &root.0,
             &root.0,
             &root.0,
-            ResourceLimits::default(),
+            FilesystemReadLimits::default(),
             &PreprocessOptions::default(),
             &mut observer,
         )

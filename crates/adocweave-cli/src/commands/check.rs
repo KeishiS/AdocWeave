@@ -96,7 +96,7 @@ pub(crate) fn process(
     source_id: &str,
     base_analysis_options: &AnalysisOptions,
     preprocess_options: &adocweave::preprocess::PreprocessOptions,
-    resource_limits: adocweave_host::ResourceLimits,
+    resource_limits: adocweave_host::FilesystemReadLimits,
     local: Option<LocalContext<'_>>,
 ) -> Result<CheckOutcome, Error> {
     let source = decode_input(input)?;
@@ -586,7 +586,7 @@ mod tests {
             "manual.adoc",
             &AnalysisOptions::default(),
             &adocweave::preprocess::PreprocessOptions::default(),
-            adocweave_host::ResourceLimits::default(),
+            adocweave_host::FilesystemReadLimits::default(),
             None,
         )
         .expect("check outcome");
@@ -628,7 +628,7 @@ mod tests {
             "<stdin>",
             &AnalysisOptions::default(),
             &adocweave::preprocess::PreprocessOptions::default(),
-            adocweave_host::ResourceLimits::default(),
+            adocweave_host::FilesystemReadLimits::default(),
             None,
         );
 

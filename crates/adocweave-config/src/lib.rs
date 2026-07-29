@@ -16,7 +16,8 @@ use adocweave::output::formatter::{FormatConfig, NewlineStyle};
 use adocweave::output::html::{HtmlDocumentMode, RenderPolicy};
 use adocweave::preprocess::PreprocessOptions;
 use adocweave::{AnalysisOptions, SyntaxMode};
-use adocweave_host::ResourceLimits;
+use adocweave_host::FilesystemReadLimits;
+use adocweave_workspace::RetainedResourceLimits;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -225,6 +226,140 @@ pub fn discover_and_load(
         .transpose()
 }
 
+/// Bounds applied to the effective resources of one analysis snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AnalysisSnapshotLimits {
+    /// Maximum number of effective resources visible to one analysis root.
+    pub max_resources: usize,
+    /// Maximum combined bytes visible to one analysis root.
+    pub max_total_bytes: u64,
+    /// Maximum bytes visible from one effective resource.
+    pub max_resource_bytes: u64,
+}
+
+/// Stable category for analysis-snapshot resource limit failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnalysisSnapshotLimitError {
+    /// Effective resource count exceeds the configured limit.
+    ResourceCount,
+    /// One effective resource exceeds the configured byte limit.
+    ResourceBytes,
+    /// Combined effective resource bytes exceed the configured limit.
+    TotalBytes,
+}
+
+impl fmt::Display for AnalysisSnapshotLimitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ResourceCount => "analysis snapshot resource count limit exceeded",
+            Self::ResourceBytes => "analysis snapshot single-resource byte limit exceeded",
+            Self::TotalBytes => "analysis snapshot total byte limit exceeded",
+        })
+    }
+}
+
+impl Error for AnalysisSnapshotLimitError {}
+
+/// Transactional counter shared by adapters which build one analysis snapshot.
+#[derive(Clone, Copy, Debug)]
+pub struct AnalysisSnapshotBudget {
+    limits: AnalysisSnapshotLimits,
+    resources: usize,
+    bytes: u64,
+}
+
+impl AnalysisSnapshotBudget {
+    /// Starts an empty budget with resolved limits.
+    pub const fn new(limits: AnalysisSnapshotLimits) -> Self {
+        Self {
+            limits,
+            resources: 0,
+            bytes: 0,
+        }
+    }
+
+    /// Charges one effective logical resource before it enters the snapshot.
+    pub fn charge(&mut self, bytes: u64) -> Result<(), AnalysisSnapshotLimitError> {
+        if bytes > self.limits.max_resource_bytes {
+            return Err(AnalysisSnapshotLimitError::ResourceBytes);
+        }
+        let resources = self
+            .resources
+            .checked_add(1)
+            .ok_or(AnalysisSnapshotLimitError::ResourceCount)?;
+        if resources > self.limits.max_resources {
+            return Err(AnalysisSnapshotLimitError::ResourceCount);
+        }
+        let total = self
+            .bytes
+            .checked_add(bytes)
+            .ok_or(AnalysisSnapshotLimitError::TotalBytes)?;
+        if total > self.limits.max_total_bytes {
+            return Err(AnalysisSnapshotLimitError::TotalBytes);
+        }
+        self.resources = resources;
+        self.bytes = total;
+        Ok(())
+    }
+
+    /// Returns the committed resource count.
+    pub const fn resources(self) -> usize {
+        self.resources
+    }
+
+    /// Returns the committed byte count.
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
+}
+
+/// Resource limits resolved once from one document's nearest project file.
+///
+/// The three fields deliberately use different types because filesystem reads,
+/// retained disk and overlay layers, and effective analysis resources have
+/// different accounting semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResolvedResourceLimitPlan {
+    /// Limits enforced by the host before and during filesystem reads.
+    pub filesystem_reads: FilesystemReadLimits,
+    /// Limits enforced before disk or overlay layers enter workspace state.
+    pub retained_layers: RetainedResourceLimits,
+    /// Limits enforced when selecting effective resources for analysis.
+    pub analysis_snapshot: AnalysisSnapshotLimits,
+}
+
+impl Default for ResolvedResourceLimitPlan {
+    fn default() -> Self {
+        Self::from_configured(10_000, 50 * 1024 * 1024, 10 * 1024 * 1024)
+    }
+}
+
+impl ResolvedResourceLimitPlan {
+    const fn from_configured(
+        max_files: usize,
+        max_total_bytes: u64,
+        max_resource_bytes: u64,
+    ) -> Self {
+        Self {
+            filesystem_reads: FilesystemReadLimits {
+                max_files,
+                max_total_bytes,
+                max_resource_bytes,
+            },
+            retained_layers: RetainedResourceLimits {
+                max_files,
+                max_total_bytes,
+                max_resource_bytes,
+            },
+            analysis_snapshot: AnalysisSnapshotLimits {
+                max_resources: max_files,
+                max_total_bytes,
+                max_resource_bytes,
+            },
+        }
+    }
+}
+
 /// Include policy and bounded local resource settings.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResourceSettings {
@@ -233,7 +368,7 @@ pub struct ResourceSettings {
     /// Configuration-relative roots proposed to the host policy.
     pub roots: Vec<PathBuf>,
     /// Resource limits no greater than built-in ceilings.
-    pub limits: ResourceLimits,
+    pub limit_plan: ResolvedResourceLimitPlan,
 }
 
 /// Local target validation settings.
@@ -360,11 +495,17 @@ impl ProjectConfigWire {
         self.lint.apply(&mut resolved.analysis.diagnostics.lint)?;
         resolved.resources = self.resources.resolve(directory)?;
         resolved.preprocess.enable_includes = resolved.resources.include;
-        resolved.preprocess.max_total_bytes =
-            u32::try_from(resolved.resources.limits.max_total_bytes).map_err(|_| {
-                ConfigError::new(ConfigErrorCode::InvalidLimit, "limit exceeds u32")
-                    .at("resources.max-total-bytes")
-            })?;
+        resolved.preprocess.max_total_bytes = u32::try_from(
+            resolved
+                .resources
+                .limit_plan
+                .analysis_snapshot
+                .max_total_bytes,
+        )
+        .map_err(|_| {
+            ConfigError::new(ConfigErrorCode::InvalidLimit, "limit exceeds u32")
+                .at("resources.max-total-bytes")
+        })?;
         resolved.local_targets = self.local_targets.resolve(directory)?;
         resolved.format_newline_explicit = self.format.newline.is_some();
         resolved.format_final_newline_explicit = self.format.final_newline.is_some();
@@ -509,21 +650,24 @@ struct ResourcesWire {
 
 impl ResourcesWire {
     fn resolve(self, directory: &Path) -> Result<ResourceSettings, ConfigError> {
-        let ceiling = ResourceLimits::default();
-        let limits = ResourceLimits {
-            max_files: bounded(self.max_files, ceiling.max_files, "resources.max-files")?,
-            max_total_bytes: bounded(
-                self.max_total_bytes,
-                ceiling.max_total_bytes,
-                "resources.max-total-bytes",
-            )?,
-            max_resource_bytes: bounded(
-                self.max_resource_bytes,
-                ceiling.max_resource_bytes,
-                "resources.max-resource-bytes",
-            )?,
-        };
-        if limits.max_resource_bytes > limits.max_total_bytes {
+        let ceiling = ResolvedResourceLimitPlan::default().filesystem_reads;
+        let max_files = bounded(self.max_files, ceiling.max_files, "resources.max-files")?;
+        let max_total_bytes = bounded(
+            self.max_total_bytes,
+            ceiling.max_total_bytes,
+            "resources.max-total-bytes",
+        )?;
+        let max_resource_bytes = bounded(
+            self.max_resource_bytes,
+            ceiling.max_resource_bytes,
+            "resources.max-resource-bytes",
+        )?;
+        let limit_plan = ResolvedResourceLimitPlan::from_configured(
+            max_files,
+            max_total_bytes,
+            max_resource_bytes,
+        );
+        if max_resource_bytes > max_total_bytes {
             return Err(ConfigError::new(
                 ConfigErrorCode::InvalidLimit,
                 "resource limit exceeds the total byte limit",
@@ -541,7 +685,7 @@ impl ResourcesWire {
         Ok(ResourceSettings {
             include: self.include,
             roots,
-            limits,
+            limit_plan,
         })
     }
 }
@@ -829,6 +973,26 @@ stylesheet-urls = ["https://example.test/manual.css"]
         assert_eq!(trailing.severity, Severity::Hint);
         assert_eq!(config.resources.roots, [PathBuf::from("/workspace/docs")]);
         assert_eq!(
+            config.resources.limit_plan,
+            ResolvedResourceLimitPlan {
+                filesystem_reads: FilesystemReadLimits {
+                    max_files: 20,
+                    max_total_bytes: 4096,
+                    max_resource_bytes: 2048,
+                },
+                retained_layers: RetainedResourceLimits {
+                    max_files: 20,
+                    max_total_bytes: 4096,
+                    max_resource_bytes: 2048,
+                },
+                analysis_snapshot: AnalysisSnapshotLimits {
+                    max_resources: 20,
+                    max_total_bytes: 4096,
+                    max_resource_bytes: 2048,
+                },
+            }
+        );
+        assert_eq!(
             config.local_targets.project_root,
             Some(PathBuf::from("/workspace/docs"))
         );
@@ -960,5 +1124,29 @@ stylesheet-urls = ["https://example.test/manual.css"]
 
         let error = discover_and_load(&project.0, &project.0).expect_err("symlink rejected");
         assert_eq!(error.code, ConfigErrorCode::ReadFailed);
+    }
+
+    #[test]
+    fn analysis_snapshot_budget_is_transactional_at_each_boundary() {
+        let limits = AnalysisSnapshotLimits {
+            max_resources: 2,
+            max_total_bytes: 5,
+            max_resource_bytes: 3,
+        };
+        let mut budget = AnalysisSnapshotBudget::new(limits);
+        budget.charge(2).expect("first resource");
+        assert_eq!((budget.resources(), budget.bytes()), (1, 2));
+        assert_eq!(
+            budget.charge(4),
+            Err(AnalysisSnapshotLimitError::ResourceBytes)
+        );
+        assert_eq!((budget.resources(), budget.bytes()), (1, 2));
+        budget.charge(3).expect("exact total");
+        assert_eq!((budget.resources(), budget.bytes()), (2, 5));
+        assert_eq!(
+            budget.charge(0),
+            Err(AnalysisSnapshotLimitError::ResourceCount)
+        );
+        assert_eq!((budget.resources(), budget.bytes()), (2, 5));
     }
 }
