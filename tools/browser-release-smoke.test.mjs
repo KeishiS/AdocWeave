@@ -26,6 +26,11 @@ test("browser startup production bounds and process diagnostics remain explicit"
   assert.equal(BROWSER_STARTUP_ATTEMPTS, 3);
   assert.equal(BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS, 20_000);
   assert.equal(BROWSER_STARTUP_TOTAL_TIMEOUT_MS, 75_000);
+  assert.equal(
+    BROWSER_STARTUP_TOTAL_TIMEOUT_MS
+      - BROWSER_STARTUP_ATTEMPTS * BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS,
+    15_000,
+  );
 
   const smoke = readFileSync(
     new URL("./browser-release-smoke.mjs", import.meta.url),
@@ -141,10 +146,54 @@ test("Page.enable timeout replaces the profile, process, and socket", async () =
   assert.equal(harness.browsers.length, 2);
   assert.deepEqual(
     harness.browsers.map((browser) => browser.kills),
-    [["SIGTERM"], ["SIGTERM"]],
+    [["SIGTERM", "SIGKILL"], ["SIGTERM"]],
+  );
+  assert.deepEqual(
+    harness.browsers.map((browser) => browser.unrefs),
+    [1, 0],
+  );
+  assert.deepEqual(
+    harness.browsers.map((browser) => browser.stderrDestroys),
+    [1, 0],
   );
   assert.equal(harness.sockets.length, 2);
   assert.ok(harness.sockets.every((socket) => socket.readyState === 3));
+});
+
+test("two DevToolsActivePort deadlines reach a successful third handshake", async () => {
+  const harness = browserHarness({ activePortHangsUntilAttempt: 2 });
+  const result = await inspectPage(
+    "chromium",
+    "http://example.test",
+    "/temporary",
+    {
+      attempts: BROWSER_STARTUP_ATTEMPTS,
+      attemptTimeoutMs: 10,
+      totalTimeoutMs: 5000,
+      dependencies: harness.dependencies,
+    },
+  );
+
+  assert.equal(result.status, "ready:4:5");
+  assert.deepEqual(harness.profiles, [
+    "/temporary/profile-profile-1",
+    "/temporary/profile-profile-2",
+    "/temporary/profile-profile-3",
+  ]);
+  assert.deepEqual(
+    harness.browsers.map((browser) => browser.kills),
+    [
+      ["SIGTERM", "SIGKILL"],
+      ["SIGTERM", "SIGKILL"],
+      ["SIGTERM"],
+    ],
+  );
+  assert.deepEqual(
+    harness.browsers.map((browser) => browser.unrefs),
+    [1, 1, 0],
+  );
+  assert.equal(harness.sockets.length, 1);
+  assert.equal(harness.sockets[0].readyState, 3);
 });
 
 test("Page.navigate failure is not retried", async () => {
@@ -190,7 +239,40 @@ test("a stalled DevToolsActivePort read obeys the attempt deadline", async () =>
 
   assert.match(error.message, /during DevToolsActivePort/);
   assert.ok(Date.now() - started < 2000);
-  assert.deepEqual(harness.browsers[0].kills, ["SIGTERM"]);
+  assert.deepEqual(harness.browsers[0].kills, ["SIGTERM", "SIGKILL"]);
+  assert.equal(harness.browsers[0].unrefs, 1);
+});
+
+test("the total deadline interrupts process cleanup and detaches the browser", async () => {
+  const harness = browserHarness({ pageEnableFails: true });
+  harness.dependencies.waitForBrowserExit = (_browser, _milliseconds, { signal }) => (
+    new Promise((_, reject) => {
+      const aborted = () => reject(signal.reason);
+      signal.addEventListener("abort", aborted, { once: true });
+    })
+  );
+  const started = Date.now();
+  const error = await inspectPage(
+    "chromium",
+    "http://example.test",
+    "/temporary",
+    {
+      attempts: 1,
+      attemptTimeoutMs: 5000,
+      totalTimeoutMs: 20,
+      dependencies: harness.dependencies,
+    },
+  ).then(
+    () => undefined,
+    (failure) => failure,
+  );
+
+  assert.match(error.message, /Page.enable rejected/);
+  assert.ok(Date.now() - started < 2000);
+  assert.deepEqual(harness.browsers[0].kills, ["SIGTERM", "SIGKILL"]);
+  assert.equal(harness.browsers[0].unrefs, 1);
+  assert.equal(harness.browsers[0].stderrDestroys, 1);
+  assert.equal(harness.sockets[0].readyState, 3);
 });
 
 test("browser startup exhaustion reports every attempted handshake", async () => {
@@ -243,7 +325,9 @@ test("browser smoke rejects an archive whose extracted raw WASM exceeds the budg
 });
 
 function browserHarness({
+  activePortHangsUntilAttempt = 0,
   firstPageEnableHangs = false,
+  pageEnableFails = false,
   navigationFails = false,
 } = {}) {
   const browsers = [];
@@ -272,6 +356,13 @@ function browserHarness({
         && firstPageEnableHangs
         && this.attempt === 1
       ) {
+        return;
+      }
+      if (request.method === "Page.enable" && pageEnableFails) {
+        this.reply({
+          id: request.id,
+          error: { message: "Page.enable rejected" },
+        });
         return;
       }
       if (request.method === "Page.navigate" && navigationFails) {
@@ -313,14 +404,23 @@ function browserHarness({
         const browser = new EventEmitter();
         browser.stderr = new EventEmitter();
         browser.stderr.setEncoding = () => {};
+        browser.stderrDestroys = 0;
+        browser.stderr.destroy = () => { browser.stderrDestroys += 1; };
         browser.exitCode = null;
         browser.signalCode = null;
         browser.kills = [];
+        browser.unrefs = 0;
         browser.kill = (signal) => browser.kills.push(signal);
+        browser.unref = () => { browser.unrefs += 1; };
         browsers.push(browser);
         return browser;
       },
-      readText: async () => "9222\n",
+      readText: async () => {
+        if (browsers.length <= activePortHangsUntilAttempt) {
+          return new Promise(() => {});
+        }
+        return "9222\n";
+      },
       fetchTarget: async () => ({
         json: async () => [{
           type: "page",
