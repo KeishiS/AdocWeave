@@ -7,7 +7,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
-use crate::local_resource::ResourceLimits;
+use crate::local_resource::FilesystemReadLimits;
 
 /// Concurrent-filesystem guarantee provided by the active platform adapter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -201,7 +201,7 @@ impl LocalTargetPolicy {
 pub struct LocalTargetSession {
     policy: LocalTargetPolicy,
     max_paths: usize,
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
     requests: usize,
     read_files: usize,
     read_bytes: u64,
@@ -232,7 +232,7 @@ impl LoadedLocalTarget {
 }
 
 impl LocalTargetSession {
-    pub fn new(policy: LocalTargetPolicy, max_paths: usize, limits: ResourceLimits) -> Self {
+    pub fn new(policy: LocalTargetPolicy, max_paths: usize, limits: FilesystemReadLimits) -> Self {
         Self {
             policy,
             max_paths,
@@ -772,7 +772,7 @@ mod tests {
     fn session_caches_normalized_paths_and_bounds_unique_inspections() {
         let root = TestDir::new();
         let policy = LocalTargetPolicy::new(&root.0).expect("policy");
-        let mut session = LocalTargetSession::new(policy, 1, ResourceLimits::default());
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
 
         session
             .inspect(&root.0.join("docs/sub"), "../guide.adoc")
@@ -807,7 +807,7 @@ mod tests {
         let mut session = LocalTargetSession::new(
             policy,
             2,
-            ResourceLimits {
+            FilesystemReadLimits {
                 max_files: 2,
                 max_resource_bytes: 10,
                 max_total_bytes: 1,
@@ -834,7 +834,7 @@ mod tests {
         let root = TestDir::new();
         symlink("guide.adoc", root.0.join("docs/alias.adoc")).expect("inside alias");
         let policy = LocalTargetPolicy::new(&root.0).expect("policy");
-        let mut session = LocalTargetSession::new(policy, 2, ResourceLimits::default());
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
 
         let direct = session
             .read_utf8(&root.0.join("docs"), "guide.adoc")
@@ -912,7 +912,7 @@ mod tests {
             policy.race_resistance(),
             FilesystemRaceResistance::HandleRelative
         );
-        let mut session = LocalTargetSession::new(policy, 1, ResourceLimits::default());
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
         let docs = root.0.join("docs");
         let displaced = root.0.join("displaced");
 
@@ -932,7 +932,7 @@ mod tests {
     fn opened_file_is_stable_when_leaf_is_renamed_and_replaced() {
         let root = TestDir::new();
         let policy = LocalTargetPolicy::new(&root.0).expect("policy");
-        let mut session = LocalTargetSession::new(policy, 1, ResourceLimits::default());
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
         let target = root.0.join("docs/guide.adoc");
         let displaced = root.0.join("docs/original.adoc");
 

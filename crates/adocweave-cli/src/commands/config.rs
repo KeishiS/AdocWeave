@@ -69,9 +69,9 @@ fn resolved_config_json(
         "resources": {
             "include": config.resources.include,
             "roots": config.resources.roots.iter().map(|value| path(value)).collect::<Vec<_>>(),
-            "maxFiles": config.resources.limits.max_files,
-            "maxTotalBytes": config.resources.limits.max_total_bytes,
-            "maxResourceBytes": config.resources.limits.max_resource_bytes,
+            "maxFiles": config.resources.limit_plan.filesystem_reads.max_files,
+            "maxTotalBytes": config.resources.limit_plan.filesystem_reads.max_total_bytes,
+            "maxResourceBytes": config.resources.limit_plan.filesystem_reads.max_resource_bytes,
         },
         "localTargets": {
             "enabled": config.local_targets.enabled,

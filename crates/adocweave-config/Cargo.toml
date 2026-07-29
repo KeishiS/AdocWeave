@@ -12,6 +12,7 @@ description = "Strict versioned project configuration for AdocWeave consumers"
 [dependencies]
 adocweave = { path = "../adocweave" }
 adocweave-host = { path = "../adocweave-host" }
+adocweave-workspace = { path = "../adocweave-workspace" }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.11"
 toml = "1.1"
