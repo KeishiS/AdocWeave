@@ -16,6 +16,7 @@ use adocweave::{
 use serde::{Deserialize, Serialize};
 
 mod preprocess_wire;
+mod preprocess_wire_generated;
 mod protocol_generated;
 mod render_inputs;
 pub use preprocess_wire::{
@@ -1719,6 +1720,27 @@ mod tests {
             render_policy: WasmRenderPolicy::default(),
             output_limits: WasmOutputLimits::default(),
         }
+    }
+
+    #[test]
+    fn generated_preprocess_defaults_match_the_core_adapter() {
+        let core = preprocess_options(None, WasmPreprocessOptions::default());
+        let expected = PreprocessOptions::default();
+
+        assert_eq!(core.source_id, expected.source_id);
+        assert_eq!(core.base_uri, expected.base_uri);
+        assert_eq!(core.safe_mode, expected.safe_mode);
+        assert_eq!(core.allowed_schemes, expected.allowed_schemes);
+        assert_eq!(core.attributes, expected.attributes);
+        assert_eq!(core.enable_includes, expected.enable_includes);
+        assert_eq!(core.max_include_depth, expected.max_include_depth);
+        assert_eq!(core.max_includes, expected.max_includes);
+        assert_eq!(core.max_total_bytes, expected.max_total_bytes);
+        assert_eq!(core.max_expanded_nodes, expected.max_expanded_nodes);
+        assert_eq!(
+            core.max_source_map_segments,
+            expected.max_source_map_segments
+        );
     }
 
     #[test]
