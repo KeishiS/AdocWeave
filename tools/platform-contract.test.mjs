@@ -11,6 +11,7 @@ import {
   isPathInside,
   macosMinimumVersion,
   pathImplementation,
+  selectedInstallationFamilies,
   shouldRetryRemoval,
   unexpectedMacosDependencies,
   unexpectedWindowsDlls,
@@ -48,6 +49,17 @@ test("WindowsとPOSIXのpath境界をそれぞれ判定する", () => {
   assert.equal(isPathInside("C:\\release", "C:\\release-other\\file", path.win32), false);
   assert.equal(isPathInside("/release", "/release/bin/adocweave", path.posix), true);
   assert.equal(isPathInside("/release", "/release-other/file", path.posix), false);
+});
+
+test("Pull Requestで選択されたcandidate familyだけをインストール対象にする", () => {
+  assert.deepEqual(selectedInstallationFamilies("native-only"), { native: true, global: false });
+  assert.deepEqual(selectedInstallationFamilies("global-only"), { native: false, global: true });
+  assert.deepEqual(selectedInstallationFamilies("complete"), { native: true, global: true });
+  assert.deepEqual(selectedInstallationFamilies(), { native: true, global: true });
+  assert.throws(
+    () => selectedInstallationFamilies("skipped"),
+    /installation scope must be complete, native-only, or global-only/,
+  );
 });
 
 test("CRLFのZIP一覧を正規化し、VSIXを含むarchive pathを検査する", () => {
