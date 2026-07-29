@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   generateRustPreprocessInputs,
+  generateRustPreprocessOutputs,
   generateRustRenderInputs,
   generateRustRequestEnums,
   generateRustRequestWire,
@@ -233,6 +234,106 @@ test("preprocess Rust inputs are generated without a core dependency", () => {
   assert.doesNotMatch(generated, /adocweave::/);
   assert.match(generated, /enable_includes: true/);
   assert.match(generated, /max_include_depth: 16/);
+});
+
+test("preprocess Rust outputs are generated from the exact reachable schema", () => {
+  const generated = generateRustPreprocessOutputs(schema);
+
+  for (const name of [
+    "WasmPreprocessResponse",
+    "WasmSourceMapSegment",
+    "WasmSourceMapping",
+    "WasmError",
+  ]) {
+    assert.match(generated, new RegExp(`\\b${name}\\b`));
+  }
+  assert.match(generated, /pub mapping: WasmSourceMapping/);
+  assert.match(generated, /pub enum WasmSourceMapping/);
+  assert.doesNotMatch(generated, /adocweave::/);
+
+  const actual = [...generated.matchAll(/pub (?:struct|enum) ([A-Z][A-Za-z0-9]*)/g)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(actual, [
+    "WasmError",
+    "WasmPreprocessResponse",
+    "WasmSourceMapSegment",
+    "WasmSourceMapping",
+  ]);
+});
+
+test("preprocess Rust output generation follows schema changes deterministically", () => {
+  const first = generateRustPreprocessOutputs(schema);
+  assert.equal(first, generateRustPreprocessOutputs(structuredClone(schema)));
+
+  const changed = structuredClone(schema);
+  changed.preprocessDefinitions.WasmError.fields.push({
+    json: "traceId",
+    type: "string | null",
+    required: true,
+  });
+  assert.match(
+    generateRustPreprocessOutputs(changed),
+    /pub trace_id: Option<String>/,
+  );
+
+  const reordered = structuredClone(schema);
+  reordered.preprocessDefinitions = Object.fromEntries(
+    Object.entries(reordered.preprocessDefinitions).reverse(),
+  );
+  reordered.enums = Object.fromEntries(Object.entries(reordered.enums).reverse());
+  assert.equal(generateRustPreprocessOutputs(reordered), first);
+});
+
+test("preprocess Rust output generation fails closed on ownership and invalid shapes", () => {
+  const unsupported = structuredClone(schema);
+  unsupported.preprocessDefinitions.SourceMapSegment.fields
+    .find(({ json }) => json === "mapping").type = "number";
+  assert.throws(
+    () => generateRustPreprocessOutputs(unsupported),
+    /unsupported response Rust field type number/,
+  );
+
+  const unowned = structuredClone(schema);
+  unowned.preprocessDefinitions.SourceMapSegment.fields.push({
+    json: "origin",
+    type: "NewPreprocessOutput",
+    required: true,
+  });
+  unowned.preprocessDefinitions.NewPreprocessOutput = {
+    fields: [{ json: "value", type: "string", required: true }],
+  };
+  assert.throws(
+    () => generateRustPreprocessOutputs(unowned),
+    /must exactly match reachable outputs/,
+  );
+
+  const recursive = structuredClone(schema);
+  recursive.preprocessDefinitions.SourceMapSegment.fields.push({
+    json: "parent",
+    type: "SourceMapSegment | null",
+    required: true,
+  });
+  assert.throws(
+    () => generateRustPreprocessOutputs(recursive),
+    /infinitely sized cycle: SourceMapSegment -> SourceMapSegment/,
+  );
+
+  const collision = structuredClone(schema);
+  collision.preprocessDefinitions.WasmError.fields.push({
+    json: "errorCode",
+    type: "string",
+    required: true,
+  });
+  collision.preprocessDefinitions.WasmError.fields.push({
+    json: "errorCode",
+    type: "string",
+    required: true,
+  });
+  assert.throws(
+    () => generateRustPreprocessOutputs(collision),
+    /fields collide as Rust identifier error_code/,
+  );
 });
 
 test("schema field and default changes deterministically change generated Rust", () => {

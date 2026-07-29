@@ -1,10 +1,11 @@
 use adocweave::NeverCancel;
 use adocweave_wasm::{
     WasmActiveUrlPolicy, WasmAnalysisOptions, WasmAnalysisPreprocessInput, WasmAuthoredUrlPolicy,
-    WasmDiagnosticProfile, WasmDocumentMode, WasmExternalLinkPolicy, WasmLimits, WasmOutputLimits,
-    WasmPreprocessOptions, WasmPreprocessRequest, WasmRenderInputs, WasmRenderPolicy, WasmRequest,
-    WasmResolvedReference, WasmResolvedResource, WasmResource, WasmResourceCapabilities,
-    WasmResourceOutcome, WasmRuleSettings, WasmSafeMode, WasmSourceLanguagePolicy, WasmStylesheet,
+    WasmDiagnosticProfile, WasmDocumentMode, WasmError, WasmExternalLinkPolicy, WasmLimits,
+    WasmOutputLimits, WasmPreprocessOptions, WasmPreprocessRequest, WasmPreprocessResponse,
+    WasmRenderInputs, WasmRenderPolicy, WasmRequest, WasmResolvedReference, WasmResolvedResource,
+    WasmResource, WasmResourceCapabilities, WasmResourceOutcome, WasmRuleSettings, WasmSafeMode,
+    WasmSourceLanguagePolicy, WasmSourceMapSegment, WasmSourceMapping, WasmStylesheet,
     WasmSyntaxMode, WasmSyntaxOptions, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation, preprocess_request, process_request,
 };
@@ -245,37 +246,76 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
 }
 
 #[test]
-fn handwritten_request_dtos_require_a_type_specific_exception() {
-    const WIRE: &str = include_str!("../src/request_wire.rs");
-    const HANDWRITTEN_REQUEST_DTO_EXCEPTIONS: &[(&str, &str)] = &[];
+fn handwritten_wasm_wire_dtos_require_a_type_specific_exception() {
+    const HANDWRITTEN_SOURCES: &[(&str, &str)] = &[
+        ("lib.rs", include_str!("../src/lib.rs")),
+        (
+            "preprocess_wire.rs",
+            include_str!("../src/preprocess_wire.rs"),
+        ),
+        (
+            "render_input_conversion.rs",
+            include_str!("../src/render_input_conversion.rs"),
+        ),
+        (
+            "preprocess_projection.rs",
+            include_str!("../src/preprocess_projection.rs"),
+        ),
+        (
+            "render_input_normalization.rs",
+            include_str!("../src/render_input_normalization.rs"),
+        ),
+        (
+            "render_input_wire.rs",
+            include_str!("../src/render_input_wire.rs"),
+        ),
+        (
+            "request_conversion.rs",
+            include_str!("../src/request_conversion.rs"),
+        ),
+        (
+            "request_normalization.rs",
+            include_str!("../src/request_normalization.rs"),
+        ),
+        ("request_wire.rs", include_str!("../src/request_wire.rs")),
+        (
+            "response_projection.rs",
+            include_str!("../src/response_projection.rs"),
+        ),
+        ("response_wire.rs", include_str!("../src/response_wire.rs")),
+    ];
+    const HANDWRITTEN_WIRE_DTO_EXCEPTIONS: &[(&str, &str, &str)] = &[];
 
-    let declared = WIRE
-        .lines()
-        .filter_map(|line| {
-            let mut words = line.split_whitespace();
-            let first = words.next()?;
-            let kind = if first.starts_with("pub") {
-                words.next()
-            } else {
-                Some(first)
-            };
-            match kind {
-                Some("struct" | "enum") => words.next().map(str::to_owned),
-                _ => None,
-            }
+    let declared = HANDWRITTEN_SOURCES
+        .iter()
+        .flat_map(|(path, source)| {
+            source.lines().filter_map(move |line| {
+                let declaration = line
+                    .trim()
+                    .strip_prefix("pub struct ")
+                    .or_else(|| line.trim().strip_prefix("pub enum "))?;
+                let name = declaration
+                    .split(|character: char| !character.is_ascii_alphanumeric())
+                    .next()
+                    .expect("public type name");
+                Some(((*path).to_owned(), name.to_owned()))
+            })
         })
         .collect::<BTreeSet<_>>();
-    let excepted = HANDWRITTEN_REQUEST_DTO_EXCEPTIONS
+    let excepted = HANDWRITTEN_WIRE_DTO_EXCEPTIONS
         .iter()
-        .map(|(name, reason)| {
-            assert!(!reason.trim().is_empty(), "{name} has no exception reason");
-            (*name).to_owned()
+        .map(|(path, name, reason)| {
+            assert!(
+                !reason.trim().is_empty(),
+                "{path}:{name} has no exception reason"
+            );
+            ((*path).to_owned(), (*name).to_owned())
         })
         .collect::<BTreeSet<_>>();
 
     assert_eq!(
         declared, excepted,
-        "every handwritten request DTO must have a type-specific exception"
+        "every handwritten WASM wire DTO must have a type-specific exception"
     );
 }
 
@@ -304,7 +344,7 @@ fn generated_render_inputs_match_the_schema_safe_integer_boundary() {
 }
 
 #[test]
-fn generated_preprocess_inputs_keep_the_public_api_and_schema_defaults() {
+fn generated_preprocess_wire_keeps_the_public_api_and_schema_defaults() {
     let (schema, _) = documents();
     let options = WasmPreprocessOptions::default();
     assert_schema_defaults(
@@ -337,9 +377,43 @@ fn generated_preprocess_inputs_keep_the_public_api_and_schema_defaults() {
         "PreprocessRequest",
         &schema,
     );
+    let response = WasmPreprocessResponse {
+        package_version: adocweave::VERSION.to_owned(),
+        source: "expanded".to_owned(),
+        source_map: vec![WasmSourceMapSegment {
+            output_start: 0,
+            output_end: 8,
+            source_id: Some("source".to_owned()),
+            source_start: 1,
+            source_end: 9,
+            mapping: WasmSourceMapping::Identity,
+        }],
+    };
+    assert_wire_value(
+        &serde_json::to_value(response).expect("public preprocess response"),
+        "PreprocessResponse",
+        &schema,
+    );
+    assert_wire_value(
+        &serde_json::to_value(WasmError {
+            code: "invalid-request".to_owned(),
+            message: "request is invalid".to_owned(),
+        })
+        .expect("public WASM error"),
+        "WasmError",
+        &schema,
+    );
 
     const GENERATED: &str = include_str!("../src/preprocess_wire_generated.rs");
     assert!(GENERATED.starts_with("// @generated"));
+    for name in [
+        "WasmPreprocessResponse",
+        "WasmSourceMapSegment",
+        "WasmSourceMapping",
+        "WasmError",
+    ] {
+        assert!(GENERATED.contains(name), "{name}");
+    }
     assert!(!GENERATED.contains("adocweave::"));
 }
 

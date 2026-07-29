@@ -82,3 +82,36 @@ pub struct WasmPreprocessRequest {
     #[serde(default = "default_wasm_preprocess_request_options")]
     pub options: WasmPreprocessOptions,
 }
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmPreprocessResponse {
+    pub package_version: String,
+    pub source: String,
+    pub source_map: Vec<WasmSourceMapSegment>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmSourceMapSegment {
+    pub output_start: u32,
+    pub output_end: u32,
+    pub source_id: Option<String>,
+    pub source_start: u32,
+    pub source_end: u32,
+    pub mapping: WasmSourceMapping,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmSourceMapping {
+    Identity,
+    WholeOrigin,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmError {
+    pub code: String,
+    pub message: String,
+}
