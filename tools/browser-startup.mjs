@@ -13,7 +13,8 @@ export async function retryBrowserStartup(
   if (!Number.isFinite(totalTimeoutMs) || totalTimeoutMs <= 0) {
     throw new Error("browser startup total timeout must be positive");
   }
-  const deadline = now() + totalTimeoutMs;
+  const startedAt = now();
+  const deadline = startedAt + totalTimeoutMs;
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const remainingMs = deadline - now();
@@ -22,8 +23,17 @@ export async function retryBrowserStartup(
       return await operation({ attempt, remainingMs });
     } catch (error) {
       lastError = error;
-      if (!error.retryBrowserStartup || attempt === attempts || now() >= deadline) throw error;
-      onFailure({ attempt, attempts, error });
+      if (!error.retryBrowserStartup) throw error;
+      const currentTime = now();
+      const willRetry = attempt < attempts && currentTime < deadline;
+      onFailure({
+        attempt,
+        attempts,
+        elapsedMs: currentTime - startedAt,
+        error,
+        willRetry,
+      });
+      if (!willRetry) throw error;
     }
   }
   throw new Error(

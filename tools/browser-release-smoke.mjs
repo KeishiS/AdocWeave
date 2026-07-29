@@ -110,9 +110,9 @@ async function inspectPage(chromium, url, temporaryRoot) {
     {
       attempts: BROWSER_STARTUP_ATTEMPTS,
       totalTimeoutMs: BROWSER_STARTUP_TOTAL_TIMEOUT_MS,
-      onFailure: ({ attempt, attempts, error }) => {
+      onFailure: ({ attempt, attempts, elapsedMs, error, willRetry }) => {
         console.error(
-          `browser release smoke: startup attempt ${attempt}/${attempts} failed; retrying with a fresh profile:\n${error.message}`,
+          `browser release smoke: startup attempt ${attempt}/${attempts} failed after ${elapsedMs} ms; ${willRetry ? "retrying with a fresh profile" : "no retries remain"}:\n${error.message}`,
         );
       },
     },

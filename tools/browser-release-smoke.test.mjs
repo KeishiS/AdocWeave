@@ -11,10 +11,12 @@ import { retryBrowserStartup } from "./browser-startup.mjs";
 test("browser startup retries once with an attempt-specific diagnostic", async () => {
   const attempts = [];
   const failures = [];
+  let clock = 100;
   const result = await retryBrowserStartup(
     async ({ attempt }) => {
       attempts.push(attempt);
       if (attempt === 1) {
+        clock = 125;
         const error = new Error("DevToolsActivePort timeout");
         error.retryBrowserStartup = true;
         throw error;
@@ -25,6 +27,7 @@ test("browser startup retries once with an attempt-specific diagnostic", async (
       attempts: 2,
       totalTimeoutMs: 1000,
       onFailure: (failure) => failures.push(failure),
+      now: () => clock,
     },
   );
 
@@ -33,11 +36,14 @@ test("browser startup retries once with an attempt-specific diagnostic", async (
   assert.equal(failures.length, 1);
   assert.equal(failures[0].attempt, 1);
   assert.equal(failures[0].attempts, 2);
+  assert.equal(failures[0].elapsedMs, 25);
+  assert.equal(failures[0].willRetry, true);
   assert.match(failures[0].error.message, /DevToolsActivePort timeout/);
 });
 
 test("browser startup retry respects the total deadline", async () => {
   let clock = 0;
+  const failures = [];
   const error = await retryBrowserStartup(
     async ({ remainingMs }) => {
       assert.equal(remainingMs, 30);
@@ -46,13 +52,21 @@ test("browser startup retry respects the total deadline", async () => {
       failure.retryBrowserStartup = true;
       throw failure;
     },
-    { attempts: 2, totalTimeoutMs: 30, now: () => clock },
+    {
+      attempts: 2,
+      totalTimeoutMs: 30,
+      now: () => clock,
+      onFailure: (failure) => failures.push(failure),
+    },
   ).then(
     () => undefined,
     (failure) => failure,
   );
 
   assert.match(error.message, /cold start/);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].elapsedMs, 30);
+  assert.equal(failures[0].willRetry, false);
 });
 
 test("browser smoke rejects an archive whose extracted raw WASM exceeds the budget", () => {
