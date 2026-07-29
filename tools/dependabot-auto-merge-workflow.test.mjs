@@ -36,7 +36,12 @@ const reconciliationPullRequestDetailFilter = new URL(
   "./dependabot-auto-merge-pr-detail.jq",
   import.meta.url,
 );
-const decide = controller.match(/\n  decide:\n[\s\S]*?(?=\n  revoke:\n)/)?.[0] ?? "";
+const decide = controller.match(
+  /\n  decide:\n[\s\S]*?(?=\n  inspect-revoke:\n)/,
+)?.[0] ?? "";
+const inspectRevoke = controller.match(
+  /\n  inspect-revoke:\n[\s\S]*?(?=\n  revoke:\n)/,
+)?.[0] ?? "";
 const revoke = controller.match(/\n  revoke:\n[\s\S]*?(?=\n  enable:\n)/)?.[0] ?? "";
 const enable = controller.match(
   /\n  enable:\n[\s\S]*?(?=\n  revoke-after-enable-failure:\n)/,
@@ -227,8 +232,29 @@ test("a failed final verification revokes a previously enabled request", () => {
 });
 
 test("controller revokes auto-merge after failed or ineligible reevaluation", () => {
+  assert.match(inspectRevoke, /needs:\s*decide/);
+  assert.match(inspectRevoke, /always\(\)/);
+  assert.match(inspectRevoke, /needs\.decide\.outputs\.eligible != 'true'/);
+  assert.match(inspectRevoke, /workflow_run\.name == 'CI and Release'/);
+  assert.match(inspectRevoke, /workflow_run\.event == 'pull_request'/);
+  assert.match(inspectRevoke, /workflow_run\.name == 'Dependabot review signal'/);
+  assert.match(inspectRevoke, /workflow_run\.event == 'pull_request_review'/);
+  assert.doesNotMatch(inspectRevoke, /workflow_run\.conclusion == 'success'/);
+  assert.doesNotMatch(inspectRevoke, /workflow_run\.actor\.login/);
+  assert.match(inspectRevoke, /pull-requests:\s*read/);
+  assert.doesNotMatch(inspectRevoke, /pull-requests:\s*write/);
+  assert.match(inspectRevoke, /\.user\.login == "dependabot\[bot\]"/);
+  assert.match(inspectRevoke, /candidate=true/);
+  assert.match(inspectRevoke, /candidate=false/);
+  assert.doesNotMatch(
+    inspectRevoke,
+    /disablePullRequestAutoMerge|enablePullRequestAutoMerge|checkout/,
+  );
+  assert.match(revoke, /needs:\s*\[decide, inspect-revoke\]/);
   assert.match(revoke, /always\(\)/);
   assert.match(revoke, /needs\.decide\.outputs\.eligible != 'true'/);
+  assert.match(revoke, /needs\.inspect-revoke\.result == 'success'/);
+  assert.match(revoke, /needs\.inspect-revoke\.outputs\.candidate == 'true'/);
   assert.match(revoke, /pull-requests:\s*write/);
   assert.doesNotMatch(revoke, /contents:\s*write|actions:\s*write|checks:\s*write/);
   assert.match(revoke, /\.user\.login == "dependabot\[bot\]"/);
