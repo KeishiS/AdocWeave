@@ -14,7 +14,6 @@ use adocweave::{
     ParseError, SourceId, SyntaxOptions, VERSION,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 mod protocol_generated;
 mod render_inputs;
@@ -113,7 +112,7 @@ pub struct WasmSourceMapSegment {
 }
 
 /// A half-open UTF-8 byte range in the submitted source.
-#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WasmTextRange {
     pub start: u32,
@@ -569,10 +568,368 @@ pub struct WasmResponse {
     pub attribute_occurrences: Vec<WasmDocumentAttributeOccurrence>,
     pub attribute_queries: WasmAttributeQueryProduct,
     pub resource_queries: Vec<WasmResourceQuery>,
-    pub diagnostics: Value,
-    pub render_diagnostics: Value,
-    pub symbols: Value,
-    pub projection: Value,
+    pub diagnostics: Vec<WasmDiagnostic>,
+    pub render_diagnostics: Vec<WasmDiagnostic>,
+    pub symbols: Vec<WasmDocumentSymbol>,
+    pub projection: Option<WasmDocumentProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDiagnostic {
+    pub id: String,
+    pub code: String,
+    pub severity: WasmSeverity,
+    pub message: String,
+    pub range: WasmTextRange,
+    pub related: Vec<WasmRelatedInformation>,
+    pub fixes: Vec<WasmFix>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmRelatedInformation {
+    pub range: WasmTextRange,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmFix {
+    pub title: String,
+    pub applicability: WasmApplicability,
+    pub edits: Vec<WasmTextEdit>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmApplicability {
+    Always,
+    Maybe,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmTextEdit {
+    pub range: WasmTextRange,
+    pub replacement: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDocumentSymbol {
+    pub name: String,
+    pub kind: WasmSymbolKind,
+    pub range: WasmTextRange,
+    pub selection_range: WasmTextRange,
+    pub children: Vec<WasmDocumentSymbol>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmSymbolKind {
+    DocumentTitle,
+    Part,
+    Section,
+    ListItem,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDocumentProjection {
+    pub package_version: String,
+    pub source_id: Option<String>,
+    pub source_blocks: Vec<WasmSourceBlockProjection>,
+    pub formulas: Vec<WasmFormulaProjection>,
+    pub block_presentations: Vec<WasmBlockPresentationProjection>,
+    pub ordered_lists: Vec<WasmOrderedListProjection>,
+    pub reference_edges: Vec<WasmReferenceEdge>,
+    pub external_links: Vec<WasmExternalLink>,
+    pub searchable_text: WasmSearchableText,
+    pub structure: WasmDocumentStructure,
+    pub catalogs: WasmDocumentCatalogs,
+    pub targets: Vec<WasmReferenceTarget>,
+    pub title: Option<WasmProjectedText>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmProjectedText {
+    pub source_range: WasmTextRange,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmSourceBlockProjection {
+    pub source_range: WasmTextRange,
+    pub content_range: WasmTextRange,
+    pub title: Option<WasmProjectedText>,
+    pub language_range: Option<WasmTextRange>,
+    pub language: Option<String>,
+    pub line_numbers: bool,
+    pub start_line: Option<u32>,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmFormulaProjection {
+    pub kind: WasmFormulaKind,
+    pub language: WasmMathLanguage,
+    pub source_range: WasmTextRange,
+    pub content_range: WasmTextRange,
+    pub source: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmFormulaKind {
+    Inline,
+    Block,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmOrderedListProjection {
+    pub source_range: WasmTextRange,
+    pub start: Option<u32>,
+    pub reversed: bool,
+    pub style: WasmOrderedListStyle,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmOrderedListStyle {
+    Arabic,
+    Decimal,
+    Loweralpha,
+    Upperalpha,
+    Lowerroman,
+    Upperroman,
+    Lowergreek,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmBlockPresentationProjection {
+    pub kind: WasmBlockPresentationKind,
+    pub source_range: WasmTextRange,
+    pub content_range: WasmTextRange,
+    pub title: Option<String>,
+    pub attribution: Option<String>,
+    pub citation: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmBlockPresentationKind {
+    Admonition,
+    Quote,
+    Verse,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmExternalLink {
+    pub source_range: WasmTextRange,
+    pub target_range: WasmTextRange,
+    pub target: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmReferenceTarget {
+    pub kind: WasmReferenceTargetKind,
+    pub id: String,
+    pub label: String,
+    pub id_range: WasmTextRange,
+    pub target_range: WasmTextRange,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmReferenceTargetKind {
+    DocumentTitle,
+    Part,
+    Section,
+    ExplicitAnchor,
+    InlineAnchor,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmReferenceEdge {
+    pub source_id: Option<String>,
+    pub source_range: WasmTextRange,
+    pub target: WasmReferenceKey,
+    pub resolution: Option<WasmProjectedResolutionOutcome>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum WasmReferenceKey {
+    Local {
+        anchor: String,
+    },
+    Document {
+        document: String,
+        anchor: Option<String>,
+    },
+    Scheme {
+        scheme: String,
+        locator: String,
+        anchor: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(
+    tag = "status",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum WasmProjectedResolutionOutcome {
+    Resolved {
+        href: String,
+        display_text: Option<String>,
+        notices: Vec<WasmProjectedReferenceNotice>,
+    },
+    Failed {
+        kind: WasmProjectedReferenceFailureKind,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmProjectedReferenceFailureKind {
+    MissingReferenceTarget,
+    MissingReferenceAnchor,
+    AmbiguousReferenceTarget,
+    ReferenceOutsideRoot,
+    ReferenceResolverFailure,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmProjectedReferenceNotice {
+    ReferenceResolutionFallback,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmSearchableText {
+    pub text: String,
+    pub segments: Vec<WasmSearchTextSegment>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmSearchTextSegment {
+    pub kind: WasmSearchTextKind,
+    pub source_range: WasmTextRange,
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmSearchTextKind {
+    Prose,
+    Code,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDocumentStructure {
+    pub headings: Vec<WasmStructuredHeading>,
+    pub toc: Vec<WasmTocEntry>,
+    pub manpage: Option<WasmManpage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmStructuredHeading {
+    pub kind: WasmSectionKind,
+    pub level: u32,
+    pub id: String,
+    pub id_range: WasmTextRange,
+    pub title: String,
+    pub range: WasmTextRange,
+    pub title_range: WasmTextRange,
+    pub number: Vec<u32>,
+    pub toc_included: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WasmSectionKind {
+    DocumentTitle,
+    Part,
+    Section,
+    Appendix,
+    Discrete,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmTocEntry {
+    pub id: String,
+    pub title: String,
+    pub level: u32,
+    pub number: Vec<u32>,
+    pub range: WasmTextRange,
+    pub children: Vec<WasmTocEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmManpage {
+    pub name: String,
+    pub section: String,
+    pub purpose: String,
+    pub title_range: WasmTextRange,
+    pub name_range: WasmTextRange,
+    pub purpose_range: WasmTextRange,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmDocumentCatalogs {
+    pub footnotes: Vec<WasmFootnote>,
+    pub bibliography: Vec<WasmBibliographyEntry>,
+    pub index: Vec<WasmIndexEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmFootnote {
+    pub number: u32,
+    pub id: Option<String>,
+    pub definition_range: WasmTextRange,
+    pub content_range: WasmTextRange,
+    pub text: String,
+    pub occurrences: Vec<WasmTextRange>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmBibliographyEntry {
+    pub id: String,
+    pub definition_range: WasmTextRange,
+    pub references: Vec<WasmTextRange>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WasmIndexEntry {
+    pub terms: Vec<String>,
+    pub display: String,
+    pub occurrences: Vec<WasmTextRange>,
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
@@ -710,6 +1067,11 @@ pub fn process_request(
     request: WasmRequest,
     cancellation: &dyn CancellationCheck,
 ) -> Result<WasmResponse, WasmError> {
+    let request = normalize_request(request)?;
+    process_normalized_request(request, cancellation)
+}
+
+fn normalize_request(mut request: WasmRequest) -> Result<WasmRequest, WasmError> {
     if request.package_version != VERSION {
         return Err(WasmError {
             code: "unsupported-api-version".to_owned(),
@@ -719,15 +1081,8 @@ pub fn process_request(
             ),
         });
     }
-    let requested_products = request.products;
-    let products: adocweave::ProductSet = requested_products.into();
-    let render_inputs = request.render_inputs;
-    let analysis_options = request.analysis_options;
-    let render_options = request.render_policy;
-    let output_limits = request.output_limits;
-    let mut preprocess_input = request.preprocess;
-    let mut external_attributes = analysis_options.attributes.clone();
-    if let Some(input) = &mut preprocess_input {
+    let mut external_attributes = request.analysis_options.attributes.clone();
+    if let Some(input) = &mut request.preprocess {
         if external_attributes.is_empty() {
             external_attributes.clone_from(&input.options.attributes);
         } else if !input.options.attributes.is_empty()
@@ -742,10 +1097,26 @@ pub fn process_request(
         input.options.attributes.clone_from(&external_attributes);
     }
     render_inputs::validate(
-        &render_inputs,
-        &analysis_options.syntax.limits,
-        &output_limits,
+        &request.render_inputs,
+        &request.analysis_options.syntax.limits,
+        &request.output_limits,
     )?;
+    request.analysis_options.attributes = external_attributes;
+    Ok(request)
+}
+
+fn process_normalized_request(
+    request: WasmRequest,
+    cancellation: &dyn CancellationCheck,
+) -> Result<WasmResponse, WasmError> {
+    let requested_products = request.products;
+    let products: adocweave::ProductSet = requested_products.into();
+    let render_inputs = request.render_inputs;
+    let analysis_options = request.analysis_options;
+    let render_options = request.render_policy;
+    let output_limits = request.output_limits;
+    let preprocess_input = request.preprocess;
+    let external_attributes = analysis_options.attributes.clone();
     let max_output_bytes = usize::try_from(output_limits.max_output_bytes)
         .expect("u32 fits usize on supported targets");
     let authored_url_policy = AuthoredUrlPolicy {
@@ -948,38 +1319,43 @@ pub fn process_request(
         &render_inputs,
         products,
     );
-    let diagnostics = products
-        .diagnostics_json
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-        .map_err(serialization_error)?;
-    let render_diagnostics = products
-        .render_diagnostics_json
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-        .map_err(serialization_error)?;
-    let symbols = products
-        .symbols_json
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-        .map_err(serialization_error)?;
-    let projection = products
-        .projection_json
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-        .map_err(serialization_error)?;
     if cancellation.is_cancelled() {
         return Err(cancelled_error());
     }
+    let response = project_response(
+        products,
+        requested_products,
+        request.version,
+        request.generation,
+        analysis,
+        source_id.as_ref(),
+        attribute_projection.as_ref(),
+    )?;
+    enforce_output_limit(&response, max_output_bytes)?;
+    Ok(response)
+}
 
-    let response = WasmResponse {
+fn project_response(
+    products: adocweave::output::conformance::DocumentProducts,
+    requested_products: WasmProductSet,
+    version: u32,
+    generation: u32,
+    analysis: &adocweave::Analysis,
+    source_id: Option<&SourceId>,
+    attribute_projection: Option<&adocweave::preprocess::AnalysisProjection>,
+) -> Result<WasmResponse, WasmError> {
+    let diagnostics =
+        parse_optional_product::<Vec<WasmDiagnostic>>(products.diagnostics_json.as_deref())?;
+    let render_diagnostics =
+        parse_optional_product::<Vec<WasmDiagnostic>>(products.render_diagnostics_json.as_deref())?;
+    let symbols =
+        parse_optional_product::<Vec<WasmDocumentSymbol>>(products.symbols_json.as_deref())?;
+    let projection =
+        parse_optional_product::<WasmDocumentProjection>(products.projection_json.as_deref())?;
+    Ok(WasmResponse {
         package_version: VERSION,
-        version: request.version,
-        generation: request.generation,
+        version,
+        generation,
         products: requested_products,
         parse: ParseSummary {
             package_version: analysis.package_version(),
@@ -998,13 +1374,7 @@ pub fn process_request(
             .collect(),
         attribute_queries: products
             .attribute_queries
-            .map(|queries| {
-                wasm_attribute_query_product(
-                    &queries,
-                    source_id.as_ref(),
-                    attribute_projection.as_ref(),
-                )
-            })
+            .map(|queries| wasm_attribute_query_product(&queries, source_id, attribute_projection))
             .unwrap_or_default(),
         resource_queries: products
             .resource_queries
@@ -1033,11 +1403,14 @@ pub fn process_request(
                 }
             })
             .collect(),
-        diagnostics: diagnostics.unwrap_or_else(|| Value::Array(Vec::new())),
-        render_diagnostics: render_diagnostics.unwrap_or_else(|| Value::Array(Vec::new())),
-        symbols: symbols.unwrap_or_else(|| Value::Array(Vec::new())),
-        projection: projection.unwrap_or(Value::Null),
-    };
+        diagnostics: diagnostics.unwrap_or_default(),
+        render_diagnostics: render_diagnostics.unwrap_or_default(),
+        symbols: symbols.unwrap_or_default(),
+        projection,
+    })
+}
+
+fn enforce_output_limit(response: &WasmResponse, max_output_bytes: usize) -> Result<(), WasmError> {
     let output_bytes = serde_json::to_vec(&response)
         .map_err(serialization_error)?
         .len();
@@ -1049,7 +1422,17 @@ pub fn process_request(
             ),
         });
     }
-    Ok(response)
+    Ok(())
+}
+
+fn parse_optional_product<T>(source: Option<&str>) -> Result<Option<T>, WasmError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    source
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(serialization_error)
 }
 
 fn wasm_document_attribute_occurrence(
@@ -1372,7 +1755,8 @@ mod bindings {
     }
 
     fn deserialize_request<T: DeserializeOwned>(request: JsValue) -> Result<T, JsValue> {
-        let value: Value = serde_wasm_bindgen::from_value(request).map_err(invalid_request)?;
+        let value: serde_json::Value =
+            serde_wasm_bindgen::from_value(request).map_err(invalid_request)?;
         serde_json::from_value(value).map_err(invalid_request)
     }
 
@@ -1428,8 +1812,15 @@ mod tests {
         assert!(response.syntax.contains("Document@"));
         assert!(response.ast.contains("\"blocks\""));
         assert!(response.html.contains("<h1"));
-        assert_eq!(response.symbols[0]["name"], "Title");
-        assert_eq!(response.projection["packageVersion"], VERSION);
+        assert_eq!(response.symbols[0].name, "Title");
+        assert_eq!(
+            response
+                .projection
+                .as_ref()
+                .expect("projection")
+                .package_version,
+            VERSION
+        );
         assert_eq!(response.parse.reference_count, 0);
     }
 
@@ -1442,9 +1833,9 @@ mod tests {
         assert!(response.syntax.is_empty());
         assert!(response.ast.is_empty());
         assert!(response.attribute_occurrences.is_empty());
-        assert!(response.symbols.as_array().is_some_and(Vec::is_empty));
+        assert!(response.symbols.is_empty());
         assert!(!response.html.is_empty());
-        assert!(response.projection.is_object());
+        assert!(response.projection.is_some());
     }
 
     #[test]
@@ -1521,7 +1912,7 @@ mod tests {
             response.html,
             "<p><img src=\"https://cdn.example/image.png\" alt=\"alt\"></p>\n"
         );
-        assert_eq!(response.render_diagnostics, json!([]));
+        assert!(response.render_diagnostics.is_empty());
 
         let mut unsafe_request = request(source);
         unsafe_request
@@ -1539,7 +1930,7 @@ mod tests {
         let unsafe_response = process_request(unsafe_request, &NeverCancel).expect("response");
         assert_eq!(unsafe_response.html, "<p>alt</p>\n");
         assert_eq!(
-            unsafe_response.render_diagnostics[0]["code"],
+            unsafe_response.render_diagnostics[0].code,
             "invalid-url-scheme"
         );
 
@@ -1565,7 +1956,7 @@ mod tests {
             root_relative.html,
             "<p><img src=\"/assets/image.png\" alt=\"alt\"></p>\n"
         );
-        assert_eq!(root_relative.render_diagnostics, json!([]));
+        assert!(root_relative.render_diagnostics.is_empty());
 
         let mut limited = request(source);
         limited.analysis_options.syntax.limits.max_references = 0;
@@ -1624,10 +2015,8 @@ mod tests {
             assert!(
                 response
                     .diagnostics
-                    .as_array()
-                    .expect("diagnostic array")
                     .iter()
-                    .any(|diagnostic| diagnostic["code"] == "invalid-url-scheme"),
+                    .any(|diagnostic| diagnostic.code == "invalid-url-scheme"),
                 "{target}"
             );
             assert!(!response.html.contains("href="), "{target}");
@@ -1687,10 +2076,19 @@ mod tests {
             response.html,
             "<p><a href=\"/notes/01800000-0000-7000-8000-000000000001\">公開 &lt;タイトル&gt; &amp; *not markup*</a></p>\n"
         );
-        assert_eq!(
-            response.projection["referenceEdges"][0]["resolution"]["displayText"],
-            "公開 <タイトル> & *not markup*"
-        );
+        let Some(WasmProjectedResolutionOutcome::Resolved {
+            display_text: Some(display_text),
+            ..
+        }) = &response
+            .projection
+            .as_ref()
+            .expect("projection")
+            .reference_edges[0]
+            .resolution
+        else {
+            panic!("resolved projection");
+        };
+        assert_eq!(display_text, "公開 <タイトル> & *not markup*");
 
         let mut oversized = request(source);
         oversized.output_limits.max_output_bytes = 4;
@@ -1740,13 +2138,14 @@ mod tests {
         assert!(!response.html.contains("math-latex"));
         assert!(!response.html.contains("note:secret"));
         assert!(!response.html.contains("<img"));
-        assert_eq!(response.projection["formulas"][0]["source"], "x");
+        assert_eq!(
+            response.projection.as_ref().expect("projection").formulas[0].source,
+            "x"
+        );
         let codes = response
             .render_diagnostics
-            .as_array()
-            .expect("render diagnostics")
             .iter()
-            .filter_map(|diagnostic| diagnostic["code"].as_str())
+            .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>();
         assert!(codes.contains(&"source-language-not-allowed"));
         assert!(codes.contains(&"math-language-not-allowed"));
@@ -1778,7 +2177,7 @@ mod tests {
                 .html
                 .contains("<link rel=\"stylesheet\" href=\"https://example.com/theme.css\">")
         );
-        assert_eq!(response.render_diagnostics, json!([]));
+        assert!(response.render_diagnostics.is_empty());
 
         let mut fragment = request("paragraph");
         fragment.render_policy.stylesheets = vec![WasmStylesheet::Inline {
@@ -1787,7 +2186,7 @@ mod tests {
         let response = process_request(fragment, &NeverCancel).expect("response");
         assert_eq!(response.html, "<p>paragraph</p>\n");
         assert_eq!(
-            response.render_diagnostics[0]["code"],
+            response.render_diagnostics[0].code,
             "stylesheet-not-applicable"
         );
     }
@@ -1811,10 +2210,8 @@ mod tests {
         assert!(!response.html.contains("script"));
         let codes = response
             .render_diagnostics
-            .as_array()
-            .expect("render diagnostics")
             .iter()
-            .filter_map(|diagnostic| diagnostic["code"].as_str())
+            .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>();
         assert!(codes.contains(&"invalid-stylesheet-content"));
         assert!(codes.contains(&"invalid-stylesheet-url"));
@@ -1926,8 +2323,8 @@ mod tests {
             },
         );
         let response = process_request(configured, &NeverCancel).expect("configured diagnostics");
-        assert_eq!(response.diagnostics[0]["code"], "trailing-whitespace");
-        assert_eq!(response.diagnostics[0]["severity"], "error");
+        assert_eq!(response.diagnostics[0].code, "trailing-whitespace");
+        assert_eq!(response.diagnostics[0].severity, WasmSeverity::Error);
 
         let mut unknown = request("text");
         unknown
@@ -1947,10 +2344,8 @@ mod tests {
         assert!(
             default_response
                 .diagnostics
-                .as_array()
-                .expect("diagnostics")
                 .iter()
-                .all(|diagnostic| diagnostic["code"] != "macro-boundary")
+                .all(|diagnostic| diagnostic.code != "macro-boundary")
         );
 
         let mut configured = request(source);
@@ -1964,10 +2359,8 @@ mod tests {
         let wasm = process_request(configured, &NeverCancel).expect("opt-in diagnostics");
         let wasm = wasm
             .diagnostics
-            .as_array()
-            .expect("diagnostics")
             .iter()
-            .find(|diagnostic| diagnostic["code"] == "macro-boundary")
+            .find(|diagnostic| diagnostic.code == "macro-boundary")
             .expect("macro-boundary diagnostic");
 
         let mut lint = LintConfig::default();
@@ -1990,10 +2383,10 @@ mod tests {
             .find(|diagnostic| diagnostic.code.as_str() == "macro-boundary")
             .expect("native macro-boundary diagnostic");
 
-        assert_eq!(wasm["code"], native.code.as_str());
-        assert_eq!(wasm["severity"], native.severity.as_str());
-        assert_eq!(wasm["range"]["start"], native.range.start().to_u32());
-        assert_eq!(wasm["range"]["end"], native.range.end().to_u32());
+        assert_eq!(wasm.code, native.code.as_str());
+        assert_eq!(wasm.severity, WasmSeverity::Warning);
+        assert_eq!(wasm.range.start, native.range.start().to_u32());
+        assert_eq!(wasm.range.end, native.range.end().to_u32());
     }
 
     #[test]

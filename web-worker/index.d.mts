@@ -1,21 +1,13 @@
 import type {
   AdocWeaveWasmResponse,
   AdocWeaveError,
-  Diagnostic,
   UpdateRequest,
 } from "./protocol.generated.d.mts";
 
 export type * from "./protocol.generated.d.mts";
 
-export interface AdocWeaveResult {
-  html: string;
-  diagnostics: Diagnostic[];
-  renderDiagnostics: Diagnostic[];
-  sourceVersion: number;
-  generation: number;
-  packageVersion: string;
-  result: AdocWeaveWasmResponse;
-}
+export type AdocWeaveResult =
+  Omit<AdocWeaveWasmResponse, "version"> & { sourceVersion: number };
 
 export interface AdocWeaveClientOptions {
   workerUrl: string | URL;

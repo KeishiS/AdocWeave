@@ -109,6 +109,9 @@ test("ready and analyze provide a one-shot Promise over the callback controller"
   assert.equal(workers.length, 1);
   const result = await client.analyze({ version: 1, source: "text" });
   assert.equal(result.html, "one-shot");
+  assert.equal(result.sourceVersion, 1);
+  assert.equal(Object.hasOwn(result, "version"), false);
+  assert.equal(Object.hasOwn(result, "result"), false);
   assert.equal(callbackResults[0], result);
   client.dispose();
 });
@@ -168,16 +171,11 @@ test("callback exceptions never prevent Promise settlement", async () => {
     Worker: FakeWorker, sharedCancellation: false,
     onResult() { throw new Error("callback failed"); },
   });
-  const uncaught = new Promise((resolve) => {
-    process.setUncaughtExceptionCaptureCallback((error) => {
-      process.setUncaughtExceptionCaptureCallback(null);
-      resolve(error);
-    });
-  });
-
   const result = await client.analyze({ version: 1, source: "text" });
   assert.equal(result.html, "settled");
-  assert.match((await uncaught).message, /callback failed/);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const next = await client.analyze({ version: 2, source: "next" });
+  assert.equal(next.html, "settled");
   client.dispose();
 });
 
@@ -380,6 +378,42 @@ test("client rejects a WASM result with a different contract version", async () 
   client.dispose();
 });
 
+test("client rejects result identities which disagree with the worker envelope", async () => {
+  const workers = [];
+  class FakeWorker {
+    listeners = new Map();
+    constructor() { workers.push(this); }
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
+      }
+    }
+    terminate() {}
+    publish(data) { this.listeners.get("message")?.({ data }); }
+  }
+
+  for (const field of ["version", "generation"]) {
+    const errors = [];
+    const client = new AdocWeaveClient({
+      workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+      Worker: FakeWorker, sharedCancellation: false,
+      onError: (error) => errors.push(error),
+    });
+    const analysis = client.analyze({ version: 1, source: "text" });
+    const rejected = assert.rejects(analysis, errorWithCode("invalid-worker-response"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const response = responseEnvelope(1, 1, BROWSER_PACKAGE_VERSION, "");
+    response.result[field] = 2;
+    workers.at(-1).publish(response);
+    await rejected;
+    assert.equal(errors.at(-1).code, "invalid-worker-response", field);
+    client.dispose();
+  }
+});
+
 test("client rejects and terminates an obsolete worker protocol during initialization", async () => {
   const errors = [];
   const messages = [];
@@ -463,21 +497,7 @@ function responseEnvelope(version, generation, packageVersion, html) {
       diagnostics: [],
       renderDiagnostics: [],
       symbols: [],
-      projection: {
-        packageVersion,
-        sourceId: null,
-        sourceBlocks: [],
-        formulas: [],
-        blockPresentations: [],
-        orderedLists: [],
-        referenceEdges: [],
-        externalLinks: [],
-        searchableText: { text: "", segments: [] },
-        structure: { headings: [], toc: [], manpage: null },
-        catalogs: { footnotes: [], bibliography: [], index: [] },
-        targets: [],
-        title: null,
-      },
+      projection: null,
     },
   };
 }

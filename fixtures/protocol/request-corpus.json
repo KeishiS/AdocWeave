@@ -8,7 +8,7 @@
     "source": "text"
   },
   "responseProbe": {
-    "source": "= Probe\n:name: value\n\n{name}\n\n== Section\n\n. item\n\n[source,rust]\n----\nfn main() {}\n----\n\nNOTE: note\n\nhttps://example.com[link]\n\nxref:first[] and xref:second[]\n\nstem:[x]\n\nfootnote:f[Note]\n\nindexterm:[term]\n\nimage:a.png[]\n\ntext \n"
+    "source": "= Probe\n:name: value\n\n{name}\n\n== Section\n\n. item\n\n[source,rust]\n----\nfn main() {}\n----\n\nNOTE: note\n\nhttps://example.com[link]\n\nxref:first[] xref:second[] xref:other.adoc#part[] xref:note:item[]\n\nstem:[x]\n\nfootnote:f[Note]\n\nindexterm:[term]\n\n[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nSee <<ref>>.\n\nimage:a.png[]\n\ntext \n"
   },
   "preprocessRequest": {
     "packageVersion": "@PACKAGE_VERSION@",
