@@ -560,6 +560,45 @@ fn explicit_table_columns_are_rejected_before_repeat_materialization() {
 }
 
 #[test]
+fn unrepresentable_table_column_numbers_are_rejected() {
+    for (source, actual) in [
+        (
+            "\
+[cols=\"18446744073709551616*a\"]
+|===
+|value
+|===
+",
+            u64::MAX,
+        ),
+        (
+            "\
+[cols=\"4294967296\"]
+|===
+|value
+|===
+",
+            4_294_967_296,
+        ),
+    ] {
+        assert!(matches!(
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_table_columns: 4,
+                    ..AnalysisLimits::default()
+                },
+            ),
+            Err(ParseError::LimitExceeded {
+                resource: "table columns",
+                actual: rejected,
+                ..
+            }) if rejected == actual
+        ));
+    }
+}
+
+#[test]
 fn table_resources_are_rejected_at_the_construction_boundary() {
     let cases = [
         (

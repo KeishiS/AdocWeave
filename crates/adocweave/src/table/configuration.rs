@@ -45,7 +45,7 @@ impl ResolvedTableConfiguration {
         delimiter_range: TextRange,
         metadata: &BlockMetadata,
         maximum_columns: usize,
-    ) -> Result<Self, usize> {
+    ) -> Result<Self, u64> {
         let (input, input_problems) = resolve_input(delimiter, delimiter_range, metadata);
         let columns = resolve_columns(metadata, maximum_columns)?;
         let (presentation, presentation_problems) = resolve_presentation(metadata);
@@ -201,7 +201,7 @@ fn resolve_input(
 fn resolve_columns(
     metadata: &BlockMetadata,
     maximum_columns: usize,
-) -> Result<Option<Vec<TableColumn>>, usize> {
+) -> Result<Option<Vec<TableColumn>>, u64> {
     let Some(value) = metadata
         .attributes
         .iter()
@@ -212,23 +212,24 @@ fn resolve_columns(
         return Ok(None);
     };
     let mut columns = Vec::new();
-    let mut actual = 0_usize;
+    let mut actual = 0_u64;
+    let maximum_columns = maximum_columns as u64;
     for value in value
         .split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let (count, spec) = value
-            .split_once('*')
-            .and_then(|(count, spec)| count.parse::<usize>().ok().map(|count| (count, spec)))
-            .unwrap_or((1, value));
+        let (count, spec) = match value.split_once('*') {
+            Some((count, spec)) => (parse_unsigned(count)?, spec),
+            None => (1, value),
+        };
         let count = count.max(1);
         actual = actual.saturating_add(count);
         if actual > maximum_columns {
             return Err(actual);
         }
-        let column = parse_column(spec);
-        columns.extend(std::iter::repeat_n(column, count));
+        let column = parse_column(spec)?;
+        columns.extend(std::iter::repeat_n(column, count as usize));
     }
     for (index, column) in columns.iter_mut().enumerate() {
         column.index = index as u32;
@@ -248,20 +249,39 @@ fn default_columns(count: usize) -> Vec<TableColumn> {
         .collect()
 }
 
-fn parse_column(value: &str) -> TableColumn {
+fn parse_unsigned(value: &str) -> Result<u64, u64> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(u64::MAX);
+    }
+    value.bytes().try_fold(0_u64, |current, byte| {
+        current
+            .checked_mul(10)
+            .and_then(|current| current.checked_add(u64::from(byte - b'0')))
+            .ok_or(u64::MAX)
+    })
+}
+
+fn parse_column(value: &str) -> Result<TableColumn, u64> {
     let width = value
         .bytes()
         .filter(u8::is_ascii_digit)
-        .fold(None, |current, byte| {
-            Some(current.unwrap_or(0_u32) * 10 + u32::from(byte - b'0'))
-        });
+        .try_fold(None, |current, byte| {
+            let width = current
+                .unwrap_or(0_u64)
+                .checked_mul(10)
+                .and_then(|current| current.checked_add(u64::from(byte - b'0')))
+                .ok_or(u64::MAX)?;
+            Ok::<_, u64>(Some(width))
+        })?
+        .map(|width| u32::try_from(width).map_err(|_| width))
+        .transpose()?;
     let horizontal_alignment = value.chars().find_map(|character| match character {
         '<' => Some(HorizontalAlignment::Left),
         '^' => Some(HorizontalAlignment::Center),
         '>' => Some(HorizontalAlignment::Right),
         _ => None,
     });
-    TableColumn {
+    Ok(TableColumn {
         index: 0,
         width,
         horizontal_alignment: horizontal_alignment.unwrap_or(HorizontalAlignment::Left),
@@ -281,7 +301,7 @@ fn parse_column(value: &str) -> TableColumn {
             .next_back()
             .and_then(super::scan::style)
             .unwrap_or(TableCellStyle::Default),
-    }
+    })
 }
 
 fn has_option(metadata: &BlockMetadata, name: &str) -> bool {
@@ -413,5 +433,27 @@ mod tests {
             ResolvedTableConfiguration::resolve("|===", range(source), &metadata, 4),
             Err(1_000_000_000)
         );
+    }
+
+    #[test]
+    fn unrepresentable_column_numbers_are_rejected() {
+        for (value, actual) in [
+            ("18446744073709551616*a", u64::MAX),
+            ("4294967296", 4_294_967_296),
+        ] {
+            let source = format!("[cols=\"{value}\"]");
+            let metadata = BlockMetadata {
+                attributes: vec![ElementAttribute {
+                    name: Some("cols".to_owned()),
+                    value: value.to_owned(),
+                    range: range(&source),
+                }],
+                ..Default::default()
+            };
+            assert_eq!(
+                ResolvedTableConfiguration::resolve("|===", range(&source), &metadata, 4),
+                Err(actual)
+            );
+        }
     }
 }

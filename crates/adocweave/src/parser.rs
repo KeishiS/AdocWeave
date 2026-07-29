@@ -1588,13 +1588,7 @@ fn parse_table(
         input.metadata,
         maximum_columns,
     )
-    .map_err(|actual| {
-        reject(
-            "table columns",
-            config.limits.max_table_columns,
-            actual as u64,
-        )
-    })?;
+    .map_err(|actual| reject("table columns", config.limits.max_table_columns, actual))?;
     let column_styles = configuration.column_styles().collect::<Vec<_>>();
     let scanned = crate::table::scan_with_configuration(
         input.value,
