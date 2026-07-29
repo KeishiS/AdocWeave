@@ -95,6 +95,20 @@ pub(crate) fn tokens(
     })
 }
 
+pub(crate) fn response(
+    analysis: Option<&Analysis>,
+    encoding: PositionEncoding,
+) -> Result<lsp::SemanticTokensResult, String> {
+    let tokens = match analysis {
+        Some(analysis) => tokens(analysis, encoding)?,
+        None => lsp::SemanticTokens {
+            result_id: None,
+            data: Vec::new(),
+        },
+    };
+    Ok(lsp::SemanticTokensResult::Tokens(tokens))
+}
+
 fn push_range(
     output: &mut Vec<(lsp::Position, u32, u32)>,
     range: TextRange,
@@ -126,8 +140,9 @@ fn push_range(
 #[cfg(test)]
 mod tests {
     use adocweave::{Analysis, AnalysisOptions, AnalysisRequest, NeverCancel};
+    use async_lsp::lsp_types as lsp;
 
-    use super::tokens;
+    use super::{response, tokens};
     use crate::PositionEncoding;
 
     fn analyze(source: &str) -> Analysis {
@@ -183,5 +198,15 @@ mod tests {
     #[test]
     fn syntactic_headings_are_left_to_editor_grammars() {
         assert!(encoded("= Document\n\n== Section\n", PositionEncoding::Utf8).is_empty());
+    }
+
+    #[test]
+    fn missing_snapshot_has_an_empty_semantic_token_response() {
+        let lsp::SemanticTokensResult::Tokens(tokens) =
+            response(None, PositionEncoding::Utf16).expect("response")
+        else {
+            panic!("full semantic tokens");
+        };
+        assert!(tokens.data.is_empty());
     }
 }
