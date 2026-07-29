@@ -1359,6 +1359,33 @@ fn hover_and_completion_cover_attributes_references_links_and_math() {
 }
 
 #[test]
+fn hover_selects_the_token_starting_at_an_adjacent_range_boundary() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///adjacent-attributes.adoc",
+        1,
+        ":first: one\n:second: two\n\n{first}{second}\n",
+    );
+    let hover = service
+        .hover(
+            &uri("file:///adjacent-attributes.adoc"),
+            lsp::Position::new(3, 7),
+        )
+        .expect("hover")
+        .expect("second attribute hover");
+    let value = serde_json::to_value(hover).expect("serialize");
+
+    assert!(
+        value["contents"]["value"]
+            .as_str()
+            .expect("hover text")
+            .contains("Value: `two`"),
+        "{value}"
+    );
+}
+
+#[test]
 fn attribute_features_follow_the_binding_visible_at_the_cursor() {
     let source = "\
 :name: first

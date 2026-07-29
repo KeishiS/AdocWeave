@@ -21,6 +21,7 @@ use adocweave::{
 };
 
 mod check_output;
+mod commands;
 mod file_workflow;
 mod local_include;
 mod local_target;
@@ -1270,14 +1271,6 @@ fn process_format(
         .formatted)
 }
 
-fn process_symbols(input: &[u8], analysis_options: &AnalysisOptions) -> Result<String, CliError> {
-    let source = decode_input(input)?;
-    let analysis = analyze(source, analysis_options)?;
-    Ok(adocweave::semantic::render_symbols_json(
-        &adocweave::semantic::document_symbols(analysis.document()),
-    ))
-}
-
 fn load_project_config(
     arguments: &Arguments,
 ) -> Result<Option<adocweave_config::ConfigSnapshot>, CliError> {
@@ -1310,80 +1303,6 @@ fn load_project_config_at(
         Err(error) if error.code == adocweave_config::ConfigErrorCode::OutsideBoundary => Ok(None),
         Err(error) => Err(CliError::Config(error)),
     }
-}
-
-fn resolved_config_json(
-    snapshot: Option<&adocweave_config::ConfigSnapshot>,
-    config: &adocweave_config::ResolvedProjectConfig,
-) -> serde_json::Value {
-    let attributes = config
-        .analysis
-        .attributes
-        .iter()
-        .map(|(name, value)| {
-            (
-                name.clone(),
-                serde_json::json!({ "state": if value.is_some() { "set" } else { "unset" } }),
-            )
-        })
-        .collect::<serde_json::Map<_, _>>();
-    let rules = diagnostic::LINT_RULES
-        .iter()
-        .map(|descriptor| {
-            let settings = config.analysis.diagnostics.lint.rule(descriptor.id);
-            (
-                descriptor.id.as_str().to_owned(),
-                serde_json::json!({
-                    "enabled": settings.enabled,
-                    "severity": settings.severity.as_str(),
-                }),
-            )
-        })
-        .collect::<serde_json::Map<_, _>>();
-    let path = |path: &std::path::Path| path.to_string_lossy().into_owned();
-    serde_json::json!({
-        "schemaVersion": config.schema_version,
-        "source": snapshot.map(|snapshot| path(&snapshot.path)),
-        "analysis": {
-            "syntaxMode": match config.analysis.syntax.syntax_mode {
-                adocweave::SyntaxMode::Permissive => "permissive",
-                adocweave::SyntaxMode::Strict => "strict",
-            },
-            "attributes": attributes,
-        },
-        "lint": {
-            "rules": rules,
-            "maxLineLength": config.analysis.diagnostics.lint.max_line_length,
-            "maxConsecutiveBlankLines":
-                config.analysis.diagnostics.lint.max_consecutive_blank_lines,
-            "maxDiagnostics": config.analysis.diagnostics.lint.max_diagnostics,
-        },
-        "resources": {
-            "include": config.resources.include,
-            "roots": config.resources.roots.iter().map(|value| path(value)).collect::<Vec<_>>(),
-            "maxFiles": config.resources.limits.max_files,
-            "maxTotalBytes": config.resources.limits.max_total_bytes,
-            "maxResourceBytes": config.resources.limits.max_resource_bytes,
-        },
-        "localTargets": {
-            "enabled": config.local_targets.enabled,
-            "projectRoot": config.local_targets.project_root.as_deref().map(path),
-        },
-        "format": {
-            "newline": match config.format.newline {
-                adocweave::output::formatter::NewlineStyle::Lf => "lf",
-                adocweave::output::formatter::NewlineStyle::CrLf => "cr-lf",
-            },
-            "finalNewline": config.format.final_newline,
-            "maxConsecutiveBlankLines": config.format.max_consecutive_blank_lines,
-        },
-        "html": {
-            "complete": config.html.policy.document_mode == HtmlDocumentMode::Complete,
-            "stylesheetFiles":
-                config.html.stylesheet_files.iter().map(|value| path(value)).collect::<Vec<_>>(),
-            "stylesheetUrls": config.html.stylesheet_urls,
-        }
-    })
 }
 
 fn validate_project_config_authority(
@@ -1955,11 +1874,7 @@ fn run() -> Result<ExitCode, CliError> {
                 |snapshot| snapshot.config.clone(),
             );
             if matches!(arguments.command, CommandOptions::ConfigShow) {
-                let output = serde_json::to_string_pretty(&resolved_config_json(
-                    config_snapshot.as_ref(),
-                    &project_config,
-                ))
-                .expect("resolved configuration is serializable");
+                let output = commands::config::render(config_snapshot.as_ref(), &project_config);
                 println!("{output}");
                 return Ok(ExitCode::SUCCESS);
             }
@@ -2214,9 +2129,16 @@ fn run() -> Result<ExitCode, CliError> {
                         &project_config.analysis,
                         &project_config.format,
                     )?,
-                    CommandOptions::Symbols => {
-                        process_symbols(&processed, &project_config.analysis)?
-                    }
+                    CommandOptions::Symbols => commands::symbols::process(
+                        &processed,
+                        &project_config.analysis,
+                    )
+                    .map_err(|error| match error {
+                        commands::symbols::Error::InvalidUtf8 { valid_up_to } => {
+                            CliError::InvalidUtf8 { valid_up_to }
+                        }
+                        commands::symbols::Error::Analysis(source) => CliError::Analysis(source),
+                    })?,
                     CommandOptions::ConfigShow => unreachable!("config show handled above"),
                     CommandOptions::Preview { .. } => unreachable!("preview handled above"),
                     CommandOptions::Check(_) => unreachable!("check handled above"),
