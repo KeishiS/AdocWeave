@@ -127,6 +127,28 @@ export function installationE2ESchedule({ nativeRequired, verifyCandidateResult 
   return nativeRequired === true && verifyCandidateResult === "success" ? "run" : "skipped";
 }
 
+function requireBrowserStartupInteger(source, name, expected) {
+  if (typeof source !== "string") fail("browser startup policy source is missing");
+  const matches = [
+    ...source.matchAll(
+      new RegExp(`^export const ${name} = ([0-9][0-9_]*);$`, "gm"),
+    ),
+  ];
+  if (matches.length !== 1) {
+    fail(`browser startup policy must export ${name} exactly once`);
+  }
+  const actual = Number(matches[0][1].replaceAll("_", ""));
+  if (actual !== expected) {
+    fail(`browser startup policy ${name} must equal ${expected}`);
+  }
+}
+
+export function validateBrowserStartupPolicy(source) {
+  requireBrowserStartupInteger(source, "BROWSER_STARTUP_ATTEMPTS", 3);
+  requireBrowserStartupInteger(source, "BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS", 20_000);
+  requireBrowserStartupInteger(source, "BROWSER_STARTUP_TOTAL_TIMEOUT_MS", 75_000);
+}
+
 export function validateReleaseWorkflowPolicy({
   release,
   publish,
@@ -137,7 +159,9 @@ export function validateReleaseWorkflowPolicy({
   plan,
   windowsDistBootstrap,
   windowsDistInstaller,
+  browserStartup,
 }) {
+  validateBrowserStartupPolicy(browserStartup);
   const releaseDoc = parseWorkflow("release.yml", release);
   const publishDoc = parseWorkflow("release-publish.yml", publish);
   const contractDoc = parseWorkflow("quality.yml", contract);
@@ -677,6 +701,7 @@ export function loadWorkflowPolicyInputs() {
     plan: JSON.parse(read("release/distribution-plan.json")),
     windowsDistBootstrap: JSON.parse(read("release/windows-dist-bootstrap.json")),
     windowsDistInstaller: read("tools/install-pinned-cargo-dist.ps1"),
+    browserStartup: read("tools/browser-startup.mjs"),
   };
 }
 

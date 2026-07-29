@@ -4,12 +4,34 @@ import test from "node:test";
 import {
   installationE2ESchedule,
   loadWorkflowPolicyInputs,
+  validateBrowserStartupPolicy,
   validatePinnedActions,
   validateReleaseWorkflowPolicy,
 } from "./release-workflow-policy.mjs";
 
 test("repository release workflows satisfy the least-privilege policy", () => {
   validateReleaseWorkflowPolicy(loadWorkflowPolicyInputs());
+});
+
+test("browser startup production bounds are canonical and mutation-resistant", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  validateBrowserStartupPolicy(inputs.browserStartup);
+  for (const [name, current, replacement] of [
+    ["BROWSER_STARTUP_ATTEMPTS", "3", "2"],
+    ["BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS", "20_000", "25_000"],
+    ["BROWSER_STARTUP_TOTAL_TIMEOUT_MS", "75_000", "90_000"],
+  ]) {
+    const browserStartup = inputs.browserStartup.replace(
+      `export const ${name} = ${current};`,
+      `export const ${name} = ${replacement};`,
+    );
+    assert.notEqual(browserStartup, inputs.browserStartup, name);
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({ ...inputs, browserStartup }),
+      new RegExp(`${name} must equal`),
+      name,
+    );
+  }
 });
 
 test("every external action requires a full commit SHA", () => {

@@ -175,13 +175,15 @@ export async function inspectPageAttempt(
   let spawnError;
   let stderr = "";
   let socket;
+  let attemptTimer;
+  let cleanupSignal = signal;
   browser.once("error", (error) => { spawnError = error; });
   browser.stderr.setEncoding("utf8");
   browser.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-8192); });
   try {
     const attemptController = new AbortController();
     let startupPhase = "DevToolsActivePort";
-    const attemptTimer = setTimeout(() => {
+    attemptTimer = setTimeout(() => {
       const error = new Error(
         `Chromium startup attempt exceeded ${startupTimeoutMs} ms during ${startupPhase}`,
       );
@@ -189,6 +191,7 @@ export async function inspectPageAttempt(
       attemptController.abort(error);
     }, startupTimeoutMs);
     const startupSignal = AbortSignal.any([signal, attemptController.signal]);
+    cleanupSignal = startupSignal;
     let port;
     let call;
     let event;
@@ -245,9 +248,10 @@ export async function inspectPageAttempt(
       );
       failure.retryBrowserStartup = fatal === undefined;
       throw failure;
-    } finally {
-      clearTimeout(attemptTimer);
     }
+    clearTimeout(attemptTimer);
+    attemptTimer = undefined;
+    cleanupSignal = signal;
 
     const loaded = event("Page.loadEventFired");
     await withTimeout(call("Page.navigate", { url }), 5000, "Page.navigate timeout");
@@ -281,13 +285,55 @@ export async function inspectPageAttempt(
     socket.close();
     return evaluated.result.value;
   } finally {
-    if (socket && socket.readyState < WebSocketImplementation.CLOSING) socket.close();
-    browser.kill("SIGTERM");
-    if (!await waitForBrowserExit(browser, 2000)) {
-      browser.kill("SIGKILL");
-      if (!await waitForBrowserExit(browser, 5000)) throw new Error("browser did not exit after SIGKILL");
+    try {
+      if (socket && socket.readyState < WebSocketImplementation.CLOSING) socket.close();
+    } finally {
+      try {
+        await terminateBrowser(browser, cleanupSignal, waitForBrowserExit);
+      } finally {
+        clearTimeout(attemptTimer);
+      }
     }
   }
+}
+
+async function terminateBrowser(browser, signal, waitForBrowserExit) {
+  browser.kill("SIGTERM");
+  if (signal?.aborted) {
+    killAndDetach(browser);
+    return;
+  }
+  try {
+    if (await waitForBrowserExit(browser, 2000, { signal })) return;
+  } catch (error) {
+    if (!signal?.aborted) throw error;
+    killAndDetach(browser);
+    return;
+  }
+  browser.kill("SIGKILL");
+  if (signal?.aborted) {
+    detachBrowser(browser);
+    return;
+  }
+  try {
+    if (await waitForBrowserExit(browser, 5000, { signal })) return;
+  } catch (error) {
+    if (!signal?.aborted) throw error;
+    detachBrowser(browser);
+    return;
+  }
+  detachBrowser(browser);
+  throw new Error("browser did not exit after SIGKILL");
+}
+
+function killAndDetach(browser) {
+  browser.kill("SIGKILL");
+  detachBrowser(browser);
+}
+
+function detachBrowser(browser) {
+  browser.stderr?.destroy?.();
+  browser.unref?.();
 }
 
 async function withAbortSignal(promise, signal) {
