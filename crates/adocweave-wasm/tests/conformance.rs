@@ -6,8 +6,12 @@ use adocweave_wasm::{WasmRequest, process_request};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-const CONFORMANCE_MANIFEST_PATH: &str = "crates/adocweave/conformance/cases.json";
-const CONFORMANCE_FIXTURE_ROOT: &str = "fixtures/conformance";
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConformanceConsumers {
+    manifest: PathBuf,
+    fixture_root: PathBuf,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -20,8 +24,13 @@ struct ReleaseManifest {
 #[test]
 fn native_adapter_accepts_every_shared_conformance_case() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let fixtures = root.join(CONFORMANCE_FIXTURE_ROOT);
-    let manifest_path = root.join(CONFORMANCE_MANIFEST_PATH);
+    let consumers: ConformanceConsumers = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/conformance/consumers.json"))
+            .expect("conformance consumers"),
+    )
+    .expect("valid conformance consumers");
+    let fixtures = root.join(consumers.fixture_root);
+    let manifest_path = root.join(consumers.manifest);
     let manifest: Value =
         serde_json::from_str(&fs::read_to_string(manifest_path).expect("conformance manifest"))
             .expect("valid conformance manifest");

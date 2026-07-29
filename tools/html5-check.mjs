@@ -9,8 +9,9 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const CONFORMANCE_MANIFEST_PATH = "crates/adocweave/conformance/cases.json";
-const CONFORMANCE_FIXTURE_ROOT = "fixtures/conformance";
+const conformanceConsumers = JSON.parse(
+  readFileSync(resolve(root, "fixtures/conformance/consumers.json"), "utf8"),
+);
 const manifestPath = resolve(root, "fixtures/html/validation.json");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const outputDirectory = resolve(root, "target/html5");
@@ -19,10 +20,10 @@ const conformanceNative = resolve(
   root,
   "target/debug/adocweave-conformance-native",
 );
-const conformanceDirectory = resolve(root, CONFORMANCE_FIXTURE_ROOT);
+const conformanceDirectory = resolve(root, conformanceConsumers.fixtureRoot);
 const validator = process.env.ADOCWEAVE_HTML_VALIDATOR;
 const conformanceManifest = JSON.parse(
-  readFileSync(resolve(root, CONFORMANCE_MANIFEST_PATH), "utf8"),
+  readFileSync(resolve(root, conformanceConsumers.manifest), "utf8"),
 );
 const release = JSON.parse(
   readFileSync(resolve(root, "release-manifest.json"), "utf8"),

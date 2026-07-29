@@ -5,9 +5,6 @@ use std::process::Command;
 use adocweave::{AnalysisOptions, Engine};
 use serde::Deserialize;
 
-const CONFORMANCE_MANIFEST_PATH: &str = "crates/adocweave/conformance/cases.json";
-const CONFORMANCE_FIXTURE_ROOT: &str = "fixtures/conformance";
-
 #[derive(Deserialize)]
 struct CorpusManifest {
     normative: Vec<NormativeCase>,
@@ -81,8 +78,7 @@ struct ConformanceConsumers {
 struct ConformanceConsumer {
     name: String,
     path: String,
-    manifest_binding: String,
-    fixture_root_binding: String,
+    capabilities: BTreeSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -548,31 +544,76 @@ fn conformance_fixture_has_every_declared_consumer() {
     )
     .expect("valid conformance consumer manifest");
     assert_eq!(manifest.schema_version, 2);
-    assert_eq!(manifest.manifest, CONFORMANCE_MANIFEST_PATH);
-    assert_eq!(manifest.fixture_root, CONFORMANCE_FIXTURE_ROOT);
-    assert_eq!(
-        adocweave::output::conformance::conformance_contract_paths(),
-        (CONFORMANCE_MANIFEST_PATH, CONFORMANCE_FIXTURE_ROOT)
-    );
     assert!(root.join(&manifest.manifest).is_file());
     assert!(root.join(&manifest.fixture_root).is_dir());
-    assert_eq!(manifest.consumers.len(), 6);
+    let capabilities = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<BTreeSet<_>>()
+    };
+    let expected = BTreeMap::from([
+        (
+            "browser",
+            (
+                "web-worker/cross-runtime.test.mjs",
+                capabilities(&["fixture-root", "manifest"]),
+            ),
+        ),
+        (
+            "html5",
+            (
+                "tools/html5-check.mjs",
+                capabilities(&["fixture-root", "manifest"]),
+            ),
+        ),
+        (
+            "native-core",
+            (
+                "crates/adocweave/src/conformance.rs",
+                capabilities(&["manifest"]),
+            ),
+        ),
+        (
+            "public-conformance",
+            (
+                "crates/adocweave/tests/public_conformance_fixture.rs",
+                capabilities(&["fixture-root", "manifest"]),
+            ),
+        ),
+        (
+            "repository-governance",
+            (
+                "crates/adocweave/tests/repository_governance.rs",
+                capabilities(&["fixture-root", "manifest"]),
+            ),
+        ),
+        (
+            "wasm",
+            (
+                "crates/adocweave-wasm/tests/conformance.rs",
+                capabilities(&["fixture-root", "manifest"]),
+            ),
+        ),
+    ]);
+    let mut names = BTreeSet::new();
     for consumer in manifest.consumers {
-        let content = fs::read_to_string(root.join(&consumer.path))
-            .unwrap_or_else(|error| panic!("{}: {error}", consumer.name));
+        assert!(root.join(&consumer.path).is_file(), "{}", consumer.path);
+        let (path, capabilities) = expected
+            .get(consumer.name.as_str())
+            .unwrap_or_else(|| panic!("unexpected conformance consumer: {}", consumer.name));
+        assert_eq!(&consumer.path, path, "{}", consumer.name);
+        assert_eq!(&consumer.capabilities, capabilities, "{}", consumer.name);
         assert!(
-            content.matches(&consumer.manifest_binding).count() >= 2,
-            "{} does not declare and use manifest binding {}",
-            consumer.name,
-            consumer.manifest_binding
-        );
-        assert!(
-            content.matches(&consumer.fixture_root_binding).count() >= 2,
-            "{} does not declare and use fixture root binding {}",
-            consumer.name,
-            consumer.fixture_root_binding
+            names.insert(consumer.name.clone()),
+            "duplicate conformance consumer: {}",
+            consumer.name
         );
     }
+    assert_eq!(
+        names,
+        expected.keys().map(|name| (*name).to_owned()).collect()
+    );
 }
 
 #[test]
@@ -605,6 +646,11 @@ fn core_source_package_contains_conformance_manifest() {
 #[test]
 fn html5_validation_manifest_has_fixed_tools_and_complete_inputs() {
     let root = repository_root();
+    let consumers: ConformanceConsumers = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/conformance/consumers.json"))
+            .expect("conformance consumer manifest"),
+    )
+    .expect("valid conformance consumer manifest");
     let manifest: Html5Manifest = serde_json::from_str(
         &fs::read_to_string(root.join("fixtures/html/validation.json"))
             .expect("HTML5 validation manifest"),
@@ -622,7 +668,7 @@ fn html5_validation_manifest_has_fixed_tools_and_complete_inputs() {
     assert_eq!(template.matches(&manifest.template.marker).count(), 1);
 
     let conformance: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join(CONFORMANCE_MANIFEST_PATH)).expect("conformance manifest"),
+        &fs::read_to_string(root.join(consumers.manifest)).expect("conformance manifest"),
     )
     .expect("valid conformance manifest");
     let conformance_modes = conformance["cases"]

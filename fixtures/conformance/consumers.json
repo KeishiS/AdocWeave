@@ -6,38 +6,32 @@
     {
       "name": "native-core",
       "path": "crates/adocweave/src/conformance.rs",
-      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
-      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+      "capabilities": ["manifest"]
     },
     {
       "name": "wasm",
       "path": "crates/adocweave-wasm/tests/conformance.rs",
-      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
-      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+      "capabilities": ["fixture-root", "manifest"]
     },
     {
       "name": "browser",
       "path": "web-worker/cross-runtime.test.mjs",
-      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
-      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+      "capabilities": ["fixture-root", "manifest"]
     },
     {
       "name": "html5",
       "path": "tools/html5-check.mjs",
-      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
-      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+      "capabilities": ["fixture-root", "manifest"]
     },
     {
       "name": "repository-governance",
       "path": "crates/adocweave/tests/repository_governance.rs",
-      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
-      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+      "capabilities": ["fixture-root", "manifest"]
     },
     {
       "name": "public-conformance",
       "path": "crates/adocweave/tests/public_conformance_fixture.rs",
-      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
-      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+      "capabilities": ["fixture-root", "manifest"]
     }
   ]
 }

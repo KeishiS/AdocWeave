@@ -8,11 +8,12 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const CONFORMANCE_MANIFEST_PATH = "crates/adocweave/conformance/cases.json";
-const CONFORMANCE_FIXTURE_ROOT = "fixtures/conformance";
-const fixtureRoot = resolve(root, CONFORMANCE_FIXTURE_ROOT);
+const consumers = JSON.parse(
+  readFileSync(resolve(root, "fixtures/conformance/consumers.json"), "utf8"),
+);
+const fixtureRoot = resolve(root, consumers.fixtureRoot);
 const manifest = JSON.parse(
-  readFileSync(resolve(root, CONFORMANCE_MANIFEST_PATH), "utf8"),
+  readFileSync(resolve(root, consumers.manifest), "utf8"),
 );
 const require = createRequire(import.meta.url);
 const wasm = require(resolve(root, "target/adocweave-wasm-node/adocweave_wasm.js"));
