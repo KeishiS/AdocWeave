@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -25,6 +34,15 @@ const asset: DistributionAsset = {
   sha256: "a".repeat(64),
   target: "x86_64-pc-windows-msvc",
 };
+
+async function removeTemporaryDirectory(path: string): Promise<void> {
+  await rm(path, {
+    force: true,
+    maxRetries: 5,
+    recursive: true,
+    retryDelay: 100,
+  });
+}
 
 test("ZIPから期待する実行fileだけを取り出します", () => {
   const archive = zipSync({
@@ -122,7 +140,7 @@ test("managed binaryを検証して原子的cacheへ保存し、offlineでも再
       true,
     );
   } finally {
-    await rm(storagePath, { force: true, recursive: true });
+    await removeTemporaryDirectory(storagePath);
   }
 });
 
@@ -154,11 +172,11 @@ test("hash不一致と欠落assetは既存の検証済みcacheを破壊しませ
     );
     assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), installed);
   } finally {
-    await rm(storagePath, { force: true, recursive: true });
+    await removeTemporaryDirectory(storagePath);
   }
 });
 
-test("改変cacheを採用せず、所有markerを確認して完全削除します", async () => {
+test("改変cacheを採用せず、所有markerを残してmanaged serverだけを削除します", async () => {
   const storagePath = await mkdtemp(join(tmpdir(), "adocweave-managed-"));
   const platform = platformForHost("linux", "x64");
   const archive = zipSync({ [platform.executable]: new TextEncoder().encode("server") });
@@ -170,7 +188,7 @@ test("改変cacheを採用せず、所有markerを確認して完全削除しま
   await writeFile(installed, "tampered");
   assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), undefined);
   await clearManagedServers(storagePath);
-  await assert.rejects(access(storagePath));
+  assert.deepEqual(await readdir(storagePath), [".adocweave-vscode-managed-cache"]);
 
   const unrelated = await mkdtemp(join(tmpdir(), "adocweave-unrelated-"));
   try {
@@ -178,7 +196,7 @@ test("改変cacheを採用せず、所有markerを確認して完全削除しま
     await clearManagedServers(unrelated);
     assert.equal(await readFile(join(unrelated, "keep"), "utf8"), "user");
   } finally {
-    await rm(unrelated, { force: true, recursive: true });
+    await removeTemporaryDirectory(unrelated);
   }
 });
 
@@ -210,7 +228,7 @@ test("Content-Lengthがない巨大manifestを受信中の上限で拒否しま�
       /managed-download-size-mismatch/,
     );
   } finally {
-    await rm(storagePath, { force: true, recursive: true });
+    await removeTemporaryDirectory(storagePath);
   }
 });
 
@@ -225,14 +243,114 @@ test("同時installはarchiveを一度だけ取得して同じcacheを返しま�
     return baseFetcher(input, init);
   }) as typeof fetch;
   try {
-    const results = await Promise.all([
-      installManagedServer(platform, { fetcher, storagePath, version: "0.16.0" }),
-      installManagedServer(platform, { fetcher, storagePath, version: "0.16.0" }),
-    ]);
-    assert.equal(results[0], results[1]);
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        installManagedServer(platform, { fetcher, storagePath, version: "0.16.0" }),
+      ),
+    );
+    assert.ok(results.every((result) => result === results[0]));
     assert.equal(archiveDownloads, 1);
+    assert.equal(
+      (await lstat(join(storagePath, ".adocweave-vscode-managed-cache"))).isDirectory(),
+      true,
+    );
   } finally {
-    await rm(storagePath, { force: true, recursive: true });
+    await removeTemporaryDirectory(storagePath);
+  }
+});
+
+test("以前のfile形式の所有markerを引き続き受け入れます", async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), "adocweave-managed-"));
+  const platform = platformForHost("linux", "x64");
+  const archive = zipSync({ [platform.executable]: new TextEncoder().encode("server") });
+  await writeFile(
+    join(storagePath, ".adocweave-vscode-managed-cache"),
+    "adocweave-vscode-managed-cache-v1\n",
+  );
+  try {
+    const installed = await installManagedServer(platform, {
+      fetcher: releaseFetcher(archive),
+      storagePath,
+      version: "0.16.0",
+    });
+    assert.equal(await readFile(installed, "utf8"), "server");
+    await clearManagedServers(storagePath);
+    assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), undefined);
+    assert.equal(
+      await readFile(join(storagePath, ".adocweave-vscode-managed-cache"), "utf8"),
+      "adocweave-vscode-managed-cache-v1\n",
+    );
+  } finally {
+    await removeTemporaryDirectory(storagePath);
+  }
+});
+
+test("内容のあるdirectory markerを所有証明として受け入れません", async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), "adocweave-managed-"));
+  const owner = join(storagePath, ".adocweave-vscode-managed-cache");
+  await mkdir(owner);
+  await writeFile(join(owner, "unexpected"), "not-owned");
+  await writeFile(join(storagePath, "keep"), "user");
+  try {
+    await assert.rejects(clearManagedServers(storagePath), /managed-cache-owner-mismatch/);
+    await assert.rejects(
+      installManagedServer(platformForHost("linux", "x64"), {
+        fetcher: releaseFetcher(
+          zipSync({ "adocweave-lsp": new TextEncoder().encode("server") }),
+        ),
+        storagePath,
+        version: "0.16.0",
+      }),
+      /managed-cache-owner-mismatch/,
+    );
+    assert.equal(await readFile(join(storagePath, "keep"), "utf8"), "user");
+  } finally {
+    await removeTemporaryDirectory(storagePath);
+  }
+});
+
+test("clearは進行中のinstall完了後にcacheだけを削除します", async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), "adocweave-managed-"));
+  const platform = platformForHost("linux", "x64");
+  const archive = zipSync({ [platform.executable]: new TextEncoder().encode("server") });
+  const baseFetcher = releaseFetcher(archive);
+  let releaseManifest: (() => void) | undefined;
+  let notifyManifestStarted: (() => void) | undefined;
+  const manifestStarted = new Promise<void>((resolvePromise) => {
+    notifyManifestStarted = resolvePromise;
+  });
+  const manifestMayContinue = new Promise<void>((resolvePromise) => {
+    releaseManifest = resolvePromise;
+  });
+  let delayed = false;
+  const fetcher = (async (input, init) => {
+    if (!delayed && String(input).endsWith("adocweave-dist-manifest.json")) {
+      delayed = true;
+      notifyManifestStarted?.();
+      await manifestMayContinue;
+    }
+    return baseFetcher(input, init);
+  }) as typeof fetch;
+  try {
+    const installing = installManagedServer(platform, {
+      fetcher,
+      storagePath,
+      version: "0.16.0",
+    });
+    let installFinished = false;
+    void installing.then(() => {
+      installFinished = true;
+    });
+    await manifestStarted;
+    const clearing = clearManagedServers(storagePath);
+    releaseManifest?.();
+    await clearing;
+    await installing;
+    assert.equal(installFinished, true);
+    assert.equal(await findVerifiedCache(storagePath, "0.16.0", platform), undefined);
+    assert.deepEqual(await readdir(storagePath), [".adocweave-vscode-managed-cache"]);
+  } finally {
+    await removeTemporaryDirectory(storagePath);
   }
 });
 
@@ -255,6 +373,6 @@ test("書込み権限がないstorageでは既存内容を変更しません", {
     assert.equal(await readFile(join(storagePath, "keep"), "utf8"), "user");
   } finally {
     await chmod(storagePath, 0o700);
-    await rm(storagePath, { force: true, recursive: true });
+    await removeTemporaryDirectory(storagePath);
   }
 });

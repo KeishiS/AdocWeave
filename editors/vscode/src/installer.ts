@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, type Dirent } from "node:fs";
 import {
   access,
+  lstat,
   mkdir,
   open,
   readFile,
@@ -29,9 +30,10 @@ const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_DECOMPRESSED_BYTES = 128 * 1024 * 1024;
 const MAX_BINARY_BYTES = 64 * 1024 * 1024;
 const LOCK_STALE_MS = 5 * 60 * 1_000;
-const LOCK_WAIT_MS = 15_000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
+const LOCK_WAIT_MS = DOWNLOAD_TIMEOUT_MS * 2 + 15_000;
 const OWNER_MARKER = ".adocweave-vscode-managed-cache";
+const OWNER_LOCK = ".adocweave-vscode-managed-cache.lock";
 const OWNER_MARKER_CONTENT = "adocweave-vscode-managed-cache-v1\n";
 
 interface CacheMarker {
@@ -246,14 +248,20 @@ async function ensureManagedRoot(storagePath: string): Promise<string> {
   await mkdir(root, { recursive: true });
   const owner = join(root, OWNER_MARKER);
   try {
-    await writeFile(owner, OWNER_MARKER_CONTENT, { flag: "wx", mode: 0o600 });
+    await mkdir(owner, { mode: 0o700 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    if ((await readFile(owner, "utf8")) !== OWNER_MARKER_CONTENT) {
+    if (!(await hasValidOwnerMarker(owner))) {
       throw new Error("managed-cache-owner-mismatch");
     }
   }
   return root;
+}
+
+async function hasValidOwnerMarker(path: string): Promise<boolean> {
+  const entry = await lstat(path);
+  if (entry.isDirectory()) return (await readdir(path)).length === 0;
+  return entry.isFile() && (await readFile(path, "utf8")) === OWNER_MARKER_CONTENT;
 }
 
 export async function findVerifiedCache(
@@ -317,6 +325,20 @@ export async function installManagedServer(
 ): Promise<string> {
   const fetcher = options.fetcher ?? fetch;
   const storageRoot = await ensureManagedRoot(options.storagePath);
+  const operationLockCleanup = await acquireLock(join(storageRoot, OWNER_LOCK), options.signal);
+  try {
+    return await installManagedServerLocked(platform, options, fetcher, storageRoot);
+  } finally {
+    await operationLockCleanup();
+  }
+}
+
+async function installManagedServerLocked(
+  platform: ManagedPlatform,
+  options: InstallerOptions,
+  fetcher: typeof fetch,
+  storageRoot: string,
+): Promise<string> {
   const root = join(storageRoot, options.version, platform.target);
   await mkdir(root, { recursive: true });
   const release = await download(
@@ -332,61 +354,67 @@ export async function installManagedServer(
   const cached = await verifyCacheDirectory(destination, options.version, platform);
   if (cached) return cached;
 
-  const releaseLock = join(root, ".install.lock");
-  const releaseLockCleanup = await acquireLock(releaseLock, options.signal);
+  const archive = await download(
+    releaseUrl(options.version, asset.name),
+    fetcher,
+    options.signal,
+    asset.byteSize,
+  );
+  if (sha256(archive) !== asset.sha256) throw new Error("managed-download-hash-mismatch");
+  const binary = extractManagedBinary(archive, asset);
+  const staging = join(root, `.staging-${randomUUID()}`);
+  await mkdir(staging, { mode: 0o700 });
   try {
-    const afterLock = await verifyCacheDirectory(destination, options.version, platform);
-    if (afterLock) return afterLock;
-    const archive = await download(
-      releaseUrl(options.version, asset.name),
-      fetcher,
-      options.signal,
-      asset.byteSize,
-    );
-    if (sha256(archive) !== asset.sha256) throw new Error("managed-download-hash-mismatch");
-    const binary = extractManagedBinary(archive, asset);
-    const staging = join(root, `.staging-${randomUUID()}`);
-    await mkdir(staging, { mode: 0o700 });
+    const binaryPath = join(staging, platform.executable);
+    await writeFile(binaryPath, binary, { mode: 0o755 });
+    const marker: CacheMarker = {
+      asset: asset.name,
+      assetByteSize: asset.byteSize,
+      assetSha256: asset.sha256,
+      binarySha256: sha256(binary),
+      packageVersion: options.version,
+      schemaVersion: 1,
+      sourceCommit: manifest.sourceCommit,
+      target: platform.target,
+    };
+    await writeFile(markerPath(staging), `${JSON.stringify(marker)}\n`, { mode: 0o600 });
     try {
-      const binaryPath = join(staging, platform.executable);
-      await writeFile(binaryPath, binary, { mode: 0o755 });
-      const marker: CacheMarker = {
-        asset: asset.name,
-        assetByteSize: asset.byteSize,
-        assetSha256: asset.sha256,
-        binarySha256: sha256(binary),
-        packageVersion: options.version,
-        schemaVersion: 1,
-        sourceCommit: manifest.sourceCommit,
-        target: platform.target,
-      };
-      await writeFile(markerPath(staging), `${JSON.stringify(marker)}\n`, { mode: 0o600 });
-      try {
-        await rename(staging, destination);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      }
-    } finally {
-      await rm(staging, { force: true, recursive: true });
+      await rename(staging, destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    const installed = await verifyCacheDirectory(destination, options.version, platform);
-    if (!installed) throw new Error("managed-cache-commit-failed");
-    return installed;
   } finally {
-    await releaseLockCleanup();
+    await rm(staging, { force: true, recursive: true });
   }
+  const installed = await verifyCacheDirectory(destination, options.version, platform);
+  if (!installed) throw new Error("managed-cache-commit-failed");
+  return installed;
 }
 
 export async function clearManagedServers(storagePath: string): Promise<void> {
   const root = resolve(storagePath);
   if (root === parse(root).root) throw new Error("managed-cache-invalid-root");
   try {
-    if ((await readFile(join(root, OWNER_MARKER), "utf8")) !== OWNER_MARKER_CONTENT) {
+    const owner = join(root, OWNER_MARKER);
+    if (!(await hasValidOwnerMarker(owner))) {
       throw new Error("managed-cache-owner-mismatch");
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
-  await rm(root, { force: true, recursive: true });
+  const operationLockCleanup = await acquireLock(join(root, OWNER_LOCK), undefined);
+  try {
+    for (const entry of await readdir(root)) {
+      if (entry === OWNER_MARKER || entry === OWNER_LOCK) continue;
+      await rm(join(root, entry), {
+        force: true,
+        maxRetries: 5,
+        recursive: true,
+        retryDelay: 100,
+      });
+    }
+  } finally {
+    await operationLockCleanup();
+  }
 }
