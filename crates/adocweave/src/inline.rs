@@ -55,9 +55,10 @@ fn parse_segment(
     let mut output = InlineParseOutput::default();
     let mut cursor = 0;
     let mut plain_start = 0;
-    let mut scanner = InlineScanner::new(value);
+    let index = InlineCandidateIndex::new(value);
+    let mut candidates = index.cursor();
 
-    while let Some(candidate) = scanner.next(cursor) {
+    while let Some(candidate) = candidates.next(cursor) {
         match candidate {
             InlineCandidate::EscapedAnchor { slash } => {
                 push_text(
@@ -80,7 +81,7 @@ fn parse_segment(
                 plain_start = cursor;
             }
             InlineCandidate::Macro { open } => {
-                match scanner.recognize_macro(value, open) {
+                match index.recognize_macro(value, open) {
                     MacroRecognition::Complete(token) => {
                         if is_escaped(value, open) {
                             let end = token.end();
@@ -157,7 +158,7 @@ fn parse_segment(
                 cursor = next_char_boundary(value, open);
             }
             InlineCandidate::MacroBoundary { open } => {
-                if let MacroRecognition::Complete(token) = scanner.recognize_macro(value, open)
+                if let MacroRecognition::Complete(token) = index.recognize_macro(value, open)
                     && let Some((name_end, name)) = macro_boundary_subject(value, token)
                 {
                     output.problems.push(InlineProblem {
@@ -338,15 +339,15 @@ impl MarkerForm {
     }
 }
 
-struct InlineScanner {
+struct InlineCandidateIndex {
     candidates: Vec<InlineCandidate>,
     delimiters: DelimiterIndex,
     url_candidates: UrlCandidateIndex,
-    next: usize,
-    _inspected_positions: usize,
+    #[cfg(test)]
+    inspected_positions: usize,
 }
 
-impl InlineScanner {
+impl InlineCandidateIndex {
     fn new(value: &str) -> Self {
         let (mut candidates, mut preparsed_markers, mut inspected_positions) =
             preparsed_candidates(value);
@@ -422,11 +423,41 @@ impl InlineScanner {
             candidates,
             delimiters,
             url_candidates,
-            next: 0,
-            _inspected_positions: inspected_positions,
+            #[cfg(test)]
+            inspected_positions,
         }
     }
 
+    fn cursor(&self) -> InlineCandidateCursor<'_> {
+        InlineCandidateCursor {
+            candidates: &self.candidates,
+            next: 0,
+        }
+    }
+
+    fn recognize_macro(&self, value: &str, open: usize) -> MacroRecognition {
+        recognize_macro_with_index(value, open, &self.delimiters, Some(&self.url_candidates))
+    }
+
+    #[cfg(test)]
+    fn inspected_positions(&self) -> usize {
+        self.inspected_positions
+    }
+
+    #[cfg(test)]
+    fn storage_bytes(&self) -> usize {
+        self.candidates.capacity() * std::mem::size_of::<InlineCandidate>()
+            + self.delimiters.storage_bytes()
+            + self.url_candidates.storage_bytes()
+    }
+}
+
+struct InlineCandidateCursor<'index> {
+    candidates: &'index [InlineCandidate],
+    next: usize,
+}
+
+impl InlineCandidateCursor<'_> {
     fn next(&mut self, cursor: usize) -> Option<InlineCandidate> {
         while self
             .candidates
@@ -438,15 +469,6 @@ impl InlineScanner {
         let candidate = self.candidates.get(self.next).copied()?;
         self.next += 1;
         Some(candidate)
-    }
-
-    fn recognize_macro(&self, value: &str, open: usize) -> MacroRecognition {
-        recognize_macro_with_index(value, open, &self.delimiters, Some(&self.url_candidates))
-    }
-
-    #[cfg(test)]
-    fn inspected_positions(&self) -> usize {
-        self._inspected_positions
     }
 }
 
@@ -659,7 +681,7 @@ impl InlineCandidate {
 
 #[cfg(test)]
 fn next_candidate(value: &str, cursor: usize) -> Option<InlineCandidate> {
-    InlineScanner::new(value).next(cursor)
+    InlineCandidateIndex::new(value).cursor().next(cursor)
 }
 
 fn next_char_boundary(value: &str, offset: usize) -> usize {
@@ -1890,6 +1912,11 @@ impl UrlCandidateIndex {
     fn next_label_or_whitespace(&self, start: usize) -> usize {
         self.next_label_or_whitespace[start] as usize
     }
+
+    #[cfg(test)]
+    fn storage_bytes(&self) -> usize {
+        self.next_label_or_whitespace.capacity() * std::mem::size_of::<u32>()
+    }
 }
 
 fn url_link_candidate(value: &str, open: usize, index: &UrlCandidateIndex) -> bool {
@@ -2149,8 +2176,8 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DelimiterIndex, FormulaToken, Inline, InlineCandidate, InlineLiteralKind,
-        InlineParseConfig, InlineProblemKind, InlineScanner, InlineStyle, LinkToken, MacroForm,
+        DelimiterIndex, FormulaToken, Inline, InlineCandidate, InlineCandidateIndex,
+        InlineLiteralKind, InlineParseConfig, InlineProblemKind, InlineStyle, LinkToken, MacroForm,
         MacroRecognition, MacroToken, MarkerForm, MarkerRecognition, MarkerToken,
         ReferenceDestination, ReferenceToken, StandardMacroKind, inline_at, next_candidate, parse,
         parse_text, recognize_macro, recognize_marker,
@@ -2206,19 +2233,27 @@ mod tests {
     }
 
     #[test]
-    fn scanner_has_a_fixed_linear_inspection_budget() {
-        assert_eq!(InlineScanner::new("abc").inspected_positions(), 26);
+    fn candidate_index_has_fixed_linear_inspection_and_storage_budgets() {
+        fn assert_bounded(source: &str) {
+            let index = InlineCandidateIndex::new(source);
+            assert!(index.inspected_positions() <= source.len().saturating_mul(12));
+            assert!(
+                index.storage_bytes() <= source.len().saturating_add(1).saturating_mul(128),
+                "candidate index storage must remain linear"
+            );
+        }
+
+        assert_eq!(InlineCandidateIndex::new("abc").inspected_positions(), 26);
 
         let source = "日本語 *open xref:broken[ https://example.org[label] _tail";
-        let scanner = InlineScanner::new(source);
+        let index = InlineCandidateIndex::new(source);
 
-        assert!(scanner.inspected_positions() > source.len());
-        assert!(scanner.inspected_positions() <= source.len() * 12);
+        assert!(index.inspected_positions() > source.len());
+        assert_bounded(source);
 
         for repetitions in 1..128 {
             let hostile = "xref:".repeat(repetitions) + "target[open";
-            let scanner = InlineScanner::new(&hostile);
-            assert!(scanner.inspected_positions() <= hostile.len() * 12);
+            assert_bounded(&hostile);
             let output = parse(
                 &hostile,
                 range(0, hostile.len()),
@@ -2228,18 +2263,26 @@ mod tests {
         }
         for repetitions in 1..128 {
             let hostile = "\"`x ".repeat(repetitions);
-            let scanner = InlineScanner::new(&hostile);
-            assert!(
-                scanner.inspected_positions() <= hostile.len() * 12,
-                "preparsed quote indexing must remain linear"
-            );
+            assert_bounded(&hostile);
         }
         let seed = include_str!("../../../fixtures/lint/macro-boundary-adversarial.adoc");
         let hostile = seed.repeat(256);
-        let scanner = InlineScanner::new(&hostile);
-        assert!(
-            scanner.inspected_positions() <= hostile.len() * 12,
-            "macro candidate inspection must remain linear"
+        assert_bounded(&hostile);
+    }
+
+    #[test]
+    fn candidate_index_is_immutable_and_each_cursor_advances_independently() {
+        let index = InlineCandidateIndex::new("*first* xref:target[]");
+        let mut first = index.cursor();
+        let mut second = index.cursor();
+
+        assert_eq!(first.next(0), second.next(0));
+        assert_eq!(first.next("*first* xref:target[]".len()), None);
+        assert_eq!(
+            second.next("*first* ".len()),
+            Some(InlineCandidate::Macro {
+                open: "*first* ".len()
+            })
         );
     }
 
