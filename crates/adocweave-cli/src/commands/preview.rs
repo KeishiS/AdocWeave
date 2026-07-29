@@ -17,9 +17,6 @@ pub(crate) enum Error {
         source_name: String,
         source: io::Error,
     },
-    InvalidUtf8 {
-        valid_up_to: usize,
-    },
     Analysis(ParseError),
     Include(local_include::LocalIncludeError),
     Html(html_policy::Error),
@@ -188,25 +185,30 @@ fn build_with_stage_hook(
 ) -> Result<preview::Build, Error> {
     ensure_active(cancellation)?;
     let plan = request.project.resources.limit_plan;
-    let root_limit = plan
-        .analysis_snapshot
-        .max_resource_bytes
-        .min(plan.analysis_snapshot.max_total_bytes);
-    let (input, input_fingerprint) =
-        preview::read_dependency_bounded(request.input_path, root_limit).map_err(|source| {
-            Error::Read {
-                source_name: request.input_path.display().to_string(),
-                source,
-            }
-        })?;
-    let mut root_budget = adocweave_config::AnalysisSnapshotBudget::new(plan.analysis_snapshot);
-    root_budget
-        .charge(u64::try_from(input.len()).unwrap_or(u64::MAX))
-        .map_err(|error| Error::Path(error.to_string()))?;
+    let policy = adocweave_host::LocalFilesystemPolicy::new(
+        [request.project_root.to_owned()],
+        plan.filesystem_reads,
+    )
+    .map_err(local_include::LocalIncludeError::Host)
+    .map_err(Error::Include)?;
+    let mut filesystem = policy
+        .session()
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(Error::Include)?;
+    let loaded = filesystem
+        .read_utf8(
+            adocweave_host::LogicalSourceId::new(request.input_path.to_string_lossy())
+                .map_err(local_include::LocalIncludeError::Host)
+                .map_err(Error::Include)?,
+            request.input_path,
+        )
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(Error::Include)?;
+    let (_, input) = loaded.into_parts();
+    let input_fingerprint =
+        preview::Fingerprint::from_loaded_bytes(request.input_path, input.as_bytes());
     ensure_active(cancellation)?;
-    let source = std::str::from_utf8(&input).map_err(|error| Error::InvalidUtf8 {
-        valid_up_to: error.valid_up_to(),
-    })?;
+    let source = input.as_ref();
     ensure_active(cancellation)?;
     let source_id = request.input_path.to_string_lossy().into_owned();
     dependencies.insert(request.input_path.to_owned(), input_fingerprint);
@@ -215,42 +217,20 @@ fn build_with_stage_hook(
         ensure_active(cancellation)?;
         let prepared = {
             let mut observer = DependencyObserver { dependencies };
-            let root_bytes = u64::try_from(input.len()).unwrap_or(u64::MAX);
-            let limits = adocweave_host::FilesystemReadLimits {
-                max_files: plan
-                    .filesystem_reads
-                    .max_files
-                    .checked_sub(1)
-                    .ok_or_else(|| {
-                        Error::Path("analysis snapshot resource count limit exceeded".to_owned())
-                    })?,
-                max_total_bytes: plan
-                    .filesystem_reads
-                    .max_total_bytes
-                    .checked_sub(root_bytes)
-                    .ok_or_else(|| {
-                        Error::Path("analysis snapshot total byte limit exceeded".to_owned())
-                    })?,
-                max_resource_bytes: plan.filesystem_reads.max_resource_bytes,
-            };
-            local_include::prepare_local_tracking(
+            local_include::prepare_local_tracking_with_existing_session(
                 source,
                 source_id,
                 request.base_dir,
                 request.base_dir,
                 request.project_root,
-                limits,
                 &request.project.preprocess,
                 &mut observer,
+                &mut filesystem,
             )
         }
         .map_err(Error::Include)?;
-        let mut budget = adocweave_config::AnalysisSnapshotBudget::new(plan.analysis_snapshot);
-        for bytes in prepared.projection().resource_lengths() {
-            budget
-                .charge(bytes)
-                .map_err(|error| Error::Path(error.to_string()))?;
-        }
+        crate::validate_resource_plan(prepared.resource_sizes(), plan)
+            .map_err(|error| Error::Path(error.to_string()))?;
         stage_hook(BuildStage::IncludesPrepared);
         ensure_active(cancellation)?;
         let include_diagnostics = prepared
@@ -271,6 +251,8 @@ fn build_with_stage_hook(
             include_diagnostics,
         )
     } else {
+        crate::validate_resource_plan([input.len() as u64], plan)
+            .map_err(|error| Error::Path(error.to_string()))?;
         (source.to_owned(), Vec::new())
     };
     ensure_active(cancellation)?;
@@ -329,10 +311,6 @@ impl std::fmt::Display for Error {
                 source_name,
                 source,
             } => write!(formatter, "could not read {source_name}: {source}"),
-            Self::InvalidUtf8 { valid_up_to } => write!(
-                formatter,
-                "input is not valid UTF-8 (invalid byte starts at offset {valid_up_to})"
-            ),
             Self::Analysis(source) => source.fmt(formatter),
             Self::Include(source) => source.fmt(formatter),
             Self::Html(source) => match source {
