@@ -56,6 +56,11 @@ function controllerInput() {
       headSha: SHA,
       baseSha: BASE_SHA,
     },
+    securityAlerts: {
+      lookupCompleted: true,
+      openCount: 0,
+    },
+    changedFiles: [...input.changedFiles],
     review: {
       changesRequested: false,
       approvedCount: 0,
@@ -162,10 +167,25 @@ for (const [name, mutate, expected] of [
   ["failed CI", (input) => { input.workflowRun.conclusion = "failure"; }, "ci-workflow-run"],
   ["wrong CI SHA", (input) => { input.workflowRun.headSha = "3".repeat(40); }, "ci-workflow-run"],
   ["stale CI base", (input) => { input.workflowRun.baseSha = "3".repeat(40); }, "ci-workflow-run"],
+  ["controller open security alert", (input) => {
+    input.securityAlerts.openCount = 1;
+  }, "open-security-alert-or-lookup"],
+  ["controller alert lookup missing", (input) => {
+    delete input.securityAlerts;
+  }, "open-security-alert-or-lookup"],
   ["draft", (input) => { input.pullRequest.draft = true; }, "draft"],
   ["conflict", (input) => { input.pullRequest.mergeable = false; }, "merge-conflict-or-unknown"],
   ["unknown mergeability", (input) => { input.pullRequest.mergeable = null; }, "merge-conflict-or-unknown"],
   ["stale base", (input) => { input.currentBaseSha = "4".repeat(40); }, "stale-base"],
+  ["controller workflow change", (input) => {
+    input.changedFiles.push(".github/workflows/dependabot-eligibility.yml");
+  }, "controller-changed-files"],
+  ["controller policy tool change", (input) => {
+    input.changedFiles.push("tools/dependabot-auto-merge-policy.mjs");
+  }, "controller-changed-files"],
+  ["controller changed files missing", (input) => {
+    delete input.changedFiles;
+  }, "controller-changed-files"],
   ["changes requested", (input) => { input.review.changesRequested = true; }, "review"],
   ["missing approval", (input) => {
     input.policy.requiredApprovals = 1;

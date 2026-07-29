@@ -94,6 +94,14 @@ export function evaluateEligibility(input) {
   return decision(reasons.length === 0, reasons);
 }
 
+function validateSecurityAlerts(securityAlerts, reasons) {
+  if (securityAlerts?.lookupCompleted !== true
+      || !Number.isSafeInteger(securityAlerts.openCount)
+      || securityAlerts.openCount !== 0) {
+    reasons.push("open-security-alert-or-lookup");
+  }
+}
+
 export function evaluateController(input) {
   const reasons = [];
   let policy;
@@ -104,6 +112,7 @@ export function evaluateController(input) {
   }
   if (!policy.enabled) reasons.push("release-freeze");
   validatePullRequest(input.pullRequest, policy, reasons);
+  validateSecurityAlerts(input.securityAlerts, reasons);
   if (!input.workflowRun
       || input.workflowRun.event !== "pull_request"
       || input.workflowRun.conclusion !== "success"
@@ -114,6 +123,12 @@ export function evaluateController(input) {
   if (input.pullRequest?.draft === true) reasons.push("draft");
   if (input.pullRequest?.mergeable !== true) reasons.push("merge-conflict-or-unknown");
   if (input.pullRequest?.baseSha !== input.currentBaseSha) reasons.push("stale-base");
+  const allowedChangedFiles = policy.allowedUpdates.flatMap((update) => update.changedFiles);
+  if (!Array.isArray(input.changedFiles)
+      || input.changedFiles.length === 0
+      || input.changedFiles.some((path) => !matchesAny(path, allowedChangedFiles))) {
+    reasons.push("controller-changed-files");
+  }
   if (input.review?.changesRequested === true
       || !Number.isSafeInteger(input.review?.approvedCount)
       || input.review.approvedCount < policy.requiredApprovals) {

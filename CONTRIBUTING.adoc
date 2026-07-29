@@ -121,8 +121,9 @@ advisoryおよびRust stableへの影響を、GitHub Actions更新では完全�
 
 ``.github/dependabot-auto-merge-policy.json``は、自動mergeの停止状態と許可範囲の正本です。
 ``enabled``が``false``の場合、項目が欠けている場合または設定を解釈できない場合は、自動mergeしません。
-初期状態は停止です。停止中も判定結果をhead commitに対応するcheckへ記録しますが、Pull Requestの
-auto-mergeを有効化しません。
+初期状態は停止です。eligibilityは通常の``pull_request``から起動するread-only jobとして実行し、
+base commitだけをcheckoutします。Pull Request由来のcodeはcheckoutも実行もせず、不適格または停止中は
+``dependabot / eligibility`` checkを失敗させます。
 
 自動mergeの候補は、Dependabotが同じrepositoryに作成した``main``向けのbranchに限定します。
 Cargoのpatch更新とVS Code拡張の開発用npm依存のpatch更新だけを候補とし、次の更新は手動で確認します。
@@ -146,6 +147,13 @@ checkoutまたは実行せず、write権限をauto-merge登録だけを行うjob
 また、REST APIによる未解決Dependabot alertの全ページ照会に失敗した場合、結果が欠けた場合またはalertが1件でも
 存在する場合は、更新内容にかかわらず自動mergeを停止します。この照会にはrepositoryのGitHub Actions tokenを使い、
 個人用access tokenは使用しません。
+
+activation前には実repositoryでintegration gateを実施します。Actions tokenで未解決Dependabot alertの全pageと
+有効なruleset詳細を取得できること、``main``向けrulesetの
+``strict_required_status_checks_policy``が``true``であること、および対象headでGitHub Actionsの
+``dependabot / eligibility`` checkを識別できることを確認します。policyを有効化した後の最初の許可対象patch更新を
+監視し、eligibility、CI、controllerおよびenable直前の再照合がすべて成功するまで通常運用へ移行しません。
+API権限や応答形式を確認できない場合はfail-closedで停止し、policyを直ちに``enabled = false``へ戻します。
 さらに、人間の承認を0件のままにするか1件以上にするか、Cargoの間接dependencyを許可するか、
 security patchを将来許可するかをrepository管理者が決定します。GitHub Actions、npm runtime依存および
 minor以上の更新は、初期導入の対象にしません。

@@ -21,6 +21,7 @@ jobs:
       checks: read
       contents: read
       pull-requests: read
+      vulnerability-alerts: read
     outputs:
       eligible: ${{ steps.decision.outputs.eligible }}
       expected_base_sha: ${{ steps.context.outputs.base_sha }}
@@ -49,6 +50,14 @@ jobs:
             | jq -s 'add' > reviews.json
           gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -r .base.ref pr.json)" \
             --jq .commit.sha > base-sha.txt
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" \
+            | jq -es '
+                if all(.[]; type == "array")
+                then add | length
+                else error("Dependabot alert response must contain arrays")
+                end
+              ' > open-security-alerts.txt
           {
             echo "base_sha=$(cat base-sha.txt)"
             echo "head_sha=$(jq -r .head.sha pr.json)"
@@ -70,7 +79,9 @@ jobs:
             --arg run_event "$RUN_EVENT" \
             --arg run_head_sha "$RUN_HEAD_SHA" \
             --arg current_base_sha "$(cat base-sha.txt)" \
+            --argjson open_security_alerts "$(cat open-security-alerts.txt)" \
             --slurpfile pr pr.json \
+            --slurpfile changed_files changed-files.json \
             --slurpfile checks checks.json \
             --slurpfile reviews reviews.json \
             '($pr[0]) as $pull |
@@ -95,6 +106,11 @@ jobs:
                 baseSha: $run_base_sha
               },
               currentBaseSha: $current_base_sha,
+              securityAlerts: {
+                lookupCompleted: true,
+                openCount: $open_security_alerts
+              },
+              changedFiles: $changed_files[0],
               review: {
                 changesRequested: any($latest_reviews[]?; .state == "CHANGES_REQUESTED"),
                 approvedCount: ([$latest_reviews[]? | select(.state == "APPROVED")] | length)
@@ -130,6 +146,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      vulnerability-alerts: read
     steps:
       - name: Enable GitHub-managed auto-merge for the verified head
         env:
@@ -139,6 +156,17 @@ jobs:
           PR_NUMBER: ${{ needs.decide.outputs.pull_request_number }}
           PULL_REQUEST_NODE_ID: ${{ needs.decide.outputs.pull_request_node_id }}
         run: |
+          open_count="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" \
+              | jq -es '
+                  if all(.[]; type == "array")
+                  then add | length
+                  else error("Dependabot alert response must contain arrays")
+                  end
+                '
+          )"
+          test "$open_count" -eq 0
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > enable-pr.json
           test "$(jq -r .node_id enable-pr.json)" = "$PULL_REQUEST_NODE_ID"
           test "$(jq -r .head.sha enable-pr.json)" = "$EXPECTED_HEAD_OID"
@@ -147,6 +175,34 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha \
             > enable-base-sha.txt
           test "$(cat enable-base-sha.txt)" = "$EXPECTED_BASE_SHA"
+          ruleset_ids="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true&per_page=100" \
+              | jq -er -s '
+                  add
+                  | map(select(.target == "branch" and .enforcement == "active"))
+                  | .[].id
+                '
+          )"
+          test -n "$ruleset_ids"
+          : > active-rulesets.jsonl
+          while IFS= read -r ruleset_id; do
+            gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" \
+              >> active-rulesets.jsonl
+          done <<< "$ruleset_ids"
+          strict="$(
+            jq -es '
+              any(.[];
+                ((.conditions.ref_name.include // [])
+                  | any(. == "~DEFAULT_BRANCH" or . == "refs/heads/main"))
+                and
+                any(.rules[]?;
+                  .type == "required_status_checks"
+                  and .parameters.strict_required_status_checks_policy == true)
+              )
+            ' active-rulesets.jsonl
+          )"
+          test "$strict" = true
           # shellcheck disable=SC2016
           gh api graphql \
             -f query='

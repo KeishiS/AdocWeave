@@ -192,6 +192,10 @@ node --test \
 description = "Lint GitHub Actions syntax and enforce the release security policy"
 dependencies = ["release-workflow-policy"]
 command = "actionlint"
+args = [
+  "-ignore",
+  'unknown permission scope "vulnerability-alerts"',
+]
 
 [tasks.release-ci-contract]
 description = "Run the release contract, workflow lint, and cargo-dist plan used by pull requests"

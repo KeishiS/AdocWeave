@@ -10,9 +10,12 @@ const controller = await readFile(
   new URL("../.github/workflows/dependabot-auto-merge.yml", import.meta.url),
   "utf8",
 );
+const makefile = await readFile(new URL("../Makefile.toml", import.meta.url), "utf8");
 
-test("eligibility uses the trusted base workflow and binds its result to the head SHA", () => {
-  assert.match(eligibility, /pull_request_target:/);
+test("eligibility is a read-only pull request job check over trusted base code", () => {
+  assert.match(eligibility, /\n  pull_request:\n/);
+  assert.doesNotMatch(eligibility, /pull_request_target:/);
+  assert.match(eligibility, /name:\s*dependabot \/ eligibility/);
   assert.match(eligibility, /dependabot\[bot\]/);
   assert.match(eligibility, /head\.repo\.full_name == github\.repository/);
   assert.doesNotMatch(eligibility, /ref:\s*\$\{\{\s*github\.event\.pull_request\.head/);
@@ -20,10 +23,10 @@ test("eligibility uses the trusted base workflow and binds its result to the hea
   assert.match(eligibility, /persist-credentials:\s*false/);
   assert.match(eligibility, /dependabot\/fetch-metadata@[0-9a-f]{40}/);
   assert.doesNotMatch(eligibility, /alert-lookup:/);
-  assert.match(eligibility, /security-events:\s*read/);
-  assert.match(eligibility, /"head_sha":\s*\$head_sha/);
-  assert.match(eligibility, /"name":\s*"dependabot \/ eligibility"/);
-  assert.match(eligibility, /conclusion/);
+  assert.match(eligibility, /vulnerability-alerts:\s*read/);
+  assert.match(eligibility, /headSha:\s*\$head_sha/);
+  assert.match(eligibility, /jq -e '\.eligible == true'/);
+  assert.doesNotMatch(eligibility, /check-runs|checks:\s*write|--method POST/);
   assert.doesNotMatch(eligibility, /issues:\s*write/);
 });
 
@@ -58,12 +61,18 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(controller, /github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha/);
   assert.match(controller, /dependabot \/ eligibility/);
   assert.match(controller, /appSlug:\s*\.app\.slug, appId:\s*\.app\.id/);
+  assert.match(controller, /--slurpfile changed_files changed-files\.json/);
+  assert.match(controller, /changedFiles:\s*\$changed_files\[0\]/);
   assert.match(controller, /ref:\s*\$\{\{\s*github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha\s*\}\}/);
   assert.match(controller, /expected_base_sha:\s*\$\{\{\s*steps\.context\.outputs\.base_sha\s*\}\}/);
   assert.match(controller, /test "\$\(jq -r \.head\.sha enable-pr\.json\)" = "\$EXPECTED_HEAD_OID"/);
   assert.match(controller, /test "\$\(jq -r \.base\.sha enable-pr\.json\)" = "\$EXPECTED_BASE_SHA"/);
   assert.match(controller, /test "\$\(cat enable-base-sha\.txt\)" = "\$EXPECTED_BASE_SHA"/);
   assert.match(controller, /gh api "repos\/\$GITHUB_REPOSITORY\/branches\/main"/);
+  assert.match(controller, /vulnerability-alerts:\s*read/g);
+  assert.match(controller, /rulesets\?includes_parents=true&per_page=100/);
+  assert.match(controller, /strict_required_status_checks_policy == true/);
+  assert.match(controller, /test "\$strict" = true/);
 });
 
 test("workflow permissions remain scoped to the jobs that need them", () => {
@@ -71,6 +80,8 @@ test("workflow permissions remain scoped to the jobs that need them", () => {
   assert.match(controller, /^permissions:\s*\{\}/m);
   assert.doesNotMatch(eligibility, /issues:\s*write|contents:\s*write|pull-requests:\s*write/);
   assert.doesNotMatch(controller, /issues:\s*write|checks:\s*write/);
+  assert.doesNotMatch(eligibility, /security-events:/);
+  assert.match(makefile, /unknown permission scope "vulnerability-alerts"/);
 });
 
 test("all actions are pinned and pull request code is never checked out", () => {
