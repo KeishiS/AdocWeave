@@ -17,7 +17,6 @@ def valid_auto_merge:
 
 def valid_pull_request:
   type == "object"
-  and has("auto_merge")
   and (.number | type == "number" and . > 0 and floor == .)
   and .number == $pr_number
   and (.node_id | non_empty_string)
@@ -25,13 +24,22 @@ def valid_pull_request:
   and .base.ref == "main"
   and .base.repo.full_name == $repository
   and .head.repo.full_name == $repository
-  and (.head.ref | type == "string" and startswith("dependabot/"))
-  and (.auto_merge == null or (.auto_merge | valid_auto_merge));
+  and (.head.ref | type == "string" and startswith("dependabot/"));
 
 if valid_pull_request
 then {
   nodeId: .node_id,
-  autoMergeEnabled: (.auto_merge != null)
+  autoMergeEnabled: (has("auto_merge") and .auto_merge != null),
+  autoMergeStateKnown: (
+    has("auto_merge")
+    and (.auto_merge == null or (.auto_merge | valid_auto_merge))
+  ),
+  autoMergeMethod: (
+    if (.auto_merge | valid_auto_merge)
+    then .auto_merge.merge_method
+    else null
+    end
+  )
 }
-else error("Pull Request detail response is invalid or its identity changed")
+else error("Pull Request detail response identity changed")
 end

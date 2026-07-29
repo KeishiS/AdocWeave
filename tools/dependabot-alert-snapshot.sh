@@ -22,7 +22,10 @@ jq -e '
   and all(.[]; type == "string" and length > 0)
 ' <<< "$changed_files" > /dev/null
 
-for state in open fixed dismissed auto_dismissed; do
+# The open-alert observation is the merge safety boundary. Read it last so the
+# returned snapshot minimizes the gap between that observation and its caller's
+# final decision.
+for state in fixed dismissed auto_dismissed open; do
   gh api --paginate \
     "repos/$repository/dependabot/alerts?state=$state&per_page=100" \
     | jq -es --arg expected_state "$state" '
@@ -49,6 +52,7 @@ for state in open fixed dismissed auto_dismissed; do
 done
 
 jq -n \
+  --arg observed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --argjson dependencies "$dependencies" \
   --argjson changed_files "$changed_files" \
   --slurpfile open "$snapshot_directory/open.json" \
@@ -62,6 +66,7 @@ jq -n \
     ([$open[0][], $fixed[0][], $dismissed[0][], $auto_dismissed[0][]]) as $alerts |
     {
       lookupCompleted: true,
+      observedAt: $observed_at,
       openCount: ($open[0] | length),
       securityUpdate: any(
         $alerts[];
