@@ -1,5 +1,6 @@
 //! Pure preprocessing over caller-provided resource snapshots.
 
+mod directive;
 mod source_map;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,6 +16,7 @@ use crate::resource::ResourceReference;
 use crate::source::PositionError;
 use crate::source::{TextRange, TextSize};
 use crate::substitution::AttributeExpansionLimits;
+use directive::{ConditionalTransition, ParsedDirective, RecognizedDirective};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SafeMode {
@@ -938,7 +940,8 @@ impl Context<'_> {
             ));
         }
         self.bump_node(source_id.clone(), range)?;
-        let expanded_target = expand_attributes(&include.target, self.attributes.values());
+        let expanded_target =
+            directive::expand_attributes(&include.target, self.attributes.values());
         let target = resolve_include_target(&expanded_target, base_uri);
         validate_target(&target, self.options).map_err(|message| {
             error(
@@ -1061,93 +1064,52 @@ impl Context<'_> {
                 }
                 continue;
             }
-            if let Some(directive) = conditional_directive(content) {
-                self.bump_node(source_id.clone(), line.range)?;
-                self.directives.push(Directive {
-                    kind: directive.kind,
-                    source_id: source_id.clone(),
-                    range: line.range,
-                    authored_target: None,
-                    optional: false,
-                    target: directive.target.clone(),
-                    target_range: relative_range(
-                        line.range,
-                        directive.target_start,
-                        directive.target_end,
-                    ),
-                    resource_source_id: None,
-                });
-                match directive.kind {
-                    DirectiveKind::Ifdef | DirectiveKind::Ifndef
-                        if !directive.attributes.is_empty() =>
-                    {
-                        let present = directive.kind == DirectiveKind::Ifdef;
-                        if enabled
-                            && conditional_attribute(
-                                &directive.target,
-                                self.attributes.values(),
-                                present,
-                            )
-                        {
-                            let ending = &line.text[content.len()..];
-                            self.append(
-                                &format!("{}{ending}", directive.attributes),
-                                source_id.clone(),
-                                line.range,
-                                SourceMapping::WholeOrigin,
-                            )?;
-                            self.attribute_position = false;
+            match directive::recognize(content) {
+                RecognizedDirective::Conditional(directive) => {
+                    self.bump_node(source_id.clone(), line.range)?;
+                    self.directives.push(Directive {
+                        kind: directive.kind,
+                        source_id: source_id.clone(),
+                        range: line.range,
+                        authored_target: None,
+                        optional: false,
+                        target: directive.target.clone(),
+                        target_range: relative_range(
+                            line.range,
+                            directive.target_start,
+                            directive.target_end,
+                        ),
+                        resource_source_id: None,
+                    });
+                    match directive::transition(&directive, enabled, self.attributes.values()) {
+                        ConditionalTransition::Inline { selected } => {
+                            if selected {
+                                let ending = &line.text[content.len()..];
+                                self.append(
+                                    &format!("{}{ending}", directive.attributes),
+                                    source_id.clone(),
+                                    line.range,
+                                    SourceMapping::WholeOrigin,
+                                )?;
+                                self.attribute_position = false;
+                            }
+                        }
+                        ConditionalTransition::Open { enabled: condition } => {
+                            conditions.push(condition)
+                        }
+                        ConditionalTransition::Close => {
+                            if conditions.pop().is_none() {
+                                return Err(error(
+                                    PreprocessErrorKind::InvalidDirective,
+                                    source_id,
+                                    line.range,
+                                    "endif has no matching conditional",
+                                ));
+                            }
                         }
                     }
-                    DirectiveKind::Ifdef => conditions.push(
-                        enabled
-                            && conditional_attribute(
-                                &directive.target,
-                                self.attributes.values(),
-                                true,
-                            ),
-                    ),
-                    DirectiveKind::Ifndef => conditions.push(
-                        enabled
-                            && conditional_attribute(
-                                &directive.target,
-                                self.attributes.values(),
-                                false,
-                            ),
-                    ),
-                    DirectiveKind::Ifeval => conditions.push(
-                        enabled
-                            && evaluate_expression(&expand_attributes(
-                                &directive.attributes,
-                                self.attributes.values(),
-                            )),
-                    ),
-                    DirectiveKind::Endif => {
-                        if conditions.pop().is_none() {
-                            return Err(error(
-                                PreprocessErrorKind::InvalidDirective,
-                                source_id,
-                                line.range,
-                                "endif has no matching conditional",
-                            ));
-                        }
-                    }
-                    DirectiveKind::Include => unreachable!(),
                 }
-            } else if enabled {
-                let delimiter = crate::delimiter::spec(content).is_some();
-                if delimiter {
-                    if self
-                        .attribute_delimiters
-                        .last()
-                        .is_some_and(|open| open == content)
-                    {
-                        self.attribute_delimiters.pop();
-                    } else {
-                        self.attribute_delimiters.push(content.to_owned());
-                    }
-                }
-                if let Some(include) = include_directive(content) {
+                RecognizedDirective::Include(include) if enabled => {
                     if self.options.enable_includes {
                         self.expand_include(
                             include,
@@ -1159,7 +1121,7 @@ impl Context<'_> {
                     } else {
                         self.bump_node(source_id.clone(), line.range)?;
                         let authored_target =
-                            expand_attributes(&include.target, self.attributes.values());
+                            directive::expand_attributes(&include.target, self.attributes.values());
                         let optional = parse_attributes(&include.attributes)
                             .is_ok_and(|attributes| attributes.contains_key("optional"));
                         self.directives.push(Directive {
@@ -1179,7 +1141,8 @@ impl Context<'_> {
                         self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
                         self.attribute_position = false;
                     }
-                } else if let Some(literal) = escaped_directive(content) {
+                }
+                RecognizedDirective::Escaped(literal) if enabled => {
                     let ending = &line.text[content.len()..];
                     self.append(
                         &format!("{literal}{ending}"),
@@ -1188,7 +1151,20 @@ impl Context<'_> {
                         SourceMapping::WholeOrigin,
                     )?;
                     self.attribute_position = false;
-                } else {
+                }
+                RecognizedDirective::Text if enabled => {
+                    let delimiter = crate::delimiter::spec(content).is_some();
+                    if delimiter {
+                        if self
+                            .attribute_delimiters
+                            .last()
+                            .is_some_and(|open| open == content)
+                        {
+                            self.attribute_delimiters.pop();
+                        } else {
+                            self.attribute_delimiters.push(content.to_owned());
+                        }
+                    }
                     let mut document_attribute = false;
                     self.bump_node(source_id.clone(), line.range)?;
                     if !delimiter
@@ -1227,6 +1203,9 @@ impl Context<'_> {
                         || content.trim_matches([' ', '\t']).is_empty()
                         || content.starts_with("//");
                 }
+                RecognizedDirective::Include(_)
+                | RecognizedDirective::Escaped(_)
+                | RecognizedDirective::Text => {}
             }
         }
         if !conditions.is_empty() {
@@ -1283,15 +1262,6 @@ impl Context<'_> {
     }
 }
 
-#[derive(Clone, Debug)]
-struct ParsedDirective {
-    kind: DirectiveKind,
-    target: String,
-    attributes: String,
-    target_start: usize,
-    target_end: usize,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IncludeRequest {
     pub range: TextRange,
@@ -1311,9 +1281,7 @@ pub fn discover_includes(source: &str) -> Result<Vec<IncludeRequest>, PositionEr
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let content = line.trim_end_matches(['\r', '\n']);
-        if !content.starts_with('\\')
-            && let Some(include) = include_directive(content)
-        {
+        if let RecognizedDirective::Include(include) = directive::recognize(content) {
             requests.push(IncludeRequest {
                 range: TextRange::new(TextSize::new(offset)?, TextSize::new(end)?)?,
                 target_range: TextRange::new(
@@ -1327,98 +1295,6 @@ pub fn discover_includes(source: &str) -> Result<Vec<IncludeRequest>, PositionEr
         offset = end;
     }
     Ok(requests)
-}
-
-fn include_directive(value: &str) -> Option<ParsedDirective> {
-    parse_directive(value, "include::", DirectiveKind::Include)
-}
-
-fn conditional_directive(value: &str) -> Option<ParsedDirective> {
-    [
-        ("ifdef::", DirectiveKind::Ifdef),
-        ("ifndef::", DirectiveKind::Ifndef),
-        ("ifeval::", DirectiveKind::Ifeval),
-        ("endif::", DirectiveKind::Endif),
-    ]
-    .into_iter()
-    .find_map(|(prefix, kind)| parse_directive(value, prefix, kind))
-}
-
-fn parse_directive(value: &str, prefix: &str, kind: DirectiveKind) -> Option<ParsedDirective> {
-    let rest = value.strip_prefix(prefix)?;
-    let bracket = rest.find('[')?;
-    let close = rest.rfind(']')?;
-    (close == rest.len() - 1 && bracket <= close).then(|| ParsedDirective {
-        kind,
-        target: rest[..bracket].to_owned(),
-        attributes: rest[bracket + 1..close].to_owned(),
-        target_start: prefix.len(),
-        target_end: prefix.len() + bracket,
-    })
-}
-
-fn escaped_directive(value: &str) -> Option<&str> {
-    let literal = value.strip_prefix('\\')?;
-    (include_directive(literal).is_some() || conditional_directive(literal).is_some())
-        .then_some(literal)
-}
-
-fn conditional_attribute(
-    target: &str,
-    attributes: &BTreeMap<String, String>,
-    present: bool,
-) -> bool {
-    let matches = if target.contains('+') {
-        target
-            .split('+')
-            .all(|name| attributes.contains_key(name.trim()))
-    } else {
-        target
-            .split(',')
-            .any(|name| attributes.contains_key(name.trim()))
-    };
-    if present { matches } else { !matches }
-}
-
-fn evaluate_expression(value: &str) -> bool {
-    for operator in ["==", "!=", ">=", "<=", ">", "<"] {
-        if let Some((left, right)) = value.split_once(operator) {
-            let left = left.trim().trim_matches(['\'', '"']);
-            let right = right.trim().trim_matches(['\'', '"']);
-            let numeric = left.parse::<f64>().ok().zip(right.parse::<f64>().ok());
-            return match (operator, numeric) {
-                ("==", _) => left == right,
-                ("!=", _) => left != right,
-                (">=", Some((left, right))) => left >= right,
-                ("<=", Some((left, right))) => left <= right,
-                (">", Some((left, right))) => left > right,
-                ("<", Some((left, right))) => left < right,
-                _ => false,
-            };
-        }
-    }
-    false
-}
-
-fn expand_attributes(value: &str, attributes: &BTreeMap<String, String>) -> String {
-    let mut output = String::new();
-    let mut cursor = 0;
-    while let Some(open) = value[cursor..].find('{').map(|offset| cursor + offset) {
-        output.push_str(&value[cursor..open]);
-        let Some(close) = value[open + 1..].find('}').map(|offset| open + 1 + offset) else {
-            output.push_str(&value[open..]);
-            return output;
-        };
-        let name = &value[open + 1..close];
-        if let Some(replacement) = attributes.get(name) {
-            output.push_str(replacement);
-        } else {
-            output.push_str(&value[open..=close]);
-        }
-        cursor = close + 1;
-    }
-    output.push_str(&value[cursor..]);
-    output
 }
 
 fn parse_attributes(value: &str) -> Result<BTreeMap<String, String>, String> {
