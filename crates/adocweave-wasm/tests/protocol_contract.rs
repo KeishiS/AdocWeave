@@ -418,6 +418,24 @@ fn generated_preprocess_wire_keeps_the_public_api_and_schema_defaults() {
 }
 
 #[test]
+fn schema_six_preprocess_fixture_uses_schema_seven_expansion_defaults() {
+    let (_, corpus) = documents();
+    let request: WasmPreprocessRequest =
+        serde_json::from_value(corpus["preprocessRequest"].clone())
+            .expect("schema 6 compatible preprocess request");
+    let defaults = WasmPreprocessOptions::default();
+
+    assert_eq!(
+        request.options.max_attribute_expansion_depth,
+        defaults.max_attribute_expansion_depth
+    );
+    assert_eq!(
+        request.options.max_attribute_expansion_bytes,
+        defaults.max_attribute_expansion_bytes
+    );
+}
+
+#[test]
 fn generated_request_enums_keep_the_public_api_and_schema_defaults() {
     let (schema, _) = documents();
     let cases = [
