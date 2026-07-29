@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
-  "fixture": "cases.json",
+  "manifest": "crates/adocweave/conformance/cases.json",
+  "fixtureRoot": "fixtures/conformance",
   "consumers": [
     {
       "name": "native-core",

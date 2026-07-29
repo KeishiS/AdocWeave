@@ -201,8 +201,9 @@ fn assert_cross_runtime_bijection(manifest: &Manifest) {
         "duplicate public sourceId"
     );
 
-    let cross_runtime: Value = serde_json::from_str(&read("fixtures/conformance/cases.json"))
-        .expect("valid cross-runtime manifest");
+    let cross_runtime: Value =
+        serde_json::from_str(&read("crates/adocweave/conformance/cases.json"))
+            .expect("valid cross-runtime manifest");
     let public_entries: Vec<&Value> = cross_runtime["cases"]
         .as_array()
         .expect("cross-runtime cases")

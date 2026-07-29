@@ -68,7 +68,8 @@ struct AttributeContract {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ConformanceConsumers {
     schema_version: u8,
-    fixture: String,
+    manifest: String,
+    fixture_root: String,
     consumers: Vec<ConformanceConsumer>,
 }
 
@@ -542,22 +543,45 @@ fn conformance_fixture_has_every_declared_consumer() {
     )
     .expect("valid conformance consumer manifest");
     assert_eq!(manifest.schema_version, 1);
-    assert!(
-        root.join("fixtures/conformance")
-            .join(&manifest.fixture)
-            .is_file()
-    );
+    assert!(root.join(&manifest.manifest).is_file());
+    assert!(root.join(&manifest.fixture_root).is_dir());
     assert_eq!(manifest.consumers.len(), 3);
     for consumer in manifest.consumers {
         let content = fs::read_to_string(root.join(&consumer.path))
             .unwrap_or_else(|error| panic!("{}: {error}", consumer.name));
         assert!(
-            content.contains(&manifest.fixture),
-            "{} does not consume {}",
+            content.contains(&manifest.manifest),
+            "{} does not consume manifest {}",
             consumer.name,
-            manifest.fixture
+            manifest.manifest
+        );
+        assert!(
+            content.contains(&manifest.fixture_root),
+            "{} does not resolve files from fixture root {}",
+            consumer.name,
+            manifest.fixture_root
         );
     }
+}
+
+#[test]
+fn core_source_package_contains_conformance_manifest() {
+    let root = repository_root();
+    let output = Command::new("cargo")
+        .args(["package", "--list", "-p", "adocweave", "--allow-dirty"])
+        .current_dir(&root)
+        .output()
+        .expect("cargo package --list");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let files = String::from_utf8(output.stdout).expect("UTF-8 package file list");
+    assert!(
+        files.lines().any(|path| path == "conformance/cases.json"),
+        "adocweave source package does not contain conformance/cases.json"
+    );
 }
 
 #[test]
@@ -580,7 +604,7 @@ fn html5_validation_manifest_has_fixed_tools_and_complete_inputs() {
     assert_eq!(template.matches(&manifest.template.marker).count(), 1);
 
     let conformance: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("fixtures/conformance/cases.json"))
+        &fs::read_to_string(root.join("crates/adocweave/conformance/cases.json"))
             .expect("conformance manifest"),
     )
     .expect("valid conformance manifest");

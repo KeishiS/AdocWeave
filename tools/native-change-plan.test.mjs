@@ -78,6 +78,15 @@ test("成果物へ影響しない既知の文書とfixtureだけを明示的に�
   }
 });
 
+test("crateへ埋め込むconformance manifestは両candidateへ含める", () => {
+  const pathname = "crates/adocweave/conformance/cases.json";
+  assert.deepEqual(candidateImpact(pathname), { global: true, native: true });
+  const plan = nativeChangePlan("pull_request", [pathname], distributionPlan);
+  assert.equal(plan.candidateRequired, true);
+  assert.equal(plan.nativeRequired, true);
+  assert.equal(plan.globalRequired, true);
+});
+
 test("dist設定はcommon、protocolはglobalだけに分類する", () => {
   assert.deepEqual(candidateImpact("dist-workspace.toml"), { global: true, native: true });
   assert.deepEqual(candidateImpact("protocol/public-api.json"), { global: true, native: false });

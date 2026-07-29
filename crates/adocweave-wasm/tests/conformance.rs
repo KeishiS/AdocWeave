@@ -16,11 +16,12 @@ struct ReleaseManifest {
 
 #[test]
 fn native_adapter_accepts_every_shared_conformance_case() {
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/conformance");
-    let manifest: Value = serde_json::from_str(
-        &fs::read_to_string(fixtures.join("cases.json")).expect("conformance manifest"),
-    )
-    .expect("valid conformance manifest");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixtures = root.join("fixtures/conformance");
+    let manifest_path = root.join("crates/adocweave/conformance/cases.json");
+    let manifest: Value =
+        serde_json::from_str(&fs::read_to_string(manifest_path).expect("conformance manifest"))
+            .expect("valid conformance manifest");
     assert_eq!(manifest["packageVersion"], adocweave::VERSION);
 
     for entry in manifest["cases"].as_array().expect("cases") {
