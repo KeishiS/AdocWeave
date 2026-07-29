@@ -804,6 +804,14 @@ stylesheet-urls = ["https://example.test/manual.css"]
         );
         assert_eq!(config.analysis.attributes.get("hidden"), Some(&None));
         assert_eq!(config.preprocess.attributes, config.analysis.attributes);
+        assert_eq!(
+            config.preprocess.max_attribute_expansion_depth,
+            config.analysis.syntax.limits.max_attribute_expansion_depth
+        );
+        assert_eq!(
+            config.preprocess.max_attribute_expansion_bytes,
+            config.analysis.syntax.limits.max_attribute_expansion_bytes
+        );
         assert!(
             config
                 .analysis

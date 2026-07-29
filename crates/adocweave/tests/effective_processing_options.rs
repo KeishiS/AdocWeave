@@ -100,6 +100,51 @@ fn compatibility_entry_rejects_every_shared_setting_mismatch_before_preprocessin
 }
 
 #[test]
+fn processing_option_errors_keep_stable_codes_and_public_error_classification() {
+    for (expected, code, change) in [
+        (
+            ProcessingOptionsError::ExternalAttributes,
+            "external-attributes-mismatch",
+            0_u8,
+        ),
+        (
+            ProcessingOptionsError::AttributeExpansionDepth,
+            "attribute-expansion-depth-mismatch",
+            1_u8,
+        ),
+        (
+            ProcessingOptionsError::AttributeExpansionBytes,
+            "attribute-expansion-bytes-mismatch",
+            2_u8,
+        ),
+    ] {
+        let (analysis, mut preprocess) = matching_options();
+        match change {
+            0 => preprocess.attributes.clear(),
+            1 => preprocess.max_attribute_expansion_depth += 1,
+            2 => preprocess.max_attribute_expansion_bytes += 1,
+            _ => unreachable!(),
+        }
+
+        assert_eq!(expected.as_str(), code);
+        assert!(matches!(
+            EffectiveProcessingOptions::new(analysis.clone(), preprocess.clone()),
+            Err(actual) if actual == expected
+        ));
+        assert!(matches!(
+            preprocess_and_analyze(
+                &Engine::new(analysis),
+                "include::missing.adoc[]\n",
+                &ResourceSnapshot::default(),
+                &preprocess,
+            ),
+            Err(adocweave::preprocess::PreprocessedAnalysisError::Options(actual))
+                if actual == expected && actual.as_str() == code
+        ));
+    }
+}
+
+#[test]
 fn preprocessing_uses_the_caller_attribute_expansion_boundaries() {
     let source = ":base: 12345\n:expanded: {base}\ninclude::{expanded}.adoc[]\n";
     let resources = [(

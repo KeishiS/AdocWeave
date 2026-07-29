@@ -1051,25 +1051,34 @@ mod tests {
 
     #[test]
     fn workspace_compatibility_entry_rejects_mismatch_before_root_lookup() {
-        let analysis = AnalysisOptions::default();
-        let mut preprocess = options();
-        preprocess
-            .attributes
-            .insert("different".to_owned(), Some("value".to_owned()));
+        for mismatch in 0..3 {
+            let analysis = AnalysisOptions::default();
+            let mut preprocess = options();
+            match mismatch {
+                0 => {
+                    preprocess
+                        .attributes
+                        .insert("different".to_owned(), Some("value".to_owned()));
+                }
+                1 => preprocess.max_attribute_expansion_depth += 1,
+                2 => preprocess.max_attribute_expansion_bytes += 1,
+                _ => unreachable!(),
+            }
 
-        let error = Workspace::default()
-            .snapshot()
-            .analyze(
-                &id("missing"),
-                &analysis,
-                &preprocess,
-                ProjectionLimits::default(),
-                &NeverCancelled,
-            )
-            .expect_err("options must be checked first");
+            let error = Workspace::default()
+                .snapshot()
+                .analyze(
+                    &id("missing"),
+                    &analysis,
+                    &preprocess,
+                    ProjectionLimits::default(),
+                    &NeverCancelled,
+                )
+                .expect_err("options must be checked first");
 
-        assert_eq!(error.code, WorkspaceErrorCode::InvalidOptions);
-        assert_eq!(error.diagnostic_code(), "invalid-options");
+            assert_eq!(error.code, WorkspaceErrorCode::InvalidOptions);
+            assert_eq!(error.diagnostic_code(), "invalid-options");
+        }
     }
 
     #[test]

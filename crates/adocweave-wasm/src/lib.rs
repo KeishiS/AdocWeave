@@ -1442,4 +1442,52 @@ mod tests {
                 .any(|diagnostic| diagnostic.code == "protected-attribute")
         );
     }
+
+    #[test]
+    fn wasm_combined_processing_applies_matching_non_default_attribute_expansion_limits() {
+        let source = ":base: 12345\n:expanded: {base}\ninclude::{expanded}.adoc[]\n";
+        for (depth, bytes, accepted) in [(1, 5, true), (0, 5, false), (1, 4, false)] {
+            let mut request = request(source);
+            request
+                .analysis_options
+                .syntax
+                .limits
+                .max_attribute_expansion_depth = depth;
+            request
+                .analysis_options
+                .syntax
+                .limits
+                .max_attribute_expansion_bytes = bytes;
+            request.preprocess = Some(WasmAnalysisPreprocessInput {
+                resources: BTreeMap::from([(
+                    "12345.adoc".to_owned(),
+                    WasmResource {
+                        source_id: "included".to_owned(),
+                        source: "analysis {expanded}\n".to_owned(),
+                    },
+                )]),
+                options: WasmPreprocessOptions {
+                    max_attribute_expansion_depth: depth,
+                    max_attribute_expansion_bytes: bytes,
+                    ..WasmPreprocessOptions::default()
+                },
+            });
+
+            let result = process_request(request, &NeverCancel);
+            if accepted {
+                let response = result.expect("matching boundary is accepted");
+                assert!(
+                    response.html.contains("analysis 12345"),
+                    "analysis must use the same non-default expansion limits"
+                );
+            } else {
+                assert_eq!(
+                    result
+                        .expect_err("matching strict boundary is enforced")
+                        .code,
+                    "missing-resource"
+                );
+            }
+        }
+    }
 }
