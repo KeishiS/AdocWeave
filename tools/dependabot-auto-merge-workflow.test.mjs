@@ -24,9 +24,12 @@ test("eligibility is a read-only pull request job check over trusted base code",
   assert.match(eligibility, /ref:\s*\$\{\{\s*github\.event\.pull_request\.base\.sha\s*\}\}/);
   assert.match(eligibility, /persist-credentials:\s*false/);
   assert.match(eligibility, /dependabot\/fetch-metadata@[0-9a-f]{40}/);
-  assert.doesNotMatch(eligibility, /alert-lookup:/);
+  assert.match(eligibility, /alert-lookup:\s*true/);
   assert.match(eligibility, /vulnerability-alerts:\s*read/);
   assert.match(eligibility, /headSha:\s*\$head_sha/);
+  assert.match(eligibility, /SECURITY_ADVISORY_ID:.*outputs\.ghsa-id/);
+  assert.match(eligibility, /SECURITY_ALERT_STATE:.*outputs\.alert-state/);
+  assert.match(eligibility, /securityUpdate:\s*\$security_update/);
   assert.match(eligibility, /jq -e '\.eligible == true'/);
   assert.doesNotMatch(eligibility, /check-runs|checks:\s*write|--method POST/);
   assert.doesNotMatch(eligibility, /issues:\s*write/);
@@ -61,6 +64,12 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(controller, /github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha/);
   assert.match(controller, /dependabot \/ eligibility/);
   assert.match(controller, /appSlug:\s*\.app\.slug, appId:\s*\.app\.id/);
+  assert.equal(
+    [...controller.matchAll(
+      /select\(\.state == "APPROVED" and \.user\.type == "User"\)/g,
+    )].length,
+    2,
+  );
   assert.match(controller, /--slurpfile changed_files changed-files\.json/);
   assert.match(controller, /changedFiles:\s*\$changed_files\[0\]/);
   assert.match(controller, /ref:\s*\$\{\{\s*github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha\s*\}\}/);
@@ -70,10 +79,28 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(controller, /test "\$\(jq -r \.base\.sha enable-pr\.json\)" = "\$EXPECTED_BASE_SHA"/);
   assert.match(controller, /test "\$\(cat enable-base-sha\.txt\)" = "\$EXPECTED_BASE_SHA"/);
   assert.match(controller, /gh api "repos\/\$GITHUB_REPOSITORY\/branches\/main"/);
+  assert.match(enable, /--jq \.default_branch/);
+  assert.match(enable, /test "\$\(cat enable-default-branch\.txt\)" = "main"/);
   assert.match(controller, /vulnerability-alerts:\s*read/g);
   assert.match(controller, /rulesets\?includes_parents=true&per_page=100/);
   assert.match(controller, /strict-rulesets \.github\/dependabot-auto-merge-policy\.json/);
   assert.match(controller, /jq -e '\.eligible == true' strict-ruleset-decision\.json/);
+  assert.equal(
+    [...controller.matchAll(
+      /controller \.github\/dependabot-auto-merge-policy\.json/g,
+    )].length,
+    2,
+  );
+  assert.match(enable, /checks:\s*read/);
+  assert.match(enable, /pulls\/\$PR_NUMBER\/files\?per_page=100/);
+  assert.match(enable, /commits\/\$EXPECTED_HEAD_OID\/check-runs\?per_page=100/);
+  assert.match(enable, /pulls\/\$PR_NUMBER\/reviews\?per_page=100/);
+  assert.match(enable, /enable-controller-input\.json/);
+  assert.match(enable, /jq -e '\.eligible == true' enable-controller-decision\.json/);
+  assert.ok(
+    enable.indexOf("enable-controller-decision.json")
+      < enable.indexOf("enablePullRequestAutoMerge"),
+  );
 });
 
 test("workflow permissions remain scoped to the jobs that need them", () => {

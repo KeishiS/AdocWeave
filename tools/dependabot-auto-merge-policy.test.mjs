@@ -41,6 +41,7 @@ function eligibleInput() {
       dependencies: ["serde"],
       dependencyGroup: "",
       maintainerChanges: false,
+      securityUpdate: false,
     },
     changedFiles: ["Cargo.toml", "Cargo.lock"],
   };
@@ -64,7 +65,7 @@ function controllerInput() {
     changedFiles: [...input.changedFiles],
     review: {
       changesRequested: false,
-      approvedCount: 0,
+      approvedCount: input.policy.requiredApprovals,
     },
     eligibilityCheck: {
       name: "dependabot / eligibility",
@@ -84,8 +85,15 @@ function controllerInput() {
 }
 
 test("tracked policy starts frozen and excludes high-risk ecosystems", () => {
-  assert.equal(validatePolicy(policy).enabled, false);
-  assert.equal(validatePolicy(policy).requiresStrictStatusChecks, true);
+  const validated = validatePolicy(policy);
+  assert.equal(validated.enabled, false);
+  assert.equal(validated.maximumDependencies, 1);
+  assert.equal(validated.allowDependencyGroups, false);
+  assert.equal(validated.allowIndirectDependencies, false);
+  assert.equal(validated.allowMaintainerChanges, false);
+  assert.equal(validated.allowSecurityUpdates, false);
+  assert.equal(validated.requiresStrictStatusChecks, true);
+  assert.equal(validated.requiredApprovals, 1);
   assert.deepEqual(
     [...new Set(policy.allowedUpdates.map((entry) => entry.packageEcosystem))].sort(),
     ["cargo", "npm"],
@@ -93,7 +101,8 @@ test("tracked policy starts frozen and excludes high-risk ecosystems", () => {
   assert.ok(
     policy.allowedUpdates.every(
       (entry) => entry.updateTypes.length === 1
-        && entry.updateTypes[0] === "version-update:semver-patch",
+        && entry.updateTypes[0] === "version-update:semver-patch"
+        && !entry.dependencyTypes.includes("indirect"),
     ),
   );
 });
@@ -149,9 +158,16 @@ for (const [name, mutate, expected] of [
     input.metadata.dependencyType = "direct:production";
     input.changedFiles = ["editors/vscode/package.json"];
   }, "dependency-type"],
+  ["indirect Cargo dependency", (input) => {
+    input.metadata.dependencyType = "indirect";
+  }, "dependency-type"],
   ["group", (input) => { input.metadata.dependencyGroup = "tooling"; }, "dependency-group"],
   ["multiple dependencies", (input) => { input.metadata.dependencies = ["serde", "syn"]; }, "dependency-count-or-name"],
   ["maintainer changes", (input) => { input.metadata.maintainerChanges = true; }, "maintainer-changes"],
+  ["security update", (input) => { input.metadata.securityUpdate = true; }, "security-update"],
+  ["unknown security update state", (input) => {
+    delete input.metadata.securityUpdate;
+  }, "security-update"],
   ["source file", (input) => { input.changedFiles.push("crates/adocweave/src/lib.rs"); }, "changed-files"],
   ["workflow file", (input) => { input.changedFiles.push(".github/workflows/release.yml"); }, "changed-files"],
 ]) {
@@ -189,7 +205,6 @@ for (const [name, mutate, expected] of [
   }, "controller-changed-files"],
   ["changes requested", (input) => { input.review.changesRequested = true; }, "review"],
   ["missing approval", (input) => {
-    input.policy.requiredApprovals = 1;
     input.review.approvedCount = 0;
   }, "review"],
   ["old eligibility", (input) => { input.eligibilityCheck.headSha = "5".repeat(40); }, "eligibility-attestation"],
@@ -220,10 +235,26 @@ function strictRuleset(include = ["~DEFAULT_BRANCH"], exclude = []) {
     target: "branch",
     enforcement: "active",
     conditions: { ref_name: { include, exclude } },
-    rules: [{
-      type: "required_status_checks",
-      parameters: { strict_required_status_checks_policy: true },
-    }],
+    rules: [
+      {
+        type: "required_status_checks",
+        parameters: {
+          strict_required_status_checks_policy: true,
+          required_status_checks: policy.requiredChecks.map((context) => ({
+            context,
+            integration_id: policy.requiredCheckAppId,
+          })),
+        },
+      },
+      {
+        type: "pull_request",
+        parameters: {
+          required_approving_review_count: policy.requiredApprovals,
+          dismiss_stale_reviews_on_push: true,
+          require_last_push_approval: true,
+        },
+      },
+    ],
   };
 }
 
@@ -260,6 +291,24 @@ for (const [name, mutate] of [
   ["non-strict status checks", (ruleset) => {
     ruleset.rules[0].parameters.strict_required_status_checks_policy = false;
   }],
+  ["missing required status check", (ruleset) => {
+    ruleset.rules[0].parameters.required_status_checks.pop();
+  }],
+  ["wrong required status check app", (ruleset) => {
+    ruleset.rules[0].parameters.required_status_checks[0].integration_id = 1;
+  }],
+  ["missing pull request rule", (ruleset) => {
+    ruleset.rules.pop();
+  }],
+  ["no required approval", (ruleset) => {
+    ruleset.rules[1].parameters.required_approving_review_count = 0;
+  }],
+  ["stale reviews remain valid", (ruleset) => {
+    ruleset.rules[1].parameters.dismiss_stale_reviews_on_push = false;
+  }],
+  ["last push approval is not required", (ruleset) => {
+    ruleset.rules[1].parameters.require_last_push_approval = false;
+  }],
 ]) {
   test(`strict ruleset rejects ${name}`, () => {
     const ruleset = strictRuleset();
@@ -274,8 +323,19 @@ for (const [name, mutate] of [
 test("invalid and broadened policies fail closed", () => {
   for (const mutate of [
     (changed) => { changed.enabled = "yes"; },
+    (changed) => { changed.maximumDependencies = 2; },
+    (changed) => { changed.allowIndirectDependencies = true; },
+    (changed) => { changed.allowSecurityUpdates = true; },
     (changed) => { changed.requiresStrictStatusChecks = false; },
+    (changed) => { changed.requiredApprovals = 0; },
     (changed) => { changed.requiredChecks.push(changed.requiredChecks[0]); },
+    (changed) => { changed.allowedUpdates[0].dependencyTypes.push("indirect"); },
+    (changed) => {
+      const npm = changed.allowedUpdates.find(
+        (entry) => entry.packageEcosystem === "npm",
+      );
+      npm.dependencyTypes.push("direct:production");
+    },
     (changed) => { changed.allowedUpdates[0].updateTypes = ["version-update:semver-minor"]; },
     (changed) => { changed.allowedUpdates.push({
       ...changed.allowedUpdates[0],

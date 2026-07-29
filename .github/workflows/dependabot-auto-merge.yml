@@ -79,7 +79,7 @@ jobs:
             --slurpfile checks checks.json \
             --slurpfile reviews reviews.json \
             '($pr[0]) as $pull |
-            ($reviews[0] | sort_by(.submitted_at) | group_by(.user.login) | map(last)) as $latest_reviews |
+            ($reviews[0] | group_by(.user.login) | map(max_by(.submitted_at))) as $latest_reviews |
             {
               pullRequest: {
                 actor: $actor,
@@ -107,7 +107,10 @@ jobs:
               changedFiles: $changed_files[0],
               review: {
                 changesRequested: any($latest_reviews[]?; .state == "CHANGES_REQUESTED"),
-                approvedCount: ([$latest_reviews[]? | select(.state == "APPROVED")] | length)
+                approvedCount: ([
+                  $latest_reviews[]?
+                  | select(.state == "APPROVED" and .user.type == "User")
+                ] | length)
               },
               eligibilityCheck: (
                 $checks[0]
@@ -138,6 +141,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      checks: read
       contents: write
       pull-requests: write
       vulnerability-alerts: read
@@ -153,6 +157,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.decide.outputs.pull_request_number }}
           PULL_REQUEST_NODE_ID: ${{ needs.decide.outputs.pull_request_node_id }}
+          RUN_ACTOR: ${{ github.event.workflow_run.actor.login }}
+          RUN_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           open_count="$(tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY")"
           test "$open_count" -eq 0
@@ -161,9 +170,88 @@ jobs:
           test "$(jq -r .head.sha enable-pr.json)" = "$EXPECTED_HEAD_OID"
           test "$(jq -r .base.sha enable-pr.json)" = "$EXPECTED_BASE_SHA"
           test "$(jq -r .base.ref enable-pr.json)" = "main"
+          gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch \
+            > enable-default-branch.txt
+          test "$(cat enable-default-branch.txt)" = "main"
           gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha \
             > enable-base-sha.txt
           test "$(cat enable-base-sha.txt)" = "$EXPECTED_BASE_SHA"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[].filename' \
+            | jq -Rsc 'split("\n") | map(select(length > 0))' \
+            > enable-changed-files.json
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/commits/$EXPECTED_HEAD_OID/check-runs?per_page=100" \
+            --jq '.check_runs' | jq -s 'add' > enable-checks.json
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+            | jq -s 'add' > enable-reviews.json
+          jq -n \
+            --arg actor "$RUN_ACTOR" \
+            --arg run_conclusion "$RUN_CONCLUSION" \
+            --arg run_base_sha "$RUN_BASE_SHA" \
+            --arg run_event "$RUN_EVENT" \
+            --arg run_head_sha "$RUN_HEAD_SHA" \
+            --arg current_base_sha "$(cat enable-base-sha.txt)" \
+            --argjson open_security_alerts "$open_count" \
+            --slurpfile pr enable-pr.json \
+            --slurpfile changed_files enable-changed-files.json \
+            --slurpfile checks enable-checks.json \
+            --slurpfile reviews enable-reviews.json \
+            '($pr[0]) as $pull |
+            ($reviews[0] | group_by(.user.login) | map(max_by(.submitted_at))) as $latest_reviews |
+            {
+              pullRequest: {
+                actor: $actor,
+                author: $pull.user.login,
+                baseRef: $pull.base.ref,
+                baseRepository: $pull.base.repo.full_name,
+                headRef: $pull.head.ref,
+                headRepository: $pull.head.repo.full_name,
+                headSha: $pull.head.sha,
+                baseSha: $pull.base.sha,
+                draft: $pull.draft,
+                mergeable: $pull.mergeable
+              },
+              workflowRun: {
+                event: $run_event,
+                conclusion: $run_conclusion,
+                headSha: $run_head_sha,
+                baseSha: $run_base_sha
+              },
+              currentBaseSha: $current_base_sha,
+              securityAlerts: {
+                lookupCompleted: true,
+                openCount: $open_security_alerts
+              },
+              changedFiles: $changed_files[0],
+              review: {
+                changesRequested: any($latest_reviews[]?; .state == "CHANGES_REQUESTED"),
+                approvedCount: ([
+                  $latest_reviews[]?
+                  | select(.state == "APPROVED" and .user.type == "User")
+                ] | length)
+              },
+              eligibilityCheck: (
+                $checks[0]
+                | map(select(.name == "dependabot / eligibility"))
+                | sort_by(.completed_at)
+                | last
+                | if . == null then null else {
+                    name, headSha: .head_sha, conclusion,
+                    appSlug: .app.slug, appId: .app.id
+                  } end
+              ),
+              checks: (
+                $checks[0] | map({
+                  name, headSha: .head_sha, conclusion,
+                  completedAt: .completed_at, appId: .app.id
+                })
+              )
+            }' > enable-controller-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            controller .github/dependabot-auto-merge-policy.json \
+            enable-controller-input.json > enable-controller-decision.json
+          jq -e '.eligible == true' enable-controller-decision.json
           ruleset_ids="$(
             gh api --paginate \
               "repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true&per_page=100" \

@@ -29,6 +29,7 @@ jobs:
       - id: metadata
         uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7 # v2.5.0
         with:
+          alert-lookup: true
           github-token: ${{ github.token }}
       - name: Read every open Dependabot alert
         id: security_alerts
@@ -67,6 +68,8 @@ jobs:
           MAINTAINER_CHANGES: ${{ steps.metadata.outputs.maintainer-changes }}
           OPEN_SECURITY_ALERTS: ${{ steps.security_alerts.outputs.open_count }}
           PACKAGE_ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          SECURITY_ADVISORY_ID: ${{ steps.metadata.outputs.ghsa-id }}
+          SECURITY_ALERT_STATE: ${{ steps.metadata.outputs.alert-state }}
           SECURITY_ALERT_LOOKUP: ${{ steps.security_alerts.outputs.lookup_completed }}
           TARGET_BRANCH: ${{ steps.metadata.outputs.target-branch }}
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
@@ -77,6 +80,11 @@ jobs:
             maintainer_changes=true
           else
             maintainer_changes=false
+          fi
+          if [ -n "$SECURITY_ADVISORY_ID" ] || [ -n "$SECURITY_ALERT_STATE" ]; then
+            security_update=true
+          else
+            security_update=false
           fi
           jq -n \
             --arg actor "$ACTOR" \
@@ -95,6 +103,7 @@ jobs:
             --arg security_alert_lookup "$SECURITY_ALERT_LOOKUP" \
             --argjson dependencies "$dependencies" \
             --argjson maintainer_changes "$maintainer_changes" \
+            --argjson security_update "$security_update" \
             --argjson open_security_alerts "$OPEN_SECURITY_ALERTS" \
             --argjson changed_files "$CHANGED_FILES" \
             '{
@@ -110,7 +119,8 @@ jobs:
                 targetBranch: $target_branch, dependencyType: $dependency_type,
                 updateType: $update_type, dependencies: $dependencies,
                 dependencyGroup: $dependency_group,
-                maintainerChanges: $maintainer_changes
+                maintainerChanges: $maintainer_changes,
+                securityUpdate: $security_update
               },
               changedFiles: $changed_files
             }' > eligibility-input.json

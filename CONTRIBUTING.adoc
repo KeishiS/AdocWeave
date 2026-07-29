@@ -126,9 +126,12 @@ base commitだけをcheckoutします。Pull Request由来のcodeはcheckoutも�
 ``dependabot / eligibility`` checkを失敗させます。
 
 自動mergeの候補は、Dependabotが同じrepositoryに作成した``main``向けのbranchに限定します。
-Cargoのpatch更新とVS Code拡張の開発用npm依存のpatch更新だけを候補とし、次の更新は手動で確認します。
+Cargoの直接依存関係とVS Code拡張の開発用npm依存関係のpatch更新だけを候補とし、次の更新は
+手動で確認します。
 
 * majorまたはminor更新
+* Cargoの間接依存関係の更新
+* セキュリティ更新
 * repositoryに未解決のDependabot alertが存在する間のすべての更新
 * GitHub Actionsの更新
 * VS Code拡張のruntime依存
@@ -142,24 +145,31 @@ workflow自身がPull Requestを直ちにmergeすることはありません。�
 checkoutまたは実行せず、write権限をauto-merge登録だけを行うjobへ限定します。
 
 自動mergeを開始する前に、repositoryの``main`` rulesetで必須checkのstrict設定を有効にします。
-これは``requiresStrictStatusChecks``でも固定する実運用上の必須条件であり、policyを有効にするだけでは
-満たされません。rulesetでstrict設定が有効であることを確認できない場合は、``enabled``を``false``のままにします。
+rulesetにはpolicyの``requiredChecks``を同じGitHub Actions integration IDで登録し、承認を1件以上要求します。
+新しいcommitがpushされたときは古い承認を取り消し、最後にpushした人以外の承認を要求します。
+これらは実運用上の必須条件であり、policyを有効にするだけでは満たされません。rulesetで確認できない場合は、
+``enabled``を``false``のままにします。
 また、REST APIによる未解決Dependabot alertの全ページ照会に失敗した場合、結果が欠けた場合またはalertが1件でも
 存在する場合は、更新内容にかかわらず自動mergeを停止します。この照会にはrepositoryのGitHub Actions tokenを使い、
 個人用access tokenは使用しません。
 
 activation前には実repositoryでintegration gateを実施します。Actions tokenで未解決Dependabot alertの全pageと
 有効なruleset詳細を取得できること、``main``向けrulesetの
-``strict_required_status_checks_policy``が``true``であること、および対象headでGitHub Actionsの
-``dependabot / eligibility`` checkを識別できることを確認します。policyを有効化した後の最初の許可対象patch更新を
+``strict_required_status_checks_policy``が``true``であること、必須checkとそのintegration IDがpolicyに一致すること、
+承認数、古い承認の取り消しおよび最後のpushに対する承認の設定がpolicy以上に厳しいこと、ならびに対象headで
+GitHub Actionsの``dependabot / eligibility`` checkを識別できることを確認します。policyを有効化した後の最初の
+許可対象patch更新を
 監視し、eligibility、CI、controllerおよびenable直前の再照合がすべて成功するまで通常運用へ移行しません。
 API権限や応答形式を確認できない場合はfail-closedで停止し、policyを直ちに``enabled = false``へ戻します。
 activation gateではrulesetのref条件を安全側に限定し、``main``またはdefault branchをincludeし、excludeが空の
 rulesetだけをstrict設定の根拠として受け入れます。exclude patternが1件でもある場合は、そのpatternが``main``へ
 一致するかを推測せずに停止します。
-さらに、人間の承認を0件のままにするか1件以上にするか、Cargoの間接dependencyを許可するか、
-security patchを将来許可するかをrepository管理者が決定します。GitHub Actions、npm runtime依存および
-minor以上の更新は、初期導入の対象にしません。
+初期導入では、人間の承認を1件要求し、Cargoの間接依存関係とセキュリティ更新を許可しません。
+単独管理でも、管理者自身がDependabot Pull Requestを承認できます。承認できない状況では登録を保留し、
+予期しないmetadataや自動化の変更によるmergeを防ぎます。間接依存関係は依存関係全体の広い範囲へ影響し得るため、
+手動で確認します。セキュリティ更新は脆弱性の影響、修正版および緊急度を個別に判断する必要があるため、
+脆弱性情報と更新内容を検証する専用の許可規則を別途設計するまで手動で扱います。GitHub Actions、
+npmの実行時依存関係およびminor以上の更新も、初期導入の対象にしません。
 
 停止するときは、通常のPull Requestでpolicyの``enabled``を``false``へ変更します。すでにauto-mergeが
 有効なDependabot Pull Requestがある場合は、対象とhead commitを確認してGitHub上でauto-mergeを解除します。

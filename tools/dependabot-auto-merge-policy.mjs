@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 const DEPENDABOT_LOGIN = "dependabot[bot]";
 const DEPENDABOT_BRANCH = /^dependabot\/[a-z0-9_-]+\/[a-zA-Z0-9._/-]+$/;
 const SAFE_TEXT = /^[a-zA-Z0-9@._:/,+-]+$/;
+const ALLOWED_DEPENDENCY_TYPES = new Map([
+  ["cargo", new Set(["direct:production", "direct:development"])],
+  ["npm", new Set(["direct:development"])],
+]);
 
 export function validatePolicy(policy) {
   if (!policy || policy.version !== 1 || typeof policy.enabled !== "boolean") {
@@ -11,13 +15,14 @@ export function validatePolicy(policy) {
   if (policy.baseBranch !== "main" || policy.mergeMethod !== "SQUASH") {
     throw new Error("Dependabot auto-merge must target main with squash");
   }
-  if (!Number.isSafeInteger(policy.maximumDependencies)
-      || policy.maximumDependencies < 1
+  if (policy.maximumDependencies !== 1
       || policy.allowDependencyGroups !== false
+      || policy.allowIndirectDependencies !== false
       || policy.allowMaintainerChanges !== false
+      || policy.allowSecurityUpdates !== false
       || policy.requiresStrictStatusChecks !== true
       || !Number.isSafeInteger(policy.requiredApprovals)
-      || policy.requiredApprovals < 0
+      || policy.requiredApprovals < 1
       || !Number.isSafeInteger(policy.requiredCheckAppId)
       || policy.requiredCheckAppId < 1) {
     throw new Error("Dependabot auto-merge limits must fail closed");
@@ -37,6 +42,9 @@ export function validatePolicy(policy) {
         || !uniqueStrings(update.dependencyTypes)
         || !uniqueStrings(update.updateTypes)
         || !uniqueStrings(update.changedFiles)
+        || update.dependencyTypes.some(
+          (value) => !ALLOWED_DEPENDENCY_TYPES.get(update.packageEcosystem)?.has(value),
+        )
         || update.updateTypes.some((value) => value !== "version-update:semver-patch")
         || update.changedFiles.some((value) => !safeFilePattern(value))) {
       throw new Error(`invalid Dependabot update boundary: ${boundary}`);
@@ -73,6 +81,7 @@ export function evaluateEligibility(input) {
   if (!boundary) reasons.push("metadata-boundary-denied");
   if (metadata.targetBranch !== policy.baseBranch) reasons.push("metadata-target-branch");
   if (metadata.maintainerChanges !== false) reasons.push("maintainer-changes");
+  if (metadata.securityUpdate !== false) reasons.push("security-update");
   if (metadata.dependencyGroup) reasons.push("dependency-group");
   if (!Array.isArray(metadata.dependencies)
       || metadata.dependencies.length === 0
@@ -168,6 +177,13 @@ export function evaluateStrictRulesetProtection(input) {
   }
   const eligible = input.rulesets.some((ruleset) => {
     const references = ruleset?.conditions?.ref_name;
+    const statusRule = ruleset?.rules?.find(
+      (rule) => rule?.type === "required_status_checks",
+    );
+    const pullRequestRule = ruleset?.rules?.find(
+      (rule) => rule?.type === "pull_request",
+    );
+    const requiredStatusChecks = statusRule?.parameters?.required_status_checks;
     return ruleset?.target === "branch"
       && ruleset.enforcement === "active"
       && Array.isArray(references?.include)
@@ -177,10 +193,18 @@ export function evaluateStrictRulesetProtection(input) {
       && Array.isArray(references.exclude)
       && references.exclude.length === 0
       && Array.isArray(ruleset.rules)
-      && ruleset.rules.some(
-        (rule) => rule?.type === "required_status_checks"
-          && rule.parameters?.strict_required_status_checks_policy === true,
-      );
+      && statusRule?.parameters?.strict_required_status_checks_policy === true
+      && Array.isArray(requiredStatusChecks)
+      && policy.requiredChecks.every(
+        (name) => requiredStatusChecks.some(
+          (check) => check?.context === name
+            && check.integration_id === policy.requiredCheckAppId,
+        ),
+      )
+      && pullRequestRule?.parameters?.required_approving_review_count
+        >= policy.requiredApprovals
+      && pullRequestRule?.parameters?.dismiss_stale_reviews_on_push === true
+      && pullRequestRule?.parameters?.require_last_push_approval === true;
   });
   return decision(eligible, eligible ? [] : ["strict-ruleset"]);
 }
