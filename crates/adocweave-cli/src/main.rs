@@ -1831,9 +1831,10 @@ complete -c adocweave -l fix
             .replace("@NESTED@", &nested)
         }
         CompletionShell::PowerShell => {
-            let nested = tree
-                .nested
-                .iter()
+            let mut groups = tree.nested.iter().collect::<Vec<_>>();
+            groups.sort_by_key(|group| std::cmp::Reverse(group.parent.len()));
+            let nested = groups
+                .into_iter()
                 .map(|group| {
                     let conditions = group
                         .parent
@@ -2531,7 +2532,7 @@ mod tests {
         const ALTERNATE: &[model::CommandSpec] = &[
             model::CommandSpec {
                 id: CommandId::ConfigShow,
-                path: &["workspace", "inspect"],
+                path: &["workspace", "inspect", "show"],
                 root_usage: "",
                 summary: "inspect workspace",
                 help: None,
@@ -2558,6 +2559,20 @@ mod tests {
                 assert_tree(shell, tree);
             }
         }
+
+        let powershell = render_completion_script(CompletionShell::PowerShell, &trees[1]);
+        let deep = "$words.Count -le 4 -and $words[1] -eq 'workspace' -and $words[2] -eq 'inspect'";
+        let shallow = "$words.Count -le 3 -and $words[1] -eq 'workspace'";
+        let deep_position = powershell.find(deep).expect("deep PowerShell branch");
+        let shallow_position = powershell.find(shallow).expect("shallow PowerShell branch");
+        assert!(
+            deep_position < shallow_position,
+            "PowerShell must test the deepest parent first"
+        );
+        assert!(
+            powershell[deep_position..shallow_position].contains("@('show')"),
+            "the deepest parent must offer its child"
+        );
     }
 
     #[test]
