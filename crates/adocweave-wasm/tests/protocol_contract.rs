@@ -1,7 +1,8 @@
 use adocweave::NeverCancel;
 use adocweave_wasm::{
-    WasmAnalysisPreprocessInput, WasmPreprocessOptions, WasmPreprocessRequest, WasmRequest,
-    WasmResource, WasmSafeMode, preprocess_request, process_request,
+    WasmAnalysisPreprocessInput, WasmDocumentMode, WasmPreprocessOptions, WasmPreprocessRequest,
+    WasmRequest, WasmResource, WasmSafeMode, WasmSyntaxMode, WasmUnknownSourceLanguage,
+    WasmUnresolvedReferencePresentation, preprocess_request, process_request,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -200,6 +201,53 @@ fn generated_preprocess_inputs_keep_the_public_api_and_schema_defaults() {
     const GENERATED: &str = include_str!("../src/preprocess_wire_generated.rs");
     assert!(GENERATED.starts_with("// @generated"));
     assert!(!GENERATED.contains("adocweave::"));
+}
+
+#[test]
+fn generated_request_enums_keep_the_public_api_and_schema_defaults() {
+    let (schema, _) = documents();
+    let cases = [
+        (
+            "SyntaxMode",
+            serde_json::to_value(WasmSyntaxMode::Permissive).expect("syntax mode"),
+            serde_json::to_value(WasmSyntaxMode::default()).expect("default syntax mode"),
+        ),
+        (
+            "DocumentMode",
+            serde_json::to_value(WasmDocumentMode::Fragment).expect("document mode"),
+            serde_json::to_value(WasmDocumentMode::default()).expect("default document mode"),
+        ),
+        (
+            "UnknownSourceLanguage",
+            serde_json::to_value(WasmUnknownSourceLanguage::PreserveSanitized)
+                .expect("unknown source language"),
+            serde_json::to_value(WasmUnknownSourceLanguage::default())
+                .expect("default unknown source language"),
+        ),
+        (
+            "UnresolvedReferencePresentation",
+            serde_json::to_value(WasmUnresolvedReferencePresentation::Target)
+                .expect("unresolved reference presentation"),
+            serde_json::to_value(WasmUnresolvedReferencePresentation::default())
+                .expect("default unresolved reference presentation"),
+        ),
+    ];
+    for (name, public_value, default_value) in cases {
+        let expected = schema["enums"][name][0].clone();
+        assert_eq!(public_value, expected, "{name} public JSON value");
+        assert_eq!(default_value, expected, "{name} default JSON value");
+    }
+
+    const GENERATED: &str = include_str!("../src/request_enum_generated.rs");
+    assert!(GENERATED.starts_with("// @generated"));
+    for name in [
+        "WasmSyntaxMode",
+        "WasmDocumentMode",
+        "WasmUnknownSourceLanguage",
+        "WasmUnresolvedReferencePresentation",
+    ] {
+        assert!(GENERATED.contains(&format!("pub enum {name}")));
+    }
 }
 
 fn assert_schema_defaults(value: &Value, name: &str, schema: &Value) {

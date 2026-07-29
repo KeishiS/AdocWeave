@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   generateRustPreprocessInputs,
+  generateRustRequestEnums,
   generateRustResponseTypes,
   generateRustSharedTypes,
 } from "./protocol-rust-codegen.mjs";
@@ -160,6 +161,98 @@ test("shared Rust enums are generated once with schema-derived defaults", () => 
   assert.throws(
     () => generateRustSharedTypes(conflicting),
     /Severity has conflicting shared Rust defaults/,
+  );
+});
+
+test("request Rust enums are generated from the exact reachable ownership set", () => {
+  const generated = generateRustRequestEnums(schema);
+
+  for (const name of [
+    "WasmDocumentMode",
+    "WasmSyntaxMode",
+    "WasmUnknownSourceLanguage",
+    "WasmUnresolvedReferencePresentation",
+  ]) {
+    assert.match(generated, new RegExp(`pub enum ${name}\\b`));
+  }
+  for (const name of [
+    "WasmMathLanguage",
+    "WasmReferenceFailureKind",
+    "WasmReferenceNotice",
+    "WasmResourceFailureKind",
+    "WasmSafeMode",
+    "WasmSeverity",
+  ]) {
+    assert.doesNotMatch(generated, new RegExp(`pub enum ${name}\\b`));
+  }
+  assert.match(generated, /pub enum WasmSyntaxMode \{\s+#\[default\]\s+Permissive,/);
+  assert.match(generated, /pub enum WasmDocumentMode \{\s+#\[default\]\s+Fragment,/);
+  assert.match(
+    generated,
+    /pub enum WasmUnknownSourceLanguage \{\s+#\[default\]\s+PreserveSanitized,/,
+  );
+  assert.match(
+    generated,
+    /pub enum WasmUnresolvedReferencePresentation \{\s+#\[default\]\s+Target,/,
+  );
+
+  const unreachable = structuredClone(schema);
+  unreachable.settings.SyntaxOptions.fields
+    .find(({ json }) => json === "syntaxMode").type = "string";
+  assert.throws(
+    () => generateRustRequestEnums(unreachable),
+    /ownership must exactly match reachable enums/,
+  );
+});
+
+test("request Rust enum schema mutations fail closed", () => {
+  const missingDefault = structuredClone(schema);
+  delete missingDefault.settings.SyntaxOptions.fields
+    .find(({ json }) => json === "syntaxMode").default;
+  assert.throws(
+    () => generateRustRequestEnums(missingDefault),
+    /SyntaxMode must have one unambiguous request Rust default/,
+  );
+
+  const invalidDefault = structuredClone(schema);
+  invalidDefault.settings.SyntaxOptions.fields
+    .find(({ json }) => json === "syntaxMode").default = "unknown";
+  assert.throws(
+    () => generateRustRequestEnums(invalidDefault),
+    /SyntaxMode has an invalid request Rust default/,
+  );
+
+  const conflictingDefault = structuredClone(schema);
+  conflictingDefault.settings.AnalysisOptions.fields.push({
+    json: "fallbackSyntaxMode",
+    type: "SyntaxMode",
+    default: "strict",
+  });
+  assert.throws(
+    () => generateRustRequestEnums(conflictingDefault),
+    /SyntaxMode must have one unambiguous request Rust default/,
+  );
+
+  const collidingVariant = structuredClone(schema);
+  collidingVariant.enums.DocumentMode.push("fragment");
+  assert.throws(
+    () => generateRustRequestEnums(collidingVariant),
+    /DocumentMode enum values collide as Rust identifier Fragment/,
+  );
+});
+
+test("request Rust enum generation is deterministic across object insertion order", () => {
+  const reordered = structuredClone(schema);
+  for (const namespace of ["enums", "settings", "definitions", "preprocessDefinitions"]) {
+    reordered[namespace] = Object.fromEntries(
+      Object.entries(reordered[namespace]).reverse(),
+    );
+  }
+  reordered.request.fields.reverse();
+
+  assert.equal(
+    generateRustRequestEnums(reordered),
+    generateRustRequestEnums(schema),
   );
 });
 

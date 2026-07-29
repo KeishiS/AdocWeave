@@ -190,6 +190,10 @@
           "versionOccurrences": 0
         },
         {
+          "path": "crates/adocweave-wasm/src/request_enum_generated.rs",
+          "versionOccurrences": 0
+        },
+        {
           "path": "crates/adocweave-wasm/src/shared_wire_generated.rs",
           "versionOccurrences": 0
         },
