@@ -180,6 +180,9 @@ package versionが一致しない要求や未知のfieldは拒否します。ver
 出力はsyntax tree、AST、HTML、文書属性の出現箇所、resource query、診断、symbolおよび構造情報から選択できます。
 省略時はHTML、resource query、診断および構造情報を返します。`analysisOptions`、`renderPolicy`、
 ``outputLimits``および``renderInputs``を責務別に渡し、省略したfieldにはコアの既定値を使用します。
+返却fieldは出力の選択にかかわらず省略しません。選択しなかった構造情報の``projection``は``null``、
+配列の出力は空の配列、文字列の出力は空文字列です。利用側はfieldの有無ではなく、要求時に指定した
+``products``とこれらの値を使って結果を処理します。
 参照とresourceのJSON表現および
 安全性の規則はxref:server-execution.adoc#render-inputs[変換入力]を基準とします。
 

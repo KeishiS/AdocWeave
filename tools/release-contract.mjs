@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
+import { PUBLIC_PROTOCOL_SCHEMA_VERSION } from "./release-policy.mjs";
 import { loadWorkflowPolicyInputs, validateReleaseWorkflowPolicy } from "./release-workflow-policy.mjs";
 
 const ROOT = new URL("../", import.meta.url);
@@ -11,6 +12,7 @@ const fail = (message) => {
 };
 
 export const STABLE_TAG = /^v(\d+\.\d+\.\d+)$/;
+export const SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
 export function versionFromTag(tag) {
   const match = STABLE_TAG.exec(tag);
@@ -167,6 +169,32 @@ export function validateDistributionManifest(manifest, plan) {
   }
 }
 
+export function validateReleaseTrainVersions(version, components) {
+  for (const [name, actual] of Object.entries(components)) {
+    if (actual !== version) fail(`${name} version ${actual} does not match workspace ${version}`);
+  }
+}
+
+export function validatePublicClientReleaseContract(version, vscodePackage, vscodeLock, protocol) {
+  validateReleaseTrainVersions(version, {
+    "VS Code package": vscodePackage.version,
+    "VS Code package lock": vscodeLock.version,
+    "VS Code package lock root": vscodeLock.packages?.[""]?.version,
+    "public protocol": protocol.packageVersion,
+  });
+  if (vscodePackage.private !== true) {
+    fail("VS Code package must remain private");
+  }
+  if (vscodeLock.lockfileVersion !== 3) {
+    fail("VS Code package lockfileVersion must be 3");
+  }
+  if (protocol.schemaVersion !== SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION) {
+    fail(
+      `public protocol schemaVersion must be ${SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION}`,
+    );
+  }
+}
+
 function tomlValue(source, key) {
   const match = source.match(new RegExp(`^${key.replaceAll("-", "\\-")}\\s*=\\s*"([^"]+)"`, "m"));
   return match?.[1] ?? fail(`missing TOML field: ${key}`);
@@ -178,6 +206,11 @@ function verifyRepository() {
   const plan = json("release/distribution-plan.json");
   const platformFixture = json("release/platform-selection.fixture.json");
   const vscodePlatforms = json("editors/vscode/resources/platforms.json");
+  const vscodePackage = json("editors/vscode/package.json");
+  const vscodeLock = json("editors/vscode/package-lock.json");
+  const protocol = json("protocol/public-api.json");
+  const conformance = json("crates/adocweave/conformance/cases.json");
+  const publicConformance = json("fixtures/public-conformance.json");
   const worker = json("web-worker/package.json");
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
@@ -231,15 +264,16 @@ function verifyRepository() {
     }
   }
 
-  for (const [name, actual] of [
-    ["release manifest", manifest.packageVersion],
-    ["distribution plan", plan.packageVersion],
-    ["browser package", worker.version],
-    ["Zed extension", tomlValue(extension, "version")],
-    ["Zed crate", tomlValue(extensionCargo, "version")],
-  ]) {
-    if (actual !== version) fail(`${name} version ${actual} does not match workspace ${version}`);
-  }
+  validateReleaseTrainVersions(version, {
+    "release manifest": manifest.packageVersion,
+    "distribution plan": plan.packageVersion,
+    "browser package": worker.version,
+    "cross-runtime conformance manifest": conformance.packageVersion,
+    "public conformance manifest": publicConformance.packageVersion,
+    "Zed extension": tomlValue(extension, "version"),
+    "Zed crate": tomlValue(extensionCargo, "version"),
+  });
+  validatePublicClientReleaseContract(version, vscodePackage, vscodeLock, protocol);
   if (plan.repository !== repository || tomlValue(extension, "repository") !== repository) {
     fail("repository URL mismatch in release train");
   }

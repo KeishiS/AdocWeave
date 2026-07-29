@@ -1,10 +1,17 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
+import {
+  PUBLIC_PROTOCOL_SCHEMA_VERSION,
+  RELEASE_NOTES_VERSION,
+} from "./release-policy.mjs";
+
 const ROOT = new URL("../", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", ROOT), "utf8"));
 const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", ROOT), "utf8"));
 const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROOT), "utf8"));
+export { RELEASE_NOTES_VERSION };
+export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## 対応環境",
@@ -15,27 +22,54 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#108：ソースブロックのタイトル、言語、`linenums`および開始行を解析結果へ保持し、安全なHTML表示契約を追加しました。",
-  "#109：インライン数式とブロック数式の表示形式、言語、未加工sourceおよび入力範囲を公開し、HTMLへ描画adapter向け属性を追加しました。",
-  "#111：解析結果、HTML、解析診断および描画診断を対応付ける公開適合性fixtureを追加しました。",
-  "#110：`rendering_features()`で数式言語、正規化済みソース言語および実際の目次出力の有無を決定的に取得できるようにしました。",
-  "#81：Browser clientへPromise形式の`analyze()`と`analyzeOnce()`、初期化状態、型付きlifecycle errorおよびbundler向けasset URL契約を追加しました。",
+  "#85：`adocweave preview`を追加しました。起点文書、includeで読み込んだ文書、まだ存在しないinclude対象およびCSSを監視し、変更後のHTMLと診断をWebブラウザーへ反映します。",
+  "連続した変更をまとめて処理し、完了したうち最も新しい更新だけを表示します。監視対象は解析で見つかった依存関係に限定し、ファイルシステム全体は探索しません。",
+  "既定では同じ端末からだけ接続できる`127.0.0.1:4000`で待ち受けます。ループバック以外のIPアドレスを使うには`--allow-external`が必要です。",
 ];
 
 const contractNotes = [
-  `統一package version：${manifest.packageVersion}`,
-  `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。これらのschema形状はv0.15.0から変更していません。`,
-  `WASM protocol schema version：${protocol.schemaVersion}、Worker protocol version：${protocol.workerProtocolVersion}。WASM protocolはschema 4から5へ更新し、Worker envelopeはversion 2を維持します。`,
-  "schema 5では`SourceBlockProjection`へ必須fieldの`title`、`lineNumbers`および`startLine`を追加しました。schema 4の保存済みprojectionを読むconsumerは、schema versionを検査して型とfixtureを更新してください。",
-  "ソースブロックは必要な場合だけ`figure.source-block`と`figcaption`を生成し、`pre`の`data-language`、`data-line-numbers`および`data-line-start`で表示情報を公開します。タイトルと行番号指定がない従来の`pre > code`構造は維持します。",
-  "数式HTMLは`data-math-language=\"latexmath\"`と`data-math-display=\"inline|block\"`を公開します。JSONとWASMの言語値は互換性のため`latex`を維持します。",
-  "`rendering_features()`は追加描画が必要な数式言語、正規化済みソース言語および空でない目次の有無だけを返します。renderer、theme、JavaScript libraryまたはasset URLは選択しません。",
-  "Browser clientの従来の`update()`、`onResult`および`onError`は維持します。新しい`ready`、`analyze()`および`analyzeOnce()`は、cancel、dispose、世代の上書き、package不一致およびWorker障害を型付きerrorとしてrejectします。",
-  "`defaultAssetUrls()`はmodule URLを基準にWorkerとWASMを解決します。bundler利用時もWorkerとWASMを別assetとして配備し、JavaScript bundleへinline化しないでください。",
-  "公開適合性fixtureの安定契約はmanifestの`stableContract`に列挙したJSON pointer、HTML断片および診断codeです。期待出力file全体の空白、key順および属性順はconsumer向け契約ではありません。",
-  "HTMLは入力由来のraw HTML、任意属性、event handler、`script`およびSVGを生成しません。構文強調、行番号の見た目、数式engine、themeおよび操作buttonは利用側が安全なadapterとして提供します。",
+  `統一package version：${RELEASE_NOTES_VERSION}`,
+  `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。v0.16.0からschema形状を変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。WASM protocolは未選択のprojectionをnullで表す契約などを反映してschema 5から6へ破壊的に更新し、Worker envelopeはversion 2を維持します。WASM adapterはcoreが生成したprojection JSONを、入れ子のobject（nested object）や種類を示すfieldで形が変わるtagged unionも含むすべてのobject境界で厳格に検証し、内部契約にないfieldを検出すると失敗します。利用側はbindings、型定義およびfixtureをschema 6から再生成し、保存済みの出力をschema versionで区別してください。`,
+  "`preview`は新しいCLIコマンドです。既存のCLIコマンドとWorker protocolはv0.16.0から維持します。Browser APIとWASM responseには次の移行が必要です。",
+  "プレビューのHTMLは既存の変換処理と同じ安全性方針で生成します。任意のファイルやディレクトリ一覧を配信せず、配信するURLを表示画面、生成文書、更新番号、診断および固定のクライアントスクリプトに限定します。",
+  "`adocweave-host`のfilesystem読込APIを、検証後のpathを後から開き直す方式から、rootのhandleを基準に検証と読込を一体で行うsession方式へ変更しました。これはRust APIの破壊的変更です。",
+  "`LocalFilesystemSession`が全rootで共有する`ResourceBudget`を所有します。同じcanonical pathを再読込するとfile数を維持したままbyte数の差分を反映し、上限超過時は以前の計上値を維持します。workspaceから除いたpathは`session.release(path)`で計上を解放し、現在値は`session.budget()`で確認できます。",
+  "filesystem errorは`ResourceError`の`Missing`、`PermissionDenied`、`PathNotAbsolute`、`OutsideRoots`、`NotRegularFile`および`Unverifiable`などで分類します。表示文字列ではなくvariantを処理してください。",
+  "複数の許可rootを設定していても、読込は入力pathに対応する1つのroot handleへ限定します。symlinkの参照先が別の許可root内にある場合も、選択したrootの境界を越えるため`OutsideRoots`として拒否します。",
+  "Linuxのfilesystem読込はrootのdirectory handleを基準にpath componentを開く`HandleRelative`方式です。macOSとWindowsは`StaticSnapshotOnly`方式であり、検査中にworkspaceを同時変更しない、信頼済みのworkspaceを前提とします。",
+  "Browser clientは受信したWASM結果の`packageVersion`がBrowser packageと一致しない場合、結果を採用せず、解析Promiseを`unsupported-package-version`でrejectします。",
+  "現在のgenerationのresultまたはerrorについて、Worker応答の`version`が解析要求の`version`と一致しない場合は応答を採用せず、解析Promiseを`invalid-worker-response`でrejectして、そのWorkerを終了します。新しいgenerationに置き換えられたstaleな応答は`onResult`にも`onError`にも通知しません。",
+  "Worker障害などのterminal errorでは未完了の解析Promiseをrejectし、`onError`をmicrotaskで通知します。Promiseのrejectを処理するcallbackと`onError`の同期的な実行順には依存しないでください。",
+  "Browser clientの`onResult`と`onError`で発生した例外は、解析Promiseの完了状態とWorkerの生存状態へ影響させません。callback内の例外を記録または表示する必要がある場合は、利用側で処理してください。",
+  "WASM productを選択しなかった場合もresponse fieldは省略しません。`projection`は`null`、配列で表すproductは空配列、文字列で表すproductは空文字列を返します。",
+  "公式Playgroundはこのリリースに含みません。`preview`は利用者の端末で実行するローカル機能です。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
+
+const rustApiMigration = `### \`adocweave-host\` Rust APIの移行
+
+| v0.16まで | v0.17 |
+| --- | --- |
+| \`LocalResourcePolicy::new(...)\` | \`LocalFilesystemPolicy::new(...)\`の後に\`policy.session()\` |
+| \`policy.validate_file(&mut budget, path)\`と\`ValidatedFilesystemTarget::into_loaded_utf8()\` | \`session.read_utf8(LogicalSourceId::new(...)?, absolute_path)\` |
+| \`LoadedLocalResource\` | \`LoadedFilesystemSource\`。論理上のsource識別子は\`source_id()\`、実体の由来は\`canonical_path()\`で取得 |
+| \`normalize_relative(target)\`または\`policy.resolve_relative(base, target)\`による解決だけの操作 | 解決専用の公開APIは廃止。\`session.read_target_utf8(LogicalSourceId::new(...)?, absolute_base, target)\`で解決、読込、UTF-8検証および予算計上を一体で実行 |
+| 呼出側が所有する\`ResourceBudget\` | sessionが所有する共有budget。現在値は\`session.budget()\`で参照 |
+| workspace scan後に別のpolicyで再読込 | \`scan_filesystem_with_session(&mut session)\`を使用し、scanと後続の再読込で同じsessionとbudgetを共有 |
+
+\`read_utf8\`と\`reread_utf8\`へ渡すpath、および\`read_target_utf8\`へ渡すbaseは絶対pathにしてください。診断やsource mapへ公開する名前はfilesystem pathから暗黙に作らず、制御文字を含まない\`LogicalSourceId\`として明示します。再読込には\`reread_utf8\`を使用し、監視対象から削除したpathには\`release\`を呼び出してください。`;
+
+const browserApiMigration = `### Browser APIとWASM responseの移行
+
+| v0.16まで | v0.17 |
+| --- | --- |
+| \`AdocWeaveResult.result\`内の\`AdocWeaveWasmResponse\` | \`AdocWeaveResult\`自体がWASM responseを表すflatな結果 |
+| \`result.result.projection\`など | \`result.projection\`など、すべてのWASM productを結果直下から参照 |
+| nested WASM responseの\`version\`とcallback adapterの\`sourceVersion\` | WASM wireでは\`version\`を維持。Browserのflatな結果では同じ値を\`sourceVersion\`として公開 |
+| 投影済み参照の\`notices: ReferenceNotice[]\`と値\`fallback\` | \`notices: ProjectedReferenceNotice[]\`と値\`reference-resolution-fallback\`。入力側の\`ReferenceNotice\`と区別 |
+
+\`result.html\`、\`result.diagnostics\`および\`result.renderDiagnostics\`など、従来から結果直下にあった主なfieldは同じ名前で利用できます。互換aliasの\`AdocWeaveWorkerClient\`も維持します。schema versionを検査する処理を6へ更新し、生成済みのbindings、型定義およびfixtureをschema 6から再生成してください。`;
 
 const knownConstraints = [
   `対応Rust toolchain：${manifest.rustVersion}。このreleaseのflake.lockで固定しています。`,
@@ -43,6 +77,10 @@ const knownConstraints = [
   "macOS binaryへDeveloper ID署名とnotarizationを行わず、Windows binaryへAuthenticode署名を行いません。OSの警告が表示された場合はchecksumとattestationを確認してください。",
   "Zed拡張はdevelopment extension、VS Code拡張はVSIXとして手動導入します。拡張registryへは公開しません。",
   "Zed extension APIではhost OS versionを取得できないため、macOSとWindowsの最小versionはdownload前ではなく、配布binaryのdeployment targetをOS loaderが強制します。",
+  "プレビューサーバーは利用者認証とTLSによる通信の暗号化を提供しません。ループバック以外で待ち受ける場合は、信頼できないネットワークへ直接公開しないでください。",
+  "プレビューはファイルの情報を定期的に確認し、内容の長さと更新時刻が同じ変更も定期的なハッシュ値確認で検出します。変更検出後に`--debounce-ms`の待ち時間を適用します。",
+  "プレビューの停止は生成処理の段階間で協調的に行います。停止通知に対応しない処理段階は完了まで待ちます。",
+  "プレビューのHTTP処理には同時実行数、待機数、request headerの長さおよび通信時間の上限があります。接続数が上限に達した場合は、新しい接続を応答せずに閉じます。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
 ];
 
@@ -50,15 +88,36 @@ function markdownList(items) {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
+const MINIMUM_OS_DESCRIPTIONS = {
+  "darwin:14.0": "macOS 14.0以降",
+  "win32:10.0.17763": "Windows 10 version 1809（build 10.0.17763）以降",
+};
+
+function minimumOsDescription(target) {
+  if (target.minimumOsVersion === null) return "";
+  const description = MINIMUM_OS_DESCRIPTIONS[`${target.os}:${target.minimumOsVersion}`];
+  if (!description) {
+    throw new Error(`最小対応OS版の説明がありません：${target.os} ${target.minimumOsVersion}`);
+  }
+  return `、${description}`;
+}
+
 export function buildReleaseNotes(tag) {
-  if (tag !== `v${manifest.packageVersion}`) throw new Error("Release Notesのtagがpackage versionと一致しません");
+  if (tag !== `v${RELEASE_NOTES_VERSION}`) {
+    throw new Error(`Release Notesはv${RELEASE_NOTES_VERSION}専用です`);
+  }
   const osNames = { darwin: "macOS", linux: "Linux", win32: "Windows" };
   const targets = plan.targets
-    .map((target) => `- ${osNames[target.os]} ${target.architecture}（\`${target.triple}\`）`)
+    .map(
+      (target) =>
+        `- ${osNames[target.os]} ${target.architecture}（\`${target.triple}\`${minimumOsDescription(target)}）`,
+    )
     .join("\n");
   const notes = `## 主な変更\n\n${markdownList(highlights)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${markdownList(contractNotes)}\n\n` +
+    `${rustApiMigration}\n\n` +
+    `${browserApiMigration}\n\n` +
     "consumerは記載されたpackage versionを厳密に一致させる必要があります。異なるversionのCLI、LSP、browser、ZedまたはVS Code向け配布物を混在させないでください。\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n${markdownList(knownConstraints)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n` +

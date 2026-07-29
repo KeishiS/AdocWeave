@@ -103,6 +103,8 @@ Options:
   -V, --version  Print version
   -h, --help  Print help
 ";
+const DEFAULT_PREVIEW_PORT: u16 = 4000;
+const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
 
 #[derive(Debug)]
 enum CliError {
@@ -380,8 +382,8 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut complete = false;
     let mut css = Vec::new();
     let mut bind = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let mut port = 4000;
-    let mut debounce_ms = 100;
+    let mut port = DEFAULT_PREVIEW_PORT;
+    let mut debounce_ms = DEFAULT_PREVIEW_DEBOUNCE_MS;
     let mut allow_external = false;
     let mut config_path = None;
     let mut no_config = false;
@@ -1874,7 +1876,35 @@ fn command_help(operation: Operation) -> &'static str {
             "Usage:\n  adocweave convert [OPTIONS] [FILE]\n\nExample:\n  adocweave convert --complete manual.adoc\n"
         }
         Operation::Preview => {
-            "Usage:\n  adocweave preview [OPTIONS] FILE\n\nExample:\n  adocweave preview --include manual.adoc\n"
+            "\
+使用法:
+  adocweave preview [OPTIONS] FILE
+
+引数:
+  FILE  プレビューするAsciiDocファイル（標準入力とシンボリックリンクは使用不可）
+
+オプション:
+  --bind ADDRESS  待ち受けるIPアドレス（既定値: 127.0.0.1）
+  --port PORT  待ち受けるポート（既定値: 4000）
+  --debounce-ms MILLISECONDS  連続した変更をまとめる待ち時間（既定値: 100）
+  --allow-external  ループバック以外のIPアドレスでの待ち受けを許可
+  --include  上限を設けてローカルincludeを展開
+  --base-dir DIR  起点文書のincludeをDIRから解決
+  --allow-root DIR  includeを許可する範囲（複数指定可）
+  --css FILE  完全なHTML文書へCSSを埋め込み（複数指定可）
+  --css-url URL  許可されたCSSのURLを追加（複数指定可）
+  --config FILE  指定したプロジェクト設定を使用
+  --no-config  プロジェクト設定の探索を無効化
+  --color WHEN  端末表示の色をauto、always、neverから選択（既定値: auto）
+  -h, --help  この説明を表示
+
+安全性:
+  ループバック以外のIPアドレスには--allow-externalが必要です。
+  このサーバーは利用者認証とTLSによる通信の暗号化を提供しません。
+
+例:
+  adocweave preview --include manual.adoc
+"
         }
         Operation::Check => {
             "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format github --summary manual.adoc\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n"
@@ -2488,9 +2518,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CliError, CommandOptions, CssArgument, DiagnosticFormat, Operation,
-        PreviewBuildRequest, PreviewBuildStage, PreviewDependencyObserver,
-        check_preview_cancellation, parse_arguments, preview_build, preview_build_with_stage_hook,
+        Action, CliError, CommandOptions, CssArgument, DEFAULT_PREVIEW_DEBOUNCE_MS,
+        DEFAULT_PREVIEW_PORT, DiagnosticFormat, HELP, Operation, PreviewBuildRequest,
+        PreviewBuildStage, PreviewDependencyObserver, check_preview_cancellation, command_help,
+        parse_arguments, preview_build, preview_build_with_stage_hook,
     };
     use crate::local_include::DependencyObserver;
 
@@ -2697,6 +2728,60 @@ mod tests {
                 Ok(Action::Help { .. })
             ));
         }
+    }
+
+    #[test]
+    fn preview_help_explains_options_defaults_and_external_access() {
+        let help = command_help(Operation::Preview);
+        let port = DEFAULT_PREVIEW_PORT.to_string();
+        let debounce = DEFAULT_PREVIEW_DEBOUNCE_MS.to_string();
+        for expected in [
+            "--bind ADDRESS",
+            "127.0.0.1",
+            "--port PORT",
+            "--debounce-ms MILLISECONDS",
+            "--allow-external",
+            "--include",
+            "--base-dir DIR",
+            "--allow-root DIR",
+            "--css FILE",
+            "--css-url URL",
+            "--config FILE",
+            "--no-config",
+            "--color WHEN",
+            "auto",
+            "利用者認証",
+            "TLS",
+        ] {
+            assert!(
+                help.contains(expected),
+                "preview helpに{expected}がありません"
+            );
+        }
+        for (name, value) in [("port", port), ("debounce", debounce)] {
+            assert!(
+                help.contains(&value),
+                "preview helpの{name}既定値が実装と異なります"
+            );
+            assert!(
+                HELP.contains(&value),
+                "全体helpの{name}既定値が実装と異なります"
+            );
+        }
+
+        let Action::Run(parsed) =
+            parse_arguments(arguments(&["preview", "document.adoc"])).expect("preview defaults")
+        else {
+            panic!("expected run action");
+        };
+        assert!(matches!(
+            parsed.command,
+            CommandOptions::Preview {
+                port: DEFAULT_PREVIEW_PORT,
+                debounce_ms: DEFAULT_PREVIEW_DEBOUNCE_MS,
+                ..
+            }
+        ));
     }
 
     #[test]

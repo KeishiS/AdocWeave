@@ -43,6 +43,14 @@ binaryではELF architecture、静的linkおよび実行権限を検査します
 deployment target、system dynamic libraryだけへのlinkおよび実行権限を検査します。Windows binaryでは
 PE architecture、``.exe``名、CRLF入力、空白とUnicodeを含むpathおよびstdio process lifecycleを検査します。
 
+Windowsで成果物を構築する``cargo-dist``は、公式GitHub Releaseのversion付きZIPを使用します。取得する
+version、asset名、URL、SHA-256およびZIP内の許可file一覧は
+``release/windows-dist-bootstrap.json``へ固定します。
+SHA-256と許可file一覧を検証してから、``dist.exe``だけを一時directoryから実行用directoryへ移します。
+任意のnetwork installer、package registryからのsource buildおよび実行toolのcacheは使用しません。
+download、SHA-256検証、ZIP内の許可file一覧の検証または展開のいずれかに失敗した場合はcandidateの構築を
+中止し、成功と失敗のどちらでも一時directoryの削除を試みます。
+
 Native binaryへDeveloper ID、notarizationまたはAuthenticodeによるOS code signingは行いません。GitHub Artifact
 Attestationはbuild provenanceであり、OS code signingの代替ではありません。macOSではdownload元に応じて
 quarantine確認が必要になる場合があり、Windowsでは発行元未署名の警告が表示される場合があります。

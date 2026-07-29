@@ -17,3 +17,15 @@ test("worker consumes the public WASM contract registry", async () => {
   assert.equal(manifest.packageVersion, BROWSER_PACKAGE_VERSION);
   assert.match(manifest.rustVersion, /^\d+\.\d+\.\d+$/);
 });
+
+test("READMEはBrowserのversion境界とprojection境界を説明する", async () => {
+  const readme = await readFile(new URL("./README.adoc", import.meta.url), "utf8");
+
+  assert.match(readme, /unsupported-package-version/);
+  assert.match(readme, /Worker応答の.*version.*解析要求の.*version/s);
+  assert.match(readme, /invalid-worker-response/);
+  assert.match(readme, /staleな応答.*onResult.*onError.*通知しません/s);
+  assert.match(readme, /onError.*microtask/s);
+  assert.match(readme, /WASM adapterがcoreから受け取るprojection JSON/);
+  assert.match(readme, /内部契約にないfieldを検出した場合は処理を失敗/);
+});

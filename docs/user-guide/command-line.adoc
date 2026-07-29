@@ -83,6 +83,11 @@ directory、権限不足および検査不能なtargetは安定したcodeを持�
 ``local-target-limit-exceeded``を報告して、それ以降のfilesystem検査を行いません。
 標準入力の基準directoryはproject rootです。
 
+Linuxでは、project rootのdirectory handleを基準に各path componentを開く``HandleRelative``方式を使用し、
+検証後のpathを名前から開き直す競合を避けます。macOSとWindowsでは``StaticSnapshotOnly``方式を使用します。
+この方式は、検査中にworkspaceを同時変更しない、信頼済みのworkspaceだけを対象とします。信頼できない入力を
+検査する場合は、書換え不能なsnapshotへコピーしてから実行してください。
+
 利用可能な規則は文書を読み込まずにJSONで取得できます。
 
 [source,console]
@@ -210,7 +215,9 @@ network resourceは取得しません。
 == ローカルプレビュー
 
 ``preview``は完全なHTML文書を生成し、既定では``127.0.0.1:4000``で配信します。
-表示されたURLをブラウザーで開き、終了する場合はプロセスを停止してください。
+``127.0.0.1``は、同じ端末からだけ接続できるループバックアドレスです。
+コマンドが表示したURLをWebブラウザーで開いてください。Webブラウザーは自動では起動しません。
+終了する場合は、コマンドを実行した端末でkbd:[Ctrl+C]を押します。
 
 [source,console]
 ----
@@ -218,18 +225,36 @@ adocweave preview --include manual.adoc
 adocweave preview --port 8080 --css theme.css manual.adoc
 ----
 
-root文書、読み込み済みinclude、欠落しているinclude候補およびCSSの作成、変更、削除を監視します。
-変更は``--debounce-ms``で指定した時間だけまとめ、完了した最新世代を表示します。
-監視対象は解析済みの依存関係に限定され、filesystem全体を探索しません。
+既定のポートをほかのプログラムが使用している場合は、``--port``で空いているポートを指定します。
 
-配信routeはpreview shell、生成文書、更新世代、診断および固定client scriptだけです。
-任意fileの配信、directory一覧およびpath traversalは提供しません。
-responseにはCSP、``no-store``およびMIME sniffing禁止headerを付けます。
-``--css-url``で検証済みの``http``または``https`` URLを指定した場合は、そのoriginだけをCSPの
+起点文書、includeで読み込んだ文書、まだ存在しないinclude対象およびCSSの作成、変更、削除を監視します。
+ファイルの更新時刻、長さおよび種類を定期的に確認します。内容の長さと更新時刻が
+変わらない編集も検出するため、内容のハッシュ値も定期的に確認します。変更を検出した後に
+``--debounce-ms``の待ち時間を適用します。
+``--debounce-ms``は、連続した変更を一回の更新としてまとめる待ち時間をミリ秒で指定します。
+各更新には単調に増える更新番号を付け、処理が完了したうち最も新しい内容だけを表示します。
+監視対象は解析済みの依存関係に限定し、ファイルシステム全体は探索しません。
+
+配信するURLは、表示画面、生成した文書、更新番号、診断および固定のクライアントスクリプトだけです。
+任意のファイルの配信、ディレクトリ一覧およびパスを使った配信範囲外への移動は提供しません。
+HTTP応答にはContent Security Policy（読み込める資源を制限するHTTPヘッダー）、``no-store``および
+内容からファイルの種類を推測させないヘッダーを付けます。
+``--css-url``で検証済みの``http``または``https`` URLを指定した場合は、その送信元だけを
+Content Security Policyの
 ``style-src``へ追加します。
-非loopback addressを使用する場合は``--bind ADDRESS --allow-external``を明示する必要があり、
-ほかのhostから生成内容を閲覧される可能性がある旨を警告します。
-includeとCSSには``convert``と同じproject root、resource上限およびHTML出力policyを適用します。
+ループバック以外のIPアドレスを使用する場合は``--bind ADDRESS --allow-external``を明示する必要があり、
+ほかの端末から生成内容を閲覧される可能性がある旨を警告します。プレビューサーバーは利用者認証と
+TLSによる通信の暗号化を提供しません。信頼できないネットワークへ直接公開しないでください。
+includeとCSSには``convert``と同じプロジェクトの基準ディレクトリ、資源の上限およびHTML出力方針を
+適用します。
+
+プレビューサーバーはHTTP処理の同時実行数、待機数、request headerの長さおよび通信時間に
+上限を設けます。実行中と待機中の枠がすべて埋まった場合は、新しい接続を応答せずに閉じます。
+Webブラウザーは次の更新確認で再接続します。
+
+kbd:[Ctrl+C]または新しい変更を検出すると、実行中の生成処理へ停止を通知します。解析処理は停止通知を
+直接確認できます。includeの準備、ファイルの読み取りおよびHTMLの生成など、処理中に停止通知を確認しない段階は
+その段階が完了するまで待ち、次の段階へ移る境界で終了します。
 
 == 完全なHTML文書とCSS
 

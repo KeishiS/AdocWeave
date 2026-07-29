@@ -8,17 +8,26 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== v0.17.0候補：対話的な確認環境
+== v0.17.0公開前の整合確認
 
-公開済みのBrowser API、HTML契約および安全性境界を再利用し、browserとlocal CLIで文書を
-対話的に確認する経路を整備します。
+ローカルファイルの読込境界、プレビューの責務、BrowserとWASMの公開契約、CIおよび文書を
+一つのリリース候補として確認します。
+
+* https://github.com/KeishiS/adocweave/issues/132[v0.17.0前の安全性・公開契約・CIの再設計]
+
+この作業では各機能を追加で拡張せず、実装、検証、利用手順およびRelease Notesが同じ契約を
+説明していることを確認します。完了後はversion固有の結果をRelease Notesへ移し、この項目を削除します。
+
+== 保留中の対話的な確認環境
+
+公開済みのBrowser APIとHTML契約を利用し、Webブラウザーだけで文書を試せる環境を提供する案を
+保留しています。
 
 * https://github.com/KeishiS/adocweave/issues/84[公式Playground]
-* https://github.com/KeishiS/adocweave/issues/85[local preview・watch mode]
 
-Playgroundは静的に配布できるBrowser APIを利用し、local previewにはlocal target、include、
-監視対象およびloopback serverの安全性境界を反映します。両Issueの完了条件とrelease gateを
-満たした時点でversionを確定します。
+公式Playgroundの公開には、配信先、公開URL、公開作業を行う権限および問題発生時に以前の状態へ戻す
+権限を決める必要があります。これらが決まるまで実装済みのローカルプレビューとは分離し、
+製品versionの更新やほかの機能を公開するための前提にはしません。
 
 == 継続運用
 
@@ -35,12 +44,15 @@ Playgroundは静的に配布できるBrowser APIを利用し、local previewに�
 
 * https://github.com/KeishiS/adocweave/issues/33[単体CLIのlocal resource profile評価]
 * https://github.com/KeishiS/adocweave/issues/34[RenovateによるNix依存更新の評価]
-* https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
-* https://github.com/KeishiS/adocweave/issues/83[crates.io・npm公開の評価]
-* https://github.com/KeishiS/adocweave/issues/82[公式extension registry]
 
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
-extension registry、public package registryおよび標準package managerは低優先度とし、
-他の施策の前提にしません。公式binaryとeditor導線を先に安定させ、具体的な導入需要と
-長期保守責務が確認できた場合だけ採用を判断します。
+
+== 実施しない公開経路
+
+extension registry、public package registryおよびOSのpackage managerへの登録・公開は行いません。
+次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として保留します。
+
+* https://github.com/KeishiS/adocweave/issues/82[公式extension registry]
+* https://github.com/KeishiS/adocweave/issues/83[crates.io・npm公開の評価]
+* https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
