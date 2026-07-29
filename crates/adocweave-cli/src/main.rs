@@ -11,9 +11,6 @@ use std::time::Duration;
 
 use adocweave::output::diagnostics as diagnostic;
 use adocweave::output::formatter::{FormatConfig, format_analysis};
-use adocweave::output::html::{
-    HtmlDocumentMode, RenderPolicy, StylesheetPolicy, StylesheetSource, render,
-};
 use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits};
 use adocweave::text::{PositionEncoding, SourceDocument};
 use adocweave::{
@@ -50,6 +47,7 @@ use check_output::{
     CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, github_annotation,
     prefix_human_source, sarif_log, sarif_result, sarif_results,
 };
+use commands::html_policy::StylesheetArgument;
 use commands::model::{CommandId, LookupError};
 use file_workflow::{
     PendingWrite, atomic_write_all, colorize_lines, safe_write_format_config, unified_diff,
@@ -152,12 +150,32 @@ impl Error for CliError {
     }
 }
 
-/// A stylesheet argument in command-line order; files are embedded, URLs are
-/// linked, and both apply only to complete document output.
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum CssArgument {
-    File(PathBuf),
-    Url(String),
+fn convert_error(error: commands::convert::Error) -> CliError {
+    match error {
+        commands::convert::Error::InvalidUtf8 { valid_up_to } => {
+            CliError::InvalidUtf8 { valid_up_to }
+        }
+        commands::convert::Error::Analysis(source) => CliError::Analysis(source),
+        commands::convert::Error::Html(source) => html_policy_error(source),
+    }
+}
+
+fn html_policy_error(error: commands::html_policy::Error) -> CliError {
+    match error {
+        commands::html_policy::Error::Cancelled => CliError::Analysis(ParseError::Cancelled),
+        commands::html_policy::Error::InvalidUtf8 { valid_up_to } => {
+            CliError::InvalidUtf8 { valid_up_to }
+        }
+        commands::html_policy::Error::Read {
+            source_name,
+            source,
+        } => CliError::Read {
+            source_name,
+            source,
+        },
+        commands::html_policy::Error::Stylesheet(message) => CliError::Stylesheet(message),
+        commands::html_policy::Error::Usage(message) => CliError::Usage(message),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -183,10 +201,10 @@ struct CheckOptions {
 enum CommandOptions {
     Convert {
         complete: bool,
-        css: Vec<CssArgument>,
+        css: Vec<StylesheetArgument>,
     },
     Preview {
-        css: Vec<CssArgument>,
+        css: Vec<StylesheetArgument>,
         bind: IpAddr,
         port: u16,
         debounce_ms: u64,
@@ -447,13 +465,13 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--css requires a file".to_owned()))?;
-                css.push(CssArgument::File(PathBuf::from(value)));
+                css.push(StylesheetArgument::File(PathBuf::from(value)));
             }
             "--css-url" if matches!(command_id, CommandId::Convert | CommandId::Preview) => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--css-url requires a URL".to_owned()))?;
-                css.push(CssArgument::Url(value));
+                css.push(StylesheetArgument::Url(value));
             }
             "--bind" if command_id == CommandId::Preview => {
                 let value = arguments
@@ -703,116 +721,6 @@ fn finish_output(output: String) -> Result<String, CliError> {
     Ok(output)
 }
 
-/// Builds the convert render policy from command-line stylesheet arguments.
-/// CSS files are read here so a missing or oversized file fails before any
-/// output is produced; the renderer revalidates every source.
-fn convert_policy(
-    project: &adocweave_config::HtmlSettings,
-    complete: bool,
-    css: &[CssArgument],
-    mut dependency_snapshots: Option<
-        &mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
-    >,
-    cancellation: Option<&CancellationToken>,
-) -> Result<RenderPolicy, CliError> {
-    let limits = StylesheetPolicy::default();
-    let mut sources = Vec::new();
-    for path in &project.stylesheet_files {
-        check_preview_cancellation(cancellation)?;
-        let bytes = if let Some(snapshots) = dependency_snapshots.as_deref_mut() {
-            let (bytes, fingerprint) =
-                preview::read_dependency(path).map_err(|source| CliError::Read {
-                    source_name: path.display().to_string(),
-                    source,
-                })?;
-            snapshots.insert(path.clone(), fingerprint);
-            bytes
-        } else {
-            fs::read(path).map_err(|source| CliError::Read {
-                source_name: path.display().to_string(),
-                source,
-            })?
-        };
-        check_preview_cancellation(cancellation)?;
-        if bytes.len()
-            > usize::try_from(limits.max_inline_bytes).expect("u32 fits usize on supported targets")
-        {
-            return Err(CliError::Stylesheet(format!(
-                "stylesheet {} exceeds the limit of {} bytes",
-                path.display(),
-                limits.max_inline_bytes
-            )));
-        }
-        let text = String::from_utf8(bytes).map_err(|error| CliError::InvalidUtf8 {
-            valid_up_to: error.utf8_error().valid_up_to(),
-        })?;
-        sources.push(StylesheetSource::Inline(text));
-    }
-    sources.extend(
-        project
-            .stylesheet_urls
-            .iter()
-            .cloned()
-            .map(StylesheetSource::External),
-    );
-    for argument in css {
-        check_preview_cancellation(cancellation)?;
-        match argument {
-            CssArgument::File(path) => {
-                let bytes = if let Some(snapshots) = dependency_snapshots.as_deref_mut() {
-                    let (bytes, fingerprint) =
-                        preview::read_dependency(path).map_err(|source| CliError::Read {
-                            source_name: path.display().to_string(),
-                            source,
-                        })?;
-                    snapshots.insert(path.clone(), fingerprint);
-                    bytes
-                } else {
-                    fs::read(path).map_err(|source| CliError::Read {
-                        source_name: path.display().to_string(),
-                        source,
-                    })?
-                };
-                check_preview_cancellation(cancellation)?;
-                if bytes.len()
-                    > usize::try_from(limits.max_inline_bytes)
-                        .expect("u32 fits usize on supported targets")
-                {
-                    return Err(CliError::Stylesheet(format!(
-                        "stylesheet {} exceeds the limit of {} bytes",
-                        path.display(),
-                        limits.max_inline_bytes
-                    )));
-                }
-                let text = String::from_utf8(bytes).map_err(|error| CliError::InvalidUtf8 {
-                    valid_up_to: error.utf8_error().valid_up_to(),
-                })?;
-                sources.push(StylesheetSource::Inline(text));
-            }
-            CssArgument::Url(url) => sources.push(StylesheetSource::External(url.clone())),
-        }
-    }
-    let document_mode = if complete {
-        HtmlDocumentMode::Complete
-    } else {
-        project.policy.document_mode
-    };
-    if document_mode != HtmlDocumentMode::Complete && !sources.is_empty() {
-        return Err(CliError::Usage(
-            "--css and --css-url require --complete".to_owned(),
-        ));
-    }
-    Ok(RenderPolicy {
-        document_mode: if complete {
-            HtmlDocumentMode::Complete
-        } else {
-            project.policy.document_mode
-        },
-        stylesheets: StylesheetPolicy { sources, ..limits },
-        ..RenderPolicy::default()
-    })
-}
-
 fn check_preview_cancellation(cancellation: Option<&CancellationToken>) -> Result<(), CliError> {
     if cancellation.is_some_and(CancellationCheck::is_cancelled) {
         Err(CliError::Analysis(ParseError::Cancelled))
@@ -821,35 +729,13 @@ fn check_preview_cancellation(cancellation: Option<&CancellationToken>) -> Resul
     }
 }
 
-fn process_convert(
-    input: &[u8],
-    analysis_options: &AnalysisOptions,
-    render_policy: &RenderPolicy,
-) -> Result<String, CliError> {
-    let source = decode_input(input)?;
-    let analysis = analyze(source, analysis_options)?;
-    let output = render(analysis.document(), render_policy);
-    if let Some(diagnostic) = output.diagnostics.iter().find(|diagnostic| {
-        matches!(
-            diagnostic.code.as_str(),
-            "invalid-stylesheet-url"
-                | "invalid-stylesheet-content"
-                | "stylesheet-limit-exceeded"
-                | "stylesheet-not-applicable"
-        )
-    }) {
-        return Err(CliError::Stylesheet(diagnostic.message.clone()));
-    }
-    Ok(output.html)
-}
-
 struct PreviewBuildRequest<'request> {
     input_path: &'request Path,
     include: bool,
     base_dir: &'request Path,
     project_root: &'request Path,
     project: &'request adocweave_config::ResolvedProjectConfig,
-    css: &'request [CssArgument],
+    css: &'request [StylesheetArgument],
 }
 
 struct IncludePreparation<'request> {
@@ -989,27 +875,22 @@ fn preview_build_with_stage_hook(
         .analyze_cancellable(&processed, cancellation)
         .map_err(CliError::Analysis)?;
     check_preview_cancellation(Some(cancellation))?;
-    let render_policy = convert_policy(
+    let render_policy = commands::html_policy::build(
         &project.html,
         true,
         css,
-        Some(dependencies),
-        Some(cancellation),
-    )?;
+        |path| {
+            let (bytes, fingerprint) = preview::read_dependency(path)?;
+            dependencies.insert(path.to_owned(), fingerprint);
+            Ok(bytes)
+        },
+        || cancellation.is_cancelled(),
+    )
+    .map_err(html_policy_error)?;
     check_preview_cancellation(Some(cancellation))?;
-    let output = render(analysis.document(), &render_policy);
+    let output = commands::html_policy::render_checked(analysis.document(), &render_policy)
+        .map_err(html_policy_error)?;
     check_preview_cancellation(Some(cancellation))?;
-    if let Some(item) = output.diagnostics.iter().find(|item| {
-        matches!(
-            item.code.as_str(),
-            "invalid-stylesheet-url"
-                | "invalid-stylesheet-content"
-                | "stylesheet-limit-exceeded"
-                | "stylesheet-not-applicable"
-        )
-    }) {
-        return Err(CliError::Stylesheet(item.message.clone()));
-    }
     let mut diagnostics = serde_json::from_str::<Vec<serde_json::Value>>(&diagnostic::render_json(
         analysis.diagnostics(),
     ))
@@ -1021,18 +902,7 @@ fn preview_build_with_stage_hook(
         .expect("render diagnostic renderer returns a JSON array"),
     );
     diagnostics.extend(include_diagnostics);
-    let style_origins = project
-        .html
-        .stylesheet_urls
-        .iter()
-        .chain(css.iter().filter_map(|argument| match argument {
-            CssArgument::Url(url) => Some(url),
-            CssArgument::File(_) => None,
-        }))
-        .filter_map(|value| url::Url::parse(value).ok())
-        .filter(|url| matches!(url.scheme(), "http" | "https"))
-        .map(|url| url.origin().ascii_serialization())
-        .collect();
+    let style_origins = commands::html_policy::external_origins(&render_policy);
     Ok(preview::Build::new(
         output.html,
         serde_json::to_string(&diagnostics).expect("diagnostics are serializable"),
@@ -2048,8 +1918,8 @@ fn run() -> Result<ExitCode, CliError> {
                                 let paths = std::iter::once(canonical_input.clone())
                                     .chain(project_config.html.stylesheet_files.iter().cloned())
                                     .chain(css.iter().filter_map(|argument| match argument {
-                                        CssArgument::File(path) => Some(path.clone()),
-                                        CssArgument::Url(_) => None,
+                                        StylesheetArgument::File(path) => Some(path.clone()),
+                                        StylesheetArgument::Url(_) => None,
                                     }));
                                 dependencies.extend(paths.map(|path| {
                                     let fingerprint = preview::Fingerprint::read(&path);
@@ -2164,11 +2034,15 @@ fn run() -> Result<ExitCode, CliError> {
                 Ok((String::new(), ExitCode::SUCCESS))
             } else {
                 let output = match &arguments.command {
-                    CommandOptions::Convert { complete, css } => process_convert(
+                    CommandOptions::Convert { complete, css } => commands::convert::run(
                         &processed,
                         &project_config.analysis,
-                        &convert_policy(&project_config.html, *complete, css, None, None)?,
-                    )?,
+                        &project_config.html,
+                        *complete,
+                        css,
+                        |path| fs::read(path),
+                    )
+                    .map_err(convert_error)?,
                     CommandOptions::Format { .. } => process_format(
                         &processed,
                         &project_config.analysis,
@@ -2485,9 +2359,9 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CliError, CommandOptions, CompletionShell, CssArgument,
-        DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT, DiagnosticFormat, PreviewBuildRequest,
-        PreviewBuildStage, PreviewDependencyObserver, check_preview_cancellation, parse_arguments,
+        Action, CliError, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS,
+        DEFAULT_PREVIEW_PORT, DiagnosticFormat, PreviewBuildRequest, PreviewBuildStage,
+        PreviewDependencyObserver, StylesheetArgument, check_preview_cancellation, parse_arguments,
         preview_build, preview_build_with_stage_hook, render_completion_script,
     };
     use crate::commands::model::{self, CommandId};
@@ -2612,7 +2486,7 @@ mod tests {
                 base_dir: root.path(),
                 project_root: root.path(),
                 project: &adocweave_config::ResolvedProjectConfig::default(),
-                css: &[CssArgument::File(stylesheet)],
+                css: &[StylesheetArgument::File(stylesheet.clone())],
             },
             &adocweave::CancellationToken::new(),
             &mut dependencies,
@@ -2620,6 +2494,7 @@ mod tests {
 
         assert!(result.is_err());
         assert!(dependencies.contains_key(&include));
+        assert!(dependencies.contains_key(&stylesheet));
     }
 
     #[test]
