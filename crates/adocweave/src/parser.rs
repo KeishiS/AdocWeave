@@ -1557,10 +1557,7 @@ fn parse_table(
     state: &mut ParseState<'_>,
     depth: ParseDepth,
 ) -> Result<(crate::table::Table, Vec<SyntaxNode>), ParseFailure> {
-    use crate::table::{
-        HorizontalAlignment, TableCell, TableCellContent, TableCellStyle, TableColumn, TableRow,
-        TableSection, VerticalAlignment,
-    };
+    use crate::table::{TableCellContent, TableCellStyle};
 
     let config = context.config;
     let reject = |resource, limit, actual| {
@@ -1584,24 +1581,29 @@ fn parse_table(
             depth.table as u64,
         ));
     }
-    let (input_spec, mut table_problems) = crate::table::TableInputSpec::resolve(
+    let maximum_columns = config.limits.max_table_columns as usize;
+    let configuration = crate::table::ResolvedTableConfiguration::resolve(
         input.delimiter,
         input.delimiter_range,
         input.metadata,
-    );
-    let raw = crate::table::scan_with_metadata(
+        maximum_columns,
+    )
+    .map_err(|error| match error {
+        crate::table::TableConfigurationError::ColumnCount(actual) => {
+            reject("table columns", config.limits.max_table_columns, actual)
+        }
+        crate::table::TableConfigurationError::ColumnWidth(actual) => {
+            reject("table column width", u32::MAX, actual)
+        }
+    })?;
+    let column_styles = configuration.column_styles().collect::<Vec<_>>();
+    let scanned = crate::table::scan_with_configuration(
         input.value,
         input.content_range,
-        input_spec,
-        input.metadata,
+        configuration.input(),
+        &column_styles,
     );
-    let implicit_header_candidate = raw.implicit_header_candidate;
-    table_problems.extend(raw.problems.iter().copied());
-    let cell_count = raw
-        .cells
-        .iter()
-        .map(|cell| u64::from(cell.duplication))
-        .sum::<u64>();
+    let cell_count = scanned.materialized_cell_count();
     if cell_count > u64::from(config.limits.max_table_cells) {
         return Err(reject(
             "table cells",
@@ -1609,7 +1611,7 @@ fn parse_table(
             cell_count,
         ));
     }
-    let widest = raw.inferred_columns as u64;
+    let widest = scanned.inferred_columns as u64;
     if widest > u64::from(config.limits.max_table_columns) {
         return Err(reject(
             "table columns",
@@ -1617,25 +1619,66 @@ fn parse_table(
             widest,
         ));
     }
-    let column_count = raw
-        .inferred_columns
-        .min(config.limits.max_table_columns as usize);
-    let columns = (0..column_count)
-        .map(|index| TableColumn {
-            index: index as u32,
-            width: None,
-            horizontal_alignment: HorizontalAlignment::Left,
-            vertical_alignment: VerticalAlignment::Top,
-            style: TableCellStyle::Default,
-        })
-        .collect();
-    let mut cells = Vec::with_capacity(raw.cells.len());
-    for cell in raw.cells {
-        for _ in 0..cell.duplication {
-            state.budget.consume_node()?;
-            let content = match cell.style {
+    if (context.is_cancelled)() {
+        return Err(ParseFailure::Cancelled);
+    }
+    state.budget.consume_nodes(cell_count)?;
+    let laid_out = configuration
+        .configure(scanned, || {
+            if (context.is_cancelled)() {
+                Err(ParseFailure::Cancelled)
+            } else {
+                Ok(())
+            }
+        })?
+        .layout();
+    let mut nested_syntax = Vec::new();
+    let table = laid_out.lower_content(
+        |cell: &crate::table::ConfiguredCell| -> Result<TableCellContent, ParseFailure> {
+            match cell.style {
                 TableCellStyle::Literal | TableCellStyle::Verse => {
-                    TableCellContent::Verbatim(cell.raw.clone())
+                    Ok(TableCellContent::Verbatim(cell.raw.clone()))
+                }
+                TableCellStyle::AsciiDoc => {
+                    let fragment = if context.source_document.text(cell.content_range)
+                        == Some(cell.raw.as_str())
+                    {
+                        SourceDocument::indexed_view(context.source_document, cell.content_range)?
+                    } else {
+                        SourceDocument::from_fragment_bounded(
+                            Arc::from(cell.raw.as_str()),
+                            cell.content_range.start(),
+                            config.limits.max_line_bytes,
+                            context.is_cancelled,
+                        )
+                        .map_err(|error| match error {
+                            SourceDocumentBuildError::Position(error) => {
+                                ParseFailure::Position(error)
+                            }
+                            SourceDocumentBuildError::LineLimitExceeded { limit, actual } => {
+                                ParseFailure::Budget(BudgetExceeded {
+                                    resource: "line bytes",
+                                    limit,
+                                    actual,
+                                })
+                            }
+                            SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
+                        })?
+                    };
+                    let nested = parse_nested_blocks(
+                        &fragment,
+                        0,
+                        fragment.lines().len(),
+                        context,
+                        state,
+                        ParseDepth {
+                            block: depth.block + 1,
+                            table: depth.table + 1,
+                        },
+                        BlockLocation::AsciiDocCell,
+                    )?;
+                    nested_syntax.extend(nested.syntax);
+                    Ok(TableCellContent::AsciiDoc(nested.blocks))
                 }
                 _ => {
                     let parsed = parse_inlines(
@@ -1647,92 +1690,11 @@ fn parse_table(
                         },
                         state.budget,
                     )?;
-                    TableCellContent::Inlines(parsed.inlines)
+                    Ok(TableCellContent::Inlines(parsed.inlines))
                 }
-            };
-            cells.push(TableCell {
-                range: cell.range,
-                marker_range: cell.marker_range,
-                content_range: cell.content_range,
-                raw: cell.raw.clone(),
-                column_index: 0,
-                column_span: cell.column_span,
-                row_span: cell.row_span,
-                horizontal_alignment: cell.horizontal_alignment,
-                vertical_alignment: cell.vertical_alignment,
-                style: cell.style,
-                style_is_explicit: cell.style_is_explicit,
-                content,
-            });
-        }
-    }
-    let mut table = crate::table::Table {
-        format: raw.format,
-        separator: raw.separator,
-        content_range: raw.content_range,
-        columns,
-        rows: if cells.is_empty() {
-            Vec::new()
-        } else {
-            vec![TableRow {
-                range: TextRange::new(
-                    cells.first().expect("non-empty cells").range.start(),
-                    cells.last().expect("non-empty cells").range.end(),
-                )
-                .expect("table cell range is ordered"),
-                section: TableSection::Body,
-                cells,
-            }]
-        },
-        presentation: crate::table::TablePresentation::default(),
-        problems: table_problems,
-    };
-    crate::table::layout_rows(&mut table);
-    crate::table::configure(&mut table, input.metadata, implicit_header_candidate);
-    let mut nested_syntax = Vec::new();
-    for row in &mut table.rows {
-        for cell in &mut row.cells {
-            if cell.style != TableCellStyle::AsciiDoc {
-                continue;
             }
-            let fragment =
-                if context.source_document.text(cell.content_range) == Some(cell.raw.as_str()) {
-                    SourceDocument::indexed_view(context.source_document, cell.content_range)?
-                } else {
-                    SourceDocument::from_fragment_bounded(
-                        Arc::from(cell.raw.as_str()),
-                        cell.content_range.start(),
-                        config.limits.max_line_bytes,
-                        context.is_cancelled,
-                    )
-                    .map_err(|error| match error {
-                        SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
-                        SourceDocumentBuildError::LineLimitExceeded { limit, actual } => {
-                            ParseFailure::Budget(BudgetExceeded {
-                                resource: "line bytes",
-                                limit,
-                                actual,
-                            })
-                        }
-                        SourceDocumentBuildError::Cancelled => ParseFailure::Cancelled,
-                    })?
-                };
-            let nested = parse_nested_blocks(
-                &fragment,
-                0,
-                fragment.lines().len(),
-                context,
-                state,
-                ParseDepth {
-                    block: depth.block + 1,
-                    table: depth.table + 1,
-                },
-                BlockLocation::AsciiDocCell,
-            )?;
-            nested_syntax.extend(nested.syntax);
-            cell.content = TableCellContent::AsciiDoc(nested.blocks);
-        }
-    }
+        },
+    )?;
     Ok((table, nested_syntax))
 }
 

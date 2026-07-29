@@ -60,6 +60,10 @@ impl ParseBudget {
         consume(&mut self.nodes, self.limits.max_nodes, "nodes")
     }
 
+    pub(crate) fn consume_nodes(&mut self, count: u64) -> Result<(), BudgetExceeded> {
+        consume_many(&mut self.nodes, self.limits.max_nodes, count, "nodes")
+    }
+
     pub(crate) fn consume_reference(&mut self) -> Result<(), BudgetExceeded> {
         consume(
             &mut self.references,
@@ -109,7 +113,16 @@ impl ParseBudget {
 }
 
 fn consume(current: &mut u32, limit: u32, resource: &'static str) -> Result<(), BudgetExceeded> {
-    let actual = u64::from(*current) + 1;
+    consume_many(current, limit, 1, resource)
+}
+
+fn consume_many(
+    current: &mut u32,
+    limit: u32,
+    count: u64,
+    resource: &'static str,
+) -> Result<(), BudgetExceeded> {
+    let actual = u64::from(*current).saturating_add(count);
     if actual > u64::from(limit) {
         return Err(BudgetExceeded {
             resource,
@@ -117,6 +130,6 @@ fn consume(current: &mut u32, limit: u32, resource: &'static str) -> Result<(), 
             actual,
         });
     }
-    *current += 1;
+    *current = u32::try_from(actual).expect("accepted budget fits u32");
     Ok(())
 }

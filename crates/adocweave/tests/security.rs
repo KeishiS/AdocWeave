@@ -501,6 +501,183 @@ fn asciidoc_cell_uses_the_parent_table_depth_budget() {
 }
 
 #[test]
+fn asciidoc_cell_uses_the_parent_node_budget_without_speculative_inline_nodes() {
+    let source = "\
+[cols=a]
+|===
+|paragraph
+|===
+";
+    let minimum = (1..32)
+        .find(|maximum| {
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_nodes: *maximum,
+                    ..AnalysisLimits::default()
+                },
+            )
+            .is_ok()
+        })
+        .expect("small table has a bounded node minimum");
+    assert_eq!(minimum, 6);
+    assert!(matches!(
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_nodes: minimum - 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "nodes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn explicit_table_columns_are_rejected_before_repeat_materialization() {
+    assert!(matches!(
+        analyze_with_limits(
+            "\
+[cols=\"1000000000*a\"]
+|===
+|value
+|===
+",
+            AnalysisLimits {
+                max_table_columns: 4,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "table columns",
+            actual: 1_000_000_000,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn duplicated_table_cells_reserve_the_node_budget_before_cloning_large_content() {
+    let content = "x".repeat(256 * 1024);
+    let source = format!("|===\n100000*|{content}\n|===\n");
+    assert!(matches!(
+        analyze_with_limits(
+            &source,
+            AnalysisLimits {
+                max_nodes: 2,
+                max_table_columns: 100_000,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "nodes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn duplicated_table_cell_materialization_is_cooperatively_cancellable() {
+    struct CancelAfter {
+        checks: AtomicUsize,
+        threshold: usize,
+    }
+    impl CancellationCheck for CancelAfter {
+        fn is_cancelled(&self) -> bool {
+            self.checks.fetch_add(1, Ordering::Relaxed) >= self.threshold
+        }
+    }
+
+    let content = "x".repeat(64 * 1024);
+    let source = format!("|===\n100000*|{content}\n|===\n");
+    let cancellation = CancelAfter {
+        checks: AtomicUsize::new(0),
+        threshold: 64,
+    };
+    let mut options = AnalysisOptions::default();
+    options.syntax.limits.max_table_columns = 100_000;
+    let result = Engine::new(options).analyze_cancellable(&source, &cancellation);
+    assert!(matches!(result, Err(ParseError::Cancelled)));
+    assert!(cancellation.checks.load(Ordering::Relaxed) <= 66);
+}
+
+#[test]
+fn malformed_table_column_repetitions_keep_the_permissive_single_column_behavior() {
+    for columns in ["x*a", "*a"] {
+        let source = format!("[cols=\"{columns}\"]\n|===\n|paragraph\n|===\n");
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&source)
+            .expect("malformed repetition recovers");
+        let table = analysis
+            .document()
+            .blocks()
+            .iter()
+            .find_map(|block| match block {
+                adocweave::semantic::Block::Delimited(block) => match &block.content {
+                    adocweave::semantic::DelimitedContent::Table(table) => Some(table),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("table");
+        assert_eq!(table.columns.len(), 1);
+        assert_eq!(
+            table.columns[0].style,
+            adocweave::semantic::TableCellStyle::AsciiDoc
+        );
+    }
+}
+
+#[test]
+fn unrepresentable_table_column_numbers_are_rejected() {
+    for (source, resource, limit, actual) in [
+        (
+            "\
+[cols=\"18446744073709551616*a\"]
+|===
+|value
+|===
+",
+            "table columns",
+            4,
+            u64::MAX,
+        ),
+        (
+            "\
+[cols=\"4294967296\"]
+|===
+|value
+|===
+",
+            "table column width",
+            u32::MAX,
+            4_294_967_296,
+        ),
+    ] {
+        assert!(matches!(
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_table_columns: 4,
+                    ..AnalysisLimits::default()
+                },
+            ),
+            Err(ParseError::LimitExceeded {
+                resource: rejected_resource,
+                limit: rejected_limit,
+                actual: rejected,
+                ..
+            }) if rejected_resource == resource
+                && rejected_limit == limit
+                && rejected == actual
+        ));
+    }
+}
+
+#[test]
 fn table_resources_are_rejected_at_the_construction_boundary() {
     let cases = [
         (

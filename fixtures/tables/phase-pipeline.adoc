@@ -1,0 +1,24 @@
+[cols="a,d",options=header]
+|===
+|PSV header |Value
+
+2+a|nested *PSV* cell
+|===
+
+[format=csv,cols="a,d",options=header]
+|===
+CSV header,Value
+nested CSV cell,plain
+|===
+
+[format=dsv,cols="a,d",options=header]
+|===
+DSV header:値
+nested 日本語 DSV cell:plain
+|===
+
+[format=tsv,cols="a,d",options=header]
+|===
+TSV header	Value
+nested 🙂 TSV cell	plain
+|===
