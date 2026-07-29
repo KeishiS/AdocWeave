@@ -10,6 +10,10 @@ const controller = await readFile(
   new URL("../.github/workflows/dependabot-auto-merge.yml", import.meta.url),
   "utf8",
 );
+const reviewSignal = await readFile(
+  new URL("../.github/workflows/dependabot-review-signal.yml", import.meta.url),
+  "utf8",
+);
 const makefile = await readFile(new URL("../Makefile.toml", import.meta.url), "utf8");
 const decide = controller.match(/\n  decide:\n[\s\S]*?(?=\n  enable:\n)/)?.[0] ?? "";
 const enable = controller.match(/\n  enable:\n[\s\S]*$/)?.[0] ?? "";
@@ -24,31 +28,58 @@ test("eligibility is a read-only pull request job check over trusted base code",
   assert.match(eligibility, /ref:\s*\$\{\{\s*github\.event\.pull_request\.base\.sha\s*\}\}/);
   assert.match(eligibility, /persist-credentials:\s*false/);
   assert.match(eligibility, /dependabot\/fetch-metadata@[0-9a-f]{40}/);
-  assert.match(eligibility, /alert-lookup:\s*true/);
+  assert.doesNotMatch(eligibility, /alert-lookup:/);
   assert.match(eligibility, /vulnerability-alerts:\s*read/);
   assert.match(eligibility, /headSha:\s*\$head_sha/);
-  assert.match(eligibility, /SECURITY_ADVISORY_ID:.*outputs\.ghsa-id/);
-  assert.match(eligibility, /SECURITY_ALERT_STATE:.*outputs\.alert-state/);
-  assert.match(eligibility, /securityUpdate:\s*\$security_update/);
+  assert.match(eligibility, /dependabot-alert-snapshot\.sh/);
+  assert.match(eligibility, /securityUpdate:\s*\$security_alerts\[0\]\.securityUpdate/);
+  assert.match(eligibility, /case "\$MAINTAINER_CHANGES" in/);
+  assert.match(eligibility, /true\|false\) maintainer_changes=/);
   assert.match(eligibility, /jq -e '\.eligible == true'/);
   assert.doesNotMatch(eligibility, /check-runs|checks:\s*write|--method POST/);
   assert.doesNotMatch(eligibility, /issues:\s*write/);
 });
 
 test("security alert inventory paginates beyond 100 and fails closed", () => {
-  const helperCall = /tools\/dependabot-alert-inventory\.sh "\$GITHUB_REPOSITORY"/g;
+  const helperCall = /tools\/dependabot-alert-snapshot\.sh/g;
   assert.equal([...eligibility.matchAll(helperCall)].length, 1);
   assert.equal([...decide.matchAll(helperCall)].length, 1);
   assert.equal([...enable.matchAll(helperCall)].length, 1);
-  assert.match(eligibility, /lookup_completed=true/);
-  assert.match(eligibility, /open_count=\$open_count/);
-  assert.match(eligibility, /--argjson open_security_alerts "\$OPEN_SECURITY_ALERTS"/);
+  assert.match(eligibility, /security-alert-snapshot\.json/);
+  assert.match(decide, /security-alert-snapshot\.json/);
+  assert.match(enable, /enable-security-alert-snapshot\.json/);
   assert.doesNotMatch(eligibility, /secrets\.|PAT|personal.access/i);
+});
+
+test("review changes emit a read-only signal and reuse successful current-base CI", () => {
+  assert.match(reviewSignal, /\n  pull_request_review:\n/);
+  assert.match(reviewSignal, /types:\s*\[submitted, dismissed\]/);
+  assert.match(reviewSignal, /^permissions:\s*\{\}/m);
+  assert.match(reviewSignal, /permissions:\s*\{\}/g);
+  assert.match(reviewSignal, /dependabot\[bot\]/);
+  assert.match(reviewSignal, /head\.repo\.full_name == github\.repository/);
+  assert.doesNotMatch(reviewSignal, /checkout|gh api|pull-requests:\s*write|contents:\s*write/);
+  assert.match(controller, /workflows:\s*\["CI and Release", "Dependabot review signal"\]/);
+  assert.match(controller, /workflow_run\.name == 'Dependabot review signal'/);
+  assert.equal(
+    [...controller.matchAll(
+      /actions\/runs\?event=pull_request&head_sha=.*&status=success&per_page=100/g,
+    )].length,
+    2,
+  );
+  assert.equal(
+    [...controller.matchAll(/no successful current-base CI run/g)].length,
+    2,
+  );
+  assert.match(controller, /\.actor\.login == "dependabot\[bot\]"/);
 });
 
 test("controller runs only after CI and keeps mutation in a narrow trusted job", () => {
   assert.match(controller, /workflow_run:/);
-  assert.match(controller, /workflows:\s*\["CI and Release"\]/);
+  assert.match(
+    controller,
+    /workflows:\s*\["CI and Release", "Dependabot review signal"\]/,
+  );
   assert.match(controller, /types:\s*\[completed\]/);
   assert.match(controller, /pull-requests:\s*write/);
   assert.doesNotMatch(controller, /issues:\s*write/);
@@ -60,7 +91,9 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(controller, /-f head="\$EXPECTED_HEAD_OID"/);
   assert.match(controller, /EXPECTED_HEAD_OID:\s*\$\{\{\s*needs\.decide\.outputs\.expected_head_oid\s*\}\}/);
   assert.match(controller, /mergeMethod:\s*SQUASH/);
-  assert.match(controller, /github\.event\.workflow_run\.head_sha/);
+  assert.match(controller, /--slurpfile ci_run ci-run\.json/);
+  assert.match(controller, /headSha:\s*\$ci\.head_sha/);
+  assert.match(controller, /baseSha:\s*\$ci\.verified_base_sha/);
   assert.match(controller, /github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha/);
   assert.match(controller, /dependabot \/ eligibility/);
   assert.match(controller, /appSlug:\s*\.app\.slug, appId:\s*\.app\.id/);
@@ -97,6 +130,7 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(enable, /pulls\/\$PR_NUMBER\/reviews\?per_page=100/);
   assert.match(enable, /enable-controller-input\.json/);
   assert.match(enable, /jq -e '\.eligible == true' enable-controller-decision\.json/);
+  assert.match(enable, /actions:\s*read/);
   assert.ok(
     enable.indexOf("enable-controller-decision.json")
       < enable.indexOf("enablePullRequestAutoMerge"),
@@ -113,7 +147,7 @@ test("workflow permissions remain scoped to the jobs that need them", () => {
 });
 
 test("all actions are pinned and pull request code is never checked out", () => {
-  for (const workflow of [eligibility, controller]) {
+  for (const workflow of [eligibility, controller, reviewSignal]) {
     for (const reference of workflow.matchAll(/uses:\s*([^\s#]+)/g)) {
       assert.match(reference[1], /@[0-9a-f]{40}$/, reference[1]);
     }

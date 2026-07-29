@@ -2,7 +2,7 @@ name: Dependabot auto-merge controller
 
 on:
   workflow_run:
-    workflows: ["CI and Release"]
+    workflows: ["CI and Release", "Dependabot review signal"]
     types: [completed]
 
 permissions: {}
@@ -10,10 +10,19 @@ permissions: {}
 jobs:
   decide:
     if: >-
-      github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
-      github.event.workflow_run.pull_requests[0] != null
+      github.event.workflow_run.pull_requests[0] != null &&
+      (
+        (
+          github.event.workflow_run.name == 'CI and Release' &&
+          github.event.workflow_run.event == 'pull_request' &&
+          github.event.workflow_run.actor.login == 'dependabot[bot]'
+        ) ||
+        (
+          github.event.workflow_run.name == 'Dependabot review signal' &&
+          github.event.workflow_run.event == 'pull_request_review'
+        )
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -38,51 +47,65 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
-          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > pr.json
-          test "$(jq -r .head.sha pr.json)" = "$RUN_HEAD_SHA"
           gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
             --jq '.[].filename' | jq -Rsc 'split("\n") | map(select(length > 0))' > changed-files.json
-          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$RUN_HEAD_SHA/check-runs?per_page=100" \
+          head_sha="$(jq -r .head.sha pr.json)"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" \
             --jq '.check_runs' | jq -s 'add' > checks.json
           gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
             | jq -s 'add' > reviews.json
           gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -r .base.ref pr.json)" \
             --jq .commit.sha > base-sha.txt
-          tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY" \
-            > open-security-alerts.txt
+          tools/dependabot-alert-snapshot.sh \
+            "$GITHUB_REPOSITORY" '[]' "$(cat changed-files.json)" \
+            > security-alert-snapshot.json
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$head_sha&status=success&per_page=100" \
+            --jq '.workflow_runs' \
+            | jq -e -s \
+                --arg base_sha "$(cat base-sha.txt)" \
+                --arg head_sha "$head_sha" \
+                --argjson pr_number "$PR_NUMBER" '
+                  add
+                  | map(select(
+                      .name == "CI and Release"
+                      and .event == "pull_request"
+                      and .conclusion == "success"
+                      and .head_sha == $head_sha
+                      and .actor.login == "dependabot[bot]"
+                      and any(
+                        .pull_requests[]?;
+                        .number == $pr_number and .base.sha == $base_sha
+                      )
+                    ))
+                  | sort_by(.updated_at)
+                  | (last // error("no successful current-base CI run"))
+                  | . + {verified_base_sha: $base_sha}
+                ' > ci-run.json
           {
             echo "base_sha=$(cat base-sha.txt)"
-            echo "head_sha=$(jq -r .head.sha pr.json)"
+            echo "head_sha=$head_sha"
             echo "node_id=$(jq -r .node_id pr.json)"
           } >> "$GITHUB_OUTPUT"
       - name: Evaluate CI completion against the current head
         id: decision
-        env:
-          ACTOR: ${{ github.event.workflow_run.actor.login }}
-          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          RUN_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
-          RUN_EVENT: ${{ github.event.workflow_run.event }}
-          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           jq -n \
-            --arg actor "$ACTOR" \
-            --arg run_conclusion "$RUN_CONCLUSION" \
-            --arg run_base_sha "$RUN_BASE_SHA" \
-            --arg run_event "$RUN_EVENT" \
-            --arg run_head_sha "$RUN_HEAD_SHA" \
             --arg current_base_sha "$(cat base-sha.txt)" \
-            --argjson open_security_alerts "$(cat open-security-alerts.txt)" \
             --slurpfile pr pr.json \
             --slurpfile changed_files changed-files.json \
             --slurpfile checks checks.json \
             --slurpfile reviews reviews.json \
+            --slurpfile ci_run ci-run.json \
+            --slurpfile security_alerts security-alert-snapshot.json \
             '($pr[0]) as $pull |
+            ($ci_run[0]) as $ci |
             ($reviews[0] | group_by(.user.login) | map(max_by(.submitted_at))) as $latest_reviews |
             {
               pullRequest: {
-                actor: $actor,
+                actor: $ci.actor.login,
                 author: $pull.user.login,
                 baseRef: $pull.base.ref,
                 baseRepository: $pull.base.repo.full_name,
@@ -94,15 +117,16 @@ jobs:
                 mergeable: $pull.mergeable
               },
               workflowRun: {
-                event: $run_event,
-                conclusion: $run_conclusion,
-                headSha: $run_head_sha,
-                baseSha: $run_base_sha
+                event: $ci.event,
+                conclusion: $ci.conclusion,
+                headSha: $ci.head_sha,
+                baseSha: $ci.verified_base_sha
               },
               currentBaseSha: $current_base_sha,
               securityAlerts: {
-                lookupCompleted: true,
-                openCount: $open_security_alerts
+                lookupCompleted: $security_alerts[0].lookupCompleted,
+                openCount: $security_alerts[0].openCount,
+                securityUpdate: $security_alerts[0].securityUpdate
               },
               changedFiles: $changed_files[0],
               review: {
@@ -141,6 +165,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      actions: read
       checks: read
       contents: write
       pull-requests: write
@@ -157,14 +182,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.decide.outputs.pull_request_number }}
           PULL_REQUEST_NODE_ID: ${{ needs.decide.outputs.pull_request_node_id }}
-          RUN_ACTOR: ${{ github.event.workflow_run.actor.login }}
-          RUN_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
-          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          RUN_EVENT: ${{ github.event.workflow_run.event }}
-          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          open_count="$(tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY")"
-          test "$open_count" -eq 0
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > enable-pr.json
           test "$(jq -r .node_id enable-pr.json)" = "$PULL_REQUEST_NODE_ID"
           test "$(jq -r .head.sha enable-pr.json)" = "$EXPECTED_HEAD_OID"
@@ -185,23 +203,46 @@ jobs:
             --jq '.check_runs' | jq -s 'add' > enable-checks.json
           gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
             | jq -s 'add' > enable-reviews.json
+          tools/dependabot-alert-snapshot.sh \
+            "$GITHUB_REPOSITORY" '[]' "$(cat enable-changed-files.json)" \
+            > enable-security-alert-snapshot.json
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$EXPECTED_HEAD_OID&status=success&per_page=100" \
+            --jq '.workflow_runs' \
+            | jq -e -s \
+                --arg base_sha "$EXPECTED_BASE_SHA" \
+                --arg head_sha "$EXPECTED_HEAD_OID" \
+                --argjson pr_number "$PR_NUMBER" '
+                  add
+                  | map(select(
+                      .name == "CI and Release"
+                      and .event == "pull_request"
+                      and .conclusion == "success"
+                      and .head_sha == $head_sha
+                      and .actor.login == "dependabot[bot]"
+                      and any(
+                        .pull_requests[]?;
+                        .number == $pr_number and .base.sha == $base_sha
+                      )
+                    ))
+                  | sort_by(.updated_at)
+                  | (last // error("no successful current-base CI run"))
+                  | . + {verified_base_sha: $base_sha}
+                ' > enable-ci-run.json
           jq -n \
-            --arg actor "$RUN_ACTOR" \
-            --arg run_conclusion "$RUN_CONCLUSION" \
-            --arg run_base_sha "$RUN_BASE_SHA" \
-            --arg run_event "$RUN_EVENT" \
-            --arg run_head_sha "$RUN_HEAD_SHA" \
             --arg current_base_sha "$(cat enable-base-sha.txt)" \
-            --argjson open_security_alerts "$open_count" \
             --slurpfile pr enable-pr.json \
             --slurpfile changed_files enable-changed-files.json \
             --slurpfile checks enable-checks.json \
             --slurpfile reviews enable-reviews.json \
+            --slurpfile ci_run enable-ci-run.json \
+            --slurpfile security_alerts enable-security-alert-snapshot.json \
             '($pr[0]) as $pull |
+            ($ci_run[0]) as $ci |
             ($reviews[0] | group_by(.user.login) | map(max_by(.submitted_at))) as $latest_reviews |
             {
               pullRequest: {
-                actor: $actor,
+                actor: $ci.actor.login,
                 author: $pull.user.login,
                 baseRef: $pull.base.ref,
                 baseRepository: $pull.base.repo.full_name,
@@ -213,15 +254,16 @@ jobs:
                 mergeable: $pull.mergeable
               },
               workflowRun: {
-                event: $run_event,
-                conclusion: $run_conclusion,
-                headSha: $run_head_sha,
-                baseSha: $run_base_sha
+                event: $ci.event,
+                conclusion: $ci.conclusion,
+                headSha: $ci.head_sha,
+                baseSha: $ci.verified_base_sha
               },
               currentBaseSha: $current_base_sha,
               securityAlerts: {
-                lookupCompleted: true,
-                openCount: $open_security_alerts
+                lookupCompleted: $security_alerts[0].lookupCompleted,
+                openCount: $security_alerts[0].openCount,
+                securityUpdate: $security_alerts[0].securityUpdate
               },
               changedFiles: $changed_files[0],
               review: {

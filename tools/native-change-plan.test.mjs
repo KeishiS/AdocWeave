@@ -116,6 +116,8 @@ test("成果物へ影響しない既知の文書とfixtureだけを明示的に�
     "tools/release-workflow-policy.test.mjs",
     "tools/dependabot-alert-inventory.sh",
     "tools/dependabot-alert-inventory.test.mjs",
+    "tools/dependabot-alert-snapshot.sh",
+    "tools/dependabot-alert-snapshot.test.mjs",
     "tools/dependabot-auto-merge-policy.mjs",
     "tools/dependabot-auto-merge-policy.test.mjs",
     "tools/dependabot-auto-merge-workflow.test.mjs",

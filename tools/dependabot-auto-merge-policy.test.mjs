@@ -61,6 +61,7 @@ function controllerInput() {
     securityAlerts: {
       lookupCompleted: true,
       openCount: 0,
+      securityUpdate: false,
     },
     changedFiles: [...input.changedFiles],
     review: {
@@ -190,6 +191,12 @@ for (const [name, mutate, expected] of [
   ["controller alert lookup missing", (input) => {
     delete input.securityAlerts;
   }, "open-security-alert-or-lookup"],
+  ["controller security update", (input) => {
+    input.securityAlerts.securityUpdate = true;
+  }, "open-security-alert-or-lookup"],
+  ["controller security state missing", (input) => {
+    delete input.securityAlerts.securityUpdate;
+  }, "open-security-alert-or-lookup"],
   ["draft", (input) => { input.pullRequest.draft = true; }, "draft"],
   ["conflict", (input) => { input.pullRequest.mergeable = false; }, "merge-conflict-or-unknown"],
   ["unknown mergeability", (input) => { input.pullRequest.mergeable = null; }, "merge-conflict-or-unknown"],
@@ -234,6 +241,7 @@ function strictRuleset(include = ["~DEFAULT_BRANCH"], exclude = []) {
   return {
     target: "branch",
     enforcement: "active",
+    bypass_actors: [],
     conditions: { ref_name: { include, exclude } },
     rules: [
       {
@@ -288,6 +296,23 @@ for (const [name, mutate] of [
   ["inactive enforcement", (ruleset) => {
     ruleset.enforcement = "disabled";
   }],
+  ["GitHub Actions bypass", (ruleset) => {
+    ruleset.bypass_actors.push({
+      actor_id: policy.requiredCheckAppId,
+      actor_type: "Integration",
+      bypass_mode: "always",
+    });
+  }],
+  ["repository role bypass", (ruleset) => {
+    ruleset.bypass_actors.push({
+      actor_id: 5,
+      actor_type: "RepositoryRole",
+      bypass_mode: "always",
+    });
+  }],
+  ["missing bypass inventory", (ruleset) => {
+    delete ruleset.bypass_actors;
+  }],
   ["non-strict status checks", (ruleset) => {
     ruleset.rules[0].parameters.strict_required_status_checks_policy = false;
   }],
@@ -328,13 +353,23 @@ test("invalid and broadened policies fail closed", () => {
     (changed) => { changed.allowSecurityUpdates = true; },
     (changed) => { changed.requiresStrictStatusChecks = false; },
     (changed) => { changed.requiredApprovals = 0; },
+    (changed) => { changed.requiredCheckAppId = 1; },
     (changed) => { changed.requiredChecks.push(changed.requiredChecks[0]); },
+    (changed) => { changed.requiredChecks[0] = "easy-check"; },
     (changed) => { changed.allowedUpdates[0].dependencyTypes.push("indirect"); },
     (changed) => {
       const npm = changed.allowedUpdates.find(
         (entry) => entry.packageEcosystem === "npm",
       );
       npm.dependencyTypes.push("direct:production");
+    },
+    (changed) => { changed.allowedUpdates[0].directory = "/other"; },
+    (changed) => { changed.allowedUpdates[0].changedFiles.push("src/*"); },
+    (changed) => {
+      changed.allowedUpdates.push({
+        ...changed.allowedUpdates[0],
+        directory: "/other",
+      });
     },
     (changed) => { changed.allowedUpdates[0].updateTypes = ["version-update:semver-minor"]; },
     (changed) => { changed.allowedUpdates.push({

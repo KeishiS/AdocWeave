@@ -3,9 +3,28 @@ import { readFile } from "node:fs/promises";
 const DEPENDABOT_LOGIN = "dependabot[bot]";
 const DEPENDABOT_BRANCH = /^dependabot\/[a-z0-9_-]+\/[a-zA-Z0-9._/-]+$/;
 const SAFE_TEXT = /^[a-zA-Z0-9@._:/,+-]+$/;
+const GITHUB_ACTIONS_APP_ID = 15368;
+const REQUIRED_CHECKS = new Set([
+  "quality / dependencies",
+  "quality / fuzz",
+  "quality / nix-package",
+  "quality / verify",
+]);
 const ALLOWED_DEPENDENCY_TYPES = new Map([
   ["cargo", new Set(["direct:production", "direct:development"])],
   ["npm", new Set(["direct:development"])],
+]);
+const ALLOWED_UPDATE_BOUNDARIES = new Map([
+  ["cargo:/", new Set(["Cargo.toml", "Cargo.lock", "crates/*/Cargo.toml"])],
+  [
+    "cargo:/editors/zed",
+    new Set(["editors/zed/Cargo.toml", "editors/zed/Cargo.lock"]),
+  ],
+  ["cargo:/fuzz", new Set(["fuzz/Cargo.toml", "fuzz/Cargo.lock"])],
+  [
+    "npm:/editors/vscode",
+    new Set(["editors/vscode/package.json", "editors/vscode/package-lock.json"]),
+  ],
 ]);
 
 export function validatePolicy(policy) {
@@ -23,11 +42,12 @@ export function validatePolicy(policy) {
       || policy.requiresStrictStatusChecks !== true
       || !Number.isSafeInteger(policy.requiredApprovals)
       || policy.requiredApprovals < 1
-      || !Number.isSafeInteger(policy.requiredCheckAppId)
-      || policy.requiredCheckAppId < 1) {
+      || policy.requiredCheckAppId !== GITHUB_ACTIONS_APP_ID) {
     throw new Error("Dependabot auto-merge limits must fail closed");
   }
-  if (!uniqueStrings(policy.requiredChecks) || policy.requiredChecks.length === 0) {
+  if (!uniqueStrings(policy.requiredChecks)
+      || policy.requiredChecks.length !== REQUIRED_CHECKS.size
+      || policy.requiredChecks.some((name) => !REQUIRED_CHECKS.has(name))) {
     throw new Error("Dependabot required checks must be a non-empty unique list");
   }
   if (!Array.isArray(policy.allowedUpdates) || policy.allowedUpdates.length === 0) {
@@ -36,8 +56,9 @@ export function validatePolicy(policy) {
   const boundaries = new Set();
   for (const update of policy.allowedUpdates) {
     const boundary = `${update.packageEcosystem}:${update.directory}`;
+    const allowedFiles = ALLOWED_UPDATE_BOUNDARIES.get(boundary);
     if (boundaries.has(boundary)
-        || !["cargo", "npm"].includes(update.packageEcosystem)
+        || !allowedFiles
         || !/^\/(?:[a-z0-9._-]+(?:\/[a-z0-9._-]+)*)?$/.test(update.directory)
         || !uniqueStrings(update.dependencyTypes)
         || !uniqueStrings(update.updateTypes)
@@ -46,7 +67,9 @@ export function validatePolicy(policy) {
           (value) => !ALLOWED_DEPENDENCY_TYPES.get(update.packageEcosystem)?.has(value),
         )
         || update.updateTypes.some((value) => value !== "version-update:semver-patch")
-        || update.changedFiles.some((value) => !safeFilePattern(value))) {
+        || update.changedFiles.some(
+          (value) => !safeFilePattern(value) || !allowedFiles.has(value),
+        )) {
       throw new Error(`invalid Dependabot update boundary: ${boundary}`);
     }
     boundaries.add(boundary);
@@ -106,7 +129,8 @@ export function evaluateEligibility(input) {
 function validateSecurityAlerts(securityAlerts, reasons) {
   if (securityAlerts?.lookupCompleted !== true
       || !Number.isSafeInteger(securityAlerts.openCount)
-      || securityAlerts.openCount !== 0) {
+      || securityAlerts.openCount !== 0
+      || securityAlerts.securityUpdate !== false) {
     reasons.push("open-security-alert-or-lookup");
   }
 }
@@ -186,6 +210,8 @@ export function evaluateStrictRulesetProtection(input) {
     const requiredStatusChecks = statusRule?.parameters?.required_status_checks;
     return ruleset?.target === "branch"
       && ruleset.enforcement === "active"
+      && Array.isArray(ruleset.bypass_actors)
+      && ruleset.bypass_actors.length === 0
       && Array.isArray(references?.include)
       && references.include.some(
         (pattern) => pattern === "~DEFAULT_BRANCH" || pattern === `refs/heads/${policy.baseBranch}`,
