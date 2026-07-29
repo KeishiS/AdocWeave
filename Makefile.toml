@@ -481,6 +481,10 @@ dependencies = [
   "test-vscode-release-package",
 ]
 
+[tasks.release-global-candidate]
+description = "Build and runtime-test the exact global archives uploaded by candidate CI"
+dependencies = ["release-global-artifacts", "browser-runtime-check"]
+
 [tasks.browser-runtime-check]
 description = "Run the release-intent browser archive in isolated, fallback, and bundler Chromium paths"
 dependencies = ["test-browser-smoke", "test-browser-bundler"]
@@ -773,6 +777,12 @@ dependencies = [
 description = "Run formatting, generated-file, workflow, release, platform, and repository policy checks"
 dependencies = [
   "ci-preflight",
+  "quality-fast-after-preflight",
+]
+
+[tasks.quality-fast-after-preflight]
+description = "Run fast source checks not covered by the candidate preflight"
+dependencies = [
   "platform-contract",
   "docs-check",
   "adoc-check-targets",

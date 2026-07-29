@@ -154,6 +154,11 @@ export function validateReleaseWorkflowPolicy({
       "github.event_name == 'pull_request' || github.ref == 'refs/heads/main'") {
     fail("pull requests and main pushes must pass quality while tags reuse main quality");
   }
+  requireNeeds(releaseJobs.quality, ["changes"], "quality must consume the tested change plan");
+  if (releaseJobs.quality?.with?.common_preflight_scheduled !==
+      "${{ needs.changes.outputs.preflight_required == 'true' }}") {
+    fail("quality must skip only the common preflight that candidate CI schedules separately");
+  }
 
   const changes = releaseJobs.changes;
   const changeRun = step(changes, (item) => item.id === "changes", "fast change planner is missing").run;
@@ -177,6 +182,16 @@ export function validateReleaseWorkflowPolicy({
     "nix develop .#ci -c cargo make ci-preflight",
     "candidate preflight must use its canonical local task",
   );
+  if (preflight?.["continue-on-error"] !== undefined &&
+      preflight["continue-on-error"] !== false) {
+    fail("candidate preflight job must not continue after failure");
+  }
+  const preflightStep = step(preflight, (item) =>
+    item.name === "Candidate common preflight", "candidate preflight step is missing");
+  if (preflightStep["continue-on-error"] !== undefined &&
+      preflightStep["continue-on-error"] !== false) {
+    fail("candidate preflight step must not continue after failure");
+  }
 
   const releasePlan = releaseJobs["release-plan"];
   if (releasePlan?.if !== "needs.changes.outputs.preflight_required == 'true'") {
@@ -230,6 +245,42 @@ export function validateReleaseWorkflowPolicy({
   requireNeeds(releaseJobs["native-smoke"], ["changes", "build-native"], "native smoke must consume native builds");
   requireNeeds(releaseJobs["verify-candidate"], ["changes", "native-smoke", "build-global"], "partial candidate dependency edge is incomplete");
   requireNeeds(releaseJobs["installation-e2e"], ["changes", "verify-candidate"], "installation must consume a verified native candidate");
+
+  const mergeGate = releaseJobs["merge-gate"];
+  if (mergeGate?.name !== "quality / verify" ||
+      mergeGate?.if !== "always() && github.event_name == 'pull_request'") {
+    fail("the stable quality / verify context must be the final pull request gate");
+  }
+  requireNeeds(
+    mergeGate,
+    [
+      "changes",
+      "quality",
+      "preflight",
+      "release-plan",
+      "build-native",
+      "native-smoke",
+      "build-global",
+      "verify-candidate",
+      "installation-e2e",
+    ],
+    "the final pull request gate must wait for quality and every selected candidate stage",
+  );
+  const mergeGateRun = step(mergeGate, (item) =>
+    item.name === "Required pull request result aggregation",
+  "final pull request aggregation step is missing").run;
+  for (const [command, message] of [
+    ['test "$QUALITY_RESULT" = success', "final gate must require source quality"],
+    ['test "$PREFLIGHT_RESULT" = success', "final gate must require candidate preflight"],
+    ['test "$RELEASE_PLAN_RESULT" = success', "final gate must require candidate planning"],
+    ['test "$BUILD_GLOBAL_RESULT" = success', "final gate must require selected global build"],
+    ['test "$BUILD_NATIVE_RESULT" = success', "final gate must require selected native builds"],
+    ['test "$NATIVE_SMOKE_RESULT" = success', "final gate must require selected native smoke"],
+    ['test "$VERIFY_CANDIDATE_RESULT" = success', "final gate must require candidate verification"],
+    ['test "$INSTALLATION_RESULT" = success', "final gate must require selected installation E2E"],
+  ]) {
+    requireCommand(mergeGateRun, command, message);
+  }
 
   const nativeBuildRun = step(releaseJobs["build-native"], (item) =>
     item.name === "Target archive builds", "native build step is missing").run;
@@ -324,15 +375,11 @@ export function validateReleaseWorkflowPolicy({
     fail("release workflow must not cache executable build tools");
   }
 
-  const globalRun = step(releaseJobs["build-global"], (item) =>
-    item.name === "Browser, Zed, and VS Code artifact build and verification",
-  "global artifact step is missing").run;
-  requireCommand(globalRun, "cargo make release-global-artifacts", "global uploaded artifacts must pass their complete gate");
   const browserAcceptance = step(releaseJobs["build-global"], (item) =>
-    item.name === "Browser release archive runtime and bundler acceptance",
-  "global browser archive acceptance is missing");
+    item.name === "Browser, Zed, and VS Code candidate build and runtime verification",
+  "global candidate build and browser acceptance is missing");
   if (browserAcceptance.if !== undefined) {
-    fail("browser archive acceptance must run for every global candidate");
+    fail("global candidate build and browser acceptance must always run together");
   }
   if (releaseJobs["build-global"]?.["continue-on-error"] !== undefined &&
       releaseJobs["build-global"]["continue-on-error"] !== false) {
@@ -343,8 +390,8 @@ export function validateReleaseWorkflowPolicy({
     fail("browser archive acceptance must not continue after failure");
   }
   if (browserAcceptance.run !==
-      "nix develop .#ci -c cargo make browser-runtime-check") {
-    fail("global candidates must use the exact browser archive gate command");
+      "nix develop .#ci -c cargo make release-global-candidate") {
+    fail("global candidates must use the exact combined archive gate command");
   }
   const smokeRun = step(smokeDoc.jobs?.smoke, (item) =>
     item.name === "Extracted release binary smoke tests", "native smoke is missing").run;
@@ -399,7 +446,6 @@ export function validateReleaseWorkflowPolicy({
   }
 
   for (const [name, task, timeout] of [
-    ["source-fast", "quality-fast", 10],
     ["rust", "quality-rust", 25],
     ["adapters", "quality-adapters", 25],
     ["dependencies", "dependency-governance", 15],
@@ -410,13 +456,33 @@ export function validateReleaseWorkflowPolicy({
     const run = (contractJobs[name]?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
     requireCommand(run, `nix develop .#ci -c cargo make ${task}`, `${name} must use its canonical local task`);
   }
+  const completeFast = step(contractJobs["source-fast"], (item) =>
+    item.name === "Complete fast source policy execution",
+  "complete fast source step is missing");
+  if (completeFast.if !== "${{ !inputs.common_preflight_scheduled }}" ||
+      completeFast.run !== "nix develop .#ci -c cargo make quality-fast") {
+    fail("non-candidate source-fast must retain the complete canonical gate");
+  }
+  const remainingFast = step(contractJobs["source-fast"], (item) =>
+    item.name === "Fast source policy execution after candidate preflight",
+  "post-preflight fast source step is missing");
+  if (remainingFast.if !== "${{ inputs.common_preflight_scheduled }}" ||
+      remainingFast.run !== "nix develop .#ci -c cargo make quality-fast-after-preflight") {
+    fail("candidate source-fast must avoid repeating the common preflight");
+  }
+  requireTimeout(contractJobs["source-fast"], 10, "source-fast quality job must have a timeout");
   requireNeeds(
-    contractJobs.verify,
+    contractJobs.aggregate,
     ["source-fast", "rust", "adapters", "dependencies", "fuzz", "nix-package"],
     "the stable required check must aggregate every local gate unit",
   );
-  if (contractJobs.verify?.if !== "always()") fail("the required aggregate must report failures reliably");
-  requireTimeout(contractJobs.verify, 5, "required aggregate must have a timeout");
+  if (contractJobs.aggregate?.if !== "always()") {
+    fail("the reusable quality aggregate must report failures reliably");
+  }
+  requireTimeout(contractJobs.aggregate, 5, "reusable quality aggregate must have a timeout");
+  if (contractJobs.verify !== undefined) {
+    fail("reusable quality must reserve the quality / verify context for the final candidate gate");
+  }
   if (contractJobs["nix-package"]?.if !== "inputs.run_nix_package") {
     fail("Nix package validation must be controlled by an explicit caller input");
   }
@@ -435,8 +501,10 @@ export function validateReleaseWorkflowPolicy({
     ],
   });
   requireTask(tasks, "quality-fast", {
+    dependencies: ["ci-preflight", "quality-fast-after-preflight"],
+  });
+  requireTask(tasks, "quality-fast-after-preflight", {
     dependencies: [
-      "ci-preflight",
       "platform-contract",
       "docs-check",
       "adoc-check-targets",
@@ -472,6 +540,9 @@ export function validateReleaseWorkflowPolicy({
   });
   requireTask(tasks, "browser-runtime-check", {
     dependencies: ["test-browser-smoke", "test-browser-bundler"],
+  });
+  requireTask(tasks, "release-global-candidate", {
+    dependencies: ["release-global-artifacts", "browser-runtime-check"],
   });
   requireTask(tasks, "quality", {
     dependencies: ["quality-fast", "quality-rust", "quality-adapters"],

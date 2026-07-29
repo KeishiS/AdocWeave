@@ -70,7 +70,8 @@ xref:../user-guide/release-installation.adoc#browser-library-deployment[Browser 
 Browser packageは展開前のarchiveを2 MiB以下、archive内のraw WASMを1.25 MiB以下とします。
 global成果物へ影響するPull Requestとrelease用main candidateでは公開archiveを展開し、
 分離されたChromium環境、通常のChromium環境およびbundlerで構築した経路から同じ公開APIを実行して、
-この性能予算と実行時の互換性を確認します。
+この性能予算と実行時の互換性を確認します。静的なarchive検査と実行検査は一つのtask graphで行い、
+実行検査後に同じarchiveをcandidateとして保存します。
 この上限を定めた時点の基準値はraw WASMが1,085,621 byte、archiveが277,152 byte
 （約271 KiB）です。raw WASMの上限には基準値から約21%の余裕を設けます。archiveの2 MiBという上限は、
 圧縮方式の変更や収録物の拡張を妨げないための余裕を含みます。上限を変更する場合は、実際の成果物を計測し、
@@ -152,6 +153,8 @@ Browser package、Zed拡張またはVS Code拡張だけに影響する場合はg
 成果物のbuildと配布計画の生成は、``cargo make ci-preflight``が成功した後に開始します。
 この事前検査では書式、生成file、workflow policy、release contractおよび変更pathの分類を確認します。
 成果物を作らないPull Requestと、公開済みversionの通常の``main`` pushでは配布計画を生成しません。
+Pull Requestの``quality / verify``はsource qualityに加え、変更に応じて選択したbuild、smoke test、
+candidate検証およびinstallation E2Eが完了してから成功します。
 
 release manifestのversionに対応するtagが存在する通常の``main`` pushではsource quality gateを実行し、
 release candidateを構築しません。未公開versionへ更新したrelease用Pull Requestが``main``へ統合されてから
