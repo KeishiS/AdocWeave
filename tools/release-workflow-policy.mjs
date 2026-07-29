@@ -313,6 +313,24 @@ export function validateReleaseWorkflowPolicy({
     item.name === "Browser, Zed, and VS Code artifact build and verification",
   "global artifact step is missing").run;
   requireCommand(globalRun, "cargo make release-global-artifacts", "global uploaded artifacts must pass their complete gate");
+  const browserAcceptance = step(releaseJobs["build-global"], (item) =>
+    item.name === "Browser release archive runtime and bundler acceptance",
+  "release-intent browser archive acceptance is missing");
+  if (browserAcceptance.if !== "needs.changes.outputs.release_main == 'true'") {
+    fail("browser archive acceptance may only run for release-intent main");
+  }
+  if (releaseJobs["build-global"]?.["continue-on-error"] !== undefined &&
+      releaseJobs["build-global"]["continue-on-error"] !== false) {
+    fail("global candidate job must not continue after a browser acceptance failure");
+  }
+  if (browserAcceptance["continue-on-error"] !== undefined &&
+      browserAcceptance["continue-on-error"] !== false) {
+    fail("browser archive acceptance must not continue after failure");
+  }
+  if (browserAcceptance.run !==
+      "nix develop .#ci -c cargo make browser-runtime-check") {
+    fail("release-intent global candidates must use the exact browser archive gate command");
+  }
   const smokeRun = step(smokeDoc.jobs?.smoke, (item) =>
     item.name === "Extracted release binary smoke tests", "native smoke is missing").run;
   requireCommand(smokeRun, "node tools/native-release-smoke.mjs", "native smoke must inspect extracted artifacts");
@@ -430,6 +448,9 @@ export function validateReleaseWorkflowPolicy({
       "test-vscode-release-package",
       "test-cross-runtime",
     ],
+  });
+  requireTask(tasks, "browser-runtime-check", {
+    dependencies: ["test-browser-smoke", "test-browser-bundler"],
   });
   requireTask(tasks, "quality", {
     dependencies: ["quality-fast", "quality-rust", "quality-adapters"],

@@ -206,6 +206,9 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
       - name: Browser, Zed, and VS Code artifact build and verification
         run: nix develop .#ci -c cargo make release-global-artifacts
+      - name: Browser release archive runtime and bundler acceptance
+        if: needs.changes.outputs.release_main == 'true'
+        run: nix develop .#ci -c cargo make browser-runtime-check
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-global

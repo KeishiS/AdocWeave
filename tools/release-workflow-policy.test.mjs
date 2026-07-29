@@ -156,6 +156,81 @@ test("candidate jobs cannot broaden the explicit artifact plan", () => {
   );
 });
 
+test("release-intent global candidates cannot omit the browser archive runtime gate", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "nix develop .#ci -c cargo make browser-runtime-check",
+        "nix develop .#ci -c cargo make test-browser-release-package",
+      ),
+    }),
+    /exact browser archive gate command/,
+  );
+  for (const bypass of [" || true", "; true"]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        release: inputs.release.replace(
+          "nix develop .#ci -c cargo make browser-runtime-check",
+          `nix develop .#ci -c cargo make browser-runtime-check${bypass}`,
+        ),
+      }),
+      /exact browser archive gate command/,
+      bypass,
+    );
+  }
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "      - name: Browser release archive runtime and bundler acceptance\n" +
+          "        if: needs.changes.outputs.release_main == 'true'",
+        "      - name: Browser release archive runtime and bundler acceptance\n" +
+          "        if: needs.changes.outputs.global_required == 'true'",
+      ),
+    }),
+    /only run for release-intent main/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        'dependencies = ["test-browser-smoke", "test-browser-bundler"]',
+        'dependencies = ["test-browser-smoke", "test-browser-release-package"]',
+      ),
+    }),
+    /browser-runtime-check dependencies must exactly match/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "  build-global:\n" +
+          "    if: needs.changes.outputs.global_required == 'true'",
+        "  build-global:\n" +
+          "    continue-on-error: true\n" +
+          "    if: needs.changes.outputs.global_required == 'true'",
+      ),
+    }),
+    /global candidate job must not continue/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "      - name: Browser release archive runtime and bundler acceptance\n" +
+          "        if: needs.changes.outputs.release_main == 'true'",
+        "      - name: Browser release archive runtime and bundler acceptance\n" +
+          "        if: needs.changes.outputs.release_main == 'true'\n" +
+          "        continue-on-error: true",
+      ),
+    }),
+    /browser archive acceptance must not continue/,
+  );
+});
+
 test("release workflow cannot cache executable build tools", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(

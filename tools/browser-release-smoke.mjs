@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { assertBrowserArtifactSizes } from "./browser-release-budget.mjs";
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
@@ -34,8 +35,7 @@ try {
   const packageRoot = join(root, entries[0]);
   const archiveBytes = (await stat(archive)).size;
   const wasmBytes = (await stat(join(packageRoot, "wasm/adocweave_wasm_bg.wasm"))).size;
-  if (archiveBytes > 2 * 1024 * 1024) throw new Error(`archive exceeds 2 MiB: ${archiveBytes}`);
-  if (wasmBytes > 1024 * 1024) throw new Error(`WASM exceeds 1 MiB: ${wasmBytes}`);
+  assertBrowserArtifactSizes(archiveBytes, wasmBytes);
 
   const requests = [];
   const server = createServer(async (request, response) => {
@@ -151,13 +151,13 @@ async function inspectPage(chromium, url, temporaryRoot) {
         const wait = () => {
           const status = document.querySelector('#status').value;
           if (status.startsWith('ready:') || status.startsWith('error:')) {
-            const response = globalThis.adocweaveLastResult.result;
+            const response = globalThis.adocweaveLastResult;
             resolve({
               status,
               html: document.querySelector('#preview').textContent,
               isolated: crossOriginIsolated,
               packageVersion: globalThis.adocweavePackageVersion,
-              resultPackageVersion: globalThis.adocweaveLastResult.packageVersion,
+              resultPackageVersion: response.packageVersion,
               wasmPackageVersion: response.packageVersion,
               analysisPackageVersion: response.parse.packageVersion,
               projectionPackageVersion: response.projection.packageVersion,
