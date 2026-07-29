@@ -43,7 +43,7 @@ use check_output::{
 use commands::check::Options as CheckOptions;
 use commands::format::Options as FormatOptions;
 use commands::html_policy::StylesheetArgument;
-use commands::model::{CommandId, LookupError};
+use commands::model::{CommandId, LookupError, OptionId, OptionSpec};
 use file_workflow::{PendingWrite, atomic_write_all, colorize_lines};
 const DEFAULT_PREVIEW_PORT: u16 = 4000;
 const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
@@ -283,20 +283,38 @@ enum CompletionShell {
     PowerShell,
 }
 
+fn take_option_value(
+    option: &OptionSpec,
+    arguments: &mut impl Iterator<Item = String>,
+) -> Result<String, CliError> {
+    let missing = option
+        .missing_value()
+        .expect("only valued options request a following value");
+    arguments
+        .next()
+        .ok_or_else(|| CliError::Usage(format!("{} requires {missing}", option.canonical_name())))
+}
+
 fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, CliError> {
     let arguments = arguments.collect::<Vec<_>>();
     let Some(command) = arguments.first() else {
         return Err(CliError::Usage("a command is required".to_owned()));
     };
 
-    if matches!(command.as_str(), "-h" | "--help") {
+    if commands::model::root_option(command).is_some_and(|option| option.id == OptionId::Help) {
         return Ok(Action::Help { command: None });
     }
-    if matches!(command.as_str(), "-V" | "--version") {
+    if commands::model::root_option(command).is_some_and(|option| option.id == OptionId::Version) {
         let mut arguments = arguments.into_iter().skip(1);
         let json = match arguments.next().as_deref() {
             None => false,
-            Some("--json") if arguments.next().is_none() => true,
+            Some(argument)
+                if commands::model::version_option(argument)
+                    .is_some_and(|option| option.id == OptionId::Json)
+                    && arguments.next().is_none() =>
+            {
+                true
+            }
             Some(argument) => {
                 return Err(CliError::Usage(format!(
                     "unexpected version argument: {argument}"
@@ -371,28 +389,30 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
     let mut no_config = false;
     let mut color = ColorChoice::Auto;
     while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "-h" | "--help" => {
+        let option = commands::model::option_for_command(command_id, &argument);
+        match option.map(|option| option.id) {
+            Some(OptionId::Help) => {
                 return Ok(Action::Help {
                     command: Some(command_id),
                 });
             }
-            "--config" => {
+            Some(OptionId::Config) => {
                 if no_config {
                     return Err(CliError::Usage(
                         "--config cannot be combined with --no-config".to_owned(),
                     ));
                 }
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--config requires a file".to_owned()))?;
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 if config_path.replace(PathBuf::from(value)).is_some() {
                     return Err(CliError::Usage(
                         "--config cannot be specified more than once".to_owned(),
                     ));
                 }
             }
-            "--no-config" => {
+            Some(OptionId::NoConfig) => {
                 if config_path.is_some() {
                     return Err(CliError::Usage(
                         "--no-config cannot be combined with --config".to_owned(),
@@ -400,10 +420,11 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
                 }
                 no_config = true;
             }
-            "--color" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--color requires a value".to_owned()))?;
+            Some(OptionId::Color) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 color = match value.as_str() {
                     "auto" => ColorChoice::Auto,
                     "always" => ColorChoice::Always,
@@ -411,13 +432,14 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
                     _ => return Err(CliError::Usage(format!("unknown color choice: {value}"))),
                 };
             }
-            "--glob" if matches!(command_id, CommandId::Check | CommandId::Format) => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--glob requires a pattern".to_owned()))?;
+            Some(OptionId::Glob) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 glob_patterns.push(value);
             }
-            "--json" if command_id == CommandId::Check => {
+            Some(OptionId::Json) => {
                 if format_selected && diagnostic_format != DiagnosticFormat::Json {
                     return Err(CliError::Usage(
                         "--json conflicts with another --format value".to_owned(),
@@ -426,10 +448,11 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
                 diagnostic_format = DiagnosticFormat::Json;
                 format_selected = true;
             }
-            "--format" if command_id == CommandId::Check => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--format requires a value".to_owned()))?;
+            Some(OptionId::DiagnosticFormat) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 let parsed = DiagnosticFormat::parse(&value)?;
                 if format_selected && parsed != diagnostic_format {
                     return Err(CliError::Usage(
@@ -439,24 +462,22 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
                 diagnostic_format = parsed;
                 format_selected = true;
             }
-            "--fail-on" if command_id == CommandId::Check => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--fail-on requires a level".to_owned()))?;
+            Some(OptionId::FailOn) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 fail_on = FailOn::parse(&value)?;
             }
-            "--summary" if matches!(command_id, CommandId::Check | CommandId::Format) => {
-                summary = true
-            }
-            "--fix" if command_id == CommandId::Check => fix = true,
-            "--dry-run" if matches!(command_id, CommandId::Check | CommandId::Format) => {
-                dry_run = true
-            }
-            "--list-rules" if command_id == CommandId::Check => list_rules = true,
-            "--enable-rule" if command_id == CommandId::Check => {
-                let code = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--enable-rule requires a code".to_owned()))?;
+            Some(OptionId::Summary) => summary = true,
+            Some(OptionId::Fix) => fix = true,
+            Some(OptionId::DryRun) => dry_run = true,
+            Some(OptionId::ListRules) => list_rules = true,
+            Some(OptionId::EnableRule) => {
+                let code = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 let descriptor = diagnostic::lint_rule(&code).ok_or_else(|| {
                     CliError::Usage(format!("unknown or non-enableable rule: {code}"))
                 })?;
@@ -469,50 +490,56 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
                     enabled_rules.push(descriptor.id);
                 }
             }
-            "--check" if command_id == CommandId::Format => format_check = true,
-            "--write" if command_id == CommandId::Format => format_write = true,
-            "--diff" if command_id == CommandId::Format => format_diff = true,
-            "--include" => include = true,
-            "--local-targets" if command_id == CommandId::Check => local_targets = true,
-            "--project-root" if command_id == CommandId::Check => {
-                let value = arguments.next().ok_or_else(|| {
-                    CliError::Usage("--project-root requires a directory".to_owned())
-                })?;
+            Some(OptionId::FormatCheck) => format_check = true,
+            Some(OptionId::FormatWrite) => format_write = true,
+            Some(OptionId::FormatDiff) => format_diff = true,
+            Some(OptionId::Include) => include = true,
+            Some(OptionId::LocalTargets) => local_targets = true,
+            Some(OptionId::ProjectRoot) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 project_root = Some(PathBuf::from(value));
             }
-            "--complete" if command_id == CommandId::Convert => complete = true,
-            "--css" if matches!(command_id, CommandId::Convert | CommandId::Preview) => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--css requires a file".to_owned()))?;
+            Some(OptionId::Complete) => complete = true,
+            Some(OptionId::Css) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 css.push(StylesheetArgument::File(PathBuf::from(value)));
             }
-            "--css-url" if matches!(command_id, CommandId::Convert | CommandId::Preview) => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--css-url requires a URL".to_owned()))?;
+            Some(OptionId::CssUrl) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 css.push(StylesheetArgument::Url(value));
             }
-            "--bind" if command_id == CommandId::Preview => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--bind requires an address".to_owned()))?;
+            Some(OptionId::Bind) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 bind = value
                     .parse()
                     .map_err(|_| CliError::Usage(format!("invalid bind address: {value}")))?;
             }
-            "--port" if command_id == CommandId::Preview => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--port requires a value".to_owned()))?;
+            Some(OptionId::Port) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 port = value
                     .parse()
                     .map_err(|_| CliError::Usage(format!("invalid port: {value}")))?;
             }
-            "--debounce-ms" if command_id == CommandId::Preview => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--debounce-ms requires a value".to_owned()))?;
+            Some(OptionId::Debounce) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 debounce_ms = value
                     .parse()
                     .map_err(|_| CliError::Usage(format!("invalid debounce interval: {value}")))?;
@@ -522,30 +549,44 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
                     ));
                 }
             }
-            "--allow-external" if command_id == CommandId::Preview => allow_external = true,
-            "--base-dir" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| CliError::Usage("--base-dir requires a directory".to_owned()))?;
+            Some(OptionId::AllowExternal) => allow_external = true,
+            Some(OptionId::BaseDir) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 base_dir = Some(PathBuf::from(value));
             }
-            "--allow-root" => {
-                let value = arguments.next().ok_or_else(|| {
-                    CliError::Usage("--allow-root requires a directory".to_owned())
-                })?;
+            Some(OptionId::AllowRoot) => {
+                let value = take_option_value(
+                    option.expect("matched option id has a specification"),
+                    &mut arguments,
+                )?;
                 allowed_roots.push(PathBuf::from(value));
             }
-            "-" if input.is_none() && !stdin_selected => stdin_selected = true,
-            "-" => {
+            Some(OptionId::Version) => {
+                unreachable!("version is a root-only option")
+            }
+            None if command_id == CommandId::ConfigShow
+                && commands::model::option_by_name(&argument).is_some() =>
+            {
+                return Err(CliError::Usage(
+                    "config show only accepts --config or --no-config".to_owned(),
+                ));
+            }
+            None if argument == "-" && input.is_none() && !stdin_selected => stdin_selected = true,
+            None if argument == "-" => {
                 return Err(CliError::Usage(
                     "standard input cannot be combined with file paths".to_owned(),
                 ));
             }
-            _ if input.is_none() && !stdin_selected => input = Some(PathBuf::from(argument)),
-            _ if matches!(command_id, CommandId::Check | CommandId::Format) && !stdin_selected => {
+            None if input.is_none() && !stdin_selected => input = Some(PathBuf::from(argument)),
+            None if matches!(command_id, CommandId::Check | CommandId::Format)
+                && !stdin_selected =>
+            {
                 additional_inputs.push(PathBuf::from(argument));
             }
-            _ => {
+            None => {
                 return Err(CliError::Usage(format!(
                     "unexpected argument after input: {argument}"
                 )));
@@ -1219,6 +1260,17 @@ fn render_completion_script(
             .collect::<Vec<_>>()
             .join(",")
     };
+    let completion_words = |command| {
+        let mut words = Vec::new();
+        for option in commands::model::options_for_command(command) {
+            for value in option.names.iter().chain(option.candidates()) {
+                if !words.contains(value) {
+                    words.push(*value);
+                }
+            }
+        }
+        words
+    };
     let mut contract = format!("# adocweave-command-tree root={}\n", tree.roots.join(","));
     for group in &tree.nested {
         contract.push_str(&format!(
@@ -1227,9 +1279,20 @@ fn render_completion_script(
             group.children.join(",")
         ));
     }
+    for (command, path) in &tree.commands {
+        for option in commands::model::options_for_command(*command) {
+            contract.push_str(&format!(
+                "# adocweave-option command={} names={} metavar={} values={}\n",
+                path.join("/"),
+                option.names.join(","),
+                option.metavar().unwrap_or("-"),
+                option.candidates().join(","),
+            ));
+        }
+    }
     let rendered = match shell {
         CompletionShell::Bash => {
-            let declarations = tree
+            let nested_declarations = tree
                 .nested
                 .iter()
                 .enumerate()
@@ -1241,7 +1304,22 @@ fn render_completion_script(
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            let branches = tree
+            let option_declarations = tree
+                .commands
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (command, _))| {
+                    let options = completion_words(*command);
+                    (!options.is_empty()).then(|| {
+                        format!(
+                            "  local command_options_{index}=\"{}\"",
+                            shell_words(&options)
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let nested_branches = tree
                 .nested
                 .iter()
                 .enumerate()
@@ -1262,25 +1340,55 @@ fn render_completion_script(
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let option_branches = tree
+                .commands
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (command, path))| {
+                    let options = completion_words(*command);
+                    if options.is_empty() {
+                        return None;
+                    }
+                    let conditions = path
+                        .iter()
+                        .enumerate()
+                        .map(|(position, token)| {
+                            format!(
+                                "${{COMP_WORDS[{position_plus_one}]}} == {token}",
+                                position_plus_one = position + 1
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ");
+                    Some(format!(
+                        "  elif [[ ${{COMP_CWORD}} -gt {path_len} && {conditions} ]]; then\n    COMPREPLY=( $(compgen -W \"${{command_options_{index}}}\" -f -- \"${{COMP_WORDS[COMP_CWORD]}}\") )",
+                        path_len = path.len(),
+                    ))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             r#"_adocweave() {
   local commands="@ROOTS@"
-@DECLARATIONS@
-  local options="--format --fail-on --summary --fix --check --write --diff --dry-run --config --no-config --include --base-dir --allow-root --local-targets --project-root --complete --css --css-url --bind --port --debounce-ms --allow-external --help --version"
+@NESTED_DECLARATIONS@
+@OPTION_DECLARATIONS@
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${commands}" -- "${COMP_WORDS[COMP_CWORD]}") )
-@BRANCHES@
+@NESTED_BRANCHES@
+@OPTION_BRANCHES@
   else
-    COMPREPLY=( $(compgen -W "${options}" -f -- "${COMP_WORDS[COMP_CWORD]}") )
+    COMPREPLY=( $(compgen -f -- "${COMP_WORDS[COMP_CWORD]}") )
   fi
 }
 complete -F _adocweave adocweave
 "#
             .replace("@ROOTS@", &shell_words(&tree.roots))
-            .replace("@DECLARATIONS@", &declarations)
-            .replace("@BRANCHES@", &branches)
+            .replace("@NESTED_DECLARATIONS@", &nested_declarations)
+            .replace("@OPTION_DECLARATIONS@", &option_declarations)
+            .replace("@NESTED_BRANCHES@", &nested_branches)
+            .replace("@OPTION_BRANCHES@", &option_branches)
         }
         CompletionShell::Zsh => {
-            let branches = tree
+            let nested_branches = tree
                 .nested
                 .iter()
                 .map(|group| {
@@ -1302,22 +1410,46 @@ complete -F _adocweave adocweave
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let option_branches = tree
+                .commands
+                .iter()
+                .filter_map(|(command, path)| {
+                    let options = completion_words(*command);
+                    if options.is_empty() {
+                        return None;
+                    }
+                    let conditions = path
+                        .iter()
+                        .enumerate()
+                        .map(|(position, token)| {
+                            format!("$words[{}] == {token}", position + 2)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ");
+                    Some(format!(
+                        "  elif [[ $CURRENT -gt {current} && {conditions} ]]; then\n    _values 'arguments for {parent}' {options}",
+                        current = path.len() + 1,
+                        parent = path.join(" "),
+                        options = shell_words(&options),
+                    ))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             r#"#compdef adocweave
 _adocweave() {
   if (( CURRENT == 2 )); then
     _values 'commands' @ROOTS@
-@BRANCHES@
+@NESTED_BRANCHES@
+@OPTION_BRANCHES@
   else
-    _values 'arguments' \
-      --format --fail-on --summary --fix --check --write --diff --dry-run \
-      --config --no-config --include --base-dir --allow-root --local-targets \
-      --project-root --complete --css --css-url --bind --port --debounce-ms --allow-external
+    _files
   fi
 }
 compdef _adocweave adocweave
 "#
             .replace("@ROOTS@", &shell_words(&tree.roots))
-            .replace("@BRANCHES@", &branches)
+            .replace("@NESTED_BRANCHES@", &nested_branches)
+            .replace("@OPTION_BRANCHES@", &option_branches)
         }
         CompletionShell::Fish => {
             let nested = tree
@@ -1332,6 +1464,39 @@ compdef _adocweave adocweave
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let options = tree
+                .commands
+                .iter()
+                .flat_map(|(command, path)| {
+                    commands::model::options_for_command(*command).map(move |option| {
+                        let names = option
+                            .names
+                            .iter()
+                            .map(|name| {
+                                if let Some(long) = name.strip_prefix("--") {
+                                    format!("-l {long}")
+                                } else {
+                                    format!("-s {}", &name[1..])
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let value = option.metavar().map_or_else(String::new, |_| {
+                            let candidates = option.candidates();
+                            if candidates.is_empty() {
+                                " -r".to_owned()
+                            } else {
+                                format!(" -r -a '{}'", shell_words(candidates))
+                            }
+                        });
+                        format!(
+                            "complete -c adocweave -f -n '__adocweave_uses_command {}' {names}{value}",
+                            path.join(" "),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             r#"function __adocweave_at_path
   set -l expected $argv
   set -l words (commandline -opc)
@@ -1340,17 +1505,21 @@ compdef _adocweave adocweave
     test $words[(math $index + 1)] = $expected[$index]; or return 1
   end
 end
+function __adocweave_uses_command
+  set -l expected $argv
+  set -l words (commandline -opc)
+  test (count $words) -ge (math (count $expected) + 1); or return 1
+  for index in (seq (count $expected))
+    test $words[(math $index + 1)] = $expected[$index]; or return 1
+  end
+end
 complete -c adocweave -f -n '__fish_use_subcommand' -a '@ROOTS@'
 @NESTED@
-complete -c adocweave -l format -x -a 'human json github sarif'
-complete -c adocweave -l fail-on -x -a 'error warning never'
-complete -c adocweave -l config -r
-complete -c adocweave -l write
-complete -c adocweave -l diff
-complete -c adocweave -l fix
+@OPTIONS@
 "#
             .replace("@ROOTS@", &shell_words(&tree.roots))
             .replace("@NESTED@", &nested)
+            .replace("@OPTIONS@", &options)
         }
         CompletionShell::PowerShell => {
             let mut groups = tree.nested.iter().collect::<Vec<_>>();
@@ -1376,18 +1545,38 @@ complete -c adocweave -l fix
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let option_branches = tree
+                .commands
+                .iter()
+                .filter_map(|(command, path)| {
+                    let options = completion_words(*command);
+                    if options.is_empty() {
+                        return None;
+                    }
+                    let conditions = path
+                        .iter()
+                        .enumerate()
+                        .map(|(position, token)| format!("$words[{}] -eq '{token}'", position + 1))
+                        .collect::<Vec<_>>()
+                        .join(" -and ");
+                    Some(format!(
+                        "  }} elseif ({conditions}) {{\n    @({options})",
+                        options = powershell_words(&options),
+                    ))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             r#"Register-ArgumentCompleter -Native -CommandName adocweave -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
   $words = @($commandAst.CommandElements | ForEach-Object { $_.Value })
   $candidates = if ($false) {
     @()
 @NESTED@
+@OPTION_BRANCHES@
   } elseif ($words.Count -le 2) {
     @(@ROOTS@)
   } else {
-    @('--format','--fail-on','--summary','--fix','--check','--write','--diff',
-      '--dry-run','--config','--no-config','--include','--base-dir','--allow-root',
-      '--bind','--port','--debounce-ms','--allow-external')
+    @()
   }
   $candidates |
     Where-Object { $_ -like "$wordToComplete*" } |
@@ -1396,6 +1585,7 @@ complete -c adocweave -l fix
 "#
             .replace("@ROOTS@", &powershell_words(&tree.roots))
             .replace("@NESTED@", &nested)
+            .replace("@OPTION_BRANCHES@", &option_branches)
         }
     };
     format!("{contract}{rendered}")
@@ -1405,10 +1595,7 @@ fn run() -> Result<ExitCode, CliError> {
     match parse_arguments(env::args().skip(1))? {
         Action::Help { command } => {
             let help = command.map_or_else(commands::model::root_help, |id| {
-                commands::model::spec(id)
-                    .help
-                    .expect("document commands have command help")
-                    .to_owned()
+                commands::model::command_help(id).expect("document commands have command help")
             });
             print!("{help}");
             Ok(ExitCode::SUCCESS)
@@ -1735,6 +1922,7 @@ mod tests {
                 root_usage: "",
                 summary: "inspect workspace",
                 help: None,
+                help_options: &[],
             },
             model::CommandSpec {
                 id: CommandId::Help,
@@ -1742,6 +1930,7 @@ mod tests {
                 root_usage: "",
                 summary: "show project status",
                 help: None,
+                help_options: &[],
             },
         ];
         let trees = [
@@ -1793,6 +1982,80 @@ mod tests {
     }
 
     #[test]
+    fn completion_renderers_use_every_model_option_and_value_candidate() {
+        let tree = model::completion_tree();
+        for shell in [
+            CompletionShell::Bash,
+            CompletionShell::Zsh,
+            CompletionShell::Fish,
+            CompletionShell::PowerShell,
+        ] {
+            let output = render_completion_script(shell, &tree);
+            let body_marker = match shell {
+                CompletionShell::Bash => "_adocweave() {",
+                CompletionShell::Zsh => "#compdef adocweave",
+                CompletionShell::Fish => "function __adocweave_at_path",
+                CompletionShell::PowerShell => {
+                    "Register-ArgumentCompleter -Native -CommandName adocweave"
+                }
+            };
+            let body = output
+                .split_once(body_marker)
+                .map(|(_, body)| body)
+                .expect("completion output contains its shell-specific body");
+            for (command, path) in &tree.commands {
+                for option in model::options_for_command(*command) {
+                    let contract = format!(
+                        "# adocweave-option command={} names={} metavar={} values={}",
+                        path.join("/"),
+                        option.names.join(","),
+                        option.metavar().unwrap_or("-"),
+                        option.candidates().join(","),
+                    );
+                    assert!(output.contains(&contract), "{shell:?}: {contract}");
+                    for token in option.names.iter().chain(option.candidates()) {
+                        let rendered = match shell {
+                            CompletionShell::Fish if token.starts_with("--") => {
+                                format!("-l {}", &token[2..])
+                            }
+                            CompletionShell::Fish if token.starts_with('-') => {
+                                format!("-s {}", &token[1..])
+                            }
+                            _ => (*token).to_owned(),
+                        };
+                        assert!(
+                            body.contains(&rendered),
+                            "{shell:?} did not render {token} from {command:?} as {rendered}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn parser_accepts_every_typed_value_candidate() {
+        for candidate in model::option(model::OptionId::DiagnosticFormat).candidates() {
+            assert!(
+                parse_arguments(arguments(&["check", "--format", candidate])).is_ok(),
+                "diagnostic format {candidate}"
+            );
+        }
+        for candidate in model::option(model::OptionId::FailOn).candidates() {
+            assert!(
+                parse_arguments(arguments(&["check", "--fail-on", candidate])).is_ok(),
+                "failure level {candidate}"
+            );
+        }
+        for candidate in model::option(model::OptionId::Color).candidates() {
+            assert!(
+                parse_arguments(arguments(&["symbols", "--color", candidate])).is_ok(),
+                "color choice {candidate}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_file_input() {
         let Action::Run(parsed) =
             parse_arguments(arguments(&["convert", "document.adoc"])).expect("valid arguments")
@@ -1837,9 +2100,7 @@ mod tests {
 
     #[test]
     fn preview_help_explains_options_defaults_and_external_access() {
-        let help = model::spec(CommandId::Preview)
-            .help
-            .expect("preview has command help");
+        let help = model::command_help(CommandId::Preview).expect("preview has command help");
         let root_help = model::root_help();
         let port = DEFAULT_PREVIEW_PORT.to_string();
         let debounce = DEFAULT_PREVIEW_DEBOUNCE_MS.to_string();
