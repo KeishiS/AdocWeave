@@ -1,12 +1,56 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { MAX_BROWSER_WASM_BYTES } from "./browser-release-budget.mjs";
-import { retryBrowserStartup } from "./browser-startup.mjs";
+import {
+  BROWSER_STARTUP_ATTEMPTS,
+  BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS,
+  BROWSER_STARTUP_TOTAL_TIMEOUT_MS,
+  retryBrowserStartup,
+} from "./browser-startup.mjs";
+
+test("browser startup production bounds and process diagnostics remain explicit", () => {
+  assert.equal(BROWSER_STARTUP_ATTEMPTS, 2);
+  assert.equal(BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS, 20_000);
+  assert.equal(BROWSER_STARTUP_TOTAL_TIMEOUT_MS, 45_000);
+
+  const smoke = readFileSync(
+    new URL("./browser-release-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(smoke, /profile-\$\{crypto\.randomUUID\(\)\}/);
+  assert.match(smoke, /browser\.kill\("SIGTERM"\)/);
+  assert.match(smoke, /browser\.kill\("SIGKILL"\)/);
+  assert.match(smoke, /stderr = `\$\{stderr\}\$\{chunk\}`\.slice\(-8192\)/);
+  assert.match(smoke, /browser exited before DevTools became ready \(\$\{status\}\)/);
+});
+
+test("browser startup aborts an in-flight attempt at the total deadline", async () => {
+  const started = Date.now();
+  const error = await retryBrowserStartup(
+    ({ signal }) => new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }),
+    { attempts: 2, totalTimeoutMs: 20 },
+  ).then(
+    () => undefined,
+    (failure) => failure,
+  );
+
+  assert.match(error.message, /20 ms total timeout/);
+  assert.ok(Date.now() - started < 500);
+});
 
 test("browser startup retries once with an attempt-specific diagnostic", async () => {
   const attempts = [];
