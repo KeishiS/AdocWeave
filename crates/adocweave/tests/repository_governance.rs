@@ -499,7 +499,7 @@ fn roadmap_uses_unique_github_issue_urls() {
     assert!(!numbers.is_empty(), "roadmap has no GitHub Issues");
 
     let expected = [
-        "19", "33", "34", "82", "83", "84", "86", "232", "233", "234",
+        "19", "33", "34", "82", "83", "84", "86", "233", "234", "236", "237", "238",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -850,4 +850,26 @@ fn core_package_has_no_native_host_or_runtime_dependency() {
     assert!(!core.contains("tokio"));
     assert!(cli.contains("adocweave = { path = \"../adocweave\" }"));
     assert!(cli.contains("adocweave-host = { path = \"../adocweave-host\" }"));
+}
+
+#[test]
+fn workspace_state_has_no_filesystem_or_host_dependency() {
+    let root = repository_root();
+    let manifest = fs::read_to_string(root.join("crates/adocweave-workspace/Cargo.toml"))
+        .expect("workspace manifest");
+    let source =
+        fs::read_to_string(root.join("crates/adocweave-workspace/src/lib.rs")).expect("workspace");
+    let host =
+        fs::read_to_string(root.join("crates/adocweave-host/src/local_resource.rs")).expect("host");
+
+    assert!(!manifest.contains("adocweave-host"));
+    for forbidden in [
+        "std::fs",
+        "LocalFilesystemPolicy",
+        "LocalFilesystemSession",
+        "LogicalSourceId",
+    ] {
+        assert!(!source.contains(forbidden), "{forbidden}");
+    }
+    assert!(host.contains("pub fn scan_utf8("));
 }

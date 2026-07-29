@@ -1,13 +1,11 @@
 //! Shared native-host infrastructure for AdocWeave.
 //!
-//! This crate owns dependency tracking and the bounded local-filesystem boundary.
-//! It deliberately does not depend on the parser core.
+//! This crate owns the bounded local-filesystem boundary. It deliberately does
+//! not depend on the parser core or workspace state.
 
-mod dependency_graph;
 mod local_resource;
 mod local_target;
 
-pub use dependency_graph::DependencyGraph;
 pub use local_resource::{
     LoadedFilesystemSource, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
     ResourceBudget, ResourceError, ResourceLimits,

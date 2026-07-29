@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DependencyGraph<K: Ord> {
+pub(crate) struct DependencyGraph<K: Ord> {
     forward: BTreeMap<K, BTreeSet<K>>,
     reverse: BTreeMap<K, BTreeSet<K>>,
 }
@@ -16,7 +16,7 @@ impl<K: Ord> Default for DependencyGraph<K> {
 }
 
 impl<K: Clone + Ord> DependencyGraph<K> {
-    pub fn replace(&mut self, key: K, dependencies: BTreeSet<K>) {
+    pub(crate) fn replace(&mut self, key: K, dependencies: BTreeSet<K>) {
         if let Some(previous) = self.forward.remove(&key) {
             for dependency in previous {
                 remove_reverse(&mut self.reverse, &dependency, &key);
@@ -31,7 +31,7 @@ impl<K: Clone + Ord> DependencyGraph<K> {
         self.forward.insert(key, dependencies);
     }
 
-    pub fn remove(&mut self, key: &K) {
+    pub(crate) fn remove(&mut self, key: &K) {
         if let Some(previous) = self.forward.remove(key) {
             for dependency in previous {
                 remove_reverse(&mut self.reverse, &dependency, key);
@@ -39,11 +39,12 @@ impl<K: Clone + Ord> DependencyGraph<K> {
         }
     }
 
-    pub fn affected(&self, key: &K) -> BTreeSet<K> {
+    pub(crate) fn affected(&self, key: &K) -> BTreeSet<K> {
         closure(key.clone(), |item| self.reverse.get(item))
     }
 
-    pub fn dependencies(&self, key: &K) -> BTreeSet<K> {
+    #[cfg(test)]
+    pub(crate) fn dependencies(&self, key: &K) -> BTreeSet<K> {
         let mut output = closure(key.clone(), |item| self.forward.get(item));
         output.remove(key);
         output

@@ -4,13 +4,15 @@
 //! [`WorkspaceSnapshot`] is immutable and can safely move to a worker thread.
 //! Callers accept completed analysis through [`Workspace::accept`] so results
 //! from an older generation cannot replace current dependency information.
+//! Filesystem discovery and reads belong to host adapters; this crate accepts
+//! already validated resource identities and text without performing I/O.
 #![warn(missing_docs)]
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+mod dependency_graph;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use adocweave::output::diagnostics::Severity;
@@ -19,9 +21,7 @@ use adocweave::preprocess::{
     ResourceDocument, ResourceSnapshot, preprocess,
 };
 use adocweave::{AnalysisOptions, Engine, SourceId};
-use adocweave_host::{
-    DependencyGraph, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId, ResourceLimits,
-};
+use dependency_graph::DependencyGraph;
 
 /// Stable, host-defined identity for one workspace resource.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -128,10 +128,31 @@ impl Resource {
     }
 }
 
+/// Bounds applied to verified resources retained in workspace state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResourceLimits {
+    /// Maximum number of distinct resource identities.
+    pub max_files: usize,
+    /// Maximum combined bytes retained across disk and overlay layers.
+    pub max_total_bytes: u64,
+    /// Maximum bytes retained for one resource layer.
+    pub max_resource_bytes: u64,
+}
+
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_files: 10_000,
+            max_total_bytes: 50 * 1024 * 1024,
+            max_resource_bytes: 10 * 1024 * 1024,
+        }
+    }
+}
+
 /// Bounds applied before resources or analysis roots enter workspace state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkspaceLimits {
-    /// Resource count and byte limits shared with host filesystem policy.
+    /// Resource count and byte limits for verified resources supplied by a host.
     pub resources: ResourceLimits,
     /// Maximum number of registered analysis roots.
     pub max_roots: usize,
@@ -167,8 +188,6 @@ pub enum WorkspaceErrorCode {
     Analysis,
     /// Source-origin projection failure.
     Projection,
-    /// Filesystem adapter failure.
-    Filesystem,
 }
 
 /// Workspace error with an optional source origin.
@@ -246,7 +265,6 @@ impl WorkspaceErrorCode {
             Self::Preprocess => "preprocess",
             Self::Analysis => "analysis",
             Self::Projection => "projection",
-            Self::Filesystem => "filesystem",
         }
     }
 }
@@ -828,112 +846,9 @@ fn actual_dependencies(
     dependencies
 }
 
-/// UTF-8 resource loaded by [`scan_filesystem`].
-#[derive(Clone, Debug)]
-pub struct FilesystemResource {
-    /// Canonical filesystem path.
-    pub path: PathBuf,
-    /// Shared immutable UTF-8 text.
-    pub text: Arc<str>,
-}
-
-/// Scans `.adoc` files below canonical roots without following symlinks.
-///
-/// Roots are canonicalized and deduplicated. The scan rejects more than
-/// 100,000 directory entries before loading candidates, then applies the
-/// supplied file and byte limits.
-pub fn scan_filesystem(
-    roots: &[PathBuf],
-    limits: ResourceLimits,
-) -> Result<Vec<FilesystemResource>, WorkspaceError> {
-    let policy = LocalFilesystemPolicy::new(roots.to_vec(), limits)
-        .map_err(|error| WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string()))?;
-    let mut session = policy
-        .session()
-        .map_err(|error| WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string()))?;
-    scan_filesystem_with_session(&mut session)
-}
-
-/// Scans with a caller-owned filesystem session so later reloads retain one budget.
-pub fn scan_filesystem_with_session(
-    session: &mut LocalFilesystemSession,
-) -> Result<Vec<FilesystemResource>, WorkspaceError> {
-    const MAX_SCAN_ENTRIES: usize = 100_000;
-
-    let canonical_roots = session.roots().to_vec();
-    let limits = session.limits();
-    let mut paths = Vec::new();
-    let mut scanned_entries = 0_usize;
-    for root in &canonical_roots {
-        if !root.is_dir() {
-            return Err(WorkspaceError::new(
-                WorkspaceErrorCode::Filesystem,
-                format!("root is not a directory: {}", root.display()),
-            ));
-        }
-        let mut pending = VecDeque::from([root.clone()]);
-        while let Some(path) = pending.pop_front() {
-            let metadata = fs::symlink_metadata(&path).map_err(|error| {
-                WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
-            })?;
-            if metadata.file_type().is_symlink() {
-                continue;
-            }
-            if metadata.is_dir() {
-                let mut children = Vec::new();
-                for child in fs::read_dir(&path).map_err(|error| {
-                    WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
-                })? {
-                    children.push(child.map_err(|error| {
-                        WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
-                    })?);
-                    scanned_entries += 1;
-                    if scanned_entries > MAX_SCAN_ENTRIES {
-                        return Err(WorkspaceError::new(
-                            WorkspaceErrorCode::ResourceLimit,
-                            "filesystem scan entry limit exceeded",
-                        ));
-                    }
-                }
-                children.sort_by_key(fs::DirEntry::file_name);
-                pending.extend(children.into_iter().map(|entry| entry.path()));
-            } else if path.extension().and_then(|value| value.to_str()) == Some("adoc") {
-                paths.push(path);
-                if paths.len() > limits.max_files {
-                    return Err(WorkspaceError::new(
-                        WorkspaceErrorCode::ResourceLimit,
-                        "file limit exceeded",
-                    ));
-                }
-            }
-        }
-    }
-    paths.sort();
-    paths.dedup();
-    paths
-        .into_iter()
-        .map(|path| {
-            let source_id =
-                LogicalSourceId::new(path.to_string_lossy().into_owned()).map_err(|error| {
-                    WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
-                })?;
-            session
-                .read_utf8(source_id, &path)
-                .map(|loaded| {
-                    let (_, text) = loaded.into_parts();
-                    FilesystemResource { path, text }
-                })
-                .map_err(|error| {
-                    WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
-                })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
 
@@ -1116,40 +1031,6 @@ mod tests {
             )
             .expect_err("cancelled");
         assert_eq!(error.code, WorkspaceErrorCode::Cancelled);
-    }
-
-    #[test]
-    fn filesystem_scan_deduplicates_roots_before_applying_limits() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("adocweave-workspace-scan-{unique}"));
-        fs::create_dir(&root).expect("root");
-        fs::write(root.join("root.adoc"), "text\n").expect("resource");
-        let limits = ResourceLimits {
-            max_files: 1,
-            ..ResourceLimits::default()
-        };
-
-        let resources =
-            scan_filesystem(&[root.clone(), root.clone()], limits).expect("deduplicated scan");
-        assert_eq!(resources.len(), 1);
-
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn filesystem_scan_reports_missing_roots_as_filesystem_errors() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let missing = std::env::temp_dir().join(format!("adocweave-workspace-missing-{unique}"));
-
-        let error = scan_filesystem(&[missing], ResourceLimits::default())
-            .expect_err("missing root must fail");
-        assert_eq!(error.code, WorkspaceErrorCode::Filesystem);
     }
 
     #[test]

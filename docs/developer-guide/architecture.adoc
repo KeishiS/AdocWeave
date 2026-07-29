@@ -51,11 +51,12 @@ HTMLやエディター固有の表示規則をParserへ持ち込みません。
 外部resourceを必要とする処理は、利用側アプリが安全性と権限を確認したスナップショットをコアへ渡します。
 
 ``adocweave-workspace``は、disk resource、open overlay、解析root、include依存graphおよび世代付き
-スナップショットをruntime非依存の状態機械として提供します。filesystem pathやURIの検査と読込は
-adapter側に残し、検証済みのresource IDと本文だけをWorkspaceへ渡します。
+スナップショットをruntime非依存かつI/O非依存の状態機械として提供します。filesystem関連crateへ依存せず、
+検証済みのresource IDと本文だけを受け取ります。
 
 Native adapterは``adocweave-host``の``LocalFilesystemSession``を共有します。Linuxではrootの
 directory handleを起点にfileを開いてから読み取り、path検査後に別のfileを開き直しません。
+初期directory列挙、symlink判定、UTF-8読込およびfile数・byte数の上限も同じsessionが担当します。
 論理的なsource ID、不変な本文およびfilesystem provenanceは一つの読込結果として構築します。
 依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
 

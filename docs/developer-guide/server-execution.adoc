@@ -67,15 +67,18 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 ``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
 
-Native側のfile読込は``LocalFilesystemSession``を経由します。このsessionは許可したrootごとの
-filesystem adapterと、全rootで共有するfile数・byte数の上限を所有します。呼出側は公開用の
-``LogicalSourceId``と絶対pathを同時に渡し、読込結果を``LoadedFilesystemSource``として受け取ります。
+Native側のdirectory列挙とfile読込は``LocalFilesystemSession``を経由します。このsessionは許可したrootごとの
+filesystem adapter、symlink判定および全rootで共有するfile数・byte数の上限を所有します。初期走査では
+``.adoc``の通常fileだけを決定的な順序で読み、呼出側がpathから公開用の論理IDを割り当てます。個別読込では
+呼出側が``LogicalSourceId``と絶対pathを同時に渡します。どちらの読込結果も
+``LoadedFilesystemSource``として返します。
 この値は論理IDと不変な本文を一回の読込結果として保持します。検査に使ったcanonical pathはfieldとして
 直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
 相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
 
-Linuxでは、CLIのinclude、Language Serverのworkspace読込および``adocweave-workspace``のfile走査が
-同じhandle相対adapterを使用します。macOSとWindowsでは``StaticSnapshotOnly``を返し、同時に書き換えられる
+Linuxでは、CLIのincludeとLanguage Serverのworkspace走査・読込が同じhandle相対adapterを使用します。
+``adocweave-workspace``はfilesystemへアクセスせず、検証済みの論理IDと本文を取り込みます。
+macOSとWindowsでは``StaticSnapshotOnly``を返し、同時に書き換えられる
 workspaceをsecurity境界として扱いません。
 Language Serverは初回走査とfile変更通知でworkspace単位のsessionを共有します。変更通知では本文cacheを
 使用せずに対象を再度openしますが、走査から継続するfile数・byte数の上限は初期化しません。
