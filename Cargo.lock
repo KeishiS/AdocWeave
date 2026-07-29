@@ -32,6 +32,7 @@ version = "0.19.0"
 dependencies = [
  "adocweave",
  "adocweave-host",
+ "adocweave-workspace",
  "serde",
  "sha2",
  "toml",
