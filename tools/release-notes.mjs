@@ -88,13 +88,30 @@ function markdownList(items) {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
+const MINIMUM_OS_DESCRIPTIONS = {
+  "darwin:14.0": "macOS 14.0以降",
+  "win32:10.0.17763": "Windows 10 version 1809（build 10.0.17763）以降",
+};
+
+function minimumOsDescription(target) {
+  if (target.minimumOsVersion === null) return "";
+  const description = MINIMUM_OS_DESCRIPTIONS[`${target.os}:${target.minimumOsVersion}`];
+  if (!description) {
+    throw new Error(`最小対応OS版の説明がありません：${target.os} ${target.minimumOsVersion}`);
+  }
+  return `、${description}`;
+}
+
 export function buildReleaseNotes(tag) {
   if (tag !== `v${RELEASE_NOTES_VERSION}`) {
     throw new Error(`Release Notesはv${RELEASE_NOTES_VERSION}専用です`);
   }
   const osNames = { darwin: "macOS", linux: "Linux", win32: "Windows" };
   const targets = plan.targets
-    .map((target) => `- ${osNames[target.os]} ${target.architecture}（\`${target.triple}\`）`)
+    .map(
+      (target) =>
+        `- ${osNames[target.os]} ${target.architecture}（\`${target.triple}\`${minimumOsDescription(target)}）`,
+    )
     .join("\n");
   const notes = `## 主な変更\n\n${markdownList(highlights)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +

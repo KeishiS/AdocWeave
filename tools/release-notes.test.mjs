@@ -17,6 +17,8 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
+  assert.match(notes, /macOS 14\.0以降/);
+  assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /#85：`adocweave preview`/);
   assert.match(notes, /起点文書/);
