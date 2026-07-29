@@ -28,7 +28,7 @@ fn run_with_stdin(arguments: &[&str], input: &[u8]) -> Output {
 }
 
 #[cfg(unix)]
-fn preview_get(address: std::net::SocketAddr, path: &str) -> String {
+fn try_preview_get(address: std::net::SocketAddr, path: &str) -> Option<String> {
     use std::io::Read;
     use std::net::TcpStream;
     use std::time::Duration;
@@ -39,12 +39,17 @@ fn preview_get(address: std::net::SocketAddr, path: &str) -> String {
         {
             let mut response = String::new();
             if stream.read_to_string(&mut response).is_ok() {
-                return response;
+                return Some(response);
             }
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    panic!("preview response timed out");
+    None
+}
+
+#[cfg(unix)]
+fn preview_get(address: std::net::SocketAddr, path: &str) -> String {
+    try_preview_get(address, path).expect("preview response timed out")
 }
 
 #[cfg(unix)]
@@ -63,12 +68,11 @@ fn stop_preview(child: &mut std::process::Child) {
 #[cfg(unix)]
 #[test]
 fn preview_sigterm_exits_cleanly_and_releases_the_listener() {
-    use std::net::{Ipv4Addr, TcpListener, TcpStream};
-    use std::time::Duration;
+    use std::net::{Ipv4Addr, TcpListener};
 
     let directory = tempfile::tempdir().expect("tempdir");
     let document = directory.path().join("document.adoc");
-    std::fs::write(&document, "= Preview\n").expect("document");
+    std::fs::write(&document, "= SIGTERM readiness marker\n").expect("document");
     let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
     let address = reservation.local_addr().expect("address");
     drop(reservation);
@@ -83,11 +87,20 @@ fn preview_sigterm_exits_cleanly_and_releases_the_listener() {
         .stderr(Stdio::null())
         .spawn()
         .expect("preview");
-    for _ in 0..100 {
-        if TcpStream::connect(address).is_ok() {
-            break;
+    let Some(response) = try_preview_get(address, "/document") else {
+        let status = child.try_wait().expect("preview status");
+        if status.is_none() {
+            child.kill().expect("stop unready preview");
+            child.wait().expect("reap unready preview");
         }
-        std::thread::sleep(Duration::from_millis(10));
+        panic!("preview did not become ready before SIGTERM; process status: {status:?}");
+    };
+    if !response.starts_with("HTTP/1.1 200 OK\r\n")
+        || !response.contains("SIGTERM readiness marker")
+    {
+        child.kill().expect("stop unexpected preview");
+        child.wait().expect("reap unexpected preview");
+        panic!("preview returned an unexpected readiness response: {response}");
     }
     stop_preview(&mut child);
     TcpListener::bind(address).expect("listener released");
