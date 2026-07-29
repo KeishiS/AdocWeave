@@ -588,8 +588,7 @@ impl WorkspaceResources {
             Vec::new()
         };
         let limits = project_config.resources.limit_plan.analysis_snapshot;
-        let mut retained_files = 0_usize;
-        let mut retained_bytes = 0_u64;
+        let mut budget = adocweave_config::AnalysisSnapshotBudget::new(limits);
         let snapshot = snapshot.try_filter_resources(|id, resource| {
             let allowed = if id == &root_id {
                 true
@@ -604,22 +603,12 @@ impl WorkspaceResources {
                     .is_some_and(|path| allowed_roots.iter().any(|root| path.starts_with(root)))
             };
             if !allowed {
-                return Ok(false);
+                return Ok::<bool, String>(false);
             }
-            let bytes = resource.text().len() as u64;
-            retained_files = retained_files
-                .checked_add(1)
-                .ok_or_else(snapshot_limit_error)?;
-            retained_bytes = retained_bytes
-                .checked_add(bytes)
-                .ok_or_else(snapshot_limit_error)?;
-            if retained_files > limits.max_resources
-                || bytes > limits.max_resource_bytes
-                || retained_bytes > limits.max_total_bytes
-            {
-                return Err(snapshot_limit_error());
-            }
-            Ok(true)
+            budget
+                .charge(resource.text().len() as u64)
+                .map_err(|error| error.to_string())?;
+            Ok::<bool, String>(true)
         })?;
         Ok(WorkspaceInput {
             generation: snapshot.generation(),
@@ -764,10 +753,6 @@ fn scope_and_config_for_path_typed(
         },
         config,
     ))
-}
-
-fn snapshot_limit_error() -> String {
-    "configured analysis snapshot resource limit exceeded".to_owned()
 }
 
 fn strings(values: BTreeSet<ResourceId>) -> BTreeSet<String> {
@@ -1443,6 +1428,31 @@ mod tests {
             .expect_err("root snapshot count limit");
 
         assert!(error.contains("analysis snapshot"), "{error}");
+    }
+
+    #[test]
+    fn shared_scope_fixture_has_the_same_root_and_include_count_contract() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 1, 64, 64, true);
+        let root_path = root.0.join("root.adoc");
+        std::fs::write(
+            &root_path,
+            include_bytes!("../../../fixtures/resource-limits/root-with-include.adoc"),
+        )
+        .expect("root source");
+        std::fs::write(
+            root.0.join("part.adoc"),
+            include_bytes!("../../../fixtures/resource-limits/part.adoc"),
+        )
+        .expect("included source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let mut resources = WorkspaceResources::default();
+
+        let error = resources
+            .load_roots(&[root_uri])
+            .expect_err("root and include exceed count");
+
+        assert!(error.contains("file limit"), "{error}");
     }
 
     #[test]

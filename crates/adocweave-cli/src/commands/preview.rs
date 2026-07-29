@@ -187,11 +187,22 @@ fn build_with_stage_hook(
     mut stage_hook: impl FnMut(BuildStage),
 ) -> Result<preview::Build, Error> {
     ensure_active(cancellation)?;
+    let plan = request.project.resources.limit_plan;
+    let root_limit = plan
+        .analysis_snapshot
+        .max_resource_bytes
+        .min(plan.analysis_snapshot.max_total_bytes);
     let (input, input_fingerprint) =
-        preview::read_dependency(request.input_path).map_err(|source| Error::Read {
-            source_name: request.input_path.display().to_string(),
-            source,
+        preview::read_dependency_bounded(request.input_path, root_limit).map_err(|source| {
+            Error::Read {
+                source_name: request.input_path.display().to_string(),
+                source,
+            }
         })?;
+    let mut root_budget = adocweave_config::AnalysisSnapshotBudget::new(plan.analysis_snapshot);
+    root_budget
+        .charge(u64::try_from(input.len()).unwrap_or(u64::MAX))
+        .map_err(|error| Error::Path(error.to_string()))?;
     ensure_active(cancellation)?;
     let source = std::str::from_utf8(&input).map_err(|error| Error::InvalidUtf8 {
         valid_up_to: error.valid_up_to(),
@@ -204,18 +215,42 @@ fn build_with_stage_hook(
         ensure_active(cancellation)?;
         let prepared = {
             let mut observer = DependencyObserver { dependencies };
+            let root_bytes = u64::try_from(input.len()).unwrap_or(u64::MAX);
+            let limits = adocweave_host::FilesystemReadLimits {
+                max_files: plan
+                    .filesystem_reads
+                    .max_files
+                    .checked_sub(1)
+                    .ok_or_else(|| {
+                        Error::Path("analysis snapshot resource count limit exceeded".to_owned())
+                    })?,
+                max_total_bytes: plan
+                    .filesystem_reads
+                    .max_total_bytes
+                    .checked_sub(root_bytes)
+                    .ok_or_else(|| {
+                        Error::Path("analysis snapshot total byte limit exceeded".to_owned())
+                    })?,
+                max_resource_bytes: plan.filesystem_reads.max_resource_bytes,
+            };
             local_include::prepare_local_tracking(
                 source,
                 source_id,
                 request.base_dir,
                 request.base_dir,
                 request.project_root,
-                request.project.resources.limit_plan.filesystem_reads,
+                limits,
                 &request.project.preprocess,
                 &mut observer,
             )
         }
         .map_err(Error::Include)?;
+        let mut budget = adocweave_config::AnalysisSnapshotBudget::new(plan.analysis_snapshot);
+        for bytes in prepared.projection().resource_lengths() {
+            budget
+                .charge(bytes)
+                .map_err(|error| Error::Path(error.to_string()))?;
+        }
         stage_hook(BuildStage::IncludesPrepared);
         ensure_active(cancellation)?;
         let include_diagnostics = prepared
