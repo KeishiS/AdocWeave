@@ -25,6 +25,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 const highlights = [
   "WASMの要求、前処理、応答およびエラーのwire型を公開schemaから生成し、wire値の検査・変換とコア処理の境界を明確にしました。",
   "filesystemの列挙と読込をhostへ集約し、Workspaceは検証済みの論理ID、本文、snapshotおよび依存関係だけを扱うようにしました。",
+  "project設定のresource上限を、filesystem読込、Workspaceが保持するdisk・overlay、および解析snapshotへ適用する一つの解決済みplanへ統合しました。",
   "前処理と解析で共有する文書外属性と属性展開上限を一つの検証済み処理契約へ統合しました。",
   "前処理、解析、Lintおよび生成元への位置投影へ協調キャンセルを伝播し、取り消し後の部分結果を返さない入口を追加しました。",
   "公開Rust APIとWASM protocol schemaに互換性へ影響する変更があります。次の移行手順を確認してください。",
@@ -34,7 +35,7 @@ const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。前処理設定へdefault付きの属性展開上限を追加しました。worker envelopeは変更していません。`,
-  "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型、前処理とWorkspaceの公開設定・エラー型、およびfilesystem読込の公開境界を変更しました。",
+  "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型、前処理とWorkspaceの公開設定・エラー型、filesystem読込の公開境界、およびresource上限の公開型を変更しました。",
   "CLI引数およびHTML契約はv0.18.0から変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
@@ -46,6 +47,9 @@ const migrationNotes = [
   "前処理と解析を一度に行うRustコードは、同じ文書外属性と属性展開上限を持つ`AnalysisOptions`と`PreprocessOptions`から`EffectiveProcessingOptions::new`を呼び、`preprocess_and_analyze_with_options`または`WorkspaceSnapshot::analyze_with_options`へ渡してください。従来の入口は不一致を`PreprocessedAnalysisError::Options`または`WorkspaceErrorCode::InvalidOptions`として拒否します。",
   "`adocweave-workspace`の`scan_filesystem`、`scan_filesystem_with_session`、`FilesystemResource`および`WorkspaceErrorCode::Filesystem`を削除しました。`LocalFilesystemSession::scan_utf8`でhost側から読込み、検証済みの論理IDと本文を`Workspace::upsert_disk`へ渡してください。読込エラーはWorkspaceへ渡す前にhostの`ResourceError`として処理してください。",
   "`adocweave_host::DependencyGraph`の公開を終了しました。依存関係はWorkspaceが所有するため、解析後は`WorkspaceAnalysis::dependencies`を参照してください。",
+  "`adocweave_host::ResourceLimits`はfilesystem読込専用の`FilesystemReadLimits`へ、`adocweave_workspace::ResourceLimits`はdisk・overlay保持専用の`RetainedResourceLimits`へ置き換えました。以前の型名をimportするコードは、上限を適用する段階に応じた型名へ変更してください。",
+  "`ResourceSettings::limits`は`ResourceSettings::limit_plan`へ変わりました。host adapterは`ResolvedResourceLimitPlan::filesystem_reads`、Workspaceへの取込みは`retained_layers`、解析対象の選択は`analysis_snapshot`を使用してください。`.adocweave.toml`の`resources.max-files`、`max-total-bytes`および`max-resource-bytes`の項目名は変更していません。",
+  "resource上限は段階ごとに独立して検査します。特に、保持上限は同じresourceのdiskとoverlayを別々に加算し、解析snapshot上限は一つのrootから参照できる有効resourceだけを数えます。以前は通過した入力でも新しい保持上限またはsnapshot上限を超える場合があるため、上限エラー時は値を無条件に引き上げず、開いているoverlayとinclude範囲を確認してください。",
   "WASM protocol schema 7では`preprocess.options`へ`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`を追加しました。省略時は従来と同じ32と1048576を使用します。combined requestで`analysisOptions.syntax.limits`へ非既定値を指定する場合は、前処理側にも同じ値を指定してください。不一致は処理前に`invalid-options`として拒否されます。",
   "`PreprocessedAnalysisError`へ`Cancelled`を追加しました。この列挙型を網羅的に`match`するRustコードは、処理の取り消しを扱う分岐を追加してください。協調キャンセルが必要な場合は`preprocess_cancellable`、`preprocess_and_analyze_cancellable_with_options`、`lint_analysis_cancellable`または`PreprocessedAnalysis::project_origins_cancellable`を使用してください。",
   "JSONの`packageVersion`は文字列のままです。source mapの`mapping`も`identity`または`whole-origin`の文字列を維持します。",

@@ -17,6 +17,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /公開Rust APIとWASM protocol schemaに互換性へ影響する変更/);
   assert.match(notes, /wire型を公開schemaから生成/);
   assert.match(notes, /filesystemの列挙と読込をhostへ集約/);
+  assert.match(notes, /resource上限を、filesystem読込、Workspaceが保持するdisk・overlay/);
   assert.match(notes, /文書外属性と属性展開上限を一つの検証済み処理契約へ統合/);
   assert.match(notes, /前処理、解析、Lintおよび生成元への位置投影へ協調キャンセルを伝播/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
@@ -44,6 +45,14 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /hostの`ResourceError`/);
   assert.match(notes, /`adocweave_host::DependencyGraph`の公開を終了/);
   assert.match(notes, /WorkspaceAnalysis::dependencies/);
+  assert.match(notes, /`adocweave_host::ResourceLimits`はfilesystem読込専用の`FilesystemReadLimits`/);
+  assert.match(notes, /`adocweave_workspace::ResourceLimits`はdisk・overlay保持専用/);
+  assert.match(notes, /`ResourceSettings::limits`は`ResourceSettings::limit_plan`/);
+  assert.match(notes, /`ResolvedResourceLimitPlan::filesystem_reads`/);
+  assert.match(notes, /`retained_layers`、解析対象の選択は`analysis_snapshot`/);
+  assert.match(notes, /`.adocweave.toml`の`resources.max-files`/);
+  assert.match(notes, /同じresourceのdiskとoverlayを別々に加算/);
+  assert.match(notes, /一つのrootから参照できる有効resourceだけを数えます/);
   assert.match(notes, /WASM protocol schema 7/);
   assert.match(notes, /`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`/);
   assert.match(notes, /省略時は従来と同じ32と1048576/);

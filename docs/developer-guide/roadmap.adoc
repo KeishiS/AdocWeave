@@ -8,19 +8,6 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 次の設計整理
-
-外部I/O、Workspace状態、意味木の走査、Table解析、解析全体へ渡す設定およびcancellationの
-境界整理に続いて、resource上限の正本を一つにします。
-
-* https://github.com/KeishiS/adocweave/issues/238[resource上限の解決済みplanによる適用]
-
-filesystem読込、Workspaceの保持および解析snapshotへ適用するresource上限は、project設定から
-構築した解決済みplanで区別します。
-
-各作業では、既存の入力と出力だけでなく、処理量の上限、cancellation、UTF-8の範囲、走査順、
-resource budgetおよび不正入力からの回復を先に自動検査で固定します。
-
 == 依存更新の運用
 
 製品versionとは独立して、依存更新の安全な運用を改善します。
