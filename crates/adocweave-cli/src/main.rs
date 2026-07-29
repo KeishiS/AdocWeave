@@ -10,7 +10,6 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use adocweave::output::diagnostics as diagnostic;
-use adocweave::output::formatter::{FormatConfig, format_analysis};
 use adocweave::{
     AnalysisOptions, CancellationCheck, CancellationToken, Engine, OutputLimits, ParseError,
 };
@@ -45,11 +44,10 @@ use check_output::{
     CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, sarif_log, sarif_results,
 };
 use commands::check::Options as CheckOptions;
+use commands::format::Options as FormatOptions;
 use commands::html_policy::StylesheetArgument;
 use commands::model::{CommandId, LookupError};
-use file_workflow::{
-    PendingWrite, atomic_write_all, colorize_lines, safe_write_format_config, unified_diff,
-};
+use file_workflow::{PendingWrite, atomic_write_all, colorize_lines};
 const DEFAULT_PREVIEW_PORT: u16 = 4000;
 const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
 
@@ -171,6 +169,17 @@ fn check_error(error: commands::check::Error) -> CliError {
     }
 }
 
+fn format_error(error: commands::format::Error) -> CliError {
+    match error {
+        commands::format::Error::InvalidUtf8 { valid_up_to } => {
+            CliError::InvalidUtf8 { valid_up_to }
+        }
+        commands::format::Error::Analysis(source) => CliError::Analysis(source),
+        commands::format::Error::Position(source) => CliError::Position(source),
+        commands::format::Error::FormattingRequired => CliError::FormattingRequired,
+    }
+}
+
 fn html_policy_error(error: commands::html_policy::Error) -> CliError {
     match error {
         commands::html_policy::Error::Cancelled => CliError::Analysis(ParseError::Cancelled),
@@ -210,13 +219,7 @@ enum CommandOptions {
         debounce_ms: u64,
     },
     Check(CheckOptions),
-    Format {
-        check: bool,
-        write: bool,
-        diff: bool,
-        dry_run: bool,
-        summary: bool,
-    },
+    Format(FormatOptions),
     Symbols,
     ConfigShow,
 }
@@ -227,7 +230,7 @@ impl CommandOptions {
             Self::Convert { .. } => CommandId::Convert,
             Self::Preview { .. } => CommandId::Preview,
             Self::Check(_) => CommandId::Check,
-            Self::Format { .. } => CommandId::Format,
+            Self::Format(_) => CommandId::Format,
             Self::Symbols => CommandId::Symbols,
             Self::ConfigShow => CommandId::ConfigShow,
         }
@@ -633,13 +636,13 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
             list_rules,
             enabled_rules,
         }),
-        CommandId::Format => CommandOptions::Format {
+        CommandId::Format => CommandOptions::Format(FormatOptions {
             check: format_check,
             write: format_write,
             diff: format_diff,
             dry_run,
             summary,
-        },
+        }),
         CommandId::Symbols => CommandOptions::Symbols,
         CommandId::ConfigShow => CommandOptions::ConfigShow,
         CommandId::Completion | CommandId::Help => {
@@ -684,12 +687,6 @@ fn decode_input(input: &[u8]) -> Result<&str, CliError> {
     std::str::from_utf8(input).map_err(|error| CliError::InvalidUtf8 {
         valid_up_to: error.valid_up_to(),
     })
-}
-
-fn analyze(source: &str, options: &AnalysisOptions) -> Result<adocweave::Analysis, CliError> {
-    Engine::new(options.clone())
-        .analyze(source)
-        .map_err(CliError::Analysis)
 }
 
 fn finish_output(output: String) -> Result<String, CliError> {
@@ -918,18 +915,6 @@ fn process_check(
     .map_err(check_error)
 }
 
-fn process_format(
-    input: &[u8],
-    analysis_options: &AnalysisOptions,
-    format_config: &FormatConfig,
-) -> Result<String, CliError> {
-    let source = decode_input(input)?;
-    let analysis = analyze(source, analysis_options)?;
-    Ok(format_analysis(&analysis, format_config)
-        .map_err(CliError::Position)?
-        .formatted)
-}
-
 fn load_project_config(
     arguments: &Arguments,
 ) -> Result<Option<adocweave_config::ConfigSnapshot>, CliError> {
@@ -1099,7 +1084,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
     let directory_selected = arguments.input.as_ref().is_some_and(|path| path.is_dir());
     let explicit_path_mode = matches!(
         arguments.command,
-        CommandOptions::Format { write: true, .. } | CommandOptions::Format { diff: true, .. }
+        CommandOptions::Format(options) if options.uses_explicit_path_mode()
     ) || matches!(
         arguments.command,
         CommandOptions::Check(CheckOptions { fix: true, .. })
@@ -1122,21 +1107,13 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
         source,
     })?;
     match &arguments.command {
-        CommandOptions::Format {
-            check,
-            write,
-            diff,
-            dry_run,
-            summary,
-        } => {
-            if !check && !write && !diff {
+        CommandOptions::Format(options) => {
+            if !options.supports_multiple_inputs() {
                 return Err(CliError::Usage(
                     "multiple format inputs require --check, --write, or --diff".to_owned(),
                 ));
             }
-            let mut pending = Vec::new();
-            let mut differences = 0_usize;
-            let mut output = String::new();
+            let mut workflow = commands::format::BatchWorkflow::new(*options, paths.len());
             for path in &paths {
                 let snapshot = load_project_config_at(arguments, path, &boundary)?;
                 let config = snapshot.as_ref().map_or_else(
@@ -1179,46 +1156,38 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     )
                     .map_err(CliError::Include)?;
                 }
-                let format_config = if *write || *check || *diff {
-                    safe_write_format_config(&original, &config)
-                } else {
-                    config.format
-                };
+                let format_config = commands::format::format_config(*options, &original, &config);
                 let formatted =
-                    process_format(&original, &config.analysis, &format_config)?.into_bytes();
-                if original == formatted {
-                    continue;
-                }
-                differences += 1;
-                if *diff {
-                    output.push_str(&unified_diff(
-                        path,
-                        decode_input(&original)?,
-                        decode_input(&formatted)?,
-                    ));
-                }
-                if *write && !dry_run {
-                    pending.push(PendingWrite {
-                        path: path.clone(),
-                        original,
-                        replacement: formatted,
-                    });
-                }
+                    commands::format::process(&original, &config.analysis, &format_config)
+                        .map_err(format_error)?
+                        .into_bytes();
+                workflow
+                    .record(path.clone(), original, formatted)
+                    .map_err(format_error)?;
             }
-            if !pending.is_empty() {
-                atomic_write_all(pending)?;
+            let outcome = workflow.finish();
+            let summary = options.summary.then(|| outcome.summary());
+            if !outcome.pending_writes.is_empty() {
+                atomic_write_all(
+                    outcome
+                        .pending_writes
+                        .into_iter()
+                        .map(|write| PendingWrite {
+                            path: write.path,
+                            original: write.original,
+                            replacement: write.replacement,
+                        })
+                        .collect(),
+                )?;
             }
-            if !output.is_empty() {
-                let output = finish_output(colorize_lines(&output, arguments.color))?;
+            if !outcome.output.is_empty() {
+                let output = finish_output(colorize_lines(&outcome.output, arguments.color))?;
                 print!("{output}");
             }
-            if *summary {
-                eprintln!(
-                    "adocweave format: files={}, changed={differences}",
-                    paths.len()
-                );
+            if let Some(summary) = summary {
+                eprintln!("{summary}");
             }
-            Ok(Some(if *check && differences > 0 {
+            Ok(Some(if outcome.formatting_required {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS
@@ -1842,15 +1811,14 @@ fn run() -> Result<ExitCode, CliError> {
                 Ok((outcome.output, exit_code))
             } else if matches!(
                 &arguments.command,
-                CommandOptions::Format { check: true, .. }
+                CommandOptions::Format(FormatOptions { check: true, .. })
             ) {
-                let source = decode_input(&input)?;
-                let format_config = safe_write_format_config(&input, &project_config);
-                let output = process_format(&input, &project_config.analysis, &format_config)?;
-                if output != source {
-                    return Err(CliError::FormattingRequired);
-                }
-                Ok((String::new(), ExitCode::SUCCESS))
+                let CommandOptions::Format(options) = &arguments.command else {
+                    unreachable!("format check matched above")
+                };
+                let outcome = commands::format::run_single(&input, *options, &project_config)
+                    .map_err(format_error)?;
+                Ok((outcome.output, ExitCode::SUCCESS))
             } else {
                 let output = match &arguments.command {
                     CommandOptions::Convert { complete, css } => commands::convert::run(
@@ -1862,11 +1830,11 @@ fn run() -> Result<ExitCode, CliError> {
                         |path| fs::read(path),
                     )
                     .map_err(convert_error)?,
-                    CommandOptions::Format { .. } => process_format(
-                        &processed,
-                        &project_config.analysis,
-                        &project_config.format,
-                    )?,
+                    CommandOptions::Format(options) => {
+                        commands::format::run_single(&processed, *options, &project_config)
+                            .map_err(format_error)?
+                            .output
+                    }
                     CommandOptions::Symbols => commands::symbols::process(
                         &processed,
                         &project_config.analysis,
@@ -1926,9 +1894,10 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         Action, CliError, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS,
-        DEFAULT_PREVIEW_PORT, DiagnosticFormat, PreviewBuildRequest, PreviewBuildStage,
-        PreviewDependencyObserver, StylesheetArgument, check_preview_cancellation, parse_arguments,
-        preview_build, preview_build_with_stage_hook, render_completion_script,
+        DEFAULT_PREVIEW_PORT, DiagnosticFormat, FormatOptions, PreviewBuildRequest,
+        PreviewBuildStage, PreviewDependencyObserver, StylesheetArgument,
+        check_preview_cancellation, parse_arguments, preview_build, preview_build_with_stage_hook,
+        render_completion_script,
     };
     use crate::commands::model::{self, CommandId};
     use crate::local_include::DependencyObserver;
@@ -2368,7 +2337,7 @@ mod tests {
         };
         assert!(matches!(
             parsed.command,
-            CommandOptions::Format { check: true, .. }
+            CommandOptions::Format(FormatOptions { check: true, .. })
         ));
     }
 

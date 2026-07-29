@@ -1,5 +1,8 @@
 //! Pure preprocessing over caller-provided resource snapshots.
 
+mod directive;
+mod source_map;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -13,6 +16,7 @@ use crate::resource::ResourceReference;
 use crate::source::PositionError;
 use crate::source::{TextRange, TextSize};
 use crate::substitution::AttributeExpansionLimits;
+use directive::{ConditionalTransition, ParsedDirective, RecognizedDirective};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SafeMode {
@@ -244,213 +248,6 @@ pub struct PreprocessedDocument {
     source_map: Vec<SourceMapSegment>,
     pub directives: Vec<Directive>,
     pub notices: Vec<PreprocessNotice>,
-}
-
-impl PreprocessedDocument {
-    fn from_parts(
-        source: String,
-        source_map: Vec<SourceMapSegment>,
-        directives: Vec<Directive>,
-        notices: Vec<PreprocessNotice>,
-    ) -> Result<Self, SourceMapInvariantError> {
-        let source_end = TextSize::new(source.len()).map_err(|_| SourceMapInvariantError)?;
-        let mut previous_end = TextSize::ZERO;
-        for segment in &source_map {
-            if segment.output_range.start() < previous_end
-                || segment.output_range.end() > source_end
-            {
-                return Err(SourceMapInvariantError);
-            }
-            previous_end = segment.output_range.end();
-        }
-        Ok(Self {
-            source,
-            source_map,
-            directives,
-            notices,
-        })
-    }
-
-    pub fn source_map(&self) -> &[SourceMapSegment] {
-        &self.source_map
-    }
-
-    pub fn origin_at(&self, output_offset: ExpandedOffset) -> Option<&SourceOrigin> {
-        let output_offset = output_offset.text_size();
-        let index = self
-            .source_map
-            .partition_point(|segment| segment.output_range.end() <= output_offset);
-        self.source_map
-            .get(index)
-            .filter(|segment| segment.output_range.start() <= output_offset)
-            .map(|segment| &segment.origin)
-    }
-
-    /// Maps an output range to the originating source segment.
-    ///
-    /// When a range crosses include boundaries, the origin containing its
-    /// start is returned. Consumers that need exact pieces should inspect
-    /// `source_map` directly.
-    pub fn origin_for_range(&self, output_range: ExpandedRange) -> Option<&SourceOrigin> {
-        if let Some(origin) = self.origin_at(ExpandedOffset::new(output_range.start())) {
-            return Some(origin);
-        }
-        if !output_range.is_empty() {
-            return None;
-        }
-        self.source_map
-            .iter()
-            .rev()
-            .find(|segment| segment.output_range.end() == output_range.start())
-            .map(|segment| &segment.origin)
-    }
-
-    /// Projects an expanded range into all originating source ranges.
-    ///
-    /// Adjacent pieces in the same source are merged. For an unchanged segment,
-    /// the relative byte range is preserved. A transformed segment (for example
-    /// `indent` or `leveloffset`) conservatively maps to its complete source line.
-    pub fn origins_for_range(&self, output_range: ExpandedRange) -> Vec<SourceOrigin> {
-        if output_range.is_empty() {
-            let segment = self
-                .source_map
-                .iter()
-                .find(|segment| {
-                    segment.output_range.start() <= output_range.start()
-                        && output_range.start() < segment.output_range.end()
-                })
-                .or_else(|| {
-                    self.source_map
-                        .last()
-                        .filter(|segment| segment.output_range.end() == output_range.start())
-                });
-            let Some(segment) = segment else {
-                return Vec::new();
-            };
-            let range = if segment.mapping == SourceMapping::Identity {
-                let relative = output_range
-                    .start()
-                    .to_u32()
-                    .saturating_sub(segment.output_range.start().to_u32());
-                let offset =
-                    TextSize::new(segment.origin.range.start().to_usize() + relative as usize)
-                        .expect("projected source offset is bounded");
-                TextRange::new(offset, offset).expect("zero source range is ordered")
-            } else {
-                segment.origin.range.text_range()
-            };
-            return vec![SourceOrigin {
-                source_id: segment.origin.source_id.clone(),
-                range: OriginRange::new(range),
-            }];
-        }
-        let mut origins: Vec<SourceOrigin> = Vec::new();
-        let first = self
-            .source_map
-            .partition_point(|segment| segment.output_range.end() <= output_range.start());
-        for segment in &self.source_map[first..] {
-            if output_range.end() <= segment.output_range.start() {
-                break;
-            }
-            let start = segment
-                .output_range
-                .start()
-                .to_u32()
-                .max(output_range.start().to_u32());
-            let end = segment
-                .output_range
-                .end()
-                .to_u32()
-                .min(output_range.end().to_u32());
-            if start >= end {
-                continue;
-            }
-
-            let range = if segment.mapping == SourceMapping::Identity {
-                let relative_start = start.saturating_sub(segment.output_range.start().to_u32());
-                let relative_end = end.saturating_sub(segment.output_range.start().to_u32());
-                TextRange::new(
-                    TextSize::new(
-                        segment.origin.range.start().to_usize() + relative_start as usize,
-                    )
-                    .expect("projected source offset is bounded"),
-                    TextSize::new(segment.origin.range.start().to_usize() + relative_end as usize)
-                        .expect("projected source offset is bounded"),
-                )
-                .expect("projected source range is ordered")
-            } else {
-                segment.origin.range.text_range()
-            };
-            let origin = SourceOrigin {
-                source_id: segment.origin.source_id.clone(),
-                range: OriginRange::new(range),
-            };
-            let merged = if let Some(previous) = origins.last_mut() {
-                if previous.source_id == origin.source_id
-                    && previous.range.end() == origin.range.start()
-                {
-                    previous.range = OriginRange::new(
-                        TextRange::new(previous.range.start(), origin.range.end())
-                            .expect("merged source range is ordered"),
-                    );
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if !merged {
-                origins.push(origin);
-            }
-        }
-        origins
-    }
-
-    fn origins_for_empty_range_within(
-        &self,
-        output_range: ExpandedRange,
-        containing_range: ExpandedRange,
-    ) -> Vec<SourceOrigin> {
-        debug_assert!(output_range.is_empty());
-        let Some(segment) = self.source_map.iter().find(|segment| {
-            segment.output_range.start() <= output_range.start()
-                && output_range.start() <= segment.output_range.end()
-                && segment.output_range.start() < containing_range.end()
-                && containing_range.start() < segment.output_range.end()
-        }) else {
-            return self.origins_for_range(output_range);
-        };
-        let range = if segment.mapping == SourceMapping::Identity {
-            let relative = output_range
-                .start()
-                .to_u32()
-                .saturating_sub(segment.output_range.start().to_u32());
-            let offset = TextSize::new(segment.origin.range.start().to_usize() + relative as usize)
-                .expect("projected source offset is bounded");
-            TextRange::new(offset, offset).expect("zero source range is ordered")
-        } else {
-            segment.origin.range.text_range()
-        };
-        vec![SourceOrigin {
-            source_id: segment.origin.source_id.clone(),
-            range: OriginRange::new(range),
-        }]
-    }
-
-    fn mapping_is_identity(&self, output_range: ExpandedRange) -> bool {
-        if output_range.is_empty() {
-            return false;
-        }
-        let index = self
-            .source_map
-            .partition_point(|segment| segment.output_range.end() <= output_range.start());
-        self.source_map.get(index).is_some_and(|segment| {
-            segment.mapping == SourceMapping::Identity
-                && segment.output_range.start() <= output_range.start()
-                && output_range.end() <= segment.output_range.end()
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1040,8 +837,10 @@ pub fn preprocess(
     let mut context = Context {
         snapshot,
         options,
-        output: String::new(),
-        source_map: Vec::new(),
+        source_map: source_map::SourceMapBuilder::new(
+            options.max_total_bytes,
+            options.max_source_map_segments,
+        ),
         directives: Vec::new(),
         notices: Vec::new(),
         active: Vec::new(),
@@ -1063,28 +862,24 @@ pub fn preprocess(
         0,
         options.base_uri.as_deref(),
     )?;
-    PreprocessedDocument::from_parts(
-        context.output,
-        context.source_map,
-        context.directives,
-        context.notices,
-    )
-    .map_err(|_| PreprocessError {
-        kind: PreprocessErrorKind::InternalInvariant,
-        source_id: options.source_id.clone(),
-        range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
-        requested_target: None,
-        target: None,
-        message: "source map segments are unsorted, overlapping, or outside expanded source"
-            .to_owned(),
-    })
+    context
+        .source_map
+        .finish(context.directives, context.notices)
+        .map_err(|_| PreprocessError {
+            kind: PreprocessErrorKind::InternalInvariant,
+            source_id: options.source_id.clone(),
+            range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
+            requested_target: None,
+            target: None,
+            message: "source map segments are unsorted, overlapping, or outside expanded source"
+                .to_owned(),
+        })
 }
 
 struct Context<'a> {
     snapshot: &'a ResourceSnapshot,
     options: &'a PreprocessOptions,
-    output: String,
-    source_map: Vec<SourceMapSegment>,
+    source_map: source_map::SourceMapBuilder,
     directives: Vec<Directive>,
     notices: Vec<PreprocessNotice>,
     active: Vec<String>,
@@ -1145,7 +940,8 @@ impl Context<'_> {
             ));
         }
         self.bump_node(source_id.clone(), range)?;
-        let expanded_target = expand_attributes(&include.target, self.attributes.values());
+        let expanded_target =
+            directive::expand_attributes(&include.target, self.attributes.values());
         let target = resolve_include_target(&expanded_target, base_uri);
         validate_target(&target, self.options).map_err(|message| {
             error(
@@ -1268,93 +1064,52 @@ impl Context<'_> {
                 }
                 continue;
             }
-            if let Some(directive) = conditional_directive(content) {
-                self.bump_node(source_id.clone(), line.range)?;
-                self.directives.push(Directive {
-                    kind: directive.kind,
-                    source_id: source_id.clone(),
-                    range: line.range,
-                    authored_target: None,
-                    optional: false,
-                    target: directive.target.clone(),
-                    target_range: relative_range(
-                        line.range,
-                        directive.target_start,
-                        directive.target_end,
-                    ),
-                    resource_source_id: None,
-                });
-                match directive.kind {
-                    DirectiveKind::Ifdef | DirectiveKind::Ifndef
-                        if !directive.attributes.is_empty() =>
-                    {
-                        let present = directive.kind == DirectiveKind::Ifdef;
-                        if enabled
-                            && conditional_attribute(
-                                &directive.target,
-                                self.attributes.values(),
-                                present,
-                            )
-                        {
-                            let ending = &line.text[content.len()..];
-                            self.append(
-                                &format!("{}{ending}", directive.attributes),
-                                source_id.clone(),
-                                line.range,
-                                SourceMapping::WholeOrigin,
-                            )?;
-                            self.attribute_position = false;
+            match directive::recognize(content) {
+                RecognizedDirective::Conditional(directive) => {
+                    self.bump_node(source_id.clone(), line.range)?;
+                    self.directives.push(Directive {
+                        kind: directive.kind,
+                        source_id: source_id.clone(),
+                        range: line.range,
+                        authored_target: None,
+                        optional: false,
+                        target: directive.target.clone(),
+                        target_range: relative_range(
+                            line.range,
+                            directive.target_start,
+                            directive.target_end,
+                        ),
+                        resource_source_id: None,
+                    });
+                    match directive::transition(&directive, enabled, self.attributes.values()) {
+                        ConditionalTransition::Inline { selected } => {
+                            if selected {
+                                let ending = &line.text[content.len()..];
+                                self.append(
+                                    &format!("{}{ending}", directive.attributes),
+                                    source_id.clone(),
+                                    line.range,
+                                    SourceMapping::WholeOrigin,
+                                )?;
+                                self.attribute_position = false;
+                            }
+                        }
+                        ConditionalTransition::Open { enabled: condition } => {
+                            conditions.push(condition)
+                        }
+                        ConditionalTransition::Close => {
+                            if conditions.pop().is_none() {
+                                return Err(error(
+                                    PreprocessErrorKind::InvalidDirective,
+                                    source_id,
+                                    line.range,
+                                    "endif has no matching conditional",
+                                ));
+                            }
                         }
                     }
-                    DirectiveKind::Ifdef => conditions.push(
-                        enabled
-                            && conditional_attribute(
-                                &directive.target,
-                                self.attributes.values(),
-                                true,
-                            ),
-                    ),
-                    DirectiveKind::Ifndef => conditions.push(
-                        enabled
-                            && conditional_attribute(
-                                &directive.target,
-                                self.attributes.values(),
-                                false,
-                            ),
-                    ),
-                    DirectiveKind::Ifeval => conditions.push(
-                        enabled
-                            && evaluate_expression(&expand_attributes(
-                                &directive.attributes,
-                                self.attributes.values(),
-                            )),
-                    ),
-                    DirectiveKind::Endif => {
-                        if conditions.pop().is_none() {
-                            return Err(error(
-                                PreprocessErrorKind::InvalidDirective,
-                                source_id,
-                                line.range,
-                                "endif has no matching conditional",
-                            ));
-                        }
-                    }
-                    DirectiveKind::Include => unreachable!(),
                 }
-            } else if enabled {
-                let delimiter = crate::delimiter::spec(content).is_some();
-                if delimiter {
-                    if self
-                        .attribute_delimiters
-                        .last()
-                        .is_some_and(|open| open == content)
-                    {
-                        self.attribute_delimiters.pop();
-                    } else {
-                        self.attribute_delimiters.push(content.to_owned());
-                    }
-                }
-                if let Some(include) = include_directive(content) {
+                RecognizedDirective::Include(include) if enabled => {
                     if self.options.enable_includes {
                         self.expand_include(
                             include,
@@ -1366,7 +1121,7 @@ impl Context<'_> {
                     } else {
                         self.bump_node(source_id.clone(), line.range)?;
                         let authored_target =
-                            expand_attributes(&include.target, self.attributes.values());
+                            directive::expand_attributes(&include.target, self.attributes.values());
                         let optional = parse_attributes(&include.attributes)
                             .is_ok_and(|attributes| attributes.contains_key("optional"));
                         self.directives.push(Directive {
@@ -1386,7 +1141,8 @@ impl Context<'_> {
                         self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
                         self.attribute_position = false;
                     }
-                } else if let Some(literal) = escaped_directive(content) {
+                }
+                RecognizedDirective::Escaped(literal) if enabled => {
                     let ending = &line.text[content.len()..];
                     self.append(
                         &format!("{literal}{ending}"),
@@ -1395,7 +1151,20 @@ impl Context<'_> {
                         SourceMapping::WholeOrigin,
                     )?;
                     self.attribute_position = false;
-                } else {
+                }
+                RecognizedDirective::Text if enabled => {
+                    let delimiter = crate::delimiter::spec(content).is_some();
+                    if delimiter {
+                        if self
+                            .attribute_delimiters
+                            .last()
+                            .is_some_and(|open| open == content)
+                        {
+                            self.attribute_delimiters.pop();
+                        } else {
+                            self.attribute_delimiters.push(content.to_owned());
+                        }
+                    }
                     let mut document_attribute = false;
                     self.bump_node(source_id.clone(), line.range)?;
                     if !delimiter
@@ -1434,6 +1203,9 @@ impl Context<'_> {
                         || content.trim_matches([' ', '\t']).is_empty()
                         || content.starts_with("//");
                 }
+                RecognizedDirective::Include(_)
+                | RecognizedDirective::Escaped(_)
+                | RecognizedDirective::Text => {}
             }
         }
         if !conditions.is_empty() {
@@ -1471,46 +1243,23 @@ impl Context<'_> {
         origin_range: TextRange,
         mapping: SourceMapping,
     ) -> Result<(), PreprocessError> {
-        let start = self.output.len();
-        let end = start.saturating_add(value.len());
-        if end > self.options.max_total_bytes as usize {
-            return Err(error(
-                PreprocessErrorKind::ByteLimit,
-                source_id,
-                origin_range,
-                "preprocessor byte limit exceeded",
-            ));
-        }
-        self.output.push_str(value);
-        if start < end {
-            if self.source_map.len() >= self.options.max_source_map_segments as usize {
-                return Err(error(
+        self.source_map
+            .append(value, source_id.clone(), origin_range, mapping)
+            .map_err(|build_error| match build_error {
+                source_map::SourceMapBuildError::ByteLimit => error(
+                    PreprocessErrorKind::ByteLimit,
+                    source_id,
+                    origin_range,
+                    "preprocessor byte limit exceeded",
+                ),
+                source_map::SourceMapBuildError::SegmentLimit => error(
                     PreprocessErrorKind::SourceMapLimit,
                     source_id,
                     origin_range,
                     "source map segment limit exceeded",
-                ));
-            }
-            self.source_map.push(SourceMapSegment {
-                output_range: ExpandedRange::new(range(start, end)),
-                origin: SourceOrigin {
-                    source_id,
-                    range: OriginRange::new(origin_range),
-                },
-                mapping,
-            });
-        }
-        Ok(())
+                ),
+            })
     }
-}
-
-#[derive(Clone, Debug)]
-struct ParsedDirective {
-    kind: DirectiveKind,
-    target: String,
-    attributes: String,
-    target_start: usize,
-    target_end: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1532,9 +1281,7 @@ pub fn discover_includes(source: &str) -> Result<Vec<IncludeRequest>, PositionEr
     for line in source.split_inclusive('\n') {
         let end = offset + line.len();
         let content = line.trim_end_matches(['\r', '\n']);
-        if !content.starts_with('\\')
-            && let Some(include) = include_directive(content)
-        {
+        if let RecognizedDirective::Include(include) = directive::recognize(content) {
             requests.push(IncludeRequest {
                 range: TextRange::new(TextSize::new(offset)?, TextSize::new(end)?)?,
                 target_range: TextRange::new(
@@ -1548,98 +1295,6 @@ pub fn discover_includes(source: &str) -> Result<Vec<IncludeRequest>, PositionEr
         offset = end;
     }
     Ok(requests)
-}
-
-fn include_directive(value: &str) -> Option<ParsedDirective> {
-    parse_directive(value, "include::", DirectiveKind::Include)
-}
-
-fn conditional_directive(value: &str) -> Option<ParsedDirective> {
-    [
-        ("ifdef::", DirectiveKind::Ifdef),
-        ("ifndef::", DirectiveKind::Ifndef),
-        ("ifeval::", DirectiveKind::Ifeval),
-        ("endif::", DirectiveKind::Endif),
-    ]
-    .into_iter()
-    .find_map(|(prefix, kind)| parse_directive(value, prefix, kind))
-}
-
-fn parse_directive(value: &str, prefix: &str, kind: DirectiveKind) -> Option<ParsedDirective> {
-    let rest = value.strip_prefix(prefix)?;
-    let bracket = rest.find('[')?;
-    let close = rest.rfind(']')?;
-    (close == rest.len() - 1 && bracket <= close).then(|| ParsedDirective {
-        kind,
-        target: rest[..bracket].to_owned(),
-        attributes: rest[bracket + 1..close].to_owned(),
-        target_start: prefix.len(),
-        target_end: prefix.len() + bracket,
-    })
-}
-
-fn escaped_directive(value: &str) -> Option<&str> {
-    let literal = value.strip_prefix('\\')?;
-    (include_directive(literal).is_some() || conditional_directive(literal).is_some())
-        .then_some(literal)
-}
-
-fn conditional_attribute(
-    target: &str,
-    attributes: &BTreeMap<String, String>,
-    present: bool,
-) -> bool {
-    let matches = if target.contains('+') {
-        target
-            .split('+')
-            .all(|name| attributes.contains_key(name.trim()))
-    } else {
-        target
-            .split(',')
-            .any(|name| attributes.contains_key(name.trim()))
-    };
-    if present { matches } else { !matches }
-}
-
-fn evaluate_expression(value: &str) -> bool {
-    for operator in ["==", "!=", ">=", "<=", ">", "<"] {
-        if let Some((left, right)) = value.split_once(operator) {
-            let left = left.trim().trim_matches(['\'', '"']);
-            let right = right.trim().trim_matches(['\'', '"']);
-            let numeric = left.parse::<f64>().ok().zip(right.parse::<f64>().ok());
-            return match (operator, numeric) {
-                ("==", _) => left == right,
-                ("!=", _) => left != right,
-                (">=", Some((left, right))) => left >= right,
-                ("<=", Some((left, right))) => left <= right,
-                (">", Some((left, right))) => left > right,
-                ("<", Some((left, right))) => left < right,
-                _ => false,
-            };
-        }
-    }
-    false
-}
-
-fn expand_attributes(value: &str, attributes: &BTreeMap<String, String>) -> String {
-    let mut output = String::new();
-    let mut cursor = 0;
-    while let Some(open) = value[cursor..].find('{').map(|offset| cursor + offset) {
-        output.push_str(&value[cursor..open]);
-        let Some(close) = value[open + 1..].find('}').map(|offset| open + 1 + offset) else {
-            output.push_str(&value[open..]);
-            return output;
-        };
-        let name = &value[open + 1..close];
-        if let Some(replacement) = attributes.get(name) {
-            output.push_str(replacement);
-        } else {
-            output.push_str(&value[open..=close]);
-        }
-        cursor = close + 1;
-    }
-    output.push_str(&value[cursor..]);
-    output
 }
 
 fn parse_attributes(value: &str) -> Result<BTreeMap<String, String>, String> {

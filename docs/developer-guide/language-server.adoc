@@ -281,8 +281,10 @@ Renameはhost indexが結果を返す場合はそれを優先し、それ以外�
 
 ``LanguageService``は文書状態、client capabilityおよび解析結果の採用判定を所有します。
 Document Symbolsの変換moduleは、serviceが選択した採用済み``Analysis``、文書URI、position encodingおよび
-階層・平坦の表示方針だけを受け取ります。Semantic Tokensの変換moduleは採用済み``Analysis``とposition encoding
-だけを受け取ります。どちらも文書storeやworkspace状態を参照せず、同じ解析snapshotからLSP型を生成します。
+階層・平坦の表示方針だけを受け取ります。Hoverの変換moduleは採用済み``Analysis``、読み取り専用のworkspace投影、
+文書URI、position encodingおよび交渉済みの表示形式だけを受け取ります。Semantic Tokensの変換moduleは
+採用済み``Analysis``とposition encodingだけを受け取ります。これらのmoduleは文書storeやworkspace状態を
+参照せず、同じ解析snapshotからLSP型を生成します。
 
 Definition、ReferencesおよびDocument Linkは文書内、相対文書および任意スキームを同じ
 ``ReferenceKey``で扱います。通常の外部URLは``AuthoredUrlPolicy``を通したDocument Linkとして別に扱います。
