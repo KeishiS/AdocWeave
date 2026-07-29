@@ -402,6 +402,64 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
 }
 
 #[test]
+fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-lsp-root-authority-{unique}"));
+    let docs = root.join("docs");
+    fs::create_dir_all(&docs).expect("workspace");
+    let document_path = root.join("outside.adoc");
+    let config_path = root.join(adocweave_config::FILE_NAME);
+    fs::write(&document_path, "disk").expect("document");
+    fs::write(
+        &config_path,
+        "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 8\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
+    )
+    .expect("configuration");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    })));
+    open(&mut service, document_uri.as_str(), 1, "open overlay");
+
+    fs::write(
+        &config_path,
+        "schema-version = 1\n[resources]\nroots = [\"docs\"]\nmax-files = 8\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
+    )
+    .expect("narrowed configuration");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": config_uri, "type": 2}]
+    })));
+
+    assert_eq!(jobs.len(), 1);
+    assert!(jobs[0].workspace.is_none());
+    assert_eq!(
+        jobs[0]
+            .workspace_problem
+            .as_ref()
+            .expect("fail-closed workspace problem")
+            .code,
+        "workspace-input-error"
+    );
+    adopt(&mut service, jobs.into_iter().next().expect("reanalysis"));
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(lsp::NumberOrString::String(
+                "workspace-input-error".to_owned(),
+            ))
+    }));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn project_configuration_bounds_lsp_diagnostics_before_protocol_projection() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
