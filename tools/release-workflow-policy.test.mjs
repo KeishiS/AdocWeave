@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  installationE2ESchedule,
   loadWorkflowPolicyInputs,
   validatePinnedActions,
   validateReleaseWorkflowPolicy,
@@ -260,6 +261,71 @@ test("candidate preflight cannot continue after a job or step failure", () => {
     }),
     /preflight step must not continue/,
   );
+});
+
+test("installation E2E event results follow the native candidate plan", () => {
+  for (const scenario of [
+    {
+      name: "native-only",
+      nativeRequired: true,
+      globalRequired: false,
+      verifyCandidateResult: "success",
+      expected: "run",
+    },
+    {
+      name: "global-only",
+      nativeRequired: false,
+      globalRequired: true,
+      verifyCandidateResult: "success",
+      expected: "skipped",
+    },
+    {
+      name: "native-and-global",
+      nativeRequired: true,
+      globalRequired: true,
+      verifyCandidateResult: "success",
+      expected: "run",
+    },
+    {
+      name: "no-candidate",
+      nativeRequired: false,
+      globalRequired: false,
+      verifyCandidateResult: "skipped",
+      expected: "skipped",
+    },
+    ...["failure", "cancelled", "skipped"].map((verifyCandidateResult) => ({
+      name: `native-upstream-${verifyCandidateResult}`,
+      nativeRequired: true,
+      globalRequired: false,
+      verifyCandidateResult,
+      expected: "skipped",
+    })),
+  ]) {
+    assert.equal(
+      installationE2ESchedule(scenario),
+      scenario.expected,
+      scenario.name,
+    );
+  }
+});
+
+test("installation E2E cannot inherit unrelated skips or bypass verification", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  const condition =
+    "always() && needs.changes.outputs.native_required == 'true' && needs.verify-candidate.result == 'success'";
+  for (const replacement of [
+    "needs.changes.outputs.native_required == 'true' && needs.verify-candidate.result == 'success'",
+    "always() && needs.changes.outputs.native_required == 'true'",
+    "always() && needs.verify-candidate.result == 'success'",
+  ]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        release: inputs.release.replace(condition, replacement),
+      }),
+      /verified native candidate without inheriting unrelated skips/,
+    );
+  }
 });
 
 test("stable quality verify context must wait for every selected candidate stage", () => {
