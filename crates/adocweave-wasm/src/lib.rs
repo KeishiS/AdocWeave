@@ -113,7 +113,7 @@ pub struct WasmSourceMapSegment {
 
 /// A half-open UTF-8 byte range in the submitted source.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTextRange {
     pub start: u32,
     pub end: u32,
@@ -575,7 +575,7 @@ pub struct WasmResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDiagnostic {
     pub id: String,
     pub code: String,
@@ -587,14 +587,14 @@ pub struct WasmDiagnostic {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRelatedInformation {
     pub range: WasmTextRange,
     pub message: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmFix {
     pub title: String,
     pub applicability: WasmApplicability,
@@ -609,14 +609,14 @@ pub enum WasmApplicability {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTextEdit {
     pub range: WasmTextRange,
     pub replacement: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentSymbol {
     pub name: String,
     pub kind: WasmSymbolKind,
@@ -635,7 +635,7 @@ pub enum WasmSymbolKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentProjection {
     pub package_version: String,
     pub source_id: Option<String>,
@@ -653,14 +653,14 @@ pub struct WasmDocumentProjection {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmProjectedText {
     pub source_range: WasmTextRange,
     pub text: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSourceBlockProjection {
     pub source_range: WasmTextRange,
     pub content_range: WasmTextRange,
@@ -673,7 +673,7 @@ pub struct WasmSourceBlockProjection {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmFormulaProjection {
     pub kind: WasmFormulaKind,
     pub language: WasmMathLanguage,
@@ -690,7 +690,7 @@ pub enum WasmFormulaKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmOrderedListProjection {
     pub source_range: WasmTextRange,
     pub start: Option<u32>,
@@ -711,7 +711,7 @@ pub enum WasmOrderedListStyle {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmBlockPresentationProjection {
     pub kind: WasmBlockPresentationKind,
     pub source_range: WasmTextRange,
@@ -730,7 +730,7 @@ pub enum WasmBlockPresentationKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmExternalLink {
     pub source_range: WasmTextRange,
     pub target_range: WasmTextRange,
@@ -739,7 +739,7 @@ pub struct WasmExternalLink {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmReferenceTarget {
     pub kind: WasmReferenceTargetKind,
     pub id: String,
@@ -759,7 +759,7 @@ pub enum WasmReferenceTargetKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmReferenceEdge {
     pub source_id: Option<String>,
     pub source_range: WasmTextRange,
@@ -771,7 +771,8 @@ pub struct WasmReferenceEdge {
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub enum WasmReferenceKey {
     Local {
@@ -792,7 +793,8 @@ pub enum WasmReferenceKey {
 #[serde(
     tag = "status",
     rename_all = "kebab-case",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub enum WasmProjectedResolutionOutcome {
     Resolved {
@@ -822,14 +824,14 @@ pub enum WasmProjectedReferenceNotice {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSearchableText {
     pub text: String,
     pub segments: Vec<WasmSearchTextSegment>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSearchTextSegment {
     pub kind: WasmSearchTextKind,
     pub source_range: WasmTextRange,
@@ -844,7 +846,7 @@ pub enum WasmSearchTextKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentStructure {
     pub headings: Vec<WasmStructuredHeading>,
     pub toc: Vec<WasmTocEntry>,
@@ -852,7 +854,7 @@ pub struct WasmDocumentStructure {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmStructuredHeading {
     pub kind: WasmSectionKind,
     pub level: u32,
@@ -876,7 +878,7 @@ pub enum WasmSectionKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTocEntry {
     pub id: String,
     pub title: String,
@@ -887,7 +889,7 @@ pub struct WasmTocEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmManpage {
     pub name: String,
     pub section: String,
@@ -898,7 +900,7 @@ pub struct WasmManpage {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentCatalogs {
     pub footnotes: Vec<WasmFootnote>,
     pub bibliography: Vec<WasmBibliographyEntry>,
@@ -906,7 +908,7 @@ pub struct WasmDocumentCatalogs {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmFootnote {
     pub number: u32,
     pub id: Option<String>,
@@ -917,7 +919,7 @@ pub struct WasmFootnote {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmBibliographyEntry {
     pub id: String,
     pub definition_range: WasmTextRange,
@@ -925,7 +927,7 @@ pub struct WasmBibliographyEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmIndexEntry {
     pub terms: Vec<String>,
     pub display: String,
@@ -1771,6 +1773,7 @@ mod bindings {
 #[cfg(test)]
 mod tests {
     use adocweave::CancellationToken;
+    use serde::de::DeserializeOwned;
     use serde_json::json;
 
     use super::*;
@@ -1822,6 +1825,176 @@ mod tests {
             VERSION
         );
         assert_eq!(response.parse.reference_count, 0);
+    }
+
+    #[test]
+    fn core_json_products_reject_unknown_fields_at_every_object_boundary() {
+        let diagnostics = json!([{
+            "id": "diagnostic",
+            "code": "example",
+            "severity": "warning",
+            "message": "message",
+            "range": { "start": 0, "end": 1 },
+            "related": [{
+                "range": { "start": 1, "end": 2 },
+                "message": "related"
+            }],
+            "fixes": [{
+                "title": "fix",
+                "applicability": "always",
+                "edits": [{
+                    "range": { "start": 0, "end": 1 },
+                    "replacement": "replacement"
+                }]
+            }]
+        }]);
+        assert_product_rejects_unknown_fields::<Vec<WasmDiagnostic>>("diagnostics", &diagnostics);
+
+        let symbols: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/conformance/full.symbols.json"
+        ))
+        .expect("symbol fixture");
+        assert_product_rejects_unknown_fields::<Vec<WasmDocumentSymbol>>("symbols", &symbols);
+
+        let mut projection: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/conformance/full.projection.json"
+        ))
+        .expect("projection fixture");
+        projection["sourceBlocks"] = json!([{
+            "sourceRange": { "start": 0, "end": 4 },
+            "contentRange": { "start": 1, "end": 3 },
+            "title": {
+                "sourceRange": { "start": 0, "end": 1 },
+                "text": "source"
+            },
+            "languageRange": { "start": 1, "end": 2 },
+            "language": "rust",
+            "lineNumbers": true,
+            "startLine": 3,
+            "source": "fn main() {}"
+        }]);
+        projection["orderedLists"] = json!([{
+            "sourceRange": { "start": 0, "end": 4 },
+            "start": 1,
+            "reversed": false,
+            "style": "arabic"
+        }]);
+        projection["blockPresentations"] = json!([{
+            "kind": "admonition",
+            "sourceRange": { "start": 0, "end": 4 },
+            "contentRange": { "start": 1, "end": 3 },
+            "title": "Note",
+            "attribution": null,
+            "citation": null
+        }]);
+        projection["structure"]["manpage"] = json!({
+            "name": "tool",
+            "section": "1",
+            "purpose": "purpose",
+            "titleRange": { "start": 0, "end": 4 },
+            "nameRange": { "start": 0, "end": 1 },
+            "purposeRange": { "start": 2, "end": 4 }
+        });
+        projection["catalogs"]["footnotes"] = json!([{
+            "number": 1,
+            "id": "note",
+            "definitionRange": { "start": 0, "end": 4 },
+            "contentRange": { "start": 1, "end": 3 },
+            "text": "note",
+            "occurrences": [{ "start": 0, "end": 4 }]
+        }]);
+        projection["catalogs"]["bibliography"] = json!([{
+            "id": "reference",
+            "definitionRange": { "start": 0, "end": 4 },
+            "references": [{ "start": 1, "end": 2 }]
+        }]);
+        projection["catalogs"]["index"] = json!([{
+            "terms": ["term"],
+            "display": "term",
+            "occurrences": [{ "start": 1, "end": 2 }]
+        }]);
+        projection["referenceEdges"][0]["resolution"] = json!({
+            "status": "resolved",
+            "href": "#target",
+            "displayText": "target",
+            "notices": ["reference-resolution-fallback"]
+        });
+        projection["referenceEdges"][1]["resolution"] = json!({
+            "status": "failed",
+            "kind": "missing-reference-target"
+        });
+
+        let target_kinds = projection["referenceEdges"]
+            .as_array()
+            .expect("reference edges")
+            .iter()
+            .map(|edge| edge["target"]["kind"].as_str().expect("target kind"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            target_kinds,
+            BTreeSet::from(["document", "local", "scheme"])
+        );
+        let resolution_statuses = projection["referenceEdges"]
+            .as_array()
+            .expect("reference edges")
+            .iter()
+            .filter_map(|edge| edge["resolution"]["status"].as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(resolution_statuses, BTreeSet::from(["failed", "resolved"]));
+        assert_product_rejects_unknown_fields::<WasmDocumentProjection>("projection", &projection);
+    }
+
+    fn assert_product_rejects_unknown_fields<T>(name: &str, product: &serde_json::Value)
+    where
+        T: DeserializeOwned,
+    {
+        let source = serde_json::to_string(product).expect("product JSON");
+        parse_optional_product::<T>(Some(&source))
+            .unwrap_or_else(|error| panic!("{name} fixture must be valid: {}", error.message));
+
+        let mut pointers = Vec::new();
+        collect_object_pointers(product, "", &mut pointers);
+        assert!(
+            !pointers.is_empty(),
+            "{name} must contain object boundaries"
+        );
+        for pointer in pointers {
+            let mut mutated = product.clone();
+            mutated
+                .pointer_mut(&pointer)
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("object boundary")
+                .insert("unknownField".to_owned(), json!(true));
+            let source = serde_json::to_string(&mutated).expect("mutated product JSON");
+
+            let error = match parse_optional_product::<T>(Some(&source)) {
+                Ok(_) => panic!("{name}{pointer}: unknown field must fail"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code, "serialization-failed", "{name}{pointer}");
+            assert!(
+                error.message.contains("unknown field `unknownField`"),
+                "{name}{pointer}: {}",
+                error.message
+            );
+        }
+    }
+
+    fn collect_object_pointers(value: &serde_json::Value, pointer: &str, output: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(object) => {
+                output.push(pointer.to_owned());
+                for (field, value) in object {
+                    collect_object_pointers(value, &format!("{pointer}/{field}"), output);
+                }
+            }
+            serde_json::Value::Array(array) => {
+                for (index, value) in array.iter().enumerate() {
+                    collect_object_pointers(value, &format!("{pointer}/{index}"), output);
+                }
+            }
+            _ => {}
+        }
     }
 
     #[test]
