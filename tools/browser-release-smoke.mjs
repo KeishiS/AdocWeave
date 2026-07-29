@@ -6,11 +6,16 @@ import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { assertBrowserArtifactSizes } from "./browser-release-budget.mjs";
+import {
+  hostExecutableEnvironment,
+  resolveHostExecutable,
+} from "./host-executable.mjs";
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
-const [archive, chromium = "chromium"] = process.argv.slice(2);
+const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
 if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
+const chromium = await resolveHostExecutable(chromiumCommand);
 const releaseManifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
 
 const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
@@ -96,7 +101,10 @@ async function inspectPage(chromium, url, temporaryRoot) {
     "--disable-background-networking", "--no-first-run", "--no-default-browser-check",
     "--remote-debugging-port=0", `--user-data-dir=${profile}`,
     "about:blank",
-  ], { stdio: ["ignore", "ignore", "pipe"] });
+  ], {
+    env: hostExecutableEnvironment(process.env),
+    stdio: ["ignore", "ignore", "pipe"],
+  });
   let spawnError;
   let stderr = "";
   browser.once("error", (error) => { spawnError = error; });
