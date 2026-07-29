@@ -403,7 +403,10 @@ fn completion_scripts_cover_every_supported_shell() {
             .output()
             .expect("completion");
         assert!(output.status.success(), "{shell}");
-        assert!(String::from_utf8_lossy(&output.stdout).contains(marker));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains(marker));
+        assert!(stdout.contains("config"), "{shell}");
+        assert!(stdout.contains("show"), "{shell}");
         assert!(output.stderr.is_empty());
     }
 }

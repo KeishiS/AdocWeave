@@ -1681,37 +1681,53 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
     }
 }
 
-fn completion_script(shell: CompletionShell) -> &'static str {
+fn completion_script(shell: CompletionShell) -> String {
+    let roots = commands::model::root_commands();
+    let config_children = commands::model::subcommands(&["config"]);
+    let shell_words = |values: &[&str]| values.join(" ");
+    let powershell_words = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| format!("'{value}'"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     match shell {
-        CompletionShell::Bash => {
-            r#"_adocweave() {
-  local commands="convert preview check format symbols config completion help"
+        CompletionShell::Bash => r#"_adocweave() {
+  local commands="@ROOTS@"
+  local config_commands="@CONFIG@"
   local options="--format --fail-on --summary --fix --check --write --diff --dry-run --config --no-config --include --base-dir --allow-root --local-targets --project-root --complete --css --css-url --bind --port --debounce-ms --allow-external --help --version"
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${commands}" -- "${COMP_WORDS[COMP_CWORD]}") )
+  elif [[ ${COMP_CWORD} -eq 2 && ${COMP_WORDS[1]} == config ]]; then
+    COMPREPLY=( $(compgen -W "${config_commands}" -- "${COMP_WORDS[COMP_CWORD]}") )
   else
     COMPREPLY=( $(compgen -W "${options}" -f -- "${COMP_WORDS[COMP_CWORD]}") )
   fi
 }
 complete -F _adocweave adocweave
 "#
-        }
-        CompletionShell::Zsh => {
-            r#"#compdef adocweave
+        .replace("@ROOTS@", &shell_words(&roots))
+        .replace("@CONFIG@", &shell_words(&config_children)),
+        CompletionShell::Zsh => r#"#compdef adocweave
 _adocweave() {
-  _arguments '*:argument:->args'
-  case $state in
-    args) _values 'arguments' convert preview check format symbols config completion help \
+  if (( CURRENT == 2 )); then
+    _values 'commands' @ROOTS@
+  elif [[ $words[2] == config && CURRENT == 3 ]]; then
+    _values 'config commands' @CONFIG@
+  else
+    _values 'arguments' \
       --format --fail-on --summary --fix --check --write --diff --dry-run \
       --config --no-config --include --base-dir --allow-root --local-targets \
-      --project-root --complete --css --css-url --bind --port --debounce-ms --allow-external ;;
-  esac
+      --project-root --complete --css --css-url --bind --port --debounce-ms --allow-external
+  fi
 }
 compdef _adocweave adocweave
 "#
-        }
-        CompletionShell::Fish => {
-            r#"complete -c adocweave -f -n '__fish_use_subcommand' -a 'convert preview check format symbols config completion help'
+        .replace("@ROOTS@", &shell_words(&roots))
+        .replace("@CONFIG@", &shell_words(&config_children)),
+        CompletionShell::Fish => r#"complete -c adocweave -f -n '__fish_use_subcommand' -a '@ROOTS@'
+complete -c adocweave -f -n '__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from @CONFIG@' -a '@CONFIG@'
 complete -c adocweave -l format -x -a 'human json github sarif'
 complete -c adocweave -l fail-on -x -a 'error warning never'
 complete -c adocweave -l config -r
@@ -1719,18 +1735,28 @@ complete -c adocweave -l write
 complete -c adocweave -l diff
 complete -c adocweave -l fix
 "#
-        }
+        .replace("@ROOTS@", &shell_words(&roots))
+        .replace("@CONFIG@", &shell_words(&config_children)),
         CompletionShell::PowerShell => {
             r#"Register-ArgumentCompleter -Native -CommandName adocweave -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
-  'convert','preview','check','format','symbols','config','completion','help',
-  '--format','--fail-on','--summary','--fix','--check','--write','--diff',
-  '--dry-run','--config','--no-config','--include','--base-dir','--allow-root',
-  '--bind','--port','--debounce-ms','--allow-external' |
+  $words = @($commandAst.CommandElements | ForEach-Object { $_.Value })
+  $candidates = if ($words.Count -le 2 -and ($words.Count -lt 2 -or $words[1] -ne 'config')) {
+    @(@ROOTS@)
+  } elseif ($words[1] -eq 'config' -and $words.Count -le 3) {
+    @(@CONFIG@)
+  } else {
+    @('--format','--fail-on','--summary','--fix','--check','--write','--diff',
+      '--dry-run','--config','--no-config','--include','--base-dir','--allow-root',
+      '--bind','--port','--debounce-ms','--allow-external')
+  }
+  $candidates |
     Where-Object { $_ -like "$wordToComplete*" } |
     ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
 }
 "#
+            .replace("@ROOTS@", &powershell_words(&roots))
+            .replace("@CONFIG@", &powershell_words(&config_children))
         }
     }
 }
@@ -2341,16 +2367,52 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CliError, CommandOptions, CssArgument, DEFAULT_PREVIEW_DEBOUNCE_MS,
-        DEFAULT_PREVIEW_PORT, DiagnosticFormat, PreviewBuildRequest, PreviewBuildStage,
-        PreviewDependencyObserver, check_preview_cancellation, parse_arguments, preview_build,
-        preview_build_with_stage_hook,
+        Action, CliError, CommandOptions, CompletionShell, CssArgument,
+        DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT, DiagnosticFormat, PreviewBuildRequest,
+        PreviewBuildStage, PreviewDependencyObserver, check_preview_cancellation,
+        completion_script, parse_arguments, preview_build, preview_build_with_stage_hook,
     };
     use crate::commands::model::{self, CommandId};
     use crate::local_include::DependencyObserver;
 
     fn arguments(values: &[&str]) -> impl Iterator<Item = String> {
         values.iter().map(ToString::to_string)
+    }
+
+    #[test]
+    fn completion_renderers_use_the_model_command_tree() {
+        let roots = model::root_commands();
+        let children = model::subcommands(&["config"]);
+        let root_words = roots.join(" ");
+        let child_words = children.join(" ");
+        let powershell_roots = roots
+            .iter()
+            .map(|value| format!("'{value}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let powershell_children = children
+            .iter()
+            .map(|value| format!("'{value}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let bash = completion_script(CompletionShell::Bash);
+        assert!(bash.contains(&format!("local commands=\"{root_words}\"")));
+        assert!(bash.contains(&format!("local config_commands=\"{child_words}\"")));
+
+        let zsh = completion_script(CompletionShell::Zsh);
+        assert!(zsh.contains(&format!("_values 'commands' {root_words}")));
+        assert!(zsh.contains(&format!("_values 'config commands' {child_words}")));
+
+        let fish = completion_script(CompletionShell::Fish);
+        assert!(fish.contains(&format!("-a '{root_words}'")));
+        assert!(fish.contains(&format!(
+            "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from {child_words}"
+        )));
+
+        let powershell = completion_script(CompletionShell::PowerShell);
+        assert!(powershell.contains(&format!("@({powershell_roots})")));
+        assert!(powershell.contains(&format!("@({powershell_children})")));
     }
 
     #[test]

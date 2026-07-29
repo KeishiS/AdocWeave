@@ -175,6 +175,32 @@ pub(crate) fn spec(id: CommandId) -> &'static CommandSpec {
         .expect("every CommandId has a CommandSpec")
 }
 
+pub(crate) fn root_commands() -> Vec<&'static str> {
+    validate_model(COMMANDS).expect("command model must be unambiguous");
+    let mut roots = Vec::new();
+    for command in COMMANDS {
+        let root = command.path[0];
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
+pub(crate) fn subcommands(parent: &[&str]) -> Vec<&'static str> {
+    validate_model(COMMANDS).expect("command model must be unambiguous");
+    let mut children = Vec::new();
+    for command in COMMANDS {
+        if command.path.len() > parent.len()
+            && command.path[..parent.len()] == *parent
+            && !children.contains(&command.path[parent.len()])
+        {
+            children.push(command.path[parent.len()]);
+        }
+    }
+    children
+}
+
 fn validate_model(commands: &[CommandSpec]) -> Result<(), &'static str> {
     for (index, command) in commands.iter().enumerate() {
         if command.path.is_empty() || command.path.iter().any(|token| token.is_empty()) {
@@ -340,6 +366,25 @@ mod tests {
             },
         ];
         assert!(validate_model(&ambiguous).is_err());
+    }
+
+    #[test]
+    fn completion_tree_is_derived_from_command_paths() {
+        assert_eq!(
+            root_commands(),
+            [
+                "convert",
+                "preview",
+                "check",
+                "format",
+                "symbols",
+                "config",
+                "completion",
+                "help",
+            ]
+        );
+        assert_eq!(subcommands(&["config"]), ["show"]);
+        assert!(subcommands(&["convert"]).is_empty());
     }
 
     #[test]
