@@ -4,6 +4,7 @@
 //! do not depend on this module, so additional output backends can consume the
 //! same document without changing parsing behavior.
 
+mod head;
 mod safe;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -376,14 +377,15 @@ pub(crate) fn render_with_inputs_ast(
             problem.range,
         ));
     }
-    let stylesheets = render_stylesheets(policy, &mut diagnostics);
+    let document_head = head::plan_document_head(document, policy, &mut diagnostics);
     crate::diagnostic::sort_diagnostics(&mut diagnostics);
 
-    let html = if policy.document_mode == HtmlDocumentMode::Complete {
-        let head = render_document_head(document, &stylesheets);
-        format!("<!doctype html>\n<html lang=\"\">\n{head}<body>\n{fragment}</body>\n</html>\n")
-    } else {
-        fragment
+    let html = match document_head {
+        Some(document_head) => {
+            let head = head::serialize_document_head(&document_head);
+            format!("<!doctype html>\n<html lang=\"\">\n{head}<body>\n{fragment}</body>\n</html>\n")
+        }
+        None => fragment,
     };
 
     HtmlOutput {
@@ -393,23 +395,6 @@ pub(crate) fn render_with_inputs_ast(
         document_attributes,
         heading_ids,
     }
-}
-
-fn render_document_head(document: &AstDocument, stylesheets: &str) -> String {
-    let title = document
-        .structure()
-        .headings()
-        .iter()
-        .find(|heading| heading.kind == crate::structure::SectionKind::DocumentTitle)
-        .map(|heading| heading.title.as_str())
-        .filter(|title| !title.trim().is_empty())
-        .unwrap_or("AdocWeave document");
-    let mut head = String::from("<head>\n<meta charset=\"utf-8\">\n<title>");
-    escape_html_into(&mut head, title);
-    head.push_str("</title>\n");
-    head.push_str(stylesheets);
-    head.push_str("</head>\n");
-    head
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1963,127 +1948,6 @@ fn render_input_diagnostic(
     diagnostic
 }
 
-/// Validates the host-supplied stylesheet configuration and returns the
-/// `<head>` payload for complete document output. Rejected sources are never
-/// emitted; every rejection is reported as a diagnostic that identifies the
-/// source by index without echoing CSS content or URLs.
-fn render_stylesheets(policy: &RenderPolicy, diagnostics: &mut Vec<Diagnostic>) -> String {
-    let config = &policy.stylesheets;
-    if config.sources.is_empty() {
-        return String::new();
-    }
-    if policy.document_mode != HtmlDocumentMode::Complete {
-        diagnostics.push(stylesheet_diagnostic(
-            "stylesheet-not-applicable",
-            0,
-            "stylesheets apply only to complete document output",
-        ));
-        return String::new();
-    }
-    let mut output = String::new();
-    let mut emitted: Vec<&StylesheetSource> = Vec::new();
-    for (index, source) in config.sources.iter().enumerate() {
-        if emitted.contains(&source) {
-            continue;
-        }
-        if emitted.len() == usize::try_from(config.max_sources).unwrap_or(usize::MAX) {
-            diagnostics.push(stylesheet_diagnostic(
-                "stylesheet-limit-exceeded",
-                index,
-                &format!(
-                    "stylesheet count exceeds the limit of {}",
-                    config.max_sources
-                ),
-            ));
-            break;
-        }
-        match source {
-            StylesheetSource::Inline(css) => {
-                if css.len() > usize::try_from(config.max_inline_bytes).unwrap_or(usize::MAX) {
-                    diagnostics.push(stylesheet_diagnostic(
-                        "stylesheet-limit-exceeded",
-                        index,
-                        &format!(
-                            "inline stylesheet {index} exceeds the limit of {} bytes",
-                            config.max_inline_bytes
-                        ),
-                    ));
-                    continue;
-                }
-                if !safe_inline_css(css) {
-                    diagnostics.push(stylesheet_diagnostic(
-                        "invalid-stylesheet-content",
-                        index,
-                        &format!(
-                            "inline stylesheet {index} contains a forbidden sequence or control character"
-                        ),
-                    ));
-                    continue;
-                }
-                output.push_str("<style>\n");
-                output.push_str(css);
-                if !css.ends_with('\n') {
-                    output.push('\n');
-                }
-                output.push_str("</style>\n");
-            }
-            StylesheetSource::External(url) => {
-                if url.len() > usize::try_from(config.max_url_bytes).unwrap_or(usize::MAX) {
-                    diagnostics.push(stylesheet_diagnostic(
-                        "stylesheet-limit-exceeded",
-                        index,
-                        &format!(
-                            "stylesheet URL {index} exceeds the limit of {} bytes",
-                            config.max_url_bytes
-                        ),
-                    ));
-                    continue;
-                }
-                if !policy.allows_url(url, UrlProvenance::ResolvedResource) {
-                    diagnostics.push(stylesheet_diagnostic(
-                        "invalid-stylesheet-url",
-                        index,
-                        &format!("stylesheet URL {index} is not allowed by the URL policy"),
-                    ));
-                    continue;
-                }
-                output.push_str("<link rel=\"stylesheet\" href=\"");
-                escape_html_into(&mut output, url);
-                output.push_str("\">\n");
-            }
-        }
-        emitted.push(source);
-    }
-    output
-}
-
-/// Inline CSS cannot be protected by HTML escaping, so bodies that could
-/// terminate the `<style>` element or open a comment context are rejected.
-fn safe_inline_css(css: &str) -> bool {
-    if css
-        .chars()
-        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
-    {
-        return false;
-    }
-    if css.contains("<!--") {
-        return false;
-    }
-    let bytes = css.as_bytes();
-    !bytes
-        .windows("</style".len())
-        .any(|window| window.eq_ignore_ascii_case(b"</style"))
-}
-
-fn stylesheet_diagnostic(code: &str, index: usize, message: &str) -> Diagnostic {
-    let range =
-        crate::source::TextRange::new(crate::source::TextSize::ZERO, crate::source::TextSize::ZERO)
-            .expect("the empty range at the document start is always valid");
-    let mut diagnostic = render_diagnostic(code, message, range);
-    diagnostic.id = DiagnosticId::new(format!("{code}:stylesheet-{index}@0:0"));
-    diagnostic
-}
-
 fn render_unsupported(output: &mut String, unsupported: &Unsupported, id: Option<&str>) {
     output.push_str("<p");
     render_optional_id(output, id);
@@ -2426,34 +2290,20 @@ mod tests {
 
     #[test]
     fn stylesheets_render_into_the_complete_document_head_in_host_order() {
-        let parsed = parse("paragraph").expect("valid source");
+        let parsed = parse(include_str!("../../../fixtures/html/head-stylesheets.adoc"))
+            .expect("valid source");
         let output = render(
             &parsed.ast,
             &stylesheet_policy(vec![
-                StylesheetSource::External("https://example.com/a.css".to_owned()),
+                StylesheetSource::External("https://example.com/a.css?a=1&b=2".to_owned()),
                 StylesheetSource::Inline("p { margin: 0; }".to_owned()),
-                StylesheetSource::External("https://example.com/a.css".to_owned()),
+                StylesheetSource::External("https://example.com/a.css?a=1&b=2".to_owned()),
             ]),
         );
 
         assert_eq!(
             output.html,
-            concat!(
-                "<!doctype html>\n",
-                "<html lang=\"\">\n",
-                "<head>\n",
-                "<meta charset=\"utf-8\">\n",
-                "<title>AdocWeave document</title>\n",
-                "<link rel=\"stylesheet\" href=\"https://example.com/a.css\">\n",
-                "<style>\n",
-                "p { margin: 0; }\n",
-                "</style>\n",
-                "</head>\n",
-                "<body>\n",
-                "<p>paragraph</p>\n",
-                "</body>\n",
-                "</html>\n"
-            )
+            include_str!("../../../fixtures/html/head-stylesheets.complete.html")
         );
         assert!(output.diagnostics.is_empty());
     }
