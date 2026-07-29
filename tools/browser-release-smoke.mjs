@@ -7,13 +7,18 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { assertBrowserArtifactSizes } from "./browser-release-budget.mjs";
 import {
+  BROWSER_STARTUP_ATTEMPTS,
+  BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS,
+  BROWSER_STARTUP_TOTAL_TIMEOUT_MS,
+  retryBrowserStartup,
+} from "./browser-startup.mjs";
+import {
   hostExecutableEnvironment,
   resolveHostExecutable,
 } from "./host-executable.mjs";
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
-const BROWSER_STARTUP_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 25;
 const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
 if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
@@ -97,6 +102,27 @@ try {
 }
 
 async function inspectPage(chromium, url, temporaryRoot) {
+  return retryBrowserStartup(
+    ({ remainingMs, signal }) => inspectPageAttempt(
+      chromium,
+      url,
+      temporaryRoot,
+      Math.min(BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS, remainingMs),
+      signal,
+    ),
+    {
+      attempts: BROWSER_STARTUP_ATTEMPTS,
+      totalTimeoutMs: BROWSER_STARTUP_TOTAL_TIMEOUT_MS,
+      onFailure: ({ attempt, attempts, elapsedMs, error, willRetry }) => {
+        console.error(
+          `browser release smoke: startup attempt ${attempt}/${attempts} failed after ${elapsedMs} ms; ${willRetry ? "retrying with a fresh profile" : "no retries remain"}:\n${error.message}`,
+        );
+      },
+    },
+  );
+}
+
+async function inspectPageAttempt(chromium, url, temporaryRoot, startupTimeoutMs, signal) {
   const profile = join(temporaryRoot, `profile-${crypto.randomUUID()}`);
   const browser = spawn(chromium, [
     "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
@@ -119,16 +145,19 @@ async function inspectPage(chromium, url, temporaryRoot) {
         const contents = await readFile(join(profile, "DevToolsActivePort"), "utf8");
         const candidate = Number.parseInt(contents.split("\n", 1)[0], 10);
         return Number.isInteger(candidate) && candidate > 0 ? candidate : undefined;
-      }, () => browserFailure(browser, spawnError, stderr));
+      }, () => browserFailure(browser, spawnError, stderr), startupTimeoutMs, signal);
     } catch (error) {
-      throw browserFailure(browser, spawnError, stderr) ?? new Error(
+      const fatal = browserFailure(browser, spawnError, stderr);
+      const failure = fatal ?? new Error(
         `browser did not create DevToolsActivePort: ${error.message}${stderr ? `\n${stderr}` : ""}`,
       );
+      failure.retryBrowserStartup = fatal === undefined;
+      throw failure;
     }
     const target = await poll(async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) });
       return (await response.json()).find((candidate) => candidate.type === "page");
-    }, () => browserFailure(browser, spawnError, stderr));
+    }, () => browserFailure(browser, spawnError, stderr), startupTimeoutMs, signal);
     const socket = new WebSocket(target.webSocketDebuggerUrl);
     await withTimeout(once(socket, "open"), 5000, "DevTools WebSocket connection timeout");
     let id = 0;
@@ -192,10 +221,11 @@ async function inspectPage(chromium, url, temporaryRoot) {
   }
 }
 
-async function poll(operation, failure) {
+async function poll(operation, failure, timeoutMs, signal) {
   let error;
-  const deadline = Date.now() + BROWSER_STARTUP_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const fatal = failure?.();
     if (fatal) throw fatal;
     try {
@@ -206,8 +236,9 @@ async function poll(operation, failure) {
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, POLL_INTERVAL_MS));
   }
+  signal?.throwIfAborted();
   throw error ?? new Error(
-    `Chromium did not become ready within ${BROWSER_STARTUP_TIMEOUT_MS} ms`,
+    `Chromium did not become ready within ${timeoutMs} ms`,
   );
 }
 

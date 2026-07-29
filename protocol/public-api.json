@@ -513,7 +513,7 @@
       "fields": [
         { "json": "baseUri", "type": "string | null", "default": null },
         { "json": "safeMode", "type": "SafeMode", "default": "secure" },
-        { "json": "allowedSchemes", "type": "string[]", "default": [] },
+        { "json": "allowedSchemes", "type": "string[]", "collection": "set", "default": [] },
         { "json": "attributes", "type": "Record<string, string | null>", "default": {} },
         { "json": "enableIncludes", "type": "boolean", "default": true },
         { "json": "maxIncludeDepth", "type": "u32", "default": 16 },

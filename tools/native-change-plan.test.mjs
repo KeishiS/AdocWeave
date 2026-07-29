@@ -41,6 +41,8 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "editors/vscode/src/extension.ts",
     "web-worker/client.mjs",
     "tools/browser-release-smoke.mjs",
+    "tools/protocol-rust-codegen.mjs",
+    "tools/protocol-rust-codegen.test.mjs",
     "release-manifest.json",
     "protocol/public-api.json",
   ]) {
@@ -83,6 +85,7 @@ test("tracked path監査は未分類pathを具体的に報告する", () => {
 
 test("Browser実行補助はglobalだけ、repository metadataはcandidate対象外に分類する", () => {
   for (const pathname of [
+    "tools/browser-startup.mjs",
     "tools/browser-release-budget.mjs",
     "tools/browser-release-smoke.test.mjs",
     "tools/host-executable.mjs",

@@ -1,5 +1,8 @@
 use adocweave::NeverCancel;
-use adocweave_wasm::{WasmPreprocessRequest, WasmRequest, preprocess_request, process_request};
+use adocweave_wasm::{
+    WasmAnalysisPreprocessInput, WasmPreprocessOptions, WasmPreprocessRequest, WasmRequest,
+    WasmResource, WasmSafeMode, preprocess_request, process_request,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -157,6 +160,46 @@ fn default_request_uses_every_schema_default() {
             "{name} must be required or have an explicit default"
         );
     }
+}
+
+#[test]
+fn generated_preprocess_inputs_keep_the_public_api_and_schema_defaults() {
+    let (schema, _) = documents();
+    let options = WasmPreprocessOptions::default();
+    assert_schema_defaults(
+        &serde_json::to_value(&options).expect("preprocess defaults"),
+        "PreprocessOptions",
+        &schema,
+    );
+    assert_eq!(options.safe_mode, WasmSafeMode::Secure);
+
+    let resource = WasmResource {
+        source_id: "file:///chapter.adoc".to_owned(),
+        source: "= Chapter".to_owned(),
+    };
+    let analysis = WasmAnalysisPreprocessInput {
+        resources: std::collections::BTreeMap::from([(
+            "chapter.adoc".to_owned(),
+            resource.clone(),
+        )]),
+        options: options.clone(),
+    };
+    let request = WasmPreprocessRequest {
+        package_version: adocweave::VERSION.to_owned(),
+        source_id: None,
+        source: "include::chapter.adoc[]".to_owned(),
+        resources: analysis.resources,
+        options: analysis.options,
+    };
+    assert_wire_value(
+        &serde_json::to_value(request).expect("public preprocess request"),
+        "PreprocessRequest",
+        &schema,
+    );
+
+    const GENERATED: &str = include_str!("../src/preprocess_wire_generated.rs");
+    assert!(GENERATED.starts_with("// @generated"));
+    assert!(!GENERATED.contains("adocweave::"));
 }
 
 fn assert_schema_defaults(value: &Value, name: &str, schema: &Value) {
