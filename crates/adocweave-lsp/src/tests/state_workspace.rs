@@ -89,6 +89,95 @@ fn stale_analysis_never_replaces_published_diagnostics() {
 }
 
 #[test]
+fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-oversized-open-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[resources]\nmax-files = 8\nmax-total-bytes = 8\nmax-resource-bytes = 4\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("document.adoc");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    })));
+    let accepted = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": document_uri,
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "old"
+        }
+    })));
+    assert_eq!(accepted.len(), 1);
+    let previous = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("committed document")
+        .request
+        .revision
+        .clone();
+
+    let rejected = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": document_uri,
+            "languageId": "asciidoc",
+            "version": 2,
+            "text": "oversized"
+        }
+    })));
+
+    assert!(rejected.is_empty());
+    let current = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("previous document");
+    assert_eq!(current.request.revision, previous);
+    assert_eq!(current.request.source.as_ref(), "old");
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(lsp::NumberOrString::String(
+                "workspace-resource-error".to_owned(),
+            ))
+            && diagnostic.message.contains("retained resource byte")
+    }));
+
+    let recovered = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": document_uri,
+            "languageId": "asciidoc",
+            "version": 3,
+            "text": "new"
+        }
+    })));
+    assert_eq!(recovered.len(), 1);
+    let current = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("recovered document");
+    assert_eq!(current.request.revision.version, 3);
+    assert_eq!(current.request.source.as_ref(), "new");
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code
+            != Some(lsp::NumberOrString::String(
+                "workspace-resource-error".to_owned(),
+            ))
+    }));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn workspace_folders_null_does_not_fall_back_to_legacy_root_uri() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -440,7 +529,7 @@ fn invalid_project_configuration_does_not_fall_back_to_default_analysis() {
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
         diagnostic.code
             == Some(lsp::NumberOrString::String(
-                "workspace-input-error".to_owned(),
+                "workspace-resource-error".to_owned(),
             ))
     }));
     assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
