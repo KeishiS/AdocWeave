@@ -1,3 +1,4 @@
+pub(crate) mod check;
 pub(crate) mod config;
 pub(crate) mod convert;
 pub(crate) mod html_policy;

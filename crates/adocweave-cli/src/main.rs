@@ -11,8 +11,6 @@ use std::time::Duration;
 
 use adocweave::output::diagnostics as diagnostic;
 use adocweave::output::formatter::{FormatConfig, format_analysis};
-use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits};
-use adocweave::text::{PositionEncoding, SourceDocument};
 use adocweave::{
     AnalysisOptions, CancellationCheck, CancellationToken, Engine, OutputLimits, ParseError,
 };
@@ -44,9 +42,9 @@ fn install_preview_signal_handlers() {
 fn install_preview_signal_handlers() {}
 
 use check_output::{
-    CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, github_annotation,
-    prefix_human_source, sarif_log, sarif_result, sarif_results,
+    CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, sarif_log, sarif_results,
 };
+use commands::check::Options as CheckOptions;
 use commands::html_policy::StylesheetArgument;
 use commands::model::{CommandId, LookupError};
 use file_workflow::{
@@ -160,6 +158,19 @@ fn convert_error(error: commands::convert::Error) -> CliError {
     }
 }
 
+fn check_error(error: commands::check::Error) -> CliError {
+    match error {
+        commands::check::Error::InvalidUtf8 { valid_up_to } => {
+            CliError::InvalidUtf8 { valid_up_to }
+        }
+        commands::check::Error::Analysis(source) => CliError::Analysis(source),
+        commands::check::Error::Position(source) => CliError::Position(source),
+        commands::check::Error::Include(source) => CliError::Include(source),
+        commands::check::Error::LocalTarget(source) => CliError::LocalTarget(source),
+        commands::check::Error::FixConflict(source) => CliError::FixConflict(source),
+    }
+}
+
 fn html_policy_error(error: commands::html_policy::Error) -> CliError {
     match error {
         commands::html_policy::Error::Cancelled => CliError::Analysis(ParseError::Cancelled),
@@ -184,17 +195,6 @@ enum ColorChoice {
     Auto,
     Always,
     Never,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct CheckOptions {
-    format: DiagnosticFormat,
-    fail_on: FailOn,
-    summary: bool,
-    fix: bool,
-    dry_run: bool,
-    list_rules: bool,
-    enabled_rules: Vec<diagnostic::LintRuleId>,
 }
 
 #[derive(Debug)]
@@ -692,24 +692,6 @@ fn analyze(source: &str, options: &AnalysisOptions) -> Result<adocweave::Analysi
         .map_err(CliError::Analysis)
 }
 
-fn check_analysis_options(
-    base: &AnalysisOptions,
-    enabled_rules: &[diagnostic::LintRuleId],
-) -> AnalysisOptions {
-    let mut options = base.clone();
-    for rule in enabled_rules {
-        let current = options.diagnostics.lint.rule(*rule);
-        options.diagnostics.lint.set_rule(
-            *rule,
-            diagnostic::RuleSettings {
-                enabled: true,
-                ..current
-            },
-        );
-    }
-    options
-}
-
 fn finish_output(output: String) -> Result<String, CliError> {
     let limit = OutputLimits::default().max_output_bytes;
     if output.len() > usize::try_from(limit).expect("u32 fits usize on supported targets") {
@@ -920,159 +902,20 @@ fn process_check(
     resource_limits: adocweave_host::ResourceLimits,
     local: Option<(&std::path::Path, &std::path::Path, &str)>,
 ) -> Result<CheckOutcome, CliError> {
-    let source = decode_input(input)?;
-    let analysis = Engine::new(check_analysis_options(
+    commands::check::process(
+        input,
+        check,
+        source_id,
         analysis_options,
-        &check.enabled_rules,
-    ))
-    .analyze(source)
-    .map_err(CliError::Analysis)?;
-    let mut host = if let Some((base, root, source_id)) = local {
-        let mut targets = analysis.local_targets();
-        let snapshot =
-            std::iter::empty::<(String, adocweave::preprocess::ResourceDocument)>().collect();
-        let mut local_preprocess_options = preprocess_options.clone();
-        local_preprocess_options.source_id = Some(adocweave::SourceId::new(source_id));
-        local_preprocess_options.enable_includes = false;
-        let include_document =
-            adocweave::preprocess::preprocess(source, &snapshot, &local_preprocess_options)
-                .map_err(|error| {
-                    CliError::Include(local_include::LocalIncludeError::Preprocess(error))
-                })?;
-        let includes = include_document
-            .directives
-            .iter()
-            .filter(|directive| directive.kind == adocweave::preprocess::DirectiveKind::Include)
-            .collect::<Vec<_>>();
-        let optional_ranges = includes
-            .iter()
-            .filter(|include| include.optional)
-            .map(|include| include.target_range)
-            .collect::<Vec<_>>();
-        targets.extend(includes.iter().filter_map(|include| include.local_target()));
-        let mut diagnostics =
-            local_target::validate(&targets, base, root, source_id, source, resource_limits)
-                .map_err(CliError::LocalTarget)?;
-        diagnostics.retain(|diagnostic| {
-            diagnostic.code != "local-target-missing"
-                || !optional_ranges.contains(&diagnostic.range)
-        });
-        diagnostics
-    } else {
-        Vec::new()
-    };
-    host.sort_by(|left, right| {
-        (
-            left.range.start(),
-            left.range.end(),
-            left.code,
-            left.target.as_str(),
-        )
-            .cmp(&(
-                right.range.start(),
-                right.range.end(),
-                right.code,
-                right.target.as_str(),
-            ))
-    });
-    let mut counts = DiagnosticCounts::default();
-    for item in analysis.diagnostics() {
-        counts.add(item.severity);
-    }
-    counts.add_host_errors(host.len());
-    let output = match check.format {
-        DiagnosticFormat::Json => {
-            let core = diagnostic::render_json(analysis.diagnostics());
-            if host.is_empty() {
-                core
-            } else {
-                let mut values = serde_json::from_str::<Vec<serde_json::Value>>(&core)
-                    .expect("core diagnostic renderer returns a JSON array");
-                values.extend(local_target::json_values(&host));
-                serde_json::to_string(&values).expect("diagnostics are serializable")
-            }
-        }
-        DiagnosticFormat::Human => {
-            let core = diagnostic::render_human(
-                analysis.diagnostics(),
-                analysis.source_document(),
-                PositionEncoding::Utf8,
-            )
-            .map_err(CliError::Position)?;
-            prefix_human_source(&core, source_id)
-                + &local_target::render_human(&host, source).map_err(CliError::Position)?
-        }
-        DiagnosticFormat::Github => {
-            let document = SourceDocument::new(source).map_err(CliError::Position)?;
-            let mut output = String::new();
-            for item in analysis.diagnostics() {
-                let position = document
-                    .offset_to_position(item.range.start(), PositionEncoding::Utf8)
-                    .map_err(CliError::Position)?;
-                output.push_str(&github_annotation(
-                    item.severity,
-                    item.code.as_str(),
-                    &item.message,
-                    source_id,
-                    position.line + 1,
-                    position.character + 1,
-                ));
-            }
-            for item in &host {
-                output.push_str(&github_annotation(
-                    diagnostic::Severity::Error,
-                    item.code,
-                    item.message,
-                    &item.source_id,
-                    item.line,
-                    item.column,
-                ));
-            }
-            output
-        }
-        DiagnosticFormat::Sarif => {
-            let document = SourceDocument::new(source).map_err(CliError::Position)?;
-            let mut results = Vec::new();
-            for item in analysis.diagnostics() {
-                let position = document
-                    .offset_to_position(item.range.start(), PositionEncoding::Utf8)
-                    .map_err(CliError::Position)?;
-                results.push(sarif_result(
-                    item.id.as_str(),
-                    item.severity,
-                    item.code.as_str(),
-                    &item.message,
-                    source_id,
-                    position.line + 1,
-                    position.character + 1,
-                ));
-            }
-            results.extend(host.iter().map(|item| {
-                let id = format!(
-                    "{}@{}:{}:{}",
-                    item.code,
-                    item.source_id,
-                    item.range.start().to_u32(),
-                    item.range.end().to_u32()
-                );
-                sarif_result(
-                    &id,
-                    diagnostic::Severity::Error,
-                    item.code,
-                    item.message,
-                    &item.source_id,
-                    item.line,
-                    item.column,
-                )
-            }));
-            sarif_log(results)
-        }
-    };
-    Ok(CheckOutcome {
-        output,
-        counts,
-        fail_on: check.fail_on,
-    })
+        preprocess_options,
+        resource_limits,
+        local.map(|(base, root, source_id)| commands::check::LocalContext {
+            base,
+            root,
+            source_id,
+        }),
+    )
+    .map_err(check_error)
 }
 
 fn process_format(
@@ -1243,31 +1086,12 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
     Ok(files.into_iter().collect())
 }
 
-fn apply_safe_fixes(input: &[u8], analysis_options: &AnalysisOptions) -> Result<Vec<u8>, CliError> {
-    let source = decode_input(input)?;
-    let analysis = Engine::new(analysis_options.clone())
-        .analyze(source)
-        .map_err(CliError::Analysis)?;
-    let edits = analysis
-        .diagnostics()
-        .iter()
-        .flat_map(|diagnostic| &diagnostic.fixes)
-        .filter(|fix| fix.applicability == diagnostic::Applicability::Always)
-        .flat_map(|fix| fix.edits().iter().cloned())
-        .collect::<Vec<_>>();
-    if edits.is_empty() {
-        return Ok(input.to_vec());
-    }
-    let fix = diagnostic::Fix::new("apply safe fixes", diagnostic::Applicability::Always, edits)
-        .map_err(CliError::FixConflict)?;
-    let mut fixed = source.to_owned();
-    for edit in fix.edits().iter().rev() {
-        fixed.replace_range(
-            edit.range.start().to_usize()..edit.range.end().to_usize(),
-            &edit.replacement,
-        );
-    }
-    Ok(fixed.into_bytes())
+fn apply_safe_fixes(
+    input: &[u8],
+    check: &CheckOptions,
+    analysis_options: &AnalysisOptions,
+) -> Result<Vec<u8>, CliError> {
+    commands::check::apply_safe_fixes(input, check, analysis_options).map_err(check_error)
 }
 
 fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
@@ -1417,10 +1241,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     source,
                 })?;
                 let checked = if check.fix {
-                    apply_safe_fixes(
-                        &original,
-                        &check_analysis_options(&config.analysis, &check.enabled_rules),
-                    )?
+                    apply_safe_fixes(&original, check, &config.analysis)?
                 } else {
                     original.clone()
                 };
@@ -1484,8 +1305,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         preprocess: &config.preprocess,
                     })
                     .map_err(CliError::Include)?;
-                    check_preprocessed(&mut prepared, check, &config.analysis)
-                        .map_err(CliError::Include)?
+                    check_preprocessed(&mut prepared, check, &config.analysis)?
                 } else {
                     process_check(
                         &checked,
@@ -2002,7 +1822,6 @@ fn run() -> Result<ExitCode, CliError> {
             let (output, exit_code) = if let CommandOptions::Check(check) = &arguments.command {
                 let outcome = if let Some(prepared) = prepared.as_mut() {
                     check_preprocessed(prepared, check, &project_config.analysis)
-                        .map_err(CliError::Include)
                 } else {
                     process_check(
                         &processed,
@@ -2088,261 +1907,8 @@ fn check_preprocessed(
     prepared: &mut local_include::PreparedInput,
     check: &CheckOptions,
     analysis_options: &AnalysisOptions,
-) -> Result<CheckOutcome, local_include::LocalIncludeError> {
-    let (projection, mut validation) = prepared.projection_and_validation_mut();
-    let engine = adocweave::Engine::new(check_analysis_options(
-        analysis_options,
-        &check.enabled_rules,
-    ));
-    let analysis = engine
-        .analyze(&projection.document().source)
-        .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
-    let projected = PreprocessedAnalysis {
-        document: projection.document().clone(),
-        analysis,
-    }
-    .project_origins(ProjectionLimits::default())
-    .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
-    let mut host = Vec::new();
-    if let Some(validation) = validation.as_mut() {
-        for target in &projected.local_targets {
-            for origin in &target.target_origins {
-                let source_id = origin
-                    .source_id
-                    .as_ref()
-                    .map_or("<stdin>", adocweave::SourceId::as_str);
-                let directive = (target.value.kind == adocweave::LocalTargetKind::Include)
-                    .then(|| {
-                        projected.directives.iter().find(|directive| {
-                            directive
-                                .source_id
-                                .as_ref()
-                                .map(adocweave::SourceId::as_str)
-                                == Some(source_id)
-                                && directive.target_range == origin.range.text_range()
-                        })
-                    })
-                    .flatten();
-                let base = if directive.is_some() {
-                    projection.include_base(source_id)
-                } else {
-                    projection.source_base(source_id)
-                }
-                .ok_or_else(|| {
-                    local_include::LocalIncludeError::MissingSource(source_id.to_owned())
-                })?;
-                let optional = directive.is_some_and(|directive| directive.optional);
-                let source = projection.source(source_id).ok_or_else(|| {
-                    local_include::LocalIncludeError::MissingSource(source_id.to_owned())
-                })?;
-                if let Some(error) =
-                    directive.and_then(|directive| validation.include_error(&directive.target))
-                {
-                    if optional && matches!(error, adocweave_host::LocalTargetError::Missing(_)) {
-                        continue;
-                    }
-                    host.push(local_target::diagnostic_from_error(
-                        error,
-                        source_id,
-                        source,
-                        origin.range.text_range(),
-                        &target.value.target,
-                    ));
-                    continue;
-                }
-                if optional && target.value.syntax == adocweave::LocalTargetSyntax::Candidate {
-                    match validation.session_mut().inspect(base, &target.value.path) {
-                        Ok(_) | Err(adocweave_host::LocalTargetError::Missing(_)) => continue,
-                        Err(_) => {}
-                    }
-                }
-                let mut value = target.value.clone();
-                value.target_range = origin.range.text_range();
-                host.extend(local_target::validate_with_session(
-                    std::slice::from_ref(&value),
-                    base,
-                    source_id,
-                    source,
-                    validation.session_mut(),
-                ));
-            }
-        }
-        host.sort_by(|left, right| {
-            (
-                left.source_id.as_str(),
-                left.range.start(),
-                left.range.end(),
-                left.code,
-                left.target.as_str(),
-            )
-                .cmp(&(
-                    right.source_id.as_str(),
-                    right.range.start(),
-                    right.range.end(),
-                    right.code,
-                    right.target.as_str(),
-                ))
-        });
-    }
-    let mut counts = DiagnosticCounts::default();
-    for item in &projected.diagnostics {
-        for _ in &item.origins {
-            counts.add(item.diagnostic.severity);
-        }
-    }
-    counts.add_host_errors(host.len());
-    if check.format == DiagnosticFormat::Json {
-        let mut values = projected
-            .diagnostics
-            .iter()
-            .flat_map(|diagnostic| {
-                diagnostic.origins.iter().map(move |origin| {
-                    serde_json::json!({
-                        "id": diagnostic.diagnostic.id.as_str(),
-                        "code": diagnostic.diagnostic.code.as_str(),
-                        "severity": diagnostic.diagnostic.severity.as_str(),
-                        "message": diagnostic.diagnostic.message,
-                        "sourceId": origin.source_id.as_ref().map(adocweave::SourceId::as_str),
-                        "range": {
-                            "start": origin.range.start().to_u32(),
-                            "end": origin.range.end().to_u32()
-                        }
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
-        values.extend(local_target::json_values(&host));
-        return serde_json::to_string(&values)
-            .map(|output| CheckOutcome {
-                output,
-                counts,
-                fail_on: check.fail_on,
-            })
-            .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()));
-    }
-    if check.format == DiagnosticFormat::Sarif {
-        let mut results = Vec::new();
-        for diagnostic in &projected.diagnostics {
-            for origin in &diagnostic.origins {
-                let source_id = origin
-                    .source_id
-                    .as_ref()
-                    .map_or("<unknown>", adocweave::SourceId::as_str);
-                let source = projection.source(source_id).ok_or_else(|| {
-                    local_include::LocalIncludeError::MissingSource(source_id.to_owned())
-                })?;
-                let index = SourceDocument::new(source)
-                    .map_err(local_include::LocalIncludeError::Position)?;
-                let position = index
-                    .offset_to_position(origin.range.start(), PositionEncoding::Utf8)
-                    .map_err(local_include::LocalIncludeError::Position)?;
-                results.push(sarif_result(
-                    &format!(
-                        "{}@{}:{}:{}",
-                        diagnostic.diagnostic.code.as_str(),
-                        source_id,
-                        origin.range.start().to_u32(),
-                        origin.range.end().to_u32()
-                    ),
-                    diagnostic.diagnostic.severity,
-                    diagnostic.diagnostic.code.as_str(),
-                    &diagnostic.diagnostic.message,
-                    source_id,
-                    position.line + 1,
-                    position.character + 1,
-                ));
-            }
-        }
-        results.extend(host.iter().map(|diagnostic| {
-            let id = format!(
-                "{}@{}:{}:{}",
-                diagnostic.code,
-                diagnostic.source_id,
-                diagnostic.range.start().to_u32(),
-                diagnostic.range.end().to_u32()
-            );
-            sarif_result(
-                &id,
-                diagnostic::Severity::Error,
-                diagnostic.code,
-                diagnostic.message,
-                &diagnostic.source_id,
-                diagnostic.line,
-                diagnostic.column,
-            )
-        }));
-        return Ok(CheckOutcome {
-            output: sarif_log(results),
-            counts,
-            fail_on: check.fail_on,
-        });
-    }
-
-    let mut output = String::new();
-    for diagnostic in &projected.diagnostics {
-        for origin in &diagnostic.origins {
-            let source_id = origin
-                .source_id
-                .as_ref()
-                .map_or("<unknown>", adocweave::SourceId::as_str);
-            let source = projection.source(source_id).ok_or_else(|| {
-                local_include::LocalIncludeError::MissingSource(source_id.to_owned())
-            })?;
-            let index =
-                SourceDocument::new(source).map_err(local_include::LocalIncludeError::Position)?;
-            let position = index
-                .offset_to_position(origin.range.start(), PositionEncoding::Utf8)
-                .map_err(local_include::LocalIncludeError::Position)?;
-            if check.format == DiagnosticFormat::Github {
-                output.push_str(&github_annotation(
-                    diagnostic.diagnostic.severity,
-                    diagnostic.diagnostic.code.as_str(),
-                    &diagnostic.diagnostic.message,
-                    source_id,
-                    position.line + 1,
-                    position.character + 1,
-                ));
-                continue;
-            }
-            use std::fmt::Write as _;
-            writeln!(
-                output,
-                "{}:{}:{}: {}[{}]: {}",
-                source_id,
-                position.line + 1,
-                position.character + 1,
-                diagnostic.diagnostic.severity.as_str(),
-                diagnostic.diagnostic.code.as_str(),
-                diagnostic.diagnostic.message,
-            )
-            .expect("writing to a String cannot fail");
-        }
-    }
-    for diagnostic in &host {
-        if check.format == DiagnosticFormat::Github {
-            output.push_str(&github_annotation(
-                diagnostic::Severity::Error,
-                diagnostic.code,
-                diagnostic.message,
-                &diagnostic.source_id,
-                diagnostic.line,
-                diagnostic.column,
-            ));
-            continue;
-        }
-        let source = projection.source(&diagnostic.source_id).ok_or_else(|| {
-            local_include::LocalIncludeError::MissingSource(diagnostic.source_id.clone())
-        })?;
-        output.push_str(
-            &local_target::render_human(std::slice::from_ref(diagnostic), source)
-                .map_err(local_include::LocalIncludeError::Position)?,
-        );
-    }
-    Ok(CheckOutcome {
-        output,
-        counts,
-        fail_on: check.fail_on,
-    })
+) -> Result<CheckOutcome, CliError> {
+    commands::check::process_preprocessed(prepared, check, analysis_options).map_err(check_error)
 }
 
 fn main() -> ExitCode {
