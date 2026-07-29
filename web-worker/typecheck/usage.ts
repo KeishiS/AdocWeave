@@ -13,7 +13,7 @@ const client = new AdocWeaveClient({
     const html: string = result.html;
     const version: number = result.sourceVersion;
     const formulaSource: string | undefined =
-      result.result.projection.formulas[0]?.source;
+      result.projection?.formulas[0]?.source;
     console.log(html, version, formulaSource);
   },
 });

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "packageVersion": "0.16.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
@@ -91,6 +91,7 @@
     ,"SymbolKind": ["document-title", "part", "section", "list-item"]
     ,"SafeMode": ["unsafe", "server", "safe", "secure"]
     ,"SourceMapping": ["identity", "whole-origin"]
+    ,"ProjectedReferenceNotice": ["reference-resolution-fallback"]
     ,"ProjectedReferenceFailureKind": ["missing-reference-target", "missing-reference-anchor", "ambiguous-reference-target", "reference-outside-root", "reference-resolver-failure"]
   },
   "settings": {
@@ -464,7 +465,7 @@
         "resolved": [
           { "json": "href", "type": "string", "required": true },
           { "json": "displayText", "type": "string | null", "required": true },
-          { "json": "notices", "type": "ReferenceNotice[]", "required": true }
+          { "json": "notices", "type": "ProjectedReferenceNotice[]", "required": true }
         ],
         "failed": [{ "json": "kind", "type": "ProjectedReferenceFailureKind", "required": true }]
       }
@@ -486,7 +487,7 @@
       { "json": "diagnostics", "type": "Diagnostic[]" },
       { "json": "renderDiagnostics", "type": "Diagnostic[]" },
       { "json": "symbols", "type": "DocumentSymbol[]" },
-      { "json": "projection", "type": "DocumentProjection" }
+      { "json": "projection", "type": "DocumentProjection | null" }
     ]
   },
   "preprocessRequest": {

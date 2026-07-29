@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
+import { validateWorkerMessage, WORKER_PROTOCOL_VERSION } from "./protocol.generated.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -42,6 +43,25 @@ test("generated wasm-bindgen accepts the current default requests", () => {
   assert.equal(response.packageVersion, release.packageVersion);
   assert.equal(response.version, 1);
   assert.equal(response.generation, 1);
+  assert.equal(validateWorkerMessage({
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    type: "result",
+    version: response.version,
+    generation: response.generation,
+    result: response,
+  }, "responses"), true);
+
+  const withoutProjection = currentRequest();
+  withoutProjection.products = { ...response.products, projection: false };
+  const disabledResponse = wasm.process(withoutProjection);
+  assert.equal(disabledResponse.projection, null);
+  assert.equal(validateWorkerMessage({
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    type: "result",
+    version: disabledResponse.version,
+    generation: disabledResponse.generation,
+    result: disabledResponse,
+  }, "responses"), true);
 
   const preprocessed = wasm.preprocess(currentPreprocessRequest());
   assert.equal(preprocessed.packageVersion, release.packageVersion);

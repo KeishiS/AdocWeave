@@ -65,6 +65,8 @@ export type SafeMode = "unsafe" | "server" | "safe" | "secure";
 
 export type SourceMapping = "identity" | "whole-origin";
 
+export type ProjectedReferenceNotice = "reference-resolution-fallback";
+
 export type ProjectedReferenceFailureKind = "missing-reference-target" | "missing-reference-anchor" | "ambiguous-reference-target" | "reference-outside-root" | "reference-resolver-failure";
 
 export interface AnalysisOptions {
@@ -384,7 +386,7 @@ export type ReferenceKey =
   | { kind: "scheme"; scheme: string; locator: string; anchor: string | null };
 
 export type ProjectedResolutionOutcome =
-  | { status: "resolved"; href: string; displayText: string | null; notices: ReferenceNotice[] }
+  | { status: "resolved"; href: string; displayText: string | null; notices: ProjectedReferenceNotice[] }
   | { status: "failed"; kind: ProjectedReferenceFailureKind };
 
 export interface TextRange {
@@ -545,7 +547,7 @@ export interface AdocWeaveWasmResponse {
   diagnostics: Diagnostic[];
   renderDiagnostics: Diagnostic[];
   symbols: DocumentSymbol[];
-  projection: DocumentProjection;
+  projection: DocumentProjection | null;
 }
 
 export type WorkerRequest =
@@ -564,7 +566,7 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 5;
+export declare const PROTOCOL_SCHEMA_VERSION: 6;
 export declare const WORKER_PROTOCOL_VERSION: 2;
 export declare const PACKAGE_VERSION: "0.16.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];

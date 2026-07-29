@@ -485,6 +485,7 @@ fn response_and_projection_fields_match_the_schema() {
         "/projection/title",
         "/projection/targets/0",
         "/projection/structure/headings/0",
+        "/projection/structure/toc/0",
         "/projection/sourceBlocks/0",
         "/projection/formulas/0",
         "/projection/orderedLists/0",
@@ -493,6 +494,7 @@ fn response_and_projection_fields_match_the_schema() {
         "/projection/referenceEdges/0",
         "/projection/searchableText/segments/0",
         "/projection/catalogs/footnotes/0",
+        "/projection/catalogs/bibliography/0",
         "/projection/catalogs/index/0",
         "/symbols/0",
     ] {
@@ -505,13 +507,25 @@ fn response_and_projection_fields_match_the_schema() {
     let edges = response["projection"]["referenceEdges"]
         .as_array()
         .expect("reference edges");
-    assert!(edges.len() >= 2, "union witness reference edges");
+    let target_kinds = edges
+        .iter()
+        .map(|edge| edge["target"]["kind"].as_str().expect("target kind"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        target_kinds,
+        BTreeSet::from(["document", "local", "scheme"]),
+        "every ReferenceKey variant needs a non-empty wire witness"
+    );
     value["renderInputs"] = json!({
         "references": [
             {
                 "sourceStart": edges[0]["sourceRange"]["start"],
                 "sourceEnd": edges[0]["sourceRange"]["end"],
-                "outcome": { "status": "resolved", "href": "#first" }
+                "outcome": {
+                    "status": "resolved",
+                    "href": "#first",
+                    "notices": ["fallback"]
+                }
             },
             {
                 "sourceStart": edges[1]["sourceRange"]["start"],
@@ -532,9 +546,102 @@ fn response_and_projection_fields_match_the_schema() {
         "resolved"
     );
     assert_eq!(
+        resolved["projection"]["referenceEdges"][0]["resolution"]["notices"],
+        json!(["reference-resolution-fallback"])
+    );
+    assert_eq!(
         resolved["projection"]["referenceEdges"][1]["resolution"]["status"],
         "failed"
     );
+}
+
+#[test]
+fn manpage_projection_is_a_non_empty_typed_schema_witness() {
+    let (schema, corpus) = documents();
+    let mut value = base_request(&corpus);
+    value["source"] = json!(
+        "= adocweave(1)\n:doctype: manpage\n\n== NAME\n\nadocweave - convert AsciiDoc safely\n"
+    );
+    value["products"] = json!({
+        "syntax": false,
+        "canonicalAst": false,
+        "html": false,
+        "attributeOccurrences": false,
+        "attributeQueries": false,
+        "resourceQueries": false,
+        "diagnostics": false,
+        "symbols": false,
+        "projection": true
+    });
+    let response = process_request(
+        serde_json::from_value(value).expect("manpage request"),
+        &NeverCancel,
+    )
+    .expect("manpage response");
+    let response = serde_json::to_value(response).expect("serialized manpage response");
+
+    assert_wire_value(&response, "AdocWeaveWasmResponse", &schema);
+    for field in [
+        "name",
+        "section",
+        "purpose",
+        "titleRange",
+        "nameRange",
+        "purposeRange",
+    ] {
+        assert!(
+            response["projection"]["structure"]["manpage"]
+                .get(field)
+                .is_some(),
+            "manpage witness must contain {field}"
+        );
+    }
+}
+
+#[test]
+fn stable_typed_products_use_explicit_disabled_sentinels() {
+    let (_, corpus) = documents();
+    let mut disabled = base_request(&corpus);
+    disabled["products"] = json!({
+        "syntax": false,
+        "canonicalAst": false,
+        "html": false,
+        "attributeOccurrences": false,
+        "attributeQueries": false,
+        "resourceQueries": false,
+        "diagnostics": false,
+        "symbols": false,
+        "projection": false
+    });
+    let request: WasmRequest = serde_json::from_value(disabled).expect("disabled request");
+    let response = process_request(request, &NeverCancel).expect("default response");
+
+    assert!(response.diagnostics.is_empty());
+    assert!(response.render_diagnostics.is_empty());
+    assert!(response.symbols.is_empty());
+    assert!(response.projection.is_none());
+
+    let mut enabled = base_request(&corpus);
+    enabled["source"] = corpus["responseProbe"]["source"].clone();
+    enabled["products"] = json!({
+        "syntax": false,
+        "canonicalAst": false,
+        "html": true,
+        "attributeOccurrences": false,
+        "attributeQueries": false,
+        "resourceQueries": false,
+        "diagnostics": true,
+        "symbols": true,
+        "projection": true
+    });
+    let response = process_request(
+        serde_json::from_value(enabled).expect("enabled request"),
+        &NeverCancel,
+    )
+    .expect("enabled response");
+    assert!(!response.diagnostics.is_empty());
+    assert!(!response.symbols.is_empty());
+    assert!(response.projection.is_some());
 }
 
 #[test]

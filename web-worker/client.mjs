@@ -197,12 +197,9 @@ export class AdocWeaveClient {
             generation: this.#generation,
           };
           this.#rejectPendingError(error);
-          try {
-            this.#options.onError(error);
-          } finally {
-            if (!initialized) reject(new AdocWeaveClientError(error));
-            this.#terminateWorker();
-          }
+          this.#notifyError(error);
+          if (!initialized) reject(new AdocWeaveClientError(error));
+          this.#terminateWorker();
           return;
         }
         if (data?.type === "ready") {
@@ -210,6 +207,18 @@ export class AdocWeaveClient {
           this.#readyReject = null;
           resolve();
         } else if (data?.type === "result" && data.generation === this.#generation) {
+          if (!resultMatchesEnvelope(data)) {
+            const error = {
+              code: "invalid-worker-response",
+              message: "worker result identity does not match its envelope",
+              sourceVersion: data.version,
+              generation: data.generation,
+            };
+            this.#rejectPendingError(error);
+            this.#notifyError(error);
+            this.#terminateWorker();
+            return;
+          }
           const packageVersion = verifiedPackageVersion(data.result);
           if (packageVersion === null) {
             const error = {
@@ -219,20 +228,13 @@ export class AdocWeaveClient {
               generation: data.generation,
             };
             this.#rejectPendingError(error);
-            this.#options.onError(error);
+            this.#notifyError(error);
             return;
           }
-          const result = {
-            html: data.result.html,
-            diagnostics: data.result.diagnostics,
-            renderDiagnostics: data.result.renderDiagnostics,
-            sourceVersion: data.version,
-            generation: data.generation,
-            packageVersion,
-            result: data.result,
-          };
+          const { version: sourceVersion, ...products } = data.result;
+          const result = { sourceVersion, ...products };
           this.#resolvePending(data.generation, result);
-          this.#options.onResult(result);
+          this.#notifyResult(result);
         } else if (data?.type === "error" && data.generation === this.#generation) {
           const error = {
             ...data.error,
@@ -240,7 +242,7 @@ export class AdocWeaveClient {
             generation: data.generation,
           };
           this.#rejectPendingError(error);
-          this.#options.onError(error);
+          this.#notifyError(error);
         }
       };
       worker.addEventListener("message", onMessage);
@@ -253,12 +255,9 @@ export class AdocWeaveClient {
           generation: this.#generation,
         };
         this.#rejectPendingError(error);
-        try {
-          this.#options.onError(error);
-        } finally {
-          reject(new AdocWeaveClientError(error));
-          this.#terminateWorker();
-        }
+        this.#notifyError(error);
+        reject(new AdocWeaveClientError(error));
+        this.#terminateWorker();
       }, { once: true });
     });
     this.#ready = ready;
@@ -350,6 +349,14 @@ export class AdocWeaveClient {
     }
   }
 
+  #notifyResult(result) {
+    try {
+      this.#options.onResult(result);
+    } catch {
+      // Promise settlement and worker message handling do not depend on callbacks.
+    }
+  }
+
   #failWorker(cause, generation) {
     const error = this.#workerError(cause, generation);
     this.#rejectPendingError(error);
@@ -386,6 +393,11 @@ export function isAdocWeaveClientLifecycleError(error) {
 
 function verifiedPackageVersion(result) {
   return result?.packageVersion === PACKAGE_VERSION ? result.packageVersion : null;
+}
+
+function resultMatchesEnvelope({ version, generation, result }) {
+  return result.version === version &&
+    result.generation === generation;
 }
 
 export { AdocWeaveClient as AdocWeaveWorkerClient };
