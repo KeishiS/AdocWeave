@@ -572,6 +572,7 @@ fn parse_block_sequence(
         let next_content = source_document
             .lines()
             .get(line_index + 1)
+            .filter(|_| line_index + 1 < end_line)
             .and_then(|next| source_document.text(next.content_range()));
 
         if root.as_ref().is_some_and(|state| state.expect_author)
@@ -644,7 +645,7 @@ fn parse_block_sequence(
             budget.consume_block()?;
             budget.consume_node()?;
             let (mut source_block, next_line) =
-                parse_source_block(source_document, line_index, source)?;
+                parse_source_block(source_document, line_index, source, end_line)?;
             source_block.metadata =
                 parse_block_attributes(content, line.content_range().start().to_usize())
                     .unwrap_or_default();
@@ -699,7 +700,7 @@ fn parse_block_sequence(
             budget.consume_block()?;
             budget.consume_node()?;
             let (mut math, next_line) =
-                parse_math_block(source_document, line_index, source, config)?;
+                parse_math_block(source_document, line_index, source, config, end_line)?;
             math.metadata =
                 parse_block_attributes(content, line.content_range().start().to_usize())
                     .unwrap_or_default();
@@ -1031,8 +1032,13 @@ fn parse_block_sequence(
                 budget: &mut *budget,
                 anchors: &mut anchors,
             };
-            let (lists, next_line, range) =
-                parse_lists(&list_context, line_index, &mut state, context.depth)?;
+            let (lists, next_line, range) = parse_lists(
+                &list_context,
+                line_index,
+                end_line,
+                &mut state,
+                context.depth,
+            )?;
             blocks.push(crate::syntax_builder::list(range, &lists));
             ast_blocks.extend(lists.into_iter().map(AstBlock::List));
             attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
@@ -1314,6 +1320,7 @@ fn parse_math_block(
     attribute_index: usize,
     source: &str,
     config: &ParseConfig,
+    end_line: usize,
 ) -> Result<(MathBlock, usize), PositionError> {
     let attribute = source_document.lines()[attribute_index];
     let attribute_text = source_document
@@ -1322,13 +1329,7 @@ fn parse_math_block(
     let language = parse_math_attribute(attribute_text).expect("recognized math attribute");
     let delimiter_index = attribute_index + 1;
     let delimiter = source_document.lines()[delimiter_index];
-    let body = crate::delimiter::body(
-        source_document,
-        delimiter_index,
-        "++++",
-        source,
-        source_document.lines().len(),
-    )?;
+    let body = crate::delimiter::body(source_document, delimiter_index, "++++", source, end_line)?;
     let value = source
         .get(body.content_range.start().to_usize()..body.content_range.end().to_usize())
         .expect("valid math content")
@@ -1374,6 +1375,7 @@ fn parse_math_block(
 fn parse_lists(
     context: &DelimitedParseContext<'_>,
     start: usize,
+    end_line: usize,
     state: &mut ParseState<'_>,
     parse_depth: ParseDepth,
 ) -> Result<(Vec<ListBlock>, usize, TextRange), ParseFailure> {
@@ -1383,7 +1385,7 @@ fn parse_lists(
     let mut index = start;
     let mut previous: Option<(usize, ListKind)> = None;
     let mut kinds_by_depth = Vec::<Option<ListKind>>::new();
-    while index < source_document.lines().len() {
+    while index < end_line {
         let line = source_document.lines()[index];
         let content = source_document
             .text(line.content_range())
@@ -1531,7 +1533,8 @@ fn parse_lists(
             let continuation = source_document.lines()[index];
             state.budget.consume_list_continuation()?;
             let next = index + 1;
-            let Some((attached, end)) = parse_list_continuation(context, next, state, parse_depth)?
+            let Some((attached, end)) =
+                parse_list_continuation(context, next, end_line, state, parse_depth)?
             else {
                 break;
             };
@@ -1595,12 +1598,16 @@ fn parse_lists(
 fn parse_list_continuation(
     context: &DelimitedParseContext<'_>,
     index: usize,
+    end_line: usize,
     state: &mut ParseState<'_>,
     depth: ParseDepth,
 ) -> Result<Option<(Vec<AstBlock>, usize)>, ParseFailure> {
     let source_document = context.source_document;
     let source = context.source;
     let config = context.config;
+    if index >= end_line {
+        return Ok(None);
+    }
     let Some(line) = source_document.lines().get(index).copied() else {
         return Ok(None);
     };
@@ -1619,7 +1626,7 @@ fn parse_list_continuation(
             .and_then(|line| source_document.text(line.content_range()))
             == Some("----")
     {
-        let (mut block, end) = parse_source_block(source_document, index, source)?;
+        let (mut block, end) = parse_source_block(source_document, index, source, end_line)?;
         block.metadata = parse_block_attributes(content, line.content_range().start().to_usize())
             .unwrap_or_default();
         return Ok(Some((vec![AstBlock::Source(block)], end)));
@@ -1628,7 +1635,7 @@ fn parse_list_continuation(
         let (block, nested_syntax, end) = parse_delimited_block(
             context,
             index,
-            source_document.lines().len(),
+            end_line,
             spec,
             state,
             ParseDepth {
@@ -1641,7 +1648,7 @@ fn parse_list_continuation(
         return Ok(Some((vec![AstBlock::Delimited(block)], end)));
     }
     if crate::list_parser::marker(content).is_some() {
-        let (lists, end, _) = parse_lists(context, index, state, depth)?;
+        let (lists, end, _) = parse_lists(context, index, end_line, state, depth)?;
         return Ok(Some((lists.into_iter().map(AstBlock::List).collect(), end)));
     }
     let mut paragraph = Paragraph {
@@ -2015,6 +2022,7 @@ fn parse_source_block(
     source_document: &SourceDocument,
     attribute_index: usize,
     source: &str,
+    end_line: usize,
 ) -> Result<(SourceBlock, usize), PositionError> {
     let attribute = source_document.lines()[attribute_index];
     let attribute_text = source_document
@@ -2033,13 +2041,8 @@ fn parse_source_block(
     let language = language_relative.map(|(start, end)| attribute_text[start..end].to_owned());
     let delimiter_index = attribute_index + 1;
     let delimiter = source_document.lines()[delimiter_index];
-    let mut body = crate::delimiter::body(
-        source_document,
-        delimiter_index,
-        "----",
-        source,
-        source_document.lines().len(),
-    )?;
+    let mut body =
+        crate::delimiter::body(source_document, delimiter_index, "----", source, end_line)?;
     if language.is_none() {
         body.problems.push(BlockProblem {
             kind: BlockProblemKind::MissingSourceLanguage,
@@ -2453,6 +2456,27 @@ mod tests {
             issue.class == crate::syntax::SyntaxIssueClass::UnclosedBlock
                 && issue.range == inner.delimiter_range
         }));
+    }
+
+    #[test]
+    fn attributed_nested_blocks_stop_at_the_parent_boundary() {
+        for source in [
+            "--\n[source]\n----\n--",
+            "--\n[stem]\n++++\n--",
+            "--\n* item\n+\n[source]\n----\n--",
+        ] {
+            let parsed = parse(source).expect("recoverable attributed nested block");
+            assert_eq!(parsed.syntax.reconstruct(), source, "{source:?}");
+            assert_eq!(
+                parsed
+                    .syntax
+                    .blocks()
+                    .last()
+                    .map(|block| block.range().end()),
+                Some(crate::source::TextSize::new(source.len()).expect("bounded source")),
+                "{source:?}"
+            );
+        }
     }
 
     #[test]
