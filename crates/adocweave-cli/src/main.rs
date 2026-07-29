@@ -1304,7 +1304,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 }
                 if include {
                     validate_project_config_authority(
-                        &config,
+                        config,
                         arguments.allowed_roots.is_empty(),
                         false,
                         false,
@@ -1436,7 +1436,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     ));
                 }
                 validate_project_config_authority(
-                    &config,
+                    config,
                     include && arguments.allowed_roots.is_empty(),
                     project_root.is_some() && arguments.project_root.is_none(),
                     false,
