@@ -122,6 +122,52 @@ fn analysis_resource_count_includes_root_and_includes() {
     );
 }
 
+#[test]
+fn multi_project_scan_applies_file_limits_per_resolved_scope() {
+    const FILES_PER_PROJECT: usize = 6_000;
+
+    let root = tempfile::tempdir().expect("root");
+    for name in ["project-a", "project-b"] {
+        let project = root.path().join(name);
+        std::fs::create_dir(&project).expect("project directory");
+        std::fs::write(
+            project.join(".adocweave.toml"),
+            format!(
+                "schema-version = 1\n[resources]\nmax-files = {FILES_PER_PROJECT}\nmax-total-bytes = 1048576\nmax-resource-bytes = 1024\n"
+            ),
+        )
+        .expect("configuration");
+        for index in 0..FILES_PER_PROJECT {
+            std::fs::write(project.join(format!("{index:04}.adoc")), "").expect("document");
+        }
+    }
+
+    let accepted = adocweave()
+        .current_dir(root.path())
+        .args(["format", "--check", "project-a", "project-b"])
+        .output()
+        .expect("two-project command");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    std::fs::write(root.path().join("project-a/overflow.adoc"), "").expect("overflow document");
+    let rejected = adocweave()
+        .current_dir(root.path())
+        .args(["format", "--check", "project-a", "project-b"])
+        .output()
+        .expect("over-limit command");
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("filesystem resource count limit exceeded: 6000"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn preview_sigterm_exits_cleanly_and_releases_the_listener() {

@@ -955,10 +955,22 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
         .chain(&arguments.additional_inputs)
         .cloned()
         .collect::<Vec<_>>();
+    let mut scanned_entries = pending.len();
+    if scanned_entries > MAX_SCAN_ENTRIES {
+        return Err(CliError::Path(
+            "directory scan entry limit exceeded".to_owned(),
+        ));
+    }
     for pattern in &arguments.glob_patterns {
         let matches = glob::glob(pattern)
             .map_err(|error| CliError::Path(format!("invalid glob pattern {pattern}: {error}")))?;
         for path in matches {
+            scanned_entries = scanned_entries.saturating_add(1);
+            if scanned_entries > MAX_SCAN_ENTRIES {
+                return Err(CliError::Path(
+                    "directory scan entry limit exceeded".to_owned(),
+                ));
+            }
             pending.push(
                 path.map_err(|error| CliError::Path(format!("cannot read glob match: {error}")))?,
             );
@@ -966,7 +978,6 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
     }
     pending.sort();
     let mut files = std::collections::BTreeSet::new();
-    let mut scanned_entries = 0_usize;
     while let Some(path) = pending.pop() {
         let metadata = fs::symlink_metadata(&path).map_err(|source| CliError::Read {
             source_name: path.display().to_string(),
@@ -988,7 +999,7 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
                     source_name: path.display().to_string(),
                     source,
                 })?);
-                scanned_entries += 1;
+                scanned_entries = scanned_entries.saturating_add(1);
                 if scanned_entries > MAX_SCAN_ENTRIES {
                     return Err(CliError::Path(
                         "directory scan entry limit exceeded".to_owned(),
@@ -1022,13 +1033,49 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
             source_name: path.display().to_string(),
             source,
         })?);
-        if files.len() > adocweave_host::FilesystemReadLimits::default().max_files {
-            return Err(CliError::Path(
-                "input file limit exceeded while scanning directories".to_owned(),
-            ));
-        }
     }
     Ok(files.into_iter().collect())
+}
+
+fn validate_input_path_scopes(
+    arguments: &Arguments,
+    paths: &[PathBuf],
+    boundary: &Path,
+) -> Result<(), CliError> {
+    let mut scopes = std::collections::BTreeMap::<Option<PathBuf>, (usize, usize)>::new();
+    for path in paths {
+        let snapshot = load_project_config_at(arguments, path, boundary)?;
+        let scope = snapshot.as_ref().map(|snapshot| snapshot.path.clone());
+        let limit = snapshot.as_ref().map_or_else(
+            || {
+                adocweave_config::ResolvedResourceLimitPlan::default()
+                    .filesystem_reads
+                    .max_files
+            },
+            |snapshot| {
+                snapshot
+                    .config
+                    .resources
+                    .limit_plan
+                    .filesystem_reads
+                    .max_files
+            },
+        );
+        let entry = scopes.entry(scope).or_insert((0, limit));
+        if entry.1 != limit {
+            return Err(CliError::ResourceLimit(
+                "project resource limit plan changed while collecting inputs".to_owned(),
+            ));
+        }
+        entry.0 = entry.0.saturating_add(1);
+        if entry.0 > entry.1 {
+            return Err(CliError::ResourceLimit(format!(
+                "filesystem resource count limit exceeded: {}",
+                entry.1
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn apply_safe_fixes(
@@ -1066,6 +1113,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
         source_name: "current directory".to_owned(),
         source,
     })?;
+    validate_input_path_scopes(arguments, &paths, &boundary)?;
     match &arguments.command {
         CommandOptions::Format(options) => {
             if !options.supports_multiple_inputs() {
