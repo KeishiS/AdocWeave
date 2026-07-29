@@ -1,7 +1,10 @@
 use adocweave::NeverCancel;
 use adocweave_wasm::{
-    WasmAnalysisPreprocessInput, WasmDocumentMode, WasmPreprocessOptions, WasmPreprocessRequest,
-    WasmRequest, WasmResource, WasmSafeMode, WasmSyntaxMode, WasmUnknownSourceLanguage,
+    WasmActiveUrlPolicy, WasmAnalysisOptions, WasmAnalysisPreprocessInput, WasmAuthoredUrlPolicy,
+    WasmDiagnosticProfile, WasmDocumentMode, WasmExternalLinkPolicy, WasmLimits, WasmOutputLimits,
+    WasmPreprocessOptions, WasmPreprocessRequest, WasmRenderPolicy, WasmRequest, WasmResource,
+    WasmResourceCapabilities, WasmRuleSettings, WasmSafeMode, WasmSourceLanguagePolicy,
+    WasmStylesheet, WasmSyntaxMode, WasmSyntaxOptions, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation, preprocess_request, process_request,
 };
 use serde_json::{Value, json};
@@ -161,6 +164,62 @@ fn default_request_uses_every_schema_default() {
             "{name} must be required or have an explicit default"
         );
     }
+}
+
+#[test]
+fn public_request_wire_types_match_the_request_corpus_fixture() {
+    fn assert_public<T>() {}
+
+    assert_public::<WasmRequest>();
+    assert_public::<WasmAnalysisOptions>();
+    assert_public::<WasmSyntaxOptions>();
+    assert_public::<WasmLimits>();
+    assert_public::<WasmDiagnosticProfile>();
+    assert_public::<WasmRuleSettings>();
+    assert_public::<WasmAuthoredUrlPolicy>();
+    assert_public::<WasmRenderPolicy>();
+    assert_public::<WasmActiveUrlPolicy>();
+    assert_public::<WasmExternalLinkPolicy>();
+    assert_public::<WasmSourceLanguagePolicy>();
+    assert_public::<WasmResourceCapabilities>();
+    assert_public::<WasmOutputLimits>();
+    assert_public::<WasmStylesheet>();
+
+    let (schema, corpus) = documents();
+    let request: WasmRequest =
+        serde_json::from_value(expanded_request(&corpus)).expect("expanded fixture request");
+    let serialized = serde_json::to_value(request).expect("serialized fixture request");
+    assert_wire_value(&serialized, "WasmRequest", &schema);
+}
+
+#[test]
+fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
+    const FACADE: &str = include_str!("../src/lib.rs");
+    const WIRE: &str = include_str!("../src/request_wire.rs");
+    const NORMALIZATION: &str = include_str!("../src/request_normalization.rs");
+    const CONVERSION: &str = include_str!("../src/request_conversion.rs");
+
+    assert!(WIRE.contains("protocol/public-api.json"));
+    assert!(WIRE.contains("pub struct WasmRequest"));
+    assert!(!WIRE.contains("adocweave::"));
+    assert!(!WIRE.contains("fn normalize"));
+    assert!(!WIRE.contains("ExecutionRequest"));
+
+    assert!(NORMALIZATION.contains("pub(crate) struct NormalizedRequest"));
+    assert!(!NORMALIZATION.contains("adocweave::"));
+    assert!(!NORMALIZATION.contains("Engine"));
+    assert!(!NORMALIZATION.contains("RenderPolicy"));
+
+    assert!(CONVERSION.contains("NormalizedRequest"));
+    assert!(CONVERSION.contains("pub(crate) struct ExecutionRequest"));
+    assert!(CONVERSION.contains("Engine"));
+    assert!(CONVERSION.contains("RenderPolicy"));
+    assert!(!CONVERSION.contains("analyze_cancellable"));
+
+    assert!(!FACADE.contains("pub struct WasmRequest"));
+    assert!(FACADE.contains("request_normalization::normalize(request)?"));
+    assert!(FACADE.contains("request_conversion::convert(request)?"));
+    assert!(FACADE.contains("fn execute_request("));
 }
 
 #[test]
@@ -384,7 +443,7 @@ fn request_rejects_unknown_and_missing_fields_and_old_versions() {
 }
 
 #[test]
-fn every_request_object_enforces_schema_fields_recursively() {
+fn schema_mutations_enforce_every_request_object_field_recursively() {
     let (schema, corpus) = documents();
     for case in corpus["objectCases"].as_array().expect("object cases") {
         let name = case["object"].as_str().expect("object name");

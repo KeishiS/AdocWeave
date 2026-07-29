@@ -1,25 +1,17 @@
 //! Versioned, allocation-owning WASM boundary over the deterministic core.
 
-use std::collections::{BTreeMap, BTreeSet};
-
-use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
-use adocweave::output::html::RenderPolicy;
-use adocweave::preprocess::{
-    PreprocessOptions, ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode, preprocess,
-};
-use adocweave::resolution::{ActiveUrlPolicy, AuthoredUrlPolicy};
-use adocweave::{AnalysisLimits, SyntaxMode};
-use adocweave::{
-    AnalysisOptions, CancellationCheck, DiagnosticProfile, Engine, NeverCancel, OutputLimits,
-    ParseError, SourceId, SyntaxOptions, VERSION,
-};
-use serde::{Deserialize, Serialize};
+use adocweave::preprocess::{ProjectionLimits, preprocess};
+use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId, VERSION};
+use serde::Serialize;
 
 mod preprocess_wire;
 mod preprocess_wire_generated;
 mod protocol_generated;
 mod render_inputs;
+mod request_conversion;
 mod request_enum_generated;
+mod request_normalization;
+mod request_wire;
 mod response_projection;
 mod response_wire;
 mod response_wire_generated;
@@ -37,305 +29,17 @@ pub use request_enum_generated::{
     WasmDocumentMode, WasmSyntaxMode, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation,
 };
+pub use request_wire::{
+    WasmActiveUrlPolicy, WasmAnalysisOptions, WasmAuthoredUrlPolicy, WasmDiagnosticProfile,
+    WasmExternalLinkPolicy, WasmLimits, WasmOutputLimits, WasmRenderPolicy, WasmRequest,
+    WasmResourceCapabilities, WasmRuleSettings, WasmSourceLanguagePolicy, WasmStylesheet,
+    WasmSyntaxOptions,
+};
 #[cfg(test)]
 use response_projection::parse_optional_product;
 use response_projection::{enforce_output_limit, project_response};
 pub use response_wire::*;
 pub use shared_wire_generated::{WasmMathLanguage, WasmSeverity};
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRequest {
-    pub package_version: String,
-    pub source_id: Option<String>,
-    pub version: u32,
-    pub generation: u32,
-    pub source: String,
-    #[serde(default)]
-    pub preprocess: Option<WasmAnalysisPreprocessInput>,
-    #[serde(default)]
-    pub products: WasmProductSet,
-    #[serde(default)]
-    pub render_inputs: WasmRenderInputs,
-    #[serde(default)]
-    pub analysis_options: WasmAnalysisOptions,
-    #[serde(default)]
-    pub render_policy: WasmRenderPolicy,
-    #[serde(default)]
-    pub output_limits: WasmOutputLimits,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAnalysisOptions {
-    pub syntax: WasmSyntaxOptions,
-    pub diagnostics: WasmDiagnosticProfile,
-    pub attributes: BTreeMap<String, Option<String>>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSyntaxOptions {
-    pub syntax_mode: WasmSyntaxMode,
-    pub limits: WasmLimits,
-}
-
-impl Default for WasmSyntaxOptions {
-    fn default() -> Self {
-        Self {
-            syntax_mode: WasmSyntaxMode::Permissive,
-            limits: WasmLimits::default(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmDiagnosticProfile {
-    pub protected_attributes: BTreeMap<String, Option<String>>,
-    pub authored_urls: WasmAuthoredUrlPolicy,
-    pub max_diagnostics: u32,
-    pub rules: BTreeMap<String, WasmRuleSettings>,
-}
-
-impl Default for WasmDiagnosticProfile {
-    fn default() -> Self {
-        Self {
-            protected_attributes: BTreeMap::new(),
-            authored_urls: WasmAuthoredUrlPolicy::default(),
-            max_diagnostics: 1_000,
-            rules: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRuleSettings {
-    pub enabled: bool,
-    pub severity: WasmSeverity,
-}
-
-impl Default for WasmRuleSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            severity: WasmSeverity::Warning,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRenderPolicy {
-    pub active_urls: WasmActiveUrlPolicy,
-    pub external_links: WasmExternalLinkPolicy,
-    pub source_languages: WasmSourceLanguagePolicy,
-    pub math_languages: Vec<WasmMathLanguage>,
-    pub unresolved_references: WasmUnresolvedReferencePresentation,
-    pub resources: WasmResourceCapabilities,
-    pub document_mode: WasmDocumentMode,
-    pub stylesheets: Vec<WasmStylesheet>,
-}
-
-impl Default for WasmRenderPolicy {
-    fn default() -> Self {
-        Self {
-            active_urls: WasmActiveUrlPolicy::default(),
-            external_links: WasmExternalLinkPolicy::default(),
-            source_languages: WasmSourceLanguagePolicy::default(),
-            math_languages: vec![WasmMathLanguage::Latex, WasmMathLanguage::Typst],
-            unresolved_references: WasmUnresolvedReferencePresentation::Target,
-            resources: WasmResourceCapabilities::default(),
-            document_mode: WasmDocumentMode::Fragment,
-            stylesheets: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmOutputLimits {
-    pub max_output_bytes: u32,
-}
-
-impl Default for WasmOutputLimits {
-    fn default() -> Self {
-        Self {
-            max_output_bytes: OutputLimits::default().max_output_bytes,
-        }
-    }
-}
-
-/// A host-supplied stylesheet forwarded to the core stylesheet policy.
-/// Rejected sources surface as `renderDiagnostics`, never as emitted CSS.
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum WasmStylesheet {
-    Inline { css: String },
-    External { url: String },
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmExternalLinkPolicy {
-    pub open_in_new_context: bool,
-    pub noreferrer: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmSourceLanguagePolicy {
-    pub allowed: Option<Vec<String>>,
-    pub unknown: WasmUnknownSourceLanguage,
-}
-
-impl Default for WasmSourceLanguagePolicy {
-    fn default() -> Self {
-        Self {
-            allowed: None,
-            unknown: WasmUnknownSourceLanguage::PreserveSanitized,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResourceCapabilities {
-    pub images: bool,
-    pub media: bool,
-}
-
-impl Default for WasmResourceCapabilities {
-    fn default() -> Self {
-        Self {
-            images: true,
-            media: true,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmLimits {
-    pub max_input_bytes: u32,
-    pub max_line_bytes: u32,
-    pub max_list_depth: u32,
-    pub max_list_continuations: u32,
-    pub max_block_depth: u32,
-    pub max_inline_depth: u32,
-    pub max_formula_bytes: u32,
-    pub max_table_bytes: u32,
-    pub max_table_cells: u32,
-    pub max_table_columns: u32,
-    pub max_table_depth: u32,
-    pub max_catalog_entries: u32,
-    pub max_catalog_bytes: u32,
-    pub max_blocks: u32,
-    pub max_nodes: u32,
-    pub max_references: u32,
-    pub max_attributes: u32,
-    pub max_attribute_expansion_depth: u32,
-    pub max_attribute_expansion_bytes: u32,
-}
-
-impl Default for WasmLimits {
-    fn default() -> Self {
-        AnalysisLimits::default().into()
-    }
-}
-
-impl From<AnalysisLimits> for WasmLimits {
-    fn from(value: AnalysisLimits) -> Self {
-        Self {
-            max_input_bytes: value.max_input_bytes,
-            max_line_bytes: value.max_line_bytes,
-            max_list_depth: value.max_list_depth,
-            max_list_continuations: value.max_list_continuations,
-            max_block_depth: value.max_block_depth,
-            max_inline_depth: value.max_inline_depth,
-            max_formula_bytes: value.max_formula_bytes,
-            max_table_bytes: value.max_table_bytes,
-            max_table_cells: value.max_table_cells,
-            max_table_columns: value.max_table_columns,
-            max_table_depth: value.max_table_depth,
-            max_catalog_entries: value.max_catalog_entries,
-            max_catalog_bytes: value.max_catalog_bytes,
-            max_blocks: value.max_blocks,
-            max_nodes: value.max_nodes,
-            max_references: value.max_references,
-            max_attributes: value.max_attributes,
-            max_attribute_expansion_depth: value.max_attribute_expansion_depth,
-            max_attribute_expansion_bytes: value.max_attribute_expansion_bytes,
-        }
-    }
-}
-
-impl From<WasmLimits> for AnalysisLimits {
-    fn from(value: WasmLimits) -> Self {
-        Self {
-            max_input_bytes: value.max_input_bytes,
-            max_line_bytes: value.max_line_bytes,
-            max_list_depth: value.max_list_depth,
-            max_list_continuations: value.max_list_continuations,
-            max_block_depth: value.max_block_depth,
-            max_inline_depth: value.max_inline_depth,
-            max_formula_bytes: value.max_formula_bytes,
-            max_table_bytes: value.max_table_bytes,
-            max_table_cells: value.max_table_cells,
-            max_table_columns: value.max_table_columns,
-            max_table_depth: value.max_table_depth,
-            max_catalog_entries: value.max_catalog_entries,
-            max_catalog_bytes: value.max_catalog_bytes,
-            max_blocks: value.max_blocks,
-            max_nodes: value.max_nodes,
-            max_references: value.max_references,
-            max_attributes: value.max_attributes,
-            max_attribute_expansion_depth: value.max_attribute_expansion_depth,
-            max_attribute_expansion_bytes: value.max_attribute_expansion_bytes,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmAuthoredUrlPolicy {
-    pub allowed_schemes: Vec<String>,
-    pub allow_relative: bool,
-}
-
-impl Default for WasmAuthoredUrlPolicy {
-    fn default() -> Self {
-        let policy = AuthoredUrlPolicy::default();
-        Self {
-            allowed_schemes: policy.allowed_schemes.into_iter().collect(),
-            allow_relative: policy.allow_relative,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmActiveUrlPolicy {
-    pub allowed_schemes: Vec<String>,
-    pub allow_authored_relative: bool,
-    pub allow_resolved_relative: bool,
-    pub allow_resolved_root_relative: bool,
-    pub allow_data_uris: bool,
-}
-
-impl Default for WasmActiveUrlPolicy {
-    fn default() -> Self {
-        let policy = ActiveUrlPolicy::default();
-        Self {
-            allowed_schemes: policy.allowed_schemes.into_iter().collect(),
-            allow_authored_relative: policy.allow_authored_relative,
-            allow_resolved_relative: policy.allow_resolved_relative,
-            allow_resolved_root_relative: policy.allow_resolved_root_relative,
-            allow_data_uris: policy.allow_data_uris,
-        }
-    }
-}
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -356,8 +60,9 @@ pub fn preprocess_request(
             ),
         });
     }
-    let snapshot = resource_snapshot(request.resources);
-    let options = preprocess_options(request.source_id.map(SourceId::new), request.options);
+    let snapshot = preprocess_wire::resource_snapshot(request.resources);
+    let options =
+        preprocess_wire::to_core_options(request.source_id.map(SourceId::new), request.options);
     let document = preprocess(&request.source, &snapshot, &options).map_err(|error| WasmError {
         code: error.kind.as_str().to_owned(),
         message: error.to_string(),
@@ -389,168 +94,27 @@ pub fn preprocess_request(
     })
 }
 
-fn resource_snapshot(resources: BTreeMap<String, WasmResource>) -> ResourceSnapshot {
-    let mut snapshot = ResourceSnapshot::default();
-    for (target, resource) in resources {
-        snapshot.insert(
-            target,
-            ResourceDocument {
-                source_id: SourceId::new(resource.source_id),
-                source: resource.source.into(),
-            },
-        );
-    }
-    snapshot
-}
-
-fn preprocess_options(
-    source_id: Option<SourceId>,
-    options: WasmPreprocessOptions,
-) -> PreprocessOptions {
-    PreprocessOptions {
-        source_id,
-        base_uri: options.base_uri,
-        safe_mode: match options.safe_mode {
-            WasmSafeMode::Unsafe => SafeMode::Unsafe,
-            WasmSafeMode::Server => SafeMode::Server,
-            WasmSafeMode::Safe => SafeMode::Safe,
-            WasmSafeMode::Secure => SafeMode::Secure,
-        },
-        allowed_schemes: options
-            .allowed_schemes
-            .into_iter()
-            .map(|scheme| scheme.to_ascii_lowercase())
-            .collect(),
-        attributes: options.attributes,
-        enable_includes: options.enable_includes,
-        max_include_depth: options.max_include_depth,
-        max_includes: options.max_includes,
-        max_total_bytes: options.max_total_bytes,
-        max_expanded_nodes: options.max_expanded_nodes,
-        max_source_map_segments: options.max_source_map_segments,
-    }
-}
-
 pub fn process_request(
     request: WasmRequest,
     cancellation: &dyn CancellationCheck,
 ) -> Result<WasmResponse, WasmError> {
-    let request = normalize_request(request)?;
-    process_normalized_request(request, cancellation)
+    let request = request_normalization::normalize(request)?;
+    let request = request_conversion::convert(request)?;
+    execute_request(request, cancellation)
 }
 
-fn normalize_request(mut request: WasmRequest) -> Result<WasmRequest, WasmError> {
-    if request.package_version != VERSION {
-        return Err(WasmError {
-            code: "unsupported-api-version".to_owned(),
-            message: format!(
-                "unsupported package version {} (expected {VERSION})",
-                request.package_version
-            ),
-        });
-    }
-    let mut external_attributes = request.analysis_options.attributes.clone();
-    if let Some(input) = &mut request.preprocess {
-        if external_attributes.is_empty() {
-            external_attributes.clone_from(&input.options.attributes);
-        } else if !input.options.attributes.is_empty()
-            && input.options.attributes != external_attributes
-        {
-            return Err(WasmError {
-                code: "invalid-options".to_owned(),
-                message: "analysisOptions.attributes and preprocess.options.attributes must agree"
-                    .to_owned(),
-            });
-        }
-        input.options.attributes.clone_from(&external_attributes);
-    }
-    render_inputs::validate(
-        &request.render_inputs,
-        &request.analysis_options.syntax.limits,
-        &request.output_limits,
-    )?;
-    request.analysis_options.attributes = external_attributes;
-    Ok(request)
-}
-
-fn process_normalized_request(
-    request: WasmRequest,
+fn execute_request(
+    request: request_conversion::ExecutionRequest,
     cancellation: &dyn CancellationCheck,
 ) -> Result<WasmResponse, WasmError> {
-    let requested_products = request.products;
-    let products: adocweave::ProductSet = requested_products.into();
-    let render_inputs = request.render_inputs;
-    let analysis_options = request.analysis_options;
-    let render_options = request.render_policy;
-    let output_limits = request.output_limits;
-    let preprocess_input = request.preprocess;
-    let external_attributes = analysis_options.attributes.clone();
-    let max_output_bytes = usize::try_from(output_limits.max_output_bytes)
-        .expect("u32 fits usize on supported targets");
-    let authored_url_policy = AuthoredUrlPolicy {
-        allowed_schemes: analysis_options
-            .diagnostics
-            .authored_urls
-            .allowed_schemes
-            .into_iter()
-            .map(|scheme| scheme.to_ascii_lowercase())
-            .collect::<BTreeSet<_>>(),
-        allow_relative: analysis_options.diagnostics.authored_urls.allow_relative,
-    };
-    let active_url_policy = ActiveUrlPolicy {
-        allowed_schemes: render_options
-            .active_urls
-            .allowed_schemes
-            .into_iter()
-            .map(|scheme| scheme.to_ascii_lowercase())
-            .collect::<BTreeSet<_>>(),
-        allow_authored_relative: render_options.active_urls.allow_authored_relative,
-        allow_resolved_relative: render_options.active_urls.allow_resolved_relative,
-        allow_resolved_root_relative: render_options.active_urls.allow_resolved_root_relative,
-        allow_data_uris: render_options.active_urls.allow_data_uris,
-    };
-    let mut lint = LintConfig::default();
-    lint.protected_attributes = analysis_options.diagnostics.protected_attributes;
-    lint.authored_url_policy = authored_url_policy;
-    lint.max_diagnostics = usize::try_from(analysis_options.diagnostics.max_diagnostics)
-        .expect("u32 fits usize on supported targets");
-    for (code, settings) in analysis_options.diagnostics.rules {
-        let Some(descriptor) = lint_rule(&code) else {
-            return Err(WasmError {
-                code: "invalid-options".to_owned(),
-                message: format!("unknown lint rule: {code}"),
-            });
-        };
-        lint.set_rule(
-            descriptor.id,
-            RuleSettings {
-                enabled: settings.enabled,
-                severity: match settings.severity {
-                    WasmSeverity::Error => Severity::Error,
-                    WasmSeverity::Warning => Severity::Warning,
-                    WasmSeverity::Information => Severity::Information,
-                    WasmSeverity::Hint => Severity::Hint,
-                },
-            },
-        );
-    }
-    let source_id = request.source_id.map(SourceId::new);
-    let engine = Engine::new(AnalysisOptions {
-        syntax: SyntaxOptions {
-            syntax_mode: match analysis_options.syntax.syntax_mode {
-                WasmSyntaxMode::Permissive => SyntaxMode::Permissive,
-                WasmSyntaxMode::Strict => SyntaxMode::Strict,
-            },
-            limits: analysis_options.syntax.limits.into(),
-        },
-        diagnostics: DiagnosticProfile { lint },
-        attributes: external_attributes,
-    });
-    let preprocessed = if let Some(input) = preprocess_input {
-        let snapshot = resource_snapshot(input.resources);
-        let options = preprocess_options(source_id.clone(), input.options);
+    let preprocessed = if let Some(preprocess_plan) = request.preprocess {
         Some(
-            preprocess(&request.source, &snapshot, &options).map_err(|error| WasmError {
+            preprocess(
+                &request.source,
+                &preprocess_plan.snapshot,
+                &preprocess_plan.options,
+            )
+            .map_err(|error| WasmError {
                 code: error.kind.as_str().to_owned(),
                 message: error.to_string(),
             })?,
@@ -559,8 +123,13 @@ fn process_normalized_request(
         None
     };
     let preprocessed_analysis = if let Some(document) = preprocessed {
-        let expanded = engine
-            .analyze_cancellable_with_source_id(source_id.as_ref(), &document.source, cancellation)
+        let expanded = request
+            .engine
+            .analyze_cancellable_with_source_id(
+                request.source_id.as_ref(),
+                &document.source,
+                cancellation,
+            )
             .map_err(wasm_error)?;
         Some(adocweave::preprocess::PreprocessedAnalysis {
             document,
@@ -571,9 +140,10 @@ fn process_normalized_request(
     };
     let standalone_analysis = if preprocessed_analysis.is_none() {
         Some(
-            engine
+            request
+                .engine
                 .analyze_cancellable_with_source_id(
-                    source_id.as_ref(),
+                    request.source_id.as_ref(),
                     &request.source,
                     cancellation,
                 )
@@ -587,7 +157,7 @@ fn process_normalized_request(
         .map(|analysis| &analysis.analysis)
         .or(standalone_analysis.as_ref())
         .expect("exactly one analysis variant is assigned");
-    let attribute_projection = if requested_products.attribute_queries {
+    let attribute_projection = if request.requested_products.attribute_queries {
         preprocessed_analysis
             .as_ref()
             .map(|analysis| {
@@ -606,100 +176,26 @@ fn process_normalized_request(
         return Err(cancelled_error());
     }
 
-    let render_inputs = render_inputs::convert(render_inputs, analysis)?;
-    let render_policy = RenderPolicy {
-        active_urls: active_url_policy,
-        external_links: if render_options.external_links.open_in_new_context {
-            adocweave::output::html::ExternalLinkPresentation::NewContext {
-                noreferrer: render_options.external_links.noreferrer,
-            }
-        } else {
-            adocweave::output::html::ExternalLinkPresentation::SameContext
-        },
-        source_languages: adocweave::output::html::SourceLanguagePolicy {
-            allowed: render_options.source_languages.allowed.map(|languages| {
-                languages
-                    .into_iter()
-                    .map(|language| language.to_ascii_lowercase())
-                    .collect()
-            }),
-            unknown: match render_options.source_languages.unknown {
-                WasmUnknownSourceLanguage::PreserveSanitized => {
-                    adocweave::output::html::UnknownSourceLanguage::PreserveSanitized
-                }
-                WasmUnknownSourceLanguage::OmitClass => {
-                    adocweave::output::html::UnknownSourceLanguage::OmitClass
-                }
-                WasmUnknownSourceLanguage::Diagnostic => {
-                    adocweave::output::html::UnknownSourceLanguage::Diagnostic
-                }
-            },
-        },
-        math_languages: adocweave::output::html::MathLanguagePolicy {
-            allowed: render_options
-                .math_languages
-                .into_iter()
-                .map(|language| match language {
-                    WasmMathLanguage::Latex => adocweave::semantic::MathLanguage::Latex,
-                    WasmMathLanguage::Typst => adocweave::semantic::MathLanguage::Typst,
-                })
-                .collect(),
-        },
-        unresolved_references: match render_options.unresolved_references {
-            WasmUnresolvedReferencePresentation::Target => {
-                adocweave::output::html::UnresolvedReferencePresentation::Target
-            }
-            WasmUnresolvedReferencePresentation::LabelOnly => {
-                adocweave::output::html::UnresolvedReferencePresentation::LabelOnly
-            }
-            WasmUnresolvedReferencePresentation::Hidden => {
-                adocweave::output::html::UnresolvedReferencePresentation::Hidden
-            }
-        },
-        resources: adocweave::output::html::ResourceCapabilities {
-            images: render_options.resources.images,
-            media: render_options.resources.media,
-        },
-        document_mode: match render_options.document_mode {
-            WasmDocumentMode::Fragment => adocweave::output::html::HtmlDocumentMode::Fragment,
-            WasmDocumentMode::Complete => adocweave::output::html::HtmlDocumentMode::Complete,
-        },
-        stylesheets: adocweave::output::html::StylesheetPolicy {
-            sources: render_options
-                .stylesheets
-                .into_iter()
-                .map(|stylesheet| match stylesheet {
-                    WasmStylesheet::Inline { css } => {
-                        adocweave::output::html::StylesheetSource::Inline(css)
-                    }
-                    WasmStylesheet::External { url } => {
-                        adocweave::output::html::StylesheetSource::External(url)
-                    }
-                })
-                .collect(),
-            ..adocweave::output::html::StylesheetPolicy::default()
-        },
-        ..RenderPolicy::default()
-    };
+    let render_inputs = render_inputs::convert(request.render_inputs, analysis)?;
     let products = adocweave::output::conformance::products(
         analysis,
-        &render_policy,
+        &request.render_policy,
         &render_inputs,
-        products,
+        request.products,
     );
     if cancellation.is_cancelled() {
         return Err(cancelled_error());
     }
     let response = project_response(
         products,
-        requested_products,
+        request.requested_products,
         request.version,
         request.generation,
         analysis,
-        source_id.as_ref(),
+        request.source_id.as_ref(),
         attribute_projection.as_ref(),
     )?;
-    enforce_output_limit(&response, max_output_bytes)?;
+    enforce_output_limit(&response, request.max_output_bytes)?;
     Ok(response)
 }
 
@@ -803,7 +299,11 @@ mod bindings {
 
 #[cfg(test)]
 mod tests {
-    use adocweave::CancellationToken;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity};
+    use adocweave::preprocess::{PreprocessOptions, ResourceDocument, ResourceSnapshot};
+    use adocweave::{AnalysisOptions, CancellationToken, DiagnosticProfile, Engine};
     use serde::de::DeserializeOwned;
     use serde_json::json;
 
@@ -837,7 +337,7 @@ mod tests {
 
     #[test]
     fn generated_preprocess_defaults_match_the_core_adapter() {
-        let core = preprocess_options(None, WasmPreprocessOptions::default());
+        let core = preprocess_wire::to_core_options(None, WasmPreprocessOptions::default());
         let expected = PreprocessOptions::default();
 
         assert_eq!(core.source_id, expected.source_id);
