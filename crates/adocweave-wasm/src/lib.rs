@@ -575,7 +575,7 @@ pub struct WasmResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDiagnostic {
     pub id: String,
     pub code: String,
@@ -587,14 +587,14 @@ pub struct WasmDiagnostic {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRelatedInformation {
     pub range: WasmTextRange,
     pub message: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmFix {
     pub title: String,
     pub applicability: WasmApplicability,
@@ -609,14 +609,14 @@ pub enum WasmApplicability {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTextEdit {
     pub range: WasmTextRange,
     pub replacement: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentSymbol {
     pub name: String,
     pub kind: WasmSymbolKind,
@@ -1773,6 +1773,7 @@ mod bindings {
 #[cfg(test)]
 mod tests {
     use adocweave::CancellationToken;
+    use serde::de::DeserializeOwned;
     use serde_json::json;
 
     use super::*;
@@ -1827,40 +1828,172 @@ mod tests {
     }
 
     #[test]
-    fn projection_json_rejects_unknown_fields_at_every_object_boundary() {
-        let response = process_request(
-            request("= Title\n\n[#target]\n== Target\n\nSee <<target>>.\n"),
-            &NeverCancel,
-        )
-        .expect("response");
-        let projection = response.projection.expect("projection");
-        assert!(
-            !projection.reference_edges.is_empty(),
-            "variant probe requires a reference edge"
-        );
-        let projection = serde_json::to_value(projection).expect("projection JSON");
+    fn core_json_products_reject_unknown_fields_at_every_object_boundary() {
+        let diagnostics = json!([{
+            "id": "diagnostic",
+            "code": "example",
+            "severity": "warning",
+            "message": "message",
+            "range": { "start": 0, "end": 1 },
+            "related": [{
+                "range": { "start": 1, "end": 2 },
+                "message": "related"
+            }],
+            "fixes": [{
+                "title": "fix",
+                "applicability": "always",
+                "edits": [{
+                    "range": { "start": 0, "end": 1 },
+                    "replacement": "replacement"
+                }]
+            }]
+        }]);
+        assert_product_rejects_unknown_fields::<Vec<WasmDiagnostic>>("diagnostics", &diagnostics);
 
-        for (name, pointer) in [
-            ("top-level projection", ""),
-            ("nested projection object", "/structure"),
-            ("tagged projection variant", "/referenceEdges/0/target"),
-        ] {
-            let mut mutated = projection.clone();
+        let symbols: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/conformance/full.symbols.json"
+        ))
+        .expect("symbol fixture");
+        assert_product_rejects_unknown_fields::<Vec<WasmDocumentSymbol>>("symbols", &symbols);
+
+        let mut projection: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/conformance/full.projection.json"
+        ))
+        .expect("projection fixture");
+        projection["sourceBlocks"] = json!([{
+            "sourceRange": { "start": 0, "end": 4 },
+            "contentRange": { "start": 1, "end": 3 },
+            "title": {
+                "sourceRange": { "start": 0, "end": 1 },
+                "text": "source"
+            },
+            "languageRange": { "start": 1, "end": 2 },
+            "language": "rust",
+            "lineNumbers": true,
+            "startLine": 3,
+            "source": "fn main() {}"
+        }]);
+        projection["orderedLists"] = json!([{
+            "sourceRange": { "start": 0, "end": 4 },
+            "start": 1,
+            "reversed": false,
+            "style": "arabic"
+        }]);
+        projection["blockPresentations"] = json!([{
+            "kind": "admonition",
+            "sourceRange": { "start": 0, "end": 4 },
+            "contentRange": { "start": 1, "end": 3 },
+            "title": "Note",
+            "attribution": null,
+            "citation": null
+        }]);
+        projection["structure"]["manpage"] = json!({
+            "name": "tool",
+            "section": "1",
+            "purpose": "purpose",
+            "titleRange": { "start": 0, "end": 4 },
+            "nameRange": { "start": 0, "end": 1 },
+            "purposeRange": { "start": 2, "end": 4 }
+        });
+        projection["catalogs"]["footnotes"] = json!([{
+            "number": 1,
+            "id": "note",
+            "definitionRange": { "start": 0, "end": 4 },
+            "contentRange": { "start": 1, "end": 3 },
+            "text": "note",
+            "occurrences": [{ "start": 0, "end": 4 }]
+        }]);
+        projection["catalogs"]["bibliography"] = json!([{
+            "id": "reference",
+            "definitionRange": { "start": 0, "end": 4 },
+            "references": [{ "start": 1, "end": 2 }]
+        }]);
+        projection["catalogs"]["index"] = json!([{
+            "terms": ["term"],
+            "display": "term",
+            "occurrences": [{ "start": 1, "end": 2 }]
+        }]);
+        projection["referenceEdges"][0]["resolution"] = json!({
+            "status": "resolved",
+            "href": "#target",
+            "displayText": "target",
+            "notices": ["reference-resolution-fallback"]
+        });
+        projection["referenceEdges"][1]["resolution"] = json!({
+            "status": "failed",
+            "kind": "missing-reference-target"
+        });
+
+        let target_kinds = projection["referenceEdges"]
+            .as_array()
+            .expect("reference edges")
+            .iter()
+            .map(|edge| edge["target"]["kind"].as_str().expect("target kind"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            target_kinds,
+            BTreeSet::from(["document", "local", "scheme"])
+        );
+        let resolution_statuses = projection["referenceEdges"]
+            .as_array()
+            .expect("reference edges")
+            .iter()
+            .filter_map(|edge| edge["resolution"]["status"].as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(resolution_statuses, BTreeSet::from(["failed", "resolved"]));
+        assert_product_rejects_unknown_fields::<WasmDocumentProjection>("projection", &projection);
+    }
+
+    fn assert_product_rejects_unknown_fields<T>(name: &str, product: &serde_json::Value)
+    where
+        T: DeserializeOwned,
+    {
+        let source = serde_json::to_string(product).expect("product JSON");
+        parse_optional_product::<T>(Some(&source))
+            .unwrap_or_else(|error| panic!("{name} fixture must be valid: {}", error.message));
+
+        let mut pointers = Vec::new();
+        collect_object_pointers(product, "", &mut pointers);
+        assert!(
+            !pointers.is_empty(),
+            "{name} must contain object boundaries"
+        );
+        for pointer in pointers {
+            let mut mutated = product.clone();
             mutated
-                .pointer_mut(pointer)
+                .pointer_mut(&pointer)
                 .and_then(serde_json::Value::as_object_mut)
                 .expect("object boundary")
                 .insert("unknownField".to_owned(), json!(true));
-            let source = serde_json::to_string(&mutated).expect("mutated projection JSON");
+            let source = serde_json::to_string(&mutated).expect("mutated product JSON");
 
-            let error = parse_optional_product::<WasmDocumentProjection>(Some(&source))
-                .expect_err("unknown field must fail");
-            assert_eq!(error.code, "serialization-failed", "{name}");
+            let error = match parse_optional_product::<T>(Some(&source)) {
+                Ok(_) => panic!("{name}{pointer}: unknown field must fail"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code, "serialization-failed", "{name}{pointer}");
             assert!(
                 error.message.contains("unknown field `unknownField`"),
-                "{name}: {}",
+                "{name}{pointer}: {}",
                 error.message
             );
+        }
+    }
+
+    fn collect_object_pointers(value: &serde_json::Value, pointer: &str, output: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(object) => {
+                output.push(pointer.to_owned());
+                for (field, value) in object {
+                    collect_object_pointers(value, &format!("{pointer}/{field}"), output);
+                }
+            }
+            serde_json::Value::Array(array) => {
+                for (index, value) in array.iter().enumerate() {
+                    collect_object_pointers(value, &format!("{pointer}/{index}"), output);
+                }
+            }
+            _ => {}
         }
     }
 
