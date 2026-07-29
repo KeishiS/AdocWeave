@@ -164,21 +164,16 @@ release作業も通常の変更と同様に、短命なbranchとpull requestか�
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
 
-公開処理はprotected `github-release` Environmentだけに書き込み権限とOIDCを与えます。既存releaseがないことを
-確認してprivate draftを作成し、全assetのupload、集合検査、provenance生成が完了した後、最後の操作として
-stable releaseを公開します。build jobやforkからのpull requestには公開権限を与えません。
-
-candidateが未完了、失敗、期限切れまたはcommit不一致の場合は公開を中止します。公開前に失敗した場合は、
-workflowが作成したprivate draftだけを削除します。attestation作成後の失敗では孤立したattestationが残る場合が
-あるため、再実行前に対象digestを確認します。
+公開処理の権限、candidateの再利用条件およびReleaseの状態遷移は
+xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
+公開に失敗した場合は、再実行前にprivate draft、既存assetおよびattestationの対象digestを確認します。
 
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
 新しいversionで最初から実行します。tag、assetまたはattestationの手動削除は監査可能な破壊的操作であるため、
 実行前に対象、影響および理由を確認し、記録してください。
 
 repositoryの初期設定では``github-release`` Environmentを作成し、必要なreviewerとstable version tagだけを許可する
-deployment ruleを設定します。公開workflowの構成は``.github/workflows``、assetの仕様は
-xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]を基準とします。
+deployment ruleを設定します。
 
 [#release-checklist]
 == Release checklist
