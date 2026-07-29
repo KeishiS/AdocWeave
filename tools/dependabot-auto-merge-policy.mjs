@@ -156,6 +156,35 @@ export function evaluateController(input) {
   return decision(reasons.length === 0, reasons);
 }
 
+export function evaluateStrictRulesets(input) {
+  let policy;
+  try {
+    policy = validatePolicy(input.policy);
+  } catch (error) {
+    return decision(false, [`policy-invalid:${error.message}`]);
+  }
+  if (!Array.isArray(input.rulesets) || input.branch !== policy.baseBranch) {
+    return decision(false, ["strict-ruleset"]);
+  }
+  const eligible = input.rulesets.some((ruleset) => {
+    const references = ruleset?.conditions?.ref_name;
+    return ruleset?.target === "branch"
+      && ruleset.enforcement === "active"
+      && Array.isArray(references?.include)
+      && references.include.some(
+        (pattern) => pattern === "~DEFAULT_BRANCH" || pattern === `refs/heads/${policy.baseBranch}`,
+      )
+      && Array.isArray(references.exclude)
+      && references.exclude.length === 0
+      && Array.isArray(ruleset.rules)
+      && ruleset.rules.some(
+        (rule) => rule?.type === "required_status_checks"
+          && rule.parameters?.strict_required_status_checks_policy === true,
+      );
+  });
+  return decision(eligible, eligible ? [] : ["strict-ruleset"]);
+}
+
 function validatePullRequest(pullRequest, policy, reasons) {
   if (!pullRequest
       || pullRequest.author !== DEPENDABOT_LOGIN
@@ -218,14 +247,19 @@ function decision(eligible, reasons) {
 
 async function main() {
   const [mode, policyPath, inputPath] = process.argv.slice(2);
-  if (!["eligibility", "controller"].includes(mode) || !policyPath || !inputPath) {
-    throw new Error("usage: dependabot-auto-merge-policy.mjs eligibility|controller POLICY INPUT");
+  if (!["eligibility", "controller", "strict-rulesets"].includes(mode)
+      || !policyPath || !inputPath) {
+    throw new Error(
+      "usage: dependabot-auto-merge-policy.mjs eligibility|controller|strict-rulesets POLICY INPUT",
+    );
   }
   const policy = JSON.parse(await readFile(policyPath, "utf8"));
   const input = JSON.parse(await readFile(inputPath, "utf8"));
   const result = mode === "eligibility"
     ? evaluateEligibility({ ...input, policy })
-    : evaluateController({ ...input, policy });
+    : mode === "controller"
+      ? evaluateController({ ...input, policy })
+      : evaluateStrictRulesets({ ...input, policy });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

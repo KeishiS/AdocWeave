@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   evaluateController,
   evaluateEligibility,
+  evaluateStrictRulesets,
   validatePolicy,
 } from "./dependabot-auto-merge-policy.mjs";
 
@@ -213,6 +214,61 @@ for (const [name, mutate, expected] of [
 test("controller accepts only the current eligible SHA after every required check", () => {
   assert.deepEqual(evaluateController(controllerInput()), { eligible: true, reasons: [] });
 });
+
+function strictRuleset(include = ["~DEFAULT_BRANCH"], exclude = []) {
+  return {
+    target: "branch",
+    enforcement: "active",
+    conditions: { ref_name: { include, exclude } },
+    rules: [{
+      type: "required_status_checks",
+      parameters: { strict_required_status_checks_policy: true },
+    }],
+  };
+}
+
+test("strict ruleset accepts only explicit main/default includes without excludes", () => {
+  for (const include of [["~DEFAULT_BRANCH"], ["refs/heads/main"]]) {
+    assert.deepEqual(
+      evaluateStrictRulesets({
+        policy,
+        branch: "main",
+        rulesets: [strictRuleset(include)],
+      }),
+      { eligible: true, reasons: [] },
+    );
+  }
+});
+
+for (const [name, mutate] of [
+  ["default branch exclusion", (ruleset) => {
+    ruleset.conditions.ref_name.exclude = ["~DEFAULT_BRANCH"];
+  }],
+  ["main exclusion", (ruleset) => {
+    ruleset.conditions.ref_name.exclude = ["refs/heads/main"];
+  }],
+  ["unrelated exclusion", (ruleset) => {
+    ruleset.conditions.ref_name.exclude = ["refs/heads/release"];
+  }],
+  ["wildcard include", (ruleset) => {
+    ruleset.conditions.ref_name.include = ["refs/heads/*"];
+  }],
+  ["inactive enforcement", (ruleset) => {
+    ruleset.enforcement = "disabled";
+  }],
+  ["non-strict status checks", (ruleset) => {
+    ruleset.rules[0].parameters.strict_required_status_checks_policy = false;
+  }],
+]) {
+  test(`strict ruleset rejects ${name}`, () => {
+    const ruleset = strictRuleset();
+    mutate(ruleset);
+    assert.deepEqual(
+      evaluateStrictRulesets({ policy, branch: "main", rulesets: [ruleset] }),
+      { eligible: false, reasons: ["strict-ruleset"] },
+    );
+  });
+}
 
 test("invalid and broadened policies fail closed", () => {
   for (const mutate of [

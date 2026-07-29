@@ -163,6 +163,7 @@ description = "Test the frozen Dependabot auto-merge policy and workflow boundar
 command = "node"
 args = [
   "--test",
+  "tools/dependabot-alert-inventory.test.mjs",
   "tools/dependabot-auto-merge-policy.test.mjs",
   "tools/dependabot-auto-merge-workflow.test.mjs",
 ]

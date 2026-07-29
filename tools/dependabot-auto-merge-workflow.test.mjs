@@ -31,12 +31,8 @@ test("eligibility is a read-only pull request job check over trusted base code",
 });
 
 test("security alert inventory paginates beyond 100 and fails closed", () => {
-  assert.match(
-    eligibility,
-    /gh api --paginate\s+\\?\s*"repos\/\$GITHUB_REPOSITORY\/dependabot\/alerts\?state=open&per_page=100"/,
-  );
-  assert.match(eligibility, /all\(\.\[\]; type == "array"\)/);
-  assert.match(eligibility, /then add \| length/);
+  assert.match(eligibility, /tools\/dependabot-alert-inventory\.sh "\$GITHUB_REPOSITORY"/);
+  assert.match(controller, /tools\/dependabot-alert-inventory\.sh "\$GITHUB_REPOSITORY"/g);
   assert.match(eligibility, /lookup_completed=true/);
   assert.match(eligibility, /open_count=\$open_count/);
   assert.match(eligibility, /--argjson open_security_alerts "\$OPEN_SECURITY_ALERTS"/);
@@ -65,14 +61,15 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(controller, /changedFiles:\s*\$changed_files\[0\]/);
   assert.match(controller, /ref:\s*\$\{\{\s*github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha\s*\}\}/);
   assert.match(controller, /expected_base_sha:\s*\$\{\{\s*steps\.context\.outputs\.base_sha\s*\}\}/);
+  assert.match(controller, /ref:\s*\$\{\{\s*needs\.decide\.outputs\.expected_base_sha\s*\}\}/);
   assert.match(controller, /test "\$\(jq -r \.head\.sha enable-pr\.json\)" = "\$EXPECTED_HEAD_OID"/);
   assert.match(controller, /test "\$\(jq -r \.base\.sha enable-pr\.json\)" = "\$EXPECTED_BASE_SHA"/);
   assert.match(controller, /test "\$\(cat enable-base-sha\.txt\)" = "\$EXPECTED_BASE_SHA"/);
   assert.match(controller, /gh api "repos\/\$GITHUB_REPOSITORY\/branches\/main"/);
   assert.match(controller, /vulnerability-alerts:\s*read/g);
   assert.match(controller, /rulesets\?includes_parents=true&per_page=100/);
-  assert.match(controller, /strict_required_status_checks_policy == true/);
-  assert.match(controller, /test "\$strict" = true/);
+  assert.match(controller, /strict-rulesets \.github\/dependabot-auto-merge-policy\.json/);
+  assert.match(controller, /jq -e '\.eligible == true' strict-ruleset-decision\.json/);
 });
 
 test("workflow permissions remain scoped to the jobs that need them", () => {

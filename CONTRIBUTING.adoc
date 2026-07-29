@@ -154,6 +154,9 @@ activation前には実repositoryでintegration gateを実施します。Actions 
 ``dependabot / eligibility`` checkを識別できることを確認します。policyを有効化した後の最初の許可対象patch更新を
 監視し、eligibility、CI、controllerおよびenable直前の再照合がすべて成功するまで通常運用へ移行しません。
 API権限や応答形式を確認できない場合はfail-closedで停止し、policyを直ちに``enabled = false``へ戻します。
+activation gateではrulesetのref条件を安全側に限定し、``main``またはdefault branchをincludeし、excludeが空の
+rulesetだけをstrict設定の根拠として受け入れます。exclude patternが1件でもある場合は、そのpatternが``main``へ
+一致するかを推測せずに停止します。
 さらに、人間の承認を0件のままにするか1件以上にするか、Cargoの間接dependencyを許可するか、
 security patchを将来許可するかをrepository管理者が決定します。GitHub Actions、npm runtime依存および
 minor以上の更新は、初期導入の対象にしません。

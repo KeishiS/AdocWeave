@@ -35,16 +35,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          open_count="$(
-            gh api --paginate \
-              "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" \
-              | jq -es '
-                  if all(.[]; type == "array")
-                  then add | length
-                  else error("Dependabot alert response must contain arrays")
-                  end
-                '
-          )"
+          open_count="$(tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY")"
           test "$open_count" -ge 0
           {
             echo "lookup_completed=true"

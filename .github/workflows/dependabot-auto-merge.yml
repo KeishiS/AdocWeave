@@ -50,14 +50,8 @@ jobs:
             | jq -s 'add' > reviews.json
           gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -r .base.ref pr.json)" \
             --jq .commit.sha > base-sha.txt
-          gh api --paginate \
-            "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" \
-            | jq -es '
-                if all(.[]; type == "array")
-                then add | length
-                else error("Dependabot alert response must contain arrays")
-                end
-              ' > open-security-alerts.txt
+          tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY" \
+            > open-security-alerts.txt
           {
             echo "base_sha=$(cat base-sha.txt)"
             echo "head_sha=$(jq -r .head.sha pr.json)"
@@ -148,6 +142,10 @@ jobs:
       pull-requests: write
       vulnerability-alerts: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.decide.outputs.expected_base_sha }}
+          persist-credentials: false
       - name: Enable GitHub-managed auto-merge for the verified head
         env:
           EXPECTED_BASE_SHA: ${{ needs.decide.outputs.expected_base_sha }}
@@ -156,16 +154,7 @@ jobs:
           PR_NUMBER: ${{ needs.decide.outputs.pull_request_number }}
           PULL_REQUEST_NODE_ID: ${{ needs.decide.outputs.pull_request_node_id }}
         run: |
-          open_count="$(
-            gh api --paginate \
-              "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" \
-              | jq -es '
-                  if all(.[]; type == "array")
-                  then add | length
-                  else error("Dependabot alert response must contain arrays")
-                  end
-                '
-          )"
+          open_count="$(tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY")"
           test "$open_count" -eq 0
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > enable-pr.json
           test "$(jq -r .node_id enable-pr.json)" = "$PULL_REQUEST_NODE_ID"
@@ -190,19 +179,12 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" \
               >> active-rulesets.jsonl
           done <<< "$ruleset_ids"
-          strict="$(
-            jq -es '
-              any(.[];
-                ((.conditions.ref_name.include // [])
-                  | any(. == "~DEFAULT_BRANCH" or . == "refs/heads/main"))
-                and
-                any(.rules[]?;
-                  .type == "required_status_checks"
-                  and .parameters.strict_required_status_checks_policy == true)
-              )
-            ' active-rulesets.jsonl
-          )"
-          test "$strict" = true
+          jq -s '{branch: "main", rulesets: .}' active-rulesets.jsonl \
+            > strict-ruleset-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            strict-rulesets .github/dependabot-auto-merge-policy.json \
+            strict-ruleset-input.json > strict-ruleset-decision.json
+          jq -e '.eligible == true' strict-ruleset-decision.json
           # shellcheck disable=SC2016
           gh api graphql \
             -f query='
