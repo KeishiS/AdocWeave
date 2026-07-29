@@ -1436,15 +1436,15 @@ fn run() -> Result<ExitCode, CliError> {
                 return Ok(exit_code);
             }
             let config_snapshot = load_project_config(&arguments)?;
+            if matches!(arguments.command, CommandOptions::ConfigShow) {
+                let outcome = commands::config::run(config_snapshot.as_ref());
+                println!("{}", outcome.output);
+                return Ok(ExitCode::SUCCESS);
+            }
             let project_config = config_snapshot.as_ref().map_or_else(
                 adocweave_config::ResolvedProjectConfig::default,
                 |snapshot| snapshot.config.clone(),
             );
-            if matches!(arguments.command, CommandOptions::ConfigShow) {
-                let output = commands::config::render(config_snapshot.as_ref(), &project_config);
-                println!("{output}");
-                return Ok(ExitCode::SUCCESS);
-            }
             let command_id = arguments.command.command_id();
             let include = arguments.include || project_config.resources.include;
             if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty()) {
