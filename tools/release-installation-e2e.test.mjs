@@ -4,9 +4,10 @@ import {
   missingInstallationAssets,
   requiredInstallationAssets,
 } from "./platform-contract.mjs";
+import plan from "../release/distribution-plan.json" with { type: "json" };
 
 const target = "x86_64-unknown-linux-musl";
-const version = "0.18.0";
+const version = plan.packageVersion;
 const archiveType = "zip";
 
 for (const [scope, expected] of [

@@ -71,6 +71,15 @@ pub struct AnalysisCacheKey([u8; 32]);
 
 impl AnalysisCacheKey {
     pub fn new(source: &str, source_id: Option<&SourceId>, options: &AnalysisOptions) -> Self {
+        Self::new_with_version(crate::VERSION, source, source_id, options)
+    }
+
+    fn new_with_version(
+        package_version: &str,
+        source: &str,
+        source_id: Option<&SourceId>,
+        options: &AnalysisOptions,
+    ) -> Self {
         let crate::core::SyntaxOptions {
             syntax_mode,
             limits,
@@ -102,7 +111,7 @@ impl AnalysisCacheKey {
             allow_relative,
         } = &config.authored_url_policy;
         let mut hasher = Sha256::new();
-        hash_bytes(&mut hasher, crate::VERSION.as_bytes());
+        hash_bytes(&mut hasher, package_version.as_bytes());
         hash_bytes(&mut hasher, source.as_bytes());
         hash_optional_string(&mut hasher, source_id.map(SourceId::as_str));
         hash_u8(
@@ -283,11 +292,27 @@ mod tests {
 
     #[test]
     fn cache_key_is_stable_and_covers_every_analysis_option() {
-        let baseline = request("text").cache_key();
-        assert_eq!(
-            baseline.to_hex(),
-            "42468d6a74983d4752dbf8159b397c099cf401ac55f2385821613e08f03d7f7a"
+        let baseline_request = request("text");
+        let stable_baseline = AnalysisCacheKey::new_with_version(
+            "test-package-version",
+            &baseline_request.source,
+            baseline_request.revision.source_id.as_ref(),
+            &baseline_request.options,
         );
+        assert_eq!(
+            stable_baseline.to_hex(),
+            "231e9803a09935d7db1904af895889dff6599adb7c0f2646ddbf9a5951fd7696"
+        );
+        assert_ne!(
+            stable_baseline,
+            AnalysisCacheKey::new_with_version(
+                "other-package-version",
+                &baseline_request.source,
+                baseline_request.revision.source_id.as_ref(),
+                &baseline_request.options,
+            )
+        );
+        let baseline = baseline_request.cache_key();
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());
 

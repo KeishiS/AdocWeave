@@ -16,7 +16,7 @@ export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERS
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## 対応環境",
   "## 公開契約と破壊的変更",
-  "## v0.18.0への移行",
+  `## v${RELEASE_NOTES_VERSION}への移行`,
   "## 既知の制約",
   "## 配布物の検証",
   "## 更新とロールバック",
@@ -25,7 +25,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 const highlights = [
   "v0.17.1で先行して公開した互換性のないRust API変更を、プロジェクトの互換性方針に従うminor版として明示します。",
   "v0.17.1からRust API、JSON形式のWASM protocol、CLI、診断、HTMLおよび実行時の動作を追加で変更していません。",
-  "v0.17.1のtag、source commitおよびassetは置き換えず、v0.18.0を新しいtag、asset、checksumおよびattestationで公開します。",
+  `v0.17.1のtag、source commitおよびassetは置き換えず、v${RELEASE_NOTES_VERSION}を新しいtag、asset、checksumおよびattestationで公開します。`,
 ];
 
 const contractNotes = [
@@ -40,7 +40,7 @@ const migrationNotes = [
   "`WasmResponse::package_version`と`ParseSummary::package_version`は`&'static str`から`String`へ変わりました。文字列として借用する場合は`as_str()`を使用してください。",
   "`ParseSummary`の`block_count`、`node_count`および`reference_count`は`usize`から`u32`へ変わりました。`usize`が必要な場合は明示的に変換してください。値が`u32`へ収まらない場合は切り詰めず`serialization-failed`を返します。",
   "`LintConfig::protected_attribute_severity`は削除されました。`LintConfig::set_rule(PROTECTED_ATTRIBUTE, RuleSettings { enabled, severity })`を使用してください。現在の設定は`LintConfig::rule(PROTECTED_ATTRIBUTE)`で取得できます。",
-  "v0.17.1から更新する場合、これらのRust APIに追加の移行はありません。CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを0.18.0へそろえてください。",
+  `v0.17.1から更新する場合、これらのRust APIに追加の移行はありません。CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
 const knownConstraints = [
@@ -90,7 +90,7 @@ export function buildReleaseNotes(tag) {
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
     "すべてのrelease assetをdownloadし、`sha256sum --check sha256.sum`を実行してください。その後、必要なassetを`gh attestation verify <asset> --repo KeishiS/adocweave`で検証してください。\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[5]}\n\n` +
-    "native archiveはversion別directoryへ展開し、`--version --json`が`0.18.0`を返すことを確認してから選択先を切り替えてください。\n\n" +
+    `native archiveはversion別directoryへ展開し、\`--version --json\`が\`${RELEASE_NOTES_VERSION}\`を返すことを確認してから選択先を切り替えてください。\n\n` +
     "VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。\n\n" +
     "rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
   return notes;

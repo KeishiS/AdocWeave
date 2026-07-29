@@ -10,7 +10,7 @@ import {
 import manifest from "../release-manifest.json" with { type: "json" };
 import protocol from "../protocol/public-api.json" with { type: "json" };
 
-test("Release Notesはv0.18.0の互換性訂正と移行方法を含む", () => {
+test(`Release Notesはv${RELEASE_NOTES_VERSION}の互換性訂正と移行方法を含む`, () => {
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
@@ -24,7 +24,7 @@ test("Release Notesはv0.18.0の互換性訂正と移行方法を含む", () => 
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /v0\.17\.1からJSON形式のWASM protocol、schema、CLI引数、診断codeおよびHTML契約を変更していません/);
   assert.match(notes, /v0\.17\.1のRelease Notesで公開APIを変更していないと説明したことは誤り/);
-  assert.match(notes, /## v0\.18\.0への移行/);
+  assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /`WasmResponse::package_version`.*`String`/);
   assert.match(notes, /`ParseSummary`.*`usize`から`u32`/);
   assert.match(notes, /`serialization-failed`/);
@@ -32,7 +32,10 @@ test("Release Notesはv0.18.0の互換性訂正と移行方法を含む", () => 
   assert.match(notes, /`LintConfig::set_rule\(PROTECTED_ATTRIBUTE, RuleSettings/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
-  assert.match(notes, /`--version --json`が`0\.18\.0`を返す/);
+  assert.match(
+    notes,
+    new RegExp(`\`--version --json\`が\`${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}\`を返す`),
+  );
   assert.match(notes, /以前のVSIXとnative directoryを保持/);
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);

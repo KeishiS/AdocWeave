@@ -1,2 +1,4 @@
-export const RELEASE_NOTES_VERSION = "0.18.0";
+import releaseManifest from "../release-manifest.json" with { type: "json" };
+
+export const RELEASE_NOTES_VERSION = releaseManifest.packageVersion;
 export const PUBLIC_PROTOCOL_SCHEMA_VERSION = 6;
