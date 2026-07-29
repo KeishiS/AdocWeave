@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { EXPECTED_RELEASE_METADATA, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, versionFromTag } from "./release-contract.mjs";
+import { EXPECTED_RELEASE_METADATA, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, validatePublicClientReleaseContract, versionFromTag } from "./release-contract.mjs";
+import {
+  RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
+  RELEASE_NOTES_VERSION,
+} from "./release-notes.mjs";
 import plan from "../release/distribution-plan.json" with { type: "json" };
 import fixture from "../release/adocweave-dist-manifest.fixture.json" with { type: "json" };
+import protocol from "../protocol/public-api.json" with { type: "json" };
+import vscodeLock from "../editors/vscode/package-lock.json" with { type: "json" };
+import vscodePackage from "../editors/vscode/package.json" with { type: "json" };
 
 test("stable tags are exact and versioned", () => {
   assert.equal(versionFromTag("v1.2.3"), "1.2.3");
@@ -46,4 +53,65 @@ test("dist plan validation rejects an incomplete plan", () => {
     releases: [],
     artifacts: {},
   }, plan, `v${plan.packageVersion}`));
+});
+
+test("public client manifests match the release train and remain private", () => {
+  const version = plan.packageVersion;
+  assert.doesNotThrow(() =>
+    validatePublicClientReleaseContract(version, vscodePackage, vscodeLock, protocol));
+
+  const mutations = [
+    [new RegExp("VS Code package version"), { ...vscodePackage, version: "9.9.9" }, vscodeLock, protocol],
+    [/must remain private/, { ...vscodePackage, private: false }, vscodeLock, protocol],
+    [new RegExp("VS Code package lock version"), vscodePackage, { ...vscodeLock, version: "9.9.9" }, protocol],
+    [new RegExp("VS Code package lock root"), vscodePackage, {
+      ...vscodeLock,
+      packages: { ...vscodeLock.packages, "": { ...vscodeLock.packages[""], version: "9.9.9" } },
+    }, protocol],
+    [/lockfileVersion must be 3/, vscodePackage, { ...vscodeLock, lockfileVersion: 2 }, protocol],
+    [new RegExp("public protocol"), vscodePackage, vscodeLock, { ...protocol, packageVersion: "9.9.9" }],
+  ];
+  for (const [pattern, packageManifest, lock, publicProtocol] of mutations) {
+    assert.throws(
+      () => validatePublicClientReleaseContract(version, packageManifest, lock, publicProtocol),
+      pattern,
+    );
+  }
+});
+
+test("release versionへの更新後はWASM protocol schema 6を必須とする", () => {
+  const releasePackage = { ...vscodePackage, version: RELEASE_NOTES_VERSION };
+  const releaseLock = {
+    ...vscodeLock,
+    version: RELEASE_NOTES_VERSION,
+    packages: {
+      ...vscodeLock.packages,
+      "": {
+        ...vscodeLock.packages[""],
+        version: RELEASE_NOTES_VERSION,
+      },
+    },
+  };
+  const releaseProtocol = {
+    ...protocol,
+    packageVersion: RELEASE_NOTES_VERSION,
+    schemaVersion: RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
+  };
+  assert.doesNotThrow(() =>
+    validatePublicClientReleaseContract(
+      RELEASE_NOTES_VERSION,
+      releasePackage,
+      releaseLock,
+      releaseProtocol,
+    ));
+  assert.throws(
+    () =>
+      validatePublicClientReleaseContract(
+        RELEASE_NOTES_VERSION,
+        releasePackage,
+        releaseLock,
+        { ...releaseProtocol, schemaVersion: 5 },
+      ),
+    /public protocol schemaVersion must be 6 for 0\.17\.0/,
+  );
 });
