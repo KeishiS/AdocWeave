@@ -1,6 +1,7 @@
 //! Typed LSP adapter, isolated from the deterministic parsing core.
 
 mod backend;
+mod document_symbols;
 mod lifecycle;
 mod position;
 mod semantic_tokens;

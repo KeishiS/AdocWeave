@@ -1148,25 +1148,30 @@ fn close_clears_diagnostics() {
 }
 
 #[test]
-fn document_symbols_preserve_hierarchy_and_ranges() {
-    let mut service = LanguageService::default();
-    open(
-        &mut service,
-        "file:///symbols.adoc",
-        1,
-        "= 題名😀\n\n== 一\n\n=== 子\n\n== 二\n",
-    );
-    let response = service
-        .document_symbols(&uri("file:///symbols.adoc"))
-        .expect("symbols")
-        .expect("response");
-    let value = serde_json::to_value(response).expect("serialize");
+fn document_symbols_choose_the_empty_shape_from_client_capabilities() {
+    let document_uri = uri("file:///not-analyzed.adoc");
+    let mut hierarchical = LanguageService::default();
+    initialize(&mut hierarchical, &["utf-16"]);
+    assert!(matches!(
+        hierarchical
+            .document_symbols(&document_uri)
+            .expect("hierarchical symbols")
+            .expect("response"),
+        lsp::DocumentSymbolResponse::Nested(symbols) if symbols.is_empty()
+    ));
 
-    assert_eq!(value[0]["name"], "題名😀");
-    assert_eq!(value[0]["children"][0]["name"], "一");
-    assert_eq!(value[0]["children"][0]["children"][0]["name"], "子");
-    assert_eq!(value[0]["children"][1]["name"], "二");
-    assert_eq!(value[0]["selectionRange"]["end"]["character"], 6);
+    let mut flat = LanguageService::default();
+    flat.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {}
+    })));
+    assert!(matches!(
+        flat.document_symbols(&document_uri)
+            .expect("flat symbols")
+            .expect("response"),
+        lsp::DocumentSymbolResponse::Flat(symbols) if symbols.is_empty()
+    ));
 }
 
 #[test]
