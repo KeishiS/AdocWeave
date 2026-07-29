@@ -210,7 +210,7 @@ fn build_with_stage_hook(
                 request.base_dir,
                 request.base_dir,
                 request.project_root,
-                request.project.resources.limits,
+                request.project.resources.limit_plan.filesystem_reads,
                 &request.project.preprocess,
                 &mut observer,
             )
