@@ -1,7 +1,9 @@
 //! Output-independent lint catalog, configuration, and orchestration.
 
 mod catalogs;
+mod presentation;
 mod source;
+mod structure;
 mod syntax;
 mod tables;
 
@@ -12,8 +14,6 @@ use crate::diagnostic::{
     Applicability, Diagnostic, DiagnosticCode, DiagnosticId, Fix, RelatedInformation, Severity,
     TextEdit, sort_diagnostics,
 };
-use crate::document::heading_id_base;
-use crate::parser::{AstBlock, HeadingKind};
 #[cfg(test)]
 use crate::parser::{ParseConfig, parse_with_config};
 #[cfg(test)]
@@ -514,7 +514,7 @@ pub(crate) fn lint_parsed_document(
         syntax::lint_syntax_issues(syntax, &mut sink);
     }
     if !sink.is_full() {
-        lint_headings(document, &mut sink);
+        structure::lint_headings(document, &mut sink);
     }
     if !sink.is_full() {
         lint_attributes(document, config, &mut sink);
@@ -526,10 +526,10 @@ pub(crate) fn lint_parsed_document(
         lint_links_and_references(document, config, &mut sink);
     }
     if !sink.is_full() {
-        lint_list_presentation(document, &mut sink);
+        presentation::lint_list_presentation(document, &mut sink);
     }
     if !sink.is_full() {
-        lint_document_presentation(document, &mut sink);
+        presentation::lint_document_presentation(document, &mut sink);
     }
     if !sink.is_full() {
         tables::lint_tables(document, &mut sink);
@@ -538,112 +538,9 @@ pub(crate) fn lint_parsed_document(
         catalogs::lint_catalogs(document, &mut sink);
     }
     if !sink.is_full() {
-        lint_document_structure(document, &mut sink);
+        structure::lint_document_structure(document, &mut sink);
     }
     Ok(sink.finish())
-}
-
-fn lint_list_presentation(
-    document: &crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-) {
-    lint_list_presentation_with_observer(document, sink, |_| {});
-}
-
-fn lint_list_presentation_with_observer<'document>(
-    document: &'document crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-    mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
-) {
-    let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
-        observe(node);
-        if sink.is_full() {
-            return ControlFlow::Break(());
-        }
-        let crate::walker::SemanticNode::Block(AstBlock::List(list)) = node else {
-            return ControlFlow::Continue(());
-        };
-        for problem in &list.presentation_problems {
-            if sink.is_full() {
-                break;
-            }
-            let message = match problem.kind {
-                crate::parser::ListPresentationProblemKind::InvalidStart => {
-                    "ordered list start must be a positive integer"
-                }
-                crate::parser::ListPresentationProblemKind::InvalidExplicitNumber => {
-                    "explicit ordered-list number must be a positive 32-bit integer"
-                }
-                crate::parser::ListPresentationProblemKind::InconsistentExplicitNumber => {
-                    "explicit ordered-list numbers must be sequential"
-                }
-                crate::parser::ListPresentationProblemKind::UnknownOrderedStyle => {
-                    "unsupported ordered list style"
-                }
-            };
-            sink.emit(INVALID_LIST_PRESENTATION, problem.range, || {
-                LintDiagnosticBody::new(message)
-            });
-            if sink.is_full() {
-                return ControlFlow::Break(());
-            }
-        }
-        ControlFlow::Continue(())
-    });
-}
-
-fn lint_document_presentation(
-    document: &crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-) {
-    if let Some(range) = document.presentation().toc_policy().invalid_level_range {
-        sink.emit(INVALID_ATTRIBUTE, range, || {
-            LintDiagnosticBody::new("toclevels must be an integer from 1 to 5")
-        });
-    }
-}
-
-fn lint_document_structure(
-    document: &crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-) {
-    for problem in document.structure().problems() {
-        if sink.is_full() {
-            break;
-        }
-        let message = match problem.kind {
-            crate::structure::StructureProblemKind::AppendixLevel => {
-                "appendix must be a level-one section"
-            }
-            crate::structure::StructureProblemKind::AppendixDoctype => {
-                "appendix is only valid for article or book documents"
-            }
-            crate::structure::StructureProblemKind::BibliographyNotSection => {
-                "bibliography must be a section, not a document title or discrete heading"
-            }
-            crate::structure::StructureProblemKind::BibliographyScope => {
-                "whole-book bibliography must be a level-zero section in a multipart book"
-            }
-            crate::structure::StructureProblemKind::BibliographyDoctype => {
-                "bibliography is only valid for article or book documents"
-            }
-            crate::structure::StructureProblemKind::MissingManpageTitle => {
-                "manpage document title is missing"
-            }
-            crate::structure::StructureProblemKind::InvalidManpageTitle => {
-                "manpage title must use name(section)"
-            }
-            crate::structure::StructureProblemKind::MissingManpageNameSection => {
-                "manpage NAME section is missing"
-            }
-            crate::structure::StructureProblemKind::InvalidManpagePurpose => {
-                "manpage NAME paragraph must use name - purpose"
-            }
-        };
-        sink.emit(INVALID_DOCUMENT_STRUCTURE, problem.range, || {
-            LintDiagnosticBody::new(message)
-        });
-    }
 }
 
 fn lint_links_and_references(
@@ -1070,52 +967,6 @@ fn attribute_expansion_message(
     }
 }
 
-fn lint_headings(document: &crate::parser::AstDocument, sink: &mut LintDiagnosticSink<'_>) {
-    let mut previous_level = None;
-    let mut ids = BTreeMap::<String, TextRange>::new();
-
-    for block in document.blocks() {
-        if sink.is_full() {
-            break;
-        }
-        let AstBlock::Heading(heading) = block else {
-            continue;
-        };
-
-        let structurally_invalid = !heading.hierarchy_valid;
-        match heading.kind {
-            HeadingKind::DocumentTitle => {
-                previous_level = None;
-            }
-            HeadingKind::Part => previous_level = None,
-            HeadingKind::Discrete { .. } => {}
-            HeadingKind::Section { level } => {
-                let hierarchy_invalid =
-                    previous_level.map_or(level > 1, |previous| level > previous + 1);
-                if !structurally_invalid && hierarchy_invalid {
-                    sink.emit(INVALID_HEADING_LEVEL, heading.marker_range, || {
-                        LintDiagnosticBody::new("heading level skips the expected hierarchy")
-                    });
-                }
-                previous_level = Some(level);
-            }
-        }
-
-        let base = heading_id_base(&heading.text);
-        if let Some(first_range) = ids.get(&base).copied() {
-            sink.emit(DUPLICATE_HEADING_ID, heading.text_range, || {
-                LintDiagnosticBody::new(format!("duplicate generated heading ID `{base}`"))
-                    .with_related(vec![RelatedInformation {
-                        message: "first heading with this ID".to_owned(),
-                        range: first_range,
-                    }])
-            });
-        } else {
-            ids.insert(base, heading.text_range);
-        }
-    }
-}
-
 #[cfg(test)]
 fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
     TextRange::new(TextSize::new(start)?, TextSize::new(end)?)
@@ -1129,8 +980,8 @@ mod tests {
         DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID, INVALID_ANCHOR, INVALID_CATALOG, INVALID_TABLE,
         LINE_TOO_LONG, LINT_RULES, LintConfig, LintDiagnosticBody, LintDiagnosticSink, LintRuleId,
         MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE, UNUSED_ATTRIBUTE,
-        lint, lint_links_and_references_with_observer, lint_list_presentation_with_observer,
-        lint_rule, lint_with_analysis_limits, render_lint_rule_catalog_json, text_range,
+        lint, lint_links_and_references_with_observer, lint_rule, lint_with_analysis_limits,
+        render_lint_rule_catalog_json, text_range,
     };
     use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
 
@@ -1425,7 +1276,7 @@ mod tests {
         };
         let mut sink = LintDiagnosticSink::new(&config);
         let mut visited = Vec::new();
-        lint_list_presentation_with_observer(&list.ast, &mut sink, |node| {
+        super::presentation::lint_list_presentation_with_observer(&list.ast, &mut sink, |node| {
             visited.push(node_kind(node));
         });
         assert_eq!(sink.finish().len(), 1);
