@@ -43,6 +43,10 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /`scan_filesystem`、`scan_filesystem_with_session`、`FilesystemResource`/);
   assert.match(notes, /LocalFilesystemSession::scan_utf8/);
   assert.match(notes, /hostの`ResourceError`/);
+  assert.match(notes, /`LocalFilesystemSession::reread_utf8_with_rollback`/);
+  assert.match(notes, /同じsessionの`rollback_reread`/);
+  assert.match(notes, /`FilesystemReadRollbackResult::Stale`/);
+  assert.match(notes, /`release`で読込課金を解放/);
   assert.match(notes, /`adocweave_host::DependencyGraph`の公開を終了/);
   assert.match(notes, /WorkspaceAnalysis::dependencies/);
   assert.match(notes, /`adocweave_host::ResourceLimits`はfilesystem読込専用の`FilesystemReadLimits`/);
@@ -57,10 +61,14 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`/);
   assert.match(notes, /省略時は従来と同じ32と1048576/);
   assert.match(notes, /不一致は処理前に`invalid-options`/);
-  assert.match(notes, /`PreprocessedAnalysisError`へ`Cancelled`を追加/);
-  assert.match(notes, /網羅的に`match`するRustコード/);
+  assert.match(notes, /`PreprocessedAnalysisError`へ`Options`と`Cancelled`を追加/);
+  assert.match(notes, /設定不一致と処理の取り消しを扱う両方の分岐/);
+  assert.match(notes, /削除した`Filesystem`を除き、新しい`InvalidOptions`を追加/);
   assert.match(notes, /preprocess_and_analyze_cancellable_with_options/);
   assert.match(notes, /PreprocessedAnalysis::project_origins_cancellable/);
+  assert.match(notes, /旧設定で構築したhover、semantic tokenおよびdiagnosticを失効/);
+  assert.match(notes, /open overlayが上限を超えた場合も、disk本文へ切り替えません/);
+  assert.match(notes, /一時的な設定読込失敗では、直前に検証済みのsnapshotとplanを維持/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
