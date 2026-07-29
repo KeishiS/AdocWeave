@@ -1100,7 +1100,7 @@ fn select_lines(
                 .any(|tag| requested_tags.contains(tag.as_str()));
         let line_selected = requested_lines
             .as_ref()
-            .is_none_or(|lines| lines.contains(&number));
+            .is_none_or(|lines| lines.contains(number));
         if tag_selected && line_selected {
             output.push(SelectedLine {
                 text: line.to_owned(),
@@ -1119,30 +1119,60 @@ fn tag_marker<'a>(value: &'a str, marker: &str) -> Option<&'a str> {
     rest.strip_suffix("[]")
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct LineSelection {
+    ranges: Vec<(usize, usize)>,
+}
+
+impl LineSelection {
+    fn contains(&self, line: usize) -> bool {
+        let index = self
+            .ranges
+            .partition_point(|(_, range_end)| *range_end < line);
+        self.ranges
+            .get(index)
+            .is_some_and(|(range_start, range_end)| *range_start <= line && line <= *range_end)
+    }
+}
+
 fn parse_line_selection(
     value: &str,
     cancellation: &dyn CancellationCheck,
-) -> Result<BTreeSet<usize>, TextRange> {
+) -> Result<LineSelection, TextRange> {
     let mut checkpoint = CancellationCheckpoint::new(cancellation);
-    let mut output = BTreeSet::new();
+    let mut ranges = Vec::new();
     for item in value.split([';', ',']) {
+        if checkpoint.is_cancelled() {
+            return Err(zero_range());
+        }
         if let Some((start, end)) = item.trim().split_once("..") {
-            if let (Ok(start), Ok(end)) = (start.parse::<usize>(), end.parse::<usize>()) {
-                for line in start..=end {
-                    if checkpoint.is_cancelled() {
-                        return Err(zero_range());
-                    }
-                    output.insert(line);
-                }
+            if let (Ok(start), Ok(end)) = (start.parse::<u128>(), end.parse::<u128>())
+                && start <= end
+                && start <= usize::MAX as u128
+            {
+                ranges.push((start as usize, end.min(usize::MAX as u128) as usize));
             }
-        } else if let Ok(line) = item.trim().parse() {
-            if checkpoint.is_cancelled() {
-                return Err(zero_range());
-            }
-            output.insert(line);
+        } else if let Ok(line) = item.trim().parse::<u128>()
+            && line <= usize::MAX as u128
+        {
+            ranges.push((line as usize, line as usize));
         }
     }
-    Ok(output)
+    ranges.sort_unstable();
+    let mut normalized: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if checkpoint.is_cancelled() {
+            return Err(zero_range());
+        }
+        if let Some((_, previous_end)) = normalized.last_mut()
+            && start <= previous_end.saturating_add(1)
+        {
+            *previous_end = (*previous_end).max(end);
+        } else {
+            normalized.push((start, end));
+        }
+    }
+    Ok(LineSelection { ranges: normalized })
 }
 
 fn transform_lines(
@@ -1340,6 +1370,50 @@ mod tests {
         .expect("cancellable preprocess");
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn enormous_line_range_is_not_materialized() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("part"),
+                source: "first\nsecond\n".into(),
+            },
+        );
+
+        let document = preprocess(
+            "include::part.adoc[lines=1..18446744073709551615]\n",
+            &snapshot,
+            &PreprocessOptions::default(),
+        )
+        .expect("bounded line selection");
+
+        assert_eq!(document.source, "first\nsecond\n");
+    }
+
+    #[test]
+    fn line_selection_parsing_remains_cancellable() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let value = (0..CHECKPOINT_INTERVAL * 3)
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        assert_eq!(
+            parse_line_selection(&value, &cancellation),
+            Err(zero_range())
+        );
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
     }
 
     #[test]
