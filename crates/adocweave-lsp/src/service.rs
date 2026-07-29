@@ -19,7 +19,8 @@ use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
 use crate::position::{
-    PositionEncoding, contains, negotiate_encoding, range_to_lsp, ranges_intersect, request_offset,
+    PositionEncoding, cursor_touches_range, negotiate_encoding, range_contains_offset,
+    range_to_lsp, ranges_intersect, request_offset,
 };
 use crate::state::DocumentStore;
 use crate::state::{
@@ -1088,7 +1089,7 @@ impl LanguageService {
             .analysis
             .document_attribute_occurrences()
             .iter()
-            .find(|attribute| contains(attribute.range, offset))
+            .find(|attribute| range_contains_offset(attribute.range, offset))
         {
             return make_hover(
                 format!(
@@ -1120,7 +1121,7 @@ impl LanguageService {
             .analysis
             .attribute_references()
             .iter()
-            .find(|reference| contains(reference.range, offset))
+            .find(|reference| range_contains_offset(reference.range, offset))
         {
             return make_hover(
                 attribute_reference_hover(reference),
@@ -1131,7 +1132,7 @@ impl LanguageService {
             );
         }
         if let Some(target) = document.analysis.reference_targets().iter().find(|target| {
-            contains(target.id_range, offset)
+            range_contains_offset(target.id_range, offset)
                 && !document.analysis.document().blocks().iter().any(|block| {
                     matches!(
                         block,
@@ -1168,7 +1169,7 @@ impl LanguageService {
             );
         }
         for author in &document.analysis.document().header().authors {
-            if contains(author.range, offset) {
+            if range_contains_offset(author.range, offset) {
                 let value = author.email.as_ref().map_or_else(
                     || format!("**author**  \nName: `{}`", author.name),
                     |email| format!("**author**  \nName: `{}`  \nEmail: `{email}`", author.name),
@@ -1183,7 +1184,7 @@ impl LanguageService {
             }
         }
         if let Some(revision) = &document.analysis.document().header().revision
-            && contains(revision.range, offset)
+            && range_contains_offset(revision.range, offset)
         {
             return make_hover(
                 "**document revision**".to_owned(),
@@ -1302,7 +1303,7 @@ impl LanguageService {
             .analysis
             .references()
             .iter()
-            .any(|reference| contains(reference.target_range, offset))
+            .any(|reference| cursor_touches_range(reference.target_range, offset))
         {
             let items = document
                 .analysis
@@ -1441,7 +1442,7 @@ impl LanguageService {
             .analysis
             .attribute_references()
             .iter()
-            .find(|reference| contains(reference.range, offset))
+            .find(|reference| range_contains_offset(reference.range, offset))
             && let Some(binding) = reference
                 .binding_id
                 .and_then(|id| document.analysis.attribute_environment().binding(id))
@@ -1463,7 +1464,7 @@ impl LanguageService {
                     .source_id
                     .as_ref()
                     .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                    && contains(directive.target_range, offset)
+                    && range_contains_offset(directive.target_range, offset)
             }) && let Some(target) = directive.resource_source_id.as_ref()
             {
                 let target: lsp::Url = target
@@ -1479,7 +1480,7 @@ impl LanguageService {
             .analysis
             .references()
             .iter()
-            .find(|reference| contains(reference.range, offset))
+            .find(|reference| range_contains_offset(reference.range, offset))
         else {
             return Ok(None);
         };
@@ -1577,7 +1578,7 @@ impl LanguageService {
             .analysis
             .attribute_references()
             .iter()
-            .find(|reference| contains(reference.range, offset))
+            .find(|reference| range_contains_offset(reference.range, offset))
             .and_then(|reference| reference.binding_id)
             .or_else(|| {
                 document
@@ -1585,7 +1586,7 @@ impl LanguageService {
                     .attribute_environment()
                     .bindings()
                     .iter()
-                    .find(|binding| contains(binding.occurrence().name_range, offset))
+                    .find(|binding| range_contains_offset(binding.occurrence().name_range, offset))
                     .map(adocweave::semantic::AttributeBinding::id)
             });
         if let Some(binding_id) = local_binding_id {
@@ -1623,7 +1624,7 @@ impl LanguageService {
             .analysis
             .references()
             .iter()
-            .find(|reference| contains(reference.range, offset));
+            .find(|reference| range_contains_offset(reference.range, offset));
         let key = reference_at_position
             .and_then(|reference| reference.target.clone())
             .or_else(|| {
@@ -1631,7 +1632,7 @@ impl LanguageService {
                     .analysis
                     .reference_targets()
                     .iter()
-                    .find(|target| contains(target.id_range, offset))
+                    .find(|target| range_contains_offset(target.id_range, offset))
                     .map(|target| ReferenceKey::Local {
                         anchor: target.id.clone(),
                     })
@@ -1769,7 +1770,7 @@ impl LanguageService {
             .analysis
             .reference_targets()
             .iter()
-            .find(|target| contains(target.id_range, offset))
+            .find(|target| range_contains_offset(target.id_range, offset))
         else {
             return Ok(None);
         };
@@ -2198,7 +2199,7 @@ fn projected_attribute_reference_at<'a>(
                         .source_id
                         .as_ref()
                         .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                        && contains(origin.range.text_range(), offset)
+                        && range_contains_offset(origin.range.text_range(), offset)
                 })
                 .map(|origin| (&reference.value, origin))
         })
@@ -2219,7 +2220,7 @@ fn projected_attribute_binding_at(
                     .source_id
                     .as_ref()
                     .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                    && contains(origin.range.text_range(), offset)
+                    && range_contains_offset(origin.range.text_range(), offset)
             })
         })
         .map(|binding| binding.value.id())
@@ -2293,7 +2294,7 @@ fn inline_hover(
         let adocweave::semantic::SemanticNode::Inline(inline) = node else {
             return;
         };
-        if contains(inline.range(), offset) {
+        if range_contains_offset(inline.range(), offset) {
             let value = match inline {
                 Inline::Link(link) => {
                     Some(format!("**external link**  \nTarget: `{}`", link.target))
@@ -2380,7 +2381,7 @@ fn block_presentation_hover(
                 if value
                     .admonition
                     .as_ref()
-                    .is_some_and(|item| contains(item.label_range, offset)) =>
+                    .is_some_and(|item| range_contains_offset(item.label_range, offset)) =>
             {
                 let item = value.admonition.as_ref().expect("guarded admonition");
                 found = Some((
@@ -2390,7 +2391,7 @@ fn block_presentation_hover(
             }
             parser::Block::Delimited(value) => match &value.presentation {
                 Some(parser::DelimitedPresentation::Admonition(item))
-                    if contains(item.label_range, offset) =>
+                    if range_contains_offset(item.label_range, offset) =>
                 {
                     found = Some((
                         format!("**{} admonition**", item.kind.label()),
@@ -2398,7 +2399,10 @@ fn block_presentation_hover(
                     ));
                 }
                 Some(parser::DelimitedPresentation::Quote(item))
-                    if contains(value.metadata.range.unwrap_or(value.range), offset) =>
+                    if range_contains_offset(
+                        value.metadata.range.unwrap_or(value.range),
+                        offset,
+                    ) =>
                 {
                     let kind = match item.kind {
                         parser::QuoteKind::Quote => "quote",

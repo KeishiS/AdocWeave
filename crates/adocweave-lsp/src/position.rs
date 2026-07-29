@@ -103,7 +103,13 @@ fn position_lt(left: lsp::Position, right: lsp::Position) -> bool {
     (left.line, left.character) < (right.line, right.character)
 }
 
-pub(crate) fn contains(range: CoreTextRange, offset: u32) -> bool {
+/// Returns whether a source offset is inside a half-open text range.
+pub(crate) fn range_contains_offset(range: CoreTextRange, offset: u32) -> bool {
+    range.start().to_u32() <= offset && offset < range.end().to_u32()
+}
+
+/// Returns whether a cursor can complete content in or immediately after a range.
+pub(crate) fn cursor_touches_range(range: CoreTextRange, offset: u32) -> bool {
     range.start().to_u32() <= offset && offset <= range.end().to_u32()
 }
 
@@ -175,5 +181,19 @@ mod tests {
             range,
             lsp::Range::new(lsp::Position::new(1, 3), lsp::Position::new(1, 3)),
         ));
+    }
+
+    #[test]
+    fn text_containment_is_half_open_while_completion_accepts_the_end_cursor() {
+        let range = TextRange::new(
+            TextSize::new(2).expect("start"),
+            TextSize::new(5).expect("end"),
+        )
+        .expect("range");
+
+        assert!(range_contains_offset(range, 2));
+        assert!(range_contains_offset(range, 4));
+        assert!(!range_contains_offset(range, 5));
+        assert!(cursor_touches_range(range, 5));
     }
 }
