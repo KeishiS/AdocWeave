@@ -198,9 +198,30 @@ test("Windows cargo-dist bootstrap pins the complete reviewed asset identity", (
         ...inputs,
         windowsDistBootstrap: { ...inputs.windowsDistBootstrap, ...mutation },
       }),
-      /exactly pin the reviewed release asset/,
+      /version and asset|exactly pin the reviewed release asset/,
     );
   }
+});
+
+test("Windows cargo-dist bootstrap stays aligned with the distribution plan and asset URL", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      plan: { ...inputs.plan, distVersion: "0.31.0" },
+    }),
+    /version must match the distribution plan/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      windowsDistBootstrap: {
+        ...inputs.windowsDistBootstrap,
+        url: "https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-x86_64-pc-windows-msvc.zip",
+      },
+    }),
+    /URL must match its version and asset/,
+  );
 });
 
 test("Windows cargo-dist bootstrap cannot omit bounded download and extraction", () => {

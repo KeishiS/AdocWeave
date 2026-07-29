@@ -120,6 +120,7 @@ export function validateReleaseWorkflowPolicy({
   smoke,
   dist,
   makefile,
+  plan,
   windowsDistBootstrap,
   windowsDistInstaller,
 }) {
@@ -240,6 +241,14 @@ export function validateReleaseWorkflowPolicy({
   requireCommand(windowsVersions, "-DownloadTimeoutSeconds 60", "Windows cargo-dist download must have a timeout");
   requireCommand(windowsVersions, "-ExtractionTimeoutSeconds 30", "Windows cargo-dist extraction must have a timeout");
   requireCommand(windowsVersions, 'Join-Path $distDirectory "dist.exe"', "Windows cargo-dist must be verified before use");
+  if (windowsDistBootstrap.version !== plan.distVersion) {
+    fail("Windows cargo-dist bootstrap version must match the distribution plan");
+  }
+  const expectedWindowsDistUrl =
+    `https://github.com/axodotdev/cargo-dist/releases/download/v${windowsDistBootstrap.version}/${windowsDistBootstrap.asset}`;
+  if (windowsDistBootstrap.url !== expectedWindowsDistUrl) {
+    fail("Windows cargo-dist bootstrap URL must match its version and asset");
+  }
   if (windowsDistBootstrap.schemaVersion !== 1 ||
       windowsDistBootstrap.version !== "0.32.0" ||
       windowsDistBootstrap.asset !== "cargo-dist-x86_64-pc-windows-msvc.zip" ||
