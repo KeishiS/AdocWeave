@@ -486,6 +486,10 @@ dependencies = [
   "test-vscode-release-package",
 ]
 
+[tasks.release-global-candidate]
+description = "Build and runtime-test the exact global archives uploaded by candidate CI"
+dependencies = ["release-global-artifacts", "browser-runtime-check"]
+
 [tasks.browser-runtime-check]
 description = "Run the release-intent browser archive in isolated, fallback, and bundler Chromium paths"
 dependencies = ["test-browser-smoke", "test-browser-bundler"]
@@ -757,14 +761,34 @@ nix build \
 nix run . -- --version --json | jq -e --arg version "$version" '.packageVersion == $version' >/dev/null
 '''
 
-[tasks.quality-fast]
-description = "Run formatting, generated-file, workflow, release, platform, and repository policy checks"
+[tasks.candidate-path-audit]
+description = "Reject tracked paths without an explicit release candidate impact classification"
+script_runner = "@shell"
+script = '''
+git ls-files | node tools/native-change-plan.mjs --audit
+'''
+
+[tasks.ci-preflight]
+description = "Run inexpensive common checks before release candidate builds"
 dependencies = [
   "fmt-check",
   "protocol-generated-check",
-  "platform-contract",
   "release-contract",
   "workflow-lint",
+  "candidate-path-audit",
+]
+
+[tasks.quality-fast]
+description = "Run formatting, generated-file, workflow, release, platform, and repository policy checks"
+dependencies = [
+  "ci-preflight",
+  "quality-fast-after-preflight",
+]
+
+[tasks.quality-fast-after-preflight]
+description = "Run fast source checks not covered by the candidate preflight"
+dependencies = [
+  "platform-contract",
   "docs-check",
   "adoc-check-targets",
 ]

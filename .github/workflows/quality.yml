@@ -3,6 +3,10 @@ name: Quality gate
 on:
   workflow_call:
     inputs:
+      common_preflight_scheduled:
+        required: false
+        type: boolean
+        default: false
       run_nix_package:
         required: false
         type: boolean
@@ -31,8 +35,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-      - name: Fast source policy execution
+      - name: Complete fast source policy execution
+        if: ${{ !inputs.common_preflight_scheduled }}
         run: nix develop .#ci -c cargo make quality-fast
+      - name: Fast source policy execution after candidate preflight
+        if: ${{ inputs.common_preflight_scheduled }}
+        run: nix develop .#ci -c cargo make quality-fast-after-preflight
 
   rust:
     runs-on: ubuntu-24.04
@@ -79,7 +87,7 @@ jobs:
       - name: Nix package build and execution
         run: nix develop .#ci -c cargo make nix-package-check
 
-  verify:
+  aggregate:
     if: always()
     needs: [source-fast, rust, adapters, dependencies, fuzz, nix-package]
     runs-on: ubuntu-24.04

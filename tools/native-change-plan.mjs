@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const COMMON_RELEASE_ROOTS = [
   ".cargo/",
   ".github/workflows/",
+  "config/",
   "release/",
 ];
 const COMMON_RELEASE_FILES = new Set([
@@ -38,22 +39,45 @@ const GLOBAL_ROOTS = [
   "web-worker/",
 ];
 const NON_RELEASE_ROOTS = [
+  ".codex/",
   ".github/ISSUE_TEMPLATE/",
   "docs/",
   "fixtures/",
   "fuzz/",
+  "security/",
 ];
 const NON_RELEASE_FILES = new Set([
   ".adocweave.toml",
+  ".gitattributes",
   ".gitignore",
+  ".github/dependabot.yml",
+  ".github/pull_request_template.md",
   "AGENTS.md",
   "CONTRIBUTING.adoc",
+  "deny.toml",
+  "tools/adoc-check.mjs",
+  "tools/adoc-check.test.mjs",
+  "tools/dependency-governance.sh",
+  "tools/generate-third-party-notices.test.mjs",
+  "tools/html5-check.mjs",
+  "tools/native-change-plan.test.mjs",
+  "tools/platform-contract.mjs",
+  "tools/platform-contract.test.mjs",
+  "tools/release-contract.test.mjs",
+  "tools/release-notes.mjs",
+  "tools/release-notes.test.mjs",
+  "tools/release-policy.mjs",
   "tools/release-workflow-policy.mjs",
   "tools/release-workflow-policy.test.mjs",
+  "tools/verify-cargo-release-metadata.mjs",
+  "tools/verify-dependency-boundaries.mjs",
+  "tools/verify-dependency-boundaries.test.mjs",
+  "tools/verify-duplicate-dependencies.mjs",
 ]);
 const NATIVE_TOOLS = [
   "dependency-governance.sh",
   "generate-third-party-notices.mjs",
+  "install-pinned-cargo-dist.ps1",
   "local-native-check.mjs",
   "native-change-plan.mjs",
   "native-change-plan.test.mjs",
@@ -71,14 +95,21 @@ const NATIVE_TOOLS = [
   "verify-native-pr-candidate.test.mjs",
 ];
 const GLOBAL_TOOLS = [
+  "browser-release-budget.mjs",
+  "browser-release-budget.test.mjs",
   "browser-release-smoke.mjs",
+  "browser-release-smoke.test.mjs",
   "generate-protocol.mjs",
   "generate-third-party-notices.mjs",
+  "host-executable.mjs",
+  "host-executable.test.mjs",
   "package-browser-release.sh",
   "package-vscode-release.sh",
   "package-zed-release.sh",
   "process-lifecycle.mjs",
   "process-lifecycle.test.mjs",
+  "protocol-rust-codegen.mjs",
+  "protocol-rust-codegen.test.mjs",
   "release-contract.mjs",
   "release-installation-e2e.mjs",
   "release-metadata.mjs",
@@ -112,16 +143,26 @@ export function affectsGlobalCandidate(pathname) {
 }
 
 export function candidateImpact(pathname) {
-  if (isCommonReleaseInput(pathname)) return { global: true, native: true };
+  return classifyCandidatePath(pathname).impact;
+}
+
+export function classifyCandidatePath(pathname) {
+  if (isCommonReleaseInput(pathname)) {
+    return { classified: true, impact: { global: true, native: true } };
+  }
   if (NON_RELEASE_FILES.has(pathname) || startsWithAny(pathname, NON_RELEASE_ROOTS)) {
-    return { global: false, native: false };
+    return { classified: true, impact: { global: false, native: false } };
   }
   const native = startsWithAny(pathname, NATIVE_ROOTS) || isNamedTool(pathname, NATIVE_TOOLS);
   const global = startsWithAny(pathname, GLOBAL_ROOTS) || isNamedTool(pathname, GLOBAL_TOOLS);
-  if (native || global) return { global, native };
+  if (native || global) return { classified: true, impact: { global, native } };
   // New source and build paths must receive complete candidate validation until
   // their artifact ownership is explicitly classified above.
-  return { global: true, native: true };
+  return { classified: false, impact: { global: true, native: true } };
+}
+
+export function auditCandidatePaths(paths) {
+  return paths.filter((pathname) => !classifyCandidatePath(pathname).classified);
 }
 
 function matrixEntry(target) {
@@ -159,12 +200,24 @@ export function nativeChangePlan(
     candidateRequired: nativeRequired || globalRequired,
     globalRequired,
     nativeRequired,
+    preflightRequired: nativeRequired || globalRequired || ref.startsWith("refs/tags/"),
     releaseMain,
     matrix: { include: targets },
   };
 }
 
 function main() {
+  if (process.argv[2] === "--audit") {
+    const paths = readFileSync(0, "utf8").replaceAll("\r\n", "\n").split("\n").filter(Boolean);
+    const unknown = auditCandidatePaths(paths);
+    if (unknown.length > 0) {
+      process.stderr.write(
+        `candidate impact is not classified for tracked paths:\n${unknown.map((path) => `- ${path}`).join("\n")}\n`,
+      );
+      process.exit(1);
+    }
+    return;
+  }
   const [eventName, ref, outputPath, releaseTagExistsArgument] = process.argv.slice(2);
   if (!eventName || !ref || !outputPath ||
       !["true", "false"].includes(releaseTagExistsArgument)) {
@@ -190,6 +243,7 @@ function main() {
       `candidate_required=${plan.candidateRequired}`,
       `global_required=${plan.globalRequired}`,
       `native_required=${plan.nativeRequired}`,
+      `preflight_required=${plan.preflightRequired}`,
       `release_main=${plan.releaseMain}`,
       `native_matrix=${JSON.stringify(plan.matrix)}`,
       "",

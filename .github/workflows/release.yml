@@ -26,6 +26,7 @@ jobs:
       global_required: ${{ steps.changes.outputs.global_required }}
       native_required: ${{ steps.changes.outputs.native_required }}
       native_matrix: ${{ steps.changes.outputs.native_matrix }}
+      preflight_required: ${{ steps.changes.outputs.preflight_required }}
       release_main: ${{ steps.changes.outputs.release_main }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
@@ -66,8 +67,22 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-  release-plan:
+  preflight:
+    if: needs.changes.outputs.preflight_required == 'true'
     needs: [changes]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - name: Candidate common preflight
+        run: nix develop .#ci -c cargo make ci-preflight
+
+  release-plan:
+    if: needs.changes.outputs.preflight_required == 'true'
+    needs: [changes, preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -114,13 +129,15 @@ jobs:
 
   quality:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    needs: [changes]
     uses: ./.github/workflows/quality.yml
     with:
+      common_preflight_scheduled: ${{ needs.changes.outputs.preflight_required == 'true' }}
       run_nix_package: ${{ github.event_name == 'pull_request' }}
 
   build-native:
     if: needs.changes.outputs.native_required == 'true'
-    needs: [changes]
+    needs: [changes, preflight]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.native_matrix) }}
@@ -196,7 +213,7 @@ jobs:
 
   build-global:
     if: needs.changes.outputs.global_required == 'true'
-    needs: [changes]
+    needs: [changes, preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -204,11 +221,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-      - name: Browser, Zed, and VS Code artifact build and verification
-        run: nix develop .#ci -c cargo make release-global-artifacts
-      - name: Browser release archive runtime and bundler acceptance
-        if: needs.changes.outputs.release_main == 'true'
-        run: nix develop .#ci -c cargo make browser-runtime-check
+      - name: Browser, Zed, and VS Code candidate build and runtime verification
+        run: nix develop .#ci -c cargo make release-global-candidate
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: artifacts-build-global
@@ -288,6 +302,61 @@ jobs:
           artifacts
           "${{ matrix.target }}"
           release-manifest.json
+
+  merge-gate:
+    name: quality / verify
+    if: always() && github.event_name == 'pull_request'
+    needs:
+      - changes
+      - quality
+      - preflight
+      - release-plan
+      - build-native
+      - native-smoke
+      - build-global
+      - verify-candidate
+      - installation-e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Required pull request result aggregation
+        env:
+          BUILD_GLOBAL_RESULT: ${{ needs.build-global.result }}
+          BUILD_NATIVE_RESULT: ${{ needs.build-native.result }}
+          CANDIDATE_REQUIRED: ${{ needs.changes.outputs.candidate_required }}
+          GLOBAL_REQUIRED: ${{ needs.changes.outputs.global_required }}
+          INSTALLATION_RESULT: ${{ needs.installation-e2e.result }}
+          NATIVE_REQUIRED: ${{ needs.changes.outputs.native_required }}
+          NATIVE_SMOKE_RESULT: ${{ needs.native-smoke.result }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          RELEASE_PLAN_RESULT: ${{ needs.release-plan.result }}
+          VERIFY_CANDIDATE_RESULT: ${{ needs.verify-candidate.result }}
+        run: |
+          test "$QUALITY_RESULT" = success
+          if [ "$CANDIDATE_REQUIRED" = true ]; then
+            test "$PREFLIGHT_RESULT" = success
+            test "$RELEASE_PLAN_RESULT" = success
+            test "$VERIFY_CANDIDATE_RESULT" = success
+          else
+            test "$PREFLIGHT_RESULT" = skipped
+            test "$RELEASE_PLAN_RESULT" = skipped
+            test "$VERIFY_CANDIDATE_RESULT" = skipped
+          fi
+          if [ "$GLOBAL_REQUIRED" = true ]; then
+            test "$BUILD_GLOBAL_RESULT" = success
+          else
+            test "$BUILD_GLOBAL_RESULT" = skipped
+          fi
+          if [ "$NATIVE_REQUIRED" = true ]; then
+            test "$BUILD_NATIVE_RESULT" = success
+            test "$NATIVE_SMOKE_RESULT" = success
+            test "$INSTALLATION_RESULT" = success
+          else
+            test "$BUILD_NATIVE_RESULT" = skipped
+            test "$NATIVE_SMOKE_RESULT" = skipped
+            test "$INSTALLATION_RESULT" = skipped
+          fi
 
   reuse-candidate:
     if: startsWith(github.ref, 'refs/tags/')
