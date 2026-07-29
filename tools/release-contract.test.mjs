@@ -115,6 +115,6 @@ test("公開WASM protocolは対応schemaを必須とする", () => {
         vscodeLock,
         { ...protocol, schemaVersion: SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION - 1 },
       ),
-    /public protocol schemaVersion must be 6/,
+    /public protocol schemaVersion must be 7/,
   );
 });

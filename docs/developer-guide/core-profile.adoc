@@ -143,6 +143,11 @@ source occurrenceを取得します。
 属性fixtureと保証対象の対応は link:../../fixtures/attributes/manifest.json[属性契約manifest]を基準とし、
 repository検査でfixture一覧とこの文書体系の同期を確認します。
 
+前処理と解析を一度に行う場合は、``AnalysisOptions``と``PreprocessOptions``から
+``EffectiveProcessingOptions``を作り、``preprocess_and_analyze_with_options``へ渡します。
+この値は両段階で共有する文書外属性と属性展開上限の一致を構築時に検査します。Workspaceでも
+``WorkspaceSnapshot::analyze_with_options``へ同じ値を渡します。
+
 [source,rust]
 ----
 use adocweave::output::html::{RenderPolicy, render};

@@ -321,13 +321,8 @@ impl Engine {
         Self { options }
     }
 
-    pub(crate) fn options_with_attributes(
-        &self,
-        attributes: &crate::attributes::ExternalAttributes,
-    ) -> AnalysisOptions {
-        let mut options = self.options.clone();
-        options.attributes.clone_from(attributes);
-        options
+    pub(crate) const fn options(&self) -> &AnalysisOptions {
+        &self.options
     }
 
     pub fn analyze(&self, source: &str) -> Result<Analysis, ParseError> {

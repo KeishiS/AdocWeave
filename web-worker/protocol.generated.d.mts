@@ -346,6 +346,8 @@ export interface PreprocessOptions {
   maxTotalBytes?: number;
   maxExpandedNodes?: number;
   maxSourceMapSegments?: number;
+  maxAttributeExpansionDepth?: number;
+  maxAttributeExpansionBytes?: number;
 }
 
 export interface PreprocessResponse {
@@ -566,7 +568,7 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 6;
+export declare const PROTOCOL_SCHEMA_VERSION: 7;
 export declare const WORKER_PROTOCOL_VERSION: 2;
 export declare const PACKAGE_VERSION: "0.19.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];

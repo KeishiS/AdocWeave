@@ -61,8 +61,13 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 暗黙のresource取得やinclude展開を行いません。
 
 文書外属性は``AnalysisOptions.attributes``、WASMでは``analysisOptions.attributes``へ指定します。
-文字列はhard-lockedなset、``null``はhard-lockedなunsetを表します。前処理設定にも属性を指定する場合は
-同じ値でなければならず、解析と前処理で異なる属性状態を使用できません。
+文字列はhard-lockedなset、``null``はhard-lockedなunsetを表します。前処理と解析を組み合わせるRust APIでは、
+``EffectiveProcessingOptions``が文書外属性と属性展開の深さ・生成byte数の上限を一つの処理契約として検証します。
+``preprocess_and_analyze_with_options``と``WorkspaceSnapshot::analyze_with_options``には、この検証済みの値を渡します。
+
+互換APIやWASMのように解析設定と前処理設定を別々に受け取る入口では、文書外属性と二つの属性展開上限を
+同じ値にします。不一致はincludeの探索や解析を始める前に``invalid-options``として拒否されます。
+処理中に既定の上限を再取得して、呼出側が指定した境界を置き換えることはありません。
 
 ``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
