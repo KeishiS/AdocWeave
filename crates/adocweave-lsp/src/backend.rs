@@ -260,12 +260,11 @@ impl Backend {
                 let workspace_result =
                     worker_job.workspace_problem.clone().map(Err).or_else(|| {
                         worker_job.workspace.as_ref().map(|input| {
-                            let mut analysis_options = worker_job.request.options.clone();
-                            analysis_options
-                                .attributes
-                                .clone_from(&input.options.attributes);
                             input
-                                .analyze(&analysis_options, worker_job.cancellation.as_ref())
+                                .analyze(
+                                    &worker_job.request.options,
+                                    worker_job.cancellation.as_ref(),
+                                )
                                 .map_err(|error| WorkspaceProblem {
                                     source_id: error.source_id.as_ref().map(ToString::to_string),
                                     range: error.range.unwrap_or_else(zero_range),

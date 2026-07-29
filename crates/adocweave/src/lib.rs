@@ -153,16 +153,16 @@ pub mod output {
 /// Deterministic preprocessing over caller-provided resource snapshots.
 pub mod preprocess {
     pub use crate::preprocessor::{
-        AnalysisProjection, Directive, DirectiveKind, ExpandedOffset, ExpandedRange,
-        IncludeRequest, OriginRange, Originated, PreprocessError, PreprocessErrorKind,
-        PreprocessNotice, PreprocessNoticeKind, PreprocessOptions, PreprocessedAnalysis,
-        PreprocessedAnalysisError, PreprocessedDocument, ProjectedAttributeBinding,
-        ProjectedAttributeReference, ProjectedDiagnostic, ProjectedDocumentAttribute,
-        ProjectedDocumentAttributeValueLine, ProjectedDocumentSymbol, ProjectedFix,
-        ProjectedLocalTarget, ProjectedReference, ProjectedResource, ProjectionError,
-        ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode, SourceMapSegment,
-        SourceMapping, SourceOrigin, discover_includes, preprocess, preprocess_and_analyze,
-        resolve_include_target,
+        AnalysisProjection, Directive, DirectiveKind, EffectiveProcessingOptions, ExpandedOffset,
+        ExpandedRange, IncludeRequest, OriginRange, Originated, PreprocessError,
+        PreprocessErrorKind, PreprocessNotice, PreprocessNoticeKind, PreprocessOptions,
+        PreprocessedAnalysis, PreprocessedAnalysisError, PreprocessedDocument,
+        ProcessingOptionsError, ProjectedAttributeBinding, ProjectedAttributeReference,
+        ProjectedDiagnostic, ProjectedDocumentAttribute, ProjectedDocumentAttributeValueLine,
+        ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget, ProjectedReference,
+        ProjectedResource, ProjectionError, ProjectionLimits, ResourceDocument, ResourceSnapshot,
+        SafeMode, SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
+        preprocess_and_analyze, preprocess_and_analyze_with_options, resolve_include_target,
     };
 }
 

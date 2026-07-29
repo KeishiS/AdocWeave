@@ -47,5 +47,7 @@ pub(crate) fn to_core_options(
         max_total_bytes: options.max_total_bytes,
         max_expanded_nodes: options.max_expanded_nodes,
         max_source_map_segments: options.max_source_map_segments,
+        max_attribute_expansion_depth: options.max_attribute_expansion_depth,
+        max_attribute_expansion_bytes: options.max_attribute_expansion_bytes,
     }
 }

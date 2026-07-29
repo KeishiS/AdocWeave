@@ -23,27 +23,44 @@ pub(crate) fn normalize(mut request: WasmRequest) -> Result<NormalizedRequest, W
             ),
         });
     }
-    let mut external_attributes = request.analysis_options.attributes.clone();
-    if let Some(input) = &mut request.preprocess {
-        if external_attributes.is_empty() {
-            external_attributes.clone_from(&input.options.attributes);
-        } else if !input.options.attributes.is_empty()
-            && input.options.attributes != external_attributes
-        {
-            return Err(WasmError {
-                code: "invalid-options".to_owned(),
-                message: "analysisOptions.attributes and preprocess.options.attributes must agree"
-                    .to_owned(),
-            });
+    if let Some(input) = &request.preprocess {
+        for (matches, message) in [
+            (
+                input.options.attributes == request.analysis_options.attributes,
+                "analysisOptions.attributes and preprocess.options.attributes must agree",
+            ),
+            (
+                input.options.max_attribute_expansion_depth
+                    == request
+                        .analysis_options
+                        .syntax
+                        .limits
+                        .max_attribute_expansion_depth,
+                "analysis and preprocessing attribute expansion depth limits must agree",
+            ),
+            (
+                input.options.max_attribute_expansion_bytes
+                    == request
+                        .analysis_options
+                        .syntax
+                        .limits
+                        .max_attribute_expansion_bytes,
+                "analysis and preprocessing attribute expansion byte limits must agree",
+            ),
+        ] {
+            if !matches {
+                return Err(WasmError {
+                    code: "invalid-options".to_owned(),
+                    message: message.to_owned(),
+                });
+            }
         }
-        input.options.attributes.clone_from(&external_attributes);
     }
     let render_inputs = render_input_normalization::normalize(
         std::mem::take(&mut request.render_inputs),
         &request.analysis_options.syntax.limits,
         &request.output_limits,
     )?;
-    request.analysis_options.attributes = external_attributes;
     Ok(NormalizedRequest {
         wire: request,
         render_inputs,

@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use adocweave::AnalysisOptions;
-use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
+use adocweave::preprocess::{
+    EffectiveProcessingOptions, PreprocessOptions, ProjectionLimits, SafeMode,
+};
 use adocweave_workspace::{NeverCancelled, ResourceId, Revision, Workspace, WorkspaceLimits};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,10 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         allowed_schemes,
         ..PreprocessOptions::default()
     };
-    let analysis = workspace.snapshot().analyze(
+    let options = EffectiveProcessingOptions::new(AnalysisOptions::default(), preprocess_options)?;
+    let analysis = workspace.snapshot().analyze_with_options(
         &root,
-        &AnalysisOptions::default(),
-        &preprocess_options,
+        &options,
         ProjectionLimits::default(),
         &NeverCancelled,
     )?;

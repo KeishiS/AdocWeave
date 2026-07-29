@@ -263,7 +263,7 @@ pub struct ResolvedProjectConfig {
     pub schema_version: u32,
     /// Core syntax, attribute, and diagnostic options.
     pub analysis: AnalysisOptions,
-    /// Include preprocessing options shared with analysis attributes.
+    /// Include preprocessing options sharing analysis attributes and expansion limits.
     pub preprocess: PreprocessOptions,
     /// Local resource settings.
     pub resources: ResourceSettings,
@@ -347,6 +347,16 @@ impl ProjectConfigWire {
             resolved.analysis.attributes.insert(name, value);
         }
         resolved.preprocess.attributes = resolved.analysis.attributes.clone();
+        resolved.preprocess.max_attribute_expansion_depth = resolved
+            .analysis
+            .syntax
+            .limits
+            .max_attribute_expansion_depth;
+        resolved.preprocess.max_attribute_expansion_bytes = resolved
+            .analysis
+            .syntax
+            .limits
+            .max_attribute_expansion_bytes;
         self.lint.apply(&mut resolved.analysis.diagnostics.lint)?;
         resolved.resources = self.resources.resolve(directory)?;
         resolved.preprocess.enable_includes = resolved.resources.include;

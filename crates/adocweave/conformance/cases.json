@@ -446,6 +446,12 @@
     {
       "name": "position-dependent-attribute-queries-with-include-origin",
       "source": "include::part.adoc[]\n\n{seen-first} {seen-second} {seen-unset} {forward} {header-only} {multi} {locked} {absent}\n",
+      "analysisOptions": {
+        "attributes": {
+          "locked": "host",
+          "absent": null
+        }
+      },
       "preprocess": {
         "resources": {
           "part.adoc": {
