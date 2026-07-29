@@ -73,6 +73,32 @@ impl<'a> SafeUrl<'a> {
     }
 }
 
+/// Host-supplied CSS that cannot terminate its `<style>` element or open an
+/// HTML comment context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct SafeStyleBody<'a>(&'a str);
+
+impl<'a> SafeStyleBody<'a> {
+    pub(super) fn new(value: &'a str) -> Option<Self> {
+        if value
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+            || value.contains("<!--")
+        {
+            return None;
+        }
+        let closes_style = value
+            .as_bytes()
+            .windows("</style".len())
+            .any(|window| window.eq_ignore_ascii_case(b"</style"));
+        (!closes_style).then_some(Self(value))
+    }
+
+    pub(super) fn ends_with_line_break(self) -> bool {
+        self.0.as_bytes().last() == Some(&b'\n')
+    }
+}
+
 pub(super) struct HtmlWriter<'a> {
     output: &'a mut String,
 }
@@ -120,6 +146,14 @@ impl<'a> HtmlWriter<'a> {
 
     pub(super) fn text(&mut self, value: TextValue<'_>) {
         escape_into(self.output, value.0);
+    }
+
+    pub(super) fn safe_style_body(&mut self, value: SafeStyleBody<'_>) {
+        self.output.push_str(value.0);
+    }
+
+    pub(super) fn line_break(&mut self) {
+        self.output.push('\n');
     }
 
     pub(super) fn inline_text(&mut self, value: TextValue<'_>) {
@@ -243,5 +277,13 @@ mod tests {
             output,
             "<p id=\"&#34;&lt;&amp;\" class=\"admonition admonition-note\">a b &lt;&amp;</p>"
         );
+    }
+
+    #[test]
+    fn style_bodies_cannot_escape_the_style_element() {
+        assert!(SafeStyleBody::new("p { margin: 0; }\n").is_some());
+        for unsafe_css in ["</style>", "</STYLE >", "<!--", "p {}\u{0}"] {
+            assert!(SafeStyleBody::new(unsafe_css).is_none(), "{unsafe_css:?}");
+        }
     }
 }
