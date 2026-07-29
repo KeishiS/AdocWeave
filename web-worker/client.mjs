@@ -121,7 +121,7 @@ export class AdocWeaveClient {
             payload,
           });
         } catch (cause) {
-          this.#failWorker(cause, generation);
+          this.#failWorker(cause, generation, this.#worker);
         }
       }
     }).catch(() => {});
@@ -204,9 +204,12 @@ export class AdocWeaveClient {
             generation: this.#generation,
           };
           this.#rejectPendingError(error);
+          this.#expectedVersions.delete(error.generation);
+          this.#terminateWorker(
+            !initialized ? new AdocWeaveClientError(error) : null,
+            worker,
+          );
           this.#notifyError(error);
-          if (!initialized) reject(new AdocWeaveClientError(error));
-          this.#terminateWorker();
           return;
         }
         if (data?.type === "ready") {
@@ -225,8 +228,9 @@ export class AdocWeaveClient {
               generation: data.generation,
             };
             this.#rejectPendingError(error);
+            this.#expectedVersions.delete(error.generation);
+            this.#terminateWorker(null, worker);
             this.#notifyError(error);
-            this.#terminateWorker();
             return;
           }
           const packageVersion = verifiedPackageVersion(data.result);
@@ -256,8 +260,9 @@ export class AdocWeaveClient {
               generation: data.generation,
             };
             this.#rejectPendingError(error);
+            this.#expectedVersions.delete(error.generation);
+            this.#terminateWorker(null, worker);
             this.#notifyError(error);
-            this.#terminateWorker();
             return;
           }
           const error = {
@@ -280,9 +285,9 @@ export class AdocWeaveClient {
           generation: this.#generation,
         };
         this.#rejectPendingError(error);
+        this.#expectedVersions.delete(error.generation);
+        this.#terminateWorker(new AdocWeaveClientError(error), worker);
         this.#notifyError(error);
-        reject(new AdocWeaveClientError(error));
-        this.#terminateWorker();
       }, { once: true });
     });
     this.#ready = ready;
@@ -297,12 +302,16 @@ export class AdocWeaveClient {
         cancellationBuffer: this.#cancellation?.buffer ?? null,
       });
     } catch (cause) {
-      this.#failWorker(cause, this.#generation);
+      this.#failWorker(cause, this.#generation, worker);
     }
     return ready;
   }
 
-  #terminateWorker(error = null) {
+  #terminateWorker(error = null, worker = this.#worker) {
+    if (worker !== this.#worker) {
+      worker?.terminate();
+      return;
+    }
     if (error !== null) this.#readyReject?.(error);
     this.#readyReject = null;
     this.#worker?.terminate();
@@ -362,16 +371,19 @@ export class AdocWeaveClient {
   }
 
   #notifyError(error) {
-    try {
-      this.#options.onError({
-        code: error.code,
-        message: error.message,
-        sourceVersion: error.sourceVersion,
-        generation: error.generation,
-      });
-    } catch {
-      // Promise settlement and lifecycle cleanup do not depend on callbacks.
-    }
+    const notification = {
+      code: error.code,
+      message: error.message,
+      sourceVersion: error.sourceVersion,
+      generation: error.generation,
+    };
+    queueMicrotask(() => {
+      try {
+        this.#options.onError(notification);
+      } catch {
+        // Promise settlement and lifecycle cleanup do not depend on callbacks.
+      }
+    });
   }
 
   #notifyResult(result) {
@@ -386,12 +398,12 @@ export class AdocWeaveClient {
     return this.#expectedVersions.get(generation) === version;
   }
 
-  #failWorker(cause, generation) {
+  #failWorker(cause, generation, worker) {
     const error = this.#workerError(cause, generation);
     this.#rejectPendingError(error);
-    this.#readyReject?.(error);
+    this.#expectedVersions.delete(generation);
+    this.#terminateWorker(error, worker);
     this.#notifyError(error);
-    this.#terminateWorker();
   }
 }
 
