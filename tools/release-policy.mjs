@@ -1,0 +1,2 @@
+export const RELEASE_NOTES_VERSION = "0.17.0";
+export const PUBLIC_PROTOCOL_SCHEMA_VERSION = 6;

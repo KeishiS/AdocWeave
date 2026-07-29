@@ -1,12 +1,17 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
+import {
+  PUBLIC_PROTOCOL_SCHEMA_VERSION,
+  RELEASE_NOTES_VERSION,
+} from "./release-policy.mjs";
+
 const ROOT = new URL("../", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", ROOT), "utf8"));
 const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", ROOT), "utf8"));
 const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROOT), "utf8"));
-export const RELEASE_NOTES_VERSION = "0.17.0";
-export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = 6;
+export { RELEASE_NOTES_VERSION };
+export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## 対応環境",
@@ -25,7 +30,7 @@ const highlights = [
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。v0.16.0からschema形状を変更していません。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。WASM protocolは未選択のprojectionをnullで表す契約などを反映してschema 5から6へ破壊的に更新し、Worker envelopeはversion 2を維持します。schema 6ではprojectionを構成するすべてのJSON objectで、入れ子のobject（nested object）や種類を示すfieldで形が変わるtagged unionも含め、定義にないfieldを拒否します。保存済みprojectionから定義にないfieldを除いてください。bindingsと型定義はschema 6を正本として再生成してください。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。WASM protocolは未選択のprojectionをnullで表す契約などを反映してschema 5から6へ破壊的に更新し、Worker envelopeはversion 2を維持します。WASM adapterはcoreが生成したprojection JSONを、入れ子のobject（nested object）や種類を示すfieldで形が変わるtagged unionも含むすべてのobject境界で厳格に検証し、内部契約にないfieldを検出すると失敗します。利用側はbindings、型定義およびfixtureをschema 6から再生成し、保存済みの出力をschema versionで区別してください。`,
   "`preview`は新しいCLIコマンドです。既存のCLIコマンドとWorker protocolはv0.16.0から維持します。Browser APIとWASM responseには次の移行が必要です。",
   "プレビューのHTMLは既存の変換処理と同じ安全性方針で生成します。任意のファイルやディレクトリ一覧を配信せず、配信するURLを表示画面、生成文書、更新番号、診断および固定のクライアントスクリプトに限定します。",
   "`adocweave-host`のfilesystem読込APIを、検証後のpathを後から開き直す方式から、rootのhandleを基準に検証と読込を一体で行うsession方式へ変更しました。これはRust APIの破壊的変更です。",

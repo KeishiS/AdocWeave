@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
+import { PUBLIC_PROTOCOL_SCHEMA_VERSION } from "./release-policy.mjs";
 import { loadWorkflowPolicyInputs, validateReleaseWorkflowPolicy } from "./release-workflow-policy.mjs";
 
 const ROOT = new URL("../", import.meta.url);
@@ -11,7 +12,7 @@ const fail = (message) => {
 };
 
 export const STABLE_TAG = /^v(\d+\.\d+\.\d+)$/;
-export const SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION = 6;
+export const SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
 export function versionFromTag(tag) {
   const match = STABLE_TAG.exec(tag);

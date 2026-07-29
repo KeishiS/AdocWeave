@@ -28,7 +28,9 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /bindings、型定義およびfixtureをschema 6から再生成/);
   assert.match(notes, /入れ子のobject（nested object）/);
   assert.match(notes, /tagged union/);
-  assert.match(notes, /定義にないfieldを拒否/);
+  assert.match(notes, /WASM adapterはcoreが生成したprojection JSON/);
+  assert.match(notes, /内部契約にないfieldを検出すると失敗/);
+  assert.match(notes, /保存済みの出力をschema versionで区別/);
   assert.match(notes, /Rust APIの破壊的変更です/);
   assert.match(notes, /`LocalResourcePolicy::new\(\.\.\.\)`/);
   assert.match(notes, /`LocalFilesystemPolicy::new\(\.\.\.\)`/);
