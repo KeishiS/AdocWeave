@@ -76,6 +76,7 @@ pub struct FilesystemReadRollback {
     canonical_path: PathBuf,
     candidate_path: PathBuf,
     session_index: usize,
+    candidate_was_inspected: bool,
     previous_charge: Option<FilesystemCharge>,
 }
 
@@ -376,6 +377,7 @@ impl LocalFilesystemSession {
                         canonical_path,
                         candidate_path: path.to_owned(),
                         session_index: index,
+                        candidate_was_inspected,
                         previous_charge,
                     },
                 ))
@@ -412,8 +414,10 @@ impl LocalFilesystemSession {
             None => {
                 self.budget.release(current.bytes);
                 self.charged.remove(&rollback.canonical_path);
-                self.sessions[rollback.session_index].release_candidate(&rollback.candidate_path);
             }
+        }
+        if !rollback.candidate_was_inspected {
+            self.sessions[rollback.session_index].release_candidate(&rollback.candidate_path);
         }
         Ok(())
     }
@@ -1174,6 +1178,71 @@ mod tests {
             .rollback_reread(second_rollback)
             .expect("latest rollback");
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 2));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reread_rollback_preserves_a_preexisting_uncharged_candidate() {
+        let root = TestDir::new("reread-rollback-preexisting-candidate");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "oversized").expect("oversized source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 1,
+                max_total_bytes: 8,
+                max_resource_bytes: 4,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+        assert!(matches!(
+            session.read_utf8(source_id(), &path),
+            Err(ResourceError::ResourceTooLarge(_))
+        ));
+        assert_eq!(session.sessions[0].inspected_paths(), 1);
+
+        fs::write(&path, "ok").expect("accepted source");
+        let (_, rollback) = session
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("reread");
+        session.rollback_reread(rollback).expect("rollback");
+
+        assert_eq!(session.sessions[0].inspected_paths(), 1);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reread_rollback_releases_a_new_spelling_of_a_charged_canonical_path() {
+        let root = TestDir::new("reread-rollback-canonical-alias");
+        let nested = root.path().join("nested");
+        fs::create_dir(&nested).expect("nested directory");
+        let path = root.path().join("source.adoc");
+        let alias = nested.join("..").join("source.adoc");
+        fs::write(&path, "old").expect("source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 2,
+                max_total_bytes: 8,
+                max_resource_bytes: 8,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+        assert_eq!(session.sessions[0].inspected_paths(), 1);
+
+        fs::write(&path, "new").expect("replacement");
+        let (_, rollback) = session
+            .reread_utf8_with_rollback(source_id(), &alias)
+            .expect("alias reread");
+        assert_eq!(session.sessions[0].inspected_paths(), 2);
+        session.rollback_reread(rollback).expect("rollback");
+
+        assert_eq!(session.sessions[0].inspected_paths(), 1);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
     }
 
     #[test]
