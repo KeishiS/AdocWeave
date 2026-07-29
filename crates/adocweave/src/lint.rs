@@ -609,10 +609,10 @@ fn lint_list_presentation_with_observer<'document>(
     mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
 ) {
     let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
+        observe(node);
         if sink.is_full() {
             return ControlFlow::Break(());
         }
-        observe(node);
         let crate::walker::SemanticNode::Block(AstBlock::List(list)) = node else {
             return ControlFlow::Continue(());
         };
@@ -741,10 +741,10 @@ fn lint_tables_with_observer<'document>(
     mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
 ) {
     let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
+        observe(node);
         if sink.is_full() {
             return ControlFlow::Break(());
         }
-        observe(node);
         let crate::walker::SemanticNode::Table(table) = node else {
             return ControlFlow::Continue(());
         };
@@ -950,10 +950,10 @@ fn lint_links_and_references_with_observer<'document>(
         }
     }
     let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
+        observe(node);
         if sink.is_full() {
             return ControlFlow::Break(());
         }
-        observe(node);
         if let crate::walker::SemanticNode::Inline(inline) = node {
             inspect(inline, &targets, config, sink)
         } else {

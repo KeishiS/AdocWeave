@@ -172,25 +172,27 @@ fn lint_modules_use_only_interruptible_semantic_traversal() {
     let mut violations = Vec::new();
     for path in lint_implementation_files() {
         let source = fs::read_to_string(&path).expect("lint implementation");
-        for (offset, _) in source.match_indices("walk_ast") {
-            let is_identifier_character =
-                |character: char| character.is_ascii_alphanumeric() || character == '_';
-            let starts_identifier = source[..offset]
-                .chars()
-                .next_back()
-                .is_none_or(|character| !is_identifier_character(character));
-            let end = offset + "walk_ast".len();
-            let ends_identifier = source[end..]
-                .chars()
-                .next()
-                .is_none_or(|character| !is_identifier_character(character));
-            if starts_identifier && ends_identifier {
-                let line = source[..offset]
-                    .bytes()
-                    .filter(|byte| *byte == b'\n')
-                    .count()
-                    + 1;
-                violations.push(format!("{}:{line}", path.display()));
+        for forbidden in ["walk_ast", "walk_block_slice"] {
+            for (offset, _) in source.match_indices(forbidden) {
+                let is_identifier_character =
+                    |character: char| character.is_ascii_alphanumeric() || character == '_';
+                let starts_identifier = source[..offset]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|character| !is_identifier_character(character));
+                let end = offset + forbidden.len();
+                let ends_identifier = source[end..]
+                    .chars()
+                    .next()
+                    .is_none_or(|character| !is_identifier_character(character));
+                if starts_identifier && ends_identifier {
+                    let line = source[..offset]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1;
+                    violations.push(format!("{}:{line}: {forbidden}", path.display()));
+                }
             }
         }
     }
