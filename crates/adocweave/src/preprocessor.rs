@@ -1,5 +1,7 @@
 //! Pure preprocessing over caller-provided resource snapshots.
 
+mod source_map;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -244,213 +246,6 @@ pub struct PreprocessedDocument {
     source_map: Vec<SourceMapSegment>,
     pub directives: Vec<Directive>,
     pub notices: Vec<PreprocessNotice>,
-}
-
-impl PreprocessedDocument {
-    fn from_parts(
-        source: String,
-        source_map: Vec<SourceMapSegment>,
-        directives: Vec<Directive>,
-        notices: Vec<PreprocessNotice>,
-    ) -> Result<Self, SourceMapInvariantError> {
-        let source_end = TextSize::new(source.len()).map_err(|_| SourceMapInvariantError)?;
-        let mut previous_end = TextSize::ZERO;
-        for segment in &source_map {
-            if segment.output_range.start() < previous_end
-                || segment.output_range.end() > source_end
-            {
-                return Err(SourceMapInvariantError);
-            }
-            previous_end = segment.output_range.end();
-        }
-        Ok(Self {
-            source,
-            source_map,
-            directives,
-            notices,
-        })
-    }
-
-    pub fn source_map(&self) -> &[SourceMapSegment] {
-        &self.source_map
-    }
-
-    pub fn origin_at(&self, output_offset: ExpandedOffset) -> Option<&SourceOrigin> {
-        let output_offset = output_offset.text_size();
-        let index = self
-            .source_map
-            .partition_point(|segment| segment.output_range.end() <= output_offset);
-        self.source_map
-            .get(index)
-            .filter(|segment| segment.output_range.start() <= output_offset)
-            .map(|segment| &segment.origin)
-    }
-
-    /// Maps an output range to the originating source segment.
-    ///
-    /// When a range crosses include boundaries, the origin containing its
-    /// start is returned. Consumers that need exact pieces should inspect
-    /// `source_map` directly.
-    pub fn origin_for_range(&self, output_range: ExpandedRange) -> Option<&SourceOrigin> {
-        if let Some(origin) = self.origin_at(ExpandedOffset::new(output_range.start())) {
-            return Some(origin);
-        }
-        if !output_range.is_empty() {
-            return None;
-        }
-        self.source_map
-            .iter()
-            .rev()
-            .find(|segment| segment.output_range.end() == output_range.start())
-            .map(|segment| &segment.origin)
-    }
-
-    /// Projects an expanded range into all originating source ranges.
-    ///
-    /// Adjacent pieces in the same source are merged. For an unchanged segment,
-    /// the relative byte range is preserved. A transformed segment (for example
-    /// `indent` or `leveloffset`) conservatively maps to its complete source line.
-    pub fn origins_for_range(&self, output_range: ExpandedRange) -> Vec<SourceOrigin> {
-        if output_range.is_empty() {
-            let segment = self
-                .source_map
-                .iter()
-                .find(|segment| {
-                    segment.output_range.start() <= output_range.start()
-                        && output_range.start() < segment.output_range.end()
-                })
-                .or_else(|| {
-                    self.source_map
-                        .last()
-                        .filter(|segment| segment.output_range.end() == output_range.start())
-                });
-            let Some(segment) = segment else {
-                return Vec::new();
-            };
-            let range = if segment.mapping == SourceMapping::Identity {
-                let relative = output_range
-                    .start()
-                    .to_u32()
-                    .saturating_sub(segment.output_range.start().to_u32());
-                let offset =
-                    TextSize::new(segment.origin.range.start().to_usize() + relative as usize)
-                        .expect("projected source offset is bounded");
-                TextRange::new(offset, offset).expect("zero source range is ordered")
-            } else {
-                segment.origin.range.text_range()
-            };
-            return vec![SourceOrigin {
-                source_id: segment.origin.source_id.clone(),
-                range: OriginRange::new(range),
-            }];
-        }
-        let mut origins: Vec<SourceOrigin> = Vec::new();
-        let first = self
-            .source_map
-            .partition_point(|segment| segment.output_range.end() <= output_range.start());
-        for segment in &self.source_map[first..] {
-            if output_range.end() <= segment.output_range.start() {
-                break;
-            }
-            let start = segment
-                .output_range
-                .start()
-                .to_u32()
-                .max(output_range.start().to_u32());
-            let end = segment
-                .output_range
-                .end()
-                .to_u32()
-                .min(output_range.end().to_u32());
-            if start >= end {
-                continue;
-            }
-
-            let range = if segment.mapping == SourceMapping::Identity {
-                let relative_start = start.saturating_sub(segment.output_range.start().to_u32());
-                let relative_end = end.saturating_sub(segment.output_range.start().to_u32());
-                TextRange::new(
-                    TextSize::new(
-                        segment.origin.range.start().to_usize() + relative_start as usize,
-                    )
-                    .expect("projected source offset is bounded"),
-                    TextSize::new(segment.origin.range.start().to_usize() + relative_end as usize)
-                        .expect("projected source offset is bounded"),
-                )
-                .expect("projected source range is ordered")
-            } else {
-                segment.origin.range.text_range()
-            };
-            let origin = SourceOrigin {
-                source_id: segment.origin.source_id.clone(),
-                range: OriginRange::new(range),
-            };
-            let merged = if let Some(previous) = origins.last_mut() {
-                if previous.source_id == origin.source_id
-                    && previous.range.end() == origin.range.start()
-                {
-                    previous.range = OriginRange::new(
-                        TextRange::new(previous.range.start(), origin.range.end())
-                            .expect("merged source range is ordered"),
-                    );
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if !merged {
-                origins.push(origin);
-            }
-        }
-        origins
-    }
-
-    fn origins_for_empty_range_within(
-        &self,
-        output_range: ExpandedRange,
-        containing_range: ExpandedRange,
-    ) -> Vec<SourceOrigin> {
-        debug_assert!(output_range.is_empty());
-        let Some(segment) = self.source_map.iter().find(|segment| {
-            segment.output_range.start() <= output_range.start()
-                && output_range.start() <= segment.output_range.end()
-                && segment.output_range.start() < containing_range.end()
-                && containing_range.start() < segment.output_range.end()
-        }) else {
-            return self.origins_for_range(output_range);
-        };
-        let range = if segment.mapping == SourceMapping::Identity {
-            let relative = output_range
-                .start()
-                .to_u32()
-                .saturating_sub(segment.output_range.start().to_u32());
-            let offset = TextSize::new(segment.origin.range.start().to_usize() + relative as usize)
-                .expect("projected source offset is bounded");
-            TextRange::new(offset, offset).expect("zero source range is ordered")
-        } else {
-            segment.origin.range.text_range()
-        };
-        vec![SourceOrigin {
-            source_id: segment.origin.source_id.clone(),
-            range: OriginRange::new(range),
-        }]
-    }
-
-    fn mapping_is_identity(&self, output_range: ExpandedRange) -> bool {
-        if output_range.is_empty() {
-            return false;
-        }
-        let index = self
-            .source_map
-            .partition_point(|segment| segment.output_range.end() <= output_range.start());
-        self.source_map.get(index).is_some_and(|segment| {
-            segment.mapping == SourceMapping::Identity
-                && segment.output_range.start() <= output_range.start()
-                && output_range.end() <= segment.output_range.end()
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1040,8 +835,10 @@ pub fn preprocess(
     let mut context = Context {
         snapshot,
         options,
-        output: String::new(),
-        source_map: Vec::new(),
+        source_map: source_map::SourceMapBuilder::new(
+            options.max_total_bytes,
+            options.max_source_map_segments,
+        ),
         directives: Vec::new(),
         notices: Vec::new(),
         active: Vec::new(),
@@ -1063,28 +860,24 @@ pub fn preprocess(
         0,
         options.base_uri.as_deref(),
     )?;
-    PreprocessedDocument::from_parts(
-        context.output,
-        context.source_map,
-        context.directives,
-        context.notices,
-    )
-    .map_err(|_| PreprocessError {
-        kind: PreprocessErrorKind::InternalInvariant,
-        source_id: options.source_id.clone(),
-        range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
-        requested_target: None,
-        target: None,
-        message: "source map segments are unsorted, overlapping, or outside expanded source"
-            .to_owned(),
-    })
+    context
+        .source_map
+        .finish(context.directives, context.notices)
+        .map_err(|_| PreprocessError {
+            kind: PreprocessErrorKind::InternalInvariant,
+            source_id: options.source_id.clone(),
+            range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
+            requested_target: None,
+            target: None,
+            message: "source map segments are unsorted, overlapping, or outside expanded source"
+                .to_owned(),
+        })
 }
 
 struct Context<'a> {
     snapshot: &'a ResourceSnapshot,
     options: &'a PreprocessOptions,
-    output: String,
-    source_map: Vec<SourceMapSegment>,
+    source_map: source_map::SourceMapBuilder,
     directives: Vec<Directive>,
     notices: Vec<PreprocessNotice>,
     active: Vec<String>,
@@ -1471,36 +1264,22 @@ impl Context<'_> {
         origin_range: TextRange,
         mapping: SourceMapping,
     ) -> Result<(), PreprocessError> {
-        let start = self.output.len();
-        let end = start.saturating_add(value.len());
-        if end > self.options.max_total_bytes as usize {
-            return Err(error(
-                PreprocessErrorKind::ByteLimit,
-                source_id,
-                origin_range,
-                "preprocessor byte limit exceeded",
-            ));
-        }
-        self.output.push_str(value);
-        if start < end {
-            if self.source_map.len() >= self.options.max_source_map_segments as usize {
-                return Err(error(
+        self.source_map
+            .append(value, source_id.clone(), origin_range, mapping)
+            .map_err(|build_error| match build_error {
+                source_map::SourceMapBuildError::ByteLimit => error(
+                    PreprocessErrorKind::ByteLimit,
+                    source_id,
+                    origin_range,
+                    "preprocessor byte limit exceeded",
+                ),
+                source_map::SourceMapBuildError::SegmentLimit => error(
                     PreprocessErrorKind::SourceMapLimit,
                     source_id,
                     origin_range,
                     "source map segment limit exceeded",
-                ));
-            }
-            self.source_map.push(SourceMapSegment {
-                output_range: ExpandedRange::new(range(start, end)),
-                origin: SourceOrigin {
-                    source_id,
-                    range: OriginRange::new(origin_range),
-                },
-                mapping,
-            });
-        }
-        Ok(())
+                ),
+            })
     }
 }
 
