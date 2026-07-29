@@ -2240,6 +2240,61 @@ fn stdin_include_requires_a_base_and_rejects_traversal() {
 }
 
 #[test]
+fn stdin_and_include_share_the_project_retained_and_total_byte_boundary() {
+    let root = tempfile::tempdir().expect("root");
+    let source = b"include::part.adoc[]\n";
+    let include = b"part";
+    std::fs::write(root.path().join("part.adoc"), include).expect("include");
+    let total = source.len() + include.len();
+    let config = root.path().join(".adocweave.toml");
+    let run = |max_files: usize, limit: usize| {
+        std::fs::write(
+            &config,
+            format!(
+                "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = {max_files}\nmax-total-bytes = {limit}\nmax-resource-bytes = {limit}\n"
+            ),
+        )
+        .expect("configuration");
+        let mut child = adocweave()
+            .current_dir(root.path())
+            .args(["check", "--base-dir", ".", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("command");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(source)
+            .expect("input");
+        child.wait_with_output().expect("output")
+    };
+
+    let accepted = run(2, total);
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let rejected = run(2, total - 1);
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("byte limit"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    let rejected = run(1, total);
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("file limit"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+}
+
+#[test]
 fn include_check_projects_diagnostics_to_the_resource_file() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
