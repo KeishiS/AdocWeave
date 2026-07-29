@@ -4,6 +4,8 @@
 //! do not depend on this module, so additional output backends can consume the
 //! same document without changing parsing behavior.
 
+mod safe;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
@@ -475,14 +477,23 @@ fn render_layout_nodes(
 
 fn render_header_metadata(output: &mut String, header: &crate::parser::DocumentHeader) {
     for author in &header.authors {
-        output.push_str("<p class=\"author\">");
+        {
+            let mut writer = safe::HtmlWriter::new(output);
+            writer.start(safe::ElementName::new("p").expect("p is an allowed HTML element"));
+            writer.class_attribute(&[
+                safe::ClassName::new("author").expect("author is an allowed HTML class")
+            ]);
+            writer.finish_start();
+        }
         escape_html_into(output, &author.name);
         if let Some(email) = &author.email {
             output.push_str(" &lt;");
             escape_html_into(output, email);
             output.push_str("&gt;");
         }
-        output.push_str("</p>\n");
+        safe::HtmlWriter::new(output)
+            .end(safe::ElementName::new("p").expect("p is an allowed HTML element"));
+        output.push('\n');
     }
     if let Some(revision) = &header.revision {
         output.push_str("<p class=\"revision\">");
@@ -1744,13 +1755,19 @@ fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::Docum
 }
 
 fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_, '_>) {
-    if context
-        .policy
-        .allows_url(&link.target, UrlProvenance::Authored)
-    {
-        output.push_str("<a href=\"");
-        escape_html_into(output, &link.target);
-        output.push('"');
+    if let Some(target) = safe::SafeUrl::from_policy(
+        &link.target,
+        &context.policy.active_urls,
+        UrlProvenance::Authored,
+    ) {
+        {
+            let mut writer = safe::HtmlWriter::new(output);
+            writer.start(safe::ElementName::new("a").expect("a is an allowed HTML element"));
+            writer.active_url_attribute(
+                safe::ActiveUrlAttributeName::new("href").expect("href is an active URL attribute"),
+                target,
+            );
+        }
         if matches!(
             context.policy.external_links,
             ExternalLinkPresentation::NewContext { .. }
@@ -1771,9 +1788,10 @@ fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderConte
             }
             output.push('"');
         }
-        output.push('>');
+        safe::HtmlWriter::new(output).finish_start();
         render_label_or_text(output, &link.label, &link.target_source, context);
-        output.push_str("</a>");
+        safe::HtmlWriter::new(output)
+            .end(safe::ElementName::new("a").expect("a is an allowed HTML element"));
     } else {
         render_label_or_text(output, &link.label, &link.target_source, context);
         context.diagnostics.push(render_diagnostic(
@@ -2076,40 +2094,20 @@ fn render_unsupported(output: &mut String, unsupported: &Unsupported, id: Option
 
 fn render_optional_id(output: &mut String, id: Option<&str>) {
     if let Some(id) = id {
-        output.push_str(" id=\"");
-        escape_html_into(output, id);
-        output.push('"');
+        safe::HtmlWriter::new(output).passive_attribute(
+            safe::PassiveAttributeName::new("id")
+                .expect("id is a passive allowlisted HTML attribute"),
+            safe::AttributeValue::new(id),
+        );
     }
 }
 
 fn escape_html_into(output: &mut String, text: &str) {
-    for character in text.chars() {
-        match character {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            '"' => output.push_str("&#34;"),
-            '\'' => output.push_str("&#39;"),
-            _ => output.push(character),
-        }
-    }
+    safe::HtmlWriter::new(output).text(safe::TextValue::new(text));
 }
 
 fn escape_inline_text(output: &mut String, text: &str) {
-    let mut characters = text.chars().peekable();
-    while let Some(character) = characters.next() {
-        if character == '\r' {
-            if characters.peek() == Some(&'\n') {
-                characters.next();
-            }
-            output.push(' ');
-        } else if character == '\n' {
-            output.push(' ');
-        } else {
-            let mut encoded = [0; 4];
-            escape_html_into(output, character.encode_utf8(&mut encoded));
-        }
-    }
+    safe::HtmlWriter::new(output).inline_text(safe::TextValue::new(text));
 }
 
 #[cfg(test)]
