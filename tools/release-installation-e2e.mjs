@@ -11,6 +11,7 @@ import {
   executableNames,
   installationLayout,
   isPathInside,
+  selectedInstallationFamilies,
   validateArchiveEntries,
   vscodePackageContract,
 } from "./platform-contract.mjs";
@@ -45,13 +46,14 @@ const {
 const { execFileSync } = runtime.processControl;
 const { basename, delimiter, dirname, join, resolve } = runtime.pathApi;
 
-const [candidateArgument, target, manifestArgument] = process.argv.slice(2);
+const [candidateArgument, target, manifestArgument, installationScope] = process.argv.slice(2);
 if (!candidateArgument || !target) {
   process.stderr.write(
-    "usage: node tools/release-installation-e2e.mjs CANDIDATE_DIRECTORY TARGET [MANIFEST]\n",
+    "usage: node tools/release-installation-e2e.mjs CANDIDATE_DIRECTORY TARGET [MANIFEST] [SCOPE]\n",
   );
   process.exit(2);
 }
+const installationFamilies = selectedInstallationFamilies(installationScope);
 
 const distributionPlan = JSON.parse(
   readFileSync(new URL("../release/distribution-plan.json", import.meta.url), "utf8"),
@@ -311,53 +313,65 @@ try {
   mkdirSync(home);
   const before = files(home).map((path) => path.slice(home.length + 1));
 
-  installNative("adocweave-cli", `adocweave${platform.executableSuffix}`);
-  installNative("adocweave-lsp", `adocweave-lsp${platform.executableSuffix}`);
-  installBrowser();
-  installZed();
-  installVSCode();
+  if (installationFamilies.native) {
+    installNative("adocweave-cli", `adocweave${platform.executableSuffix}`);
+    installNative("adocweave-lsp", `adocweave-lsp${platform.executableSuffix}`);
+  }
+  if (installationFamilies.global) {
+    installBrowser();
+    installZed();
+    installVSCode();
+  }
   const executables = executableNames(platform.executableSuffix);
-  cpSync(versionRoot, previousRoot, { recursive: true });
-  activateNative(versionRoot, version, executables);
-  if (runtime.platform.os !== "win32" && readlinkSync(currentLink) !== versionRoot) {
-    throw new Error("current version link is not pinned");
-  }
+  if (installationFamilies.native) {
+    cpSync(versionRoot, previousRoot, { recursive: true });
+    activateNative(versionRoot, version, executables);
+    if (runtime.platform.os !== "win32" && readlinkSync(currentLink) !== versionRoot) {
+      throw new Error("current version link is not pinned");
+    }
 
-  for (const executable of executables) {
-    const actual = JSON.parse(command(executable, ["--version", "--json"]));
-    if (actual.packageVersion !== version) throw new Error(`${executable} version mismatch`);
-  }
-  activateNative(previousRoot, `${version}-previous-fixture`, executables);
-  if (readFileSync(activeMarker, "utf8") !== `${version}-previous-fixture\n`) {
-    throw new Error("native rollback did not select the previous version");
-  }
-  activateNative(versionRoot, version, executables);
-  try {
-    activateNative(join(prefix, "lib", "adocweave", "incomplete"), "incomplete", executables);
-    throw new Error("incomplete native update was accepted");
-  } catch (error) {
-    if (error instanceof Error && error.message === "incomplete native update was accepted") {
-      throw error;
+    for (const executable of executables) {
+      const actual = JSON.parse(command(executable, ["--version", "--json"]));
+      if (actual.packageVersion !== version) throw new Error(`${executable} version mismatch`);
+    }
+    activateNative(previousRoot, `${version}-previous-fixture`, executables);
+    if (readFileSync(activeMarker, "utf8") !== `${version}-previous-fixture\n`) {
+      throw new Error("native rollback did not select the previous version");
+    }
+    activateNative(versionRoot, version, executables);
+    try {
+      activateNative(join(prefix, "lib", "adocweave", "incomplete"), "incomplete", executables);
+      throw new Error("incomplete native update was accepted");
+    } catch (error) {
+      if (error instanceof Error && error.message === "incomplete native update was accepted") {
+        throw error;
+      }
+    }
+    if (readFileSync(activeMarker, "utf8") !== `${version}\n`) {
+      throw new Error("failed native update changed the active version");
     }
   }
-  if (readFileSync(activeMarker, "utf8") !== `${version}\n`) {
-    throw new Error("failed native update changed the active version");
+  if (installationFamilies.global) {
+    if (!existsSync(join(browserRoot, "worker", "index.mjs"))) throw new Error("browser public entry point is missing");
+    if (!existsSync(join(browserRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("browser WASM is missing");
+    if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
+    const vscodeManifest = JSON.parse(readFileSync(join(vscodeRoot, "package.json"), "utf8"));
+    if (!vscodePackageContract(vscodeManifest, version)) {
+      throw new Error("VS Code extension manifest mismatch");
+    }
+    await verifyBrowserContract();
   }
-  if (!existsSync(join(browserRoot, "worker", "index.mjs"))) throw new Error("browser public entry point is missing");
-  if (!existsSync(join(browserRoot, "wasm", "adocweave_wasm_bg.wasm"))) throw new Error("browser WASM is missing");
-  if (!existsSync(join(zedRoot, "extension.toml"))) throw new Error("Zed extension manifest is missing");
-  const vscodeManifest = JSON.parse(readFileSync(join(vscodeRoot, "package.json"), "utf8"));
-  if (!vscodePackageContract(vscodeManifest, version)) {
-    throw new Error("VS Code extension manifest mismatch");
-  }
-  await verifyBrowserContract();
 
-  for (const executable of executables) rmSync(join(binDirectory, executable));
-  if (runtime.platform.os !== "win32") rmSync(currentLink);
-  rmSync(activeMarker);
-  rmSync(versionRoot, { recursive: true });
-  rmSync(previousRoot, { recursive: true });
-  rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
+  if (installationFamilies.native) {
+    for (const executable of executables) rmSync(join(binDirectory, executable));
+    if (runtime.platform.os !== "win32") rmSync(currentLink);
+    rmSync(activeMarker);
+    rmSync(versionRoot, { recursive: true });
+    rmSync(previousRoot, { recursive: true });
+  }
+  if (installationFamilies.global) {
+    rmSync(join(prefix, "share", "adocweave", version), { recursive: true });
+  }
   for (const directory of [
     join(prefix, "share", "adocweave"),
     join(prefix, "share"),

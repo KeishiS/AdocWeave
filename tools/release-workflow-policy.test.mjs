@@ -328,6 +328,31 @@ test("installation E2E cannot inherit unrelated skips or bypass verification", (
   }
 });
 
+test("Pull Requestのinstallation E2Eは選択されたcandidate familyだけを要求する", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "          release-manifest.json\n" +
+          '          "native-only"',
+        "          release-manifest.json",
+      ),
+    }),
+    /must consume the selected candidate families/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        '          "global-only"',
+        '          "complete"',
+      ),
+    }),
+    /must use the global-only scope/,
+  );
+});
+
 test("stable quality verify context must wait for every selected candidate stage", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
@@ -344,11 +369,31 @@ test("stable quality verify context must wait for every selected candidate stage
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
+        "      - global-installation-e2e\n",
+        "",
+      ),
+    }),
+    /final pull request gate must wait/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
         '          test "$INSTALLATION_RESULT" = success',
         '          test "$INSTALLATION_RESULT" != failure',
       ),
     }),
     /selected installation E2E/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        '            test "$GLOBAL_INSTALLATION_RESULT" = success',
+        '            test "$GLOBAL_INSTALLATION_RESULT" != failure',
+      ),
+    }),
+    /selected global installation E2E/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({

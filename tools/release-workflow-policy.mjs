@@ -252,6 +252,35 @@ export function validateReleaseWorkflowPolicy({
   requireNeeds(releaseJobs["native-smoke"], ["changes", "build-native"], "native smoke must consume native builds");
   requireNeeds(releaseJobs["verify-candidate"], ["changes", "native-smoke", "build-global"], "partial candidate dependency edge is incomplete");
   requireNeeds(releaseJobs["installation-e2e"], ["changes", "verify-candidate"], "installation must consume a verified native candidate");
+  const pullRequestInstallation = step(
+    releaseJobs["installation-e2e"],
+    (item) => item.name === "Pull request installation and complete removal",
+    "pull request installation E2E step is missing",
+  );
+  requireCommand(
+    pullRequestInstallation.run,
+    '"native-only"',
+    "pull request installation E2E must consume the selected candidate families",
+  );
+  const globalInstallation = releaseJobs["global-installation-e2e"];
+  if (globalInstallation?.if !==
+      "always() && github.event_name == 'pull_request' && needs.changes.outputs.global_required == 'true' && needs.verify-candidate.result == 'success'") {
+    fail("global installation E2E must run only for a verified selected global candidate");
+  }
+  requireNeeds(
+    globalInstallation,
+    ["changes", "verify-candidate"],
+    "global installation must consume a verified global candidate",
+  );
+  requireCommand(
+    step(
+      globalInstallation,
+      (item) => item.name === "Global installation and complete removal",
+      "global installation E2E step is missing",
+    ).run,
+    '"global-only"',
+    "global installation E2E must use the global-only scope",
+  );
 
   const mergeGate = releaseJobs["merge-gate"];
   if (mergeGate?.name !== "quality / verify" ||
@@ -270,6 +299,7 @@ export function validateReleaseWorkflowPolicy({
       "build-global",
       "verify-candidate",
       "installation-e2e",
+      "global-installation-e2e",
     ],
     "the final pull request gate must wait for quality and every selected candidate stage",
   );
@@ -281,6 +311,7 @@ export function validateReleaseWorkflowPolicy({
     ['test "$PREFLIGHT_RESULT" = success', "final gate must require candidate preflight"],
     ['test "$RELEASE_PLAN_RESULT" = success', "final gate must require candidate planning"],
     ['test "$BUILD_GLOBAL_RESULT" = success', "final gate must require selected global build"],
+    ['test "$GLOBAL_INSTALLATION_RESULT" = success', "final gate must require selected global installation E2E"],
     ['test "$BUILD_NATIVE_RESULT" = success', "final gate must require selected native builds"],
     ['test "$NATIVE_SMOKE_RESULT" = success', "final gate must require selected native smoke"],
     ['test "$VERIFY_CANDIDATE_RESULT" = success', "final gate must require candidate verification"],
