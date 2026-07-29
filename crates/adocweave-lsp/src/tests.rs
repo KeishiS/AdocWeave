@@ -232,6 +232,45 @@ fn analysis_adoption_rejects_a_stale_workspace_generation() {
 }
 
 #[test]
+fn stale_analysis_never_replaces_published_diagnostics() {
+    let mut service = LanguageService::default();
+    let document_uri = uri("file:///stale-diagnostics.adoc");
+    let stale_job = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": document_uri,
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": "trailing  \n"
+            }
+        })))
+        .pop()
+        .expect("stale job");
+    let current_job = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": document_uri,
+                "languageId": "asciidoc",
+                "version": 2,
+                "text": "current\n"
+            }
+        })))
+        .pop()
+        .expect("current job");
+    adopt(&mut service, current_job);
+
+    let stale_analysis = stale_job
+        .request
+        .analyze(&adocweave::NeverCancel)
+        .expect("stale analysis");
+    assert_eq!(service.adopt(&stale_job, stale_analysis), Adoption::Stale);
+
+    let published = service.diagnostics(&document_uri).expect("diagnostics");
+    assert_eq!(published.version, Some(2));
+    assert!(published.diagnostics.is_empty());
+}
+
+#[test]
 fn initialize_negotiates_encoding_and_advertises_existing_features() {
     let mut service = LanguageService::default();
     let result = initialize(&mut service, &["utf-8", "utf-16"]);

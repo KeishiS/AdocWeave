@@ -3,7 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use adocweave::output::diagnostics::{Applicability, RuleSettings, Severity, lint_rule};
+use adocweave::output::diagnostics::{RuleSettings, lint_rule};
 use adocweave::output::formatter;
 use adocweave::output::projection::project;
 use adocweave::resolution::ReferenceKey;
@@ -12,11 +12,12 @@ use adocweave::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
+use crate::diagnostics::QuickFixCapabilities;
 use crate::document_symbols::SymbolPresentation;
 use crate::hover::HoverPresentation;
 use crate::position::{
     PositionEncoding, cursor_touches_range, negotiate_encoding, range_contains_offset,
-    range_to_lsp, ranges_intersect, request_offset,
+    range_to_lsp, request_offset,
 };
 use crate::state::DocumentStore;
 use crate::state::{
@@ -791,38 +792,16 @@ impl LanguageService {
             .iter()
             .flat_map(|analysis| analysis.diagnostics().iter())
             .map(|diagnostic| {
-                Ok(lsp::Diagnostic {
-                    range: range_to_lsp(
-                        diagnostic.range,
-                        &source_document,
-                        self.position_encoding,
-                    )?,
-                    severity: Some(match diagnostic.severity {
-                        Severity::Error => lsp::DiagnosticSeverity::ERROR,
-                        Severity::Warning => lsp::DiagnosticSeverity::WARNING,
-                        Severity::Information => lsp::DiagnosticSeverity::INFORMATION,
-                        Severity::Hint => lsp::DiagnosticSeverity::HINT,
-                    }),
-                    code: Some(lsp::NumberOrString::String(
-                        diagnostic.code.as_str().to_owned(),
-                    )),
-                    source: Some("adocweave".to_owned()),
-                    message: diagnostic.message.clone(),
-                    ..lsp::Diagnostic::default()
-                })
+                crate::diagnostics::analysis_diagnostic(
+                    uri,
+                    diagnostic,
+                    &source_document,
+                    self.position_encoding,
+                )
             })
             .collect::<Result<Vec<_>, String>>()?;
         if let Some(error) = &self.workspace_error {
-            diagnostics.push(lsp::Diagnostic {
-                range: lsp::Range::default(),
-                severity: Some(lsp::DiagnosticSeverity::ERROR),
-                code: Some(lsp::NumberOrString::String(
-                    "workspace-resource-error".to_owned(),
-                )),
-                source: Some("adocweave-project".to_owned()),
-                message: error.clone(),
-                ..lsp::Diagnostic::default()
-            });
+            diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         for workspace in self.documents.workspace_analyses() {
             let current_version = workspace.resource_versions.get(uri.as_str()).copied();
@@ -852,25 +831,12 @@ impl LanguageService {
                     {
                         continue;
                     }
-                    diagnostics.push(lsp::Diagnostic {
-                        range: range_to_lsp(
-                            origin.range.text_range(),
-                            &source_document,
-                            self.position_encoding,
-                        )?,
-                        severity: Some(match projected.diagnostic.severity {
-                            Severity::Error => lsp::DiagnosticSeverity::ERROR,
-                            Severity::Warning => lsp::DiagnosticSeverity::WARNING,
-                            Severity::Information => lsp::DiagnosticSeverity::INFORMATION,
-                            Severity::Hint => lsp::DiagnosticSeverity::HINT,
-                        }),
-                        code: Some(lsp::NumberOrString::String(
-                            projected.diagnostic.code.as_str().to_owned(),
-                        )),
-                        source: Some("adocweave".to_owned()),
-                        message: projected.diagnostic.message.clone(),
-                        ..lsp::Diagnostic::default()
-                    });
+                    diagnostics.push(crate::diagnostics::projected_diagnostic(
+                        origin.range.text_range(),
+                        &projected.diagnostic,
+                        &source_document,
+                        self.position_encoding,
+                    )?);
                 }
             }
         }
@@ -878,34 +844,15 @@ impl LanguageService {
             if problem.source_id.as_deref() != Some(uri.as_str()) {
                 continue;
             }
-            diagnostics.push(lsp::Diagnostic {
-                range: range_to_lsp(problem.range, &source_document, self.position_encoding)?,
-                severity: Some(lsp::DiagnosticSeverity::ERROR),
-                code: Some(lsp::NumberOrString::String(problem.code.clone())),
-                source: Some("adocweave-project".to_owned()),
-                message: problem.message.clone(),
-                ..lsp::Diagnostic::default()
-            });
+            diagnostics.push(crate::diagnostics::project_problem(
+                problem.range,
+                &problem.code,
+                &problem.message,
+                &source_document,
+                self.position_encoding,
+            )?);
         }
-        diagnostics.sort_by(|left, right| {
-            (
-                left.range.start.line,
-                left.range.start.character,
-                left.range.end.line,
-                left.range.end.character,
-                &left.message,
-            )
-                .cmp(&(
-                    right.range.start.line,
-                    right.range.start.character,
-                    right.range.end.line,
-                    right.range.end.character,
-                    &right.message,
-                ))
-        });
-        diagnostics.dedup_by(|left, right| {
-            left.range == right.range && left.code == right.code && left.message == right.message
-        });
+        crate::diagnostics::canonicalize(&mut diagnostics);
         Ok(lsp::PublishDiagnosticsParams::new(
             uri.clone(),
             diagnostics,
@@ -951,74 +898,18 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        let mut actions = Vec::new();
-        for diagnostic in document.analysis.diagnostics() {
-            let diagnostic_range = range_to_lsp(
-                diagnostic.range,
-                document.analysis.source_document(),
-                self.position_encoding,
-            )?;
-            if !ranges_intersect(range, diagnostic_range) {
-                continue;
-            }
-            for fix in &diagnostic.fixes {
-                let edits = fix
-                    .edits()
-                    .iter()
-                    .map(|edit| {
-                        Ok(lsp::OneOf::Left(lsp::TextEdit::new(
-                            range_to_lsp(
-                                edit.range,
-                                document.analysis.source_document(),
-                                self.position_encoding,
-                            )?,
-                            edit.replacement.clone(),
-                        )))
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-                let edit = if self.client.versioned_document_changes {
-                    lsp::WorkspaceEdit {
-                        document_changes: Some(lsp::DocumentChanges::Edits(vec![
-                            lsp::TextDocumentEdit {
-                                text_document: lsp::OptionalVersionedTextDocumentIdentifier {
-                                    uri: uri.clone(),
-                                    version: Some(revision_version_i32(&document.revision)),
-                                },
-                                edits,
-                            },
-                        ])),
-                        ..lsp::WorkspaceEdit::default()
-                    }
-                } else {
-                    lsp::WorkspaceEdit {
-                        changes: Some(std::collections::HashMap::from([(
-                            uri.clone(),
-                            edits
-                                .into_iter()
-                                .map(|edit| match edit {
-                                    lsp::OneOf::Left(edit) => edit,
-                                    lsp::OneOf::Right(_) => {
-                                        unreachable!("AdocWeave emits plain text edits")
-                                    }
-                                })
-                                .collect(),
-                        )])),
-                        ..lsp::WorkspaceEdit::default()
-                    }
-                };
-                actions.push(lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
-                    title: fix.title.clone(),
-                    kind: Some(lsp::CodeActionKind::QUICKFIX),
-                    edit: Some(edit),
-                    is_preferred: self
-                        .client
-                        .code_action_is_preferred
-                        .then_some(fix.applicability == Applicability::Always),
-                    ..lsp::CodeAction::default()
-                }));
-            }
-        }
-        Ok(Some(actions))
+        crate::diagnostics::quick_fixes(
+            uri,
+            revision_version_i32(&document.revision),
+            &document.analysis,
+            range,
+            self.position_encoding,
+            QuickFixCapabilities {
+                versioned_document_changes: self.client.versioned_document_changes,
+                is_preferred: self.client.code_action_is_preferred,
+            },
+        )
+        .map(Some)
     }
 
     pub fn formatting(&self, uri: &lsp::Url) -> Result<Option<Vec<lsp::TextEdit>>, String> {
