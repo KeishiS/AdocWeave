@@ -141,15 +141,7 @@ impl WorkspaceResources {
         let mut retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget> = BTreeMap::new();
         let mut next_disk_version = self.next_disk_version;
         for path in candidates {
-            let (scope, config) = match scope_and_config_for_path_typed(&paths, &path) {
-                Ok(config) => config,
-                Err(error) => {
-                    if self.roots.is_empty() {
-                        self.roots = paths;
-                    }
-                    return Err(error);
-                }
-            };
+            let (scope, config) = scope_and_config_for_path_typed(&paths, &path)?;
             let plan = config.as_ref().map_or_else(
                 adocweave_config::ResolvedResourceLimitPlan::default,
                 |snapshot| snapshot.config.resources.limit_plan,
@@ -253,8 +245,12 @@ impl WorkspaceResources {
         if previous_scope
             .as_ref()
             .is_some_and(|previous| previous != &scope)
+            && let Err(error) = self.release_filesystem_charge(previous_scope.as_ref(), &path)
         {
-            self.release_filesystem_charge(previous_scope.as_ref(), &path)?;
+            prepared
+                .rollback()
+                .map_err(|rollback| format!("{error}; rollback failed: {rollback}"))?;
+            return Err(error);
         }
         self.inner = inner;
         self.retained_layers = retained_layers;
@@ -456,8 +452,14 @@ impl WorkspaceResources {
         if previous_scope
             .as_ref()
             .is_some_and(|previous| previous != &scope)
+            && let Err(error) = self.release_filesystem_charge(previous_scope.as_ref(), &path)
         {
-            self.release_filesystem_charge(previous_scope.as_ref(), &path)?;
+            if let Some(prepared) = prepared_disk {
+                prepared
+                    .rollback()
+                    .map_err(|rollback| format!("{error}; rollback failed: {rollback}"))?;
+            }
+            return Err(error);
         }
         self.inner = inner;
         self.retained_layers = retained_layers;
@@ -1406,6 +1408,94 @@ mod tests {
             "old"
         );
         assert!(resources.input(&document_uri).is_err());
+    }
+
+    #[test]
+    fn initial_invalid_configuration_leaves_every_workspace_field_unchanged() {
+        let root = TestDirectory::new();
+        std::fs::write(root.0.join("document.adoc"), "source").expect("source");
+        std::fs::write(root.0.join(adocweave_config::FILE_NAME), "invalid = true\n")
+            .expect("invalid config");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let mut resources = WorkspaceResources::default();
+        let generation = resources.generation();
+        let next_disk_version = resources.next_disk_version;
+
+        resources
+            .load_roots(&[root_uri])
+            .expect_err("invalid configuration");
+
+        assert_eq!(resources.generation(), generation);
+        assert_eq!(resources.next_disk_version, next_disk_version);
+        assert!(resources.roots.is_empty());
+        assert!(resources.inner.roots().is_empty());
+        assert!(resources.filesystems.is_empty());
+        assert!(resources.project_plans.is_empty());
+        assert!(resources.resource_projects.is_empty());
+        assert!(resources.retained_layers.is_empty());
+    }
+
+    #[test]
+    fn failed_old_scope_release_rolls_back_reload_and_open_migrations() {
+        for migrate_open in [false, true] {
+            let root = TestDirectory::new();
+            let nested = root.0.join("nested");
+            std::fs::create_dir(&nested).expect("nested");
+            let path = nested.join("document.adoc");
+            std::fs::write(&path, "disk").expect("source");
+            let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+            let document_uri = Url::from_file_path(&path).expect("document URI");
+            let mut resources = WorkspaceResources::default();
+            resources.load_roots(&[root_uri]).expect("load workspace");
+            if migrate_open {
+                resources
+                    .upsert_open(document_uri.clone(), 1, "old overlay")
+                    .expect("initial overlay");
+            }
+            let id = uri_id(&document_uri).expect("resource ID");
+            let previous_scope = resources
+                .resource_projects
+                .get(&id)
+                .cloned()
+                .expect("previous scope");
+            let previous_generation = resources.generation();
+            let filesystem = Arc::clone(
+                resources
+                    .filesystems
+                    .get(&previous_scope)
+                    .expect("old filesystem"),
+            );
+            let _ = std::thread::spawn(move || {
+                let _guard = filesystem.lock().expect("lock before poison");
+                panic!("poison old scope");
+            })
+            .join();
+            write_resource_config(&nested, 2, 64, 64, false);
+
+            let error = if migrate_open {
+                resources
+                    .upsert_open(document_uri.clone(), 2, "new overlay")
+                    .expect_err("old release failure")
+            } else {
+                std::fs::write(&path, "new disk").expect("changed source");
+                resources
+                    .reload_file(document_uri.clone())
+                    .expect_err("old release failure")
+            };
+
+            assert!(error.contains("lock is poisoned"), "{error}");
+            assert_eq!(resources.generation(), previous_generation);
+            assert_eq!(resources.resource_projects.get(&id), Some(&previous_scope));
+            assert_eq!(resources.filesystems.len(), 1);
+            assert_eq!(
+                resources
+                    .get(&document_uri)
+                    .expect("previous resource")
+                    .text()
+                    .as_ref(),
+                if migrate_open { "old overlay" } else { "disk" }
+            );
+        }
     }
 
     #[test]
