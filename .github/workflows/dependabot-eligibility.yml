@@ -1,0 +1,121 @@
+name: Dependabot auto-merge eligibility
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  eligibility:
+    name: dependabot / eligibility
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      vulnerability-alerts: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - id: metadata
+        uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7 # v2.5.0
+        with:
+          github-token: ${{ github.token }}
+      - name: Read every open Dependabot alert
+        id: security_alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open_count="$(tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY")"
+          test "$open_count" -ge 0
+          {
+            echo "lookup_completed=true"
+            echo "open_count=$open_count"
+          } >> "$GITHUB_OUTPUT"
+      - name: Read changed files
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[].filename' | jq -Rsc 'split("\n") | map(select(length > 0))')"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+      - name: Require eligibility under the tracked base policy
+        env:
+          ACTOR: ${{ github.actor }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_REPOSITORY: ${{ github.repository }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          DEPENDENCY_GROUP: ${{ steps.metadata.outputs.dependency-group }}
+          DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          DEPENDENCY_TYPE: ${{ steps.metadata.outputs.dependency-type }}
+          DIRECTORY: ${{ steps.metadata.outputs.directory }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MAINTAINER_CHANGES: ${{ steps.metadata.outputs.maintainer-changes }}
+          OPEN_SECURITY_ALERTS: ${{ steps.security_alerts.outputs.open_count }}
+          PACKAGE_ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          SECURITY_ALERT_LOOKUP: ${{ steps.security_alerts.outputs.lookup_completed }}
+          TARGET_BRANCH: ${{ steps.metadata.outputs.target-branch }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          dependencies="$(jq -cn --arg value "$DEPENDENCY_NAMES" \
+            '$value | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')"
+          if [ "$MAINTAINER_CHANGES" = "true" ]; then
+            maintainer_changes=true
+          else
+            maintainer_changes=false
+          fi
+          jq -n \
+            --arg actor "$ACTOR" \
+            --arg author "$AUTHOR" \
+            --arg base_ref "$BASE_REF" \
+            --arg base_repository "$BASE_REPOSITORY" \
+            --arg head_ref "$HEAD_REF" \
+            --arg head_repository "$HEAD_REPOSITORY" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg package_ecosystem "$PACKAGE_ECOSYSTEM" \
+            --arg directory "$DIRECTORY" \
+            --arg target_branch "$TARGET_BRANCH" \
+            --arg dependency_type "$DEPENDENCY_TYPE" \
+            --arg update_type "$UPDATE_TYPE" \
+            --arg dependency_group "$DEPENDENCY_GROUP" \
+            --arg security_alert_lookup "$SECURITY_ALERT_LOOKUP" \
+            --argjson dependencies "$dependencies" \
+            --argjson maintainer_changes "$maintainer_changes" \
+            --argjson open_security_alerts "$OPEN_SECURITY_ALERTS" \
+            --argjson changed_files "$CHANGED_FILES" \
+            '{
+              pullRequest: {
+                actor: $actor, author: $author, baseRef: $base_ref,
+                baseRepository: $base_repository, headRef: $head_ref,
+                headRepository: $head_repository, headSha: $head_sha
+              },
+              metadata: {
+                securityAlertLookup: ($security_alert_lookup == "true"),
+                openSecurityAlerts: $open_security_alerts,
+                packageEcosystem: $package_ecosystem, directory: $directory,
+                targetBranch: $target_branch, dependencyType: $dependency_type,
+                updateType: $update_type, dependencies: $dependencies,
+                dependencyGroup: $dependency_group,
+                maintainerChanges: $maintainer_changes
+              },
+              changedFiles: $changed_files
+            }' > eligibility-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            eligibility .github/dependabot-auto-merge-policy.json eligibility-input.json \
+            > eligibility-decision.json
+          jq -e '.eligible == true' eligibility-decision.json
+          jq . eligibility-decision.json >> "$GITHUB_STEP_SUMMARY"

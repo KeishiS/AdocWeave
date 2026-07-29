@@ -8,29 +8,43 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 保守性と検証時間の改善
+== 実装責務の分割
 
-実装の責務を追いやすくし、Pull Requestで問題を早く検出できる構成へ段階的に整理します。
+実装の責務を追いやすくし、変更時に確認すべき範囲を限定できる構成へ段階的に整理します。
 
-* https://github.com/KeishiS/adocweave/issues/149[CIの事前検査と実Browser受入]
 * https://github.com/KeishiS/adocweave/issues/150[CLI command定義とworkflowの責務分割]
 * https://github.com/KeishiS/adocweave/issues/151[Language Serverの状態管理とfeature変換の分割]
 * https://github.com/KeishiS/adocweave/issues/152[WASM wire型の正本と変換責務の整理]
 
-CIでは、安価な共通検査をplatform別buildより前に実行し、実Browserの問題をmainへ統合する前に
-検出します。CLI、Language ServerおよびWASM adapterは、状態や入出力を所有する境界と、
-入力から出力を組み立てる変換処理を分けます。一括置換は行わず、公開契約を検証しながら
-独立した変更単位で進めます。
+CLI、Language ServerおよびWASM adapterは、状態や入出力を所有する境界と、入力から出力を
+組み立てる変換処理を分けます。一括置換は行わず、公開契約を検証しながら独立した変更単位で
+進めます。
+
+== コア処理の境界整理
+
+adapterの責務分割に続いて、構文解析、前処理、HTML生成および診断の状態遷移と変換処理を
+型とテストで区別します。
+
+* https://github.com/KeishiS/adocweave/issues/166[Preprocessorの展開状態機械とsource projectionの分離]
+* https://github.com/KeishiS/adocweave/issues/167[Block parserの前進保証付き状態機械への整理]
+* https://github.com/KeishiS/adocweave/issues/168[HTMLの安全判定とserializationの型による分離]
+* https://github.com/KeishiS/adocweave/issues/169[Inline認識indexと意味node構築の分離]
+* https://github.com/KeishiS/adocweave/issues/170[Lint rule実行の共通diagnostic sinkへの統合]
+
+最初にsource originを全consumerへ渡すPreprocessorと、構文解析の前進・回復を担うBlock parserを
+整理します。その後、HTMLの安全性境界、Inlineの認識境界、Lint ruleの実行境界を順に扱います。
+ファイルの行数を減らすこと自体は目的とせず、同じ入力状態から得た値だけを組み合わせること、
+処理が必ず前進すること、出力上限と安全性判定を一か所で保証することを完了条件とします。
 
 == 依存更新の運用
 
-上記のCI改善後、製品versionとは独立して、依存更新の安全な運用を改善します。
+製品versionとは独立して、依存更新の安全な運用を改善します。
 
 * https://github.com/KeishiS/adocweave/issues/19[Dependabot PRの安全な自動merge]
 
-必須検査とbranch protectionを維持したまま、対象を限定した依存更新だけを段階的に
-自動mergeできるか検証します。許可する更新範囲と停止・復旧方法を決めるまでは、
-実際の自動mergeを有効にしません。
+必須検査とmainを保護するrulesetを維持したまま、対象を限定した依存更新だけを段階的に
+自動mergeできるか検証します。許可する更新範囲、必要な承認数および停止・復旧方法を
+決めるまでは、実際の自動mergeを有効にしません。
 
 == 保留中の対話的な確認環境
 

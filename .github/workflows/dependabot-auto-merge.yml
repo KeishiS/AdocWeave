@@ -1,0 +1,202 @@
+name: Dependabot auto-merge controller
+
+on:
+  workflow_run:
+    workflows: ["CI and Release"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  decide:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      github.event.workflow_run.pull_requests[0] != null
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+      vulnerability-alerts: read
+    outputs:
+      eligible: ${{ steps.decision.outputs.eligible }}
+      expected_base_sha: ${{ steps.context.outputs.base_sha }}
+      expected_head_oid: ${{ steps.context.outputs.head_sha }}
+      pull_request_number: ${{ github.event.workflow_run.pull_requests[0].number }}
+      pull_request_node_id: ${{ steps.context.outputs.node_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          persist-credentials: false
+      - name: Read current GitHub state
+        id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > pr.json
+          test "$(jq -r .head.sha pr.json)" = "$RUN_HEAD_SHA"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[].filename' | jq -Rsc 'split("\n") | map(select(length > 0))' > changed-files.json
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$RUN_HEAD_SHA/check-runs?per_page=100" \
+            --jq '.check_runs' | jq -s 'add' > checks.json
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+            | jq -s 'add' > reviews.json
+          gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -r .base.ref pr.json)" \
+            --jq .commit.sha > base-sha.txt
+          tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY" \
+            > open-security-alerts.txt
+          {
+            echo "base_sha=$(cat base-sha.txt)"
+            echo "head_sha=$(jq -r .head.sha pr.json)"
+            echo "node_id=$(jq -r .node_id pr.json)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Evaluate CI completion against the current head
+        id: decision
+        env:
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          jq -n \
+            --arg actor "$ACTOR" \
+            --arg run_conclusion "$RUN_CONCLUSION" \
+            --arg run_base_sha "$RUN_BASE_SHA" \
+            --arg run_event "$RUN_EVENT" \
+            --arg run_head_sha "$RUN_HEAD_SHA" \
+            --arg current_base_sha "$(cat base-sha.txt)" \
+            --argjson open_security_alerts "$(cat open-security-alerts.txt)" \
+            --slurpfile pr pr.json \
+            --slurpfile changed_files changed-files.json \
+            --slurpfile checks checks.json \
+            --slurpfile reviews reviews.json \
+            '($pr[0]) as $pull |
+            ($reviews[0] | sort_by(.submitted_at) | group_by(.user.login) | map(last)) as $latest_reviews |
+            {
+              pullRequest: {
+                actor: $actor,
+                author: $pull.user.login,
+                baseRef: $pull.base.ref,
+                baseRepository: $pull.base.repo.full_name,
+                headRef: $pull.head.ref,
+                headRepository: $pull.head.repo.full_name,
+                headSha: $pull.head.sha,
+                baseSha: $pull.base.sha,
+                draft: $pull.draft,
+                mergeable: $pull.mergeable
+              },
+              workflowRun: {
+                event: $run_event,
+                conclusion: $run_conclusion,
+                headSha: $run_head_sha,
+                baseSha: $run_base_sha
+              },
+              currentBaseSha: $current_base_sha,
+              securityAlerts: {
+                lookupCompleted: true,
+                openCount: $open_security_alerts
+              },
+              changedFiles: $changed_files[0],
+              review: {
+                changesRequested: any($latest_reviews[]?; .state == "CHANGES_REQUESTED"),
+                approvedCount: ([$latest_reviews[]? | select(.state == "APPROVED")] | length)
+              },
+              eligibilityCheck: (
+                $checks[0]
+                | map(select(.name == "dependabot / eligibility"))
+                | sort_by(.completed_at)
+                | last
+                | if . == null then null else {
+                    name, headSha: .head_sha, conclusion,
+                    appSlug: .app.slug, appId: .app.id
+                  } end
+              ),
+              checks: (
+                $checks[0] | map({
+                  name, headSha: .head_sha, conclusion,
+                  completedAt: .completed_at, appId: .app.id
+                })
+              )
+            }' > controller-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            controller .github/dependabot-auto-merge-policy.json controller-input.json \
+            > controller-decision.json
+          echo "eligible=$(jq -r .eligible controller-decision.json)" >> "$GITHUB_OUTPUT"
+          jq . controller-decision.json >> "$GITHUB_STEP_SUMMARY"
+
+  enable:
+    needs: decide
+    if: needs.decide.outputs.eligible == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      vulnerability-alerts: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.decide.outputs.expected_base_sha }}
+          persist-credentials: false
+      - name: Enable GitHub-managed auto-merge for the verified head
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.decide.outputs.expected_base_sha }}
+          EXPECTED_HEAD_OID: ${{ needs.decide.outputs.expected_head_oid }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.decide.outputs.pull_request_number }}
+          PULL_REQUEST_NODE_ID: ${{ needs.decide.outputs.pull_request_node_id }}
+        run: |
+          open_count="$(tools/dependabot-alert-inventory.sh "$GITHUB_REPOSITORY")"
+          test "$open_count" -eq 0
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > enable-pr.json
+          test "$(jq -r .node_id enable-pr.json)" = "$PULL_REQUEST_NODE_ID"
+          test "$(jq -r .head.sha enable-pr.json)" = "$EXPECTED_HEAD_OID"
+          test "$(jq -r .base.sha enable-pr.json)" = "$EXPECTED_BASE_SHA"
+          test "$(jq -r .base.ref enable-pr.json)" = "main"
+          gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha \
+            > enable-base-sha.txt
+          test "$(cat enable-base-sha.txt)" = "$EXPECTED_BASE_SHA"
+          ruleset_ids="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true&per_page=100" \
+              | jq -er -s '
+                  add
+                  | map(select(.target == "branch" and .enforcement == "active"))
+                  | .[].id
+                '
+          )"
+          test -n "$ruleset_ids"
+          : > active-rulesets.jsonl
+          while IFS= read -r ruleset_id; do
+            gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" \
+              >> active-rulesets.jsonl
+          done <<< "$ruleset_ids"
+          jq -s '{branch: "main", rulesets: .}' active-rulesets.jsonl \
+            > strict-ruleset-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            strict-rulesets .github/dependabot-auto-merge-policy.json \
+            strict-ruleset-input.json > strict-ruleset-decision.json
+          jq -e '.eligible == true' strict-ruleset-decision.json
+          # shellcheck disable=SC2016
+          gh api graphql \
+            -f query='
+              mutation($pullRequest: ID!, $head: GitObjectID!) {
+                enablePullRequestAutoMerge(input: {
+                  pullRequestId: $pullRequest,
+                  mergeMethod: SQUASH,
+                  expectedHeadOid: $head
+                }) {
+                  pullRequest { number autoMergeRequest { enabledAt mergeMethod } }
+                }
+              }' \
+            -f pullRequest="$PULL_REQUEST_NODE_ID" \
+            -f head="$EXPECTED_HEAD_OID" \
+            | jq . >> "$GITHUB_STEP_SUMMARY"
