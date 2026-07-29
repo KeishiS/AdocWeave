@@ -19,24 +19,30 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      security-events: read
     outputs:
+      alert_lookup: ${{ steps.normalized.outputs.alert_lookup }}
+      alert_state: ${{ steps.metadata.outputs.alert-state }}
       changed_files: ${{ steps.changed.outputs.files }}
       dependencies: ${{ steps.normalized.outputs.dependencies }}
       dependency_group: ${{ steps.metadata.outputs.dependency-group }}
       dependency_type: ${{ steps.metadata.outputs.dependency-type }}
       directory: ${{ steps.metadata.outputs.directory }}
+      ghsa_id: ${{ steps.metadata.outputs.ghsa-id }}
       maintainer_changes: ${{ steps.normalized.outputs.maintainer_changes }}
       package_ecosystem: ${{ steps.metadata.outputs.package-ecosystem }}
       target_branch: ${{ steps.metadata.outputs.target-branch }}
       update_type: ${{ steps.metadata.outputs.update-type }}
+      cvss: ${{ steps.metadata.outputs.cvss }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
       - id: metadata
         uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7 # v2.5.0
         with:
+          alert-lookup: true
           github-token: ${{ github.token }}
       - id: normalized
         env:
@@ -51,6 +57,7 @@ jobs:
             maintainer_changes=false
           fi
           {
+            echo "alert_lookup=true"
             echo "dependencies=$dependencies"
             echo "maintainer_changes=$maintainer_changes"
           } >> "$GITHUB_OUTPUT"
@@ -71,16 +78,17 @@ jobs:
     permissions:
       checks: write
       contents: read
-      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
       - name: Evaluate the tracked policy
         id: decision
         env:
           ACTOR: ${{ github.actor }}
+          ALERT_LOOKUP: ${{ needs.metadata.outputs.alert_lookup }}
+          ALERT_STATE: ${{ needs.metadata.outputs.alert_state }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_REPOSITORY: ${{ github.repository }}
@@ -89,6 +97,7 @@ jobs:
           DEPENDENCY_GROUP: ${{ needs.metadata.outputs.dependency_group }}
           DEPENDENCY_TYPE: ${{ needs.metadata.outputs.dependency_type }}
           DIRECTORY: ${{ needs.metadata.outputs.directory }}
+          GHSA_ID: ${{ needs.metadata.outputs.ghsa_id }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -96,9 +105,12 @@ jobs:
           PACKAGE_ECOSYSTEM: ${{ needs.metadata.outputs.package_ecosystem }}
           TARGET_BRANCH: ${{ needs.metadata.outputs.target_branch }}
           UPDATE_TYPE: ${{ needs.metadata.outputs.update_type }}
+          CVSS: ${{ needs.metadata.outputs.cvss }}
         run: |
           jq -n \
             --arg actor "$ACTOR" \
+            --arg alert_lookup "$ALERT_LOOKUP" \
+            --arg alert_state "$ALERT_STATE" \
             --arg author "$AUTHOR" \
             --arg base_ref "$BASE_REF" \
             --arg base_repository "$BASE_REPOSITORY" \
@@ -111,6 +123,8 @@ jobs:
             --arg dependency_type "$DEPENDENCY_TYPE" \
             --arg update_type "$UPDATE_TYPE" \
             --arg dependency_group "$DEPENDENCY_GROUP" \
+            --arg ghsa_id "$GHSA_ID" \
+            --arg cvss "$CVSS" \
             --argjson dependencies "$DEPENDENCIES" \
             --argjson maintainer_changes "$MAINTAINER_CHANGES" \
             --argjson changed_files "$CHANGED_FILES" \
@@ -121,6 +135,10 @@ jobs:
                 headRepository: $head_repository, headSha: $head_sha
               },
               metadata: {
+                alertLookup: ($alert_lookup == "true"),
+                alertState: $alert_state,
+                ghsaId: $ghsa_id,
+                cvss: $cvss,
                 packageEcosystem: $package_ecosystem, directory: $directory,
                 targetBranch: $target_branch, dependencyType: $dependency_type,
                 updateType: $update_type, dependencies: $dependencies,

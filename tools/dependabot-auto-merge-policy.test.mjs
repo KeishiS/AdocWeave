@@ -30,6 +30,10 @@ function eligibleInput() {
       mergeable: true,
     },
     metadata: {
+      alertLookup: true,
+      alertState: "",
+      ghsaId: "",
+      cvss: "0",
       packageEcosystem: "cargo",
       directory: "/",
       targetBranch: "main",
@@ -63,6 +67,7 @@ function controllerInput() {
       headSha: SHA,
       conclusion: "success",
       appSlug: "github-actions",
+      appId: input.policy.requiredCheckAppId,
     },
     checks: input.policy.requiredChecks.map((name, index) => ({
       name,
@@ -118,7 +123,21 @@ for (const [name, mutate, expected] of [
   ["metadata target", (input) => { input.metadata.targetBranch = "release"; }, "metadata-target-branch"],
   ["major", (input) => { input.metadata.updateType = "version-update:semver-major"; }, "update-type"],
   ["minor", (input) => { input.metadata.updateType = "version-update:semver-minor"; }, "update-type"],
-  ["security update", (input) => { input.metadata.updateType = "security-update:semver-patch"; }, "update-type"],
+  ["open security alert", (input) => {
+    input.metadata.alertState = "OPEN";
+    input.metadata.ghsaId = "GHSA-xxxx-yyyy-zzzz";
+    input.metadata.cvss = "7.5";
+  }, "security-alert-or-lookup"],
+  ["fixed security alert", (input) => {
+    input.metadata.alertState = "FIXED";
+    input.metadata.ghsaId = "GHSA-xxxx-yyyy-zzzz";
+    input.metadata.cvss = "7.5";
+  }, "security-alert-or-lookup"],
+  ["missing alert lookup", (input) => { input.metadata.alertLookup = false; }, "security-alert-or-lookup"],
+  ["missing alert state", (input) => { delete input.metadata.alertState; }, "security-alert-or-lookup"],
+  ["inconsistent GHSA output", (input) => {
+    input.metadata.ghsaId = "GHSA-xxxx-yyyy-zzzz";
+  }, "security-alert-or-lookup"],
   ["runtime npm", (input) => {
     input.metadata.packageEcosystem = "npm";
     input.metadata.directory = "/editors/vscode";
@@ -156,6 +175,7 @@ for (const [name, mutate, expected] of [
   ["old eligibility", (input) => { input.eligibilityCheck.headSha = "5".repeat(40); }, "eligibility-attestation"],
   ["neutral eligibility", (input) => { input.eligibilityCheck.conclusion = "neutral"; }, "eligibility-attestation"],
   ["wrong eligibility app", (input) => { input.eligibilityCheck.appSlug = "other"; }, "eligibility-attestation"],
+  ["wrong eligibility app ID", (input) => { input.eligibilityCheck.appId = 1; }, "eligibility-attestation"],
   ["failed required check", (input) => { input.checks[0].conclusion = "failure"; }, "required-check:quality / dependencies"],
   ["wrong required check app", (input) => { input.checks[0].appId = 1; }, "required-check:quality / dependencies"],
   ["pending required check", (input) => { input.checks[1].conclusion = null; }, "required-check:quality / fuzz"],

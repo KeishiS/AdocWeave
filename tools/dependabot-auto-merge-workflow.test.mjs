@@ -16,9 +16,13 @@ test("eligibility uses the trusted base workflow and binds its result to the hea
   assert.match(eligibility, /dependabot\[bot\]/);
   assert.match(eligibility, /head\.repo\.full_name == github\.repository/);
   assert.doesNotMatch(eligibility, /ref:\s*\$\{\{\s*github\.event\.pull_request\.head/);
-  assert.match(eligibility, /ref:\s*\$\{\{\s*github\.event\.repository\.default_branch\s*\}\}/);
+  assert.match(eligibility, /ref:\s*\$\{\{\s*github\.event\.pull_request\.base\.sha\s*\}\}/);
   assert.match(eligibility, /persist-credentials:\s*false/);
   assert.match(eligibility, /dependabot\/fetch-metadata@[0-9a-f]{40}/);
+  assert.match(eligibility, /alert-lookup:\s*true/);
+  assert.match(eligibility, /security-events:\s*read/);
+  assert.match(eligibility, /steps\.metadata\.outputs\.alert-state/);
+  assert.match(eligibility, /steps\.metadata\.outputs\.ghsa-id/);
   assert.match(eligibility, /"head_sha":\s*\$head_sha/);
   assert.match(eligibility, /"name":\s*"dependabot \/ eligibility"/);
   assert.match(eligibility, /conclusion/);
@@ -34,11 +38,23 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.doesNotMatch(controller, /pull_request_target:/);
   assert.doesNotMatch(controller, /gh pr merge/);
   assert.match(controller, /enablePullRequestAutoMerge/);
+  assert.match(controller, /mutation\(\$pullRequest: ID!, \$head: GitObjectID!\)/);
   assert.match(controller, /expectedHeadOid:\s*\$head/);
+  assert.match(controller, /-f head="\$EXPECTED_HEAD_OID"/);
+  assert.match(controller, /EXPECTED_HEAD_OID:\s*\$\{\{\s*needs\.decide\.outputs\.expected_head_oid\s*\}\}/);
   assert.match(controller, /mergeMethod:\s*SQUASH/);
   assert.match(controller, /github\.event\.workflow_run\.head_sha/);
   assert.match(controller, /github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha/);
   assert.match(controller, /dependabot \/ eligibility/);
+  assert.match(controller, /appSlug:\s*\.app\.slug, appId:\s*\.app\.id/);
+  assert.match(controller, /ref:\s*\$\{\{\s*github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha\s*\}\}/);
+});
+
+test("workflow permissions remain scoped to the jobs that need them", () => {
+  assert.match(eligibility, /^permissions:\s*\{\}/m);
+  assert.match(controller, /^permissions:\s*\{\}/m);
+  assert.doesNotMatch(eligibility, /issues:\s*write|contents:\s*write|pull-requests:\s*write/);
+  assert.doesNotMatch(controller, /issues:\s*write|checks:\s*write/);
 });
 
 test("all actions are pinned and pull request code is never checked out", () => {

@@ -92,6 +92,7 @@ test("Browser実行補助はglobalだけ、repository metadataはcandidate対象
   }
   for (const pathname of [
     ".github/dependabot.yml",
+    ".github/dependabot-auto-merge-policy.json",
     ".github/pull_request_template.md",
     ".gitattributes",
     "deny.toml",
@@ -108,6 +109,9 @@ test("成果物へ影響しない既知の文書とfixtureだけを明示的に�
     ".github/ISSUE_TEMPLATE/bug_report.yml",
     "tools/release-workflow-policy.mjs",
     "tools/release-workflow-policy.test.mjs",
+    "tools/dependabot-auto-merge-policy.mjs",
+    "tools/dependabot-auto-merge-policy.test.mjs",
+    "tools/dependabot-auto-merge-workflow.test.mjs",
   ]) {
     assert.deepEqual(candidateImpact(pathname), { global: false, native: false }, pathname);
   }

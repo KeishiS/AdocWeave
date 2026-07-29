@@ -60,6 +60,12 @@ export function evaluateEligibility(input) {
   validatePullRequest(input.pullRequest, policy, reasons);
 
   const metadata = input.metadata ?? {};
+  if (metadata.alertLookup !== true
+      || metadata.alertState !== ""
+      || metadata.ghsaId !== ""
+      || String(metadata.cvss) !== "0") {
+    reasons.push("security-alert-or-lookup");
+  }
   const boundary = policy.allowedUpdates.find(
     (candidate) => candidate.packageEcosystem === metadata.packageEcosystem
       && candidate.directory === metadata.directory,
@@ -118,7 +124,8 @@ export function evaluateController(input) {
       || attestation.name !== "dependabot / eligibility"
       || attestation.headSha !== input.pullRequest?.headSha
       || attestation.conclusion !== "success"
-      || attestation.appSlug !== "github-actions") {
+      || attestation.appSlug !== "github-actions"
+      || attestation.appId !== policy.requiredCheckAppId) {
     reasons.push("eligibility-attestation");
   }
   const latestChecks = latestChecksByName(input.checks);

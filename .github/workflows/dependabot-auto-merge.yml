@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
           persist-credentials: false
       - name: Read current GitHub state
         id: context
@@ -103,7 +103,7 @@ jobs:
                 | last
                 | if . == null then null else {
                     name, headSha: .head_sha, conclusion,
-                    appSlug: .app.slug
+                    appSlug: .app.slug, appId: .app.id
                   } end
               ),
               checks: (
