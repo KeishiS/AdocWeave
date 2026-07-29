@@ -310,13 +310,14 @@ impl LocalFilesystemSession {
         path: &Path,
     ) -> Result<(LoadedFilesystemSource, FilesystemReadRollback), ResourceError> {
         let index = self.root_index(path)?;
+        let candidate_was_inspected = self.sessions[index].has_inspected_candidate(path);
         let loaded = self.sessions[index]
             .reread_candidate_utf8(path)
             .map_err(ResourceError::from)?;
         let canonical_path = loaded.canonical_path().to_owned();
         let previous_bytes = self.charged.get(&canonical_path).copied();
-        self.finish_read(source_id, loaded).map(|loaded| {
-            (
+        match self.finish_read(source_id, loaded) {
+            Ok(loaded) => Ok((
                 loaded,
                 FilesystemReadRollback {
                     canonical_path,
@@ -324,8 +325,14 @@ impl LocalFilesystemSession {
                     session_index: index,
                     previous_bytes,
                 },
-            )
-        })
+            )),
+            Err(error) => {
+                if !candidate_was_inspected {
+                    self.sessions[index].release_candidate(path);
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Restores the charge replaced by [`Self::reread_utf8_with_rollback`].
@@ -972,6 +979,39 @@ mod tests {
         assert_eq!((session.budget().files(), session.budget().bytes()), (2, 3));
         session.rollback_reread(rollback);
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
+    }
+
+    #[test]
+    fn rejected_new_reread_releases_only_its_candidate_inspection() {
+        let root = TestDir::new("reread-candidate-rollback");
+        let first = root.path().join("first.adoc");
+        let second = root.path().join("second.adoc");
+        let third = root.path().join("third.adoc");
+        fs::write(&first, "a").expect("first source");
+        fs::write(&second, "bb").expect("second source");
+        fs::write(&third, "b").expect("third source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 2,
+                max_total_bytes: 2,
+                max_resource_bytes: 2,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+
+        session.read_utf8(source_id(), &first).expect("first read");
+        let inspected = session.sessions[0].inspected_paths();
+        assert_eq!(
+            session.reread_utf8(source_id(), &second),
+            Err(ResourceError::ByteLimit)
+        );
+        assert_eq!(session.sessions[0].inspected_paths(), inspected);
+        session
+            .reread_utf8(source_id(), &third)
+            .expect("third read after rejected candidate");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (2, 2));
     }
 
     #[test]
