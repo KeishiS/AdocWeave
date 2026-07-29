@@ -47,7 +47,13 @@ pub struct DiagnosticProfile {
 impl Default for DiagnosticProfile {
     fn default() -> Self {
         let mut lint = LintConfig::default();
-        lint.protected_attribute_severity = crate::diagnostic::Severity::Warning;
+        lint.set_rule(
+            crate::lint::PROTECTED_ATTRIBUTE,
+            crate::lint::RuleSettings {
+                enabled: true,
+                severity: crate::diagnostic::Severity::Warning,
+            },
+        );
         Self { lint }
     }
 }
@@ -613,6 +619,24 @@ mod tests {
     }
 
     #[test]
+    fn protected_attribute_is_a_warning_in_the_default_analysis_profile() {
+        let mut options = AnalysisOptions::default();
+        options.diagnostics.lint.protected_attributes.insert(
+            "note-id".to_owned(),
+            Some("123e4567-e89b-12d3-a456-426614174000".to_owned()),
+        );
+        let result = analyze(
+            "= Note\n:note-id: 00000000-0000-0000-0000-000000000000\n",
+            &options,
+        )
+        .expect("analysis recovers with diagnostic");
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "protected-attribute"
+                && diagnostic.severity == crate::diagnostic::Severity::Warning
+        }));
+    }
+
+    #[test]
     fn protected_attribute_is_an_error_in_strict_mode() {
         let mut options = AnalysisOptions {
             syntax: SyntaxOptions {
@@ -621,7 +645,13 @@ mod tests {
             },
             ..AnalysisOptions::default()
         };
-        options.diagnostics.lint.protected_attribute_severity = crate::diagnostic::Severity::Error;
+        options.diagnostics.lint.set_rule(
+            crate::lint::PROTECTED_ATTRIBUTE,
+            crate::lint::RuleSettings {
+                enabled: true,
+                severity: crate::diagnostic::Severity::Error,
+            },
+        );
         options.diagnostics.lint.protected_attributes.insert(
             "note-id".to_owned(),
             Some("123e4567-e89b-12d3-a456-426614174000".to_owned()),
