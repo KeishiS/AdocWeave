@@ -101,6 +101,12 @@ impl ProjectionInput {
     pub fn include_base(&self, source_id: &str) -> Option<&Path> {
         self.include_bases.get(source_id).map(PathBuf::as_path)
     }
+
+    pub fn resource_lengths(&self) -> impl Iterator<Item = u64> + '_ {
+        self.sources
+            .values()
+            .map(|source| u64::try_from(source.len()).unwrap_or(u64::MAX))
+    }
 }
 
 impl LocalValidationContext {
