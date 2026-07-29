@@ -4,6 +4,7 @@ use adocweave::output::projection::{project, searchable_text};
 use adocweave::resolution::ReferenceKey;
 use adocweave::resolution::{AuthoredUrlPolicy, UrlDecision};
 use adocweave::semantic::{
+    Block, DelimitedContent, TableCellContent, TableCellStyle, TableFormat, TableSection,
     SemanticNode, generate_heading_ids, reference_targets, walk as walk_semantic,
 };
 use adocweave::text::{PositionEncoding, SourceDocument, SyntaxKind, TextSize};
@@ -243,6 +244,75 @@ fn url_classification_is_case_stable_and_rejects_obfuscated_controls() {
     for value in unsafe_values {
         assert_eq!(policy.classify(value), UrlDecision::Rejected, "{value}");
     }
+}
+
+#[test]
+fn table_phase_fixture_is_lossless_deterministic_and_laid_out_once() {
+    let source = include_str!("../../../fixtures/tables/phase-pipeline.adoc");
+    let engine = Engine::new(AnalysisOptions::default());
+    let first = engine.analyze(source).expect("table phase fixture");
+    let second = engine.analyze(source).expect("repeat table phase fixture");
+    assert_eq!(first.syntax().reconstruct(), source);
+    assert_eq!(first.document(), second.document());
+    assert_eq!(
+        render(first.document(), &RenderPolicy::default()),
+        render(second.document(), &RenderPolicy::default())
+    );
+
+    let tables = first
+        .document()
+        .blocks()
+        .iter()
+        .filter_map(|block| match block {
+            Block::Delimited(block) => match &block.content {
+                DelimitedContent::Table(table) => Some(table),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(tables.len(), 4);
+    assert_eq!(
+        tables.iter().map(|table| table.format).collect::<Vec<_>>(),
+        [
+            TableFormat::Psv,
+            TableFormat::Csv,
+            TableFormat::Dsv,
+            TableFormat::Tsv,
+        ]
+    );
+
+    for table in &tables {
+        assert_eq!(table.rows[0].section, TableSection::Header);
+        assert_eq!(table.columns[0].style, TableCellStyle::AsciiDoc);
+        assert!(matches!(
+            table.rows[0].cells[0].content,
+            TableCellContent::AsciiDoc(_)
+        ));
+        let mut previous_end = table.content_range.start().to_usize();
+        for row in &table.rows {
+            let mut occupied = Vec::new();
+            for cell in &row.cells {
+                let start = cell.content_range.start().to_usize();
+                let end = cell.content_range.end().to_usize();
+                assert!(source.is_char_boundary(start));
+                assert!(source.is_char_boundary(end));
+                assert_eq!(source.get(start..end), Some(cell.raw.as_str()));
+                assert!(cell.range.start().to_usize() >= previous_end);
+                previous_end = cell.range.end().to_usize();
+                for column in cell.column_index..cell.column_index.saturating_add(cell.column_span)
+                {
+                    assert!(!occupied.contains(&column));
+                    occupied.push(column);
+                }
+            }
+        }
+    }
+    assert_eq!(tables[0].rows[1].cells[0].column_span, 2);
+    assert!(matches!(
+        tables[0].rows[1].cells[0].content,
+        TableCellContent::AsciiDoc(_)
+    ));
 }
 
 fn semantic_signature(analysis: &adocweave::Analysis) -> (String, Vec<String>, Vec<ReferenceKey>) {

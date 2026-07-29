@@ -164,6 +164,12 @@ PSVで空行後も先頭cellのAsciiDoc内容が継続する場合と、quote内
 列数とします。それ以外は最もcell数の多いrecordから列数を推論します。確定したsectionはtable semanticの
 ``TableRow``だけが所有します。
 
+表の解析は``ScannedTable``、``ConfiguredTable``、``LaidOutTable``の順に前段の値を消費します。
+scanは入力形式ごとのcell範囲を保持し、configurationは列、表示属性、headerおよびfooterを確定します。
+layoutはspanを物理rowへ一度だけ配置します。cell内容はlayout後に確定済みのstyleを使って解析するため、
+公開``Table``のcellを再配置したり、inline解析済みの内容を別形式へ置き換えたりしません。
+AsciiDoc形式のcellは親Parserの深さとnode budgetを共有して子blockを直接解析します。
+
 リテラルおよびソースの内容は不透明です。開始区切りと等しい行がブロックを閉じます。
 より長い行やインデントした区切り状の行は内容として扱います。
 

@@ -501,6 +501,65 @@ fn asciidoc_cell_uses_the_parent_table_depth_budget() {
 }
 
 #[test]
+fn asciidoc_cell_uses_the_parent_node_budget_without_speculative_inline_nodes() {
+    let source = "\
+[cols=a]
+|===
+|paragraph
+|===
+";
+    let minimum = (1..32)
+        .find(|maximum| {
+            analyze_with_limits(
+                source,
+                AnalysisLimits {
+                    max_nodes: *maximum,
+                    ..AnalysisLimits::default()
+                },
+            )
+            .is_ok()
+        })
+        .expect("small table has a bounded node minimum");
+    assert_eq!(minimum, 6);
+    assert!(matches!(
+        analyze_with_limits(
+            source,
+            AnalysisLimits {
+                max_nodes: minimum - 1,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "nodes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn explicit_table_columns_are_rejected_before_repeat_materialization() {
+    assert!(matches!(
+        analyze_with_limits(
+            "\
+[cols=\"1000000000*a\"]
+|===
+|value
+|===
+",
+            AnalysisLimits {
+                max_table_columns: 4,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "table columns",
+            actual: 1_000_000_000,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn table_resources_are_rejected_at_the_construction_boundary() {
     let cases = [
         (
