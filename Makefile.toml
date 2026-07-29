@@ -172,7 +172,7 @@ description = "Test action pins, release permissions, fork isolation, and transa
 script_runner = "@shell"
 script = '''
 node tools/release-workflow-policy.mjs
-node --test tools/release-workflow-policy.test.mjs
+node --test tools/release-workflow-policy.test.mjs tools/browser-release-budget.test.mjs
 '''
 
 [tasks.workflow-lint]

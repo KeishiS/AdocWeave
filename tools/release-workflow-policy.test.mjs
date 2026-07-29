@@ -190,49 +190,31 @@ test("release-intent global candidates cannot omit the browser archive runtime g
     }),
     /browser-runtime-check dependencies must exactly match/,
   );
-});
-
-test("browser candidate performance budgets cannot drift without a policy update", () => {
-  const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      browserSmoke: inputs.browserSmoke.replace(
-        "const MAX_WASM_BYTES = 1280 * 1024;",
-        "const MAX_WASM_BYTES = 2 * 1024 * 1024;",
+      release: inputs.release.replace(
+        "  build-global:\n" +
+          "    if: needs.changes.outputs.global_required == 'true'",
+        "  build-global:\n" +
+          "    continue-on-error: true\n" +
+          "    if: needs.changes.outputs.global_required == 'true'",
       ),
     }),
-    /raw browser WASM performance budget/,
+    /global candidate job must not continue/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      browserSmoke: inputs.browserSmoke.replace(
-        "const MAX_ARCHIVE_BYTES = 2 * 1024 * 1024;",
-        "const MAX_ARCHIVE_BYTES = 4 * 1024 * 1024;",
+      release: inputs.release.replace(
+        "      - name: Browser release archive runtime and bundler acceptance\n" +
+          "        if: needs.changes.outputs.release_main == 'true'",
+        "      - name: Browser release archive runtime and bundler acceptance\n" +
+          "        if: needs.changes.outputs.release_main == 'true'\n" +
+          "        continue-on-error: true",
       ),
     }),
-    /browser archive performance budget/,
-  );
-  assert.throws(
-    () => validateReleaseWorkflowPolicy({
-      ...inputs,
-      browserSmoke: inputs.browserSmoke.replace(
-        "wasmBytes > MAX_WASM_BYTES",
-        "wasmBytes > Number.MAX_SAFE_INTEGER",
-      ),
-    }),
-    /raw browser WASM validation/,
-  );
-  assert.throws(
-    () => validateReleaseWorkflowPolicy({
-      ...inputs,
-      releaseDistribution: inputs.releaseDistribution.replace(
-        "archiveを2 MiB以下、archive内のraw WASMを1.25 MiB以下",
-        "archiveとWASMの大きさを確認します",
-      ),
-    }),
-    /document browser performance budgets/,
+    /browser archive acceptance must not continue/,
   );
 });
 
