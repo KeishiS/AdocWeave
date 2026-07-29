@@ -59,6 +59,8 @@ const NON_RELEASE_FILES = new Set([
   "tools/adoc-check.mjs",
   "tools/adoc-check.test.mjs",
   "tools/dependency-governance.sh",
+  "tools/dependabot-alert-inventory.sh",
+  "tools/dependabot-alert-inventory.test.mjs",
   "tools/dependabot-auto-merge-policy.mjs",
   "tools/dependabot-auto-merge-policy.test.mjs",
   "tools/dependabot-auto-merge-workflow.test.mjs",

@@ -112,6 +112,8 @@ test("成果物へ影響しない既知の文書とfixtureだけを明示的に�
     ".github/ISSUE_TEMPLATE/bug_report.yml",
     "tools/release-workflow-policy.mjs",
     "tools/release-workflow-policy.test.mjs",
+    "tools/dependabot-alert-inventory.sh",
+    "tools/dependabot-alert-inventory.test.mjs",
     "tools/dependabot-auto-merge-policy.mjs",
     "tools/dependabot-auto-merge-policy.test.mjs",
     "tools/dependabot-auto-merge-workflow.test.mjs",
