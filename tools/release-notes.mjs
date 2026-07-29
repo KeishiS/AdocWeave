@@ -23,24 +23,25 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "v0.17.1で先行して公開した互換性のないRust API変更を、プロジェクトの互換性方針に従うminor版として明示します。",
-  "v0.17.1からRust API、JSON形式のWASM protocol、CLI、診断、HTMLおよび実行時の動作を追加で変更していません。",
-  `v0.17.1のtag、source commitおよびassetは置き換えず、v${RELEASE_NOTES_VERSION}を新しいtag、asset、checksumおよびattestationで公開します。`,
+  "WASMの要求、前処理、応答およびエラーのwire型を公開schemaから生成し、wire値の検査・変換とコア処理の境界を明確にしました。",
+  "CLI、Language Server、構文解析、前処理、HTML生成および診断の責務を分割し、公開契約を保つ適合テストを拡充しました。",
+  "`WasmPreprocessResponse`と`WasmSourceMapSegment`の公開Rust APIに互換性のない型変更があります。JSON形式のWASM protocolは変更していません。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.17.1からJSON形式のWASM protocol、schema、CLI引数、診断codeおよびHTML契約を変更していません。`,
-  "v0.17.0からは公開Rust APIに互換性のない変更があります。v0.17.1のRelease Notesで公開APIを変更していないと説明したことは誤りでした。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.18.0からJSONのfield名、列挙値およびworker envelopeを変更していません。`,
+  "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型を変更しました。Rustからこれらの型を直接利用する場合は移行が必要です。",
+  "CLI引数、診断code、HTML契約および通常のJSON／WASM利用時の実行時動作はv0.18.0から変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "`WasmResponse::package_version`と`ParseSummary::package_version`は`&'static str`から`String`へ変わりました。文字列として借用する場合は`as_str()`を使用してください。",
-  "`ParseSummary`の`block_count`、`node_count`および`reference_count`は`usize`から`u32`へ変わりました。`usize`が必要な場合は明示的に変換してください。値が`u32`へ収まらない場合は切り詰めず`serialization-failed`を返します。",
-  "`LintConfig::protected_attribute_severity`は削除されました。`LintConfig::set_rule(PROTECTED_ATTRIBUTE, RuleSettings { enabled, severity })`を使用してください。現在の設定は`LintConfig::rule(PROTECTED_ATTRIBUTE)`で取得できます。",
-  `v0.17.1から更新する場合、これらのRust APIに追加の移行はありません。CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
+  "`WasmPreprocessResponse::package_version`は`&'static str`から所有値の`String`へ変わりました。文字列として借用する場合は`response.package_version.as_str()`を使用し、値を直接構築する場合は`VERSION.to_owned()`などの所有値を渡してください。",
+  "`WasmSourceMapSegment::mapping`は`String`から`WasmSourceMapping`へ変わりました。`\"identity\".to_owned()`と`\"whole-origin\".to_owned()`は、それぞれ`WasmSourceMapping::Identity`と`WasmSourceMapping::WholeOrigin`へ置き換えてください。",
+  "JSONの`packageVersion`は文字列のままです。`mapping`も`identity`または`whole-origin`の文字列として入出力するため、browser、WorkerまたはJSON APIの利用コードに移行は不要です。",
+  `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
 const knownConstraints = [
