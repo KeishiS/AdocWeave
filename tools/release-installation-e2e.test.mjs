@@ -6,7 +6,7 @@ import {
 } from "./platform-contract.mjs";
 
 const target = "x86_64-unknown-linux-musl";
-const version = "0.17.1";
+const version = "0.18.0";
 const archiveType = "zip";
 
 for (const [scope, expected] of [
