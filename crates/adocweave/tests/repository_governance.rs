@@ -498,12 +498,10 @@ fn roadmap_uses_unique_github_issue_urls() {
     }
     assert!(!numbers.is_empty(), "roadmap has no GitHub Issues");
 
-    let expected = [
-        "19", "33", "34", "82", "83", "84", "86", "236", "237", "238",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
+    let expected = ["19", "33", "34", "82", "83", "84", "86", "237", "238"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
     assert_eq!(
         numbers, expected,
         "roadmap must list the current major open Issues and no closed Issues"

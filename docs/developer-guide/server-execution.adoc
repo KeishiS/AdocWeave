@@ -65,9 +65,12 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 ``EffectiveProcessingOptions``が文書外属性と属性展開の深さ・生成byte数の上限を一つの処理契約として検証します。
 ``preprocess_and_analyze_with_options``と``WorkspaceSnapshot::analyze_with_options``には、この検証済みの値を渡します。
 
-互換APIやWASMのように解析設定と前処理設定を別々に受け取る入口では、文書外属性と二つの属性展開上限を
-同じ値にします。不一致はincludeの探索や解析を始める前に``invalid-options``として拒否されます。
-処理中に既定の上限を再取得して、呼出側が指定した境界を置き換えることはありません。
+解析設定と前処理設定を別々に受け取る``preprocess_and_analyze``では、文書外属性と二つの属性展開上限を
+同じ値にします。不一致はincludeの探索や解析を始める前に
+``PreprocessedAnalysisError::Options``として返され、原因は``ProcessingOptionsError``で区別できます。
+``WorkspaceSnapshot::analyze``とWASMのcombined requestも同じ不一致を処理前に検査し、
+公開境界の``invalid-options``として返します。処理中に既定の上限を再取得して、呼出側が指定した境界を
+置き換えることはありません。
 
 ``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。

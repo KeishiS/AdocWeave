@@ -24,23 +24,29 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 
 const highlights = [
   "WASMの要求、前処理、応答およびエラーのwire型を公開schemaから生成し、wire値の検査・変換とコア処理の境界を明確にしました。",
-  "CLI、Language Server、構文解析、前処理、HTML生成および診断の責務を分割し、公開契約を保つ適合テストを拡充しました。",
-  "`WasmPreprocessResponse`と`WasmSourceMapSegment`の公開Rust APIに互換性のない型変更があります。JSON形式のWASM protocolは変更していません。",
+  "filesystemの列挙と読込をhostへ集約し、Workspaceは検証済みの論理ID、本文、snapshotおよび依存関係だけを扱うようにしました。",
+  "前処理と解析で共有する文書外属性と属性展開上限を一つの検証済み処理契約へ統合しました。",
+  "公開Rust APIとWASM protocol schemaに互換性へ影響する変更があります。次の移行手順を確認してください。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.18.0からJSONのfield名、列挙値およびworker envelopeを変更していません。`,
-  "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型を変更しました。Rustからこれらの型を直接利用する場合は移行が必要です。",
-  "CLI引数、診断code、HTML契約および通常のJSON／WASM利用時の実行時動作はv0.18.0から変更していません。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。前処理設定へdefault付きの属性展開上限を追加しました。worker envelopeは変更していません。`,
+  "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型、前処理とWorkspaceの公開設定・エラー型、およびfilesystem読込の公開境界を変更しました。",
+  "CLI引数およびHTML契約はv0.18.0から変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
   "`WasmPreprocessResponse::package_version`は`&'static str`から所有値の`String`へ変わりました。文字列として借用する場合は`response.package_version.as_str()`を使用し、値を直接構築する場合は`VERSION.to_owned()`などの所有値を渡してください。",
   "`WasmSourceMapSegment::mapping`は`String`から`WasmSourceMapping`へ変わりました。`\"identity\".to_owned()`と`\"whole-origin\".to_owned()`は、それぞれ`WasmSourceMapping::Identity`と`WasmSourceMapping::WholeOrigin`へ置き換えてください。",
-  "JSONの`packageVersion`は文字列のままです。`mapping`も`identity`または`whole-origin`の文字列として入出力するため、browser、WorkerまたはJSON APIの利用コードに移行は不要です。",
+  "`PreprocessOptions`と`WasmPreprocessOptions`へ`max_attribute_expansion_depth`と`max_attribute_expansion_bytes`を追加しました。Rustの構造体を直接構築する場合は両fieldを指定するか、型に応じて`..PreprocessOptions::default()`または`..WasmPreprocessOptions::default()`を使用してください。",
+  "前処理と解析を一度に行うRustコードは、同じ文書外属性と属性展開上限を持つ`AnalysisOptions`と`PreprocessOptions`から`EffectiveProcessingOptions::new`を呼び、`preprocess_and_analyze_with_options`または`WorkspaceSnapshot::analyze_with_options`へ渡してください。従来の入口は不一致を`PreprocessedAnalysisError::Options`または`WorkspaceErrorCode::InvalidOptions`として拒否します。",
+  "`adocweave-workspace`の`scan_filesystem`、`scan_filesystem_with_session`、`FilesystemResource`および`WorkspaceErrorCode::Filesystem`を削除しました。`LocalFilesystemSession::scan_utf8`でhost側から読込み、検証済みの論理IDと本文を`Workspace::upsert_disk`へ渡してください。読込エラーはWorkspaceへ渡す前にhostの`ResourceError`として処理してください。",
+  "`adocweave_host::DependencyGraph`の公開を終了しました。依存関係はWorkspaceが所有するため、解析後は`WorkspaceAnalysis::dependencies`を参照してください。",
+  "WASM protocol schema 7では`preprocess.options`へ`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`を追加しました。省略時は従来と同じ32と1048576を使用します。combined requestで`analysisOptions.syntax.limits`へ非既定値を指定する場合は、前処理側にも同じ値を指定してください。不一致は処理前に`invalid-options`として拒否されます。",
+  "JSONの`packageVersion`は文字列のままです。source mapの`mapping`も`identity`または`whole-origin`の文字列を維持します。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
