@@ -946,9 +946,19 @@ fn validate_project_config_authority(
     Ok(())
 }
 
-fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> {
-    const MAX_SCAN_ENTRIES: usize = 100_000;
+const MAX_SCAN_ENTRIES: usize = 100_000;
 
+fn charge_scan_entry(scanned_entries: &mut usize) -> Result<(), CliError> {
+    *scanned_entries = scanned_entries.saturating_add(1);
+    if *scanned_entries > MAX_SCAN_ENTRIES {
+        return Err(CliError::Path(
+            "directory scan entry limit exceeded".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> {
     let mut pending = arguments
         .input
         .iter()
@@ -965,12 +975,7 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
         let matches = glob::glob(pattern)
             .map_err(|error| CliError::Path(format!("invalid glob pattern {pattern}: {error}")))?;
         for path in matches {
-            scanned_entries = scanned_entries.saturating_add(1);
-            if scanned_entries > MAX_SCAN_ENTRIES {
-                return Err(CliError::Path(
-                    "directory scan entry limit exceeded".to_owned(),
-                ));
-            }
+            charge_scan_entry(&mut scanned_entries)?;
             pending.push(
                 path.map_err(|error| CliError::Path(format!("cannot read glob match: {error}")))?,
             );
@@ -999,12 +1004,7 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
                     source_name: path.display().to_string(),
                     source,
                 })?);
-                scanned_entries = scanned_entries.saturating_add(1);
-                if scanned_entries > MAX_SCAN_ENTRIES {
-                    return Err(CliError::Path(
-                        "directory scan entry limit exceeded".to_owned(),
-                    ));
-                }
+                charge_scan_entry(&mut scanned_entries)?;
             }
             children.sort_by_key(fs::DirEntry::file_name);
             for entry in children.into_iter().rev() {
@@ -1999,7 +1999,8 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         Action, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT,
-        DiagnosticFormat, FormatOptions, parse_arguments, render_completion_script,
+        DiagnosticFormat, FormatOptions, MAX_SCAN_ENTRIES, charge_scan_entry, parse_arguments,
+        render_completion_script,
     };
     use crate::commands::model::{self, CommandId};
 
@@ -2373,5 +2374,14 @@ mod tests {
             Some(std::path::Path::new("docs"))
         );
         assert_eq!(parsed.allowed_roots.len(), 2);
+    }
+
+    #[test]
+    fn scan_candidate_counter_rejects_the_first_entry_past_the_cap() {
+        let mut scanned = MAX_SCAN_ENTRIES - 1;
+        charge_scan_entry(&mut scanned).expect("exact scan boundary");
+        assert_eq!(scanned, MAX_SCAN_ENTRIES);
+        let error = charge_scan_entry(&mut scanned).expect_err("entry past scan boundary");
+        assert!(error.to_string().contains("scan entry limit"));
     }
 }

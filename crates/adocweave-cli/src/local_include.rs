@@ -321,8 +321,8 @@ pub fn prepare(
             path: base_dir.to_owned(),
             source,
         })?;
-    let roots = if allowed_roots.is_empty() {
-        vec![base_dir.clone()]
+    let allowed_roots = if allowed_roots.is_empty() {
+        Vec::new()
     } else {
         allowed_roots
             .iter()
@@ -335,10 +335,12 @@ pub fn prepare(
             })
             .collect::<Result<Vec<_>, _>>()?
     };
-    if !roots.iter().any(|root| base_dir.starts_with(root)) {
-        return Err(LocalIncludeError::OutsideRoot(base_dir));
+    let mut session_roots = allowed_roots.clone();
+    if !session_roots.contains(&base_dir) {
+        session_roots.push(base_dir.clone());
     }
-    let policy = LocalFilesystemPolicy::new(roots, limits).map_err(LocalIncludeError::Host)?;
+    let policy =
+        LocalFilesystemPolicy::new(session_roots, limits).map_err(LocalIncludeError::Host)?;
     let mut filesystem = policy.session().map_err(LocalIncludeError::Host)?;
 
     let mut sources = BTreeMap::new();
@@ -358,6 +360,10 @@ pub fn prepare(
     let (projection, include_errors) =
         preprocess_with(source, preprocess_options, projection, |_, target| {
             let path = base_dir.join(target);
+            if !allowed_roots.is_empty() && !allowed_roots.iter().any(|root| path.starts_with(root))
+            {
+                return Err(LocalIncludeError::OutsideRoot(path));
+            }
             let resource_id = include_source_id(target);
             let loaded = filesystem
                 .read_utf8(
