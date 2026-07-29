@@ -6,6 +6,23 @@ const RUST_NAMES = {
   SafeMode: "WasmSafeMode",
 };
 
+const RESPONSE_RUST_NAME_OVERRIDES = {
+  AdocWeaveWasmResponse: "WasmResponse",
+  ParseSummary: "ParseSummary",
+  ProductSet: "WasmProductSet",
+};
+
+const RESPONSE_EXTERNAL_TYPES = new Set([
+  "MathLanguage",
+  "ProductSet",
+  "Severity",
+]);
+
+const SHARED_RUST_ENUMS = [
+  "MathLanguage",
+  "Severity",
+];
+
 const RUST_KEYWORDS = new Set([
   "Self", "abstract", "as", "async", "await", "become", "box", "break", "const",
   "continue", "crate", "do", "dyn", "else", "enum", "extern", "false", "final",
@@ -49,6 +66,479 @@ export function generateRustPreprocessInputs(schema) {
     rustObject("AnalysisPreprocessInput", contracts.AnalysisPreprocessInput),
     rustObject("PreprocessRequest", contracts.PreprocessRequest),
   ].join("\n\n");
+}
+
+export function generateRustSharedTypes(schema) {
+  return SHARED_RUST_ENUMS
+    .map((name) => {
+      const values = schema.enums?.[name];
+      const defaultValue = sharedEnumDefault(schema, name);
+      return rustSharedEnum(name, values, defaultValue);
+    })
+    .join("\n\n");
+}
+
+function sharedEnumDefault(schema, name) {
+  const contracts = [
+    ...Object.values(schema.settings ?? {}),
+    ...Object.values(schema.definitions ?? {}),
+    ...Object.values(schema.preprocessDefinitions ?? {}),
+    schema.request,
+    schema.preprocessRequest,
+  ].filter(Boolean);
+  const defaults = new Set(
+    contracts
+      .flatMap((contract) => contract.fields ?? [])
+      .filter((field) => field.type === name && Object.hasOwn(field, "default"))
+      .map((field) => field.default),
+  );
+  if ([...defaults].some((value) => typeof value !== "string") || defaults.size > 1) {
+    throw new Error(`${name} has conflicting shared Rust defaults`);
+  }
+  return defaults.values().next().value;
+}
+
+function rustSharedEnum(name, values, defaultValue) {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error(`${name} must have at least one shared Rust enum value`);
+  }
+  if (defaultValue !== undefined && !values.includes(defaultValue)) {
+    throw new Error(`${name} has an invalid shared Rust default`);
+  }
+  const identifiers = new Set();
+  const variants = values.map((value) => {
+    const variant = rustVariant(value);
+    validateRustIdentifier(variant, `${name} enum value ${JSON.stringify(value)}`);
+    if (identifiers.has(variant)) {
+      throw new Error(`${name} enum values collide as Rust identifier ${variant}`);
+    }
+    identifiers.add(variant);
+    return value === defaultValue
+      ? `    #[default]\n    ${variant},`
+      : `    ${variant},`;
+  });
+  const derives = [
+    "Clone",
+    "Copy",
+    "Debug",
+    ...(defaultValue === undefined ? [] : ["Default"]),
+    "serde::Deserialize",
+    "serde::Serialize",
+    "Eq",
+    "PartialEq",
+  ];
+  return `#[derive(${derives.join(", ")})]
+#[serde(rename_all = "kebab-case")]
+pub enum ${responseRustName(name)} {
+${variants.join("\n")}
+}`;
+}
+
+export function generateRustResponseTypes(schema) {
+  const contracts = collectResponseContracts(schema);
+  const reached = reachableResponseTypes(["AdocWeaveWasmResponse"], contracts);
+  validateResponseRustNames(reached);
+  validateSizedResponseTypes(reached, contracts);
+
+  const definitions = [...reached]
+    .filter((name) => !RESPONSE_EXTERNAL_TYPES.has(name))
+    .sort()
+    .map((name) => {
+      const contract = contracts[name];
+      if (Array.isArray(contract)) return rustResponseEnum(name, contract);
+      if (contract.variants) return rustResponseUnion(name, contract, reached);
+      return rustResponseObject(name, contract, reached, contracts);
+    })
+    .join("\n\n");
+  const imports = [...reached]
+    .filter((name) => RESPONSE_EXTERNAL_TYPES.has(name))
+    .map(responseRustName)
+    .sort();
+  return imports.length === 0
+    ? definitions
+    : `use crate::{${imports.join(", ")}};\n\n${definitions}`;
+}
+
+function collectResponseContracts(schema) {
+  const contracts = {};
+  for (const [namespace, entries] of [
+    ["definitions", schema.definitions],
+    ["dtos", schema.dtos],
+    ["enums", schema.enums],
+    ["taggedUnions", schema.taggedUnions],
+    ["roots", {
+      AdocWeaveWasmResponse: schema.response,
+      ProductSet: schema.productSet,
+    }],
+  ]) {
+    if (!entries || typeof entries !== "object") {
+      throw new Error(`missing response Rust contract namespace ${namespace}`);
+    }
+    for (const [name, contract] of Object.entries(entries)) {
+      if (Object.hasOwn(contracts, name)) {
+        throw new Error(`duplicate response Rust contract ${name}`);
+      }
+      contracts[name] = contract;
+    }
+  }
+  return contracts;
+}
+
+function reachableResponseTypes(roots, contracts) {
+  const reached = new Set();
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (reached.has(name)) continue;
+    const contract = contracts[name];
+    if (!contract) {
+      throw new Error(`unsupported reachable response Rust type ${name}`);
+    }
+    reached.add(name);
+    const fields = contract.variants
+      ? Object.values(contract.variants).flat()
+      : Array.isArray(contract)
+        ? []
+        : contract.fields;
+    if (!Array.isArray(fields)) {
+      throw new Error(`invalid response Rust contract ${name}`);
+    }
+    for (const field of fields) {
+      validateResponseField(field, name);
+      for (const reference of responseTypeReferences(field.type)) {
+        if (!contracts[reference]) {
+          throw new Error(`unsupported reachable response Rust type ${reference}`);
+        }
+        if (!reached.has(reference)) pending.push(reference);
+      }
+    }
+  }
+  return reached;
+}
+
+function validateSizedResponseTypes(reached, contracts) {
+  const directEdges = new Map();
+  for (const name of reached) {
+    if (RESPONSE_EXTERNAL_TYPES.has(name)) continue;
+    const contract = contracts[name];
+    const fields = contract?.variants
+      ? Object.values(contract.variants).flat()
+      : Array.isArray(contract)
+        ? []
+        : contract?.fields ?? [];
+    directEdges.set(
+      name,
+      fields
+        .map(({ type }) => directResponseReference(parseResponseType(type)))
+        .filter((reference) =>
+          reference
+          && reached.has(reference)
+          && !RESPONSE_EXTERNAL_TYPES.has(reference)
+          && !Array.isArray(contracts[reference])
+        ),
+    );
+  }
+
+  const visiting = new Set();
+  const visited = new Set();
+  const path = [];
+  const visit = (name) => {
+    if (visiting.has(name)) {
+      const start = path.indexOf(name);
+      throw new Error(
+        `response Rust types have an infinitely sized cycle: ${[...path.slice(start), name].join(" -> ")}`,
+      );
+    }
+    if (visited.has(name)) return;
+    visiting.add(name);
+    path.push(name);
+    for (const next of directEdges.get(name) ?? []) visit(next);
+    path.pop();
+    visiting.delete(name);
+    visited.add(name);
+  };
+  for (const name of directEdges.keys()) visit(name);
+}
+
+function directResponseReference(parsed) {
+  if (parsed.kind === "named") return parsed.name;
+  if (parsed.kind === "nullable" || parsed.kind === "required") {
+    return directResponseReference(parsed.inner);
+  }
+  return null;
+}
+
+function responseTypeReferences(type) {
+  const parsed = parseResponseType(type);
+  if (parsed.kind === "named") return [parsed.name];
+  if (parsed.kind === "array" || parsed.kind === "nullable" || parsed.kind === "required") {
+    return responseTypeReferencesFromAst(parsed.inner);
+  }
+  return [];
+}
+
+function responseTypeReferencesFromAst(parsed) {
+  if (parsed.kind === "named") return [parsed.name];
+  if (parsed.kind === "array" || parsed.kind === "nullable" || parsed.kind === "required") {
+    return responseTypeReferencesFromAst(parsed.inner);
+  }
+  return [];
+}
+
+function parseResponseType(type) {
+  if (typeof type !== "string" || type !== type.trim()) {
+    throw new Error(`unsupported response Rust field type ${String(type)}`);
+  }
+  if (type === "Required<ProductSet>") {
+    return {
+      kind: "required",
+      inner: { kind: "named", name: "ProductSet" },
+    };
+  }
+  const nullable = type.match(/^([A-Za-z][A-Za-z0-9]*) \| null$/);
+  if (nullable) {
+    return { kind: "nullable", inner: parseResponseAtom(nullable[1], type) };
+  }
+  const array = type.match(/^([A-Za-z][A-Za-z0-9]*)\[\]$/);
+  if (array) {
+    return { kind: "array", inner: parseResponseAtom(array[1], type) };
+  }
+  return parseResponseAtom(type, type);
+}
+
+function parseResponseAtom(value, source) {
+  if (["string", "u32", "boolean"].includes(value)) {
+    return { kind: "primitive", name: value };
+  }
+  if (/^[A-Z][A-Za-z0-9]*$/.test(value)) {
+    return { kind: "named", name: value };
+  }
+  throw new Error(`unsupported response Rust field type ${source}`);
+}
+
+function validateResponseRustNames(reached) {
+  const names = new Map();
+  for (const schemaName of reached) {
+    const rustName = responseRustName(schemaName);
+    validateRustIdentifier(rustName, `response type ${schemaName}`);
+    const previous = names.get(rustName);
+    if (previous) {
+      throw new Error(
+        `response types ${previous} and ${schemaName} collide as Rust identifier ${rustName}`,
+      );
+    }
+    names.set(rustName, schemaName);
+  }
+}
+
+function responseRustName(name) {
+  return RESPONSE_RUST_NAME_OVERRIDES[name] ?? `Wasm${name}`;
+}
+
+function rustResponseEnum(name, values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error(`${name} must have at least one response enum value`);
+  }
+  const identifiers = new Set();
+  const variants = values.map((value) => {
+    const variant = rustVariant(value);
+    validateRustIdentifier(variant, `${name} enum value ${JSON.stringify(value)}`);
+    if (identifiers.has(variant)) {
+      throw new Error(`${name} enum values collide as Rust identifier ${variant}`);
+    }
+    identifiers.add(variant);
+    return `    ${variant},`;
+  });
+  return `#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ${responseRustName(name)} {
+${variants.join("\n")}
+}`;
+}
+
+function rustResponseObject(name, contract, reached, contracts) {
+  if (!contract || !Array.isArray(contract.fields)) {
+    throw new Error(`invalid response Rust object ${name}`);
+  }
+  if (contract.description !== undefined
+      && (typeof contract.description !== "string"
+        || contract.description.length === 0
+        || /[\r\n]/.test(contract.description))) {
+    throw new Error(`${name} has an invalid Rust documentation description`);
+  }
+  const rustFields = new Set();
+  const fields = contract.fields.map((field) => {
+    validateResponseField(field, name);
+    const identifier = rustField(field.json);
+    validateRustIdentifier(identifier, `${name}.${field.json}`);
+    if (rustFields.has(identifier)) {
+      throw new Error(`${name} fields collide as Rust identifier ${identifier}`);
+    }
+    rustFields.add(identifier);
+    return `    pub ${identifier}: ${rustResponseType(field.type, reached)},`;
+  });
+  const derives = [
+    "Clone",
+    ...(responseObjectIsCopy(name, contract, reached, contracts, new Set()) ? ["Copy"] : []),
+    "Debug",
+    ...(responseObjectHasExplicitDefault(name, contract) ? ["Default"] : []),
+    "serde::Deserialize",
+    "serde::Serialize",
+    "Eq",
+    "PartialEq",
+  ];
+  const documentation = contract.description
+    ? `/// ${contract.description}\n`
+    : "";
+  return `${documentation}#[derive(${derives.join(", ")})]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ${responseRustName(name)} {
+${fields.join("\n")}
+}`;
+}
+
+function rustResponseUnion(name, contract, reached) {
+  if (typeof contract.tag !== "string"
+      || !/^[a-z][A-Za-z0-9]*$/.test(contract.tag)
+      || !contract.variants
+      || Object.keys(contract.variants).length === 0) {
+    throw new Error(`invalid response Rust tagged union ${name}`);
+  }
+  const variants = Object.entries(contract.variants)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([value, fields]) => {
+      const variant = rustVariant(value);
+      validateRustIdentifier(variant, `${name} union variant ${JSON.stringify(value)}`);
+      const rustFields = new Set();
+      const members = fields.map((field) => {
+        validateResponseField(field, `${name}.${value}`);
+        if (field.json === contract.tag) {
+          throw new Error(`${name}.${value} field collides with tag ${contract.tag}`);
+        }
+        const identifier = rustField(field.json);
+        validateRustIdentifier(identifier, `${name}.${value}.${field.json}`);
+        if (rustFields.has(identifier)) {
+          throw new Error(
+            `${name}.${value} fields collide as Rust identifier ${identifier}`,
+          );
+        }
+        rustFields.add(identifier);
+        return `        ${identifier}: ${rustResponseType(field.type, reached)},`;
+      });
+      return members.length === 0
+        ? `    ${variant},`
+        : `    ${variant} {\n${members.join("\n")}\n    },`;
+    });
+  return `#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(
+    tag = "${contract.tag}",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ${responseRustName(name)} {
+${variants.join("\n")}
+}`;
+}
+
+function validateResponseField(field, owner) {
+  if (!field?.json || !field?.type) throw new Error(`${owner} has an invalid field`);
+  if (!/^[a-z][A-Za-z0-9]*$/.test(field.json)) {
+    throw new Error(`${owner}.${field.json} is not a supported JSON field name`);
+  }
+}
+
+function rustResponseType(type, reached) {
+  return rustResponseTypeFromAst(parseResponseType(type), reached, type);
+}
+
+function rustResponseTypeFromAst(parsed, reached, source) {
+  if (parsed.kind === "required") {
+    return rustResponseTypeFromAst(parsed.inner, reached, source);
+  }
+  if (parsed.kind === "nullable") {
+    return `Option<${rustResponseTypeFromAst(parsed.inner, reached, source)}>`;
+  }
+  if (parsed.kind === "array") {
+    return `Vec<${rustResponseTypeFromAst(parsed.inner, reached, source)}>`;
+  }
+  if (parsed.kind === "primitive") {
+    return {
+      string: "String",
+      u32: "u32",
+      boolean: "bool",
+    }[parsed.name];
+  }
+  if (parsed.kind === "named" && reached.has(parsed.name)) {
+    return responseRustName(parsed.name);
+  }
+  throw new Error(`unsupported response Rust field type ${source}`);
+}
+
+function responseObjectIsCopy(name, contract, reached, contracts, visiting) {
+  if (visiting.has(name)) return false;
+  visiting.add(name);
+  const copy = contract.fields.every((field) =>
+    responseTypeIsCopy(field.type, reached, contracts, visiting)
+  );
+  visiting.delete(name);
+  return copy;
+}
+
+function responseObjectHasExplicitDefault(name, contract) {
+  if (contract.outputDefault === undefined) return false;
+  const value = contract.outputDefault;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must declare an object outputDefault`);
+  }
+  const expectedFields = contract.fields.map(({ json }) => json).sort();
+  const defaultFields = Object.keys(value).sort();
+  if (JSON.stringify(defaultFields) !== JSON.stringify(expectedFields)) {
+    throw new Error(`${name} outputDefault must cover every field exactly once`);
+  }
+  for (const field of contract.fields) {
+    if (!responseFieldUsesRustDefault(field.type, value[field.json])) {
+      throw new Error(
+        `${name}.${field.json} outputDefault does not match Rust Default`,
+      );
+    }
+  }
+  return true;
+}
+
+function responseFieldUsesRustDefault(type, value) {
+  const parsed = parseResponseType(type);
+  if (parsed.kind === "array") return Array.isArray(value) && value.length === 0;
+  if (parsed.kind === "nullable") return value === null;
+  if (parsed.kind !== "primitive") return false;
+  if (parsed.name === "string") return value === "";
+  if (parsed.name === "u32") return value === 0;
+  if (parsed.name === "boolean") return value === false;
+  return false;
+}
+
+function responseTypeIsCopy(type, reached, contracts, visiting) {
+  return responseTypeAstIsCopy(
+    parseResponseType(type),
+    reached,
+    contracts,
+    visiting,
+  );
+}
+
+function responseTypeAstIsCopy(parsed, reached, contracts, visiting) {
+  if (parsed.kind === "required" || parsed.kind === "nullable") {
+    return responseTypeAstIsCopy(parsed.inner, reached, contracts, visiting);
+  }
+  if (parsed.kind === "array") return false;
+  if (parsed.kind === "primitive") return parsed.name !== "string";
+  const value = parsed.name;
+  if (!reached.has(value)) return false;
+  if (RESPONSE_EXTERNAL_TYPES.has(value)) return true;
+  const contract = contracts[value];
+  if (Array.isArray(contract)) return true;
+  if (contract?.variants) return false;
+  return responseObjectIsCopy(value, contract, reached, contracts, visiting);
 }
 
 function reachableTypes(roots, contracts) {
