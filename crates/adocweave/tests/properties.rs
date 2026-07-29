@@ -4,8 +4,8 @@ use adocweave::output::projection::{project, searchable_text};
 use adocweave::resolution::ReferenceKey;
 use adocweave::resolution::{AuthoredUrlPolicy, UrlDecision};
 use adocweave::semantic::{
-    Block, DelimitedContent, TableCellContent, TableCellStyle, TableFormat, TableSection,
-    SemanticNode, generate_heading_ids, reference_targets, walk as walk_semantic,
+    Block, DelimitedContent, SemanticNode, TableCellContent, TableCellStyle, TableFormat,
+    TableSection, generate_heading_ids, reference_targets, walk as walk_semantic,
 };
 use adocweave::text::{PositionEncoding, SourceDocument, SyntaxKind, TextSize};
 use adocweave::{AnalysisOptions, Engine};
