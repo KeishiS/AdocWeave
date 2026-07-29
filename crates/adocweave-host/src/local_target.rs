@@ -400,6 +400,10 @@ impl LocalTargetSession {
         self.inspections.len()
     }
 
+    pub(crate) fn has_inspected_candidate(&self, candidate: &Path) -> bool {
+        self.inspections.contains_key(candidate)
+    }
+
     pub(crate) fn release_candidate(&mut self, candidate: &Path) {
         if let Some(result) = self.inspections.remove(candidate) {
             self.requests = self.requests.saturating_sub(1);
