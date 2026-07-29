@@ -82,6 +82,169 @@ impl PendingBlockMetadata {
     }
 }
 
+struct BlockParserState {
+    cursor: BlockCursor,
+    document_header_phase: Option<DocumentHeaderState>,
+    pending_metadata: PendingBlockMetadata,
+    paragraph_lines: Vec<(SourceLine, String)>,
+    saw_content: bool,
+    context: BlockContext,
+}
+
+impl BlockParserState {
+    fn new(input: &BlockInput<'_>, context: BlockContext) -> Self {
+        Self {
+            cursor: BlockCursor::for_range(&input.lines),
+            document_header_phase: context
+                .allows_document_header()
+                .then(DocumentHeaderState::default),
+            pending_metadata: PendingBlockMetadata::default(),
+            paragraph_lines: Vec::new(),
+            saw_content: false,
+            context,
+        }
+    }
+
+    fn current_line(&self) -> Option<usize> {
+        self.cursor.current()
+    }
+
+    fn document_attribute_position(
+        &self,
+        source_document: &SourceDocument,
+        line_index: usize,
+    ) -> bool {
+        self.document_header_phase.as_ref().is_some_and(|header| {
+            header.attributes_open
+                || body_attribute_has_blank_offset(
+                    source_document,
+                    line_index,
+                    self.saw_content || !header.attributes_open,
+                )
+        })
+    }
+
+    fn document_title_position(&self) -> bool {
+        self.context.document_title_position(self.saw_content)
+    }
+
+    fn take_author_expectation(&mut self) -> bool {
+        let Some(header) = self.document_header_phase.as_mut() else {
+            return false;
+        };
+        let expected = header.expect_author;
+        header.expect_author = false;
+        expected
+    }
+
+    fn record_author(&mut self, author: Author, line_range: TextRange) {
+        let header = self
+            .document_header_phase
+            .as_mut()
+            .expect("only root documents recognize authors");
+        header.extend_range(line_range);
+        header.header.authors.push(author);
+        header.expect_revision = true;
+    }
+
+    fn take_revision_expectation(&mut self) -> bool {
+        let Some(header) = self.document_header_phase.as_mut() else {
+            return false;
+        };
+        let expected = header.expect_revision;
+        header.expect_revision = false;
+        expected
+    }
+
+    fn record_revision(&mut self, revision: Revision, line_range: TextRange) {
+        let header = self
+            .document_header_phase
+            .as_mut()
+            .expect("only root documents recognize revisions");
+        header.extend_range(line_range);
+        header.header.revision = Some(revision);
+    }
+
+    fn close_header_attributes(&mut self) {
+        self.document_header_phase
+            .iter_mut()
+            .for_each(DocumentHeaderState::close_attributes);
+    }
+
+    fn stop_header_author_revision(&mut self) {
+        self.document_header_phase
+            .iter_mut()
+            .for_each(DocumentHeaderState::stop_author_revision);
+    }
+
+    fn close_header_at_blank(&mut self, line_range: TextRange) {
+        let Some(header) = self.document_header_phase.as_mut() else {
+            return;
+        };
+        if header.attributes_open && header.header.range.is_some() {
+            header.attributes_open = false;
+            header.header.end = line_range.start();
+        }
+    }
+
+    fn open_header_after_title(&mut self, line_range: TextRange) {
+        let header = self
+            .document_header_phase
+            .as_mut()
+            .expect("only root documents recognize document titles");
+        header.attributes_open = true;
+        header.extend_range(line_range);
+        header.expect_author = true;
+    }
+
+    fn mark_content_seen(&mut self) {
+        self.saw_content = true;
+    }
+
+    fn mark_body_content(&mut self) {
+        self.mark_content_seen();
+        self.close_header_attributes();
+    }
+
+    fn push_paragraph_line(&mut self, line: SourceLine, content: &str) {
+        self.paragraph_lines.push((line, content.to_owned()));
+        self.mark_body_content();
+    }
+
+    fn flush_paragraph(
+        &mut self,
+        syntax_blocks: &mut Vec<SyntaxNode>,
+        ast_blocks: &mut Vec<AstBlock>,
+        config: &ParseConfig,
+        budget: &mut ParseBudget,
+    ) -> Result<(), ParseFailure> {
+        flush_paragraph(
+            syntax_blocks,
+            ast_blocks,
+            &mut self.paragraph_lines,
+            config,
+            budget,
+            &mut self.pending_metadata,
+        )
+    }
+
+    fn flush_orphan_metadata(
+        &mut self,
+        syntax_blocks: &mut Vec<SyntaxNode>,
+        ast_blocks: &mut Vec<AstBlock>,
+        source: &str,
+        budget: &mut ParseBudget,
+    ) -> Result<(), ParseFailure> {
+        Ok(flush_orphan_metadata(
+            syntax_blocks,
+            ast_blocks,
+            &mut self.pending_metadata,
+            source,
+            budget,
+        )?)
+    }
+}
+
 impl AstDocument {
     pub(crate) fn new(
         blocks: Vec<AstBlock>,
@@ -523,22 +686,21 @@ impl BlockCommit {
 }
 
 fn commit_recognized_block(
-    cursor: &mut BlockCursor,
+    state: &mut BlockParserState,
     recognition: BlockRecognition<BlockCommit>,
     syntax_blocks: &mut Vec<SyntaxNode>,
     ast_blocks: &mut Vec<AstBlock>,
-    pending_metadata: &mut PendingBlockMetadata,
     budget: &mut ParseBudget,
 ) -> Result<bool, ParseFailure> {
     let Some((consumption, commit)) = recognition.into_commit() else {
         return Ok(false);
     };
-    cursor.validate(consumption)?;
+    state.cursor.validate(consumption)?;
     budget.charge(commit.charge)?;
-    cursor.commit(consumption)?;
+    state.cursor.commit(consumption)?;
     syntax_blocks.push(commit.syntax);
     ast_blocks.push(commit.block);
-    attach_pending_metadata(syntax_blocks, ast_blocks, pending_metadata);
+    attach_pending_metadata(syntax_blocks, ast_blocks, &mut state.pending_metadata);
     Ok(true)
 }
 
@@ -662,17 +824,11 @@ fn parse_block_sequence(
     let source_document = input.document;
     let mut blocks = Vec::new();
     let mut ast_blocks = Vec::new();
-    let mut paragraph_lines = Vec::new();
-    let mut saw_content = false;
-    let mut root = context
-        .allows_document_header()
-        .then(DocumentHeaderState::default);
     let mut anchors = Vec::new();
-    let mut pending_metadata = PendingBlockMetadata::default();
+    let mut parser = BlockParserState::new(&input, context);
 
     let end_line = input.lines.end;
-    let mut cursor = BlockCursor::for_range(&input.lines);
-    while let Some(line_index) = cursor.current() {
+    while let Some(line_index) = parser.current_line() {
         if is_cancelled() {
             return Err(ParseFailure::Cancelled);
         }
@@ -686,57 +842,40 @@ fn parse_block_sequence(
             .filter(|_| line_index + 1 < end_line)
             .and_then(|next| source_document.text(next.content_range()));
 
-        if root.as_ref().is_some_and(|state| state.expect_author)
-            && !content.trim_matches([' ', '\t']).is_empty()
+        if !content.trim_matches([' ', '\t']).is_empty()
+            && parser.take_author_expectation()
+            && !content.chars().any(char::is_control)
+            && !content.starts_with([':', '[', '='])
+            && crate::delimiter::spec(content).is_none()
+            && !content.starts_with("//")
+            && let Some(author) = crate::document_header::parse_author(content, line)?
         {
-            root.as_mut().expect("root state exists").expect_author = false;
-            if !content.chars().any(char::is_control)
-                && !content.starts_with([':', '[', '='])
-                && crate::delimiter::spec(content).is_none()
-                && !content.starts_with("//")
-                && let Some(author) = crate::document_header::parse_author(content, line)?
-            {
-                budget.consume_node()?;
-                let root = root.as_mut().expect("root state exists");
-                root.extend_range(line.full_range());
-                root.header.authors.push(author);
-                blocks.push(SyntaxNode::leaf(SyntaxKind::AuthorLine, line.full_range()));
-                root.expect_revision = true;
-                cursor.commit(BlockConsumption::OneLine)?;
-                continue;
-            }
+            budget.consume_node()?;
+            parser.record_author(author, line.full_range());
+            blocks.push(SyntaxNode::leaf(SyntaxKind::AuthorLine, line.full_range()));
+            parser.cursor.commit(BlockConsumption::OneLine)?;
+            continue;
         }
-        if root.as_ref().is_some_and(|state| state.expect_revision)
-            && !content.trim_matches([' ', '\t']).is_empty()
+        if !content.trim_matches([' ', '\t']).is_empty()
+            && parser.take_revision_expectation()
+            && !content.chars().any(char::is_control)
+            && !content.starts_with([':', '[', '='])
+            && crate::delimiter::spec(content).is_none()
+            && !content.starts_with("//")
         {
-            root.as_mut().expect("root state exists").expect_revision = false;
-            if !content.chars().any(char::is_control)
-                && !content.starts_with([':', '[', '='])
-                && crate::delimiter::spec(content).is_none()
-                && !content.starts_with("//")
-            {
-                let revision = crate::document_header::parse_revision(content, line)?;
-                budget.consume_node()?;
-                let root = root.as_mut().expect("root state exists");
-                root.extend_range(line.full_range());
-                root.header.revision = Some(revision);
-                blocks.push(SyntaxNode::leaf(
-                    SyntaxKind::RevisionLine,
-                    line.full_range(),
-                ));
-                cursor.commit(BlockConsumption::OneLine)?;
-                continue;
-            }
+            let revision = crate::document_header::parse_revision(content, line)?;
+            budget.consume_node()?;
+            parser.record_revision(revision, line.full_range());
+            blocks.push(SyntaxNode::leaf(
+                SyntaxKind::RevisionLine,
+                line.full_range(),
+            ));
+            parser.cursor.commit(BlockConsumption::OneLine)?;
+            continue;
         }
 
-        let document_attribute_position = root.as_ref().is_some_and(|state| {
-            state.attributes_open
-                || body_attribute_has_blank_offset(
-                    source_document,
-                    line_index,
-                    saw_content || !state.attributes_open,
-                )
-        });
+        let document_attribute_position =
+            parser.document_attribute_position(source_document, line_index);
         let recognition = recognize_line(
             content,
             next_content,
@@ -748,14 +887,7 @@ fn parse_block_sequence(
             recognition,
             LineRecognition::Source | LineRecognition::InvalidSource | LineRecognition::Math
         ) {
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.check(ParseBudgetCharge {
                 blocks: 1,
                 nodes: 1,
@@ -779,30 +911,21 @@ fn parse_block_sequence(
             BlockRecognition::NoMatch
         };
         if commit_recognized_block(
-            &mut cursor,
+            &mut parser,
             recognized_block,
             &mut blocks,
             &mut ast_blocks,
-            &mut pending_metadata,
             budget,
         )? {
-            saw_content = true;
+            parser.mark_content_seen();
             if recognition == LineRecognition::InvalidSource {
-                root.iter_mut()
-                    .for_each(DocumentHeaderState::close_attributes);
+                parser.close_header_attributes();
             }
             continue;
         }
         if recognition == LineRecognition::Delimited {
             let spec = crate::delimiter::spec(content).expect("recognizer verified delimiter");
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_block()?;
             budget.consume_node()?;
             let delimited_context = DelimitedParseContext {
@@ -821,8 +944,8 @@ fn parse_block_sequence(
                 end_line,
                 spec,
                 &mut state,
-                context.depth,
-                Some(&pending_metadata.semantic),
+                parser.context.depth,
+                Some(&parser.pending_metadata.semantic),
             )?;
             let syntax = crate::syntax_builder::delimited(&block, nested_syntax);
             let recognition = if block.problems.is_empty() {
@@ -837,16 +960,13 @@ fn parse_block_sequence(
                 )
             };
             commit_recognized_block(
-                &mut cursor,
+                &mut parser,
                 recognition,
                 &mut blocks,
                 &mut ast_blocks,
-                &mut pending_metadata,
                 budget,
             )?;
-            saw_content = true;
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
+            parser.mark_body_content();
             continue;
         } else if recognition == LineRecognition::Anchor {
             let anchor = parse_explicit_anchor(
@@ -856,20 +976,11 @@ fn parse_block_sequence(
             )
             .filter(|_| content.starts_with("[["))
             .expect("recognizer verified anchor");
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_node()?;
-            pending_metadata.push_anchor(&anchor);
+            parser.pending_metadata.push_anchor(&anchor);
             anchors.push(anchor);
-            saw_content = true;
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
+            parser.mark_body_content();
         } else if recognition == LineRecognition::BlockTitle {
             let title = parse_block_title(
                 content,
@@ -878,30 +989,15 @@ fn parse_block_sequence(
                 budget,
             )?
             .expect("recognizer verified block title");
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_node()?;
             budget.consume_attribute()?;
-            pending_metadata.push_title(title, line.full_range());
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
+            parser.pending_metadata.push_title(title, line.full_range());
+            parser.close_header_attributes();
         } else if recognition == LineRecognition::BlockMetadata {
             let metadata = parse_block_attributes(content, line.content_range().start().to_usize())
                 .expect("recognizer verified block metadata");
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_node()?;
             consume_metadata_budget(&metadata, budget)?;
             if let Some(id) = &metadata.id {
@@ -915,72 +1011,31 @@ fn parse_block_sequence(
                     valid: valid_anchor_id(&id.value),
                 });
             }
-            pending_metadata.push_attributes(metadata, line.full_range());
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
+            parser
+                .pending_metadata
+                .push_attributes(metadata, line.full_range());
+            parser.close_header_attributes();
         } else if recognition == LineRecognition::Comment {
-            root.iter_mut()
-                .for_each(DocumentHeaderState::stop_author_revision);
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.stop_header_author_revision();
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             let comment = SyntaxNode::leaf(SyntaxKind::CommentLine, line.full_range());
-            if pending_metadata.is_empty() {
+            if parser.pending_metadata.is_empty() {
                 blocks.push(comment);
             } else {
-                pending_metadata.push_interstitial_syntax(comment);
+                parser.pending_metadata.push_interstitial_syntax(comment);
             }
         } else if recognition == LineRecognition::Blank {
-            root.iter_mut()
-                .for_each(DocumentHeaderState::stop_author_revision);
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
-            flush_orphan_metadata(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut pending_metadata,
-                source,
-                budget,
-            )?;
+            parser.stop_header_author_revision();
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
+            parser.flush_orphan_metadata(&mut blocks, &mut ast_blocks, source, budget)?;
             blocks.push(SyntaxNode::leaf(SyntaxKind::BlankLine, line.full_range()));
-            if root
-                .as_ref()
-                .is_some_and(|state| state.attributes_open && state.header.range.is_some())
-            {
-                let root = root.as_mut().expect("root state exists");
-                root.attributes_open = false;
-                root.header.end = line.full_range().start();
-            }
+            parser.close_header_at_blank(line.full_range());
         } else if recognition == LineRecognition::DocumentAttribute {
             let (attribute, problem, last_line) =
                 parse_attribute_lines(source_document, line_index, is_cancelled)?
                     .expect("recognizer verified document attribute");
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
-            flush_orphan_metadata(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut pending_metadata,
-                source,
-                budget,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
+            parser.flush_orphan_metadata(&mut blocks, &mut ast_blocks, source, budget)?;
             budget.consume_attribute()?;
             budget.consume_node()?;
             let attribute_range = attribute.range;
@@ -988,7 +1043,8 @@ fn parse_block_sequence(
                 SyntaxKind::DocumentAttribute,
                 attribute_range,
             ));
-            let root = root
+            let root = parser
+                .document_header_phase
                 .as_mut()
                 .expect("attribute recognition requires root state");
             let in_header = root.attributes_open;
@@ -998,18 +1054,13 @@ fn parse_block_sequence(
                 root.extend_range(attribute_range);
             }
             if last_line > line_index {
-                cursor.commit(BlockConsumption::Through(last_line + 1))?;
+                parser
+                    .cursor
+                    .commit(BlockConsumption::Through(last_line + 1))?;
                 continue;
             }
         } else if recognition == LineRecognition::Break {
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_block()?;
             budget.consume_node()?;
             let kind = if content == "'''" {
@@ -1028,45 +1079,27 @@ fn parse_block_sequence(
                 range: line.full_range(),
                 kind,
             }));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
-            saw_content = true;
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut parser.pending_metadata);
+            parser.mark_body_content();
         } else if recognition == LineRecognition::LiteralParagraph {
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_block()?;
             budget.consume_node()?;
             let (literal, next_line) = parse_literal_paragraph(source_document, line_index)?;
             blocks.push(SyntaxNode::leaf(SyntaxKind::LiteralBlock, literal.range));
             ast_blocks.push(AstBlock::LiteralParagraph(literal));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
-            saw_content = true;
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
-            cursor.commit(BlockConsumption::Through(next_line))?;
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut parser.pending_metadata);
+            parser.mark_body_content();
+            parser.cursor.commit(BlockConsumption::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Heading {
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_block()?;
             budget.consume_node()?;
             let heading = parse_heading(
                 content,
                 line,
-                context.document_title_position(saw_content),
+                parser.document_title_position(),
                 config,
                 budget,
             )?;
@@ -1082,8 +1115,8 @@ fn parse_block_sequence(
             };
             blocks.push(crate::syntax_builder::heading(&heading, syntax_kind));
             ast_blocks.push(AstBlock::Heading(heading));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
-            let opens_header = context.allows_document_header()
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut parser.pending_metadata);
+            let opens_header = parser.context.allows_document_header()
                 && matches!(
                     ast_blocks.last(),
                     Some(AstBlock::Heading(Heading {
@@ -1094,21 +1127,11 @@ fn parse_block_sequence(
                     }))
                 );
             if opens_header {
-                let root = root.as_mut().expect("document title requires root state");
-                root.attributes_open = true;
-                root.extend_range(line.full_range());
-                root.expect_author = true;
+                parser.open_header_after_title(line.full_range());
             }
-            saw_content = true;
+            parser.mark_content_seen();
         } else if recognition == LineRecognition::List {
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             let list_context = DelimitedParseContext {
                 source_document,
                 source,
@@ -1124,26 +1147,17 @@ fn parse_block_sequence(
                 line_index,
                 end_line,
                 &mut state,
-                context.depth,
+                parser.context.depth,
             )?;
             blocks.push(crate::syntax_builder::list(range, &lists));
             ast_blocks.extend(lists.into_iter().map(AstBlock::List));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
-            saw_content = true;
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
-            cursor.commit(BlockConsumption::Through(next_line))?;
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut parser.pending_metadata);
+            parser.mark_body_content();
+            parser.cursor.commit(BlockConsumption::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Unsupported {
             let reason = unsupported_reason(content).expect("recognizer verified unsupported line");
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
+            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_block()?;
             budget.consume_node()?;
             blocks.push(SyntaxNode::new(
@@ -1157,39 +1171,21 @@ fn parse_block_sequence(
                 raw: content.to_owned(),
                 reason: reason.to_owned(),
             }));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
-            saw_content = true;
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
+            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut parser.pending_metadata);
+            parser.mark_body_content();
         } else {
-            paragraph_lines.push((line, content.to_owned()));
-            saw_content = true;
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
+            parser.push_paragraph_line(line, content);
         }
-        cursor.commit(BlockConsumption::OneLine)?;
+        parser.cursor.commit(BlockConsumption::OneLine)?;
     }
-    flush_paragraph(
-        &mut blocks,
-        &mut ast_blocks,
-        &mut paragraph_lines,
-        config,
-        budget,
-        &mut pending_metadata,
-    )?;
-    flush_orphan_metadata(
-        &mut blocks,
-        &mut ast_blocks,
-        &mut pending_metadata,
-        source,
-        budget,
-    )?;
+    parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
+    parser.flush_orphan_metadata(&mut blocks, &mut ast_blocks, source, budget)?;
     let common = BlockFacts {
         syntax: blocks,
         blocks: ast_blocks,
         anchors,
     };
-    Ok(match root {
+    Ok(match parser.document_header_phase {
         Some(root) => BlockSequenceOutput::Root(RootBlockSequenceOutput {
             common,
             attributes: root.attributes,
@@ -2496,10 +2492,16 @@ mod tests {
             )
         }
 
-        let mut cursor = super::BlockCursor::new(2);
+        let mut parser = super::BlockParserState {
+            cursor: super::BlockCursor::new(2),
+            document_header_phase: Some(super::DocumentHeaderState::default()),
+            pending_metadata: super::PendingBlockMetadata::default(),
+            paragraph_lines: Vec::new(),
+            saw_content: false,
+            context: super::BlockContext::root(),
+        };
         let mut syntax = Vec::new();
         let mut blocks = Vec::new();
-        let mut pending = super::PendingBlockMetadata::default();
         let mut budget = crate::budget::ParseBudget::new(crate::AnalysisLimits {
             max_blocks: 1,
             max_nodes: 2,
@@ -2509,60 +2511,100 @@ mod tests {
 
         assert!(
             !super::commit_recognized_block(
-                &mut cursor,
+                &mut parser,
                 super::BlockRecognition::NoMatch,
                 &mut syntax,
                 &mut blocks,
-                &mut pending,
                 &mut budget,
             )
             .expect("no match")
         );
         assert!(
             super::commit_recognized_block(
-                &mut cursor,
+                &mut parser,
                 recognized(super::BlockConsumption::Through(0)),
                 &mut syntax,
                 &mut blocks,
-                &mut pending,
                 &mut budget,
             )
             .is_err()
         );
-        assert_eq!(cursor.current(), Some(0));
+        assert_eq!(parser.cursor.current(), Some(0));
         assert!(syntax.is_empty());
         assert!(blocks.is_empty());
-        assert!(pending.is_empty());
+        assert!(parser.pending_metadata.is_empty());
 
         assert!(
             super::commit_recognized_block(
-                &mut cursor,
+                &mut parser,
                 recognized(super::BlockConsumption::OneLine),
                 &mut syntax,
                 &mut blocks,
-                &mut pending,
                 &mut budget,
             )
             .expect("valid recovered block")
         );
-        assert_eq!(cursor.current(), Some(1));
+        assert_eq!(parser.cursor.current(), Some(1));
         assert_eq!(syntax.len(), 1);
         assert_eq!(blocks.len(), 1);
 
         assert!(matches!(
             super::commit_recognized_block(
-                &mut cursor,
+                &mut parser,
                 recognized(super::BlockConsumption::OneLine),
                 &mut syntax,
                 &mut blocks,
-                &mut pending,
                 &mut budget,
             ),
             Err(super::ParseFailure::Budget(_))
         ));
-        assert_eq!(cursor.current(), Some(1));
+        assert_eq!(parser.cursor.current(), Some(1));
         assert_eq!(syntax.len(), 1);
         assert_eq!(blocks.len(), 1);
+    }
+
+    #[test]
+    fn parser_state_flushes_paragraphs_and_attaches_metadata_once_at_each_depth() {
+        fn assert_paragraphs(blocks: &[AstBlock]) {
+            let [AstBlock::Paragraph(first), AstBlock::Paragraph(second)] = blocks else {
+                panic!("expected two paragraphs");
+            };
+            assert_eq!(first.value, "first\ncontinued");
+            assert_eq!(
+                first.metadata.id.as_ref().map(|id| id.value.as_str()),
+                Some("only")
+            );
+            assert!(
+                second.metadata.id.is_none(),
+                "pending metadata must be consumed by the adjacent block"
+            );
+        }
+
+        let root = parse("[#only]\nfirst\ncontinued\n\nsecond\n").expect("root paragraphs");
+        assert_paragraphs(root.ast.blocks());
+
+        let nested =
+            parse("--\n[#only]\nfirst\ncontinued\n\nsecond\n--\n").expect("nested paragraphs");
+        let [AstBlock::Delimited(block)] = nested.ast.blocks() else {
+            panic!("expected open block");
+        };
+        let super::DelimitedContent::Compound(blocks) = &block.content else {
+            panic!("expected compound content");
+        };
+        assert_paragraphs(blocks);
+    }
+
+    #[test]
+    fn parser_state_closes_the_document_header_before_body_attributes() {
+        let parsed = parse("= Title\n\nparagraph\n\n:body-name: value\n").expect("root document");
+
+        assert!(parsed.ast.header_attributes().is_empty());
+        assert_eq!(parsed.ast.attributes().len(), 1);
+        assert_eq!(parsed.ast.attributes()[0].name, "body-name");
+        assert!(matches!(
+            parsed.ast.blocks(),
+            [AstBlock::Heading(_), AstBlock::Paragraph(_)]
+        ));
     }
 
     #[test]
