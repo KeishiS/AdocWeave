@@ -22,6 +22,36 @@ use crate::source::TextSize;
 use crate::source::{PositionError, TextRange};
 use crate::syntax::SyntaxTree;
 
+/// Immutable syntax and semantic views produced by one parser execution.
+///
+/// Rule groups receive this value instead of independent inputs so every rule
+/// observes the same analysis snapshot.
+pub(crate) struct LintContext<'a> {
+    syntax: &'a SyntaxTree,
+    document: &'a crate::parser::AstDocument,
+}
+
+impl<'a> LintContext<'a> {
+    pub(crate) const fn new(
+        syntax: &'a SyntaxTree,
+        document: &'a crate::parser::AstDocument,
+    ) -> Self {
+        Self { syntax, document }
+    }
+
+    const fn syntax(&self) -> &'a SyntaxTree {
+        self.syntax
+    }
+
+    const fn document(&self) -> &'a crate::parser::AstDocument {
+        self.document
+    }
+
+    fn source_document(&self) -> &'a crate::source_document::SourceDocument {
+        self.syntax.source_document()
+    }
+}
+
 /// Stable identifier for a lint rule.
 ///
 /// Rule identifiers are values rather than enum variants, so adding a rule
@@ -492,54 +522,52 @@ fn lint_with_analysis_limits(
             ..ParseConfig::default()
         },
     )?;
-    lint_parsed_document(&parsed.syntax, &parsed.ast, config)
+    lint_parsed_document(LintContext::new(&parsed.syntax, &parsed.ast), config)
 }
 
 pub fn lint_analysis(
     analysis: &crate::core::Analysis,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    lint_parsed_document(analysis.syntax(), analysis.ast(), config)
+    lint_parsed_document(LintContext::new(analysis.syntax(), analysis.ast()), config)
 }
 
 pub(crate) fn lint_parsed_document(
-    syntax: &SyntaxTree,
-    document: &crate::parser::AstDocument,
+    context: LintContext<'_>,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    let source_document = syntax.source_document();
     let mut sink = LintDiagnosticSink::new(config);
-    source::lint_source_lines(source_document, &mut sink)?;
+    source::lint_source_lines(&context, &mut sink)?;
 
     if !sink.is_full() {
-        syntax::lint_syntax_issues(syntax, &mut sink);
+        syntax::lint_syntax_issues(&context, &mut sink);
     }
     if !sink.is_full() {
-        structure::lint_headings(document, &mut sink);
+        structure::lint_headings(&context, &mut sink);
     }
     if !sink.is_full() {
-        attributes::lint_attributes(document, config, &mut sink);
+        attributes::lint_attributes(&context, &mut sink);
     }
     if !sink.is_full() {
-        references::lint_anchors(document, &mut sink);
+        references::lint_anchors(&context, &mut sink);
     }
     if !sink.is_full() {
-        references::lint_links_and_references(document, config, &mut sink);
+        references::lint_links_and_references(&context, &mut sink);
     }
     if !sink.is_full() {
-        presentation::lint_list_presentation(document, &mut sink);
+        presentation::lint_list_presentation(&context, &mut sink);
     }
     if !sink.is_full() {
-        presentation::lint_document_presentation(document, &mut sink);
+        presentation::lint_document_presentation(&context, &mut sink);
     }
     if !sink.is_full() {
-        tables::lint_tables(document, &mut sink);
+        tables::lint_tables(&context, &mut sink);
     }
     if !sink.is_full() {
-        catalogs::lint_catalogs(document, &mut sink);
+        catalogs::lint_catalogs(&context, &mut sink);
     }
     if !sink.is_full() {
-        structure::lint_document_structure(document, &mut sink);
+        structure::lint_document_structure(&context, &mut sink);
     }
     Ok(sink.finish())
 }
@@ -579,15 +607,24 @@ mod tests {
 
         let value: serde_json::Value =
             serde_json::from_str(&render_lint_rule_catalog_json()).expect("catalog JSON");
-        assert_eq!(value["schemaVersion"], 1);
-        assert_eq!(value["packageVersion"], crate::VERSION);
-        let json_codes = value["rules"]
-            .as_array()
-            .expect("rules")
-            .iter()
-            .map(|rule| rule["code"].as_str().expect("code"))
-            .collect::<Vec<_>>();
-        assert_eq!(json_codes, codes);
+        let mut descriptors = LINT_RULES.iter().collect::<Vec<_>>();
+        descriptors.sort_by_key(|descriptor| descriptor.id.as_str());
+        let expected = serde_json::json!({
+            "schemaVersion": 1,
+            "packageVersion": crate::VERSION,
+            "rules": descriptors
+                .into_iter()
+                .map(|descriptor| serde_json::json!({
+                    "code": descriptor.id.as_str(),
+                    "defaultSeverity": descriptor.default_severity.as_str(),
+                    "enabledByDefault": descriptor.default_enabled,
+                    "description": descriptor.description,
+                    "fixable": descriptor.fixable,
+                    "userConfigurable": descriptor.user_configurable,
+                }))
+                .collect::<Vec<_>>(),
+        });
+        assert_eq!(value, expected);
     }
 
     #[test]
@@ -879,7 +916,7 @@ mod tests {
         let mut visited = Vec::new();
         super::references::lint_links_and_references_with_observer(
             &links.ast,
-            &link_config,
+            &link_config.authored_url_policy,
             &mut sink,
             |node| {
                 visited.push(node_kind(node));
@@ -1579,8 +1616,11 @@ mod tests {
 
         assert_eq!(
             lint(source, &config).expect("standalone lint"),
-            super::lint_parsed_document(&parsed.syntax, &parsed.ast, &config)
-                .expect("lint existing analysis")
+            super::lint_parsed_document(
+                super::LintContext::new(&parsed.syntax, &parsed.ast),
+                &config,
+            )
+            .expect("lint existing analysis")
         );
     }
 
@@ -1865,9 +1905,11 @@ mod tests {
     fn url_policy_checks_the_semantically_expanded_link_target() {
         let source = ":scheme: https\n\n{scheme}://example.com[label]\n";
         let parsed = crate::parser::parse(source).expect("parse");
-        let diagnostics =
-            super::lint_parsed_document(&parsed.syntax, &parsed.ast, &LintConfig::default())
-                .expect("lint");
+        let diagnostics = super::lint_parsed_document(
+            super::LintContext::new(&parsed.syntax, &parsed.ast),
+            &LintConfig::default(),
+        )
+        .expect("lint");
 
         assert!(
             !diagnostics

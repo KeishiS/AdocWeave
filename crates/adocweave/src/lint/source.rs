@@ -1,16 +1,17 @@
 use crate::diagnostic::Applicability;
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_document::{LineEnding, SourceDocument};
+use crate::source_document::LineEnding;
 
 use super::{
-    EXCESSIVE_BLANK_LINES, LINE_TOO_LONG, LintDiagnosticBody, LintDiagnosticSink,
+    EXCESSIVE_BLANK_LINES, LINE_TOO_LONG, LintContext, LintDiagnosticBody, LintDiagnosticSink,
     TRAILING_WHITESPACE,
 };
 
 pub(super) fn lint_source_lines(
-    source_document: &SourceDocument,
+    context: &LintContext<'_>,
     sink: &mut LintDiagnosticSink<'_>,
 ) -> Result<(), PositionError> {
+    let source_document = context.source_document();
     let max_consecutive_blank_lines = sink.config().max_consecutive_blank_lines;
     let max_line_length = sink.config().max_line_length;
     let mut blank_count = 0;

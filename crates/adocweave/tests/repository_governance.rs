@@ -603,12 +603,14 @@ fn project_config_schema_lists_every_lint_rule() {
         .expect("lint rule name enum")
         .iter()
         .map(|value| value.as_str().expect("lint rule name"))
-        .collect::<BTreeSet<_>>();
-    let catalog_rules = adocweave::output::diagnostics::LINT_RULES
+        .collect::<Vec<_>>();
+    let mut catalog_rules = adocweave::output::diagnostics::LINT_RULES
         .iter()
         .map(|rule| rule.id.as_str())
-        .collect::<BTreeSet<_>>();
+        .collect::<Vec<_>>();
+    catalog_rules.sort_unstable();
 
+    assert!(schema_rules.windows(2).all(|pair| pair[0] < pair[1]));
     assert_eq!(schema_rules, catalog_rules);
 }
 

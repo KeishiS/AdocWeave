@@ -593,6 +593,44 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
 }
 
 #[test]
+fn project_configuration_bounds_lsp_diagnostics_before_protocol_projection() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-lsp-config-limit-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    let source = "long \n*x\n";
+    fs::write(&document_path, source).expect("document");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[lint]\nmax-line-length = 4\nmax-diagnostics = 1\n",
+    )
+    .expect("configuration");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    })));
+    open(&mut service, document_uri.as_str(), 1, source);
+
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert_eq!(diagnostics.diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics.diagnostics[0].code,
+        Some(lsp::NumberOrString::String(
+            "trailing-whitespace".to_owned()
+        ))
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn each_workspace_folder_uses_its_own_project_configuration() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

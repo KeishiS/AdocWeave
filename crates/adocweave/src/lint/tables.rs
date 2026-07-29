@@ -1,12 +1,9 @@
 use std::ops::ControlFlow;
 
-use super::{INVALID_TABLE, LintDiagnosticBody, LintDiagnosticSink};
+use super::{INVALID_TABLE, LintContext, LintDiagnosticBody, LintDiagnosticSink};
 
-pub(super) fn lint_tables(
-    document: &crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-) {
-    lint_tables_with_observer(document, sink, |_| {});
+pub(super) fn lint_tables(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
+    lint_tables_with_observer(context.document(), sink, |_| {});
 }
 
 pub(super) fn lint_tables_with_observer<'document>(

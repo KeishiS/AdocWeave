@@ -850,6 +850,31 @@ stylesheet-urls = ["https://example.test/manual.css"]
     }
 
     #[test]
+    fn every_catalog_rule_is_accepted_by_project_configuration() {
+        for descriptor in adocweave::output::diagnostics::LINT_RULES {
+            let source = format!(
+                "schema-version = 1\n[lint.rules.{}]\nenabled = false\nseverity = \"hint\"\n",
+                descriptor.id.as_str()
+            );
+            let config = ResolvedProjectConfig::parse(&source, Path::new("/workspace"))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "catalog rule {} must be configurable: {error}",
+                        descriptor.id.as_str()
+                    )
+                });
+            let settings = config.analysis.diagnostics.lint.rule(descriptor.id);
+            assert!(!settings.enabled, "{}", descriptor.id.as_str());
+            assert_eq!(
+                settings.severity,
+                Severity::Hint,
+                "{}",
+                descriptor.id.as_str()
+            );
+        }
+    }
+
+    #[test]
     fn project_config_cannot_expand_host_authority() {
         for source in [
             "schema-version = 1\n[resources]\nroots = [\"../private\"]",
