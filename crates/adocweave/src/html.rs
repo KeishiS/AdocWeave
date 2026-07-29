@@ -4,6 +4,7 @@
 //! do not depend on this module, so additional output backends can consume the
 //! same document without changing parsing behavior.
 
+mod body;
 mod head;
 mod plan;
 mod safe;
@@ -12,11 +13,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
 use crate::document::HeadingId;
-use crate::inline::{Inline, InlineLiteralKind, InlineStyle, Link, Reference};
+use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs};
-use crate::resource::MediaFamily;
 use crate::url::{ActiveUrlPolicy, UrlProvenance};
+use body::RenderScope;
 
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a",
@@ -349,13 +350,13 @@ pub(crate) fn render_with_inputs_ast(
             structure: document.structure(),
             presentation: document.presentation(),
         };
-        render_layout_nodes(
+        let body_plan = body::plan_body_traversal(document, policy);
+        serialize_body_traversal(
             &mut fragment,
             document,
-            document.layout().nodes(),
+            &body_plan,
             policy,
             &mut inline_context,
-            RenderScope::default(),
         );
     }
     for problem in input_usage.finish() {
@@ -397,62 +398,28 @@ pub(crate) fn render_with_inputs_ast(
     }
 }
 
-#[derive(Clone, Copy, Default)]
-struct RenderScope {
-    bibliography_section: bool,
-}
-
-impl RenderScope {
-    fn enter(self, scope: crate::presentation::LayoutScope) -> Self {
-        Self {
-            bibliography_section: self.bibliography_section
-                || matches!(scope, crate::presentation::LayoutScope::Bibliography),
-        }
-    }
-}
-
-fn render_layout_nodes(
+fn serialize_body_traversal(
     output: &mut String,
     document: &AstDocument,
-    nodes: &[crate::presentation::LayoutNode],
+    plan: &body::BodyTraversalPlan<'_>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
-    scope: RenderScope,
 ) {
-    for node in nodes {
-        match node {
-            crate::presentation::LayoutNode::Generated(
-                crate::presentation::GeneratedLayoutNode::TableOfContents,
-            ) => render_toc(output, document.presentation()),
-            crate::presentation::LayoutNode::Generated(
-                crate::presentation::GeneratedLayoutNode::FootnoteCatalog,
-            ) => render_footnote_catalog(output, document.catalogs()),
-            crate::presentation::LayoutNode::Section {
-                scope: layout_scope,
-                nodes,
-            } => {
-                render_layout_nodes(
-                    output,
-                    document,
-                    nodes,
-                    policy,
-                    context,
-                    scope.enter(*layout_scope),
-                );
+    for step in &plan.steps {
+        match step {
+            body::BodyTraversalStep::TableOfContents => {
+                render_toc(output, document.presentation());
             }
-            crate::presentation::LayoutNode::Block(block_id) => {
-                let block = document
-                    .top_level_block(*block_id)
-                    .expect("layout only contains top-level blocks");
-                render_block(output, block, policy, context, scope);
-                if matches!(
-                    block,
-                    AstBlock::Heading(Heading {
-                        kind: HeadingKind::DocumentTitle,
-                        ..
-                    })
-                ) && policy.render_document_title
-                {
+            body::BodyTraversalStep::FootnoteCatalog => {
+                render_footnote_catalog(output, document.catalogs());
+            }
+            body::BodyTraversalStep::Block {
+                block,
+                scope,
+                render_header_metadata: include_header_metadata,
+            } => {
+                render_block(output, block, policy, context, *scope);
+                if *include_header_metadata {
                     render_header_metadata(output, document.header());
                 }
             }
@@ -1245,378 +1212,8 @@ fn render_inlines(
     inlines: &[Inline],
     context: &mut InlineRenderContext<'_, '_>,
 ) {
-    for inline in inlines {
-        match inline {
-            Inline::Text(text) => escape_inline_text(output, &text.value),
-            Inline::Literal { kind, value, .. } => match kind {
-                InlineLiteralKind::Monospace => {
-                    output.push_str("<code>");
-                    escape_inline_text(output, value);
-                    output.push_str("</code>");
-                }
-            },
-            Inline::Styled {
-                style, children, ..
-            } => {
-                if matches!(
-                    style,
-                    InlineStyle::CurvedDoubleQuote | InlineStyle::CurvedSingleQuote
-                ) {
-                    output.push_str(if *style == InlineStyle::CurvedDoubleQuote {
-                        "“"
-                    } else {
-                        "‘"
-                    });
-                    render_inlines(output, children, context);
-                    output.push_str(if *style == InlineStyle::CurvedDoubleQuote {
-                        "”"
-                    } else {
-                        "’"
-                    });
-                    continue;
-                }
-                let tag = match style {
-                    InlineStyle::Strong => "strong",
-                    InlineStyle::Emphasis => "em",
-                    InlineStyle::Highlight => "mark",
-                    InlineStyle::Subscript => "sub",
-                    InlineStyle::Superscript => "sup",
-                    InlineStyle::CurvedDoubleQuote | InlineStyle::CurvedSingleQuote => {
-                        unreachable!()
-                    }
-                };
-                output.push('<');
-                output.push_str(tag);
-                output.push('>');
-                render_inlines(output, children, context);
-                output.push_str("</");
-                output.push_str(tag);
-                output.push('>');
-            }
-            Inline::AttributeReference { name, value, .. } => {
-                if let Some(value) = value {
-                    render_attribute_value(output, value);
-                } else {
-                    output.push('{');
-                    escape_html_into(output, name);
-                    output.push('}');
-                }
-            }
-            Inline::Link(link) => render_link(output, link, context),
-            Inline::Reference(reference) => render_reference(output, reference, context),
-            Inline::Macro(node) => render_standard_macro(output, node, context),
-            Inline::HardBreak { .. } => output.push_str("<br>\n"),
-            Inline::Passthrough { value, .. } => escape_inline_text(output, value),
-            Inline::Formula(formula) => {
-                output.push_str("<code");
-                if context
-                    .policy
-                    .math_languages
-                    .allowed
-                    .contains(&formula.language)
-                {
-                    render_math_attributes(output, formula.language, "inline");
-                } else {
-                    context.diagnostics.push(render_diagnostic(
-                        "math-language-not-allowed",
-                        "math language is rejected by the render policy",
-                        formula.range,
-                    ));
-                }
-                output.push('>');
-                escape_inline_text(output, &formula.value);
-                output.push_str("</code>");
-            }
-        }
-    }
-}
-
-fn render_attribute_value(output: &mut String, value: &str) {
-    let mut remaining = value;
-    while let Some(index) = remaining.find(" +\n") {
-        escape_html_into(output, &remaining[..index]);
-        output.push_str("<br>\n");
-        remaining = &remaining[index + 3..];
-    }
-    escape_html_into(output, remaining);
-}
-
-fn render_standard_macro(
-    output: &mut String,
-    node: &crate::inline::StandardMacro,
-    context: &mut InlineRenderContext<'_, '_>,
-) {
-    use crate::inline::StandardMacroKind as Kind;
-    let first = node
-        .attributes
-        .first()
-        .map(|attribute| attribute.value.as_str());
-    match node.kind {
-        Kind::Email => {
-            let href = format!("mailto:{}", node.target);
-            if !context.policy.allows_url(&href, UrlProvenance::Authored) {
-                escape_inline_text(output, &node.target);
-                return;
-            }
-            output.push_str("<a href=\"");
-            escape_html_into(output, &href);
-            output.push_str("\">");
-            escape_inline_text(output, &node.target);
-            output.push_str("</a>");
-        }
-        Kind::Footnote => {
-            let Some((footnote, occurrence)) = context.catalogs.footnote_occurrence(node.range)
-            else {
-                escape_inline_text(output, first.unwrap_or(&node.target));
-                return;
-            };
-            output.push_str("<sup class=\"footnote\"><a class=\"footnote-ref\" id=\"_footnoteref_");
-            output.push_str(&footnote.number.to_string());
-            output.push('_');
-            output.push_str(&(occurrence + 1).to_string());
-            output.push_str("\" href=\"#_footnote_");
-            output.push_str(&footnote.number.to_string());
-            output.push_str("\">");
-            output.push_str(&footnote.number.to_string());
-            output.push_str("</a></sup>");
-        }
-        Kind::Anchor | Kind::BibliographyAnchor => {
-            output.push_str("<span id=\"");
-            escape_html_into(output, &node.target);
-            if node.kind == Kind::BibliographyAnchor {
-                output.push_str("\" class=\"bibliography-anchor");
-            }
-            output.push_str("\"></span>");
-        }
-        Kind::IndexTerm => {
-            output.push_str("<span class=\"index-term\"></span>");
-        }
-        Kind::Keyboard => {
-            if !context.policy.render_ui_macros {
-                escape_inline_text(output, first.unwrap_or(&node.target));
-                return;
-            }
-            output.push_str("<kbd>");
-            escape_inline_text(output, first.unwrap_or(&node.target));
-            output.push_str("</kbd>");
-        }
-        Kind::Button => {
-            if !context.policy.render_ui_macros {
-                escape_inline_text(output, first.unwrap_or(&node.target));
-                return;
-            }
-            output.push_str("<span class=\"button\">");
-            escape_inline_text(output, first.unwrap_or(&node.target));
-            output.push_str("</span>");
-        }
-        Kind::Menu => {
-            if !context.policy.render_ui_macros {
-                escape_inline_text(output, first.unwrap_or(&node.target));
-                return;
-            }
-            output.push_str("<span class=\"menu\">");
-            escape_inline_text(output, &node.target);
-            for attribute in &node.attributes {
-                output.push_str(" › ");
-                escape_inline_text(output, &attribute.value);
-            }
-            output.push_str("</span>");
-        }
-        Kind::Image | Kind::Icon => render_image_macro(output, node, context),
-        Kind::Audio | Kind::Video => render_media_macro(output, node, context),
-    }
-}
-
-fn render_image_macro(
-    output: &mut String,
-    node: &crate::inline::StandardMacro,
-    context: &mut InlineRenderContext<'_, '_>,
-) {
-    let alt = if node.kind == crate::inline::StandardMacroKind::Icon {
-        macro_attribute(node, "alt", usize::MAX)
-            .or_else(|| macro_attribute(node, "title", usize::MAX))
-            .unwrap_or(&node.target)
-    } else {
-        macro_attribute(node, "alt", 0).unwrap_or("")
-    };
-    if !context.policy.resources.images {
-        escape_inline_text(output, alt);
-        context.diagnostics.push(render_diagnostic(
-            "resource-capability-disabled",
-            "image rendering is disabled by the host capability profile",
-            node.range,
-        ));
-        return;
-    }
-    let resource = plan::plan_resource(
-        node.range,
-        node.target_range,
-        MediaFamily::Image,
-        context.policy,
-        context.input_usage,
-    );
-    append_plan_diagnostics(context.diagnostics, resource.diagnostics);
-    let Some(href) = resource.value else {
-        escape_inline_text(output, alt);
-        return;
-    };
-    {
-        let mut writer = safe::HtmlWriter::new(output);
-        writer.start(safe::ElementName::new("img").expect("img is an allowed HTML element"));
-        writer.active_url_attribute(
-            safe::ActiveUrlAttributeName::new("src").expect("src is an active URL attribute"),
-            href,
-        );
-    }
-    output.push_str(" alt=\"");
-    escape_html_into(output, alt);
-    output.push('"');
-    let positional_dimensions = node.kind == crate::inline::StandardMacroKind::Image;
-    render_dimension(output, node, "width", positional_dimensions.then_some(1));
-    render_dimension(output, node, "height", positional_dimensions.then_some(2));
-    if let Some(title) = macro_attribute(node, "title", usize::MAX) {
-        output.push_str(" title=\"");
-        escape_html_into(output, title);
-        output.push('"');
-    }
-    output.push('>');
-}
-
-fn render_media_macro(
-    output: &mut String,
-    node: &crate::inline::StandardMacro,
-    context: &mut InlineRenderContext<'_, '_>,
-) {
-    let title = macro_attribute(node, "title", 0);
-    let fallback = title.unwrap_or(&node.target);
-    if !context.policy.resources.media {
-        escape_inline_text(output, fallback);
-        context.diagnostics.push(render_diagnostic(
-            "resource-capability-disabled",
-            "media rendering is disabled by the host capability profile",
-            node.range,
-        ));
-        return;
-    }
-    let (tag, family) = if node.kind == crate::inline::StandardMacroKind::Audio {
-        ("audio", MediaFamily::Audio)
-    } else {
-        ("video", MediaFamily::Video)
-    };
-    let resource = plan::plan_resource(
-        node.range,
-        node.target_range,
-        family,
-        context.policy,
-        context.input_usage,
-    );
-    append_plan_diagnostics(context.diagnostics, resource.diagnostics);
-    let Some(href) = resource.value else {
-        escape_inline_text(output, fallback);
-        return;
-    };
-    output.push('<');
-    output.push_str(tag);
-    safe::HtmlWriter::new(output).active_url_attribute(
-        safe::ActiveUrlAttributeName::new("src").expect("src is an active URL attribute"),
-        href,
-    );
-    output.push_str(" controls");
-    if node.kind == crate::inline::StandardMacroKind::Video {
-        render_dimension(output, node, "width", Some(1));
-        render_dimension(output, node, "height", Some(2));
-        if let Some(poster) =
-            macro_attribute_node(node, "poster").filter(|poster| !poster.value.is_empty())
-        {
-            if !context.policy.resources.images {
-                context.diagnostics.push(render_diagnostic(
-                    "resource-capability-disabled",
-                    "poster rendering is disabled by the host capability profile",
-                    poster.value_range,
-                ));
-            } else {
-                let poster = plan::plan_resource(
-                    poster.value_range,
-                    poster.value_range,
-                    MediaFamily::Image,
-                    context.policy,
-                    context.input_usage,
-                );
-                append_plan_diagnostics(context.diagnostics, poster.diagnostics);
-                if let Some(href) = poster.value {
-                    safe::HtmlWriter::new(output).active_url_attribute(
-                        safe::ActiveUrlAttributeName::new("poster")
-                            .expect("poster is an active URL attribute"),
-                        href,
-                    );
-                }
-            }
-        }
-    }
-    if let Some(title) = title {
-        output.push_str(" title=\"");
-        escape_html_into(output, title);
-        output.push('"');
-    }
-    output.push('>');
-    output.push_str("</");
-    output.push_str(tag);
-    output.push('>');
-}
-
-fn macro_attribute_node<'a>(
-    node: &'a crate::inline::StandardMacro,
-    name: &str,
-) -> Option<&'a crate::inline::MacroAttribute> {
-    node.attributes
-        .iter()
-        .find(|attribute| attribute.name.as_deref() == Some(name))
-}
-
-fn macro_attribute<'a>(
-    node: &'a crate::inline::StandardMacro,
-    name: &str,
-    position: usize,
-) -> Option<&'a str> {
-    node.attributes
-        .iter()
-        .find(|attribute| attribute.name.as_deref() == Some(name))
-        .or_else(|| {
-            node.attributes
-                .get(position)
-                .filter(|attribute| attribute.name.is_none())
-        })
-        .map(|attribute| attribute.value.as_str())
-}
-
-fn render_dimension(
-    output: &mut String,
-    node: &crate::inline::StandardMacro,
-    name: &str,
-    position: Option<usize>,
-) {
-    let value = node
-        .attributes
-        .iter()
-        .find(|attribute| attribute.name.as_deref() == Some(name))
-        .or_else(|| {
-            position.and_then(|position| {
-                node.attributes
-                    .get(position)
-                    .filter(|attribute| attribute.name.is_none())
-            })
-        })
-        .map(|attribute| attribute.value.as_str());
-    if let Some(value) = value
-        && !value.is_empty()
-        && value.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        output.push(' ');
-        output.push_str(name);
-        output.push_str("=\"");
-        output.push_str(value);
-        output.push('"');
-    }
+    let plan = body::plan_inlines(inlines, context);
+    body::serialize_inlines(output, &plan);
 }
 
 const fn math_class(language: crate::inline::MathLanguage) -> &'static str {
@@ -1706,109 +1303,6 @@ fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::Docum
         output.push_str("</li>\n");
     }
     output.push_str("</ol>\n</div>\n");
-}
-
-fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_, '_>) {
-    match plan::plan_link(link, context.policy) {
-        plan::PlannedLink::Active {
-            href,
-            new_context,
-            noreferrer,
-        } => {
-            {
-                let mut writer = safe::HtmlWriter::new(output);
-                writer.start(safe::ElementName::new("a").expect("a is an allowed HTML element"));
-                writer.active_url_attribute(
-                    safe::ActiveUrlAttributeName::new("href")
-                        .expect("href is an active URL attribute"),
-                    href,
-                );
-            }
-            if new_context {
-                output.push_str(" target=\"_blank\" rel=\"noopener");
-                if noreferrer {
-                    output.push_str(" noreferrer");
-                }
-                output.push('"');
-            }
-            safe::HtmlWriter::new(output).finish_start();
-            render_label_or_text(output, &link.label, &link.target_source, context);
-            safe::HtmlWriter::new(output)
-                .end(safe::ElementName::new("a").expect("a is an allowed HTML element"));
-        }
-        plan::PlannedLink::Fallback { diagnostic } => {
-            render_label_or_text(output, &link.label, &link.target_source, context);
-            append_plan_diagnostics(context.diagnostics, [diagnostic]);
-        }
-    }
-}
-
-fn render_reference(
-    output: &mut String,
-    reference: &Reference,
-    context: &mut InlineRenderContext<'_, '_>,
-) {
-    let plan = plan::plan_reference(
-        reference,
-        context.identifiers,
-        context.policy,
-        context.input_usage,
-    );
-    if let Some(href) = plan.href {
-        let mut writer = safe::HtmlWriter::new(output);
-        writer.start(safe::ElementName::new("a").expect("a is an allowed HTML element"));
-        match href {
-            plan::PlannedReferenceHref::Local(anchor) => writer.fragment_url_attribute(
-                safe::ActiveUrlAttributeName::new("href").expect("href is an active URL attribute"),
-                anchor,
-            ),
-            plan::PlannedReferenceHref::Resolved(href) => writer.active_url_attribute(
-                safe::ActiveUrlAttributeName::new("href").expect("href is an active URL attribute"),
-                href,
-            ),
-        }
-        let bibliography_reference = context.catalogs.bibliography().iter().any(|entry| {
-            entry
-                .references
-                .iter()
-                .any(|candidate| candidate.range == reference.range)
-        });
-        if bibliography_reference {
-            let id = bibliography_reference_id(reference.range);
-            writer.passive_attribute(
-                safe::PassiveAttributeName::new("id")
-                    .expect("id is a passive allowlisted HTML attribute"),
-                safe::AttributeValue::new(&id),
-            );
-        }
-        writer.finish_start();
-        render_label_or_text(output, &reference.label, &plan.fallback, context);
-        output.push_str("</a>");
-    } else {
-        match context.policy.unresolved_references {
-            UnresolvedReferencePresentation::Target => {
-                render_label_or_text(output, &reference.label, &plan.fallback, context);
-            }
-            UnresolvedReferencePresentation::LabelOnly => {
-                render_inlines(output, &reference.label, context);
-            }
-            UnresolvedReferencePresentation::Hidden => {}
-        }
-    }
-    append_plan_diagnostics(context.diagnostics, plan.diagnostics);
-}
-
-fn render_label_or_text(
-    output: &mut String,
-    label: &[Inline],
-    fallback: &str,
-    context: &mut InlineRenderContext<'_, '_>,
-) {
-    if label.is_empty() {
-        escape_html_into(output, fallback);
-    } else {
-        render_inlines(output, label, context);
-    }
 }
 
 fn render_diagnostic(code: &str, message: &str, range: crate::source::TextRange) -> Diagnostic {
