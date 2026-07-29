@@ -11,6 +11,8 @@ import {
   executableNames,
   installationLayout,
   isPathInside,
+  missingInstallationAssets,
+  requiredInstallationAssets,
   selectedInstallationFamilies,
   validateArchiveEntries,
   vscodePackageContract,
@@ -71,6 +73,21 @@ const manifestPath = manifestArgument
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const version = manifest.packageVersion;
 if (typeof version !== "string" || !version) throw new Error("manifest has no packageVersion");
+const requiredAssets = requiredInstallationAssets(
+  installationScope,
+  target,
+  version,
+  platform.archive,
+);
+const missingAssets = missingInstallationAssets(
+  readdirSync(candidate, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name),
+  requiredAssets,
+);
+if (missingAssets.length > 0) {
+  throw new Error(`missing release asset: ${missingAssets[0]}`);
+}
 
 const scratch = mkdtempSync(join(tmpdir(), "adocweave-installation-e2e-"));
 const home = join(scratch, "home");
