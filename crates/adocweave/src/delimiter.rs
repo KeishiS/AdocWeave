@@ -98,9 +98,14 @@ pub(super) fn body(
                 Vec::new(),
             )
         } else {
+            let boundary = source_document
+                .lines()
+                .get(end_line)
+                .map(|line| line.full_range().start())
+                .unwrap_or_else(|| TextSize::new(source.len()).expect("validated source size"));
             let end = recovery_index
                 .map(|index| source_document.lines()[index].full_range().start())
-                .unwrap_or_else(|| TextSize::new(source.len()).expect("validated source size"));
+                .unwrap_or(boundary);
             (
                 end,
                 end,

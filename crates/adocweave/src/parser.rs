@@ -559,6 +559,7 @@ fn parse_block_sequence(
     let mut anchors = Vec::new();
     let mut pending_metadata = PendingBlockMetadata::default();
 
+    let end_line = input.lines.end;
     let mut cursor = BlockCursor::for_range(&input.lines);
     while let Some(line_index) = cursor.current() {
         if is_cancelled() {
@@ -740,7 +741,7 @@ fn parse_block_sequence(
             let (block, nested_syntax, next_line) = parse_delimited_block(
                 &delimited_context,
                 line_index,
-                source_document.lines().len(),
+                end_line,
                 spec,
                 &mut state,
                 context.depth,
@@ -2416,6 +2417,42 @@ mod tests {
                 "a trailing comment remains an independent root block"
             );
         }
+    }
+
+    #[test]
+    fn unclosed_nested_delimiter_stops_at_the_parent_boundary() {
+        let source = "=e\n--\n----\n--\nfmfm";
+        let parsed = parse(source).expect("recoverable nested delimiter");
+
+        assert_eq!(parsed.syntax.reconstruct(), source);
+        let ranges = parsed
+            .syntax
+            .blocks()
+            .iter()
+            .map(|block| {
+                (
+                    block.range().start().to_usize(),
+                    block.range().end().to_usize(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ranges, vec![(0, 3), (3, 14), (14, 18)]);
+
+        let AstBlock::Delimited(outer) = &parsed.ast.blocks()[1] else {
+            panic!("outer open block");
+        };
+        let DelimitedContent::Compound(children) = &outer.content else {
+            panic!("outer open block has compound content");
+        };
+        let AstBlock::Verbatim(inner) = &children[0] else {
+            panic!("inner listing block");
+        };
+        assert_eq!(inner.range.start().to_usize(), 6);
+        assert_eq!(inner.range.end().to_usize(), 11);
+        assert!(parsed.syntax.issues().iter().any(|issue| {
+            issue.class == crate::syntax::SyntaxIssueClass::UnclosedBlock
+                && issue.range == inner.delimiter_range
+        }));
     }
 
     #[test]
