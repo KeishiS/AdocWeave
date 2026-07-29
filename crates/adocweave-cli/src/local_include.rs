@@ -12,8 +12,8 @@ use adocweave::preprocess::{
     ResourceDocument, ResourceSnapshot, preprocess,
 };
 use adocweave_host::{
-    LoadedLocalTarget, LocalResourcePolicy, LocalTargetError, LocalTargetPolicy,
-    LocalTargetSession, ResourceBudget, ResourceError, ResourceLimits,
+    LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError, LocalTargetPolicy,
+    LocalTargetSession, LogicalSourceId, ResourceError, ResourceLimits,
 };
 
 #[derive(Debug)]
@@ -47,18 +47,6 @@ pub struct PreparedInput {
     pub dependency_snapshots: BTreeMap<PathBuf, Fingerprint>,
 }
 
-/// Include target accepted by the filesystem policy but not yet loaded.
-///
-/// Construction is private so callers cannot attach an unchecked path to a
-/// logical source identity.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ValidatedFilesystemTarget {
-    request: IncludeRequest,
-    source_id: SourceId,
-    canonical_path: PathBuf,
-    base: PathBuf,
-}
-
 /// Filesystem provenance retained outside diagnostics and source maps.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoadedSourceProvenance {
@@ -78,53 +66,35 @@ struct LoadedSource {
 }
 
 struct IncludeLoader<'session> {
-    session: &'session mut LocalTargetSession,
+    session: &'session mut LocalFilesystemSession,
 }
 
 impl<'session> IncludeLoader<'session> {
-    fn new(session: &'session mut LocalTargetSession) -> Self {
+    fn new(session: &'session mut LocalFilesystemSession) -> Self {
         Self { session }
-    }
-
-    fn validate(
-        &mut self,
-        base: &Path,
-        request: IncludeRequest,
-    ) -> Result<ValidatedFilesystemTarget, LocalTargetError> {
-        let canonical_path = self.session.inspect(base, &request.target)?;
-        let source_id = SourceId::new(include_source_id(&request.target));
-        Ok(ValidatedFilesystemTarget {
-            request,
-            source_id,
-            canonical_path,
-            base: base.to_owned(),
-        })
     }
 
     fn load(
         &mut self,
-        target: ValidatedFilesystemTarget,
-    ) -> Result<LoadedSource, LocalTargetError> {
-        let loaded = self
-            .session
-            .read_utf8(&target.base, &target.request.target)?;
-        if loaded.canonical_path() != target.canonical_path {
-            return Err(LocalTargetError::Unverifiable(
-                "validated include target changed before read".to_owned(),
-            ));
-        }
-        Ok(loaded_source(target, loaded))
-    }
-}
-
-fn loaded_source(target: ValidatedFilesystemTarget, loaded: LoadedLocalTarget) -> LoadedSource {
-    LoadedSource {
-        source_id: target.source_id,
-        bytes: loaded.source().as_bytes().to_vec(),
-        provenance: LoadedSourceProvenance {
-            logical_target: target.request.target,
-            canonical_path: target.canonical_path,
-        },
+        base: &Path,
+        request: IncludeRequest,
+    ) -> Result<LoadedSource, ResourceError> {
+        let source_id = SourceId::new(include_source_id(&request.target));
+        let loaded = self.session.read_target_utf8(
+            LogicalSourceId::new(source_id.as_str())?,
+            base,
+            &request.target,
+        )?;
+        let canonical_path = loaded.canonical_path().to_owned();
+        let (_, source) = loaded.into_parts();
+        Ok(LoadedSource {
+            source_id,
+            bytes: source.as_bytes().to_vec(),
+            provenance: LoadedSourceProvenance {
+                logical_target: request.target,
+                canonical_path,
+            },
+        })
     }
 }
 
@@ -135,6 +105,21 @@ impl LoadedSource {
         // before provenance is attached.
         let source = String::from_utf8(self.bytes).expect("host returned validated UTF-8");
         (self.source_id, source, self.provenance)
+    }
+}
+
+fn include_target_error(error: ResourceError) -> LocalTargetError {
+    match error {
+        ResourceError::Missing(path) => LocalTargetError::Missing(path),
+        ResourceError::PermissionDenied(path) => LocalTargetError::PermissionDenied(path),
+        ResourceError::OutsideRoots(path) => LocalTargetError::OutsideRoot(path),
+        ResourceError::NotRegularFile(path) => LocalTargetError::NotFile(path),
+        ResourceError::InvalidUtf8 { path, .. } => LocalTargetError::InvalidUtf8(path),
+        ResourceError::ResourceTooLarge(path) => LocalTargetError::ResourceTooLarge(path),
+        ResourceError::FileLimit { limit } => LocalTargetError::LimitExceeded { limit },
+        ResourceError::ByteLimit => LocalTargetError::ReadLimitExceeded,
+        ResourceError::Unverifiable(reason) => LocalTargetError::Unverifiable(reason),
+        other => LocalTargetError::Unverifiable(other.to_string()),
     }
 }
 
@@ -206,7 +191,8 @@ pub fn prepare(
     if !roots.iter().any(|root| base_dir.starts_with(root)) {
         return Err(LocalIncludeError::OutsideRoot(base_dir));
     }
-    let policy = LocalResourcePolicy::new(roots, limits).map_err(LocalIncludeError::Host)?;
+    let policy = LocalFilesystemPolicy::new(roots, limits).map_err(LocalIncludeError::Host)?;
+    let mut filesystem = policy.session().map_err(LocalIncludeError::Host)?;
 
     let mut snapshot = ResourceSnapshot::default();
     let mut sources = BTreeMap::new();
@@ -217,7 +203,6 @@ pub fn prepare(
         sources.insert(source_id.clone(), source.to_owned());
         source_bases.insert(source_id.clone(), base_dir.clone());
     }
-    let mut budget = ResourceBudget::default();
     let mut preprocess_options = preprocess_options.clone();
     preprocess_options.source_id = source_id.clone().map(SourceId::new);
     preprocess_options.enable_includes = true;
@@ -230,18 +215,23 @@ pub fn prepare(
                     .clone()
                     .ok_or_else(|| LocalIncludeError::Preprocess(error.clone()))?;
                 let path = base_dir.join(&target);
-                let loaded = policy
-                    .validate_file(&mut budget, &path)
-                    .and_then(adocweave_host::ValidatedFilesystemTarget::into_loaded_utf8)
+                let resource_id = include_source_id(&target);
+                let loaded = filesystem
+                    .read_utf8(
+                        LogicalSourceId::new(resource_id.clone())
+                            .map_err(LocalIncludeError::Host)?,
+                        &path,
+                    )
                     .map_err(LocalIncludeError::Host)?;
-                let (canonical, text) = loaded.into_parts();
+                let canonical = loaded.canonical_path().to_owned();
+                let (loaded_id, text) = loaded.into_parts();
                 dependency_paths.insert(canonical.clone());
                 dependency_snapshots.insert(
                     canonical.clone(),
                     Fingerprint::from_loaded_bytes(&canonical, text.as_bytes()),
                 );
-                let resource_id = include_source_id(&target);
-                sources.insert(resource_id.clone(), text.clone());
+                debug_assert_eq!(loaded_id.as_str(), resource_id);
+                sources.insert(resource_id.clone(), text.to_string());
                 source_bases.insert(
                     resource_id.clone(),
                     canonical
@@ -253,7 +243,7 @@ pub fn prepare(
                     target,
                     ResourceDocument {
                         source_id: SourceId::new(resource_id),
-                        source: text.into(),
+                        source: text,
                     },
                 );
             }
@@ -281,6 +271,31 @@ pub fn prepare_local(
     limits: ResourceLimits,
     preprocess_options: &PreprocessOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
+    prepare_local_tracking(
+        source,
+        source_id,
+        base_dir,
+        source_base,
+        project_root,
+        limits,
+        preprocess_options,
+        &mut BTreeSet::new(),
+    )
+}
+
+// Keep this adapter parallel to `prepare_local`; the final argument is an
+// out-parameter used by preview to retain dependencies after preprocessing errors.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_local_tracking(
+    source: &str,
+    source_id: String,
+    base_dir: &Path,
+    source_base: &Path,
+    project_root: &Path,
+    limits: ResourceLimits,
+    preprocess_options: &PreprocessOptions,
+    observed_dependencies: &mut BTreeSet<PathBuf>,
+) -> Result<PreparedInput, LocalIncludeError> {
     let base_dir = base_dir
         .canonicalize()
         .map_err(|source| LocalIncludeError::InvalidBase {
@@ -293,7 +308,10 @@ pub fn prepare_local(
         return Err(LocalIncludeError::OutsideRoot(base_dir));
     }
     let root = policy.root().to_owned();
-    let mut session = LocalTargetSession::new(policy, limits.max_files, limits);
+    let mut filesystem_session = LocalFilesystemPolicy::new([root.clone()], limits)
+        .and_then(|policy| policy.session())
+        .map_err(LocalIncludeError::Host)?;
+    let session = LocalTargetSession::new(policy, limits.max_files, limits);
     let base_key = logical_key(
         base_dir
             .strip_prefix(&root)
@@ -357,11 +375,11 @@ pub fn prepare_local(
                     attributes: String::new(),
                 };
                 let candidates = dependency_candidates(&root, &target);
+                observed_dependencies.extend(candidates.iter().cloned());
                 let loaded = {
-                    let mut loader = IncludeLoader::new(&mut session);
-                    loader
-                        .validate(&root, request)
-                        .and_then(|validated| loader.load(validated))
+                    IncludeLoader::new(&mut filesystem_session)
+                        .load(&root, request)
+                        .map_err(include_target_error)
                 };
                 dependency_paths.extend(candidates);
                 match loaded {
@@ -370,6 +388,7 @@ pub fn prepare_local(
                         debug_assert_eq!(loaded_source_id.as_str(), resource_id);
                         debug_assert_eq!(provenance.logical_target, target);
                         dependency_paths.insert(provenance.canonical_path.clone());
+                        observed_dependencies.insert(provenance.canonical_path.clone());
                         dependency_snapshots.insert(
                             provenance.canonical_path.clone(),
                             Fingerprint::from_loaded_bytes(
@@ -505,12 +524,10 @@ mod tests {
         }
     }
 
-    fn session(root: &Path) -> LocalTargetSession {
-        LocalTargetSession::new(
-            LocalTargetPolicy::new(root).expect("policy"),
-            16,
-            ResourceLimits::default(),
-        )
+    fn session(root: &Path) -> LocalFilesystemSession {
+        LocalFilesystemPolicy::new([root.to_owned()], ResourceLimits::default())
+            .and_then(|policy| policy.session())
+            .expect("session")
     }
 
     fn request(target: &str) -> IncludeRequest {
@@ -529,27 +546,26 @@ mod tests {
         for _ in 0..2 {
             let loaded = {
                 let mut loader = IncludeLoader::new(&mut session);
-                let validated = loader
-                    .validate(&root.0, request("part.adoc"))
-                    .expect("validated target");
-                loader.load(validated).expect("loaded source")
+                loader
+                    .load(&root.0, request("part.adoc"))
+                    .expect("loaded source")
             };
             let (source_id, source, provenance) = loaded.into_utf8_parts();
             assert_eq!(source_id.as_str(), "include:part.adoc");
             assert_eq!(source, "part\n");
             assert_eq!(provenance.logical_target, "part.adoc");
         }
-        assert_eq!(session.read_files(), 1);
+        assert_eq!(session.budget().files(), 1);
     }
 
     #[test]
-    fn failed_validation_cannot_produce_a_loaded_source() {
+    fn failed_common_read_cannot_produce_a_loaded_source() {
         let root = TestDirectory::new();
         let mut session = session(&root.0);
-        let result = IncludeLoader::new(&mut session).validate(&root.0, request("missing.adoc"));
+        let result = IncludeLoader::new(&mut session).load(&root.0, request("missing.adoc"));
 
         assert!(result.is_err());
-        assert_eq!(session.read_files(), 0);
+        assert_eq!(session.budget().files(), 0);
     }
 
     #[test]
@@ -561,6 +577,14 @@ mod tests {
         );
         assert!(dependency_candidates(&root.0, "../secret.adoc").is_empty());
         assert!(dependency_candidates(&root.0, "/etc/passwd").is_empty());
+    }
+
+    #[test]
+    fn common_file_limit_keeps_the_configured_limit_in_cli_diagnostics() {
+        assert_eq!(
+            include_target_error(ResourceError::FileLimit { limit: 7 }),
+            LocalTargetError::LimitExceeded { limit: 7 }
+        );
     }
 
     #[cfg(unix)]
@@ -575,17 +599,15 @@ mod tests {
 
         let direct = {
             let mut loader = IncludeLoader::new(&mut session);
-            let target = loader
-                .validate(&root.0, request("part.adoc"))
-                .expect("direct validation");
-            loader.load(target).expect("direct load")
+            loader
+                .load(&root.0, request("part.adoc"))
+                .expect("direct load")
         };
         let alias = {
             let mut loader = IncludeLoader::new(&mut session);
-            let target = loader
-                .validate(&root.0, request("alias.adoc"))
-                .expect("alias validation");
-            loader.load(target).expect("alias load")
+            loader
+                .load(&root.0, request("alias.adoc"))
+                .expect("alias load")
         };
         let (direct_id, _, direct_provenance) = direct.into_utf8_parts();
         let (alias_id, _, alias_provenance) = alias.into_utf8_parts();
@@ -597,7 +619,7 @@ mod tests {
             direct_provenance.canonical_path,
             alias_provenance.canonical_path
         );
-        assert_eq!(session.read_files(), 1);
+        assert_eq!(session.budget().files(), 1);
     }
 
     #[cfg(unix)]
@@ -611,11 +633,11 @@ mod tests {
         symlink(outside.0.join("outside.adoc"), root.0.join("escape.adoc")).expect("escape");
         let mut session = session(&root.0);
         let error = IncludeLoader::new(&mut session)
-            .validate(&root.0, request("escape.adoc"))
+            .load(&root.0, request("escape.adoc"))
             .expect_err("symlink escape");
 
-        assert_eq!(error.diagnostic_code(), "local-target-outside-root");
-        assert_eq!(session.read_files(), 0);
+        assert!(matches!(error, ResourceError::OutsideRoots(_)));
+        assert_eq!(session.budget().files(), 0);
     }
 
     #[cfg(unix)]

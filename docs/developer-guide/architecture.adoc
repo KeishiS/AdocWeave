@@ -54,6 +54,11 @@ HTMLやエディター固有の表示規則をParserへ持ち込みません。
 スナップショットをruntime非依存の状態機械として提供します。filesystem pathやURIの検査と読込は
 adapter側に残し、検証済みのresource IDと本文だけをWorkspaceへ渡します。
 
+Native adapterは``adocweave-host``の``LocalFilesystemSession``を共有します。Linuxではrootの
+directory handleを起点にfileを開いてから読み取り、path検査後に別のfileを開き直しません。
+論理的なsource ID、不変な本文およびfilesystem provenanceは一つの読込結果として構築します。
+依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
+
 ``adocweave-config``は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
 設定は解析とI/O policyへの入力であり、workspace外へのアクセス権限を追加しません。
 

@@ -1,8 +1,12 @@
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
-use std::fs;
-use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::local_target::{
+    FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy, LocalTargetSession,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResourceLimits {
@@ -22,61 +26,75 @@ impl Default for ResourceLimits {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LocalResourcePolicy {
+pub struct LocalFilesystemPolicy {
     roots: Vec<PathBuf>,
     limits: ResourceLimits,
 }
 
-/// Bytes captured after filesystem-policy validation and budget accounting.
-///
-/// The fields are private so a validated capability cannot be forged or
-/// combined with a different policy before decoding.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ValidatedFilesystemTarget {
-    canonical_path: PathBuf,
-    bytes: Vec<u8>,
-}
+/// Host-defined identity which is safe to expose in diagnostics and source maps.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct LogicalSourceId(Arc<str>);
 
-impl ValidatedFilesystemTarget {
-    pub fn canonical_path(&self) -> &Path {
-        &self.canonical_path
+impl LogicalSourceId {
+    pub fn new(value: impl Into<Arc<str>>) -> Result<Self, ResourceError> {
+        let value = value.into();
+        if value.is_empty() || value.chars().any(char::is_control) {
+            return Err(ResourceError::InvalidSourceId);
+        }
+        Ok(Self(value))
     }
 
-    pub fn into_loaded_utf8(self) -> Result<LoadedLocalResource, ResourceError> {
-        let source =
-            String::from_utf8(self.bytes).map_err(|source| ResourceError::InvalidUtf8 {
-                path: self.canonical_path.clone(),
-                source: source.to_string(),
-            })?;
-        Ok(LoadedLocalResource {
-            canonical_path: self.canonical_path,
-            source,
-        })
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
-/// UTF-8 resource loaded through a [`LocalResourcePolicy`].
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LoadedLocalResource {
+struct FilesystemProvenance {
     canonical_path: PathBuf,
-    source: String,
 }
 
-impl LoadedLocalResource {
+/// Immutable UTF-8 source paired with its logical identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedFilesystemSource {
+    source_id: LogicalSourceId,
+    source: Arc<str>,
+    provenance: FilesystemProvenance,
+}
+
+impl LoadedFilesystemSource {
+    pub fn source_id(&self) -> &LogicalSourceId {
+        &self.source_id
+    }
+
     pub fn canonical_path(&self) -> &Path {
-        &self.canonical_path
+        &self.provenance.canonical_path
     }
 
     pub fn source(&self) -> &str {
         &self.source
     }
 
-    pub fn into_parts(self) -> (PathBuf, String) {
-        (self.canonical_path, self.source)
+    pub fn into_parts(self) -> (LogicalSourceId, Arc<str>) {
+        (self.source_id, self.source)
     }
 }
 
-impl LocalResourcePolicy {
+/// Per-command filesystem capability shared by all native resource consumers.
+///
+/// Construction opens one policy for each canonical root. Reads are delegated
+/// to the same handle-relative implementation used by local-target checks, and
+/// one budget is enforced across every root.
+#[derive(Debug)]
+pub struct LocalFilesystemSession {
+    roots: Vec<PathBuf>,
+    sessions: Vec<LocalTargetSession>,
+    limits: ResourceLimits,
+    budget: ResourceBudget,
+    charged: BTreeMap<PathBuf, u64>,
+}
+
+impl LocalFilesystemPolicy {
     pub fn new(
         roots: impl IntoIterator<Item = PathBuf>,
         limits: ResourceLimits,
@@ -110,53 +128,181 @@ impl LocalResourcePolicy {
         self.limits
     }
 
-    pub fn canonical_file(&self, path: &Path) -> Result<PathBuf, ResourceError> {
-        let canonical = path
-            .canonicalize()
-            .map_err(|source| ResourceError::Inspect {
-                path: path.to_owned(),
-                source: source.to_string(),
-            })?;
-        if !self.roots.iter().any(|root| canonical.starts_with(root)) {
-            return Err(ResourceError::OutsideRoots(canonical));
-        }
-        let metadata = fs::metadata(&canonical).map_err(|source| ResourceError::Inspect {
-            path: canonical.clone(),
-            source: source.to_string(),
-        })?;
-        if !metadata.is_file() {
-            return Err(ResourceError::NotRegularFile(canonical));
-        }
-        Ok(canonical)
-    }
-
-    pub fn resolve_relative(&self, base: &Path, target: &str) -> Result<PathBuf, ResourceError> {
-        let relative = normalize_relative(target)?;
-        self.canonical_file(&base.join(relative))
-    }
-
-    pub fn validate_file(
-        &self,
-        budget: &mut ResourceBudget,
-        path: &Path,
-    ) -> Result<ValidatedFilesystemTarget, ResourceError> {
-        let canonical = self.canonical_file(path)?;
-        let file = fs::File::open(&canonical).map_err(|source| ResourceError::Read {
-            path: canonical.clone(),
-            source: source.to_string(),
-        })?;
-        let mut bytes = Vec::new();
-        file.take(self.limits.max_resource_bytes.saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(|source| ResourceError::Read {
-                path: canonical.clone(),
-                source: source.to_string(),
-            })?;
-        budget.charge(&canonical, bytes.len() as u64, self.limits)?;
-        Ok(ValidatedFilesystemTarget {
-            canonical_path: canonical,
-            bytes,
+    pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
+        let sessions = self
+            .roots
+            .iter()
+            .map(|root| {
+                LocalTargetPolicy::new(root)
+                    .map(|policy| {
+                        LocalTargetSession::new(
+                            policy,
+                            self.limits.max_files,
+                            ResourceLimits {
+                                max_files: usize::MAX,
+                                max_total_bytes: u64::MAX,
+                                max_resource_bytes: self.limits.max_resource_bytes,
+                            },
+                        )
+                    })
+                    .map_err(ResourceError::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(LocalFilesystemSession {
+            roots: self.roots.clone(),
+            sessions,
+            limits: self.limits,
+            budget: ResourceBudget::default(),
+            charged: BTreeMap::new(),
         })
+    }
+}
+
+impl LocalFilesystemSession {
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    pub const fn limits(&self) -> ResourceLimits {
+        self.limits
+    }
+
+    /// Returns the concurrent-filesystem guarantee of all configured roots.
+    pub fn race_resistance(&self) -> FilesystemRaceResistance {
+        self.sessions
+            .iter()
+            .map(|session| session.policy().race_resistance())
+            .min_by_key(|resistance| match resistance {
+                FilesystemRaceResistance::StaticSnapshotOnly => 0,
+                FilesystemRaceResistance::HandleRelative => 1,
+            })
+            .unwrap_or(FilesystemRaceResistance::StaticSnapshotOnly)
+    }
+
+    /// Reads one absolute filesystem path below exactly one configured root.
+    pub fn read_utf8(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        self.read_utf8_with(source_id, path, || {})
+    }
+
+    /// Resolves and reads one authored target relative to an absolute base.
+    pub fn read_target_utf8(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let index = self.root_index(base)?;
+        let loaded = self.sessions[index]
+            .read_utf8(base, target)
+            .map_err(ResourceError::from)?;
+        self.finish_read(source_id, loaded)
+    }
+
+    /// Reopens an absolute path while retaining this session's shared budget.
+    pub fn reread_utf8(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let index = self.root_index(path)?;
+        let loaded = self.sessions[index]
+            .reread_candidate_utf8(path)
+            .map_err(ResourceError::from)?;
+        self.finish_read(source_id, loaded)
+    }
+
+    /// Releases the budget charge for a resource removed from the caller's workspace.
+    pub fn release(&mut self, path: &Path) {
+        if let Some(bytes) = self.charged.remove(path) {
+            self.budget.release(bytes);
+        }
+        if let Ok(index) = self.root_index(path) {
+            self.sessions[index].release_candidate(path);
+        }
+    }
+
+    #[cfg(test)]
+    fn read_utf8_after_open(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+        after_open: impl FnOnce(),
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        self.read_utf8_with(source_id, path, after_open)
+    }
+
+    #[cfg(test)]
+    fn read_target_utf8_after_open(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+        after_open: impl FnOnce(),
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let index = self.root_index(base)?;
+        let loaded = self.sessions[index]
+            .read_utf8_after_open(base, target, after_open)
+            .map_err(ResourceError::from)?;
+        self.finish_read(source_id, loaded)
+    }
+
+    fn read_utf8_with(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+        after_open: impl FnOnce(),
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        if !path.is_absolute() {
+            return Err(ResourceError::PathNotAbsolute(path.to_owned()));
+        }
+        let index = self.root_index(path)?;
+        let candidate = path.to_owned();
+        if candidate == self.roots[index] {
+            return Err(ResourceError::NotRegularFile(candidate));
+        }
+        let loaded = self.sessions[index]
+            .read_candidate_utf8_after_open(&candidate, after_open)
+            .map_err(ResourceError::from)?;
+        self.finish_read(source_id, loaded)
+    }
+
+    fn root_index(&self, path: &Path) -> Result<usize, ResourceError> {
+        if !path.is_absolute() {
+            return Err(ResourceError::PathNotAbsolute(path.to_owned()));
+        }
+        self.roots
+            .iter()
+            .enumerate()
+            .filter(|(_, root)| path.starts_with(root))
+            .max_by_key(|(_, root)| root.components().count())
+            .map(|(index, _)| index)
+            .ok_or_else(|| ResourceError::OutsideRoots(path.to_owned()))
+    }
+
+    fn finish_read(
+        &mut self,
+        source_id: LogicalSourceId,
+        loaded: crate::local_target::LoadedLocalTarget,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let (canonical_path, source) = loaded.into_parts();
+        let bytes = source.len() as u64;
+        let previous = self.charged.get(&canonical_path).copied();
+        self.budget
+            .replace(&canonical_path, previous, bytes, self.limits)?;
+        self.charged.insert(canonical_path.clone(), bytes);
+        Ok(LoadedFilesystemSource {
+            source_id,
+            source: Arc::from(source),
+            provenance: FilesystemProvenance { canonical_path },
+        })
+    }
+
+    pub const fn budget(&self) -> ResourceBudget {
+        self.budget
     }
 }
 
@@ -176,9 +322,13 @@ impl ResourceBudget {
         if bytes > limits.max_resource_bytes {
             return Err(ResourceError::ResourceTooLarge(path.to_owned()));
         }
-        let files = self.files.checked_add(1).ok_or(ResourceError::FileLimit)?;
+        let files = self.files.checked_add(1).ok_or(ResourceError::FileLimit {
+            limit: limits.max_files,
+        })?;
         if files > limits.max_files {
-            return Err(ResourceError::FileLimit);
+            return Err(ResourceError::FileLimit {
+                limit: limits.max_files,
+            });
         }
         let total = self
             .bytes
@@ -190,6 +340,44 @@ impl ResourceBudget {
         self.files = files;
         self.bytes = total;
         Ok(())
+    }
+
+    fn replace(
+        &mut self,
+        path: &Path,
+        previous: Option<u64>,
+        bytes: u64,
+        limits: ResourceLimits,
+    ) -> Result<(), ResourceError> {
+        let Some(previous) = previous else {
+            return self.charge(path, bytes, limits);
+        };
+        if bytes > limits.max_resource_bytes {
+            return Err(ResourceError::ResourceTooLarge(path.to_owned()));
+        }
+        let retained = self
+            .bytes
+            .checked_sub(previous)
+            .expect("charged bytes are part of the total");
+        let total = retained
+            .checked_add(bytes)
+            .ok_or(ResourceError::ByteLimit)?;
+        if total > limits.max_total_bytes {
+            return Err(ResourceError::ByteLimit);
+        }
+        self.bytes = total;
+        Ok(())
+    }
+
+    fn release(&mut self, bytes: u64) {
+        self.files = self
+            .files
+            .checked_sub(1)
+            .expect("released file was charged");
+        self.bytes = self
+            .bytes
+            .checked_sub(bytes)
+            .expect("released bytes were charged");
     }
 
     pub const fn files(self) -> usize {
@@ -205,15 +393,19 @@ impl ResourceBudget {
 pub enum ResourceError {
     NoRoots,
     InvalidRoot,
-    InvalidTarget(String),
+    InvalidSourceId,
+    Missing(PathBuf),
+    PermissionDenied(PathBuf),
+    PathNotAbsolute(PathBuf),
     OutsideRoots(PathBuf),
     NotRegularFile(PathBuf),
     Inspect { path: PathBuf, source: String },
     Read { path: PathBuf, source: String },
     InvalidUtf8 { path: PathBuf, source: String },
     ResourceTooLarge(PathBuf),
-    FileLimit,
+    FileLimit { limit: usize },
     ByteLimit,
+    Unverifiable(String),
 }
 
 impl fmt::Display for ResourceError {
@@ -221,9 +413,18 @@ impl fmt::Display for ResourceError {
         match self {
             Self::NoRoots => formatter.write_str("no local resource roots were configured"),
             Self::InvalidRoot => formatter.write_str("local resource root is not a directory"),
-            Self::InvalidTarget(target) => {
-                write!(formatter, "unsafe local resource target: {target}")
+            Self::InvalidSourceId => formatter.write_str("local source ID is invalid"),
+            Self::Missing(path) => {
+                write!(formatter, "local resource is missing: {}", path.display())
             }
+            Self::PermissionDenied(path) => {
+                write!(formatter, "permission denied reading {}", path.display())
+            }
+            Self::PathNotAbsolute(path) => write!(
+                formatter,
+                "local resource path is not absolute: {}",
+                path.display()
+            ),
             Self::OutsideRoots(path) => write!(
                 formatter,
                 "local resource is outside configured roots: {}",
@@ -248,38 +449,44 @@ impl fmt::Display for ResourceError {
             Self::ResourceTooLarge(path) => {
                 write!(formatter, "local resource is too large: {}", path.display())
             }
-            Self::FileLimit => formatter.write_str("local resource file limit exceeded"),
+            Self::FileLimit { limit } => {
+                write!(formatter, "local resource file limit exceeded: {limit}")
+            }
             Self::ByteLimit => formatter.write_str("local resource byte limit exceeded"),
+            Self::Unverifiable(reason) => {
+                write!(formatter, "local resource cannot be verified: {reason}")
+            }
         }
     }
 }
 
 impl Error for ResourceError {}
 
-pub fn normalize_relative(target: &str) -> Result<PathBuf, ResourceError> {
-    if target.is_empty() || target.contains(':') || target.chars().any(char::is_control) {
-        return Err(ResourceError::InvalidTarget(target.to_owned()));
-    }
-    let mut safe = PathBuf::new();
-    for component in Path::new(target).components() {
-        match component {
-            Component::Normal(value) => safe.push(value),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ResourceError::InvalidTarget(target.to_owned()));
+impl From<LocalTargetError> for ResourceError {
+    fn from(error: LocalTargetError) -> Self {
+        match error {
+            LocalTargetError::Missing(path) => Self::Missing(path),
+            LocalTargetError::OutsideRoot(path) => Self::OutsideRoots(path),
+            LocalTargetError::NotFile(path) | LocalTargetError::NotDirectory(path) => {
+                Self::NotRegularFile(path)
             }
+            LocalTargetError::PermissionDenied(path) => Self::PermissionDenied(path),
+            LocalTargetError::InvalidUtf8(path) => Self::InvalidUtf8 {
+                path,
+                source: "input is not valid UTF-8".to_owned(),
+            },
+            LocalTargetError::Unverifiable(source) => Self::Unverifiable(source),
+            LocalTargetError::LimitExceeded { limit } => Self::FileLimit { limit },
+            LocalTargetError::ResourceTooLarge(path) => Self::ResourceTooLarge(path),
+            LocalTargetError::ReadLimitExceeded => Self::ByteLimit,
         }
-    }
-    if safe.as_os_str().is_empty() {
-        Err(ResourceError::InvalidTarget(target.to_owned()))
-    } else {
-        Ok(safe)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TestDir(PathBuf);
@@ -309,8 +516,8 @@ mod tests {
         }
     }
 
-    fn policy(root: &Path, max_resource_bytes: u64) -> LocalResourcePolicy {
-        LocalResourcePolicy::new(
+    fn policy(root: &Path, max_resource_bytes: u64) -> LocalFilesystemPolicy {
+        LocalFilesystemPolicy::new(
             [root.to_owned()],
             ResourceLimits {
                 max_files: 10,
@@ -319,6 +526,145 @@ mod tests {
             },
         )
         .expect("valid policy")
+    }
+
+    fn source_id() -> LogicalSourceId {
+        LogicalSourceId::new("test-source").expect("source ID")
+    }
+
+    #[test]
+    fn source_ids_and_platform_capability_are_explicit() {
+        assert!(matches!(
+            LogicalSourceId::new(""),
+            Err(ResourceError::InvalidSourceId)
+        ));
+        assert!(matches!(
+            LogicalSourceId::new("bad\nid"),
+            Err(ResourceError::InvalidSourceId)
+        ));
+        let root = TestDir::new("capability");
+        let session = policy(root.path(), 100).session().expect("session");
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            session.race_resistance(),
+            FilesystemRaceResistance::HandleRelative
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(
+            session.race_resistance(),
+            FilesystemRaceResistance::StaticSnapshotOnly
+        );
+        let mut session = policy(root.path(), 100).session().expect("session");
+        assert!(matches!(
+            session.read_utf8(source_id(), Path::new("relative.adoc")),
+            Err(ResourceError::PathNotAbsolute(_))
+        ));
+    }
+
+    #[test]
+    fn failed_global_budget_charge_is_not_bypassed_by_retrying_the_same_path() {
+        let first_root = TestDir::new("file-budget-first");
+        let second_root = TestDir::new("file-budget-second");
+        let first = first_root.path().join("first.adoc");
+        let second = second_root.path().join("second.adoc");
+        fs::write(&first, "a").expect("first source");
+        fs::write(&second, "b").expect("second source");
+        let policy = LocalFilesystemPolicy::new(
+            [first_root.path().to_owned(), second_root.path().to_owned()],
+            ResourceLimits {
+                max_files: 1,
+                max_total_bytes: 2,
+                max_resource_bytes: 2,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+        session.read_utf8(source_id(), &first).expect("first read");
+        for _ in 0..2 {
+            assert_eq!(
+                session.read_utf8(source_id(), &second),
+                Err(ResourceError::FileLimit { limit: 1 })
+            );
+        }
+
+        let first_root = TestDir::new("byte-budget-first");
+        let second_root = TestDir::new("byte-budget-second");
+        let first = first_root.path().join("first.adoc");
+        let second = second_root.path().join("second.adoc");
+        fs::write(&first, "ab").expect("first source");
+        fs::write(&second, "cd").expect("second source");
+        let policy = LocalFilesystemPolicy::new(
+            [first_root.path().to_owned(), second_root.path().to_owned()],
+            ResourceLimits {
+                max_files: 2,
+                max_total_bytes: 3,
+                max_resource_bytes: 2,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+        session.read_utf8(source_id(), &first).expect("first read");
+        for _ in 0..2 {
+            assert_eq!(
+                session.read_utf8(source_id(), &second),
+                Err(ResourceError::ByteLimit)
+            );
+        }
+    }
+
+    #[test]
+    fn reread_replaces_and_release_removes_charges_transactionally() {
+        let root = TestDir::new("replacement-budget");
+        let first = root.path().join("first.adoc");
+        let second = root.path().join("second.adoc");
+        fs::write(&first, "1234").expect("first source");
+        fs::write(&second, "1234").expect("second source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            ResourceLimits {
+                max_files: 2,
+                max_total_bytes: 6,
+                max_resource_bytes: 6,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+
+        session
+            .read_utf8(source_id(), &first)
+            .expect("initial read");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
+
+        fs::write(&first, "12").expect("shrink first");
+        session
+            .reread_utf8(source_id(), &first)
+            .expect("shrunk reread");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 2));
+
+        session
+            .read_utf8(source_id(), &second)
+            .expect("second read");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (2, 6));
+
+        fs::write(&first, "123").expect("grow first");
+        assert_eq!(
+            session.reread_utf8(source_id(), &first),
+            Err(ResourceError::ByteLimit)
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (2, 6));
+
+        fs::write(&second, "1").expect("shrink second");
+        session
+            .reread_utf8(source_id(), &second)
+            .expect("shrunk second");
+        session
+            .reread_utf8(source_id(), &first)
+            .expect("grown first");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (2, 4));
+
+        fs::remove_file(&second).expect("delete second");
+        session.release(&second);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
     }
 
     #[test]
@@ -333,23 +679,9 @@ mod tests {
         assert_eq!((budget.files(), budget.bytes()), (1, 3));
         assert_eq!(
             budget.charge(Path::new("b"), 1, limits),
-            Err(ResourceError::FileLimit)
+            Err(ResourceError::FileLimit { limit: 1 })
         );
         assert_eq!((budget.files(), budget.bytes()), (1, 3));
-    }
-
-    #[test]
-    fn relative_targets_reject_parent_absolute_scheme_and_controls() {
-        for target in ["../a", "/a", "file:a", "a\0b", ""] {
-            assert!(matches!(
-                normalize_relative(target),
-                Err(ResourceError::InvalidTarget(_))
-            ));
-        }
-        assert_eq!(
-            normalize_relative("a/./b").expect("safe"),
-            PathBuf::from("a/b")
-        );
     }
 
     #[test]
@@ -358,14 +690,14 @@ mod tests {
         let outside = TestDir::new("outside");
         let outside_file = outside.path().join("outside.adoc");
         fs::write(&outside_file, "outside").expect("write outside file");
-        let policy = policy(root.path(), 100);
+        let mut session = policy(root.path(), 100).session().expect("session");
 
         assert!(matches!(
-            policy.canonical_file(&outside_file),
+            session.read_utf8(source_id(), &outside_file),
             Err(ResourceError::OutsideRoots(_))
         ));
         assert!(matches!(
-            policy.canonical_file(root.path()),
+            session.read_utf8(source_id(), root.path()),
             Err(ResourceError::NotRegularFile(_))
         ));
     }
@@ -383,9 +715,102 @@ mod tests {
         symlink(&outside_file, &link).expect("create symlink");
 
         assert!(matches!(
-            policy(root.path(), 100).canonical_file(&link),
+            policy(root.path(), 100)
+                .session()
+                .expect("session")
+                .read_utf8(source_id(), &link),
             Err(ResourceError::OutsideRoots(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deepest_root_rejects_a_symlink_back_into_an_allowed_parent_root() {
+        use std::os::unix::fs::symlink;
+
+        let outer = TestDir::new("nested-outer");
+        let inner = outer.path().join("inner");
+        fs::create_dir(&inner).expect("inner root");
+        let outer_file = outer.path().join("outer.adoc");
+        fs::write(&outer_file, "outer").expect("outer file");
+        let link = inner.join("escape.adoc");
+        symlink(&outer_file, &link).expect("cross-boundary symlink");
+        let policy =
+            LocalFilesystemPolicy::new([outer.path().to_owned(), inner], ResourceLimits::default())
+                .expect("policy");
+
+        assert!(matches!(
+            policy
+                .session()
+                .expect("session")
+                .read_utf8(source_id(), &link),
+            Err(ResourceError::OutsideRoots(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_between_allowed_roots_remain_confined_to_the_selected_root() {
+        use std::os::unix::fs::symlink;
+
+        let first = TestDir::new("cross-root-first");
+        let second = TestDir::new("cross-root-second");
+        let second_file = second.path().join("second.adoc");
+        fs::write(&second_file, "second").expect("second file");
+        let link = first.path().join("escape.adoc");
+        symlink(&second_file, &link).expect("cross-root symlink");
+        let policy = LocalFilesystemPolicy::new(
+            [first.path().to_owned(), second.path().to_owned()],
+            ResourceLimits::default(),
+        )
+        .expect("policy");
+
+        assert!(matches!(
+            policy
+                .session()
+                .expect("session")
+                .read_utf8(source_id(), &link),
+            Err(ResourceError::OutsideRoots(_))
+        ));
+    }
+
+    #[test]
+    fn missing_and_permission_errors_keep_typed_identity() {
+        let missing = PathBuf::from("missing.adoc");
+        let denied = PathBuf::from("denied.adoc");
+        assert_eq!(
+            ResourceError::from(LocalTargetError::Missing(missing.clone())),
+            ResourceError::Missing(missing)
+        );
+        assert_eq!(
+            ResourceError::from(LocalTargetError::PermissionDenied(denied.clone())),
+            ResourceError::PermissionDenied(denied)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authored_target_read_keeps_the_opened_file_when_the_leaf_is_replaced() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("target-race-root");
+        let outside = TestDir::new("target-race-outside");
+        let candidate = root.path().join("part.adoc");
+        let moved = root.path().join("opened.adoc");
+        let outside_file = outside.path().join("outside.adoc");
+        fs::write(&candidate, "inside").expect("inside file");
+        fs::write(&outside_file, "outside").expect("outside file");
+        let mut session = policy(root.path(), 100).session().expect("session");
+
+        let loaded = session
+            .read_target_utf8_after_open(source_id(), root.path(), "part.adoc", || {
+                fs::rename(&candidate, &moved).expect("retain opened file");
+                symlink(&outside_file, &candidate).expect("replace with outside symlink");
+            })
+            .expect("opened source remains valid");
+
+        assert_eq!(loaded.source(), "inside");
+        assert_eq!(loaded.canonical_path(), candidate);
     }
 
     #[test]
@@ -395,16 +820,14 @@ mod tests {
         let oversized = root.path().join("oversized.adoc");
         fs::write(&invalid, [0xff]).expect("write invalid UTF-8");
         fs::write(&oversized, "1234").expect("write oversized file");
-        let policy = policy(root.path(), 3);
+        let mut session = policy(root.path(), 3).session().expect("session");
 
         assert!(matches!(
-            policy
-                .validate_file(&mut ResourceBudget::default(), &invalid)
-                .and_then(ValidatedFilesystemTarget::into_loaded_utf8),
+            session.read_utf8(source_id(), &invalid),
             Err(ResourceError::InvalidUtf8 { .. })
         ));
         assert!(matches!(
-            policy.validate_file(&mut ResourceBudget::default(), &oversized),
+            session.read_utf8(source_id(), &oversized),
             Err(ResourceError::ResourceTooLarge(_))
         ));
     }
@@ -420,15 +843,41 @@ mod tests {
         let outside_file = outside.path().join("outside.adoc");
         fs::write(&candidate, "inside").expect("inside source");
         fs::write(&outside_file, "outside").expect("outside source");
-        let validated = policy(root.path(), 100)
-            .validate_file(&mut ResourceBudget::default(), &candidate)
-            .expect("validated target");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        let loaded = session
+            .read_utf8(source_id(), &candidate)
+            .expect("loaded target");
 
         fs::remove_file(&candidate).expect("replace candidate");
         symlink(&outside_file, &candidate).expect("outside symlink");
 
-        let loaded = validated.into_loaded_utf8().expect("captured UTF-8");
         assert_eq!(loaded.source(), "inside");
         assert_eq!(loaded.canonical_path(), candidate);
+        assert_eq!(loaded.source_id().as_str(), "test-source");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shared_session_keeps_the_opened_file_when_an_ancestor_is_replaced() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("session-race-root");
+        let outside = TestDir::new("session-race-outside");
+        let directory = root.path().join("parts");
+        let moved = root.path().join("parts-opened");
+        fs::create_dir(&directory).expect("inside directory");
+        fs::write(directory.join("part.adoc"), "inside").expect("inside source");
+        fs::write(outside.path().join("part.adoc"), "outside").expect("outside source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+
+        let loaded = session
+            .read_utf8_after_open(source_id(), &directory.join("part.adoc"), || {
+                fs::rename(&directory, &moved).expect("move opened ancestor");
+                symlink(outside.path(), &directory).expect("replace ancestor with symlink");
+            })
+            .expect("opened file remains readable");
+
+        assert_eq!(loaded.source(), "inside");
+        assert_ne!(loaded.source(), "outside");
     }
 }

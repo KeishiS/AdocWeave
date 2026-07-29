@@ -9,8 +9,8 @@ mod local_target;
 
 pub use dependency_graph::DependencyGraph;
 pub use local_resource::{
-    LoadedLocalResource, LocalResourcePolicy, ResourceBudget, ResourceError, ResourceLimits,
-    ValidatedFilesystemTarget, normalize_relative,
+    LoadedFilesystemSource, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
+    ResourceBudget, ResourceError, ResourceLimits,
 };
 pub use local_target::{
     FilesystemRaceResistance, LoadedLocalTarget, LocalTargetError, LocalTargetPolicy,

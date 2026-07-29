@@ -19,7 +19,9 @@ use adocweave::preprocess::{
     ResourceDocument, ResourceSnapshot, preprocess,
 };
 use adocweave::{AnalysisOptions, Engine, SourceId};
-use adocweave_host::{DependencyGraph, LocalResourcePolicy, ResourceBudget, ResourceLimits};
+use adocweave_host::{
+    DependencyGraph, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId, ResourceLimits,
+};
 
 /// Stable, host-defined identity for one workspace resource.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -844,20 +846,22 @@ pub fn scan_filesystem(
     roots: &[PathBuf],
     limits: ResourceLimits,
 ) -> Result<Vec<FilesystemResource>, WorkspaceError> {
+    let policy = LocalFilesystemPolicy::new(roots.to_vec(), limits)
+        .map_err(|error| WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string()))?;
+    let mut session = policy
+        .session()
+        .map_err(|error| WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string()))?;
+    scan_filesystem_with_session(&mut session)
+}
+
+/// Scans with a caller-owned filesystem session so later reloads retain one budget.
+pub fn scan_filesystem_with_session(
+    session: &mut LocalFilesystemSession,
+) -> Result<Vec<FilesystemResource>, WorkspaceError> {
     const MAX_SCAN_ENTRIES: usize = 100_000;
 
-    let mut canonical_roots = roots
-        .iter()
-        .map(|root| {
-            root.canonicalize().map_err(|error| {
-                WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    canonical_roots.sort();
-    canonical_roots.dedup();
-    let policy = LocalResourcePolicy::new(canonical_roots.clone(), limits)
-        .map_err(|error| WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string()))?;
+    let canonical_roots = session.roots().to_vec();
+    let limits = session.limits();
     let mut paths = Vec::new();
     let mut scanned_entries = 0_usize;
     for root in &canonical_roots {
@@ -906,19 +910,18 @@ pub fn scan_filesystem(
     }
     paths.sort();
     paths.dedup();
-    let mut budget = ResourceBudget::default();
     paths
         .into_iter()
         .map(|path| {
-            policy
-                .validate_file(&mut budget, &path)
-                .and_then(adocweave_host::ValidatedFilesystemTarget::into_loaded_utf8)
+            let source_id =
+                LogicalSourceId::new(path.to_string_lossy().into_owned()).map_err(|error| {
+                    WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())
+                })?;
+            session
+                .read_utf8(source_id, &path)
                 .map(|loaded| {
-                    let (path, text) = loaded.into_parts();
-                    FilesystemResource {
-                        path,
-                        text: text.into(),
-                    }
+                    let (_, text) = loaded.into_parts();
+                    FilesystemResource { path, text }
                 })
                 .map_err(|error| {
                     WorkspaceError::new(WorkspaceErrorCode::Filesystem, error.to_string())

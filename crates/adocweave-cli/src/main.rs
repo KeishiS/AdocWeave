@@ -879,15 +879,28 @@ fn process_convert(
     Ok(output.html)
 }
 
-fn preview_build(
-    input_path: &Path,
+struct PreviewBuildRequest<'request> {
+    input_path: &'request Path,
     include: bool,
-    base_dir: &Path,
-    project_root: &Path,
-    project: &adocweave_config::ResolvedProjectConfig,
-    css: &[CssArgument],
+    base_dir: &'request Path,
+    project_root: &'request Path,
+    project: &'request adocweave_config::ResolvedProjectConfig,
+    css: &'request [CssArgument],
+}
+
+fn preview_build(
+    request: PreviewBuildRequest<'_>,
     cancellation: &adocweave::CancellationToken,
+    dependencies: &mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
 ) -> Result<preview::Build, CliError> {
+    let PreviewBuildRequest {
+        input_path,
+        include,
+        base_dir,
+        project_root,
+        project,
+        css,
+    } = request;
     let (input, input_fingerprint) =
         preview::read_dependency(input_path).map_err(|source| CliError::Read {
             source_name: input_path.display().to_string(),
@@ -895,11 +908,11 @@ fn preview_build(
         })?;
     let source = decode_input(&input)?;
     let source_id = input_path.to_string_lossy().into_owned();
-    let mut dependencies =
-        std::collections::BTreeMap::from([(input_path.to_owned(), input_fingerprint)]);
+    dependencies.insert(input_path.to_owned(), input_fingerprint);
 
     let (processed, include_diagnostics) = if include {
-        let prepared = local_include::prepare_local(
+        let mut observed_dependencies = std::collections::BTreeSet::new();
+        let prepared = local_include::prepare_local_tracking(
             source,
             source_id,
             base_dir,
@@ -907,8 +920,14 @@ fn preview_build(
             project_root,
             project.resources.limits,
             &project.preprocess,
-        )
-        .map_err(CliError::Include)?;
+            &mut observed_dependencies,
+        );
+        for path in observed_dependencies {
+            dependencies
+                .entry(path.clone())
+                .or_insert_with(|| preview::Fingerprint::read(&path));
+        }
+        let prepared = prepared.map_err(CliError::Include)?;
         dependencies.extend(prepared.dependency_snapshots);
         for path in prepared.dependency_paths {
             dependencies
@@ -935,7 +954,7 @@ fn preview_build(
         .map_err(CliError::Analysis)?;
     let output = render(
         analysis.document(),
-        &convert_policy(&project.html, true, css, Some(&mut dependencies))?,
+        &convert_policy(&project.html, true, css, Some(dependencies))?,
     );
     if let Some(item) = output.diagnostics.iter().find(|item| {
         matches!(
@@ -974,7 +993,7 @@ fn preview_build(
     Ok(preview::Build::new(
         output.html,
         serde_json::to_string(&diagnostics).expect("diagnostics are serializable"),
-        dependencies,
+        dependencies.clone(),
     )
     .with_style_origins(style_origins))
 }
@@ -1936,14 +1955,18 @@ fn run() -> Result<ExitCode, CliError> {
                         debounce: Duration::from_millis(*debounce_ms),
                     },
                     |cancellation| {
+                        let mut dependencies = std::collections::BTreeMap::new();
                         let result = preview_build(
-                            &canonical_input,
-                            include,
-                            &base_dir,
-                            &preview_root,
-                            &project_config,
-                            css,
+                            PreviewBuildRequest {
+                                input_path: &canonical_input,
+                                include,
+                                base_dir: &base_dir,
+                                project_root: &preview_root,
+                                project: &project_config,
+                                css,
+                            },
                             cancellation,
+                            &mut dependencies,
                         );
                         match result {
                             Ok(build) => Ok(build),
@@ -1954,12 +1977,10 @@ fn run() -> Result<ExitCode, CliError> {
                                         CssArgument::File(path) => Some(path.clone()),
                                         CssArgument::Url(_) => None,
                                     }));
-                                let dependencies = paths
-                                    .map(|path| {
-                                        let fingerprint = preview::Fingerprint::read(&path);
-                                        (path, fingerprint)
-                                    })
-                                    .collect();
+                                dependencies.extend(paths.map(|path| {
+                                    let fingerprint = preview::Fingerprint::read(&path);
+                                    (path, fingerprint)
+                                }));
                                 Ok(preview::Build::failure(error.to_string(), dependencies))
                             }
                         }
@@ -2386,10 +2407,67 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, CommandOptions, DiagnosticFormat, Operation, parse_arguments};
+    use super::{
+        Action, CommandOptions, CssArgument, DiagnosticFormat, Operation, PreviewBuildRequest,
+        parse_arguments, preview_build,
+    };
 
     fn arguments(values: &[&str]) -> impl Iterator<Item = String> {
         values.iter().map(ToString::to_string)
+    }
+
+    #[test]
+    fn failed_preview_build_retains_discovered_include_dependencies() {
+        let root = tempfile::tempdir().expect("project root");
+        let input = root.path().join("manual.adoc");
+        let include = root.path().join("part.adoc");
+        let stylesheet = root.path().join("invalid.css");
+        std::fs::write(&input, "include::part.adoc[]\n").expect("root document");
+        std::fs::write(&include, "included text\n").expect("include");
+        std::fs::write(&stylesheet, "</style").expect("invalid stylesheet");
+        let mut dependencies = std::collections::BTreeMap::new();
+
+        let result = preview_build(
+            PreviewBuildRequest {
+                input_path: &input,
+                include: true,
+                base_dir: root.path(),
+                project_root: root.path(),
+                project: &adocweave_config::ResolvedProjectConfig::default(),
+                css: &[CssArgument::File(stylesheet)],
+            },
+            &adocweave::CancellationToken::new(),
+            &mut dependencies,
+        );
+
+        assert!(result.is_err());
+        assert!(dependencies.contains_key(&include));
+    }
+
+    #[test]
+    fn preprocess_failure_retains_dependencies_discovered_before_the_error() {
+        let root = tempfile::tempdir().expect("project root");
+        let input = root.path().join("manual.adoc");
+        let include = root.path().join("part.adoc");
+        std::fs::write(&input, "include::part.adoc[]\n").expect("root document");
+        std::fs::write(&include, "include::part.adoc[]\n").expect("cyclic include");
+        let mut dependencies = std::collections::BTreeMap::new();
+
+        let result = preview_build(
+            PreviewBuildRequest {
+                input_path: &input,
+                include: true,
+                base_dir: root.path(),
+                project_root: root.path(),
+                project: &adocweave_config::ResolvedProjectConfig::default(),
+                css: &[],
+            },
+            &adocweave::CancellationToken::new(),
+            &mut dependencies,
+        );
+
+        assert!(result.is_err());
+        assert!(dependencies.contains_key(&include));
     }
 
     #[test]
