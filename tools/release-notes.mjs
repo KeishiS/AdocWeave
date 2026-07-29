@@ -47,7 +47,7 @@ const migrationNotes = [
   "`adocweave-workspace`の`scan_filesystem`、`scan_filesystem_with_session`、`FilesystemResource`および`WorkspaceErrorCode::Filesystem`を削除しました。`LocalFilesystemSession::scan_utf8`でhost側から読込み、検証済みの論理IDと本文を`Workspace::upsert_disk`へ渡してください。読込エラーはWorkspaceへ渡す前にhostの`ResourceError`として処理してください。",
   "`adocweave_host::DependencyGraph`の公開を終了しました。依存関係はWorkspaceが所有するため、解析後は`WorkspaceAnalysis::dependencies`を参照してください。",
   "WASM protocol schema 7では`preprocess.options`へ`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`を追加しました。省略時は従来と同じ32と1048576を使用します。combined requestで`analysisOptions.syntax.limits`へ非既定値を指定する場合は、前処理側にも同じ値を指定してください。不一致は処理前に`invalid-options`として拒否されます。",
-  "`PreprocessedAnalysisError`へ`Cancelled`を追加しました。この列挙型を網羅的に`match`するRustコードは、処理の取り消しを扱う分岐を追加してください。協調キャンセルが必要な場合は`preprocess_cancellable`、`preprocess_and_analyze_with_options_cancellable`、`lint_analysis_cancellable`または`PreprocessedAnalysis::project_origins_cancellable`を使用してください。",
+  "`PreprocessedAnalysisError`へ`Cancelled`を追加しました。この列挙型を網羅的に`match`するRustコードは、処理の取り消しを扱う分岐を追加してください。協調キャンセルが必要な場合は`preprocess_cancellable`、`preprocess_and_analyze_cancellable_with_options`、`lint_analysis_cancellable`または`PreprocessedAnalysis::project_origins_cancellable`を使用してください。",
   "JSONの`packageVersion`は文字列のままです。source mapの`mapping`も`identity`または`whole-origin`の文字列を維持します。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];

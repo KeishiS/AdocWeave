@@ -50,7 +50,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /不一致は処理前に`invalid-options`/);
   assert.match(notes, /`PreprocessedAnalysisError`へ`Cancelled`を追加/);
   assert.match(notes, /網羅的に`match`するRustコード/);
-  assert.match(notes, /preprocess_and_analyze_with_options_cancellable/);
+  assert.match(notes, /preprocess_and_analyze_cancellable_with_options/);
   assert.match(notes, /PreprocessedAnalysis::project_origins_cancellable/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
