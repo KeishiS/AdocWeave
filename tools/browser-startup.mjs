@@ -1,6 +1,6 @@
-export const BROWSER_STARTUP_ATTEMPTS = 2;
+export const BROWSER_STARTUP_ATTEMPTS = 3;
 export const BROWSER_STARTUP_ATTEMPT_TIMEOUT_MS = 20_000;
-export const BROWSER_STARTUP_TOTAL_TIMEOUT_MS = 45_000;
+export const BROWSER_STARTUP_TOTAL_TIMEOUT_MS = 75_000;
 
 export async function retryBrowserStartup(
   operation,
@@ -20,6 +20,7 @@ export async function retryBrowserStartup(
   const startedAt = now();
   const deadline = startedAt + totalTimeoutMs;
   let lastError;
+  const failures = [];
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const remainingMs = deadline - now();
     if (remainingMs <= 0) break;
@@ -38,6 +39,7 @@ export async function retryBrowserStartup(
       if (!error.retryBrowserStartup) throw error;
       const currentTime = now();
       const willRetry = attempt < attempts && currentTime < deadline;
+      failures.push({ attempt, error });
       onFailure({
         attempt,
         attempts,
@@ -45,12 +47,15 @@ export async function retryBrowserStartup(
         error,
         willRetry,
       });
-      if (!willRetry) throw error;
+      if (!willRetry) break;
     } finally {
       clearTimeout(timer);
     }
   }
+  const diagnostics = failures
+    .map(({ attempt, error }) => `attempt ${attempt}: ${error.message}`)
+    .join("; ");
   throw new Error(
-    `Chromium startup exhausted ${attempts} attempts within ${totalTimeoutMs} ms: ${lastError?.message ?? "total timeout"}`,
+    `Chromium startup exhausted ${failures.length || attempts}/${attempts} attempts within ${totalTimeoutMs} ms: ${diagnostics || lastError?.message || "total timeout"}`,
   );
 }
