@@ -4,8 +4,6 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use adocweave::output::formatter::{FormatConfig, NewlineStyle};
-
 use super::{CliError, ColorChoice};
 
 pub(crate) struct PendingWrite {
@@ -78,39 +76,6 @@ fn sync_parent(path: &Path) -> Result<(), CliError> {
 #[cfg(not(unix))]
 fn sync_parent(_path: &Path) -> Result<(), CliError> {
     Ok(())
-}
-
-pub(crate) fn unified_diff(path: &Path, original: &str, formatted: &str) -> String {
-    similar::TextDiff::from_lines(original, formatted)
-        .unified_diff()
-        .header(
-            &format!("a/{}", path.display()),
-            &format!("b/{}", path.display()),
-        )
-        .to_string()
-}
-
-pub(crate) fn safe_write_format_config(
-    original: &[u8],
-    project: &adocweave_config::ResolvedProjectConfig,
-) -> FormatConfig {
-    let mut format = project.format;
-    if !project.format_newline_explicit {
-        let crlf = original
-            .windows(2)
-            .filter(|window| *window == b"\r\n")
-            .count();
-        let lf = original.iter().filter(|byte| **byte == b'\n').count();
-        format.newline = if crlf > 0 && crlf.saturating_mul(2) >= lf {
-            NewlineStyle::CrLf
-        } else {
-            NewlineStyle::Lf
-        };
-    }
-    if !project.format_final_newline_explicit {
-        format.final_newline = original.ends_with(b"\n");
-    }
-    format
 }
 
 pub(crate) fn colorize_lines(output: &str, choice: ColorChoice) -> String {
