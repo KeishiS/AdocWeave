@@ -237,6 +237,82 @@ pub struct AnalysisSnapshotLimits {
     pub max_resource_bytes: u64,
 }
 
+/// Stable category for analysis-snapshot resource limit failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnalysisSnapshotLimitError {
+    /// Effective resource count exceeds the configured limit.
+    ResourceCount,
+    /// One effective resource exceeds the configured byte limit.
+    ResourceBytes,
+    /// Combined effective resource bytes exceed the configured limit.
+    TotalBytes,
+}
+
+impl fmt::Display for AnalysisSnapshotLimitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ResourceCount => "analysis snapshot resource count limit exceeded",
+            Self::ResourceBytes => "analysis snapshot single-resource byte limit exceeded",
+            Self::TotalBytes => "analysis snapshot total byte limit exceeded",
+        })
+    }
+}
+
+impl Error for AnalysisSnapshotLimitError {}
+
+/// Transactional counter shared by adapters which build one analysis snapshot.
+#[derive(Clone, Copy, Debug)]
+pub struct AnalysisSnapshotBudget {
+    limits: AnalysisSnapshotLimits,
+    resources: usize,
+    bytes: u64,
+}
+
+impl AnalysisSnapshotBudget {
+    /// Starts an empty budget with resolved limits.
+    pub const fn new(limits: AnalysisSnapshotLimits) -> Self {
+        Self {
+            limits,
+            resources: 0,
+            bytes: 0,
+        }
+    }
+
+    /// Charges one effective logical resource before it enters the snapshot.
+    pub fn charge(&mut self, bytes: u64) -> Result<(), AnalysisSnapshotLimitError> {
+        if bytes > self.limits.max_resource_bytes {
+            return Err(AnalysisSnapshotLimitError::ResourceBytes);
+        }
+        let resources = self
+            .resources
+            .checked_add(1)
+            .ok_or(AnalysisSnapshotLimitError::ResourceCount)?;
+        if resources > self.limits.max_resources {
+            return Err(AnalysisSnapshotLimitError::ResourceCount);
+        }
+        let total = self
+            .bytes
+            .checked_add(bytes)
+            .ok_or(AnalysisSnapshotLimitError::TotalBytes)?;
+        if total > self.limits.max_total_bytes {
+            return Err(AnalysisSnapshotLimitError::TotalBytes);
+        }
+        self.resources = resources;
+        self.bytes = total;
+        Ok(())
+    }
+
+    /// Returns the committed resource count.
+    pub const fn resources(self) -> usize {
+        self.resources
+    }
+
+    /// Returns the committed byte count.
+    pub const fn bytes(self) -> u64 {
+        self.bytes
+    }
+}
+
 /// Resource limits resolved once from one document's nearest project file.
 ///
 /// The three fields deliberately use different types because filesystem reads,
@@ -1048,5 +1124,29 @@ stylesheet-urls = ["https://example.test/manual.css"]
 
         let error = discover_and_load(&project.0, &project.0).expect_err("symlink rejected");
         assert_eq!(error.code, ConfigErrorCode::ReadFailed);
+    }
+
+    #[test]
+    fn analysis_snapshot_budget_is_transactional_at_each_boundary() {
+        let limits = AnalysisSnapshotLimits {
+            max_resources: 2,
+            max_total_bytes: 5,
+            max_resource_bytes: 3,
+        };
+        let mut budget = AnalysisSnapshotBudget::new(limits);
+        budget.charge(2).expect("first resource");
+        assert_eq!((budget.resources(), budget.bytes()), (1, 2));
+        assert_eq!(
+            budget.charge(4),
+            Err(AnalysisSnapshotLimitError::ResourceBytes)
+        );
+        assert_eq!((budget.resources(), budget.bytes()), (1, 2));
+        budget.charge(3).expect("exact total");
+        assert_eq!((budget.resources(), budget.bytes()), (2, 5));
+        assert_eq!(
+            budget.charge(0),
+            Err(AnalysisSnapshotLimitError::ResourceCount)
+        );
+        assert_eq!((budget.resources(), budget.bytes()), (2, 5));
     }
 }

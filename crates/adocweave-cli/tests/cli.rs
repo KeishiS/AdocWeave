@@ -65,6 +65,63 @@ fn stop_preview(child: &mut std::process::Child) {
     assert!(status.success(), "{:?}", status.signal());
 }
 
+#[test]
+fn configured_resource_limit_rejects_root_before_processing() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+    )
+    .expect("configuration");
+    std::fs::write(root.path().join("document.adoc"), "12345").expect("document");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["check", "document.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("single-resource byte limit"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn analysis_resource_count_includes_root_and_includes() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 1\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
+    )
+    .expect("configuration");
+    std::fs::write(
+        root.path().join("root.adoc"),
+        include_bytes!("../../../fixtures/resource-limits/root-with-include.adoc"),
+    )
+    .expect("root document");
+    std::fs::write(
+        root.path().join("part.adoc"),
+        include_bytes!("../../../fixtures/resource-limits/part.adoc"),
+    )
+    .expect("included document");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["check", "root.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("file limit"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn preview_sigterm_exits_cleanly_and_releases_the_listener() {

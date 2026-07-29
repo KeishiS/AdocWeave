@@ -12,7 +12,7 @@ use adocweave::CancellationToken;
 mod dependency;
 mod http;
 
-pub(crate) use dependency::{Fingerprint, read_dependency};
+pub(crate) use dependency::{Fingerprint, read_dependency, read_dependency_bounded};
 use http::{HttpSnapshot, HttpWorkers};
 
 const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_millis(20);

@@ -190,6 +190,13 @@ fn hash(value: &impl Hash) -> u64 {
 }
 
 pub(crate) fn read_dependency(path: &Path) -> io::Result<(Vec<u8>, Fingerprint)> {
+    read_dependency_bounded(path, u64::MAX)
+}
+
+pub(crate) fn read_dependency_bounded(
+    path: &Path,
+    max_bytes: u64,
+) -> io::Result<(Vec<u8>, Fingerprint)> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(io::Error::new(
@@ -199,7 +206,15 @@ pub(crate) fn read_dependency(path: &Path) -> io::Result<(Vec<u8>, Fingerprint)>
     }
     let mut file = File::open(path)?;
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
+    file.by_ref()
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "analysis snapshot single-resource byte limit exceeded",
+        ));
+    }
     let fingerprint = Fingerprint::from_open_file(&file, &bytes)?;
     Ok((bytes, fingerprint))
 }

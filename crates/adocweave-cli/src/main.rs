@@ -65,6 +65,7 @@ enum CliError {
         limit: u32,
         actual: u64,
     },
+    ResourceLimit(String),
     Include(local_include::LocalIncludeError),
     LocalTarget(adocweave_host::LocalTargetError),
     FormattingRequired,
@@ -98,6 +99,7 @@ impl fmt::Display for CliError {
                     "output bytes limit exceeded (limit {limit}, actual {actual})"
                 )
             }
+            Self::ResourceLimit(message) => formatter.write_str(message),
             Self::Include(source) => source.fmt(formatter),
             Self::LocalTarget(source) => source.fmt(formatter),
             Self::FormattingRequired => formatter.write_str("document is not formatted"),
@@ -134,6 +136,7 @@ impl Error for CliError {
             Self::Usage(_)
             | Self::InvalidUtf8 { .. }
             | Self::OutputLimit { .. }
+            | Self::ResourceLimit(_)
             | Self::FormattingRequired
             | Self::Stylesheet(_)
             | Self::ConfigAuthority(_)
@@ -722,23 +725,76 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
     })))
 }
 
-fn read_input(path: Option<PathBuf>) -> Result<Vec<u8>, CliError> {
-    match path {
-        Some(path) => fs::read(&path).map_err(|source| CliError::Read {
-            source_name: path.display().to_string(),
+fn read_input(
+    path: Option<PathBuf>,
+    limits: adocweave_config::AnalysisSnapshotLimits,
+) -> Result<Vec<u8>, CliError> {
+    let limit = limits.max_resource_bytes.min(limits.max_total_bytes);
+    let (mut reader, source_name): (Box<dyn io::Read>, String) = match path {
+        Some(path) => (
+            Box::new(fs::File::open(&path).map_err(|source| CliError::Read {
+                source_name: path.display().to_string(),
+                source,
+            })?),
+            path.display().to_string(),
+        ),
+        None => (Box::new(io::stdin()), "standard input".to_owned()),
+    };
+    let mut input = Vec::new();
+    reader
+        .by_ref()
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut input)
+        .map_err(|source| CliError::Read {
+            source_name,
             source,
-        }),
-        None => {
-            let mut input = Vec::new();
-            io::stdin()
-                .read_to_end(&mut input)
-                .map_err(|source| CliError::Read {
-                    source_name: "standard input".to_owned(),
-                    source,
-                })?;
-            Ok(input)
-        }
+        })?;
+    let bytes = u64::try_from(input.len()).unwrap_or(u64::MAX);
+    let mut budget = adocweave_config::AnalysisSnapshotBudget::new(limits);
+    budget
+        .charge(bytes)
+        .map_err(|error| CliError::ResourceLimit(error.to_string()))?;
+    Ok(input)
+}
+
+fn include_limits_after_root(
+    plan: adocweave_config::ResolvedResourceLimitPlan,
+    root_bytes: usize,
+) -> Result<adocweave_host::FilesystemReadLimits, CliError> {
+    let root_bytes = u64::try_from(root_bytes)
+        .map_err(|_| CliError::ResourceLimit("input byte count exceeds u64".to_owned()))?;
+    Ok(adocweave_host::FilesystemReadLimits {
+        max_files: plan
+            .filesystem_reads
+            .max_files
+            .checked_sub(1)
+            .ok_or_else(|| {
+                CliError::ResourceLimit(
+                    "analysis snapshot resource count limit exceeded".to_owned(),
+                )
+            })?,
+        max_total_bytes: plan
+            .filesystem_reads
+            .max_total_bytes
+            .checked_sub(root_bytes)
+            .ok_or_else(|| {
+                CliError::ResourceLimit("analysis snapshot total byte limit exceeded".to_owned())
+            })?,
+        max_resource_bytes: plan.filesystem_reads.max_resource_bytes,
+    })
+}
+
+fn validate_prepared_resources(
+    prepared: &local_include::PreparedInput,
+    limits: adocweave_config::AnalysisSnapshotLimits,
+) -> Result<(), CliError> {
+    let mut budget = adocweave_config::AnalysisSnapshotBudget::new(limits);
+    for bytes in prepared.projection().resource_lengths() {
+        budget
+            .charge(bytes)
+            .map_err(|error| CliError::ResourceLimit(error.to_string()))?;
     }
+    Ok(())
 }
 
 fn decode_input(input: &[u8]) -> Result<&str, CliError> {
@@ -1024,10 +1080,10 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     adocweave_config::ResolvedProjectConfig::default,
                     |snapshot| snapshot.config.clone(),
                 );
-                let original = fs::read(path).map_err(|source| CliError::Read {
-                    source_name: path.display().to_string(),
-                    source,
-                })?;
+                let original = read_input(
+                    Some(path.clone()),
+                    config.resources.limit_plan.analysis_snapshot,
+                )?;
                 let include = arguments.include || config.resources.include;
                 if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
                 {
@@ -1050,15 +1106,19 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     } else {
                         &arguments.allowed_roots
                     };
-                    local_include::prepare(
+                    let prepared = local_include::prepare(
                         source,
                         Some(path.to_string_lossy().into_owned()),
                         base_dir,
                         allowed_roots,
-                        config.resources.limit_plan.filesystem_reads,
+                        include_limits_after_root(config.resources.limit_plan, original.len())?,
                         &config.preprocess,
                     )
                     .map_err(CliError::Include)?;
+                    validate_prepared_resources(
+                        &prepared,
+                        config.resources.limit_plan.analysis_snapshot,
+                    )?;
                 }
                 let format_config = commands::format::format_config(*options, &original, &config);
                 let formatted =
@@ -1109,10 +1169,10 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     adocweave_config::ResolvedProjectConfig::default,
                     |snapshot| snapshot.config.clone(),
                 );
-                let original = fs::read(path).map_err(|source| CliError::Read {
-                    source_name: path.display().to_string(),
-                    source,
-                })?;
+                let original = read_input(
+                    Some(path.clone()),
+                    config.resources.limit_plan.analysis_snapshot,
+                )?;
                 let checked = if check.fix {
                     apply_safe_fixes(&original, check, &config.analysis)?
                 } else {
@@ -1174,10 +1234,17 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         source_base: &source_base,
                         project_root: project_root.as_deref(),
                         allowed_roots,
-                        limits: config.resources.limit_plan.filesystem_reads,
+                        limits: include_limits_after_root(
+                            config.resources.limit_plan,
+                            checked.len(),
+                        )?,
                         preprocess: &config.preprocess,
                     })
                     .map_err(CliError::Include)?;
+                    validate_prepared_resources(
+                        &prepared,
+                        config.resources.limit_plan.analysis_snapshot,
+                    )?;
                     check_preprocessed(&mut prepared, check, &config.analysis)?
                 } else {
                     process_check(
@@ -1718,7 +1785,10 @@ fn run() -> Result<ExitCode, CliError> {
                     .map_or_else(|| project_root.clone(), PathBuf::from);
                 (base, project_root.clone(), source_id.clone())
             });
-            let input = read_input(arguments.input)?;
+            let input = read_input(
+                arguments.input,
+                project_config.resources.limit_plan.analysis_snapshot,
+            )?;
             let mut prepared = None;
             let processed = if include {
                 let source = decode_input(&input)?;
@@ -1749,10 +1819,17 @@ fn run() -> Result<ExitCode, CliError> {
                     source_base,
                     project_root: project_root.as_deref(),
                     allowed_roots: &allowed_roots,
-                    limits: project_config.resources.limit_plan.filesystem_reads,
+                    limits: include_limits_after_root(
+                        project_config.resources.limit_plan,
+                        input.len(),
+                    )?,
                     preprocess: &project_config.preprocess,
                 })
                 .map_err(CliError::Include)?;
+                validate_prepared_resources(
+                    &include_input,
+                    project_config.resources.limit_plan.analysis_snapshot,
+                )?;
                 let processed = if command_id == CommandId::Format {
                     input.clone()
                 } else {
