@@ -99,7 +99,11 @@ where
     }
 }
 
-pub(crate) fn walk_blocks_mut(blocks: &mut [AstBlock], visitor: &mut impl BlockVisitorMut) {
+pub(crate) fn walk_blocks_mut_cancellable(
+    blocks: &mut [AstBlock],
+    visitor: &mut impl BlockVisitorMut,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
     struct BlockAdapter<'visitor, Visitor>(&'visitor mut Visitor);
 
     impl<Visitor: BlockVisitorMut> SemanticVisitorMut for BlockAdapter<'_, Visitor> {
@@ -112,22 +116,100 @@ pub(crate) fn walk_blocks_mut(blocks: &mut [AstBlock], visitor: &mut impl BlockV
         }
     }
 
-    walk_semantic_mut(blocks, &mut BlockAdapter(visitor));
+    walk_semantic_mut_cancellable(blocks, &mut BlockAdapter(visitor), checkpoint)
 }
 
-pub(crate) fn walk_inline_sequences_mut(
+pub(crate) fn walk_inline_sequences_mut_cancellable(
     blocks: &mut [AstBlock],
-    visitor: &mut impl FnMut(&mut Vec<Inline>),
-) {
-    struct InlineAdapter<'visitor, Visitor>(&'visitor mut Visitor);
-
-    impl<Visitor: FnMut(&mut Vec<Inline>)> SemanticVisitorMut for InlineAdapter<'_, Visitor> {
-        fn visit_inline_sequence(&mut self, inlines: &mut Vec<Inline>) {
-            self.0(inlines);
+    visitor: &mut impl FnMut(
+        &mut [Inline],
+        &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<(), ()>,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
+    fn walk_list(
+        list: &mut ListBlock,
+        visitor: &mut impl FnMut(
+            &mut [Inline],
+            &mut crate::cancellation::CancellationCheckpoint<'_>,
+        ) -> Result<(), ()>,
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<(), ()> {
+        for item in &mut list.items {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            for term in &mut item.terms {
+                visitor(&mut term.inlines, checkpoint)?;
+            }
+            visitor(&mut item.inlines, checkpoint)?;
+            for child in &mut item.children {
+                walk_list(child, visitor, checkpoint)?;
+            }
+            walk_blocks(&mut item.continuations, visitor, checkpoint)?;
         }
+        Ok(())
     }
 
-    walk_semantic_mut(blocks, &mut InlineAdapter(visitor));
+    fn walk_blocks(
+        blocks: &mut [AstBlock],
+        visitor: &mut impl FnMut(
+            &mut [Inline],
+            &mut crate::cancellation::CancellationCheckpoint<'_>,
+        ) -> Result<(), ()>,
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<(), ()> {
+        for block in blocks {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            if let Some(title) = &mut block.metadata_mut().title {
+                visitor(&mut title.inlines, checkpoint)?;
+            }
+            match block {
+                AstBlock::Heading(heading) => visitor(&mut heading.inlines, checkpoint)?,
+                AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines, checkpoint)?,
+                AstBlock::List(list) => walk_list(list, visitor, checkpoint)?,
+                AstBlock::Delimited(block) => match &mut block.content {
+                    crate::parser::DelimitedContent::Compound(children) => {
+                        walk_blocks(children, visitor, checkpoint)?;
+                    }
+                    crate::parser::DelimitedContent::Table(table) => {
+                        for row in &mut table.rows {
+                            if checkpoint.is_cancelled() {
+                                return Err(());
+                            }
+                            for cell in &mut row.cells {
+                                if checkpoint.is_cancelled() {
+                                    return Err(());
+                                }
+                                match &mut cell.content {
+                                    crate::table::TableCellContent::Inlines(inlines) => {
+                                        visitor(inlines, checkpoint)?;
+                                    }
+                                    crate::table::TableCellContent::AsciiDoc(children) => {
+                                        walk_blocks(children, visitor, checkpoint)?;
+                                    }
+                                    crate::table::TableCellContent::Verbatim(_) => {}
+                                }
+                            }
+                        }
+                    }
+                    crate::parser::DelimitedContent::Verbatim(_)
+                    | crate::parser::DelimitedContent::Passthrough(_) => {}
+                },
+                AstBlock::LiteralParagraph(_)
+                | AstBlock::Break(_)
+                | AstBlock::Source(_)
+                | AstBlock::Verbatim(_)
+                | AstBlock::Math(_)
+                | AstBlock::Unsupported(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    walk_blocks(blocks, visitor, checkpoint)
 }
 
 /// Mutable counterpart of the immutable child topology.
@@ -143,22 +225,43 @@ trait SemanticVisitorMut {
     fn visit_inline_sequence(&mut self, _inlines: &mut Vec<Inline>) {}
 }
 
-fn walk_semantic_mut(blocks: &mut [AstBlock], visitor: &mut impl SemanticVisitorMut) {
-    fn walk_list_mut(list: &mut ListBlock, visitor: &mut impl SemanticVisitorMut) {
+fn walk_semantic_mut_cancellable(
+    blocks: &mut [AstBlock],
+    visitor: &mut impl SemanticVisitorMut,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
+    fn walk_list_mut(
+        list: &mut ListBlock,
+        visitor: &mut impl SemanticVisitorMut,
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<(), ()> {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         visitor.visit_list(list);
         for item in &mut list.items {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
             for term in &mut item.terms {
+                if checkpoint.is_cancelled() {
+                    return Err(());
+                }
                 visitor.visit_inline_sequence(&mut term.inlines);
             }
             visitor.visit_inline_sequence(&mut item.inlines);
             for child in &mut item.children {
-                walk_list_mut(child, visitor);
+                walk_list_mut(child, visitor, checkpoint)?;
             }
-            walk_semantic_mut(&mut item.continuations, visitor);
+            walk_semantic_mut_cancellable(&mut item.continuations, visitor, checkpoint)?;
         }
+        Ok(())
     }
 
     for block in blocks {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         visitor.visit_block(block);
         if let Some(title) = &mut block.metadata_mut().title {
             visitor.visit_inline_sequence(&mut title.inlines);
@@ -166,20 +269,26 @@ fn walk_semantic_mut(blocks: &mut [AstBlock], visitor: &mut impl SemanticVisitor
         match block {
             AstBlock::Heading(heading) => visitor.visit_inline_sequence(&mut heading.inlines),
             AstBlock::Paragraph(paragraph) => visitor.visit_inline_sequence(&mut paragraph.inlines),
-            AstBlock::List(list) => walk_list_mut(list, visitor),
+            AstBlock::List(list) => walk_list_mut(list, visitor, checkpoint)?,
             AstBlock::Delimited(block) => match &mut block.content {
                 crate::parser::DelimitedContent::Compound(children) => {
-                    walk_semantic_mut(children, visitor);
+                    walk_semantic_mut_cancellable(children, visitor, checkpoint)?;
                 }
                 crate::parser::DelimitedContent::Table(table) => {
                     for row in &mut table.rows {
+                        if checkpoint.is_cancelled() {
+                            return Err(());
+                        }
                         for cell in &mut row.cells {
+                            if checkpoint.is_cancelled() {
+                                return Err(());
+                            }
                             match &mut cell.content {
                                 crate::table::TableCellContent::Inlines(inlines) => {
                                     visitor.visit_inline_sequence(inlines);
                                 }
                                 crate::table::TableCellContent::AsciiDoc(children) => {
-                                    walk_semantic_mut(children, visitor);
+                                    walk_semantic_mut_cancellable(children, visitor, checkpoint)?;
                                 }
                                 crate::table::TableCellContent::Verbatim(_) => {}
                             }
@@ -197,6 +306,7 @@ fn walk_semantic_mut(blocks: &mut [AstBlock], visitor: &mut impl SemanticVisitor
             | AstBlock::Unsupported(_) => {}
         }
     }
+    Ok(())
 }
 
 fn try_walk_blocks<'document, Break>(
@@ -357,7 +467,7 @@ mod tests {
 
     use super::{
         SemanticNode, SemanticVisitorMut, try_walk_ast, try_walk_block_slice, walk, walk_ast,
-        walk_block_slice, walk_semantic_mut,
+        walk_block_slice, walk_semantic_mut_cancellable,
     };
     use crate::{inline::Inline, parser::AstBlock};
 
@@ -800,7 +910,12 @@ mod tests {
             }
         }
         let mut mutable = Events::default();
-        walk_semantic_mut(&mut parsed.ast.blocks, &mut mutable);
+        walk_semantic_mut_cancellable(
+            &mut parsed.ast.blocks,
+            &mut mutable,
+            &mut crate::cancellation::CancellationCheckpoint::new(&crate::core::NeverCancel),
+        )
+        .expect("NeverCancel cannot cancel mutable walking");
 
         assert_eq!(immutable, mutable.0);
     }

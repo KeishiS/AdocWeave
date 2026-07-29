@@ -7,6 +7,12 @@ use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
 use crate::substitution::AttributeExpansionLimits;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LoweringFailure {
+    Limit(crate::catalog::CatalogLimitExceeded),
+    Cancelled,
+}
+
 pub(crate) struct ParsedFacts<'a> {
     pub blocks: Vec<AstBlock>,
     pub attributes: Vec<DocumentAttributeOccurrence>,
@@ -20,15 +26,21 @@ pub(crate) struct ParsedFacts<'a> {
 
 pub(crate) fn lower(
     mut facts: ParsedFacts<'_>,
-) -> Result<AstDocument, crate::catalog::CatalogLimitExceeded> {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<AstDocument, LoweringFailure> {
+    if checkpoint.is_cancelled() {
+        return Err(LoweringFailure::Cancelled);
+    }
     let attribute_environment = crate::attributes::AttributeEnvironment::build(
         &facts.attributes,
         facts.external_attributes,
         facts.attribute_expansion_limits,
-    );
-    facts.blocks = normalize_verbatim_blocks(facts.blocks, &attribute_environment);
-    resolve_delimited_presentations(&mut facts.blocks);
-    attach_anchors(&mut facts.anchors, &facts.blocks);
+        checkpoint,
+    )
+    .map_err(|()| LoweringFailure::Cancelled)?;
+    facts.blocks = normalize_verbatim_blocks(facts.blocks, &attribute_environment, checkpoint)?;
+    resolve_delimited_presentations(&mut facts.blocks, checkpoint)?;
+    attach_anchors(&mut facts.anchors, &facts.blocks, checkpoint)?;
     facts.header.doctype = document_type(&attribute_environment, facts.header.end);
     let mut document = AstDocument::new(
         facts.blocks,
@@ -37,73 +49,145 @@ pub(crate) fn lower(
         facts.anchors,
         facts.header,
     );
-    normalize_heading_kinds(&mut document);
-    resolve_inline_attributes(&mut document, &attribute_environment);
+    normalize_heading_kinds(&mut document, checkpoint)?;
+    resolve_inline_attributes(&mut document, &attribute_environment, checkpoint)?;
     document.resolved = crate::resolved::ResolvedDocument::build(
         &document,
         attribute_environment,
         facts.processing_limits,
-    )?;
+        checkpoint,
+    )
+    .map_err(|error| match error {
+        crate::resolved::ResolvedBuildFailure::Limit(error) => LoweringFailure::Limit(error),
+        crate::resolved::ResolvedBuildFailure::Cancelled => LoweringFailure::Cancelled,
+    })?;
     Ok(document)
 }
 
-fn normalize_heading_kinds(document: &mut AstDocument) {
+fn normalize_heading_kinds(
+    document: &mut AstDocument,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), LoweringFailure> {
     let doctype = document.header.doctype;
-    document.visit_blocks_mut(|block| {
-        let AstBlock::Heading(heading) = block else {
-            return;
+    let cancellation = checkpoint.cancellation();
+    let mut inner_checkpoint = crate::cancellation::CancellationCheckpoint::new(cancellation);
+    let mut cancelled = false;
+    crate::walker::walk_blocks_mut_cancellable(
+        &mut document.blocks,
+        &mut |block: &mut AstBlock| {
+            if cancelled {
+                return;
+            }
+            cancelled = normalize_heading_kind(block, doctype, &mut inner_checkpoint).is_err();
+        },
+        checkpoint,
+    )
+    .map_err(|()| LoweringFailure::Cancelled)?;
+    if cancelled {
+        Err(LoweringFailure::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn normalize_heading_kind(
+    block: &mut AstBlock,
+    doctype: DocumentType,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
+    let AstBlock::Heading(heading) = block else {
+        return Ok(());
+    };
+    let mut discrete = false;
+    for value in &heading.metadata.roles {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        if value.value == "discrete" {
+            discrete = true;
+            break;
+        }
+    }
+    if !discrete {
+        for attribute in &heading.metadata.attributes {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            if attribute.name.is_none() && matches!(attribute.value.as_str(), "discrete" | "float")
+            {
+                discrete = true;
+                break;
+            }
+        }
+    }
+    if discrete {
+        let level = match heading.kind {
+            crate::parser::HeadingKind::DocumentTitle | crate::parser::HeadingKind::Part => 1,
+            crate::parser::HeadingKind::Section { level }
+            | crate::parser::HeadingKind::Discrete { level } => level,
         };
-        let discrete = heading
-            .metadata
-            .roles
-            .iter()
-            .any(|value| value.value == "discrete")
-            || heading.metadata.attributes.iter().any(|attribute| {
-                attribute.name.is_none() && matches!(attribute.value.as_str(), "discrete" | "float")
-            });
-        if discrete {
-            let level = match heading.kind {
-                crate::parser::HeadingKind::DocumentTitle | crate::parser::HeadingKind::Part => 1,
-                crate::parser::HeadingKind::Section { level }
-                | crate::parser::HeadingKind::Discrete { level } => level,
-            };
-            heading.kind = crate::parser::HeadingKind::Discrete { level };
-            heading.problems.retain(|problem| {
-                *problem != crate::parser::HeadingProblem::MisplacedDocumentTitle
-            });
-            heading.well_formed = heading.problems.is_empty();
-            heading.hierarchy_valid = heading.well_formed;
-        } else if doctype == DocumentType::Book
-            && heading.kind == crate::parser::HeadingKind::DocumentTitle
-            && heading
-                .problems
-                .contains(&crate::parser::HeadingProblem::MisplacedDocumentTitle)
-        {
-            heading.kind = crate::parser::HeadingKind::Part;
-            heading.problems.retain(|problem| {
-                *problem != crate::parser::HeadingProblem::MisplacedDocumentTitle
-            });
-            heading.well_formed = heading.problems.is_empty();
-            heading.hierarchy_valid = heading.well_formed;
-        }
-    });
+        heading.kind = crate::parser::HeadingKind::Discrete { level };
+        heading
+            .problems
+            .retain(|problem| *problem != crate::parser::HeadingProblem::MisplacedDocumentTitle);
+        heading.well_formed = heading.problems.is_empty();
+        heading.hierarchy_valid = heading.well_formed;
+    } else if doctype == DocumentType::Book
+        && heading.kind == crate::parser::HeadingKind::DocumentTitle
+        && heading
+            .problems
+            .contains(&crate::parser::HeadingProblem::MisplacedDocumentTitle)
+    {
+        heading.kind = crate::parser::HeadingKind::Part;
+        heading
+            .problems
+            .retain(|problem| *problem != crate::parser::HeadingProblem::MisplacedDocumentTitle);
+        heading.well_formed = heading.problems.is_empty();
+        heading.hierarchy_valid = heading.well_formed;
+    }
+    Ok(())
 }
 
-fn resolve_delimited_presentations(blocks: &mut [AstBlock]) {
-    crate::walker::walk_blocks_mut(blocks, &mut |block: &mut AstBlock| {
-        if let AstBlock::Delimited(block) = block {
-            resolve_delimited_presentation(block);
-        }
-    });
+fn resolve_delimited_presentations(
+    blocks: &mut [AstBlock],
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), LoweringFailure> {
+    let cancellation = checkpoint.cancellation();
+    let mut inner_checkpoint = crate::cancellation::CancellationCheckpoint::new(cancellation);
+    let mut cancelled = false;
+    crate::walker::walk_blocks_mut_cancellable(
+        blocks,
+        &mut |block: &mut AstBlock| {
+            if cancelled {
+                return;
+            }
+            if let AstBlock::Delimited(block) = block {
+                cancelled = resolve_delimited_presentation(block, &mut inner_checkpoint).is_err();
+            }
+        },
+        checkpoint,
+    )
+    .map_err(|()| LoweringFailure::Cancelled)?;
+    if cancelled {
+        Err(LoweringFailure::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
-fn resolve_delimited_presentation(block: &mut crate::parser::DelimitedBlock) {
-    let positional: Vec<_> = block
-        .metadata
-        .attributes
-        .iter()
-        .filter(|attribute| attribute.name.is_none())
-        .collect();
+fn resolve_delimited_presentation(
+    block: &mut crate::parser::DelimitedBlock,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
+    let mut positional = Vec::new();
+    for attribute in &block.metadata.attributes {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        if attribute.name.is_none() {
+            positional.push(attribute);
+        }
+    }
     let style = positional.first().map(|attribute| attribute.value.as_str());
     block.presentation = match (block.kind, style) {
         (crate::parser::DelimitedBlockKind::Example, Some(style))
@@ -155,23 +239,30 @@ fn resolve_delimited_presentation(block: &mut crate::parser::DelimitedBlock) {
         ),
         _ => None,
     };
+    Ok(())
 }
 
 fn normalize_verbatim_blocks(
     blocks: Vec<AstBlock>,
     attributes: &crate::attributes::AttributeEnvironment,
-) -> Vec<AstBlock> {
-    blocks
-        .into_iter()
-        .map(|block| normalize_verbatim_block(block, attributes))
-        .collect()
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<Vec<AstBlock>, LoweringFailure> {
+    let mut normalized = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
+        normalized.push(normalize_verbatim_block(block, attributes, checkpoint)?);
+    }
+    Ok(normalized)
 }
 
 fn normalize_verbatim_block(
     block: AstBlock,
     attributes: &crate::attributes::AttributeEnvironment,
-) -> AstBlock {
-    match block {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<AstBlock, LoweringFailure> {
+    let block = match block {
         AstBlock::Source(mut source) => {
             let info = source_info(
                 source.attribute_range,
@@ -179,7 +270,8 @@ fn normalize_verbatim_block(
                 source.language,
                 &source.metadata,
                 &mut source.problems,
-            );
+                checkpoint,
+            )?;
             AstBlock::Verbatim(crate::parser::VerbatimBlock {
                 metadata: source.metadata,
                 kind: crate::parser::VerbatimKind::Source(info),
@@ -194,16 +286,29 @@ fn normalize_verbatim_block(
         AstBlock::Delimited(mut block) => {
             match &mut block.content {
                 crate::parser::DelimitedContent::Compound(children) => {
-                    *children = normalize_verbatim_blocks(std::mem::take(children), attributes);
+                    *children = normalize_verbatim_blocks(
+                        std::mem::take(children),
+                        attributes,
+                        checkpoint,
+                    )?;
                 }
                 crate::parser::DelimitedContent::Table(table) => {
                     for row in &mut table.rows {
+                        if checkpoint.is_cancelled() {
+                            return Err(LoweringFailure::Cancelled);
+                        }
                         for cell in &mut row.cells {
+                            if checkpoint.is_cancelled() {
+                                return Err(LoweringFailure::Cancelled);
+                            }
                             if let crate::table::TableCellContent::AsciiDoc(children) =
                                 &mut cell.content
                             {
-                                *children =
-                                    normalize_verbatim_blocks(std::mem::take(children), attributes);
+                                *children = normalize_verbatim_blocks(
+                                    std::mem::take(children),
+                                    attributes,
+                                    checkpoint,
+                                )?;
                             }
                         }
                     }
@@ -229,7 +334,7 @@ fn normalize_verbatim_block(
                     .metadata
                     .range
                     .unwrap_or(block.opening_delimiter_range);
-                return AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                return Ok(AstBlock::Verbatim(crate::parser::VerbatimBlock {
                     metadata: block.metadata,
                     kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
                         attribute_range,
@@ -244,7 +349,7 @@ fn normalize_verbatim_block(
                     value,
                     callouts: Vec::new(),
                     problems: block.problems,
-                });
+                }));
             }
             let kind = match block.kind {
                 crate::parser::DelimitedBlockKind::Listing => {
@@ -258,7 +363,7 @@ fn normalize_verbatim_block(
             if let Some(kind) = kind
                 && let crate::parser::DelimitedContent::Verbatim(value) = block.content
             {
-                return AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                return Ok(AstBlock::Verbatim(crate::parser::VerbatimBlock {
                     metadata: block.metadata,
                     kind,
                     range: block.range,
@@ -267,23 +372,30 @@ fn normalize_verbatim_block(
                     value,
                     callouts: Vec::new(),
                     problems: block.problems,
-                });
+                }));
             }
             AstBlock::Delimited(block)
         }
         AstBlock::List(mut list) => {
-            resolve_list_presentation(&mut list);
+            resolve_list_presentation(&mut list, checkpoint)?;
             for item in &mut list.items {
-                for child in &mut item.children {
-                    normalize_list(child, attributes);
+                if checkpoint.is_cancelled() {
+                    return Err(LoweringFailure::Cancelled);
                 }
-                item.continuations =
-                    normalize_verbatim_blocks(std::mem::take(&mut item.continuations), attributes);
+                for child in &mut item.children {
+                    normalize_list(child, attributes, checkpoint)?;
+                }
+                item.continuations = normalize_verbatim_blocks(
+                    std::mem::take(&mut item.continuations),
+                    attributes,
+                    checkpoint,
+                )?;
             }
             AstBlock::List(list)
         }
         other => other,
-    }
+    };
+    Ok(block)
 }
 
 fn source_info(
@@ -292,12 +404,17 @@ fn source_info(
     language: Option<String>,
     metadata: &crate::parser::BlockMetadata,
     problems: &mut Vec<crate::parser::BlockProblem>,
-) -> crate::parser::SourceInfo {
-    let positional = metadata
-        .attributes
-        .iter()
-        .filter(|attribute| attribute.name.is_none())
-        .collect::<Vec<_>>();
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<crate::parser::SourceInfo, LoweringFailure> {
+    let mut positional = Vec::new();
+    for attribute in &metadata.attributes {
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
+        if attribute.name.is_none() {
+            positional.push(attribute);
+        }
+    }
     let mut line_numbers = false;
     let mut accept_option = |value: &str, range| {
         if value == "linenums" {
@@ -310,9 +427,15 @@ fn source_info(
         }
     };
     for attribute in positional.into_iter().skip(2) {
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
         accept_option(&attribute.value, attribute.range);
     }
     for option in &metadata.options {
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
         accept_option(&option.value, option.range);
     }
     for attribute in metadata
@@ -320,12 +443,18 @@ fn source_info(
         .iter()
         .filter(|attribute| attribute.name.as_deref() == Some("options"))
     {
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
         for option in attribute
             .value
             .split(',')
             .map(str::trim)
             .filter(|v| !v.is_empty())
         {
+            if checkpoint.is_cancelled() {
+                return Err(LoweringFailure::Cancelled);
+            }
             accept_option(option, attribute.range);
         }
     }
@@ -348,37 +477,51 @@ fn source_info(
         start_line = Some(1);
     }
 
-    crate::parser::SourceInfo {
+    Ok(crate::parser::SourceInfo {
         attribute_range,
         language_range,
         language,
         line_numbers,
         start_line,
-    }
+    })
 }
 
 fn normalize_list(
     list: &mut crate::parser::ListBlock,
     attributes: &crate::attributes::AttributeEnvironment,
-) {
-    resolve_list_presentation(list);
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), LoweringFailure> {
+    resolve_list_presentation(list, checkpoint)?;
     for item in &mut list.items {
-        for child in &mut item.children {
-            normalize_list(child, attributes);
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
         }
-        item.continuations =
-            normalize_verbatim_blocks(std::mem::take(&mut item.continuations), attributes);
+        for child in &mut item.children {
+            normalize_list(child, attributes, checkpoint)?;
+        }
+        item.continuations = normalize_verbatim_blocks(
+            std::mem::take(&mut item.continuations),
+            attributes,
+            checkpoint,
+        )?;
     }
+    Ok(())
 }
 
-fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
+fn resolve_list_presentation(
+    list: &mut crate::parser::ListBlock,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), LoweringFailure> {
     if list.kind != crate::parser::ListKind::Ordered {
-        return;
+        return Ok(());
     }
 
     let mut presentation = crate::parser::OrderedListPresentation::default();
     let mut problems = Vec::new();
     for attribute in &list.metadata.attributes {
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
         match attribute.name.as_deref() {
             Some("start") => {
                 let start = attribute
@@ -437,6 +580,9 @@ fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
     }
     let mut expected = presentation.start.unwrap_or(1);
     for item in &list.items {
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
         if item.invalid_explicit_number {
             problems.push(crate::parser::ListPresentationProblem {
                 kind: crate::parser::ListPresentationProblemKind::InvalidExplicitNumber,
@@ -459,6 +605,7 @@ fn resolve_list_presentation(list: &mut crate::parser::ListBlock) {
     }
     list.presentation = presentation;
     list.presentation_problems = problems;
+    Ok(())
 }
 
 fn ordered_list_style(value: &str) -> Option<crate::parser::OrderedListStyle> {
@@ -491,22 +638,50 @@ fn document_type(
         })
 }
 
-fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
+fn attach_anchors(
+    anchors: &mut [ExplicitAnchor],
+    blocks: &[AstBlock],
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), LoweringFailure> {
     let mut ranges = Vec::new();
-    crate::walker::walk_block_slice(blocks, |node| {
+    let walked = crate::walker::try_walk_block_slice(blocks, |node| {
+        if checkpoint.is_cancelled() {
+            return std::ops::ControlFlow::Break(());
+        }
         if let crate::walker::SemanticNode::Block(block) = node {
             ranges.push(block.range());
         }
+        std::ops::ControlFlow::Continue(())
     });
-    ranges.sort_unstable_by_key(|range| (range.start(), range.end()));
+    if walked.is_break() {
+        return Err(LoweringFailure::Cancelled);
+    }
+    crate::cancellation::sort_by_cancellable(
+        &mut ranges,
+        &mut |left, right| (left.start(), left.end()).cmp(&(right.start(), right.end())),
+        checkpoint,
+    )
+    .map_err(|()| LoweringFailure::Cancelled)?;
     for anchor in &mut *anchors {
-        anchor.target_range = ranges
-            .iter()
-            .copied()
-            .find(|range| range.start() >= anchor.range.end());
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
+        anchor.target_range = None;
+        for range in &ranges {
+            if checkpoint.is_cancelled() {
+                return Err(LoweringFailure::Cancelled);
+            }
+            if range.start() >= anchor.range.end() {
+                anchor.target_range = Some(*range);
+                break;
+            }
+        }
     }
     let mut anchored_targets = BTreeSet::new();
     for anchor in anchors {
+        if checkpoint.is_cancelled() {
+            return Err(LoweringFailure::Cancelled);
+        }
         if anchor.valid {
             if let Some(target) = anchor.target_range {
                 if !anchored_targets.insert((target.start().to_u32(), target.end().to_u32())) {
@@ -517,17 +692,31 @@ fn attach_anchors(anchors: &mut [ExplicitAnchor], blocks: &[AstBlock]) {
             }
         }
     }
+    Ok(())
 }
 
 fn resolve_inline_attributes(
     document: &mut AstDocument,
     attributes: &crate::attributes::AttributeEnvironment,
-) {
-    document.visit_inline_sequences_mut(|inlines| resolve_inlines(inlines, attributes));
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), LoweringFailure> {
+    crate::walker::walk_inline_sequences_mut_cancellable(
+        &mut document.blocks,
+        &mut |inlines, checkpoint| resolve_inlines(inlines, attributes, checkpoint),
+        checkpoint,
+    )
+    .map_err(|()| LoweringFailure::Cancelled)
 }
 
-fn resolve_inlines(inlines: &mut [Inline], attributes: &crate::attributes::AttributeEnvironment) {
+fn resolve_inlines(
+    inlines: &mut [Inline],
+    attributes: &crate::attributes::AttributeEnvironment,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
     for inline in inlines {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         let offset = inline.range().start();
         match inline {
             Inline::Link(link) => {
@@ -541,7 +730,7 @@ fn resolve_inlines(inlines: &mut [Inline], attributes: &crate::attributes::Attri
                         link.target_expansion_error = Some(error);
                     }
                 }
-                resolve_inlines(&mut link.label, attributes);
+                resolve_inlines(&mut link.label, attributes, checkpoint)?;
             }
             Inline::Reference(reference) => {
                 match attributes.expand_at(&reference.target_source, reference.target_range.start())
@@ -565,7 +754,7 @@ fn resolve_inlines(inlines: &mut [Inline], attributes: &crate::attributes::Attri
                         reference.target = None;
                     }
                 }
-                resolve_inlines(&mut reference.label, attributes);
+                resolve_inlines(&mut reference.label, attributes, checkpoint)?;
             }
             Inline::Macro(node) => {
                 match attributes.expand_at(&node.target_source, node.target_range.start()) {
@@ -579,7 +768,9 @@ fn resolve_inlines(inlines: &mut [Inline], attributes: &crate::attributes::Attri
                     }
                 }
             }
-            Inline::Styled { children, .. } => resolve_inlines(children, attributes),
+            Inline::Styled { children, .. } => {
+                resolve_inlines(children, attributes, checkpoint)?;
+            }
             Inline::AttributeReference {
                 name,
                 value,
@@ -612,6 +803,7 @@ fn resolve_inlines(inlines: &mut [Inline], attributes: &crate::attributes::Attri
             | Inline::Formula(_) => {}
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

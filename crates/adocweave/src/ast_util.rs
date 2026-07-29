@@ -3,7 +3,6 @@
 use std::fmt::Write as _;
 
 use crate::block_model::*;
-use crate::inline::Inline;
 
 impl AstDocument {
     pub(crate) fn new(
@@ -107,10 +106,6 @@ impl AstDocument {
             })
             .unwrap_or(end);
         &self.blocks[start.min(end)..end]
-    }
-
-    pub(crate) fn visit_blocks_mut(&mut self, mut visitor: impl FnMut(&mut AstBlock)) {
-        crate::walker::walk_blocks_mut(&mut self.blocks, &mut visitor);
     }
 
     pub fn node_count(&self) -> usize {
@@ -256,10 +251,6 @@ impl AstDocument {
             }
         }
         output
-    }
-
-    pub(crate) fn visit_inline_sequences_mut(&mut self, mut visitor: impl FnMut(&mut Vec<Inline>)) {
-        crate::walker::walk_inline_sequences_mut(&mut self.blocks, &mut visitor);
     }
 }
 

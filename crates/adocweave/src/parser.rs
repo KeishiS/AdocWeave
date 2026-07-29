@@ -297,7 +297,7 @@ pub(crate) fn parse_shared(
     source: Arc<str>,
     config: &ParseConfig,
 ) -> Result<ParsedDocument, PositionError> {
-    match parse_shared_cancellable(source, config, &BTreeMap::new(), &|| false) {
+    match parse_shared_cancellable(source, config, &BTreeMap::new(), &crate::core::NeverCancel) {
         Ok(document) => Ok(document),
         Err(ParseFailure::Position(error)) => Err(error),
         Err(
@@ -496,13 +496,13 @@ pub(crate) fn parse_shared_cancellable(
     source: Arc<str>,
     config: &ParseConfig,
     external_attributes: &BTreeMap<String, Option<String>>,
-    is_cancelled: &dyn Fn() -> bool,
+    cancellation: &dyn crate::core::CancellationCheck,
 ) -> Result<ParsedDocument, ParseFailure> {
     let mut budget = ParseBudget::new(config.limits)?;
     let source_document = SourceDocument::from_shared_bounded(
         Arc::clone(&source),
         config.limits.max_line_bytes,
-        is_cancelled,
+        &|| cancellation.is_cancelled(),
     )
     .map_err(|error| match error {
         SourceDocumentBuildError::Position(error) => ParseFailure::Position(error),
@@ -520,11 +520,17 @@ pub(crate) fn parse_shared_cancellable(
         source.as_ref(),
         BlockInput::new(&source_document, 0..line_count)?,
         config,
-        is_cancelled,
+        &|| cancellation.is_cancelled(),
         &mut budget,
         BlockContext::root(),
     )?;
-    finish_document(sequence, source_document, config, external_attributes)
+    finish_document(
+        sequence,
+        source_document,
+        config,
+        external_attributes,
+        cancellation,
+    )
 }
 
 fn parse_block_sequence(
@@ -880,6 +886,7 @@ fn finish_document(
     source_document: SourceDocument,
     config: &ParseConfig,
     external_attributes: &BTreeMap<String, Option<String>>,
+    cancellation: &dyn crate::core::CancellationCheck,
 ) -> Result<ParsedDocument, ParseFailure> {
     let BlockSequenceOutput::Root(sequence) = sequence else {
         return Err(ParseFailure::InternalInvariant);
@@ -887,32 +894,49 @@ fn finish_document(
     let header_attribute_count = sequence
         .attributes
         .partition_point(|attribute| attribute.range.end() <= sequence.header.end);
-    let mut ast = crate::lowering::lower(crate::lowering::ParsedFacts {
-        blocks: sequence.common.blocks,
-        attributes: sequence.attributes,
-        header_attribute_count,
-        anchors: sequence.common.anchors,
-        header: sequence.header,
-        external_attributes,
-        attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
-            max_depth: config.limits.max_attribute_expansion_depth,
-            max_bytes: config.limits.max_attribute_expansion_bytes,
+    let mut checkpoint = crate::cancellation::CancellationCheckpoint::new(cancellation);
+    let mut ast = crate::lowering::lower(
+        crate::lowering::ParsedFacts {
+            blocks: sequence.common.blocks,
+            attributes: sequence.attributes,
+            header_attribute_count,
+            anchors: sequence.common.anchors,
+            header: sequence.header,
+            external_attributes,
+            attribute_expansion_limits: crate::substitution::AttributeExpansionLimits {
+                max_depth: config.limits.max_attribute_expansion_depth,
+                max_bytes: config.limits.max_attribute_expansion_bytes,
+            },
+            processing_limits: config.limits,
         },
-        processing_limits: config.limits,
-    })
-    .map_err(|error| {
-        ParseFailure::Budget(BudgetExceeded {
+        &mut checkpoint,
+    )
+    .map_err(|error| match error {
+        crate::lowering::LoweringFailure::Limit(error) => ParseFailure::Budget(BudgetExceeded {
             resource: error.resource,
             limit: error.limit,
             actual: error.actual,
-        })
+        }),
+        crate::lowering::LoweringFailure::Cancelled => ParseFailure::Cancelled,
     })?;
-    let syntax_issues =
-        crate::syntax_diagnostics::collect_and_clear(&mut ast.blocks, &sequence.attribute_problems);
+    let syntax_issues = crate::syntax_diagnostics::collect_and_clear_cancellable(
+        &mut ast.blocks,
+        &sequence.attribute_problems,
+        &mut checkpoint,
+    )
+    .map_err(|()| ParseFailure::Cancelled)?;
 
     Ok(ParsedDocument {
-        syntax: SyntaxTree::from_blocks(source_document, sequence.common.syntax, syntax_issues)
-            .map_err(|_| ParseFailure::InternalInvariant)?,
+        syntax: SyntaxTree::from_blocks_cancellable(
+            source_document,
+            sequence.common.syntax,
+            syntax_issues,
+            &mut checkpoint,
+        )
+        .map_err(|failure| match failure {
+            crate::syntax::SyntaxTreeBuildFailure::Invariant(_) => ParseFailure::InternalInvariant,
+            crate::syntax::SyntaxTreeBuildFailure::Cancelled => ParseFailure::Cancelled,
+        })?,
         ast,
     })
 }
@@ -2076,11 +2100,59 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::{
         AdmonitionKind, AstBlock, BreakBlock, BreakKind, ChecklistState, DelimitedBlockKind,
         DelimitedContent, DocumentType, Heading, HeadingKind, ListKind, SourceInfo, SyntaxKind,
         VerbatimBlock, VerbatimKind, parse,
     };
+
+    #[test]
+    fn finish_document_propagates_lowering_cancellation_without_partial_output() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl crate::core::CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = (0..crate::cancellation::CHECKPOINT_INTERVAL * 2)
+            .map(|index| format!("paragraph {index}\n\n"))
+            .collect::<String>();
+        let source: std::sync::Arc<str> = std::sync::Arc::from(source);
+        let config = super::ParseConfig::default();
+        let source_document =
+            crate::source_document::SourceDocument::from_shared(std::sync::Arc::clone(&source))
+                .expect("source document");
+        let line_count = source_document.lines().len();
+        let mut budget = super::ParseBudget::new(config.limits).expect("default limits");
+        let sequence = super::parse_block_sequence(
+            source.as_ref(),
+            super::BlockInput::new(&source_document, 0..line_count).expect("block input"),
+            &config,
+            &|| false,
+            &mut budget,
+            super::BlockContext::root(),
+        )
+        .expect("block parsing completes");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        let result = super::finish_document(
+            sequence,
+            source_document,
+            &config,
+            &std::collections::BTreeMap::new(),
+            &cancellation,
+        );
+
+        assert!(matches!(
+            result,
+            Err(crate::parser_support::ParseFailure::Cancelled)
+        ));
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
 
     #[test]
     fn valid_anchor_id_rejects_html_attribute_metacharacters() {

@@ -205,29 +205,58 @@ pub struct SyntaxTree {
     issues: Vec<SyntaxIssue>,
 }
 
+pub(crate) enum SyntaxTreeBuildFailure {
+    Invariant(SyntaxInvariantError),
+    Cancelled,
+}
+
 impl SyntaxTree {
     /// Builds a tree only when top-level blocks and materialized token leaves
     /// form ordered, non-overlapping partitions of the source.
+    #[cfg(test)]
     pub(crate) fn from_blocks(
+        source: SourceDocument,
+        blocks: Vec<SyntaxNode>,
+        issues: Vec<SyntaxIssue>,
+    ) -> Result<Self, SyntaxInvariantError> {
+        match Self::from_blocks_cancellable(
+            source,
+            blocks,
+            issues,
+            &mut crate::cancellation::CancellationCheckpoint::new(&crate::core::NeverCancel),
+        ) {
+            Ok(tree) => Ok(tree),
+            Err(SyntaxTreeBuildFailure::Invariant(error)) => Err(error),
+            Err(SyntaxTreeBuildFailure::Cancelled) => {
+                unreachable!("NeverCancel cannot cancel syntax tree construction")
+            }
+        }
+    }
+
+    pub(crate) fn from_blocks_cancellable(
         source: SourceDocument,
         mut blocks: Vec<SyntaxNode>,
         issues: Vec<SyntaxIssue>,
-    ) -> Result<Self, SyntaxInvariantError> {
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<Self, SyntaxTreeBuildFailure> {
         let end = TextSize::new(source.source().len()).expect("validated source length");
         let mut cursor = TextSize::ZERO;
         for block in &mut blocks {
+            if checkpoint.is_cancelled() {
+                return Err(SyntaxTreeBuildFailure::Cancelled);
+            }
             if !block.kind.is_block()
                 || block.range.start() != cursor
                 || end < block.range.end()
                 || source.text(block.range).is_none()
             {
-                return Err(SyntaxInvariantError);
+                return Err(SyntaxTreeBuildFailure::Invariant(SyntaxInvariantError));
             }
             cursor = block.range.end();
-            materialize(&source, block)?;
+            materialize(&source, block, checkpoint)?;
         }
         if cursor != end {
-            return Err(SyntaxInvariantError);
+            return Err(SyntaxTreeBuildFailure::Invariant(SyntaxInvariantError));
         }
 
         let tree = Self {
@@ -239,8 +268,8 @@ impl SyntaxTree {
             ),
             issues,
         };
-        if !token_leaves_partition_source(&tree.root, end) {
-            return Err(SyntaxInvariantError);
+        if !token_leaves_partition_source(&tree.root, end, checkpoint)? {
+            return Err(SyntaxTreeBuildFailure::Invariant(SyntaxInvariantError));
         }
         Ok(tree)
     }
@@ -334,27 +363,45 @@ fn collect_protected_ranges(
     }
 }
 
-fn materialize(source: &SourceDocument, node: &mut SyntaxNode) -> Result<(), SyntaxInvariantError> {
+fn materialize(
+    source: &SourceDocument,
+    node: &mut SyntaxNode,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), SyntaxTreeBuildFailure> {
+    if checkpoint.is_cancelled() {
+        return Err(SyntaxTreeBuildFailure::Cancelled);
+    }
     if source.text(node.range).is_none() {
-        return Err(SyntaxInvariantError);
+        return Err(SyntaxTreeBuildFailure::Invariant(SyntaxInvariantError));
     }
     let mut annotations = std::mem::take(&mut node.children);
-    annotations.sort_by_key(|child| (child.range.start(), child.range.end()));
+    crate::cancellation::sort_by_cancellable(
+        &mut annotations,
+        &mut |left, right| {
+            (left.range.start(), left.range.end()).cmp(&(right.range.start(), right.range.end()))
+        },
+        checkpoint,
+    )
+    .map_err(|()| SyntaxTreeBuildFailure::Cancelled)?;
     let mut cursor = node.range.start();
     let mut children = Vec::new();
     for mut annotation in annotations {
+        if checkpoint.is_cancelled() {
+            return Err(SyntaxTreeBuildFailure::Cancelled);
+        }
         if annotation.range.start() < node.range.start()
             || node.range.end() < annotation.range.end()
             || annotation.range.start() < cursor
         {
-            return Err(SyntaxInvariantError);
+            return Err(SyntaxTreeBuildFailure::Invariant(SyntaxInvariantError));
         }
         append_tokens(
             source,
             TextRange::new(cursor, annotation.range.start()).expect("ordered"),
             &mut children,
-        );
-        materialize(source, &mut annotation)?;
+            checkpoint,
+        )?;
+        materialize(source, &mut annotation, checkpoint)?;
         cursor = annotation.range.end();
         children.push(annotation);
     }
@@ -362,28 +409,41 @@ fn materialize(source: &SourceDocument, node: &mut SyntaxNode) -> Result<(), Syn
         source,
         TextRange::new(cursor, node.range.end()).expect("ordered"),
         &mut children,
-    );
+        checkpoint,
+    )?;
     node.children = children;
     Ok(())
 }
 
-fn token_leaves_partition_source(root: &SyntaxNode, end: TextSize) -> bool {
+fn token_leaves_partition_source(
+    root: &SyntaxNode,
+    end: TextSize,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<bool, SyntaxTreeBuildFailure> {
     let mut cursor = TextSize::ZERO;
     for node in root.descendants() {
+        if checkpoint.is_cancelled() {
+            return Err(SyntaxTreeBuildFailure::Cancelled);
+        }
         if !matches!(node.kind, SyntaxKind::Token(_)) {
             continue;
         }
         if node.range.start() != cursor || node.range.start() >= node.range.end() {
-            return false;
+            return Ok(false);
         }
         cursor = node.range.end();
     }
-    cursor == end
+    Ok(cursor == end)
 }
 
-fn append_tokens(source: &SourceDocument, range: TextRange, output: &mut Vec<SyntaxNode>) {
+fn append_tokens(
+    source: &SourceDocument,
+    range: TextRange,
+    output: &mut Vec<SyntaxNode>,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), SyntaxTreeBuildFailure> {
     if range.is_empty() {
-        return;
+        return Ok(());
     }
     let tokens = source.tokens();
     let first = tokens.partition_point(|token| token.range.end() <= range.start());
@@ -391,6 +451,9 @@ fn append_tokens(source: &SourceDocument, range: TextRange, output: &mut Vec<Syn
         .iter()
         .take_while(|token| token.range.start() < range.end())
     {
+        if checkpoint.is_cancelled() {
+            return Err(SyntaxTreeBuildFailure::Cancelled);
+        }
         let start = token.range.start().max(range.start());
         let end = token.range.end().min(range.end());
         if start < end {
@@ -400,13 +463,49 @@ fn append_tokens(source: &SourceDocument, range: TextRange, output: &mut Vec<Syn
             ));
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::{SyntaxIssueClass, SyntaxKind, SyntaxNode, SyntaxTree};
     use crate::source::{TextRange, TextSize};
     use crate::source_document::SourceDocument;
+
+    #[test]
+    fn syntax_materialization_cancels_at_a_bounded_node_checkpoint() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl crate::core::CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = "line\n".repeat(crate::cancellation::CHECKPOINT_INTERVAL * 2);
+        let document = SourceDocument::new(&source).expect("source");
+        let blocks = document
+            .lines()
+            .iter()
+            .map(|line| SyntaxNode::leaf(SyntaxKind::Paragraph, line.full_range()))
+            .collect();
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        let result = SyntaxTree::from_blocks_cancellable(
+            document,
+            blocks,
+            Vec::new(),
+            &mut crate::cancellation::CancellationCheckpoint::new(&cancellation),
+        );
+
+        assert!(matches!(
+            result,
+            Err(super::SyntaxTreeBuildFailure::Cancelled)
+        ));
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
 
     #[test]
     fn tree_reconstructs_only_from_ordered_token_leaves() {
