@@ -3,9 +3,12 @@
 mod backend;
 mod diagnostics;
 mod document_symbols;
+mod editing;
 mod hover;
 mod lifecycle;
+mod navigation;
 mod position;
+mod presentation;
 mod semantic_tokens;
 mod service;
 mod state;

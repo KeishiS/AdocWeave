@@ -5,20 +5,18 @@ use std::sync::Arc;
 
 use adocweave::output::diagnostics::{RuleSettings, lint_rule};
 use adocweave::output::formatter;
-use adocweave::output::projection::project;
 use adocweave::resolution::ReferenceKey;
-use adocweave::semantic::{DocumentElement, document_element_at, source_language_candidates};
 use adocweave::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
 use crate::diagnostics::QuickFixCapabilities;
 use crate::document_symbols::SymbolPresentation;
+use crate::editing;
 use crate::hover::HoverPresentation;
-use crate::position::{
-    PositionEncoding, cursor_touches_range, negotiate_encoding, range_contains_offset,
-    range_to_lsp, request_offset,
-};
+use crate::navigation::{self, NavigationInput};
+use crate::position::{PositionEncoding, lsp_position_to_core, negotiate_encoding, request_offset};
+use crate::presentation;
 use crate::state::DocumentStore;
 use crate::state::{
     Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis as DocumentWorkspaceAnalysis,
@@ -405,16 +403,18 @@ impl LanguageService {
                 None => source = change.text,
                 Some(range) => {
                     let index = SourceDocument::new(&source).map_err(|error| error.to_string())?;
-                    let position = |position: lsp::Position| adocweave::text::Position {
-                        line: position.line,
-                        character: position.character,
-                    };
                     let start = index
-                        .position_to_offset(position(range.start), self.position_encoding.core())
+                        .position_to_offset(
+                            lsp_position_to_core(range.start),
+                            self.position_encoding.core(),
+                        )
                         .map_err(|error| error.to_string())?
                         .to_usize();
                     let end = index
-                        .position_to_offset(position(range.end), self.position_encoding.core())
+                        .position_to_offset(
+                            lsp_position_to_core(range.end),
+                            self.position_encoding.core(),
+                        )
                         .map_err(|error| error.to_string())?
                         .to_usize();
                     if start > end {
@@ -916,23 +916,7 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        let output = formatter::format_analysis(&document.analysis, &document.format)
-            .map_err(|error| error.to_string())?;
-        let edits = output
-            .edits
-            .iter()
-            .map(|edit| {
-                Ok(lsp::TextEdit::new(
-                    range_to_lsp(
-                        edit.range,
-                        document.analysis.source_document(),
-                        self.position_encoding,
-                    )?,
-                    edit.replacement.clone(),
-                ))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        Ok(Some(edits))
+        editing::formatting(&document.analysis, &document.format, self.position_encoding).map(Some)
     }
 
     pub fn hover(
@@ -966,150 +950,17 @@ impl LanguageService {
         position: lsp::Position,
     ) -> Result<Option<lsp::CompletionResponse>, String> {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
-            return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
+            return Ok(Some(presentation::empty_completion()));
         };
-        let offset = request_offset(
-            document.analysis.source_document(),
+        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        presentation::completion(
+            &document.analysis,
+            &workspaces,
+            uri,
             position,
             self.position_encoding,
-        )?;
-        if attribute_completion_context(document.analysis.source(), offset as usize) {
-            let values =
-                self.documents
-                    .workspace_analyses()
-                    .find_map(|workspace| {
-                        expanded_offset_for_origin(workspace, uri, offset).map(|expanded| {
-                            workspace
-                                .analysis
-                                .attribute_environment()
-                                .values_at(expanded)
-                        })
-                    })
-                    .unwrap_or_else(|| {
-                        document.analysis.attribute_environment().values_at(
-                            adocweave::text::TextSize::new(offset as usize).expect("offset"),
-                        )
-                    });
-            let items = values
-                .into_iter()
-                .map(|(name, value)| lsp::CompletionItem {
-                    label: name,
-                    detail: Some(value),
-                    kind: Some(lsp::CompletionItemKind::VARIABLE),
-                    ..lsp::CompletionItem::default()
-                })
-                .collect();
-            return Ok(Some(lsp::CompletionResponse::Array(items)));
-        }
-        if document
-            .analysis
-            .references()
-            .iter()
-            .any(|reference| cursor_touches_range(reference.target_range, offset))
-        {
-            let items = document
-                .analysis
-                .reference_targets()
-                .iter()
-                .map(|target| lsp::CompletionItem {
-                    label: target.id.clone(),
-                    detail: Some(target.label.clone()),
-                    kind: Some(lsp::CompletionItemKind::REFERENCE),
-                    ..lsp::CompletionItem::default()
-                })
-                .collect();
-            return Ok(Some(lsp::CompletionResponse::Array(items)));
-        }
-        let Some(element) = document_element_at(document.analysis.document(), offset) else {
-            return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
-        };
-        let metadata_candidates: Option<(&[&str], lsp::CompletionItemKind)> = match element {
-            DocumentElement::MetadataRole(_) => {
-                Some((&["lead", "discrete"], lsp::CompletionItemKind::VALUE))
-            }
-            DocumentElement::MetadataOption(_) => Some((
-                &[
-                    "autowidth",
-                    "collapsible",
-                    "footer",
-                    "header",
-                    "interactive",
-                    "nowrap",
-                ],
-                lsp::CompletionItemKind::VALUE,
-            )),
-            DocumentElement::ElementAttribute(_) => Some((
-                &[
-                    "CAUTION",
-                    "IMPORTANT",
-                    "NOTE",
-                    "TIP",
-                    "WARNING",
-                    "cols",
-                    "frame",
-                    "grid",
-                    "id",
-                    "options",
-                    "quote",
-                    "role",
-                    "stripes",
-                    "subs",
-                    "verse",
-                    "width",
-                ],
-                lsp::CompletionItemKind::PROPERTY,
-            )),
-            DocumentElement::MetadataTitle(_) | DocumentElement::MetadataId(_) => {
-                return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
-            }
-            _ => None,
-        };
-        if let Some((candidates, kind)) = metadata_candidates {
-            let items = candidates
-                .iter()
-                .map(|candidate| lsp::CompletionItem {
-                    label: (*candidate).to_owned(),
-                    kind: Some(kind),
-                    ..lsp::CompletionItem::default()
-                })
-                .collect();
-            return Ok(Some(lsp::CompletionResponse::Array(items)));
-        }
-        let source = match element {
-            DocumentElement::SourceLanguage(source) | DocumentElement::SourceAttribute(source) => {
-                source
-            }
-            DocumentElement::HeadingMarker(_) | DocumentElement::HeadingText(_) => {
-                return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
-            }
-            DocumentElement::MetadataTitle(_)
-            | DocumentElement::MetadataId(_)
-            | DocumentElement::MetadataRole(_)
-            | DocumentElement::MetadataOption(_)
-            | DocumentElement::ElementAttribute(_) => unreachable!(),
-        };
-        let offset = offset as usize;
-        let text = document.analysis.source();
-        let attribute_start = source.attribute_range.start().to_usize();
-        if offset > text.len() || !text[attribute_start..offset].contains(',') {
-            return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
-        }
-        let prefix = source
-            .language_range
-            .and_then(|range| {
-                let start = range.start().to_usize();
-                (start <= offset).then(|| &text[start..offset])
-            })
-            .unwrap_or("");
-        let items = source_language_candidates(prefix)
-            .iter()
-            .map(|language| lsp::CompletionItem {
-                label: language.to_string(),
-                kind: Some(lsp::CompletionItemKind::VALUE),
-                ..lsp::CompletionItem::default()
-            })
-            .collect();
-        Ok(Some(lsp::CompletionResponse::Array(items)))
+        )
+        .map(Some)
     }
 
     pub fn definition(
@@ -1120,85 +971,26 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
-        let offset = request_offset(
-            document.analysis.source_document(),
-            position,
-            self.position_encoding,
-        )?;
-        for workspace in self.documents.workspace_analyses() {
-            if let Some((reference, _)) = projected_attribute_reference_at(workspace, uri, offset)
-                && let Some(binding_id) = reference.binding_id
-                && let Some(binding) = workspace
-                    .projection
-                    .attribute_bindings
-                    .iter()
-                    .find(|binding| binding.value.id() == binding_id)
-                && let Some(origin) = binding.name_origins.first()
-            {
-                return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-                    self.attribute_origin_location(origin)?,
-                )));
+        let snapshots = self.documents.snapshots();
+        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
+        let input = NavigationInput {
+            document: &document,
+            snapshots: &snapshots,
+            workspaces: &workspaces,
+            encoding: self.position_encoding,
+            source_document: &source_document,
+        };
+        match navigation::definition(&input, uri, position)? {
+            navigation::Definition::Resolved(response) => Ok(response),
+            navigation::Definition::Host(target) => {
+                let request =
+                    host_reference_request(&document, uri, target, self.position_encoding);
+                self.host_index
+                    .definition(&request)
+                    .map(|location| location.map(lsp::GotoDefinitionResponse::Scalar))
             }
         }
-        if let Some(reference) = document
-            .analysis
-            .attribute_references()
-            .iter()
-            .find(|reference| range_contains_offset(reference.range, offset))
-            && let Some(binding) = reference
-                .binding_id
-                .and_then(|id| document.analysis.attribute_environment().binding(id))
-        {
-            return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-                lsp::Location::new(
-                    uri.clone(),
-                    range_to_lsp(
-                        binding.occurrence().name_range,
-                        document.analysis.source_document(),
-                        self.position_encoding,
-                    )?,
-                ),
-            )));
-        }
-        for workspace in self.documents.workspace_analyses() {
-            if let Some(directive) = workspace.projection.directives.iter().find(|directive| {
-                directive
-                    .source_id
-                    .as_ref()
-                    .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                    && range_contains_offset(directive.target_range, offset)
-            }) && let Some(target) = directive.resource_source_id.as_ref()
-            {
-                let target: lsp::Url = target
-                    .as_str()
-                    .parse()
-                    .map_err(|error| format!("invalid include resource URI: {error}"))?;
-                return Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-                    lsp::Location::new(target, lsp::Range::default()),
-                )));
-            }
-        }
-        let Some(reference) = document
-            .analysis
-            .references()
-            .iter()
-            .find(|reference| range_contains_offset(reference.range, offset))
-        else {
-            return Ok(None);
-        };
-        let Some(key) = reference.target.clone() else {
-            return Ok(None);
-        };
-        if let Some(identity) = reference_identity(uri, reference.target.as_ref())
-            && let Some(location) =
-                self.target_location(&identity.uri, identity.anchor.as_deref())?
-        {
-            return Ok(Some(lsp::GotoDefinitionResponse::Scalar(location)));
-        }
-        let host_request = host_reference_request(&document, uri, key, self.position_encoding);
-        self.host_index
-            .definition(&host_request)
-            .map(|location| location.map(lsp::GotoDefinitionResponse::Scalar))
     }
 
     pub fn references(
@@ -1210,245 +1002,24 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        let offset = request_offset(
-            document.analysis.source_document(),
-            position,
-            self.position_encoding,
-        )?;
-        let projected_binding_origin = self.documents.workspace_analyses().find_map(|workspace| {
-            let binding_id = projected_attribute_reference_at(workspace, uri, offset)
-                .and_then(|(reference, _)| reference.binding_id)
-                .or_else(|| projected_attribute_binding_at(workspace, uri, offset))?;
-            workspace
-                .projection
-                .attribute_bindings
-                .iter()
-                .find(|binding| binding.value.id() == binding_id)?
-                .name_origins
-                .first()
-                .cloned()
-        });
-        if let Some(binding_origin) = projected_binding_origin {
-            let mut locations = Vec::new();
-            for workspace in self.documents.workspace_analyses() {
-                let Some(binding) =
-                    workspace
-                        .projection
-                        .attribute_bindings
-                        .iter()
-                        .find(|binding| {
-                            binding
-                                .name_origins
-                                .iter()
-                                .any(|origin| same_origin(origin, &binding_origin))
-                        })
-                else {
-                    continue;
-                };
-                if include_declaration && let Some(origin) = binding.name_origins.first() {
-                    locations.push(self.attribute_origin_location(origin)?);
-                }
-                for reference in &workspace.projection.attribute_references {
-                    if reference.value.binding_id != Some(binding.value.id()) {
-                        continue;
-                    }
-                    for origin in &reference.name_origins {
-                        locations.push(self.attribute_origin_location(origin)?);
-                    }
-                }
-            }
-            locations.sort_by(|left, right| {
-                (
-                    left.uri.as_str(),
-                    left.range.start.line,
-                    left.range.start.character,
-                    left.range.end.line,
-                    left.range.end.character,
-                )
-                    .cmp(&(
-                        right.uri.as_str(),
-                        right.range.start.line,
-                        right.range.start.character,
-                        right.range.end.line,
-                        right.range.end.character,
-                    ))
-            });
-            locations.dedup();
-            return Ok(Some(locations));
-        }
-        let local_binding_id = document
-            .analysis
-            .attribute_references()
-            .iter()
-            .find(|reference| range_contains_offset(reference.range, offset))
-            .and_then(|reference| reference.binding_id)
-            .or_else(|| {
-                document
-                    .analysis
-                    .attribute_environment()
-                    .bindings()
-                    .iter()
-                    .find(|binding| range_contains_offset(binding.occurrence().name_range, offset))
-                    .map(adocweave::semantic::AttributeBinding::id)
-            });
-        if let Some(binding_id) = local_binding_id {
-            let mut locations = Vec::new();
-            if include_declaration
-                && let Some(binding) = document
-                    .analysis
-                    .attribute_environment()
-                    .binding(binding_id)
-            {
-                locations.push(lsp::Location::new(
-                    uri.clone(),
-                    range_to_lsp(
-                        binding.occurrence().name_range,
-                        document.analysis.source_document(),
-                        self.position_encoding,
-                    )?,
-                ));
-            }
-            for reference in document.analysis.attribute_references() {
-                if reference.binding_id == Some(binding_id) {
-                    locations.push(lsp::Location::new(
-                        uri.clone(),
-                        range_to_lsp(
-                            reference.name_range,
-                            document.analysis.source_document(),
-                            self.position_encoding,
-                        )?,
-                    ));
-                }
-            }
-            return Ok(Some(locations));
-        }
-        let reference_at_position = document
-            .analysis
-            .references()
-            .iter()
-            .find(|reference| range_contains_offset(reference.range, offset));
-        let key = reference_at_position
-            .and_then(|reference| reference.target.clone())
-            .or_else(|| {
-                document
-                    .analysis
-                    .reference_targets()
-                    .iter()
-                    .find(|target| range_contains_offset(target.id_range, offset))
-                    .map(|target| ReferenceKey::Local {
-                        anchor: target.id.clone(),
-                    })
-            });
-        let Some(key) = key else {
-            return Ok(Some(Vec::new()));
+        let snapshots = self.documents.snapshots();
+        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
+        let input = NavigationInput {
+            document: &document,
+            snapshots: &snapshots,
+            workspaces: &workspaces,
+            encoding: self.position_encoding,
+            source_document: &source_document,
         };
-        let host_request =
-            host_reference_request(&document, uri, key.clone(), self.position_encoding);
-        if let Some(locations) = self
-            .host_index
-            .references(&host_request, include_declaration)?
-        {
-            return Ok(Some(locations));
-        }
-        let identity = reference_at_position
-            .and_then(|reference| reference_identity(uri, reference.target.as_ref()))
-            .or_else(|| match &key {
-                ReferenceKey::Local { anchor } => Some(TargetIdentity {
-                    uri: uri.clone(),
-                    anchor: Some(anchor.clone()),
-                }),
-                ReferenceKey::Document { document, anchor } => {
-                    uri.join(document).ok().map(|uri| TargetIdentity {
-                        uri,
-                        anchor: anchor.clone(),
-                    })
-                }
-                ReferenceKey::Scheme { .. } => None,
-            });
-        let Some(identity) = identity else {
-            return Ok(Some(Vec::new()));
-        };
-
-        let mut locations = Vec::new();
-        if include_declaration
-            && let Some(location) =
-                self.target_location(&identity.uri, identity.anchor.as_deref())?
-        {
-            locations.push(location);
-        }
-        for candidate in self.documents.snapshots() {
-            let candidate_uri: lsp::Url = candidate
-                .uri
-                .parse()
-                .map_err(|error| format!("invalid open document URI {}: {error}", candidate.uri))?;
-            for reference in candidate.analysis.references() {
-                if reference_identity(&candidate_uri, reference.target.as_ref()).as_ref()
-                    == Some(&identity)
-                {
-                    locations.push(lsp::Location::new(
-                        candidate_uri.clone(),
-                        range_to_lsp(
-                            reference.target_range,
-                            candidate.analysis.source_document(),
-                            self.position_encoding,
-                        )?,
-                    ));
-                }
+        let result = navigation::references(&input, uri, position, include_declaration)?;
+        if let Some(target) = result.host_target {
+            let request = host_reference_request(&document, uri, target, self.position_encoding);
+            if let Some(locations) = self.host_index.references(&request, include_declaration)? {
+                return Ok(Some(locations));
             }
         }
-        for workspace in self.documents.workspace_analyses() {
-            for reference in &workspace.projection.references {
-                let Some(source_origin) = reference.origins.first() else {
-                    continue;
-                };
-                let Some(source_id) = &source_origin.source_id else {
-                    continue;
-                };
-                let source_uri: lsp::Url = source_id
-                    .as_str()
-                    .parse()
-                    .map_err(|error| format!("invalid projected reference URI: {error}"))?;
-                if reference_identity(&source_uri, reference.value.target.as_ref()).as_ref()
-                    != Some(&identity)
-                {
-                    continue;
-                }
-                let Some(target_origin) = reference
-                    .target_origins
-                    .iter()
-                    .find(|origin| origin.source_id.as_ref() == Some(source_id))
-                else {
-                    continue;
-                };
-                let source_document = self.source_document(&source_uri)?;
-                locations.push(lsp::Location::new(
-                    source_uri,
-                    range_to_lsp(
-                        target_origin.range.text_range(),
-                        &source_document,
-                        self.position_encoding,
-                    )?,
-                ));
-            }
-        }
-        locations.sort_by(|left, right| {
-            (
-                left.uri.as_str(),
-                left.range.start.line,
-                left.range.start.character,
-                left.range.end.line,
-                left.range.end.character,
-            )
-                .cmp(&(
-                    right.uri.as_str(),
-                    right.range.start.line,
-                    right.range.start.character,
-                    right.range.end.line,
-                    right.range.end.character,
-                ))
-        });
-        locations.dedup();
-        Ok(Some(locations))
+        Ok(Some(result.fallback))
     }
 
     pub fn rename(
@@ -1457,27 +1028,17 @@ impl LanguageService {
         position: lsp::Position,
         new_name: &str,
     ) -> Result<Option<lsp::WorkspaceEdit>, String> {
-        if !valid_anchor_name(new_name) {
-            return Ok(None);
-        }
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
-        let offset = request_offset(
-            document.analysis.source_document(),
+        let Some(key) = editing::rename_target(
+            &document.analysis,
             position,
+            new_name,
             self.position_encoding,
-        )?;
-        let Some(target) = document
-            .analysis
-            .reference_targets()
-            .iter()
-            .find(|target| range_contains_offset(target.id_range, offset))
+        )?
         else {
             return Ok(None);
-        };
-        let key = ReferenceKey::Local {
-            anchor: target.id.clone(),
         };
         let host_request = host_reference_request(&document, uri, key, self.position_encoding);
         let locations = if let Some(locations) = self.host_index.references(&host_request, true)? {
@@ -1485,127 +1046,36 @@ impl LanguageService {
         } else {
             self.references(uri, position, true)?.unwrap_or_default()
         };
-        if locations.is_empty() {
-            return Ok(None);
-        }
-        let mut changes = std::collections::HashMap::<lsp::Url, Vec<lsp::TextEdit>>::new();
-        for location in locations {
-            changes
-                .entry(location.uri)
-                .or_default()
-                .push(lsp::TextEdit::new(location.range, new_name.to_owned()));
-        }
-        Ok(Some(lsp::WorkspaceEdit {
-            changes: Some(changes),
-            ..lsp::WorkspaceEdit::default()
-        }))
+        Ok(editing::rename_edit(locations, new_name))
     }
 
     pub fn document_links(&self, uri: &lsp::Url) -> Result<Option<Vec<lsp::DocumentLink>>, String> {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        let mut links = Vec::new();
-        for link in project(
-            &document.analysis,
-            &adocweave::resolution::RenderInputs::default(),
-        )
-        .external_links
-        {
-            if !adocweave::resolution::AuthoredUrlPolicy::default().allows(&link.target) {
-                continue;
-            }
-            let Ok(target) = lsp::Url::parse(&link.target) else {
-                continue;
-            };
-            links.push(lsp::DocumentLink {
-                range: range_to_lsp(
-                    link.target_range,
-                    document.analysis.source_document(),
-                    self.position_encoding,
-                )?,
-                target: Some(target),
-                tooltip: self
-                    .client
-                    .document_link_tooltip
-                    .then(|| "外部リンクを開く".to_owned()),
-                data: None,
-            });
+        let snapshots = self.documents.snapshots();
+        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
+        let input = NavigationInput {
+            document: &document,
+            snapshots: &snapshots,
+            workspaces: &workspaces,
+            encoding: self.position_encoding,
+            source_document: &source_document,
+        };
+        let tooltips = self.client.document_link_tooltip;
+        let mut links = navigation::document_links(&input, uri, tooltips)?;
+        for unresolved in std::mem::take(&mut links.unresolved) {
+            let request = host_reference_request(
+                &document,
+                uri,
+                unresolved.target.clone(),
+                self.position_encoding,
+            );
+            let location = self.host_index.definition(&request).ok().flatten();
+            links.resolve(unresolved, location, tooltips);
         }
-        for reference in document.analysis.references() {
-            let target = if let Some(identity) = reference_identity(uri, reference.target.as_ref())
-            {
-                let mut target = identity.uri;
-                target.set_fragment(identity.anchor.as_deref());
-                Some(target)
-            } else if let Some(key) = reference.target.clone() {
-                let host_request =
-                    host_reference_request(&document, uri, key, self.position_encoding);
-                self.host_index
-                    .definition(&host_request)
-                    .ok()
-                    .flatten()
-                    .map(|location| location.uri)
-            } else {
-                None
-            };
-            let Some(target) = target else {
-                continue;
-            };
-            links.push(lsp::DocumentLink {
-                range: range_to_lsp(
-                    reference.target_range,
-                    document.analysis.source_document(),
-                    self.position_encoding,
-                )?,
-                target: Some(target),
-                tooltip: self
-                    .client
-                    .document_link_tooltip
-                    .then(|| "参照先を開く".to_owned()),
-                data: None,
-            });
-        }
-        for workspace in self.documents.workspace_analyses() {
-            for directive in &workspace.projection.directives {
-                if directive
-                    .source_id
-                    .as_ref()
-                    .is_none_or(|source_id| source_id.as_str() != uri.as_str())
-                {
-                    continue;
-                }
-                let Some(target) = directive.resource_source_id.as_ref() else {
-                    continue;
-                };
-                let Ok(target) = target.as_str().parse() else {
-                    continue;
-                };
-                links.push(lsp::DocumentLink {
-                    range: range_to_lsp(
-                        directive.target_range,
-                        document.analysis.source_document(),
-                        self.position_encoding,
-                    )?,
-                    target: Some(target),
-                    tooltip: self
-                        .client
-                        .document_link_tooltip
-                        .then(|| "include先を開く".to_owned()),
-                    data: None,
-                });
-            }
-        }
-        links.sort_by_key(|link| {
-            (
-                link.range.start.line,
-                link.range.start.character,
-                link.range.end.line,
-                link.range.end.character,
-            )
-        });
-        links.dedup_by(|left, right| left.range == right.range && left.target == right.target);
-        Ok(Some(links))
+        Ok(Some(links.finish()))
     }
 
     fn source_document(&self, uri: &lsp::Url) -> Result<SourceDocument, String> {
@@ -1622,29 +1092,6 @@ impl LanguageService {
         SourceDocument::new(source).map_err(|error| error.to_string())
     }
 
-    fn attribute_origin_location(
-        &self,
-        origin: &adocweave::preprocess::SourceOrigin,
-    ) -> Result<lsp::Location, String> {
-        let source_id = origin
-            .source_id
-            .as_ref()
-            .ok_or_else(|| "attribute origin has no source ID".to_owned())?;
-        let uri: lsp::Url = source_id
-            .as_str()
-            .parse()
-            .map_err(|error| format!("invalid attribute origin URI: {error}"))?;
-        let source_document = self.source_document(&uri)?;
-        Ok(lsp::Location::new(
-            uri,
-            range_to_lsp(
-                origin.range.text_range(),
-                &source_document,
-                self.position_encoding,
-            )?,
-        ))
-    }
-
     pub fn semantic_tokens(
         &self,
         uri: &lsp::Url,
@@ -1652,47 +1099,12 @@ impl LanguageService {
         if !self.client.semantic_tokens_full {
             return Ok(None);
         }
-        let Some(document) = self.documents.snapshot(uri.as_str()) else {
-            return Ok(Some(lsp::SemanticTokensResult::Tokens(
-                lsp::SemanticTokens {
-                    result_id: None,
-                    data: Vec::new(),
-                },
-            )));
-        };
-        Ok(Some(lsp::SemanticTokensResult::Tokens(
-            crate::semantic_tokens::tokens(&document.analysis, self.position_encoding)?,
-        )))
-    }
-
-    fn target_location(
-        &self,
-        uri: &lsp::Url,
-        anchor: Option<&str>,
-    ) -> Result<Option<lsp::Location>, String> {
-        let Some(document) = self.documents.snapshot(uri.as_str()) else {
-            return Ok(None);
-        };
-        let target = anchor
-            .and_then(|anchor| {
-                document
-                    .analysis
-                    .reference_targets()
-                    .iter()
-                    .find(|target| target.id == anchor)
-            })
-            .or_else(|| document.analysis.reference_targets().first());
-        let Some(target) = target else {
-            return Ok(None);
-        };
-        Ok(Some(lsp::Location::new(
-            uri.clone(),
-            range_to_lsp(
-                target.target_range,
-                document.analysis.source_document(),
-                self.position_encoding,
-            )?,
-        )))
+        let document = self.documents.snapshot(uri.as_str());
+        crate::semantic_tokens::response(
+            document.as_ref().map(|document| document.analysis.as_ref()),
+            self.position_encoding,
+        )
+        .map(Some)
     }
 }
 
@@ -1709,138 +1121,6 @@ fn code_action_kind_requested(
                     .is_some_and(|suffix| suffix.starts_with('.'))
         })
     })
-}
-
-fn projected_attribute_reference_at<'a>(
-    workspace: &'a DocumentWorkspaceAnalysis,
-    uri: &lsp::Url,
-    offset: u32,
-) -> Option<(
-    &'a adocweave::semantic::AttributeReference,
-    &'a adocweave::preprocess::SourceOrigin,
-)> {
-    workspace
-        .projection
-        .attribute_references
-        .iter()
-        .find_map(|reference| {
-            reference
-                .origins
-                .iter()
-                .find(|origin| {
-                    origin
-                        .source_id
-                        .as_ref()
-                        .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                        && range_contains_offset(origin.range.text_range(), offset)
-                })
-                .map(|origin| (&reference.value, origin))
-        })
-}
-
-fn projected_attribute_binding_at(
-    workspace: &DocumentWorkspaceAnalysis,
-    uri: &lsp::Url,
-    offset: u32,
-) -> Option<adocweave::semantic::AttributeBindingId> {
-    workspace
-        .projection
-        .attribute_bindings
-        .iter()
-        .find(|binding| {
-            binding.name_origins.iter().any(|origin| {
-                origin
-                    .source_id
-                    .as_ref()
-                    .is_some_and(|source_id| source_id.as_str() == uri.as_str())
-                    && range_contains_offset(origin.range.text_range(), offset)
-            })
-        })
-        .map(|binding| binding.value.id())
-}
-
-fn same_origin(
-    left: &adocweave::preprocess::SourceOrigin,
-    right: &adocweave::preprocess::SourceOrigin,
-) -> bool {
-    left.source_id == right.source_id && left.range == right.range
-}
-
-fn expanded_offset_for_origin(
-    workspace: &DocumentWorkspaceAnalysis,
-    uri: &lsp::Url,
-    offset: u32,
-) -> Option<adocweave::text::TextSize> {
-    workspace.document.source_map().iter().find_map(|segment| {
-        if segment.mapping != adocweave::preprocess::SourceMapping::Identity
-            || segment
-                .origin
-                .source_id
-                .as_ref()
-                .is_none_or(|source_id| source_id.as_str() != uri.as_str())
-        {
-            return None;
-        }
-        let origin = segment.origin.range.text_range();
-        if !(origin.start().to_u32() <= offset && offset <= origin.end().to_u32()) {
-            return None;
-        }
-        let relative = offset.checked_sub(origin.start().to_u32())?;
-        adocweave::text::TextSize::new(segment.output_range.start().to_usize() + relative as usize)
-            .ok()
-    })
-}
-
-fn attribute_completion_context(source: &str, offset: usize) -> bool {
-    if offset > source.len() || !source.is_char_boundary(offset) {
-        return false;
-    }
-    let line_start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
-    let bytes = &source.as_bytes()[line_start..offset];
-    let mut open = None;
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'\\' && bytes.get(index + 1) == Some(&b'{') {
-            index += 2;
-            continue;
-        }
-        match bytes[index] {
-            b'{' => open = Some(index),
-            b'}' => open = None,
-            _ => {}
-        }
-        index += 1;
-    }
-    open.is_some_and(|open| {
-        bytes[open + 1..]
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-    })
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TargetIdentity {
-    uri: lsp::Url,
-    anchor: Option<String>,
-}
-
-fn reference_identity(
-    source_uri: &lsp::Url,
-    destination: Option<&ReferenceKey>,
-) -> Option<TargetIdentity> {
-    match destination {
-        Some(ReferenceKey::Local { anchor }) => Some(TargetIdentity {
-            uri: source_uri.clone(),
-            anchor: Some(anchor.clone()),
-        }),
-        Some(ReferenceKey::Document { document, anchor }) => {
-            source_uri.join(document).ok().map(|uri| TargetIdentity {
-                uri,
-                anchor: anchor.clone(),
-            })
-        }
-        Some(ReferenceKey::Scheme { .. }) | None => None,
-    }
 }
 
 fn host_reference_request(
@@ -1860,13 +1140,4 @@ fn host_reference_request(
 
 fn revision_version_i32(revision: &adocweave::DocumentRevision) -> i32 {
     i32::try_from(revision.version).expect("LSP document versions originate as i32")
-}
-
-fn valid_anchor_name(value: &str) -> bool {
-    !value.is_empty()
-        && !value.chars().any(|character| {
-            character.is_whitespace()
-                || character.is_control()
-                || matches!(character, '[' | ']' | '<' | '>' | '#')
-        })
 }

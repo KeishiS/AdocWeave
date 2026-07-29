@@ -71,6 +71,23 @@ impl<'a> SafeUrl<'a> {
     ) -> Option<Self> {
         (policy.classify(value, provenance) == UrlDecision::Allowed).then_some(Self(value))
     }
+
+    pub(super) fn into_owned(self) -> OwnedSafeUrl {
+        OwnedSafeUrl(self.0.to_owned())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct OwnedSafeUrl(String);
+
+impl OwnedSafeUrl {
+    pub(super) fn from_policy(
+        value: String,
+        policy: &ActiveUrlPolicy,
+        provenance: UrlProvenance,
+    ) -> Option<Self> {
+        (policy.classify(&value, provenance) == UrlDecision::Allowed).then_some(Self(value))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,7 +97,14 @@ impl<'a> SafeFragmentUrl<'a> {
     pub(super) fn new(anchor: &'a str) -> Option<Self> {
         (!anchor.is_empty() && !anchor.chars().any(char::is_control)).then_some(Self(anchor))
     }
+
+    pub(super) fn into_owned(self) -> OwnedSafeFragmentUrl {
+        OwnedSafeFragmentUrl(self.0.to_owned())
+    }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct OwnedSafeFragmentUrl(String);
 
 /// Host-supplied CSS that cannot terminate its `<style>` element or open an
 /// HTML comment context.
@@ -138,15 +162,23 @@ impl<'a> HtmlWriter<'a> {
         self.attribute(name.0, value.0);
     }
 
-    pub(super) fn fragment_url_attribute(
+    pub(super) fn owned_active_url_attribute(
         &mut self,
         name: ActiveUrlAttributeName<'_>,
-        value: SafeFragmentUrl<'_>,
+        value: &OwnedSafeUrl,
+    ) {
+        self.attribute(name.0, &value.0);
+    }
+
+    pub(super) fn owned_fragment_url_attribute(
+        &mut self,
+        name: ActiveUrlAttributeName<'_>,
+        value: &OwnedSafeFragmentUrl,
     ) {
         self.output.push(' ');
         self.output.push_str(name.0);
         self.output.push_str("=\"#");
-        escape_into(self.output, value.0);
+        escape_into(self.output, &value.0);
         self.output.push('"');
     }
 
@@ -159,6 +191,11 @@ impl<'a> HtmlWriter<'a> {
             escape_into(self.output, class.0);
         }
         self.output.push('"');
+    }
+
+    pub(super) fn boolean_attribute(&mut self, name: PassiveAttributeName<'_>) {
+        self.output.push(' ');
+        self.output.push_str(name.0);
     }
 
     pub(super) fn finish_start(&mut self) {
@@ -286,9 +323,9 @@ mod tests {
         let mut output = String::new();
         let mut writer = HtmlWriter::new(&mut output);
         writer.start(ElementName::new("a").expect("allowlisted element"));
-        writer.fragment_url_attribute(
+        writer.owned_fragment_url_attribute(
             ActiveUrlAttributeName::new("href").expect("active URL attribute"),
-            anchor,
+            &anchor.into_owned(),
         );
         writer.finish_start();
         assert_eq!(output, "<a href=\"#section-日本語&amp;more\">");
