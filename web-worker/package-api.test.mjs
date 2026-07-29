@@ -414,6 +414,84 @@ test("client rejects result identities which disagree with the worker envelope",
   }
 });
 
+test("client rejects result and error versions which disagree with the request", async () => {
+  const workers = [];
+  class FakeWorker {
+    listeners = new Map();
+    constructor() { workers.push(this); }
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
+      }
+    }
+    terminate() {}
+    publish(data) { this.listeners.get("message")?.({ data }); }
+  }
+
+  for (const response of [
+    () => responseEnvelope(2, 1, BROWSER_PACKAGE_VERSION, ""),
+    () => ({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      type: "error",
+      version: 2,
+      generation: 1,
+      error: { code: "cancelled", message: "cancelled" },
+    }),
+  ]) {
+    const client = new AdocWeaveClient({
+      workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+      Worker: FakeWorker, sharedCancellation: false,
+    });
+    const analysis = client.analyze({ version: 1, source: "text" });
+    const rejected = assert.rejects(analysis, errorWithCode("invalid-worker-response"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    workers.at(-1).publish(response());
+    await rejected;
+    client.dispose();
+  }
+});
+
+test("stale responses cannot disturb the current request version contract", async () => {
+  const results = [];
+  const errors = [];
+  let worker;
+  class FakeWorker {
+    listeners = new Map();
+    constructor() { worker = this; }
+    addEventListener(type, callback) { this.listeners.set(type, callback); }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
+      }
+    }
+    terminate() {}
+    publish(data) { this.listeners.get("message")?.({ data }); }
+  }
+  const client = new AdocWeaveClient({
+    workerUrl: "worker.mjs", moduleUrl: "wasm.js", wasmUrl: "wasm.wasm",
+    Worker: FakeWorker, sharedCancellation: true,
+    onResult: (result) => results.push(result),
+    onError: (error) => errors.push(error),
+  });
+  assert.equal(client.update({ version: 1, source: "old" }), 1);
+  assert.equal(client.update({ version: 2, source: "current" }), 2);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  worker.publish(responseEnvelope(99, 1, BROWSER_PACKAGE_VERSION, "stale"));
+  worker.publish(responseEnvelope(2, 2, BROWSER_PACKAGE_VERSION, "current"));
+
+  assert.equal(results[0].html, "current");
+  assert.equal(results[0].sourceVersion, 2);
+  assert.equal(results.length, 1);
+  assert.deepEqual(errors, []);
+  client.dispose();
+});
+
 test("client rejects and terminates an obsolete worker protocol during initialization", async () => {
   const errors = [];
   const messages = [];

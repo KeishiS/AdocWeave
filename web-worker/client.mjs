@@ -11,6 +11,7 @@ export class AdocWeaveClient {
   #ready = null;
   #readyReject = null;
   #pending = new Map();
+  #expectedVersions = new Map();
 
   constructor({
     workerUrl,
@@ -94,6 +95,8 @@ export class AdocWeaveClient {
       }));
       ready = this.#spawnWorker();
     }
+    this.#expectedVersions.clear();
+    this.#expectedVersions.set(generation, version);
     const payload = {
       packageVersion: PACKAGE_VERSION,
       sourceId,
@@ -128,6 +131,7 @@ export class AdocWeaveClient {
     this.#assertActive();
     this.#rejectPending("cancelled", "analysis was cancelled");
     ++this.#generation;
+    this.#expectedVersions.clear();
     if (this.#options.sharedCancellation) {
       Atomics.store(this.#cancellation, 0, this.#generation);
     } else {
@@ -207,10 +211,13 @@ export class AdocWeaveClient {
           this.#readyReject = null;
           resolve();
         } else if (data?.type === "result" && data.generation === this.#generation) {
-          if (!resultMatchesEnvelope(data)) {
+          if (
+            !resultMatchesEnvelope(data) ||
+            !this.#responseMatchesRequest(data)
+          ) {
             const error = {
               code: "invalid-worker-response",
-              message: "worker result identity does not match its envelope",
+              message: "worker result identity does not match its request",
               sourceVersion: data.version,
               generation: data.generation,
             };
@@ -229,18 +236,33 @@ export class AdocWeaveClient {
             };
             this.#rejectPendingError(error);
             this.#notifyError(error);
+            this.#expectedVersions.delete(data.generation);
             return;
           }
           const { version: sourceVersion, ...products } = data.result;
           const result = { sourceVersion, ...products };
+          this.#expectedVersions.delete(data.generation);
           this.#resolvePending(data.generation, result);
           this.#notifyResult(result);
         } else if (data?.type === "error" && data.generation === this.#generation) {
+          if (!this.#responseMatchesRequest(data)) {
+            const error = {
+              code: "invalid-worker-response",
+              message: "worker error identity does not match its request",
+              sourceVersion: data.version,
+              generation: data.generation,
+            };
+            this.#rejectPendingError(error);
+            this.#notifyError(error);
+            this.#terminateWorker();
+            return;
+          }
           const error = {
             ...data.error,
             sourceVersion: data.version,
             generation: data.generation,
           };
+          this.#expectedVersions.delete(data.generation);
           this.#rejectPendingError(error);
           this.#notifyError(error);
         }
@@ -283,6 +305,7 @@ export class AdocWeaveClient {
     this.#worker?.terminate();
     this.#worker = null;
     this.#ready = null;
+    this.#expectedVersions.clear();
   }
 
   #ensureWorker() {
@@ -355,6 +378,10 @@ export class AdocWeaveClient {
     } catch {
       // Promise settlement and worker message handling do not depend on callbacks.
     }
+  }
+
+  #responseMatchesRequest({ version, generation }) {
+    return this.#expectedVersions.get(generation) === version;
   }
 
   #failWorker(cause, generation) {
