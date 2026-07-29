@@ -27,6 +27,7 @@ const highlights = [
   "filesystemの列挙と読込をhostへ集約し、Workspaceは検証済みの論理ID、本文、snapshotおよび依存関係だけを扱うようにしました。",
   "前処理と解析で共有する文書外属性と属性展開上限を一つの検証済み処理契約へ統合しました。",
   "前処理、解析、Lintおよび生成元への位置投影へ協調キャンセルを伝播し、取り消し後の部分結果を返さない入口を追加しました。",
+  "project設定からfilesystem読込、Workspaceのdisk・overlay保持および解析snapshotの上限planを一度だけ解決し、CLIとLanguage Serverへ同じ境界で適用しました。",
   "公開Rust APIとWASM protocol schemaに互換性へ影響する変更があります。次の移行手順を確認してください。",
 ];
 
@@ -34,7 +35,7 @@ const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。前処理設定へdefault付きの属性展開上限を追加しました。worker envelopeは変更していません。`,
-  "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型、前処理とWorkspaceの公開設定・エラー型、およびfilesystem読込の公開境界を変更しました。",
+  "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型、前処理とWorkspaceの公開設定・エラー型、filesystem読込およびresource上限planの公開境界を変更しました。",
   "CLI引数およびHTML契約はv0.18.0から変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
@@ -48,6 +49,7 @@ const migrationNotes = [
   "`adocweave_host::DependencyGraph`の公開を終了しました。依存関係はWorkspaceが所有するため、解析後は`WorkspaceAnalysis::dependencies`を参照してください。",
   "WASM protocol schema 7では`preprocess.options`へ`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`を追加しました。省略時は従来と同じ32と1048576を使用します。combined requestで`analysisOptions.syntax.limits`へ非既定値を指定する場合は、前処理側にも同じ値を指定してください。不一致は処理前に`invalid-options`として拒否されます。",
   "`PreprocessedAnalysisError`へ`Cancelled`を追加しました。この列挙型を網羅的に`match`するRustコードは、処理の取り消しを扱う分岐を追加してください。協調キャンセルが必要な場合は`preprocess_cancellable`、`preprocess_and_analyze_cancellable_with_options`、`lint_analysis_cancellable`または`PreprocessedAnalysis::project_origins_cancellable`を使用してください。",
+  "`adocweave_host::ResourceLimits`は`FilesystemReadLimits`へ、`adocweave_workspace::ResourceLimits`は`RetainedResourceLimits`へ変わりました。project設定からは`ResolvedResourceLimitPlan`を取得し、`filesystem_reads`、`retained_layers`および`analysis_snapshot`を対応する境界へ渡してください。",
   "JSONの`packageVersion`は文字列のままです。source mapの`mapping`も`identity`または`whole-origin`の文字列を維持します。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];

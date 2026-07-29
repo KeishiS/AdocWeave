@@ -109,6 +109,9 @@ workspaceをsecurity境界として扱いません。
 Language Serverは初回走査とfile変更通知で、解決したproject設定ごとのsessionを共有します。変更通知では
 本文cacheを使用せずに対象を再度openしますが、走査から継続するfile数・byte数の上限は初期化しません。
 resourceを削除した場合は、そのprojectの読込課金と保持課金を解放します。
+projectの識別には設定pathだけでなくworkspace rootも含めます。設定を持たない複数のworkspace rootが
+同じ既定budgetを共有することはありません。設定の新設または削除でresourceのprojectが変わる場合は、
+diskとoverlayを新しい範囲へ移し、旧filesystem課金を解放して参照されなくなったsessionとplanを破棄します。
 project設定の変更通知と本文の変更通知を同時に受け取った場合は、project全体を先に再読込し、新しいplanを
 適用してから本文をWorkspaceへ渡します。既存sessionのplanと現在の設定が一致しない場合は個別読込を拒否し、
 旧planで本文を読みません。
@@ -124,8 +127,9 @@ filesystemの再読込後に保持上限またはWorkspace更新を拒否した�
 
 workspace rootの再読込は、新しいfilesystem session、plan、保持予算およびWorkspaceを一時状態へ構築し、
 全て成功した後に置き換えます。一時的なfilesystem読込失敗や走査中の設定競合では、直前の正常なsnapshotを
-保持します。構文、schemaまたは設定値が不正なproject設定を検出した場合だけ、旧planへのfallbackを防ぐため、
-信頼済みのroot境界を残してresourceを破棄します。
+保持します。構文、schemaまたは設定値が不正なproject設定を検出した場合も、直前の状態は変更しません。
+ただし新しい解析入力は設定エラーとして拒否し、旧planまたは既定値へfallbackしません。disk、overlay、
+保持予算および解析rootのいずれかを更新できない場合は、同じ操作に含まれる全状態を更新前へ戻します。
 
 複数rootは独立したfilesystem境界です。あるroot内のsymlinkが別の許可済みrootを指す場合も、
 読込開始時に選んだrootから外へ移動するため拒否します。同じfileを両方のrootから参照する必要がある場合は、
@@ -141,6 +145,9 @@ Includeを無効にした場合はdirectiveを展開せず、snapshotも参照�
 
 CLI、Language Serverおよびworkspace走査は、同一のpath検査、上限付きUTF-8読み取り、byte数集計および
 filesystem競合耐性を使用します。各adapterで異なる読込処理やsymlink判定を設けません。
+CLIはproject設定を解決してからroot本文を上限付きで読み、rootを最初の解析snapshot resourceとして課金します。
+includeは同じplanの残り件数と残りbyte数だけを使用し、Language Serverと同じ
+``AnalysisSnapshotBudget``でresource件数、各本文のbyte数および合計byte数を検査します。
 Canonical pathは検査、cacheおよびprovenanceに限定し、診断とsource mapにはinclude要求から導出した
 論理的な``SourceId``を使用します。Aliasが同じcanonical fileを指す場合も論理IDは統合しません。
 
