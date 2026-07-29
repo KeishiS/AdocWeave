@@ -1192,6 +1192,103 @@ mod tests {
     }
 
     #[test]
+    fn public_preprocess_fixture_is_identical_in_native_and_wasm_adapters() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/preprocessor/public-v1.json"
+        ))
+        .expect("public preprocess fixture");
+        let request: WasmPreprocessRequest = serde_json::from_value(json!({
+            "packageVersion": VERSION,
+            "sourceId": fixture["sourceId"],
+            "source": fixture["source"],
+            "resources": fixture["resources"],
+            "options": fixture["options"],
+        }))
+        .expect("fixture request");
+        let native_snapshot = resource_snapshot(request.resources.clone());
+        let native_options = preprocess_options(
+            request.source_id.clone().map(SourceId::new),
+            request.options.clone(),
+        );
+        let native = preprocess(&request.source, &native_snapshot, &native_options)
+            .expect("native preprocessing");
+        let wasm = preprocess_request(request).expect("WASM preprocessing");
+
+        assert_eq!(wasm.source, native.source);
+        assert_eq!(wasm.source_map.len(), native.source_map().len());
+        for (wasm, native) in wasm.source_map.iter().zip(native.source_map()) {
+            assert_eq!(wasm.output_start, native.output_range.start().to_u32());
+            assert_eq!(wasm.output_end, native.output_range.end().to_u32());
+            assert_eq!(
+                wasm.source_id.as_deref(),
+                native.origin.source_id.as_ref().map(SourceId::as_str)
+            );
+            assert_eq!(wasm.source_start, native.origin.range.start().to_u32());
+            assert_eq!(wasm.source_end, native.origin.range.end().to_u32());
+            assert_eq!(
+                wasm.mapping,
+                match native.mapping {
+                    adocweave::preprocess::SourceMapping::Identity => "identity",
+                    adocweave::preprocess::SourceMapping::WholeOrigin => "whole-origin",
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn every_preprocess_limit_has_the_same_native_and_wasm_error_code() {
+        type LimitCase = (&'static str, fn(&mut WasmPreprocessOptions), &'static str);
+
+        let resource = WasmResource {
+            source_id: "part".to_owned(),
+            source: "text".into(),
+        };
+        let cases: [LimitCase; 5] = [
+            (
+                "include::part.adoc[]\n",
+                |options| options.max_include_depth = 0,
+                "depth-limit",
+            ),
+            (
+                "include::part.adoc[]\n",
+                |options| options.max_includes = 0,
+                "include-limit",
+            ),
+            ("text", |options| options.max_total_bytes = 3, "byte-limit"),
+            (
+                "text",
+                |options| options.max_expanded_nodes = 0,
+                "node-limit",
+            ),
+            (
+                "text",
+                |options| options.max_source_map_segments = 0,
+                "source-map-limit",
+            ),
+        ];
+        for (source, configure, expected) in cases {
+            let mut options = WasmPreprocessOptions::default();
+            configure(&mut options);
+            let resources = BTreeMap::from([("part.adoc".to_owned(), resource.clone())]);
+            let native_snapshot = resource_snapshot(resources.clone());
+            let native_options = preprocess_options(None, options.clone());
+            let native =
+                preprocess(source, &native_snapshot, &native_options).expect_err("native limit");
+            let wasm = preprocess_request(WasmPreprocessRequest {
+                package_version: VERSION.to_owned(),
+                source_id: None,
+                source: source.to_owned(),
+                resources,
+                options,
+            })
+            .expect_err("WASM limit");
+
+            assert_eq!(native.kind.as_str(), expected);
+            assert_eq!(wasm.code, expected);
+        }
+    }
+
+    #[test]
     fn analysis_and_preprocess_attribute_inputs_cannot_diverge() {
         let mut request = request("text");
         request
