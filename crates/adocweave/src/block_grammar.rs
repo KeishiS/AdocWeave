@@ -24,6 +24,93 @@ pub(crate) enum LineRecognition {
     Paragraph,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BlockRecognizer {
+    Source,
+    InvalidSource,
+    Math,
+    Delimited,
+    Anchor,
+    BlockTitle,
+    BlockMetadata,
+    Comment,
+    Blank,
+    DocumentAttribute,
+    Break,
+    LiteralParagraph,
+    Heading,
+    List,
+    Unsupported,
+}
+
+const BLOCK_RECOGNIZER_PRIORITY: &[BlockRecognizer] = &[
+    BlockRecognizer::Source,
+    BlockRecognizer::InvalidSource,
+    BlockRecognizer::Math,
+    BlockRecognizer::Delimited,
+    BlockRecognizer::Anchor,
+    BlockRecognizer::BlockTitle,
+    BlockRecognizer::BlockMetadata,
+    BlockRecognizer::Comment,
+    BlockRecognizer::Blank,
+    BlockRecognizer::DocumentAttribute,
+    BlockRecognizer::Break,
+    BlockRecognizer::LiteralParagraph,
+    BlockRecognizer::Heading,
+    BlockRecognizer::List,
+    BlockRecognizer::Unsupported,
+];
+
+struct RecognitionInput<'a> {
+    content: &'a str,
+    next_content: Option<&'a str>,
+    content_start: usize,
+    full_range: TextRange,
+    document_attribute_position: bool,
+}
+
+impl BlockRecognizer {
+    fn recognize(self, input: &RecognitionInput<'_>) -> Option<LineRecognition> {
+        let content = input.content;
+        match self {
+            Self::Source => (parse_source_attribute(content).is_some()
+                && input.next_content == Some("----"))
+            .then_some(LineRecognition::Source),
+            Self::InvalidSource => (content.starts_with("[source")
+                && input.next_content == Some("----"))
+            .then_some(LineRecognition::InvalidSource),
+            Self::Math => (parse_math_attribute(content).is_some()
+                && input.next_content == Some("++++"))
+            .then_some(LineRecognition::Math),
+            Self::Delimited => crate::delimiter::spec(content).map(|_| LineRecognition::Delimited),
+            Self::Anchor => parse_explicit_anchor(content, input.content_start, input.full_range)
+                .filter(|_| content.starts_with("[["))
+                .map(|_| LineRecognition::Anchor),
+            Self::BlockTitle => is_block_title(content).then_some(LineRecognition::BlockTitle),
+            Self::BlockMetadata => parse_block_attributes(content, input.content_start)
+                .map(|_| LineRecognition::BlockMetadata),
+            Self::Comment => content
+                .starts_with("//")
+                .then_some(LineRecognition::Comment),
+            Self::Blank => content
+                .trim_matches([' ', '\t'])
+                .is_empty()
+                .then_some(LineRecognition::Blank),
+            Self::DocumentAttribute => (input.document_attribute_position
+                && crate::attributes::parse_line(content, input.content_start, input.full_range)
+                    .is_some())
+            .then_some(LineRecognition::DocumentAttribute),
+            Self::Break => matches!(content, "'''" | "<<<").then_some(LineRecognition::Break),
+            Self::LiteralParagraph => content
+                .starts_with([' ', '\t'])
+                .then_some(LineRecognition::LiteralParagraph),
+            Self::Heading => content.starts_with('=').then_some(LineRecognition::Heading),
+            Self::List => crate::list_parser::marker(content).map(|_| LineRecognition::List),
+            Self::Unsupported => unsupported_reason(content).map(|_| LineRecognition::Unsupported),
+        }
+    }
+}
+
 /// Classifies one source line without mutating parser state.
 pub(crate) fn recognize_line(
     content: &str,
@@ -32,44 +119,17 @@ pub(crate) fn recognize_line(
     full_range: TextRange,
     document_attribute_position: bool,
 ) -> LineRecognition {
-    if parse_source_attribute(content).is_some() && next_content == Some("----") {
-        LineRecognition::Source
-    } else if content.starts_with("[source") && next_content == Some("----") {
-        LineRecognition::InvalidSource
-    } else if parse_math_attribute(content).is_some() && next_content == Some("++++") {
-        LineRecognition::Math
-    } else if crate::delimiter::spec(content).is_some() {
-        LineRecognition::Delimited
-    } else if parse_explicit_anchor(content, content_start, full_range)
-        .filter(|_| content.starts_with("[["))
-        .is_some()
-    {
-        LineRecognition::Anchor
-    } else if is_block_title(content) {
-        LineRecognition::BlockTitle
-    } else if parse_block_attributes(content, content_start).is_some() {
-        LineRecognition::BlockMetadata
-    } else if content.starts_with("//") {
-        LineRecognition::Comment
-    } else if content.trim_matches([' ', '\t']).is_empty() {
-        LineRecognition::Blank
-    } else if document_attribute_position
-        && crate::attributes::parse_line(content, content_start, full_range).is_some()
-    {
-        LineRecognition::DocumentAttribute
-    } else if matches!(content, "'''" | "<<<") {
-        LineRecognition::Break
-    } else if content.starts_with([' ', '\t']) {
-        LineRecognition::LiteralParagraph
-    } else if content.starts_with('=') {
-        LineRecognition::Heading
-    } else if crate::list_parser::marker(content).is_some() {
-        LineRecognition::List
-    } else if unsupported_reason(content).is_some() {
-        LineRecognition::Unsupported
-    } else {
-        LineRecognition::Paragraph
-    }
+    let input = RecognitionInput {
+        content,
+        next_content,
+        content_start,
+        full_range,
+        document_attribute_position,
+    };
+    BLOCK_RECOGNIZER_PRIORITY
+        .iter()
+        .find_map(|recognizer| recognizer.recognize(&input))
+        .unwrap_or(LineRecognition::Paragraph)
 }
 
 pub(crate) fn parse_explicit_anchor(
@@ -313,4 +373,89 @@ fn is_delimiter(text: &str) -> bool {
     matches!(first, '-' | '.' | '=' | '_')
         && text.chars().count() >= 4
         && characters.all(|character| character == first)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn range(content: &str) -> TextRange {
+        TextRange::new(
+            TextSize::ZERO,
+            TextSize::new(content.len()).expect("test range"),
+        )
+        .expect("ordered test range")
+    }
+
+    fn recognize(
+        content: &str,
+        next_content: Option<&str>,
+        document_attribute_position: bool,
+    ) -> LineRecognition {
+        recognize_line(
+            content,
+            next_content,
+            0,
+            range(content),
+            document_attribute_position,
+        )
+    }
+
+    #[test]
+    fn block_recognizer_priority_is_explicit_complete_and_unique() {
+        assert_eq!(
+            BLOCK_RECOGNIZER_PRIORITY,
+            &[
+                BlockRecognizer::Source,
+                BlockRecognizer::InvalidSource,
+                BlockRecognizer::Math,
+                BlockRecognizer::Delimited,
+                BlockRecognizer::Anchor,
+                BlockRecognizer::BlockTitle,
+                BlockRecognizer::BlockMetadata,
+                BlockRecognizer::Comment,
+                BlockRecognizer::Blank,
+                BlockRecognizer::DocumentAttribute,
+                BlockRecognizer::Break,
+                BlockRecognizer::LiteralParagraph,
+                BlockRecognizer::Heading,
+                BlockRecognizer::List,
+                BlockRecognizer::Unsupported,
+            ]
+        );
+        let mut unique = BLOCK_RECOGNIZER_PRIORITY.to_vec();
+        unique.sort_by_key(|recognizer| *recognizer as u8);
+        unique.dedup();
+        assert_eq!(unique.len(), BLOCK_RECOGNIZER_PRIORITY.len());
+    }
+
+    #[test]
+    fn overlapping_forms_follow_the_static_priority() {
+        assert_eq!(
+            recognize("[source,rust]", Some("----"), false),
+            LineRecognition::Source
+        );
+        assert_eq!(
+            recognize("[source,rust,unknown]", Some("----"), false),
+            LineRecognition::InvalidSource
+        );
+        assert_eq!(
+            recognize("[stem]", Some("++++"), false),
+            LineRecognition::Math
+        );
+        assert_eq!(recognize("----", None, false), LineRecognition::Delimited);
+        assert_eq!(recognize("   ", None, false), LineRecognition::Blank);
+        assert_eq!(
+            recognize(" indented", None, false),
+            LineRecognition::LiteralParagraph
+        );
+        assert_eq!(
+            recognize(":name: value", None, true),
+            LineRecognition::DocumentAttribute
+        );
+        assert_eq!(
+            recognize(":name: value", None, false),
+            LineRecognition::Paragraph
+        );
+    }
 }

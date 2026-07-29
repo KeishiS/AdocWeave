@@ -311,6 +311,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::preprocess_wire::{resource_snapshot, to_core_options as preprocess_options};
 
     fn request(source: &str) -> WasmRequest {
         WasmRequest {

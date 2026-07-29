@@ -778,6 +778,68 @@ fn recognize_source_or_math(
     }
 }
 
+fn recognize_simple_block(
+    recognition: LineRecognition,
+    source_document: &SourceDocument,
+    line_index: usize,
+    content: &str,
+    line: SourceLine,
+) -> Result<BlockRecognition<BlockCommit>, ParseFailure> {
+    let commit = match recognition {
+        LineRecognition::Break => {
+            let kind = if content == "'''" {
+                BreakKind::Thematic
+            } else {
+                BreakKind::Page
+            };
+            let syntax_kind = if kind == BreakKind::Thematic {
+                SyntaxKind::ThematicBreak
+            } else {
+                SyntaxKind::PageBreak
+            };
+            BlockCommit::single(
+                SyntaxNode::leaf(syntax_kind, line.full_range()),
+                AstBlock::Break(BreakBlock {
+                    metadata: BlockMetadata::default(),
+                    range: line.full_range(),
+                    kind,
+                }),
+                0,
+            )
+        }
+        LineRecognition::LiteralParagraph => {
+            let (literal, next_line) = parse_literal_paragraph(source_document, line_index)?;
+            return Ok(BlockRecognition::matched(
+                BlockConsumption::Through(next_line),
+                BlockCommit::single(
+                    SyntaxNode::leaf(SyntaxKind::LiteralBlock, literal.range),
+                    AstBlock::LiteralParagraph(literal),
+                    0,
+                ),
+            ));
+        }
+        LineRecognition::Unsupported => {
+            let reason = unsupported_reason(content).ok_or(ParseFailure::InternalInvariant)?;
+            BlockCommit::single(
+                SyntaxNode::new(
+                    SyntaxKind::Unsupported,
+                    line.full_range(),
+                    vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
+                ),
+                AstBlock::Unsupported(Unsupported {
+                    metadata: BlockMetadata::default(),
+                    range: line.full_range(),
+                    raw: content.to_owned(),
+                    reason: reason.to_owned(),
+                }),
+                0,
+            )
+        }
+        _ => return Ok(BlockRecognition::NoMatch),
+    };
+    Ok(BlockRecognition::matched(BlockConsumption::OneLine, commit))
+}
+
 pub(crate) fn parse_shared_cancellable(
     source: Arc<str>,
     config: &ParseConfig,
@@ -885,7 +947,12 @@ fn parse_block_sequence(
         );
         let recognized_block = if matches!(
             recognition,
-            LineRecognition::Source | LineRecognition::InvalidSource | LineRecognition::Math
+            LineRecognition::Source
+                | LineRecognition::InvalidSource
+                | LineRecognition::Math
+                | LineRecognition::Break
+                | LineRecognition::LiteralParagraph
+                | LineRecognition::Unsupported
         ) {
             parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.check(ParseBudgetCharge {
@@ -893,20 +960,27 @@ fn parse_block_sequence(
                 nodes: 1,
                 attributes: 0,
             })?;
-            let recognition_context = DelimitedParseContext {
-                source_document,
-                source,
-                config,
-                is_cancelled,
-            };
-            recognize_source_or_math(
+            if matches!(
                 recognition,
-                &recognition_context,
-                line_index,
-                end_line,
-                content,
-                line,
-            )?
+                LineRecognition::Source | LineRecognition::InvalidSource | LineRecognition::Math
+            ) {
+                let recognition_context = DelimitedParseContext {
+                    source_document,
+                    source,
+                    config,
+                    is_cancelled,
+                };
+                recognize_source_or_math(
+                    recognition,
+                    &recognition_context,
+                    line_index,
+                    end_line,
+                    content,
+                    line,
+                )?
+            } else {
+                recognize_simple_block(recognition, source_document, line_index, content, line)?
+            }
         } else {
             BlockRecognition::NoMatch
         };
@@ -917,9 +991,13 @@ fn parse_block_sequence(
             &mut ast_blocks,
             budget,
         )? {
-            parser.mark_content_seen();
-            if recognition == LineRecognition::InvalidSource {
-                parser.close_header_attributes();
+            match recognition {
+                LineRecognition::Source | LineRecognition::Math => parser.mark_content_seen(),
+                LineRecognition::InvalidSource
+                | LineRecognition::Break
+                | LineRecognition::LiteralParagraph
+                | LineRecognition::Unsupported => parser.mark_body_content(),
+                _ => return Err(ParseFailure::InternalInvariant),
             }
             continue;
         }
@@ -1059,39 +1137,6 @@ fn parse_block_sequence(
                     .commit(BlockConsumption::Through(last_line + 1))?;
                 continue;
             }
-        } else if recognition == LineRecognition::Break {
-            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
-            budget.consume_block()?;
-            budget.consume_node()?;
-            let kind = if content == "'''" {
-                BreakKind::Thematic
-            } else {
-                BreakKind::Page
-            };
-            let syntax_kind = if kind == BreakKind::Thematic {
-                SyntaxKind::ThematicBreak
-            } else {
-                SyntaxKind::PageBreak
-            };
-            blocks.push(SyntaxNode::leaf(syntax_kind, line.full_range()));
-            ast_blocks.push(AstBlock::Break(BreakBlock {
-                metadata: BlockMetadata::default(),
-                range: line.full_range(),
-                kind,
-            }));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut parser.pending_metadata);
-            parser.mark_body_content();
-        } else if recognition == LineRecognition::LiteralParagraph {
-            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
-            budget.consume_block()?;
-            budget.consume_node()?;
-            let (literal, next_line) = parse_literal_paragraph(source_document, line_index)?;
-            blocks.push(SyntaxNode::leaf(SyntaxKind::LiteralBlock, literal.range));
-            ast_blocks.push(AstBlock::LiteralParagraph(literal));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut parser.pending_metadata);
-            parser.mark_body_content();
-            parser.cursor.commit(BlockConsumption::Through(next_line))?;
-            continue;
         } else if recognition == LineRecognition::Heading {
             parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
             budget.consume_block()?;
@@ -1155,24 +1200,6 @@ fn parse_block_sequence(
             parser.mark_body_content();
             parser.cursor.commit(BlockConsumption::Through(next_line))?;
             continue;
-        } else if recognition == LineRecognition::Unsupported {
-            let reason = unsupported_reason(content).expect("recognizer verified unsupported line");
-            parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
-            budget.consume_block()?;
-            budget.consume_node()?;
-            blocks.push(SyntaxNode::new(
-                SyntaxKind::Unsupported,
-                line.full_range(),
-                vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
-            ));
-            ast_blocks.push(AstBlock::Unsupported(Unsupported {
-                metadata: BlockMetadata::default(),
-                range: line.full_range(),
-                raw: content.to_owned(),
-                reason: reason.to_owned(),
-            }));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut parser.pending_metadata);
-            parser.mark_body_content();
         } else {
             parser.push_paragraph_line(line, content);
         }
