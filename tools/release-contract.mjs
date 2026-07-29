@@ -214,6 +214,7 @@ function verifyRepository() {
   const vscodePackage = json("editors/vscode/package.json");
   const vscodeLock = json("editors/vscode/package-lock.json");
   const protocol = json("protocol/public-api.json");
+  const conformance = json("crates/adocweave/conformance/cases.json");
   const worker = json("web-worker/package.json");
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
@@ -271,6 +272,7 @@ function verifyRepository() {
     "release manifest": manifest.packageVersion,
     "distribution plan": plan.packageVersion,
     "browser package": worker.version,
+    "cross-runtime conformance manifest": conformance.packageVersion,
     "Zed extension": tomlValue(extension, "version"),
     "Zed crate": tomlValue(extensionCargo, "version"),
   });

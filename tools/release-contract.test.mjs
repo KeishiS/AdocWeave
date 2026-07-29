@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { EXPECTED_RELEASE_METADATA, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, validatePublicClientReleaseContract, versionFromTag } from "./release-contract.mjs";
+import { EXPECTED_RELEASE_METADATA, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, validatePublicClientReleaseContract, validateReleaseTrainVersions, versionFromTag } from "./release-contract.mjs";
 import {
   RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_VERSION,
@@ -11,6 +11,7 @@ import fixture from "../release/adocweave-dist-manifest.fixture.json" with { typ
 import protocol from "../protocol/public-api.json" with { type: "json" };
 import vscodeLock from "../editors/vscode/package-lock.json" with { type: "json" };
 import vscodePackage from "../editors/vscode/package.json" with { type: "json" };
+import conformance from "../crates/adocweave/conformance/cases.json" with { type: "json" };
 
 test("stable tags are exact and versioned", () => {
   assert.equal(versionFromTag("v1.2.3"), "1.2.3");
@@ -77,6 +78,20 @@ test("public client manifests match the release train and remain private", () =>
       pattern,
     );
   }
+});
+
+test("cross-runtime conformance manifestはrelease trainと一致する", () => {
+  assert.doesNotThrow(() =>
+    validateReleaseTrainVersions(plan.packageVersion, {
+      "cross-runtime conformance manifest": conformance.packageVersion,
+    }));
+  assert.throws(
+    () =>
+      validateReleaseTrainVersions(plan.packageVersion, {
+        "cross-runtime conformance manifest": "9.9.9",
+      }),
+    /cross-runtime conformance manifest version/,
+  );
 });
 
 test("release versionへの更新後はWASM protocol schema 6を必須とする", () => {

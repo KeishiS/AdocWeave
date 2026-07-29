@@ -26,6 +26,9 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /--allow-external/);
   assert.match(notes, /schema 5から6へ破壊的に更新/);
   assert.match(notes, /bindings、型定義およびfixtureをschema 6から再生成/);
+  assert.match(notes, /入れ子のobject（nested object）/);
+  assert.match(notes, /tagged union/);
+  assert.match(notes, /定義にないfieldを拒否/);
   assert.match(notes, /Rust APIの破壊的変更です/);
   assert.match(notes, /`LocalResourcePolicy::new\(\.\.\.\)`/);
   assert.match(notes, /`LocalFilesystemPolicy::new\(\.\.\.\)`/);
@@ -59,8 +62,9 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /`HandleRelative`方式/);
   assert.match(notes, /macOSとWindowsは`StaticSnapshotOnly`方式/);
   assert.match(notes, /workspaceを同時変更しない、信頼済みのworkspace/);
-  assert.match(notes, /要求の`packageVersion`がBrowser packageと一致しない場合に解析を拒否/);
-  assert.match(notes, /staleな結果は`onResult`にも`onError`にも通知しません/);
+  assert.match(notes, /WASM結果の`packageVersion`がBrowser packageと一致しない場合、`unsupported-package-version`/);
+  assert.match(notes, /Worker応答の`version`が解析要求の`version`と一致しない場合は`invalid-worker-response`/);
+  assert.match(notes, /staleな応答は`onResult`にも`onError`にも通知しません/);
   assert.match(notes, /terminal errorでは未完了の解析Promiseをreject/);
   assert.match(notes, /`onError`をmicrotaskで通知/);
   assert.match(notes, /同期的な実行順には依存しない/);

@@ -25,7 +25,7 @@ const highlights = [
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。v0.16.0からschema形状を変更していません。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。WASM protocolは未選択のprojectionをnullで表す契約などを反映してschema 5から6へ破壊的に更新し、Worker envelopeはversion 2を維持します。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。WASM protocolは未選択のprojectionをnullで表す契約などを反映してschema 5から6へ破壊的に更新し、Worker envelopeはversion 2を維持します。schema 6ではprojectionを構成するすべてのJSON objectで、入れ子のobject（nested object）や種類を示すfieldで形が変わるtagged unionも含め、定義にないfieldを拒否します。保存済みprojectionや独自bindingsから定義にないfieldを除き、schema 6を正本として再生成してください。`,
   "`preview`は新しいCLIコマンドです。既存のCLIコマンドとWorker protocolはv0.16.0から維持します。Browser APIとWASM responseには次の移行が必要です。",
   "プレビューのHTMLは既存の変換処理と同じ安全性方針で生成します。任意のファイルやディレクトリ一覧を配信せず、配信するURLを表示画面、生成文書、更新番号、診断および固定のクライアントスクリプトに限定します。",
   "`adocweave-host`のfilesystem読込APIを、検証後のpathを後から開き直す方式から、rootのhandleを基準に検証と読込を一体で行うsession方式へ変更しました。これはRust APIの破壊的変更です。",
@@ -33,7 +33,8 @@ const contractNotes = [
   "filesystem errorは`ResourceError`の`Missing`、`PermissionDenied`、`PathNotAbsolute`、`OutsideRoots`、`NotRegularFile`および`Unverifiable`などで分類します。表示文字列ではなくvariantを処理してください。",
   "複数の許可rootを設定していても、読込は入力pathに対応する1つのroot handleへ限定します。symlinkの参照先が別の許可root内にある場合も、選択したrootの境界を越えるため`OutsideRoots`として拒否します。",
   "Linuxのfilesystem読込はrootのdirectory handleを基準にpath componentを開く`HandleRelative`方式です。macOSとWindowsは`StaticSnapshotOnly`方式であり、検査中にworkspaceを同時変更しない、信頼済みのworkspaceを前提とします。",
-  "Browser clientは要求の`packageVersion`がBrowser packageと一致しない場合に解析を拒否します。新しいgenerationに置き換えられたstaleな結果は`onResult`にも`onError`にも通知しません。",
+  "Browser clientはWASM結果の`packageVersion`がBrowser packageと一致しない場合、`unsupported-package-version`として解析を拒否します。",
+  "現在のgenerationのresultまたはerrorについて、Worker応答の`version`が解析要求の`version`と一致しない場合は`invalid-worker-response`として拒否し、そのWorkerを終了します。新しいgenerationに置き換えられたstaleな応答は`onResult`にも`onError`にも通知しません。",
   "Worker障害などのterminal errorでは未完了の解析Promiseをrejectし、`onError`をmicrotaskで通知します。Promiseのrejectを処理するcallbackと`onError`の同期的な実行順には依存しないでください。",
   "Browser clientの`onResult`と`onError`で発生した例外は、解析Promiseの完了状態とWorkerの生存状態へ影響させません。callback内の例外を記録または表示する必要がある場合は、利用側で処理してください。",
   "WASM productを選択しなかった場合もresponse fieldは省略しません。`projection`は`null`、配列で表すproductは空配列、文字列で表すproductは空文字列を返します。",
