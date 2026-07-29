@@ -125,7 +125,12 @@ args = ["--test", "web-worker/protocol-wasm.test.mjs"]
 
 [tasks.release-contract]
 description = "Verify release train versions, targets, tags, and distribution manifest schema"
-dependencies = ["release-metadata-test", "release-notes-test", "release-workflow-policy"]
+dependencies = [
+  "release-version-check",
+  "release-metadata-test",
+  "release-notes-test",
+  "release-workflow-policy",
+]
 script_runner = "@shell"
 script = '''
 args=""
@@ -143,6 +148,17 @@ cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=
 node tools/verify-cargo-release-metadata.mjs "$metadata" "$zed_metadata"
 node tools/generate-third-party-notices.mjs "$notice"
 '''
+
+[tasks.release-version-check]
+description = "Verify the explicit release version allowlist and generated outputs"
+dependencies = ["release-version-sync-test"]
+command = "node"
+args = ["tools/sync-release-version.mjs", "--check"]
+
+[tasks.release-version-sync-test]
+description = "Test deterministic release version updates and fail-closed behavior"
+command = "node"
+args = ["--test", "tools/sync-release-version.test.mjs"]
 
 [tasks.release-metadata-test]
 description = "Test canonical release manifest, SPDX SBOM, and checksum generation"
