@@ -1,12 +1,23 @@
 use adocweave::output::diagnostics as diagnostic;
 use adocweave::output::html::HtmlDocumentMode;
 
-pub(crate) fn render(
-    snapshot: Option<&adocweave_config::ConfigSnapshot>,
-    config: &adocweave_config::ResolvedProjectConfig,
-) -> String {
-    serde_json::to_string_pretty(&resolved_config_json(snapshot, config))
-        .expect("resolved configuration is serializable")
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct Outcome {
+    pub(crate) output: String,
+}
+
+pub(crate) fn run(snapshot: Option<&adocweave_config::ConfigSnapshot>) -> Outcome {
+    let default_config;
+    let config = if let Some(snapshot) = snapshot {
+        &snapshot.config
+    } else {
+        default_config = adocweave_config::ResolvedProjectConfig::default();
+        &default_config
+    };
+    Outcome {
+        output: serde_json::to_string_pretty(&resolved_config_json(snapshot, config))
+            .expect("resolved configuration is serializable"),
+    }
 }
 
 fn resolved_config_json(
@@ -81,4 +92,68 @@ fn resolved_config_json(
             "stylesheetUrls": config.html.stylesheet_urls,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn missing_snapshot_uses_defaults_without_inventing_a_source() {
+        let outcome = run(None);
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("config JSON");
+
+        assert!(value["source"].is_null());
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["resources"]["include"], false);
+        assert_eq!(value["analysis"]["attributes"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn snapshot_redacts_values_and_internal_content_identity() {
+        let mut config = adocweave_config::ResolvedProjectConfig::default();
+        config
+            .analysis
+            .attributes
+            .insert("token".to_owned(), Some("do-not-print".to_owned()));
+        config.analysis.attributes.insert("hidden".to_owned(), None);
+        let snapshot = adocweave_config::ConfigSnapshot {
+            path: PathBuf::from("/project/.adocweave.toml"),
+            content_sha256: [0xab; 32],
+            config,
+        };
+
+        let outcome = run(Some(&snapshot));
+        assert!(!outcome.output.contains("do-not-print"));
+        assert!(!outcome.output.contains("abababab"));
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("config JSON");
+        assert_eq!(value["analysis"]["attributes"]["token"]["state"], "set");
+        assert_eq!(value["analysis"]["attributes"]["hidden"]["state"], "unset");
+    }
+
+    #[test]
+    fn attribute_names_are_serialized_as_data() {
+        let hostile_name = "quote\"\nkey";
+        let mut config = adocweave_config::ResolvedProjectConfig::default();
+        config.analysis.attributes.insert(
+            hostile_name.to_owned(),
+            Some("still-do-not-print".to_owned()),
+        );
+        let snapshot = adocweave_config::ConfigSnapshot {
+            path: PathBuf::from("/project/.adocweave.toml"),
+            content_sha256: [0; 32],
+            config,
+        };
+
+        let outcome = run(Some(&snapshot));
+        let value: serde_json::Value = serde_json::from_str(&outcome.output).expect("config JSON");
+
+        assert_eq!(
+            value["analysis"]["attributes"][hostile_name]["state"],
+            "set"
+        );
+        assert!(!outcome.output.contains("still-do-not-print"));
+    }
 }
