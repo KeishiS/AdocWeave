@@ -388,11 +388,34 @@ test("reconciliation requires a confirmed GraphQL auto-merge cancellation", () =
   stillEnabled.data.disablePullRequestAutoMerge.pullRequest.autoMergeRequest = {
     enabledAt: "2026-07-29T21:00:00Z",
   };
+  const missingAutoMergeRequest = structuredClone(success);
+  delete missingAutoMergeRequest.data.disablePullRequestAutoMerge.pullRequest
+    .autoMergeRequest;
+  const missingNumber = structuredClone(success);
+  delete missingNumber.data.disablePullRequestAutoMerge.pullRequest.number;
+  const incompleteResponses = [
+    null,
+    {},
+    { data: null },
+    { data: {} },
+    { data: { disablePullRequestAutoMerge: null } },
+    { data: { disablePullRequestAutoMerge: {} } },
+    { data: { disablePullRequestAutoMerge: { pullRequest: null } } },
+    missingNumber,
+    missingAutoMergeRequest,
+  ];
 
   assert.equal(validateReconciliationDisableResult(success).status, 0);
   assert.notEqual(validateReconciliationDisableResult(graphQlError).status, 0);
   assert.notEqual(validateReconciliationDisableResult(stillEnabled).status, 0);
   assert.notEqual(validateReconciliationDisableResult(success, 18).status, 0);
+  for (const incompleteResponse of incompleteResponses) {
+    assert.notEqual(
+      validateReconciliationDisableResult(incompleteResponse).status,
+      0,
+      JSON.stringify(incompleteResponse),
+    );
+  }
 });
 
 test("reconciliation trusts only a validated Pull Request detail response", () => {
