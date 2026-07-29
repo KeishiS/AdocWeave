@@ -1,31 +1,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File};
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{self, Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::net::{IpAddr, SocketAddr, TcpListener};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 
 use adocweave::CancellationToken;
 
-const MAX_REQUEST_BYTES: usize = 8192;
-const CLIENT_JS: &str = r#"let generation=-1;
-async function update(){
-  try {
-    const event=await fetch('/events',{cache:'no-store'}).then(r=>r.json());
-    if(generation>=0&&event.generation!==generation){
-      document.querySelector('iframe').contentWindow.location.reload();
-    }
-    if(generation<0||event.generation!==generation){
-      document.querySelector('pre').textContent=await fetch('/diagnostics',{cache:'no-store'}).then(r=>r.text());
-    }
-    generation=event.generation;
-  } catch (_) {}
-}
-setInterval(update,500); update();
-"#;
+mod dependency;
+mod http;
+
+pub(crate) use dependency::{Fingerprint, read_dependency};
+use http::{HttpSnapshot, HttpWorkers};
+
+const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_millis(20);
+const DEPENDENCY_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const DEPENDENCY_FORCE_HASH_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Options {
@@ -57,11 +49,8 @@ impl Build {
     }
 
     pub fn failure(message: String, dependencies: BTreeMap<PathBuf, Fingerprint>) -> Self {
-        Self::new(
-            error_document(&message),
-            format!("{message}\n"),
-            dependencies,
-        )
+        let diagnostics = failure_diagnostics(&message);
+        Self::new(error_document(&message), diagnostics, dependencies)
     }
 
     pub fn with_style_origins(mut self, origins: BTreeSet<String>) -> Self {
@@ -69,10 +58,10 @@ impl Build {
         self
     }
 
-    fn changed(&self) -> bool {
+    fn changed(&mut self) -> bool {
         self.dependencies
-            .iter()
-            .any(|(path, fingerprint)| Fingerprint::read(path) != *fingerprint)
+            .iter_mut()
+            .any(|(path, fingerprint)| fingerprint.changed(path, true))
     }
 }
 
@@ -103,156 +92,29 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Fingerprint {
-    modified: Option<SystemTime>,
-    len: u64,
-    exists: bool,
-    kind: FileKind,
-    content_hash: Option<u64>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FileKind {
-    Missing,
-    Regular,
-    Symlink,
-    Directory,
-    Other,
-    Unreadable,
-}
-
-impl Fingerprint {
-    pub(crate) fn read(path: &Path) -> Self {
-        match fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.file_type().is_symlink() => Self {
-                modified: metadata.modified().ok(),
-                len: metadata.len(),
-                exists: true,
-                kind: FileKind::Symlink,
-                content_hash: fs::read_link(path).ok().map(|target| hash(&target)),
-            },
-            Ok(metadata) if metadata.is_dir() => Self {
-                modified: metadata.modified().ok(),
-                len: metadata.len(),
-                exists: true,
-                kind: FileKind::Directory,
-                content_hash: None,
-            },
-            Ok(metadata) if metadata.is_file() => match File::open(path) {
-                Ok(mut file) => {
-                    let opened = file.metadata().unwrap_or(metadata);
-                    let mut bytes = Vec::new();
-                    let content_hash = file.read_to_end(&mut bytes).ok().map(|_| hash(&bytes));
-                    Self {
-                        modified: opened.modified().ok(),
-                        len: opened.len(),
-                        exists: true,
-                        kind: if content_hash.is_some() {
-                            FileKind::Regular
-                        } else {
-                            FileKind::Unreadable
-                        },
-                        content_hash,
-                    }
-                }
-                Err(_) => Self {
-                    modified: metadata.modified().ok(),
-                    len: metadata.len(),
-                    exists: true,
-                    kind: FileKind::Unreadable,
-                    content_hash: None,
-                },
-            },
-            Ok(metadata) => Self {
-                modified: metadata.modified().ok(),
-                len: metadata.len(),
-                exists: true,
-                kind: FileKind::Other,
-                content_hash: None,
-            },
-            Err(_) => Self {
-                modified: None,
-                len: 0,
-                exists: false,
-                kind: FileKind::Missing,
-                content_hash: None,
-            },
-        }
-    }
-
-    pub(crate) fn from_open_file(file: &File, bytes: &[u8]) -> io::Result<Self> {
-        let metadata = file.metadata()?;
-        Ok(Self {
-            modified: metadata.modified().ok(),
-            len: metadata.len(),
-            exists: true,
-            kind: FileKind::Regular,
-            content_hash: Some(hash(&bytes)),
-        })
-    }
-
-    pub(crate) fn from_loaded_bytes(path: &Path, bytes: &[u8]) -> Self {
-        let metadata = fs::symlink_metadata(path)
-            .ok()
-            .filter(|metadata| metadata.is_file() && !metadata.file_type().is_symlink());
-        Self {
-            modified: metadata
-                .as_ref()
-                .and_then(|metadata| metadata.modified().ok()),
-            len: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-            exists: true,
-            kind: FileKind::Regular,
-            content_hash: Some(hash(&bytes)),
-        }
-    }
-}
-
-fn hash(value: &impl Hash) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
-pub(crate) fn read_dependency(path: &Path) -> io::Result<(Vec<u8>, Fingerprint)> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "dependency is not a regular non-symlink file",
-        ));
-    }
-    let mut file = File::open(path)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    let fingerprint = Fingerprint::from_open_file(&file, &bytes)?;
-    Ok((bytes, fingerprint))
-}
-
 #[derive(Clone)]
 struct State {
-    generation: u64,
-    html: String,
-    diagnostics: String,
+    http: Arc<HttpSnapshot>,
     dependencies: BTreeMap<PathBuf, Fingerprint>,
-    style_origins: BTreeSet<String>,
 }
 
 impl State {
     fn from_build(generation: u64, build: Build) -> Self {
         Self {
-            generation,
-            html: build.html,
-            diagnostics: build.diagnostics,
+            http: Arc::new(HttpSnapshot::new(
+                generation,
+                build.html,
+                build.diagnostics,
+                build.style_origins,
+            )),
             dependencies: build.dependencies,
-            style_origins: build.style_origins,
         }
     }
 
-    fn changed(&self) -> bool {
+    fn changed(&mut self, force_hash: bool) -> bool {
         self.dependencies
-            .iter()
-            .any(|(path, previous)| Fingerprint::read(path) != *previous)
+            .iter_mut()
+            .any(|(path, previous)| previous.changed(path, force_hash))
     }
 
     fn refresh(&mut self) {
@@ -260,8 +122,72 @@ impl State {
             *fingerprint = Fingerprint::read(path);
         }
     }
+
+    fn replace_failure(&mut self, generation: u64, message: &str) {
+        self.http = Arc::new(self.http.failure(
+            generation,
+            error_document(message),
+            failure_diagnostics(message),
+        ));
+        self.refresh();
+    }
 }
 
+#[derive(Clone, Debug)]
+struct DependencyPoll {
+    next_poll: Instant,
+    next_force_hash: Instant,
+}
+
+impl DependencyPoll {
+    fn new(now: Instant) -> Self {
+        Self {
+            next_poll: now,
+            next_force_hash: now + DEPENDENCY_FORCE_HASH_INTERVAL,
+        }
+    }
+
+    fn mode(&mut self, now: Instant) -> Option<bool> {
+        if now < self.next_poll {
+            return None;
+        }
+        self.next_poll = now + DEPENDENCY_POLL_INTERVAL;
+        let force_hash = now >= self.next_force_hash;
+        if force_hash {
+            self.next_force_hash = now + DEPENDENCY_FORCE_HASH_INTERVAL;
+        }
+        Some(force_hash)
+    }
+
+    fn reset(&mut self, now: Instant) {
+        self.next_poll = now + DEPENDENCY_POLL_INTERVAL;
+        self.next_force_hash = now + DEPENDENCY_FORCE_HASH_INTERVAL;
+    }
+}
+
+fn run_build<T: Send>(
+    cancellation: &CancellationToken,
+    build: impl FnOnce(&CancellationToken) -> T + Send,
+    mut monitor: impl FnMut() -> Result<(), Error>,
+) -> Result<T, Error> {
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| build(cancellation));
+        while !worker.is_finished() {
+            monitor()?;
+        }
+        worker
+            .join()
+            .map_err(|_| Error::Build("preview build worker panicked".to_owned()))
+    })
+}
+
+/// Runs the preview loop with cancellation at cooperative build-stage boundaries.
+///
+/// The build callback must observe its cancellation token between non-cooperative
+/// stages. A stage which does not accept the token runs to completion.
+/// The server waits for an active callback to finish before rebuilding or
+/// shutting down; it does not impose a deadline on callbacks which ignore the
+/// token.
 pub fn run(
     options: Options,
     mut build: impl FnMut(&CancellationToken) -> Result<Build, String> + Send,
@@ -273,37 +199,63 @@ pub fn run(
     let local = listener.local_addr().map_err(Error::Io)?;
     eprintln!("AdocWeave preview: http://{local}/");
 
-    let first = build(&CancellationToken::new()).map_err(Error::Build)?;
+    let cancellation = CancellationToken::new();
+    let first = run_build(
+        &cancellation,
+        |cancellation| build(cancellation),
+        || {
+            if shutdown.load(Ordering::Acquire) {
+                cancellation.cancel();
+            }
+            std::thread::sleep(ACCEPT_RETRY_INTERVAL);
+            Ok(())
+        },
+    )?;
+    if shutdown.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let first = first.map_err(Error::Build)?;
     let mut state = State::from_build(1, first);
+    let http_workers = HttpWorkers::new().map_err(Error::Io)?;
     let mut changed_at = None;
+    let mut dependency_poll = DependencyPoll::new(Instant::now());
     while !shutdown.load(Ordering::Acquire) {
-        if state.changed() {
-            changed_at.get_or_insert_with(std::time::Instant::now);
+        let now = Instant::now();
+        if dependency_poll
+            .mode(now)
+            .is_some_and(|force_hash| state.changed(force_hash))
+        {
+            changed_at.get_or_insert(now);
         }
         if changed_at.is_some_and(|start| start.elapsed() >= options.debounce) {
             state.refresh();
+            dependency_poll.reset(Instant::now());
             let cancellation = CancellationToken::new();
             let mut superseded = false;
-            let result = std::thread::scope(|scope| {
-                let worker = scope.spawn(|| build(&cancellation));
-                while !worker.is_finished() {
-                    if shutdown.load(Ordering::Acquire) || state.changed() {
+            let result = run_build(
+                &cancellation,
+                |cancellation| build(cancellation),
+                || {
+                    let dependency_changed = dependency_poll
+                        .mode(Instant::now())
+                        .is_some_and(|force_hash| state.changed(force_hash));
+                    if shutdown.load(Ordering::Acquire) || dependency_changed {
                         cancellation.cancel();
                         superseded = true;
                     }
                     match listener.accept() {
-                        Ok((stream, _)) => spawn_response(stream, state.clone(), local),
+                        Ok((stream, _)) => {
+                            http_workers.dispatch(stream, &state.http, local);
+                        }
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(Duration::from_millis(20));
+                            std::thread::sleep(ACCEPT_RETRY_INTERVAL);
                         }
                         Err(error) => return Err(Error::Io(error)),
                     }
-                }
-                worker
-                    .join()
-                    .map_err(|_| Error::Build("preview build worker panicked".to_owned()))
-            })?;
-            if state.changed() {
+                    Ok(())
+                },
+            )?;
+            if state.changed(true) {
                 superseded = true;
             }
             if shutdown.load(Ordering::Acquire) {
@@ -311,31 +263,32 @@ pub fn run(
             }
             if superseded {
                 state.refresh();
+                dependency_poll.reset(Instant::now());
                 changed_at = Some(std::time::Instant::now());
                 continue;
             }
-            let next_generation = state.generation.saturating_add(1);
+            let next_generation = state.http.generation().saturating_add(1);
             match result {
-                Ok(next) if next.changed() => {
-                    state.refresh();
-                    changed_at = Some(std::time::Instant::now());
-                    continue;
+                Ok(mut next) => {
+                    if next.changed() {
+                        state.refresh();
+                        dependency_poll.reset(Instant::now());
+                        changed_at = Some(std::time::Instant::now());
+                        continue;
+                    }
+                    state = State::from_build(next_generation, next);
                 }
-                Ok(next) => state = State::from_build(next_generation, next),
                 Err(message) => {
-                    state.generation = next_generation;
-                    state.html = error_document(&message);
-                    state.diagnostics = format!("{message}\n");
-                    state.refresh();
+                    state.replace_failure(next_generation, &message);
                 }
             }
             changed_at = None;
         }
 
         match listener.accept() {
-            Ok((stream, _)) => spawn_response(stream, state.clone(), local),
+            Ok((stream, _)) => http_workers.dispatch(stream, &state.http, local),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(20));
+                std::thread::sleep(ACCEPT_RETRY_INTERVAL);
             }
             Err(error) => return Err(Error::Io(error)),
         }
@@ -343,127 +296,12 @@ pub fn run(
     Ok(())
 }
 
-fn spawn_response(stream: TcpStream, state: State, local: SocketAddr) {
-    std::thread::spawn(move || {
-        let _ = respond(stream, &state, local);
-    });
-}
-
-fn respond(mut stream: TcpStream, state: &State, local: SocketAddr) -> Result<(), Error> {
-    stream
-        .set_read_timeout(Some(Duration::from_millis(250)))
-        .map_err(Error::Io)?;
-    let mut request = [0_u8; MAX_REQUEST_BYTES];
-    let count = stream.read(&mut request).map_err(Error::Io)?;
-    let request = std::str::from_utf8(&request[..count]).unwrap_or("");
-    let mut parts = request.lines().next().unwrap_or("").split_whitespace();
-    let method = parts.next().unwrap_or("");
-    let path = parts.next().unwrap_or("");
-    let host = request
-        .lines()
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("host").then_some(value)
-        })
-        .unwrap_or("")
-        .trim();
-    if !host_allowed(host, local) {
-        return write_response(
-            &mut stream,
-            method,
-            400,
-            "text/plain",
-            "invalid host\n",
-            &BTreeSet::new(),
-        );
-    }
-    if !matches!(method, "GET" | "HEAD") {
-        return write_response(
-            &mut stream,
-            method,
-            405,
-            "text/plain",
-            "method not allowed\n",
-            &state.style_origins,
-        );
-    }
-    let (status, content_type, body) = match path {
-        "/" => (200, "text/html; charset=utf-8", shell()),
-        "/document" => (200, "text/html; charset=utf-8", state.html.clone()),
-        "/client.js" => (200, "text/javascript; charset=utf-8", CLIENT_JS.to_owned()),
-        "/events" => (
-            200,
-            "application/json",
-            format!("{{\"generation\":{}}}\n", state.generation),
-        ),
-        "/diagnostics" => (200, "application/json", state.diagnostics.clone()),
-        _ => (404, "text/plain; charset=utf-8", "not found\n".to_owned()),
-    };
-    write_response(
-        &mut stream,
-        method,
-        status,
-        content_type,
-        &body,
-        &state.style_origins,
-    )
-}
-
-fn host_allowed(host: &str, local: SocketAddr) -> bool {
-    let Ok(url) = url::Url::parse(&format!("http://{host}")) else {
-        return false;
-    };
-    if url.port_or_known_default() != Some(local.port()) {
-        return false;
-    }
-    match url.host() {
-        Some(url::Host::Ipv4(address)) => local.ip().is_unspecified() || local.ip() == address,
-        Some(url::Host::Ipv6(address)) => local.ip().is_unspecified() || local.ip() == address,
-        Some(url::Host::Domain(name)) => local.ip().is_loopback() && name == "localhost",
-        None => false,
-    }
-}
-
-fn write_response(
-    stream: &mut TcpStream,
-    method: &str,
-    status: u16,
-    content_type: &str,
-    body: &str,
-    style_origins: &BTreeSet<String>,
-) -> Result<(), Error> {
-    let reason = match status {
-        200 => "OK",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        400 => "Bad Request",
-        _ => "Error",
-    };
-    write!(
-        stream,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: {}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
-        body.len(),
-        content_security_policy(style_origins)
-    )
-    .map_err(Error::Io)?;
-    if method != "HEAD" {
-        stream.write_all(body.as_bytes()).map_err(Error::Io)?;
-    }
-    Ok(())
-}
-
-fn content_security_policy(style_origins: &BTreeSet<String>) -> String {
-    format!(
-        "default-src 'none'; script-src 'self'; frame-src 'self'; style-src 'unsafe-inline'{}",
-        style_origins
-            .iter()
-            .map(|origin| format!(" {origin}"))
-            .collect::<String>()
-    )
-}
-
-fn shell() -> String {
-    "<!doctype html><html><head><meta charset=\"utf-8\"><title>AdocWeave preview</title></head><body><iframe title=\"Preview\" sandbox src=\"/document\"></iframe><pre aria-label=\"Diagnostics\"></pre><script src=\"/client.js\"></script></body></html>\n".to_owned()
+fn failure_diagnostics(message: &str) -> String {
+    serde_json::to_string(&[serde_json::json!({
+        "code": "preview-build",
+        "message": message,
+    })])
+    .expect("preview build diagnostic is serializable")
 }
 
 fn error_document(message: &str) -> String {
@@ -483,12 +321,14 @@ fn escape_html(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::io::{Read, Write};
     use std::net::{Ipv4Addr, TcpStream};
-    use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
 
-    use super::*;
     use adocweave::CancellationCheck;
+
+    use super::*;
 
     fn snapshots(paths: impl IntoIterator<Item = PathBuf>) -> BTreeMap<PathBuf, Fingerprint> {
         paths
@@ -500,10 +340,10 @@ mod tests {
             .collect()
     }
 
-    fn request(address: SocketAddr, path: &str) -> String {
+    fn raw_request(address: SocketAddr, request: &str) -> String {
         for _ in 0..100 {
             if let Ok(mut stream) = TcpStream::connect(address) {
-                write!(stream, "GET {path} HTTP/1.1\r\nHost: {address}\r\n\r\n").expect("request");
+                stream.write_all(request.as_bytes()).expect("request");
                 let mut response = String::new();
                 if stream.read_to_string(&mut response).is_ok() {
                     return response;
@@ -514,6 +354,13 @@ mod tests {
         panic!("preview server did not start");
     }
 
+    fn request(address: SocketAddr, path: &str) -> String {
+        raw_request(
+            address,
+            &format!("GET {path} HTTP/1.1\r\nHost: {address}\r\n\r\n"),
+        )
+    }
+
     #[test]
     fn error_page_escapes_input() {
         let page = error_document("</pre><script>alert(1)</script>");
@@ -522,19 +369,66 @@ mod tests {
     }
 
     #[test]
-    fn fingerprints_detect_create_change_and_delete() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let path = directory.path().join("dependency.adoc");
-        let missing = Fingerprint::read(&path);
-        fs::write(&path, "one").expect("create");
-        let created = Fingerprint::read(&path);
-        fs::write(&path, "two").expect("same-length change");
-        let changed = Fingerprint::read(&path);
-        fs::remove_file(&path).expect("delete");
-        let deleted = Fingerprint::read(&path);
-        assert_ne!(missing, created);
-        assert_ne!(created, changed);
-        assert_ne!(changed, deleted);
+    fn build_failures_keep_diagnostics_as_json() {
+        let build = Build::failure("missing include".to_owned(), BTreeMap::new());
+        let diagnostics: serde_json::Value =
+            serde_json::from_str(&build.diagnostics).expect("JSON diagnostics");
+        assert_eq!(diagnostics[0]["code"], "preview-build");
+        assert_eq!(diagnostics[0]["message"], "missing include");
+    }
+
+    #[test]
+    fn dependency_poll_schedule_is_independent_from_accept_retries() {
+        let start = Instant::now();
+        let mut poll = DependencyPoll::new(start);
+        assert_eq!(poll.mode(start), Some(false));
+        assert_eq!(poll.mode(start + ACCEPT_RETRY_INTERVAL), None);
+        assert_eq!(poll.mode(start + DEPENDENCY_POLL_INTERVAL), Some(false));
+        assert_eq!(
+            poll.mode(start + DEPENDENCY_FORCE_HASH_INTERVAL),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn shutdown_cancels_the_initial_build_at_its_next_cooperative_boundary() {
+        let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
+        let address = reservation.local_addr().expect("address");
+        drop(reservation);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let server_shutdown = Arc::clone(&shutdown);
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let (cancelled_sender, cancelled_receiver) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            run(
+                Options {
+                    bind: address.ip(),
+                    port: address.port(),
+                    debounce: Duration::from_millis(20),
+                },
+                |cancellation| {
+                    started_sender.send(()).expect("started");
+                    while !cancellation.is_cancelled() {
+                        std::thread::yield_now();
+                    }
+                    cancelled_sender.send(()).expect("cancelled");
+                    Err("cancelled".to_owned())
+                },
+                &server_shutdown,
+            )
+        });
+
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("initial build started");
+        shutdown.store(true, Ordering::Release);
+        cancelled_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("initial build observed cancellation");
+        server
+            .join()
+            .expect("server thread")
+            .expect("clean shutdown");
     }
 
     #[test]
@@ -573,6 +467,12 @@ mod tests {
         assert!(shell.contains("Content-Security-Policy: default-src 'none'"));
         assert!(shell.contains("<iframe"));
         assert!(request(address, "/secret").starts_with("HTTP/1.1 404"));
+        let method_not_allowed = raw_request(
+            address,
+            &format!("POST / HTTP/1.1\r\nHost: {address}\r\n\r\n"),
+        );
+        assert!(method_not_allowed.starts_with("HTTP/1.1 405"));
+        assert!(method_not_allowed.contains("\r\nAllow: GET, HEAD\r\n"));
         fs::write(&dependency, "created").expect("create dependency");
         for _ in 0..100 {
             if request(address, "/events").contains("\"generation\":2") {
@@ -612,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn newer_dependency_change_cancels_an_in_flight_build() {
+    fn cooperative_build_observes_cancellation_for_a_newer_change() {
         let directory = tempfile::tempdir().expect("tempdir");
         let dependency = directory.path().join("dependency.adoc");
         fs::write(&dependency, "one").expect("fixture");
@@ -677,13 +577,13 @@ mod tests {
         fs::write(&root, "one").expect("root");
         fs::write(&discovered, "old").expect("dependency");
         let builds = AtomicU64::new(0);
-        let first = Build::new(
+        let mut first = Build::new(
             "initial".to_owned(),
             "[]".to_owned(),
             snapshots([root.clone()]),
         );
         fs::write(&root, "two").expect("trigger");
-        let second = {
+        let mut second = {
             builds.fetch_add(1, Ordering::Relaxed);
             let build = Build::new(
                 "stale".to_owned(),
@@ -696,81 +596,5 @@ mod tests {
         assert!(first.changed());
         assert!(second.changed());
         assert_eq!(builds.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn dependency_snapshot_is_captured_when_the_file_is_read() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let dependency = directory.path().join("new.adoc");
-        fs::write(&dependency, "old").expect("dependency");
-        let (bytes, fingerprint) = read_dependency(&dependency).expect("read dependency");
-        assert_eq!(bytes, b"old");
-
-        // This is the deterministic barrier between loading a newly discovered
-        // dependency and completing the build.
-        fs::write(&dependency, "new").expect("replace after read");
-        let build = Build::new(
-            "rendered from old".to_owned(),
-            "[]".to_owned(),
-            BTreeMap::from([(dependency, fingerprint)]),
-        );
-        assert!(build.changed(), "the stale build must not be adopted");
-    }
-
-    #[test]
-    fn csp_lists_only_explicit_stylesheet_origins() {
-        let origins = BTreeSet::from(["https://cdn.example".to_owned()]);
-        let response = content_security_policy(&origins);
-        assert!(response.contains("style-src 'unsafe-inline' https://cdn.example"));
-        assert!(!response.contains("style-src *"));
-    }
-
-    #[test]
-    fn host_validation_supports_wildcard_bind_and_rejects_injection() {
-        let wildcard = SocketAddr::from(([0, 0, 0, 0], 4000));
-        assert!(host_allowed("192.0.2.10:4000", wildcard));
-        assert!(!host_allowed("evil.example:4000", wildcard));
-        assert!(!host_allowed("192.0.2.10:4000\r\nX-Evil: yes", wildcard));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn permission_fingerprint_recovers_after_read_access_returns() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let directory = tempfile::tempdir().expect("tempdir");
-        let path = directory.path().join("dependency.adoc");
-        fs::write(&path, "content").expect("fixture");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).expect("deny");
-        let denied = Fingerprint::read(&path);
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("restore");
-        let restored = Fingerprint::read(&path);
-        if denied.content_hash.is_none() {
-            assert_ne!(denied, restored);
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlink_fingerprint_never_reads_the_target_body() {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir().expect("root");
-        let outside = tempfile::tempdir().expect("outside");
-        let secret = outside.path().join("secret.adoc");
-        fs::write(&secret, "EXTERNAL_SECRET_BODY").expect("secret");
-        let watched = root.path().join("dependency");
-        symlink(&secret, &watched).expect("symlink");
-
-        let fingerprint = Fingerprint::read(&watched);
-        assert_eq!(fingerprint.kind, FileKind::Symlink);
-        assert_eq!(
-            fingerprint.content_hash,
-            Some(hash(&fs::read_link(&watched).expect("link target")))
-        );
-        assert_ne!(
-            fingerprint.content_hash,
-            Some(hash(&b"EXTERNAL_SECRET_BODY".as_slice()))
-        );
     }
 }

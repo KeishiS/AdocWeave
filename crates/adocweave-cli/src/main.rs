@@ -16,7 +16,9 @@ use adocweave::output::html::{
 };
 use adocweave::preprocess::{PreprocessedAnalysis, ProjectionLimits};
 use adocweave::text::{PositionEncoding, SourceDocument};
-use adocweave::{AnalysisOptions, Engine, OutputLimits, ParseError};
+use adocweave::{
+    AnalysisOptions, CancellationCheck, CancellationToken, Engine, OutputLimits, ParseError,
+};
 
 mod check_output;
 mod file_workflow;
@@ -762,10 +764,12 @@ fn convert_policy(
     mut dependency_snapshots: Option<
         &mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
     >,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<RenderPolicy, CliError> {
     let limits = StylesheetPolicy::default();
     let mut sources = Vec::new();
     for path in &project.stylesheet_files {
+        check_preview_cancellation(cancellation)?;
         let bytes = if let Some(snapshots) = dependency_snapshots.as_deref_mut() {
             let (bytes, fingerprint) =
                 preview::read_dependency(path).map_err(|source| CliError::Read {
@@ -780,6 +784,7 @@ fn convert_policy(
                 source,
             })?
         };
+        check_preview_cancellation(cancellation)?;
         if bytes.len()
             > usize::try_from(limits.max_inline_bytes).expect("u32 fits usize on supported targets")
         {
@@ -802,6 +807,7 @@ fn convert_policy(
             .map(StylesheetSource::External),
     );
     for argument in css {
+        check_preview_cancellation(cancellation)?;
         match argument {
             CssArgument::File(path) => {
                 let bytes = if let Some(snapshots) = dependency_snapshots.as_deref_mut() {
@@ -818,6 +824,7 @@ fn convert_policy(
                         source,
                     })?
                 };
+                check_preview_cancellation(cancellation)?;
                 if bytes.len()
                     > usize::try_from(limits.max_inline_bytes)
                         .expect("u32 fits usize on supported targets")
@@ -855,6 +862,14 @@ fn convert_policy(
         stylesheets: StylesheetPolicy { sources, ..limits },
         ..RenderPolicy::default()
     })
+}
+
+fn check_preview_cancellation(cancellation: Option<&CancellationToken>) -> Result<(), CliError> {
+    if cancellation.is_some_and(CancellationCheck::is_cancelled) {
+        Err(CliError::Analysis(ParseError::Cancelled))
+    } else {
+        Ok(())
+    }
 }
 
 fn process_convert(
@@ -948,6 +963,20 @@ fn preview_build(
     cancellation: &adocweave::CancellationToken,
     dependencies: &mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
 ) -> Result<preview::Build, CliError> {
+    preview_build_with_stage_hook(request, cancellation, dependencies, |_| {})
+}
+
+#[derive(Clone, Copy)]
+enum PreviewBuildStage {
+    IncludesPrepared,
+}
+
+fn preview_build_with_stage_hook(
+    request: PreviewBuildRequest<'_>,
+    cancellation: &adocweave::CancellationToken,
+    dependencies: &mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
+    mut stage_hook: impl FnMut(PreviewBuildStage),
+) -> Result<preview::Build, CliError> {
     let PreviewBuildRequest {
         input_path,
         include,
@@ -956,16 +985,20 @@ fn preview_build(
         project,
         css,
     } = request;
+    check_preview_cancellation(Some(cancellation))?;
     let (input, input_fingerprint) =
         preview::read_dependency(input_path).map_err(|source| CliError::Read {
             source_name: input_path.display().to_string(),
             source,
         })?;
+    check_preview_cancellation(Some(cancellation))?;
     let source = decode_input(&input)?;
+    check_preview_cancellation(Some(cancellation))?;
     let source_id = input_path.to_string_lossy().into_owned();
     dependencies.insert(input_path.to_owned(), input_fingerprint);
 
     let (processed, include_diagnostics) = if include {
+        check_preview_cancellation(Some(cancellation))?;
         let prepared = {
             let mut observer = PreviewDependencyObserver { dependencies };
             local_include::prepare_local_tracking(
@@ -980,6 +1013,8 @@ fn preview_build(
             )
         };
         let prepared = prepared.map_err(CliError::Include)?;
+        stage_hook(PreviewBuildStage::IncludesPrepared);
+        check_preview_cancellation(Some(cancellation))?;
         let include_diagnostics = prepared
             .validation()
             .expect("local preparation has validation context")
@@ -1000,13 +1035,21 @@ fn preview_build(
     } else {
         (source.to_owned(), Vec::new())
     };
+    check_preview_cancellation(Some(cancellation))?;
     let analysis = Engine::new(project.analysis.clone())
         .analyze_cancellable(&processed, cancellation)
         .map_err(CliError::Analysis)?;
-    let output = render(
-        analysis.document(),
-        &convert_policy(&project.html, true, css, Some(dependencies))?,
-    );
+    check_preview_cancellation(Some(cancellation))?;
+    let render_policy = convert_policy(
+        &project.html,
+        true,
+        css,
+        Some(dependencies),
+        Some(cancellation),
+    )?;
+    check_preview_cancellation(Some(cancellation))?;
+    let output = render(analysis.document(), &render_policy);
+    check_preview_cancellation(Some(cancellation))?;
     if let Some(item) = output.diagnostics.iter().find(|item| {
         matches!(
             item.code.as_str(),
@@ -2134,7 +2177,7 @@ fn run() -> Result<ExitCode, CliError> {
                     CommandOptions::Convert { complete, css } => process_convert(
                         &processed,
                         &project_config.analysis,
-                        &convert_policy(&project_config.html, *complete, css, None)?,
+                        &convert_policy(&project_config.html, *complete, css, None, None)?,
                     )?,
                     CommandOptions::Format { .. } => process_format(
                         &processed,
@@ -2445,8 +2488,9 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CommandOptions, CssArgument, DiagnosticFormat, Operation, PreviewBuildRequest,
-        PreviewDependencyObserver, parse_arguments, preview_build,
+        Action, CliError, CommandOptions, CssArgument, DiagnosticFormat, Operation,
+        PreviewBuildRequest, PreviewBuildStage, PreviewDependencyObserver,
+        check_preview_cancellation, parse_arguments, preview_build, preview_build_with_stage_hook,
     };
     use crate::local_include::DependencyObserver;
 
@@ -2527,6 +2571,95 @@ mod tests {
 
         assert!(result.is_err());
         assert!(dependencies.contains_key(&include));
+    }
+
+    #[test]
+    fn preview_build_stage_boundaries_observe_cancellation() {
+        let cancellation = adocweave::CancellationToken::new();
+        assert!(check_preview_cancellation(Some(&cancellation)).is_ok());
+        cancellation.cancel();
+        assert!(matches!(
+            check_preview_cancellation(Some(&cancellation)),
+            Err(CliError::Analysis(adocweave::ParseError::Cancelled))
+        ));
+    }
+
+    #[test]
+    fn cancelled_preview_retains_loaded_include_snapshot() {
+        let root = tempfile::tempdir().expect("project root");
+        let input = root.path().join("manual.adoc");
+        let include = root.path().join("part.adoc");
+        std::fs::write(&input, "include::part.adoc[]\n").expect("root document");
+        std::fs::write(&include, "included text\n").expect("include");
+        let cancellation = adocweave::CancellationToken::new();
+        let mut dependencies = std::collections::BTreeMap::new();
+
+        let result = preview_build_with_stage_hook(
+            PreviewBuildRequest {
+                input_path: &input,
+                include: true,
+                base_dir: root.path(),
+                project_root: root.path(),
+                project: &adocweave_config::ResolvedProjectConfig::default(),
+                css: &[],
+            },
+            &cancellation,
+            &mut dependencies,
+            |stage| {
+                if matches!(stage, PreviewBuildStage::IncludesPrepared) {
+                    cancellation.cancel();
+                }
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(CliError::Analysis(adocweave::ParseError::Cancelled))
+        ));
+        assert_eq!(
+            dependencies.get(&include),
+            Some(&crate::preview::Fingerprint::from_loaded_bytes(
+                &include,
+                b"included text\n"
+            ))
+        );
+    }
+
+    #[test]
+    fn cancelled_preview_retains_missing_include_candidate() {
+        let root = tempfile::tempdir().expect("project root");
+        let input = root.path().join("manual.adoc");
+        let missing = root.path().join("missing.adoc");
+        std::fs::write(&input, "include::missing.adoc[]\n").expect("root document");
+        let cancellation = adocweave::CancellationToken::new();
+        let mut dependencies = std::collections::BTreeMap::new();
+
+        let result = preview_build_with_stage_hook(
+            PreviewBuildRequest {
+                input_path: &input,
+                include: true,
+                base_dir: root.path(),
+                project_root: root.path(),
+                project: &adocweave_config::ResolvedProjectConfig::default(),
+                css: &[],
+            },
+            &cancellation,
+            &mut dependencies,
+            |stage| {
+                if matches!(stage, PreviewBuildStage::IncludesPrepared) {
+                    cancellation.cancel();
+                }
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(CliError::Analysis(adocweave::ParseError::Cancelled))
+        ));
+        assert_eq!(
+            dependencies.get(&missing),
+            Some(&crate::preview::Fingerprint::read(&missing))
+        );
     }
 
     #[test]
