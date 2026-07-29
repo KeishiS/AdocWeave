@@ -10,16 +10,16 @@ function fail(message) {
   throw new Error(message);
 }
 
-function requireText(source, text, message) {
-  if (!source.includes(text)) fail(message);
+function requireText(source, value, message) {
+  if (!source.includes(value)) fail(message);
 }
 
-function requireCommand(source, text, message) {
+function requireCommand(source, value, message) {
   if (typeof source !== "string") fail(message);
   const executable = source.split("\n")
     .map((line) => line.replace(/\s+#.*$/, ""))
     .join("\n");
-  requireText(executable, text, message);
+  requireText(executable, value, message);
 }
 
 function parseWorkflow(name, source) {
@@ -29,18 +29,9 @@ function parseWorkflow(name, source) {
   const parsed = spawnSync("yq", ["-o=json", ".", path], { encoding: "utf8" });
   rmSync(directory, { force: true, recursive: true });
   if (parsed.status !== 0) {
-    const detail = parsed.stderr.trim() || parsed.error?.message || `exit status ${parsed.status}`;
-    fail(`cannot parse workflow ${name}: ${detail}`);
+    fail(`cannot parse workflow ${name}: ${parsed.stderr.trim() || parsed.error?.message}`);
   }
-  try {
-    return JSON.parse(parsed.stdout);
-  } catch (error) {
-    fail(`yq returned invalid JSON for ${name}: ${error.message}`);
-  }
-}
-
-function entries(value) {
-  return value && typeof value === "object" ? Object.entries(value) : [];
+  return JSON.parse(parsed.stdout);
 }
 
 function workflowUses(document) {
@@ -53,11 +44,8 @@ function workflowUses(document) {
     if (!value || typeof value !== "object") return;
     for (const [key, child] of Object.entries(value)) {
       const location = path ? `${path}.${key}` : key;
-      if (key === "uses" && typeof child === "string") {
-        uses.push({ location, value: child });
-      } else {
-        visit(child, location);
-      }
+      if (key === "uses" && typeof child === "string") uses.push({ location, value: child });
+      else visit(child, location);
     }
   }
   visit(document, "");
@@ -72,8 +60,8 @@ function step(job, predicate, message) {
 
 function requireNeeds(job, expected, message) {
   const actual = typeof job?.needs === "string" ? [job.needs] : job?.needs;
-  if (!Array.isArray(actual) || actual.length !== expected.length
-    || expected.some((name) => !actual.includes(name))) fail(message);
+  if (!Array.isArray(actual) || actual.length !== expected.length ||
+      expected.some((name) => !actual.includes(name))) fail(message);
 }
 
 function requirePermission(document, name, value, message) {
@@ -82,6 +70,35 @@ function requirePermission(document, name, value, message) {
 
 function requireTimeout(job, value, message) {
   if (job?.["timeout-minutes"] !== value) fail(message);
+}
+
+export function parseMakeTasks(source) {
+  const headers = [...source.matchAll(/^\[tasks\.([^\]]+)\]\s*$/gm)];
+  const tasks = new Map();
+  headers.forEach((header, index) => {
+    const bodyStart = header.index + header[0].length;
+    const bodyEnd = headers[index + 1]?.index ?? source.length;
+    const body = source.slice(bodyStart, bodyEnd);
+    const alias = body.match(/^alias\s*=\s*"([^"]+)"\s*$/m)?.[1];
+    const dependencyBody = body.match(/^dependencies\s*=\s*\[([\s\S]*?)\]/m)?.[1];
+    const dependencies = dependencyBody === undefined
+      ? undefined
+      : [...dependencyBody.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    tasks.set(header[1], { alias, dependencies });
+  });
+  return tasks;
+}
+
+function requireTask(tasks, name, expected) {
+  const actual = tasks.get(name);
+  if (!actual) fail(`Makefile is missing task: ${name}`);
+  if (Object.hasOwn(expected, "alias") && actual.alias !== expected.alias) {
+    fail(`${name} must alias ${expected.alias}`);
+  }
+  if (Object.hasOwn(expected, "dependencies") &&
+      JSON.stringify(actual.dependencies) !== JSON.stringify(expected.dependencies)) {
+    fail(`${name} dependencies must exactly match the canonical gate`);
+  }
 }
 
 export function validatePinnedActions(workflows) {
@@ -96,275 +113,305 @@ export function validatePinnedActions(workflows) {
   }
 }
 
-export function validateReleaseWorkflowPolicy({ release, publish, contract, smoke, dist, plan }) {
+export function validateReleaseWorkflowPolicy({ release, publish, contract, smoke, dist, makefile }) {
   const releaseDoc = parseWorkflow("release.yml", release);
   const publishDoc = parseWorkflow("release-publish.yml", publish);
   const contractDoc = parseWorkflow("quality.yml", contract);
   const smokeDoc = parseWorkflow("native-artifact-smoke.yml", smoke);
-
   const releaseJobs = releaseDoc.jobs ?? {};
-  const publishJob = publishDoc.jobs?.publish;
   const contractJobs = contractDoc.jobs ?? {};
-  for (const [label, matrix, expected] of [
-    ["native build", releaseJobs["build-native"]?.strategy?.matrix, "${{ fromJSON(needs.plan.outputs.native_matrix) }}"],
-    ["installation E2E", releaseJobs["installation-e2e"]?.strategy?.matrix, "${{ fromJSON(needs.plan.outputs.native_matrix) }}"],
-    ["native smoke", smokeDoc.jobs?.smoke?.strategy?.matrix, "${{ fromJSON(inputs.matrix) }}"],
-  ]) {
-    if (matrix !== expected) fail(`${label} must consume the planned native matrix`);
-  }
+  const publishJob = publishDoc.jobs?.publish;
 
-  if (!Object.hasOwn(releaseDoc.on ?? {}, "pull_request") || !releaseDoc.on?.push) {
-    fail("release workflow must exercise pull requests and pushes");
+  if (!Object.hasOwn(releaseDoc.on ?? {}, "pull_request") ||
+      !releaseDoc.on?.push?.branches?.includes("main")) {
+    fail("release workflow must exercise pull requests and every main push");
   }
-  if (!releaseDoc.on.push.branches?.includes("main")) {
-    fail("release workflow must validate every main push before tagging");
+  if (JSON.stringify(releaseDoc.on.push.tags) !==
+      JSON.stringify(["v[0-9]+.[0-9]+.[0-9]+"])) {
+    fail("release workflow must trigger only for stable semantic version tags");
   }
-  requirePermission(releaseDoc, "actions", "read", "release build workflow must read verified candidate artifacts");
-  requirePermission(releaseDoc, "contents", "read", "release build workflow must be read-only");
+  requirePermission(releaseDoc, "actions", "read", "release workflow must only read Actions");
+  requirePermission(releaseDoc, "contents", "read", "release workflow must only read repository contents");
   if (releaseDoc.concurrency?.group !== "ci-release-${{ github.ref }}") {
     fail("CI and release runs must be serialized per ref");
   }
-  if (releaseDoc.concurrency?.["cancel-in-progress"] !== "${{ github.event_name == 'pull_request' }}") {
-    fail("only superseded pull request runs may be cancelled");
+  if (releaseDoc.concurrency?.["cancel-in-progress"] !==
+      "${{ !startsWith(github.ref, 'refs/tags/') }}") {
+    fail("superseded pull request and main runs must be cancelled without cancelling tags");
+  }
+  if (releaseJobs.quality?.uses !== "./.github/workflows/quality.yml" ||
+      releaseJobs.quality?.if !==
+      "github.event_name == 'pull_request' || github.ref == 'refs/heads/main'") {
+    fail("pull requests and main pushes must pass quality while tags reuse main quality");
   }
 
-  if (releaseJobs.quality?.uses !== "./.github/workflows/quality.yml") {
-    fail("pull requests and main pushes must pass the reusable quality gate");
+  const changes = releaseJobs.changes;
+  const changeRun = step(changes, (item) => item.id === "changes", "fast change planner is missing").run;
+  requireCommand(changeRun, 'git diff --name-only "$BASE_SHA" "$GITHUB_SHA"', "pull request planning must inspect the complete base diff");
+  requireCommand(changeRun, 'git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA"', "main planning must inspect only the pushed change");
+  requireCommand(changeRun, 'git show-ref --verify --quiet "refs/tags/v$version"', "release intent must be derived from the fixed manifest version tag");
+  requireCommand(changeRun, "node tools/native-change-plan.mjs", "candidate planning must use the tested local planner");
+  if ((changes.steps ?? []).some((item) =>
+    item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"))) {
+    fail("fast change planning must not wait for Nix installation");
   }
-  if (releaseJobs.plan?.if !== "github.event_name == 'pull_request' || github.event_name == 'push'") {
-    fail("pull requests, main pushes, and tags must create an explicit release plan");
+
+  const releasePlan = releaseJobs["release-plan"];
+  requireNeeds(releasePlan, ["changes"], "dist planning must consume the fast version plan");
+  step(releasePlan, (item) =>
+    item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"),
+  "dist planning must use the locked Nix environment");
+  const planRun = step(releasePlan, (item) => item.id === "plan", "release plan step is missing").run;
+  requireCommand(planRun, 'tools/run-pinned-dist.sh plan --tag="$CANDIDATE_TAG"', "every dist plan must use the locked cargo-dist closure");
+  const tagRun = step(releasePlan, (item) =>
+    item.name === "Publication tag verification against the current main commit",
+  "publication tag check is missing").run;
+  const tagStep = step(releasePlan, (item) =>
+    item.name === "Publication tag verification against the current main commit",
+  "publication tag check is missing");
+  if (tagStep.if !== "startsWith(github.ref, 'refs/tags/')") {
+    fail("publication tag verification must be structurally limited to tags");
   }
-  if (releaseJobs.quality?.if !== "github.event_name == 'pull_request' || github.ref == 'refs/heads/main'") {
-    fail("release tags must reuse main quality rather than rerunning it");
+  requireCommand(tagRun, 'test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"', "publication tags must identify current main");
+  const candidateStep = step(releasePlan, (item) => item.id === "candidate", "main candidate lookup is missing");
+  if (candidateStep.if !== "startsWith(github.ref, 'refs/tags/')") {
+    fail("candidate lookup must be structurally limited to tags");
   }
-  const candidateCondition = "github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'";
-  for (const jobName of ["build-global", "build-native", "installation-e2e", "native-smoke", "verify-candidate"]) {
-    if (releaseJobs[jobName]?.if !== candidateCondition) {
-      fail(`${jobName} must run for main and native-affecting pull requests`);
+  const lookup = candidateStep.run;
+  requireCommand(lookup, "actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA", "tag must select a successful main run for the same commit");
+  requireCommand(lookup, ".[].workflow_runs[]", "candidate lookup must traverse response pages");
+  requireCommand(lookup, "no successful main candidate exists", "missing main candidate must stop publication");
+
+  for (const [jobName, condition] of [
+    ["build-native", "needs.changes.outputs.native_required == 'true'"],
+    ["native-smoke", "needs.changes.outputs.native_required == 'true'"],
+    ["installation-e2e", "needs.changes.outputs.native_required == 'true'"],
+    ["build-global", "needs.changes.outputs.global_required == 'true'"],
+    ["verify-candidate", "always() && needs.changes.outputs.candidate_required == 'true'"],
+  ]) {
+    if (releaseJobs[jobName]?.if !== condition) {
+      fail(`${jobName} must use the explicit candidate change plan`);
     }
   }
+  for (const [label, matrix, expected] of [
+    ["native build", releaseJobs["build-native"]?.strategy?.matrix, "${{ fromJSON(needs.changes.outputs.native_matrix) }}"],
+    ["installation E2E", releaseJobs["installation-e2e"]?.strategy?.matrix, "${{ fromJSON(needs.changes.outputs.native_matrix) }}"],
+    ["native smoke", smokeDoc.jobs?.smoke?.strategy?.matrix, "${{ fromJSON(inputs.matrix) }}"],
+  ]) {
+    if (matrix !== expected) fail(`${label} must consume the fast planned matrix`);
+  }
+  requireNeeds(releaseJobs["build-native"], ["changes"], "native build must start after fast planning");
+  requireNeeds(releaseJobs["build-global"], ["changes"], "global build must start after fast planning");
+  requireNeeds(releaseJobs["native-smoke"], ["changes", "build-native"], "native smoke must consume native builds");
+  requireNeeds(releaseJobs["verify-candidate"], ["changes", "native-smoke", "build-global"], "partial candidate dependency edge is incomplete");
+  requireNeeds(releaseJobs["installation-e2e"], ["changes", "verify-candidate"], "installation must consume a verified native candidate");
 
-  requireNeeds(releaseJobs["build-native"], ["plan"], "native builds must start as soon as the release plan is available");
-  requireNeeds(releaseJobs["build-global"], ["plan"], "global artifacts must start as soon as the release plan is available");
-  requireNeeds(releaseJobs["verify-candidate"], ["plan", "native-smoke", "build-global"], "candidate verification dependency edge is incomplete");
-  requireNeeds(
-    releaseJobs["installation-e2e"],
-    ["plan", "verify-candidate"],
-    "installation E2E must consume the planned matrix and only a verified candidate",
-  );
-  requireNeeds(releaseJobs["reuse-candidate"], ["plan"], "tag reuse must depend on the release plan");
-  if (releaseJobs["reuse-candidate"]?.if !== "startsWith(github.ref, 'refs/tags/')") {
-    fail("only version tags may reuse a main candidate");
+  const nativeBuildRun = step(releaseJobs["build-native"], (item) =>
+    item.name === "Target archive builds", "native build step is missing").run;
+  requireCommand(nativeBuildRun, "nix develop .#ci -c tools/run-pinned-dist.sh build", "native archives must use the locked build closure");
+  const darwin = step(releaseJobs["build-native"], (item) =>
+    item.name === "Darwin archive portability normalization",
+  "Darwin normalization is missing");
+  if (darwin.if !== "endsWith(matrix.target, '-apple-darwin')") {
+    fail("Darwin normalization must be limited to Darwin targets");
   }
-  requireNeeds(releaseJobs.publish, ["plan", "reuse-candidate"], "publication must depend on reused candidate verification");
-  if (releaseJobs.publish?.if !== "needs.plan.outputs.publishing == 'true'") {
-    fail("pull requests must not invoke publication");
-  }
-  if (releaseJobs.publish?.uses !== "./.github/workflows/release-publish.yml") {
-    fail("publication must be isolated in its reusable workflow");
+  requireCommand(darwin.run, "tools/normalize-darwin-archives.sh", "Darwin archives must replace Nix store dependencies");
+  if (release.includes("rustup target add") ||
+      release.includes("cargo-dist-installer") ||
+      release.includes("curl | sh")) {
+    fail("release builds must not bypass the locked toolchain");
   }
 
-  const planRun = step(releaseJobs.plan, (item) => item.id === "plan", "release plan step is missing").run;
-  requireCommand(planRun, 'candidate_tag="v$(jq -r .packageVersion release-manifest.json)"', "non-tag candidate plans must use the release train version");
-  requireCommand(planRun, 'tools/run-pinned-dist.sh plan --tag="$candidate_tag"', "every dist plan must use the locked cargo-dist closure");
-  const nativePlanRun = step(releaseJobs.plan, (item) => item.id === "native", "native pull request change planning is missing").run;
-  requireCommand(nativePlanRun, 'git diff --name-only "$BASE_SHA" "$GITHUB_SHA"', "native pull request planning must inspect the complete base diff");
-  requireCommand(
-    nativePlanRun,
-    'node tools/native-change-plan.mjs "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_OUTPUT"',
-    "native pull request planning must use the locally tested planner",
-  );
-  const tagRun = step(releaseJobs.plan, (item) => item.name === "Publication tag verification against the current main commit", "publication tag check is missing").run;
-  requireCommand(tagRun, 'test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"', "publication tags must identify the current main commit");
-  const candidateLookup = step(releaseJobs.plan, (item) => item.id === "candidate", "successful main candidate lookup is missing").run;
-  requireCommand(candidateLookup, 'actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA', "tag publication must select a successful main workflow for the same commit");
-  requireCommand(candidateLookup, ".[].workflow_runs[]", "tag publication must traverse workflow-run response pages");
-  requireCommand(candidateLookup, 'no successful main candidate exists', "missing main candidates must stop publication");
+  const windowsVersions = step(releaseJobs["build-native"], (item) =>
+    item.name === "Fixed Windows Rust and cargo-dist installation",
+  "fixed Windows toolchain step is missing").run;
+  requireCommand(windowsVersions, "release-manifest.json", "Windows Rust must use the release manifest");
+  requireCommand(windowsVersions, "distribution-plan.json", "Windows cargo-dist must use the distribution plan");
+  requireCommand(windowsVersions, 'cargo install cargo-dist --version "=$distVersion" --locked', "Windows cargo-dist must use an exact locked source installation");
+  requireCommand(windowsVersions, "dist --version", "Windows cargo-dist must be verified before use");
+  if (workflowUses(releaseDoc).some(({ value }) => value.startsWith("actions/cache/")) ||
+      release.includes("target/cargo-dist-bin")) {
+    fail("release workflow must not cache executable build tools");
+  }
 
-  for (const jobName of ["plan", "build-native"]) {
-    step(releaseJobs[jobName], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), `${jobName} must install the locked Nix environment`);
-  }
-  const nativeBuildRun = step(releaseJobs["build-native"], (item) => item.name === "Target archive builds", "native build step is missing").run;
-  requireCommand(nativeBuildRun, "nix develop .#ci -c tools/run-pinned-dist.sh build", "native archives must use the locked cargo-dist closure and locked Nix toolchain");
-  const darwinNormalization = step(
-    releaseJobs["build-native"],
-    (item) => item.name === "Darwin archive portability normalization",
-    "Darwin archive portability normalization is missing",
-  );
-  if (darwinNormalization.if !== "endsWith(matrix.target, '-apple-darwin')") {
-    fail("Darwin archive portability normalization must be limited to Darwin targets");
-  }
-  requireCommand(
-    darwinNormalization.run,
-    'tools/normalize-darwin-archives.sh target/distrib "${{ matrix.target }}"',
-    "Darwin archives must replace Nix store runtime dependencies",
-  );
-  if (release.includes("rustup target add")) {
-    fail("release builds must not bypass the locked Nix Rust toolchain through rustup");
-  }
-  if (release.includes("cargo-dist-installer") || release.includes("curl | sh")) {
-    fail("release workflow must not execute a network-fetched cargo-dist installer");
-  }
-  const windowsTools = step(
-    releaseJobs["build-native"],
-    (item) => item.name === "Fixed Windows Rust and cargo-dist installation",
-    "Windows toolchain installation is missing",
-  ).run;
-  requireCommand(windowsTools, "release-manifest.json", "Windows Rust must use the release manifest version");
-  requireCommand(windowsTools, "distribution-plan.json", "Windows cargo-dist must use the distribution plan version");
-  requireCommand(windowsTools, 'cargo install cargo-dist --version "=$distVersion" --locked', "Windows cargo-dist must be exact and locked");
-  const dumpbin = step(
-    smokeDoc.jobs?.smoke,
-    (item) => item.name === "Resolve the Visual C++ dependency inspector",
-    "Windows dependency inspection is missing",
-  );
-  if (dumpbin.if !== "runner.os == 'Windows'" || !dumpbin.run?.includes("ADOCWEAVE_DUMPBIN")) {
-    fail("Windows smoke must resolve dumpbin only on Windows");
-  }
+  const globalRun = step(releaseJobs["build-global"], (item) =>
+    item.name === "Browser, Zed, and VS Code artifact build and verification",
+  "global artifact step is missing").run;
+  requireCommand(globalRun, "cargo make release-global-artifacts", "global uploaded artifacts must pass their complete gate");
+  const smokeRun = step(smokeDoc.jobs?.smoke, (item) =>
+    item.name === "Extracted release binary smoke tests", "native smoke is missing").run;
+  requireCommand(smokeRun, "node tools/native-release-smoke.mjs", "native smoke must inspect extracted artifacts");
   if (smoke.includes("npm ci") || smoke.includes("npm test")) {
-    fail("native artifact smoke must not repeat editor adapter tests from the source quality gate");
+    fail("native smoke must not repeat source adapter tests");
   }
-  const nativeSmokeRun = step(
-    smokeDoc.jobs?.smoke,
-    (item) => item.name === "Extracted release binary smoke tests",
-    "native release binary smoke step is missing",
-  ).run;
-  requireCommand(
-    nativeSmokeRun,
-    'node tools/native-release-smoke.mjs target/distrib "${{ matrix.target }}"',
-    "native artifact smoke must verify only the extracted release binaries",
-  );
 
-  const aggregateRun = step(releaseJobs["verify-candidate"], (item) => item.name === "Complete candidate metadata generation and verification", "candidate metadata step is missing").run;
-  requireCommand(aggregateRun, "node tools/release-metadata.mjs generate artifacts", "metadata must be generated from the aggregated candidate");
-  requireCommand(aggregateRun, "node tools/release-metadata.mjs verify artifacts", "the aggregate job must verify exact release metadata");
-  const pullRequestCandidate = step(
-    releaseJobs["verify-candidate"],
-    (item) => item.name === "Native pull request candidate verification",
-    "native pull request candidate verification is missing",
-  );
-  if (pullRequestCandidate.if !== "github.event_name == 'pull_request'") {
-    fail("partial native candidate verification must be limited to pull requests");
+  const aggregateRun = step(releaseJobs["verify-candidate"], (item) =>
+    item.name === "Complete candidate metadata generation and verification",
+  "complete candidate metadata step is missing");
+  if (aggregateRun.if !== "needs.changes.outputs.release_main == 'true'") {
+    fail("complete metadata may only be generated for a release-intent main commit");
   }
-  requireCommand(
-    pullRequestCandidate.run,
-    "node tools/verify-native-pr-candidate.mjs artifacts",
-    "native pull request candidates must have an exact artifact set",
-  );
-  const globalStep = step(
-    releaseJobs["build-global"],
-    (item) => item.name === "Browser, Zed, and VS Code artifact build and verification",
-    "global artifact step is missing",
-  );
-  const globalRun = globalStep.run;
-  requireCommand(globalRun, "nix develop .#ci -c cargo make release-global-artifacts", "uploaded browser, Zed, and VS Code artifacts must pass their complete artifact gate");
-  const installStep = step(releaseJobs["installation-e2e"], (item) => item.name === "Candidate installation and complete removal", "installation E2E step is missing");
-  if (installStep.if !== "github.ref == 'refs/heads/main'") {
-    fail("complete candidate installation must run on main");
+  requireCommand(aggregateRun.run, "release-metadata.mjs generate", "release main must generate candidate metadata");
+  requireCommand(aggregateRun.run, "release-metadata.mjs verify", "release main must verify candidate metadata");
+  const partialRun = step(releaseJobs["verify-candidate"], (item) =>
+    item.name === "Pull request candidate verification", "partial candidate verification is missing").run;
+  requireCommand(partialRun, "needs.changes.outputs.native_required", "partial verification must receive native selection");
+  requireCommand(partialRun, "needs.changes.outputs.global_required", "partial verification must receive global selection");
+  const completeInstall = step(releaseJobs["installation-e2e"], (item) =>
+    item.name === "Candidate installation and complete removal",
+  "release candidate installation is missing");
+  if (completeInstall.if !== "needs.changes.outputs.release_main == 'true'") {
+    fail("complete installation may only run for release-intent main");
   }
-  requireCommand(installStep.run, "node tools/release-installation-e2e.mjs artifacts", "both Linux architectures must run the installation lifecycle");
-  const pullRequestInstall = step(
-    releaseJobs["installation-e2e"],
-    (item) => item.name === "Pull request installation and complete removal",
-    "pull request installation E2E step is missing",
-  );
-  if (pullRequestInstall.if !== "github.event_name == 'pull_request'") {
-    fail("partial candidate installation must be limited to pull requests");
+  const nixInstall = step(releaseJobs["installation-e2e"], (item) =>
+    item.name === "Nix package build and execution", "Nix package acceptance is missing").run;
+  for (const output of ["public-contract", "package-smoke", "nixos-package-evaluation"]) {
+    requireCommand(nixInstall, output, `candidate must verify Nix ${output}`);
   }
-  requireCommand(
-    pullRequestInstall.run,
-    "release-manifest.json",
-    "pull request installation must use source metadata for the partial candidate",
-  );
-  step(releaseJobs["installation-e2e"], (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"), "installation E2E must install the locked Nix environment");
-  const nixInstallRun = step(releaseJobs["installation-e2e"], (item) => item.name === "Nix package build and execution", "Nix package acceptance step is missing").run;
-  requireCommand(nixInstallRun, '".#checks.${{ matrix.nixSystem }}.public-contract"', "candidate runners must verify the public flake output contract");
-  requireCommand(nixInstallRun, '".#checks.${{ matrix.nixSystem }}.package-smoke"', "both Linux architectures must build and run the Nix package");
-  requireCommand(nixInstallRun, '".#checks.${{ matrix.nixSystem }}.nixos-package-evaluation"', "both Linux architectures must evaluate the NixOS installation contract");
-  const reusedDownload = step(releaseJobs["reuse-candidate"], (item) => item.uses?.startsWith("actions/download-artifact@"), "tag candidate download is missing");
+
+  requireNeeds(releaseJobs["reuse-candidate"], ["release-plan"], "tag reuse must depend on dist planning");
+  if (releaseJobs["reuse-candidate"]?.if !== "startsWith(github.ref, 'refs/tags/')") {
+    fail("only version tags may reuse a candidate");
+  }
+  const reusedDownload = step(releaseJobs["reuse-candidate"], (item) =>
+    item.uses?.startsWith("actions/download-artifact@"), "tag candidate download is missing");
   if (reusedDownload.with?.name !== "release-candidate" ||
       reusedDownload.with?.["github-token"] !== "${{ github.token }}" ||
       reusedDownload.with?.repository !== "${{ github.repository }}" ||
-      reusedDownload.with?.["run-id"] !== "${{ needs.plan.outputs.candidate_run_id }}") {
-    fail("tag publication must download the named candidate from the selected main run");
+      reusedDownload.with?.["run-id"] !== "${{ needs.release-plan.outputs.candidate_run_id }}") {
+    fail("tag publication must download the selected main candidate");
   }
-  const reuseRun = step(releaseJobs["reuse-candidate"], (item) => item.name === "Reused candidate verification", "tag candidate verification is missing").run;
-  requireCommand(reuseRun, 'node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"', "tag publication must verify candidate metadata against the tag commit");
-
-  const uploads = (releaseJobs["verify-candidate"]?.steps ?? []).filter((item) => item.uses?.startsWith("actions/upload-artifact@"));
-  if (!uploads.some((item) => item.with?.name === "release-candidate" && item.with?.["retention-days"] === 14)) {
-    fail("verified candidates must have bounded retention");
-  }
-  const reusedUploads = (releaseJobs["reuse-candidate"]?.steps ?? []).filter((item) => item.uses?.startsWith("actions/upload-artifact@"));
-  if (!reusedUploads.some((item) => item.with?.name === "release-candidate" && item.with?.["retention-days"] === 1)) {
-    fail("tag candidate handoff must have minimal retention");
-  }
-  if (!Object.values(releaseJobs).flatMap((job) => job.steps ?? [])
-    .some((item) => item.uses?.startsWith("actions/upload-artifact@") && item.with?.["retention-days"] === 7)) {
-    fail("intermediate build artifacts must have short retention");
+  const reuseRun = step(releaseJobs["reuse-candidate"], (item) =>
+    item.name === "Reused candidate verification", "tag candidate verification is missing").run;
+  requireCommand(reuseRun, 'release-metadata.mjs verify artifacts "$GITHUB_SHA"', "tag must verify reused candidate metadata");
+  requireNeeds(releaseJobs.publish, ["release-plan", "reuse-candidate"], "publication must consume the verified candidate");
+  if (releaseJobs.publish?.if !== "needs.release-plan.outputs.publishing == 'true'" ||
+      releaseJobs.publish?.uses !== "./.github/workflows/release-publish.yml") {
+    fail("only a publishing release plan may invoke the isolated publisher");
   }
 
-  requireTimeout(contractJobs.verify, 30, "the complete quality gate must have a timeout");
-  requireTimeout(contractJobs.dependencies, 15, "dependency governance must have a timeout");
-  requireTimeout(contractJobs.fuzz, 15, "fuzz quality must have a timeout");
-  requireTimeout(contractJobs["nix-package"], 20, "Nix package quality must have a timeout");
-  requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke tests must have a timeout");
-  requireTimeout(releaseJobs["installation-e2e"], 15, "candidate installation and Nix package acceptance must have a timeout");
-  requireTimeout(releaseJobs["reuse-candidate"], 15, "tag candidate reuse must have a timeout");
-  requireTimeout(publishJob, 20, "publication must have a timeout and cleanup path");
-  const qualityStep = step(contractJobs.verify, (item) => item.name === "Source quality gate execution", "source quality step is missing");
-  const qualityRun = qualityStep.run;
-  requireCommand(qualityRun, "nix develop .#ci -c cargo make quality", "the reusable quality workflow must run the source quality gate");
-  const dependencyRun = step(contractJobs.dependencies, (item) => item.name === "Dependency boundary audit", "dependency governance step is missing").run;
-  requireCommand(dependencyRun, "nix develop .#ci -c cargo make dependency-governance", "quality must audit every dependency boundary");
-  const fuzzRun = step(contractJobs.fuzz, (item) => item.name === "Fuzz target compilation and exploration", "fuzz quality step is missing").run;
-  requireCommand(fuzzRun, "nix develop .#ci -c cargo make fuzz", "quality must compile and explore fuzz targets");
-  const nixRun = step(contractJobs["nix-package"], (item) => item.name === "Nix package build and execution", "Nix package quality step is missing").run;
-  requireCommand(nixRun, "nix develop .#ci -c cargo make nix-package-check", "quality must verify the Nix package on pull requests");
-  if (contractJobs["nix-package"].if !== "inputs.run_nix_package") fail("Nix package quality must be controlled by an explicit caller input");
-  if (contractJobs.msrv) fail("quality must not retain an MSRV-only job");
+  for (const [name, task, timeout] of [
+    ["source-fast", "quality-fast", 10],
+    ["rust", "quality-rust", 25],
+    ["adapters", "quality-adapters", 25],
+    ["dependencies", "dependency-governance", 15],
+    ["fuzz", "fuzz", 15],
+    ["nix-package", "nix-package-check", 20],
+  ]) {
+    requireTimeout(contractJobs[name], timeout, `${name} quality job must have a timeout`);
+    const run = (contractJobs[name]?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
+    requireCommand(run, `nix develop .#ci -c cargo make ${task}`, `${name} must use its canonical local task`);
+  }
+  requireNeeds(
+    contractJobs.verify,
+    ["source-fast", "rust", "adapters", "dependencies", "fuzz", "nix-package"],
+    "the stable required check must aggregate every local gate unit",
+  );
+  if (contractJobs.verify?.if !== "always()") fail("the required aggregate must report failures reliably");
+  requireTimeout(contractJobs.verify, 5, "required aggregate must have a timeout");
+  if (contractJobs["nix-package"]?.if !== "inputs.run_nix_package") {
+    fail("Nix package validation must be controlled by an explicit caller input");
+  }
   if (contract.includes("github.event_name") || contract.includes("github.ref")) {
     fail("the reusable quality workflow must not infer its caller event or tag");
   }
 
-  if (JSON.stringify(releaseDoc).includes('"secrets"') || release.includes("secrets.")) {
-    fail("build and aggregate jobs must not receive repository secrets");
-  }
-  if (/gh release\s+(create|upload|edit|delete)/.test(release)) {
-    fail("the read-only workflow must not mutate GitHub Releases");
+  const tasks = parseMakeTasks(makefile);
+  requireTask(tasks, "quality-fast", {
+    dependencies: [
+      "fmt-check",
+      "protocol-generated-check",
+      "platform-contract",
+      "release-contract",
+      "workflow-lint",
+      "docs-check",
+      "adoc-check-targets",
+    ],
+  });
+  requireTask(tasks, "quality-rust", {
+    dependencies: [
+      "check",
+      "cross-native-check",
+      "clippy",
+      "test",
+      "doc-check",
+      "adoc-check",
+      "docs-lint",
+      "html5-check",
+    ],
+  });
+  requireTask(tasks, "quality-adapters", {
+    dependencies: [
+      "check-wasm",
+      "check-zed",
+      "check-zed-wasm",
+      "check-vscode",
+      "clippy-zed",
+      "test-web-worker",
+      "protocol-check",
+      "test-zed",
+      "test-vscode",
+      "test-vscode-extension-host",
+      "test-vscode-release-package",
+      "test-cross-runtime",
+    ],
+  });
+  requireTask(tasks, "quality", {
+    dependencies: ["quality-fast", "quality-rust", "quality-adapters"],
+  });
+  requireTask(tasks, "verify", {
+    dependencies: ["quality", "dependency-governance", "fuzz", "nix-package-check"],
+  });
+  requireTask(tasks, "ci", { alias: "verify" });
+  if (tasks.get("ci").dependencies !== undefined) {
+    fail("ci alias must not define a second dependency graph");
   }
 
+  if (JSON.stringify(releaseDoc).includes('"secrets"') || release.includes("secrets.")) {
+    fail("build jobs must not receive repository secrets");
+  }
+  if (/gh release\s+(create|upload|edit|delete)/.test(release)) {
+    fail("read-only workflows must not mutate GitHub Releases");
+  }
   for (const permission of ["attestations", "contents", "id-token"]) {
-    requirePermission(publishDoc, permission, "write", `publisher is missing permission: ${permission}: write`);
+    requirePermission(publishDoc, permission, "write", `publisher is missing ${permission}: write`);
     if (releaseJobs.publish?.permissions?.[permission] !== "write") {
-      fail(`publisher caller is missing permission: ${permission}: write`);
+      fail(`publisher caller is missing ${permission}: write`);
     }
   }
   if (publishJob?.environment !== "github-release") {
     fail("publisher must use the protected github-release environment");
   }
+  requireTimeout(publishJob, 20, "publisher must have a timeout");
   const publishRuns = (publishJob?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
-  for (const [text, message] of [
-    ["node tools/release-notes.mjs", "publication must append and validate the required release notes"],
-    ["release already exists", "publisher must reject release replacement"],
-    ['gh api --method POST "repos/$GITHUB_REPOSITORY/releases"', "publisher must create a draft only after verification"],
-    ["-F draft=true", "publisher must stage assets in a private draft"],
-    ['upload_url="$(jq -r', "publisher must use the upload URL returned with the private draft"],
-    ["gh api --method PATCH", "publication must address the verified draft by release ID"],
+  for (const [value, message] of [
+    ["node tools/release-notes.mjs", "publisher must validate release notes"],
+    ["release already exists", "publisher must reject replacement"],
+    ['gh api --method POST "repos/$GITHUB_REPOSITORY/releases"', "publisher must create a draft"],
+    ["-F draft=true", "publisher must stage a private draft"],
+    ['upload_url="$(jq -r', "publisher must use the draft upload URL returned by GitHub"],
+    ['"$upload_url?name=$name"', "publisher must upload assets through the returned draft URL"],
+    ["gh api --method PATCH", "publisher must address the verified draft"],
     ["-F draft=false", "publication must be the final mutation"],
-    ["gh api --method DELETE", "failed publication must delete an incomplete draft by release ID"],
-  ]) requireCommand(publishRuns, text, message);
-  step(publishJob, (item) => item.uses?.startsWith("actions/attest@") && item.with?.["subject-path"] === "artifacts/*", "the complete public asset set must be attested");
+    ["gh api --method DELETE", "failed publication must remove its draft"],
+  ]) requireCommand(publishRuns, value, message);
+  step(publishJob, (item) =>
+    item.uses?.startsWith("actions/attest@") && item.with?.["subject-path"] === "artifacts/*",
+  "the complete public asset set must be attested");
   step(publishJob, (item) => item.if === "failure()", "failed publication must clean up its draft");
-  if (publishRuns.includes("/releases/tags/") || /gh release\s+(upload|view|edit)/.test(publishRuns)) {
-    fail("private drafts must never be looked up through the tag-only release API");
+  if (publishRuns.includes("/releases/tags/") ||
+      /gh release\s+(upload|view|edit)/.test(publishRuns)) {
+    fail("private drafts must never use the tag-only release API");
   }
   if (JSON.stringify(publishDoc).includes('"secrets"') || publish.includes("secrets.")) {
-    fail("publisher must use the scoped GitHub token rather than repository secrets");
+    fail("publisher must use the scoped GitHub token");
   }
 
+  requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke must have a timeout");
+  requireTimeout(releaseJobs["installation-e2e"], 15, "installation must have a timeout");
+  requireTimeout(releaseJobs["reuse-candidate"], 15, "tag reuse must have a timeout");
   requireText(dist, 'cargo-dist-version = "0.32.0"', "cargo-dist must be pinned exactly");
-  requireText(dist, 'allow-dirty = ["ci"]', "repository-owned workflow must be declared as an intentional dist override");
+  requireText(dist, 'allow-dirty = ["ci"]', "workflow override must be intentional");
   requireText(dist, 'hosting = "github"', "GitHub Releases must be the only configured host");
 }
 
@@ -380,6 +427,7 @@ export function loadWorkflowPolicyInputs() {
     contract: workflows["quality.yml"],
     smoke: workflows["native-artifact-smoke.yml"],
     dist: read("dist-workspace.toml"),
+    makefile: read("Makefile.toml"),
     plan: JSON.parse(read("release/distribution-plan.json")),
   };
 }

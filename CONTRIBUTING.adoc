@@ -12,8 +12,9 @@ nix develop
 cargo make verify
 ----
 
-``cargo make verify``は、整形、型検査、test、browser向けtest、HTML5標準適合性検査および文書検査を
-実行します。
+``cargo make verify``はPull Request用の標準検査です。source、依存関係、fuzz target、Nix package、
+browserおよびeditor adapter、HTML5標準適合性、文書をまとめて検査します。``cargo make ci``も
+同じ検査を実行します。
 
 == 作業の進め方
 
@@ -141,6 +142,10 @@ pull requestを作成するときは、link:.github/pull_request_template.md[Pul
 CIではdependency governance、source quality、fuzz quality、Nix package qualityを確認します。失敗した場合は、
 該当する``cargo make`` taskをNix開発環境で再実行し、設定の基準である``.github/workflows``と
 ``Makefile.toml``を確認してください。
+
+source qualityは、書式や生成fileなどの短い検査、Rust workspaceの検査、WASM・browser・editor adapterの
+検査に分けて並列実行します。``quality / verify``はこれらとdependency governance、fuzz、Nix packageの結果を
+集約する必須checkです。ローカルの``cargo make verify``は同じ検査単位をすべて含みます。
 
 == Tag
 

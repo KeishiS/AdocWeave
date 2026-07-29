@@ -271,7 +271,7 @@ function verifyRepository() {
   if (!dist.includes('pr-run-mode = "plan"') || !dist.includes('global-artifacts-jobs = ["./native-artifact-smoke"]')) {
     fail("PRs must stop after planning while pushed candidates use the native smoke workflow");
   }
-  if (!releaseWorkflow.includes("needs: [plan, build-native]") ||
+  if (!releaseWorkflow.includes("needs: [changes, build-native]") ||
       !releaseWorkflow.includes("uses: ./.github/workflows/native-artifact-smoke.yml")) {
     fail("release workflow does not gate on native archive smoke tests");
   }
