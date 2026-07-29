@@ -188,61 +188,24 @@ impl DocumentLayout {
 }
 
 pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
-    fn index_list(list: &crate::parser::ListBlock, block_ranges: &mut Vec<TextRange>) {
-        for item in &list.items {
-            for child in &item.children {
-                index_list(child, block_ranges);
-            }
-            for continuation in &item.continuations {
-                index_block(continuation, block_ranges);
-            }
-        }
-    }
-
-    fn index_block(block: &crate::parser::AstBlock, block_ranges: &mut Vec<TextRange>) -> BlockId {
-        let id = BlockId(u32::try_from(block_ranges.len()).expect("block count fits u32"));
-        block_ranges.push(block.range());
-        match block {
-            crate::parser::AstBlock::List(list) => index_list(list, block_ranges),
-            crate::parser::AstBlock::Delimited(block) => match &block.content {
-                crate::parser::DelimitedContent::Compound(children) => {
-                    for child in children {
-                        index_block(child, block_ranges);
-                    }
-                }
-                crate::parser::DelimitedContent::Table(table) => {
-                    for row in &table.rows {
-                        for cell in &row.cells {
-                            if let crate::table::TableCellContent::AsciiDoc(children) =
-                                &cell.content
-                            {
-                                for child in children {
-                                    index_block(child, block_ranges);
-                                }
-                            }
-                        }
-                    }
-                }
-                crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Passthrough(_) => {}
-            },
-            crate::parser::AstBlock::Heading(_)
-            | crate::parser::AstBlock::Paragraph(_)
-            | crate::parser::AstBlock::LiteralParagraph(_)
-            | crate::parser::AstBlock::Break(_)
-            | crate::parser::AstBlock::Source(_)
-            | crate::parser::AstBlock::Verbatim(_)
-            | crate::parser::AstBlock::Math(_)
-            | crate::parser::AstBlock::Unsupported(_) => {}
-        }
-        id
-    }
-
     let mut block_ranges = Vec::new();
+    let mut block_ids_by_address = BTreeMap::new();
+    crate::walker::walk_block_slice(document.blocks(), |node| {
+        if let crate::walker::SemanticNode::Block(block) = node {
+            let id = BlockId(u32::try_from(block_ranges.len()).expect("block count fits u32"));
+            block_ids_by_address.insert(block as *const crate::parser::AstBlock, id);
+            block_ranges.push(block.range());
+        }
+    });
     let top_level_blocks = document
         .blocks()
         .iter()
-        .map(|block| index_block(block, &mut block_ranges))
+        .map(|block| {
+            block_ids_by_address
+                .get(&(block as *const crate::parser::AstBlock))
+                .copied()
+                .expect("the shared topology visits every top-level block")
+        })
         .collect::<Vec<_>>();
     let mut top_level_ordinals = vec![None; block_ranges.len()];
     for (ordinal, id) in top_level_blocks.iter().copied().enumerate() {
