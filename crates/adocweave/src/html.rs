@@ -5,6 +5,7 @@
 //! same document without changing parsing behavior.
 
 mod head;
+mod plan;
 mod safe;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,9 +14,8 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
 use crate::document::HeadingId;
 use crate::inline::{Inline, InlineLiteralKind, InlineStyle, Link, Reference};
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
-use crate::reference::ReferenceKey;
-use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs, ResolutionMatch};
-use crate::resource::{MediaFamily, ResolvedResource, ResourceOutcome};
+use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs};
+use crate::resource::MediaFamily;
 use crate::url::{ActiveUrlPolicy, UrlProvenance};
 
 pub const ALLOWED_ELEMENTS: &[&str] = &[
@@ -1448,15 +1448,27 @@ fn render_image_macro(
         ));
         return;
     }
-    let Some(href) =
-        resolved_resource_href(node.range, node.target_range, MediaFamily::Image, context)
-    else {
+    let resource = plan::plan_resource(
+        node.range,
+        node.target_range,
+        MediaFamily::Image,
+        context.policy,
+        context.input_usage,
+    );
+    append_plan_diagnostics(context.diagnostics, resource.diagnostics);
+    let Some(href) = resource.value else {
         escape_inline_text(output, alt);
         return;
     };
-    output.push_str("<img src=\"");
-    escape_html_into(output, &href);
-    output.push_str("\" alt=\"");
+    {
+        let mut writer = safe::HtmlWriter::new(output);
+        writer.start(safe::ElementName::new("img").expect("img is an allowed HTML element"));
+        writer.active_url_attribute(
+            safe::ActiveUrlAttributeName::new("src").expect("src is an active URL attribute"),
+            href,
+        );
+    }
+    output.push_str(" alt=\"");
     escape_html_into(output, alt);
     output.push('"');
     let positional_dimensions = node.kind == crate::inline::StandardMacroKind::Image;
@@ -1491,15 +1503,25 @@ fn render_media_macro(
     } else {
         ("video", MediaFamily::Video)
     };
-    let Some(href) = resolved_resource_href(node.range, node.target_range, family, context) else {
+    let resource = plan::plan_resource(
+        node.range,
+        node.target_range,
+        family,
+        context.policy,
+        context.input_usage,
+    );
+    append_plan_diagnostics(context.diagnostics, resource.diagnostics);
+    let Some(href) = resource.value else {
         escape_inline_text(output, fallback);
         return;
     };
     output.push('<');
     output.push_str(tag);
-    output.push_str(" src=\"");
-    escape_html_into(output, &href);
-    output.push_str("\" controls");
+    safe::HtmlWriter::new(output).active_url_attribute(
+        safe::ActiveUrlAttributeName::new("src").expect("src is an active URL attribute"),
+        href,
+    );
+    output.push_str(" controls");
     if node.kind == crate::inline::StandardMacroKind::Video {
         render_dimension(output, node, "width", Some(1));
         render_dimension(output, node, "height", Some(2));
@@ -1512,15 +1534,22 @@ fn render_media_macro(
                     "poster rendering is disabled by the host capability profile",
                     poster.value_range,
                 ));
-            } else if let Some(href) = resolved_resource_href(
-                poster.value_range,
-                poster.value_range,
-                MediaFamily::Image,
-                context,
-            ) {
-                output.push_str(" poster=\"");
-                escape_html_into(output, &href);
-                output.push('"');
+            } else {
+                let poster = plan::plan_resource(
+                    poster.value_range,
+                    poster.value_range,
+                    MediaFamily::Image,
+                    context.policy,
+                    context.input_usage,
+                );
+                append_plan_diagnostics(context.diagnostics, poster.diagnostics);
+                if let Some(href) = poster.value {
+                    safe::HtmlWriter::new(output).active_url_attribute(
+                        safe::ActiveUrlAttributeName::new("poster")
+                            .expect("poster is an active URL attribute"),
+                        href,
+                    );
+                }
             }
         }
     }
@@ -1533,66 +1562,6 @@ fn render_media_macro(
     output.push_str("</");
     output.push_str(tag);
     output.push('>');
-}
-
-fn resolved_resource_href(
-    range: crate::source::TextRange,
-    target_range: crate::source::TextRange,
-    expected_family: MediaFamily,
-    context: &mut InlineRenderContext<'_, '_>,
-) -> Option<String> {
-    let resolution = context.input_usage.resource_at(range);
-    match resolution {
-        ResolutionMatch::Unique(ResolvedResource {
-            outcome: ResourceOutcome::Resolved(value),
-            ..
-        }) if context
-            .policy
-            .allows_url(&value.href, UrlProvenance::ResolvedResource) =>
-        {
-            if value.media_type.family() != expected_family {
-                context.diagnostics.push(render_diagnostic(
-                    "resource-media-type-mismatch",
-                    "resolved resource media type does not match the macro",
-                    target_range,
-                ));
-                None
-            } else {
-                Some(value.href.clone())
-            }
-        }
-        ResolutionMatch::Unique(ResolvedResource {
-            outcome: ResourceOutcome::Resolved(_),
-            ..
-        }) => {
-            context.diagnostics.push(render_diagnostic(
-                "invalid-url-scheme",
-                "resolved resource URL is rejected by the render policy",
-                target_range,
-            ));
-            None
-        }
-        ResolutionMatch::Unique(ResolvedResource {
-            outcome: ResourceOutcome::Failed(failure),
-            ..
-        }) => {
-            context.diagnostics.push(render_diagnostic(
-                failure.kind.diagnostic_code(),
-                "resource resolution failed",
-                target_range,
-            ));
-            None
-        }
-        ResolutionMatch::Missing => {
-            context.diagnostics.push(render_diagnostic(
-                "unresolved-resource",
-                "resource requires host resolution",
-                target_range,
-            ));
-            None
-        }
-        ResolutionMatch::Duplicate => None,
-    }
 }
 
 fn macro_attribute_node<'a>(
@@ -1740,50 +1709,37 @@ fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::Docum
 }
 
 fn render_link(output: &mut String, link: &Link, context: &mut InlineRenderContext<'_, '_>) {
-    if let Some(target) = safe::SafeUrl::from_policy(
-        &link.target,
-        &context.policy.active_urls,
-        UrlProvenance::Authored,
-    ) {
-        {
-            let mut writer = safe::HtmlWriter::new(output);
-            writer.start(safe::ElementName::new("a").expect("a is an allowed HTML element"));
-            writer.active_url_attribute(
-                safe::ActiveUrlAttributeName::new("href").expect("href is an active URL attribute"),
-                target,
-            );
-        }
-        if matches!(
-            context.policy.external_links,
-            ExternalLinkPresentation::NewContext { .. }
-        ) && matches!(
-            context
-                .policy
-                .classify_url(&link.target, UrlProvenance::Authored),
-            crate::url::UrlDecision::Allowed
-        ) && link.target.split_once(':').is_some_and(|(scheme, _)| {
-            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
-        }) {
-            output.push_str(" target=\"_blank\" rel=\"noopener");
-            if matches!(
-                context.policy.external_links,
-                ExternalLinkPresentation::NewContext { noreferrer: true }
-            ) {
-                output.push_str(" noreferrer");
+    match plan::plan_link(link, context.policy) {
+        plan::PlannedLink::Active {
+            href,
+            new_context,
+            noreferrer,
+        } => {
+            {
+                let mut writer = safe::HtmlWriter::new(output);
+                writer.start(safe::ElementName::new("a").expect("a is an allowed HTML element"));
+                writer.active_url_attribute(
+                    safe::ActiveUrlAttributeName::new("href")
+                        .expect("href is an active URL attribute"),
+                    href,
+                );
             }
-            output.push('"');
+            if new_context {
+                output.push_str(" target=\"_blank\" rel=\"noopener");
+                if noreferrer {
+                    output.push_str(" noreferrer");
+                }
+                output.push('"');
+            }
+            safe::HtmlWriter::new(output).finish_start();
+            render_label_or_text(output, &link.label, &link.target_source, context);
+            safe::HtmlWriter::new(output)
+                .end(safe::ElementName::new("a").expect("a is an allowed HTML element"));
         }
-        safe::HtmlWriter::new(output).finish_start();
-        render_label_or_text(output, &link.label, &link.target_source, context);
-        safe::HtmlWriter::new(output)
-            .end(safe::ElementName::new("a").expect("a is an allowed HTML element"));
-    } else {
-        render_label_or_text(output, &link.label, &link.target_source, context);
-        context.diagnostics.push(render_diagnostic(
-            "invalid-url-scheme",
-            "URL is rejected by the render policy",
-            link.target_range,
-        ));
+        plan::PlannedLink::Fallback { diagnostic } => {
+            render_label_or_text(output, &link.label, &link.target_source, context);
+            append_plan_diagnostics(context.diagnostics, [diagnostic]);
+        }
     }
 }
 
@@ -1792,100 +1748,46 @@ fn render_reference(
     reference: &Reference,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
-    let (href, fallback, diagnostic) = match &reference.target {
-        Some(ReferenceKey::Local { anchor }) => {
-            if let Some(target) = context.identifiers.target_by_id(anchor) {
-                (Some(format!("#{anchor}")), target.label.clone(), None)
-            } else {
-                (
-                    None,
-                    anchor.clone(),
-                    Some(("unresolved-cross-reference", "local anchor does not exist")),
-                )
-            }
+    let plan = plan::plan_reference(
+        reference,
+        context.identifiers,
+        context.policy,
+        context.input_usage,
+    );
+    if let Some(href) = plan.href {
+        let mut writer = safe::HtmlWriter::new(output);
+        writer.start(safe::ElementName::new("a").expect("a is an allowed HTML element"));
+        match href {
+            plan::PlannedReferenceHref::Local(anchor) => writer.fragment_url_attribute(
+                safe::ActiveUrlAttributeName::new("href").expect("href is an active URL attribute"),
+                anchor,
+            ),
+            plan::PlannedReferenceHref::Resolved(href) => writer.active_url_attribute(
+                safe::ActiveUrlAttributeName::new("href").expect("href is an active URL attribute"),
+                href,
+            ),
         }
-        None => (
-            None,
-            reference_text(reference),
-            Some(("invalid-cross-reference", "invalid cross reference target")),
-        ),
-        Some(ReferenceKey::Document { .. }) | Some(ReferenceKey::Scheme { .. }) => {
-            let resolution = context.input_usage.reference_at(reference.range);
-            if let ResolutionMatch::Unique(resolution) = resolution {
-                match &resolution.outcome {
-                    crate::reference::ResolutionOutcome::Resolved {
-                        href,
-                        display_text,
-                        notices,
-                    } if context
-                        .policy
-                        .allows_url(href, UrlProvenance::ResolvedReference) =>
-                    {
-                        for notice in notices {
-                            context.diagnostics.push(render_diagnostic(
-                                notice.kind.diagnostic_code(),
-                                "reference resolution used a fallback",
-                                reference.target_range,
-                            ));
-                        }
-                        (
-                            Some(href.clone()),
-                            display_text
-                                .clone()
-                                .unwrap_or_else(|| reference_text(reference)),
-                            None,
-                        )
-                    }
-                    crate::reference::ResolutionOutcome::Resolved { .. } => (
-                        None,
-                        reference_text(reference),
-                        Some((
-                            "invalid-url-scheme",
-                            "resolved reference URL is rejected by the render policy",
-                        )),
-                    ),
-                    crate::reference::ResolutionOutcome::Failed(failure) => (
-                        None,
-                        reference_text(reference),
-                        Some((
-                            failure.kind.diagnostic_code(),
-                            "reference resolution failed",
-                        )),
-                    ),
-                }
-            } else if resolution == ResolutionMatch::Duplicate {
-                (None, reference_text(reference), None)
-            } else {
-                (
-                    None,
-                    reference_text(reference),
-                    Some((
-                        "unresolved-cross-reference",
-                        "cross reference requires host resolution",
-                    )),
-                )
-            }
-        }
-    };
-    if let Some(href) = href {
-        output.push_str("<a href=\"");
-        escape_html_into(output, &href);
-        if context.catalogs.bibliography().iter().any(|entry| {
+        let bibliography_reference = context.catalogs.bibliography().iter().any(|entry| {
             entry
                 .references
                 .iter()
                 .any(|candidate| candidate.range == reference.range)
-        }) {
-            output.push_str("\" id=\"");
-            output.push_str(&bibliography_reference_id(reference.range));
+        });
+        if bibliography_reference {
+            let id = bibliography_reference_id(reference.range);
+            writer.passive_attribute(
+                safe::PassiveAttributeName::new("id")
+                    .expect("id is a passive allowlisted HTML attribute"),
+                safe::AttributeValue::new(&id),
+            );
         }
-        output.push_str("\">");
-        render_label_or_text(output, &reference.label, &fallback, context);
+        writer.finish_start();
+        render_label_or_text(output, &reference.label, &plan.fallback, context);
         output.push_str("</a>");
     } else {
         match context.policy.unresolved_references {
             UnresolvedReferencePresentation::Target => {
-                render_label_or_text(output, &reference.label, &fallback, context);
+                render_label_or_text(output, &reference.label, &plan.fallback, context);
             }
             UnresolvedReferencePresentation::LabelOnly => {
                 render_inlines(output, &reference.label, context);
@@ -1893,11 +1795,7 @@ fn render_reference(
             UnresolvedReferencePresentation::Hidden => {}
         }
     }
-    if let Some((code, message)) = diagnostic {
-        context
-            .diagnostics
-            .push(render_diagnostic(code, message, reference.target_range));
-    }
+    append_plan_diagnostics(context.diagnostics, plan.diagnostics);
 }
 
 fn render_label_or_text(
@@ -1911,10 +1809,6 @@ fn render_label_or_text(
     } else {
         render_inlines(output, label, context);
     }
-}
-
-fn reference_text(reference: &Reference) -> String {
-    reference.target_source.clone()
 }
 
 fn render_diagnostic(code: &str, message: &str, range: crate::source::TextRange) -> Diagnostic {
@@ -1931,6 +1825,15 @@ fn render_diagnostic(code: &str, message: &str, range: crate::source::TextRange)
         related: Vec::new(),
         fixes: Vec::new(),
     }
+}
+
+fn append_plan_diagnostics(
+    diagnostics: &mut Vec<Diagnostic>,
+    planned: impl IntoIterator<Item = plan::PlanDiagnostic>,
+) {
+    diagnostics.extend(planned.into_iter().map(|diagnostic| {
+        render_diagnostic(diagnostic.code, diagnostic.message, diagnostic.range)
+    }));
 }
 
 fn render_input_diagnostic(

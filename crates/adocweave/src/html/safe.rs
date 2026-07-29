@@ -73,6 +73,15 @@ impl<'a> SafeUrl<'a> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct SafeFragmentUrl<'a>(&'a str);
+
+impl<'a> SafeFragmentUrl<'a> {
+    pub(super) fn new(anchor: &'a str) -> Option<Self> {
+        (!anchor.is_empty() && !anchor.chars().any(char::is_control)).then_some(Self(anchor))
+    }
+}
+
 /// Host-supplied CSS that cannot terminate its `<style>` element or open an
 /// HTML comment context.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,6 +136,18 @@ impl<'a> HtmlWriter<'a> {
         value: SafeUrl<'_>,
     ) {
         self.attribute(name.0, value.0);
+    }
+
+    pub(super) fn fragment_url_attribute(
+        &mut self,
+        name: ActiveUrlAttributeName<'_>,
+        value: SafeFragmentUrl<'_>,
+    ) {
+        self.output.push(' ');
+        self.output.push_str(name.0);
+        self.output.push_str("=\"#");
+        escape_into(self.output, value.0);
+        self.output.push('"');
     }
 
     pub(super) fn class_attribute(&mut self, classes: &[ClassName<'_>]) {
@@ -255,6 +276,22 @@ mod tests {
             output,
             "<a href=\"https://example.com/?a=1&amp;b=2\">&lt;label&gt;</a>"
         );
+    }
+
+    #[test]
+    fn fragment_urls_require_nonempty_control_free_identifiers() {
+        assert!(SafeFragmentUrl::new("").is_none());
+        assert!(SafeFragmentUrl::new("unsafe\nanchor").is_none());
+        let anchor = SafeFragmentUrl::new("section-日本語&more").expect("safe fragment");
+        let mut output = String::new();
+        let mut writer = HtmlWriter::new(&mut output);
+        writer.start(ElementName::new("a").expect("allowlisted element"));
+        writer.fragment_url_attribute(
+            ActiveUrlAttributeName::new("href").expect("active URL attribute"),
+            anchor,
+        );
+        writer.finish_start();
+        assert_eq!(output, "<a href=\"#section-日本語&amp;more\">");
     }
 
     #[test]
