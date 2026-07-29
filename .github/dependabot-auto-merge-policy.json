@@ -6,6 +6,7 @@
   "maximumDependencies": 1,
   "allowDependencyGroups": false,
   "allowMaintainerChanges": false,
+  "requiresStrictStatusChecks": true,
   "requiredApprovals": 0,
   "requiredCheckAppId": 15368,
   "requiredChecks": [

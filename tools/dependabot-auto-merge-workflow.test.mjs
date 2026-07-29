@@ -19,14 +19,25 @@ test("eligibility uses the trusted base workflow and binds its result to the hea
   assert.match(eligibility, /ref:\s*\$\{\{\s*github\.event\.pull_request\.base\.sha\s*\}\}/);
   assert.match(eligibility, /persist-credentials:\s*false/);
   assert.match(eligibility, /dependabot\/fetch-metadata@[0-9a-f]{40}/);
-  assert.match(eligibility, /alert-lookup:\s*true/);
+  assert.doesNotMatch(eligibility, /alert-lookup:/);
   assert.match(eligibility, /security-events:\s*read/);
-  assert.match(eligibility, /steps\.metadata\.outputs\.alert-state/);
-  assert.match(eligibility, /steps\.metadata\.outputs\.ghsa-id/);
   assert.match(eligibility, /"head_sha":\s*\$head_sha/);
   assert.match(eligibility, /"name":\s*"dependabot \/ eligibility"/);
   assert.match(eligibility, /conclusion/);
   assert.doesNotMatch(eligibility, /issues:\s*write/);
+});
+
+test("security alert inventory paginates beyond 100 and fails closed", () => {
+  assert.match(
+    eligibility,
+    /gh api --paginate\s+\\?\s*"repos\/\$GITHUB_REPOSITORY\/dependabot\/alerts\?state=open&per_page=100"/,
+  );
+  assert.match(eligibility, /all\(\.\[\]; type == "array"\)/);
+  assert.match(eligibility, /then add \| length/);
+  assert.match(eligibility, /lookup_completed=true/);
+  assert.match(eligibility, /open_count=\$open_count/);
+  assert.match(eligibility, /--argjson open_security_alerts "\$OPEN_SECURITY_ALERTS"/);
+  assert.doesNotMatch(eligibility, /secrets\.|PAT|personal.access/i);
 });
 
 test("controller runs only after CI and keeps mutation in a narrow trusted job", () => {
@@ -48,6 +59,11 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(controller, /dependabot \/ eligibility/);
   assert.match(controller, /appSlug:\s*\.app\.slug, appId:\s*\.app\.id/);
   assert.match(controller, /ref:\s*\$\{\{\s*github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha\s*\}\}/);
+  assert.match(controller, /expected_base_sha:\s*\$\{\{\s*steps\.context\.outputs\.base_sha\s*\}\}/);
+  assert.match(controller, /test "\$\(jq -r \.head\.sha enable-pr\.json\)" = "\$EXPECTED_HEAD_OID"/);
+  assert.match(controller, /test "\$\(jq -r \.base\.sha enable-pr\.json\)" = "\$EXPECTED_BASE_SHA"/);
+  assert.match(controller, /test "\$\(cat enable-base-sha\.txt\)" = "\$EXPECTED_BASE_SHA"/);
+  assert.match(controller, /gh api "repos\/\$GITHUB_REPOSITORY\/branches\/main"/);
 });
 
 test("workflow permissions remain scoped to the jobs that need them", () => {

@@ -30,10 +30,8 @@ function eligibleInput() {
       mergeable: true,
     },
     metadata: {
-      alertLookup: true,
-      alertState: "",
-      ghsaId: "",
-      cvss: "0",
+      securityAlertLookup: true,
+      openSecurityAlerts: 0,
       packageEcosystem: "cargo",
       directory: "/",
       targetBranch: "main",
@@ -81,6 +79,7 @@ function controllerInput() {
 
 test("tracked policy starts frozen and excludes high-risk ecosystems", () => {
   assert.equal(validatePolicy(policy).enabled, false);
+  assert.equal(validatePolicy(policy).requiresStrictStatusChecks, true);
   assert.deepEqual(
     [...new Set(policy.allowedUpdates.map((entry) => entry.packageEcosystem))].sort(),
     ["cargo", "npm"],
@@ -123,21 +122,21 @@ for (const [name, mutate, expected] of [
   ["metadata target", (input) => { input.metadata.targetBranch = "release"; }, "metadata-target-branch"],
   ["major", (input) => { input.metadata.updateType = "version-update:semver-major"; }, "update-type"],
   ["minor", (input) => { input.metadata.updateType = "version-update:semver-minor"; }, "update-type"],
-  ["open security alert", (input) => {
-    input.metadata.alertState = "OPEN";
-    input.metadata.ghsaId = "GHSA-xxxx-yyyy-zzzz";
-    input.metadata.cvss = "7.5";
-  }, "security-alert-or-lookup"],
-  ["fixed security alert", (input) => {
-    input.metadata.alertState = "FIXED";
-    input.metadata.ghsaId = "GHSA-xxxx-yyyy-zzzz";
-    input.metadata.cvss = "7.5";
-  }, "security-alert-or-lookup"],
-  ["missing alert lookup", (input) => { input.metadata.alertLookup = false; }, "security-alert-or-lookup"],
-  ["missing alert state", (input) => { delete input.metadata.alertState; }, "security-alert-or-lookup"],
-  ["inconsistent GHSA output", (input) => {
-    input.metadata.ghsaId = "GHSA-xxxx-yyyy-zzzz";
-  }, "security-alert-or-lookup"],
+  ["one open security alert", (input) => {
+    input.metadata.openSecurityAlerts = 1;
+  }, "open-security-alert-or-lookup"],
+  ["more than one page of open security alerts", (input) => {
+    input.metadata.openSecurityAlerts = 101;
+  }, "open-security-alert-or-lookup"],
+  ["missing security alert lookup", (input) => {
+    input.metadata.securityAlertLookup = false;
+  }, "open-security-alert-or-lookup"],
+  ["missing security alert count", (input) => {
+    delete input.metadata.openSecurityAlerts;
+  }, "open-security-alert-or-lookup"],
+  ["invalid security alert count", (input) => {
+    input.metadata.openSecurityAlerts = "0";
+  }, "open-security-alert-or-lookup"],
   ["runtime npm", (input) => {
     input.metadata.packageEcosystem = "npm";
     input.metadata.directory = "/editors/vscode";
@@ -198,6 +197,7 @@ test("controller accepts only the current eligible SHA after every required chec
 test("invalid and broadened policies fail closed", () => {
   for (const mutate of [
     (changed) => { changed.enabled = "yes"; },
+    (changed) => { changed.requiresStrictStatusChecks = false; },
     (changed) => { changed.requiredChecks.push(changed.requiredChecks[0]); },
     (changed) => { changed.allowedUpdates[0].updateTypes = ["version-update:semver-minor"]; },
     (changed) => { changed.allowedUpdates.push({

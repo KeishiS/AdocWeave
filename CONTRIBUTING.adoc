@@ -128,7 +128,7 @@ auto-mergeを有効化しません。
 Cargoのpatch更新とVS Code拡張の開発用npm依存のpatch更新だけを候補とし、次の更新は手動で確認します。
 
 * majorまたはminor更新
-* security update
+* repositoryに未解決のDependabot alertが存在する間のすべての更新
 * GitHub Actionsの更新
 * VS Code拡張のruntime依存
 * 複数dependencyの更新とgrouped update
@@ -141,6 +141,11 @@ workflow自身がPull Requestを直ちにmergeすることはありません。�
 checkoutまたは実行せず、write権限をauto-merge登録だけを行うjobへ限定します。
 
 自動mergeを開始する前に、repositoryの``main`` rulesetで必須checkのstrict設定を有効にします。
+これは``requiresStrictStatusChecks``でも固定する実運用上の必須条件であり、policyを有効にするだけでは
+満たされません。rulesetでstrict設定が有効であることを確認できない場合は、``enabled``を``false``のままにします。
+また、REST APIによる未解決Dependabot alertの全ページ照会に失敗した場合、結果が欠けた場合またはalertが1件でも
+存在する場合は、更新内容にかかわらず自動mergeを停止します。この照会にはrepositoryのGitHub Actions tokenを使い、
+個人用access tokenは使用しません。
 さらに、人間の承認を0件のままにするか1件以上にするか、Cargoの間接dependencyを許可するか、
 security patchを将来許可するかをrepository管理者が決定します。GitHub Actions、npm runtime依存および
 minor以上の更新は、初期導入の対象にしません。

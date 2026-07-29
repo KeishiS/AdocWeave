@@ -23,7 +23,9 @@ jobs:
       pull-requests: read
     outputs:
       eligible: ${{ steps.decision.outputs.eligible }}
+      expected_base_sha: ${{ steps.context.outputs.base_sha }}
       expected_head_oid: ${{ steps.context.outputs.head_sha }}
+      pull_request_number: ${{ github.event.workflow_run.pull_requests[0].number }}
       pull_request_node_id: ${{ steps.context.outputs.node_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,6 +50,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -r .base.ref pr.json)" \
             --jq .commit.sha > base-sha.txt
           {
+            echo "base_sha=$(cat base-sha.txt)"
             echo "head_sha=$(jq -r .head.sha pr.json)"
             echo "node_id=$(jq -r .node_id pr.json)"
           } >> "$GITHUB_OUTPUT"
@@ -130,10 +133,20 @@ jobs:
     steps:
       - name: Enable GitHub-managed auto-merge for the verified head
         env:
+          EXPECTED_BASE_SHA: ${{ needs.decide.outputs.expected_base_sha }}
           EXPECTED_HEAD_OID: ${{ needs.decide.outputs.expected_head_oid }}
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.decide.outputs.pull_request_number }}
           PULL_REQUEST_NODE_ID: ${{ needs.decide.outputs.pull_request_node_id }}
         run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > enable-pr.json
+          test "$(jq -r .node_id enable-pr.json)" = "$PULL_REQUEST_NODE_ID"
+          test "$(jq -r .head.sha enable-pr.json)" = "$EXPECTED_HEAD_OID"
+          test "$(jq -r .base.sha enable-pr.json)" = "$EXPECTED_BASE_SHA"
+          test "$(jq -r .base.ref enable-pr.json)" = "main"
+          gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha \
+            > enable-base-sha.txt
+          test "$(cat enable-base-sha.txt)" = "$EXPECTED_BASE_SHA"
           # shellcheck disable=SC2016
           gh api graphql \
             -f query='

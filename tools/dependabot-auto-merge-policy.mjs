@@ -15,6 +15,7 @@ export function validatePolicy(policy) {
       || policy.maximumDependencies < 1
       || policy.allowDependencyGroups !== false
       || policy.allowMaintainerChanges !== false
+      || policy.requiresStrictStatusChecks !== true
       || !Number.isSafeInteger(policy.requiredApprovals)
       || policy.requiredApprovals < 0
       || !Number.isSafeInteger(policy.requiredCheckAppId)
@@ -60,11 +61,10 @@ export function evaluateEligibility(input) {
   validatePullRequest(input.pullRequest, policy, reasons);
 
   const metadata = input.metadata ?? {};
-  if (metadata.alertLookup !== true
-      || metadata.alertState !== ""
-      || metadata.ghsaId !== ""
-      || String(metadata.cvss) !== "0") {
-    reasons.push("security-alert-or-lookup");
+  if (metadata.securityAlertLookup !== true
+      || !Number.isSafeInteger(metadata.openSecurityAlerts)
+      || metadata.openSecurityAlerts !== 0) {
+    reasons.push("open-security-alert-or-lookup");
   }
   const boundary = policy.allowedUpdates.find(
     (candidate) => candidate.packageEcosystem === metadata.packageEcosystem
