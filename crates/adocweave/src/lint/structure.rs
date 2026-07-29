@@ -6,14 +6,12 @@ use crate::parser::{AstBlock, HeadingKind};
 use crate::source::TextRange;
 
 use super::{
-    DUPLICATE_HEADING_ID, INVALID_DOCUMENT_STRUCTURE, INVALID_HEADING_LEVEL, LintDiagnosticBody,
-    LintDiagnosticSink,
+    DUPLICATE_HEADING_ID, INVALID_DOCUMENT_STRUCTURE, INVALID_HEADING_LEVEL, LintContext,
+    LintDiagnosticBody, LintDiagnosticSink,
 };
 
-pub(super) fn lint_headings(
-    document: &crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-) {
+pub(super) fn lint_headings(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
+    let document = context.document();
     let mut previous_level = None;
     let mut ids = BTreeMap::<String, TextRange>::new();
 
@@ -60,9 +58,10 @@ pub(super) fn lint_headings(
 }
 
 pub(super) fn lint_document_structure(
-    document: &crate::parser::AstDocument,
+    context: &LintContext<'_>,
     sink: &mut LintDiagnosticSink<'_>,
 ) {
+    let document = context.document();
     for problem in document.structure().problems() {
         if sink.is_full() {
             break;

@@ -2,13 +2,13 @@ use std::ops::ControlFlow;
 
 use crate::parser::AstBlock;
 
-use super::{INVALID_ATTRIBUTE, INVALID_LIST_PRESENTATION, LintDiagnosticBody, LintDiagnosticSink};
+use super::{
+    INVALID_ATTRIBUTE, INVALID_LIST_PRESENTATION, LintContext, LintDiagnosticBody,
+    LintDiagnosticSink,
+};
 
-pub(super) fn lint_list_presentation(
-    document: &crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-) {
-    lint_list_presentation_with_observer(document, sink, |_| {});
+pub(super) fn lint_list_presentation(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
+    lint_list_presentation_with_observer(context.document(), sink, |_| {});
 }
 
 pub(super) fn lint_list_presentation_with_observer<'document>(
@@ -54,9 +54,10 @@ pub(super) fn lint_list_presentation_with_observer<'document>(
 }
 
 pub(super) fn lint_document_presentation(
-    document: &crate::parser::AstDocument,
+    context: &LintContext<'_>,
     sink: &mut LintDiagnosticSink<'_>,
 ) {
+    let document = context.document();
     if let Some(range) = document.presentation().toc_policy().invalid_level_range {
         sink.emit(INVALID_ATTRIBUTE, range, || {
             LintDiagnosticBody::new("toclevels must be an integer from 1 to 5")

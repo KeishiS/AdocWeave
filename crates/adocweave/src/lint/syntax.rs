@@ -1,15 +1,16 @@
 use crate::diagnostic::Applicability;
 use crate::source::TextRange;
-use crate::syntax::{SyntaxIssueClass, SyntaxIssueDetail, SyntaxTree};
+use crate::syntax::{SyntaxIssueClass, SyntaxIssueDetail};
 
 use super::{
     HEADING_MARKER_SPACE, INCONSISTENT_LIST, INVALID_ATTRIBUTE, INVALID_CROSS_REFERENCE,
-    INVALID_HEADING_LEVEL, INVALID_STEM, INVALID_URL_SCHEME, LintDiagnosticBody,
+    INVALID_HEADING_LEVEL, INVALID_STEM, INVALID_URL_SCHEME, LintContext, LintDiagnosticBody,
     LintDiagnosticSink, MACRO_BOUNDARY, MISSING_SOURCE_LANGUAGE, NESTING_LIMIT_EXCEEDED,
     UNCLOSED_BLOCK, UNCLOSED_INLINE,
 };
 
-pub(super) fn lint_syntax_issues(syntax: &SyntaxTree, sink: &mut LintDiagnosticSink<'_>) {
+pub(super) fn lint_syntax_issues(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
+    let syntax = context.syntax();
     for issue in syntax.issues() {
         if sink.is_full() {
             break;

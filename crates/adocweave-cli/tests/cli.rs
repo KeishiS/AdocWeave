@@ -712,6 +712,40 @@ fn project_config_is_discovered_and_can_be_disabled_explicitly() {
 }
 
 #[test]
+fn project_config_bounds_cli_diagnostics_before_json_projection() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-config-limit-cli-{unique}"));
+    std::fs::create_dir(&root).expect("create project");
+    std::fs::write(
+        root.join(".adocweave.toml"),
+        "schema-version = 1\n[lint]\nmax-line-length = 4\nmax-diagnostics = 1\n",
+    )
+    .expect("write config");
+    std::fs::write(root.join("manual.adoc"), "long \n*x\n").expect("write document");
+
+    let output = adocweave()
+        .current_dir(&root)
+        .args(["check", "--json", "manual.adoc"])
+        .output()
+        .expect("run configured check");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("JSON diagnostics");
+    let diagnostics = diagnostics.as_array().expect("diagnostic array");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], "trailing-whitespace");
+
+    std::fs::remove_dir_all(root).expect("remove project");
+}
+
+#[test]
 fn commands_validate_only_the_configuration_paths_they_consume() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

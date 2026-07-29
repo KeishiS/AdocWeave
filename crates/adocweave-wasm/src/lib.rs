@@ -1576,6 +1576,16 @@ mod tests {
     }
 
     #[test]
+    fn wasm_diagnostic_limit_is_applied_before_wire_projection() {
+        let mut configured = request("trailing \n*x\n");
+        configured.analysis_options.diagnostics.max_diagnostics = 1;
+
+        let response = process_request(configured, &NeverCancel).expect("bounded diagnostics");
+        assert_eq!(response.diagnostics.len(), 1);
+        assert_eq!(response.diagnostics[0].code, "trailing-whitespace");
+    }
+
+    #[test]
     fn opt_in_macro_boundary_matches_the_native_diagnostic_contract() {
         let source = "本文xref:guide.adoc[Guide]\n";
         let default_response =

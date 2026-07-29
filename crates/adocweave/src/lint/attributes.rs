@@ -4,20 +4,18 @@ use crate::attributes::{AttributeBindingId, DocumentAttributeOperation};
 use crate::source::TextRange;
 
 use super::{
-    ATTRIBUTE_EXPANSION, LintConfig, LintDiagnosticBody, LintDiagnosticSink, PROTECTED_ATTRIBUTE,
+    ATTRIBUTE_EXPANSION, LintContext, LintDiagnosticBody, LintDiagnosticSink, PROTECTED_ATTRIBUTE,
     UNDEFINED_ATTRIBUTE, UNUSED_ATTRIBUTE,
 };
 
-pub(super) fn lint_attributes(
-    document: &crate::parser::AstDocument,
-    config: &LintConfig,
-    sink: &mut LintDiagnosticSink<'_>,
-) {
+pub(super) fn lint_attributes(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
+    let document = context.document();
+    let protected_attributes = sink.config().protected_attributes.clone();
     for attribute in document.attributes() {
         if sink.is_full() {
             break;
         }
-        if let Some(expected) = config.protected_attributes.get(&attribute.name) {
+        if let Some(expected) = protected_attributes.get(&attribute.name) {
             let changed = match &attribute.operation {
                 DocumentAttributeOperation::Set => expected
                     .as_ref()
@@ -111,7 +109,7 @@ pub(super) fn lint_attributes(
         let occurrence = binding.occurrence();
         if binding.operation() == DocumentAttributeOperation::Set
             && !used_bindings.contains(&binding.id())
-            && !config.protected_attributes.contains_key(&occurrence.name)
+            && !protected_attributes.contains_key(&occurrence.name)
         {
             sink.emit(UNUSED_ATTRIBUTE, occurrence.name_range, || {
                 LintDiagnosticBody::new(format!("unused document attribute `{}`", occurrence.name))

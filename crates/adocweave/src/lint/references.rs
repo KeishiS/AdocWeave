@@ -3,24 +3,26 @@ use std::ops::ControlFlow;
 
 use crate::diagnostic::{Applicability, RelatedInformation};
 use crate::source::TextRange;
+use crate::url::AuthoredUrlPolicy;
 
 use super::{
     ASCIIDOC_FILE_LINK, DUPLICATE_ANCHOR, INVALID_ANCHOR, INVALID_CROSS_REFERENCE,
-    INVALID_URL_SCHEME, LintConfig, LintDiagnosticBody, LintDiagnosticSink, NON_ASCIIDOC_XREF,
+    INVALID_URL_SCHEME, LintContext, LintDiagnosticBody, LintDiagnosticSink, NON_ASCIIDOC_XREF,
     UNRESOLVED_CROSS_REFERENCE,
 };
 
 pub(super) fn lint_links_and_references(
-    document: &crate::parser::AstDocument,
-    config: &LintConfig,
+    context: &LintContext<'_>,
     sink: &mut LintDiagnosticSink<'_>,
 ) {
-    lint_links_and_references_with_observer(document, config, sink, |_| {});
+    let document = context.document();
+    let authored_url_policy = sink.config().authored_url_policy.clone();
+    lint_links_and_references_with_observer(document, &authored_url_policy, sink, |_| {});
 }
 
 pub(super) fn lint_links_and_references_with_observer<'document>(
     document: &'document crate::parser::AstDocument,
-    config: &LintConfig,
+    authored_url_policy: &AuthoredUrlPolicy,
     sink: &mut LintDiagnosticSink<'_>,
     mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
 ) {
@@ -28,7 +30,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
     fn inspect(
         inline: &crate::inline::Inline,
         targets: &[crate::document::ReferenceTarget],
-        config: &LintConfig,
+        authored_url_policy: &AuthoredUrlPolicy,
         sink: &mut LintDiagnosticSink<'_>,
     ) -> ControlFlow<()> {
         if sink.is_full() {
@@ -38,7 +40,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
         use crate::reference::ReferenceKey;
         match inline {
             Inline::Link(link) => {
-                if !config.authored_url_policy.allows(&link.target) {
+                if !authored_url_policy.allows(&link.target) {
                     sink.emit(INVALID_URL_SCHEME, link.target_range, || {
                         LintDiagnosticBody::new("URL is rejected by the configured policy")
                     });
@@ -67,7 +69,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
                         | crate::inline::StandardMacroKind::Icon
                         | crate::inline::StandardMacroKind::Audio
                         | crate::inline::StandardMacroKind::Video
-                ) && !config.authored_url_policy.allows(&node.target) =>
+                ) && !authored_url_policy.allows(&node.target) =>
             {
                 sink.emit(INVALID_URL_SCHEME, node.target_range, || {
                     LintDiagnosticBody::new("resource URL is rejected by the configured policy")
@@ -143,7 +145,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
             return ControlFlow::Break(());
         }
         if let crate::walker::SemanticNode::Inline(inline) = node {
-            inspect(inline, &targets, config, sink)
+            inspect(inline, &targets, authored_url_policy, sink)
         } else {
             ControlFlow::Continue(())
         }
@@ -237,10 +239,8 @@ const fn hex_digit(value: u8) -> Option<u8> {
     }
 }
 
-pub(super) fn lint_anchors(
-    document: &crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-) {
+pub(super) fn lint_anchors(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
+    let document = context.document();
     let mut ids = BTreeMap::<String, TextRange>::new();
     for anchor in document.anchors() {
         if sink.is_full() {
