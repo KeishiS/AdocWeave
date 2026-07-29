@@ -224,8 +224,11 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     assert!(CONVERSION.contains("NormalizedRequest"));
     assert!(CONVERSION.contains("NormalizedRenderInputs"));
     assert!(CONVERSION.contains("pub(crate) struct ExecutionRequest"));
+    assert!(CONVERSION.contains("pub(crate) enum ProcessingExecution"));
     assert!(CONVERSION.contains("Engine"));
     assert!(CONVERSION.contains("RenderPolicy"));
+    assert!(!CONVERSION.contains("pub(crate) engine:"));
+    assert!(!CONVERSION.contains("pub(crate) preprocess:"));
     assert!(!CONVERSION.contains("analyze_cancellable"));
 
     assert!(!FACADE.contains("pub struct WasmRequest"));

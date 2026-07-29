@@ -18,14 +18,14 @@ pub(super) fn lint_list_presentation_with_observer<'document>(
 ) {
     let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
         observe(node);
-        if sink.is_full() {
+        if sink.should_stop() {
             return ControlFlow::Break(());
         }
         let crate::walker::SemanticNode::Block(AstBlock::List(list)) = node else {
             return ControlFlow::Continue(());
         };
         for problem in &list.presentation_problems {
-            if sink.is_full() {
+            if sink.should_stop() {
                 break;
             }
             let message = match problem.kind {
@@ -45,7 +45,7 @@ pub(super) fn lint_list_presentation_with_observer<'document>(
             sink.emit(INVALID_LIST_PRESENTATION, problem.range, || {
                 LintDiagnosticBody::new(message)
             });
-            if sink.is_full() {
+            if sink.should_stop() {
                 return ControlFlow::Break(());
             }
         }

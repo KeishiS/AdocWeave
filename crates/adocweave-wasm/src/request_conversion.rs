@@ -29,9 +29,14 @@ use crate::request_normalization::NormalizedRequest;
 use crate::request_wire::{WasmLimits, WasmStylesheet};
 use crate::shared_wire_generated::{WasmMathLanguage, WasmSeverity};
 
-pub(crate) struct PreprocessExecution {
-    pub(crate) snapshot: ResourceSnapshot,
-    pub(crate) options: EffectiveProcessingOptions,
+pub(crate) enum ProcessingExecution {
+    Standalone {
+        engine: Engine,
+    },
+    Combined {
+        snapshot: ResourceSnapshot,
+        options: EffectiveProcessingOptions,
+    },
 }
 
 /// Core configuration and remaining analysis-dependent wire inputs.
@@ -46,8 +51,7 @@ pub(crate) struct ExecutionRequest {
     pub(crate) requested_products: WasmProductSet,
     pub(crate) products: ProductSet,
     pub(crate) render_inputs: NormalizedRenderInputs,
-    pub(crate) engine: Engine,
-    pub(crate) preprocess: Option<PreprocessExecution>,
+    pub(crate) processing: ProcessingExecution,
     pub(crate) render_policy: RenderPolicy,
     pub(crate) max_output_bytes: usize,
 }
@@ -72,22 +76,23 @@ pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, Wa
         },
         attributes: analysis_options.attributes,
     };
-    let preprocess = request
-        .preprocess
-        .map(|input| {
+    let processing = match request.preprocess {
+        Some(input) => {
             let options = to_core_options(source_id.clone(), input.options);
             EffectiveProcessingOptions::new(analysis_options.clone(), options)
-                .map(|options| PreprocessExecution {
+                .map(|options| ProcessingExecution::Combined {
                     snapshot: resource_snapshot(input.resources),
                     options,
                 })
                 .map_err(|error| WasmError {
                     code: "invalid-options".to_owned(),
                     message: error.to_string(),
-                })
-        })
-        .transpose()?;
-    let engine = Engine::new(analysis_options);
+                })?
+        }
+        None => ProcessingExecution::Standalone {
+            engine: Engine::new(analysis_options),
+        },
+    };
     let max_output_bytes = usize::try_from(request.output_limits.max_output_bytes)
         .expect("u32 fits usize on supported targets");
 
@@ -99,8 +104,7 @@ pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, Wa
         requested_products,
         products,
         render_inputs,
-        engine,
-        preprocess,
+        processing,
         render_policy: render_policy(render_options),
         max_output_bytes,
     })

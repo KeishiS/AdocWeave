@@ -27,6 +27,22 @@ Semaphore、``spawn_blocking``またはthread poolなどの具体的な投入方
 ``AnalysisRequest::analyze``はpanicを捕捉しません。通常入力の失敗は``ParseError``として扱い、panicの隔離と
 workerの再起動はFFI、taskまたはthreadなどの利用側アプリの境界で行います。panicを構文診断へ変換しません。
 
+=== 協調キャンセル
+
+``Engine::analyze_cancellable``、``preprocess_cancellable``、
+``preprocess_and_analyze_cancellable``、``lint_analysis_cancellable``および
+``PreprocessedAnalysis::project_origins_cancellable``は、呼出側が所有する同じ
+``CancellationCheck``を受け取ります。Workspace解析は前処理、構文解析、lintおよび生成元への位置投影へ
+同じtokenを渡し、いずれかの段階でキャンセルを検出した場合は途中結果を返しません。
+
+各段階は開始時と終了時に加えて、行、構文nodeまたは投影対象rangeを処理する長いloopで検査します。
+長いloopでは最大256作業単位ごとに検査するため、入力の大きさにかかわらず検査間隔は一定です。
+協調キャンセルは処理threadを強制停止しないため、利用側アプリは返却後にもgenerationとtokenを確認してから
+結果を採用します。
+
+``Engine::analyze``、``preprocess``、``preprocess_and_analyze``、``lint_analysis``および
+``PreprocessedAnalysis::project_origins``は、キャンセルしないtokenを使う互換用APIです。
+
 === キャッシュ
 
 ``AnalysisCacheKey``は、package version、生入力、``SourceId``および解析結果・診断を変える

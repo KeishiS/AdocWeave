@@ -5,7 +5,7 @@ use super::{INVALID_CATALOG, LintContext, LintDiagnosticBody, LintDiagnosticSink
 pub(super) fn lint_catalogs(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
     let document = context.document();
     for problem in document.catalogs().problems() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         let message = match problem.kind {

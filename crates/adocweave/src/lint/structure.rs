@@ -16,7 +16,7 @@ pub(super) fn lint_headings(context: &LintContext<'_>, sink: &mut LintDiagnostic
     let mut ids = BTreeMap::<String, TextRange>::new();
 
     for block in document.blocks() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         let AstBlock::Heading(heading) = block else {
@@ -63,7 +63,7 @@ pub(super) fn lint_document_structure(
 ) {
     let document = context.document();
     for problem in document.structure().problems() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         let message = match problem.kind {

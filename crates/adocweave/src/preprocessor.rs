@@ -10,7 +10,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{Analysis, Engine, ParseError, SourceId};
+use crate::cancellation::CancellationCheckpoint;
+use crate::core::{Analysis, CancellationCheck, Engine, NeverCancel, ParseError, SourceId};
 use crate::source::PositionError;
 use crate::source::{TextRange, TextSize};
 use crate::substitution::AttributeExpansionLimits;
@@ -20,7 +21,7 @@ pub use projection::{
     AnalysisProjection, Originated, ProjectedAttributeBinding, ProjectedAttributeReference,
     ProjectedDiagnostic, ProjectedDocumentAttribute, ProjectedDocumentAttributeValueLine,
     ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget, ProjectedReference,
-    ProjectedResource, ProjectionError, ProjectionLimits,
+    ProjectedResource, ProjectionError, ProjectionFailure, ProjectionLimits,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -139,6 +140,12 @@ impl EffectiveProcessingOptions {
     /// Returns the preprocessing settings in this effective contract.
     pub const fn preprocess(&self) -> &PreprocessOptions {
         &self.preprocess
+    }
+
+    /// Returns the same effective settings with one source identity.
+    pub fn with_source_id(mut self, source_id: Option<SourceId>) -> Self {
+        self.preprocess.source_id = source_id;
+        self
     }
 }
 
@@ -342,6 +349,7 @@ pub struct PreprocessedDocument {
     pub notices: Vec<PreprocessNotice>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SourceMapInvariantError;
 
@@ -352,12 +360,13 @@ pub struct PreprocessedAnalysis {
     pub analysis: Analysis,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreprocessedAnalysisError {
     /// Combined processing settings are inconsistent.
     Options(ProcessingOptionsError),
     Preprocess(PreprocessError),
     Parse(ParseError),
+    Cancelled,
 }
 
 impl fmt::Display for PreprocessedAnalysisError {
@@ -366,6 +375,7 @@ impl fmt::Display for PreprocessedAnalysisError {
             Self::Options(error) => error.fmt(formatter),
             Self::Preprocess(error) => error.fmt(formatter),
             Self::Parse(error) => error.fmt(formatter),
+            Self::Cancelled => formatter.write_str("processing was cancelled"),
         }
     }
 }
@@ -379,9 +389,20 @@ pub fn preprocess_and_analyze(
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
+    preprocess_and_analyze_cancellable(engine, source, snapshot, options, &NeverCancel)
+}
+
+/// Expands and analyzes caller-provided input with cooperative cancellation.
+pub fn preprocess_and_analyze_cancellable(
+    engine: &Engine,
+    source: &str,
+    snapshot: &ResourceSnapshot,
+    options: &PreprocessOptions,
+    cancellation: &dyn CancellationCheck,
+) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
     let options = EffectiveProcessingOptions::new(engine.options().clone(), options.clone())
         .map_err(PreprocessedAnalysisError::Options)?;
-    preprocess_and_analyze_with_options(source, snapshot, &options)
+    preprocess_and_analyze_cancellable_with_options(source, snapshot, &options, cancellation)
 }
 
 /// Expands and analyzes with one previously validated effective configuration.
@@ -390,11 +411,34 @@ pub fn preprocess_and_analyze_with_options(
     snapshot: &ResourceSnapshot,
     options: &EffectiveProcessingOptions,
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
-    let document = preprocess(source, snapshot, options.preprocess())
-        .map_err(PreprocessedAnalysisError::Preprocess)?;
+    preprocess_and_analyze_cancellable_with_options(source, snapshot, options, &NeverCancel)
+}
+
+/// Expands and analyzes with validated settings and cooperative cancellation.
+pub fn preprocess_and_analyze_cancellable_with_options(
+    source: &str,
+    snapshot: &ResourceSnapshot,
+    options: &EffectiveProcessingOptions,
+    cancellation: &dyn CancellationCheck,
+) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
+    let document = preprocess_cancellable(source, snapshot, options.preprocess(), cancellation)
+        .map_err(|failure| match failure {
+            PreprocessFailure::Error(error) => PreprocessedAnalysisError::Preprocess(error),
+            PreprocessFailure::Cancelled => PreprocessedAnalysisError::Cancelled,
+        })?;
     let analysis = Engine::new(options.analysis().clone())
-        .analyze(&document.source)
-        .map_err(PreprocessedAnalysisError::Parse)?;
+        .analyze_cancellable_with_source_id(
+            options.preprocess().source_id.as_ref(),
+            &document.source,
+            cancellation,
+        )
+        .map_err(|error| {
+            if error == ParseError::Cancelled {
+                PreprocessedAnalysisError::Cancelled
+            } else {
+                PreprocessedAnalysisError::Parse(error)
+            }
+        })?;
     Ok(PreprocessedAnalysis { document, analysis })
 }
 
@@ -453,14 +497,58 @@ impl fmt::Display for PreprocessError {
 
 impl Error for PreprocessError {}
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreprocessFailure {
+    Error(PreprocessError),
+    Cancelled,
+}
+
+impl fmt::Display for PreprocessFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Error(error) => error.fmt(formatter),
+            Self::Cancelled => formatter.write_str("preprocessing was cancelled"),
+        }
+    }
+}
+
+impl Error for PreprocessFailure {}
+
+impl From<PreprocessError> for PreprocessFailure {
+    fn from(error: PreprocessError) -> Self {
+        Self::Error(error)
+    }
+}
+
 pub fn preprocess(
     source: &str,
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
 ) -> Result<PreprocessedDocument, PreprocessError> {
+    match preprocess_cancellable(source, snapshot, options, &NeverCancel) {
+        Ok(document) => Ok(document),
+        Err(PreprocessFailure::Error(error)) => Err(error),
+        Err(PreprocessFailure::Cancelled) => {
+            unreachable!("NeverCancel cannot cancel preprocessing")
+        }
+    }
+}
+
+/// Expands a caller-provided snapshot with cooperative cancellation.
+pub fn preprocess_cancellable(
+    source: &str,
+    snapshot: &ResourceSnapshot,
+    options: &PreprocessOptions,
+    cancellation: &dyn CancellationCheck,
+) -> Result<PreprocessedDocument, PreprocessFailure> {
+    if cancellation.is_cancelled() {
+        return Err(PreprocessFailure::Cancelled);
+    }
     let mut context = Context {
         snapshot,
         options,
+        cancellation,
+        checkpoint: CancellationCheckpoint::new(cancellation),
         source_map: source_map::SourceMapBuilder::new(
             options.max_total_bytes,
             options.max_source_map_segments,
@@ -479,23 +567,46 @@ pub fn preprocess(
         source,
         IncludeFrame::root(options.source_id.clone(), options.base_uri.as_deref()),
     )?;
-    context
-        .source_map
-        .finish(context.directives, context.notices)
-        .map_err(|_| PreprocessError {
-            kind: PreprocessErrorKind::InternalInvariant,
-            source_id: options.source_id.clone(),
-            range: TextRange::new(TextSize::ZERO, TextSize::ZERO).expect("zero range is ordered"),
-            requested_target: None,
-            target: None,
-            message: "source map segments are unsorted, overlapping, or outside expanded source"
-                .to_owned(),
-        })
+    if cancellation.is_cancelled() {
+        return Err(PreprocessFailure::Cancelled);
+    }
+    let Context {
+        source_map,
+        directives,
+        notices,
+        mut checkpoint,
+        ..
+    } = context;
+    let document = source_map
+        .finish_cancellable(directives, notices, &mut checkpoint)
+        .map_err(|failure| match failure {
+            source_map::SourceMapFinishError::Cancelled => PreprocessFailure::Cancelled,
+            source_map::SourceMapFinishError::Invariant => {
+                PreprocessFailure::Error(PreprocessError {
+                    kind: PreprocessErrorKind::InternalInvariant,
+                    source_id: options.source_id.clone(),
+                    range: TextRange::new(TextSize::ZERO, TextSize::ZERO)
+                        .expect("zero range is ordered"),
+                    requested_target: None,
+                    target: None,
+                    message:
+                        "source map segments are unsorted, overlapping, or outside expanded source"
+                            .to_owned(),
+                })
+            }
+        })?;
+    if cancellation.is_cancelled() {
+        Err(PreprocessFailure::Cancelled)
+    } else {
+        Ok(document)
+    }
 }
 
 struct Context<'a> {
     snapshot: &'a ResourceSnapshot,
     options: &'a PreprocessOptions,
+    cancellation: &'a dyn CancellationCheck,
+    checkpoint: CancellationCheckpoint<'a>,
     source_map: source_map::SourceMapBuilder,
     directives: Vec<Directive>,
     notices: Vec<PreprocessNotice>,
@@ -503,20 +614,20 @@ struct Context<'a> {
 }
 
 impl Context<'_> {
-    fn expand(&mut self, source: &str, frame: IncludeFrame) -> Result<(), PreprocessError> {
+    fn expand(&mut self, source: &str, frame: IncludeFrame) -> Result<(), PreprocessFailure> {
         let mut offset = 0;
-        let lines = source
-            .split_inclusive('\n')
-            .map(|line| {
-                let start = offset;
-                offset += line.len();
-                SelectedLine {
-                    text: line.to_owned(),
-                    range: range(start, offset),
-                    mapping: SourceMapping::Identity,
-                }
-            })
-            .collect();
+        let mut lines = Vec::new();
+        for line in source.split_inclusive('\n') {
+            let start = offset;
+            offset += line.len();
+            let line_range = range(start, offset);
+            self.check_cancelled()?;
+            lines.push(SelectedLine {
+                text: line.to_owned(),
+                range: line_range,
+                mapping: SourceMapping::Identity,
+            });
+        }
         self.expand_selected(lines, frame)
     }
 
@@ -525,7 +636,7 @@ impl Context<'_> {
         include: ParsedDirective,
         frame: &IncludeFrame,
         range: TextRange,
-    ) -> Result<(), PreprocessError> {
+    ) -> Result<(), PreprocessFailure> {
         let source_id = frame.source_id();
         if frame.depth() >= self.options.max_include_depth {
             return Err(error(
@@ -533,7 +644,8 @@ impl Context<'_> {
                 source_id.clone(),
                 range,
                 "include depth limit exceeded",
-            ));
+            )
+            .into());
         }
         if self
             .state
@@ -545,7 +657,8 @@ impl Context<'_> {
                 source_id,
                 range,
                 "include count limit exceeded",
-            ));
+            )
+            .into());
         }
         self.bump_node(source_id.clone(), range)?;
         let expanded_target =
@@ -565,7 +678,8 @@ impl Context<'_> {
                 source_id,
                 range,
                 "include cycle detected",
-            ));
+            )
+            .into());
         }
         let attributes = parse_attributes(&include.attributes).map_err(|message| {
             error(
@@ -585,7 +699,8 @@ impl Context<'_> {
                 source_id,
                 range,
                 "resource snapshots contain UTF-8 text only",
-            ));
+            )
+            .into());
         }
         let document = self.snapshot.get(&target);
         self.directives.push(Directive {
@@ -615,10 +730,13 @@ impl Context<'_> {
                 requested_target: Some(expanded_target),
                 target: Some(target.clone()),
                 message: format!("resource snapshot does not contain {target}"),
-            });
+            }
+            .into());
         };
-        let selected = select_lines(&document.source, &attributes);
-        let transformed = transform_lines(selected, &attributes);
+        let selected = select_lines(&document.source, &attributes, self.cancellation)
+            .map_err(|_| PreprocessFailure::Cancelled)?;
+        let transformed = transform_lines(selected, &attributes, self.cancellation)
+            .map_err(|_| PreprocessFailure::Cancelled)?;
         let child = frame.child(
             target.clone(),
             document.source_id.clone(),
@@ -631,7 +749,7 @@ impl Context<'_> {
         &mut self,
         lines: Vec<SelectedLine>,
         frame: IncludeFrame,
-    ) -> Result<(), PreprocessError> {
+    ) -> Result<(), PreprocessFailure> {
         let source_id = frame.source_id();
         let selected_source = lines
             .iter()
@@ -652,11 +770,13 @@ impl Context<'_> {
                 source_id,
                 zero_range(),
                 "selected source lines do not preserve physical boundaries",
-            ));
+            )
+            .into());
         }
         let mut conditions = Vec::<bool>::new();
         let mut attribute_value_through = None;
         for (line_index, line) in lines.into_iter().enumerate() {
+            self.check_cancelled()?;
             let content = line.text.trim_end_matches(['\r', '\n']);
             let enabled = conditions.iter().all(|condition| *condition);
             if attribute_value_through.is_some_and(|last_line| line_index <= last_line) {
@@ -707,7 +827,8 @@ impl Context<'_> {
                                     source_id,
                                     line.range,
                                     "endif has no matching conditional",
-                                ));
+                                )
+                                .into());
                             }
                         }
                     }
@@ -765,15 +886,21 @@ impl Context<'_> {
                         .is_some()
                         && let Some((occurrence, _, last_line)) =
                             crate::attributes::parse_lines(&selected_document, line_index, &|| {
-                                false
+                                self.cancellation.is_cancelled()
                             })
-                            .map_err(|_| {
-                                error(
+                            .map_err(|failure| match failure {
+                                crate::parser_support::ParseFailure::Cancelled => {
+                                    PreprocessFailure::Cancelled
+                                }
+                                crate::parser_support::ParseFailure::Position(_)
+                                | crate::parser_support::ParseFailure::Budget(_)
+                                | crate::parser_support::ParseFailure::InternalInvariant => error(
                                     PreprocessErrorKind::InternalInvariant,
                                     source_id.clone(),
                                     line.range,
                                     "attribute preprocessing failed",
                                 )
+                                .into(),
                             })?
                     {
                         self.state.apply_attribute(&occurrence);
@@ -796,23 +923,33 @@ impl Context<'_> {
                 source_id,
                 zero_range(),
                 "conditional directive is not closed",
-            ));
+            )
+            .into());
         }
         Ok(())
+    }
+
+    fn check_cancelled(&mut self) -> Result<(), PreprocessFailure> {
+        if self.checkpoint.is_cancelled() {
+            Err(PreprocessFailure::Cancelled)
+        } else {
+            Ok(())
+        }
     }
 
     fn bump_node(
         &mut self,
         source_id: Option<SourceId>,
         range: TextRange,
-    ) -> Result<(), PreprocessError> {
+    ) -> Result<(), PreprocessFailure> {
         if self.state.register_node(self.options.max_expanded_nodes) == Err(ExpansionLimit::Nodes) {
             return Err(error(
                 PreprocessErrorKind::NodeLimit,
                 source_id,
                 range,
                 "preprocessor node limit exceeded",
-            ));
+            )
+            .into());
         }
         Ok(())
     }
@@ -823,7 +960,7 @@ impl Context<'_> {
         source_id: Option<SourceId>,
         origin_range: TextRange,
         mapping: SourceMapping,
-    ) -> Result<(), PreprocessError> {
+    ) -> Result<(), PreprocessFailure> {
         self.source_map
             .append(value, source_id.clone(), origin_range, mapping)
             .map_err(|build_error| match build_error {
@@ -840,6 +977,7 @@ impl Context<'_> {
                     "source map segment limit exceeded",
                 ),
             })
+            .map_err(PreprocessFailure::from)
     }
 }
 
@@ -937,7 +1075,12 @@ struct SelectedLine {
     mapping: SourceMapping,
 }
 
-fn select_lines(source: &str, attributes: &BTreeMap<String, String>) -> Vec<SelectedLine> {
+fn select_lines(
+    source: &str,
+    attributes: &BTreeMap<String, String>,
+    cancellation: &dyn CancellationCheck,
+) -> Result<Vec<SelectedLine>, TextRange> {
+    let mut checkpoint = CancellationCheckpoint::new(cancellation);
     let requested_tags = attributes
         .get("tag")
         .into_iter()
@@ -948,11 +1091,16 @@ fn select_lines(source: &str, attributes: &BTreeMap<String, String>) -> Vec<Sele
         .collect::<BTreeSet<_>>();
     let requested_lines = attributes
         .get("lines")
-        .map(|value| parse_line_selection(value));
+        .map(|value| parse_line_selection(value, cancellation))
+        .transpose()?;
     let mut active_tags = Vec::<String>::new();
     let mut offset = 0;
     let mut output = Vec::new();
     for (index, line) in source.split_inclusive('\n').enumerate() {
+        let line_range = range(offset, offset + line.len());
+        if checkpoint.is_cancelled() {
+            return Err(line_range);
+        }
         let content = line.trim_end_matches(['\r', '\n']);
         if let Some(tag) = tag_marker(content, "tag::") {
             active_tags.push(tag.to_owned());
@@ -973,17 +1121,17 @@ fn select_lines(source: &str, attributes: &BTreeMap<String, String>) -> Vec<Sele
                 .any(|tag| requested_tags.contains(tag.as_str()));
         let line_selected = requested_lines
             .as_ref()
-            .is_none_or(|lines| lines.contains(&number));
+            .is_none_or(|lines| lines.contains(number));
         if tag_selected && line_selected {
             output.push(SelectedLine {
                 text: line.to_owned(),
-                range: range(offset, offset + line.len()),
+                range: line_range,
                 mapping: SourceMapping::Identity,
             });
         }
         offset += line.len();
     }
-    output
+    Ok(output)
 }
 
 fn tag_marker<'a>(value: &'a str, marker: &str) -> Option<&'a str> {
@@ -992,24 +1140,73 @@ fn tag_marker<'a>(value: &'a str, marker: &str) -> Option<&'a str> {
     rest.strip_suffix("[]")
 }
 
-fn parse_line_selection(value: &str) -> BTreeSet<usize> {
-    let mut output = BTreeSet::new();
+#[derive(Debug, Eq, PartialEq)]
+struct LineSelection {
+    ranges: Vec<(usize, usize)>,
+}
+
+impl LineSelection {
+    fn contains(&self, line: usize) -> bool {
+        let index = self
+            .ranges
+            .partition_point(|(_, range_end)| *range_end < line);
+        self.ranges
+            .get(index)
+            .is_some_and(|(range_start, range_end)| *range_start <= line && line <= *range_end)
+    }
+}
+
+fn parse_line_selection(
+    value: &str,
+    cancellation: &dyn CancellationCheck,
+) -> Result<LineSelection, TextRange> {
+    let mut checkpoint = CancellationCheckpoint::new(cancellation);
+    let mut ranges = BTreeMap::<usize, usize>::new();
     for item in value.split([';', ',']) {
+        if checkpoint.is_cancelled() {
+            return Err(zero_range());
+        }
         if let Some((start, end)) = item.trim().split_once("..") {
-            if let (Ok(start), Ok(end)) = (start.parse::<usize>(), end.parse::<usize>()) {
-                output.extend(start..=end);
+            if let (Ok(start), Ok(end)) = (start.parse::<u128>(), end.parse::<u128>())
+                && start <= end
+                && start <= usize::MAX as u128
+            {
+                let start = start as usize;
+                let end = end.min(usize::MAX as u128) as usize;
+                ranges
+                    .entry(start)
+                    .and_modify(|previous| *previous = (*previous).max(end))
+                    .or_insert(end);
             }
-        } else if let Ok(line) = item.trim().parse() {
-            output.insert(line);
+        } else if let Ok(line) = item.trim().parse::<u128>()
+            && line <= usize::MAX as u128
+        {
+            let line = line as usize;
+            ranges.entry(line).or_insert(line);
         }
     }
-    output
+    let mut normalized: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if checkpoint.is_cancelled() {
+            return Err(zero_range());
+        }
+        if let Some((_, previous_end)) = normalized.last_mut()
+            && start <= previous_end.saturating_add(1)
+        {
+            *previous_end = (*previous_end).max(end);
+        } else {
+            normalized.push((start, end));
+        }
+    }
+    Ok(LineSelection { ranges: normalized })
 }
 
 fn transform_lines(
     lines: Vec<SelectedLine>,
     attributes: &BTreeMap<String, String>,
-) -> Vec<SelectedLine> {
+    cancellation: &dyn CancellationCheck,
+) -> Result<Vec<SelectedLine>, TextRange> {
+    let mut checkpoint = CancellationCheckpoint::new(cancellation);
     let indent = attributes
         .get("indent")
         .and_then(|value| value.parse::<i32>().ok())
@@ -1018,31 +1215,33 @@ fn transform_lines(
         .get("leveloffset")
         .and_then(|value| value.parse::<i32>().ok())
         .unwrap_or(0);
-    lines
-        .into_iter()
-        .map(|mut line| {
-            let original = line.text.clone();
-            if leveloffset != 0 {
-                line.text = apply_leveloffset(&line.text, leveloffset);
-            }
-            if indent > 0 {
-                line.text = format!("{}{}", " ".repeat(indent as usize), line.text);
-            } else if indent < 0 {
-                let remove = (-indent) as usize;
-                let leading = line
-                    .text
-                    .bytes()
-                    .take_while(|byte| *byte == b' ')
-                    .count()
-                    .min(remove);
-                line.text.drain(..leading);
-            }
-            if line.text != original {
-                line.mapping = SourceMapping::WholeOrigin;
-            }
-            line
-        })
-        .collect()
+    let mut output = Vec::with_capacity(lines.len());
+    for mut line in lines {
+        if checkpoint.is_cancelled() {
+            return Err(line.range);
+        }
+        let original = line.text.clone();
+        if leveloffset != 0 {
+            line.text = apply_leveloffset(&line.text, leveloffset);
+        }
+        if indent > 0 {
+            line.text = format!("{}{}", " ".repeat(indent as usize), line.text);
+        } else if indent < 0 {
+            let remove = (-indent) as usize;
+            let leading = line
+                .text
+                .bytes()
+                .take_while(|byte| *byte == b' ')
+                .count()
+                .min(remove);
+            line.text.drain(..leading);
+        }
+        if line.text != original {
+            line.mapping = SourceMapping::WholeOrigin;
+        }
+        output.push(line);
+    }
+    Ok(output)
 }
 
 fn apply_leveloffset(line: &str, offset: i32) -> String {
@@ -1143,7 +1342,198 @@ fn zero_range() -> TextRange {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+    use crate::cancellation::CHECKPOINT_INTERVAL;
+
+    struct CancelAfter {
+        checks: AtomicUsize,
+        completed_checks: usize,
+    }
+
+    impl CancellationCheck for CancelAfter {
+        fn is_cancelled(&self) -> bool {
+            self.checks.fetch_add(1, Ordering::Relaxed) >= self.completed_checks
+        }
+    }
+
+    #[test]
+    fn preprocessing_cancels_at_a_bounded_line_checkpoint() {
+        let cancellation = CancelAfter {
+            checks: AtomicUsize::new(0),
+            completed_checks: 2,
+        };
+        let source = "paragraph\n".repeat(CHECKPOINT_INTERVAL * 3);
+
+        let failure = preprocess_cancellable(
+            &source,
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+            &cancellation,
+        )
+        .expect_err("preprocessing should be cancelled");
+
+        assert_eq!(failure, PreprocessFailure::Cancelled);
+        assert_eq!(cancellation.checks.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn noncancellable_preprocessing_facade_preserves_output() {
+        let source = "first\nsecond\n";
+        let expected = preprocess(
+            source,
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+        )
+        .expect("preprocess");
+        let actual = preprocess_cancellable(
+            source,
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+            &NeverCancel,
+        )
+        .expect("cancellable preprocess");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn enormous_line_range_is_not_materialized() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("part"),
+                source: "first\nsecond\n".into(),
+            },
+        );
+
+        let document = preprocess(
+            "include::part.adoc[lines=1..18446744073709551615]\n",
+            &snapshot,
+            &PreprocessOptions::default(),
+        )
+        .expect("bounded line selection");
+
+        assert_eq!(document.source, "first\nsecond\n");
+    }
+
+    #[test]
+    fn line_selection_parsing_remains_cancellable() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let value = (0..CHECKPOINT_INTERVAL * 3)
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        assert_eq!(
+            parse_line_selection(&value, &cancellation),
+            Err(zero_range())
+        );
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn line_selection_normalizes_unordered_overlapping_and_boundary_ranges() {
+        assert_eq!(
+            parse_line_selection("5..8,1,2..4,7..10,12,12,11,20..19,not-a-line", &NeverCancel,)
+                .expect("line selection"),
+            LineSelection {
+                ranges: vec![(1, 12)]
+            }
+        );
+
+        let maximum = usize::MAX as u128;
+        assert_eq!(
+            parse_line_selection(
+                &format!("{}..{},{}", maximum - 1, u128::MAX, maximum),
+                &NeverCancel,
+            )
+            .expect("boundary line selection"),
+            LineSelection {
+                ranges: vec![(usize::MAX - 1, usize::MAX)]
+            }
+        );
+        assert_eq!(
+            parse_line_selection(&(maximum + 1).to_string(), &NeverCancel)
+                .expect("out-of-range line selection"),
+            LineSelection { ranges: Vec::new() }
+        );
+    }
+
+    #[test]
+    fn combined_processing_classifies_preprocess_cancellation_separately() {
+        let cancellation = crate::core::CancellationToken::new();
+        cancellation.cancel();
+
+        assert!(matches!(
+            preprocess_and_analyze_cancellable(
+                &Engine::new(crate::core::AnalysisOptions::default()),
+                "paragraph\n",
+                &ResourceSnapshot::default(),
+                &PreprocessOptions::default(),
+                &cancellation,
+            ),
+            Err(PreprocessedAnalysisError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn never_cancel_combined_processing_preserves_success_and_preprocess_errors() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("part"),
+                source: "included\n".into(),
+            },
+        );
+        let engine = Engine::new(crate::core::AnalysisOptions::default());
+        let options = PreprocessOptions::default();
+        let expected =
+            preprocess_and_analyze(&engine, "include::part.adoc[]\n", &snapshot, &options)
+                .expect("compatibility analysis");
+        let actual = preprocess_and_analyze_cancellable(
+            &engine,
+            "include::part.adoc[]\n",
+            &snapshot,
+            &options,
+            &NeverCancel,
+        )
+        .expect("cancellable analysis");
+
+        assert_eq!(actual.document, expected.document);
+        assert_eq!(
+            actual.analysis.document().snapshot(),
+            expected.analysis.document().snapshot()
+        );
+        assert_eq!(
+            actual.analysis.diagnostics(),
+            expected.analysis.diagnostics()
+        );
+
+        let expected_error =
+            preprocess_and_analyze(&engine, "include::missing.adoc[]\n", &snapshot, &options)
+                .expect_err("compatibility preprocessing error");
+        let actual_error = preprocess_and_analyze_cancellable(
+            &engine,
+            "include::missing.adoc[]\n",
+            &snapshot,
+            &options,
+            &NeverCancel,
+        )
+        .expect_err("cancellable preprocessing error");
+        assert_eq!(actual_error, expected_error);
+    }
 
     #[test]
     fn include_conditionals_filters_and_source_map_are_deterministic() {

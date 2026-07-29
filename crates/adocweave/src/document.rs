@@ -536,23 +536,41 @@ pub fn document_symbols(document: &Document) -> Vec<DocumentSymbol> {
 }
 
 pub(crate) fn document_symbols_ast(document: &AstDocument) -> Vec<DocumentSymbol> {
-    let mut symbols = document
-        .structure()
-        .roots()
-        .iter()
-        .map(section_symbol)
-        .collect::<Vec<_>>();
+    document_symbols_ast_checked(document, &mut || false)
+        .expect("a noncancellable symbol query cannot be cancelled")
+}
+
+pub(crate) fn document_symbols_cancellable(
+    document: &Document,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<Vec<DocumentSymbol>, ()> {
+    document_symbols_ast_checked(document.inner(), &mut || checkpoint.is_cancelled())
+}
+
+fn document_symbols_ast_checked(
+    document: &AstDocument,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<Vec<DocumentSymbol>, ()> {
+    let mut symbols = Vec::with_capacity(document.structure().roots().len());
+    for section in document.structure().roots() {
+        symbols.push(section_symbol_checked(section, is_cancelled)?);
+    }
     let mut current_heading = None;
     for block in document.blocks() {
+        if is_cancelled() {
+            return Err(());
+        }
         match block {
             AstBlock::Heading(heading) if !matches!(heading.kind, HeadingKind::Discrete { .. }) => {
                 current_heading = Some(heading.range);
             }
             AstBlock::List(list) => {
-                let children = list_symbols(list);
-                if let Some(parent) =
-                    current_heading.and_then(|range| find_symbol_mut(&mut symbols, range))
-                {
+                let children = list_symbols_checked(list, is_cancelled)?;
+                let parent = current_heading
+                    .map(|range| find_symbol_mut_checked(&mut symbols, range, is_cancelled))
+                    .transpose()?
+                    .flatten();
+                if let Some(parent) = parent {
                     parent.children.extend(children);
                 } else {
                     symbols.extend(children);
@@ -561,11 +579,21 @@ pub(crate) fn document_symbols_ast(document: &AstDocument) -> Vec<DocumentSymbol
             _ => {}
         }
     }
-    symbols
+    Ok(symbols)
 }
 
-fn section_symbol(section: &crate::structure::Section) -> DocumentSymbol {
-    DocumentSymbol {
+fn section_symbol_checked(
+    section: &crate::structure::Section,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<DocumentSymbol, ()> {
+    if is_cancelled() {
+        return Err(());
+    }
+    let mut children = Vec::with_capacity(section.children.len());
+    for child in &section.children {
+        children.push(section_symbol_checked(child, is_cancelled)?);
+    }
+    Ok(DocumentSymbol {
         name: section.heading.title.clone(),
         kind: match section.heading.kind {
             crate::structure::SectionKind::DocumentTitle => SymbolKind::DocumentTitle,
@@ -577,56 +605,64 @@ fn section_symbol(section: &crate::structure::Section) -> DocumentSymbol {
         },
         range: section.heading.range,
         selection_range: section.heading.title_range,
-        children: section.children.iter().map(section_symbol).collect(),
+        children,
+    })
+}
+
+fn list_symbols_checked(
+    list: &crate::parser::ListBlock,
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<Vec<DocumentSymbol>, ()> {
+    let mut symbols = Vec::with_capacity(list.items.len());
+    for item in &list.items {
+        if is_cancelled() {
+            return Err(());
+        }
+        let mut children = Vec::new();
+        for child in &item.children {
+            children.extend(list_symbols_checked(child, is_cancelled)?);
+        }
+        for continuation in &item.continuations {
+            if let AstBlock::List(list) = continuation {
+                children.extend(list_symbols_checked(list, is_cancelled)?);
+            }
+        }
+        symbols.push(DocumentSymbol {
+            name: if item.terms.is_empty() {
+                item.text.clone()
+            } else {
+                item.terms
+                    .iter()
+                    .map(|term| term.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+            kind: SymbolKind::ListItem,
+            range: item.range,
+            selection_range: item.text_range,
+            children,
+        });
     }
+    Ok(symbols)
 }
 
-fn list_symbols(list: &crate::parser::ListBlock) -> Vec<DocumentSymbol> {
-    list.items
-        .iter()
-        .map(|item| {
-            let mut children = item
-                .children
-                .iter()
-                .flat_map(list_symbols)
-                .collect::<Vec<_>>();
-            for continuation in &item.continuations {
-                if let AstBlock::List(list) = continuation {
-                    children.extend(list_symbols(list));
-                }
-            }
-            DocumentSymbol {
-                name: if item.terms.is_empty() {
-                    item.text.clone()
-                } else {
-                    item.terms
-                        .iter()
-                        .map(|term| term.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                },
-                kind: SymbolKind::ListItem,
-                range: item.range,
-                selection_range: item.text_range,
-                children,
-            }
-        })
-        .collect()
-}
-
-fn find_symbol_mut(
-    symbols: &mut [DocumentSymbol],
+fn find_symbol_mut_checked<'a>(
+    symbols: &'a mut [DocumentSymbol],
     range: TextRange,
-) -> Option<&mut DocumentSymbol> {
+    is_cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<&'a mut DocumentSymbol>, ()> {
     for symbol in symbols {
-        if symbol.range == range {
-            return Some(symbol);
+        if is_cancelled() {
+            return Err(());
         }
-        if let Some(found) = find_symbol_mut(&mut symbol.children, range) {
-            return Some(found);
+        if symbol.range == range {
+            return Ok(Some(symbol));
+        }
+        if let Some(found) = find_symbol_mut_checked(&mut symbol.children, range, is_cancelled)? {
+            return Ok(Some(found));
         }
     }
-    None
+    Ok(None)
 }
 
 pub fn render_symbols_json(symbols: &[DocumentSymbol]) -> String {
@@ -668,7 +704,8 @@ fn write_json_string(output: &mut String, value: &str) {
 mod tests {
     use super::{
         DocumentElement, ReferenceTargetKind, document_element_at_ast as document_element_at,
-        document_symbols_ast as document_symbols, generate_heading_ids_ast as generate_heading_ids,
+        document_symbols_ast as document_symbols, document_symbols_ast_checked,
+        generate_heading_ids_ast as generate_heading_ids,
         reference_targets_ast as reference_targets, render_symbols_json,
         source_language_candidates,
     };
@@ -741,6 +778,23 @@ mod tests {
         assert_eq!(symbols[0].children[0].name, "One");
         assert_eq!(symbols[0].children[0].children[0].name, "Child");
         assert_eq!(symbols[0].children[1].name, "Two");
+    }
+
+    #[test]
+    fn document_symbol_generation_is_cancellable() {
+        let source = (0..crate::cancellation::CHECKPOINT_INTERVAL * 2)
+            .map(|index| format!("== Section {index}\n"))
+            .collect::<String>();
+        let parsed = parse(&source).expect("valid source");
+        let mut checks = 0;
+
+        let result = document_symbols_ast_checked(&parsed.ast, &mut || {
+            checks += 1;
+            checks > crate::cancellation::CHECKPOINT_INTERVAL
+        });
+
+        assert_eq!(result, Err(()));
+        assert_eq!(checks, crate::cancellation::CHECKPOINT_INTERVAL + 1);
     }
 
     #[test]

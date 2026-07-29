@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::cancellation::CancellationCheckpoint;
+use crate::core::{CancellationCheck, NeverCancel};
 use crate::diagnostic::{Diagnostic, RelatedInformation, TextEdit};
 use crate::document::DocumentSymbol;
 use crate::inline::Reference;
@@ -141,21 +143,64 @@ impl fmt::Display for ProjectionError {
 
 impl Error for ProjectionError {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectionFailure {
+    LimitExceeded(ProjectionError),
+    Cancelled,
+}
+
+impl fmt::Display for ProjectionFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LimitExceeded(error) => error.fmt(formatter),
+            Self::Cancelled => formatter.write_str("source origin projection was cancelled"),
+        }
+    }
+}
+
+impl Error for ProjectionFailure {}
+
+impl From<ProjectionError> for ProjectionFailure {
+    fn from(error: ProjectionError) -> Self {
+        Self::LimitExceeded(error)
+    }
+}
+
 impl PreprocessedAnalysis {
     pub fn project_origins(
         &self,
         limits: ProjectionLimits,
     ) -> Result<AnalysisProjection, ProjectionError> {
-        project_origins(self, limits)
+        match self.project_origins_cancellable(limits, &NeverCancel) {
+            Ok(projection) => Ok(projection),
+            Err(ProjectionFailure::LimitExceeded(error)) => Err(error),
+            Err(ProjectionFailure::Cancelled) => {
+                unreachable!("NeverCancel cannot cancel source origin projection")
+            }
+        }
+    }
+
+    /// Projects source origins with cooperative cancellation.
+    pub fn project_origins_cancellable(
+        &self,
+        limits: ProjectionLimits,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<AnalysisProjection, ProjectionFailure> {
+        project_origins(self, limits, cancellation)
     }
 }
 
 fn project_origins(
     input: &PreprocessedAnalysis,
     limits: ProjectionLimits,
-) -> Result<AnalysisProjection, ProjectionError> {
+    cancellation: &dyn CancellationCheck,
+) -> Result<AnalysisProjection, ProjectionFailure> {
     let map = &input.document;
     let mut projected_segments = 0_u64;
+    let mut checkpoint = CancellationCheckpoint::new(cancellation);
+    if checkpoint.is_cancelled() {
+        return Err(ProjectionFailure::Cancelled);
+    }
     let attribute_occurrences = input
         .analysis
         .document_attribute_occurrences()
@@ -168,6 +213,7 @@ fn project_origins(
                 value.range,
                 &mut projected_segments,
                 limits,
+                &mut checkpoint,
             )?;
             let name_origins = project_attribute_range(
                 map,
@@ -175,6 +221,7 @@ fn project_origins(
                 value.range,
                 &mut projected_segments,
                 limits,
+                &mut checkpoint,
             )?;
             let value_origins = project_attribute_range(
                 map,
@@ -182,6 +229,7 @@ fn project_origins(
                 value.range,
                 &mut projected_segments,
                 limits,
+                &mut checkpoint,
             )?;
             let value_lines = value
                 .value
@@ -195,6 +243,7 @@ fn project_origins(
                         value.range,
                         &mut projected_segments,
                         limits,
+                        &mut checkpoint,
                     )?;
                     let indent_origins = project_attribute_range(
                         map,
@@ -202,6 +251,7 @@ fn project_origins(
                         value.range,
                         &mut projected_segments,
                         limits,
+                        &mut checkpoint,
                     )?;
                     let content_origins = project_attribute_range(
                         map,
@@ -209,6 +259,7 @@ fn project_origins(
                         value.range,
                         &mut projected_segments,
                         limits,
+                        &mut checkpoint,
                     )?;
                     let ending_origins = project_attribute_range(
                         map,
@@ -216,6 +267,7 @@ fn project_origins(
                         value.range,
                         &mut projected_segments,
                         limits,
+                        &mut checkpoint,
                     )?;
                     let continuation_origins = line
                         .continuation
@@ -226,6 +278,7 @@ fn project_origins(
                                 value.range,
                                 &mut projected_segments,
                                 limits,
+                                &mut checkpoint,
                             )
                         })
                         .transpose()?
@@ -239,7 +292,7 @@ fn project_origins(
                         continuation_origins,
                     })
                 })
-                .collect::<Result<Vec<_>, ProjectionError>>()?;
+                .collect::<Result<Vec<_>, ProjectionFailure>>()?;
             Ok(ProjectedDocumentAttribute {
                 value,
                 origins,
@@ -248,7 +301,7 @@ fn project_origins(
                 value_lines,
             })
         })
-        .collect::<Result<Vec<_>, ProjectionError>>()?;
+        .collect::<Result<Vec<_>, ProjectionFailure>>()?;
     let attribute_bindings = input
         .analysis
         .attribute_environment()
@@ -264,6 +317,7 @@ fn project_origins(
                     occurrence.range,
                     &mut projected_segments,
                     limits,
+                    &mut checkpoint,
                 )?,
                 name_origins: project_attribute_range(
                     map,
@@ -271,6 +325,7 @@ fn project_origins(
                     occurrence.range,
                     &mut projected_segments,
                     limits,
+                    &mut checkpoint,
                 )?,
                 value_origins: project_attribute_range(
                     map,
@@ -278,11 +333,12 @@ fn project_origins(
                     occurrence.range,
                     &mut projected_segments,
                     limits,
+                    &mut checkpoint,
                 )?,
                 value,
             })
         })
-        .collect::<Result<Vec<_>, ProjectionError>>()?;
+        .collect::<Result<Vec<_>, ProjectionFailure>>()?;
     let attribute_references = input
         .analysis
         .attribute_references()
@@ -295,6 +351,7 @@ fn project_origins(
                 value.range,
                 &mut projected_segments,
                 limits,
+                &mut checkpoint,
             )?;
             let name_origins = project_attribute_range(
                 map,
@@ -302,6 +359,7 @@ fn project_origins(
                 value.range,
                 &mut projected_segments,
                 limits,
+                &mut checkpoint,
             )?;
             Ok(ProjectedAttributeReference {
                 value,
@@ -309,15 +367,20 @@ fn project_origins(
                 name_origins,
             })
         })
-        .collect::<Result<Vec<_>, ProjectionError>>()?;
+        .collect::<Result<Vec<_>, ProjectionFailure>>()?;
     let mut project = |range| {
-        let origins = map.origins_for_range(ExpandedRange::new(range));
+        if checkpoint.is_cancelled() {
+            return Err(ProjectionFailure::Cancelled);
+        }
+        let origins = map
+            .origins_for_range_cancellable(ExpandedRange::new(range), &mut checkpoint)
+            .map_err(|()| ProjectionFailure::Cancelled)?;
         projected_segments = projected_segments.saturating_add(origins.len() as u64);
         if projected_segments > u64::from(limits.max_origin_segments) {
-            Err(ProjectionError {
+            Err(ProjectionFailure::LimitExceeded(ProjectionError {
                 limit: limits.max_origin_segments,
                 actual: projected_segments,
-            })
+            }))
         } else {
             Ok(origins)
         }
@@ -339,12 +402,12 @@ fn project_origins(
                         value,
                     })
                 })
-                .collect::<Result<Vec<_>, ProjectionError>>()?;
+                .collect::<Result<Vec<_>, ProjectionFailure>>()?;
             let fixes = diagnostic
                 .fixes
                 .iter()
                 .cloned()
-                .map(|fix| -> Result<_, ProjectionError> {
+                .map(|fix| -> Result<_, ProjectionFailure> {
                     let edits: Vec<_> = fix
                         .edits()
                         .iter()
@@ -355,7 +418,7 @@ fn project_origins(
                                 value,
                             })
                         })
-                        .collect::<Result<_, ProjectionError>>()?;
+                        .collect::<Result<_, ProjectionFailure>>()?;
                     let applicable = edits.iter().all(|edit| edit.origins.len() == 1)
                         && edits.iter().all(|edit| {
                             map.mapping_is_identity(ExpandedRange::new(edit.value.range))
@@ -367,7 +430,7 @@ fn project_origins(
                         edits,
                     })
                 })
-                .collect::<Result<Vec<_>, ProjectionError>>()?;
+                .collect::<Result<Vec<_>, ProjectionFailure>>()?;
             Ok(ProjectedDiagnostic {
                 diagnostic,
                 origins,
@@ -375,7 +438,7 @@ fn project_origins(
                 fixes,
             })
         })
-        .collect::<Result<Vec<_>, ProjectionError>>()?;
+        .collect::<Result<Vec<_>, ProjectionFailure>>()?;
     let mut local_targets = Vec::new();
     for link in input.analysis.links() {
         let Some(value) = crate::local_target::LocalTargetReference::from_link(link) else {
@@ -422,7 +485,12 @@ fn project_origins(
             value: value.clone(),
         });
     }
+    let mut directives = Vec::with_capacity(input.document.directives.len());
     for directive in &input.document.directives {
+        if cancellation.is_cancelled() {
+            return Err(ProjectionFailure::Cancelled);
+        }
+        directives.push(directive.clone());
         let Some(value) = directive.local_target() else {
             continue;
         };
@@ -440,15 +508,23 @@ fn project_origins(
             target_origins: vec![target_origin],
         });
     }
-    let symbols = crate::document::document_symbols(input.analysis.document())
-        .into_iter()
-        .map(|symbol| project_symbol(symbol, &mut project))
-        .collect::<Result<Vec<_>, ProjectionError>>()?;
+    let mut symbol_checkpoint = CancellationCheckpoint::new(cancellation);
+    let symbols = crate::document::document_symbols_cancellable(
+        input.analysis.document(),
+        &mut symbol_checkpoint,
+    )
+    .map_err(|()| ProjectionFailure::Cancelled)?
+    .into_iter()
+    .map(|symbol| project_symbol(symbol, &mut project))
+    .collect::<Result<Vec<_>, ProjectionFailure>>()?;
+    if cancellation.is_cancelled() {
+        return Err(ProjectionFailure::Cancelled);
+    }
     Ok(AnalysisProjection {
         attribute_bindings,
         attribute_occurrences,
         attribute_references,
-        directives: input.document.directives.clone(),
+        directives,
         diagnostics,
         local_targets,
         references,
@@ -463,21 +539,28 @@ fn project_attribute_range(
     occurrence_range: TextRange,
     projected_segments: &mut u64,
     limits: ProjectionLimits,
-) -> Result<Vec<SourceOrigin>, ProjectionError> {
+    checkpoint: &mut CancellationCheckpoint<'_>,
+) -> Result<Vec<SourceOrigin>, ProjectionFailure> {
+    if checkpoint.is_cancelled() {
+        return Err(ProjectionFailure::Cancelled);
+    }
     let origins = if range.is_empty() {
-        map.origins_for_empty_range_within(
+        map.origins_for_empty_range_within_cancellable(
             ExpandedRange::new(range),
             ExpandedRange::new(occurrence_range),
+            checkpoint,
         )
+        .map_err(|()| ProjectionFailure::Cancelled)?
     } else {
-        map.origins_for_range(ExpandedRange::new(range))
+        map.origins_for_range_cancellable(ExpandedRange::new(range), checkpoint)
+            .map_err(|()| ProjectionFailure::Cancelled)?
     };
     *projected_segments = projected_segments.saturating_add(origins.len() as u64);
     if *projected_segments > u64::from(limits.max_origin_segments) {
-        Err(ProjectionError {
+        Err(ProjectionFailure::LimitExceeded(ProjectionError {
             limit: limits.max_origin_segments,
             actual: *projected_segments,
-        })
+        }))
     } else {
         Ok(origins)
     }
@@ -485,8 +568,8 @@ fn project_attribute_range(
 
 fn project_symbol(
     mut symbol: DocumentSymbol,
-    project: &mut impl FnMut(TextRange) -> Result<Vec<SourceOrigin>, ProjectionError>,
-) -> Result<ProjectedDocumentSymbol, ProjectionError> {
+    project: &mut impl FnMut(TextRange) -> Result<Vec<SourceOrigin>, ProjectionFailure>,
+) -> Result<ProjectedDocumentSymbol, ProjectionFailure> {
     let children = std::mem::take(&mut symbol.children)
         .into_iter()
         .map(|child| project_symbol(child, project))
@@ -501,12 +584,75 @@ fn project_symbol(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
-    use crate::core::{Engine, SourceId};
+    use crate::core::{AnalysisOptions, CancellationCheck, Engine, SourceId};
     use crate::preprocessor::{
         PreprocessOptions, ResourceDocument, ResourceSnapshot, preprocess_and_analyze,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn origin_projection_cancels_at_a_bounded_range_checkpoint() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = "xref:target[Target]\n\n".repeat(crate::cancellation::CHECKPOINT_INTERVAL * 2);
+        let input = preprocess_and_analyze(
+            &Engine::new(AnalysisOptions::default()),
+            &source,
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+        )
+        .expect("analysis");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        let failure = input
+            .project_origins_cancellable(ProjectionLimits::default(), &cancellation)
+            .expect_err("projection should be cancelled");
+
+        assert_eq!(failure, ProjectionFailure::Cancelled);
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn never_cancel_projection_preserves_success_and_limit_errors() {
+        let input = preprocess_and_analyze(
+            &Engine::new(AnalysisOptions::default()),
+            "== Section\n\nxref:missing[Missing]\n",
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+        )
+        .expect("analysis");
+
+        assert_eq!(
+            input
+                .project_origins_cancellable(ProjectionLimits::default(), &NeverCancel)
+                .expect("cancellable projection"),
+            input
+                .project_origins(ProjectionLimits::default())
+                .expect("compatibility projection")
+        );
+
+        let limits = ProjectionLimits {
+            max_origin_segments: 0,
+        };
+        let expected = input
+            .project_origins(limits)
+            .expect_err("compatibility projection limit");
+        assert_eq!(
+            input
+                .project_origins_cancellable(limits, &NeverCancel)
+                .expect_err("cancellable projection limit"),
+            ProjectionFailure::LimitExceeded(expected)
+        );
+    }
 
     #[test]
     fn feature_products_are_projected_from_one_fixed_document() {

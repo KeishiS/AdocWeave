@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use adocweave::SourceId;
 use adocweave::preprocess::{
-    DirectiveKind, PreprocessErrorKind, PreprocessOptions, ResourceDocument, ResourceSnapshot,
-    SourceMapping, preprocess,
+    DirectiveKind, PreprocessErrorKind, PreprocessFailure, PreprocessOptions, ProjectionFailure,
+    ProjectionLimits, ResourceDocument, ResourceSnapshot, SourceMapping, preprocess,
+    preprocess_and_analyze_cancellable, preprocess_cancellable,
 };
+use adocweave::{AnalysisOptions, CancellationToken, Engine};
 use serde_json::Value;
 
 fn public_fixture() -> Value {
@@ -194,4 +196,44 @@ fn every_public_processing_limit_accepts_its_boundary_and_rejects_the_next_item(
         .expect("exact processing boundaries");
     assert_eq!(document.source, "text");
     assert_eq!(document.source_map().len(), 1);
+}
+
+#[test]
+fn cancellable_preprocess_and_projection_apis_are_public() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    assert_eq!(
+        preprocess_cancellable(
+            "text\n",
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+            &cancellation,
+        )
+        .expect_err("cancelled preprocess"),
+        PreprocessFailure::Cancelled
+    );
+
+    let analysis = adocweave::preprocess::preprocess_and_analyze(
+        &Engine::new(AnalysisOptions::default()),
+        "text\n",
+        &ResourceSnapshot::default(),
+        &PreprocessOptions::default(),
+    )
+    .expect("analysis");
+    assert_eq!(
+        analysis
+            .project_origins_cancellable(ProjectionLimits::default(), &cancellation)
+            .expect_err("cancelled projection"),
+        ProjectionFailure::Cancelled
+    );
+    assert!(matches!(
+        preprocess_and_analyze_cancellable(
+            &Engine::new(AnalysisOptions::default()),
+            "text\n",
+            &ResourceSnapshot::default(),
+            &PreprocessOptions::default(),
+            &cancellation,
+        ),
+        Err(adocweave::preprocess::PreprocessedAnalysisError::Cancelled)
+    ));
 }

@@ -1,6 +1,9 @@
 //! Versioned, allocation-owning WASM boundary over the deterministic core.
 
-use adocweave::preprocess::{ProjectionLimits, preprocess};
+use adocweave::preprocess::{
+    PreprocessedAnalysisError, ProjectionFailure, ProjectionLimits, preprocess,
+    preprocess_and_analyze_cancellable_with_options,
+};
 use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId, VERSION};
 
 mod preprocess_projection;
@@ -80,65 +83,49 @@ fn execute_request(
     request: request_conversion::ExecutionRequest,
     cancellation: &dyn CancellationCheck,
 ) -> Result<WasmResponse, WasmError> {
-    let preprocessed = if let Some(preprocess_plan) = request.preprocess {
-        Some(
-            preprocess(
-                &request.source,
-                &preprocess_plan.snapshot,
-                preprocess_plan.options.preprocess(),
-            )
-            .map_err(|error| WasmError {
-                code: error.kind.as_str().to_owned(),
-                message: error.to_string(),
-            })?,
-        )
-    } else {
-        None
-    };
-    let preprocessed_analysis = if let Some(document) = preprocessed {
-        let expanded = request
-            .engine
-            .analyze_cancellable_with_source_id(
-                request.source_id.as_ref(),
-                &document.source,
-                cancellation,
-            )
-            .map_err(wasm_error)?;
-        Some(adocweave::preprocess::PreprocessedAnalysis {
-            document,
-            analysis: expanded,
-        })
-    } else {
-        None
-    };
-    let standalone_analysis = if preprocessed_analysis.is_none() {
-        Some(
-            request
-                .engine
-                .analyze_cancellable_with_source_id(
-                    request.source_id.as_ref(),
+    let (preprocessed_analysis, standalone_analysis) = match request.processing {
+        request_conversion::ProcessingExecution::Combined { snapshot, options } => (
+            Some(
+                preprocess_and_analyze_cancellable_with_options(
                     &request.source,
+                    &snapshot,
+                    &options,
                     cancellation,
                 )
-                .map_err(wasm_error)?,
-        )
-    } else {
-        None
+                .map_err(preprocessed_analysis_error)?,
+            ),
+            None,
+        ),
+        request_conversion::ProcessingExecution::Standalone { engine } => (
+            None,
+            Some(
+                engine
+                    .analyze_cancellable_with_source_id(
+                        request.source_id.as_ref(),
+                        &request.source,
+                        cancellation,
+                    )
+                    .map_err(wasm_error)?,
+            ),
+        ),
     };
     let analysis = preprocessed_analysis
         .as_ref()
         .map(|analysis| &analysis.analysis)
         .or(standalone_analysis.as_ref())
-        .expect("exactly one analysis variant is assigned");
+        .expect("exactly one processing variant is assigned");
     let attribute_projection = if request.requested_products.attribute_queries {
         preprocessed_analysis
             .as_ref()
             .map(|analysis| {
                 analysis
-                    .project_origins(ProjectionLimits::default())
-                    .map_err(|error| WasmError {
-                        code: "limit-exceeded".to_owned(),
-                        message: error.to_string(),
+                    .project_origins_cancellable(ProjectionLimits::default(), cancellation)
+                    .map_err(|error| match error {
+                        ProjectionFailure::LimitExceeded(error) => WasmError {
+                            code: "limit-exceeded".to_owned(),
+                            message: error.to_string(),
+                        },
+                        ProjectionFailure::Cancelled => cancelled_error(),
                     })
             })
             .transpose()?
@@ -188,6 +175,21 @@ fn wasm_error(error: ParseError) -> WasmError {
     WasmError {
         code: error.code().as_str().to_owned(),
         message: error.to_string(),
+    }
+}
+
+fn preprocessed_analysis_error(error: PreprocessedAnalysisError) -> WasmError {
+    match error {
+        PreprocessedAnalysisError::Options(error) => WasmError {
+            code: "invalid-options".to_owned(),
+            message: error.to_string(),
+        },
+        PreprocessedAnalysisError::Preprocess(error) => WasmError {
+            code: error.kind.as_str().to_owned(),
+            message: error.to_string(),
+        },
+        PreprocessedAnalysisError::Parse(error) => wasm_error(error),
+        PreprocessedAnalysisError::Cancelled => cancelled_error(),
     }
 }
 
@@ -1078,6 +1080,27 @@ mod tests {
         let cancellation = CancellationToken::new();
         cancellation.cancel();
         let error = process_request(request("text"), &cancellation).expect_err("cancelled");
+        assert_eq!(error.code, "cancelled");
+    }
+
+    #[test]
+    fn wasm_combined_processing_propagates_preprocessing_cancellation() {
+        let mut combined = request("include::part.adoc[]\n");
+        combined.preprocess = Some(WasmAnalysisPreprocessInput {
+            resources: BTreeMap::from([(
+                "part.adoc".to_owned(),
+                WasmResource {
+                    source_id: "part".to_owned(),
+                    source: "included\n".to_owned(),
+                },
+            )]),
+            options: WasmPreprocessOptions::default(),
+        });
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = process_request(combined, &cancellation).expect_err("cancelled");
+
         assert_eq!(error.code, "cancelled");
     }
 

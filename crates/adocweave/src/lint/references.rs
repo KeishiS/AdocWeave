@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
 
 use crate::diagnostic::{Applicability, RelatedInformation};
@@ -26,14 +26,20 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
     sink: &mut LintDiagnosticSink<'_>,
     mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
 ) {
-    let targets = crate::document::reference_targets_ast(document);
+    let mut targets = BTreeSet::new();
+    for target in document.identifiers().targets() {
+        if sink.should_stop() {
+            return;
+        }
+        targets.insert(target.id.clone());
+    }
     fn inspect(
         inline: &crate::inline::Inline,
-        targets: &[crate::document::ReferenceTarget],
+        targets: &BTreeSet<String>,
         authored_url_policy: &AuthoredUrlPolicy,
         sink: &mut LintDiagnosticSink<'_>,
     ) -> ControlFlow<()> {
-        if sink.is_full() {
+        if sink.should_stop() {
             return ControlFlow::Break(());
         }
         use crate::inline::Inline;
@@ -45,7 +51,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
                         LintDiagnosticBody::new("URL is rejected by the configured policy")
                     });
                 }
-                if sink.is_full() {
+                if sink.should_stop() {
                     return ControlFlow::Break(());
                 }
                 if link.target_expansion_error.is_none()
@@ -77,7 +83,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
             }
             Inline::Reference(reference) => match &reference.target {
                 Some(ReferenceKey::Local { anchor }) => {
-                    if !targets.iter().any(|target| target.id == *anchor) {
+                    if !targets.contains(anchor.as_str()) {
                         sink.emit(UNRESOLVED_CROSS_REFERENCE, reference.target_range, || {
                             LintDiagnosticBody::new("local cross reference target does not exist")
                         });
@@ -89,7 +95,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
                             LintDiagnosticBody::new("unsafe cross-document target")
                         });
                     }
-                    if sink.is_full() {
+                    if sink.should_stop() {
                         return ControlFlow::Break(());
                     }
                     if reference.target_expansion_error.is_none()
@@ -133,7 +139,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
             | Inline::Macro(_)
             | Inline::Formula(_) => {}
         }
-        if sink.is_full() {
+        if sink.should_stop() {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -141,7 +147,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
     }
     let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
         observe(node);
-        if sink.is_full() {
+        if sink.should_stop() {
             return ControlFlow::Break(());
         }
         if let crate::walker::SemanticNode::Inline(inline) = node {
@@ -243,7 +249,7 @@ pub(super) fn lint_anchors(context: &LintContext<'_>, sink: &mut LintDiagnosticS
     let document = context.document();
     let mut ids = BTreeMap::<String, TextRange>::new();
     for anchor in document.anchors() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         if !anchor.valid {
@@ -252,11 +258,11 @@ pub(super) fn lint_anchors(context: &LintContext<'_>, sink: &mut LintDiagnosticS
             });
         }
     }
-    if sink.is_full() {
+    if sink.should_stop() {
         return;
     }
-    for target in crate::document::reference_targets_ast(document) {
-        if sink.is_full() {
+    for target in document.identifiers().targets() {
+        if sink.should_stop() {
             break;
         }
         if let Some(first) = ids.insert(target.id.clone(), target.id_range) {

@@ -12,7 +12,7 @@ use super::{
 pub(super) fn lint_syntax_issues(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
     let syntax = context.syntax();
     for issue in syntax.issues() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         let rule = match issue.class {

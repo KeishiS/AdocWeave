@@ -17,7 +17,7 @@ pub(super) fn lint_source_lines(
     let mut blank_count = 0;
 
     for line in source_document.lines() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         let content = source_document

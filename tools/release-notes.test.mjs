@@ -18,6 +18,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /wire型を公開schemaから生成/);
   assert.match(notes, /filesystemの列挙と読込をhostへ集約/);
   assert.match(notes, /文書外属性と属性展開上限を一つの検証済み処理契約へ統合/);
+  assert.match(notes, /前処理、解析、Lintおよび生成元への位置投影へ協調キャンセルを伝播/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -47,6 +48,10 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`/);
   assert.match(notes, /省略時は従来と同じ32と1048576/);
   assert.match(notes, /不一致は処理前に`invalid-options`/);
+  assert.match(notes, /`PreprocessedAnalysisError`へ`Cancelled`を追加/);
+  assert.match(notes, /網羅的に`match`するRustコード/);
+  assert.match(notes, /preprocess_and_analyze_cancellable_with_options/);
+  assert.match(notes, /PreprocessedAnalysis::project_origins_cancellable/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
