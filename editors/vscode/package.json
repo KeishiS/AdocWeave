@@ -2,7 +2,7 @@
   "name": "adocweave-vscode",
   "displayName": "AdocWeave",
   "description": "AdocWeave Language Server client and AsciiDoc syntax highlighting",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "publisher": "adocweave",
   "license": "MIT OR Apache-2.0",
   "homepage": "https://github.com/KeishiS/adocweave",
