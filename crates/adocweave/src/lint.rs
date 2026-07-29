@@ -1,6 +1,7 @@
 //! Output-independent lint catalog, configuration, and orchestration.
 
 mod source;
+mod syntax;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
@@ -16,7 +17,7 @@ use crate::parser::{ParseConfig, parse_with_config};
 #[cfg(test)]
 use crate::source::TextSize;
 use crate::source::{PositionError, TextRange};
-use crate::syntax::{SyntaxIssueClass, SyntaxIssueDetail, SyntaxTree};
+use crate::syntax::SyntaxTree;
 
 /// Stable identifier for a lint rule.
 ///
@@ -508,7 +509,7 @@ pub(crate) fn lint_parsed_document(
     source::lint_source_lines(source_document, &mut sink)?;
 
     if !sink.is_full() {
-        lint_syntax_issues(syntax, &mut sink);
+        syntax::lint_syntax_issues(syntax, &mut sink);
     }
     if !sink.is_full() {
         lint_headings(document, &mut sink);
@@ -715,55 +716,6 @@ fn lint_tables_with_observer<'document>(
         }
         ControlFlow::Continue(())
     });
-}
-
-fn lint_syntax_issues(syntax: &SyntaxTree, sink: &mut LintDiagnosticSink<'_>) {
-    for issue in syntax.issues() {
-        if sink.is_full() {
-            break;
-        }
-        let rule = match issue.class {
-            SyntaxIssueClass::HeadingMarkerSpace => HEADING_MARKER_SPACE,
-            SyntaxIssueClass::InvalidHeadingLevel => INVALID_HEADING_LEVEL,
-            SyntaxIssueClass::UnclosedInline => UNCLOSED_INLINE,
-            SyntaxIssueClass::NestingLimitExceeded => NESTING_LIMIT_EXCEEDED,
-            SyntaxIssueClass::UnclosedBlock => UNCLOSED_BLOCK,
-            SyntaxIssueClass::MissingSourceLanguage => MISSING_SOURCE_LANGUAGE,
-            SyntaxIssueClass::InvalidAttribute => INVALID_ATTRIBUTE,
-            SyntaxIssueClass::InvalidUrl => INVALID_URL_SCHEME,
-            SyntaxIssueClass::InvalidCrossReference => INVALID_CROSS_REFERENCE,
-            SyntaxIssueClass::InconsistentList => INCONSISTENT_LIST,
-            SyntaxIssueClass::InvalidStem => INVALID_STEM,
-            SyntaxIssueClass::MacroBoundary => MACRO_BOUNDARY,
-        };
-        if issue.class == SyntaxIssueClass::MacroBoundary {
-            let SyntaxIssueDetail::MacroBoundary { name } = issue.detail else {
-                continue;
-            };
-            sink.emit(rule, issue.range, || {
-                let source = syntax.source_document().source();
-                let start = issue.range.start().to_usize();
-                let fix = source[..start]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|character| character.is_ascii_alphanumeric())
-                    .then(|| {
-                        let range = TextRange::new(issue.range.start(), issue.range.start())
-                            .expect("empty insertion range is ordered");
-                        ("insert a space before the inline macro", range, " ")
-                    });
-                LintDiagnosticBody::new(format!(
-                    "{name} inline macro must start at a token boundary"
-                ))
-                .with_optional_fix(fix, Applicability::Maybe)
-            });
-            continue;
-        }
-        sink.emit(rule, issue.range, || {
-            let fix = issue.fix.map(|fix| (fix.label, fix.range, fix.replacement));
-            LintDiagnosticBody::new(issue.message).with_optional_fix(fix, Applicability::Always)
-        });
-    }
 }
 
 fn lint_links_and_references(
@@ -1432,6 +1384,29 @@ mod tests {
         ] {
             let config = LintConfig {
                 max_line_length: 4,
+                max_diagnostics,
+                ..LintConfig::default()
+            };
+
+            let diagnostics = lint(source, &config).expect("lint");
+            let codes = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>();
+
+            assert_eq!(codes, expected, "max_diagnostics={max_diagnostics}");
+        }
+    }
+
+    #[test]
+    fn syntax_phase_limit_is_applied_before_semantic_phases_and_canonical_sort() {
+        let source = "*x\n\n== Repeated\n\n== Repeated\n";
+        for (max_diagnostics, expected) in [
+            (0, Vec::<&str>::new()),
+            (1, vec!["unclosed-inline"]),
+            (2, vec!["unclosed-inline", "duplicate-heading-id"]),
+        ] {
+            let config = LintConfig {
                 max_diagnostics,
                 ..LintConfig::default()
             };
