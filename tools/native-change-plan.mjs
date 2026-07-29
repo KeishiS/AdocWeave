@@ -48,6 +48,8 @@ const NON_RELEASE_FILES = new Set([
   ".gitignore",
   "AGENTS.md",
   "CONTRIBUTING.adoc",
+  "tools/release-workflow-policy.mjs",
+  "tools/release-workflow-policy.test.mjs",
 ]);
 const NATIVE_TOOLS = [
   "dependency-governance.sh",

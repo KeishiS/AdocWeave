@@ -59,6 +59,7 @@ test("未分類のsourceとbuild入力はfail-safeで両方のcandidateを要求
     "crates/new-adapter/src/lib.rs",
     "new-build-system/config.json",
     "tools/new-release-helper.mjs",
+    "tools/release-workflow-policy-helper.mjs",
   ]) {
     assert.deepEqual(candidateImpact(pathname), { global: true, native: true }, pathname);
   }
@@ -70,6 +71,8 @@ test("成果物へ影響しない既知の文書とfixtureだけを明示的に�
     "docs/developer-guide/architecture.adoc",
     "fixtures/basic/input.adoc",
     ".github/ISSUE_TEMPLATE/bug_report.yml",
+    "tools/release-workflow-policy.mjs",
+    "tools/release-workflow-policy.test.mjs",
   ]) {
     assert.deepEqual(candidateImpact(pathname), { global: false, native: false }, pathname);
   }
