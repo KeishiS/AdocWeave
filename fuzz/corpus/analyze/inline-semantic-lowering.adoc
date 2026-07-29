@@ -1,0 +1,2 @@
+*outer _日本語_* xref:doc.adoc#節[参照 `code`] image:図.png[代替,{width}]
+_unclosed
