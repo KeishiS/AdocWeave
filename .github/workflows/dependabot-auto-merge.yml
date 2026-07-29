@@ -166,7 +166,7 @@ jobs:
           echo "eligible=$(jq -r .eligible controller-decision.json)" >> "$GITHUB_OUTPUT"
           jq . controller-decision.json >> "$GITHUB_STEP_SUMMARY"
 
-  revoke:
+  inspect-revoke:
     needs: decide
     if: >-
       always() &&
@@ -175,15 +175,46 @@ jobs:
       (
         (
           github.event.workflow_run.name == 'CI and Release' &&
-          github.event.workflow_run.event == 'pull_request' &&
-          github.event.workflow_run.actor.login == 'dependabot[bot]'
+          github.event.workflow_run.event == 'pull_request'
         ) ||
         (
           github.event.workflow_run.name == 'Dependabot review signal' &&
-          github.event.workflow_run.event == 'pull_request_review' &&
-          github.event.workflow_run.conclusion == 'success'
+          github.event.workflow_run.event == 'pull_request_review'
         )
       )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      candidate: ${{ steps.identity.outputs.candidate }}
+    steps:
+      - name: Identify a Dependabot request that may require revocation
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > inspect-revoke-pr.json
+          if jq -e --arg repository "$GITHUB_REPOSITORY" '
+            .user.login == "dependabot[bot]"
+            and .base.ref == "main"
+            and .base.repo.full_name == $repository
+            and .head.repo.full_name == $repository
+            and (.head.ref | startswith("dependabot/"))
+          ' inspect-revoke-pr.json > /dev/null; then
+            echo "candidate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "candidate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  revoke:
+    needs: [decide, inspect-revoke]
+    if: >-
+      always() &&
+      needs.decide.outputs.eligible != 'true' &&
+      needs.inspect-revoke.result == 'success' &&
+      needs.inspect-revoke.outputs.candidate == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
