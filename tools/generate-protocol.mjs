@@ -4,6 +4,7 @@ import {
   generateRustPreprocessInputs,
   generateRustRenderInputs,
   generateRustRequestEnums,
+  generateRustRequestWire,
   generateRustResponseTypes,
   generateRustSharedTypes,
 } from "./protocol-rust-codegen.mjs";
@@ -50,6 +51,7 @@ const rust = `${header}\npub const PROTOCOL_SCHEMA_VERSION: u16 = ${schema.schem
 const preprocessRust = `${header}\n${generateRustPreprocessInputs(schema)}\n`;
 const renderInputRust = `${header}\n${generateRustRenderInputs(schema)}\n`;
 const requestEnumRust = `${header}\n${generateRustRequestEnums(schema)}\n`;
+const requestWireRust = `${header}\n${generateRustRequestWire(schema)}\n`;
 const sharedRust = `${header}\n${generateRustSharedTypes(schema)}\n`;
 const responseRust = `${header}\n${generateRustResponseTypes(schema)}\n`;
 const outputs = [
@@ -59,6 +61,7 @@ const outputs = [
   [new URL("crates/adocweave-wasm/src/preprocess_wire_generated.rs", root), preprocessRust],
   [new URL("crates/adocweave-wasm/src/render_input_wire_generated.rs", root), renderInputRust],
   [new URL("crates/adocweave-wasm/src/request_enum_generated.rs", root), requestEnumRust],
+  [new URL("crates/adocweave-wasm/src/request_wire_generated.rs", root), requestWireRust],
   [new URL("crates/adocweave-wasm/src/shared_wire_generated.rs", root), sharedRust],
   [new URL("crates/adocweave-wasm/src/response_wire_generated.rs", root), responseRust],
 ];
