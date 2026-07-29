@@ -608,6 +608,117 @@ fn invalid_project_configuration_does_not_fall_back_to_default_analysis() {
 }
 
 #[test]
+fn invalidated_project_configuration_clears_old_feature_views() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-lsp-invalidated-config-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    let config_path = root.join(adocweave_config::FILE_NAME);
+    let source = "xref:other.adoc[Other]\ntrailing  \n";
+    fs::write(&document_path, source).expect("document");
+    fs::write(&config_path, "schema-version = 1\n").expect("configuration");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
+    let mut service = LanguageService::default();
+    initialize(&mut service, &["utf-16"]);
+    service.workspace_folders_changed(typed(json!({
+        "event": {"added": [{"uri": root_uri, "name": "root"}], "removed": []}
+    })));
+    open(&mut service, document_uri.as_str(), 1, source);
+    assert!(service.documents.snapshot(document_uri.as_str()).is_some());
+
+    fs::write(&config_path, "schema-version = 99\n").expect("invalid configuration");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": config_uri, "type": 2}]
+    })));
+
+    assert_eq!(jobs.len(), 1);
+    assert!(service.documents.snapshot(document_uri.as_str()).is_none());
+    assert!(
+        service
+            .hover(&document_uri, lsp::Position::new(0, 6))
+            .expect("hover")
+            .is_none()
+    );
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code
+            != Some(lsp::NumberOrString::String(
+                "trailing-whitespace".to_owned(),
+            ))
+    }));
+    for job in jobs {
+        assert!(job.workspace_problem.is_some());
+        adopt(&mut service, job);
+    }
+    assert!(service.documents.snapshot(document_uri.as_str()).is_none());
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-lsp-overlay-plan-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    let config_path = root.join(adocweave_config::FILE_NAME);
+    fs::write(&document_path, "disk\n").expect("document");
+    fs::write(
+        &config_path,
+        "schema-version = 1\n[resources]\nmax-files = 2\nmax-total-bytes = 16\nmax-resource-bytes = 16\n",
+    )
+    .expect("configuration");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null, "rootUri": root_uri, "capabilities": {}
+    })));
+    open(&mut service, document_uri.as_str(), 1, "`open`\n");
+    fs::write(
+        &config_path,
+        "schema-version = 1\n[resources]\nmax-files = 2\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+    )
+    .expect("stricter configuration");
+
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": config_uri, "type": 2}]
+    })));
+
+    assert_eq!(jobs.len(), 1);
+    assert!(jobs[0].workspace.is_none());
+    assert!(
+        jobs[0]
+            .workspace_problem
+            .as_ref()
+            .expect("input error")
+            .message
+            .contains("retained resource byte")
+    );
+    assert!(service.documents.snapshot(document_uri.as_str()).is_none());
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert!(service.documents.snapshot(document_uri.as_str()).is_none());
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(lsp::NumberOrString::String(
+                "workspace-input-error".to_owned(),
+            ))
+    }));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn workspace_configuration_reanalyzes_open_documents_with_enabled_rules() {
     let mut service = LanguageService::default();
     open(

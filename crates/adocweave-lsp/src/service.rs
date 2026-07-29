@@ -543,8 +543,20 @@ impl LanguageService {
             .workspace
             .reload_roots_with_open_sources(&roots, &parsed_open_sources)
         {
-            self.workspace_error = Some(error);
-            return Vec::new();
+            let failed_closed = self.workspace.last_load_failed_closed();
+            self.workspace_error = Some(error.clone());
+            if !failed_closed {
+                return Vec::new();
+            }
+            return open_sources
+                .into_iter()
+                .filter_map(|(uri, _, _)| {
+                    let options = self.analysis_options_for(None);
+                    let mut job = self.documents.reconfigure(&uri, options)?;
+                    attach_workspace(&mut job, Err(error.clone()));
+                    Some(job)
+                })
+                .collect();
         }
         self.workspace_error = None;
         open_sources
@@ -581,8 +593,21 @@ impl LanguageService {
             .workspace
             .reload_roots_with_open_sources(&root_uris, &parsed_open_sources)
         {
-            self.workspace_error = Some(error);
-            return Vec::new();
+            let failed_closed = self.workspace.last_load_failed_closed();
+            self.workspace_error = Some(error.clone());
+            if !failed_closed {
+                return Vec::new();
+            }
+            self.workspace_roots = roots;
+            return open_sources
+                .into_iter()
+                .filter_map(|(uri, _, _)| {
+                    let options = self.analysis_options_for(None);
+                    let mut job = self.documents.reconfigure(&uri, options)?;
+                    attach_workspace(&mut job, Err(error.clone()));
+                    Some(job)
+                })
+                .collect();
         }
         self.workspace_roots = roots;
         self.workspace_error = None;
