@@ -8,33 +8,22 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 実装責務の分割
+== 次の設計整理
 
-実装の責務を追いやすくし、変更時に確認すべき範囲を限定できる構成へ段階的に整理します。
+公開入口、構文解析および出力処理の責務分割に続いて、外部I/O、意味木の走査およびTable解析の
+正本を一つにします。
 
-* https://github.com/KeishiS/adocweave/issues/150[CLI command定義とworkflowの責務分割]
-* https://github.com/KeishiS/adocweave/issues/151[Language Serverの状態管理とfeature変換の分割]
-* https://github.com/KeishiS/adocweave/issues/152[WASM wire型の正本と変換責務の整理]
+* https://github.com/KeishiS/adocweave/issues/232[Workspaceの状態管理とfilesystem I/O境界の分離]
+* https://github.com/KeishiS/adocweave/issues/233[意味木のchild topologyとwalker契約の統合]
+* https://github.com/KeishiS/adocweave/issues/234[Table解析の型付きphase pipeline化]
 
-CLI、Language ServerおよびWASM adapterは、状態や入出力を所有する境界と、入力から出力を
-組み立てる変換処理を分けます。一括置換は行わず、公開契約を検証しながら独立した変更単位で
-進めます。
+最初にfilesystemへアクセスする権限をhostへ集約し、Workspaceを検証済みresourceからsnapshotと
+依存graphを作る状態機械へ整理します。次に意味木のchild関係を一か所で定義し、immutable、
+mutableおよびconsumer固有の走査が同じ到達規則を利用するようにします。最後にTable解析を
+scan、configurationおよびlayoutの所有権を順に消費する処理へ分けます。
 
-== コア処理の境界整理
-
-adapterの責務分割に続いて、構文解析、前処理、HTML生成および診断の状態遷移と変換処理を
-型とテストで区別します。
-
-* https://github.com/KeishiS/adocweave/issues/166[Preprocessorの展開状態機械とsource projectionの分離]
-* https://github.com/KeishiS/adocweave/issues/167[Block parserの前進保証付き状態機械への整理]
-* https://github.com/KeishiS/adocweave/issues/168[HTMLの安全判定とserializationの型による分離]
-* https://github.com/KeishiS/adocweave/issues/169[Inline認識indexと意味node構築の分離]
-* https://github.com/KeishiS/adocweave/issues/170[Lint rule実行の共通diagnostic sinkへの統合]
-
-最初にsource originを全consumerへ渡すPreprocessorと、構文解析の前進・回復を担うBlock parserを
-整理します。その後、HTMLの安全性境界、Inlineの認識境界、Lint ruleの実行境界を順に扱います。
-ファイルの行数を減らすこと自体は目的とせず、同じ入力状態から得た値だけを組み合わせること、
-処理が必ず前進すること、出力上限と安全性判定を一か所で保証することを完了条件とします。
+各作業では、既存の入力と出力だけでなく、処理量の上限、cancellation、UTF-8の範囲、走査順、
+resource budgetおよび不正入力からの回復を先に自動検査で固定します。
 
 == 依存更新の運用
 
