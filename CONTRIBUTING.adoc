@@ -114,7 +114,42 @@ Advisoryを一時的に除外する場合は、RustSec advisory ID、担当者�
 
 Dependabotのpull requestでも通常のreviewと必須検査を省略しません。Cargo更新ではlockfile、license、取得元、
 advisoryおよびRust stableへの影響を、GitHub Actions更新では完全なcommit SHAへの固定とRelease Notesを
-確認します。安全な自動mergeの条件が実装されるまでは手動で統合します。
+確認します。
+
+[#dependabot-auto-merge]
+=== Dependabotの自動merge
+
+``.github/dependabot-auto-merge-policy.json``は、自動mergeの停止状態と許可範囲の正本です。
+``enabled``が``false``の場合、項目が欠けている場合または設定を解釈できない場合は、自動mergeしません。
+初期状態は停止です。停止中も判定結果をhead commitに対応するcheckへ記録しますが、Pull Requestの
+auto-mergeを有効化しません。
+
+自動mergeの候補は、Dependabotが同じrepositoryに作成した``main``向けのbranchに限定します。
+Cargoのpatch更新とVS Code拡張の開発用npm依存のpatch更新だけを候補とし、次の更新は手動で確認します。
+
+* majorまたはminor更新
+* security update
+* GitHub Actionsの更新
+* VS Code拡張のruntime依存
+* 複数dependencyの更新とgrouped update
+* Dependabot以外が加えた変更
+* 許可されたmanifestとlockfile以外を含む変更
+
+候補であっても、最新の``main``を基準とする必須check、review規則および競合検査がすべて完了するまで
+mergeしません。自動化はGitHubのauto-mergeへ、検証済みのhead commitを指定して登録します。
+workflow自身がPull Requestを直ちにmergeすることはありません。判定workflowはPull Request由来のcodeを
+checkoutまたは実行せず、write権限をauto-merge登録だけを行うjobへ限定します。
+
+自動mergeを開始する前に、repositoryの``main`` rulesetで必須checkのstrict設定を有効にします。
+さらに、人間の承認を0件のままにするか1件以上にするか、Cargoの間接dependencyを許可するか、
+security patchを将来許可するかをrepository管理者が決定します。GitHub Actions、npm runtime依存および
+minor以上の更新は、初期導入の対象にしません。
+
+停止するときは、通常のPull Requestでpolicyの``enabled``を``false``へ変更します。すでにauto-mergeが
+有効なDependabot Pull Requestがある場合は、対象とhead commitを確認してGitHub上でauto-mergeを解除します。
+復旧するときは、停止理由が解消され、rulesetとActions権限が期待どおりであることを確認してから、
+policyを変更するPull Requestを作成します。復旧後も既存の判定結果を再利用せず、各Pull Requestの最新headで
+CIとeligibility checkを再実行します。手動で条件を迂回するoverrideは設けません。
 
 Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新します。Frontendへruntime dependencyを追加する
 場合は、lockfileに基づくSBOM生成を先に実装します。

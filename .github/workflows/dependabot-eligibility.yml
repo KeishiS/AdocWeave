@@ -1,0 +1,159 @@
+name: Dependabot auto-merge eligibility
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  metadata:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changed_files: ${{ steps.changed.outputs.files }}
+      dependencies: ${{ steps.normalized.outputs.dependencies }}
+      dependency_group: ${{ steps.metadata.outputs.dependency-group }}
+      dependency_type: ${{ steps.metadata.outputs.dependency-type }}
+      directory: ${{ steps.metadata.outputs.directory }}
+      maintainer_changes: ${{ steps.normalized.outputs.maintainer_changes }}
+      package_ecosystem: ${{ steps.metadata.outputs.package-ecosystem }}
+      target_branch: ${{ steps.metadata.outputs.target-branch }}
+      update_type: ${{ steps.metadata.outputs.update-type }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - id: metadata
+        uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7 # v2.5.0
+        with:
+          github-token: ${{ github.token }}
+      - id: normalized
+        env:
+          DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          MAINTAINER_CHANGES: ${{ steps.metadata.outputs.maintainer-changes }}
+        run: |
+          dependencies="$(jq -cn --arg value "$DEPENDENCY_NAMES" \
+            '$value | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')"
+          if [ "$MAINTAINER_CHANGES" = "true" ]; then
+            maintainer_changes=true
+          else
+            maintainer_changes=false
+          fi
+          {
+            echo "dependencies=$dependencies"
+            echo "maintainer_changes=$maintainer_changes"
+          } >> "$GITHUB_OUTPUT"
+      - id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[].filename' | jq -Rsc 'split("\n") | map(select(length > 0))')"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
+  attest:
+    needs: metadata
+    if: always() && needs.metadata.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Evaluate the tracked policy
+        id: decision
+        env:
+          ACTOR: ${{ github.actor }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_REPOSITORY: ${{ github.repository }}
+          CHANGED_FILES: ${{ needs.metadata.outputs.changed_files }}
+          DEPENDENCIES: ${{ needs.metadata.outputs.dependencies }}
+          DEPENDENCY_GROUP: ${{ needs.metadata.outputs.dependency_group }}
+          DEPENDENCY_TYPE: ${{ needs.metadata.outputs.dependency_type }}
+          DIRECTORY: ${{ needs.metadata.outputs.directory }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MAINTAINER_CHANGES: ${{ needs.metadata.outputs.maintainer_changes }}
+          PACKAGE_ECOSYSTEM: ${{ needs.metadata.outputs.package_ecosystem }}
+          TARGET_BRANCH: ${{ needs.metadata.outputs.target_branch }}
+          UPDATE_TYPE: ${{ needs.metadata.outputs.update_type }}
+        run: |
+          jq -n \
+            --arg actor "$ACTOR" \
+            --arg author "$AUTHOR" \
+            --arg base_ref "$BASE_REF" \
+            --arg base_repository "$BASE_REPOSITORY" \
+            --arg head_ref "$HEAD_REF" \
+            --arg head_repository "$HEAD_REPOSITORY" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg package_ecosystem "$PACKAGE_ECOSYSTEM" \
+            --arg directory "$DIRECTORY" \
+            --arg target_branch "$TARGET_BRANCH" \
+            --arg dependency_type "$DEPENDENCY_TYPE" \
+            --arg update_type "$UPDATE_TYPE" \
+            --arg dependency_group "$DEPENDENCY_GROUP" \
+            --argjson dependencies "$DEPENDENCIES" \
+            --argjson maintainer_changes "$MAINTAINER_CHANGES" \
+            --argjson changed_files "$CHANGED_FILES" \
+            '{
+              pullRequest: {
+                actor: $actor, author: $author, baseRef: $base_ref,
+                baseRepository: $base_repository, headRef: $head_ref,
+                headRepository: $head_repository, headSha: $head_sha
+              },
+              metadata: {
+                packageEcosystem: $package_ecosystem, directory: $directory,
+                targetBranch: $target_branch, dependencyType: $dependency_type,
+                updateType: $update_type, dependencies: $dependencies,
+                dependencyGroup: $dependency_group,
+                maintainerChanges: $maintainer_changes
+              },
+              changedFiles: $changed_files
+            }' > eligibility-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            eligibility .github/dependabot-auto-merge-policy.json eligibility-input.json \
+            > eligibility-decision.json
+          echo "eligible=$(jq -r .eligible eligibility-decision.json)" >> "$GITHUB_OUTPUT"
+          jq . eligibility-decision.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Record the head-bound eligibility check
+        env:
+          ELIGIBLE: ${{ steps.decision.outputs.eligible }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$ELIGIBLE" = true ]; then conclusion=success; else conclusion=neutral; fi
+          jq -n \
+            --arg conclusion "$conclusion" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg summary "$(jq -c . eligibility-decision.json)" \
+            '{
+              "name": "dependabot / eligibility",
+              "head_sha": $head_sha,
+              "status": "completed",
+              conclusion: $conclusion,
+              output: {
+                title: "Dependabot auto-merge policy",
+                summary: $summary
+              }
+            }' > check-run.json
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            --input check-run.json >/dev/null

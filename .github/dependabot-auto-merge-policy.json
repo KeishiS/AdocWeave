@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "enabled": false,
+  "baseBranch": "main",
+  "mergeMethod": "SQUASH",
+  "maximumDependencies": 1,
+  "allowDependencyGroups": false,
+  "allowMaintainerChanges": false,
+  "requiredApprovals": 0,
+  "requiredCheckAppId": 15368,
+  "requiredChecks": [
+    "quality / dependencies",
+    "quality / fuzz",
+    "quality / nix-package",
+    "quality / verify"
+  ],
+  "allowedUpdates": [
+    {
+      "packageEcosystem": "cargo",
+      "directory": "/",
+      "dependencyTypes": [
+        "direct:production",
+        "direct:development",
+        "indirect"
+      ],
+      "updateTypes": [
+        "version-update:semver-patch"
+      ],
+      "changedFiles": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/*/Cargo.toml"
+      ]
+    },
+    {
+      "packageEcosystem": "cargo",
+      "directory": "/editors/zed",
+      "dependencyTypes": [
+        "direct:production",
+        "direct:development",
+        "indirect"
+      ],
+      "updateTypes": [
+        "version-update:semver-patch"
+      ],
+      "changedFiles": [
+        "editors/zed/Cargo.toml",
+        "editors/zed/Cargo.lock"
+      ]
+    },
+    {
+      "packageEcosystem": "cargo",
+      "directory": "/fuzz",
+      "dependencyTypes": [
+        "direct:production",
+        "direct:development",
+        "indirect"
+      ],
+      "updateTypes": [
+        "version-update:semver-patch"
+      ],
+      "changedFiles": [
+        "fuzz/Cargo.toml",
+        "fuzz/Cargo.lock"
+      ]
+    },
+    {
+      "packageEcosystem": "npm",
+      "directory": "/editors/vscode",
+      "dependencyTypes": [
+        "direct:development"
+      ],
+      "updateTypes": [
+        "version-update:semver-patch"
+      ],
+      "changedFiles": [
+        "editors/vscode/package.json",
+        "editors/vscode/package-lock.json"
+      ]
+    }
+  ]
+}
