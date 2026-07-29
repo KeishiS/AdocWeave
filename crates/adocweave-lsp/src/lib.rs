@@ -5,6 +5,7 @@ mod diagnostics;
 mod document_symbols;
 mod hover;
 mod lifecycle;
+mod navigation;
 mod position;
 mod semantic_tokens;
 mod service;
