@@ -10,26 +10,28 @@ import {
 import manifest from "../release-manifest.json" with { type: "json" };
 import protocol from "../protocol/public-api.json" with { type: "json" };
 
-test(`Release Notesはv${RELEASE_NOTES_VERSION}の互換性訂正と移行方法を含む`, () => {
+test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を含む`, () => {
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /互換性のないRust API変更/);
-  assert.match(notes, /v0\.17\.1からRust API.*追加で変更していません/);
-  assert.match(notes, /v0\.17\.1のtag、source commitおよびassetは置き換えず/);
+  assert.match(notes, /公開Rust APIに互換性のない型変更/);
+  assert.match(notes, /wire型を公開schemaから生成/);
+  assert.match(notes, /CLI、Language Server、構文解析、前処理、HTML生成および診断の責務を分割/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
-  assert.match(notes, /v0\.17\.1からJSON形式のWASM protocol、schema、CLI引数、診断codeおよびHTML契約を変更していません/);
-  assert.match(notes, /v0\.17\.1のRelease Notesで公開APIを変更していないと説明したことは誤り/);
+  assert.match(notes, /v0\.18\.0からJSONのfield名、列挙値およびworker envelopeを変更していません/);
+  assert.match(notes, /CLI引数、診断code、HTML契約.*v0\.18\.0から変更していません/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /`WasmResponse::package_version`.*`String`/);
-  assert.match(notes, /`ParseSummary`.*`usize`から`u32`/);
-  assert.match(notes, /`serialization-failed`/);
-  assert.match(notes, /`LintConfig::protected_attribute_severity`は削除/);
-  assert.match(notes, /`LintConfig::set_rule\(PROTECTED_ATTRIBUTE, RuleSettings/);
+  assert.match(notes, /`WasmPreprocessResponse::package_version`は`&'static str`から所有値の`String`/);
+  assert.match(notes, /response\.package_version\.as_str\(\)/);
+  assert.match(notes, /VERSION\.to_owned\(\)/);
+  assert.match(notes, /`WasmSourceMapSegment::mapping`は`String`から`WasmSourceMapping`/);
+  assert.match(notes, /WasmSourceMapping::Identity/);
+  assert.match(notes, /WasmSourceMapping::WholeOrigin/);
+  assert.match(notes, /browser、WorkerまたはJSON APIの利用コードに移行は不要/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
@@ -52,7 +54,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の互換性訂正と移行方法
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.17.1"), /v0\.18\.0専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.18\.0専用/);
+  assert.throws(() => buildReleaseNotes("v0.18.0"), /v0\.19\.0専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.19\.0専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });
