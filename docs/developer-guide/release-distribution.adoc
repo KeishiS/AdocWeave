@@ -149,6 +149,9 @@ Native archiveへ影響する場合はWindowsとmacOSのbuild、native smokeお�
 Browser package、Zed拡張またはVS Code拡張だけに影響する場合はglobal成果物だけを構築し、
 実Chromiumによる受入検査も行います。tracked fileは成果物への影響をすべて明示的に分類し、
 未分類のpathが追加された場合は事前検査を失敗させます。
+installation E2Eはnative candidateの検証が成功した場合だけ実行し、global成果物など別系統の
+意図的なskipを失敗として継承しません。native candidateの検証が失敗、cancelまたはskipになった場合は
+installation E2Eを実行せず、最終gateを失敗させます。
 
 成果物のbuildと配布計画の生成は、``cargo make ci-preflight``が成功した後に開始します。
 この事前検査では書式、生成file、workflow policy、release contractおよび変更pathの分類を確認します。
