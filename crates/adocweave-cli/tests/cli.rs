@@ -90,6 +90,86 @@ fn configured_resource_limit_rejects_root_before_processing() {
 }
 
 #[test]
+fn configured_resource_limit_bounds_standard_input_while_reading() {
+    let root = tempfile::tempdir().expect("root");
+    let config = root.path().join(".adocweave.toml");
+    std::fs::write(
+        &config,
+        "schema-version = 1\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+    )
+    .expect("configuration");
+    let mut child = adocweave()
+        .current_dir(root.path())
+        .args(["check", "--config", ".adocweave.toml", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("command");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"12345")
+        .expect("input");
+    let output = child.wait_with_output().expect("output");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("single-resource byte limit"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn explicit_primary_parent_does_not_expand_include_root_authority() {
+    let root = tempfile::tempdir().expect("root");
+    let includes = root.path().join("includes");
+    std::fs::create_dir(&includes).expect("include root");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\"includes\"]\nmax-files = 2\nmax-total-bytes = 128\nmax-resource-bytes = 128\n",
+    )
+    .expect("configuration");
+    std::fs::write(
+        root.path().join("document.adoc"),
+        "include::includes/part.adoc[]\n",
+    )
+    .expect("primary");
+    std::fs::write(includes.join("part.adoc"), "included\n").expect("include");
+    std::fs::write(root.path().join("outside.adoc"), "outside\n").expect("outside");
+
+    let accepted = adocweave()
+        .current_dir(root.path())
+        .args(["check", "document.adoc"])
+        .output()
+        .expect("authorized include");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    std::fs::write(
+        root.path().join("document.adoc"),
+        "include::outside.adoc[]\n",
+    )
+    .expect("outside include request");
+    let rejected = adocweave()
+        .current_dir(root.path())
+        .args(["check", "document.adoc"])
+        .output()
+        .expect("unauthorized include");
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("outside"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+}
+
+#[test]
 fn analysis_resource_count_includes_root_and_includes() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(
