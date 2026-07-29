@@ -66,7 +66,7 @@ pub struct AnalysisOptions {
     pub attributes: crate::attributes::ExternalAttributes,
 }
 
-/// Cooperative cancellation checked at deterministic parsing checkpoints.
+/// Cooperative cancellation checked at deterministic checkpoints throughout analysis.
 pub trait CancellationCheck: Send + Sync {
     fn is_cancelled(&self) -> bool;
 }
@@ -302,7 +302,7 @@ impl fmt::Display for ParseError {
             Self::UnsupportedSyntax => {
                 formatter.write_str("unsupported syntax is forbidden in strict mode")
             }
-            Self::Cancelled => formatter.write_str("parsing was cancelled"),
+            Self::Cancelled => formatter.write_str("analysis was cancelled"),
             Self::InternalInvariant => formatter.write_str("internal parsing invariant failed"),
         }
     }
@@ -396,7 +396,7 @@ fn analyze_cancellable_with_source_id(
             limits: options.syntax.limits,
         },
         &options.attributes,
-        &|| cancellation.is_cancelled(),
+        cancellation,
     )
     .map_err(|failure| match failure {
         crate::parser_support::ParseFailure::Position(error) => ParseError::Position(error),
@@ -408,13 +408,8 @@ fn analyze_cancellable_with_source_id(
         crate::parser_support::ParseFailure::Cancelled => ParseError::Cancelled,
         crate::parser_support::ParseFailure::InternalInvariant => ParseError::InternalInvariant,
     })?;
-    if options.syntax.syntax_mode == SyntaxMode::Strict
-        && ast
-            .blocks()
-            .iter()
-            .any(|block| matches!(block, AstBlock::Unsupported(_)))
-    {
-        return Err(ParseError::UnsupportedSyntax);
+    if options.syntax.syntax_mode == SyntaxMode::Strict {
+        enforce_strict_syntax(&ast, cancellation)?;
     }
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
@@ -446,6 +441,40 @@ fn analyze_cancellable_with_source_id(
     })
 }
 
+fn enforce_strict_syntax(
+    document: &crate::parser::AstDocument,
+    cancellation: &dyn CancellationCheck,
+) -> Result<(), ParseError> {
+    let mut checkpoint = crate::cancellation::CancellationCheckpoint::new(cancellation);
+    match has_unsupported_syntax(document, &mut checkpoint) {
+        Ok(true) => Err(ParseError::UnsupportedSyntax),
+        Ok(false) => Ok(()),
+        Err(()) => Err(ParseError::Cancelled),
+    }
+}
+
+fn has_unsupported_syntax(
+    document: &crate::parser::AstDocument,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<bool, ()> {
+    let result = crate::walker::try_walk_block_slice(document.blocks(), |node| {
+        if checkpoint.is_cancelled() {
+            return std::ops::ControlFlow::Break(Err(()));
+        }
+        if matches!(
+            node,
+            crate::walker::SemanticNode::Block(AstBlock::Unsupported(_))
+        ) {
+            return std::ops::ControlFlow::Break(Ok(true));
+        }
+        std::ops::ControlFlow::Continue(())
+    });
+    match result {
+        std::ops::ControlFlow::Break(result) => result,
+        std::ops::ControlFlow::Continue(()) => Ok(false),
+    }
+}
+
 fn enforce_limit(resource: &'static str, limit: u32, actual: usize) -> Result<(), ParseError> {
     if actual > limit_to_usize(limit) {
         Err(ParseError::LimitExceeded {
@@ -465,12 +494,35 @@ fn limit_to_usize(limit: u32) -> usize {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
     use super::{
         AnalysisOptions, CancellationCheck, CancellationToken, Engine, ParseError, SourceId,
         SyntaxOptions, analyze, analyze_cancellable,
     };
+
+    #[test]
+    fn strict_mode_scan_cancels_after_parser_and_lowering() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = (0..crate::cancellation::CHECKPOINT_INTERVAL * 2)
+            .map(|index| format!("paragraph {index}\n\n"))
+            .collect::<String>();
+        let parsed = crate::parser::parse(&source).expect("parse");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        let result = super::enforce_strict_syntax(&parsed.ast, &cancellation);
+
+        assert_eq!(result, Err(ParseError::Cancelled));
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
 
     fn assert_send_sync<T: Send + Sync>() {}
 
@@ -580,6 +632,7 @@ mod tests {
             .expect_err("cancelled");
         assert_eq!(error, ParseError::Cancelled);
         assert_eq!(error.code().as_str(), "cancelled");
+        assert_eq!(error.to_string(), "analysis was cancelled");
     }
 
     #[test]

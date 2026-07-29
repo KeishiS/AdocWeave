@@ -1,5 +1,7 @@
 //! Deterministic cooperative-cancellation checkpoints shared by core stages.
 
+use std::cmp::Ordering;
+
 use crate::core::CancellationCheck;
 
 pub(crate) const CHECKPOINT_INTERVAL: usize = 256;
@@ -30,6 +32,59 @@ impl<'a> CancellationCheckpoint<'a> {
     pub(crate) fn is_cancelled_now(&self) -> bool {
         self.cancellation.is_cancelled()
     }
+
+    pub(crate) const fn cancellation(&self) -> &'a dyn CancellationCheck {
+        self.cancellation
+    }
+}
+
+pub(crate) fn sort_by_cancellable<T>(
+    values: &mut Vec<T>,
+    compare: &mut impl FnMut(&T, &T) -> Ordering,
+    checkpoint: &mut CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
+    if checkpoint.is_cancelled() {
+        return Err(());
+    }
+    if values.len() < 2 {
+        return Ok(());
+    }
+    let middle = values.len() / 2;
+    let mut right = values.split_off(middle);
+    let mut left = std::mem::take(values);
+    sort_by_cancellable(&mut left, compare, checkpoint)?;
+    sort_by_cancellable(&mut right, compare, checkpoint)?;
+
+    values.reserve(left.len() + right.len());
+    let mut left = left.into_iter().peekable();
+    let mut right = right.into_iter().peekable();
+    while left.peek().is_some() && right.peek().is_some() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        if compare(
+            left.peek().expect("left is non-empty"),
+            right.peek().expect("right is non-empty"),
+        ) != Ordering::Greater
+        {
+            values.push(left.next().expect("left is non-empty"));
+        } else {
+            values.push(right.next().expect("right is non-empty"));
+        }
+    }
+    for value in left {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        values.push(value);
+    }
+    for value in right {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        values.push(value);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -54,6 +109,60 @@ mod tests {
         for _ in 0..=CHECKPOINT_INTERVAL {
             assert!(!checkpoint.is_cancelled());
         }
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn cancellable_sort_is_stable_and_does_not_require_clone() {
+        #[derive(Debug, Eq, PartialEq)]
+        struct Item {
+            key: u8,
+            order: u8,
+        }
+
+        let mut values = vec![
+            Item { key: 2, order: 0 },
+            Item { key: 1, order: 1 },
+            Item { key: 2, order: 2 },
+            Item { key: 1, order: 3 },
+        ];
+        sort_by_cancellable(
+            &mut values,
+            &mut |left, right| left.key.cmp(&right.key),
+            &mut CancellationCheckpoint::new(&crate::core::NeverCancel),
+        )
+        .expect("NeverCancel cannot cancel sorting");
+
+        assert_eq!(
+            values,
+            vec![
+                Item { key: 1, order: 1 },
+                Item { key: 1, order: 3 },
+                Item { key: 2, order: 0 },
+                Item { key: 2, order: 2 },
+            ]
+        );
+    }
+
+    #[test]
+    fn cancellable_sort_checks_at_a_bounded_work_interval() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+        let mut values = (0..CHECKPOINT_INTERVAL * 2).rev().collect::<Vec<_>>();
+        let result = sort_by_cancellable(
+            &mut values,
+            &mut Ord::cmp,
+            &mut CancellationCheckpoint::new(&cancellation),
+        );
+
+        assert_eq!(result, Err(()));
         assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
     }
 }

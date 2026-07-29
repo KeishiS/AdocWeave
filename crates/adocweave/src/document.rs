@@ -170,11 +170,17 @@ pub(crate) fn reference_targets_ast(document: &AstDocument) -> Vec<ReferenceTarg
     document.identifiers().targets.clone()
 }
 
-pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
+pub(crate) fn build_identifiers(
+    document: &AstDocument,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<DocumentIdentifiers, ()> {
     let mut inline_anchors = Vec::new();
-    crate::walker::walk_ast(document, |node| {
+    let walked = crate::walker::try_walk_ast(document, |node| {
+        if checkpoint.is_cancelled() {
+            return std::ops::ControlFlow::Break(());
+        }
         let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(anchor)) = node else {
-            return;
+            return std::ops::ControlFlow::Continue(());
         };
         if matches!(
             anchor.kind,
@@ -184,28 +190,48 @@ pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
         {
             inline_anchors.push(anchor);
         }
+        std::ops::ControlFlow::Continue(())
     });
-    let mut used = document
-        .anchors()
-        .iter()
-        .filter(|anchor| anchor.valid)
-        .map(|anchor| anchor.id.clone())
-        .chain(inline_anchors.iter().map(|anchor| anchor.target.clone()))
-        .collect::<BTreeSet<_>>();
+    if walked.is_break() {
+        return Err(());
+    }
+    let mut used = BTreeSet::new();
+    for anchor in document.anchors().iter().filter(|anchor| anchor.valid) {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        used.insert(anchor.id.clone());
+    }
+    for anchor in &inline_anchors {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        used.insert(anchor.target.clone());
+    }
     let mut occurrences = BTreeMap::<String, usize>::new();
     let mut heading_ids = Vec::new();
     let mut targets = Vec::new();
-    crate::walker::walk_block_slice(document.blocks(), |node| {
+    let walked = crate::walker::try_walk_block_slice(document.blocks(), |node| {
+        if checkpoint.is_cancelled() {
+            return std::ops::ControlFlow::Break(());
+        }
         let crate::walker::SemanticNode::Block(block) = node else {
-            return;
+            return std::ops::ControlFlow::Continue(());
         };
         let range = block.range();
-        let attached = document
-            .anchors()
-            .iter()
-            .filter(|anchor| anchor.valid && anchor.target_range == Some(range))
-            .collect::<Vec<_>>();
+        let mut attached = Vec::new();
+        for anchor in document.anchors() {
+            if checkpoint.is_cancelled() {
+                return std::ops::ControlFlow::Break(());
+            }
+            if anchor.valid && anchor.target_range == Some(range) {
+                attached.push(anchor);
+            }
+        }
         for anchor in &attached {
+            if checkpoint.is_cancelled() {
+                return std::ops::ControlFlow::Break(());
+            }
             targets.push(ReferenceTarget {
                 kind: match block {
                     AstBlock::Heading(heading) => match heading.kind {
@@ -224,16 +250,18 @@ pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
             });
         }
         if let AstBlock::Heading(heading) = block {
-            let base = heading_id_base(&heading.text);
-            let (id, id_range) = attached.first().map_or_else(
-                || {
-                    (
-                        unique_heading_id(&base, &mut occurrences, &mut used),
-                        heading.text_range,
-                    )
-                },
-                |anchor| (anchor.id.clone(), anchor.id_range),
-            );
+            let Ok(base) = heading_id_base_cancellable(&heading.text, checkpoint) else {
+                return std::ops::ControlFlow::Break(());
+            };
+            let (id, id_range) = if let Some(anchor) = attached.first() {
+                (anchor.id.clone(), anchor.id_range)
+            } else {
+                let Ok(id) = unique_heading_id(&base, &mut occurrences, &mut used, checkpoint)
+                else {
+                    return std::ops::ControlFlow::Break(());
+                };
+                (id, heading.text_range)
+            };
             heading_ids.push(HeadingId {
                 range: heading.text_range,
                 id_range,
@@ -256,8 +284,15 @@ pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
                 });
             }
         }
+        std::ops::ControlFlow::Continue(())
     });
+    if walked.is_break() {
+        return Err(());
+    }
     for anchor in inline_anchors {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         targets.push(ReferenceTarget {
             kind: ReferenceTargetKind::InlineAnchor,
             id: anchor.target.clone(),
@@ -269,16 +304,32 @@ pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
             target_range: anchor.range,
         });
     }
-    targets.sort_by_key(|target| (target.target_range.start(), target.target_range.end()));
-    heading_ids.sort_by_key(|heading| heading.range);
-    let heading_ordinals = heading_ids
-        .iter()
-        .enumerate()
-        .map(|(ordinal, heading)| (heading.range, ordinal))
-        .collect();
+    crate::cancellation::sort_by_cancellable(
+        &mut targets,
+        &mut |left, right| {
+            (left.target_range.start(), left.target_range.end())
+                .cmp(&(right.target_range.start(), right.target_range.end()))
+        },
+        checkpoint,
+    )?;
+    crate::cancellation::sort_by_cancellable(
+        &mut heading_ids,
+        &mut |left, right| left.range.cmp(&right.range),
+        checkpoint,
+    )?;
+    let mut heading_ordinals = BTreeMap::new();
+    for (ordinal, heading) in heading_ids.iter().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        heading_ordinals.insert(heading.range, ordinal);
+    }
     let mut target_ordinals_by_range = BTreeMap::new();
     let mut target_ordinals_by_id = BTreeMap::new();
     for (ordinal, target) in targets.iter().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         target_ordinals_by_range
             .entry(target.target_range)
             .or_insert(ordinal);
@@ -286,22 +337,26 @@ pub(crate) fn build_identifiers(document: &AstDocument) -> DocumentIdentifiers {
             .entry(target.id.clone())
             .or_insert(ordinal);
     }
-    DocumentIdentifiers {
+    Ok(DocumentIdentifiers {
         heading_ids,
         heading_ordinals,
         targets,
         target_ordinals_by_range,
         target_ordinals_by_id,
-    }
+    })
 }
 
 fn unique_heading_id(
     base: &str,
     occurrences: &mut BTreeMap<String, usize>,
     used: &mut BTreeSet<String>,
-) -> String {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<String, ()> {
     let occurrence = occurrences.entry(base.to_owned()).or_default();
     loop {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         *occurrence += 1;
         let candidate = if *occurrence == 1 {
             base.to_owned()
@@ -309,7 +364,7 @@ fn unique_heading_id(
             format!("{base}_{}", *occurrence)
         };
         if used.insert(candidate.clone()) {
-            return candidate;
+            return Ok(candidate);
         }
     }
 }
@@ -343,9 +398,23 @@ fn block_label(block: &AstBlock) -> String {
 }
 
 pub fn heading_id_base(text: &str) -> String {
+    heading_id_base_cancellable(
+        text,
+        &mut crate::cancellation::CancellationCheckpoint::new(&crate::core::NeverCancel),
+    )
+    .expect("NeverCancel cannot cancel heading ID generation")
+}
+
+fn heading_id_base_cancellable(
+    text: &str,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<String, ()> {
     let mut id = String::from("_");
     let mut pending_separator = false;
     for character in text.chars() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         if character.is_alphanumeric() {
             if pending_separator && id.len() > 1 {
                 id.push('_');
@@ -361,7 +430,7 @@ pub fn heading_id_base(text: &str) -> String {
     if id.len() == 1 {
         id.push_str("section");
     }
-    id
+    Ok(id)
 }
 
 pub fn source_language_candidates(prefix: &str) -> Vec<&'static str> {
@@ -702,14 +771,41 @@ fn write_json_string(output: &mut String, value: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::{
-        DocumentElement, ReferenceTargetKind, document_element_at_ast as document_element_at,
-        document_symbols_ast as document_symbols, document_symbols_ast_checked,
-        generate_heading_ids_ast as generate_heading_ids,
+        DocumentElement, ReferenceTargetKind, build_identifiers,
+        document_element_at_ast as document_element_at, document_symbols_ast as document_symbols,
+        document_symbols_ast_checked, generate_heading_ids_ast as generate_heading_ids,
         reference_targets_ast as reference_targets, render_symbols_json,
         source_language_candidates,
     };
     use crate::parser::parse;
+
+    #[test]
+    fn identifier_build_cancels_during_the_semantic_walk() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl crate::core::CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = (0..crate::cancellation::CHECKPOINT_INTERVAL * 2)
+            .map(|index| format!("== Heading {index}\n"))
+            .collect::<String>();
+        let parsed = parse(&source).expect("parse");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        let result = build_identifiers(
+            &parsed.ast,
+            &mut crate::cancellation::CancellationCheckpoint::new(&cancellation),
+        );
+
+        assert_eq!(result, Err(()));
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
 
     #[test]
     fn source_block_language_candidates_are_deterministic_and_filtered() {

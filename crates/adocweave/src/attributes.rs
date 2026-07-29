@@ -246,6 +246,34 @@ impl SequentialAttributeState {
         }
     }
 
+    fn with_locked_values_cancellable(
+        values: &ExternalAttributes,
+        limits: AttributeExpansionLimits,
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<Self, ()> {
+        let mut locked = BTreeSet::new();
+        let mut normalized = BTreeMap::new();
+        let mut depths = BTreeMap::new();
+        for (name, value) in values {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            let name = canonical_name(name);
+            locked.insert(name.clone());
+            if let Some(value) = value {
+                depths.insert(name.clone(), 0);
+                normalized.insert(name, value.clone());
+            }
+        }
+        Ok(Self {
+            values: normalized,
+            depths,
+            failures: BTreeMap::new(),
+            locked,
+            limits,
+        })
+    }
+
     pub(crate) fn apply(
         &mut self,
         occurrence: &DocumentAttributeOccurrence,
@@ -318,18 +346,29 @@ impl AttributeEnvironment {
         occurrences: &[DocumentAttributeOccurrence],
         external_values: &ExternalAttributes,
         limits: AttributeExpansionLimits,
-    ) -> Self {
-        let external_values = external_values
-            .iter()
-            .map(|(name, value)| (canonical_name(name), value.clone()))
-            .collect::<BTreeMap<_, _>>();
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<Self, ()> {
+        let mut normalized_external_values = BTreeMap::new();
+        for (name, value) in external_values {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            normalized_external_values.insert(canonical_name(name), value.clone());
+        }
         let mut environment = Self {
             limits,
-            external_values: external_values.clone(),
+            external_values: normalized_external_values.clone(),
             ..Self::default()
         };
-        let mut state = SequentialAttributeState::with_locked_values(&external_values, limits);
+        let mut state = SequentialAttributeState::with_locked_values_cancellable(
+            &normalized_external_values,
+            limits,
+            checkpoint,
+        )?;
         for (ordinal, occurrence) in occurrences.iter().enumerate() {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
             if !occurrence.valid || state.is_locked(&occurrence.name) {
                 continue;
             }
@@ -361,7 +400,7 @@ impl AttributeEnvironment {
             environment.bindings.push(binding);
         }
         environment.final_values = state.values;
-        environment
+        Ok(environment)
     }
 
     pub fn bindings(&self) -> &[AttributeBinding] {
@@ -853,7 +892,9 @@ mod tests {
                 max_depth: 8,
                 max_bytes: 128,
             },
-        );
+            &mut crate::cancellation::CancellationCheckpoint::new(&crate::core::NeverCancel),
+        )
+        .expect("NeverCancel cannot cancel attribute lowering");
         let at = |event| {
             environment
                 .resolve_at_event(

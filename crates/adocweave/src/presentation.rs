@@ -187,42 +187,60 @@ impl DocumentLayout {
     }
 }
 
-pub(crate) fn build_index(document: &AstDocument) -> DocumentIndex {
+pub(crate) fn build_index(
+    document: &AstDocument,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<DocumentIndex, ()> {
     let mut block_ranges = Vec::new();
     let mut block_ids_by_address = BTreeMap::new();
-    crate::walker::walk_block_slice(document.blocks(), |node| {
+    let walked = crate::walker::try_walk_block_slice(document.blocks(), |node| {
+        if checkpoint.is_cancelled() {
+            return std::ops::ControlFlow::Break(());
+        }
         if let crate::walker::SemanticNode::Block(block) = node {
             let id = BlockId(u32::try_from(block_ranges.len()).expect("block count fits u32"));
             block_ids_by_address.insert(block as *const crate::parser::AstBlock, id);
             block_ranges.push(block.range());
         }
+        std::ops::ControlFlow::Continue(())
     });
-    let top_level_blocks = document
-        .blocks()
-        .iter()
-        .map(|block| {
+    if walked.is_break() {
+        return Err(());
+    }
+    let mut top_level_blocks = Vec::with_capacity(document.blocks().len());
+    for block in document.blocks() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        top_level_blocks.push(
             block_ids_by_address
                 .get(&(block as *const crate::parser::AstBlock))
                 .copied()
-                .expect("the shared topology visits every top-level block")
-        })
-        .collect::<Vec<_>>();
+                .expect("the shared topology visits every top-level block"),
+        );
+    }
     let mut top_level_ordinals = vec![None; block_ranges.len()];
     for (ordinal, id) in top_level_blocks.iter().copied().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         top_level_ordinals[id.get() as usize] = Some(ordinal);
     }
     let mut block_ids_by_range = BTreeMap::new();
     for (index, range) in block_ranges.iter().copied().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         block_ids_by_range
             .entry(range)
             .or_insert_with(|| BlockId(u32::try_from(index).expect("block count fits u32")));
     }
-    DocumentIndex {
+    Ok(DocumentIndex {
         block_ranges,
         block_ids_by_range,
         top_level_blocks,
         top_level_ordinals,
-    }
+    })
 }
 
 pub(crate) fn build_presentation(
@@ -230,7 +248,8 @@ pub(crate) fn build_presentation(
     structure: &crate::structure::DocumentStructure,
     index: &DocumentIndex,
     attribute_environment: &crate::attributes::AttributeEnvironment,
-) -> DocumentPresentation {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<DocumentPresentation, ()> {
     // These document-wide presentation controls are header metadata. Body
     // bindings remain queryable but do not retroactively reconfigure them.
     let header_offset = document.header().end;
@@ -264,94 +283,99 @@ pub(crate) fn build_presentation(
     };
     let mut section_numbers = header_values("sectnums").is_some();
     let mut counters = [0_u32; 6];
-    let headings = structure
-        .headings()
-        .iter()
-        .map(|heading| {
-            let numbered = attribute_environment
-                .resolve_at("sectnums", heading.range.start())
-                .and_then(|resolved| resolved.value.ok().flatten())
-                .is_some();
-            section_numbers |= numbered;
-            let level_index = usize::from(heading.level.min(5));
-            let number = if matches!(
-                heading.kind,
-                crate::structure::SectionKind::DocumentTitle
-                    | crate::structure::SectionKind::Discrete
-            ) {
-                Vec::new()
-            } else {
-                counters[level_index] += 1;
-                counters[level_index + 1..].fill(0);
-                counters[..=level_index]
+    let mut headings = Vec::with_capacity(structure.headings().len());
+    for heading in structure.headings() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        let numbered = attribute_environment
+            .resolve_at("sectnums", heading.range.start())
+            .and_then(|resolved| resolved.value.ok().flatten())
+            .is_some();
+        section_numbers |= numbered;
+        let level_index = usize::from(heading.level.min(5));
+        let number = if matches!(
+            heading.kind,
+            crate::structure::SectionKind::DocumentTitle | crate::structure::SectionKind::Discrete
+        ) {
+            Vec::new()
+        } else {
+            counters[level_index] += 1;
+            counters[level_index + 1..].fill(0);
+            counters[..=level_index]
+                .iter()
+                .copied()
+                .filter(|number| *number != 0)
+                .collect()
+        };
+        let block = index
+            .block_id_at(heading.range)
+            .expect("every structured heading is indexed");
+        let toc_included = !matches!(
+            heading.kind,
+            crate::structure::SectionKind::DocumentTitle | crate::structure::SectionKind::Discrete
+        ) && !index
+            .top_level_ordinal(block)
+            .and_then(|ordinal| document.blocks().get(ordinal))
+            .is_some_and(|block| {
+                block
+                    .metadata()
+                    .roles
                     .iter()
-                    .copied()
-                    .filter(|number| *number != 0)
-                    .collect()
-            };
-            let block = index
-                .block_id_at(heading.range)
-                .expect("every structured heading is indexed");
-            let toc_included = !matches!(
-                heading.kind,
-                crate::structure::SectionKind::DocumentTitle
-                    | crate::structure::SectionKind::Discrete
-            ) && !index
-                .top_level_ordinal(block)
-                .and_then(|ordinal| document.blocks().get(ordinal))
-                .is_some_and(|block| {
-                    block
-                        .metadata()
-                        .roles
-                        .iter()
-                        .any(|item| item.value == "notoc")
-                });
-            HeadingPresentation {
-                block,
-                range: heading.range,
-                number,
-                numbered,
-                toc_included,
-            }
-        })
-        .collect::<Vec<_>>();
-    let heading_ordinals = headings
-        .iter()
-        .enumerate()
-        .map(|(ordinal, heading)| (heading.range, ordinal))
-        .collect::<BTreeMap<_, _>>();
+                    .any(|item| item.value == "notoc")
+            });
+        headings.push(HeadingPresentation {
+            block,
+            range: heading.range,
+            number,
+            numbered,
+            toc_included,
+        });
+    }
+    let mut heading_ordinals = BTreeMap::new();
+    for (ordinal, heading) in headings.iter().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        heading_ordinals.insert(heading.range, ordinal);
+    }
     let toc = toc_entries(
         structure.roots(),
         &headings,
         &heading_ordinals,
         toc_policy.max_level,
-    );
-    let bibliography_sections = document
-        .blocks()
-        .iter()
-        .filter_map(|block| {
-            let crate::parser::AstBlock::Heading(heading) = block else {
-                return None;
-            };
-            block
-                .metadata()
-                .attributes
-                .iter()
-                .any(|attribute| attribute.name.is_none() && attribute.value == "bibliography")
-                .then(|| BibliographySection {
-                    block: index
-                        .block_id_at(heading.range)
-                        .expect("every heading is indexed"),
-                    range: heading.range,
-                })
-        })
-        .collect::<Vec<_>>();
-    let bibliography_ordinals = bibliography_sections
-        .iter()
-        .enumerate()
-        .map(|(ordinal, section)| (section.range, ordinal))
-        .collect();
-    DocumentPresentation {
+        checkpoint,
+    )?;
+    let mut bibliography_sections = Vec::new();
+    for block in document.blocks() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        let crate::parser::AstBlock::Heading(heading) = block else {
+            continue;
+        };
+        if block
+            .metadata()
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.is_none() && attribute.value == "bibliography")
+        {
+            bibliography_sections.push(BibliographySection {
+                block: index
+                    .block_id_at(heading.range)
+                    .expect("every heading is indexed"),
+                range: heading.range,
+            });
+        }
+    }
+    let mut bibliography_ordinals = BTreeMap::new();
+    for (ordinal, section) in bibliography_sections.iter().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        bibliography_ordinals.insert(section.range, ordinal);
+    }
+    Ok(DocumentPresentation {
         source_language,
         toc_policy,
         section_numbers,
@@ -360,7 +384,7 @@ pub(crate) fn build_presentation(
         toc,
         bibliography_sections,
         bibliography_ordinals,
-    }
+    })
 }
 
 fn toc_entries(
@@ -368,13 +392,23 @@ fn toc_entries(
     headings: &[HeadingPresentation],
     heading_ordinals: &BTreeMap<TextRange, usize>,
     max_level: Option<u8>,
-) -> Vec<crate::structure::TocEntry> {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<Vec<crate::structure::TocEntry>, ()> {
     let mut entries = Vec::new();
     for section in sections {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         if max_level.is_some_and(|max_level| section.heading.level > max_level) {
             continue;
         }
-        let children = toc_entries(&section.children, headings, heading_ordinals, max_level);
+        let children = toc_entries(
+            &section.children,
+            headings,
+            heading_ordinals,
+            max_level,
+            checkpoint,
+        )?;
         let presentation = heading_ordinals
             .get(&section.heading.range)
             .and_then(|ordinal| headings.get(*ordinal))
@@ -392,14 +426,15 @@ fn toc_entries(
             entries.extend(children);
         }
     }
-    entries
+    Ok(entries)
 }
 
 pub(crate) fn build_layout(
     document: &AstDocument,
     index: &DocumentIndex,
     presentation: &DocumentPresentation,
-) -> DocumentLayout {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<DocumentLayout, ()> {
     fn structural_heading_level(block: &crate::parser::AstBlock) -> Option<u8> {
         let crate::parser::AstBlock::Heading(heading) = block else {
             return None;
@@ -414,6 +449,9 @@ pub(crate) fn build_layout(
     let mut nodes = Vec::new();
     let mut bibliography_scope: Option<(u8, Vec<LayoutNode>)> = None;
     for id in index.top_level_blocks().iter().copied() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         let block = index
             .top_level_ordinal(id)
             .and_then(|ordinal| document.blocks().get(ordinal))
@@ -454,34 +492,65 @@ pub(crate) fn build_layout(
         });
     }
     if presentation.toc_policy().enabled {
-        let insertion = nodes
-            .iter()
-            .position(|node| {
-                let LayoutNode::Block(id) = node else {
-                    return false;
-                };
-                matches!(
-                    index
-                        .top_level_ordinal(*id)
-                        .and_then(|ordinal| document.blocks().get(ordinal)),
-                    Some(crate::parser::AstBlock::Heading(heading))
-                        if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle)
-                )
-            })
-            .map_or(0, |index| index + 1);
+        let mut insertion = None;
+        for (node_index, node) in nodes.iter().enumerate() {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            let LayoutNode::Block(id) = node else {
+                continue;
+            };
+            if matches!(
+                index
+                    .top_level_ordinal(*id)
+                    .and_then(|ordinal| document.blocks().get(ordinal)),
+                Some(crate::parser::AstBlock::Heading(heading))
+                    if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle)
+            ) {
+                insertion = Some(node_index + 1);
+                break;
+            }
+        }
         nodes.insert(
-            insertion,
+            insertion.unwrap_or(0),
             LayoutNode::Generated(GeneratedLayoutNode::TableOfContents),
         );
     }
     nodes.push(LayoutNode::Generated(GeneratedLayoutNode::FootnoteCatalog));
-    DocumentLayout { nodes }
+    Ok(DocumentLayout { nodes })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{GeneratedLayoutNode, LayoutNode, LayoutScope};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::{GeneratedLayoutNode, LayoutNode, LayoutScope, build_index};
     use crate::parser::parse;
+
+    #[test]
+    fn document_index_build_cancels_during_the_block_walk() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl crate::core::CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = (0..crate::cancellation::CHECKPOINT_INTERVAL * 2)
+            .map(|index| format!("paragraph {index}\n\n"))
+            .collect::<String>();
+        let parsed = parse(&source).expect("parse");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        let result = build_index(
+            &parsed.ast,
+            &mut crate::cancellation::CancellationCheckpoint::new(&cancellation),
+        );
+
+        assert_eq!(result, Err(()));
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
 
     #[test]
     fn resolves_final_attributes_and_indexes_layout_without_ranges_as_ids() {

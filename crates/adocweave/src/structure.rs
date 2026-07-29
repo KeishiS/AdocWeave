@@ -113,17 +113,30 @@ struct ArenaSection {
 pub(crate) fn build(
     document: &AstDocument,
     identifiers: &crate::document::DocumentIdentifiers,
-) -> DocumentStructure {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<DocumentStructure, ()> {
     let mut structure = DocumentStructure::default();
     let mut arena = Vec::<ArenaSection>::new();
     let mut stack = Vec::<(u8, usize)>::new();
     let mut title = None;
-    let multipart_book = document.header().doctype == DocumentType::Book
-        && document.blocks().iter().any(|block| {
-            matches!(block, AstBlock::Heading(heading) if heading.kind == HeadingKind::Part && !is_bibliography(heading))
-        });
+    let mut multipart_book = false;
+    if document.header().doctype == DocumentType::Book {
+        for block in document.blocks() {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            if matches!(block, AstBlock::Heading(heading) if heading.kind == HeadingKind::Part && !is_bibliography(heading))
+            {
+                multipart_book = true;
+                break;
+            }
+        }
+    }
 
     for block in document.blocks() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         let AstBlock::Heading(heading) = block else {
             continue;
         };
@@ -239,16 +252,20 @@ pub(crate) fn build(
             stack.push((hierarchy_level, index));
         }
     }
-    structure.roots = arena
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.parent.is_none())
-        .map(|(index, _)| materialize_section(index, &arena))
-        .collect();
-    if document.header().doctype == DocumentType::Manpage {
-        structure.manpage = build_manpage(document, &mut structure.problems);
+    for (index, node) in arena.iter().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        if node.parent.is_none() {
+            structure
+                .roots
+                .push(materialize_section(index, &arena, checkpoint)?);
+        }
     }
-    structure
+    if document.header().doctype == DocumentType::Manpage {
+        structure.manpage = build_manpage(document, &mut structure.problems, checkpoint)?;
+    }
+    Ok(structure)
 }
 
 fn is_appendix(heading: &Heading) -> bool {
@@ -272,29 +289,48 @@ fn is_bibliography(heading: &Heading) -> bool {
         .any(|attribute| attribute.name.is_none() && attribute.value == "bibliography")
 }
 
-fn materialize_section(index: usize, arena: &[ArenaSection]) -> Section {
-    Section {
-        heading: arena[index].heading.clone(),
-        children: arena[index]
-            .children
-            .iter()
-            .map(|child| materialize_section(*child, arena))
-            .collect(),
+fn materialize_section(
+    index: usize,
+    arena: &[ArenaSection],
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<Section, ()> {
+    if checkpoint.is_cancelled() {
+        return Err(());
     }
+    let mut children = Vec::new();
+    for child in &arena[index].children {
+        children.push(materialize_section(*child, arena, checkpoint)?);
+    }
+    Ok(Section {
+        heading: arena[index].heading.clone(),
+        children,
+    })
 }
 
-fn build_manpage(document: &AstDocument, problems: &mut Vec<StructureProblem>) -> Option<Manpage> {
-    let title = document.blocks().iter().find_map(|block| match block {
-        AstBlock::Heading(heading) if heading.kind == HeadingKind::DocumentTitle => Some(heading),
-        _ => None,
-    });
+fn build_manpage(
+    document: &AstDocument,
+    problems: &mut Vec<StructureProblem>,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<Option<Manpage>, ()> {
+    let mut title = None;
+    for block in document.blocks() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        if let AstBlock::Heading(heading) = block
+            && heading.kind == HeadingKind::DocumentTitle
+        {
+            title = Some(heading);
+            break;
+        }
+    }
     let Some(title) = title else {
         problems.push(StructureProblem {
             kind: StructureProblemKind::MissingManpageTitle,
             range: TextRange::new(document.header().end, document.header().end)
                 .expect("empty header range"),
         });
-        return None;
+        return Ok(None);
     };
     let Some((name, section)) = title
         .text
@@ -306,24 +342,32 @@ fn build_manpage(document: &AstDocument, problems: &mut Vec<StructureProblem>) -
             kind: StructureProblemKind::InvalidManpageTitle,
             range: title.text_range,
         });
-        return None;
+        return Ok(None);
     };
-    let name_heading = document.blocks().iter().position(|block| {
-        matches!(block, AstBlock::Heading(heading) if heading.text.eq_ignore_ascii_case("NAME"))
-    });
+    let mut name_heading = None;
+    for (index, block) in document.blocks().iter().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
+        if matches!(block, AstBlock::Heading(heading) if heading.text.eq_ignore_ascii_case("NAME"))
+        {
+            name_heading = Some(index);
+            break;
+        }
+    }
     let Some(index) = name_heading else {
         problems.push(StructureProblem {
             kind: StructureProblemKind::MissingManpageNameSection,
             range: title.range,
         });
-        return None;
+        return Ok(None);
     };
     let Some(AstBlock::Paragraph(paragraph)) = document.blocks().get(index + 1) else {
         problems.push(StructureProblem {
             kind: StructureProblemKind::InvalidManpagePurpose,
             range: document.blocks()[index].range(),
         });
-        return None;
+        return Ok(None);
     };
     let Some((declared_name, purpose)) = paragraph
         .value
@@ -335,10 +379,10 @@ fn build_manpage(document: &AstDocument, problems: &mut Vec<StructureProblem>) -
             kind: StructureProblemKind::InvalidManpagePurpose,
             range: paragraph.content_range,
         });
-        return None;
+        return Ok(None);
     };
     let name_offset = paragraph.value.find(declared_name).unwrap_or(0);
-    Some(Manpage {
+    Ok(Some(Manpage {
         name: name.to_owned(),
         section: section.to_owned(),
         purpose: purpose.to_owned(),
@@ -358,7 +402,7 @@ fn build_manpage(document: &AstDocument, problems: &mut Vec<StructureProblem>) -
             paragraph.content_range.end(),
         )
         .expect("manpage purpose range"),
-    })
+    }))
 }
 
 #[cfg(test)]

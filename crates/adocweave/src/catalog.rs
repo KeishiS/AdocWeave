@@ -101,11 +101,18 @@ pub(crate) struct CatalogLimitExceeded {
     pub actual: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CatalogBuildFailure {
+    Limit(CatalogLimitExceeded),
+    Cancelled,
+}
+
 pub(crate) fn build(
     facts: &crate::resolved::DocumentFacts,
     document_index: &crate::presentation::DocumentIndex,
     limits: AnalysisLimits,
-) -> Result<DocumentCatalogs, CatalogLimitExceeded> {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<DocumentCatalogs, CatalogBuildFailure> {
     let mut catalogs = DocumentCatalogs::default();
     let mut named_footnotes = BTreeMap::<String, usize>::new();
     let mut pending_references = Vec::<(String, TextRange)>::new();
@@ -116,6 +123,9 @@ pub(crate) fn build(
     let mut catalog_bytes = 0_u64;
 
     for node in facts.macros() {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
         match node {
             node if node.kind == StandardMacroKind::Footnote => {
                 let text = node
@@ -176,12 +186,16 @@ pub(crate) fn build(
                 }
             }
             node if node.kind == StandardMacroKind::IndexTerm => {
-                let terms = node
-                    .attributes
-                    .iter()
-                    .map(|attribute| attribute.value.trim().to_owned())
-                    .filter(|term| !term.is_empty())
-                    .collect::<Vec<_>>();
+                let mut terms = Vec::new();
+                for attribute in &node.attributes {
+                    if checkpoint.is_cancelled() {
+                        return Err(CatalogBuildFailure::Cancelled);
+                    }
+                    let term = attribute.value.trim().to_owned();
+                    if !term.is_empty() {
+                        terms.push(term);
+                    }
+                }
                 if terms.is_empty() {
                     catalogs.problems.push(CatalogProblem {
                         kind: CatalogProblemKind::EmptyIndexTerm,
@@ -192,7 +206,12 @@ pub(crate) fn build(
                     catalogs.index[existing].occurrences.push(node.range);
                 } else {
                     let display = terms.join(", ");
-                    catalog_bytes += terms.iter().map(String::len).sum::<usize>() as u64;
+                    for term in &terms {
+                        if checkpoint.is_cancelled() {
+                            return Err(CatalogBuildFailure::Cancelled);
+                        }
+                        catalog_bytes = catalog_bytes.saturating_add(term.len() as u64);
+                    }
                     index.insert(terms.clone(), catalogs.index.len());
                     catalogs.index.push(IndexEntry {
                         terms,
@@ -205,6 +224,9 @@ pub(crate) fn build(
         }
     }
     for reference in facts.references() {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
         let Some(ReferenceKey::Local { anchor }) = &reference.target else {
             continue;
         };
@@ -218,6 +240,9 @@ pub(crate) fn build(
     }
 
     for (id, range) in pending_references {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
         if let Some(existing) = named_footnotes.get(&id).copied() {
             catalogs.footnotes[existing]
                 .occurrences
@@ -231,6 +256,9 @@ pub(crate) fn build(
         }
     }
     for (id, range, block) in bibliography_references {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
         if let Some(entry) = bibliography
             .get(&id)
             .and_then(|index| catalogs.bibliography.get_mut(*index))
@@ -241,60 +269,88 @@ pub(crate) fn build(
         }
     }
     for footnote in &mut catalogs.footnotes {
-        footnote.occurrences.sort_by_key(|item| item.range.start());
+        crate::cancellation::sort_by_cancellable(
+            &mut footnote.occurrences,
+            &mut |left, right| left.range.start().cmp(&right.range.start()),
+            checkpoint,
+        )
+        .map_err(|()| CatalogBuildFailure::Cancelled)?;
     }
-    catalogs.footnotes.sort_by_key(|footnote| {
-        footnote
-            .occurrences
-            .first()
-            .map_or(footnote.definition_range.start(), |item| item.range.start())
-    });
+    crate::cancellation::sort_by_cancellable(
+        &mut catalogs.footnotes,
+        &mut |left, right| {
+            let left_start = left
+                .occurrences
+                .first()
+                .map_or(left.definition_range.start(), |item| item.range.start());
+            let right_start = right
+                .occurrences
+                .first()
+                .map_or(right.definition_range.start(), |item| item.range.start());
+            left_start.cmp(&right_start)
+        },
+        checkpoint,
+    )
+    .map_err(|()| CatalogBuildFailure::Cancelled)?;
     for (index, footnote) in catalogs.footnotes.iter_mut().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
         footnote.number = index as u32 + 1;
     }
     for entry in &mut catalogs.bibliography {
-        entry
-            .references
-            .sort_by_key(|reference| reference.range.start());
+        crate::cancellation::sort_by_cancellable(
+            &mut entry.references,
+            &mut |left, right| left.range.start().cmp(&right.range.start()),
+            checkpoint,
+        )
+        .map_err(|()| CatalogBuildFailure::Cancelled)?;
     }
-    catalogs
-        .index
-        .sort_by(|left, right| left.terms.cmp(&right.terms));
+    crate::cancellation::sort_by_cancellable(
+        &mut catalogs.index,
+        &mut |left, right| left.terms.cmp(&right.terms),
+        checkpoint,
+    )
+    .map_err(|()| CatalogBuildFailure::Cancelled)?;
 
-    let occurrence_count = catalogs
-        .footnotes
-        .iter()
-        .map(|entry| entry.occurrences.len())
-        .sum::<usize>()
-        + catalogs
-            .bibliography
-            .iter()
-            .map(|entry| entry.references.len() + 1)
-            .sum::<usize>()
-        + catalogs
-            .index
-            .iter()
-            .map(|entry| entry.occurrences.len())
-            .sum::<usize>();
+    let mut occurrence_count = 0_usize;
+    for entry in &catalogs.footnotes {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
+        occurrence_count = occurrence_count.saturating_add(entry.occurrences.len());
+    }
+    for entry in &catalogs.bibliography {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
+        occurrence_count = occurrence_count.saturating_add(entry.references.len() + 1);
+    }
+    for entry in &catalogs.index {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
+        occurrence_count = occurrence_count.saturating_add(entry.occurrences.len());
+    }
     let entry_count = catalogs.footnotes.len()
         + catalogs.bibliography.len()
         + catalogs.index.len()
         + catalogs.problems.len()
         + occurrence_count;
     if entry_count as u64 > u64::from(limits.max_catalog_entries) {
-        return Err(CatalogLimitExceeded {
+        return Err(CatalogBuildFailure::Limit(CatalogLimitExceeded {
             resource: "catalog entries",
             limit: limits.max_catalog_entries,
             actual: entry_count as u64,
-        });
+        }));
     }
     catalog_bytes = catalog_bytes.saturating_add((occurrence_count as u64).saturating_mul(8));
     if catalog_bytes > u64::from(limits.max_catalog_bytes) {
-        return Err(CatalogLimitExceeded {
+        return Err(CatalogBuildFailure::Limit(CatalogLimitExceeded {
             resource: "catalog bytes",
             limit: limits.max_catalog_bytes,
             actual: catalog_bytes,
-        });
+        }));
     }
     Ok(catalogs)
 }
