@@ -765,7 +765,7 @@ struct IncludePreparation<'request> {
     source_base: &'request Path,
     project_root: Option<&'request Path>,
     allowed_roots: &'request [PathBuf],
-    limits: adocweave_host::ResourceLimits,
+    limits: adocweave_host::FilesystemReadLimits,
     preprocess: &'request adocweave::preprocess::PreprocessOptions,
 }
 
@@ -800,7 +800,7 @@ fn process_check(
     source_id: &str,
     analysis_options: &AnalysisOptions,
     preprocess_options: &adocweave::preprocess::PreprocessOptions,
-    resource_limits: adocweave_host::ResourceLimits,
+    resource_limits: adocweave_host::FilesystemReadLimits,
     local: Option<(&std::path::Path, &std::path::Path, &str)>,
 ) -> Result<CheckOutcome, CliError> {
     commands::check::process(
@@ -966,7 +966,7 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
             source_name: path.display().to_string(),
             source,
         })?);
-        if files.len() > adocweave_host::ResourceLimits::default().max_files {
+        if files.len() > adocweave_host::FilesystemReadLimits::default().max_files {
             return Err(CliError::Path(
                 "input file limit exceeded while scanning directories".to_owned(),
             ));
@@ -1055,7 +1055,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         Some(path.to_string_lossy().into_owned()),
                         base_dir,
                         allowed_roots,
-                        config.resources.limits,
+                        config.resources.limit_plan.filesystem_reads,
                         &config.preprocess,
                     )
                     .map_err(CliError::Include)?;
@@ -1174,7 +1174,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         source_base: &source_base,
                         project_root: project_root.as_deref(),
                         allowed_roots,
-                        limits: config.resources.limits,
+                        limits: config.resources.limit_plan.filesystem_reads,
                         preprocess: &config.preprocess,
                     })
                     .map_err(CliError::Include)?;
@@ -1186,7 +1186,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         &source_id,
                         &config.analysis,
                         &config.preprocess,
-                        config.resources.limits,
+                        config.resources.limit_plan.filesystem_reads,
                         local_context,
                     )?
                 };
@@ -1749,7 +1749,7 @@ fn run() -> Result<ExitCode, CliError> {
                     source_base,
                     project_root: project_root.as_deref(),
                     allowed_roots: &allowed_roots,
-                    limits: project_config.resources.limits,
+                    limits: project_config.resources.limit_plan.filesystem_reads,
                     preprocess: &project_config.preprocess,
                 })
                 .map_err(CliError::Include)?;
@@ -1778,7 +1778,7 @@ fn run() -> Result<ExitCode, CliError> {
                         &source_id,
                         &project_config.analysis,
                         &project_config.preprocess,
-                        project_config.resources.limits,
+                        project_config.resources.limit_plan.filesystem_reads,
                         local_context.as_ref().map(|(base, root, source_id)| {
                             (base.as_path(), root.as_path(), source_id.as_str())
                         }),

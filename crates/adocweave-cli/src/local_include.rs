@@ -12,8 +12,8 @@ use adocweave::preprocess::{
     ResourceDocument, ResourceSnapshot, preprocess,
 };
 use adocweave_host::{
-    LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError, LocalTargetPolicy,
-    LocalTargetSession, LogicalSourceId, ResourceError, ResourceLimits,
+    FilesystemReadLimits, LocalFilesystemPolicy, LocalFilesystemSession, LocalTargetError,
+    LocalTargetPolicy, LocalTargetSession, LogicalSourceId, ResourceError,
 };
 
 #[derive(Debug)]
@@ -306,7 +306,7 @@ pub fn prepare(
     source_id: Option<String>,
     base_dir: &Path,
     allowed_roots: &[PathBuf],
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let base_dir = base_dir
@@ -385,7 +385,7 @@ pub fn prepare_local(
     base_dir: &Path,
     source_base: &Path,
     project_root: &Path,
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
 ) -> Result<PreparedInput, LocalIncludeError> {
     prepare_local_tracking(
@@ -409,7 +409,7 @@ pub(crate) fn prepare_local_tracking(
     base_dir: &Path,
     source_base: &Path,
     project_root: &Path,
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
     preprocess_options: &PreprocessOptions,
     observer: &mut dyn DependencyObserver,
 ) -> Result<PreparedInput, LocalIncludeError> {
@@ -595,7 +595,7 @@ mod tests {
     }
 
     fn session(root: &Path) -> LocalFilesystemSession {
-        LocalFilesystemPolicy::new([root.to_owned()], ResourceLimits::default())
+        LocalFilesystemPolicy::new([root.to_owned()], FilesystemReadLimits::default())
             .and_then(|policy| policy.session())
             .expect("session")
     }
@@ -669,7 +669,7 @@ mod tests {
             Some(source_id.clone()),
             &root.0,
             &[],
-            ResourceLimits::default(),
+            FilesystemReadLimits::default(),
             &PreprocessOptions::default(),
         )
         .expect("regular preparation");
@@ -696,7 +696,7 @@ mod tests {
             &root.0,
             &root.0,
             &root.0,
-            ResourceLimits::default(),
+            FilesystemReadLimits::default(),
             &PreprocessOptions::default(),
             &mut observer,
         )

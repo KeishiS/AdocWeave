@@ -9,14 +9,18 @@ use crate::local_target::{
     FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy, LocalTargetSession,
 };
 
+/// Bounds applied while the host discovers and reads filesystem resources.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ResourceLimits {
+pub struct FilesystemReadLimits {
+    /// Maximum number of filesystem resources charged to one session.
     pub max_files: usize,
+    /// Maximum combined bytes charged to one session.
     pub max_total_bytes: u64,
+    /// Maximum bytes read from one filesystem resource.
     pub max_resource_bytes: u64,
 }
 
-impl Default for ResourceLimits {
+impl Default for FilesystemReadLimits {
     fn default() -> Self {
         Self {
             max_files: 10_000,
@@ -29,7 +33,7 @@ impl Default for ResourceLimits {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalFilesystemPolicy {
     roots: Vec<PathBuf>,
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
 }
 
 /// Host-defined identity which is safe to expose in diagnostics and source maps.
@@ -90,7 +94,7 @@ impl LoadedFilesystemSource {
 pub struct LocalFilesystemSession {
     roots: Vec<PathBuf>,
     sessions: Vec<LocalTargetSession>,
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
     budget: ResourceBudget,
     charged: BTreeMap<PathBuf, u64>,
 }
@@ -98,7 +102,7 @@ pub struct LocalFilesystemSession {
 impl LocalFilesystemPolicy {
     pub fn new(
         roots: impl IntoIterator<Item = PathBuf>,
-        limits: ResourceLimits,
+        limits: FilesystemReadLimits,
     ) -> Result<Self, ResourceError> {
         let mut roots = roots
             .into_iter()
@@ -125,7 +129,7 @@ impl LocalFilesystemPolicy {
         &self.roots
     }
 
-    pub const fn limits(&self) -> ResourceLimits {
+    pub const fn limits(&self) -> FilesystemReadLimits {
         self.limits
     }
 
@@ -139,7 +143,7 @@ impl LocalFilesystemPolicy {
                         LocalTargetSession::new(
                             policy,
                             self.limits.max_files,
-                            ResourceLimits {
+                            FilesystemReadLimits {
                                 max_files: usize::MAX,
                                 max_total_bytes: u64::MAX,
                                 max_resource_bytes: self.limits.max_resource_bytes,
@@ -166,7 +170,7 @@ impl LocalFilesystemSession {
         &self.roots
     }
 
-    pub const fn limits(&self) -> ResourceLimits {
+    pub const fn limits(&self) -> FilesystemReadLimits {
         self.limits
     }
 
@@ -180,6 +184,26 @@ impl LocalFilesystemSession {
         &mut self,
         mut source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
     ) -> Result<Vec<LoadedFilesystemSource>, ResourceError> {
+        let paths = self.discover_adoc_paths()?;
+        if paths.len() > self.limits.max_files {
+            return Err(ResourceError::FileLimit {
+                limit: self.limits.max_files,
+            });
+        }
+        paths
+            .into_iter()
+            .map(|path| {
+                let source_id = source_id(&path)?;
+                self.read_utf8(source_id, &path)
+            })
+            .collect()
+    }
+
+    /// Discovers canonical `.adoc` candidate paths without reading file content.
+    ///
+    /// This split lets an adapter resolve the nearest project configuration
+    /// before selecting the read budget used for each candidate.
+    pub fn discover_adoc_paths(&self) -> Result<Vec<PathBuf>, ResourceError> {
         let mut paths = Vec::new();
         let mut scanned_entries = 0_usize;
         for root in &self.roots {
@@ -214,23 +238,12 @@ impl LocalFilesystemSession {
                     pending.extend(children.into_iter().map(|entry| entry.path()));
                 } else if path.extension().and_then(|value| value.to_str()) == Some("adoc") {
                     paths.push(path);
-                    if paths.len() > self.limits.max_files {
-                        return Err(ResourceError::FileLimit {
-                            limit: self.limits.max_files,
-                        });
-                    }
                 }
             }
         }
         paths.sort();
         paths.dedup();
-        paths
-            .into_iter()
-            .map(|path| {
-                let source_id = source_id(&path)?;
-                self.read_utf8(source_id, &path)
-            })
-            .collect()
+        Ok(paths)
     }
 
     /// Returns the concurrent-filesystem guarantee of all configured roots.
@@ -383,7 +396,7 @@ impl ResourceBudget {
         &mut self,
         path: &Path,
         bytes: u64,
-        limits: ResourceLimits,
+        limits: FilesystemReadLimits,
     ) -> Result<(), ResourceError> {
         if bytes > limits.max_resource_bytes {
             return Err(ResourceError::ResourceTooLarge(path.to_owned()));
@@ -413,7 +426,7 @@ impl ResourceBudget {
         path: &Path,
         previous: Option<u64>,
         bytes: u64,
-        limits: ResourceLimits,
+        limits: FilesystemReadLimits,
     ) -> Result<(), ResourceError> {
         let Some(previous) = previous else {
             return self.charge(path, bytes, limits);
@@ -592,7 +605,7 @@ mod tests {
     fn policy(root: &Path, max_resource_bytes: u64) -> LocalFilesystemPolicy {
         LocalFilesystemPolicy::new(
             [root.to_owned()],
-            ResourceLimits {
+            FilesystemReadLimits {
                 max_files: 10,
                 max_total_bytes: 100,
                 max_resource_bytes,
@@ -626,7 +639,7 @@ mod tests {
         fs::write(root.path().join("ignored.txt"), "ignored\n").expect("ignored source");
         let policy = LocalFilesystemPolicy::new(
             [root.path().to_owned(), root.path().to_owned()],
-            ResourceLimits::default(),
+            FilesystemReadLimits::default(),
         )
         .expect("policy");
         let mut session = policy.session().expect("session");
@@ -688,7 +701,7 @@ mod tests {
         fs::write(root.path().join("b.adoc"), "5678").expect("second source");
         let policy = LocalFilesystemPolicy::new(
             [root.path().to_owned()],
-            ResourceLimits {
+            FilesystemReadLimits {
                 max_files: 1,
                 max_total_bytes: 8,
                 max_resource_bytes: 4,
@@ -702,7 +715,7 @@ mod tests {
 
         let policy = LocalFilesystemPolicy::new(
             [root.path().to_owned()],
-            ResourceLimits {
+            FilesystemReadLimits {
                 max_files: 2,
                 max_total_bytes: 7,
                 max_resource_bytes: 4,
@@ -754,7 +767,7 @@ mod tests {
         fs::write(&second, "b").expect("second source");
         let policy = LocalFilesystemPolicy::new(
             [first_root.path().to_owned(), second_root.path().to_owned()],
-            ResourceLimits {
+            FilesystemReadLimits {
                 max_files: 1,
                 max_total_bytes: 2,
                 max_resource_bytes: 2,
@@ -778,7 +791,7 @@ mod tests {
         fs::write(&second, "cd").expect("second source");
         let policy = LocalFilesystemPolicy::new(
             [first_root.path().to_owned(), second_root.path().to_owned()],
-            ResourceLimits {
+            FilesystemReadLimits {
                 max_files: 2,
                 max_total_bytes: 3,
                 max_resource_bytes: 2,
@@ -804,7 +817,7 @@ mod tests {
         fs::write(&second, "1234").expect("second source");
         let policy = LocalFilesystemPolicy::new(
             [root.path().to_owned()],
-            ResourceLimits {
+            FilesystemReadLimits {
                 max_files: 2,
                 max_total_bytes: 6,
                 max_resource_bytes: 6,
@@ -852,7 +865,7 @@ mod tests {
 
     #[test]
     fn budget_rejects_without_partially_charging() {
-        let limits = ResourceLimits {
+        let limits = FilesystemReadLimits {
             max_files: 1,
             max_total_bytes: 3,
             max_resource_bytes: 3,
@@ -918,9 +931,11 @@ mod tests {
         fs::write(&outer_file, "outer").expect("outer file");
         let link = inner.join("escape.adoc");
         symlink(&outer_file, &link).expect("cross-boundary symlink");
-        let policy =
-            LocalFilesystemPolicy::new([outer.path().to_owned(), inner], ResourceLimits::default())
-                .expect("policy");
+        let policy = LocalFilesystemPolicy::new(
+            [outer.path().to_owned(), inner],
+            FilesystemReadLimits::default(),
+        )
+        .expect("policy");
 
         assert!(matches!(
             policy
@@ -944,7 +959,7 @@ mod tests {
         symlink(&second_file, &link).expect("cross-root symlink");
         let policy = LocalFilesystemPolicy::new(
             [first.path().to_owned(), second.path().to_owned()],
-            ResourceLimits::default(),
+            FilesystemReadLimits::default(),
         )
         .expect("policy");
 

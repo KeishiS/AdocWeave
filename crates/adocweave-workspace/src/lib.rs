@@ -129,9 +129,9 @@ impl Resource {
     }
 }
 
-/// Bounds applied to verified resources retained in workspace state.
+/// Bounds applied to disk and overlay layers retained in workspace state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ResourceLimits {
+pub struct RetainedResourceLimits {
     /// Maximum number of distinct resource identities.
     pub max_files: usize,
     /// Maximum combined bytes retained across disk and overlay layers.
@@ -140,7 +140,7 @@ pub struct ResourceLimits {
     pub max_resource_bytes: u64,
 }
 
-impl Default for ResourceLimits {
+impl Default for RetainedResourceLimits {
     fn default() -> Self {
         Self {
             max_files: 10_000,
@@ -150,11 +150,101 @@ impl Default for ResourceLimits {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct RetainedLayerCharge {
+    disk_bytes: Option<u64>,
+    overlay_bytes: Option<u64>,
+}
+
+/// Transactional accounting for disk and overlay layers in one project scope.
+///
+/// The returned replacement budget is committed by the caller only after the
+/// corresponding workspace update succeeds.
+#[derive(Clone, Debug, Default)]
+pub struct RetainedResourceBudget {
+    resources: BTreeMap<ResourceId, RetainedLayerCharge>,
+}
+
+impl RetainedResourceBudget {
+    /// Returns a budget with one disk layer inserted, replaced, or removed.
+    pub fn with_disk(
+        &self,
+        id: ResourceId,
+        bytes: Option<u64>,
+        limits: RetainedResourceLimits,
+    ) -> Result<Self, WorkspaceError> {
+        let mut replacement = self.clone();
+        replacement
+            .resources
+            .entry(id.clone())
+            .or_default()
+            .disk_bytes = bytes;
+        replacement.validate_replacement(id, limits)?;
+        Ok(replacement)
+    }
+
+    /// Returns a budget with one overlay layer inserted, replaced, or removed.
+    pub fn with_overlay(
+        &self,
+        id: ResourceId,
+        bytes: Option<u64>,
+        limits: RetainedResourceLimits,
+    ) -> Result<Self, WorkspaceError> {
+        let mut replacement = self.clone();
+        replacement
+            .resources
+            .entry(id.clone())
+            .or_default()
+            .overlay_bytes = bytes;
+        replacement.validate_replacement(id, limits)?;
+        Ok(replacement)
+    }
+
+    fn validate_replacement(
+        &mut self,
+        id: ResourceId,
+        limits: RetainedResourceLimits,
+    ) -> Result<(), WorkspaceError> {
+        if self
+            .resources
+            .get(&id)
+            .is_some_and(|charge| charge.disk_bytes.is_none() && charge.overlay_bytes.is_none())
+        {
+            self.resources.remove(&id);
+        }
+        if self.resources.len() > limits.max_files {
+            return Err(WorkspaceError::new(
+                WorkspaceErrorCode::ResourceLimit,
+                "retained resource count limit exceeded",
+            ));
+        }
+        let bytes = self.resources.values().try_fold(0_u64, |total, charge| {
+            charge
+                .disk_bytes
+                .into_iter()
+                .chain(charge.overlay_bytes)
+                .try_fold(total, |total, bytes| {
+                    if bytes > limits.max_resource_bytes {
+                        return None;
+                    }
+                    total.checked_add(bytes)
+                })
+        });
+        if bytes.is_none_or(|bytes| bytes > limits.max_total_bytes) {
+            return Err(WorkspaceError::new(
+                WorkspaceErrorCode::ResourceLimit,
+                "retained resource byte limit exceeded",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Bounds applied before resources or analysis roots enter workspace state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkspaceLimits {
     /// Resource count and byte limits for verified resources supplied by a host.
-    pub resources: ResourceLimits,
+    pub resources: RetainedResourceLimits,
     /// Maximum number of registered analysis roots.
     pub max_roots: usize,
 }
@@ -162,7 +252,7 @@ pub struct WorkspaceLimits {
 impl Default for WorkspaceLimits {
     fn default() -> Self {
         Self {
-            resources: ResourceLimits::default(),
+            resources: RetainedResourceLimits::default(),
             max_roots: 10_000,
         }
     }
@@ -917,7 +1007,7 @@ mod tests {
     #[test]
     fn oversized_overlay_is_rejected_without_replacing_current_text() {
         let limits = WorkspaceLimits {
-            resources: ResourceLimits {
+            resources: RetainedResourceLimits {
                 max_files: 2,
                 max_total_bytes: 8,
                 max_resource_bytes: 8,
@@ -937,6 +1027,34 @@ mod tests {
             WorkspaceErrorCode::ResourceLimit
         );
         assert_eq!(workspace.get(&root).unwrap().text().as_ref(), "disk");
+    }
+
+    #[test]
+    fn retained_layer_budget_rejects_transactionally_and_releases_each_layer() {
+        let limits = RetainedResourceLimits {
+            max_files: 1,
+            max_total_bytes: 5,
+            max_resource_bytes: 4,
+        };
+        let root = id("file:///book/root.adoc");
+        let disk = RetainedResourceBudget::default()
+            .with_disk(root.clone(), Some(3), limits)
+            .expect("disk charge");
+
+        assert_eq!(
+            disk.with_overlay(root.clone(), Some(3), limits)
+                .expect_err("combined layer limit")
+                .code,
+            WorkspaceErrorCode::ResourceLimit
+        );
+        let overlay = disk
+            .with_disk(root.clone(), None, limits)
+            .expect("disk release")
+            .with_overlay(root.clone(), Some(4), limits)
+            .expect("overlay charge after release");
+        overlay
+            .with_overlay(root, None, limits)
+            .expect("overlay release");
     }
 
     #[test]

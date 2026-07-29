@@ -4,7 +4,9 @@ use std::path::Path;
 
 use adocweave::text::{PositionEncoding, SourceDocument};
 use adocweave::{LocalTargetReference, LocalTargetSyntax};
-use adocweave_host::{LocalTargetError, LocalTargetPolicy, LocalTargetSession, ResourceLimits};
+use adocweave_host::{
+    FilesystemReadLimits, LocalTargetError, LocalTargetPolicy, LocalTargetSession,
+};
 
 #[derive(Clone, Debug)]
 pub struct HostDiagnostic {
@@ -23,7 +25,7 @@ pub fn validate(
     project_root: &Path,
     source_id: &str,
     source: &str,
-    limits: ResourceLimits,
+    limits: FilesystemReadLimits,
 ) -> Result<Vec<HostDiagnostic>, LocalTargetError> {
     let policy = LocalTargetPolicy::new(project_root)?;
     let mut session = LocalTargetSession::new(policy, limits.max_files, limits);
