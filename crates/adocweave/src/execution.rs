@@ -167,10 +167,6 @@ impl AnalysisCacheKey {
                 hash_bytes(&mut hasher, value.as_bytes());
             }
         }
-        hash_u8(
-            &mut hasher,
-            severity_tag(config.protected_attribute_severity),
-        );
         for (rule, settings) in config.configured_rules() {
             hash_bytes(&mut hasher, rule.as_str().as_bytes());
             hash_bool(&mut hasher, settings.enabled);
@@ -290,7 +286,7 @@ mod tests {
         let baseline = request("text").cache_key();
         assert_eq!(
             baseline.to_hex(),
-            "c41458776d9501355b47a6970ac57e458e6c9f3467cd7efd37ca4c1863306d32"
+            "5b0a2252e3881c109be299f6bed2f1dbfcaf01c4d1236f36d71f0308af81aeb9"
         );
         assert_eq!(baseline, request("text").cache_key());
         assert_ne!(baseline, request("other").cache_key());
@@ -315,6 +311,15 @@ mod tests {
         let mut options = AnalysisOptions::default();
         options.diagnostics.lint.protected_attributes =
             BTreeMap::from([("host".to_owned(), Some("value".to_owned()))]);
+        variants.push(options);
+        let mut options = AnalysisOptions::default();
+        options.diagnostics.lint.set_rule(
+            crate::lint::PROTECTED_ATTRIBUTE,
+            crate::lint::RuleSettings {
+                enabled: true,
+                severity: crate::diagnostic::Severity::Error,
+            },
+        );
         variants.push(options);
         let mut options = AnalysisOptions::default();
         options.diagnostics.lint.authored_url_policy.allow_relative = false;

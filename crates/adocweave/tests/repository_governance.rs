@@ -128,6 +128,41 @@ fn repository_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+#[test]
+fn lint_modules_construct_diagnostics_only_inside_the_sink() {
+    fn collect_rust_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        if !directory.exists() {
+            return;
+        }
+        for entry in fs::read_dir(directory).expect("lint module directory") {
+            let path = entry.expect("lint module entry").path();
+            if path.is_dir() {
+                collect_rust_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let source_root = repository_root().join("crates/adocweave/src");
+    let mut files = vec![source_root.join("lint.rs")];
+    collect_rust_files(&source_root.join("lint"), &mut files);
+    files.sort();
+
+    let mut diagnostic_constructions = Vec::new();
+    for path in files {
+        let source = fs::read_to_string(&path).expect("lint implementation");
+        for _ in source.match_indices(concat!("Diagnostic", " {")) {
+            diagnostic_constructions.push(path.clone());
+        }
+    }
+    assert_eq!(
+        diagnostic_constructions,
+        [source_root.join("lint.rs")],
+        "Lint rule modules must emit through LintDiagnosticSink"
+    );
+}
+
 fn analyze(path: &str) -> adocweave::Analysis {
     let source = fs::read_to_string(repository_root().join(path))
         .unwrap_or_else(|error| panic!("{path}: {error}"));
