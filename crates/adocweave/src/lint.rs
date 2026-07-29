@@ -1,4 +1,6 @@
-//! Output-independent lint rules over the original source.
+//! Output-independent lint catalog, configuration, and orchestration.
+
+mod source;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
@@ -11,8 +13,9 @@ use crate::document::heading_id_base;
 use crate::parser::{AstBlock, HeadingKind};
 #[cfg(test)]
 use crate::parser::{ParseConfig, parse_with_config};
-use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_document::LineEnding;
+#[cfg(test)]
+use crate::source::TextSize;
+use crate::source::{PositionError, TextRange};
 use crate::syntax::{SyntaxIssueClass, SyntaxIssueDetail, SyntaxTree};
 
 /// Stable identifier for a lint rule.
@@ -403,6 +406,10 @@ impl<'a> LintDiagnosticSink<'a> {
         self.diagnostics.len() >= self.config.max_diagnostics
     }
 
+    fn config(&self) -> &LintConfig {
+        self.config
+    }
+
     fn emit(
         &mut self,
         rule: LintRuleId,
@@ -481,87 +488,24 @@ fn lint_with_analysis_limits(
             ..ParseConfig::default()
         },
     )?;
-    lint_syntax(&parsed.syntax, &parsed.ast, config)
+    lint_parsed_document(&parsed.syntax, &parsed.ast, config)
 }
 
 pub fn lint_analysis(
     analysis: &crate::core::Analysis,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    lint_syntax(analysis.syntax(), analysis.ast(), config)
+    lint_parsed_document(analysis.syntax(), analysis.ast(), config)
 }
 
-pub(crate) fn lint_syntax(
+pub(crate) fn lint_parsed_document(
     syntax: &SyntaxTree,
     document: &crate::parser::AstDocument,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
     let source_document = syntax.source_document();
     let mut sink = LintDiagnosticSink::new(config);
-    let mut blank_count = 0;
-
-    for line in source_document.lines() {
-        if sink.is_full() {
-            break;
-        }
-        let content = source_document
-            .text(line.content_range())
-            .expect("line ranges are valid");
-        let is_virtual_final_line =
-            line.full_range().is_empty() && line.ending() == LineEnding::None;
-        let is_blank = content.trim_matches([' ', '\t']).is_empty();
-
-        if is_blank && !is_virtual_final_line {
-            blank_count += 1;
-            if blank_count > config.max_consecutive_blank_lines {
-                sink.emit(EXCESSIVE_BLANK_LINES, line.full_range(), || {
-                    LintDiagnosticBody::new("excessive blank line").with_edit_fix(
-                        "remove excessive blank line",
-                        line.full_range(),
-                        "",
-                        Applicability::Always,
-                    )
-                });
-            }
-        } else {
-            blank_count = 0;
-        }
-
-        let trimmed_end = content.trim_end_matches([' ', '\t']);
-        if trimmed_end.len() != content.len() {
-            let range = text_range(
-                line.content_range().start().to_usize() + trimmed_end.len(),
-                line.content_range().end().to_usize(),
-            )?;
-            sink.emit(TRAILING_WHITESPACE, range, || {
-                LintDiagnosticBody::new("trailing whitespace").with_edit_fix(
-                    "remove trailing whitespace",
-                    range,
-                    "",
-                    Applicability::Always,
-                )
-            });
-        }
-
-        let character_count = content.chars().count();
-        if character_count > config.max_line_length {
-            let overflow_start = content
-                .char_indices()
-                .nth(config.max_line_length)
-                .map(|(offset, _)| offset)
-                .expect("line is longer than configured maximum");
-            let range = text_range(
-                line.content_range().start().to_usize() + overflow_start,
-                line.content_range().end().to_usize(),
-            )?;
-            sink.emit(LINE_TOO_LONG, range, || {
-                LintDiagnosticBody::new(format!(
-                    "line has {character_count} characters; maximum is {}",
-                    config.max_line_length
-                ))
-            });
-        }
-    }
+    source::lint_source_lines(source_document, &mut sink)?;
 
     if !sink.is_full() {
         lint_syntax_issues(syntax, &mut sink);
@@ -1292,6 +1236,7 @@ fn lint_headings(document: &crate::parser::AstDocument, sink: &mut LintDiagnosti
     }
 }
 
+#[cfg(test)]
 fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
     TextRange::new(TextSize::new(start)?, TextSize::new(end)?)
 }
@@ -1459,6 +1404,34 @@ mod tests {
             ),
         ] {
             let config = LintConfig {
+                max_diagnostics,
+                ..LintConfig::default()
+            };
+
+            let diagnostics = lint(source, &config).expect("lint");
+            let codes = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>();
+
+            assert_eq!(codes, expected, "max_diagnostics={max_diagnostics}");
+        }
+    }
+
+    #[test]
+    fn source_phase_limit_is_applied_before_later_phases_and_canonical_sort() {
+        let source = "long \n*x\n";
+        for (max_diagnostics, expected) in [
+            (0, Vec::<&str>::new()),
+            (1, vec!["trailing-whitespace"]),
+            (2, vec!["line-too-long", "trailing-whitespace"]),
+            (
+                3,
+                vec!["line-too-long", "trailing-whitespace", "unclosed-inline"],
+            ),
+        ] {
+            let config = LintConfig {
+                max_line_length: 4,
                 max_diagnostics,
                 ..LintConfig::default()
             };
@@ -2272,7 +2245,7 @@ mod tests {
 
         assert_eq!(
             lint(source, &config).expect("standalone lint"),
-            super::lint_syntax(&parsed.syntax, &parsed.ast, &config)
+            super::lint_parsed_document(&parsed.syntax, &parsed.ast, &config)
                 .expect("lint existing analysis")
         );
     }
@@ -2559,7 +2532,8 @@ mod tests {
         let source = ":scheme: https\n\n{scheme}://example.com[label]\n";
         let parsed = crate::parser::parse(source).expect("parse");
         let diagnostics =
-            super::lint_syntax(&parsed.syntax, &parsed.ast, &LintConfig::default()).expect("lint");
+            super::lint_parsed_document(&parsed.syntax, &parsed.ast, &LintConfig::default())
+                .expect("lint");
 
         assert!(
             !diagnostics
