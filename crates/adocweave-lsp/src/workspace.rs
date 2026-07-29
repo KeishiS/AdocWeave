@@ -96,6 +96,8 @@ impl WorkspaceResources {
         if let Err(error) = replacement.load_roots(roots) {
             if replacement.last_load_failed_closed {
                 *self = replacement;
+            } else {
+                self.last_load_failed_closed = false;
             }
             return Err(error);
         }
@@ -1513,6 +1515,32 @@ mod tests {
                 .as_ref(),
             "old"
         );
+    }
+
+    #[test]
+    fn read_failure_after_fail_closed_reload_is_classified_for_the_current_attempt() {
+        let root = TestDirectory::new();
+        let config = root.0.join(adocweave_config::FILE_NAME);
+        std::fs::write(&config, "schema-version = 99\n").expect("invalid config");
+        std::fs::write(root.0.join("document.adoc"), "source").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let mut resources = WorkspaceResources::default();
+
+        resources
+            .reload_roots_with_open_sources(std::slice::from_ref(&root_uri), &[])
+            .expect_err("invalid configuration");
+        assert!(resources.last_load_failed_closed());
+        let failed_closed_generation = resources.generation();
+
+        std::fs::remove_file(&config).expect("remove invalid config");
+        std::fs::create_dir(&config).expect("unreadable config path");
+        let error = resources
+            .reload_roots_with_open_sources(&[root_uri], &[])
+            .expect_err("configuration read failure");
+
+        assert!(error.contains("read-failed"), "{error}");
+        assert!(!resources.last_load_failed_closed());
+        assert_eq!(resources.generation(), failed_closed_generation);
     }
 
     #[test]
