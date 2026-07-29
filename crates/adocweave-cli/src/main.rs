@@ -1182,30 +1182,27 @@ fn cli_project_scope(
     }
 }
 
-fn validate_input_path_scopes(
+#[derive(Clone, Debug)]
+struct ResolvedCliInput {
+    scope: CliProjectScopeId,
+    config: adocweave_config::ResolvedProjectConfig,
+}
+
+fn resolve_input_path_scopes(
     arguments: &Arguments,
     paths: &[PathBuf],
     boundary: &Path,
-) -> Result<(), CliError> {
+) -> Result<std::collections::BTreeMap<PathBuf, ResolvedCliInput>, CliError> {
     let mut scopes = std::collections::BTreeMap::<CliProjectScopeId, (usize, usize)>::new();
+    let mut resolved = std::collections::BTreeMap::new();
     for path in paths {
         let snapshot = load_project_config_at(arguments, path, boundary)?;
         let scope = cli_project_scope(path, snapshot.as_ref());
-        let limit = snapshot.as_ref().map_or_else(
-            || {
-                adocweave_config::ResolvedResourceLimitPlan::default()
-                    .filesystem_reads
-                    .max_files
-            },
-            |snapshot| {
-                snapshot
-                    .config
-                    .resources
-                    .limit_plan
-                    .filesystem_reads
-                    .max_files
-            },
+        let config = snapshot.as_ref().map_or_else(
+            adocweave_config::ResolvedProjectConfig::default,
+            |snapshot| snapshot.config.clone(),
         );
+        let limit = config.resources.limit_plan.filesystem_reads.max_files;
         let entry = scopes.entry(scope).or_insert((0, limit));
         if entry.1 != limit {
             return Err(CliError::ResourceLimit(
@@ -1219,8 +1216,15 @@ fn validate_input_path_scopes(
                 entry.1
             )));
         }
+        resolved.insert(
+            path.clone(),
+            ResolvedCliInput {
+                scope: cli_project_scope(path, snapshot.as_ref()),
+                config,
+            },
+        );
     }
-    Ok(())
+    Ok(resolved)
 }
 
 fn apply_safe_fixes(
@@ -1258,7 +1262,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
         source_name: "current directory".to_owned(),
         source,
     })?;
-    validate_input_path_scopes(arguments, &paths, &boundary)?;
+    let resolved_inputs = resolve_input_path_scopes(arguments, &paths, &boundary)?;
     let mut project_filesystems = std::collections::BTreeMap::<
         CliProjectScopeId,
         adocweave_host::LocalFilesystemSession,
@@ -1274,11 +1278,10 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
             }
             let mut workflow = commands::format::BatchWorkflow::new(*options, paths.len());
             for path in &paths {
-                let snapshot = load_project_config_at(arguments, path, &boundary)?;
-                let config = snapshot.as_ref().map_or_else(
-                    adocweave_config::ResolvedProjectConfig::default,
-                    |snapshot| snapshot.config.clone(),
-                );
+                let resolved = resolved_inputs
+                    .get(path)
+                    .expect("every collected input has a resolved project");
+                let config = &resolved.config;
                 let include = arguments.include || config.resources.include;
                 if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
                 {
@@ -1301,7 +1304,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 } else {
                     &arguments.allowed_roots
                 };
-                let project_key = cli_project_scope(path, snapshot.as_ref());
+                let project_key = resolved.scope.clone();
                 let filesystem = match project_filesystems.entry(project_key.clone()) {
                     std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
@@ -1356,7 +1359,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                             retained_limits.max_resource_bytes,
                         )?;
                 }
-                let format_config = commands::format::format_config(*options, &original, &config);
+                let format_config = commands::format::format_config(*options, &original, config);
                 let formatted =
                     commands::format::process(&original, &config.analysis, &format_config)
                         .map_err(format_error)?
@@ -1400,11 +1403,10 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
             let mut pending = Vec::new();
             let mut changed = 0_usize;
             for path in &paths {
-                let snapshot = load_project_config_at(arguments, path, &boundary)?;
-                let config = snapshot.as_ref().map_or_else(
-                    adocweave_config::ResolvedProjectConfig::default,
-                    |snapshot| snapshot.config.clone(),
-                );
+                let resolved = resolved_inputs
+                    .get(path)
+                    .expect("every collected input has a resolved project");
+                let config = &resolved.config;
                 let source_id = path.to_string_lossy();
                 let project_root = arguments.project_root.clone().or_else(|| {
                     config
@@ -1435,7 +1437,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 } else {
                     &arguments.allowed_roots
                 };
-                let project_key = cli_project_scope(path, snapshot.as_ref());
+                let project_key = resolved.scope.clone();
                 let filesystem = match project_filesystems.entry(project_key.clone()) {
                     std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
@@ -2262,6 +2264,7 @@ mod tests {
         Action, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT,
         DiagnosticFormat, FormatOptions, MAX_SCAN_ENTRIES, ProjectRetainedBudget,
         charge_scan_entry, cli_project_scope, parse_arguments, render_completion_script,
+        resolve_input_path_scopes,
     };
     use crate::commands::model::{self, CommandId};
 
@@ -2666,6 +2669,60 @@ mod tests {
             .or_insert_with(ProjectRetainedBudget::default)
             .replace_all([("a".to_owned(), 1)], 1, 1, 1)
             .expect("second project has an independent budget");
+    }
+
+    #[test]
+    fn multi_path_resolution_pins_one_project_plan_before_processing() {
+        let directory = tempfile::tempdir().expect("temporary project");
+        let first = directory.path().join("first.adoc");
+        let second = directory.path().join("second.adoc");
+        std::fs::write(&first, "first").expect("first source");
+        std::fs::write(&second, "second").expect("second source");
+        let config = directory.path().join(adocweave_config::FILE_NAME);
+        std::fs::write(
+            &config,
+            "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = 16\nmax-resource-bytes = 8\n",
+        )
+        .expect("initial config");
+        let Action::Run(arguments) = parse_arguments(arguments(&[
+            "format",
+            "--check",
+            "first.adoc",
+            "second.adoc",
+        ]))
+        .expect("multi-path arguments") else {
+            panic!("expected run action");
+        };
+        let resolved = resolve_input_path_scopes(
+            &arguments,
+            &[first.clone(), second.clone()],
+            directory.path(),
+        )
+        .expect("resolve project once");
+
+        std::fs::write(
+            &config,
+            "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 1\nmax-total-bytes = 1\nmax-resource-bytes = 1\n",
+        )
+        .expect("stricter config");
+        assert_eq!(
+            resolved[&first]
+                .config
+                .resources
+                .limit_plan
+                .filesystem_reads
+                .max_files,
+            2
+        );
+        assert_eq!(
+            resolved[&second]
+                .config
+                .resources
+                .limit_plan
+                .filesystem_reads
+                .max_files,
+            2
+        );
     }
 
     #[test]
