@@ -229,6 +229,12 @@ test("a failed final verification revokes a previously enabled request", () => {
 test("controller revokes auto-merge after failed or ineligible reevaluation", () => {
   assert.match(revoke, /always\(\)/);
   assert.match(revoke, /needs\.decide\.outputs\.eligible != 'true'/);
+  assert.match(revoke, /workflow_run\.name == 'CI and Release'/);
+  assert.match(revoke, /workflow_run\.event == 'pull_request'/);
+  assert.match(revoke, /workflow_run\.actor\.login == 'dependabot\[bot\]'/);
+  assert.match(revoke, /workflow_run\.name == 'Dependabot review signal'/);
+  assert.match(revoke, /workflow_run\.event == 'pull_request_review'/);
+  assert.match(revoke, /workflow_run\.conclusion == 'success'/);
   assert.match(revoke, /pull-requests:\s*write/);
   assert.doesNotMatch(revoke, /contents:\s*write|actions:\s*write|checks:\s*write/);
   assert.match(revoke, /\.user\.login == "dependabot\[bot\]"/);
