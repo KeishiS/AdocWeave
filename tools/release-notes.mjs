@@ -50,6 +50,8 @@ const migrationNotes = [
   "WASM protocol schema 7では`preprocess.options`へ`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`を追加しました。省略時は従来と同じ32と1048576を使用します。combined requestで`analysisOptions.syntax.limits`へ非既定値を指定する場合は、前処理側にも同じ値を指定してください。不一致は処理前に`invalid-options`として拒否されます。",
   "`PreprocessedAnalysisError`へ`Cancelled`を追加しました。この列挙型を網羅的に`match`するRustコードは、処理の取り消しを扱う分岐を追加してください。協調キャンセルが必要な場合は`preprocess_cancellable`、`preprocess_and_analyze_cancellable_with_options`、`lint_analysis_cancellable`または`PreprocessedAnalysis::project_origins_cancellable`を使用してください。",
   "`adocweave_host::ResourceLimits`は`FilesystemReadLimits`へ、`adocweave_workspace::ResourceLimits`は`RetainedResourceLimits`へ変わりました。project設定からは`ResolvedResourceLimitPlan`を取得し、`filesystem_reads`、`retained_layers`および`analysis_snapshot`を対応する境界へ渡してください。",
+  "`adocweave_host::ResourceError`へ`SessionIdentityExhausted`と`InvalidRollback`を追加しました。この列挙型を網羅的に`match`するRustコードは、session識別子の枯渇と、別session・古い世代・使用済みtokenによる`FilesystemReadRollback`の拒否を扱う分岐を追加してください。",
+  "複数pathを指定する`format`と`check`は、同じ設定fileから解決したprojectごとにprimaryとincludeのfilesystem読込予算および保持予算を合算します。各入力を単独で処理すると成功する場合も、project内の合計が設定上限を超える入力群は拒否されます。",
   "JSONの`packageVersion`は文字列のままです。source mapの`mapping`も`identity`または`whole-origin`の文字列を維持します。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];

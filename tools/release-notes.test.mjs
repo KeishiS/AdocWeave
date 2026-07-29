@@ -56,6 +56,10 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /`adocweave_host::ResourceLimits`は`FilesystemReadLimits`/);
   assert.match(notes, /`adocweave_workspace::ResourceLimits`は`RetainedResourceLimits`/);
   assert.match(notes, /`ResolvedResourceLimitPlan`/);
+  assert.match(notes, /ResourceError`へ`SessionIdentityExhausted`と`InvalidRollback`/);
+  assert.match(notes, /`FilesystemReadRollback`の拒否/);
+  assert.match(notes, /複数pathを指定する`format`と`check`/);
+  assert.match(notes, /primaryとincludeのfilesystem読込予算および保持予算を合算/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
