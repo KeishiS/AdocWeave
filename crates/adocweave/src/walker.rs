@@ -100,88 +100,86 @@ where
 }
 
 pub(crate) fn walk_blocks_mut(blocks: &mut [AstBlock], visitor: &mut impl BlockVisitorMut) {
-    fn walk_list_mut(list: &mut ListBlock, visitor: &mut impl BlockVisitorMut) {
-        visitor.visit_list(list);
-        for item in &mut list.items {
-            for child in &mut item.children {
-                walk_list_mut(child, visitor);
-            }
-            walk_blocks_mut(&mut item.continuations, visitor);
+    struct BlockAdapter<'visitor, Visitor>(&'visitor mut Visitor);
+
+    impl<Visitor: BlockVisitorMut> SemanticVisitorMut for BlockAdapter<'_, Visitor> {
+        fn visit_block(&mut self, block: &mut AstBlock) {
+            self.0.visit_block(block);
+        }
+
+        fn visit_list(&mut self, list: &mut ListBlock) {
+            self.0.visit_list(list);
         }
     }
 
-    for block in blocks {
-        visitor.visit_block(block);
-        match block {
-            AstBlock::List(list) => walk_list_mut(list, visitor),
-            AstBlock::Delimited(block) => match &mut block.content {
-                crate::parser::DelimitedContent::Compound(children) => {
-                    walk_blocks_mut(children, visitor);
-                }
-                crate::parser::DelimitedContent::Table(table) => {
-                    for row in &mut table.rows {
-                        for cell in &mut row.cells {
-                            if let crate::table::TableCellContent::AsciiDoc(children) =
-                                &mut cell.content
-                            {
-                                walk_blocks_mut(children, visitor);
-                            }
-                        }
-                    }
-                }
-                crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Passthrough(_) => {}
-            },
-            AstBlock::Heading(_)
-            | AstBlock::Paragraph(_)
-            | AstBlock::LiteralParagraph(_)
-            | AstBlock::Break(_)
-            | AstBlock::Source(_)
-            | AstBlock::Verbatim(_)
-            | AstBlock::Math(_)
-            | AstBlock::Unsupported(_) => {}
-        }
-    }
+    walk_semantic_mut(blocks, &mut BlockAdapter(visitor));
 }
 
 pub(crate) fn walk_inline_sequences_mut(
     blocks: &mut [AstBlock],
     visitor: &mut impl FnMut(&mut Vec<Inline>),
 ) {
-    fn visit_list(list: &mut ListBlock, visitor: &mut impl FnMut(&mut Vec<Inline>)) {
+    struct InlineAdapter<'visitor, Visitor>(&'visitor mut Visitor);
+
+    impl<Visitor: FnMut(&mut Vec<Inline>)> SemanticVisitorMut for InlineAdapter<'_, Visitor> {
+        fn visit_inline_sequence(&mut self, inlines: &mut Vec<Inline>) {
+            self.0(inlines);
+        }
+    }
+
+    walk_semantic_mut(blocks, &mut InlineAdapter(visitor));
+}
+
+/// Mutable counterpart of the immutable child topology.
+///
+/// Adapters select the mutable node categories they need, while this function
+/// owns the structural recursion for lists, continuations, compound blocks,
+/// tables, AsciiDoc cells, and inline-bearing fields.
+trait SemanticVisitorMut {
+    fn visit_block(&mut self, _block: &mut AstBlock) {}
+
+    fn visit_list(&mut self, _list: &mut ListBlock) {}
+
+    fn visit_inline_sequence(&mut self, _inlines: &mut Vec<Inline>) {}
+}
+
+fn walk_semantic_mut(blocks: &mut [AstBlock], visitor: &mut impl SemanticVisitorMut) {
+    fn walk_list_mut(list: &mut ListBlock, visitor: &mut impl SemanticVisitorMut) {
+        visitor.visit_list(list);
         for item in &mut list.items {
             for term in &mut item.terms {
-                visitor(&mut term.inlines);
+                visitor.visit_inline_sequence(&mut term.inlines);
             }
-            visitor(&mut item.inlines);
+            visitor.visit_inline_sequence(&mut item.inlines);
             for child in &mut item.children {
-                visit_list(child, visitor);
+                walk_list_mut(child, visitor);
             }
-            walk_inline_sequences_mut(&mut item.continuations, visitor);
+            walk_semantic_mut(&mut item.continuations, visitor);
         }
     }
 
     for block in blocks {
+        visitor.visit_block(block);
         if let Some(title) = &mut block.metadata_mut().title {
-            visitor(&mut title.inlines);
+            visitor.visit_inline_sequence(&mut title.inlines);
         }
         match block {
-            AstBlock::Heading(heading) => visitor(&mut heading.inlines),
-            AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines),
-            AstBlock::List(list) => visit_list(list, visitor),
+            AstBlock::Heading(heading) => visitor.visit_inline_sequence(&mut heading.inlines),
+            AstBlock::Paragraph(paragraph) => visitor.visit_inline_sequence(&mut paragraph.inlines),
+            AstBlock::List(list) => walk_list_mut(list, visitor),
             AstBlock::Delimited(block) => match &mut block.content {
                 crate::parser::DelimitedContent::Compound(children) => {
-                    walk_inline_sequences_mut(children, visitor);
+                    walk_semantic_mut(children, visitor);
                 }
                 crate::parser::DelimitedContent::Table(table) => {
                     for row in &mut table.rows {
                         for cell in &mut row.cells {
                             match &mut cell.content {
                                 crate::table::TableCellContent::Inlines(inlines) => {
-                                    visitor(inlines)
+                                    visitor.visit_inline_sequence(inlines);
                                 }
                                 crate::table::TableCellContent::AsciiDoc(children) => {
-                                    walk_inline_sequences_mut(children, visitor);
+                                    walk_semantic_mut(children, visitor);
                                 }
                                 crate::table::TableCellContent::Verbatim(_) => {}
                             }
@@ -206,111 +204,149 @@ fn try_walk_blocks<'document, Break>(
     visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
 ) -> ControlFlow<Break> {
     for block in blocks {
-        visitor(SemanticNode::Block(block))?;
-        try_walk_metadata(block.metadata(), visitor)?;
-        match block {
-            AstBlock::Heading(heading) => try_walk_inlines(&heading.inlines, visitor)?,
-            AstBlock::Paragraph(paragraph) => try_walk_inlines(&paragraph.inlines, visitor)?,
-            AstBlock::List(list) => {
-                visitor(SemanticNode::List(list))?;
-                try_walk_list_contents(list, visitor)?;
-            }
-            AstBlock::Delimited(block) => match &block.content {
-                crate::parser::DelimitedContent::Compound(children) => {
-                    try_walk_blocks(children, visitor)?;
+        try_walk_node(SemanticNode::Block(block), visitor)?;
+    }
+    ControlFlow::Continue(())
+}
+
+fn try_walk_node<'document, Break>(
+    node: SemanticNode<'document>,
+    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
+    visitor(node)?;
+    try_visit_children(node, &mut |child| try_walk_node(child, visitor))
+}
+
+/// Visits the immediate semantic children of one node in source event order.
+///
+/// This is the immutable child-topology contract. Recursive walkers and
+/// hierarchy-building consumers must derive descent from this function rather
+/// than repeating matches over block, list, table, or inline variants.
+pub(crate) fn try_visit_children<'document, Break>(
+    node: SemanticNode<'document>,
+    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
+    match node {
+        SemanticNode::Block(block) => {
+            visitor(SemanticNode::Metadata(block.metadata()))?;
+            match block {
+                AstBlock::Heading(heading) => {
+                    visit_inline_children(&heading.inlines, visitor)?;
                 }
-                crate::parser::DelimitedContent::Table(table) => {
-                    visitor(SemanticNode::Table(table))?;
-                    for row in &table.rows {
-                        visitor(SemanticNode::TableRow(row))?;
-                        for cell in &row.cells {
-                            visitor(SemanticNode::TableCell(cell))?;
-                            match &cell.content {
-                                crate::table::TableCellContent::Inlines(inlines) => {
-                                    try_walk_inlines(inlines, visitor)?;
-                                }
-                                crate::table::TableCellContent::AsciiDoc(blocks) => {
-                                    try_walk_blocks(blocks, visitor)?;
-                                }
-                                crate::table::TableCellContent::Verbatim(_) => {}
-                            }
-                        }
+                AstBlock::Paragraph(paragraph) => {
+                    visit_inline_children(&paragraph.inlines, visitor)?;
+                }
+                AstBlock::List(list) => visitor(SemanticNode::List(list))?,
+                AstBlock::Delimited(block) => match &block.content {
+                    crate::parser::DelimitedContent::Compound(children) => {
+                        visit_block_children(children, visitor)?;
                     }
-                }
-                crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Passthrough(_) => {}
-            },
-            AstBlock::LiteralParagraph(_)
-            | AstBlock::Break(_)
-            | AstBlock::Source(_)
-            | AstBlock::Verbatim(_)
-            | AstBlock::Math(_)
-            | AstBlock::Unsupported(_) => {}
+                    crate::parser::DelimitedContent::Table(table) => {
+                        visitor(SemanticNode::Table(table))?;
+                    }
+                    crate::parser::DelimitedContent::Verbatim(_)
+                    | crate::parser::DelimitedContent::Passthrough(_) => {}
+                },
+                AstBlock::LiteralParagraph(_)
+                | AstBlock::Break(_)
+                | AstBlock::Source(_)
+                | AstBlock::Verbatim(_)
+                | AstBlock::Math(_)
+                | AstBlock::Unsupported(_) => {}
+            }
         }
-    }
-    ControlFlow::Continue(())
-}
-
-fn try_walk_metadata<'document, Break>(
-    metadata: &'document BlockMetadata,
-    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
-) -> ControlFlow<Break> {
-    visitor(SemanticNode::Metadata(metadata))?;
-    if let Some(title) = &metadata.title {
-        visitor(SemanticNode::MetadataTitle(title))?;
-    }
-    if let Some(id) = &metadata.id {
-        visitor(SemanticNode::MetadataId(id))?;
-    }
-    for role in &metadata.roles {
-        visitor(SemanticNode::MetadataRole(role))?;
-    }
-    for option in &metadata.options {
-        visitor(SemanticNode::MetadataOption(option))?;
-    }
-    for attribute in &metadata.attributes {
-        visitor(SemanticNode::ElementAttribute(attribute))?;
-    }
-    ControlFlow::Continue(())
-}
-
-fn try_walk_list_contents<'document, Break>(
-    list: &'document ListBlock,
-    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
-) -> ControlFlow<Break> {
-    for item in &list.items {
-        visitor(SemanticNode::ListItem(item))?;
-        for term in &item.terms {
-            try_walk_inlines(&term.inlines, visitor)?;
+        SemanticNode::List(list) => {
+            for item in &list.items {
+                visitor(SemanticNode::ListItem(item))?;
+            }
         }
-        try_walk_inlines(&item.inlines, visitor)?;
-        for child in &item.children {
-            visitor(SemanticNode::List(child))?;
-            try_walk_list_contents(child, visitor)?;
+        SemanticNode::ListItem(item) => {
+            for term in &item.terms {
+                visit_inline_children(&term.inlines, visitor)?;
+            }
+            visit_inline_children(&item.inlines, visitor)?;
+            for child in &item.children {
+                visitor(SemanticNode::List(child))?;
+            }
+            visit_block_children(&item.continuations, visitor)?;
         }
-        try_walk_blocks(&item.continuations, visitor)?;
-    }
-    ControlFlow::Continue(())
-}
-
-fn try_walk_inlines<'document, Break>(
-    inlines: &'document [Inline],
-    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
-) -> ControlFlow<Break> {
-    for inline in inlines {
-        visitor(SemanticNode::Inline(inline))?;
-        match inline {
-            Inline::Styled { children, .. } => try_walk_inlines(children, visitor)?,
-            Inline::Link(link) => try_walk_inlines(&link.label, visitor)?,
-            Inline::Reference(reference) => try_walk_inlines(&reference.label, visitor)?,
-            Inline::Macro(_) => {}
-            Inline::Text(_)
+        SemanticNode::Table(table) => {
+            for row in &table.rows {
+                visitor(SemanticNode::TableRow(row))?;
+            }
+        }
+        SemanticNode::TableRow(row) => {
+            for cell in &row.cells {
+                visitor(SemanticNode::TableCell(cell))?;
+            }
+        }
+        SemanticNode::TableCell(cell) => match &cell.content {
+            crate::table::TableCellContent::Inlines(inlines) => {
+                visit_inline_children(inlines, visitor)?;
+            }
+            crate::table::TableCellContent::AsciiDoc(blocks) => {
+                visit_block_children(blocks, visitor)?;
+            }
+            crate::table::TableCellContent::Verbatim(_) => {}
+        },
+        SemanticNode::Inline(inline) => match inline {
+            Inline::Styled { children, .. } => visit_inline_children(children, visitor)?,
+            Inline::Link(link) => visit_inline_children(&link.label, visitor)?,
+            Inline::Reference(reference) => visit_inline_children(&reference.label, visitor)?,
+            Inline::Macro(_)
+            | Inline::Text(_)
             | Inline::Literal { .. }
             | Inline::AttributeReference { .. }
             | Inline::HardBreak { .. }
             | Inline::Passthrough { .. }
             | Inline::Formula(_) => {}
+        },
+        SemanticNode::Metadata(metadata) => {
+            if let Some(title) = &metadata.title {
+                visitor(SemanticNode::MetadataTitle(title))?;
+            }
+            if let Some(id) = &metadata.id {
+                visitor(SemanticNode::MetadataId(id))?;
+            }
+            for role in &metadata.roles {
+                visitor(SemanticNode::MetadataRole(role))?;
+            }
+            for option in &metadata.options {
+                visitor(SemanticNode::MetadataOption(option))?;
+            }
+            for attribute in &metadata.attributes {
+                visitor(SemanticNode::ElementAttribute(attribute))?;
+            }
         }
+        SemanticNode::MetadataTitle(title) => {
+            visit_inline_children(&title.inlines, visitor)?;
+        }
+        SemanticNode::Attribute(_)
+        | SemanticNode::Anchor(_)
+        | SemanticNode::MetadataId(_)
+        | SemanticNode::MetadataRole(_)
+        | SemanticNode::MetadataOption(_)
+        | SemanticNode::ElementAttribute(_) => {}
+    }
+    ControlFlow::Continue(())
+}
+
+fn visit_block_children<'document, Break>(
+    blocks: &'document [AstBlock],
+    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
+    for block in blocks {
+        visitor(SemanticNode::Block(block))?;
+    }
+    ControlFlow::Continue(())
+}
+
+fn visit_inline_children<'document, Break>(
+    inlines: &'document [Inline],
+    visitor: &mut impl FnMut(SemanticNode<'document>) -> ControlFlow<Break>,
+) -> ControlFlow<Break> {
+    for inline in inlines {
+        visitor(SemanticNode::Inline(inline))?;
     }
     ControlFlow::Continue(())
 }
@@ -320,8 +356,8 @@ mod tests {
     use std::ops::ControlFlow;
 
     use super::{
-        BlockVisitorMut, SemanticNode, try_walk_ast, try_walk_block_slice, walk, walk_ast,
-        walk_block_slice, walk_blocks_mut,
+        SemanticNode, SemanticVisitorMut, try_walk_ast, try_walk_block_slice, walk, walk_ast,
+        walk_block_slice, walk_semantic_mut,
     };
     use crate::{inline::Inline, parser::AstBlock};
 
@@ -472,6 +508,15 @@ mod tests {
         assert_eq!(result, ControlFlow::Continue(()));
         assert_eq!(controlled, legacy);
         assert_eq!(
+            controlled
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            controlled.len(),
+            "each semantic node must be emitted exactly once"
+        );
+        assert_eq!(
             snapshots,
             [
                 "attribute@0..13:name",
@@ -480,6 +525,7 @@ mod tests {
                 "block-paragraph@81..152:",
                 "metadata@14..81:",
                 "metadata-title@35..46:Block title",
+                "inline-text@35..46:Block title",
                 "metadata-id@49..57:block-id",
                 "metadata-role@58..62:role",
                 "metadata-option@63..69:option",
@@ -693,7 +739,7 @@ mod tests {
     }
 
     #[test]
-    fn immutable_and_mutable_walkers_reach_the_same_blocks_and_lists() {
+    fn immutable_and_mutable_walkers_reach_the_same_topology() {
         let source = concat!(
             "====\n",
             "* outer\n",
@@ -710,28 +756,76 @@ mod tests {
             "====\n",
         );
         let mut parsed = crate::parser::parse(source).expect("nested source");
-        let mut immutable = (0, 0);
+        let mut immutable = Vec::new();
         walk_ast(&parsed.ast, |node| match node {
-            SemanticNode::Block(_) => immutable.0 += 1,
-            SemanticNode::List(_) => immutable.1 += 1,
+            SemanticNode::Block(block) => immutable.push(("block", block.range())),
+            SemanticNode::List(list) => immutable.push(("list", list.range)),
+            SemanticNode::Inline(inline) => immutable.push(("inline", inline.range())),
             _ => {}
         });
 
         #[derive(Default)]
-        struct Counts(usize, usize);
-        impl BlockVisitorMut for Counts {
-            fn visit_block(&mut self, _block: &mut AstBlock) {
-                self.0 += 1;
+        struct Events(Vec<(&'static str, crate::source::TextRange)>);
+        impl SemanticVisitorMut for Events {
+            fn visit_block(&mut self, block: &mut AstBlock) {
+                self.0.push(("block", block.range()));
             }
 
-            fn visit_list(&mut self, _list: &mut crate::parser::ListBlock) {
-                self.1 += 1;
+            fn visit_list(&mut self, list: &mut crate::parser::ListBlock) {
+                self.0.push(("list", list.range));
+            }
+
+            fn visit_inline_sequence(&mut self, inlines: &mut Vec<Inline>) {
+                fn collect(
+                    inlines: &[Inline],
+                    output: &mut Vec<(&'static str, crate::source::TextRange)>,
+                ) {
+                    for inline in inlines {
+                        output.push(("inline", inline.range()));
+                        match inline {
+                            Inline::Styled { children, .. } => collect(children, output),
+                            Inline::Link(link) => collect(&link.label, output),
+                            Inline::Reference(reference) => collect(&reference.label, output),
+                            Inline::Macro(_)
+                            | Inline::Text(_)
+                            | Inline::Literal { .. }
+                            | Inline::AttributeReference { .. }
+                            | Inline::HardBreak { .. }
+                            | Inline::Passthrough { .. }
+                            | Inline::Formula(_) => {}
+                        }
+                    }
+                }
+                collect(inlines, &mut self.0);
             }
         }
-        let mut mutable = Counts::default();
-        walk_blocks_mut(&mut parsed.ast.blocks, &mut mutable);
+        let mut mutable = Events::default();
+        walk_semantic_mut(&mut parsed.ast.blocks, &mut mutable);
 
-        assert_eq!(immutable, (mutable.0, mutable.1));
+        assert_eq!(immutable, mutable.0);
+    }
+
+    #[test]
+    fn failed_budget_or_cancellation_produces_no_walkable_semantic_tree() {
+        let mut limited = crate::AnalysisOptions::default();
+        limited.syntax.limits.max_blocks = 1;
+        let budget_result = crate::Engine::new(limited).analyze("one\n\ntwo\n");
+        assert!(matches!(
+            budget_result,
+            Err(crate::ParseError::LimitExceeded {
+                resource: "blocks",
+                ..
+            })
+        ));
+
+        let cancellation = crate::CancellationToken::new();
+        cancellation.cancel();
+        let cancellation_result = crate::Engine::new(crate::AnalysisOptions::default())
+            .analyze_cancellable("paragraph\n", &cancellation);
+        assert!(matches!(
+            cancellation_result,
+            Err(crate::ParseError::Cancelled)
+        ));
     }
 
     #[test]

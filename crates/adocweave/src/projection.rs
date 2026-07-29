@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use crate::core::{Analysis, SourceId};
 use crate::document::{ReferenceTarget, ReferenceTargetKind};
 use crate::inline::{Inline, Link};
-use crate::parser::{AstBlock, ListBlock};
+use crate::parser::AstBlock;
 use crate::reference::{ReferenceKey, ResolutionOutcome};
 use crate::render::{RenderInputs, ResolutionMatch};
 use crate::source::TextRange;
@@ -400,108 +400,98 @@ fn project_link(link: &Link) -> ExternalLink {
 }
 
 fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment>) {
-    for block in blocks {
-        match block {
-            AstBlock::Heading(heading) => push_search(
-                output,
-                SearchTextKind::Prose,
-                heading.text_range,
-                inline_text(&heading.inlines),
-            ),
-            AstBlock::Paragraph(paragraph) => {
-                push_search(
-                    output,
-                    SearchTextKind::Prose,
-                    paragraph.content_range,
-                    fold_line_endings(&inline_text(&paragraph.inlines)),
-                );
-            }
-            AstBlock::LiteralParagraph(literal) => push_search(
-                output,
-                SearchTextKind::Code,
-                literal.content_range,
-                literal.value.clone(),
-            ),
-            AstBlock::Break(_) => {}
-            AstBlock::Source(source) => push_search(
-                output,
-                SearchTextKind::Code,
-                source.content_range,
-                source.value.clone(),
-            ),
-            AstBlock::Verbatim(source) => push_search(
-                output,
-                SearchTextKind::Code,
-                source.content_range,
-                source.value.clone(),
-            ),
-            AstBlock::List(list) => collect_search_list(list, output),
-            AstBlock::Delimited(block) => match &block.content {
-                crate::parser::DelimitedContent::Compound(children) => {
-                    collect_search_blocks(children, output);
-                }
-                crate::parser::DelimitedContent::Verbatim(value)
-                    if !matches!(block.kind, crate::parser::DelimitedBlockKind::Comment) =>
-                {
-                    push_search(
-                        output,
-                        SearchTextKind::Code,
-                        block.content_range,
-                        value.clone(),
-                    );
-                }
-                crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Passthrough(_) => {}
-                crate::parser::DelimitedContent::Table(table) => {
-                    for row in &table.rows {
-                        for cell in &row.cells {
-                            match &cell.content {
-                                crate::table::TableCellContent::Inlines(inlines) => push_search(
-                                    output,
-                                    SearchTextKind::Prose,
-                                    cell.content_range,
-                                    inline_text(inlines),
-                                ),
-                                crate::table::TableCellContent::AsciiDoc(blocks) => {
-                                    collect_search_blocks(blocks, output)
-                                }
-                                crate::table::TableCellContent::Verbatim(value) => push_search(
-                                    output,
-                                    SearchTextKind::Code,
-                                    cell.content_range,
-                                    value.clone(),
-                                ),
-                            }
-                        }
-                    }
-                }
-            },
-            AstBlock::Math(_) | AstBlock::Unsupported(_) => {}
-        }
-    }
-}
-
-fn collect_search_list(list: &ListBlock, output: &mut Vec<SearchTextSegment>) {
-    for item in &list.items {
-        for term in &item.terms {
+    crate::walker::walk_block_slice(blocks, |node| match node {
+        crate::walker::SemanticNode::Block(AstBlock::Heading(heading)) => push_search(
+            output,
+            SearchTextKind::Prose,
+            heading.text_range,
+            inline_text(&heading.inlines),
+        ),
+        crate::walker::SemanticNode::Block(AstBlock::Paragraph(paragraph)) => {
             push_search(
                 output,
                 SearchTextKind::Prose,
-                term.range,
-                inline_text(&term.inlines),
+                paragraph.content_range,
+                fold_line_endings(&inline_text(&paragraph.inlines)),
             );
         }
-        push_search(
+        crate::walker::SemanticNode::Block(AstBlock::LiteralParagraph(literal)) => push_search(
             output,
-            SearchTextKind::Prose,
-            item.text_range,
-            inline_text(&item.inlines),
-        );
-        for child in &item.children {
-            collect_search_list(child, output);
+            SearchTextKind::Code,
+            literal.content_range,
+            literal.value.clone(),
+        ),
+        crate::walker::SemanticNode::Block(AstBlock::Source(source)) => push_search(
+            output,
+            SearchTextKind::Code,
+            source.content_range,
+            source.value.clone(),
+        ),
+        crate::walker::SemanticNode::Block(AstBlock::Verbatim(source)) => push_search(
+            output,
+            SearchTextKind::Code,
+            source.content_range,
+            source.value.clone(),
+        ),
+        crate::walker::SemanticNode::Block(AstBlock::Delimited(block)) => {
+            if let crate::parser::DelimitedContent::Verbatim(value) = &block.content
+                && !matches!(block.kind, crate::parser::DelimitedBlockKind::Comment)
+            {
+                push_search(
+                    output,
+                    SearchTextKind::Code,
+                    block.content_range,
+                    value.clone(),
+                );
+            }
         }
-        collect_search_blocks(&item.continuations, output);
-    }
+        crate::walker::SemanticNode::ListItem(item) => {
+            for term in &item.terms {
+                push_search(
+                    output,
+                    SearchTextKind::Prose,
+                    term.range,
+                    inline_text(&term.inlines),
+                );
+            }
+            push_search(
+                output,
+                SearchTextKind::Prose,
+                item.text_range,
+                inline_text(&item.inlines),
+            );
+        }
+        crate::walker::SemanticNode::TableCell(cell) => match &cell.content {
+            crate::table::TableCellContent::Inlines(inlines) => push_search(
+                output,
+                SearchTextKind::Prose,
+                cell.content_range,
+                inline_text(inlines),
+            ),
+            crate::table::TableCellContent::Verbatim(value) => push_search(
+                output,
+                SearchTextKind::Code,
+                cell.content_range,
+                value.clone(),
+            ),
+            crate::table::TableCellContent::AsciiDoc(_) => {}
+        },
+        crate::walker::SemanticNode::Block(
+            AstBlock::Break(_) | AstBlock::List(_) | AstBlock::Math(_) | AstBlock::Unsupported(_),
+        )
+        | crate::walker::SemanticNode::List(_)
+        | crate::walker::SemanticNode::Table(_)
+        | crate::walker::SemanticNode::TableRow(_)
+        | crate::walker::SemanticNode::Inline(_)
+        | crate::walker::SemanticNode::Attribute(_)
+        | crate::walker::SemanticNode::Anchor(_)
+        | crate::walker::SemanticNode::Metadata(_)
+        | crate::walker::SemanticNode::MetadataTitle(_)
+        | crate::walker::SemanticNode::MetadataId(_)
+        | crate::walker::SemanticNode::MetadataRole(_)
+        | crate::walker::SemanticNode::MetadataOption(_)
+        | crate::walker::SemanticNode::ElementAttribute(_) => {}
+    });
 }
 
 fn push_search(

@@ -3,7 +3,9 @@ use adocweave::output::html::{RenderPolicy, render};
 use adocweave::output::projection::{project, searchable_text};
 use adocweave::resolution::ReferenceKey;
 use adocweave::resolution::{AuthoredUrlPolicy, UrlDecision};
-use adocweave::semantic::{generate_heading_ids, reference_targets};
+use adocweave::semantic::{
+    SemanticNode, generate_heading_ids, reference_targets, walk as walk_semantic,
+};
 use adocweave::text::{PositionEncoding, SourceDocument, SyntaxKind, TextSize};
 use adocweave::{AnalysisOptions, Engine};
 
@@ -164,6 +166,53 @@ fn generated_reference_keys_and_targets_are_stable_and_bounded() {
                 assert!(reference.range.end().to_usize() <= source.len());
             }
         }
+    }
+}
+
+#[test]
+fn generated_semantic_topology_is_deterministic_and_visits_each_node_once() {
+    fn identity(node: SemanticNode<'_>) -> (&'static str, usize) {
+        fn address<T>(value: &T) -> usize {
+            value as *const T as usize
+        }
+
+        match node {
+            SemanticNode::Block(value) => ("block", address(value)),
+            SemanticNode::List(value) => ("list", address(value)),
+            SemanticNode::ListItem(value) => ("list-item", address(value)),
+            SemanticNode::Table(value) => ("table", address(value)),
+            SemanticNode::TableRow(value) => ("table-row", address(value)),
+            SemanticNode::TableCell(value) => ("table-cell", address(value)),
+            SemanticNode::Inline(value) => ("inline", address(value)),
+            SemanticNode::Attribute(value) => ("attribute", address(value)),
+            SemanticNode::Anchor(value) => ("anchor", address(value)),
+            SemanticNode::Metadata(value) => ("metadata", address(value)),
+            SemanticNode::MetadataTitle(value) => ("metadata-title", address(value)),
+            SemanticNode::MetadataId(value) => ("metadata-id", address(value)),
+            SemanticNode::MetadataRole(value) => ("metadata-role", address(value)),
+            SemanticNode::MetadataOption(value) => ("metadata-option", address(value)),
+            SemanticNode::ElementAttribute(value) => ("element-attribute", address(value)),
+        }
+    }
+
+    let engine = Engine::new(AnalysisOptions::default());
+    for source in corpus() {
+        let analysis = engine.analyze(&source).expect("analysis");
+        let mut first = Vec::new();
+        walk_semantic(analysis.document(), |node| first.push(identity(node)));
+        let mut second = Vec::new();
+        walk_semantic(analysis.document(), |node| second.push(identity(node)));
+
+        assert_eq!(first, second, "{source:?}");
+        assert_eq!(
+            first
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            first.len(),
+            "{source:?}"
+        );
     }
 }
 
