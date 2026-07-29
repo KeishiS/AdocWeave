@@ -75,7 +75,8 @@ impl PreparedWorkspaceRead {
         self.filesystem
             .lock()
             .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-            .rollback_reread(self.rollback);
+            .rollback_reread(self.rollback)
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 }
