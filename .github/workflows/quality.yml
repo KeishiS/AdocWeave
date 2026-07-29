@@ -23,16 +23,38 @@ jobs:
       - name: Dependency boundary audit
         run: nix develop .#ci -c cargo make dependency-governance
 
-  verify:
+  source-fast:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-      - name: Source quality gate execution
-        run: nix develop .#ci -c cargo make quality
+      - name: Fast source policy execution
+        run: nix develop .#ci -c cargo make quality-fast
+
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - name: Rust source gate execution
+        run: nix develop .#ci -c cargo make quality-rust
+
+  adapters:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - name: Adapter source gate execution
+        run: nix develop .#ci -c cargo make quality-adapters
 
   fuzz:
     runs-on: ubuntu-24.04
@@ -56,3 +78,30 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
       - name: Nix package build and execution
         run: nix develop .#ci -c cargo make nix-package-check
+
+  verify:
+    if: always()
+    needs: [source-fast, rust, adapters, dependencies, fuzz, nix-package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Required quality result aggregation
+        env:
+          ADAPTERS_RESULT: ${{ needs.adapters.result }}
+          DEPENDENCIES_RESULT: ${{ needs.dependencies.result }}
+          FUZZ_RESULT: ${{ needs.fuzz.result }}
+          NIX_PACKAGE_REQUIRED: ${{ inputs.run_nix_package }}
+          NIX_PACKAGE_RESULT: ${{ needs.nix-package.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          SOURCE_FAST_RESULT: ${{ needs.source-fast.result }}
+        run: |
+          test "$SOURCE_FAST_RESULT" = success
+          test "$RUST_RESULT" = success
+          test "$ADAPTERS_RESULT" = success
+          test "$DEPENDENCIES_RESULT" = success
+          test "$FUZZ_RESULT" = success
+          if [ "$NIX_PACKAGE_REQUIRED" = true ]; then
+            test "$NIX_PACKAGE_RESULT" = success
+          else
+            test "$NIX_PACKAGE_RESULT" = skipped
+          fi

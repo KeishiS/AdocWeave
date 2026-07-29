@@ -749,48 +749,64 @@ nix build \
 nix run . -- --version --json | jq -e --arg version "$version" '.packageVersion == $version' >/dev/null
 '''
 
-[tasks.quality]
-description = "Run the merge-time source quality gate, including editor adapter tests, without release-candidate work"
+[tasks.quality-fast]
+description = "Run formatting, generated-file, workflow, release, platform, and repository policy checks"
 dependencies = [
   "fmt-check",
+  "protocol-generated-check",
+  "platform-contract",
+  "release-contract",
+  "workflow-lint",
+  "docs-check",
+  "adoc-check-targets",
+]
+
+[tasks.quality-rust]
+description = "Run native Rust compilation, lint, tests, API documentation, and AsciiDoc checks"
+dependencies = [
   "check",
+  "cross-native-check",
+  "clippy",
+  "test",
+  "doc-check",
+  "adoc-check",
+  "docs-lint",
+  "html5-check",
+]
+
+[tasks.quality-adapters]
+description = "Run WASM, browser, Zed, and VS Code adapter contracts"
+dependencies = [
   "check-wasm",
   "check-zed",
   "check-zed-wasm",
   "check-vscode",
-  "cross-native-check",
-  "clippy",
   "clippy-zed",
-  "test",
   "test-web-worker",
   "protocol-check",
-  "test-browser-types",
   "test-zed",
   "test-vscode",
   "test-vscode-extension-host",
   "test-vscode-release-package",
-  "platform-contract",
-  "release-contract",
-  "workflow-lint",
   "test-cross-runtime",
-  "doc-check",
-  "docs-check",
-  "adoc-check",
-  "html5-check",
-  "docs-lint",
 ]
 
+[tasks.quality]
+description = "Run every merge-time source gate without release-candidate work"
+dependencies = ["quality-fast", "quality-rust", "quality-adapters"]
+
 [tasks.verify]
-description = "Run every non-mutating validation task"
+description = "Run the canonical local pull request gate"
 dependencies = [
   "quality",
+  "dependency-governance",
+  "fuzz",
   "nix-package-check",
-  "build",
 ]
 
 [tasks.ci]
-description = "Run the complete gate plus fuzz target compilation and short exploration"
-dependencies = ["verify", "fuzz"]
+description = "Alias for the canonical local pull request gate"
+alias = "verify"
 
 [tasks.release-check]
 description = "Run the publish gate and report release WASM artifact sizes"

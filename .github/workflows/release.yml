@@ -14,20 +14,66 @@ permissions:
 
 concurrency:
   group: ci-release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  plan:
+  changes:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      candidate_required: ${{ steps.changes.outputs.candidate_required }}
+      global_required: ${{ steps.changes.outputs.global_required }}
+      native_required: ${{ steps.changes.outputs.native_required }}
+      native_matrix: ${{ steps.changes.outputs.native_matrix }}
+      release_main: ${{ steps.changes.outputs.release_main }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff --name-only "$BASE_SHA" "$GITHUB_SHA" > changed-paths.txt
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] &&
+            [ -n "$BEFORE_SHA" ] &&
+            [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" > changed-paths.txt
+          else
+            : > changed-paths.txt
+          fi
+          version="$(jq -r .packageVersion release-manifest.json)"
+          if git show-ref --verify --quiet "refs/tags/v$version"; then
+            release_tag_exists=true
+          else
+            release_tag_exists=false
+          fi
+          node tools/native-change-plan.mjs \
+            "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_OUTPUT" "$release_tag_exists" \
+            < changed-paths.txt
+      - id: version
+        run: |
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(jq -r .packageVersion release-manifest.json)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release-plan:
+    needs: [changes]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      manifest: ${{ steps.plan.outputs.manifest }}
-      tag: ${{ steps.plan.outputs.tag }}
-      publishing: ${{ steps.plan.outputs.publishing }}
       candidate_run_id: ${{ steps.candidate.outputs.run_id }}
-      native_required: ${{ steps.native.outputs.native_required }}
-      native_matrix: ${{ steps.native.outputs.native_matrix }}
+      manifest: ${{ steps.plan.outputs.manifest }}
+      publishing: ${{ steps.plan.outputs.publishing }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,16 +85,6 @@ jobs:
           git fetch origin main:refs/remotes/origin/main
           test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-      - id: native
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            git diff --name-only "$BASE_SHA" "$GITHUB_SHA" > changed-paths.txt
-          else
-            : > changed-paths.txt
-          fi
-          node tools/native-change-plan.mjs "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_OUTPUT" < changed-paths.txt
       - id: candidate
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -63,19 +99,16 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
       - id: plan
         env:
-          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          CANDIDATE_TAG: ${{ needs.changes.outputs.tag }}
         run: |
-          if [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            candidate_tag="$RELEASE_TAG"
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             publishing=true
           else
-            candidate_tag="v$(jq -r .packageVersion release-manifest.json)"
             publishing=false
           fi
-          tools/run-pinned-dist.sh plan --tag="$candidate_tag" --output-format=json > plan.json
+          tools/run-pinned-dist.sh plan --tag="$CANDIDATE_TAG" --output-format=json > plan.json
           {
             echo "manifest=$(jq -c . plan.json)"
-            echo "tag=$candidate_tag"
             echo "publishing=$publishing"
           } >> "$GITHUB_OUTPUT"
 
@@ -86,11 +119,11 @@ jobs:
       run_nix_package: ${{ github.event_name == 'pull_request' }}
 
   build-native:
-    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
-    needs: [plan]
+    if: needs.changes.outputs.native_required == 'true'
+    needs: [changes]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.native_matrix) }}
+      matrix: ${{ fromJSON(needs.changes.outputs.native_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -108,7 +141,7 @@ jobs:
         if: matrix.build == 'nix'
         env:
           MACOSX_DEPLOYMENT_TARGET: '14.0'
-          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          RELEASE_TAG: ${{ needs.changes.outputs.tag }}
         run: |
           args=()
           if [ -n "$RELEASE_TAG" ]; then args+=("--tag=$RELEASE_TAG"); fi
@@ -131,7 +164,7 @@ jobs:
       - name: Windows target archive builds
         if: matrix.build == 'windows'
         env:
-          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+          RELEASE_TAG: ${{ needs.changes.outputs.tag }}
         shell: pwsh
         run: |
           node tools/generate-third-party-notices.mjs THIRD_PARTY_NOTICES.adoc
@@ -150,15 +183,15 @@ jobs:
             target/distrib/adocweave-lsp-${{ matrix.target }}.zip
 
   native-smoke:
-    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
-    needs: [plan, build-native]
+    if: needs.changes.outputs.native_required == 'true'
+    needs: [changes, build-native]
     uses: ./.github/workflows/native-artifact-smoke.yml
     with:
-      matrix: ${{ needs.plan.outputs.native_matrix }}
+      matrix: ${{ needs.changes.outputs.native_matrix }}
 
   build-global:
-    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
-    needs: [plan]
+    if: needs.changes.outputs.global_required == 'true'
+    needs: [changes]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -179,8 +212,8 @@ jobs:
             target/distrib/adocweave-vscode-*.vsix
 
   verify-candidate:
-    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
-    needs: [plan, native-smoke, build-global]
+    if: always() && needs.changes.outputs.candidate_required == 'true'
+    needs: [changes, native-smoke, build-global]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -193,13 +226,17 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Complete candidate metadata generation and verification
-        if: github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.release_main == 'true'
         run: |
           node tools/release-metadata.mjs generate artifacts "$GITHUB_SHA"
           node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
-      - name: Native pull request candidate verification
+      - name: Pull request candidate verification
         if: github.event_name == 'pull_request'
-        run: node tools/verify-native-pr-candidate.mjs artifacts
+        run: >-
+          node tools/verify-native-pr-candidate.mjs
+          artifacts
+          "${{ needs.changes.outputs.native_required }}"
+          "${{ needs.changes.outputs.global_required }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-candidate
@@ -208,11 +245,11 @@ jobs:
           path: artifacts/*
 
   installation-e2e:
-    if: github.ref == 'refs/heads/main' || needs.plan.outputs.native_required == 'true'
-    needs: [plan, verify-candidate]
+    if: needs.changes.outputs.native_required == 'true'
+    needs: [changes, verify-candidate]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.native_matrix) }}
+      matrix: ${{ fromJSON(needs.changes.outputs.native_matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
@@ -234,7 +271,7 @@ jobs:
           name: release-candidate
           path: artifacts
       - name: Candidate installation and complete removal
-        if: github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.release_main == 'true'
         run: node tools/release-installation-e2e.mjs artifacts "${{ matrix.target }}"
       - name: Pull request installation and complete removal
         if: github.event_name == 'pull_request'
@@ -246,7 +283,7 @@ jobs:
 
   reuse-candidate:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [plan]
+    needs: [release-plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -259,7 +296,7 @@ jobs:
           path: artifacts
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ needs.plan.outputs.candidate_run_id }}
+          run-id: ${{ needs.release-plan.outputs.candidate_run_id }}
       - name: Reused candidate verification
         run: node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -270,11 +307,11 @@ jobs:
           path: artifacts/*
 
   publish:
-    if: needs.plan.outputs.publishing == 'true'
-    needs: [plan, reuse-candidate]
+    if: needs.release-plan.outputs.publishing == 'true'
+    needs: [release-plan, reuse-candidate]
     uses: ./.github/workflows/release-publish.yml
     with:
-      plan: ${{ needs.plan.outputs.manifest }}
+      plan: ${{ needs.release-plan.outputs.manifest }}
     permissions:
       attestations: write
       contents: write

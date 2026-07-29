@@ -127,8 +127,16 @@ cargo make installation-e2e
 quarantine属性および各OSでのprocess lifecycleを再現しません。これらは対象OSのnative runnerで
 ``native-release-smoke``とinstallation E2Eを実行して確認します。
 
-Native成果物へ影響するpull requestでは、変更pathを``native-change-plan.mjs``で判定し、WindowsとmacOSの
-build、native smokeおよびinstallation E2Eを実行します。mainでは同じscriptを配布計画の全targetへ実行します。
+Pull Requestでは、変更pathを``native-change-plan.mjs``で判定します。CLIまたはLanguage Serverの
+Native archiveへ影響する場合はWindowsとmacOSのbuild、native smokeおよびinstallation E2Eを実行します。
+Browser package、Zed拡張またはVS Code拡張だけに影響する場合はglobal成果物だけを構築します。
+
+release manifestのversionに対応するtagが存在する通常の``main`` pushではsource quality gateを実行し、
+release candidateを構築しません。未公開versionへ更新したrelease用Pull Requestが``main``へ統合されてから
+tagを作成するまでは、配布計画にある全targetとglobal成果物を構築し、metadataとinstallation E2Eを含む
+完全なcandidateを保存します。candidateが失敗した後の修正commitでも同じ検査を再実行します。
+後から作成したversion tagは、同じcommitに対する成功済みcandidateを再検証して再利用します。
+新しいcommitによって不要になったPull Requestまたは``main``のrunは取り消しますが、tagの公開runは取り消しません。
 
 この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は
 xref:../../CONTRIBUTING.adoc[コントリビューションガイド]に従います。

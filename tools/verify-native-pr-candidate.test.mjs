@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import plan from "../release/distribution-plan.json" with { type: "json" };
 import {
-  expectedNativePullRequestAssets,
-  verifyNativePullRequestAssets,
+  expectedPullRequestAssets,
+  verifyPullRequestAssets,
 } from "./verify-native-pr-candidate.mjs";
 
 test("pull request candidateはWindows・macOSとglobal成果物だけを要求する", () => {
-  const expected = expectedNativePullRequestAssets(plan);
+  const expected = expectedPullRequestAssets(plan);
   assert.equal(expected.length, 7);
   assert(expected.includes("adocweave-cli-aarch64-apple-darwin.zip"));
   assert(expected.includes("adocweave-lsp-x86_64-pc-windows-msvc.zip"));
@@ -16,8 +16,27 @@ test("pull request candidateはWindows・macOSとglobal成果物だけを要求�
 });
 
 test("pull request candidateの欠落と余分なfileを拒否する", () => {
-  const expected = expectedNativePullRequestAssets(plan);
-  assert.doesNotThrow(() => verifyNativePullRequestAssets(expected, plan));
-  assert.throws(() => verifyNativePullRequestAssets(expected.slice(1), plan), /candidate mismatch/);
-  assert.throws(() => verifyNativePullRequestAssets([...expected, "unknown.zip"], plan), /candidate mismatch/);
+  const expected = expectedPullRequestAssets(plan);
+  assert.doesNotThrow(() => verifyPullRequestAssets(expected, plan));
+  assert.throws(() => verifyPullRequestAssets(expected.slice(1), plan), /candidate mismatch/);
+  assert.throws(() => verifyPullRequestAssets([...expected, "unknown.zip"], plan), /candidate mismatch/);
+});
+
+test("native-only candidateはglobal成果物を要求しない", () => {
+  const expected = expectedPullRequestAssets(plan, { global: false, native: true });
+  assert.equal(expected.length, 4);
+  assert.equal(expected.some((name) => name.includes("browser")), false);
+  assert.doesNotThrow(() =>
+    verifyPullRequestAssets(expected, plan, { global: false, native: true }));
+});
+
+test("global-only candidateはnative成果物を要求しない", () => {
+  const expected = expectedPullRequestAssets(plan, { global: true, native: false });
+  assert.deepEqual(expected, [
+    `adocweave-browser-${plan.packageVersion}.tar.xz`,
+    `adocweave-vscode-${plan.packageVersion}.vsix`,
+    `adocweave-zed-${plan.packageVersion}.tar.xz`,
+  ]);
+  assert.doesNotThrow(() =>
+    verifyPullRequestAssets(expected, plan, { global: true, native: false }));
 });
