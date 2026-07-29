@@ -752,14 +752,28 @@ nix build \
 nix run . -- --version --json | jq -e --arg version "$version" '.packageVersion == $version' >/dev/null
 '''
 
-[tasks.quality-fast]
-description = "Run formatting, generated-file, workflow, release, platform, and repository policy checks"
+[tasks.candidate-path-audit]
+description = "Reject tracked paths without an explicit release candidate impact classification"
+script_runner = "@shell"
+script = '''
+git ls-files | node tools/native-change-plan.mjs --audit
+'''
+
+[tasks.ci-preflight]
+description = "Run inexpensive common checks before release candidate builds"
 dependencies = [
   "fmt-check",
   "protocol-generated-check",
-  "platform-contract",
   "release-contract",
   "workflow-lint",
+  "candidate-path-audit",
+]
+
+[tasks.quality-fast]
+description = "Run formatting, generated-file, workflow, release, platform, and repository policy checks"
+dependencies = [
+  "ci-preflight",
+  "platform-contract",
   "docs-check",
   "adoc-check-targets",
 ]

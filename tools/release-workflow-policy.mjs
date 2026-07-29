@@ -166,8 +166,23 @@ export function validateReleaseWorkflowPolicy({
     fail("fast change planning must not wait for Nix installation");
   }
 
+  const preflight = releaseJobs.preflight;
+  if (preflight?.if !== "needs.changes.outputs.preflight_required == 'true'") {
+    fail("candidate preflight must use the explicit change plan");
+  }
+  requireNeeds(preflight, ["changes"], "candidate preflight must follow fast planning");
+  const preflightRun = (preflight?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
+  requireCommand(
+    preflightRun,
+    "nix develop .#ci -c cargo make ci-preflight",
+    "candidate preflight must use its canonical local task",
+  );
+
   const releasePlan = releaseJobs["release-plan"];
-  requireNeeds(releasePlan, ["changes"], "dist planning must consume the fast version plan");
+  if (releasePlan?.if !== "needs.changes.outputs.preflight_required == 'true'") {
+    fail("dist planning must be skipped when no candidate or tag requires it");
+  }
+  requireNeeds(releasePlan, ["changes", "preflight"], "dist planning must follow candidate preflight");
   step(releasePlan, (item) =>
     item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"),
   "dist planning must use the locked Nix environment");
@@ -210,8 +225,8 @@ export function validateReleaseWorkflowPolicy({
   ]) {
     if (matrix !== expected) fail(`${label} must consume the fast planned matrix`);
   }
-  requireNeeds(releaseJobs["build-native"], ["changes"], "native build must start after fast planning");
-  requireNeeds(releaseJobs["build-global"], ["changes"], "global build must start after fast planning");
+  requireNeeds(releaseJobs["build-native"], ["changes", "preflight"], "native build must follow candidate preflight");
+  requireNeeds(releaseJobs["build-global"], ["changes", "preflight"], "global build must follow candidate preflight");
   requireNeeds(releaseJobs["native-smoke"], ["changes", "build-native"], "native smoke must consume native builds");
   requireNeeds(releaseJobs["verify-candidate"], ["changes", "native-smoke", "build-global"], "partial candidate dependency edge is incomplete");
   requireNeeds(releaseJobs["installation-e2e"], ["changes", "verify-candidate"], "installation must consume a verified native candidate");
@@ -315,9 +330,9 @@ export function validateReleaseWorkflowPolicy({
   requireCommand(globalRun, "cargo make release-global-artifacts", "global uploaded artifacts must pass their complete gate");
   const browserAcceptance = step(releaseJobs["build-global"], (item) =>
     item.name === "Browser release archive runtime and bundler acceptance",
-  "release-intent browser archive acceptance is missing");
-  if (browserAcceptance.if !== "needs.changes.outputs.release_main == 'true'") {
-    fail("browser archive acceptance may only run for release-intent main");
+  "global browser archive acceptance is missing");
+  if (browserAcceptance.if !== undefined) {
+    fail("browser archive acceptance must run for every global candidate");
   }
   if (releaseJobs["build-global"]?.["continue-on-error"] !== undefined &&
       releaseJobs["build-global"]["continue-on-error"] !== false) {
@@ -329,7 +344,7 @@ export function validateReleaseWorkflowPolicy({
   }
   if (browserAcceptance.run !==
       "nix develop .#ci -c cargo make browser-runtime-check") {
-    fail("release-intent global candidates must use the exact browser archive gate command");
+    fail("global candidates must use the exact browser archive gate command");
   }
   const smokeRun = step(smokeDoc.jobs?.smoke, (item) =>
     item.name === "Extracted release binary smoke tests", "native smoke is missing").run;
@@ -410,13 +425,19 @@ export function validateReleaseWorkflowPolicy({
   }
 
   const tasks = parseMakeTasks(makefile);
-  requireTask(tasks, "quality-fast", {
+  requireTask(tasks, "ci-preflight", {
     dependencies: [
       "fmt-check",
       "protocol-generated-check",
-      "platform-contract",
       "release-contract",
       "workflow-lint",
+      "candidate-path-audit",
+    ],
+  });
+  requireTask(tasks, "quality-fast", {
+    dependencies: [
+      "ci-preflight",
+      "platform-contract",
       "docs-check",
       "adoc-check-targets",
     ],

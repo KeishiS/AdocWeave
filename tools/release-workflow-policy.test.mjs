@@ -144,19 +144,9 @@ test("candidate jobs cannot broaden the explicit artifact plan", () => {
     }),
     /explicit candidate change plan/,
   );
-  assert.throws(
-    () => validateReleaseWorkflowPolicy({
-      ...inputs,
-      release: inputs.release.replace(
-        "if: needs.changes.outputs.release_main == 'true'",
-        "if: github.ref == 'refs/heads/main'",
-      ),
-    }),
-    /release-intent main/,
-  );
 });
 
-test("release-intent global candidates cannot omit the browser archive runtime gate", () => {
+test("every global candidate must run the browser archive runtime gate", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({
@@ -186,12 +176,13 @@ test("release-intent global candidates cannot omit the browser archive runtime g
       ...inputs,
       release: inputs.release.replace(
         "      - name: Browser release archive runtime and bundler acceptance\n" +
-          "        if: needs.changes.outputs.release_main == 'true'",
+        "        run: nix develop .#ci -c cargo make browser-runtime-check",
         "      - name: Browser release archive runtime and bundler acceptance\n" +
-          "        if: needs.changes.outputs.global_required == 'true'",
+          "        if: github.event_name == 'push'\n" +
+          "        run: nix develop .#ci -c cargo make browser-runtime-check",
       ),
     }),
-    /only run for release-intent main/,
+    /every global candidate/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
@@ -221,14 +212,56 @@ test("release-intent global candidates cannot omit the browser archive runtime g
       ...inputs,
       release: inputs.release.replace(
         "      - name: Browser release archive runtime and bundler acceptance\n" +
-          "        if: needs.changes.outputs.release_main == 'true'",
+          "        run: nix develop .#ci -c cargo make browser-runtime-check",
         "      - name: Browser release archive runtime and bundler acceptance\n" +
-          "        if: needs.changes.outputs.release_main == 'true'\n" +
-          "        continue-on-error: true",
+          "        continue-on-error: true\n" +
+          "        run: nix develop .#ci -c cargo make browser-runtime-check",
       ),
     }),
     /browser archive acceptance must not continue/,
   );
+});
+
+test("candidate build and dist plan cannot bypass the inexpensive preflight", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  for (const [original, replacement, message] of [
+    [
+      "  build-native:\n" +
+        "    if: needs.changes.outputs.native_required == 'true'\n" +
+        "    needs: [changes, preflight]",
+      "  build-native:\n" +
+        "    if: needs.changes.outputs.native_required == 'true'\n" +
+        "    needs: [changes]",
+      /native build must follow candidate preflight/,
+    ],
+    [
+      "  build-global:\n" +
+        "    if: needs.changes.outputs.global_required == 'true'\n" +
+        "    needs: [changes, preflight]",
+      "  build-global:\n" +
+        "    if: needs.changes.outputs.global_required == 'true'\n" +
+        "    needs: [changes]",
+      /global build must follow candidate preflight/,
+    ],
+    [
+      "nix develop .#ci -c cargo make ci-preflight",
+      "true # preflight omitted",
+      /canonical local task/,
+    ],
+    [
+      "  release-plan:\n    if: needs.changes.outputs.preflight_required == 'true'",
+      "  release-plan:\n    if: always()",
+      /skipped when no candidate or tag/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        release: inputs.release.replace(original, replacement),
+      }),
+      message,
+    );
+  }
 });
 
 test("release workflow cannot cache executable build tools", () => {
@@ -420,6 +453,16 @@ test("Makefile canonical gate graph is parsed and mutation-resistant", () => {
       ),
     }),
     /quality-adapters dependencies must exactly match/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        '  "candidate-path-audit",\n]',
+        "]",
+      ),
+    }),
+    /ci-preflight dependencies must exactly match/,
   );
 });
 

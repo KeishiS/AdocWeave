@@ -4,7 +4,9 @@ import distributionPlan from "../release/distribution-plan.json" with { type: "j
 import {
   affectsGlobalCandidate,
   affectsNativeCandidate,
+  auditCandidatePaths,
   candidateImpact,
+  classifyCandidatePath,
   nativeChangePlan,
 } from "./native-change-plan.mjs";
 
@@ -62,6 +64,39 @@ test("未分類のsourceとbuild入力はfail-safeで両方のcandidateを要求
     "tools/release-workflow-policy-helper.mjs",
   ]) {
     assert.deepEqual(candidateImpact(pathname), { global: true, native: true }, pathname);
+    assert.equal(classifyCandidatePath(pathname).classified, false, pathname);
+  }
+});
+
+test("tracked path監査は未分類pathを具体的に報告する", () => {
+  const unknown = auditCandidatePaths([
+    "docs/user-guide/command-line.adoc",
+    "tools/host-executable.mjs",
+    "new-build-system/config.json",
+    "tools/new-release-helper.mjs",
+  ]);
+  assert.deepEqual(unknown, [
+    "new-build-system/config.json",
+    "tools/new-release-helper.mjs",
+  ]);
+});
+
+test("Browser実行補助はglobalだけ、repository metadataはcandidate対象外に分類する", () => {
+  for (const pathname of [
+    "tools/browser-release-budget.mjs",
+    "tools/browser-release-smoke.test.mjs",
+    "tools/host-executable.mjs",
+    "tools/host-executable.test.mjs",
+  ]) {
+    assert.deepEqual(candidateImpact(pathname), { global: true, native: false }, pathname);
+  }
+  for (const pathname of [
+    ".github/dependabot.yml",
+    ".github/pull_request_template.md",
+    ".gitattributes",
+    "deny.toml",
+  ]) {
+    assert.deepEqual(candidateImpact(pathname), { global: false, native: false }, pathname);
   }
 });
 
@@ -98,6 +133,7 @@ test("native pull requestではWindowsとmacOSだけを実OS検証する", () =>
   assert.equal(plan.nativeRequired, true);
   assert.equal(plan.globalRequired, false);
   assert.equal(plan.releaseMain, false);
+  assert.equal(plan.preflightRequired, true);
   assert.deepEqual(plan.matrix.include.map(({ target, runner }) => ({ target, runner })), [
     { target: "aarch64-apple-darwin", runner: "macos-15" },
     { target: "x86_64-pc-windows-msvc", runner: "windows-2025" },
@@ -117,6 +153,7 @@ test("文書だけのpull requestではcandidate全体を省略する", () => {
   assert.equal(plan.candidateRequired, false);
   assert.equal(plan.nativeRequired, false);
   assert.equal(plan.globalRequired, false);
+  assert.equal(plan.preflightRequired, false);
 });
 
 test("通常main pushではrelease candidateを構築しない", () => {
@@ -176,4 +213,5 @@ test("公開済みversionのmain pushではmanifest以外を変更してもcandi
 test("version tagではmain candidateを再構築しない", () => {
   const plan = nativeChangePlan("push", [], distributionPlan, "refs/tags/v0.17.0");
   assert.equal(plan.candidateRequired, false);
+  assert.equal(plan.preflightRequired, true);
 });

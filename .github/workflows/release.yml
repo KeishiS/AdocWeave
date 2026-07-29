@@ -26,6 +26,7 @@ jobs:
       global_required: ${{ steps.changes.outputs.global_required }}
       native_required: ${{ steps.changes.outputs.native_required }}
       native_matrix: ${{ steps.changes.outputs.native_matrix }}
+      preflight_required: ${{ steps.changes.outputs.preflight_required }}
       release_main: ${{ steps.changes.outputs.release_main }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
@@ -66,8 +67,22 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-  release-plan:
+  preflight:
+    if: needs.changes.outputs.preflight_required == 'true'
     needs: [changes]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - name: Candidate common preflight
+        run: nix develop .#ci -c cargo make ci-preflight
+
+  release-plan:
+    if: needs.changes.outputs.preflight_required == 'true'
+    needs: [changes, preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -120,7 +135,7 @@ jobs:
 
   build-native:
     if: needs.changes.outputs.native_required == 'true'
-    needs: [changes]
+    needs: [changes, preflight]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.native_matrix) }}
@@ -196,7 +211,7 @@ jobs:
 
   build-global:
     if: needs.changes.outputs.global_required == 'true'
-    needs: [changes]
+    needs: [changes, preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -207,7 +222,6 @@ jobs:
       - name: Browser, Zed, and VS Code artifact build and verification
         run: nix develop .#ci -c cargo make release-global-artifacts
       - name: Browser release archive runtime and bundler acceptance
-        if: needs.changes.outputs.release_main == 'true'
         run: nix develop .#ci -c cargo make browser-runtime-check
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
