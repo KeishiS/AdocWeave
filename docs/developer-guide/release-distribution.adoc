@@ -72,6 +72,9 @@ global成果物へ影響するPull Requestとrelease用main candidateでは公�
 分離されたChromium環境、通常のChromium環境およびbundlerで構築した経路から同じ公開APIを実行して、
 この性能予算と実行時の互換性を確認します。静的なarchive検査と実行検査は一つのtask graphで行い、
 実行検査後に同じarchiveをcandidateとして保存します。
+Chromiumの起動確認は1回20秒、最大2回、合計45秒を上限とします。
+起動に失敗した場合は新しいprofileで再試行し、各試行の番号、経過時間、標準エラー出力および終了状態を記録します。
+合計時間へ達した場合は進行中の起動確認を中止し、browser processを終了します。
 この上限を定めた時点の基準値はraw WASMが1,085,621 byte、archiveが277,152 byte
 （約271 KiB）です。raw WASMの上限には基準値から約21%の余裕を設けます。archiveの2 MiBという上限は、
 圧縮方式の変更や収録物の拡張を妨げないための余裕を含みます。上限を変更する場合は、実際の成果物を計測し、
