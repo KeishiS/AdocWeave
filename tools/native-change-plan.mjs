@@ -95,6 +95,7 @@ const NATIVE_TOOLS = [
   "verify-native-pr-candidate.test.mjs",
 ];
 const GLOBAL_TOOLS = [
+  "browser-startup.mjs",
   "browser-release-budget.mjs",
   "browser-release-budget.test.mjs",
   "browser-release-smoke.mjs",
@@ -108,6 +109,8 @@ const GLOBAL_TOOLS = [
   "package-zed-release.sh",
   "process-lifecycle.mjs",
   "process-lifecycle.test.mjs",
+  "protocol-rust-codegen.mjs",
+  "protocol-rust-codegen.test.mjs",
   "release-contract.mjs",
   "release-installation-e2e.mjs",
   "release-metadata.mjs",
