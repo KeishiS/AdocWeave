@@ -27,7 +27,7 @@ test("browser smoke rejects an archive whose extracted raw WASM exceeds the budg
 
     const checked = spawnSync(
       process.execPath,
-      ["tools/browser-release-smoke.mjs", archive, "/bin/false"],
+      ["tools/browser-release-smoke.mjs", archive, process.execPath],
       { cwd: new URL("../", import.meta.url), encoding: "utf8" },
     );
     assert.notEqual(checked.status, 0);
