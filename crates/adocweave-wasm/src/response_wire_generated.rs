@@ -2,7 +2,7 @@
 
 use crate::{WasmMathLanguage, WasmProductSet, WasmSeverity};
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResponse {
     pub package_version: String,
@@ -56,7 +56,7 @@ pub struct WasmAttributeQueryProduct {
     pub references: Vec<WasmAttributeReferenceQuery>,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmAttributeReferenceQuery {
     pub source_id: Option<String>,
@@ -75,7 +75,7 @@ pub enum WasmAttributeValueContinuation {
     Hard,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmBibliographyEntry {
     pub id: String,
@@ -102,7 +102,7 @@ pub struct WasmBlockPresentationProjection {
     pub citation: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDiagnostic {
     pub id: String,
@@ -140,7 +140,7 @@ pub enum WasmDocumentAttributeOperation {
     Unset,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentAttributeValue {
     pub source_range: WasmTextRange,
@@ -149,7 +149,7 @@ pub struct WasmDocumentAttributeValue {
     pub lines: Vec<WasmDocumentAttributeValueLine>,
 }
 
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentAttributeValueLine {
     pub range: WasmTextRange,
@@ -159,7 +159,7 @@ pub struct WasmDocumentAttributeValueLine {
     pub continuation: Option<WasmDocumentAttributeContinuation>,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentCatalogs {
     pub footnotes: Vec<WasmFootnote>,
@@ -167,7 +167,7 @@ pub struct WasmDocumentCatalogs {
     pub index: Vec<WasmIndexEntry>,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentProjection {
     pub package_version: String,
@@ -185,7 +185,7 @@ pub struct WasmDocumentProjection {
     pub title: Option<WasmProjectedText>,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentStructure {
     pub headings: Vec<WasmStructuredHeading>,
@@ -203,7 +203,7 @@ pub struct WasmDocumentSymbol {
     pub children: Vec<WasmDocumentSymbol>,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmExternalLink {
     pub source_range: WasmTextRange,
@@ -220,7 +220,7 @@ pub struct WasmFix {
     pub edits: Vec<WasmTextEdit>,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmFootnote {
     pub number: u32,
@@ -248,7 +248,7 @@ pub struct WasmFormulaProjection {
     pub source: String,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmIndexEntry {
     pub terms: Vec<String>,
@@ -263,7 +263,7 @@ pub enum WasmMacroForm {
     Block,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmManpage {
     pub name: String,
@@ -295,7 +295,7 @@ pub enum WasmOrderedListStyle {
     Lowergreek,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ParseSummary {
     pub package_version: String,
@@ -338,7 +338,7 @@ pub enum WasmProjectedResolutionOutcome {
     },
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmProjectedText {
     pub source_range: WasmTextRange,
@@ -396,7 +396,7 @@ pub enum WasmReferenceTargetKind {
     InlineAnchor,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmRelatedInformation {
     pub range: WasmTextRange,
@@ -439,7 +439,7 @@ pub struct WasmSearchTextSegment {
     pub text: String,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSearchableText {
     pub text: String,
@@ -456,7 +456,7 @@ pub enum WasmSectionKind {
     Discrete,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmSourceBlockProjection {
     pub source_range: WasmTextRange,
@@ -492,7 +492,7 @@ pub enum WasmSymbolKind {
     ListItem,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTextEdit {
     pub range: WasmTextRange,
@@ -500,14 +500,14 @@ pub struct WasmTextEdit {
 }
 
 /// A half-open UTF-8 byte range in the submitted source.
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTextRange {
     pub start: u32,
     pub end: u32,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmTocEntry {
     pub id: String,

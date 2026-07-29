@@ -662,6 +662,10 @@
       ]
     },
     "AttributeQueryProduct": {
+      "outputDefault": {
+        "bindings": [],
+        "references": []
+      },
       "fields": [
         { "json": "bindings", "type": "AttributeBindingQuery[]" },
         { "json": "references", "type": "AttributeReferenceQuery[]" }

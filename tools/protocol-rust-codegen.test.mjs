@@ -362,21 +362,31 @@ test("response generation rejects infinitely sized types but permits Vec recursi
   );
 });
 
-test("response Default derives follow the complete field type graph", () => {
+test("response Default derives require an explicit complete schema default", () => {
   const generated = generateRustResponseTypes(schema);
   assert.match(
     generated,
     /derive\(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq\)\]\n#\[serde\(rename_all = "camelCase", deny_unknown_fields\)\]\npub struct WasmAttributeQueryProduct/,
   );
+  assert.doesNotMatch(
+    generated,
+    /derive\([^)]*Default[^)]*\)\]\n#\[serde\(rename_all = "camelCase", deny_unknown_fields\)\]\npub struct (?:WasmResponse|ParseSummary)/,
+  );
 
-  const nonDefault = structuredClone(schema);
-  nonDefault.dtos.AttributeQueryProduct.fields.push({
+  const incomplete = structuredClone(schema);
+  incomplete.dtos.AttributeQueryProduct.fields.push({
     json: "language",
     type: "MathLanguage",
   });
-  const declaration = generateRustResponseTypes(nonDefault).match(
-    /#\[derive\(([^)]*)\)\]\n#\[serde\(rename_all = "camelCase", deny_unknown_fields\)\]\npub struct WasmAttributeQueryProduct/,
+  assert.throws(
+    () => generateRustResponseTypes(incomplete),
+    /AttributeQueryProduct outputDefault must cover every field exactly once/,
   );
-  assert.ok(declaration);
-  assert.doesNotMatch(declaration[1], /\bDefault\b/);
+
+  const mismatched = structuredClone(schema);
+  mismatched.dtos.AttributeQueryProduct.outputDefault.bindings = ["not-empty"];
+  assert.throws(
+    () => generateRustResponseTypes(mismatched),
+    /AttributeQueryProduct.bindings outputDefault does not match Rust Default/,
+  );
 });

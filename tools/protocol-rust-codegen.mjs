@@ -381,9 +381,7 @@ function rustResponseObject(name, contract, reached, contracts) {
     "Clone",
     ...(responseObjectIsCopy(name, contract, reached, contracts, new Set()) ? ["Copy"] : []),
     "Debug",
-    ...(responseObjectIsDefault(name, contract, reached, contracts, new Set())
-      ? ["Default"]
-      : []),
+    ...(responseObjectHasExplicitDefault(name, contract) ? ["Default"] : []),
     "serde::Deserialize",
     "serde::Serialize",
     "Eq",
@@ -487,34 +485,36 @@ function responseObjectIsCopy(name, contract, reached, contracts, visiting) {
   return copy;
 }
 
-function responseObjectIsDefault(name, contract, reached, contracts, visiting) {
-  if (visiting.has(name)) return false;
-  visiting.add(name);
-  const hasDefault = contract.fields.every((field) =>
-    responseTypeIsDefault(field.type, reached, contracts, visiting)
-  );
-  visiting.delete(name);
-  return hasDefault;
-}
-
-function responseTypeIsDefault(type, reached, contracts, visiting) {
-  const parsed = parseResponseType(type);
-  if (parsed.kind === "nullable" || parsed.kind === "array") return true;
-  if (parsed.kind === "required") {
-    return responseTypeAstIsDefault(parsed.inner, reached, contracts, visiting);
+function responseObjectHasExplicitDefault(name, contract) {
+  if (contract.outputDefault === undefined) return false;
+  const value = contract.outputDefault;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must declare an object outputDefault`);
   }
-  return responseTypeAstIsDefault(parsed, reached, contracts, visiting);
+  const expectedFields = contract.fields.map(({ json }) => json).sort();
+  const defaultFields = Object.keys(value).sort();
+  if (JSON.stringify(defaultFields) !== JSON.stringify(expectedFields)) {
+    throw new Error(`${name} outputDefault must cover every field exactly once`);
+  }
+  for (const field of contract.fields) {
+    if (!responseFieldUsesRustDefault(field.type, value[field.json])) {
+      throw new Error(
+        `${name}.${field.json} outputDefault does not match Rust Default`,
+      );
+    }
+  }
+  return true;
 }
 
-function responseTypeAstIsDefault(parsed, reached, contracts, visiting) {
-  if (parsed.kind === "primitive") return true;
-  const value = parsed.name;
-  if (!reached.has(value)) return false;
-  if (value === "ProductSet" || value === "Severity") return true;
-  if (value === "MathLanguage") return false;
-  const contract = contracts[value];
-  if (Array.isArray(contract) || contract?.variants) return false;
-  return responseObjectIsDefault(value, contract, reached, contracts, visiting);
+function responseFieldUsesRustDefault(type, value) {
+  const parsed = parseResponseType(type);
+  if (parsed.kind === "array") return Array.isArray(value) && value.length === 0;
+  if (parsed.kind === "nullable") return value === null;
+  if (parsed.kind !== "primitive") return false;
+  if (parsed.name === "string") return value === "";
+  if (parsed.name === "u32") return value === 0;
+  if (parsed.name === "boolean") return value === false;
+  return false;
 }
 
 function responseTypeIsCopy(type, reached, contracts, visiting) {

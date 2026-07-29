@@ -108,7 +108,9 @@ function validateSchema() {
 
 function runtimeValidationSchema(value) {
   return JSON.parse(JSON.stringify(value, (name, item) =>
-    name === "collection" || name === "description" ? undefined : item
+    name === "collection" || name === "description" || name === "outputDefault"
+      ? undefined
+      : item
   ));
 }
 
