@@ -113,17 +113,16 @@ impl WorkspaceResources {
                     return Err(error);
                 }
             };
-            if has_authority {
-                if let Err(error) =
+            if has_authority
+                && let Err(error) =
                     replacement.upsert_open(uri.clone(), *version, Arc::clone(source))
-                {
-                    replacement.fail_closed(
-                        replacement.roots.clone(),
-                        adapter_managed_workspace_limits(),
-                    );
-                    *self = replacement;
-                    return Err(error);
-                }
+            {
+                replacement.fail_closed(
+                    replacement.roots.clone(),
+                    adapter_managed_workspace_limits(),
+                );
+                *self = replacement;
+                return Err(error);
             }
         }
         *self = replacement;
