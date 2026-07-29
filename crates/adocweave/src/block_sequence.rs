@@ -91,9 +91,41 @@ pub(super) struct BlockCursor {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum BlockRecognition {
+pub(super) enum BlockConsumption {
     OneLine,
     Through(usize),
+}
+
+#[derive(Debug)]
+pub(super) enum BlockRecognition<T> {
+    NoMatch,
+    Matched {
+        consumption: BlockConsumption,
+        value: T,
+    },
+    Recovered {
+        consumption: BlockConsumption,
+        value: T,
+    },
+}
+
+impl<T> BlockRecognition<T> {
+    pub(super) const fn matched(consumption: BlockConsumption, value: T) -> Self {
+        Self::Matched { consumption, value }
+    }
+
+    pub(super) const fn recovered(consumption: BlockConsumption, value: T) -> Self {
+        Self::Recovered { consumption, value }
+    }
+
+    pub(super) fn into_commit(self) -> Option<(BlockConsumption, T)> {
+        match self {
+            Self::NoMatch => None,
+            Self::Matched { consumption, value } | Self::Recovered { consumption, value } => {
+                Some((consumption, value))
+            }
+        }
+    }
 }
 
 impl BlockCursor {
@@ -120,14 +152,19 @@ impl BlockCursor {
         }
     }
 
-    pub(super) fn commit(&mut self, recognition: BlockRecognition) -> Result<(), ParseFailure> {
-        let next = match recognition {
-            BlockRecognition::OneLine => self.line.saturating_add(1),
-            BlockRecognition::Through(next) => next,
+    pub(super) fn validate(self, consumption: BlockConsumption) -> Result<usize, ParseFailure> {
+        let next = match consumption {
+            BlockConsumption::OneLine => self.line.saturating_add(1),
+            BlockConsumption::Through(next) => next,
         };
         if next <= self.line || next > self.line_count {
             return Err(ParseFailure::InternalInvariant);
         }
+        Ok(next)
+    }
+
+    pub(super) fn commit(&mut self, consumption: BlockConsumption) -> Result<(), ParseFailure> {
+        let next = self.validate(consumption)?;
         self.line = next;
         Ok(())
     }

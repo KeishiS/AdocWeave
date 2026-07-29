@@ -19,6 +19,13 @@ pub(crate) struct ParseBudget {
     list_continuations: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ParseBudgetCharge {
+    pub(crate) blocks: usize,
+    pub(crate) nodes: usize,
+    pub(crate) attributes: usize,
+}
+
 impl ParseBudget {
     pub(crate) fn new(limits: AnalysisLimits) -> Result<Self, BudgetExceeded> {
         let mut budget = Self {
@@ -75,6 +82,29 @@ impl ParseBudget {
             self.limits.max_list_continuations,
             "list continuations",
         )
+    }
+
+    pub(crate) fn charge(&mut self, charge: ParseBudgetCharge) -> Result<(), BudgetExceeded> {
+        *self = self.charged(charge)?;
+        Ok(())
+    }
+
+    pub(crate) fn check(&self, charge: ParseBudgetCharge) -> Result<(), BudgetExceeded> {
+        self.charged(charge).map(|_| ())
+    }
+
+    fn charged(&self, charge: ParseBudgetCharge) -> Result<Self, BudgetExceeded> {
+        let mut charged = self.clone();
+        for _ in 0..charge.blocks {
+            charged.consume_block()?;
+        }
+        for _ in 0..charge.nodes {
+            charged.consume_node()?;
+        }
+        for _ in 0..charge.attributes {
+            charged.consume_attribute()?;
+        }
+        Ok(charged)
     }
 }
 
