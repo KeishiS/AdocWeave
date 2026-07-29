@@ -103,6 +103,8 @@ Options:
   -V, --version  Print version
   -h, --help  Print help
 ";
+const DEFAULT_PREVIEW_PORT: u16 = 4000;
+const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
 
 #[derive(Debug)]
 enum CliError {
@@ -380,8 +382,8 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     let mut complete = false;
     let mut css = Vec::new();
     let mut bind = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let mut port = 4000;
-    let mut debounce_ms = 100;
+    let mut port = DEFAULT_PREVIEW_PORT;
+    let mut debounce_ms = DEFAULT_PREVIEW_DEBOUNCE_MS;
     let mut allow_external = false;
     let mut config_path = None;
     let mut no_config = false;
@@ -2516,10 +2518,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CliError, CommandOptions, CssArgument, DiagnosticFormat, Operation,
-        PreviewBuildRequest, PreviewBuildStage, PreviewDependencyObserver,
-        check_preview_cancellation, command_help, parse_arguments, preview_build,
-        preview_build_with_stage_hook,
+        Action, CliError, CommandOptions, CssArgument, DEFAULT_PREVIEW_DEBOUNCE_MS,
+        DEFAULT_PREVIEW_PORT, DiagnosticFormat, HELP, Operation, PreviewBuildRequest,
+        PreviewBuildStage, PreviewDependencyObserver, check_preview_cancellation, command_help,
+        parse_arguments, preview_build, preview_build_with_stage_hook,
     };
     use crate::local_include::DependencyObserver;
 
@@ -2731,13 +2733,13 @@ mod tests {
     #[test]
     fn preview_help_explains_options_defaults_and_external_access() {
         let help = command_help(Operation::Preview);
+        let port = DEFAULT_PREVIEW_PORT.to_string();
+        let debounce = DEFAULT_PREVIEW_DEBOUNCE_MS.to_string();
         for expected in [
             "--bind ADDRESS",
             "127.0.0.1",
             "--port PORT",
-            "4000",
             "--debounce-ms MILLISECONDS",
-            "100",
             "--allow-external",
             "--include",
             "--base-dir DIR",
@@ -2756,6 +2758,30 @@ mod tests {
                 "preview helpに{expected}がありません"
             );
         }
+        for (name, value) in [("port", port), ("debounce", debounce)] {
+            assert!(
+                help.contains(&value),
+                "preview helpの{name}既定値が実装と異なります"
+            );
+            assert!(
+                HELP.contains(&value),
+                "全体helpの{name}既定値が実装と異なります"
+            );
+        }
+
+        let Action::Run(parsed) =
+            parse_arguments(arguments(&["preview", "document.adoc"])).expect("preview defaults")
+        else {
+            panic!("expected run action");
+        };
+        assert!(matches!(
+            parsed.command,
+            CommandOptions::Preview {
+                port: DEFAULT_PREVIEW_PORT,
+                debounce_ms: DEFAULT_PREVIEW_DEBOUNCE_MS,
+                ..
+            }
+        ));
     }
 
     #[test]

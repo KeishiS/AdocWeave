@@ -52,8 +52,8 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /`AdocWeaveWorkerClient`も維持/);
   assert.match(notes, /callback内の例外/);
   assert.match(notes, /`projection`は`null`/);
-  assert.match(notes, /200ミリ秒ごとにファイルの情報を確認/);
-  assert.match(notes, /2秒ごとのハッシュ値確認/);
+  assert.match(notes, /ファイルの情報を定期的に確認/);
+  assert.match(notes, /定期的なハッシュ値確認/);
   assert.match(notes, /停止通知に対応しない処理段階は完了まで待ち/);
   assert.match(notes, /新しい接続を応答せずに閉じ/);
   assert.match(notes, /`PermissionDenied`/);
@@ -62,8 +62,8 @@ test("Release Notesは日本語の受入契約を常に含む", () => {
   assert.match(notes, /`HandleRelative`方式/);
   assert.match(notes, /macOSとWindowsは`StaticSnapshotOnly`方式/);
   assert.match(notes, /workspaceを同時変更しない、信頼済みのworkspace/);
-  assert.match(notes, /WASM結果の`packageVersion`がBrowser packageと一致しない場合、`unsupported-package-version`/);
-  assert.match(notes, /Worker応答の`version`が解析要求の`version`と一致しない場合は`invalid-worker-response`/);
+  assert.match(notes, /WASM結果の`packageVersion`がBrowser packageと一致しない場合.*解析Promiseを`unsupported-package-version`でreject/s);
+  assert.match(notes, /Worker応答の`version`が解析要求の`version`と一致しない場合.*解析Promiseを`invalid-worker-response`でreject/s);
   assert.match(notes, /staleな応答は`onResult`にも`onError`にも通知しません/);
   assert.match(notes, /terminal errorでは未完了の解析Promiseをreject/);
   assert.match(notes, /`onError`をmicrotaskで通知/);

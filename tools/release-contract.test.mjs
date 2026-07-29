@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { EXPECTED_RELEASE_METADATA, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, validatePublicClientReleaseContract, validateReleaseTrainVersions, versionFromTag } from "./release-contract.mjs";
-import {
-  RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
-  RELEASE_NOTES_VERSION,
-} from "./release-notes.mjs";
+import { EXPECTED_RELEASE_METADATA, SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION, canonicalJson, expectedAssets, validateDistributionManifest, validateDistPlan, validatePublicClientReleaseContract, validateReleaseTrainVersions, versionFromTag } from "./release-contract.mjs";
 import plan from "../release/distribution-plan.json" with { type: "json" };
 import fixture from "../release/adocweave-dist-manifest.fixture.json" with { type: "json" };
 import protocol from "../protocol/public-api.json" with { type: "json" };
 import vscodeLock from "../editors/vscode/package-lock.json" with { type: "json" };
 import vscodePackage from "../editors/vscode/package.json" with { type: "json" };
 import conformance from "../crates/adocweave/conformance/cases.json" with { type: "json" };
+import publicConformance from "../fixtures/public-conformance.json" with { type: "json" };
 
 test("stable tags are exact and versioned", () => {
   assert.equal(versionFromTag("v1.2.3"), "1.2.3");
@@ -84,6 +81,7 @@ test("cross-runtime conformance manifestはrelease trainと一致する", () => 
   assert.doesNotThrow(() =>
     validateReleaseTrainVersions(plan.packageVersion, {
       "cross-runtime conformance manifest": conformance.packageVersion,
+      "public conformance manifest": publicConformance.packageVersion,
     }));
   assert.throws(
     () =>
@@ -92,41 +90,31 @@ test("cross-runtime conformance manifestはrelease trainと一致する", () => 
       }),
     /cross-runtime conformance manifest version/,
   );
+  assert.throws(
+    () =>
+      validateReleaseTrainVersions(plan.packageVersion, {
+        "public conformance manifest": "9.9.9",
+      }),
+    /public conformance manifest version/,
+  );
 });
 
-test("release versionへの更新後はWASM protocol schema 6を必須とする", () => {
-  const releasePackage = { ...vscodePackage, version: RELEASE_NOTES_VERSION };
-  const releaseLock = {
-    ...vscodeLock,
-    version: RELEASE_NOTES_VERSION,
-    packages: {
-      ...vscodeLock.packages,
-      "": {
-        ...vscodeLock.packages[""],
-        version: RELEASE_NOTES_VERSION,
-      },
-    },
-  };
-  const releaseProtocol = {
-    ...protocol,
-    packageVersion: RELEASE_NOTES_VERSION,
-    schemaVersion: RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
-  };
+test("公開WASM protocolは対応schemaを必須とする", () => {
   assert.doesNotThrow(() =>
     validatePublicClientReleaseContract(
-      RELEASE_NOTES_VERSION,
-      releasePackage,
-      releaseLock,
-      releaseProtocol,
+      plan.packageVersion,
+      vscodePackage,
+      vscodeLock,
+      protocol,
     ));
   assert.throws(
     () =>
       validatePublicClientReleaseContract(
-        RELEASE_NOTES_VERSION,
-        releasePackage,
-        releaseLock,
-        { ...releaseProtocol, schemaVersion: 5 },
+        plan.packageVersion,
+        vscodePackage,
+        vscodeLock,
+        { ...protocol, schemaVersion: SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION - 1 },
       ),
-    /public protocol schemaVersion must be 6 for 0\.17\.0/,
+    /public protocol schemaVersion must be 6/,
   );
 });

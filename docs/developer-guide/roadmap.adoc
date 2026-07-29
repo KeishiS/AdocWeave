@@ -44,12 +44,15 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 * https://github.com/KeishiS/adocweave/issues/33[単体CLIのlocal resource profile評価]
 * https://github.com/KeishiS/adocweave/issues/34[RenovateによるNix依存更新の評価]
-* https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
-* https://github.com/KeishiS/adocweave/issues/83[crates.io・npm公開の評価]
-* https://github.com/KeishiS/adocweave/issues/82[公式extension registry]
 
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
-extension registry、public package registryおよび標準package managerは低優先度とし、
-他の施策の前提にしません。公式binaryとeditor導線を先に安定させ、具体的な導入需要と
-長期保守責務が確認できた場合だけ採用を判断します。
+
+== 実施しない公開経路
+
+extension registry、public package registryおよびOSのpackage managerへの登録・公開は行いません。
+次のIssueは実装候補ではなく、この判断と過去の検討内容を残す記録として保留します。
+
+* https://github.com/KeishiS/adocweave/issues/82[公式extension registry]
+* https://github.com/KeishiS/adocweave/issues/83[crates.io・npm公開の評価]
+* https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]

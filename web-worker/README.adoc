@@ -34,9 +34,9 @@ projectionを一つの結果として返します。``result.result``は存在�
 schema 6はprojectionを構成するすべてのJSON objectで、入れ子のobject（nested object）や
 種類を示すfieldで形が変わるtagged unionも含め、定義にないfieldを拒否します。
 WASM結果の``packageVersion``がこのBrowser packageのversionと一致しない場合は、
-``unsupported-package-version``として解析を拒否します。現在のgenerationでは、Worker応答の
-``version``が解析要求の``version``と一致しない場合に``invalid-worker-response``として拒否し、
-そのWorkerを終了します。
+結果を採用せず、解析Promiseを``unsupported-package-version``でrejectします。現在のgenerationでは、
+Worker応答の``version``が解析要求の``version``と一致しない場合も応答を採用せず、解析Promiseを
+``invalid-worker-response``でrejectして、そのWorkerを終了します。
 
 公開入口がWorkerの生成、初期化、debounce、generation、cancelおよびdisposeを所有します。
 ``SharedArrayBuffer``を利用できない場合はWorker再生成へ自動的に縮退します。DOMへの反映とUI stateは

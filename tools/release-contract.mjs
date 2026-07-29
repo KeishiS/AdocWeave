@@ -2,10 +2,6 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 import { loadWorkflowPolicyInputs, validateReleaseWorkflowPolicy } from "./release-workflow-policy.mjs";
-import {
-  RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
-  RELEASE_NOTES_VERSION,
-} from "./release-notes.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
@@ -15,6 +11,7 @@ const fail = (message) => {
 };
 
 export const STABLE_TAG = /^v(\d+\.\d+\.\d+)$/;
+export const SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION = 6;
 
 export function versionFromTag(tag) {
   const match = STABLE_TAG.exec(tag);
@@ -190,12 +187,9 @@ export function validatePublicClientReleaseContract(version, vscodePackage, vsco
   if (vscodeLock.lockfileVersion !== 3) {
     fail("VS Code package lockfileVersion must be 3");
   }
-  if (
-    version === RELEASE_NOTES_VERSION &&
-    protocol.schemaVersion !== RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION
-  ) {
+  if (protocol.schemaVersion !== SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION) {
     fail(
-      `public protocol schemaVersion must be ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION} for ${RELEASE_NOTES_VERSION}`,
+      `public protocol schemaVersion must be ${SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION}`,
     );
   }
 }
@@ -215,6 +209,7 @@ function verifyRepository() {
   const vscodeLock = json("editors/vscode/package-lock.json");
   const protocol = json("protocol/public-api.json");
   const conformance = json("crates/adocweave/conformance/cases.json");
+  const publicConformance = json("fixtures/public-conformance.json");
   const worker = json("web-worker/package.json");
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
@@ -273,6 +268,7 @@ function verifyRepository() {
     "distribution plan": plan.packageVersion,
     "browser package": worker.version,
     "cross-runtime conformance manifest": conformance.packageVersion,
+    "public conformance manifest": publicConformance.packageVersion,
     "Zed extension": tomlValue(extension, "version"),
     "Zed crate": tomlValue(extensionCargo, "version"),
   });
