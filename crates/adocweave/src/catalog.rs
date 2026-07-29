@@ -116,8 +116,6 @@ pub(crate) fn build(
     let mut catalogs = DocumentCatalogs::default();
     let mut named_footnotes = BTreeMap::<String, usize>::new();
     let mut pending_references = Vec::<(String, TextRange)>::new();
-    let mut bibliography_references =
-        Vec::<(String, TextRange, crate::presentation::BlockId)>::new();
     let mut bibliography = BTreeMap::<String, usize>::new();
     let mut index = BTreeMap::<Vec<String>, usize>::new();
     let mut catalog_bytes = 0_u64;
@@ -173,14 +171,15 @@ pub(crate) fn build(
                         related_range: Some(catalogs.bibliography[existing].definition_range),
                     });
                 } else if !node.target.is_empty() {
+                    let Some(definition_block) = document_index.block_containing(node.range) else {
+                        continue;
+                    };
                     bibliography.insert(node.target.clone(), catalogs.bibliography.len());
                     catalog_bytes += node.target.len() as u64;
                     catalogs.bibliography.push(BibliographyEntry {
                         id: node.target.clone(),
                         definition_range: node.range,
-                        definition_block: document_index
-                            .block_containing(node.range)
-                            .expect("bibliography anchor belongs to a semantic block"),
+                        definition_block,
                         references: Vec::new(),
                     });
                 }
@@ -230,13 +229,19 @@ pub(crate) fn build(
         let Some(ReferenceKey::Local { anchor }) = &reference.target else {
             continue;
         };
-        bibliography_references.push((
-            anchor.clone(),
-            reference.range,
-            document_index
-                .block_containing(reference.range)
-                .expect("bibliography reference belongs to a semantic block"),
-        ));
+        let Some(entry) = bibliography
+            .get(anchor)
+            .and_then(|index| catalogs.bibliography.get_mut(*index))
+        else {
+            continue;
+        };
+        let Some(block) = document_index.block_containing(reference.range) else {
+            continue;
+        };
+        entry.references.push(BibliographyReference {
+            range: reference.range,
+            block,
+        });
     }
 
     for (id, range) in pending_references {
@@ -253,19 +258,6 @@ pub(crate) fn build(
                 range,
                 related_range: None,
             });
-        }
-    }
-    for (id, range, block) in bibliography_references {
-        if checkpoint.is_cancelled() {
-            return Err(CatalogBuildFailure::Cancelled);
-        }
-        if let Some(entry) = bibliography
-            .get(&id)
-            .and_then(|index| catalogs.bibliography.get_mut(*index))
-        {
-            entry
-                .references
-                .push(BibliographyReference { range, block });
         }
     }
     for footnote in &mut catalogs.footnotes {
@@ -416,6 +408,69 @@ mod tests {
             problem.kind == super::CatalogProblemKind::DuplicateFootnoteDefinition
                 && problem.related_range.is_some()
         }));
+    }
+
+    #[test]
+    fn unresolved_local_reference_outside_a_semantic_block_is_not_cataloged() {
+        let source = concat!(
+            "./>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ral` <<tar-*ou|er rence>>\n",
+            "\0\n",
+            "* item\n",
+            "+\n",
+            "[sourctem\n",
+            "+\n",
+            "[source,e>>>>>>>>\n",
+            "]",
+        );
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(source)
+            .expect("incomplete input remains recoverable");
+
+        assert!(analysis.ast().catalogs().bibliography().is_empty());
+    }
+
+    #[test]
+    fn bibliography_anchor_without_a_semantic_block_is_not_cataloged() {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze("bibanchor:ref[]")
+            .expect("analyze");
+        let catalogs = super::build(
+            analysis.facts(),
+            &crate::presentation::DocumentIndex::default(),
+            crate::limits::AnalysisLimits::default(),
+            &mut crate::cancellation::CancellationCheckpoint::new(&crate::core::NeverCancel),
+        )
+        .expect("catalog recovery");
+
+        assert!(catalogs.bibliography().is_empty());
+        assert!(catalogs.problems().is_empty());
+    }
+
+    #[test]
+    fn bibliography_skips_only_the_matching_reference_outside_a_semantic_block() {
+        let source = concat!(
+            "<<ref>> bibanchor:ref[]\n\n",
+            "./>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>ral` <<ref>>\n",
+            "\0\n",
+            "* item\n",
+            "+\n",
+            "[sourctem\n",
+            "+\n",
+            "[source,e>>>>>>>>\n",
+            "]",
+        );
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(source)
+            .expect("incomplete input remains recoverable");
+        let bibliography = analysis.ast().catalogs().bibliography();
+
+        assert_eq!(bibliography.len(), 1);
+        assert_eq!(bibliography[0].id, "ref");
+        assert_eq!(bibliography[0].references.len(), 1);
+        assert_eq!(
+            bibliography[0].references[0].block,
+            bibliography[0].definition_block
+        );
     }
 
     #[test]
