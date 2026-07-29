@@ -9,14 +9,14 @@ use adocweave::output::projection::project;
 use adocweave::resolution::ReferenceKey;
 use adocweave::semantic as parser;
 use adocweave::semantic::{
-    DocumentElement, DocumentSymbol as CoreDocumentSymbol, SymbolKind as CoreSymbolKind,
-    document_element_at, document_symbols, generate_heading_ids, source_language_candidates,
+    DocumentElement, document_element_at, generate_heading_ids, source_language_candidates,
 };
 use adocweave::semantic::{Inline, MathLanguage};
 use adocweave::text::{SourceDocument, TextRange as CoreTextRange};
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
+use crate::document_symbols::SymbolPresentation;
 use crate::position::{
     PositionEncoding, cursor_touches_range, negotiate_encoding, range_contains_offset,
     range_to_lsp, ranges_intersect, request_offset,
@@ -928,40 +928,24 @@ impl LanguageService {
         &self,
         uri: &lsp::Url,
     ) -> Result<Option<lsp::DocumentSymbolResponse>, String> {
+        let presentation = if self.client.hierarchical_document_symbols {
+            SymbolPresentation::Hierarchical
+        } else {
+            SymbolPresentation::Flat
+        };
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
-            return Ok(Some(if self.client.hierarchical_document_symbols {
-                lsp::DocumentSymbolResponse::Nested(Vec::new())
-            } else {
-                lsp::DocumentSymbolResponse::Flat(Vec::new())
+            return Ok(Some(match presentation {
+                SymbolPresentation::Hierarchical => lsp::DocumentSymbolResponse::Nested(Vec::new()),
+                SymbolPresentation::Flat => lsp::DocumentSymbolResponse::Flat(Vec::new()),
             }));
         };
-        let symbols = document_symbols(document.analysis.document());
-        if self.client.hierarchical_document_symbols {
-            let symbols = symbols
-                .iter()
-                .map(|symbol| {
-                    symbol_to_lsp(
-                        symbol,
-                        document.analysis.source_document(),
-                        self.position_encoding,
-                    )
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            Ok(Some(lsp::DocumentSymbolResponse::Nested(symbols)))
-        } else {
-            let mut flat = Vec::new();
-            for symbol in symbols {
-                flatten_symbol_to_lsp(
-                    &symbol,
-                    None,
-                    uri,
-                    document.analysis.source_document(),
-                    self.position_encoding,
-                    &mut flat,
-                )?;
-            }
-            Ok(Some(lsp::DocumentSymbolResponse::Flat(flat)))
-        }
+        crate::document_symbols::symbols(
+            &document.analysis,
+            uri,
+            self.position_encoding,
+            presentation,
+        )
+        .map(Some)
     }
 
     pub fn code_actions(
@@ -2366,75 +2350,4 @@ fn valid_anchor_name(value: &str) -> bool {
                 || character.is_control()
                 || matches!(character, '[' | ']' | '<' | '>' | '#')
         })
-}
-
-#[allow(deprecated)]
-fn symbol_to_lsp(
-    symbol: &CoreDocumentSymbol,
-    source_document: &SourceDocument,
-    encoding: PositionEncoding,
-) -> Result<lsp::DocumentSymbol, String> {
-    Ok(lsp::DocumentSymbol {
-        name: symbol.name.clone(),
-        detail: None,
-        kind: match symbol.kind {
-            CoreSymbolKind::DocumentTitle => lsp::SymbolKind::FILE,
-            CoreSymbolKind::Part => lsp::SymbolKind::MODULE,
-            CoreSymbolKind::Section => lsp::SymbolKind::NAMESPACE,
-            CoreSymbolKind::ListItem => lsp::SymbolKind::STRING,
-        },
-        tags: None,
-        deprecated: None,
-        range: range_to_lsp(symbol.range, source_document, encoding)?,
-        selection_range: range_to_lsp(symbol.selection_range, source_document, encoding)?,
-        children: Some(
-            symbol
-                .children
-                .iter()
-                .map(|child| symbol_to_lsp(child, source_document, encoding))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-    })
-}
-
-#[allow(deprecated)]
-fn flatten_symbol_to_lsp(
-    symbol: &CoreDocumentSymbol,
-    container_name: Option<&str>,
-    uri: &lsp::Url,
-    source_document: &SourceDocument,
-    encoding: PositionEncoding,
-    output: &mut Vec<lsp::SymbolInformation>,
-) -> Result<(), String> {
-    output.push(lsp::SymbolInformation {
-        name: symbol.name.clone(),
-        kind: core_symbol_kind_to_lsp(symbol.kind),
-        tags: None,
-        deprecated: None,
-        location: lsp::Location::new(
-            uri.clone(),
-            range_to_lsp(symbol.range, source_document, encoding)?,
-        ),
-        container_name: container_name.map(str::to_owned),
-    });
-    for child in &symbol.children {
-        flatten_symbol_to_lsp(
-            child,
-            Some(&symbol.name),
-            uri,
-            source_document,
-            encoding,
-            output,
-        )?;
-    }
-    Ok(())
-}
-
-fn core_symbol_kind_to_lsp(kind: CoreSymbolKind) -> lsp::SymbolKind {
-    match kind {
-        CoreSymbolKind::DocumentTitle => lsp::SymbolKind::FILE,
-        CoreSymbolKind::Part => lsp::SymbolKind::MODULE,
-        CoreSymbolKind::Section => lsp::SymbolKind::NAMESPACE,
-        CoreSymbolKind::ListItem => lsp::SymbolKind::STRING,
-    }
 }
