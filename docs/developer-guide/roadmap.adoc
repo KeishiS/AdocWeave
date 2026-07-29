@@ -10,17 +10,20 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 == 次の設計整理
 
-公開入口、構文解析および出力処理の責務分割に続いて、外部I/O、意味木の走査およびTable解析の
-正本を一つにします。
+外部I/OとWorkspace状態の境界整理に続いて、意味木の走査、Table解析および解析全体へ渡す設定と
+処理上限の正本を一つにします。
 
-* https://github.com/KeishiS/adocweave/issues/232[Workspaceの状態管理とfilesystem I/O境界の分離]
 * https://github.com/KeishiS/adocweave/issues/233[意味木のchild topologyとwalker契約の統合]
 * https://github.com/KeishiS/adocweave/issues/234[Table解析の型付きphase pipeline化]
+* https://github.com/KeishiS/adocweave/issues/236[前処理と解析の実効設定の統合]
+* https://github.com/KeishiS/adocweave/issues/237[cancellationの全処理段階への伝播]
+* https://github.com/KeishiS/adocweave/issues/238[resource上限の解決済みplanによる適用]
 
-最初にfilesystemへアクセスする権限をhostへ集約し、Workspaceを検証済みresourceからsnapshotと
-依存graphを作る状態機械へ整理します。次に意味木のchild関係を一か所で定義し、immutable、
-mutableおよびconsumer固有の走査が同じ到達規則を利用するようにします。最後にTable解析を
-scan、configurationおよびlayoutの所有権を順に消費する処理へ分けます。
+最初に意味木のchild関係を一か所で定義し、immutable、mutableおよびconsumer固有の走査が同じ到達規則を
+利用するようにします。次にTable解析をscan、configurationおよびlayoutの所有権を順に消費する処理へ
+分けます。その後、前処理と解析へ渡す属性と属性展開上限を一つの実効設定へ統合し、cancellationを
+長時間loopの内部まで伝播します。filesystem読込、Workspaceの保持および解析snapshotへ適用するresource
+上限は、project設定から構築した解決済みplanで区別します。
 
 各作業では、既存の入力と出力だけでなく、処理量の上限、cancellation、UTF-8の範囲、走査順、
 resource budgetおよび不正入力からの回復を先に自動検査で固定します。
