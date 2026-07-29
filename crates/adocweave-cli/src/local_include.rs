@@ -565,7 +565,7 @@ fn prepare_local_tracking_with_session(
     let session = LocalTargetSession::new(policy, limits.max_files, limits);
     let base_key = logical_key(
         base_dir
-            .strip_prefix(&root)
+            .strip_prefix(root)
             .expect("base checked below root"),
     );
 
@@ -610,13 +610,13 @@ fn prepare_local_tracking_with_session(
                 target: target.to_owned(),
                 attributes: String::new(),
             };
-            let candidates = dependency_candidates(&root, target);
+            let candidates = dependency_candidates(root, target);
             for candidate in &candidates {
                 observer.observe_path(candidate);
             }
             let loaded = {
                 IncludeLoader::new(filesystem_session)
-                    .load(&root, request)
+                    .load(root, request)
                     .map_err(include_target_error)
             };
             match loaded {
