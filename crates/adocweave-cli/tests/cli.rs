@@ -300,6 +300,101 @@ fn multi_path_byte_budget_is_shared_only_within_the_resolved_project() {
     );
 }
 
+#[test]
+fn multi_path_include_budget_is_shared_only_within_the_resolved_project() {
+    const FIRST_SOURCE: &str = "include::first-part.adoc[]\n";
+    const SECOND_SOURCE: &str = "include::second-part.adoc[]\n";
+    const PART: &str = "part\n";
+
+    let root = tempfile::tempdir().expect("root");
+    let same_files = root.path().join("same-files");
+    std::fs::create_dir(&same_files).expect("file-limit project");
+    std::fs::write(
+        same_files.join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 3\nmax-total-bytes = 1024\nmax-resource-bytes = 1024\n",
+    )
+    .expect("file-limit config");
+    std::fs::write(same_files.join("a.adoc"), FIRST_SOURCE).expect("first primary");
+    std::fs::write(same_files.join("b.adoc"), SECOND_SOURCE).expect("second primary");
+    std::fs::write(same_files.join("first-part.adoc"), PART).expect("first include");
+    std::fs::write(same_files.join("second-part.adoc"), PART).expect("second include");
+
+    let file_rejected = adocweave()
+        .current_dir(root.path())
+        .args([
+            "format",
+            "--check",
+            "same-files/a.adoc",
+            "same-files/b.adoc",
+        ])
+        .output()
+        .expect("shared file budget");
+    assert!(!file_rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&file_rejected.stderr).contains("file limit exceeded: 3"),
+        "{}",
+        String::from_utf8_lossy(&file_rejected.stderr)
+    );
+
+    let same_bytes = root.path().join("same-bytes");
+    std::fs::create_dir(&same_bytes).expect("byte-limit project");
+    let byte_limit = FIRST_SOURCE.len() + PART.len() + SECOND_SOURCE.len();
+    std::fs::write(
+        same_bytes.join(".adocweave.toml"),
+        format!(
+            "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 4\nmax-total-bytes = {byte_limit}\nmax-resource-bytes = {byte_limit}\n"
+        ),
+    )
+    .expect("byte-limit config");
+    std::fs::write(same_bytes.join("a.adoc"), FIRST_SOURCE).expect("first primary");
+    std::fs::write(same_bytes.join("b.adoc"), SECOND_SOURCE).expect("second primary");
+    std::fs::write(same_bytes.join("first-part.adoc"), PART).expect("first include");
+    std::fs::write(same_bytes.join("second-part.adoc"), PART).expect("second include");
+
+    let byte_rejected = adocweave()
+        .current_dir(root.path())
+        .args([
+            "format",
+            "--check",
+            "same-bytes/a.adoc",
+            "same-bytes/b.adoc",
+        ])
+        .output()
+        .expect("shared byte budget");
+    assert!(!byte_rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&byte_rejected.stderr).contains("byte limit exceeded"),
+        "{}",
+        String::from_utf8_lossy(&byte_rejected.stderr)
+    );
+
+    const PROJECT_SOURCE: &str = "include::part.adoc[]\n";
+    for name in ["one", "two"] {
+        let project = root.path().join(name);
+        std::fs::create_dir(&project).expect("independent project");
+        let project_limit = PROJECT_SOURCE.len() + PART.len();
+        std::fs::write(
+            project.join(".adocweave.toml"),
+            format!(
+                "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = {project_limit}\nmax-resource-bytes = {project_limit}\n"
+            ),
+        )
+        .expect("independent config");
+        std::fs::write(project.join("root.adoc"), PROJECT_SOURCE).expect("primary");
+        std::fs::write(project.join("part.adoc"), PART).expect("include");
+    }
+    let accepted = adocweave()
+        .current_dir(root.path())
+        .args(["format", "--check", "one/root.adoc", "two/root.adoc"])
+        .output()
+        .expect("independent project budgets");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn preview_sigterm_exits_cleanly_and_releases_the_listener() {
