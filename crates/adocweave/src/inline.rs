@@ -80,9 +80,12 @@ fn parse_segment(
                 cursor = slash + 2;
                 plain_start = cursor;
             }
-            InlineCandidate::Macro { open } => {
-                match index.recognize_macro(value, open) {
-                    MacroRecognition::Complete(token) => {
+            candidate @ InlineCandidate::Macro { open } => {
+                match index
+                    .recognize(value, candidate)
+                    .expect("macro candidates have recognition results")
+                {
+                    InlineRecognition::Matched(InlineToken::Macro(token)) => {
                         if is_escaped(value, open) {
                             let end = token.end();
                             push_text(
@@ -104,7 +107,14 @@ fn parse_segment(
                             cursor = end;
                             plain_start = end;
                         } else {
-                            let built = build_macro(value, range, config, depth, token, budget)?;
+                            let built = lower_inline_token(
+                                value,
+                                range,
+                                config,
+                                depth,
+                                InlineToken::Macro(token),
+                                budget,
+                            )?;
                             push_text(
                                 &mut output.inlines,
                                 value,
@@ -119,7 +129,7 @@ fn parse_segment(
                             output.problems.extend(built.problems);
                         }
                     }
-                    MacroRecognition::Incomplete { kind, next } => {
+                    InlineRecognition::Recovered { kind, next, .. } => {
                         if is_escaped(value, open) {
                             push_text(
                                 &mut output.inlines,
@@ -147,7 +157,10 @@ fn parse_segment(
                             cursor = next;
                         }
                     }
-                    MacroRecognition::Invalid { next } => cursor = next,
+                    InlineRecognition::Rejected { next, .. } => cursor = next,
+                    InlineRecognition::Matched(InlineToken::Marker(_)) => {
+                        unreachable!("macro recognizer returns only macro tokens")
+                    }
                 }
                 if cursor == value.len() {
                     break;
@@ -157,8 +170,10 @@ fn parse_segment(
                 }
                 cursor = next_char_boundary(value, open);
             }
-            InlineCandidate::MacroBoundary { open } => {
-                if let MacroRecognition::Complete(token) = index.recognize_macro(value, open)
+            candidate @ InlineCandidate::MacroBoundary { open } => {
+                if let InlineRecognition::Matched(InlineToken::Macro(token)) = index
+                    .recognize(value, candidate)
+                    .expect("macro boundary candidates have recognition results")
                     && let Some((name_end, name)) = macro_boundary_subject(value, token)
                 {
                     output.problems.push(InlineProblem {
@@ -170,12 +185,7 @@ fn parse_segment(
                     cursor = next_char_boundary(value, open);
                 }
             }
-            InlineCandidate::Marker {
-                open,
-                marker,
-                form,
-                close,
-            } => {
+            candidate @ InlineCandidate::Marker { open, form, .. } => {
                 if is_escaped(value, open) {
                     let marker_width = form.width();
                     push_text(
@@ -198,23 +208,36 @@ fn parse_segment(
                     plain_start = cursor;
                     continue;
                 }
-                match recognize_marker(value, open, marker, form, close) {
-                    MarkerRecognition::Complete(token) => {
-                        let built = build_marker(value, range, config, depth, token, budget)?;
+                match index
+                    .recognize(value, candidate)
+                    .expect("marker candidates have recognition results")
+                {
+                    InlineRecognition::Matched(InlineToken::Marker(token)) => {
+                        let built = lower_inline_token(
+                            value,
+                            range,
+                            config,
+                            depth,
+                            InlineToken::Marker(token),
+                            budget,
+                        )?;
                         push_text(&mut output.inlines, value, range, plain_start, open, budget)?;
                         push_inline(&mut output.inlines, built.inline, budget)?;
                         output.problems.extend(built.problems);
                         cursor = token.end;
                         plain_start = cursor;
                     }
-                    MarkerRecognition::Unclosed { next, kind } => {
+                    InlineRecognition::Recovered { next, kind, .. } => {
                         output.problems.push(InlineProblem {
                             kind,
                             range: subrange(range, open, next),
                         });
                         cursor = next;
                     }
-                    MarkerRecognition::Invalid { next } => cursor = next,
+                    InlineRecognition::Rejected { next, .. } => cursor = next,
+                    InlineRecognition::Matched(InlineToken::Macro(_)) => {
+                        unreachable!("marker recognizer returns only marker tokens")
+                    }
                 }
             }
             InlineCandidate::TypographicQuote {
@@ -435,8 +458,25 @@ impl InlineCandidateIndex {
         }
     }
 
-    fn recognize_macro(&self, value: &str, open: usize) -> MacroRecognition {
+    fn recognize_macro(&self, value: &str, open: usize) -> InlineRecognition {
         recognize_macro_with_index(value, open, &self.delimiters, Some(&self.url_candidates))
+    }
+
+    fn recognize(&self, value: &str, candidate: InlineCandidate) -> Option<InlineRecognition> {
+        match candidate {
+            InlineCandidate::Macro { open } | InlineCandidate::MacroBoundary { open } => {
+                Some(self.recognize_macro(value, open))
+            }
+            InlineCandidate::Marker {
+                open,
+                marker,
+                form,
+                close,
+            } => Some(recognize_marker(value, open, marker, form, close)),
+            InlineCandidate::EscapedAnchor { .. }
+            | InlineCandidate::TypographicQuote { .. }
+            | InlineCandidate::Passthrough { .. } => None,
+        }
     }
 
     #[cfg(test)]
@@ -724,15 +764,82 @@ struct MarkerToken {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MarkerRecognition {
-    Complete(MarkerToken),
-    Unclosed {
+enum InlineToken {
+    Macro(MacroToken),
+    Marker(MarkerToken),
+}
+
+impl InlineToken {
+    const fn open(self) -> usize {
+        match self {
+            Self::Macro(token) => token.open(),
+            Self::Marker(token) => token.open,
+        }
+    }
+
+    const fn end(self) -> usize {
+        match self {
+            Self::Macro(token) => token.end(),
+            Self::Marker(token) => token.end,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InlineRecognition {
+    Matched(InlineToken),
+    Recovered {
+        open: usize,
         next: usize,
         kind: InlineProblemKind,
     },
-    Invalid {
+    Rejected {
+        open: usize,
         next: usize,
     },
+}
+
+impl InlineRecognition {
+    fn matched(value: &str, token: InlineToken) -> Self {
+        let recognition = Self::Matched(token);
+        debug_assert!(recognition.is_well_formed(value));
+        recognition
+    }
+
+    fn recovered(value: &str, open: usize, next: usize, kind: InlineProblemKind) -> Self {
+        let recognition = Self::Recovered { open, next, kind };
+        debug_assert!(recognition.is_well_formed(value));
+        recognition
+    }
+
+    fn rejected(value: &str, open: usize, next: usize) -> Self {
+        let recognition = Self::Rejected { open, next };
+        debug_assert!(recognition.is_well_formed(value));
+        recognition
+    }
+
+    const fn open(self) -> usize {
+        match self {
+            Self::Matched(token) => token.open(),
+            Self::Recovered { open, .. } | Self::Rejected { open, .. } => open,
+        }
+    }
+
+    const fn next(self) -> usize {
+        match self {
+            Self::Matched(token) => token.end(),
+            Self::Recovered { next, .. } | Self::Rejected { next, .. } => next,
+        }
+    }
+
+    fn is_well_formed(self, value: &str) -> bool {
+        let open = self.open();
+        let next = self.next();
+        open < next
+            && next <= value.len()
+            && value.is_char_boundary(open)
+            && value.is_char_boundary(next)
+    }
 }
 
 struct BuiltInline {
@@ -747,7 +854,7 @@ fn recognize_marker(
     marker: char,
     form: MarkerForm,
     close: Option<usize>,
-) -> MarkerRecognition {
+) -> InlineRecognition {
     let width = form.width();
     let next = open + width;
     let Some(close) = close else {
@@ -758,7 +865,7 @@ fn recognize_marker(
                     .next()
                     .is_some_and(char::is_whitespace))
         {
-            return MarkerRecognition::Invalid { next };
+            return InlineRecognition::rejected(value, open, next);
         }
         let kind = match marker {
             '`' => InlineProblemKind::UnclosedMonospace,
@@ -770,26 +877,27 @@ fn recognize_marker(
             '{' => InlineProblemKind::UnclosedAttributeReference,
             _ => unreachable!("only supported markers are returned"),
         };
-        return MarkerRecognition::Unclosed { next, kind };
+        return InlineRecognition::recovered(value, open, next, kind);
     };
     if close == next {
-        return MarkerRecognition::Invalid {
-            next: close + width,
-        };
+        return InlineRecognition::rejected(value, open, close + width);
     }
     if marker == '{' && !valid_attribute_name(&value[next..close]) {
-        return MarkerRecognition::Invalid { next };
+        return InlineRecognition::rejected(value, open, next);
     }
     if matches!(marker, '^' | '~') && value[next..close].chars().any(char::is_whitespace) {
-        return MarkerRecognition::Invalid { next };
+        return InlineRecognition::rejected(value, open, next);
     }
-    MarkerRecognition::Complete(MarkerToken {
-        open,
-        close,
-        end: close + width,
-        marker,
-        form,
-    })
+    InlineRecognition::matched(
+        value,
+        InlineToken::Marker(MarkerToken {
+            open,
+            close,
+            end: close + width,
+            marker,
+            form,
+        }),
+    )
 }
 
 fn index_marker_closers(
@@ -962,6 +1070,20 @@ enum MacroToken {
 }
 
 impl MacroToken {
+    const fn open(self) -> usize {
+        match self {
+            Self::Formula(token) => token.open,
+            Self::Reference(ReferenceToken::Short { open, .. })
+            | Self::Reference(ReferenceToken::Xref { open, .. })
+            | Self::Link(LinkToken::Explicit { open, .. })
+            | Self::Link(LinkToken::Url { open, .. }) => open,
+            Self::Passthrough(token) => token.open,
+            Self::Standard(token) => token.open,
+            Self::ShorthandAnchor(token) => token.open,
+            Self::Email(token) => token.open,
+        }
+    }
+
     const fn end(self) -> usize {
         match self {
             Self::Formula(token) => token.end,
@@ -1033,18 +1155,6 @@ const fn standard_macro_name(kind: StandardMacroKind) -> &'static str {
         Kind::Audio => "audio",
         Kind::Video => "video",
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MacroRecognition {
-    Complete(MacroToken),
-    Incomplete {
-        kind: InlineProblemKind,
-        next: usize,
-    },
-    Invalid {
-        next: usize,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1176,131 +1286,160 @@ fn recognize_macro_with_index(
     open: usize,
     delimiters: &DelimiterIndex,
     url_candidates: Option<&UrlCandidateIndex>,
-) -> MacroRecognition {
+) -> InlineRecognition {
     let rest = &value[open..];
     if let Some(content) = rest.strip_prefix("[[[")
         && let Some(relative_end) = content.find("]]]")
     {
         let target_end = open + 3 + relative_end;
-        return MacroRecognition::Complete(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
-            kind: StandardMacroKind::BibliographyAnchor,
-            open,
-            target_start: open + 3,
-            target_end,
-            end: target_end + 3,
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
+                kind: StandardMacroKind::BibliographyAnchor,
+                open,
+                target_start: open + 3,
+                target_end,
+                end: target_end + 3,
+            })),
+        );
     }
     if let Some(content) = rest.strip_prefix("[[")
         && let Some(relative_end) = content.find("]]")
     {
         let target_end = open + 2 + relative_end;
-        return MacroRecognition::Complete(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
-            kind: StandardMacroKind::Anchor,
-            open,
-            target_start: open + 2,
-            target_end,
-            end: target_end + 2,
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
+                kind: StandardMacroKind::Anchor,
+                open,
+                target_start: open + 2,
+                target_end,
+                end: target_end + 2,
+            })),
+        );
     }
     let named_prefix = named_macro_prefix(rest);
     if let Some(NamedMacroPrefix::Formula { prefix_len }) = named_prefix {
         let close = delimiters.next_close_bracket(open + prefix_len);
-        return MacroRecognition::Complete(MacroToken::Formula(FormulaToken {
-            open,
-            content_start: open + prefix_len,
-            content_end: close.unwrap_or(value.len()),
-            end: close.map_or(value.len(), |close| close + 1),
-            closed: close.is_some(),
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::Formula(FormulaToken {
+                open,
+                content_start: open + prefix_len,
+                content_end: close.unwrap_or(value.len()),
+                end: close.map_or(value.len(), |close| close + 1),
+                closed: close.is_some(),
+            })),
+        );
     }
     if let Some(NamedMacroPrefix::Passthrough { prefix_len }) = named_prefix {
         let content_start = open + prefix_len;
         let Some(close) = delimiters.next_close_bracket(content_start) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::UnclosedPassthrough,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::UnclosedPassthrough,
+            );
         };
-        return MacroRecognition::Complete(MacroToken::Passthrough(PassthroughToken {
-            open,
-            content_start,
-            content_end: close,
-            end: close + 1,
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::Passthrough(PassthroughToken {
+                open,
+                content_start,
+                content_end: close,
+                end: close + 1,
+            })),
+        );
     }
     if rest.starts_with("<<") {
         let Some(close) = delimiters.next_double_greater(open + 2) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::IncompleteCrossReference,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::IncompleteCrossReference,
+            );
         };
-        return MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Short {
-            open,
-            target_start: open + 2,
-            close,
-            end: close + 2,
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::Reference(ReferenceToken::Short {
+                open,
+                target_start: open + 2,
+                close,
+                end: close + 2,
+            })),
+        );
     }
     if let Some(NamedMacroPrefix::Xref { prefix_len }) = named_prefix {
         let target_start = open + prefix_len;
         let Some(bracket) = delimiters.next_open_bracket(target_start) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::IncompleteCrossReference,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::IncompleteCrossReference,
+            );
         };
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
         {
-            return MacroRecognition::Invalid {
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::rejected(value, open, next_char_boundary(value, open));
         }
         let Some(close) = delimiters.next_close_bracket(bracket + 1) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::IncompleteCrossReference,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::IncompleteCrossReference,
+            );
         };
-        return MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Xref {
-            open,
-            target_start,
-            bracket,
-            close,
-            end: close + 1,
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::Reference(ReferenceToken::Xref {
+                open,
+                target_start,
+                bracket,
+                close,
+                end: close + 1,
+            })),
+        );
     }
     if let Some(NamedMacroPrefix::Link { prefix_len }) = named_prefix {
         let target_start = open + prefix_len;
         let Some(bracket) = delimiters.next_open_bracket(target_start) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::IncompleteLink,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::IncompleteLink,
+            );
         };
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
         {
-            return MacroRecognition::Invalid {
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::rejected(value, open, next_char_boundary(value, open));
         }
         let Some(close) = delimiters.next_close_bracket(bracket + 1) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::IncompleteLink,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::IncompleteLink,
+            );
         };
-        return MacroRecognition::Complete(MacroToken::Link(LinkToken::Explicit {
-            open,
-            target_start,
-            bracket,
-            close,
-            end: close + 1,
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::Link(LinkToken::Explicit {
+                open,
+                target_start,
+                bracket,
+                close,
+                end: close + 1,
+            })),
+        );
     }
 
     if let Some(NamedMacroPrefix::Standard {
@@ -1311,47 +1450,53 @@ fn recognize_macro_with_index(
     {
         let target_start = open + prefix_len;
         let Some(bracket) = delimiters.next_open_bracket(target_start) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::IncompleteLink,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::IncompleteLink,
+            );
         };
         if value[target_start..bracket]
             .chars()
             .any(char::is_whitespace)
         {
-            return MacroRecognition::Invalid {
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::rejected(value, open, next_char_boundary(value, open));
         }
         let Some(close) = delimiters.next_close_bracket(bracket + 1) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::IncompleteLink,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::IncompleteLink,
+            );
         };
-        return MacroRecognition::Complete(MacroToken::Standard(StandardMacroToken {
-            kind,
-            form,
-            open,
-            target_start,
-            bracket,
-            close,
-            end: close + 1,
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::Standard(StandardMacroToken {
+                kind,
+                form,
+                open,
+                target_start,
+                bracket,
+                close,
+                end: close + 1,
+            })),
+        );
     }
 
     if let Some(relative_end) = email_address_end(rest) {
-        return MacroRecognition::Complete(MacroToken::Email(EmailToken {
-            open,
-            end: open + relative_end,
-        }));
+        return InlineRecognition::matched(
+            value,
+            InlineToken::Macro(MacroToken::Email(EmailToken {
+                open,
+                end: open + relative_end,
+            })),
+        );
     }
 
     let Some(scheme_end) = url_scheme_end(rest) else {
-        return MacroRecognition::Invalid {
-            next: next_char_boundary(value, open),
-        };
+        return InlineRecognition::rejected(value, open, next_char_boundary(value, open));
     };
     let mut target_end = url_candidates.map_or_else(
         || {
@@ -1374,32 +1519,49 @@ fn recognize_macro_with_index(
         target_end -= 1;
     }
     if target_end <= open + scheme_end {
-        return MacroRecognition::Invalid {
-            next: next_char_boundary(value, open),
-        };
+        return InlineRecognition::rejected(value, open, next_char_boundary(value, open));
     }
     let (label, end) = if value.as_bytes().get(target_end) == Some(&b'[') {
         let Some(close) = delimiters.next_close_bracket(target_end + 1) else {
-            return MacroRecognition::Incomplete {
-                kind: InlineProblemKind::IncompleteLink,
-                next: next_char_boundary(value, open),
-            };
+            return InlineRecognition::recovered(
+                value,
+                open,
+                next_char_boundary(value, open),
+                InlineProblemKind::IncompleteLink,
+            );
         };
         (Some((target_end + 1, close)), close + 1)
     } else {
         (None, target_end)
     };
-    MacroRecognition::Complete(MacroToken::Link(LinkToken::Url {
-        open,
-        target_end,
-        label,
-        end,
-    }))
+    InlineRecognition::matched(
+        value,
+        InlineToken::Macro(MacroToken::Link(LinkToken::Url {
+            open,
+            target_end,
+            label,
+            end,
+        })),
+    )
 }
 
 #[cfg(test)]
-fn recognize_macro(value: &str, open: usize) -> MacroRecognition {
+fn recognize_macro(value: &str, open: usize) -> InlineRecognition {
     recognize_macro_with_index(value, open, &DelimiterIndex::new(value), None)
+}
+
+fn lower_inline_token(
+    value: &str,
+    range: TextRange,
+    config: InlineParseConfig,
+    depth: usize,
+    token: InlineToken,
+    budget: &mut ParseBudget,
+) -> Result<BuiltInline, BudgetExceeded> {
+    match token {
+        InlineToken::Macro(token) => build_macro(value, range, config, depth, token, budget),
+        InlineToken::Marker(token) => build_marker(value, range, config, depth, token, budget),
+    }
 }
 
 fn build_macro(
@@ -2177,8 +2339,8 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 mod tests {
     use super::{
         DelimiterIndex, FormulaToken, Inline, InlineCandidate, InlineCandidateIndex,
-        InlineLiteralKind, InlineParseConfig, InlineProblemKind, InlineStyle, LinkToken, MacroForm,
-        MacroRecognition, MacroToken, MarkerForm, MarkerRecognition, MarkerToken,
+        InlineLiteralKind, InlineParseConfig, InlineProblemKind, InlineRecognition, InlineStyle,
+        InlineToken, LinkToken, MacroForm, MacroToken, MarkerForm, MarkerToken,
         ReferenceDestination, ReferenceToken, StandardMacroKind, inline_at, next_candidate, parse,
         parse_text, recognize_macro, recognize_marker,
     };
@@ -2299,52 +2461,72 @@ mod tests {
     fn macro_recognizer_returns_ranges_without_building_nodes() {
         assert!(matches!(
             recognize_macro("stem:[x]", 0),
-            MacroRecognition::Complete(MacroToken::Formula(FormulaToken {
+            InlineRecognition::Matched(InlineToken::Macro(MacroToken::Formula(FormulaToken {
                 content_start: 6,
                 content_end: 7,
                 end: 8,
                 closed: true,
                 ..
-            }))
+            })))
         ));
         assert!(matches!(
             recognize_macro("<<id,label>>", 0),
-            MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Short {
-                target_start: 2,
-                close: 10,
-                end: 12,
-                ..
-            }))
+            InlineRecognition::Matched(InlineToken::Macro(MacroToken::Reference(
+                ReferenceToken::Short {
+                    target_start: 2,
+                    close: 10,
+                    end: 12,
+                    ..
+                }
+            )))
         ));
         assert!(matches!(
             recognize_macro("xref:other.adoc[Other]", 0),
-            MacroRecognition::Complete(MacroToken::Reference(ReferenceToken::Xref {
-                target_start: 5,
-                bracket: 15,
-                close: 21,
-                end: 22,
-                ..
-            }))
+            InlineRecognition::Matched(InlineToken::Macro(MacroToken::Reference(
+                ReferenceToken::Xref {
+                    target_start: 5,
+                    bracket: 15,
+                    close: 21,
+                    end: 22,
+                    ..
+                }
+            )))
         ));
         assert!(matches!(
             recognize_macro("https://example.org[label]", 0),
-            MacroRecognition::Complete(MacroToken::Link(LinkToken::Url {
+            InlineRecognition::Matched(InlineToken::Macro(MacroToken::Link(LinkToken::Url {
                 target_end: 19,
                 label: Some((20, 25)),
                 end: 26,
                 ..
-            }))
+            })))
+        ));
+        assert!(matches!(
+            recognize_macro("image:asset.png[Alt]", 0),
+            InlineRecognition::Matched(InlineToken::Macro(MacroToken::Standard(
+                super::StandardMacroToken {
+                    kind: StandardMacroKind::Image,
+                    form: MacroForm::Inline,
+                    target_start: 6,
+                    bracket: 15,
+                    close: 19,
+                    end: 20,
+                    ..
+                }
+            )))
         ));
         assert_eq!(
             recognize_macro("xref:other.adoc[open", 0),
-            MacroRecognition::Incomplete {
+            InlineRecognition::Recovered {
+                open: 0,
                 kind: InlineProblemKind::IncompleteCrossReference,
                 next: 1,
             }
         );
         assert_eq!(
             recognize_macro("https://example.org[open", 0),
-            MacroRecognition::Incomplete {
+            InlineRecognition::Recovered {
+                open: 0,
                 kind: InlineProblemKind::IncompleteLink,
                 next: 1,
             }
@@ -2355,21 +2537,22 @@ mod tests {
     fn marker_recognizer_distinguishes_complete_invalid_and_unclosed_input() {
         assert_eq!(
             recognize_marker("*strong*", 0, '*', MarkerForm::Constrained, Some(7),),
-            MarkerRecognition::Complete(MarkerToken {
+            InlineRecognition::Matched(InlineToken::Marker(MarkerToken {
                 open: 0,
                 close: 7,
                 end: 8,
                 marker: '*',
                 form: MarkerForm::Constrained,
-            })
+            }))
         );
         assert_eq!(
             recognize_marker("{bad name}", 0, '{', MarkerForm::Constrained, Some(9),),
-            MarkerRecognition::Invalid { next: 1 }
+            InlineRecognition::Rejected { open: 0, next: 1 }
         );
         assert_eq!(
             recognize_marker("_open", 0, '_', MarkerForm::Constrained, None),
-            MarkerRecognition::Unclosed {
+            InlineRecognition::Recovered {
+                open: 0,
                 next: 1,
                 kind: InlineProblemKind::UnclosedEmphasis,
             }
@@ -2378,18 +2561,37 @@ mod tests {
 
     #[test]
     fn candidate_recovery_always_advances_on_utf8_boundaries() {
-        let source = "日本語 xref:broken[ *open _also";
-        let mut cursor = 0;
-        let mut steps = 0;
-        while let Some(candidate) = next_candidate(source, cursor) {
-            let open = candidate.open();
-            let next = super::next_char_boundary(source, open);
-            assert!(next > cursor);
-            assert!(source.is_char_boundary(next));
-            cursor = next;
-            steps += 1;
+        for source in [
+            "日本語 xref:broken[ *open _also",
+            "link:https://example.org[Label] image:asset.png[Alt]",
+            "<<target,label>> https://example.org[label] user@example.org",
+            "{bad name} **strong** stem:[x]",
+        ] {
+            let index = InlineCandidateIndex::new(source);
+            let mut candidates = index.cursor();
+            let mut cursor = 0;
+            let mut steps = 0;
+            while let Some(candidate) = candidates.next(cursor) {
+                let recognition = index.recognize(source, candidate);
+                let next = recognition.map_or_else(
+                    || super::next_char_boundary(source, candidate.open()),
+                    |recognition| {
+                        assert!(recognition.is_well_formed(source));
+                        assert_eq!(
+                            Some(recognition),
+                            index.recognize(source, candidate),
+                            "recognition must be deterministic"
+                        );
+                        recognition.next()
+                    },
+                );
+                assert!(next > cursor, "{source:?} at {cursor}");
+                assert!(source.is_char_boundary(next));
+                cursor = next;
+                steps += 1;
+            }
+            assert!(steps <= source.chars().count());
         }
-        assert!(steps <= source.chars().count());
     }
 
     #[test]
