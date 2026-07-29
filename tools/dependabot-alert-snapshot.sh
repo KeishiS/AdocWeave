@@ -33,9 +33,9 @@ for state in open fixed dismissed auto_dismissed; do
               .[];
               type == "object"
               and .state == $expected_state
-              and (.manifest_path | type) == "string"
-              and (.manifest_path | length) > 0
               and (.dependency | type) == "object"
+              and (.dependency.manifest_path | type) == "string"
+              and (.dependency.manifest_path | length) > 0
               and (.dependency.package | type) == "object"
               and (.dependency.package.name | type) == "string"
               and (.dependency.package.name | length) > 0
@@ -66,8 +66,11 @@ jq -n \
       securityUpdate: any(
         $alerts[];
         . as $alert |
-        ($alert.manifest_path? | type) == "string"
-        and ($paths | index($alert.manifest_path | normalized_path)) != null
+        ($alert.dependency?.manifest_path? | type) == "string"
+        and (
+          $paths
+          | index($alert.dependency.manifest_path | normalized_path)
+        ) != null
         and (
           ($dependencies | length) == 0
           or (

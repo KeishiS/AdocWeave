@@ -20,8 +20,10 @@ if [[ "$FAKE_GH_MODE" == match-* ]]; then
   if [[ "$state" == "\${FAKE_GH_MODE#match-}" ]]; then
     jq -cn --arg state "$state" '[{
       state: $state,
-      manifest_path: "Cargo.lock",
-      dependency: {package: {name: "serde"}}
+      dependency: {
+        manifest_path: "Cargo.lock",
+        package: {name: "serde"}
+      }
     }]'
   else
     printf '%s\\n' '[]'
@@ -33,16 +35,18 @@ case "$FAKE_GH_MODE:$state" in
     jq -cn '[range(0;100) | {
       number: .,
       state: "open",
-      manifest_path: "other/Cargo.lock",
-      dependency: {package: {name: "other"}}
+      dependency: {
+        manifest_path: "other/Cargo.lock",
+        package: {name: "other"}
+      }
     }]'
-    printf '%s\\n' '[{"number":101,"state":"open","manifest_path":"other/Cargo.lock","dependency":{"package":{"name":"other"}}}]'
+    printf '%s\\n' '[{"number":101,"state":"open","dependency":{"manifest_path":"other/Cargo.lock","package":{"name":"other"}}}]'
     ;;
   pages:fixed)
     printf '%s\\n' '[]'
     ;;
   pages:dismissed)
-    printf '%s\\n' '[]' '[{"state":"dismissed","manifest_path":"Cargo.lock","dependency":{"package":{"name":"serde"}}}]'
+    printf '%s\\n' '[]' '[{"state":"dismissed","dependency":{"manifest_path":"Cargo.lock","package":{"name":"serde"}}}]'
     ;;
   pages:auto_dismissed)
     printf '%s\\n' '[]'
@@ -58,12 +62,16 @@ case "$FAKE_GH_MODE:$state" in
     printf '%s\\n' '[{"state":"fixed","dependency":{"package":{"name":"serde"}}}]'
     ;;
   missing-manifest:*) printf '%s\\n' '[]' ;;
+  top-level-manifest:fixed)
+    printf '%s\\n' '[{"state":"fixed","manifest_path":"Cargo.lock","dependency":{"package":{"name":"serde"}}}]'
+    ;;
+  top-level-manifest:*) printf '%s\\n' '[]' ;;
   invalid-dependency:dismissed)
-    printf '%s\\n' '[{"state":"dismissed","manifest_path":"Cargo.lock","dependency":{"package":{"name":1}}}]'
+    printf '%s\\n' '[{"state":"dismissed","dependency":{"manifest_path":"Cargo.lock","package":{"name":1}}}]'
     ;;
   invalid-dependency:*) printf '%s\\n' '[]' ;;
   mismatched-state:auto_dismissed)
-    printf '%s\\n' '[{"state":"dismissed","manifest_path":"Cargo.lock","dependency":{"package":{"name":"serde"}}}]'
+    printf '%s\\n' '[{"state":"dismissed","dependency":{"manifest_path":"Cargo.lock","package":{"name":"serde"}}}]'
     ;;
   mismatched-state:*) printf '%s\\n' '[]' ;;
   failure:auto_dismissed) exit 22 ;;
@@ -136,6 +144,7 @@ for (const mode of ["no-output", "malformed", "failure"]) {
 for (const mode of [
   "invalid-object",
   "missing-manifest",
+  "top-level-manifest",
   "invalid-dependency",
   "mismatched-state",
 ]) {

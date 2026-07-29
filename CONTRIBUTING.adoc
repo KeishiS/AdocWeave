@@ -183,6 +183,18 @@ npmの実行時依存関係およびminor以上の更新も、初期導入の対
 5分間隔の監査で再確認し、未解決alertを検知した場合も解除します。手動監査でもpolicyとalertを再確認し、
 設定を解釈できない場合、alertを取得できない場合または停止中は
 既存のauto-mergeを解除します。CIまたはreviewを契機とする再判定で不適格になった場合も同様です。
+
+workflowまたは判定toolを変更するときは、停止と変更を一つのPull Requestにまとめません。最初のPull Requestでは
+policyの``enabled``だけを``false``へ変更し、mainへの統合後にreconciliationが成功したことと、既存の
+Dependabot Pull Requestからauto-mergeが解除されたことをGitHub APIで確認します。その確認後に、別の
+Pull Requestでworkflowまたは判定toolを変更します。workflow自身を削除または変更するpushは、変更前の
+reconciliationを実行する保証がないためです。
+
+現在の方式では、Dependabot alertの照会とauto-mergeを登録するGraphQL mutationを一つの原子的な操作には
+できません。照会後にalertが発生した場合や、5分間隔の監査が実行される前には、安全でないauto-mergeが
+残る時間差があります。定期監査はこの時間差を解消する保証ではありません。この残存リスクの扱いと
+auto-merge方式の採否を決定するまで、policyの``enabled``は``false``のまま維持します。
+
 復旧するときは、停止理由が解消され、rulesetとActions権限が期待どおりであることを確認してから、
 policyを変更するPull Requestを作成します。復旧後も既存の判定結果を再利用せず、各Pull Requestの最新headで
 CIとeligibility checkを再実行します。手動で条件を迂回するoverrideは設けません。

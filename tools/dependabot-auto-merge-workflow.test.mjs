@@ -18,10 +18,19 @@ const reconciliation = await readFile(
   new URL("../.github/workflows/dependabot-auto-merge-reconcile.yml", import.meta.url),
   "utf8",
 );
+const contributing = await readFile(
+  new URL("../CONTRIBUTING.adoc", import.meta.url),
+  "utf8",
+);
 const makefile = await readFile(new URL("../Makefile.toml", import.meta.url), "utf8");
 const decide = controller.match(/\n  decide:\n[\s\S]*?(?=\n  revoke:\n)/)?.[0] ?? "";
 const revoke = controller.match(/\n  revoke:\n[\s\S]*?(?=\n  enable:\n)/)?.[0] ?? "";
-const enable = controller.match(/\n  enable:\n[\s\S]*$/)?.[0] ?? "";
+const enable = controller.match(
+  /\n  enable:\n[\s\S]*?(?=\n  revoke-after-enable-failure:\n)/,
+)?.[0] ?? "";
+const revokeAfterEnableFailure = controller.match(
+  /\n  revoke-after-enable-failure:\n[\s\S]*$/,
+)?.[0] ?? "";
 
 test("eligibility is a read-only pull request job check over trusted base code", () => {
   assert.match(eligibility, /\n  pull_request:\n/);
@@ -135,10 +144,41 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(enable, /pulls\/\$PR_NUMBER\/reviews\?per_page=100/);
   assert.match(enable, /enable-controller-input\.json/);
   assert.match(enable, /jq -e '\.eligible == true' enable-controller-decision\.json/);
+  assert.match(enable, /enable-auto-merge-result\.json/);
+  assert.match(
+    enable,
+    /\.data\.enablePullRequestAutoMerge\.pullRequest\.number == \$pr_number/,
+  );
   assert.match(enable, /actions:\s*read/);
   assert.ok(
     enable.indexOf("enable-controller-decision.json")
       < enable.indexOf("enablePullRequestAutoMerge"),
+  );
+});
+
+test("a failed final verification revokes a previously enabled request", () => {
+  assert.match(revokeAfterEnableFailure, /needs:\s*\[decide, enable\]/);
+  assert.match(revokeAfterEnableFailure, /always\(\)/);
+  assert.match(revokeAfterEnableFailure, /needs\.decide\.outputs\.eligible == 'true'/);
+  assert.match(revokeAfterEnableFailure, /needs\.enable\.result != 'success'/);
+  assert.match(revokeAfterEnableFailure, /pull-requests:\s*write/);
+  assert.match(
+    revokeAfterEnableFailure,
+    /\.node_id == \$expected_node_id/,
+  );
+  assert.match(revokeAfterEnableFailure, /\.user\.login == "dependabot\[bot\]"/);
+  assert.match(revokeAfterEnableFailure, /disablePullRequestAutoMerge/);
+  assert.match(
+    revokeAfterEnableFailure,
+    /\.data\.disablePullRequestAutoMerge\.pullRequest\.number == \$pr_number/,
+  );
+  assert.match(
+    revokeAfterEnableFailure,
+    /\.data\.disablePullRequestAutoMerge\.pullRequest\.autoMergeRequest == null/,
+  );
+  assert.doesNotMatch(
+    revokeAfterEnableFailure,
+    /checkout|contents:\s*write|checks:\s*write|enablePullRequestAutoMerge/,
   );
 });
 
@@ -178,6 +218,29 @@ test("repository changes continuously reconcile existing auto-merge requests", (
   assert.match(reconciliation, /steps\.safety\.outcome == 'failure'/);
   assert.match(reconciliation, /disablePullRequestAutoMerge/);
   assert.doesNotMatch(reconciliation, /enablePullRequestAutoMerge|pull_request_target:/);
+});
+
+test("automation changes require a frozen two-stage procedure", () => {
+  assert.match(
+    contributing,
+    /最初のPull Requestでは\s*policyの``enabled``だけを``false``へ変更/,
+  );
+  assert.match(
+    contributing,
+    /既存の\s*Dependabot Pull Requestからauto-mergeが解除されたことをGitHub APIで確認/,
+  );
+  assert.match(
+    contributing,
+    /その確認後に、別の\s*Pull Requestでworkflowまたは判定toolを変更/,
+  );
+  assert.match(
+    contributing,
+    /定期監査はこの時間差を解消する保証ではありません/,
+  );
+  assert.match(
+    contributing,
+    /auto-merge方式の採否を決定するまで、policyの``enabled``は``false``のまま維持/,
+  );
 });
 
 test("workflow permissions remain scoped to the jobs that need them", () => {

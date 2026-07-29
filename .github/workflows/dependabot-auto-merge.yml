@@ -368,4 +368,68 @@ jobs:
               }' \
             -f pullRequest="$PULL_REQUEST_NODE_ID" \
             -f head="$EXPECTED_HEAD_OID" \
-            | jq . >> "$GITHUB_STEP_SUMMARY"
+            > enable-auto-merge-result.json
+          jq -e --argjson pr_number "$PR_NUMBER" '
+            .data.enablePullRequestAutoMerge.pullRequest.number == $pr_number
+            and (
+              .data.enablePullRequestAutoMerge.pullRequest.autoMergeRequest.enabledAt
+              | type
+            ) == "string"
+            and (
+              .data.enablePullRequestAutoMerge.pullRequest.autoMergeRequest.mergeMethod
+              == "SQUASH"
+            )
+          ' enable-auto-merge-result.json > /dev/null
+          jq . enable-auto-merge-result.json >> "$GITHUB_STEP_SUMMARY"
+
+  revoke-after-enable-failure:
+    needs: [decide, enable]
+    if: >-
+      always() &&
+      needs.decide.outputs.eligible == 'true' &&
+      needs.enable.result != 'success' &&
+      github.event.workflow_run.pull_requests[0] != null
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Disable auto-merge after final verification failure
+        env:
+          EXPECTED_NODE_ID: ${{ needs.decide.outputs.pull_request_node_id }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.decide.outputs.pull_request_number }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" \
+            > revoke-after-enable-pr.json
+          jq -e \
+            --arg expected_node_id "$EXPECTED_NODE_ID" \
+            --arg repository "$GITHUB_REPOSITORY" '
+              .node_id == $expected_node_id
+              and .user.login == "dependabot[bot]"
+              and .base.ref == "main"
+              and .base.repo.full_name == $repository
+              and .head.repo.full_name == $repository
+              and (.head.ref | startswith("dependabot/"))
+            ' revoke-after-enable-pr.json > /dev/null
+          if jq -e '.auto_merge != null' \
+            revoke-after-enable-pr.json > /dev/null
+          then
+            # shellcheck disable=SC2016
+            gh api graphql \
+              -f query='
+                mutation($pullRequest: ID!) {
+                  disablePullRequestAutoMerge(input: {
+                    pullRequestId: $pullRequest
+                  }) {
+                    pullRequest { number autoMergeRequest { enabledAt } }
+                  }
+                }' \
+              -f pullRequest="$EXPECTED_NODE_ID" \
+              > revoke-after-enable-result.json
+            jq -e --argjson pr_number "$PR_NUMBER" '
+              .data.disablePullRequestAutoMerge.pullRequest.number == $pr_number
+              and .data.disablePullRequestAutoMerge.pullRequest.autoMergeRequest == null
+            ' revoke-after-enable-result.json > /dev/null
+            jq . revoke-after-enable-result.json >> "$GITHUB_STEP_SUMMARY"
+          fi
