@@ -6,6 +6,9 @@ use crate::source::{TextRange, TextSize};
 use crate::source_document::{LosslessToken, LosslessTokenKind, SourceDocument};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SyntaxInvariantError;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyntaxKind {
     Document,
     DocumentTitle,
@@ -203,17 +206,31 @@ pub struct SyntaxTree {
 }
 
 impl SyntaxTree {
+    /// Builds a tree only when top-level blocks and materialized token leaves
+    /// form ordered, non-overlapping partitions of the source.
     pub(crate) fn from_blocks(
         source: SourceDocument,
         mut blocks: Vec<SyntaxNode>,
         issues: Vec<SyntaxIssue>,
-    ) -> Self {
-        for block in &mut blocks {
-            debug_assert!(block.kind.is_block());
-            materialize(&source, block);
-        }
+    ) -> Result<Self, SyntaxInvariantError> {
         let end = TextSize::new(source.source().len()).expect("validated source length");
-        Self {
+        let mut cursor = TextSize::ZERO;
+        for block in &mut blocks {
+            if !block.kind.is_block()
+                || block.range.start() != cursor
+                || end < block.range.end()
+                || source.text(block.range).is_none()
+            {
+                return Err(SyntaxInvariantError);
+            }
+            cursor = block.range.end();
+            materialize(&source, block)?;
+        }
+        if cursor != end {
+            return Err(SyntaxInvariantError);
+        }
+
+        let tree = Self {
             source,
             root: SyntaxNode::new(
                 SyntaxKind::Document,
@@ -221,7 +238,11 @@ impl SyntaxTree {
                 blocks,
             ),
             issues,
+        };
+        if !token_leaves_partition_source(&tree.root, end) {
+            return Err(SyntaxInvariantError);
         }
+        Ok(tree)
     }
 
     pub fn source(&self) -> &str {
@@ -313,27 +334,27 @@ fn collect_protected_ranges(
     }
 }
 
-fn materialize(source: &SourceDocument, node: &mut SyntaxNode) {
+fn materialize(source: &SourceDocument, node: &mut SyntaxNode) -> Result<(), SyntaxInvariantError> {
+    if source.text(node.range).is_none() {
+        return Err(SyntaxInvariantError);
+    }
     let mut annotations = std::mem::take(&mut node.children);
     annotations.sort_by_key(|child| (child.range.start(), child.range.end()));
     let mut cursor = node.range.start();
     let mut children = Vec::new();
     for mut annotation in annotations {
-        assert!(
-            node.range.start() <= annotation.range.start()
-                && annotation.range.end() <= node.range.end(),
-            "syntax child must be contained by its parent"
-        );
-        assert!(
-            cursor <= annotation.range.start(),
-            "syntax children must not overlap"
-        );
+        if annotation.range.start() < node.range.start()
+            || node.range.end() < annotation.range.end()
+            || annotation.range.start() < cursor
+        {
+            return Err(SyntaxInvariantError);
+        }
         append_tokens(
             source,
             TextRange::new(cursor, annotation.range.start()).expect("ordered"),
             &mut children,
         );
-        materialize(source, &mut annotation);
+        materialize(source, &mut annotation)?;
         cursor = annotation.range.end();
         children.push(annotation);
     }
@@ -343,6 +364,21 @@ fn materialize(source: &SourceDocument, node: &mut SyntaxNode) {
         &mut children,
     );
     node.children = children;
+    Ok(())
+}
+
+fn token_leaves_partition_source(root: &SyntaxNode, end: TextSize) -> bool {
+    let mut cursor = TextSize::ZERO;
+    for node in root.descendants() {
+        if !matches!(node.kind, SyntaxKind::Token(_)) {
+            continue;
+        }
+        if node.range.start() != cursor || node.range.start() >= node.range.end() {
+            return false;
+        }
+        cursor = node.range.end();
+    }
+    cursor == end
 }
 
 fn append_tokens(source: &SourceDocument, range: TextRange, output: &mut Vec<SyntaxNode>) {
@@ -380,7 +416,8 @@ mod tests {
             source,
             vec![SyntaxNode::leaf(SyntaxKind::Paragraph, range)],
             Vec::new(),
-        );
+        )
+        .expect("valid syntax partition");
 
         assert_eq!(tree.reconstruct(), "text \r\n");
         assert_eq!(tree.root().kind(), SyntaxKind::Document);
@@ -404,10 +441,97 @@ mod tests {
             .map(|line| SyntaxNode::leaf(SyntaxKind::Paragraph, line.full_range()))
             .collect();
 
-        let tree = SyntaxTree::from_blocks(document, blocks, Vec::new());
+        let tree =
+            SyntaxTree::from_blocks(document, blocks, Vec::new()).expect("valid syntax partition");
 
         assert_eq!(tree.blocks().len(), block_count);
         assert_eq!(tree.reconstruct(), source);
+    }
+
+    #[test]
+    fn tree_rejects_top_level_gaps_overlaps_and_wrong_kinds() {
+        const SOURCE: &str = "first\nsecond\n";
+        let first = TextRange::new(TextSize::ZERO, TextSize::new(6).expect("size")).expect("range");
+        let second = TextRange::new(
+            TextSize::new(6).expect("size"),
+            TextSize::new(13).expect("size"),
+        )
+        .expect("range");
+        let full = TextRange::new(TextSize::ZERO, TextSize::new(13).expect("size")).expect("range");
+        let beyond_source =
+            TextRange::new(TextSize::ZERO, TextSize::new(14).expect("size")).expect("range");
+        let invalid_layouts = [
+            vec![SyntaxNode::leaf(SyntaxKind::Paragraph, second)],
+            vec![
+                SyntaxNode::leaf(SyntaxKind::Paragraph, first),
+                SyntaxNode::leaf(SyntaxKind::Paragraph, first),
+            ],
+            vec![SyntaxNode::leaf(SyntaxKind::InlineSpan, full)],
+            vec![
+                SyntaxNode::leaf(SyntaxKind::Paragraph, second),
+                SyntaxNode::leaf(SyntaxKind::Paragraph, first),
+            ],
+            vec![SyntaxNode::leaf(SyntaxKind::Paragraph, first)],
+            vec![SyntaxNode::leaf(SyntaxKind::Paragraph, beyond_source)],
+        ];
+
+        for blocks in invalid_layouts {
+            assert!(
+                SyntaxTree::from_blocks(
+                    SourceDocument::new(SOURCE).expect("source"),
+                    blocks,
+                    Vec::new(),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn tree_rejects_out_of_bounds_and_overlapping_annotations() {
+        const SOURCE: &str = "first\nsecond\n";
+        let full = TextRange::new(TextSize::ZERO, TextSize::new(13).expect("size")).expect("range");
+        let first = TextRange::new(TextSize::ZERO, TextSize::new(6).expect("size")).expect("range");
+        let overlapping = TextRange::new(
+            TextSize::new(5).expect("size"),
+            TextSize::new(13).expect("size"),
+        )
+        .expect("range");
+        let out_of_bounds = TextRange::new(
+            TextSize::new(12).expect("size"),
+            TextSize::new(14).expect("size"),
+        )
+        .expect("range");
+        let invalid_annotations = [
+            vec![
+                SyntaxNode::leaf(SyntaxKind::InlineSpan, first),
+                SyntaxNode::leaf(SyntaxKind::InlineSpan, overlapping),
+            ],
+            vec![SyntaxNode::leaf(SyntaxKind::InlineSpan, out_of_bounds)],
+        ];
+
+        for children in invalid_annotations {
+            assert!(
+                SyntaxTree::from_blocks(
+                    SourceDocument::new(SOURCE).expect("source"),
+                    vec![SyntaxNode::new(SyntaxKind::Paragraph, full, children)],
+                    Vec::new(),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn empty_tree_is_a_valid_complete_partition() {
+        let tree = SyntaxTree::from_blocks(
+            SourceDocument::new("").expect("source"),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("empty source is fully covered");
+
+        assert_eq!(tree.reconstruct(), "");
     }
 
     #[test]

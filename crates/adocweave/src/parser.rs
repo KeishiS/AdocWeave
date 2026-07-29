@@ -67,6 +67,11 @@ impl PendingBlockMetadata {
             .push(SyntaxNode::leaf(SyntaxKind::BlockAnchor, anchor.range));
     }
 
+    fn push_interstitial_syntax(&mut self, syntax: SyntaxNode) {
+        debug_assert!(!self.is_empty());
+        self.syntax.push(syntax);
+    }
+
     fn extend_range(&mut self, line_range: TextRange) {
         self.semantic.range = Some(match self.semantic.range {
             Some(range) => {
@@ -835,7 +840,12 @@ fn parse_block_sequence(
                 budget,
                 &mut pending_metadata,
             )?;
-            blocks.push(SyntaxNode::leaf(SyntaxKind::CommentLine, line.full_range()));
+            let comment = SyntaxNode::leaf(SyntaxKind::CommentLine, line.full_range());
+            if pending_metadata.is_empty() {
+                blocks.push(comment);
+            } else {
+                pending_metadata.push_interstitial_syntax(comment);
+            }
         } else if recognition == LineRecognition::Blank {
             root.iter_mut()
                 .for_each(DocumentHeaderState::stop_author_revision);
@@ -874,6 +884,13 @@ fn parse_block_sequence(
                 config,
                 budget,
                 &mut pending_metadata,
+            )?;
+            flush_orphan_metadata(
+                &mut blocks,
+                &mut ast_blocks,
+                &mut pending_metadata,
+                source,
+                budget,
             )?;
             budget.consume_attribute()?;
             budget.consume_node()?;
@@ -1125,7 +1142,8 @@ fn finish_document(
         crate::syntax_diagnostics::collect_and_clear(&mut ast.blocks, &sequence.attribute_problems);
 
     Ok(ParsedDocument {
-        syntax: SyntaxTree::from_blocks(source_document, sequence.common.syntax, syntax_issues),
+        syntax: SyntaxTree::from_blocks(source_document, sequence.common.syntax, syntax_issues)
+            .map_err(|_| ParseFailure::InternalInvariant)?,
         ast,
     })
 }
@@ -1241,25 +1259,32 @@ fn flush_orphan_metadata(
     }
     budget.consume_block()?;
     budget.consume_node()?;
-    let pending = std::mem::take(pending);
-    let range = pending
+    let mut pending = std::mem::take(pending);
+    let metadata_range = pending
         .semantic
         .range
         .expect("non-empty metadata has a range");
-    let unknown = SyntaxNode::new(SyntaxKind::Unknown, range, pending.syntax);
+    let trailing_start = pending
+        .syntax
+        .iter()
+        .position(|syntax| metadata_range.end() <= syntax.range().start())
+        .unwrap_or(pending.syntax.len());
+    let trailing_syntax = pending.syntax.split_off(trailing_start);
+    let unknown = SyntaxNode::new(SyntaxKind::Unknown, metadata_range, pending.syntax);
     syntax_blocks.push(SyntaxNode::new(
         SyntaxKind::Unsupported,
-        range,
+        metadata_range,
         vec![unknown],
     ));
     ast_blocks.push(AstBlock::Unsupported(Unsupported {
         metadata: BlockMetadata::default(),
-        range,
-        raw: source[range.start().to_usize()..range.end().to_usize()]
+        range: metadata_range,
+        raw: source[metadata_range.start().to_usize()..metadata_range.end().to_usize()]
             .trim_end_matches(['\r', '\n'])
             .to_owned(),
         reason: "block metadata is not attached to a block".to_owned(),
     }));
+    syntax_blocks.extend(trailing_syntax);
     Ok(())
 }
 
@@ -2351,6 +2376,114 @@ mod tests {
             .commit(super::BlockRecognition::Through(2))
             .expect("second line");
         assert_eq!(cursor.current(), None);
+    }
+
+    #[test]
+    fn orphan_metadata_and_following_comment_reconstruct_in_source_order() {
+        for source in ["[]\n//", "[é]\n//", "[\0]\n//\0n\n\n"] {
+            let parsed = parse(source).expect("recoverable metadata and comment");
+            assert_eq!(parsed.syntax.reconstruct(), source, "{source:?}");
+            let ranges = parsed
+                .syntax
+                .root()
+                .descendants()
+                .filter_map(|node| match node.kind() {
+                    SyntaxKind::Token(_) => Some(node.range()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let mut cursor = crate::source::TextSize::ZERO;
+            for range in ranges {
+                assert_eq!(range.start(), cursor, "{source:?}");
+                assert!(range.start() < range.end(), "{source:?}");
+                assert!(source.is_char_boundary(range.start().to_usize()));
+                assert!(source.is_char_boundary(range.end().to_usize()));
+                cursor = range.end();
+            }
+            assert_eq!(cursor.to_usize(), source.len(), "{source:?}");
+
+            let AstBlock::Unsupported(unsupported) = &parsed.ast.blocks()[0] else {
+                panic!("orphan metadata is represented as unsupported");
+            };
+            assert_eq!(
+                unsupported.range.end().to_usize(),
+                source.find("//").unwrap()
+            );
+            assert!(!unsupported.raw.contains("//"));
+            assert_eq!(
+                parsed.syntax.blocks()[1].kind(),
+                SyntaxKind::CommentLine,
+                "a trailing comment remains an independent root block"
+            );
+        }
+    }
+
+    #[test]
+    fn comments_between_metadata_and_a_block_remain_attached_syntax() {
+        let source = "[#identifier]\n// interstitial comment\nparagraph\n";
+        let parsed = parse(source).expect("metadata, comment, and paragraph");
+
+        assert_eq!(parsed.syntax.reconstruct(), source);
+        assert_eq!(
+            parsed.syntax.nodes(SyntaxKind::CommentLine).count(),
+            1,
+            "the interstitial comment remains queryable"
+        );
+        let AstBlock::Paragraph(paragraph) = &parsed.ast.blocks()[0] else {
+            panic!("paragraph");
+        };
+        assert_eq!(
+            paragraph.metadata.id.as_ref().map(|id| id.value.as_str()),
+            Some("identifier"),
+            "comments do not detach metadata from the following block"
+        );
+    }
+
+    #[test]
+    fn orphan_metadata_separates_only_comments_after_the_last_metadata_line() {
+        let source = "[role]\n// between metadata\n.Title\n// trailing\n\n";
+        let parsed = parse(source).expect("orphan metadata with comments");
+
+        assert_eq!(parsed.syntax.reconstruct(), source);
+        assert_eq!(parsed.syntax.nodes(SyntaxKind::CommentLine).count(), 2);
+        let AstBlock::Unsupported(unsupported) = &parsed.ast.blocks()[0] else {
+            panic!("orphan metadata is represented as unsupported");
+        };
+        assert!(
+            unsupported.raw.contains("// between metadata"),
+            "an interstitial comment remains inside the recovered metadata region"
+        );
+        assert!(!unsupported.raw.contains("// trailing"));
+        assert_eq!(parsed.syntax.blocks()[1].kind(), SyntaxKind::CommentLine);
+        assert_eq!(parsed.syntax.blocks()[2].kind(), SyntaxKind::BlankLine);
+    }
+
+    #[test]
+    fn document_attribute_flushes_preceding_orphan_metadata_and_comment() {
+        let source = "[#identifier]\n// trailing metadata comment\n:name: value\n\n";
+        let parsed = parse(source).expect("orphan metadata before document attribute");
+
+        assert_eq!(parsed.syntax.reconstruct(), source);
+        assert_eq!(
+            parsed
+                .syntax
+                .blocks()
+                .iter()
+                .map(|node| node.kind())
+                .collect::<Vec<_>>(),
+            [
+                SyntaxKind::Unsupported,
+                SyntaxKind::CommentLine,
+                SyntaxKind::DocumentAttribute,
+                SyntaxKind::BlankLine,
+                SyntaxKind::BlankLine,
+            ]
+        );
+        let AstBlock::Unsupported(unsupported) = &parsed.ast.blocks()[0] else {
+            panic!("orphan metadata is represented as unsupported");
+        };
+        assert_eq!(unsupported.raw, "[#identifier]");
+        assert_eq!(parsed.ast.blocks().len(), 1);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use adocweave::output::projection::{project, searchable_text};
 use adocweave::resolution::ReferenceKey;
 use adocweave::resolution::{AuthoredUrlPolicy, UrlDecision};
 use adocweave::semantic::{generate_heading_ids, reference_targets};
-use adocweave::text::{PositionEncoding, SourceDocument, TextSize};
+use adocweave::text::{PositionEncoding, SourceDocument, SyntaxKind, TextSize};
 use adocweave::{AnalysisOptions, Engine};
 
 fn corpus() -> Vec<String> {
@@ -49,6 +49,20 @@ fn arbitrary_utf8_like_corpus_is_lossless_and_has_valid_ranges() {
             .analyze(&source)
             .expect("bounded UTF-8 input analyzes");
         assert_eq!(analysis.syntax().reconstruct(), source);
+        let mut syntax_cursor = 0;
+        for node in analysis.syntax().root().descendants() {
+            if !matches!(node.kind(), SyntaxKind::Token(_)) {
+                continue;
+            }
+            let start = node.range().start().to_usize();
+            let end = node.range().end().to_usize();
+            assert_eq!(start, syntax_cursor);
+            assert!(start < end && end <= source.len());
+            assert!(source.is_char_boundary(start));
+            assert!(source.is_char_boundary(end));
+            syntax_cursor = end;
+        }
+        assert_eq!(syntax_cursor, source.len());
         for token in analysis.syntax().tokens() {
             let start = token.range.start().to_usize();
             let end = token.range.end().to_usize();
