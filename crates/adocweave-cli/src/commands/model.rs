@@ -175,36 +175,69 @@ pub(crate) fn spec(id: CommandId) -> &'static CommandSpec {
         .expect("every CommandId has a CommandSpec")
 }
 
-pub(crate) fn root_commands() -> Vec<&'static str> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CompletionGroup {
+    pub(crate) parent: Vec<&'static str>,
+    pub(crate) children: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CompletionTree {
+    pub(crate) roots: Vec<&'static str>,
+    pub(crate) nested: Vec<CompletionGroup>,
+}
+
+pub(crate) fn completion_tree() -> CompletionTree {
     validate_model(COMMANDS).expect("command model must be unambiguous");
+    completion_tree_from(COMMANDS)
+}
+
+fn completion_tree_from(commands: &[CommandSpec]) -> CompletionTree {
     let mut roots = Vec::new();
-    for command in COMMANDS {
+    let mut nested: Vec<CompletionGroup> = Vec::new();
+    for command in commands {
         let root = command.path[0];
         if !roots.contains(&root) {
             roots.push(root);
         }
-    }
-    roots
-}
-
-pub(crate) fn subcommands(parent: &[&str]) -> Vec<&'static str> {
-    validate_model(COMMANDS).expect("command model must be unambiguous");
-    let mut children = Vec::new();
-    for command in COMMANDS {
-        if command.path.len() > parent.len()
-            && command.path[..parent.len()] == *parent
-            && !children.contains(&command.path[parent.len()])
-        {
-            children.push(command.path[parent.len()]);
+        for depth in 1..command.path.len() {
+            let parent = command.path[..depth].to_vec();
+            let child = command.path[depth];
+            if let Some(group) = nested.iter_mut().find(|group| group.parent == parent) {
+                if !group.children.contains(&child) {
+                    group.children.push(child);
+                }
+            } else {
+                nested.push(CompletionGroup {
+                    parent,
+                    children: vec![child],
+                });
+            }
         }
     }
-    children
+    CompletionTree { roots, nested }
+}
+
+fn valid_path_token(token: &str) -> bool {
+    let mut bytes = token.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+#[cfg(test)]
+pub(crate) fn completion_tree_for_tests(commands: &[CommandSpec]) -> CompletionTree {
+    if let Err(error) = validate_model(commands) {
+        panic!("invalid test command model: {error}");
+    }
+    completion_tree_from(commands)
 }
 
 fn validate_model(commands: &[CommandSpec]) -> Result<(), &'static str> {
     for (index, command) in commands.iter().enumerate() {
-        if command.path.is_empty() || command.path.iter().any(|token| token.is_empty()) {
-            return Err("command paths must contain non-empty tokens");
+        if command.path.is_empty() || command.path.iter().any(|token| !valid_path_token(token)) {
+            return Err("command path tokens must match ^[a-z0-9][a-z0-9-]*$");
         }
         if command.summary.is_empty() {
             return Err("command summaries must not be empty");
@@ -370,8 +403,9 @@ mod tests {
 
     #[test]
     fn completion_tree_is_derived_from_command_paths() {
+        let tree = completion_tree();
         assert_eq!(
-            root_commands(),
+            tree.roots,
             [
                 "convert",
                 "preview",
@@ -383,8 +417,33 @@ mod tests {
                 "help",
             ]
         );
-        assert_eq!(subcommands(&["config"]), ["show"]);
-        assert!(subcommands(&["convert"]).is_empty());
+        assert_eq!(
+            tree.nested,
+            [CompletionGroup {
+                parent: vec!["config"],
+                children: vec!["show"],
+            }]
+        );
+    }
+
+    #[test]
+    fn unsafe_shell_tokens_are_rejected() {
+        for path in [
+            &["Config"][..],
+            &["bad_name"][..],
+            &["bad;name"][..],
+            &["-leading"][..],
+            &["日本語"][..],
+        ] {
+            let commands = [CommandSpec {
+                id: CommandId::Help,
+                path,
+                root_usage: "",
+                summary: "unsafe",
+                help: None,
+            }];
+            assert!(validate_model(&commands).is_err(), "{path:?}");
+        }
     }
 
     #[test]
