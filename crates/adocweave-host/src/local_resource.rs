@@ -67,6 +67,15 @@ pub struct LoadedFilesystemSource {
     provenance: FilesystemProvenance,
 }
 
+/// Opaque state used to undo one successfully charged filesystem reread.
+#[derive(Clone, Debug)]
+pub struct FilesystemReadRollback {
+    canonical_path: PathBuf,
+    candidate_path: PathBuf,
+    session_index: usize,
+    previous_bytes: Option<u64>,
+}
+
 impl LoadedFilesystemSource {
     pub fn source_id(&self) -> &LogicalSourceId {
         &self.source_id
@@ -287,11 +296,57 @@ impl LocalFilesystemSession {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
+        self.reread_utf8_with_rollback(source_id, path)
+            .map(|(loaded, _)| loaded)
+    }
+
+    /// Reopens a path and returns the state needed to undo its budget charge.
+    ///
+    /// Callers which update another state store after reading must retain the
+    /// rollback value until that update commits.
+    pub fn reread_utf8_with_rollback(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<(LoadedFilesystemSource, FilesystemReadRollback), ResourceError> {
         let index = self.root_index(path)?;
         let loaded = self.sessions[index]
             .reread_candidate_utf8(path)
             .map_err(ResourceError::from)?;
-        self.finish_read(source_id, loaded)
+        let canonical_path = loaded.canonical_path().to_owned();
+        let previous_bytes = self.charged.get(&canonical_path).copied();
+        self.finish_read(source_id, loaded).map(|loaded| {
+            (
+                loaded,
+                FilesystemReadRollback {
+                    canonical_path,
+                    candidate_path: path.to_owned(),
+                    session_index: index,
+                    previous_bytes,
+                },
+            )
+        })
+    }
+
+    /// Restores the charge replaced by [`Self::reread_utf8_with_rollback`].
+    pub fn rollback_reread(&mut self, rollback: FilesystemReadRollback) {
+        let current = self.charged.get(&rollback.canonical_path).copied();
+        match (current, rollback.previous_bytes) {
+            (Some(current), Some(previous)) => {
+                self.budget.restore_replacement(current, previous);
+                self.charged.insert(rollback.canonical_path, previous);
+            }
+            (Some(current), None) => {
+                self.budget.release(current);
+                self.charged.remove(&rollback.canonical_path);
+                self.sessions[rollback.session_index].release_candidate(&rollback.candidate_path);
+            }
+            (None, Some(previous)) => {
+                self.budget.restore_release(previous);
+                self.charged.insert(rollback.canonical_path, previous);
+            }
+            (None, None) => {}
+        }
     }
 
     /// Releases the budget charge for a resource removed from the caller's workspace.
@@ -446,6 +501,25 @@ impl ResourceBudget {
         }
         self.bytes = total;
         Ok(())
+    }
+
+    fn restore_replacement(&mut self, current: u64, previous: u64) {
+        self.bytes = self
+            .bytes
+            .checked_sub(current)
+            .and_then(|bytes| bytes.checked_add(previous))
+            .expect("replacement charge is part of the budget");
+    }
+
+    fn restore_release(&mut self, bytes: u64) {
+        self.files = self
+            .files
+            .checked_add(1)
+            .expect("restored file count fits in usize");
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .expect("restored byte count fits in u64");
     }
 
     fn release(&mut self, bytes: u64) {
@@ -861,6 +935,43 @@ mod tests {
         fs::remove_file(&second).expect("delete second");
         session.release(&second);
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
+    }
+
+    #[test]
+    fn reread_rollback_restores_replaced_and_new_charges() {
+        let root = TestDir::new("reread-rollback");
+        let first = root.path().join("first.adoc");
+        let second = root.path().join("second.adoc");
+        fs::write(&first, "a").expect("first source");
+        fs::write(&second, "bb").expect("second source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 2,
+                max_total_bytes: 4,
+                max_resource_bytes: 4,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+        session
+            .read_utf8(source_id(), &first)
+            .expect("initial read");
+
+        fs::write(&first, "aaa").expect("grown first");
+        let (_, rollback) = session
+            .reread_utf8_with_rollback(source_id(), &first)
+            .expect("replacement reread");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
+        session.rollback_reread(rollback);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
+
+        let (_, rollback) = session
+            .reread_utf8_with_rollback(source_id(), &second)
+            .expect("new reread");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (2, 3));
+        session.rollback_reread(rollback);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
     }
 
     #[test]

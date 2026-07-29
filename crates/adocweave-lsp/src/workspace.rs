@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
-use adocweave_host::{LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId};
+use adocweave_host::{
+    FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
+};
 use adocweave_workspace::{
     Generation, ResourceId, RetainedResourceBudget, RetainedResourceLimits, Revision, Workspace,
     WorkspaceAnalysis, WorkspaceLimits, WorkspaceSnapshot,
@@ -56,6 +58,22 @@ pub struct WorkspaceResources {
     next_disk_version: i64,
 }
 
+struct PreparedWorkspaceRead {
+    text: Arc<str>,
+    filesystem: Arc<Mutex<LocalFilesystemSession>>,
+    rollback: FilesystemReadRollback,
+}
+
+impl PreparedWorkspaceRead {
+    fn rollback(self) -> Result<(), String> {
+        self.filesystem
+            .lock()
+            .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
+            .rollback_reread(self.rollback);
+        Ok(())
+    }
+}
+
 impl WorkspaceResources {
     pub fn load_roots(&mut self, roots: &[Url]) -> Result<(), String> {
         self.load_roots_with_limits(roots, adapter_managed_workspace_limits())
@@ -95,16 +113,7 @@ impl WorkspaceResources {
                 .map_err(|error| error.to_string())?,
             None => Vec::new(),
         };
-        // Retain only the trusted canonical boundaries when a project file is
-        // invalid. Open overlays must still resolve that invalid nearest file
-        // and fail closed instead of falling back to the built-in plan.
-        self.roots = paths.clone();
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
-        self.inner = Workspace::new_at_generation(limits, seed);
-        self.filesystems.clear();
-        self.project_plans.clear();
-        self.resource_projects.clear();
-        self.retained_layers.clear();
         let mut inner = Workspace::new_at_generation(limits, seed);
         let mut filesystems = BTreeMap::new();
         let mut resource_projects = BTreeMap::new();
@@ -113,7 +122,21 @@ impl WorkspaceResources {
             BTreeMap::new();
         let mut next_disk_version = self.next_disk_version;
         for path in candidates {
-            let config = config_for_path(&paths, &path)?;
+            let config = match config_for_path_typed(&paths, &path) {
+                Ok(config) => config,
+                Err(error) if invalid_project_config(error.code) => {
+                    // Keep only trusted canonical boundaries. An invalid
+                    // nearest project file must not fall back to an old plan.
+                    self.inner = Workspace::new_at_generation(limits, seed);
+                    self.roots = paths;
+                    self.filesystems.clear();
+                    self.project_plans.clear();
+                    self.resource_projects.clear();
+                    self.retained_layers.clear();
+                    return Err(error.to_string());
+                }
+                Err(error) => return Err(error.to_string()),
+            };
             let project = config.as_ref().map(|snapshot| snapshot.path.clone());
             let plan = config.as_ref().map_or_else(
                 adocweave_config::ResolvedResourceLimitPlan::default,
@@ -178,25 +201,51 @@ impl WorkspaceResources {
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         let (project, plan) = self.plan_for_path(&path)?;
-        let text = self.read_workspace_file(&path, project.clone(), plan.filesystem_reads)?;
-        self.next_disk_version = self.next_disk_version.saturating_add(1);
         let id = uri_id(&uri)?;
-        let budget = self
-            .retained_layers
-            .get(&project)
-            .cloned()
-            .unwrap_or_default()
-            .with_disk(id.clone(), Some(text.len() as u64), plan.retained_layers)
-            .map_err(|error| error.to_string())?;
-        let affected = self
-            .inner
-            .upsert_disk(id.clone(), Revision::new(self.next_disk_version), text)
-            .map_err(|error| error.to_string())?;
-        if !self.inner.roots().contains(&id) {
-            self.inner
-                .register_root(id.clone())
-                .map_err(|error| error.to_string())?;
+        if self
+            .resource_projects
+            .get(&id)
+            .is_some_and(|previous| previous != &project)
+        {
+            return Err("workspace project changed; a full reload is required".to_owned());
         }
+        let prepared = self.read_workspace_file(&path, project.clone(), plan)?;
+        self.next_disk_version = self.next_disk_version.saturating_add(1);
+        let result = (|| {
+            let budget = self
+                .retained_layers
+                .get(&project)
+                .cloned()
+                .unwrap_or_default()
+                .with_disk(
+                    id.clone(),
+                    Some(prepared.text.len() as u64),
+                    plan.retained_layers,
+                )
+                .map_err(|error| error.to_string())?;
+            let mut inner = self.inner.clone();
+            let affected = inner
+                .upsert_disk(
+                    id.clone(),
+                    Revision::new(self.next_disk_version),
+                    Arc::clone(&prepared.text),
+                )
+                .map_err(|error| error.to_string())?;
+            if !inner.roots().contains(&id) {
+                inner
+                    .register_root(id.clone())
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok((budget, inner, affected))
+        })();
+        let (budget, inner, affected) = match result {
+            Ok(committed) => committed,
+            Err(error) => {
+                prepared.rollback()?;
+                return Err(error);
+            }
+        };
+        self.inner = inner;
         self.retained_layers.insert(project.clone(), budget);
         self.project_plans.insert(project.clone(), plan);
         self.resource_projects.insert(id, project);
@@ -207,34 +256,49 @@ impl WorkspaceResources {
         &mut self,
         path: &Path,
         project: Option<PathBuf>,
-        limits: adocweave_host::FilesystemReadLimits,
-    ) -> Result<Arc<str>, String> {
+        plan: adocweave_config::ResolvedResourceLimitPlan,
+    ) -> Result<PreparedWorkspaceRead, String> {
         if path.extension().and_then(|value| value.to_str()) != Some("adoc") {
             return Err(format!(
                 "workspace resource is not an .adoc file: {}",
                 path.display()
             ));
         }
+        if let Some(previous) = self.project_plans.get(&project)
+            && previous != &plan
+        {
+            return Err(
+                "workspace resource limit plan changed; a full reload is required".to_owned(),
+            );
+        }
         if !self.filesystems.contains_key(&project) {
-            let session = LocalFilesystemPolicy::new(self.roots.clone(), limits)
+            let session = LocalFilesystemPolicy::new(self.roots.clone(), plan.filesystem_reads)
                 .map_err(|error| error.to_string())?
                 .session()
                 .map_err(|error| error.to_string())?;
             self.filesystems
                 .insert(project.clone(), Arc::new(Mutex::new(session)));
+            self.project_plans.insert(project.clone(), plan);
         }
-        self.filesystems
-            .get(&project)
-            .expect("project filesystem session was inserted")
+        let filesystem = Arc::clone(
+            self.filesystems
+                .get(&project)
+                .expect("project filesystem session was inserted"),
+        );
+        let (loaded, rollback) = filesystem
             .lock()
             .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-            .reread_utf8(
+            .reread_utf8_with_rollback(
                 LogicalSourceId::new(path.to_string_lossy().into_owned())
                     .map_err(|error| error.to_string())?,
                 path,
             )
-            .map(|loaded| loaded.into_parts().1)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        Ok(PreparedWorkspaceRead {
+            text: loaded.into_parts().1,
+            filesystem,
+            rollback,
+        })
     }
 
     pub fn get(&self, uri: &Url) -> Option<&adocweave_workspace::Resource> {
@@ -386,37 +450,40 @@ impl WorkspaceResources {
         } else {
             Vec::new()
         };
-        let snapshot = snapshot.filter_resources(|id, _| {
-            if id == &root_id {
-                return true;
-            }
-            if !options.enable_includes {
-                return false;
-            }
-            if allowed_roots.is_empty() {
-                return true;
-            }
-            Url::parse(id.as_str())
-                .ok()
-                .and_then(|uri| uri.to_file_path().ok())
-                .is_some_and(|path| allowed_roots.iter().any(|root| path.starts_with(root)))
-        });
-        let retained_files = snapshot.resources().count();
-        let retained_bytes = snapshot
-            .resources()
-            .try_fold(0_u64, |total, (_, resource)| {
-                total.checked_add(resource.text().len() as u64)
-            });
         let limits = project_config.resources.limit_plan.analysis_snapshot;
-        let oversized_resource = snapshot
-            .resources()
-            .any(|(_, resource)| resource.text().len() as u64 > limits.max_resource_bytes);
-        if retained_files > limits.max_resources
-            || oversized_resource
-            || retained_bytes.is_none_or(|bytes| bytes > limits.max_total_bytes)
-        {
-            return Err("configured analysis snapshot resource limit exceeded".to_owned());
-        }
+        let mut retained_files = 0_usize;
+        let mut retained_bytes = 0_u64;
+        let snapshot = snapshot.try_filter_resources(|id, resource| {
+            let allowed = if id == &root_id {
+                true
+            } else if !options.enable_includes {
+                false
+            } else if allowed_roots.is_empty() {
+                true
+            } else {
+                Url::parse(id.as_str())
+                    .ok()
+                    .and_then(|uri| uri.to_file_path().ok())
+                    .is_some_and(|path| allowed_roots.iter().any(|root| path.starts_with(root)))
+            };
+            if !allowed {
+                return Ok(false);
+            }
+            let bytes = resource.text().len() as u64;
+            retained_files = retained_files
+                .checked_add(1)
+                .ok_or_else(snapshot_limit_error)?;
+            retained_bytes = retained_bytes
+                .checked_add(bytes)
+                .ok_or_else(snapshot_limit_error)?;
+            if retained_files > limits.max_resources
+                || bytes > limits.max_resource_bytes
+                || retained_bytes > limits.max_total_bytes
+            {
+                return Err(snapshot_limit_error());
+            }
+            Ok(true)
+        })?;
         Ok(WorkspaceInput {
             generation: snapshot.generation(),
             root: root_id,
@@ -493,6 +560,13 @@ fn config_for_path(
     roots: &[PathBuf],
     path: &Path,
 ) -> Result<Option<adocweave_config::ConfigSnapshot>, String> {
+    config_for_path_typed(roots, path).map_err(|error| error.to_string())
+}
+
+fn config_for_path_typed(
+    roots: &[PathBuf],
+    path: &Path,
+) -> Result<Option<adocweave_config::ConfigSnapshot>, adocweave_config::ConfigError> {
     let boundary = roots
         .iter()
         .filter(|root| path.starts_with(root))
@@ -507,7 +581,19 @@ fn config_for_path(
         };
         start = parent;
     }
-    adocweave_config::discover_and_load(start, boundary).map_err(|error| error.to_string())
+    adocweave_config::discover_and_load(start, boundary)
+}
+
+const fn invalid_project_config(code: adocweave_config::ConfigErrorCode) -> bool {
+    !matches!(
+        code,
+        adocweave_config::ConfigErrorCode::ReadFailed
+            | adocweave_config::ConfigErrorCode::OutsideBoundary
+    )
+}
+
+fn snapshot_limit_error() -> String {
+    "configured analysis snapshot resource limit exceeded".to_owned()
 }
 
 fn strings(values: BTreeSet<ResourceId>) -> BTreeSet<String> {
@@ -739,6 +825,32 @@ mod tests {
     }
 
     #[test]
+    fn separate_project_sessions_and_retained_budgets_do_not_compete() {
+        let root = TestDirectory::new();
+        let first = root.0.join("first");
+        let second = root.0.join("second");
+        std::fs::create_dir(&first).expect("first project");
+        std::fs::create_dir(&second).expect("second project");
+        write_resource_config(&first, 1, 4, 4, false);
+        write_resource_config(&second, 1, 4, 4, false);
+        let first_path = first.join("document.adoc");
+        let second_path = second.join("document.adoc");
+        std::fs::write(&first_path, "one").expect("first source");
+        std::fs::write(&second_path, "two").expect("second source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let first_uri = Url::from_file_path(first_path).expect("first URI");
+        let second_uri = Url::from_file_path(second_path).expect("second URI");
+        let mut resources = WorkspaceResources::default();
+
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        assert!(resources.get(&first_uri).is_some());
+        assert!(resources.get(&second_uri).is_some());
+        assert_eq!(resources.filesystems.len(), 2);
+        assert_eq!(resources.retained_layers.len(), 2);
+    }
+
+    #[test]
     fn retained_layer_plan_rejects_overlay_bytes_before_workspace_ingest() {
         let root = TestDirectory::new();
         write_resource_config(&root.0, 1, 3, 3, false);
@@ -795,6 +907,146 @@ mod tests {
     }
 
     #[test]
+    fn changed_project_plan_is_rejected_before_the_existing_session_reads() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 8, 8, false);
+        let first = root.0.join("first.adoc");
+        let second = root.0.join("second.adoc");
+        std::fs::write(&first, "a").expect("first source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let first_uri = Url::from_file_path(&first).expect("first URI");
+        let second_uri = Url::from_file_path(&second).expect("second URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        write_resource_config(&root.0, 2, 1, 1, false);
+        std::fs::write(&first, "bb").expect("oversized replacement");
+        let error = resources
+            .reload_file(first_uri)
+            .expect_err("changed plan requires full reload");
+        assert!(error.contains("full reload"), "{error}");
+
+        write_resource_config(&root.0, 2, 8, 8, false);
+        std::fs::write(&second, "1234567").expect("second source");
+        resources
+            .reload_file(second_uri)
+            .expect("rejected reread did not consume the old session budget");
+    }
+
+    #[test]
+    fn retained_byte_rejection_rolls_back_replaced_filesystem_charge() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 4, 4, false);
+        let first = root.0.join("first.adoc");
+        let second = root.0.join("second.adoc");
+        std::fs::write(&first, "a").expect("first source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let first_uri = Url::from_file_path(&first).expect("first URI");
+        let second_uri = Url::from_file_path(&second).expect("second URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        resources
+            .upsert_open(first_uri.clone(), 1, "xxx")
+            .expect("overlay");
+
+        std::fs::write(&first, "bb").expect("grown disk source");
+        let error = resources
+            .reload_file(first_uri.clone())
+            .expect_err("disk and overlay exceed retained budget");
+        assert!(error.contains("retained resource byte"), "{error}");
+        resources.close_open(&first_uri).expect("close overlay");
+
+        std::fs::write(&second, "yyy").expect("second source");
+        resources
+            .reload_file(second_uri)
+            .expect("old filesystem charge was restored");
+    }
+
+    #[test]
+    fn retained_count_rejection_rolls_back_a_new_filesystem_charge() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 1, 8, 8, false);
+        let overlay = root.0.join("overlay.adoc");
+        let rejected = root.0.join("rejected.adoc");
+        let accepted = root.0.join("accepted.adoc");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let overlay_uri = Url::from_file_path(&overlay).expect("overlay URI");
+        let rejected_uri = Url::from_file_path(&rejected).expect("rejected URI");
+        let accepted_uri = Url::from_file_path(&accepted).expect("accepted URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        resources
+            .upsert_open(overlay_uri.clone(), 1, "open")
+            .expect("overlay");
+
+        std::fs::write(&rejected, "disk").expect("rejected source");
+        let error = resources
+            .reload_file(rejected_uri)
+            .expect_err("overlay already consumes retained count");
+        assert!(error.contains("retained resource count"), "{error}");
+        resources.close_open(&overlay_uri).expect("close overlay");
+
+        std::fs::write(&accepted, "disk").expect("accepted source");
+        resources
+            .reload_file(accepted_uri)
+            .expect("new filesystem charge was removed");
+    }
+
+    #[test]
+    fn transient_configuration_read_failure_preserves_the_previous_snapshot() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 1, 8, 8, false);
+        let path = root.0.join("document.adoc");
+        std::fs::write(&path, "old").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("load workspace");
+
+        std::fs::remove_file(root.0.join(adocweave_config::FILE_NAME)).expect("remove config");
+        std::fs::create_dir(root.0.join(adocweave_config::FILE_NAME))
+            .expect("unreadable config path");
+        let error = resources
+            .load_roots(&[root_uri])
+            .expect_err("configuration read failure");
+
+        assert!(error.contains("read-failed"), "{error}");
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("previous snapshot")
+                .text()
+                .as_ref(),
+            "old"
+        );
+    }
+
+    #[test]
+    fn invalid_configuration_fails_closed_instead_of_retaining_the_old_plan() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 1, 8, 8, false);
+        let path = root.0.join("document.adoc");
+        std::fs::write(&path, "old").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("load workspace");
+
+        std::fs::write(root.0.join(adocweave_config::FILE_NAME), "invalid = true\n")
+            .expect("invalid config");
+        resources
+            .load_roots(&[root_uri])
+            .expect_err("invalid configuration");
+
+        assert!(resources.get(&document_uri).is_none());
+        assert!(resources.input(&document_uri).is_err());
+    }
+
+    #[test]
     fn analysis_snapshot_uses_the_root_documents_nearest_plan() {
         let root = TestDirectory::new();
         write_resource_config(&root.0, 1, 16, 16, true);
@@ -813,6 +1065,73 @@ mod tests {
             .input(&document_uri)
             .expect_err("root snapshot count limit");
 
+        assert!(error.contains("analysis snapshot"), "{error}");
+    }
+
+    #[test]
+    fn analysis_snapshot_does_not_charge_resources_outside_configured_roots() {
+        let root = TestDirectory::new();
+        std::fs::create_dir(root.0.join("docs")).expect("docs");
+        std::fs::create_dir(root.0.join("other")).expect("other");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[resources]\ninclude = true\nroots = [\"docs\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+        )
+        .expect("root config");
+        std::fs::write(root.0.join("docs/root.adoc"), "root").expect("root source");
+        write_resource_config(&root.0.join("other"), 1, 8, 8, false);
+        std::fs::write(root.0.join("other/outside.adoc"), "outside").expect("outside source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri =
+            Url::from_file_path(root.0.join("docs/root.adoc")).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        let input = resources
+            .input(&document_uri)
+            .expect("outside resource is not charged");
+        assert_eq!(input.snapshot.resources().count(), 1);
+    }
+
+    #[test]
+    fn analysis_snapshot_applies_root_single_resource_limit_to_nested_projects() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 6, 2, true);
+        let root_path = root.0.join("root.adoc");
+        std::fs::write(&root_path, "a").expect("root source");
+        let nested = root.0.join("nested");
+        std::fs::create_dir(&nested).expect("nested");
+        write_resource_config(&nested, 1, 4, 4, false);
+        std::fs::write(nested.join("child.adoc"), "bbb").expect("child source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(root_path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        let error = resources
+            .input(&document_uri)
+            .expect_err("root single-resource snapshot limit");
+        assert!(error.contains("analysis snapshot"), "{error}");
+    }
+
+    #[test]
+    fn analysis_snapshot_checked_addition_applies_root_total_limit() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 3, 3, true);
+        let root_path = root.0.join("root.adoc");
+        std::fs::write(&root_path, "aa").expect("root source");
+        let nested = root.0.join("nested");
+        std::fs::create_dir(&nested).expect("nested");
+        write_resource_config(&nested, 1, 3, 3, false);
+        std::fs::write(nested.join("child.adoc"), "bb").expect("child source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(root_path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        let error = resources
+            .input(&document_uri)
+            .expect_err("root total snapshot limit");
         assert!(error.contains("analysis snapshot"), "{error}");
     }
 }
