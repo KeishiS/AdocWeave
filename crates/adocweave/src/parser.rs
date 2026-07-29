@@ -12,10 +12,10 @@ use crate::block_grammar::{
 };
 pub use crate::block_model::*;
 use crate::block_sequence::{
-    BlockContext, BlockCursor, BlockFacts, BlockInput, BlockLocation, BlockRecognition,
-    BlockSequenceOutput, ParseDepth, RootBlockSequenceOutput,
+    BlockConsumption, BlockContext, BlockCursor, BlockFacts, BlockInput, BlockLocation,
+    BlockRecognition, BlockSequenceOutput, ParseDepth, RootBlockSequenceOutput,
 };
-use crate::budget::{BudgetExceeded, ParseBudget};
+use crate::budget::{BudgetExceeded, ParseBudget, ParseBudgetCharge};
 use crate::delimiter::{DelimitedContentModel, DelimiterSpec};
 use crate::document_header::DocumentHeaderState;
 use crate::inline::{Inline, InlineParseConfig};
@@ -493,16 +493,127 @@ pub(crate) fn parse_shared(
     }
 }
 
-fn commit_block(
+#[derive(Debug)]
+struct BlockCommit {
+    syntax: SyntaxNode,
+    block: AstBlock,
+    charge: ParseBudgetCharge,
+}
+
+impl BlockCommit {
+    fn single(syntax: SyntaxNode, block: AstBlock, attributes: usize) -> Self {
+        Self {
+            syntax,
+            block,
+            charge: ParseBudgetCharge {
+                blocks: 1,
+                nodes: 1,
+                attributes,
+            },
+        }
+    }
+
+    fn already_charged(syntax: SyntaxNode, block: AstBlock) -> Self {
+        Self {
+            syntax,
+            block,
+            charge: ParseBudgetCharge::default(),
+        }
+    }
+}
+
+fn commit_recognized_block(
+    cursor: &mut BlockCursor,
+    recognition: BlockRecognition<BlockCommit>,
     syntax_blocks: &mut Vec<SyntaxNode>,
     ast_blocks: &mut Vec<AstBlock>,
     pending_metadata: &mut PendingBlockMetadata,
-    syntax: SyntaxNode,
-    block: AstBlock,
-) {
-    syntax_blocks.push(syntax);
-    ast_blocks.push(block);
+    budget: &mut ParseBudget,
+) -> Result<bool, ParseFailure> {
+    let Some((consumption, commit)) = recognition.into_commit() else {
+        return Ok(false);
+    };
+    cursor.validate(consumption)?;
+    budget.charge(commit.charge)?;
+    cursor.commit(consumption)?;
+    syntax_blocks.push(commit.syntax);
+    ast_blocks.push(commit.block);
     attach_pending_metadata(syntax_blocks, ast_blocks, pending_metadata);
+    Ok(true)
+}
+
+fn recognize_source_or_math(
+    recognition: LineRecognition,
+    context: &DelimitedParseContext<'_>,
+    line_index: usize,
+    end_line: usize,
+    content: &str,
+    line: SourceLine,
+) -> Result<BlockRecognition<BlockCommit>, ParseFailure> {
+    match recognition {
+        LineRecognition::Source => {
+            let (mut source_block, next_line) = parse_source_block(
+                context.source_document,
+                line_index,
+                context.source,
+                end_line,
+            )?;
+            source_block.metadata =
+                parse_block_attributes(content, line.content_range().start().to_usize())
+                    .unwrap_or_default();
+            let attribute_count = metadata_attribute_count(&source_block.metadata);
+            source_block.metadata.range = Some(line.full_range());
+            let syntax = crate::syntax_builder::source(&source_block);
+            let recovered = !source_block.problems.is_empty();
+            let commit =
+                BlockCommit::single(syntax, AstBlock::Source(source_block), attribute_count);
+            Ok(if recovered {
+                BlockRecognition::recovered(BlockConsumption::Through(next_line), commit)
+            } else {
+                BlockRecognition::matched(BlockConsumption::Through(next_line), commit)
+            })
+        }
+        LineRecognition::InvalidSource => Ok(BlockRecognition::recovered(
+            BlockConsumption::OneLine,
+            BlockCommit::single(
+                SyntaxNode::new(
+                    SyntaxKind::Unsupported,
+                    line.full_range(),
+                    vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
+                ),
+                AstBlock::Unsupported(Unsupported {
+                    metadata: BlockMetadata::default(),
+                    range: line.full_range(),
+                    raw: content.to_owned(),
+                    reason: "invalid source block attribute".to_owned(),
+                }),
+                0,
+            ),
+        )),
+        LineRecognition::Math => {
+            let (mut math, next_line) = parse_math_block(
+                context.source_document,
+                line_index,
+                context.source,
+                context.config,
+                end_line,
+            )?;
+            math.metadata =
+                parse_block_attributes(content, line.content_range().start().to_usize())
+                    .unwrap_or_default();
+            let attribute_count = metadata_attribute_count(&math.metadata);
+            math.metadata.range = Some(line.full_range());
+            let syntax = crate::syntax_builder::math(&math);
+            let recovered = !math.problems.is_empty();
+            let commit = BlockCommit::single(syntax, AstBlock::Math(math), attribute_count);
+            Ok(if recovered {
+                BlockRecognition::recovered(BlockConsumption::Through(next_line), commit)
+            } else {
+                BlockRecognition::matched(BlockConsumption::Through(next_line), commit)
+            })
+        }
+        _ => Err(ParseFailure::InternalInvariant),
+    }
 }
 
 pub(crate) fn parse_shared_cancellable(
@@ -591,7 +702,7 @@ fn parse_block_sequence(
                 root.header.authors.push(author);
                 blocks.push(SyntaxNode::leaf(SyntaxKind::AuthorLine, line.full_range()));
                 root.expect_revision = true;
-                cursor.commit(BlockRecognition::OneLine)?;
+                cursor.commit(BlockConsumption::OneLine)?;
                 continue;
             }
         }
@@ -613,7 +724,7 @@ fn parse_block_sequence(
                     SyntaxKind::RevisionLine,
                     line.full_range(),
                 ));
-                cursor.commit(BlockRecognition::OneLine)?;
+                cursor.commit(BlockConsumption::OneLine)?;
                 continue;
             }
         }
@@ -633,7 +744,10 @@ fn parse_block_sequence(
             line.full_range(),
             document_attribute_position,
         );
-        if recognition == LineRecognition::Source {
+        let recognized_block = if matches!(
+            recognition,
+            LineRecognition::Source | LineRecognition::InvalidSource | LineRecognition::Math
+        ) {
             flush_paragraph(
                 &mut blocks,
                 &mut ast_blocks,
@@ -642,82 +756,44 @@ fn parse_block_sequence(
                 budget,
                 &mut pending_metadata,
             )?;
-            budget.consume_block()?;
-            budget.consume_node()?;
-            let (mut source_block, next_line) =
-                parse_source_block(source_document, line_index, source, end_line)?;
-            source_block.metadata =
-                parse_block_attributes(content, line.content_range().start().to_usize())
-                    .unwrap_or_default();
-            consume_metadata_budget(&source_block.metadata, budget)?;
-            source_block.metadata.range = Some(line.full_range());
-            let syntax = crate::syntax_builder::source(&source_block);
-            commit_block(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut pending_metadata,
-                syntax,
-                AstBlock::Source(source_block),
-            );
+            budget.check(ParseBudgetCharge {
+                blocks: 1,
+                nodes: 1,
+                attributes: 0,
+            })?;
+            let recognition_context = DelimitedParseContext {
+                source_document,
+                source,
+                config,
+                is_cancelled,
+            };
+            recognize_source_or_math(
+                recognition,
+                &recognition_context,
+                line_index,
+                end_line,
+                content,
+                line,
+            )?
+        } else {
+            BlockRecognition::NoMatch
+        };
+        if commit_recognized_block(
+            &mut cursor,
+            recognized_block,
+            &mut blocks,
+            &mut ast_blocks,
+            &mut pending_metadata,
+            budget,
+        )? {
             saw_content = true;
-            cursor.commit(BlockRecognition::Through(next_line))?;
+            if recognition == LineRecognition::InvalidSource {
+                root.iter_mut()
+                    .for_each(DocumentHeaderState::close_attributes);
+            }
             continue;
-        } else if recognition == LineRecognition::InvalidSource {
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
-            budget.consume_block()?;
-            budget.consume_node()?;
-            blocks.push(SyntaxNode::new(
-                SyntaxKind::Unsupported,
-                line.full_range(),
-                vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
-            ));
-            ast_blocks.push(AstBlock::Unsupported(Unsupported {
-                metadata: BlockMetadata::default(),
-                range: line.full_range(),
-                raw: content.to_owned(),
-                reason: "invalid source block attribute".to_owned(),
-            }));
-            attach_pending_metadata(&mut blocks, &mut ast_blocks, &mut pending_metadata);
-            saw_content = true;
-            root.iter_mut()
-                .for_each(DocumentHeaderState::close_attributes);
-        } else if recognition == LineRecognition::Math {
-            flush_paragraph(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut paragraph_lines,
-                config,
-                budget,
-                &mut pending_metadata,
-            )?;
-            budget.consume_block()?;
-            budget.consume_node()?;
-            let (mut math, next_line) =
-                parse_math_block(source_document, line_index, source, config, end_line)?;
-            math.metadata =
-                parse_block_attributes(content, line.content_range().start().to_usize())
-                    .unwrap_or_default();
-            consume_metadata_budget(&math.metadata, budget)?;
-            math.metadata.range = Some(line.full_range());
-            let syntax = crate::syntax_builder::math(&math);
-            commit_block(
-                &mut blocks,
-                &mut ast_blocks,
-                &mut pending_metadata,
-                syntax,
-                AstBlock::Math(math),
-            );
-            saw_content = true;
-            cursor.commit(BlockRecognition::Through(next_line))?;
-            continue;
-        } else if recognition == LineRecognition::Delimited {
+        }
+        if recognition == LineRecognition::Delimited {
             let spec = crate::delimiter::spec(content).expect("recognizer verified delimiter");
             flush_paragraph(
                 &mut blocks,
@@ -749,17 +825,28 @@ fn parse_block_sequence(
                 Some(&pending_metadata.semantic),
             )?;
             let syntax = crate::syntax_builder::delimited(&block, nested_syntax);
-            commit_block(
+            let recognition = if block.problems.is_empty() {
+                BlockRecognition::matched(
+                    BlockConsumption::Through(next_line),
+                    BlockCommit::already_charged(syntax, AstBlock::Delimited(block)),
+                )
+            } else {
+                BlockRecognition::recovered(
+                    BlockConsumption::Through(next_line),
+                    BlockCommit::already_charged(syntax, AstBlock::Delimited(block)),
+                )
+            };
+            commit_recognized_block(
+                &mut cursor,
+                recognition,
                 &mut blocks,
                 &mut ast_blocks,
                 &mut pending_metadata,
-                syntax,
-                AstBlock::Delimited(block),
-            );
+                budget,
+            )?;
             saw_content = true;
             root.iter_mut()
                 .for_each(DocumentHeaderState::close_attributes);
-            cursor.commit(BlockRecognition::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Anchor {
             let anchor = parse_explicit_anchor(
@@ -911,7 +998,7 @@ fn parse_block_sequence(
                 root.extend_range(attribute_range);
             }
             if last_line > line_index {
-                cursor.commit(BlockRecognition::Through(last_line + 1))?;
+                cursor.commit(BlockConsumption::Through(last_line + 1))?;
                 continue;
             }
         } else if recognition == LineRecognition::Break {
@@ -963,7 +1050,7 @@ fn parse_block_sequence(
             saw_content = true;
             root.iter_mut()
                 .for_each(DocumentHeaderState::close_attributes);
-            cursor.commit(BlockRecognition::Through(next_line))?;
+            cursor.commit(BlockConsumption::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Heading {
             flush_paragraph(
@@ -1045,7 +1132,7 @@ fn parse_block_sequence(
             saw_content = true;
             root.iter_mut()
                 .for_each(DocumentHeaderState::close_attributes);
-            cursor.commit(BlockRecognition::Through(next_line))?;
+            cursor.commit(BlockConsumption::Through(next_line))?;
             continue;
         } else if recognition == LineRecognition::Unsupported {
             let reason = unsupported_reason(content).expect("recognizer verified unsupported line");
@@ -1080,7 +1167,7 @@ fn parse_block_sequence(
             root.iter_mut()
                 .for_each(DocumentHeaderState::close_attributes);
         }
-        cursor.commit(BlockRecognition::OneLine)?;
+        cursor.commit(BlockConsumption::OneLine)?;
     }
     flush_paragraph(
         &mut blocks,
@@ -1223,14 +1310,17 @@ fn consume_metadata_budget(
     metadata: &BlockMetadata,
     budget: &mut ParseBudget,
 ) -> Result<(), BudgetExceeded> {
-    let count = metadata.attributes.len()
-        + metadata.roles.len()
-        + metadata.options.len()
-        + usize::from(metadata.id.is_some());
-    for _ in 0..count {
+    for _ in 0..metadata_attribute_count(metadata) {
         budget.consume_attribute()?;
     }
     Ok(())
+}
+
+fn metadata_attribute_count(metadata: &BlockMetadata) -> usize {
+    metadata.attributes.len()
+        + metadata.roles.len()
+        + metadata.options.len()
+        + usize::from(metadata.id.is_some())
 }
 
 fn attach_pending_metadata(
@@ -2371,15 +2461,108 @@ mod tests {
     fn block_cursor_rejects_non_progress_and_out_of_bounds_commits() {
         let mut cursor = super::BlockCursor::new(2);
         assert_eq!(cursor.current(), Some(0));
-        assert!(cursor.commit(super::BlockRecognition::Through(0)).is_err());
-        assert!(cursor.commit(super::BlockRecognition::Through(3)).is_err());
+        assert!(cursor.commit(super::BlockConsumption::Through(0)).is_err());
+        assert!(cursor.commit(super::BlockConsumption::Through(3)).is_err());
         cursor
-            .commit(super::BlockRecognition::OneLine)
+            .commit(super::BlockConsumption::OneLine)
             .expect("first line");
         cursor
-            .commit(super::BlockRecognition::Through(2))
+            .commit(super::BlockConsumption::Through(2))
             .expect("second line");
         assert_eq!(cursor.current(), None);
+    }
+
+    #[test]
+    fn recognized_block_commit_is_atomic_for_cursor_budget_syntax_and_facts() {
+        fn recognized(
+            consumption: super::BlockConsumption,
+        ) -> super::BlockRecognition<super::BlockCommit> {
+            let range = crate::source::TextRange::new(
+                crate::source::TextSize::ZERO,
+                crate::source::TextSize::new(1).expect("test offset"),
+            )
+            .expect("test range");
+            super::BlockRecognition::recovered(
+                consumption,
+                super::BlockCommit::single(
+                    crate::syntax::SyntaxNode::leaf(SyntaxKind::PageBreak, range),
+                    AstBlock::Break(BreakBlock {
+                        metadata: Default::default(),
+                        range,
+                        kind: BreakKind::Page,
+                    }),
+                    0,
+                ),
+            )
+        }
+
+        let mut cursor = super::BlockCursor::new(2);
+        let mut syntax = Vec::new();
+        let mut blocks = Vec::new();
+        let mut pending = super::PendingBlockMetadata::default();
+        let mut budget = crate::budget::ParseBudget::new(crate::AnalysisLimits {
+            max_blocks: 1,
+            max_nodes: 2,
+            ..crate::AnalysisLimits::default()
+        })
+        .expect("document node budget");
+
+        assert!(
+            !super::commit_recognized_block(
+                &mut cursor,
+                super::BlockRecognition::NoMatch,
+                &mut syntax,
+                &mut blocks,
+                &mut pending,
+                &mut budget,
+            )
+            .expect("no match")
+        );
+        assert!(
+            super::commit_recognized_block(
+                &mut cursor,
+                recognized(super::BlockConsumption::Through(0)),
+                &mut syntax,
+                &mut blocks,
+                &mut pending,
+                &mut budget,
+            )
+            .is_err()
+        );
+        assert_eq!(cursor.current(), Some(0));
+        assert!(syntax.is_empty());
+        assert!(blocks.is_empty());
+        assert!(pending.is_empty());
+
+        assert!(
+            super::commit_recognized_block(
+                &mut cursor,
+                recognized(super::BlockConsumption::OneLine),
+                &mut syntax,
+                &mut blocks,
+                &mut pending,
+                &mut budget,
+            )
+            .expect("valid recovered block")
+        );
+        assert_eq!(cursor.current(), Some(1));
+        assert_eq!(syntax.len(), 1);
+        assert_eq!(blocks.len(), 1);
+
+        assert!(matches!(
+            super::commit_recognized_block(
+                &mut cursor,
+                recognized(super::BlockConsumption::OneLine),
+                &mut syntax,
+                &mut blocks,
+                &mut pending,
+                &mut budget,
+            ),
+            Err(super::ParseFailure::Budget(_))
+        ));
+        assert_eq!(cursor.current(), Some(1));
+        assert_eq!(syntax.len(), 1);
+        assert_eq!(blocks.len(), 1);
     }
 
     #[test]
