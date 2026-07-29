@@ -169,12 +169,23 @@ export function evaluateController(input) {
   }
   const attestation = input.eligibilityCheck;
   if (!attestation
+      || !Number.isSafeInteger(attestation.id)
+      || attestation.id <= 0
       || attestation.name !== "dependabot / eligibility"
       || attestation.headSha !== input.pullRequest?.headSha
       || attestation.conclusion !== "success"
       || attestation.appSlug !== "github-actions"
       || attestation.appId !== policy.requiredCheckAppId) {
     reasons.push("eligibility-attestation");
+  }
+  if (!Array.isArray(input.checks)
+      || input.checks.some(
+        (check) => !Number.isSafeInteger(check?.id)
+          || check.id <= 0
+          || typeof check.name !== "string"
+          || check.name.length === 0,
+      )) {
+    reasons.push("check-inventory");
   }
   const latestChecks = latestChecksByName(input.checks);
   for (const name of policy.requiredChecks) {
@@ -299,8 +310,9 @@ function validatePullRequest(pullRequest, policy, reasons) {
 function latestChecksByName(checks) {
   const result = new Map();
   for (const check of Array.isArray(checks) ? checks : []) {
+    if (!Number.isSafeInteger(check?.id) || check.id <= 0) continue;
     const previous = result.get(check.name);
-    if (!previous || String(previous.completedAt) < String(check.completedAt)) {
+    if (!previous || previous.id < check.id) {
       result.set(check.name, check);
     }
   }

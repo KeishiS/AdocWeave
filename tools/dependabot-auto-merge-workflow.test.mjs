@@ -112,9 +112,15 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.doesNotMatch(controller, /issues:\s*write/);
   assert.doesNotMatch(controller, /pull_request_target:/);
   assert.doesNotMatch(controller, /gh pr merge/);
+  assert.match(
+    controller,
+    /group:\s*>-[\s\S]*dependabot-auto-merge-\$\{\{[\s\S]*pull_requests\[0\]\.number/,
+  );
+  assert.match(controller, /cancel-in-progress:\s*false/);
   assert.match(controller, /enablePullRequestAutoMerge/);
-  assert.match(controller, /mutation\(\$pullRequest: ID!, \$head: GitObjectID!\)/);
+  assert.match(controller, /\$clientMutationId:\s*String!/);
   assert.match(controller, /expectedHeadOid:\s*\$head/);
+  assert.match(controller, /clientMutationId:\s*\$clientMutationId/);
   assert.match(controller, /-f head="\$EXPECTED_HEAD_OID"/);
   assert.match(controller, /EXPECTED_HEAD_OID:\s*\$\{\{\s*needs\.decide\.outputs\.expected_head_oid\s*\}\}/);
   assert.match(controller, /mergeMethod:\s*SQUASH/);
@@ -130,6 +136,8 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
     )].length,
     2,
   );
+  assert.equal([...controller.matchAll(/sort_by\(\.id\)/g)].length, 2);
+  assert.doesNotMatch(controller, /sort_by\(\.completed_at\)/);
   assert.match(controller, /--slurpfile changed_files changed-files\.json/);
   assert.match(controller, /changedFiles:\s*\$changed_files\[0\]/);
   assert.match(controller, /ref:\s*\$\{\{\s*github\.event\.workflow_run\.pull_requests\[0\]\.base\.sha\s*\}\}/);
@@ -158,6 +166,10 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.match(enable, /enable-controller-input\.json/);
   assert.match(enable, /jq -e '\.eligible == true' enable-controller-decision\.json/);
   assert.match(enable, /enable-auto-merge-result\.json/);
+  assert.match(enable, /enable-audit-record\.json/);
+  assert.match(enable, /clientMutationId:\s*\$clientMutationId/);
+  assert.match(enable, /alertObservation:\s*\$alerts\[0\]/);
+  assert.match(enable, /strictRulesetDecision:\s*\$ruleset\[0\]/);
   assert.match(
     enable,
     /\.data\.enablePullRequestAutoMerge\.pullRequest\.number == \$pr_number/,
@@ -166,6 +178,25 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   assert.ok(
     enable.indexOf("enable-controller-decision.json")
       < enable.indexOf("enablePullRequestAutoMerge"),
+  );
+  assert.ok(
+    enable.indexOf("strict-ruleset-decision.json")
+      < enable.indexOf("enable-security-alert-snapshot.json"),
+  );
+  for (const priorObservation of [
+    "enable-checks.json",
+    "enable-reviews.json",
+    "enable-ci-run.json",
+  ]) {
+    assert.ok(
+      enable.indexOf(priorObservation)
+        < enable.indexOf("enable-security-alert-snapshot.json"),
+      priorObservation,
+    );
+  }
+  assert.ok(
+    enable.indexOf("enable-security-alert-snapshot.json")
+      < enable.indexOf("enable-controller-decision.json"),
   );
 });
 
@@ -215,11 +246,34 @@ test("repository changes continuously reconcile existing auto-merge requests", (
   assert.match(reconciliation, /\n  workflow_dispatch:\n/);
   assert.match(reconciliation, /^permissions:\s*\{\}/m);
   assert.match(reconciliation, /pull-requests:\s*write/);
+  assert.match(reconciliation, /actions:\s*read/);
+  assert.match(reconciliation, /checks:\s*read/);
   assert.match(reconciliation, /vulnerability-alerts:\s*read/);
   assert.match(reconciliation, /dependabot-alert-snapshot\.sh/);
   assert.match(reconciliation, /dependabot-auto-merge-disable-result\.jq/);
   assert.match(reconciliation, /dependabot-auto-merge-pr-detail\.jq/);
   assert.match(reconciliation, /dependabot-auto-merge-pr-numbers\.jq/);
+  assert.match(reconciliation, /rulesets\?includes_parents=true&per_page=100/);
+  assert.match(
+    reconciliation,
+    /strict-rulesets \.github\/dependabot-auto-merge-policy\.json/,
+  );
+  assert.match(reconciliation, /reconciliation-strict-ruleset-decision\.json/);
+  assert.match(reconciliation, /pulls\/\$pr_number\/files\?per_page=100/);
+  assert.match(reconciliation, /commits\/\$head_sha\/check-runs\?per_page=100/);
+  assert.match(reconciliation, /pulls\/\$pr_number\/reviews\?per_page=100/);
+  assert.match(
+    reconciliation,
+    /actions\/runs\?event=pull_request&head_sha=\$head_sha&status=success&per_page=100/,
+  );
+  assert.match(reconciliation, /reconciliation-controller-input-\$pr_number\.json/);
+  assert.match(reconciliation, /sort_by\(\.id\)/);
+  assert.doesNotMatch(reconciliation, /sort_by\(\.completed_at\)/);
+  assert.match(
+    reconciliation,
+    /controller \.github\/dependabot-auto-merge-policy\.json/,
+  );
+  assert.match(reconciliation, /reconciliation-audit-\$pr_number\.json/);
   assert.equal(
     [...reconciliation.matchAll(
       /reconcile \.github\/dependabot-auto-merge-policy\.json/g,
@@ -433,20 +487,21 @@ test("reconciliation trusts only a validated Pull Request detail response", () =
   assert.deepEqual(JSON.parse(disabled.stdout), {
     nodeId: "PR_kwDOExample17",
     autoMergeEnabled: false,
+    autoMergeStateKnown: true,
+    autoMergeMethod: null,
   });
   assert.equal(enabled.status, 0, enabled.stderr);
   assert.deepEqual(JSON.parse(enabled.stdout), {
     nodeId: "PR_kwDOExample17",
     autoMergeEnabled: true,
+    autoMergeStateKnown: true,
+    autoMergeMethod: "squash",
   });
 });
 
 test("reconciliation rejects missing or drifted Pull Request identity", () => {
-  const missingAutoMerge = pullRequestDetail();
-  delete missingAutoMerge.auto_merge;
   const invalidResponses = [
     {},
-    missingAutoMerge,
     { ...pullRequestDetail(), number: 18 },
     { ...pullRequestDetail(), node_id: "" },
     { ...pullRequestDetail(), user: { login: "contributor" } },
@@ -476,12 +531,16 @@ test("reconciliation rejects missing or drifted Pull Request identity", () => {
   for (const response of invalidResponses) {
     const result = validateReconciliationPullRequestDetail(response);
     assert.notEqual(result.status, 0, JSON.stringify(response));
-    assert.match(result.stderr, /detail response is invalid or its identity changed/);
+    assert.match(result.stderr, /detail response identity changed/);
   }
 });
 
-test("reconciliation rejects an invalid auto-merge detail shape", () => {
-  for (const autoMerge of [
+test("reconciliation marks an unknown auto-merge detail for cancellation", () => {
+  const missingAutoMerge = pullRequestDetail();
+  delete missingAutoMerge.auto_merge;
+  for (const response of [
+    missingAutoMerge,
+    ...[
     "enabled",
     {},
     {
@@ -496,13 +555,42 @@ test("reconciliation rejects an invalid auto-merge detail shape", () => {
       commit_title: null,
       commit_message: null,
     },
+    ].map((autoMerge) => pullRequestDetail(autoMerge)),
   ]) {
     const result = validateReconciliationPullRequestDetail(
-      pullRequestDetail(autoMerge),
+      response,
     );
-    assert.notEqual(result.status, 0, JSON.stringify(autoMerge));
-    assert.match(result.stderr, /detail response is invalid or its identity changed/);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      nodeId: "PR_kwDOExample17",
+      autoMergeEnabled: Object.hasOwn(response, "auto_merge")
+        && response.auto_merge != null,
+      autoMergeStateKnown: false,
+      autoMergeMethod: null,
+    });
   }
+  assert.match(reconciliation, /autoMergeStateKnown != true/);
+});
+
+test("reconciliation can identify non-squash requests before disabling them", () => {
+  for (const mergeMethod of ["merge", "rebase"]) {
+    const result = validateReconciliationPullRequestDetail(
+      pullRequestDetail({
+        enabled_by: { login: "maintainer" },
+        merge_method: mergeMethod,
+        commit_title: null,
+        commit_message: null,
+      }),
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      nodeId: "PR_kwDOExample17",
+      autoMergeEnabled: true,
+      autoMergeStateKnown: true,
+      autoMergeMethod: mergeMethod,
+    });
+  }
+  assert.match(reconciliation, /autoMergeMethod == "squash"/);
 });
 
 test("automation changes require a frozen two-stage procedure", () => {
@@ -521,6 +609,15 @@ test("automation changes require a frozen two-stage procedure", () => {
   assert.match(
     contributing,
     /定期監査はこの時間差を解消する保証ではありません/,
+  );
+  assert.match(
+    contributing,
+    /同じPull Requestに対する判定は同時実行せず、実行中の判定を取り消さずに直列化/,
+  );
+  assert.match(contributing, /OPEN alertを最後に取得/);
+  assert.match(
+    contributing,
+    /head、base、check、review、変更fileおよび現在のbaseに対するCI/,
   );
   assert.match(
     contributing,

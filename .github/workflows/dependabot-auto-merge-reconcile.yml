@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      actions: read
+      checks: read
       contents: read
       pull-requests: write
       vulnerability-alerts: read
@@ -70,11 +72,222 @@ jobs:
             reconcile .github/dependabot-auto-merge-policy.json \
             reconciliation-input.json > reconciliation-decision.json
           jq . reconciliation-decision.json >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$GITHUB_EVENT_NAME" != "push" ]] \
-            && jq -e '.eligible == true' reconciliation-decision.json > /dev/null
-          then
-            echo "safe=true" >> "$GITHUB_OUTPUT"
+          jq -e '.eligible == true' reconciliation-decision.json > /dev/null
+
+          ruleset_ids="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/rulesets?includes_parents=true&per_page=100" \
+              | jq -er -s '
+                  add
+                  | map(select(.target == "branch" and .enforcement == "active"))
+                  | .[].id
+                '
+          )"
+          test -n "$ruleset_ids"
+          : > reconciliation-active-rulesets.jsonl
+          while IFS= read -r ruleset_id; do
+            gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" \
+              >> reconciliation-active-rulesets.jsonl
+          done <<< "$ruleset_ids"
+          jq -s '{branch: "main", rulesets: .}' \
+            reconciliation-active-rulesets.jsonl \
+            > reconciliation-strict-ruleset-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            strict-rulesets .github/dependabot-auto-merge-policy.json \
+            reconciliation-strict-ruleset-input.json \
+            > reconciliation-strict-ruleset-decision.json
+          jq . reconciliation-strict-ruleset-decision.json >> "$GITHUB_STEP_SUMMARY"
+          jq -e '.eligible == true' \
+            reconciliation-strict-ruleset-decision.json > /dev/null
+
+          # A push changing the policy or its implementation always revokes
+          # existing requests. A later scheduled/manual run may revalidate them.
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            exit 0
           fi
+
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" \
+            | jq -esf tools/dependabot-auto-merge-pr-numbers.jq \
+              > reconciliation-pr-numbers.json
+          while IFS= read -r pr_number; do
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+              > "reconciliation-pr-$pr_number.json"
+            jq -e \
+              --argjson pr_number "$pr_number" \
+              --arg repository "$GITHUB_REPOSITORY" \
+              -f tools/dependabot-auto-merge-pr-detail.jq \
+              "reconciliation-pr-$pr_number.json" \
+              > "reconciliation-validated-pr-$pr_number.json"
+            jq -e '.autoMergeStateKnown == true' \
+              "reconciliation-validated-pr-$pr_number.json" > /dev/null
+            if ! jq -e '.autoMergeEnabled == true' \
+              "reconciliation-validated-pr-$pr_number.json" > /dev/null
+            then
+              continue
+            fi
+            jq -e '.autoMergeMethod == "squash"' \
+              "reconciliation-validated-pr-$pr_number.json" > /dev/null
+
+            head_sha="$(
+              jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' \
+                "reconciliation-pr-$pr_number.json"
+            )"
+            base_ref="$(
+              jq -er '.base.ref | select(type == "string" and length > 0)' \
+                "reconciliation-pr-$pr_number.json"
+            )"
+            gh api "repos/$GITHUB_REPOSITORY/branches/$base_ref" \
+              --jq .commit.sha > "reconciliation-base-$pr_number.txt"
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files?per_page=100" \
+              --jq '.[].filename' \
+              | jq -Rsc 'split("\n") | map(select(length > 0))' \
+                > "reconciliation-files-$pr_number.json"
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100" \
+              --jq '.check_runs' \
+              | jq -s 'add' > "reconciliation-checks-$pr_number.json"
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/pulls/$pr_number/reviews?per_page=100" \
+              | jq -s 'add' > "reconciliation-reviews-$pr_number.json"
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=$head_sha&status=success&per_page=100" \
+              --jq '.workflow_runs' \
+              | jq -e -s \
+                  --arg base_sha "$(cat "reconciliation-base-$pr_number.txt")" \
+                  --arg head_sha "$head_sha" \
+                  --argjson pr_number "$pr_number" '
+                    add
+                    | map(select(
+                        .name == "CI and Release"
+                        and .event == "pull_request"
+                        and .conclusion == "success"
+                        and .head_sha == $head_sha
+                        and .actor.login == "dependabot[bot]"
+                        and any(
+                          .pull_requests[]?;
+                          .number == $pr_number and .base.sha == $base_sha
+                        )
+                      ))
+                    | sort_by(.updated_at)
+                    | (last // error("no successful current-base CI run"))
+                    | . + {verified_base_sha: $base_sha}
+                  ' > "reconciliation-ci-run-$pr_number.json"
+
+            # Keep the open-alert observation as the final remote read.
+            tools/dependabot-alert-snapshot.sh \
+              "$GITHUB_REPOSITORY" '[]' \
+              "$(cat "reconciliation-files-$pr_number.json")" \
+              > "reconciliation-alert-snapshot-$pr_number.json"
+            jq -n \
+              --arg current_base_sha \
+                "$(cat "reconciliation-base-$pr_number.txt")" \
+              --slurpfile pr "reconciliation-pr-$pr_number.json" \
+              --slurpfile changed_files \
+                "reconciliation-files-$pr_number.json" \
+              --slurpfile checks "reconciliation-checks-$pr_number.json" \
+              --slurpfile reviews "reconciliation-reviews-$pr_number.json" \
+              --slurpfile ci_run "reconciliation-ci-run-$pr_number.json" \
+              --slurpfile security_alerts \
+                "reconciliation-alert-snapshot-$pr_number.json" '
+                ($pr[0]) as $pull |
+                ($ci_run[0]) as $ci |
+                (
+                  $reviews[0]
+                  | group_by(.user.login)
+                  | map(max_by(.submitted_at))
+                ) as $latest_reviews |
+                {
+                  pullRequest: {
+                    actor: $ci.actor.login,
+                    author: $pull.user.login,
+                    baseRef: $pull.base.ref,
+                    baseRepository: $pull.base.repo.full_name,
+                    headRef: $pull.head.ref,
+                    headRepository: $pull.head.repo.full_name,
+                    headSha: $pull.head.sha,
+                    baseSha: $pull.base.sha,
+                    draft: $pull.draft,
+                    mergeable: $pull.mergeable
+                  },
+                  workflowRun: {
+                    event: $ci.event,
+                    conclusion: $ci.conclusion,
+                    headSha: $ci.head_sha,
+                    baseSha: $ci.verified_base_sha
+                  },
+                  currentBaseSha: $current_base_sha,
+                  securityAlerts: {
+                    lookupCompleted: $security_alerts[0].lookupCompleted,
+                    openCount: $security_alerts[0].openCount,
+                    securityUpdate: $security_alerts[0].securityUpdate
+                  },
+                  changedFiles: $changed_files[0],
+                  review: {
+                    changesRequested: any(
+                      $latest_reviews[]?;
+                      .state == "CHANGES_REQUESTED"
+                    ),
+                    approvedCount: ([
+                      $latest_reviews[]?
+                      | select(
+                          .state == "APPROVED"
+                          and .user.type == "User"
+                        )
+                    ] | length)
+                  },
+                  eligibilityCheck: (
+                    $checks[0]
+                    | map(select(.name == "dependabot / eligibility"))
+                    | sort_by(.id)
+                    | last
+                    | if . == null then null else {
+                        id,
+                        name,
+                        headSha: .head_sha,
+                        conclusion,
+                        appSlug: .app.slug,
+                        appId: .app.id
+                      } end
+                  ),
+                  checks: (
+                    $checks[0] | map({
+                      id,
+                      name,
+                      headSha: .head_sha,
+                      conclusion,
+                      completedAt: .completed_at,
+                      appId: .app.id
+                    })
+                  )
+                }
+              ' > "reconciliation-controller-input-$pr_number.json"
+            node tools/dependabot-auto-merge-policy.mjs \
+              controller .github/dependabot-auto-merge-policy.json \
+              "reconciliation-controller-input-$pr_number.json" \
+              > "reconciliation-controller-decision-$pr_number.json"
+            jq -n \
+              --argjson pullRequestNumber "$pr_number" \
+              --arg headSha "$head_sha" \
+              --arg baseSha "$(cat "reconciliation-base-$pr_number.txt")" \
+              --slurpfile alerts \
+                "reconciliation-alert-snapshot-$pr_number.json" \
+              --slurpfile decision \
+                "reconciliation-controller-decision-$pr_number.json" \
+              '{
+                pullRequestNumber: $pullRequestNumber,
+                headSha: $headSha,
+                baseSha: $baseSha,
+                alertObservation: $alerts[0],
+                controllerDecision: $decision[0]
+              }' > "reconciliation-audit-$pr_number.json"
+            jq . "reconciliation-audit-$pr_number.json" \
+              >> "$GITHUB_STEP_SUMMARY"
+            jq -e '.eligible == true' \
+              "reconciliation-controller-decision-$pr_number.json" > /dev/null
+          done < <(jq -r '.[]' reconciliation-pr-numbers.json)
+          echo "safe=true" >> "$GITHUB_OUTPUT"
       - name: Disable existing Dependabot auto-merge requests
         if: always() && steps.safety.outputs.safe != 'true'
         env:
@@ -94,7 +307,8 @@ jobs:
                 -f tools/dependabot-auto-merge-pr-detail.jq \
                 "reconciliation-pr-$pr_number.json" \
                 > "reconciliation-validated-pr-$pr_number.json"
-              if jq -e '.autoMergeEnabled == true' \
+              if jq -e \
+                '.autoMergeEnabled == true or .autoMergeStateKnown != true' \
                 "reconciliation-validated-pr-$pr_number.json" > /dev/null
               then
                 # shellcheck disable=SC2016
