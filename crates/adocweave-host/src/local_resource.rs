@@ -74,6 +74,17 @@ pub struct FilesystemReadRollback {
     candidate_path: PathBuf,
     session_index: usize,
     previous_bytes: Option<u64>,
+    committed_generation: Option<u64>,
+}
+
+/// Result of attempting to undo one filesystem reread charge.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FilesystemReadRollbackResult {
+    /// The token described the latest session mutation and was applied.
+    Applied,
+    /// A later session mutation made the token unsafe to apply.
+    Stale,
 }
 
 impl LoadedFilesystemSource {
@@ -106,6 +117,7 @@ pub struct LocalFilesystemSession {
     limits: FilesystemReadLimits,
     budget: ResourceBudget,
     charged: BTreeMap<PathBuf, u64>,
+    rollback_generation: Option<u64>,
 }
 
 impl LocalFilesystemPolicy {
@@ -168,6 +180,7 @@ impl LocalFilesystemPolicy {
             limits: self.limits,
             budget: ResourceBudget::default(),
             charged: BTreeMap::new(),
+            rollback_generation: Some(0),
         })
     }
 }
@@ -323,13 +336,26 @@ impl LocalFilesystemSession {
                     candidate_path: path.to_owned(),
                     session_index: index,
                     previous_bytes,
+                    committed_generation: self.rollback_generation,
                 },
             )
         })
     }
 
     /// Restores the charge replaced by [`Self::reread_utf8_with_rollback`].
-    pub fn rollback_reread(&mut self, rollback: FilesystemReadRollback) {
+    ///
+    /// Only the token returned by the latest successful session mutation can
+    /// be applied. A stale or out-of-order token fails closed without changing
+    /// the current charge.
+    pub fn rollback_reread(
+        &mut self,
+        rollback: FilesystemReadRollback,
+    ) -> FilesystemReadRollbackResult {
+        if rollback.committed_generation.is_none()
+            || rollback.committed_generation != self.rollback_generation
+        {
+            return FilesystemReadRollbackResult::Stale;
+        }
         let current = self.charged.get(&rollback.canonical_path).copied();
         match (current, rollback.previous_bytes) {
             (Some(current), Some(previous)) => {
@@ -347,6 +373,8 @@ impl LocalFilesystemSession {
             }
             (None, None) => {}
         }
+        self.advance_rollback_generation();
+        FilesystemReadRollbackResult::Applied
     }
 
     /// Releases the budget charge for a resource removed from the caller's workspace.
@@ -357,6 +385,7 @@ impl LocalFilesystemSession {
         if let Ok(index) = self.root_index(path) {
             self.sessions[index].release_candidate(path);
         }
+        self.advance_rollback_generation();
     }
 
     #[cfg(test)]
@@ -428,6 +457,7 @@ impl LocalFilesystemSession {
         self.budget
             .replace(&canonical_path, previous, bytes, self.limits)?;
         self.charged.insert(canonical_path.clone(), bytes);
+        self.advance_rollback_generation();
         Ok(LoadedFilesystemSource {
             source_id,
             source: Arc::from(source),
@@ -437,6 +467,12 @@ impl LocalFilesystemSession {
 
     pub const fn budget(&self) -> ResourceBudget {
         self.budget
+    }
+
+    fn advance_rollback_generation(&mut self) {
+        self.rollback_generation = self
+            .rollback_generation
+            .and_then(|generation| generation.checked_add(1));
     }
 }
 
@@ -963,14 +999,82 @@ mod tests {
             .reread_utf8_with_rollback(source_id(), &first)
             .expect("replacement reread");
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
-        session.rollback_reread(rollback);
+        assert_eq!(
+            session.rollback_reread(rollback),
+            FilesystemReadRollbackResult::Applied
+        );
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
 
         let (_, rollback) = session
             .reread_utf8_with_rollback(source_id(), &second)
             .expect("new reread");
         assert_eq!((session.budget().files(), session.budget().bytes()), (2, 3));
-        session.rollback_reread(rollback);
+        assert_eq!(
+            session.rollback_reread(rollback),
+            FilesystemReadRollbackResult::Applied
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
+    }
+
+    #[test]
+    fn stale_reread_rollback_cannot_remove_a_later_replacement_charge() {
+        let root = TestDir::new("stale-reread-rollback");
+        let first = root.path().join("first.adoc");
+        let second = root.path().join("second.adoc");
+        fs::write(&first, "a").expect("first source");
+        fs::write(&second, "b").expect("second source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 1,
+                max_total_bytes: 2,
+                max_resource_bytes: 2,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+
+        let (_, stale) = session
+            .reread_utf8_with_rollback(source_id(), &first)
+            .expect("new reread");
+        fs::write(&first, "aa").expect("replacement source");
+        session
+            .reread_utf8(source_id(), &first)
+            .expect("committed replacement");
+
+        assert_eq!(
+            session.rollback_reread(stale),
+            FilesystemReadRollbackResult::Stale
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 2));
+        assert!(session.reread_utf8(source_id(), &second).is_err());
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 2));
+    }
+
+    #[test]
+    fn out_of_order_reread_rollback_keeps_the_latest_token_valid() {
+        let root = TestDir::new("out-of-order-reread-rollback");
+        let path = root.path().join("document.adoc");
+        fs::write(&path, "a").expect("initial source");
+        let mut session = policy(root.path(), 4).session().expect("session");
+
+        let (_, stale) = session
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("new reread");
+        fs::write(&path, "bb").expect("replacement source");
+        let (_, latest) = session
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("replacement reread");
+
+        assert_eq!(
+            session.rollback_reread(stale),
+            FilesystemReadRollbackResult::Stale
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 2));
+        assert_eq!(
+            session.rollback_reread(latest),
+            FilesystemReadRollbackResult::Applied
+        );
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
     }
 

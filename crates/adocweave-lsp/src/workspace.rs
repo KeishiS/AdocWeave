@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
 use adocweave_host::{
-    FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
+    FilesystemReadRollback, FilesystemReadRollbackResult, LocalFilesystemPolicy,
+    LocalFilesystemSession, LogicalSourceId,
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedResourceBudget, RetainedResourceLimits, Revision, Workspace,
@@ -69,8 +70,10 @@ impl PreparedWorkspaceRead {
         self.filesystem
             .lock()
             .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-            .rollback_reread(self.rollback);
-        Ok(())
+            .rollback_reread(self.rollback)
+            .eq(&FilesystemReadRollbackResult::Applied)
+            .then_some(())
+            .ok_or_else(|| "workspace filesystem rollback token is stale".to_owned())
     }
 }
 
@@ -1024,6 +1027,86 @@ mod tests {
     }
 
     #[test]
+    fn later_transient_configuration_failure_preserves_every_committed_state_store() {
+        let root = TestDirectory::new();
+        let first_project = root.0.join("a");
+        let second_project = root.0.join("b");
+        std::fs::create_dir(&first_project).expect("first project");
+        std::fs::create_dir(&second_project).expect("second project");
+        write_resource_config(&first_project, 1, 8, 8, false);
+        write_resource_config(&second_project, 1, 8, 8, false);
+        let first_path = first_project.join("document.adoc");
+        let second_path = second_project.join("document.adoc");
+        std::fs::write(&first_path, "first").expect("first source");
+        std::fs::write(&second_path, "second").expect("second source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let first_uri = Url::from_file_path(&first_path).expect("first URI");
+        let second_uri = Url::from_file_path(&second_path).expect("second URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("initial workspace");
+        let generation = resources.generation();
+        let next_disk_version = resources.next_disk_version;
+        let project_plans = resources.project_plans.clone();
+        let resource_projects = resources.resource_projects.clone();
+        let retained_projects = resources
+            .retained_layers
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let filesystems = resources.filesystems.clone();
+
+        std::fs::remove_file(second_project.join(adocweave_config::FILE_NAME))
+            .expect("remove second config");
+        std::fs::create_dir(second_project.join(adocweave_config::FILE_NAME))
+            .expect("unreadable second config path");
+        let error = resources
+            .load_roots(&[root_uri])
+            .expect_err("later configuration read failure");
+
+        assert!(error.contains("read-failed"), "{error}");
+        assert_eq!(resources.generation(), generation);
+        assert_eq!(resources.next_disk_version, next_disk_version);
+        assert_eq!(resources.project_plans, project_plans);
+        assert_eq!(resources.resource_projects, resource_projects);
+        assert_eq!(
+            resources
+                .retained_layers
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            retained_projects
+        );
+        assert_eq!(resources.filesystems.len(), filesystems.len());
+        for (project, filesystem) in filesystems {
+            assert!(Arc::ptr_eq(
+                resources
+                    .filesystems
+                    .get(&project)
+                    .expect("committed filesystem"),
+                &filesystem
+            ));
+        }
+        assert_eq!(
+            resources
+                .get(&first_uri)
+                .expect("first resource")
+                .text()
+                .as_ref(),
+            "first"
+        );
+        assert_eq!(
+            resources
+                .get(&second_uri)
+                .expect("second resource")
+                .text()
+                .as_ref(),
+            "second"
+        );
+    }
+
+    #[test]
     fn invalid_configuration_fails_closed_instead_of_retaining_the_old_plan() {
         let root = TestDirectory::new();
         write_resource_config(&root.0, 1, 8, 8, false);
@@ -1044,6 +1127,92 @@ mod tests {
 
         assert!(resources.get(&document_uri).is_none());
         assert!(resources.input(&document_uri).is_err());
+    }
+
+    #[test]
+    fn later_invalid_configuration_clears_all_previously_committed_state() {
+        let root = TestDirectory::new();
+        let first_project = root.0.join("a");
+        let second_project = root.0.join("b");
+        std::fs::create_dir(&first_project).expect("first project");
+        std::fs::create_dir(&second_project).expect("second project");
+        write_resource_config(&first_project, 1, 8, 8, false);
+        write_resource_config(&second_project, 1, 8, 8, false);
+        let first_path = first_project.join("document.adoc");
+        let second_path = second_project.join("document.adoc");
+        std::fs::write(&first_path, "first").expect("first source");
+        std::fs::write(&second_path, "second").expect("second source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let first_uri = Url::from_file_path(&first_path).expect("first URI");
+        let second_uri = Url::from_file_path(&second_path).expect("second URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("initial workspace");
+
+        std::fs::write(
+            second_project.join(adocweave_config::FILE_NAME),
+            "invalid = true\n",
+        )
+        .expect("invalid second config");
+        resources
+            .load_roots(&[root_uri])
+            .expect_err("later invalid configuration");
+
+        assert!(resources.get(&first_uri).is_none());
+        assert!(resources.get(&second_uri).is_none());
+        assert!(resources.inner.roots().is_empty());
+        assert!(resources.filesystems.is_empty());
+        assert!(resources.project_plans.is_empty());
+        assert!(resources.resource_projects.is_empty());
+        assert!(resources.retained_layers.is_empty());
+    }
+
+    #[test]
+    fn late_workspace_update_failure_rolls_back_the_filesystem_replacement_charge() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 4, 4, false);
+        let first_path = root.0.join("first.adoc");
+        let second_path = root.0.join("second.adoc");
+        std::fs::write(&first_path, "a").expect("first source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let first_uri = Url::from_file_path(&first_path).expect("first URI");
+        let second_uri = Url::from_file_path(&second_path).expect("second URI");
+        let first_id = uri_id(&first_uri).expect("first ID");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("workspace");
+        resources
+            .inner
+            .upsert_disk(first_id, Revision::new(i64::MAX), "a")
+            .expect("force maximum workspace revision");
+        resources.next_disk_version = i64::MAX;
+
+        std::fs::write(&first_path, "bb").expect("replacement source");
+        let error = resources
+            .reload_file(first_uri.clone())
+            .expect_err("stale workspace revision");
+        assert!(error.contains("stale-revision"), "{error}");
+        assert_eq!(
+            resources
+                .get(&first_uri)
+                .expect("unchanged first resource")
+                .text()
+                .as_ref(),
+            "a"
+        );
+
+        std::fs::write(&second_path, "yyy").expect("second source");
+        resources
+            .reload_file(second_uri.clone())
+            .expect("replacement charge was restored");
+        assert_eq!(
+            resources
+                .get(&second_uri)
+                .expect("second resource")
+                .text()
+                .as_ref(),
+            "yyy"
+        );
     }
 
     #[test]

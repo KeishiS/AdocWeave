@@ -7,8 +7,9 @@ mod local_resource;
 mod local_target;
 
 pub use local_resource::{
-    FilesystemReadLimits, FilesystemReadRollback, LoadedFilesystemSource, LocalFilesystemPolicy,
-    LocalFilesystemSession, LogicalSourceId, ResourceBudget, ResourceError,
+    FilesystemReadLimits, FilesystemReadRollback, FilesystemReadRollbackResult,
+    LoadedFilesystemSource, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
+    ResourceBudget, ResourceError,
 };
 pub use local_target::{
     FilesystemRaceResistance, LoadedLocalTarget, LocalTargetError, LocalTargetPolicy,
