@@ -1,5 +1,7 @@
 //! Inline scanner, recognizers, and semantic builders.
 
+mod lowering;
+
 use crate::budget::{BudgetExceeded, ParseBudget};
 pub use crate::inline_model::*;
 use crate::source::{TextRange, TextSize};
@@ -976,81 +978,6 @@ fn index_marker_closers(
     }
 }
 
-fn build_marker(
-    value: &str,
-    range: TextRange,
-    config: InlineParseConfig,
-    depth: usize,
-    token: MarkerToken,
-    budget: &mut ParseBudget,
-) -> Result<BuiltInline, BudgetExceeded> {
-    let MarkerToken {
-        open,
-        close,
-        end,
-        marker,
-        form,
-    } = token;
-    let marker_width = form.width();
-    let node_range = subrange(range, open, end);
-    let content_range = subrange(range, open + marker_width, close);
-    let mut problems = Vec::new();
-    let inline = match marker {
-        '`' => Inline::Literal {
-            kind: InlineLiteralKind::Monospace,
-            range: node_range,
-            content_range,
-            value: value[open + marker_width..close].to_owned(),
-        },
-        '*' | '_' | '#' | '~' | '^' if depth >= config.max_depth => {
-            problems.push(InlineProblem {
-                kind: InlineProblemKind::NestingLimitExceeded,
-                range: node_range,
-            });
-            Inline::Text(InlineText {
-                range: node_range,
-                value: value[open..end].to_owned(),
-            })
-        }
-        '*' | '_' | '#' | '~' | '^' => {
-            let inner = parse_segment(
-                &value[open + marker_width..close],
-                content_range,
-                config,
-                depth + 1,
-                budget,
-            )?;
-            problems.extend(inner.problems);
-            Inline::Styled {
-                style: match marker {
-                    '*' => InlineStyle::Strong,
-                    '_' => InlineStyle::Emphasis,
-                    '#' => InlineStyle::Highlight,
-                    '~' => InlineStyle::Subscript,
-                    '^' => InlineStyle::Superscript,
-                    _ => unreachable!(),
-                },
-                range: node_range,
-                content_range,
-                children: inner.inlines,
-            }
-        }
-        '{' => Inline::AttributeReference {
-            range: node_range,
-            name_range: content_range,
-            name: value[open + marker_width..close].to_owned(),
-            value: None,
-            expansion_error: None,
-        },
-        _ => unreachable!("only supported markers are returned"),
-    };
-    Ok(BuiltInline {
-        inline,
-        end,
-        problems,
-    })
-}
-
 fn valid_attribute_name(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -1560,7 +1487,9 @@ fn lower_inline_token(
 ) -> Result<BuiltInline, BudgetExceeded> {
     match token {
         InlineToken::Macro(token) => build_macro(value, range, config, depth, token, budget),
-        InlineToken::Marker(token) => build_marker(value, range, config, depth, token, budget),
+        InlineToken::Marker(token) => {
+            lowering::lower_marker(value, range, config, depth, token, budget)
+        }
     }
 }
 
@@ -1628,10 +1557,10 @@ fn build_macro(
             })
         }
         MacroToken::Reference(token) => {
-            build_reference_macro(value, range, config, depth, token, budget)
+            lowering::lower_reference(value, range, config, depth, token, budget)
         }
         MacroToken::Link(token) => build_link_macro(value, range, config, depth, token, budget),
-        MacroToken::Standard(token) => Ok(build_standard_macro(value, range, token)),
+        MacroToken::Standard(token) => Ok(lowering::lower_standard_macro(value, range, token)),
         MacroToken::ShorthandAnchor(token) => Ok(build_shorthand_anchor(value, range, token)),
         MacroToken::Email(token) => Ok(build_email(value, range, token)),
     }
@@ -1682,189 +1611,6 @@ fn build_email(value: &str, range: TextRange, token: EmailToken) -> BuiltInline 
     }
 }
 
-fn build_standard_macro(value: &str, range: TextRange, token: StandardMacroToken) -> BuiltInline {
-    let attributes_range = subrange(range, token.bracket + 1, token.close);
-    BuiltInline {
-        inline: Inline::Macro(StandardMacro {
-            kind: token.kind,
-            form: token.form,
-            range: subrange(range, token.open, token.end),
-            target_range: subrange(range, token.target_start, token.bracket),
-            target_source: value[token.target_start..token.bracket].to_owned(),
-            target: value[token.target_start..token.bracket].to_owned(),
-            target_attributes: attribute_uses(
-                &value[token.target_start..token.bracket],
-                subrange(range, token.target_start, token.bracket),
-            ),
-            target_expansion_error: None,
-            attributes_range,
-            attributes: parse_macro_attributes(
-                &value[token.bracket + 1..token.close],
-                attributes_range,
-            ),
-        }),
-        end: token.end,
-        problems: Vec::new(),
-    }
-}
-
-fn parse_macro_attributes(value: &str, range: TextRange) -> Vec<MacroAttribute> {
-    let mut attributes = Vec::new();
-    let mut start = 0;
-    let mut quote = None;
-    for (offset, character) in value
-        .char_indices()
-        .chain(std::iter::once((value.len(), ',')))
-    {
-        if matches!(character, '\'' | '"') {
-            quote = if quote == Some(character) {
-                None
-            } else if quote.is_none() {
-                Some(character)
-            } else {
-                quote
-            };
-        }
-        if character != ',' || quote.is_some() {
-            continue;
-        }
-        let raw = &value[start..offset];
-        let leading = raw.len() - raw.trim_start().len();
-        let trailing = raw.len() - raw.trim_end().len();
-        let item_start = start + leading;
-        let item_end = offset.saturating_sub(trailing);
-        if item_start < item_end {
-            let item = &value[item_start..item_end];
-            let (name, raw_value, raw_value_start) =
-                item.find('=').map_or((None, item, item_start), |equals| {
-                    (
-                        Some(item[..equals].trim().to_owned()),
-                        &item[equals + 1..],
-                        item_start + equals + 1,
-                    )
-                });
-            let value_leading = raw_value.len() - raw_value.trim_start().len();
-            let value_trailing = raw_value.len() - raw_value.trim_end().len();
-            let mut value_start = raw_value_start + value_leading;
-            let mut value_end = item_end.saturating_sub(value_trailing);
-            let mut item_value = &value[value_start..value_end];
-            if item_value.len() >= 2 {
-                let first = item_value.as_bytes()[0];
-                let last = item_value.as_bytes()[item_value.len() - 1];
-                if matches!(first, b'\'' | b'"') && first == last {
-                    value_start += 1;
-                    value_end -= 1;
-                    item_value = &value[value_start..value_end];
-                }
-            }
-            attributes.push(MacroAttribute {
-                range: subrange(range, item_start, item_end),
-                value_range: subrange(range, value_start, value_end),
-                name,
-                value: item_value.to_owned(),
-            });
-        }
-        start = offset + 1;
-    }
-    attributes
-}
-
-fn build_reference_macro(
-    value: &str,
-    range: TextRange,
-    config: InlineParseConfig,
-    depth: usize,
-    token: ReferenceToken,
-    budget: &mut ParseBudget,
-) -> Result<BuiltInline, BudgetExceeded> {
-    budget.consume_reference()?;
-    match token {
-        ReferenceToken::Short {
-            open,
-            target_start,
-            close,
-            end,
-        } => {
-            let target = &value[target_start..close];
-            let (anchor, label) = target
-                .split_once(',')
-                .map_or((target, None), |(anchor, label)| (anchor, Some(label)));
-            let target_range = subrange(range, target_start, target_start + anchor.len());
-            let label_range = label.map(|label| subrange(range, close - label.len(), close));
-            let label_output = label.map(|label| {
-                parse_segment(
-                    label,
-                    label_range.expect("label has range"),
-                    config,
-                    depth + 1,
-                    budget,
-                )
-            });
-            let label_output = label_output.transpose()?;
-            let (label_inlines, problems) = label_output.map_or_else(
-                || (Vec::new(), Vec::new()),
-                |output| (output.inlines, output.problems),
-            );
-            Ok(BuiltInline {
-                inline: Inline::Reference(Reference {
-                    range: subrange(range, open, end),
-                    macro_name_range: None,
-                    target_range,
-                    target_source: anchor.to_owned(),
-                    expanded_target: anchor.to_owned(),
-                    target_attributes: attribute_uses(anchor, target_range),
-                    target_expansion_error: None,
-                    authored_destination: if anchor.is_empty() {
-                        ReferenceDestination::Invalid
-                    } else {
-                        ReferenceDestination::Local {
-                            anchor: anchor.to_owned(),
-                            anchor_range: target_range,
-                        }
-                    },
-                    target: (!anchor.is_empty()).then(|| crate::reference::ReferenceKey::Local {
-                        anchor: anchor.to_owned(),
-                    }),
-                    label_range,
-                    label: label_inlines,
-                }),
-                end,
-                problems,
-            })
-        }
-        ReferenceToken::Xref {
-            open,
-            target_start,
-            bracket,
-            close,
-            end,
-        } => {
-            let target = &value[target_start..bracket];
-            let label_text = &value[bracket + 1..close];
-            let target_range = subrange(range, target_start, bracket);
-            let label_range = subrange(range, bracket + 1, close);
-            let label = parse_segment(label_text, label_range, config, depth + 1, budget)?;
-            Ok(BuiltInline {
-                inline: Inline::Reference(Reference {
-                    range: subrange(range, open, end),
-                    macro_name_range: Some(subrange(range, open, target_start - 1)),
-                    target_range,
-                    target_source: target.to_owned(),
-                    expanded_target: target.to_owned(),
-                    target_attributes: attribute_uses(target, target_range),
-                    target_expansion_error: None,
-                    authored_destination: parse_reference_destination(target, target_range),
-                    target: crate::reference::ReferenceKey::parse(target),
-                    label_range: Some(label_range),
-                    label: label.inlines,
-                }),
-                end,
-                problems: label.problems,
-            })
-        }
-    }
-}
-
 fn build_link_macro(
     value: &str,
     range: TextRange,
@@ -1896,7 +1642,7 @@ fn build_link_macro(
                     range: subrange(range, open, end),
                     macro_name_range: Some(subrange(range, open, target_start - 1)),
                     target_range,
-                    target_attributes: attribute_uses(&target, target_range),
+                    target_attributes: lowering::attribute_uses(&target, target_range),
                     target_expansion_error: None,
                     target_source: target.clone(),
                     target,
@@ -1935,7 +1681,10 @@ fn build_link_macro(
                     target_range,
                     target_source: value[open..target_end].to_owned(),
                     target: value[open..target_end].to_owned(),
-                    target_attributes: attribute_uses(&value[open..target_end], target_range),
+                    target_attributes: lowering::attribute_uses(
+                        &value[open..target_end],
+                        target_range,
+                    ),
                     target_expansion_error: None,
                     label_range,
                     label,
@@ -1943,79 +1692,6 @@ fn build_link_macro(
                 end,
                 problems,
             })
-        }
-    }
-}
-
-fn attribute_uses(value: &str, range: TextRange) -> Vec<AttributeUse> {
-    let mut output = Vec::new();
-    let mut cursor = 0;
-    while let Some(open_relative) = value[cursor..].find('{') {
-        let open = cursor + open_relative;
-        let Some(close_relative) = value[open + 1..].find('}') else {
-            break;
-        };
-        let close = open + 1 + close_relative;
-        let name = &value[open + 1..close];
-        if valid_attribute_name(name) {
-            output.push(AttributeUse {
-                name: name.to_owned(),
-                name_range: subrange(range, open + 1, close),
-            });
-        }
-        cursor = close + 1;
-    }
-    output
-}
-
-fn parse_reference_destination(target: &str, range: TextRange) -> ReferenceDestination {
-    if let Some(anchor) = target.strip_prefix('#') {
-        return if anchor.is_empty() {
-            ReferenceDestination::Invalid
-        } else {
-            ReferenceDestination::Local {
-                anchor: anchor.to_owned(),
-                anchor_range: subrange(range, 1, target.len()),
-            }
-        };
-    }
-    if let Some(colon) = target.find(':') {
-        let scheme = &target[..colon];
-        if scheme.bytes().enumerate().all(|(index, byte)| {
-            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'+' | b'-' | b'.'))
-        }) {
-            let remainder = &target[colon + 1..];
-            let (locator, anchor) = remainder
-                .split_once('#')
-                .map_or((remainder, None), |(locator, anchor)| {
-                    (locator, Some(anchor))
-                });
-            let locator_start = colon + 1;
-            return ReferenceDestination::Scheme {
-                scheme: scheme.to_ascii_lowercase(),
-                scheme_range: subrange(range, 0, colon),
-                locator: locator.to_owned(),
-                locator_range: subrange(range, locator_start, locator_start + locator.len()),
-                anchor: anchor.map(str::to_owned),
-                anchor_range: anchor
-                    .map(|anchor| subrange(range, target.len() - anchor.len(), target.len())),
-            };
-        }
-    }
-    let (document, anchor) = target
-        .split_once('#')
-        .map_or((target, None), |(document, anchor)| {
-            (document, Some(anchor))
-        });
-    if document.is_empty() {
-        ReferenceDestination::Invalid
-    } else {
-        ReferenceDestination::Document {
-            document: document.to_owned(),
-            document_range: subrange(range, 0, document.len()),
-            anchor: anchor.map(str::to_owned),
-            anchor_range: anchor
-                .map(|anchor| subrange(range, target.len() - anchor.len(), target.len())),
         }
     }
 }
@@ -2557,6 +2233,68 @@ mod tests {
                 kind: InlineProblemKind::UnclosedEmphasis,
             }
         );
+    }
+
+    #[test]
+    fn selected_semantic_lowering_is_isolated_from_recognition() {
+        const RECOGNITION: &str = include_str!("inline.rs");
+        const LOWERING: &str = include_str!("inline/lowering.rs");
+
+        for function in ["lower_marker", "lower_reference", "lower_standard_macro"] {
+            assert!(LOWERING.contains(&format!("fn {function}(")));
+            assert!(RECOGNITION.contains(&format!("lowering::{function}(")));
+        }
+        for constructor in ["Inline::Styled", "Inline::Reference", "Inline::Macro"] {
+            assert!(LOWERING.contains(constructor));
+        }
+        for recognition_detail in [
+            "fn recognize_",
+            "InlineRecognition",
+            "InlineCandidateIndex",
+            "DelimiterIndex",
+        ] {
+            assert!(!LOWERING.contains(recognition_detail));
+        }
+        for old_builder in ["marker", "reference_macro", "standard_macro"] {
+            assert!(!RECOGNITION.contains(&format!("fn build_{old_builder}(")));
+        }
+    }
+
+    #[test]
+    fn marker_reference_and_macro_lowering_preserve_utf8_ranges_deterministically() {
+        fn source_slice<'a>(source: &'a str, base: usize, inline: &Inline) -> &'a str {
+            let range = inline.range();
+            let start = range.start().to_usize() - base;
+            let end = range.end().to_usize() - base;
+            assert!(start < end && end <= source.len());
+            assert!(source.is_char_boundary(start));
+            assert!(source.is_char_boundary(end));
+            &source[start..end]
+        }
+
+        for fragment in ["a", "日本", "😀", "a-b_1", "é"] {
+            let marker = format!("*{fragment}*");
+            let reference = format!("xref:doc#{fragment}[_{fragment}_]");
+            let macro_source = format!("image:{fragment}.png[Alt,{fragment}]");
+            let source = format!("{marker} {reference} {macro_source}");
+            let base = 7;
+            let source_range = range(base, base + source.len());
+            let first = parse(&source, source_range, InlineParseConfig::default());
+            let second = parse(&source, source_range, InlineParseConfig::default());
+
+            assert_eq!(first, second);
+            assert!(first.problems.is_empty(), "{source:?}");
+            assert_eq!(first.inlines.len(), 5);
+            assert!(matches!(first.inlines[0], Inline::Styled { .. }));
+            assert!(matches!(first.inlines[2], Inline::Reference(_)));
+            assert!(matches!(first.inlines[4], Inline::Macro(_)));
+            assert_eq!(source_slice(&source, base, &first.inlines[0]), marker);
+            assert_eq!(source_slice(&source, base, &first.inlines[2]), reference);
+            assert_eq!(source_slice(&source, base, &first.inlines[4]), macro_source);
+            for inline in &first.inlines {
+                let _ = source_slice(&source, base, inline);
+            }
+        }
     }
 
     #[test]
