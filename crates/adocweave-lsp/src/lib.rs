@@ -2,6 +2,7 @@
 
 mod backend;
 mod document_symbols;
+mod hover;
 mod lifecycle;
 mod position;
 mod semantic_tokens;

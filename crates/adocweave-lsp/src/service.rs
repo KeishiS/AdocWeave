@@ -7,16 +7,13 @@ use adocweave::output::diagnostics::{Applicability, RuleSettings, Severity, lint
 use adocweave::output::formatter;
 use adocweave::output::projection::project;
 use adocweave::resolution::ReferenceKey;
-use adocweave::semantic as parser;
-use adocweave::semantic::{
-    DocumentElement, document_element_at, generate_heading_ids, source_language_candidates,
-};
-use adocweave::semantic::{Inline, MathLanguage};
-use adocweave::text::{SourceDocument, TextRange as CoreTextRange};
+use adocweave::semantic::{DocumentElement, document_element_at, source_language_candidates};
+use adocweave::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
 use crate::document_symbols::SymbolPresentation;
+use crate::hover::HoverPresentation;
 use crate::position::{
     PositionEncoding, cursor_touches_range, negotiate_encoding, range_contains_offset,
     range_to_lsp, ranges_intersect, request_offset,
@@ -28,14 +25,6 @@ use crate::state::{
 };
 use crate::workspace::WorkspaceResources;
 use crate::{SERVER_NAME, VERSION};
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum HoverPresentation {
-    #[default]
-    Legacy,
-    Markdown,
-    PlainText,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ClientProfile {
@@ -1068,174 +1057,13 @@ impl LanguageService {
             position,
             self.position_encoding,
         )?;
-        if let Some(attribute) = document
-            .analysis
-            .document_attribute_occurrences()
-            .iter()
-            .find(|attribute| range_contains_offset(attribute.range, offset))
-        {
-            return make_hover(
-                format!(
-                    "**document attribute**  \nName: `{}`\n\nSource value:\n\n    {}\n\nFolded value:\n\n    {}",
-                    attribute.name,
-                    attribute.value.source_text.replace('\n', "\n    "),
-                    attribute.value.folded_text.replace('\n', "\n    ")
-                ),
-                attribute.range,
-                &document,
-                self.position_encoding,
-                self.client.hover,
-            );
-        }
-        for workspace in self.documents.workspace_analyses() {
-            if let Some((reference, origin)) =
-                projected_attribute_reference_at(workspace, uri, offset)
-            {
-                return make_hover(
-                    attribute_reference_hover(reference),
-                    origin.range.text_range(),
-                    &document,
-                    self.position_encoding,
-                    self.client.hover,
-                );
-            }
-        }
-        if let Some(reference) = document
-            .analysis
-            .attribute_references()
-            .iter()
-            .find(|reference| range_contains_offset(reference.range, offset))
-        {
-            return make_hover(
-                attribute_reference_hover(reference),
-                reference.range,
-                &document,
-                self.position_encoding,
-                self.client.hover,
-            );
-        }
-        if let Some(target) = document.analysis.reference_targets().iter().find(|target| {
-            range_contains_offset(target.id_range, offset)
-                && !document.analysis.document().blocks().iter().any(|block| {
-                    matches!(
-                        block,
-                        parser::Block::Heading(heading)
-                            if heading.text_range == target.id_range
-                    )
-                })
-        }) {
-            return make_hover(
-                format!("**reference target**  \nID: `{}`", target.id),
-                target.id_range,
-                &document,
-                self.position_encoding,
-                self.client.hover,
-            );
-        }
-        if let Some((value, range)) = inline_hover(document.analysis.document(), offset) {
-            return make_hover(
-                value,
-                range,
-                &document,
-                self.position_encoding,
-                self.client.hover,
-            );
-        }
-        if let Some((value, range)) = block_presentation_hover(document.analysis.document(), offset)
-        {
-            return make_hover(
-                value,
-                range,
-                &document,
-                self.position_encoding,
-                self.client.hover,
-            );
-        }
-        for author in &document.analysis.document().header().authors {
-            if range_contains_offset(author.range, offset) {
-                let value = author.email.as_ref().map_or_else(
-                    || format!("**author**  \nName: `{}`", author.name),
-                    |email| format!("**author**  \nName: `{}`  \nEmail: `{email}`", author.name),
-                );
-                return make_hover(
-                    value,
-                    author.range,
-                    &document,
-                    self.position_encoding,
-                    self.client.hover,
-                );
-            }
-        }
-        if let Some(revision) = &document.analysis.document().header().revision
-            && range_contains_offset(revision.range, offset)
-        {
-            return make_hover(
-                "**document revision**".to_owned(),
-                revision.range,
-                &document,
-                self.position_encoding,
-                self.client.hover,
-            );
-        }
-        let Some(element) = document_element_at(document.analysis.document(), offset) else {
-            return Ok(None);
-        };
-        let metadata_hover = match element {
-            DocumentElement::MetadataTitle(value) => {
-                Some(("block title", value.value.as_str(), value.range))
-            }
-            DocumentElement::MetadataId(value) => {
-                Some(("block ID", value.value.as_str(), value.range))
-            }
-            DocumentElement::MetadataRole(value) => {
-                Some(("block role", value.value.as_str(), value.range))
-            }
-            DocumentElement::MetadataOption(value) => {
-                Some(("block option", value.value.as_str(), value.range))
-            }
-            DocumentElement::ElementAttribute(attribute) => Some((
-                attribute.name.as_deref().unwrap_or("positional attribute"),
-                attribute.value.as_str(),
-                attribute.range,
-            )),
-            _ => None,
-        };
-        if let Some((kind, value, range)) = metadata_hover {
-            return make_hover(
-                format!("**{kind}**  \nValue: `{value}`"),
-                range,
-                &document,
-                self.position_encoding,
-                self.client.hover,
-            );
-        }
-        let (heading, range, part) = match element {
-            DocumentElement::HeadingMarker(heading) => (heading, heading.marker_range, "marker"),
-            DocumentElement::HeadingText(heading) => (heading, heading.text_range, "text"),
-            DocumentElement::SourceLanguage(_) | DocumentElement::SourceAttribute(_) => {
-                return Ok(None);
-            }
-            DocumentElement::MetadataTitle(_)
-            | DocumentElement::MetadataId(_)
-            | DocumentElement::MetadataRole(_)
-            | DocumentElement::MetadataOption(_)
-            | DocumentElement::ElementAttribute(_) => unreachable!(),
-        };
-        let id = generate_heading_ids(document.analysis.document())
-            .iter()
-            .find(|candidate| candidate.range == heading.text_range)
-            .map(|candidate| candidate.id.clone())
-            .unwrap_or_else(|| "_section".to_owned());
-        let level = match heading.kind {
-            parser::HeadingKind::DocumentTitle => "document title".to_owned(),
-            parser::HeadingKind::Part => "book part".to_owned(),
-            parser::HeadingKind::Section { level } => format!("section level {level}"),
-            parser::HeadingKind::Discrete { level } => format!("discrete heading level {level}"),
-        };
-        make_hover(
-            format!("**{level}**  \nGenerated ID: `{id}`  \nPart: {part}"),
-            range,
-            &document,
+        crate::hover::hover(
+            &document.analysis,
+            uri,
+            offset,
+            self.documents
+                .workspace_analyses()
+                .map(|workspace| workspace.projection.as_ref()),
             self.position_encoding,
             self.client.hover,
         )
@@ -1977,36 +1805,6 @@ impl LanguageService {
     }
 }
 
-fn make_hover(
-    value: String,
-    range: CoreTextRange,
-    document: &DocumentSnapshot,
-    encoding: PositionEncoding,
-    presentation: HoverPresentation,
-) -> Result<Option<lsp::Hover>, String> {
-    let contents = match presentation {
-        HoverPresentation::Markdown => lsp::HoverContents::Markup(lsp::MarkupContent {
-            kind: lsp::MarkupKind::Markdown,
-            value,
-        }),
-        HoverPresentation::PlainText => lsp::HoverContents::Markup(lsp::MarkupContent {
-            kind: lsp::MarkupKind::PlainText,
-            value: hover_plain_text(&value),
-        }),
-        HoverPresentation::Legacy => {
-            lsp::HoverContents::Scalar(lsp::MarkedString::String(hover_plain_text(&value)))
-        }
-    };
-    Ok(Some(lsp::Hover {
-        contents,
-        range: Some(range_to_lsp(
-            range,
-            document.analysis.source_document(),
-            encoding,
-        )?),
-    }))
-}
-
 fn code_action_kind_requested(
     only: Option<&[lsp::CodeActionKind]>,
     offered: &lsp::CodeActionKind,
@@ -2020,36 +1818,6 @@ fn code_action_kind_requested(
                     .is_some_and(|suffix| suffix.starts_with('.'))
         })
     })
-}
-
-fn hover_plain_text(markdown: &str) -> String {
-    markdown
-        .replace("  \n", "\n")
-        .replace("**", "")
-        .replace('`', "")
-}
-
-fn attribute_reference_hover(reference: &adocweave::semantic::AttributeReference) -> String {
-    match &reference.value {
-        Ok(Some(value)) => format!(
-            "**attribute reference**  \nName: `{}`  \nValue: `{}`",
-            reference.name, value
-        ),
-        Ok(None) => format!(
-            "**attribute reference**  \nName: `{}`  \nValue: _unset_",
-            reference.name
-        ),
-        Err(error) => format!(
-            "**attribute reference**  \nName: `{}`  \nResolution: `{}`",
-            reference.name,
-            match error {
-                adocweave::semantic::AttributeExpansionError::Undefined => "undefined",
-                adocweave::semantic::AttributeExpansionError::Cycle => "cycle",
-                adocweave::semantic::AttributeExpansionError::DepthLimitExceeded => "depth limit",
-                adocweave::semantic::AttributeExpansionError::SizeLimitExceeded => "size limit",
-            }
-        ),
-    }
 }
 
 fn projected_attribute_reference_at<'a>(
@@ -2157,146 +1925,6 @@ fn attribute_completion_context(source: &str, offset: usize) -> bool {
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
     })
-}
-
-fn inline_hover(
-    document: &adocweave::semantic::Document,
-    offset: u32,
-) -> Option<(String, CoreTextRange)> {
-    let mut found = None;
-    adocweave::semantic::walk(document, |node| {
-        let adocweave::semantic::SemanticNode::Inline(inline) = node else {
-            return;
-        };
-        if range_contains_offset(inline.range(), offset) {
-            let value = match inline {
-                Inline::Link(link) => {
-                    Some(format!("**external link**  \nTarget: `{}`", link.target))
-                }
-                Inline::Reference(reference) => Some(format!(
-                    "**cross reference**  \nTarget: `{}`",
-                    reference.target_source
-                )),
-                Inline::Formula(formula) => Some(format!(
-                    "**{} formula**  \nContent: `{}`",
-                    match formula.language {
-                        MathLanguage::Latex => "LaTeX",
-                        MathLanguage::Typst => "Typst",
-                    },
-                    formula.value
-                )),
-                Inline::AttributeReference { name, .. } => {
-                    Some(format!("**attribute reference**  \nName: `{name}`"))
-                }
-                Inline::Passthrough { value, .. } => {
-                    Some(format!("**passthrough**  \nLiteral content: `{value}`"))
-                }
-                Inline::Macro(node) => match node.kind {
-                    adocweave::semantic::StandardMacroKind::Footnote => document
-                        .catalogs()
-                        .footnote_occurrence(node.range)
-                        .map(|(footnote, _)| {
-                            format!(
-                                "**footnote {}**  \nID: `{}`  \nText: `{}`",
-                                footnote.number,
-                                footnote.id.as_deref().unwrap_or("anonymous"),
-                                footnote.text
-                            )
-                        }),
-                    adocweave::semantic::StandardMacroKind::BibliographyAnchor => document
-                        .catalogs()
-                        .bibliography()
-                        .iter()
-                        .find(|entry| entry.definition_range == node.range)
-                        .map(|entry| {
-                            format!(
-                                "**bibliography entry**  \nID: `{}`  \nReferences: {}",
-                                entry.id,
-                                entry.references.len()
-                            )
-                        }),
-                    adocweave::semantic::StandardMacroKind::IndexTerm => document
-                        .catalogs()
-                        .index()
-                        .iter()
-                        .find(|entry| entry.occurrences.contains(&node.range))
-                        .map(|entry| {
-                            format!("**index term**  \nPath: `{}`", entry.terms.join(" > "))
-                        }),
-                    _ => Some(format!(
-                        "**{:?} macro**  \nTarget: `{}`",
-                        node.kind, node.target
-                    )),
-                },
-                Inline::Text(_)
-                | Inline::Literal { .. }
-                | Inline::Styled { .. }
-                | Inline::HardBreak { .. } => None,
-            };
-            if let Some(value) = value {
-                found = Some((value, inline.range()));
-            }
-        }
-    });
-    found
-}
-
-fn block_presentation_hover(
-    document: &adocweave::semantic::Document,
-    offset: u32,
-) -> Option<(String, CoreTextRange)> {
-    let mut found = None;
-    adocweave::semantic::walk(document, |node| {
-        let adocweave::semantic::SemanticNode::Block(block) = node else {
-            return;
-        };
-        match block {
-            parser::Block::Paragraph(value)
-                if value
-                    .admonition
-                    .as_ref()
-                    .is_some_and(|item| range_contains_offset(item.label_range, offset)) =>
-            {
-                let item = value.admonition.as_ref().expect("guarded admonition");
-                found = Some((
-                    format!("**{} admonition**", item.kind.label()),
-                    item.label_range,
-                ));
-            }
-            parser::Block::Delimited(value) => match &value.presentation {
-                Some(parser::DelimitedPresentation::Admonition(item))
-                    if range_contains_offset(item.label_range, offset) =>
-                {
-                    found = Some((
-                        format!("**{} admonition**", item.kind.label()),
-                        item.label_range,
-                    ));
-                }
-                Some(parser::DelimitedPresentation::Quote(item))
-                    if range_contains_offset(
-                        value.metadata.range.unwrap_or(value.range),
-                        offset,
-                    ) =>
-                {
-                    let kind = match item.kind {
-                        parser::QuoteKind::Quote => "quote",
-                        parser::QuoteKind::Verse => "verse",
-                    };
-                    found = Some((
-                        format!(
-                            "**{kind} block**  \nAttribution: `{}`  \nCitation: `{}`",
-                            item.attribution.as_ref().map_or("", |value| &value.value),
-                            item.citation.as_ref().map_or("", |value| &value.value)
-                        ),
-                        value.metadata.range.unwrap_or(value.range),
-                    ));
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    });
-    found
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
