@@ -888,6 +888,61 @@ struct PreviewBuildRequest<'request> {
     css: &'request [CssArgument],
 }
 
+struct IncludePreparation<'request> {
+    source: &'request str,
+    source_id: String,
+    base_dir: &'request Path,
+    source_base: &'request Path,
+    project_root: Option<&'request Path>,
+    allowed_roots: &'request [PathBuf],
+    limits: adocweave_host::ResourceLimits,
+    preprocess: &'request adocweave::preprocess::PreprocessOptions,
+}
+
+struct PreviewDependencyObserver<'dependencies> {
+    dependencies: &'dependencies mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
+}
+
+impl local_include::DependencyObserver for PreviewDependencyObserver<'_> {
+    fn observe_path(&mut self, path: &Path) {
+        self.dependencies
+            .entry(path.to_owned())
+            .or_insert_with(|| preview::Fingerprint::read(path));
+    }
+
+    fn observe_loaded(&mut self, path: &Path, source: &str) {
+        self.dependencies.insert(
+            path.to_owned(),
+            preview::Fingerprint::from_loaded_bytes(path, source.as_bytes()),
+        );
+    }
+}
+
+fn prepare_includes(
+    request: IncludePreparation<'_>,
+) -> Result<local_include::PreparedInput, local_include::LocalIncludeError> {
+    if let Some(project_root) = request.project_root {
+        local_include::prepare_local(
+            request.source,
+            request.source_id,
+            request.base_dir,
+            request.source_base,
+            project_root,
+            request.limits,
+            request.preprocess,
+        )
+    } else {
+        local_include::prepare(
+            request.source,
+            Some(request.source_id),
+            request.base_dir,
+            request.allowed_roots,
+            request.limits,
+            request.preprocess,
+        )
+    }
+}
+
 fn preview_build(
     request: PreviewBuildRequest<'_>,
     cancellation: &adocweave::CancellationToken,
@@ -911,31 +966,24 @@ fn preview_build(
     dependencies.insert(input_path.to_owned(), input_fingerprint);
 
     let (processed, include_diagnostics) = if include {
-        let mut observed_dependencies = std::collections::BTreeSet::new();
-        let prepared = local_include::prepare_local_tracking(
-            source,
-            source_id,
-            base_dir,
-            base_dir,
-            project_root,
-            project.resources.limits,
-            &project.preprocess,
-            &mut observed_dependencies,
-        );
-        for path in observed_dependencies {
-            dependencies
-                .entry(path.clone())
-                .or_insert_with(|| preview::Fingerprint::read(&path));
-        }
+        let prepared = {
+            let mut observer = PreviewDependencyObserver { dependencies };
+            local_include::prepare_local_tracking(
+                source,
+                source_id,
+                base_dir,
+                base_dir,
+                project_root,
+                project.resources.limits,
+                &project.preprocess,
+                &mut observer,
+            )
+        };
         let prepared = prepared.map_err(CliError::Include)?;
-        dependencies.extend(prepared.dependency_snapshots);
-        for path in prepared.dependency_paths {
-            dependencies
-                .entry(path.clone())
-                .or_insert_with(|| preview::Fingerprint::read(&path));
-        }
         let include_diagnostics = prepared
-            .include_errors
+            .validation()
+            .expect("local preparation has validation context")
+            .include_errors()
             .iter()
             .map(|(target, error)| {
                 serde_json::json!({
@@ -945,7 +993,10 @@ fn preview_build(
                 })
             })
             .collect::<Vec<_>>();
-        (prepared.document.source.to_string(), include_diagnostics)
+        (
+            prepared.projection().document().source.to_string(),
+            include_diagnostics,
+        )
     } else {
         (source.to_owned(), Vec::new())
     };
@@ -1642,26 +1693,16 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     } else {
                         &arguments.allowed_roots
                     };
-                    let mut prepared = if let Some(root) = &project_root {
-                        local_include::prepare_local(
-                            source,
-                            source_id.to_string(),
-                            base_dir,
-                            &source_base,
-                            root,
-                            config.resources.limits,
-                            &config.preprocess,
-                        )
-                    } else {
-                        local_include::prepare(
-                            source,
-                            Some(source_id.to_string()),
-                            base_dir,
-                            allowed_roots,
-                            config.resources.limits,
-                            &config.preprocess,
-                        )
-                    }
+                    let mut prepared = prepare_includes(IncludePreparation {
+                        source,
+                        source_id: source_id.to_string(),
+                        base_dir,
+                        source_base: &source_base,
+                        project_root: project_root.as_deref(),
+                        allowed_roots,
+                        limits: config.resources.limits,
+                        preprocess: &config.preprocess,
+                    })
                     .map_err(CliError::Include)?;
                     check_preprocessed(&mut prepared, check, &config.analysis)
                         .map_err(CliError::Include)?
@@ -2025,35 +2066,30 @@ fn run() -> Result<ExitCode, CliError> {
                     || "<stdin>".to_owned(),
                     |path| path.to_string_lossy().into_owned(),
                 );
-                let include_input = if let Some(project_root) = &project_root {
-                    let source_base = local_context
-                        .as_ref()
-                        .map(|(base, _, _)| base.as_path())
-                        .unwrap_or(&base_dir);
-                    local_include::prepare_local(
-                        source,
-                        source_id,
-                        &base_dir,
-                        source_base,
-                        project_root,
-                        project_config.resources.limits,
-                        &project_config.preprocess,
-                    )
-                } else {
-                    local_include::prepare(
-                        source,
-                        Some(source_id),
-                        &base_dir,
-                        &allowed_roots,
-                        project_config.resources.limits,
-                        &project_config.preprocess,
-                    )
-                }
+                let source_base = local_context
+                    .as_ref()
+                    .map(|(base, _, _)| base.as_path())
+                    .unwrap_or(&base_dir);
+                let include_input = prepare_includes(IncludePreparation {
+                    source,
+                    source_id,
+                    base_dir: &base_dir,
+                    source_base,
+                    project_root: project_root.as_deref(),
+                    allowed_roots: &allowed_roots,
+                    limits: project_config.resources.limits,
+                    preprocess: &project_config.preprocess,
+                })
                 .map_err(CliError::Include)?;
                 let processed = if operation == Operation::Format {
                     input.clone()
                 } else {
-                    include_input.document.source.as_bytes().to_vec()
+                    include_input
+                        .projection()
+                        .document()
+                        .source
+                        .as_bytes()
+                        .to_vec()
                 };
                 prepared = Some(include_input);
                 processed
@@ -2139,21 +2175,22 @@ fn check_preprocessed(
     check: &CheckOptions,
     analysis_options: &AnalysisOptions,
 ) -> Result<CheckOutcome, local_include::LocalIncludeError> {
+    let (projection, mut validation) = prepared.projection_and_validation_mut();
     let engine = adocweave::Engine::new(check_analysis_options(
         analysis_options,
         &check.enabled_rules,
     ));
     let analysis = engine
-        .analyze(&prepared.document.source)
+        .analyze(&projection.document().source)
         .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
     let projected = PreprocessedAnalysis {
-        document: prepared.document.clone(),
+        document: projection.document().clone(),
         analysis,
     }
     .project_origins(ProjectionLimits::default())
     .map_err(|error| local_include::LocalIncludeError::Analysis(error.to_string()))?;
     let mut host = Vec::new();
-    if let Some(session) = prepared.local_session.as_mut() {
+    if let Some(validation) = validation.as_mut() {
         for target in &projected.local_targets {
             for origin in &target.target_origins {
                 let source_id = origin
@@ -2173,19 +2210,19 @@ fn check_preprocessed(
                     })
                     .flatten();
                 let base = if directive.is_some() {
-                    prepared.include_bases.get(source_id)
+                    projection.include_base(source_id)
                 } else {
-                    prepared.source_bases.get(source_id)
+                    projection.source_base(source_id)
                 }
                 .ok_or_else(|| {
                     local_include::LocalIncludeError::MissingSource(source_id.to_owned())
                 })?;
                 let optional = directive.is_some_and(|directive| directive.optional);
-                let source = prepared.sources.get(source_id).ok_or_else(|| {
+                let source = projection.source(source_id).ok_or_else(|| {
                     local_include::LocalIncludeError::MissingSource(source_id.to_owned())
                 })?;
                 if let Some(error) =
-                    directive.and_then(|directive| prepared.include_errors.get(&directive.target))
+                    directive.and_then(|directive| validation.include_error(&directive.target))
                 {
                     if optional && matches!(error, adocweave_host::LocalTargetError::Missing(_)) {
                         continue;
@@ -2200,7 +2237,7 @@ fn check_preprocessed(
                     continue;
                 }
                 if optional && target.value.syntax == adocweave::LocalTargetSyntax::Candidate {
-                    match session.inspect(base, &target.value.path) {
+                    match validation.session_mut().inspect(base, &target.value.path) {
                         Ok(_) | Err(adocweave_host::LocalTargetError::Missing(_)) => continue,
                         Err(_) => {}
                     }
@@ -2212,7 +2249,7 @@ fn check_preprocessed(
                     base,
                     source_id,
                     source,
-                    session,
+                    validation.session_mut(),
                 ));
             }
         }
@@ -2277,7 +2314,7 @@ fn check_preprocessed(
                     .source_id
                     .as_ref()
                     .map_or("<unknown>", adocweave::SourceId::as_str);
-                let source = prepared.sources.get(source_id).ok_or_else(|| {
+                let source = projection.source(source_id).ok_or_else(|| {
                     local_include::LocalIncludeError::MissingSource(source_id.to_owned())
                 })?;
                 let index = SourceDocument::new(source)
@@ -2334,7 +2371,7 @@ fn check_preprocessed(
                 .source_id
                 .as_ref()
                 .map_or("<unknown>", adocweave::SourceId::as_str);
-            let source = prepared.sources.get(source_id).ok_or_else(|| {
+            let source = projection.source(source_id).ok_or_else(|| {
                 local_include::LocalIncludeError::MissingSource(source_id.to_owned())
             })?;
             let index =
@@ -2379,7 +2416,7 @@ fn check_preprocessed(
             ));
             continue;
         }
-        let source = prepared.sources.get(&diagnostic.source_id).ok_or_else(|| {
+        let source = projection.source(&diagnostic.source_id).ok_or_else(|| {
             local_include::LocalIncludeError::MissingSource(diagnostic.source_id.clone())
         })?;
         output.push_str(
@@ -2409,8 +2446,9 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         Action, CommandOptions, CssArgument, DiagnosticFormat, Operation, PreviewBuildRequest,
-        parse_arguments, preview_build,
+        PreviewDependencyObserver, parse_arguments, preview_build,
     };
+    use crate::local_include::DependencyObserver;
 
     fn arguments(values: &[&str]) -> impl Iterator<Item = String> {
         values.iter().map(ToString::to_string)
@@ -2442,6 +2480,27 @@ mod tests {
 
         assert!(result.is_err());
         assert!(dependencies.contains_key(&include));
+    }
+
+    #[test]
+    fn preview_observer_records_the_loaded_snapshot() {
+        let root = tempfile::tempdir().expect("project root");
+        let include = root.path().join("part.adoc");
+        std::fs::write(&include, "first snapshot\n").expect("include");
+        let mut dependencies = std::collections::BTreeMap::new();
+
+        PreviewDependencyObserver {
+            dependencies: &mut dependencies,
+        }
+        .observe_loaded(&include, "first snapshot\n");
+        let observed = dependencies.get(&include).expect("observed fingerprint");
+        assert_eq!(
+            observed,
+            &crate::preview::Fingerprint::from_loaded_bytes(&include, b"first snapshot\n")
+        );
+
+        std::fs::write(&include, "second snapshot\n").expect("updated include");
+        assert_ne!(observed, &crate::preview::Fingerprint::read(&include));
     }
 
     #[test]
