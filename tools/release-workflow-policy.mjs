@@ -113,7 +113,16 @@ export function validatePinnedActions(workflows) {
   }
 }
 
-export function validateReleaseWorkflowPolicy({ release, publish, contract, smoke, dist, makefile }) {
+export function validateReleaseWorkflowPolicy({
+  release,
+  publish,
+  contract,
+  smoke,
+  dist,
+  makefile,
+  windowsDistBootstrap,
+  windowsDistInstaller,
+}) {
   const releaseDoc = parseWorkflow("release.yml", release);
   const publishDoc = parseWorkflow("release-publish.yml", publish);
   const contractDoc = parseWorkflow("quality.yml", contract);
@@ -227,8 +236,65 @@ export function validateReleaseWorkflowPolicy({ release, publish, contract, smok
   "fixed Windows toolchain step is missing").run;
   requireCommand(windowsVersions, "release-manifest.json", "Windows Rust must use the release manifest");
   requireCommand(windowsVersions, "distribution-plan.json", "Windows cargo-dist must use the distribution plan");
-  requireCommand(windowsVersions, 'cargo install cargo-dist --version "=$distVersion" --locked', "Windows cargo-dist must use an exact locked source installation");
-  requireCommand(windowsVersions, "dist --version", "Windows cargo-dist must be verified before use");
+  requireCommand(windowsVersions, "./tools/install-pinned-cargo-dist.ps1", "Windows cargo-dist must use the reviewed bootstrap");
+  requireCommand(windowsVersions, "-DownloadTimeoutSeconds 60", "Windows cargo-dist download must have a timeout");
+  requireCommand(windowsVersions, "-ExtractionTimeoutSeconds 30", "Windows cargo-dist extraction must have a timeout");
+  requireCommand(windowsVersions, 'Join-Path $distDirectory "dist.exe"', "Windows cargo-dist must be verified before use");
+  if (windowsDistBootstrap.schemaVersion !== 1 ||
+      windowsDistBootstrap.version !== "0.32.0" ||
+      windowsDistBootstrap.asset !== "cargo-dist-x86_64-pc-windows-msvc.zip" ||
+      windowsDistBootstrap.url !==
+        "https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-x86_64-pc-windows-msvc.zip" ||
+      windowsDistBootstrap.sha256 !==
+        "26e845cabff12a92911ce960af73a86c8f9b2b2d9072b01dfe5b662acf044fa3" ||
+      windowsDistBootstrap.executable !== "dist.exe" ||
+      JSON.stringify(windowsDistBootstrap.archiveEntries) !== JSON.stringify([
+        "CHANGELOG.md",
+        "dist.exe",
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "README.md",
+      ])) {
+    fail("Windows cargo-dist bootstrap must exactly pin the reviewed release asset");
+  }
+  for (const [value, message] of [
+    ["Invoke-WebRequest", "Windows cargo-dist bootstrap must use the bounded direct download"],
+    ["-MaximumRedirection 5", "Windows cargo-dist bootstrap must bound redirects"],
+    ["-TimeoutSec $DownloadTimeoutSeconds", "Windows cargo-dist bootstrap must bound the download"],
+    ["Get-FileHash -LiteralPath $archivePath -Algorithm SHA256", "Windows cargo-dist bootstrap must verify SHA-256"],
+    ['$actualHash -cne $config.sha256', "Windows cargo-dist bootstrap must reject a checksum mismatch"],
+    ["Compare-Object -CaseSensitive $actualEntries $expectedEntries", "Windows cargo-dist bootstrap must reject extra archive entries"],
+    ["GetFileName($entryName) -cne $entryName", "Windows cargo-dist bootstrap must reject archive paths"],
+    ['$archive.GetEntry($config.executable)', "Windows cargo-dist bootstrap must select only the expected executable"],
+    ["CopyToAsync($output, 81920, $cancellation.Token)", "Windows cargo-dist bootstrap must bound extraction"],
+    ["Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force", "Windows cargo-dist bootstrap must clean its temporary directory"],
+  ]) {
+    requireCommand(windowsDistInstaller, value, message);
+  }
+  const checksumVerification = windowsDistInstaller.indexOf(
+    '$actualHash -cne $config.sha256',
+  );
+  const archiveOpening = windowsDistInstaller.indexOf(
+    "[IO.Compression.ZipFile]::OpenRead($archivePath)",
+  );
+  const entryValidation = windowsDistInstaller.indexOf(
+    "Compare-Object -CaseSensitive $actualEntries $expectedEntries",
+  );
+  const executableExtraction = windowsDistInstaller.indexOf(
+    "$archive.GetEntry($config.executable)",
+  );
+  if (checksumVerification < 0 || archiveOpening <= checksumVerification ||
+      entryValidation <= archiveOpening || executableExtraction <= entryValidation) {
+    fail("Windows cargo-dist bootstrap must verify hash and entries before extraction");
+  }
+  if ((windowsDistInstaller.match(/Invoke-WebRequest/g) ?? []).length !== 1 ||
+      /Invoke-Expression|\biex\b|Start-Process|cargo\s+install/.test(windowsDistInstaller)) {
+    fail("Windows cargo-dist bootstrap must not execute an installer or registry build");
+  }
+  if (release.includes("cargo install cargo-dist") ||
+      release.includes("cargo-dist-installer.ps1")) {
+    fail("Windows cargo-dist must not use a registry build or network installer");
+  }
   if (workflowUses(releaseDoc).some(({ value }) => value.startsWith("actions/cache/")) ||
       release.includes("target/cargo-dist-bin")) {
     fail("release workflow must not cache executable build tools");
@@ -429,6 +495,8 @@ export function loadWorkflowPolicyInputs() {
     dist: read("dist-workspace.toml"),
     makefile: read("Makefile.toml"),
     plan: JSON.parse(read("release/distribution-plan.json")),
+    windowsDistBootstrap: JSON.parse(read("release/windows-dist-bootstrap.json")),
+    windowsDistInstaller: read("tools/install-pinned-cargo-dist.ps1"),
   };
 }
 
