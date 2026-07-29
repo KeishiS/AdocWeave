@@ -3,6 +3,7 @@
 mod backend;
 mod lifecycle;
 mod position;
+mod semantic_tokens;
 mod service;
 mod state;
 mod workspace;

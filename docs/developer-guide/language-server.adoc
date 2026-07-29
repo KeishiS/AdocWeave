@@ -278,6 +278,10 @@ Renameはhost indexが結果を返す場合はそれを優先し、それ以外�
 
 == エディター投影
 
+``LanguageService``は文書状態、client capabilityおよび解析結果の採用判定を所有します。
+Semantic Tokensの変換moduleは、serviceが選択した採用済み``Analysis``とposition encodingだけを受け取り、
+状態を参照せずにLSP token列を生成します。変換moduleから文書storeやworkspace状態を参照してはなりません。
+
 Definition、ReferencesおよびDocument Linkは文書内、相対文書および任意スキームを同じ
 ``ReferenceKey``で扱います。通常の外部URLは``AuthoredUrlPolicy``を通したDocument Linkとして別に扱います。
 Semantic Tokensは通常リンク・xrefの参照先、アンカーID、リテラルおよび数式内容を``Analysis``から生成し、
