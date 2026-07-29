@@ -80,6 +80,8 @@ export class AdocWeaveClient {
     renderPolicy = {},
     outputLimits = {},
   }, generation) {
+    this.#expectedVersions.clear();
+    this.#expectedVersions.set(generation, version);
     let ready;
     if (this.#options.sharedCancellation) {
       Atomics.store(this.#cancellation, 0, generation);
@@ -95,8 +97,6 @@ export class AdocWeaveClient {
       }));
       ready = this.#spawnWorker();
     }
-    this.#expectedVersions.clear();
-    this.#expectedVersions.set(generation, version);
     const payload = {
       packageVersion: PACKAGE_VERSION,
       sourceId,
@@ -149,6 +149,7 @@ export class AdocWeaveClient {
     this.#disposed = true;
     this.#rejectPending("disposed", "AdocWeaveClient was disposed");
     ++this.#generation;
+    this.#expectedVersions.clear();
     if (this.#cancellation) Atomics.store(this.#cancellation, 0, this.#generation);
     this.#terminateWorker(new AdocWeaveClientError({
       code: "disposed",
@@ -168,11 +169,13 @@ export class AdocWeaveClient {
         type: "module",
       });
     } catch (cause) {
-      const error = this.#workerError(cause, this.#generation);
+      const failedGeneration = this.#generation;
+      const error = this.#workerError(cause, failedGeneration);
       const ready = Promise.reject(error);
       ready.catch(() => {});
       this.#ready = ready;
       this.#rejectPendingError(error);
+      this.#expectedVersions.delete(failedGeneration);
       this.#notifyError(error);
       return ready;
     }
@@ -305,7 +308,6 @@ export class AdocWeaveClient {
     this.#worker?.terminate();
     this.#worker = null;
     this.#ready = null;
-    this.#expectedVersions.clear();
   }
 
   #ensureWorker() {
