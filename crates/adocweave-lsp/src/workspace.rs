@@ -328,6 +328,22 @@ impl WorkspaceResources {
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         let (project, plan) = self.plan_for_path(&path)?;
+        if self
+            .resource_projects
+            .get(&id)
+            .is_some_and(|previous| previous != &project)
+        {
+            return Err("workspace project changed; a full reload is required".to_owned());
+        }
+        if self
+            .project_plans
+            .get(&project)
+            .is_some_and(|previous| previous != &plan)
+        {
+            return Err(
+                "workspace resource limit plan changed; a full reload is required".to_owned(),
+            );
+        }
         let budget = self
             .retained_layers
             .get(&project)
