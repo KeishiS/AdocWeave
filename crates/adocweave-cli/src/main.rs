@@ -7,12 +7,9 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 
 use adocweave::output::diagnostics as diagnostic;
-use adocweave::{
-    AnalysisOptions, CancellationCheck, CancellationToken, Engine, OutputLimits, ParseError,
-};
+use adocweave::{AnalysisOptions, OutputLimits, ParseError};
 
 mod check_output;
 mod commands;
@@ -177,6 +174,26 @@ fn format_error(error: commands::format::Error) -> CliError {
         commands::format::Error::Analysis(source) => CliError::Analysis(source),
         commands::format::Error::Position(source) => CliError::Position(source),
         commands::format::Error::FormattingRequired => CliError::FormattingRequired,
+    }
+}
+
+fn preview_error(error: commands::preview::Error) -> CliError {
+    match error {
+        commands::preview::Error::Read {
+            source_name,
+            source,
+        } => CliError::Read {
+            source_name,
+            source,
+        },
+        commands::preview::Error::InvalidUtf8 { valid_up_to } => {
+            CliError::InvalidUtf8 { valid_up_to }
+        }
+        commands::preview::Error::Analysis(source) => CliError::Analysis(source),
+        commands::preview::Error::Include(source) => CliError::Include(source),
+        commands::preview::Error::Html(source) => html_policy_error(source),
+        commands::preview::Error::Path(message) => CliError::Path(message),
+        commands::preview::Error::Server(source) => CliError::Preview(source),
     }
 }
 
@@ -700,23 +717,6 @@ fn finish_output(output: String) -> Result<String, CliError> {
     Ok(output)
 }
 
-fn check_preview_cancellation(cancellation: Option<&CancellationToken>) -> Result<(), CliError> {
-    if cancellation.is_some_and(CancellationCheck::is_cancelled) {
-        Err(CliError::Analysis(ParseError::Cancelled))
-    } else {
-        Ok(())
-    }
-}
-
-struct PreviewBuildRequest<'request> {
-    input_path: &'request Path,
-    include: bool,
-    base_dir: &'request Path,
-    project_root: &'request Path,
-    project: &'request adocweave_config::ResolvedProjectConfig,
-    css: &'request [StylesheetArgument],
-}
-
 struct IncludePreparation<'request> {
     source: &'request str,
     source_id: String,
@@ -726,25 +726,6 @@ struct IncludePreparation<'request> {
     allowed_roots: &'request [PathBuf],
     limits: adocweave_host::ResourceLimits,
     preprocess: &'request adocweave::preprocess::PreprocessOptions,
-}
-
-struct PreviewDependencyObserver<'dependencies> {
-    dependencies: &'dependencies mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
-}
-
-impl local_include::DependencyObserver for PreviewDependencyObserver<'_> {
-    fn observe_path(&mut self, path: &Path) {
-        self.dependencies
-            .entry(path.to_owned())
-            .or_insert_with(|| preview::Fingerprint::read(path));
-    }
-
-    fn observe_loaded(&mut self, path: &Path, source: &str) {
-        self.dependencies.insert(
-            path.to_owned(),
-            preview::Fingerprint::from_loaded_bytes(path, source.as_bytes()),
-        );
-    }
 }
 
 fn prepare_includes(
@@ -770,124 +751,6 @@ fn prepare_includes(
             request.preprocess,
         )
     }
-}
-
-fn preview_build(
-    request: PreviewBuildRequest<'_>,
-    cancellation: &adocweave::CancellationToken,
-    dependencies: &mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
-) -> Result<preview::Build, CliError> {
-    preview_build_with_stage_hook(request, cancellation, dependencies, |_| {})
-}
-
-#[derive(Clone, Copy)]
-enum PreviewBuildStage {
-    IncludesPrepared,
-}
-
-fn preview_build_with_stage_hook(
-    request: PreviewBuildRequest<'_>,
-    cancellation: &adocweave::CancellationToken,
-    dependencies: &mut std::collections::BTreeMap<PathBuf, preview::Fingerprint>,
-    mut stage_hook: impl FnMut(PreviewBuildStage),
-) -> Result<preview::Build, CliError> {
-    let PreviewBuildRequest {
-        input_path,
-        include,
-        base_dir,
-        project_root,
-        project,
-        css,
-    } = request;
-    check_preview_cancellation(Some(cancellation))?;
-    let (input, input_fingerprint) =
-        preview::read_dependency(input_path).map_err(|source| CliError::Read {
-            source_name: input_path.display().to_string(),
-            source,
-        })?;
-    check_preview_cancellation(Some(cancellation))?;
-    let source = decode_input(&input)?;
-    check_preview_cancellation(Some(cancellation))?;
-    let source_id = input_path.to_string_lossy().into_owned();
-    dependencies.insert(input_path.to_owned(), input_fingerprint);
-
-    let (processed, include_diagnostics) = if include {
-        check_preview_cancellation(Some(cancellation))?;
-        let prepared = {
-            let mut observer = PreviewDependencyObserver { dependencies };
-            local_include::prepare_local_tracking(
-                source,
-                source_id,
-                base_dir,
-                base_dir,
-                project_root,
-                project.resources.limits,
-                &project.preprocess,
-                &mut observer,
-            )
-        };
-        let prepared = prepared.map_err(CliError::Include)?;
-        stage_hook(PreviewBuildStage::IncludesPrepared);
-        check_preview_cancellation(Some(cancellation))?;
-        let include_diagnostics = prepared
-            .validation()
-            .expect("local preparation has validation context")
-            .include_errors()
-            .iter()
-            .map(|(target, error)| {
-                serde_json::json!({
-                    "code": error.diagnostic_code(),
-                    "message": error.to_string(),
-                    "target": target,
-                })
-            })
-            .collect::<Vec<_>>();
-        (
-            prepared.projection().document().source.to_string(),
-            include_diagnostics,
-        )
-    } else {
-        (source.to_owned(), Vec::new())
-    };
-    check_preview_cancellation(Some(cancellation))?;
-    let analysis = Engine::new(project.analysis.clone())
-        .analyze_cancellable(&processed, cancellation)
-        .map_err(CliError::Analysis)?;
-    check_preview_cancellation(Some(cancellation))?;
-    let render_policy = commands::html_policy::build(
-        &project.html,
-        true,
-        css,
-        |path| {
-            let (bytes, fingerprint) = preview::read_dependency(path)?;
-            dependencies.insert(path.to_owned(), fingerprint);
-            Ok(bytes)
-        },
-        || cancellation.is_cancelled(),
-    )
-    .map_err(html_policy_error)?;
-    check_preview_cancellation(Some(cancellation))?;
-    let output = commands::html_policy::render_checked(analysis.document(), &render_policy)
-        .map_err(html_policy_error)?;
-    check_preview_cancellation(Some(cancellation))?;
-    let mut diagnostics = serde_json::from_str::<Vec<serde_json::Value>>(&diagnostic::render_json(
-        analysis.diagnostics(),
-    ))
-    .expect("core diagnostic renderer returns a JSON array");
-    diagnostics.extend(
-        serde_json::from_str::<Vec<serde_json::Value>>(&diagnostic::render_json(
-            &output.diagnostics,
-        ))
-        .expect("render diagnostic renderer returns a JSON array"),
-    );
-    diagnostics.extend(include_diagnostics);
-    let style_origins = commands::html_policy::external_origins(&render_policy);
-    Ok(preview::Build::new(
-        output.html,
-        serde_json::to_string(&diagnostics).expect("diagnostics are serializable"),
-        dependencies.clone(),
-    )
-    .with_style_origins(style_origins))
 }
 
 fn process_check(
@@ -1631,96 +1494,26 @@ fn run() -> Result<ExitCode, CliError> {
                     .input
                     .as_deref()
                     .expect("preview parser requires an input path");
-                let metadata =
-                    fs::symlink_metadata(input_path).map_err(|source| CliError::Read {
-                        source_name: input_path.display().to_string(),
-                        source,
-                    })?;
-                if metadata.file_type().is_symlink() || !metadata.is_file() {
-                    return Err(CliError::Path(format!(
-                        "preview input must be a regular, non-symlink file: {}",
-                        input_path.display()
-                    )));
-                }
-                let canonical_input =
-                    input_path.canonicalize().map_err(|source| CliError::Read {
-                        source_name: input_path.display().to_string(),
-                        source,
-                    })?;
-                let base_dir = arguments
-                    .base_dir
-                    .clone()
-                    .or_else(|| canonical_input.parent().map(PathBuf::from))
-                    .expect("a file has a parent");
-                let configured_root = include.then(|| {
-                    allowed_roots.iter().find_map(|root| {
-                        root.canonicalize()
-                            .ok()
-                            .filter(|root| canonical_input.starts_with(root))
-                    })
-                });
-                let preview_root = project_root
-                    .clone()
-                    .or(configured_root.flatten())
-                    .unwrap_or_else(|| base_dir.clone())
-                    .canonicalize()
-                    .map_err(|source| CliError::Read {
-                        source_name: "preview project root".to_owned(),
-                        source,
-                    })?;
-                if !canonical_input.starts_with(&preview_root) {
-                    return Err(CliError::Path(format!(
-                        "preview input is outside the project root: {}",
-                        canonical_input.display()
-                    )));
-                }
-                if !bind.is_loopback() {
-                    eprintln!(
-                        "warning: preview is exposed on non-loopback address {bind}; rendered content may be visible to other hosts"
-                    );
-                }
                 PREVIEW_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
                 install_preview_signal_handlers();
-                preview::run(
-                    preview::Options {
-                        bind: *bind,
-                        port: *port,
-                        debounce: Duration::from_millis(*debounce_ms),
-                    },
-                    |cancellation| {
-                        let mut dependencies = std::collections::BTreeMap::new();
-                        let result = preview_build(
-                            PreviewBuildRequest {
-                                input_path: &canonical_input,
-                                include,
-                                base_dir: &base_dir,
-                                project_root: &preview_root,
-                                project: &project_config,
-                                css,
-                            },
-                            cancellation,
-                            &mut dependencies,
-                        );
-                        match result {
-                            Ok(build) => Ok(build),
-                            Err(error) => {
-                                let paths = std::iter::once(canonical_input.clone())
-                                    .chain(project_config.html.stylesheet_files.iter().cloned())
-                                    .chain(css.iter().filter_map(|argument| match argument {
-                                        StylesheetArgument::File(path) => Some(path.clone()),
-                                        StylesheetArgument::Url(_) => None,
-                                    }));
-                                dependencies.extend(paths.map(|path| {
-                                    let fingerprint = preview::Fingerprint::read(&path);
-                                    (path, fingerprint)
-                                }));
-                                Ok(preview::Build::failure(error.to_string(), dependencies))
-                            }
-                        }
+                commands::preview::run(
+                    commands::preview::RunRequest {
+                        input_path,
+                        include,
+                        base_dir: arguments.base_dir.as_deref(),
+                        allowed_roots: &allowed_roots,
+                        project_root: project_root.as_deref(),
+                        project: &project_config,
+                        css,
+                        server: commands::preview::ServerOptions {
+                            bind: *bind,
+                            port: *port,
+                            debounce_ms: *debounce_ms,
+                        },
                     },
                     &PREVIEW_SHUTDOWN,
                 )
-                .map_err(CliError::Preview)?;
+                .map_err(preview_error)?;
                 return Ok(ExitCode::SUCCESS);
             }
             let input_path = arguments.input.clone();
@@ -1893,14 +1686,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CliError, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS,
-        DEFAULT_PREVIEW_PORT, DiagnosticFormat, FormatOptions, PreviewBuildRequest,
-        PreviewBuildStage, PreviewDependencyObserver, StylesheetArgument,
-        check_preview_cancellation, parse_arguments, preview_build, preview_build_with_stage_hook,
-        render_completion_script,
+        Action, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT,
+        DiagnosticFormat, FormatOptions, parse_arguments, render_completion_script,
     };
     use crate::commands::model::{self, CommandId};
-    use crate::local_include::DependencyObserver;
 
     fn arguments(values: &[&str]) -> impl Iterator<Item = String> {
         values.iter().map(ToString::to_string)
@@ -2001,171 +1790,6 @@ mod tests {
             assert!(nested_position_matches(parent_len, parent_len + 2, true));
             assert!(!nested_position_matches(parent_len, parent_len + 2, false));
         }
-    }
-
-    #[test]
-    fn failed_preview_build_retains_discovered_include_dependencies() {
-        let root = tempfile::tempdir().expect("project root");
-        let input = root.path().join("manual.adoc");
-        let include = root.path().join("part.adoc");
-        let stylesheet = root.path().join("invalid.css");
-        std::fs::write(&input, "include::part.adoc[]\n").expect("root document");
-        std::fs::write(&include, "included text\n").expect("include");
-        std::fs::write(&stylesheet, "</style").expect("invalid stylesheet");
-        let mut dependencies = std::collections::BTreeMap::new();
-
-        let result = preview_build(
-            PreviewBuildRequest {
-                input_path: &input,
-                include: true,
-                base_dir: root.path(),
-                project_root: root.path(),
-                project: &adocweave_config::ResolvedProjectConfig::default(),
-                css: &[StylesheetArgument::File(stylesheet.clone())],
-            },
-            &adocweave::CancellationToken::new(),
-            &mut dependencies,
-        );
-
-        assert!(result.is_err());
-        assert!(dependencies.contains_key(&include));
-        assert!(dependencies.contains_key(&stylesheet));
-    }
-
-    #[test]
-    fn preview_observer_records_the_loaded_snapshot() {
-        let root = tempfile::tempdir().expect("project root");
-        let include = root.path().join("part.adoc");
-        std::fs::write(&include, "first snapshot\n").expect("include");
-        let mut dependencies = std::collections::BTreeMap::new();
-
-        PreviewDependencyObserver {
-            dependencies: &mut dependencies,
-        }
-        .observe_loaded(&include, "first snapshot\n");
-        let observed = dependencies.get(&include).expect("observed fingerprint");
-        assert_eq!(
-            observed,
-            &crate::preview::Fingerprint::from_loaded_bytes(&include, b"first snapshot\n")
-        );
-
-        std::fs::write(&include, "second snapshot\n").expect("updated include");
-        assert_ne!(observed, &crate::preview::Fingerprint::read(&include));
-    }
-
-    #[test]
-    fn preprocess_failure_retains_dependencies_discovered_before_the_error() {
-        let root = tempfile::tempdir().expect("project root");
-        let input = root.path().join("manual.adoc");
-        let include = root.path().join("part.adoc");
-        std::fs::write(&input, "include::part.adoc[]\n").expect("root document");
-        std::fs::write(&include, "include::part.adoc[]\n").expect("cyclic include");
-        let mut dependencies = std::collections::BTreeMap::new();
-
-        let result = preview_build(
-            PreviewBuildRequest {
-                input_path: &input,
-                include: true,
-                base_dir: root.path(),
-                project_root: root.path(),
-                project: &adocweave_config::ResolvedProjectConfig::default(),
-                css: &[],
-            },
-            &adocweave::CancellationToken::new(),
-            &mut dependencies,
-        );
-
-        assert!(result.is_err());
-        assert!(dependencies.contains_key(&include));
-    }
-
-    #[test]
-    fn preview_build_stage_boundaries_observe_cancellation() {
-        let cancellation = adocweave::CancellationToken::new();
-        assert!(check_preview_cancellation(Some(&cancellation)).is_ok());
-        cancellation.cancel();
-        assert!(matches!(
-            check_preview_cancellation(Some(&cancellation)),
-            Err(CliError::Analysis(adocweave::ParseError::Cancelled))
-        ));
-    }
-
-    #[test]
-    fn cancelled_preview_retains_loaded_include_snapshot() {
-        let root = tempfile::tempdir().expect("project root");
-        let input = root.path().join("manual.adoc");
-        let include = root.path().join("part.adoc");
-        std::fs::write(&input, "include::part.adoc[]\n").expect("root document");
-        std::fs::write(&include, "included text\n").expect("include");
-        let cancellation = adocweave::CancellationToken::new();
-        let mut dependencies = std::collections::BTreeMap::new();
-
-        let result = preview_build_with_stage_hook(
-            PreviewBuildRequest {
-                input_path: &input,
-                include: true,
-                base_dir: root.path(),
-                project_root: root.path(),
-                project: &adocweave_config::ResolvedProjectConfig::default(),
-                css: &[],
-            },
-            &cancellation,
-            &mut dependencies,
-            |stage| {
-                if matches!(stage, PreviewBuildStage::IncludesPrepared) {
-                    cancellation.cancel();
-                }
-            },
-        );
-
-        assert!(matches!(
-            result,
-            Err(CliError::Analysis(adocweave::ParseError::Cancelled))
-        ));
-        assert_eq!(
-            dependencies.get(&include),
-            Some(&crate::preview::Fingerprint::from_loaded_bytes(
-                &include,
-                b"included text\n"
-            ))
-        );
-    }
-
-    #[test]
-    fn cancelled_preview_retains_missing_include_candidate() {
-        let root = tempfile::tempdir().expect("project root");
-        let input = root.path().join("manual.adoc");
-        let missing = root.path().join("missing.adoc");
-        std::fs::write(&input, "include::missing.adoc[]\n").expect("root document");
-        let cancellation = adocweave::CancellationToken::new();
-        let mut dependencies = std::collections::BTreeMap::new();
-
-        let result = preview_build_with_stage_hook(
-            PreviewBuildRequest {
-                input_path: &input,
-                include: true,
-                base_dir: root.path(),
-                project_root: root.path(),
-                project: &adocweave_config::ResolvedProjectConfig::default(),
-                css: &[],
-            },
-            &cancellation,
-            &mut dependencies,
-            |stage| {
-                if matches!(stage, PreviewBuildStage::IncludesPrepared) {
-                    cancellation.cancel();
-                }
-            },
-        );
-
-        assert!(matches!(
-            result,
-            Err(CliError::Analysis(adocweave::ParseError::Cancelled))
-        ));
-        assert_eq!(
-            dependencies.get(&missing),
-            Some(&crate::preview::Fingerprint::read(&missing))
-        );
     }
 
     #[test]
