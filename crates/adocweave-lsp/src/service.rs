@@ -486,15 +486,15 @@ impl LanguageService {
         &mut self,
         params: lsp::DidChangeWatchedFilesParams,
     ) -> Vec<AnalysisJob> {
+        if params.changes.iter().any(|change| {
+            change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
+        }) {
+            // A full reload selects the new plan before any changed document
+            // in the same notification is read.
+            return self.reload_project_configuration();
+        }
         let mut affected = std::collections::BTreeSet::new();
-        let mut configuration_changed = false;
         for change in params.changes {
-            if change.uri.path_segments().and_then(Iterator::last)
-                == Some(adocweave_config::FILE_NAME)
-            {
-                configuration_changed = true;
-                continue;
-            }
             if self.documents.get(change.uri.as_str()).is_some() {
                 continue;
             }
@@ -507,9 +507,6 @@ impl LanguageService {
                 Ok(changed) => affected.extend(changed),
                 Err(error) => self.workspace_error = Some(error),
             }
-        }
-        if configuration_changed {
-            return self.reload_project_configuration();
         }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, "", &mut jobs);
