@@ -53,6 +53,31 @@ struct ProjectScopeId {
     config_path: Option<PathBuf>,
 }
 
+#[derive(Debug)]
+enum ScopeConfigError {
+    Config(adocweave_config::ConfigError),
+    Other(String),
+}
+
+impl ScopeConfigError {
+    fn preserves_previous(&self) -> bool {
+        matches!(
+            self,
+            Self::Config(error)
+                if error.code == adocweave_config::ConfigErrorCode::ReadFailed
+        )
+    }
+}
+
+impl std::fmt::Display for ScopeConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Config(error) => error.fmt(formatter),
+            Self::Other(error) => formatter.write_str(error),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceResources {
     inner: Workspace,
@@ -92,6 +117,15 @@ impl WorkspaceResources {
         roots: &[Url],
         open_sources: &[(Url, i64, Arc<str>)],
     ) -> Result<(), String> {
+        self.reload_roots_with_open_sources_after_load(roots, open_sources, || {})
+    }
+
+    fn reload_roots_with_open_sources_after_load(
+        &mut self,
+        roots: &[Url],
+        open_sources: &[(Url, i64, Arc<str>)],
+        after_load: impl FnOnce(),
+    ) -> Result<(), String> {
         let mut replacement = self.clone();
         if let Err(error) = replacement.load_roots(roots) {
             if replacement.last_load_failed_closed {
@@ -101,21 +135,33 @@ impl WorkspaceResources {
             }
             return Err(error);
         }
+        after_load();
         for (uri, version, source) in open_sources {
-            let has_authority = match replacement.has_resource_authority(uri) {
-                Ok(has_authority) => has_authority,
+            let scope_and_plan = match replacement.open_scope_and_plan(uri) {
+                Ok(scope_and_plan) => scope_and_plan,
                 Err(error) => {
-                    replacement.fail_closed(
-                        replacement.roots.clone(),
-                        adapter_managed_workspace_limits(),
-                    );
-                    *self = replacement;
+                    let preserve_previous = error.preserves_previous();
+                    let error = error.to_string();
+                    if preserve_previous {
+                        self.last_load_failed_closed = false;
+                    } else {
+                        replacement.fail_closed(
+                            replacement.roots.clone(),
+                            adapter_managed_workspace_limits(),
+                        );
+                        *self = replacement;
+                    }
                     return Err(error);
                 }
             };
-            if has_authority
-                && let Err(error) =
-                    replacement.upsert_open(uri.clone(), *version, Arc::clone(source))
+            if let Some((scope, plan)) = scope_and_plan
+                && let Err(error) = replacement.upsert_open_with_plan(
+                    uri.clone(),
+                    *version,
+                    Arc::clone(source),
+                    scope,
+                    plan,
+                )
             {
                 replacement.fail_closed(
                     replacement.roots.clone(),
@@ -241,11 +287,14 @@ impl WorkspaceResources {
                 next_disk_version = next_disk_version.saturating_add(1);
                 let (source_id, text) = file.into_parts();
                 let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
-                let budget = retained_layers
-                    .get(&scope)
-                    .cloned()
-                    .unwrap_or_default()
-                    .with_disk(id.clone(), Some(text.len() as u64), plan.retained_layers)
+                retained_layers
+                    .entry(scope.clone())
+                    .or_default()
+                    .try_replace_layers(
+                        id.clone(),
+                        RetainedLayerCharge::new(Some(text.len() as u64), None),
+                        plan.retained_layers,
+                    )
                     .map_err(|error| error.to_string())?;
                 inner
                     .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
@@ -253,7 +302,6 @@ impl WorkspaceResources {
                 inner
                     .register_root(id.clone())
                     .map_err(|error| error.to_string())?;
-                retained_layers.insert(scope.clone(), budget);
                 resource_projects.insert(id, scope);
             }
             self.inner = inner;
@@ -294,7 +342,8 @@ impl WorkspaceResources {
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         let id = uri_id(&uri)?;
-        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &path)?;
+        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &path)
+            .map_err(|error| error.to_string())?;
         if !resource_path_is_allowed(config.as_ref(), &path) {
             return self.remove_outside_authority(&id, &path);
         }
@@ -504,12 +553,25 @@ impl WorkspaceResources {
         version: i64,
         text: impl Into<Arc<str>>,
     ) -> Result<BTreeSet<String>, String> {
-        let id = uri_id(&uri)?;
-        let text = text.into();
         let path = uri
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         let (scope, plan) = self.plan_for_path(&path)?;
+        self.upsert_open_with_plan(uri, version, text.into(), scope, plan)
+    }
+
+    fn upsert_open_with_plan(
+        &mut self,
+        uri: Url,
+        version: i64,
+        text: Arc<str>,
+        scope: ProjectScopeId,
+        plan: adocweave_config::ResolvedResourceLimitPlan,
+    ) -> Result<BTreeSet<String>, String> {
+        let id = uri_id(&uri)?;
+        let path = uri
+            .to_file_path()
+            .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         if self
             .project_plans
             .get(&scope)
@@ -671,6 +733,10 @@ impl WorkspaceResources {
         if self.inner.get(&root_id).is_none() {
             return Err(format!("workspace resource is missing: {root}"));
         }
+        let root_scope = self
+            .resource_projects
+            .get(&root_id)
+            .ok_or_else(|| format!("workspace project scope is missing: {root}"))?;
         let mut allowed_schemes = BTreeSet::new();
         allowed_schemes.insert("file".to_owned());
         let config_snapshot = self.config_for_uri(root)?;
@@ -713,7 +779,11 @@ impl WorkspaceResources {
         let limits = project_config.resources.limit_plan.analysis_snapshot;
         let mut budget = adocweave_config::AnalysisSnapshotBudget::new(limits);
         let snapshot = self.inner.try_snapshot_resources(|id, resource| {
-            let allowed = if id == &root_id {
+            let same_scope = root_scope.config_path.is_some()
+                || self.resource_projects.get(id) == Some(root_scope);
+            let allowed = if !same_scope {
+                false
+            } else if id == &root_id {
                 true
             } else if !options.enable_includes {
                 false
@@ -778,19 +848,33 @@ impl WorkspaceResources {
         config_for_path(&self.roots, &path)
     }
 
-    fn has_resource_authority(&self, uri: &Url) -> Result<bool, String> {
-        let path = uri
-            .to_file_path()
-            .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        let config = config_for_path(&self.roots, &path)?;
-        Ok(resource_path_is_allowed(config.as_ref(), &path))
+    fn open_scope_and_plan(
+        &self,
+        uri: &Url,
+    ) -> Result<
+        Option<(ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan)>,
+        ScopeConfigError,
+    > {
+        let path = uri.to_file_path().map_err(|()| {
+            ScopeConfigError::Other(format!("workspace resource is not a file URI: {uri}"))
+        })?;
+        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &path)?;
+        if !resource_path_is_allowed(config.as_ref(), &path) {
+            return Ok(None);
+        }
+        let plan = config.as_ref().map_or_else(
+            adocweave_config::ResolvedResourceLimitPlan::default,
+            |snapshot| snapshot.config.resources.limit_plan,
+        );
+        Ok(Some((scope, plan)))
     }
 
     fn plan_for_path(
         &self,
         path: &Path,
     ) -> Result<(ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan), String> {
-        let (scope, config) = scope_and_config_for_path_typed(&self.roots, path)?;
+        let (scope, config) = scope_and_config_for_path_typed(&self.roots, path)
+            .map_err(|error| error.to_string())?;
         let plan = config.as_ref().map_or_else(
             adocweave_config::ResolvedResourceLimitPlan::default,
             |snapshot| snapshot.config.resources.limit_plan,
@@ -860,7 +944,7 @@ fn config_for_path_typed(
 fn scope_and_config_for_path_typed(
     roots: &[PathBuf],
     path: &Path,
-) -> Result<(ProjectScopeId, Option<adocweave_config::ConfigSnapshot>), String> {
+) -> Result<(ProjectScopeId, Option<adocweave_config::ConfigSnapshot>), ScopeConfigError> {
     let boundary = roots
         .iter()
         .filter(|root| path.starts_with(root))
@@ -875,7 +959,9 @@ fn scope_and_config_for_path_typed(
                 None,
             ));
         }
-        return Err("workspace resource is outside every workspace root".to_owned());
+        return Err(ScopeConfigError::Other(
+            "workspace resource is outside every workspace root".to_owned(),
+        ));
     };
     let mut start = path;
     while !start.exists() {
@@ -891,7 +977,7 @@ fn scope_and_config_for_path_typed(
         start = parent;
     }
     let config =
-        adocweave_config::discover_and_load(start, boundary).map_err(|error| error.to_string())?;
+        adocweave_config::discover_and_load(start, boundary).map_err(ScopeConfigError::Config)?;
     Ok((
         ProjectScopeId {
             workspace_root: boundary.clone(),
@@ -1177,6 +1263,46 @@ mod tests {
                 .project_plans
                 .keys()
                 .all(|scope| scope.config_path.is_none())
+        );
+    }
+
+    #[test]
+    fn configless_multi_root_input_excludes_an_include_from_another_scope() {
+        let root = TestDirectory::new();
+        let second = root.0.join("second");
+        std::fs::create_dir(&second).expect("second root");
+        let first_path = root.0.join("document.adoc");
+        let second_path = second.join("private.adoc");
+        std::fs::write(&first_path, "include::second/private.adoc[]\n").expect("first source");
+        std::fs::write(&second_path, "private\n").expect("second source");
+        let first_uri = Url::from_file_path(&first_path).expect("first URI");
+        let second_id = ResourceId::new(
+            Url::from_file_path(&second_path)
+                .expect("second URI")
+                .as_str(),
+        )
+        .expect("second ID");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(&[
+                Url::from_directory_path(&root.0).expect("first root URI"),
+                Url::from_directory_path(&second).expect("second root URI"),
+            ])
+            .expect("load roots");
+
+        let input = resources.input(&first_uri).expect("first input");
+        assert!(input.options.enable_includes);
+        assert_eq!(input.snapshot.resources().count(), 1);
+        assert!(input.snapshot.get(&second_id).is_none());
+        let error = input
+            .analyze(
+                &adocweave::AnalysisOptions::default(),
+                &adocweave::CancellationToken::new(),
+            )
+            .expect_err("cross-scope include is unavailable");
+        assert_eq!(
+            error.code,
+            adocweave_workspace::WorkspaceErrorCode::Preprocess
         );
     }
 
@@ -1540,6 +1666,55 @@ mod tests {
         assert!(error.contains("read-failed"), "{error}");
         assert!(!resources.last_load_failed_closed());
         assert_eq!(resources.generation(), failed_closed_generation);
+    }
+
+    #[test]
+    fn read_failure_after_load_preserves_previous_view_before_invalid_failure_closes_it() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 64, 64, false);
+        let config = root.0.join(adocweave_config::FILE_NAME);
+        let path = root.0.join("document.adoc");
+        std::fs::write(&path, "disk").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("initial load");
+        resources
+            .upsert_open(document_uri.clone(), 1, "previous overlay")
+            .expect("initial overlay");
+        let previous_generation = resources.generation();
+
+        let error = resources
+            .reload_roots_with_open_sources_after_load(
+                std::slice::from_ref(&root_uri),
+                &[(document_uri.clone(), 2, Arc::from("new overlay"))],
+                || {
+                    std::fs::remove_file(&config).expect("remove config");
+                    std::fs::create_dir(&config).expect("make config unreadable");
+                },
+            )
+            .expect_err("post-load configuration read failure");
+        assert!(error.contains("read-failed"), "{error}");
+        assert!(!resources.last_load_failed_closed());
+        assert_eq!(resources.generation(), previous_generation);
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("previous view")
+                .text()
+                .as_ref(),
+            "previous overlay"
+        );
+
+        std::fs::remove_dir(&config).expect("remove unreadable config");
+        std::fs::write(&config, "invalid = true\n").expect("invalid config");
+        resources
+            .reload_roots_with_open_sources(&[root_uri], &[])
+            .expect_err("invalid configuration");
+        assert!(resources.last_load_failed_closed());
+        assert!(resources.get(&document_uri).is_none());
     }
 
     #[test]
