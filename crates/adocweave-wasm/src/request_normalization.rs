@@ -1,13 +1,17 @@
 //! Cross-field validation at the JSON request boundary.
 
+use crate::render_input_normalization::{self, NormalizedRenderInputs};
 use crate::request_wire::WasmRequest;
-use crate::{VERSION, WasmError, render_inputs};
+use crate::{VERSION, WasmError};
 
 /// A request whose package version and cross-field invariants were validated.
 ///
 /// The inner wire value is private so the core conversion stage cannot be
 /// called with an unnormalized public request.
-pub(crate) struct NormalizedRequest(WasmRequest);
+pub(crate) struct NormalizedRequest {
+    wire: WasmRequest,
+    render_inputs: NormalizedRenderInputs,
+}
 
 pub(crate) fn normalize(mut request: WasmRequest) -> Result<NormalizedRequest, WasmError> {
     if request.package_version != VERSION {
@@ -34,17 +38,20 @@ pub(crate) fn normalize(mut request: WasmRequest) -> Result<NormalizedRequest, W
         }
         input.options.attributes.clone_from(&external_attributes);
     }
-    render_inputs::validate(
-        &request.render_inputs,
+    let render_inputs = render_input_normalization::normalize(
+        std::mem::take(&mut request.render_inputs),
         &request.analysis_options.syntax.limits,
         &request.output_limits,
     )?;
     request.analysis_options.attributes = external_attributes;
-    Ok(NormalizedRequest(request))
+    Ok(NormalizedRequest {
+        wire: request,
+        render_inputs,
+    })
 }
 
 impl NormalizedRequest {
-    pub(super) fn into_wire(self) -> WasmRequest {
-        self.0
+    pub(super) fn into_parts(self) -> (WasmRequest, NormalizedRenderInputs) {
+        (self.wire, self.render_inputs)
     }
 }

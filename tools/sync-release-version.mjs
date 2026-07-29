@@ -303,7 +303,9 @@ function sourceFiles(root) {
   if (tracked.status !== 0) return walkedSourceFiles(root);
   const result = new Map();
   for (const path of tracked.stdout.split("\0").filter(Boolean)) {
-    const buffer = readFileSync(absolute(root, path));
+    const file = absolute(root, path);
+    if (!existsSync(file)) continue;
+    const buffer = readFileSync(file);
     if (!buffer.includes(0)) result.set(path, buffer.toString("utf8"));
   }
   return result;

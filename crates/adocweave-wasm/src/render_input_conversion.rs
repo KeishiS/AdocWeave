@@ -1,124 +1,19 @@
+//! Analysis-dependent conversion from normalized render inputs to core values.
+
 use adocweave::Analysis;
-use serde::{Deserialize, Serialize};
 
-use crate::{WasmError, WasmLimits};
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmRenderInputs {
-    #[serde(default)]
-    pub references: Vec<WasmResolvedReference>,
-    #[serde(default)]
-    pub resources: Vec<WasmResolvedResource>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResolvedReference {
-    pub source_start: u32,
-    pub source_end: u32,
-    pub outcome: WasmReferenceOutcome,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum WasmReferenceOutcome {
-    Resolved {
-        href: String,
-        #[serde(default, rename = "displayText")]
-        display_text: Option<String>,
-        #[serde(default)]
-        notices: Vec<WasmReferenceNotice>,
-    },
-    Failed {
-        kind: WasmReferenceFailureKind,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum WasmReferenceNotice {
-    Fallback,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum WasmReferenceFailureKind {
-    MissingTarget,
-    MissingAnchor,
-    AmbiguousTarget,
-    OutsideRoot,
-    ResolverFailure,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct WasmResolvedResource {
-    pub source_start: u32,
-    pub source_end: u32,
-    pub outcome: WasmResourceOutcome,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum WasmResourceOutcome {
-    Resolved {
-        href: String,
-        #[serde(rename = "mediaType")]
-        media_type: String,
-        #[serde(rename = "byteLength")]
-        byte_length: Option<u64>,
-    },
-    Failed {
-        kind: WasmResourceFailureKind,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum WasmResourceFailureKind {
-    Missing,
-    OutsideRoot,
-    SchemeDenied,
-    PermissionDenied,
-    MediaTypeUnavailable,
-    ResolverFailure,
-}
-
-pub(crate) fn validate(
-    inputs: &WasmRenderInputs,
-    analysis_limits: &WasmLimits,
-    output_limits: &crate::WasmOutputLimits,
-) -> Result<(), WasmError> {
-    let count = inputs.references.len() as u64 + inputs.resources.len() as u64;
-    if count > u64::from(analysis_limits.max_references) {
-        return Err(limit_error("render input count"));
-    }
-    let reference_bytes = inputs.references.iter().map(|input| match &input.outcome {
-        WasmReferenceOutcome::Resolved {
-            href, display_text, ..
-        } => href.len() as u64 + display_text.as_ref().map_or(0, |text| text.len()) as u64,
-        WasmReferenceOutcome::Failed { .. } => 0,
-    });
-    let resource_bytes = inputs.resources.iter().map(|input| match &input.outcome {
-        WasmResourceOutcome::Resolved {
-            href, media_type, ..
-        } => href.len() as u64 + media_type.len() as u64,
-        WasmResourceOutcome::Failed { .. } => 0,
-    });
-    let bytes = reference_bytes
-        .chain(resource_bytes)
-        .fold(0_u64, u64::saturating_add);
-    if bytes > u64::from(output_limits.max_output_bytes) {
-        return Err(limit_error("render input bytes"));
-    }
-    Ok(())
-}
+use crate::WasmError;
+use crate::render_input_normalization::NormalizedRenderInputs;
+use crate::render_input_wire::{
+    WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmResourceFailureKind,
+    WasmResourceOutcome,
+};
 
 pub(crate) fn convert(
-    inputs: WasmRenderInputs,
+    inputs: NormalizedRenderInputs,
     analysis: &Analysis,
 ) -> Result<adocweave::resolution::RenderInputs, WasmError> {
+    let inputs = inputs.into_wire();
     let references =
         inputs
             .references
@@ -242,13 +137,6 @@ fn source_range(
         .text(range)
         .ok_or_else(invalid_input)?;
     Ok(range)
-}
-
-fn limit_error(resource: &str) -> WasmError {
-    WasmError {
-        code: "limit-exceeded".to_owned(),
-        message: format!("{resource} exceeds the configured processing limit"),
-    }
 }
 
 fn invalid_input() -> WasmError {

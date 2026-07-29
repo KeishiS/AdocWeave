@@ -7,7 +7,10 @@ use serde::Serialize;
 mod preprocess_wire;
 mod preprocess_wire_generated;
 mod protocol_generated;
-mod render_inputs;
+mod render_input_conversion;
+mod render_input_normalization;
+mod render_input_wire;
+mod render_input_wire_generated;
 mod request_conversion;
 mod request_enum_generated;
 mod request_normalization;
@@ -21,7 +24,7 @@ pub use preprocess_wire::{
     WasmPreprocessResponse, WasmResource, WasmSafeMode, WasmSourceMapSegment,
 };
 pub use protocol_generated::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, WasmProductSet};
-pub use render_inputs::{
+pub use render_input_wire::{
     WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
     WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
@@ -176,7 +179,7 @@ fn execute_request(
         return Err(cancelled_error());
     }
 
-    let render_inputs = render_inputs::convert(request.render_inputs, analysis)?;
+    let render_inputs = render_input_conversion::convert(request.render_inputs, analysis)?;
     let products = adocweave::output::conformance::products(
         analysis,
         &request.render_policy,
@@ -728,6 +731,95 @@ mod tests {
             process_request(invalid_media_type, &NeverCancel).expect_err("invalid media type");
         assert_eq!(error.code, "invalid-render-input");
         assert_eq!(error.message, "render input is invalid");
+    }
+
+    #[test]
+    fn wasm_render_inputs_preserve_missing_failed_and_duplicate_semantics() {
+        let reference_source = "xref:target[ref]";
+        let missing_reference =
+            process_request(request(reference_source), &NeverCancel).expect("missing reference");
+        assert!(
+            missing_reference
+                .render_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "unresolved-cross-reference")
+        );
+
+        let failed_reference = WasmResolvedReference {
+            source_start: 0,
+            source_end: reference_source.len() as u32,
+            outcome: WasmReferenceOutcome::Failed {
+                kind: WasmReferenceFailureKind::MissingTarget,
+            },
+        };
+        let mut failed_reference_request = request(reference_source);
+        failed_reference_request
+            .render_inputs
+            .references
+            .push(failed_reference.clone());
+        let failed_reference_response =
+            process_request(failed_reference_request, &NeverCancel).expect("failed reference");
+        assert!(
+            failed_reference_response
+                .render_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "missing-reference-target")
+        );
+
+        let mut duplicate_reference_request = request(reference_source);
+        duplicate_reference_request.render_inputs.references =
+            vec![failed_reference.clone(), failed_reference];
+        let duplicate_reference = process_request(duplicate_reference_request, &NeverCancel)
+            .expect("duplicate reference");
+        assert!(
+            duplicate_reference
+                .render_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "duplicate-render-input")
+        );
+
+        let resource_source = "image:asset.png[alt]";
+        let missing_resource =
+            process_request(request(resource_source), &NeverCancel).expect("missing resource");
+        assert!(
+            missing_resource
+                .render_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "unresolved-resource")
+        );
+
+        let failed_resource = WasmResolvedResource {
+            source_start: 0,
+            source_end: resource_source.len() as u32,
+            outcome: WasmResourceOutcome::Failed {
+                kind: WasmResourceFailureKind::Missing,
+            },
+        };
+        let mut failed_resource_request = request(resource_source);
+        failed_resource_request
+            .render_inputs
+            .resources
+            .push(failed_resource.clone());
+        let failed_resource_response =
+            process_request(failed_resource_request, &NeverCancel).expect("failed resource");
+        assert!(
+            failed_resource_response
+                .render_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "missing-resource")
+        );
+
+        let mut duplicate_resource_request = request(resource_source);
+        duplicate_resource_request.render_inputs.resources =
+            vec![failed_resource.clone(), failed_resource];
+        let duplicate_resource =
+            process_request(duplicate_resource_request, &NeverCancel).expect("duplicate resource");
+        assert!(
+            duplicate_resource
+                .render_diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "duplicate-render-input")
+        );
     }
 
     #[test]

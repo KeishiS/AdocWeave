@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::preprocess_wire::WasmAnalysisPreprocessInput;
 use crate::protocol_generated::WasmProductSet;
-use crate::render_inputs::WasmRenderInputs;
+use crate::render_input_wire::WasmRenderInputs;
 use crate::request_enum_generated::{
     WasmDocumentMode, WasmSyntaxMode, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation,

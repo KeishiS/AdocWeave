@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -293,6 +294,28 @@ test("Git worktreeでもgeneratorの未追跡fileを検出して削除する", (
       /--checkがfileを変更/,
     );
     assert.equal(existsSync(sideEffect), false);
+  } finally {
+    scope.cleanup();
+  }
+});
+
+test("Gitで追跡中の削除済みfileを検査対象から除外する", () => {
+  const scope = fixture();
+  try {
+    const deleted = join(scope.directory, "obsolete.txt");
+    writeFileSync(deleted, "obsolete\n");
+    assert.equal(spawnSync("git", ["init", "-q"], { cwd: scope.directory }).status, 0);
+    assert.equal(spawnSync("git", ["add", "."], { cwd: scope.directory }).status, 0);
+    unlinkSync(deleted);
+
+    assert.doesNotThrow(() =>
+      syncReleaseVersion({
+        root: scope.root,
+        mode: "check",
+        registry: registry(),
+        runGenerator: generatedRunner,
+      })
+    );
   } finally {
     scope.cleanup();
   }

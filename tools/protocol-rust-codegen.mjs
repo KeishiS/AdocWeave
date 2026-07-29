@@ -39,6 +39,17 @@ const EXTERNAL_REQUEST_RUST_ENUMS = [
   "Severity",
 ];
 
+const RENDER_INPUT_RUST_NAMES = {
+  ReferenceFailureKind: "WasmReferenceFailureKind",
+  ReferenceNotice: "WasmReferenceNotice",
+  RenderInputs: "WasmRenderInputs",
+  ResolvedReference: "WasmResolvedReference",
+  ResolvedReferenceOutcome: "WasmReferenceOutcome",
+  ResolvedResource: "WasmResolvedResource",
+  ResolvedResourceOutcome: "WasmResourceOutcome",
+  ResourceFailureKind: "WasmResourceFailureKind",
+};
+
 const RUST_KEYWORDS = new Set([
   "Self", "abstract", "as", "async", "await", "become", "box", "break", "const",
   "continue", "crate", "do", "dyn", "else", "enum", "extern", "false", "final",
@@ -116,6 +127,235 @@ export function generateRustRequestEnums(schema) {
       return rustRequestEnum(name, values, defaultValue);
     })
     .join("\n\n");
+}
+
+export function generateRustRenderInputs(schema) {
+  const contracts = {
+    ReferenceFailureKind: schema.enums?.ReferenceFailureKind,
+    ReferenceNotice: schema.enums?.ReferenceNotice,
+    RenderInputs: schema.definitions?.RenderInputs,
+    ResolvedReference: schema.definitions?.ResolvedReference,
+    ResolvedReferenceOutcome: schema.taggedUnions?.ResolvedReferenceOutcome,
+    ResolvedResource: schema.definitions?.ResolvedResource,
+    ResolvedResourceOutcome: schema.taggedUnions?.ResolvedResourceOutcome,
+    ResourceFailureKind: schema.enums?.ResourceFailureKind,
+  };
+  const reached = reachableRenderInputTypes(["RenderInputs"], contracts);
+  const expected = Object.keys(RENDER_INPUT_RUST_NAMES).sort();
+  if (JSON.stringify([...reached].sort()) !== JSON.stringify(expected)) {
+    throw new Error(
+      `generated render input Rust types must exactly match reachable inputs: ${[...reached].sort().join(", ")}`,
+    );
+  }
+  validateRenderInputRustNames(expected);
+
+  return [
+    `pub(crate) const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+fn deserialize_optional_safe_integer<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <Option<u64> as serde::Deserialize>::deserialize(deserializer)?;
+    if value.is_some_and(|value| value > MAX_SAFE_INTEGER) {
+        return Err(serde::de::Error::custom(
+            "safe integer exceeds the JavaScript maximum",
+        ));
+    }
+    Ok(value)
+}`,
+    renderInputEnum("ReferenceNotice", contracts.ReferenceNotice),
+    renderInputEnum("ReferenceFailureKind", contracts.ReferenceFailureKind),
+    renderInputEnum("ResourceFailureKind", contracts.ResourceFailureKind),
+    renderInputUnion(
+      "ResolvedReferenceOutcome",
+      contracts.ResolvedReferenceOutcome,
+      reached,
+    ),
+    renderInputUnion(
+      "ResolvedResourceOutcome",
+      contracts.ResolvedResourceOutcome,
+      reached,
+    ),
+    renderInputObject("ResolvedReference", contracts.ResolvedReference, reached),
+    renderInputObject("ResolvedResource", contracts.ResolvedResource, reached),
+    renderInputObject("RenderInputs", contracts.RenderInputs, reached),
+  ].join("\n\n");
+}
+
+function reachableRenderInputTypes(roots, contracts) {
+  const reached = new Set();
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (reached.has(name)) continue;
+    if (!contracts[name]) {
+      throw new Error(`unsupported reachable render input Rust type ${name}`);
+    }
+    reached.add(name);
+    const contract = contracts[name];
+    const fields = contract.variants
+      ? Object.values(contract.variants).flat()
+      : Array.isArray(contract)
+        ? []
+        : contract.fields;
+    if (!Array.isArray(fields)) {
+      throw new Error(`invalid render input Rust contract ${name}`);
+    }
+    for (const field of fields) {
+      if (!field || typeof field.type !== "string") {
+        throw new Error(`invalid render input Rust field in ${name}`);
+      }
+      for (const reference of renderInputTypeReferences(field.type)) {
+        if (!contracts[reference]) {
+          throw new Error(`unsupported reachable render input Rust type ${reference}`);
+        }
+        if (!reached.has(reference)) pending.push(reference);
+      }
+    }
+  }
+  return reached;
+}
+
+function renderInputTypeReferences(type) {
+  if (type !== type.trim()) {
+    throw new Error(`unsupported render input Rust field type ${JSON.stringify(type)}`);
+  }
+  const references = type.match(/[A-Za-z][A-Za-z0-9]*/g) ?? [];
+  const builtins = new Set(["null", "safeInteger", "string", "u32"]);
+  return references.filter((reference) => !builtins.has(reference));
+}
+
+function validateRenderInputRustNames(names) {
+  const rustNames = new Set();
+  for (const name of names) {
+    const rustName = RENDER_INPUT_RUST_NAMES[name];
+    validateRustIdentifier(rustName, `render input type ${name}`);
+    if (rustNames.has(rustName)) {
+      throw new Error(`render input types collide as Rust identifier ${rustName}`);
+    }
+    rustNames.add(rustName);
+  }
+}
+
+function renderInputEnum(name, values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error(`${name} must have at least one render input Rust enum value`);
+  }
+  const identifiers = new Set();
+  const variants = values.map((value) => {
+    const variant = rustVariant(value);
+    validateRustIdentifier(variant, `${name} enum value ${JSON.stringify(value)}`);
+    if (identifiers.has(variant)) {
+      throw new Error(`${name} enum values collide as Rust identifier ${variant}`);
+    }
+    identifiers.add(variant);
+    return `    ${variant},`;
+  });
+  return `#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ${RENDER_INPUT_RUST_NAMES[name]} {
+${variants.join("\n")}
+}`;
+}
+
+function renderInputObject(name, contract, reached) {
+  if (!contract || contract.unknownFields !== "reject" || !Array.isArray(contract.fields)) {
+    throw new Error(`${name} must be a render input object that rejects unknown fields`);
+  }
+  const allDefaulted = contract.fields.every((field) => Object.hasOwn(field, "default"));
+  const derives = [
+    "Clone",
+    "Debug",
+    ...(allDefaulted && contract.fields.every(fieldUsesRustDefault) ? ["Default"] : []),
+    "serde::Deserialize",
+    "serde::Serialize",
+    "Eq",
+    "PartialEq",
+  ];
+  const fields = renderInputFields(name, contract.fields, reached);
+  const serde = allDefaulted
+    ? '#[serde(default, rename_all = "camelCase", deny_unknown_fields)]'
+    : '#[serde(rename_all = "camelCase", deny_unknown_fields)]';
+  return `#[derive(${derives.join(", ")})]
+${serde}
+pub struct ${RENDER_INPUT_RUST_NAMES[name]} {
+${fields.join("\n")}
+}`;
+}
+
+function renderInputUnion(name, contract, reached) {
+  if (!contract
+      || typeof contract.tag !== "string"
+      || !/^[a-z][A-Za-z0-9]*$/.test(contract.tag)
+      || contract.unknownFields !== "reject"
+      || !contract.variants
+      || Object.keys(contract.variants).length === 0) {
+    throw new Error(`invalid render input Rust tagged union ${name}`);
+  }
+  const variantNames = new Set();
+  const variants = Object.entries(contract.variants).map(([value, fields]) => {
+    const variant = rustVariant(value);
+    validateRustIdentifier(variant, `${name} union variant ${JSON.stringify(value)}`);
+    if (variantNames.has(variant)) {
+      throw new Error(`${name} union variants collide as Rust identifier ${variant}`);
+    }
+    variantNames.add(variant);
+    if (fields.some((field) => field.json === contract.tag)) {
+      throw new Error(`${name}.${value} field collides with tag ${contract.tag}`);
+    }
+    const members = renderInputFields(`${name}.${value}`, fields, reached, 8, false);
+    return members.length === 0
+      ? `    ${variant},`
+      : `    ${variant} {\n${members.join("\n")}\n    },`;
+  });
+  return `#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(
+    tag = "${contract.tag}",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ${RENDER_INPUT_RUST_NAMES[name]} {
+${variants.join("\n")}
+}`;
+}
+
+function renderInputFields(owner, fields, reached, indentation = 4, isPublic = true) {
+  const rustFields = new Set();
+  return fields.map((field) => {
+    validateField(field, owner);
+    const identifier = rustField(field.json);
+    validateRustIdentifier(identifier, `${owner}.${field.json}`);
+    if (rustFields.has(identifier)) {
+      throw new Error(`${owner} fields collide as Rust identifier ${identifier}`);
+    }
+    rustFields.add(identifier);
+    const attributes = [];
+    if (Object.hasOwn(field, "default")) attributes.push("default");
+    if (field.type === "safeInteger | null") {
+      attributes.push('deserialize_with = "deserialize_optional_safe_integer"');
+    }
+    const prefix = " ".repeat(indentation);
+    const attribute = attributes.length > 0
+      ? `${prefix}#[serde(${attributes.join(", ")})]\n`
+      : "";
+    const visibility = isPublic ? "pub " : "";
+    return `${attribute}${prefix}${visibility}${identifier}: ${renderInputRustType(field.type, reached)},`;
+  });
+}
+
+function renderInputRustType(type, reached) {
+  if (type === "string") return "String";
+  if (type === "string | null") return "Option<String>";
+  if (type === "safeInteger | null") return "Option<u64>";
+  if (type === "u32") return "u32";
+  const array = type.match(/^([A-Za-z][A-Za-z0-9]*)\[\]$/);
+  if (array && reached.has(array[1])) {
+    return `Vec<${RENDER_INPUT_RUST_NAMES[array[1]]}>`;
+  }
+  if (reached.has(type)) return RENDER_INPUT_RUST_NAMES[type];
+  throw new Error(`unsupported render input Rust field type ${type}`);
 }
 
 function collectRequestContracts(schema) {

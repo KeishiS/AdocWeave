@@ -20,7 +20,7 @@ use adocweave::{
 use crate::WasmError;
 use crate::preprocess_wire::{resource_snapshot, to_core_options};
 use crate::protocol_generated::WasmProductSet;
-use crate::render_inputs::WasmRenderInputs;
+use crate::render_input_normalization::NormalizedRenderInputs;
 use crate::request_enum_generated::{
     WasmDocumentMode, WasmSyntaxMode, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation,
@@ -45,7 +45,7 @@ pub(crate) struct ExecutionRequest {
     pub(crate) source_id: Option<SourceId>,
     pub(crate) requested_products: WasmProductSet,
     pub(crate) products: ProductSet,
-    pub(crate) render_inputs: WasmRenderInputs,
+    pub(crate) render_inputs: NormalizedRenderInputs,
     pub(crate) engine: Engine,
     pub(crate) preprocess: Option<PreprocessExecution>,
     pub(crate) render_policy: RenderPolicy,
@@ -53,7 +53,7 @@ pub(crate) struct ExecutionRequest {
 }
 
 pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, WasmError> {
-    let request = request.into_wire();
+    let (request, render_inputs) = request.into_parts();
     let requested_products = request.products;
     let products = requested_products.into();
     let analysis_options = request.analysis_options;
@@ -86,7 +86,7 @@ pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, Wa
         source_id,
         requested_products,
         products,
-        render_inputs: request.render_inputs,
+        render_inputs,
         engine,
         preprocess,
         render_policy: render_policy(render_options),

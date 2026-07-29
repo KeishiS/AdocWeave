@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   generateRustPreprocessInputs,
+  generateRustRenderInputs,
   generateRustRequestEnums,
   generateRustResponseTypes,
   generateRustSharedTypes,
@@ -12,6 +13,74 @@ import {
 const schema = JSON.parse(
   await readFile(new URL("../protocol/public-api.json", import.meta.url), "utf8"),
 );
+
+test("render input Rust types are generated without a core dependency", () => {
+  const generated = generateRustRenderInputs(schema);
+
+  for (const name of [
+    "WasmRenderInputs",
+    "WasmResolvedReference",
+    "WasmReferenceOutcome",
+    "WasmReferenceNotice",
+    "WasmReferenceFailureKind",
+    "WasmResolvedResource",
+    "WasmResourceOutcome",
+    "WasmResourceFailureKind",
+  ]) {
+    assert.match(generated, new RegExp(`\\b${name}\\b`));
+  }
+  assert.doesNotMatch(generated, /adocweave::/);
+  assert.match(
+    generated,
+    /pub\(crate\) const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991/,
+  );
+  assert.match(
+    generated,
+    /deserialize_with = "deserialize_optional_safe_integer"/,
+  );
+});
+
+test("render input schema changes deterministically change generated Rust", () => {
+  const changed = structuredClone(schema);
+  changed.definitions.RenderInputs.fields.push({
+    json: "referenceGroups",
+    type: "ResolvedReference[]",
+    default: [],
+  });
+
+  const generated = generateRustRenderInputs(changed);
+  assert.match(
+    generated,
+    /pub reference_groups: Vec<WasmResolvedReference>/,
+  );
+});
+
+test("render input generation fails closed for unsupported and colliding shapes", () => {
+  const unsupported = structuredClone(schema);
+  unsupported.definitions.ResolvedResource.fields[0].type = "number";
+  assert.throws(
+    () => generateRustRenderInputs(unsupported),
+    /unsupported reachable render input Rust type number/,
+  );
+
+  const unreachable = structuredClone(schema);
+  unreachable.definitions.RenderInputs.fields.pop();
+  assert.throws(
+    () => generateRustRenderInputs(unreachable),
+    /exactly match reachable inputs/,
+  );
+
+  const collision = structuredClone(schema);
+  collision.taggedUnions.ResolvedReferenceOutcome.variants.resolved.push({
+    json: "status",
+    type: "string",
+    required: true,
+  });
+  assert.throws(
+    () => generateRustRenderInputs(collision),
+    /field collides with tag status/,
+  );
+});
 
 test("preprocess Rust inputs are generated without a core dependency", () => {
   const generated = generateRustPreprocessInputs(schema);
