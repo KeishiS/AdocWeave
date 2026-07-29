@@ -540,6 +540,36 @@ impl Workspace {
         }
     }
 
+    /// Builds a filtered snapshot directly from current workspace state.
+    ///
+    /// The predicate runs before accepted resource identities and values are
+    /// cloned. Only registered roots present in the accepted resource map are
+    /// cloned into the result. This is useful when a host must validate a
+    /// smaller snapshot against its own limits before allocating that
+    /// snapshot.
+    pub fn try_snapshot_resources<E>(
+        &self,
+        mut retain: impl FnMut(&ResourceId, &Resource) -> Result<bool, E>,
+    ) -> Result<WorkspaceSnapshot, E> {
+        let mut resources = BTreeMap::new();
+        for (id, resource) in self.effective.iter() {
+            if retain(id, resource)? {
+                resources.insert(id.clone(), resource.clone());
+            }
+        }
+        let roots = self
+            .roots
+            .iter()
+            .filter(|root| resources.contains_key(*root))
+            .cloned()
+            .collect();
+        Ok(WorkspaceSnapshot {
+            generation: self.generation,
+            roots,
+            resources: Arc::new(resources),
+        })
+    }
+
     /// Adopts dependency information from a result that is still current.
     pub fn accept(&mut self, analysis: &WorkspaceAnalysis) -> Result<(), WorkspaceError> {
         if analysis.generation != self.generation {
@@ -1379,5 +1409,31 @@ mod tests {
 
         assert!(matches!(result, Err("limit")));
         assert_eq!(visited, ["a", "b"]);
+    }
+
+    #[test]
+    fn direct_fallible_snapshot_clones_only_accepted_resources_and_roots() {
+        let mut workspace = Workspace::default();
+        for revision in 0..100 {
+            let resource = id(&format!("file:///project/{revision:03}.adoc"));
+            workspace
+                .upsert_disk(resource.clone(), Revision::new(revision), "x")
+                .expect("resource");
+            workspace.register_root(resource).expect("root");
+        }
+        let accepted = id("file:///project/000.adoc");
+        let rejected = id("file:///project/099.adoc");
+        let accepted_text = Arc::clone(workspace.get(&accepted).expect("accepted").text());
+        let rejected_text = Arc::clone(workspace.get(&rejected).expect("rejected").text());
+        let accepted_before = Arc::strong_count(&accepted_text);
+        let rejected_before = Arc::strong_count(&rejected_text);
+        let snapshot = workspace
+            .try_snapshot_resources(|id, _| Ok::<_, ()>(id == &accepted))
+            .expect("filtered snapshot");
+
+        assert_eq!(snapshot.resources().count(), 1);
+        assert_eq!(snapshot.roots, BTreeSet::from([accepted]));
+        assert_eq!(Arc::strong_count(&accepted_text), accepted_before + 1);
+        assert_eq!(Arc::strong_count(&rejected_text), rejected_before);
     }
 }

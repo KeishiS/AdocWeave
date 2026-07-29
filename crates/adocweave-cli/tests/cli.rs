@@ -746,6 +746,91 @@ fn project_config_bounds_cli_diagnostics_before_json_projection() {
 }
 
 #[test]
+fn project_resource_plan_bounds_primary_and_root_include_aggregate() {
+    let root = tempfile::tempdir().expect("project");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+    )
+    .expect("config");
+    let document = root.path().join("manual.adoc");
+    std::fs::write(&document, "1234").expect("boundary document");
+    let boundary = adocweave()
+        .current_dir(root.path())
+        .args(["check", "manual.adoc"])
+        .output()
+        .expect("boundary check");
+    assert!(
+        boundary.status.success(),
+        "{}",
+        String::from_utf8_lossy(&boundary.stderr)
+    );
+
+    std::fs::write(&document, "12345").expect("next-byte document");
+    let oversized = adocweave()
+        .current_dir(root.path())
+        .args(["check", "manual.adoc"])
+        .output()
+        .expect("oversized check");
+    assert!(!oversized.status.success());
+
+    std::fs::write(&document, "include::part.adoc[]\n").expect("include root");
+    std::fs::write(root.path().join("part.adoc"), "x").expect("include");
+    let aggregate = adocweave()
+        .current_dir(root.path())
+        .args(["check", "manual.adoc"])
+        .output()
+        .expect("aggregate check");
+    assert!(!aggregate.status.success());
+}
+
+#[test]
+fn multi_path_filesystem_budget_is_shared_per_project_only() {
+    let root = tempfile::tempdir().expect("root");
+    let same = root.path().join("same");
+    std::fs::create_dir(&same).expect("same project");
+    std::fs::write(
+        same.join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+    )
+    .expect("same config");
+    std::fs::write(same.join("a.adoc"), "a").expect("first");
+    std::fs::write(same.join("b.adoc"), "b").expect("second");
+    let rejected = adocweave()
+        .current_dir(root.path())
+        .args(["format", "--check", "same/a.adoc", "same/b.adoc"])
+        .output()
+        .expect("same project");
+    assert!(!rejected.status.success());
+
+    for name in ["one", "two"] {
+        let project = root.path().join(name);
+        std::fs::create_dir(&project).expect("project");
+        std::fs::write(
+            project.join(".adocweave.toml"),
+            "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 1\nmax-total-bytes = 8\nmax-resource-bytes = 8\n",
+        )
+        .expect("config");
+        std::fs::write(project.join("document.adoc"), "x").expect("document");
+    }
+    let accepted = adocweave()
+        .current_dir(root.path())
+        .args([
+            "format",
+            "--check",
+            "one/document.adoc",
+            "two/document.adoc",
+        ])
+        .output()
+        .expect("separate projects");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+}
+
+#[test]
 fn commands_validate_only_the_configuration_paths_they_consume() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

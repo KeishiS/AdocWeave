@@ -186,9 +186,6 @@ fn preview_error(error: commands::preview::Error) -> CliError {
             source_name,
             source,
         },
-        commands::preview::Error::InvalidUtf8 { valid_up_to } => {
-            CliError::InvalidUtf8 { valid_up_to }
-        }
         commands::preview::Error::Analysis(source) => CliError::Analysis(source),
         commands::preview::Error::Include(source) => CliError::Include(source),
         commands::preview::Error::Html(source) => html_policy_error(source),
@@ -741,10 +738,124 @@ fn read_input(path: Option<PathBuf>) -> Result<Vec<u8>, CliError> {
     }
 }
 
+fn read_primary_with_filesystem(
+    path: &Path,
+    roots: Vec<PathBuf>,
+    limits: adocweave_host::FilesystemReadLimits,
+) -> Result<(Vec<u8>, adocweave_host::LocalFilesystemSession), CliError> {
+    let policy = adocweave_host::LocalFilesystemPolicy::new(roots, limits)
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(CliError::Include)?;
+    let mut filesystem = policy
+        .session()
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(CliError::Include)?;
+    let loaded = filesystem
+        .read_utf8(
+            adocweave_host::LogicalSourceId::new(path.to_string_lossy())
+                .map_err(local_include::LocalIncludeError::Host)
+                .map_err(CliError::Include)?,
+            path,
+        )
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(CliError::Include)?;
+    let (_, source) = loaded.into_parts();
+    Ok((source.as_bytes().to_vec(), filesystem))
+}
+
+fn read_primary_in_session(
+    path: &Path,
+    filesystem: &mut adocweave_host::LocalFilesystemSession,
+) -> Result<Vec<u8>, CliError> {
+    let loaded = filesystem
+        .read_utf8(
+            adocweave_host::LogicalSourceId::new(path.to_string_lossy())
+                .map_err(local_include::LocalIncludeError::Host)
+                .map_err(CliError::Include)?,
+            path,
+        )
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(CliError::Include)?;
+    let (_, source) = loaded.into_parts();
+    Ok(source.as_bytes().to_vec())
+}
+
+fn filesystem_for_roots(
+    roots: Vec<PathBuf>,
+    limits: adocweave_host::FilesystemReadLimits,
+) -> Result<adocweave_host::LocalFilesystemSession, CliError> {
+    adocweave_host::LocalFilesystemPolicy::new(roots, limits)
+        .and_then(|policy| policy.session())
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(CliError::Include)
+}
+
 fn decode_input(input: &[u8]) -> Result<&str, CliError> {
     std::str::from_utf8(input).map_err(|error| CliError::InvalidUtf8 {
         valid_up_to: error.valid_up_to(),
     })
+}
+
+fn validate_resource_plan(
+    sizes: impl IntoIterator<Item = u64>,
+    plan: adocweave_config::ResolvedResourceLimitPlan,
+) -> Result<(), CliError> {
+    let mut files = 0_usize;
+    let mut bytes = 0_u64;
+    for size in sizes {
+        files = files.checked_add(1).ok_or_else(|| {
+            CliError::Include(local_include::LocalIncludeError::Analysis(
+                "configured resource file limit exceeded".to_owned(),
+            ))
+        })?;
+        bytes = bytes.checked_add(size).ok_or_else(|| {
+            CliError::Include(local_include::LocalIncludeError::Analysis(
+                "configured resource byte limit exceeded".to_owned(),
+            ))
+        })?;
+        if files > plan.retained_layers.max_files
+            || size > plan.retained_layers.max_resource_bytes
+            || bytes > plan.retained_layers.max_total_bytes
+            || files > plan.analysis_snapshot.max_resources
+            || size > plan.analysis_snapshot.max_resource_bytes
+            || bytes > plan.analysis_snapshot.max_total_bytes
+        {
+            return Err(CliError::Include(
+                local_include::LocalIncludeError::Analysis(
+                    "configured retained or analysis snapshot resource limit exceeded".to_owned(),
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_project_retained_resources(
+    resources: impl IntoIterator<Item = (String, u64)>,
+    retained: &mut std::collections::BTreeMap<String, u64>,
+    max_files: usize,
+    max_total_bytes: u64,
+    max_resource_bytes: u64,
+) -> Result<(), CliError> {
+    let mut next = retained.clone();
+    for (id, bytes) in resources {
+        next.insert(id, bytes);
+    }
+    let total = next
+        .values()
+        .try_fold(0_u64, |total, bytes| total.checked_add(*bytes));
+    if next.len() > max_files
+        || next.values().any(|bytes| *bytes > max_resource_bytes)
+        || total.is_none_or(|total| total > max_total_bytes)
+    {
+        return Err(CliError::Include(
+            local_include::LocalIncludeError::Analysis(
+                "configured retained resource limit exceeded".to_owned(),
+            ),
+        ));
+    }
+    *retained = next;
+    Ok(())
 }
 
 fn finish_output(output: String) -> Result<String, CliError> {
@@ -767,12 +878,25 @@ struct IncludePreparation<'request> {
     allowed_roots: &'request [PathBuf],
     limits: adocweave_host::FilesystemReadLimits,
     preprocess: &'request adocweave::preprocess::PreprocessOptions,
+    filesystem: Option<&'request mut adocweave_host::LocalFilesystemSession>,
 }
 
 fn prepare_includes(
-    request: IncludePreparation<'_>,
+    mut request: IncludePreparation<'_>,
 ) -> Result<local_include::PreparedInput, local_include::LocalIncludeError> {
-    if let Some(project_root) = request.project_root {
+    if let (Some(project_root), Some(filesystem)) =
+        (request.project_root, request.filesystem.as_deref_mut())
+    {
+        local_include::prepare_local_with_session(
+            request.source,
+            request.source_id,
+            request.base_dir,
+            request.source_base,
+            project_root,
+            request.preprocess,
+            filesystem,
+        )
+    } else if let Some(project_root) = request.project_root {
         local_include::prepare_local(
             request.source,
             request.source_id,
@@ -781,6 +905,14 @@ fn prepare_includes(
             project_root,
             request.limits,
             request.preprocess,
+        )
+    } else if let Some(filesystem) = request.filesystem.as_deref_mut() {
+        local_include::prepare_with_session(
+            request.source,
+            Some(request.source_id),
+            request.base_dir,
+            request.preprocess,
+            filesystem,
         )
     } else {
         local_include::prepare(
@@ -1010,6 +1142,14 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
         source_name: "current directory".to_owned(),
         source,
     })?;
+    let mut project_filesystems: std::collections::BTreeMap<
+        Option<PathBuf>,
+        adocweave_host::LocalFilesystemSession,
+    > = std::collections::BTreeMap::new();
+    let mut project_retained: std::collections::BTreeMap<
+        Option<PathBuf>,
+        std::collections::BTreeMap<String, u64>,
+    > = std::collections::BTreeMap::new();
     match &arguments.command {
         CommandOptions::Format(options) => {
             if !options.supports_multiple_inputs() {
@@ -1024,10 +1164,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     adocweave_config::ResolvedProjectConfig::default,
                     |snapshot| snapshot.config.clone(),
                 );
-                let original = fs::read(path).map_err(|source| CliError::Read {
-                    source_name: path.display().to_string(),
-                    source,
-                })?;
                 let include = arguments.include || config.resources.include;
                 if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty())
                 {
@@ -1035,6 +1171,38 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         "--base-dir and --allow-root require include processing".to_owned(),
                     ));
                 }
+                let source_base = path.parent().expect("canonical input path has a parent");
+                let base_dir = arguments.base_dir.as_deref().unwrap_or(source_base);
+                let allowed_roots = if arguments.allowed_roots.is_empty() {
+                    &config.resources.roots
+                } else {
+                    &arguments.allowed_roots
+                };
+                let roots = if !allowed_roots.is_empty() {
+                    allowed_roots.to_vec()
+                } else if let Some(config_path) =
+                    snapshot.as_ref().map(|snapshot| snapshot.path.as_path())
+                {
+                    vec![
+                        config_path
+                            .parent()
+                            .expect("project config has a parent")
+                            .to_owned(),
+                    ]
+                } else {
+                    paths
+                        .iter()
+                        .filter_map(|path| path.parent().map(Path::to_owned))
+                        .collect()
+                };
+                let project_key = snapshot.as_ref().map(|snapshot| snapshot.path.clone());
+                let filesystem = match project_filesystems.entry(project_key.clone()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => entry.insert(
+                        filesystem_for_roots(roots, config.resources.limit_plan.filesystem_reads)?,
+                    ),
+                };
+                let original = read_primary_in_session(path, filesystem)?;
                 if include {
                     validate_project_config_authority(
                         &config,
@@ -1043,22 +1211,41 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         false,
                     )?;
                     let source = decode_input(&original)?;
-                    let source_base = path.parent().expect("canonical input path has a parent");
-                    let base_dir = arguments.base_dir.as_deref().unwrap_or(source_base);
-                    let allowed_roots = if arguments.allowed_roots.is_empty() {
-                        &config.resources.roots
-                    } else {
-                        &arguments.allowed_roots
-                    };
-                    local_include::prepare(
+                    let prepared = local_include::prepare_with_session(
                         source,
                         Some(path.to_string_lossy().into_owned()),
                         base_dir,
-                        allowed_roots,
-                        config.resources.limit_plan.filesystem_reads,
                         &config.preprocess,
+                        filesystem,
                     )
                     .map_err(CliError::Include)?;
+                    validate_resource_plan(prepared.resource_sizes(), config.resources.limit_plan)?;
+                    validate_project_retained_resources(
+                        prepared
+                            .resource_entries()
+                            .map(|(id, bytes)| (id.to_owned(), bytes)),
+                        project_retained.entry(project_key).or_default(),
+                        config.resources.limit_plan.retained_layers.max_files,
+                        config.resources.limit_plan.retained_layers.max_total_bytes,
+                        config
+                            .resources
+                            .limit_plan
+                            .retained_layers
+                            .max_resource_bytes,
+                    )?;
+                } else {
+                    validate_resource_plan([original.len() as u64], config.resources.limit_plan)?;
+                    validate_project_retained_resources(
+                        [(path.to_string_lossy().into_owned(), original.len() as u64)],
+                        project_retained.entry(project_key).or_default(),
+                        config.resources.limit_plan.retained_layers.max_files,
+                        config.resources.limit_plan.retained_layers.max_total_bytes,
+                        config
+                            .resources
+                            .limit_plan
+                            .retained_layers
+                            .max_resource_bytes,
+                    )?;
                 }
                 let format_config = commands::format::format_config(*options, &original, &config);
                 let formatted =
@@ -1109,25 +1296,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     adocweave_config::ResolvedProjectConfig::default,
                     |snapshot| snapshot.config.clone(),
                 );
-                let original = fs::read(path).map_err(|source| CliError::Read {
-                    source_name: path.display().to_string(),
-                    source,
-                })?;
-                let checked = if check.fix {
-                    apply_safe_fixes(&original, check, &config.analysis)?
-                } else {
-                    original.clone()
-                };
-                if check.fix && checked != original {
-                    changed += 1;
-                    if !check.dry_run {
-                        pending.push(PendingWrite {
-                            path: path.clone(),
-                            original,
-                            replacement: checked.clone(),
-                        });
-                    }
-                }
                 let source_id = path.to_string_lossy();
                 let project_root = arguments.project_root.clone().or_else(|| {
                     config
@@ -1153,6 +1321,53 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .parent()
                     .expect("canonical input path has a parent")
                     .to_path_buf();
+                let allowed_roots = if arguments.allowed_roots.is_empty() {
+                    &config.resources.roots
+                } else {
+                    &arguments.allowed_roots
+                };
+                let roots = if let Some(project_root) = project_root.as_ref() {
+                    vec![project_root.clone()]
+                } else if !allowed_roots.is_empty() {
+                    allowed_roots.to_vec()
+                } else if let Some(config_path) =
+                    snapshot.as_ref().map(|snapshot| snapshot.path.as_path())
+                {
+                    vec![
+                        config_path
+                            .parent()
+                            .expect("project config has a parent")
+                            .to_owned(),
+                    ]
+                } else {
+                    paths
+                        .iter()
+                        .filter_map(|path| path.parent().map(Path::to_owned))
+                        .collect()
+                };
+                let project_key = snapshot.as_ref().map(|snapshot| snapshot.path.clone());
+                let filesystem = match project_filesystems.entry(project_key.clone()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => entry.insert(
+                        filesystem_for_roots(roots, config.resources.limit_plan.filesystem_reads)?,
+                    ),
+                };
+                let original = read_primary_in_session(path, filesystem)?;
+                let checked = if check.fix {
+                    apply_safe_fixes(&original, check, &config.analysis)?
+                } else {
+                    original.clone()
+                };
+                if check.fix && checked != original {
+                    changed += 1;
+                    if !check.dry_run {
+                        pending.push(PendingWrite {
+                            path: path.clone(),
+                            original,
+                            replacement: checked.clone(),
+                        });
+                    }
+                }
                 let local_context = project_root
                     .as_ref()
                     .map(|root| (source_base.as_path(), root.as_path(), source_id.as_ref()));
@@ -1162,11 +1377,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         .base_dir
                         .as_deref()
                         .unwrap_or(source_base.as_path());
-                    let allowed_roots = if arguments.allowed_roots.is_empty() {
-                        &config.resources.roots
-                    } else {
-                        &arguments.allowed_roots
-                    };
                     let mut prepared = prepare_includes(IncludePreparation {
                         source,
                         source_id: source_id.to_string(),
@@ -1176,10 +1386,37 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         allowed_roots,
                         limits: config.resources.limit_plan.filesystem_reads,
                         preprocess: &config.preprocess,
+                        filesystem: Some(filesystem),
                     })
                     .map_err(CliError::Include)?;
+                    validate_resource_plan(prepared.resource_sizes(), config.resources.limit_plan)?;
+                    validate_project_retained_resources(
+                        prepared
+                            .resource_entries()
+                            .map(|(id, bytes)| (id.to_owned(), bytes)),
+                        project_retained.entry(project_key).or_default(),
+                        config.resources.limit_plan.retained_layers.max_files,
+                        config.resources.limit_plan.retained_layers.max_total_bytes,
+                        config
+                            .resources
+                            .limit_plan
+                            .retained_layers
+                            .max_resource_bytes,
+                    )?;
                     check_preprocessed(&mut prepared, check, &config.analysis)?
                 } else {
+                    validate_resource_plan([checked.len() as u64], config.resources.limit_plan)?;
+                    validate_project_retained_resources(
+                        [(path.to_string_lossy().into_owned(), checked.len() as u64)],
+                        project_retained.entry(project_key).or_default(),
+                        config.resources.limit_plan.retained_layers.max_files,
+                        config.resources.limit_plan.retained_layers.max_total_bytes,
+                        config
+                            .resources
+                            .limit_plan
+                            .retained_layers
+                            .max_resource_bytes,
+                    )?;
                     process_check(
                         &checked,
                         check,
@@ -1718,7 +1955,32 @@ fn run() -> Result<ExitCode, CliError> {
                     .map_or_else(|| project_root.clone(), PathBuf::from);
                 (base, project_root.clone(), source_id.clone())
             });
-            let input = read_input(arguments.input)?;
+            let primary_base = canonical_input
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_owned);
+            let (input, mut primary_filesystem) = if let Some(path) = canonical_input.as_deref() {
+                let roots = if let Some(project_root) = project_root.as_ref() {
+                    vec![project_root.clone()]
+                } else if include && !allowed_roots.is_empty() {
+                    allowed_roots.clone()
+                } else {
+                    vec![
+                        primary_base
+                            .clone()
+                            .expect("canonical input path has a parent"),
+                    ]
+                };
+                let (input, filesystem) = read_primary_with_filesystem(
+                    path,
+                    roots,
+                    project_config.resources.limit_plan.filesystem_reads,
+                )?;
+                (input, Some(filesystem))
+            } else {
+                (read_input(None)?, None)
+            };
+            validate_resource_plan([input.len() as u64], project_config.resources.limit_plan)?;
             let mut prepared = None;
             let processed = if include {
                 let source = decode_input(&input)?;
@@ -1751,8 +2013,13 @@ fn run() -> Result<ExitCode, CliError> {
                     allowed_roots: &allowed_roots,
                     limits: project_config.resources.limit_plan.filesystem_reads,
                     preprocess: &project_config.preprocess,
+                    filesystem: primary_filesystem.as_mut(),
                 })
                 .map_err(CliError::Include)?;
+                validate_resource_plan(
+                    include_input.resource_sizes(),
+                    project_config.resources.limit_plan,
+                )?;
                 let processed = if command_id == CommandId::Format {
                     input.clone()
                 } else {

@@ -89,7 +89,8 @@ impl WorkspaceResources {
         limits: WorkspaceLimits,
     ) -> Result<(), String> {
         self.last_load_failed_closed = false;
-        let mut paths = roots
+        let seed = Generation::new(self.inner.generation().get().saturating_add(1));
+        let mut paths = match roots
             .iter()
             .map(|root| {
                 root.to_file_path()
@@ -97,41 +98,143 @@ impl WorkspaceResources {
                     .canonicalize()
                     .map_err(|error| format!("cannot canonicalize workspace root: {error}"))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.inner = Workspace::new_at_generation(limits, seed);
+                self.roots.clear();
+                self.filesystems.clear();
+                self.project_plans.clear();
+                self.resource_projects.clear();
+                self.retained_layers.clear();
+                self.last_load_failed_closed = true;
+                return Err(error);
+            }
+        };
         paths.sort();
         paths.dedup();
-        let discovery = (!paths.is_empty())
-            .then(|| {
-                LocalFilesystemPolicy::new(
-                    paths.clone(),
-                    adocweave_host::FilesystemReadLimits::default(),
-                )
-            })
-            .transpose()
-            .map_err(|error| error.to_string())?
-            .map(|policy| policy.session())
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        let candidates = match discovery.as_ref() {
-            Some(session) => session
-                .discover_adoc_paths()
-                .map_err(|error| error.to_string())?,
-            None => Vec::new(),
-        };
-        let seed = Generation::new(self.inner.generation().get().saturating_add(1));
-        let mut inner = Workspace::new_at_generation(limits, seed);
-        let mut filesystems = BTreeMap::new();
-        let mut resource_projects = BTreeMap::new();
-        let mut project_plans = BTreeMap::new();
-        let mut retained_layers: BTreeMap<Option<PathBuf>, RetainedResourceBudget> =
-            BTreeMap::new();
-        let mut next_disk_version = self.next_disk_version;
-        for path in candidates {
-            let config = match config_for_path_typed(&paths, &path) {
-                Ok(config) => config,
-                Err(error) if invalid_project_config(error.code) => {
-                    // Keep only trusted canonical boundaries. An invalid
-                    // nearest project file must not fall back to an old plan.
+        let preserve_previous = std::cell::Cell::new(false);
+        let load_result = (|| {
+            let discovery = (!paths.is_empty())
+                .then(|| {
+                    LocalFilesystemPolicy::new(
+                        paths.clone(),
+                        adocweave_host::FilesystemReadLimits::default(),
+                    )
+                })
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .map(|policy| policy.session())
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let candidates = match discovery.as_ref() {
+                Some(session) => session
+                    .discover_adoc_paths()
+                    .map_err(|error| error.to_string())?,
+                None => Vec::new(),
+            };
+            let mut inner = Workspace::new_at_generation(limits, seed);
+            let mut filesystems = BTreeMap::new();
+            let mut resource_projects = BTreeMap::new();
+            let mut project_plans = BTreeMap::new();
+            let mut retained_layers: BTreeMap<Option<PathBuf>, RetainedResourceBudget> =
+                BTreeMap::new();
+            let mut next_disk_version = self.next_disk_version;
+            for path in candidates {
+                let config = match config_for_path_typed(&paths, &path) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        preserve_previous.set(matches!(
+                            error.code,
+                            adocweave_config::ConfigErrorCode::ReadFailed
+                        ));
+                        return Err(error.to_string());
+                    }
+                };
+                let project = config.as_ref().map(|snapshot| snapshot.path.clone());
+                let plan = config.as_ref().map_or_else(
+                    adocweave_config::ResolvedResourceLimitPlan::default,
+                    |snapshot| snapshot.config.resources.limit_plan,
+                );
+                if config.as_ref().is_some_and(|snapshot| {
+                    !snapshot.config.resources.roots.is_empty()
+                        && !snapshot
+                            .config
+                            .resources
+                            .roots
+                            .iter()
+                            .any(|root| path.starts_with(root))
+                }) {
+                    continue;
+                }
+                if let Some(previous) = project_plans.insert(project.clone(), plan)
+                    && previous != plan
+                {
+                    return Err(
+                        "project resource limit plan changed during workspace scan".to_owned()
+                    );
+                }
+                let filesystem = match filesystems.entry(project.clone()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        let session =
+                            LocalFilesystemPolicy::new(paths.clone(), plan.filesystem_reads)
+                                .map_err(|error| error.to_string())?
+                                .session()
+                                .map_err(|error| error.to_string())?;
+                        entry.insert(Arc::new(Mutex::new(session)))
+                    }
+                };
+                let uri = Url::from_file_path(&path).map_err(|()| {
+                    format!("cannot convert workspace path to URI: {}", path.display())
+                })?;
+                let file = filesystem
+                    .lock()
+                    .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
+                    .read_utf8(
+                        LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
+                        &path,
+                    )
+                    .map_err(|error| error.to_string())?;
+                next_disk_version = next_disk_version.saturating_add(1);
+                let (source_id, text) = file.into_parts();
+                let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
+                let budget = retained_layers
+                    .get(&project)
+                    .cloned()
+                    .unwrap_or_default()
+                    .with_disk(id.clone(), Some(text.len() as u64), plan.retained_layers)
+                    .map_err(|error| error.to_string())?;
+                inner
+                    .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
+                    .map_err(|error| error.to_string())?;
+                inner
+                    .register_root(id.clone())
+                    .map_err(|error| error.to_string())?;
+                retained_layers.insert(project.clone(), budget);
+                resource_projects.insert(id, project);
+            }
+            Ok((
+                inner,
+                filesystems,
+                project_plans,
+                resource_projects,
+                retained_layers,
+                next_disk_version,
+            ))
+        })();
+        let (
+            inner,
+            filesystems,
+            project_plans,
+            resource_projects,
+            retained_layers,
+            next_disk_version,
+        ) = match load_result {
+            Ok(state) => state,
+            Err(error) => {
+                if !preserve_previous.get() {
                     self.inner = Workspace::new_at_generation(limits, seed);
                     self.roots = paths;
                     self.filesystems.clear();
@@ -139,59 +242,10 @@ impl WorkspaceResources {
                     self.resource_projects.clear();
                     self.retained_layers.clear();
                     self.last_load_failed_closed = true;
-                    return Err(error.to_string());
                 }
-                Err(error) => return Err(error.to_string()),
-            };
-            let project = config.as_ref().map(|snapshot| snapshot.path.clone());
-            let plan = config.as_ref().map_or_else(
-                adocweave_config::ResolvedResourceLimitPlan::default,
-                |snapshot| snapshot.config.resources.limit_plan,
-            );
-            if let Some(previous) = project_plans.insert(project.clone(), plan)
-                && previous != plan
-            {
-                return Err("project resource limit plan changed during workspace scan".to_owned());
+                return Err(error);
             }
-            let filesystem = match filesystems.entry(project.clone()) {
-                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    let session = LocalFilesystemPolicy::new(paths.clone(), plan.filesystem_reads)
-                        .map_err(|error| error.to_string())?
-                        .session()
-                        .map_err(|error| error.to_string())?;
-                    entry.insert(Arc::new(Mutex::new(session)))
-                }
-            };
-            let uri = Url::from_file_path(&path).map_err(|()| {
-                format!("cannot convert workspace path to URI: {}", path.display())
-            })?;
-            let file = filesystem
-                .lock()
-                .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-                .read_utf8(
-                    LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
-                    &path,
-                )
-                .map_err(|error| error.to_string())?;
-            next_disk_version = next_disk_version.saturating_add(1);
-            let (source_id, text) = file.into_parts();
-            let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
-            let budget = retained_layers
-                .get(&project)
-                .cloned()
-                .unwrap_or_default()
-                .with_disk(id.clone(), Some(text.len() as u64), plan.retained_layers)
-                .map_err(|error| error.to_string())?;
-            inner
-                .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
-                .map_err(|error| error.to_string())?;
-            inner
-                .register_root(id.clone())
-                .map_err(|error| error.to_string())?;
-            retained_layers.insert(project.clone(), budget);
-            resource_projects.insert(id, project);
-        }
+        };
         self.inner = inner;
         self.roots = paths;
         self.filesystems = filesystems;
@@ -438,7 +492,6 @@ impl WorkspaceResources {
         }
         let mut allowed_schemes = BTreeSet::new();
         allowed_schemes.insert("file".to_owned());
-        let snapshot = self.inner.snapshot();
         let config_snapshot = self.config_for_uri(root)?;
         let project_config = config_snapshot.as_ref().map_or_else(
             adocweave_config::ResolvedProjectConfig::default,
@@ -479,7 +532,7 @@ impl WorkspaceResources {
         let limits = project_config.resources.limit_plan.analysis_snapshot;
         let mut retained_files = 0_usize;
         let mut retained_bytes = 0_u64;
-        let snapshot = snapshot.try_filter_resources(|id, resource| {
+        let snapshot = self.inner.try_snapshot_resources(|id, resource| {
             let allowed = if id == &root_id {
                 true
             } else if !options.enable_includes {
@@ -608,14 +661,6 @@ fn config_for_path_typed(
         start = parent;
     }
     adocweave_config::discover_and_load(start, boundary)
-}
-
-const fn invalid_project_config(code: adocweave_config::ConfigErrorCode) -> bool {
-    !matches!(
-        code,
-        adocweave_config::ConfigErrorCode::ReadFailed
-            | adocweave_config::ConfigErrorCode::OutsideBoundary
-    )
 }
 
 fn snapshot_limit_error() -> String {
@@ -1099,6 +1144,60 @@ mod tests {
                 .as_ref(),
             "old"
         );
+    }
+
+    #[test]
+    fn stricter_valid_plan_rejection_clears_the_previous_snapshot() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 1, 8, 8, false);
+        let path = root.0.join("document.adoc");
+        std::fs::write(&path, "1234").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("initial workspace");
+
+        write_resource_config(&root.0, 1, 3, 3, false);
+        let error = resources
+            .load_roots(&[root_uri])
+            .expect_err("stricter valid plan");
+
+        assert!(
+            error.contains("resource too large") || error.contains("byte limit"),
+            "{error}"
+        );
+        assert!(resources.last_load_failed_closed());
+        assert!(resources.get(&document_uri).is_none());
+        assert!(resources.input(&document_uri).is_err());
+    }
+
+    #[test]
+    fn configured_resource_roots_exclude_unrelated_project_documents() {
+        let root = TestDirectory::new();
+        let docs = root.0.join("docs");
+        let other = root.0.join("other");
+        std::fs::create_dir(&docs).expect("docs");
+        std::fs::create_dir(&other).expect("other");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[resources]\nroots = [\"docs\"]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+        )
+        .expect("project configuration");
+        let document = docs.join("root.adoc");
+        let unrelated = other.join("unrelated.adoc");
+        std::fs::write(&document, "root").expect("document");
+        std::fs::write(&unrelated, "other").expect("unrelated");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&document).expect("document URI");
+        let unrelated_uri = Url::from_file_path(&unrelated).expect("unrelated URI");
+        let mut resources = WorkspaceResources::default();
+
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        assert!(resources.get(&document_uri).is_some());
+        assert!(resources.get(&unrelated_uri).is_none());
     }
 
     #[test]

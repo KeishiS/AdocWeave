@@ -9,6 +9,13 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::local_resource::FilesystemReadLimits;
 
+#[derive(Clone, Copy)]
+pub(crate) struct CandidateReadCapacity {
+    pub allow_file: bool,
+    pub max_total_bytes: u64,
+    pub max_resource_bytes: u64,
+}
+
 /// Concurrent-filesystem guarantee provided by the active platform adapter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FilesystemRaceResistance {
@@ -289,6 +296,16 @@ impl LocalTargetSession {
         self.read_candidate_utf8(&candidate)
     }
 
+    pub(crate) fn read_utf8_with_capacity(
+        &mut self,
+        base: &Path,
+        target: &str,
+        capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
+    ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        let candidate = self.candidate(base, target)?;
+        self.read_candidate_utf8_with_capacity(&candidate, false, || {}, capacity)
+    }
+
     /// Opens and reads an already normalized path below this session's root.
     ///
     /// The path is resolved from the root handle on platforms which advertise
@@ -297,15 +314,16 @@ impl LocalTargetSession {
         &mut self,
         candidate: &Path,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        self.read_candidate_utf8_with(candidate, true, || {})
+        let capacity = self.default_read_capacity();
+        self.read_candidate_utf8_with_capacity(candidate, true, || {}, |_| capacity)
     }
 
-    /// Reopens an already normalized path without reusing cached text.
-    pub(crate) fn reread_candidate_utf8(
+    pub(crate) fn reread_candidate_utf8_with_capacity(
         &mut self,
         candidate: &Path,
+        capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        self.read_candidate_utf8_with(candidate, false, || {})
+        self.read_candidate_utf8_with_capacity(candidate, false, || {}, capacity)
     }
 
     #[cfg(test)]
@@ -316,22 +334,25 @@ impl LocalTargetSession {
         after_open: impl FnOnce(),
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let candidate = self.candidate(base, target)?;
-        self.read_candidate_utf8_after_open(&candidate, after_open)
+        let capacity = self.default_read_capacity();
+        self.read_candidate_utf8_with_capacity(&candidate, true, after_open, |_| capacity)
     }
 
-    pub(crate) fn read_candidate_utf8_after_open(
-        &mut self,
-        candidate: &Path,
-        after_open: impl FnOnce(),
-    ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        self.read_candidate_utf8_with(candidate, true, after_open)
+    fn default_read_capacity(&self) -> CandidateReadCapacity {
+        CandidateReadCapacity {
+            allow_file: self.read_files < self.limits.max_files
+                && self.read_bytes < self.limits.max_total_bytes,
+            max_total_bytes: self.limits.max_total_bytes.saturating_sub(self.read_bytes),
+            max_resource_bytes: self.limits.max_resource_bytes,
+        }
     }
 
-    fn read_candidate_utf8_with(
+    pub(crate) fn read_candidate_utf8_with_capacity(
         &mut self,
         candidate: &Path,
         reuse_cached_text: bool,
         after_open: impl FnOnce(),
+        capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         #[cfg(target_os = "linux")]
         let (canonical, file) = {
@@ -361,16 +382,13 @@ impl LocalTargetSession {
                 source,
             });
         }
-        if self.read_files >= self.limits.max_files
-            || self.read_bytes >= self.limits.max_total_bytes
-        {
+        let capacity = capacity(&canonical);
+        if !capacity.allow_file {
             return Err(LocalTargetError::ReadLimitExceeded);
         }
-        let remaining = self.limits.max_total_bytes - self.read_bytes;
-        let read_limit = self
-            .limits
+        let read_limit = capacity
             .max_resource_bytes
-            .min(remaining)
+            .min(capacity.max_total_bytes)
             .saturating_add(1);
         let result = (|| {
             self.read_files += 1;
@@ -379,10 +397,10 @@ impl LocalTargetSession {
                 .read_to_end(&mut bytes)
                 .map_err(|source| classify_io(canonical.clone(), source))?;
             self.read_bytes = self.read_bytes.saturating_add(bytes.len() as u64);
-            if self.read_bytes > self.limits.max_total_bytes {
+            if bytes.len() as u64 > capacity.max_total_bytes {
                 return Err(LocalTargetError::ReadLimitExceeded);
             }
-            if bytes.len() as u64 > self.limits.max_resource_bytes {
+            if bytes.len() as u64 > capacity.max_resource_bytes {
                 return Err(LocalTargetError::ResourceTooLarge(canonical.clone()));
             }
             String::from_utf8(bytes).map_err(|_| LocalTargetError::InvalidUtf8(canonical.clone()))

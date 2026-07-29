@@ -305,9 +305,23 @@ impl LocalFilesystemSession {
         target: &str,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
         let index = self.root_index(base)?;
+        let budget = self.budget;
+        let charged = &self.charged;
+        let limits = self.limits;
+        let file_limit_denied = std::cell::Cell::new(false);
         let loaded = self.sessions[index]
-            .read_utf8(base, target)
-            .map_err(ResourceError::from)?;
+            .read_utf8_with_capacity(base, target, |canonical| {
+                shared_read_capacity(budget, charged, limits, canonical, &file_limit_denied)
+            })
+            .map_err(|error| {
+                if file_limit_denied.get() && matches!(error, LocalTargetError::ReadLimitExceeded) {
+                    ResourceError::FileLimit {
+                        limit: limits.max_files,
+                    }
+                } else {
+                    ResourceError::from(error)
+                }
+            })?;
         self.finish_read(source_id, loaded)
     }
 
@@ -331,9 +345,23 @@ impl LocalFilesystemSession {
         path: &Path,
     ) -> Result<(LoadedFilesystemSource, FilesystemReadRollback), ResourceError> {
         let index = self.root_index(path)?;
+        let budget = self.budget;
+        let charged = &self.charged;
+        let limits = self.limits;
+        let file_limit_denied = std::cell::Cell::new(false);
         let loaded = self.sessions[index]
-            .reread_candidate_utf8(path)
-            .map_err(ResourceError::from)?;
+            .reread_candidate_utf8_with_capacity(path, |canonical| {
+                shared_read_capacity(budget, charged, limits, canonical, &file_limit_denied)
+            })
+            .map_err(|error| {
+                if file_limit_denied.get() && matches!(error, LocalTargetError::ReadLimitExceeded) {
+                    ResourceError::FileLimit {
+                        limit: limits.max_files,
+                    }
+                } else {
+                    ResourceError::from(error)
+                }
+            })?;
         let canonical_path = loaded.canonical_path().to_owned();
         let previous_bytes = self.charged.get(&canonical_path).copied();
         self.finish_read(source_id, loaded).map(|loaded| {
@@ -439,9 +467,23 @@ impl LocalFilesystemSession {
         if candidate == self.roots[index] {
             return Err(ResourceError::NotRegularFile(candidate));
         }
+        let budget = self.budget;
+        let charged = &self.charged;
+        let limits = self.limits;
+        let file_limit_denied = std::cell::Cell::new(false);
         let loaded = self.sessions[index]
-            .read_candidate_utf8_after_open(&candidate, after_open)
-            .map_err(ResourceError::from)?;
+            .read_candidate_utf8_with_capacity(&candidate, false, after_open, |canonical| {
+                shared_read_capacity(budget, charged, limits, canonical, &file_limit_denied)
+            })
+            .map_err(|error| {
+                if file_limit_denied.get() && matches!(error, LocalTargetError::ReadLimitExceeded) {
+                    ResourceError::FileLimit {
+                        limit: limits.max_files,
+                    }
+                } else {
+                    ResourceError::from(error)
+                }
+            })?;
         self.finish_read(source_id, loaded)
     }
 
@@ -485,6 +527,26 @@ impl LocalFilesystemSession {
         self.rollback_generation = self
             .rollback_generation
             .and_then(|generation| generation.checked_add(1));
+    }
+}
+
+fn shared_read_capacity(
+    budget: ResourceBudget,
+    charged: &BTreeMap<PathBuf, u64>,
+    limits: FilesystemReadLimits,
+    canonical: &Path,
+    file_limit_denied: &std::cell::Cell<bool>,
+) -> crate::local_target::CandidateReadCapacity {
+    let previous = charged.get(canonical).copied();
+    let allow_file = previous.is_some() || budget.files < limits.max_files;
+    file_limit_denied.set(!allow_file);
+    let retained = previous
+        .and_then(|bytes| budget.bytes.checked_sub(bytes))
+        .unwrap_or(budget.bytes);
+    crate::local_target::CandidateReadCapacity {
+        allow_file,
+        max_total_bytes: limits.max_total_bytes.saturating_sub(retained),
+        max_resource_bytes: limits.max_resource_bytes,
     }
 }
 
@@ -928,6 +990,64 @@ mod tests {
                 Err(ResourceError::ByteLimit)
             );
         }
+    }
+
+    #[test]
+    fn shared_byte_capacity_accepts_the_boundary_and_rejects_the_next_byte() {
+        let root = TestDir::new("shared-byte-boundary");
+        let first = root.path().join("first.adoc");
+        let second = root.path().join("second.adoc");
+        fs::write(&first, "1234").expect("first source");
+        fs::write(&second, "5").expect("second source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 2,
+                max_total_bytes: 4,
+                max_resource_bytes: 4,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+
+        session
+            .read_utf8(source_id(), &first)
+            .expect("boundary read");
+        assert_eq!(
+            session.read_utf8(source_id(), &second),
+            Err(ResourceError::ByteLimit)
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
+    }
+
+    #[test]
+    fn replacement_receives_its_previous_charge_before_the_bounded_read() {
+        let root = TestDir::new("replacement-capacity");
+        let path = root.path().join("document.adoc");
+        fs::write(&path, "1234").expect("initial source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 1,
+                max_total_bytes: 6,
+                max_resource_bytes: 5,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+
+        fs::write(&path, "12345").expect("replacement source");
+        session
+            .reread_utf8(source_id(), &path)
+            .expect("replacement uses released charge");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 5));
+        fs::write(&path, "123456").expect("oversized replacement");
+        assert_eq!(
+            session.reread_utf8(source_id(), &path),
+            Err(ResourceError::ResourceTooLarge(path))
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 5));
     }
 
     #[test]
