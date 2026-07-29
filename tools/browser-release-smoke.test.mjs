@@ -216,6 +216,10 @@ test("Page.navigate failure is not retried", async () => {
   assert.match(error.message, /navigation rejected/);
   assert.equal(harness.browsers.length, 1);
   assert.equal(harness.sockets.length, 1);
+  assert.deepEqual(harness.browsers[0].kills, ["SIGTERM"]);
+  assert.equal(harness.browsers[0].unrefs, 0);
+  assert.equal(harness.browsers[0].stderrDestroys, 0);
+  assert.equal(harness.sockets[0].readyState, 3);
 });
 
 test("a stalled DevToolsActivePort read obeys the attempt deadline", async () => {
