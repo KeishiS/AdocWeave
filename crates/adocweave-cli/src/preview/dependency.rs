@@ -43,8 +43,7 @@ impl Fingerprint {
             Ok(metadata) if metadata.is_file() => match File::open(path) {
                 Ok(mut file) => {
                     let opened = file.metadata().unwrap_or(metadata);
-                    let mut bytes = Vec::new();
-                    let content_hash = file.read_to_end(&mut bytes).ok().map(|_| hash(&bytes));
+                    let content_hash = hash_reader(&mut file, opened.len()).ok();
                     Self {
                         modified: opened.modified().ok(),
                         len: opened.len(),
@@ -89,7 +88,7 @@ impl Fingerprint {
             len: metadata.len(),
             exists: true,
             kind: FileKind::Regular,
-            content_hash: Some(hash(&bytes)),
+            content_hash: Some(hash_bytes(bytes)),
         })
     }
 
@@ -104,7 +103,7 @@ impl Fingerprint {
             len: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
             exists: true,
             kind: FileKind::Regular,
-            content_hash: Some(hash(&bytes)),
+            content_hash: Some(hash_bytes(bytes)),
         }
     }
 
@@ -189,6 +188,48 @@ fn hash(value: &impl Hash) -> u64 {
     hasher.finish()
 }
 
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn hash_reader(reader: &mut impl Read, expected_len: u64) -> io::Result<u64> {
+    let expected_len = usize::try_from(expected_len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "dependency length does not fit in memory address space",
+        )
+    })?;
+    let mut hasher = DefaultHasher::new();
+    hasher.write_usize(expected_len);
+    let mut observed = 0_usize;
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        observed = observed.checked_add(read).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "dependency length overflow")
+        })?;
+        if observed > expected_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "dependency changed while fingerprinting",
+            ));
+        }
+        hasher.write(&buffer[..read]);
+    }
+    if observed != expected_len {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "dependency changed while fingerprinting",
+        ));
+    }
+    Ok(hasher.finish())
+}
+
 pub(crate) fn read_dependency(path: &Path) -> io::Result<(Vec<u8>, Fingerprint)> {
     read_dependency_bounded(path, u64::MAX)
 }
@@ -237,6 +278,18 @@ mod tests {
         assert_ne!(missing, created);
         assert_ne!(created, changed);
         assert_ne!(changed, deleted);
+    }
+
+    #[test]
+    fn streaming_hash_matches_loaded_bytes_with_fixed_buffer() {
+        let bytes = (0..(256 * 1024 + 37))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let mut reader = io::Cursor::new(&bytes);
+        assert_eq!(
+            hash_reader(&mut reader, bytes.len() as u64).expect("streaming hash"),
+            hash_bytes(&bytes)
+        );
     }
 
     #[test]
