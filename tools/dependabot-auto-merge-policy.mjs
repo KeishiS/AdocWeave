@@ -189,6 +189,19 @@ export function evaluateController(input) {
   return decision(reasons.length === 0, reasons);
 }
 
+export function evaluateReconciliation(input) {
+  const reasons = [];
+  let policy;
+  try {
+    policy = validatePolicy(input.policy);
+  } catch (error) {
+    return decision(false, [`policy-invalid:${error.message}`]);
+  }
+  if (!policy.enabled) reasons.push("release-freeze");
+  validateSecurityAlerts(input.securityAlerts, reasons);
+  return decision(reasons.length === 0, reasons);
+}
+
 export function evaluateStrictRulesetProtection(input) {
   let policy;
   try {
@@ -199,8 +212,48 @@ export function evaluateStrictRulesetProtection(input) {
   if (!Array.isArray(input.rulesets) || input.branch !== policy.baseBranch) {
     return decision(false, ["strict-ruleset"]);
   }
-  const eligible = input.rulesets.some((ruleset) => {
+  const activeBranchRulesets = input.rulesets.filter(
+    (ruleset) => ruleset?.target === "branch" && ruleset.enforcement === "active",
+  );
+  const possiblyApplicableRulesets = activeBranchRulesets.filter((ruleset) => {
     const references = ruleset?.conditions?.ref_name;
+    if (!Array.isArray(references?.include)
+        || !Array.isArray(references.exclude)) {
+      return true;
+    }
+    if (references.exclude.some(
+      (pattern) => pattern === "~DEFAULT_BRANCH"
+        || pattern === `refs/heads/${policy.baseBranch}`,
+    )) {
+      return false;
+    }
+    return references.include.some(
+      (pattern) => pattern === "~DEFAULT_BRANCH"
+        || pattern === `refs/heads/${policy.baseBranch}`
+        || typeof pattern !== "string"
+        || !/^refs\/heads\/[a-zA-Z0-9._/-]+$/.test(pattern),
+    );
+  });
+  if (possiblyApplicableRulesets.some(
+    (ruleset) => !Array.isArray(ruleset.bypass_actors)
+      || ruleset.bypass_actors.length !== 0,
+  )) {
+    return decision(false, ["strict-ruleset"]);
+  }
+  const strictRulesets = activeBranchRulesets.filter((ruleset) => {
+    const references = ruleset?.conditions?.ref_name;
+    return Array.isArray(references?.include)
+      && references.include.some(
+        (pattern) => pattern === "~DEFAULT_BRANCH"
+          || pattern === `refs/heads/${policy.baseBranch}`,
+      )
+      && Array.isArray(references.exclude)
+      && references.exclude.length === 0;
+  });
+  if (strictRulesets.length === 0) {
+    return decision(false, ["strict-ruleset"]);
+  }
+  const eligible = strictRulesets.some((ruleset) => {
     const statusRule = ruleset?.rules?.find(
       (rule) => rule?.type === "required_status_checks",
     );
@@ -208,17 +261,7 @@ export function evaluateStrictRulesetProtection(input) {
       (rule) => rule?.type === "pull_request",
     );
     const requiredStatusChecks = statusRule?.parameters?.required_status_checks;
-    return ruleset?.target === "branch"
-      && ruleset.enforcement === "active"
-      && Array.isArray(ruleset.bypass_actors)
-      && ruleset.bypass_actors.length === 0
-      && Array.isArray(references?.include)
-      && references.include.some(
-        (pattern) => pattern === "~DEFAULT_BRANCH" || pattern === `refs/heads/${policy.baseBranch}`,
-      )
-      && Array.isArray(references.exclude)
-      && references.exclude.length === 0
-      && Array.isArray(ruleset.rules)
+    return Array.isArray(ruleset.rules)
       && statusRule?.parameters?.strict_required_status_checks_policy === true
       && Array.isArray(requiredStatusChecks)
       && policy.requiredChecks.every(
@@ -297,10 +340,10 @@ function decision(eligible, reasons) {
 
 async function main() {
   const [mode, policyPath, inputPath] = process.argv.slice(2);
-  if (!["eligibility", "controller", "strict-rulesets"].includes(mode)
+  if (!["eligibility", "controller", "reconcile", "strict-rulesets"].includes(mode)
       || !policyPath || !inputPath) {
     throw new Error(
-      "usage: dependabot-auto-merge-policy.mjs eligibility|controller|strict-rulesets POLICY INPUT",
+      "usage: dependabot-auto-merge-policy.mjs eligibility|controller|reconcile|strict-rulesets POLICY INPUT",
     );
   }
   const policy = JSON.parse(await readFile(policyPath, "utf8"));
@@ -309,7 +352,9 @@ async function main() {
     ? evaluateEligibility({ ...input, policy })
     : mode === "controller"
       ? evaluateController({ ...input, policy })
-      : evaluateStrictRulesetProtection({ ...input, policy });
+      : mode === "reconcile"
+        ? evaluateReconciliation({ ...input, policy })
+        : evaluateStrictRulesetProtection({ ...input, policy });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

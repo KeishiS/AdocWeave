@@ -18,7 +18,11 @@ state="\${3#*state=}"
 state="\${state%%&*}"
 if [[ "$FAKE_GH_MODE" == match-* ]]; then
   if [[ "$state" == "\${FAKE_GH_MODE#match-}" ]]; then
-    printf '%s\\n' '[{"manifest_path":"Cargo.lock","dependency":{"package":{"name":"serde"}}}]'
+    jq -cn --arg state "$state" '[{
+      state: $state,
+      manifest_path: "Cargo.lock",
+      dependency: {package: {name: "serde"}}
+    }]'
   else
     printf '%s\\n' '[]'
   fi
@@ -28,16 +32,17 @@ case "$FAKE_GH_MODE:$state" in
   pages:open)
     jq -cn '[range(0;100) | {
       number: .,
+      state: "open",
       manifest_path: "other/Cargo.lock",
       dependency: {package: {name: "other"}}
     }]'
-    printf '%s\\n' '[{"number":101,"manifest_path":"other/Cargo.lock","dependency":{"package":{"name":"other"}}}]'
+    printf '%s\\n' '[{"number":101,"state":"open","manifest_path":"other/Cargo.lock","dependency":{"package":{"name":"other"}}}]'
     ;;
   pages:fixed)
     printf '%s\\n' '[]'
     ;;
   pages:dismissed)
-    printf '%s\\n' '[]' '[{"manifest_path":"Cargo.lock","dependency":{"package":{"name":"serde"}}}]'
+    printf '%s\\n' '[]' '[{"state":"dismissed","manifest_path":"Cargo.lock","dependency":{"package":{"name":"serde"}}}]'
     ;;
   pages:auto_dismissed)
     printf '%s\\n' '[]'
@@ -47,6 +52,20 @@ case "$FAKE_GH_MODE:$state" in
   no-output:*) printf '%s\\n' '[]' ;;
   malformed:dismissed) printf '%s\\n' '{"message":"unexpected"}' ;;
   malformed:*) printf '%s\\n' '[]' ;;
+  invalid-object:open) printf '%s\\n' '[null]' ;;
+  invalid-object:*) printf '%s\\n' '[]' ;;
+  missing-manifest:fixed)
+    printf '%s\\n' '[{"state":"fixed","dependency":{"package":{"name":"serde"}}}]'
+    ;;
+  missing-manifest:*) printf '%s\\n' '[]' ;;
+  invalid-dependency:dismissed)
+    printf '%s\\n' '[{"state":"dismissed","manifest_path":"Cargo.lock","dependency":{"package":{"name":1}}}]'
+    ;;
+  invalid-dependency:*) printf '%s\\n' '[]' ;;
+  mismatched-state:auto_dismissed)
+    printf '%s\\n' '[{"state":"dismissed","manifest_path":"Cargo.lock","dependency":{"package":{"name":"serde"}}}]'
+    ;;
+  mismatched-state:*) printf '%s\\n' '[]' ;;
   failure:auto_dismissed) exit 22 ;;
   failure:*) printf '%s\\n' '[]' ;;
   *) exit 64 ;;
@@ -109,6 +128,18 @@ test("alert snapshot reports a completed empty lookup", async () => {
 
 for (const mode of ["no-output", "malformed", "failure"]) {
   test(`alert snapshot fails closed for ${mode}`, async () => {
+    const result = await runSnapshot(mode);
+    assert.notEqual(result.status, 0);
+  });
+}
+
+for (const mode of [
+  "invalid-object",
+  "missing-manifest",
+  "invalid-dependency",
+  "mismatched-state",
+]) {
+  test(`alert snapshot rejects an invalid alert entry for ${mode}`, async () => {
     const result = await runSnapshot(mode);
     assert.notEqual(result.status, 0);
   });

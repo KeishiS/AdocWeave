@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   evaluateController,
   evaluateEligibility,
+  evaluateReconciliation,
   evaluateStrictRulesetProtection,
   validatePolicy,
 } from "./dependabot-auto-merge-policy.mjs";
@@ -278,6 +279,55 @@ test("strict ruleset protection is only one prerequisite and does not activate f
       { eligible: true, reasons: [] },
     );
   }
+});
+
+test("strict ruleset rejects bypass actors in every applicable ruleset", () => {
+  for (const references of [
+    { include: ["refs/heads/main"], exclude: [] },
+    { include: ["refs/heads/*"], exclude: [] },
+    { include: ["refs/heads/main"], exclude: ["refs/heads/release"] },
+  ]) {
+    const bypassed = strictRuleset(["refs/heads/main"]);
+    bypassed.conditions.ref_name = references;
+    bypassed.bypass_actors.push({
+      actor_id: 5,
+      actor_type: "RepositoryRole",
+      bypass_mode: "always",
+    });
+    assert.deepEqual(
+      evaluateStrictRulesetProtection({
+        policy,
+        branch: "main",
+        rulesets: [strictRuleset(["~DEFAULT_BRANCH"]), bypassed],
+      }),
+      { eligible: false, reasons: ["strict-ruleset"] },
+    );
+  }
+});
+
+test("reconciliation fails closed for policy freeze and unsafe alert state", () => {
+  const safeAlerts = {
+    lookupCompleted: true,
+    openCount: 0,
+    securityUpdate: false,
+  };
+  assert.deepEqual(
+    evaluateReconciliation({ policy, securityAlerts: safeAlerts }),
+    { eligible: false, reasons: ["release-freeze"] },
+  );
+  const enabledPolicy = structuredClone(policy);
+  enabledPolicy.enabled = true;
+  assert.deepEqual(
+    evaluateReconciliation({
+      policy: enabledPolicy,
+      securityAlerts: { ...safeAlerts, lookupCompleted: false },
+    }),
+    { eligible: false, reasons: ["open-security-alert-or-lookup"] },
+  );
+  assert.deepEqual(
+    evaluateReconciliation({ policy: enabledPolicy, securityAlerts: safeAlerts }),
+    { eligible: true, reasons: [] },
+  );
 });
 
 for (const [name, mutate] of [

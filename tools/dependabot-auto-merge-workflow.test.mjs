@@ -14,8 +14,13 @@ const reviewSignal = await readFile(
   new URL("../.github/workflows/dependabot-review-signal.yml", import.meta.url),
   "utf8",
 );
+const reconciliation = await readFile(
+  new URL("../.github/workflows/dependabot-auto-merge-reconcile.yml", import.meta.url),
+  "utf8",
+);
 const makefile = await readFile(new URL("../Makefile.toml", import.meta.url), "utf8");
-const decide = controller.match(/\n  decide:\n[\s\S]*?(?=\n  enable:\n)/)?.[0] ?? "";
+const decide = controller.match(/\n  decide:\n[\s\S]*?(?=\n  revoke:\n)/)?.[0] ?? "";
+const revoke = controller.match(/\n  revoke:\n[\s\S]*?(?=\n  enable:\n)/)?.[0] ?? "";
 const enable = controller.match(/\n  enable:\n[\s\S]*$/)?.[0] ?? "";
 
 test("eligibility is a read-only pull request job check over trusted base code", () => {
@@ -137,6 +142,44 @@ test("controller runs only after CI and keeps mutation in a narrow trusted job",
   );
 });
 
+test("controller revokes auto-merge after failed or ineligible reevaluation", () => {
+  assert.match(revoke, /always\(\)/);
+  assert.match(revoke, /needs\.decide\.outputs\.eligible != 'true'/);
+  assert.match(revoke, /pull-requests:\s*write/);
+  assert.doesNotMatch(revoke, /contents:\s*write|actions:\s*write|checks:\s*write/);
+  assert.match(revoke, /\.user\.login == "dependabot\[bot\]"/);
+  assert.match(revoke, /\.head\.repo\.full_name == \$repository/);
+  assert.match(revoke, /disablePullRequestAutoMerge/);
+  assert.doesNotMatch(revoke, /enablePullRequestAutoMerge|checkout/);
+});
+
+test("repository changes continuously reconcile existing auto-merge requests", () => {
+  assert.match(reconciliation, /\n  push:\n/);
+  assert.match(reconciliation, /branches:\s*\[main\]/);
+  assert.match(reconciliation, /dependabot-auto-merge-policy\.json/);
+  assert.match(reconciliation, /\n  schedule:\n/);
+  assert.match(reconciliation, /cron:\s*"\*\/5 \* \* \* \*"/);
+  assert.match(reconciliation, /\n  workflow_dispatch:\n/);
+  assert.match(reconciliation, /^permissions:\s*\{\}/m);
+  assert.match(reconciliation, /pull-requests:\s*write/);
+  assert.match(reconciliation, /vulnerability-alerts:\s*read/);
+  assert.match(reconciliation, /dependabot-alert-snapshot\.sh/);
+  assert.equal(
+    [...reconciliation.matchAll(
+      /reconcile \.github\/dependabot-auto-merge-policy\.json/g,
+    )].length,
+    2,
+  );
+  assert.match(
+    reconciliation,
+    /reconciliation-policy-decision\.json[\s\S]*exit 0[\s\S]*tools\/dependabot-alert-snapshot\.sh/,
+  );
+  assert.match(reconciliation, /steps\.safety\.outputs\.safe != 'true'/);
+  assert.match(reconciliation, /steps\.safety\.outcome == 'failure'/);
+  assert.match(reconciliation, /disablePullRequestAutoMerge/);
+  assert.doesNotMatch(reconciliation, /enablePullRequestAutoMerge|pull_request_target:/);
+});
+
 test("workflow permissions remain scoped to the jobs that need them", () => {
   assert.match(eligibility, /^permissions:\s*\{\}/m);
   assert.match(controller, /^permissions:\s*\{\}/m);
@@ -147,7 +190,7 @@ test("workflow permissions remain scoped to the jobs that need them", () => {
 });
 
 test("all actions are pinned and pull request code is never checked out", () => {
-  for (const workflow of [eligibility, controller, reviewSignal]) {
+  for (const workflow of [eligibility, controller, reviewSignal, reconciliation]) {
     for (const reference of workflow.matchAll(/uses:\s*([^\s#]+)/g)) {
       assert.match(reference[1], /@[0-9a-f]{40}$/, reference[1]);
     }

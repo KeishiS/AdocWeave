@@ -159,6 +159,45 @@ jobs:
           echo "eligible=$(jq -r .eligible controller-decision.json)" >> "$GITHUB_OUTPUT"
           jq . controller-decision.json >> "$GITHUB_STEP_SUMMARY"
 
+  revoke:
+    needs: decide
+    if: >-
+      always() &&
+      needs.decide.outputs.eligible != 'true' &&
+      github.event.workflow_run.pull_requests[0] != null
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Disable stale or ineligible Dependabot auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > revoke-pr.json
+          jq -e --arg repository "$GITHUB_REPOSITORY" '
+            .user.login == "dependabot[bot]"
+            and .base.ref == "main"
+            and .base.repo.full_name == $repository
+            and .head.repo.full_name == $repository
+            and (.head.ref | startswith("dependabot/"))
+          ' revoke-pr.json > /dev/null
+          if jq -e '.auto_merge != null' revoke-pr.json > /dev/null; then
+            # shellcheck disable=SC2016
+            gh api graphql \
+              -f query='
+                mutation($pullRequest: ID!) {
+                  disablePullRequestAutoMerge(input: {
+                    pullRequestId: $pullRequest
+                  }) {
+                    pullRequest { number autoMergeRequest { enabledAt } }
+                  }
+                }' \
+              -f pullRequest="$(jq -r .node_id revoke-pr.json)" \
+              | jq . >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   enable:
     needs: decide
     if: needs.decide.outputs.eligible == 'true'

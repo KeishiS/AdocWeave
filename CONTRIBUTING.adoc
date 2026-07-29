@@ -151,7 +151,7 @@ CI成功後にreviewが提出または取り消された場合は、権限を持
 rulesetにはpolicyの``requiredChecks``を同じGitHub Actions integration IDで登録し、承認を1件以上要求します。
 新しいcommitがpushされたときは古い承認を取り消し、最後にpushした人以外の承認を要求します。
 rulesetのbypass actorは空にします。GitHub Actions integration、repository roleまたは別の主体が規則を
-迂回できるrulesetは、自動mergeの保護として受け入れません。
+迂回できる適用対象rulesetが1件でもある場合は、自動mergeの保護として受け入れません。
 これらは実運用上の必須条件であり、policyを有効にするだけでは満たされません。rulesetで確認できない場合は、
 ``enabled``を``false``のままにします。
 また、REST APIによる未解決Dependabot alertの全ページ照会に失敗した場合、結果が欠けた場合またはalertが1件でも
@@ -178,8 +178,11 @@ rulesetだけをstrict設定の根拠として受け入れます。exclude patte
 脆弱性情報と更新内容を検証する専用の許可規則を別途設計するまで手動で扱います。GitHub Actions、
 npmの実行時依存関係およびminor以上の更新も、初期導入の対象にしません。
 
-停止するときは、通常のPull Requestでpolicyの``enabled``を``false``へ変更します。すでにauto-mergeが
-有効なDependabot Pull Requestがある場合は、対象とhead commitを確認してGitHub上でauto-mergeを解除します。
+停止するときは、通常のPull Requestでpolicyの``enabled``を``false``へ変更します。policyまたは判定処理の変更を
+検知した場合は、既存のDependabot Pull Requestに登録されたauto-mergeを自動で解除します。Dependabot alertは
+5分間隔の監査で再確認し、未解決alertを検知した場合も解除します。手動監査でもpolicyとalertを再確認し、
+設定を解釈できない場合、alertを取得できない場合または停止中は
+既存のauto-mergeを解除します。CIまたはreviewを契機とする再判定で不適格になった場合も同様です。
 復旧するときは、停止理由が解消され、rulesetとActions権限が期待どおりであることを確認してから、
 policyを変更するPull Requestを作成します。復旧後も既存の判定結果を再利用せず、各Pull Requestの最新headで
 CIとeligibility checkを再実行します。手動で条件を迂回するoverrideは設けません。

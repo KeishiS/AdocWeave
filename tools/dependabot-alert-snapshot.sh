@@ -25,9 +25,24 @@ jq -e '
 for state in open fixed dismissed auto_dismissed; do
   gh api --paginate \
     "repos/$repository/dependabot/alerts?state=$state&per_page=100" \
-    | jq -es '
+    | jq -es --arg expected_state "$state" '
         if length > 0 and all(.[]; type == "array")
-        then add
+        then
+          add
+          | if all(
+              .[];
+              type == "object"
+              and .state == $expected_state
+              and (.manifest_path | type) == "string"
+              and (.manifest_path | length) > 0
+              and (.dependency | type) == "object"
+              and (.dependency.package | type) == "object"
+              and (.dependency.package.name | type) == "string"
+              and (.dependency.package.name | length) > 0
+            )
+            then .
+            else error("Dependabot alert entries must match the requested state and schema")
+            end
         else error("Dependabot alert response must contain one or more arrays")
         end
       ' > "$snapshot_directory/$state.json"
