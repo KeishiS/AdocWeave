@@ -351,6 +351,46 @@ fn every_subcommand_displays_help() {
 }
 
 #[test]
+fn public_help_paths_match_the_command_model_snapshots() {
+    let expected_root = include_bytes!("snapshots/help-root.txt");
+    for arguments in [&["--help"][..], &["help"][..]] {
+        let output = adocweave().args(arguments).output().expect("root help");
+        assert!(output.status.success(), "{arguments:?}");
+        assert_eq!(output.stdout, expected_root, "{arguments:?}");
+        assert!(output.stderr.is_empty(), "{arguments:?}");
+    }
+
+    let mut expected_commands = include_str!("snapshots/help-commands.txt");
+    for path in [
+        &["convert"][..],
+        &["preview"][..],
+        &["check"][..],
+        &["format"][..],
+        &["symbols"][..],
+        &["config", "show"][..],
+    ] {
+        let marker = format!("=== {} ===\n", path.join(" "));
+        let section = expected_commands
+            .strip_prefix(&marker)
+            .unwrap_or_else(|| panic!("missing snapshot for {}", path.join(" ")));
+        let next = section.find("=== ").unwrap_or(section.len());
+        let expected = &section[..next];
+        let output = adocweave()
+            .args(path.iter().copied().chain(["--help"]))
+            .output()
+            .expect("command help");
+        assert!(output.status.success(), "{path:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{path:?}"
+        );
+        assert!(output.stderr.is_empty(), "{path:?}");
+        expected_commands = &section[next..];
+    }
+}
+
+#[test]
 fn completion_scripts_cover_every_supported_shell() {
     for (shell, marker) in [
         ("bash", "complete -F"),

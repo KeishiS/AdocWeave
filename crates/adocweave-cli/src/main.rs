@@ -251,7 +251,7 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
         return Err(CliError::Usage("a command is required".to_owned()));
     };
 
-    if matches!(command.as_str(), "-h" | "--help" | "help") {
+    if matches!(command.as_str(), "-h" | "--help") {
         return Ok(Action::Help { command: None });
     }
     if matches!(command.as_str(), "-V" | "--version") {
@@ -267,8 +267,22 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
         };
         return Ok(Action::Version { json });
     }
-    if command == "completion" {
-        let mut arguments = arguments.into_iter().skip(1);
+    let (command_id, consumed) = commands::model::lookup(&arguments).map_err(|error| {
+        CliError::Usage(match error {
+            LookupError::UnknownCommand(value) => format!("unknown command: {value}"),
+            LookupError::MissingSubcommand(parent) => {
+                format!("{parent} requires a command")
+            }
+            LookupError::UnknownSubcommand { parent, value } => {
+                format!("unknown {parent} command: {value}")
+            }
+        })
+    })?;
+    let mut arguments = arguments.into_iter().skip(consumed);
+    if command_id == CommandId::Help {
+        return Ok(Action::Help { command: None });
+    }
+    if command_id == CommandId::Completion {
         let shell = match arguments.next().as_deref() {
             Some("bash") => CompletionShell::Bash,
             Some("zsh") => CompletionShell::Zsh,
@@ -288,19 +302,6 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
         }
         return Ok(Action::Completion { shell });
     }
-
-    let (command_id, consumed) = commands::model::lookup(&arguments).map_err(|error| {
-        CliError::Usage(match error {
-            LookupError::UnknownCommand(value) => format!("unknown command: {value}"),
-            LookupError::MissingSubcommand(parent) => {
-                format!("{parent} requires a command")
-            }
-            LookupError::UnknownSubcommand { parent, value } => {
-                format!("unknown {parent} command: {value}")
-            }
-        })
-    })?;
-    let mut arguments = arguments.into_iter().skip(consumed);
 
     let mut input = None;
     let mut additional_inputs = Vec::new();
@@ -623,6 +624,9 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, Cl
         },
         CommandId::Symbols => CommandOptions::Symbols,
         CommandId::ConfigShow => CommandOptions::ConfigShow,
+        CommandId::Completion | CommandId::Help => {
+            unreachable!("public utility commands are handled before option parsing")
+        }
     };
     Ok(Action::Run(Box::new(Arguments {
         command,
@@ -1735,7 +1739,10 @@ fn run() -> Result<ExitCode, CliError> {
     match parse_arguments(env::args().skip(1))? {
         Action::Help { command } => {
             let help = command.map_or_else(commands::model::root_help, |id| {
-                commands::model::spec(id).help.to_owned()
+                commands::model::spec(id)
+                    .help
+                    .expect("document commands have command help")
+                    .to_owned()
             });
             print!("{help}");
             Ok(ExitCode::SUCCESS)
@@ -2555,7 +2562,9 @@ mod tests {
 
     #[test]
     fn preview_help_explains_options_defaults_and_external_access() {
-        let help = model::spec(CommandId::Preview).help;
+        let help = model::spec(CommandId::Preview)
+            .help
+            .expect("preview has command help");
         let root_help = model::root_help();
         let port = DEFAULT_PREVIEW_PORT.to_string();
         let debounce = DEFAULT_PREVIEW_DEBOUNCE_MS.to_string();

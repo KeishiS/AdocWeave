@@ -6,28 +6,36 @@ pub(crate) enum CommandId {
     Format,
     Symbols,
     ConfigShow,
+    Completion,
+    Help,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CommandSpec {
     pub(crate) id: CommandId,
     pub(crate) path: &'static [&'static str],
+    pub(crate) root_usage: &'static str,
     pub(crate) summary: &'static str,
-    pub(crate) help: &'static str,
+    pub(crate) help: Option<&'static str>,
 }
 
 pub(crate) const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Convert,
         path: &["convert"],
+        root_usage: "",
         summary: "Convert an AsciiDoc document",
-        help: "Usage:\n  adocweave convert [OPTIONS] [FILE]\n\nExample:\n  adocweave convert --complete manual.adoc\n",
+        help: Some(
+            "Usage:\n  adocweave convert [OPTIONS] [FILE]\n\nExample:\n  adocweave convert --complete manual.adoc\n",
+        ),
     },
     CommandSpec {
         id: CommandId::Preview,
         path: &["preview"],
+        root_usage: "",
         summary: "Serve a live, loopback-only document preview",
-        help: "\
+        help: Some(
+            "\
 使用法:
   adocweave preview [OPTIONS] FILE
 
@@ -56,30 +64,57 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
 例:
   adocweave preview --include manual.adoc
 ",
+        ),
     },
     CommandSpec {
         id: CommandId::Check,
         path: &["check"],
+        root_usage: "",
         summary: "Check an AsciiDoc document",
-        help: "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format github --summary manual.adoc\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n",
+        help: Some(
+            "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format github --summary manual.adoc\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n",
+        ),
     },
     CommandSpec {
         id: CommandId::Format,
         path: &["format"],
+        root_usage: "",
         summary: "Format an AsciiDoc document",
-        help: "Usage:\n  adocweave format [OPTIONS] [FILE...]\n\nExamples:\n  adocweave format --check docs\n  adocweave format --diff manual.adoc\n  adocweave format --write docs\n",
+        help: Some(
+            "Usage:\n  adocweave format [OPTIONS] [FILE...]\n\nExamples:\n  adocweave format --check docs\n  adocweave format --diff manual.adoc\n  adocweave format --write docs\n",
+        ),
     },
     CommandSpec {
         id: CommandId::Symbols,
         path: &["symbols"],
+        root_usage: "",
         summary: "Print document symbols as JSON",
-        help: "Usage:\n  adocweave symbols [FILE]\n\nExample:\n  adocweave symbols manual.adoc\n",
+        help: Some(
+            "Usage:\n  adocweave symbols [FILE]\n\nExample:\n  adocweave symbols manual.adoc\n",
+        ),
     },
     CommandSpec {
         id: CommandId::ConfigShow,
         path: &["config", "show"],
+        root_usage: "",
         summary: "Print the resolved project configuration as JSON",
-        help: "Usage:\n  adocweave config show [--config FILE | --no-config]\n\nExample:\n  adocweave config show\n",
+        help: Some(
+            "Usage:\n  adocweave config show [--config FILE | --no-config]\n\nExample:\n  adocweave config show\n",
+        ),
+    },
+    CommandSpec {
+        id: CommandId::Completion,
+        path: &["completion"],
+        root_usage: " SHELL",
+        summary: "Print Bash, Zsh, Fish, or PowerShell completion",
+        help: None,
+    },
+    CommandSpec {
+        id: CommandId::Help,
+        path: &["help"],
+        root_usage: "",
+        summary: "Print this message",
+        help: None,
     },
 ];
 
@@ -94,31 +129,43 @@ pub(crate) enum LookupError<'a> {
 }
 
 pub(crate) fn lookup(tokens: &[String]) -> Result<(CommandId, usize), LookupError<'_>> {
+    validate_model(COMMANDS).expect("command model must be unambiguous");
+    lookup_in(COMMANDS, tokens)
+}
+
+fn lookup_in<'a>(
+    commands: &[CommandSpec],
+    tokens: &'a [String],
+) -> Result<(CommandId, usize), LookupError<'a>> {
     let Some(first) = tokens.first() else {
         return Err(LookupError::UnknownCommand(""));
     };
-    let candidates = COMMANDS
+    let candidates = commands
         .iter()
         .filter(|spec| spec.path.first() == Some(&first.as_str()))
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return Err(LookupError::UnknownCommand(first));
     }
-    if let Some(spec) = candidates.iter().find(|spec| spec.path.len() == 1) {
-        return Ok((spec.id, 1));
+    if let Some(spec) = candidates
+        .iter()
+        .filter(|spec| {
+            tokens.len() >= spec.path.len()
+                && spec
+                    .path
+                    .iter()
+                    .zip(tokens)
+                    .all(|(expected, actual)| expected == actual)
+        })
+        .max_by_key(|spec| spec.path.len())
+    {
+        return Ok((spec.id, spec.path.len()));
     }
     let parent = candidates[0].path[0];
-    let Some(second) = tokens.get(1) else {
+    let Some(value) = tokens.get(1) else {
         return Err(LookupError::MissingSubcommand(parent));
     };
-    candidates
-        .iter()
-        .find(|spec| spec.path.get(1) == Some(&second.as_str()))
-        .map(|spec| (spec.id, 2))
-        .ok_or(LookupError::UnknownSubcommand {
-            parent,
-            value: second,
-        })
+    Err(LookupError::UnknownSubcommand { parent, value })
 }
 
 pub(crate) fn spec(id: CommandId) -> &'static CommandSpec {
@@ -128,10 +175,32 @@ pub(crate) fn spec(id: CommandId) -> &'static CommandSpec {
         .expect("every CommandId has a CommandSpec")
 }
 
+fn validate_model(commands: &[CommandSpec]) -> Result<(), &'static str> {
+    for (index, command) in commands.iter().enumerate() {
+        if command.path.is_empty() || command.path.iter().any(|token| token.is_empty()) {
+            return Err("command paths must contain non-empty tokens");
+        }
+        if command.summary.is_empty() {
+            return Err("command summaries must not be empty");
+        }
+        for other in &commands[index + 1..] {
+            if command.id == other.id {
+                return Err("command ids must be unique");
+            }
+            let shared = command.path.len().min(other.path.len());
+            if command.path[..shared] == other.path[..shared] {
+                return Err("command paths must not duplicate or prefix another command");
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn root_help() -> String {
+    validate_model(COMMANDS).expect("command model must be unambiguous");
     let mut commands = String::new();
     for spec in COMMANDS {
-        let path = spec.path.join(" ");
+        let path = format!("{}{}", spec.path.join(" "), spec.root_usage);
         if spec.path.len() == 1 {
             commands.push_str(&format!("  {path:<7}  {}\n", spec.summary));
         } else {
@@ -146,9 +215,7 @@ Usage:
   adocweave <COMMAND> [FILE]
 
 Commands:
-{commands}  completion SHELL  Print Bash, Zsh, Fish, or PowerShell completion
-  help     Print this message
-
+{commands}
 Arguments:
   [FILE]   Input file; omit it or use '-' to read standard input
 
@@ -194,7 +261,7 @@ mod tests {
 
     #[test]
     fn command_model_has_unique_ids_and_paths() {
-        assert_eq!(COMMANDS.len(), 6);
+        assert_eq!(COMMANDS.len(), 8);
         assert_eq!(
             COMMANDS.iter().map(|spec| spec.id).collect::<BTreeSet<_>>(),
             BTreeSet::from([
@@ -204,6 +271,8 @@ mod tests {
                 CommandId::Format,
                 CommandId::Symbols,
                 CommandId::ConfigShow,
+                CommandId::Completion,
+                CommandId::Help,
             ])
         );
         assert_eq!(
@@ -218,8 +287,12 @@ mod tests {
             !spec.path.is_empty()
                 && spec.path.iter().all(|token| !token.is_empty())
                 && !spec.summary.is_empty()
-                && !spec.help.is_empty()
         }));
+        assert_eq!(
+            COMMANDS.iter().filter(|spec| spec.help.is_none()).count(),
+            2
+        );
+        assert_eq!(validate_model(COMMANDS), Ok(()));
     }
 
     #[test]
@@ -236,15 +309,49 @@ mod tests {
     }
 
     #[test]
+    fn lookup_uses_arbitrary_length_paths_and_rejects_prefix_ambiguity() {
+        const DEEP: &[CommandSpec] = &[CommandSpec {
+            id: CommandId::ConfigShow,
+            path: &["config", "profile", "show"],
+            root_usage: "",
+            summary: "show profile",
+            help: None,
+        }];
+        let tokens = ["config", "profile", "show", "input"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(lookup_in(DEEP, &tokens), Ok((CommandId::ConfigShow, 3)));
+
+        let ambiguous = [
+            CommandSpec {
+                id: CommandId::ConfigShow,
+                path: &["config"],
+                root_usage: "",
+                summary: "config",
+                help: None,
+            },
+            CommandSpec {
+                id: CommandId::Help,
+                path: &["config", "show"],
+                root_usage: "",
+                summary: "show",
+                help: None,
+            },
+        ];
+        assert!(validate_model(&ambiguous).is_err());
+    }
+
+    #[test]
     fn generated_help_matches_the_public_snapshots() {
         assert_eq!(
             root_help(),
             include_str!("../../tests/snapshots/help-root.txt")
         );
         let mut command_help = String::new();
-        for command in COMMANDS {
+        for command in COMMANDS.iter().filter(|command| command.help.is_some()) {
             command_help.push_str(&format!("=== {} ===\n", command.path.join(" ")));
-            command_help.push_str(command.help);
+            command_help.push_str(command.help.expect("filtered help"));
         }
         assert_eq!(
             command_help,
