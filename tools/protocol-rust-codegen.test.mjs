@@ -6,6 +6,7 @@ import {
   generateRustPreprocessInputs,
   generateRustRenderInputs,
   generateRustRequestEnums,
+  generateRustRequestWire,
   generateRustResponseTypes,
   generateRustSharedTypes,
 } from "./protocol-rust-codegen.mjs";
@@ -13,6 +14,141 @@ import {
 const schema = JSON.parse(
   await readFile(new URL("../protocol/public-api.json", import.meta.url), "utf8"),
 );
+
+test("request wire Rust DTOs are generated from exact reachable ownership", () => {
+  const generated = generateRustRequestWire(schema);
+
+  for (const name of [
+    "WasmRequest",
+    "WasmAnalysisOptions",
+    "WasmSyntaxOptions",
+    "WasmDiagnosticProfile",
+    "WasmRuleSettings",
+    "WasmRenderPolicy",
+    "WasmOutputLimits",
+    "WasmStylesheet",
+    "WasmExternalLinkPolicy",
+    "WasmSourceLanguagePolicy",
+    "WasmResourceCapabilities",
+    "WasmLimits",
+    "WasmAuthoredUrlPolicy",
+    "WasmActiveUrlPolicy",
+  ]) {
+    assert.match(generated, new RegExp(`\\b${name}\\b`));
+  }
+  assert.doesNotMatch(generated, /adocweave::/);
+  assert.match(generated, /max_output_bytes: 52428800/);
+  assert.match(
+    generated,
+    /math_languages: vec!\[WasmMathLanguage::Latex, WasmMathLanguage::Typst\]/,
+  );
+  assert.match(
+    generated,
+    /allowed_schemes: vec!\["http"\.to_owned\(\), "https"\.to_owned\(\)\]/,
+  );
+});
+
+test("request wire schema defaults deterministically change generated Rust", () => {
+  const changed = structuredClone(schema);
+  changed.settings.OutputLimits.fields[0].default = 1234;
+  changed.definitions.AuthoredUrlPolicy.fields[0].default.push("gemini");
+
+  const generated = generateRustRequestWire(changed);
+  assert.match(generated, /max_output_bytes: 1234/);
+  assert.match(
+    generated,
+    /allowed_schemes: vec!\["http"\.to_owned\(\), "https"\.to_owned\(\), "gemini"\.to_owned\(\)\]/,
+  );
+});
+
+test("request wire generation fails closed on ownership and incomplete defaults", () => {
+  const ownership = structuredClone(schema);
+  ownership.settings.AnalysisOptions.fields.push({
+    json: "newPolicy",
+    type: "NewPolicy",
+    default: {},
+  });
+  ownership.definitions.NewPolicy = {
+    unknownFields: "reject",
+    fields: [],
+  };
+  assert.throws(
+    () => generateRustRequestWire(ownership),
+    /unowned reachable request wire Rust type NewPolicy/,
+  );
+
+  const missingDefault = structuredClone(schema);
+  delete missingDefault.settings.OutputLimits.fields[0].default;
+  assert.throws(
+    () => generateRustRequestWire(missingDefault),
+    /must be required or defaulted/,
+  );
+
+  const mismatchedDefault = structuredClone(schema);
+  mismatchedDefault.settings.OutputLimits.fields[0].default = "large";
+  assert.throws(
+    () => generateRustRequestWire(mismatchedDefault),
+    /default does not match u32/,
+  );
+});
+
+test("request wire generation rejects unknown-field drift, recursion, and collisions", () => {
+  const unknownFields = structuredClone(schema);
+  unknownFields.settings.OutputLimits.unknownFields = "allow";
+  assert.throws(
+    () => generateRustRequestWire(unknownFields),
+    /must be a request wire object that rejects unknown fields/,
+  );
+
+  const recursive = structuredClone(schema);
+  recursive.settings.AnalysisOptions.fields.push({
+    json: "cycle",
+    type: "AnalysisOptions",
+    default: {},
+  });
+  assert.throws(
+    () => generateRustRequestWire(recursive),
+    /infinitely sized cycle: AnalysisOptions -> AnalysisOptions/,
+  );
+
+  const collision = structuredClone(schema);
+  collision.settings.OutputLimits.fields.push({
+    json: "maxOutputBytes",
+    type: "u32",
+    default: 1,
+  });
+  assert.throws(
+    () => generateRustRequestWire(collision),
+    /fields collide as Rust identifier max_output_bytes/,
+  );
+
+  const tagCollision = structuredClone(schema);
+  tagCollision.taggedUnions.Stylesheet.variants.inline.push({
+    json: "kind",
+    type: "string",
+    required: true,
+  });
+  assert.throws(
+    () => generateRustRequestWire(tagCollision),
+    /field collides with tag kind/,
+  );
+});
+
+test("request wire generation is deterministic across schema insertion order", () => {
+  const reordered = structuredClone(schema);
+  reordered.settings = Object.fromEntries(Object.entries(reordered.settings).reverse());
+  reordered.definitions = Object.fromEntries(
+    Object.entries(reordered.definitions).reverse(),
+  );
+  reordered.taggedUnions.Stylesheet.variants = Object.fromEntries(
+    Object.entries(reordered.taggedUnions.Stylesheet.variants).reverse(),
+  );
+
+  assert.equal(
+    generateRustRequestWire(reordered),
+    generateRustRequestWire(schema),
+  );
+});
 
 test("render input Rust types are generated without a core dependency", () => {
   const generated = generateRustRenderInputs(schema);

@@ -15,6 +15,7 @@ mod request_conversion;
 mod request_enum_generated;
 mod request_normalization;
 mod request_wire;
+mod request_wire_generated;
 mod response_projection;
 mod response_wire;
 mod response_wire_generated;

@@ -39,6 +39,40 @@ const EXTERNAL_REQUEST_RUST_ENUMS = [
   "Severity",
 ];
 
+const REQUEST_WIRE_OWNED_TYPES = new Set([
+  "ActiveUrlPolicy",
+  "AnalysisLimits",
+  "AnalysisOptions",
+  "AuthoredUrlPolicy",
+  "DiagnosticProfile",
+  "ExternalLinkPolicy",
+  "OutputLimits",
+  "RenderPolicy",
+  "ResourceCapabilities",
+  "RuleSettings",
+  "SourceLanguagePolicy",
+  "Stylesheet",
+  "SyntaxOptions",
+  "WasmRequest",
+]);
+
+const REQUEST_WIRE_EXTERNAL_TYPES = {
+  AnalysisPreprocessInput: "WasmAnalysisPreprocessInput",
+  DocumentMode: "WasmDocumentMode",
+  MathLanguage: "WasmMathLanguage",
+  ProductSet: "WasmProductSet",
+  RenderInputs: "WasmRenderInputs",
+  Severity: "WasmSeverity",
+  SyntaxMode: "WasmSyntaxMode",
+  UnknownSourceLanguage: "WasmUnknownSourceLanguage",
+  UnresolvedReferencePresentation: "WasmUnresolvedReferencePresentation",
+};
+
+const REQUEST_WIRE_RUST_NAME_OVERRIDES = {
+  AnalysisLimits: "WasmLimits",
+  WasmRequest: "WasmRequest",
+};
+
 const RENDER_INPUT_RUST_NAMES = {
   ReferenceFailureKind: "WasmReferenceFailureKind",
   ReferenceNotice: "WasmReferenceNotice",
@@ -127,6 +161,504 @@ export function generateRustRequestEnums(schema) {
       return rustRequestEnum(name, values, defaultValue);
     })
     .join("\n\n");
+}
+
+export function generateRustRequestWire(schema) {
+  const contracts = collectRequestContracts(schema);
+  const reached = reachableOwnedRequestWireTypes(
+    ["WasmRequest"],
+    contracts,
+  );
+  const owned = [...reached]
+    .filter((name) => REQUEST_WIRE_OWNED_TYPES.has(name))
+    .sort();
+  const external = [...reached]
+    .filter((name) => Object.hasOwn(REQUEST_WIRE_EXTERNAL_TYPES, name))
+    .sort();
+  const expectedOwned = [...REQUEST_WIRE_OWNED_TYPES].sort();
+  const expectedExternal = Object.keys(REQUEST_WIRE_EXTERNAL_TYPES).sort();
+  if (JSON.stringify(owned) !== JSON.stringify(expectedOwned)) {
+    throw new Error(
+      `request wire Rust ownership must exactly match reachable generated types: ${owned.join(", ")}`,
+    );
+  }
+  if (JSON.stringify(external) !== JSON.stringify(expectedExternal)) {
+    throw new Error(
+      `request wire Rust ownership must exactly match reachable external types: ${external.join(", ")}`,
+    );
+  }
+  validateRequestWireRustNames(reached);
+  validateSizedRequestWireTypes(reached, contracts);
+
+  const definitions = owned.map((name) => {
+    const contract = contracts[name];
+    if (contract.variants) {
+      return rustRequestWireUnion(name, contract, reached, contracts);
+    }
+    return rustRequestWireObject(name, contract, reached, contracts);
+  }).join("\n\n");
+  const imports = external
+    .map((name) => REQUEST_WIRE_EXTERNAL_TYPES[name])
+    .sort();
+  const importLines = [];
+  for (let index = 0; index < imports.length; index += 4) {
+    importLines.push(`    ${imports.slice(index, index + 4).join(", ")},`);
+  }
+  return `use std::collections::BTreeMap;
+
+use crate::{
+${importLines.join("\n")}
+};
+
+${definitions}`;
+}
+
+function reachableOwnedRequestWireTypes(roots, contracts) {
+  const reached = new Set();
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (reached.has(name)) continue;
+    const contract = contracts[name];
+    if (!contract) {
+      throw new Error(`unsupported reachable request wire Rust type ${name}`);
+    }
+    if (!REQUEST_WIRE_OWNED_TYPES.has(name)
+        && !Object.hasOwn(REQUEST_WIRE_EXTERNAL_TYPES, name)) {
+      throw new Error(`unowned reachable request wire Rust type ${name}`);
+    }
+    reached.add(name);
+    if (Object.hasOwn(REQUEST_WIRE_EXTERNAL_TYPES, name)) continue;
+    const fields = contract.variants
+      ? Object.values(contract.variants).flat()
+      : contract.fields;
+    if (!Array.isArray(fields)) {
+      throw new Error(`invalid request wire Rust contract ${name}`);
+    }
+    for (const field of fields) {
+      validateRequestWireField(field, name);
+      for (const reference of requestWireTypeReferences(field.type)) {
+        if (!contracts[reference]) {
+          throw new Error(`unsupported reachable request wire Rust type ${reference}`);
+        }
+        if (!reached.has(reference)) pending.push(reference);
+      }
+    }
+  }
+  return reached;
+}
+
+function parseRequestWireType(type) {
+  if (typeof type !== "string" || type !== type.trim()) {
+    throw new Error(`unsupported request wire Rust field type ${String(type)}`);
+  }
+  const nullable = type.match(/^(.+) \| null$/);
+  if (nullable) {
+    return { kind: "nullable", inner: parseRequestWireType(nullable[1]) };
+  }
+  const array = type.match(/^(.+)\[\]$/);
+  if (array) {
+    return { kind: "array", inner: parseRequestWireType(array[1]) };
+  }
+  const record = type.match(/^Record<string, (.+)>$/);
+  if (record) {
+    return { kind: "record", value: parseRequestWireType(record[1]) };
+  }
+  if (["boolean", "string", "u32"].includes(type)) {
+    return { kind: "primitive", name: type };
+  }
+  if (/^[A-Z][A-Za-z0-9]*$/.test(type)) {
+    return { kind: "named", name: type };
+  }
+  throw new Error(`unsupported request wire Rust field type ${type}`);
+}
+
+function requestWireTypeReferences(type) {
+  const references = [];
+  const visit = (parsed) => {
+    if (parsed.kind === "named") references.push(parsed.name);
+    if (parsed.kind === "array" || parsed.kind === "nullable") visit(parsed.inner);
+    if (parsed.kind === "record") visit(parsed.value);
+  };
+  visit(parseRequestWireType(type));
+  return references;
+}
+
+function validateRequestWireRustNames(reached) {
+  const names = new Map();
+  for (const schemaName of reached) {
+    const rustName = requestWireRustName(schemaName);
+    validateRustIdentifier(rustName, `request wire type ${schemaName}`);
+    const previous = names.get(rustName);
+    if (previous) {
+      throw new Error(
+        `request wire types ${previous} and ${schemaName} collide as Rust identifier ${rustName}`,
+      );
+    }
+    names.set(rustName, schemaName);
+  }
+}
+
+function requestWireRustName(name) {
+  return REQUEST_WIRE_EXTERNAL_TYPES[name]
+    ?? REQUEST_WIRE_RUST_NAME_OVERRIDES[name]
+    ?? `Wasm${name}`;
+}
+
+function validateSizedRequestWireTypes(reached, contracts) {
+  const directEdges = new Map();
+  for (const name of reached) {
+    if (!REQUEST_WIRE_OWNED_TYPES.has(name)) continue;
+    const contract = contracts[name];
+    const fields = contract.variants
+      ? Object.values(contract.variants).flat()
+      : contract.fields;
+    directEdges.set(
+      name,
+      fields
+        .map(({ type }) => directRequestWireReference(parseRequestWireType(type)))
+        .filter((reference) =>
+          reference
+          && REQUEST_WIRE_OWNED_TYPES.has(reference)
+          && !Array.isArray(contracts[reference])
+        ),
+    );
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  const path = [];
+  const visit = (name) => {
+    if (visiting.has(name)) {
+      const start = path.indexOf(name);
+      throw new Error(
+        `request wire Rust types have an infinitely sized cycle: ${[...path.slice(start), name].join(" -> ")}`,
+      );
+    }
+    if (visited.has(name)) return;
+    visiting.add(name);
+    path.push(name);
+    for (const next of directEdges.get(name) ?? []) visit(next);
+    path.pop();
+    visiting.delete(name);
+    visited.add(name);
+  };
+  for (const name of directEdges.keys()) visit(name);
+}
+
+function directRequestWireReference(parsed) {
+  if (parsed.kind === "named") return parsed.name;
+  if (parsed.kind === "nullable") return directRequestWireReference(parsed.inner);
+  return null;
+}
+
+function validateRequestWireField(field, owner) {
+  validateField(field, owner);
+  parseRequestWireType(field.type);
+}
+
+function rustRequestWireObject(name, contract, reached, contracts) {
+  if (!contract || contract.unknownFields !== "reject" || !Array.isArray(contract.fields)) {
+    throw new Error(`${name} must be a request wire object that rejects unknown fields`);
+  }
+  const allDefaulted = contract.fields.every((field) => Object.hasOwn(field, "default"));
+  const defaultExpressions = allDefaulted
+    ? contract.fields.map((field) =>
+      rustRequestWireDefault(field.default, field.type, contracts)
+    )
+    : [];
+  const deriveDefault = allDefaulted
+    && defaultExpressions.every(requestWireExpressionUsesRustDefault);
+  const rustFields = new Set();
+  const helpers = [];
+  const fields = contract.fields.map((field) => {
+    validateRequestWireField(field, name);
+    const identifier = rustField(field.json);
+    validateRustIdentifier(identifier, `${name}.${field.json}`);
+    if (rustFields.has(identifier)) {
+      throw new Error(`${name} fields collide as Rust identifier ${identifier}`);
+    }
+    rustFields.add(identifier);
+    let attribute = "";
+    if (!allDefaulted && Object.hasOwn(field, "default")) {
+      const helper = `default_${rustField(requestWireRustName(name)).replace(/^_/, "")}_${identifier}`;
+      const type = rustRequestWireType(field.type, reached);
+      const value = rustRequestWireDefault(field.default, field.type, contracts);
+      helpers.push(`fn ${helper}() -> ${type} {
+    ${value}
+}`);
+      attribute = `    #[serde(default = "${helper}")]\n`;
+    }
+    return `${attribute}    pub ${identifier}: ${rustRequestWireType(field.type, reached)},`;
+  });
+  const derives = [
+    "Clone",
+    ...(requestWireObjectIsCopy(name, contract, reached, contracts, new Set()) ? ["Copy"] : []),
+    "Debug",
+    ...(deriveDefault ? ["Default"] : []),
+    "serde::Deserialize",
+    "serde::Serialize",
+    "Eq",
+    "PartialEq",
+  ];
+  const serde = allDefaulted
+    ? '#[serde(default, rename_all = "camelCase", deny_unknown_fields)]'
+    : '#[serde(rename_all = "camelCase", deny_unknown_fields)]';
+  let definition = `#[derive(${derives.join(", ")})]
+${serde}
+pub struct ${requestWireRustName(name)} {
+${fields.join("\n")}
+}`;
+  if (allDefaulted && !deriveDefault) {
+    const defaults = contract.fields.map(
+      (field, index) => `            ${rustField(field.json)}: ${defaultExpressions[index]},`,
+    );
+    definition += `
+
+impl Default for ${requestWireRustName(name)} {
+    fn default() -> Self {
+        Self {
+${defaults.join("\n")}
+        }
+    }
+}`;
+  }
+  return helpers.length === 0 ? definition : `${helpers.join("\n\n")}
+
+${definition}`;
+}
+
+function requestWireExpressionUsesRustDefault(expression) {
+  return expression === "None"
+    || expression === "false"
+    || expression === "0"
+    || expression === "vec![]"
+    || expression === "BTreeMap::new()"
+    || expression === "Default::default()"
+    || expression === '"".to_owned()';
+}
+
+function rustRequestWireUnion(name, contract, reached, contracts) {
+  if (typeof contract.tag !== "string"
+      || !/^[a-z][A-Za-z0-9]*$/.test(contract.tag)
+      || contract.unknownFields !== "reject"
+      || !contract.variants
+      || Object.keys(contract.variants).length === 0) {
+    throw new Error(`invalid request wire Rust tagged union ${name}`);
+  }
+  const variants = new Set();
+  const helpers = [];
+  const members = Object.entries(contract.variants)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([value, fields]) => {
+    const variant = rustVariant(value);
+    validateRustIdentifier(variant, `${name} union variant ${JSON.stringify(value)}`);
+    if (variants.has(variant)) {
+      throw new Error(`${name} union variants collide as Rust identifier ${variant}`);
+    }
+    variants.add(variant);
+    const rustFields = new Set();
+    const generated = fields.map((field) => {
+      validateRequestWireField(field, `${name}.${value}`);
+      if (field.json === contract.tag) {
+        throw new Error(`${name}.${value} field collides with tag ${contract.tag}`);
+      }
+      const identifier = rustField(field.json);
+      validateRustIdentifier(identifier, `${name}.${value}.${field.json}`);
+      if (rustFields.has(identifier)) {
+        throw new Error(`${name}.${value} fields collide as Rust identifier ${identifier}`);
+      }
+      rustFields.add(identifier);
+      let attribute = "";
+      if (Object.hasOwn(field, "default")) {
+        const helper = `default_${rustField(requestWireRustName(name)).replace(/^_/, "")}_${rustField(variant)}_${identifier}`;
+        const type = rustRequestWireType(field.type, reached);
+        const defaultValue = rustRequestWireDefault(field.default, field.type, contracts);
+        helpers.push(`fn ${helper}() -> ${type} {
+    ${defaultValue}
+}`);
+        attribute = `        #[serde(default = "${helper}")]\n`;
+      }
+      return `${attribute}        ${identifier}: ${rustRequestWireType(field.type, reached)},`;
+    });
+    if (generated.length === 0) return `    ${variant},`;
+    if (generated.length === 1 && !generated[0].includes("#[")) {
+      return `    ${variant} { ${generated[0].trim().replace(/,$/, "")} },`;
+    }
+    return `    ${variant} {\n${generated.join("\n")}\n    },`;
+    });
+  const definition = `#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(
+    tag = "${contract.tag}",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ${requestWireRustName(name)} {
+${members.join("\n")}
+}`;
+  return helpers.length === 0 ? definition : `${helpers.join("\n\n")}
+
+${definition}`;
+}
+
+function rustRequestWireType(type, reached) {
+  return rustRequestWireTypeFromAst(parseRequestWireType(type), reached, type);
+}
+
+function rustRequestWireTypeFromAst(parsed, reached, source) {
+  if (parsed.kind === "nullable") {
+    return `Option<${rustRequestWireTypeFromAst(parsed.inner, reached, source)}>`;
+  }
+  if (parsed.kind === "array") {
+    return `Vec<${rustRequestWireTypeFromAst(parsed.inner, reached, source)}>`;
+  }
+  if (parsed.kind === "record") {
+    return `BTreeMap<String, ${rustRequestWireTypeFromAst(parsed.value, reached, source)}>`;
+  }
+  if (parsed.kind === "primitive") {
+    return { boolean: "bool", string: "String", u32: "u32" }[parsed.name];
+  }
+  if (parsed.kind === "named" && reached.has(parsed.name)) {
+    return requestWireRustName(parsed.name);
+  }
+  throw new Error(`unsupported request wire Rust field type ${source}`);
+}
+
+function rustRequestWireDefault(value, type, contracts) {
+  const parsed = parseRequestWireType(type);
+  validateRequestWireDefault(value, parsed, contracts, type, new Set());
+  return rustRequestWireDefaultExpression(value, parsed, contracts);
+}
+
+function validateRequestWireDefault(value, parsed, contracts, source, visiting) {
+  if (parsed.kind === "nullable") {
+    if (value === null) return;
+    return validateRequestWireDefault(value, parsed.inner, contracts, source, visiting);
+  }
+  if (parsed.kind === "array") {
+    if (!Array.isArray(value)) {
+      throw new Error(`request wire default does not match ${source}`);
+    }
+    for (const item of value) {
+      validateRequestWireDefault(item, parsed.inner, contracts, source, visiting);
+    }
+    return;
+  }
+  if (parsed.kind === "record") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`request wire default does not match ${source}`);
+    }
+    for (const item of Object.values(value)) {
+      validateRequestWireDefault(item, parsed.value, contracts, source, visiting);
+    }
+    return;
+  }
+  if (parsed.kind === "primitive") {
+    const valid = parsed.name === "boolean"
+      ? typeof value === "boolean"
+      : parsed.name === "string"
+        ? typeof value === "string"
+        : Number.isInteger(value) && value >= 0 && value <= 0xffff_ffff;
+    if (!valid) throw new Error(`request wire default does not match ${source}`);
+    return;
+  }
+  const contract = contracts[parsed.name];
+  if (Array.isArray(contract)) {
+    if (typeof value !== "string" || !contract.includes(value)) {
+      throw new Error(`request wire default does not match ${source}`);
+    }
+    return;
+  }
+  if (parsed.name === "ProductSet" && value === "browser-default") return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`request wire default does not match ${source}`);
+  }
+  if (visiting.has(parsed.name)) {
+    throw new Error(`recursive request wire default for ${parsed.name}`);
+  }
+  visiting.add(parsed.name);
+  const fields = new Map(contract.fields.map((field) => [field.json, field]));
+  for (const [fieldName, fieldValue] of Object.entries(value)) {
+    const field = fields.get(fieldName);
+    if (!field) throw new Error(`request wire default has unknown field ${parsed.name}.${fieldName}`);
+    validateRequestWireDefault(
+      fieldValue,
+      parseRequestWireType(field.type),
+      contracts,
+      field.type,
+      visiting,
+    );
+  }
+  for (const field of contract.fields) {
+    if (!Object.hasOwn(value, field.json)
+        && field.required === true
+        && !Object.hasOwn(field, "default")) {
+      throw new Error(`request wire default omits required field ${parsed.name}.${field.json}`);
+    }
+  }
+  visiting.delete(parsed.name);
+}
+
+function rustRequestWireDefaultExpression(value, parsed, contracts) {
+  if (parsed.kind === "nullable") {
+    return value === null
+      ? "None"
+      : `Some(${rustRequestWireDefaultExpression(value, parsed.inner, contracts)})`;
+  }
+  if (parsed.kind === "array") {
+    const values = value.map((item) =>
+      rustRequestWireDefaultExpression(item, parsed.inner, contracts)
+    );
+    return `vec![${values.join(", ")}]`;
+  }
+  if (parsed.kind === "record") {
+    if (Object.keys(value).length !== 0) {
+      throw new Error("non-empty request wire record defaults are unsupported");
+    }
+    return "BTreeMap::new()";
+  }
+  if (parsed.kind === "primitive") {
+    if (parsed.name === "string") return `${JSON.stringify(value)}.to_owned()`;
+    return String(value);
+  }
+  const contract = contracts[parsed.name];
+  if (Array.isArray(contract)) {
+    return `${requestWireRustName(parsed.name)}::${rustVariant(value)}`;
+  }
+  return "Default::default()";
+}
+
+function requestWireObjectIsCopy(name, contract, reached, contracts, visiting) {
+  if (visiting.has(name)) return false;
+  visiting.add(name);
+  const copy = contract.fields.every((field) =>
+    requestWireTypeIsCopy(parseRequestWireType(field.type), reached, contracts, visiting)
+  );
+  visiting.delete(name);
+  return copy;
+}
+
+function requestWireTypeIsCopy(parsed, reached, contracts, visiting) {
+  if (parsed.kind === "nullable") {
+    return requestWireTypeIsCopy(parsed.inner, reached, contracts, visiting);
+  }
+  if (parsed.kind === "array" || parsed.kind === "record") return false;
+  if (parsed.kind === "primitive") return parsed.name !== "string";
+  if (!reached.has(parsed.name)) return false;
+  if (Object.hasOwn(REQUEST_WIRE_EXTERNAL_TYPES, parsed.name)) {
+    return [
+      "DocumentMode",
+      "MathLanguage",
+      "Severity",
+      "SyntaxMode",
+      "UnknownSourceLanguage",
+      "UnresolvedReferencePresentation",
+    ].includes(parsed.name);
+  }
+  const contract = contracts[parsed.name];
+  if (Array.isArray(contract)) return true;
+  if (contract.variants) return false;
+  return requestWireObjectIsCopy(parsed.name, contract, reached, contracts, visiting);
 }
 
 export function generateRustRenderInputs(schema) {

@@ -197,6 +197,7 @@ fn public_request_wire_types_match_the_request_corpus_fixture() {
 fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     const FACADE: &str = include_str!("../src/lib.rs");
     const WIRE: &str = include_str!("../src/request_wire.rs");
+    const WIRE_GENERATED: &str = include_str!("../src/request_wire_generated.rs");
     const NORMALIZATION: &str = include_str!("../src/request_normalization.rs");
     const CONVERSION: &str = include_str!("../src/request_conversion.rs");
     const RENDER_GENERATED: &str = include_str!("../src/render_input_wire_generated.rs");
@@ -205,10 +206,13 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     const RENDER_CONVERSION: &str = include_str!("../src/render_input_conversion.rs");
 
     assert!(WIRE.contains("protocol/public-api.json"));
-    assert!(WIRE.contains("pub struct WasmRequest"));
+    assert!(WIRE.contains("request_wire_generated"));
     assert!(!WIRE.contains("adocweave::"));
     assert!(!WIRE.contains("fn normalize"));
     assert!(!WIRE.contains("ExecutionRequest"));
+    assert!(WIRE_GENERATED.starts_with("// @generated"));
+    assert!(WIRE_GENERATED.contains("pub struct WasmRequest"));
+    assert!(!WIRE_GENERATED.contains("adocweave::"));
 
     assert!(NORMALIZATION.contains("pub(crate) struct NormalizedRequest"));
     assert!(!NORMALIZATION.contains("adocweave::"));
@@ -238,6 +242,41 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     assert!(!RENDER_NORMALIZATION.contains("use adocweave::Analysis"));
     assert!(RENDER_CONVERSION.contains("inputs: NormalizedRenderInputs"));
     assert!(RENDER_CONVERSION.contains("analysis: &Analysis"));
+}
+
+#[test]
+fn handwritten_request_dtos_require_a_type_specific_exception() {
+    const WIRE: &str = include_str!("../src/request_wire.rs");
+    const HANDWRITTEN_REQUEST_DTO_EXCEPTIONS: &[(&str, &str)] = &[];
+
+    let declared = WIRE
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let first = words.next()?;
+            let kind = if first.starts_with("pub") {
+                words.next()
+            } else {
+                Some(first)
+            };
+            match kind {
+                Some("struct" | "enum") => words.next().map(str::to_owned),
+                _ => None,
+            }
+        })
+        .collect::<BTreeSet<_>>();
+    let excepted = HANDWRITTEN_REQUEST_DTO_EXCEPTIONS
+        .iter()
+        .map(|(name, reason)| {
+            assert!(!reason.trim().is_empty(), "{name} has no exception reason");
+            (*name).to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        declared, excepted,
+        "every handwritten request DTO must have a type-specific exception"
+    );
 }
 
 #[test]
