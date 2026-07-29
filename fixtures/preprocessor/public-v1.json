@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "sourceId": "root",
+  "source": ":edition: 2\nifdef::edition[]\ninclude::parts/intro.adoc[leveloffset=+1]\nendif::[]\ninclude::missing.adoc[optional]\n",
+  "resources": {
+    "book/parts/intro.adoc": {
+      "sourceId": "intro",
+      "source": "== Intro\ntext\n"
+    }
+  },
+  "options": {
+    "baseUri": "book"
+  },
+  "expected": {
+    "source": ":edition: 2\n=== Intro\ntext\n",
+    "sourceIds": [
+      "root",
+      "intro",
+      "intro"
+    ],
+    "mappings": [
+      "identity",
+      "whole-origin",
+      "identity"
+    ],
+    "directiveKinds": [
+      "ifdef",
+      "include",
+      "endif",
+      "include"
+    ],
+    "noticeTargets": [
+      "book/missing.adoc"
+    ]
+  }
+}
