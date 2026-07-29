@@ -4,9 +4,9 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { assertBrowserArtifactSizes } from "./browser-release-budget.mjs";
+import { retryBrowserStartup } from "./browser-startup.mjs";
 import {
   hostExecutableEnvironment,
   resolveHostExecutable,
@@ -18,14 +18,13 @@ const BROWSER_STARTUP_TIMEOUT_MS = 20_000;
 const BROWSER_STARTUP_TOTAL_TIMEOUT_MS = 45_000;
 const BROWSER_STARTUP_ATTEMPTS = 2;
 const POLL_INTERVAL_MS = 25;
+const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
+if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
+const chromium = await resolveHostExecutable(chromiumCommand);
+const releaseManifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
 
-async function main() {
-  const [archive, chromiumCommand = "chromium"] = process.argv.slice(2);
-  if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
-  const chromium = await resolveHostExecutable(chromiumCommand);
-  const releaseManifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
-  const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
-  try {
+const root = await mkdtemp(join(tmpdir(), "adocweave-browser-smoke-"));
+try {
   const { stdout: archiveList } = await run("tar", ["-tJf", resolve(archive)]);
   const members = archiveList.trimEnd().split("\n");
   const roots = new Set();
@@ -96,13 +95,8 @@ async function main() {
     await new Promise((resolveClose) => server.close(resolveClose));
   }
   console.log(`browser release smoke passed: archive=${archiveBytes} wasm=${wasmBytes}`);
-  } finally {
-    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  }
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  await main();
+} finally {
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 async function inspectPage(chromium, url, temporaryRoot) {
@@ -222,33 +216,6 @@ async function inspectPageAttempt(chromium, url, temporaryRoot, startupTimeoutMs
       if (!await waitForExit(browser, 5000)) throw new Error("browser did not exit after SIGKILL");
     }
   }
-}
-
-export async function retryBrowserStartup(
-  operation,
-  {
-    attempts = BROWSER_STARTUP_ATTEMPTS,
-    totalTimeoutMs = BROWSER_STARTUP_TOTAL_TIMEOUT_MS,
-    onFailure = () => {},
-    now = Date.now,
-  } = {},
-) {
-  const deadline = now() + totalTimeoutMs;
-  let lastError;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const remainingMs = deadline - now();
-    if (remainingMs <= 0) break;
-    try {
-      return await operation({ attempt, remainingMs });
-    } catch (error) {
-      lastError = error;
-      if (!error.retryBrowserStartup || attempt === attempts || now() >= deadline) throw error;
-      onFailure({ attempt, attempts, error });
-    }
-  }
-  throw new Error(
-    `Chromium startup exhausted ${attempts} attempts within ${totalTimeoutMs} ms: ${lastError?.message ?? "total timeout"}`,
-  );
 }
 
 async function poll(operation, failure, timeoutMs = BROWSER_STARTUP_TIMEOUT_MS) {

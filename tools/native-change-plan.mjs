@@ -95,6 +95,7 @@ const NATIVE_TOOLS = [
   "verify-native-pr-candidate.test.mjs",
 ];
 const GLOBAL_TOOLS = [
+  "browser-startup.mjs",
   "browser-release-budget.mjs",
   "browser-release-budget.test.mjs",
   "browser-release-smoke.mjs",

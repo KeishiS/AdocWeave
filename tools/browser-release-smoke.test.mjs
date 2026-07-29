@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { MAX_BROWSER_WASM_BYTES } from "./browser-release-budget.mjs";
-import { retryBrowserStartup } from "./browser-release-smoke.mjs";
+import { retryBrowserStartup } from "./browser-startup.mjs";
 
 test("browser startup retries once with an attempt-specific diagnostic", async () => {
   const attempts = [];

@@ -85,6 +85,7 @@ test("tracked path監査は未分類pathを具体的に報告する", () => {
 
 test("Browser実行補助はglobalだけ、repository metadataはcandidate対象外に分類する", () => {
   for (const pathname of [
+    "tools/browser-startup.mjs",
     "tools/browser-release-budget.mjs",
     "tools/browser-release-smoke.test.mjs",
     "tools/host-executable.mjs",
