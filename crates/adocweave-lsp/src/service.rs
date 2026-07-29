@@ -9,9 +9,8 @@ use adocweave::output::projection::project;
 use adocweave::resolution::ReferenceKey;
 use adocweave::semantic as parser;
 use adocweave::semantic::{
-    DocumentElement, DocumentSymbol as CoreDocumentSymbol, ReferenceTargetKind,
-    SymbolKind as CoreSymbolKind, document_element_at, document_symbols, generate_heading_ids,
-    source_language_candidates,
+    DocumentElement, DocumentSymbol as CoreDocumentSymbol, SymbolKind as CoreSymbolKind,
+    document_element_at, document_symbols, generate_heading_ids, source_language_candidates,
 };
 use adocweave::semantic::{Inline, MathLanguage};
 use adocweave::text::{SourceDocument, TextRange as CoreTextRange};
@@ -1958,117 +1957,8 @@ impl LanguageService {
                 },
             )));
         };
-        let mut raw = Vec::<(lsp::Position, u32, u32)>::new();
-        for link in project(
-            &document.analysis,
-            &adocweave::resolution::RenderInputs::default(),
-        )
-        .external_links
-        {
-            push_semantic_range(
-                &mut raw,
-                link.target_range,
-                0,
-                document.analysis.source_document(),
-                self.position_encoding,
-            )?;
-        }
-        for reference in document.analysis.references() {
-            push_semantic_range(
-                &mut raw,
-                reference.target_range,
-                0,
-                document.analysis.source_document(),
-                self.position_encoding,
-            )?;
-        }
-        for anchor in document
-            .analysis
-            .document()
-            .anchors()
-            .iter()
-            .filter(|anchor| anchor.valid)
-        {
-            push_semantic_range(
-                &mut raw,
-                anchor.id_range,
-                1,
-                document.analysis.source_document(),
-                self.position_encoding,
-            )?;
-        }
-        for target in document
-            .analysis
-            .reference_targets()
-            .iter()
-            .filter(|target| target.kind == ReferenceTargetKind::InlineAnchor)
-        {
-            push_semantic_range(
-                &mut raw,
-                target.id_range,
-                1,
-                document.analysis.source_document(),
-                self.position_encoding,
-            )?;
-        }
-        let mut inline_ranges = Vec::new();
-        adocweave::semantic::walk(document.analysis.document(), |node| {
-            let adocweave::semantic::SemanticNode::Inline(inline) = node else {
-                return;
-            };
-            match inline {
-                Inline::Literal { content_range, .. }
-                | Inline::Passthrough { content_range, .. }
-                | Inline::Formula(adocweave::semantic::InlineFormula { content_range, .. }) => {
-                    inline_ranges.push((*content_range, 0))
-                }
-                Inline::Text(_)
-                | Inline::Styled { .. }
-                | Inline::AttributeReference { .. }
-                | Inline::Link(_)
-                | Inline::HardBreak { .. }
-                | Inline::Macro(_)
-                | Inline::Reference(_) => {}
-            }
-        });
-        for (range, token_type) in inline_ranges {
-            push_semantic_range(
-                &mut raw,
-                range,
-                token_type,
-                document.analysis.source_document(),
-                self.position_encoding,
-            )?;
-        }
-        raw.sort_by_key(|(position, length, token_type)| {
-            (position.line, position.character, *length, *token_type)
-        });
-        raw.dedup();
-        let mut previous = lsp::Position::new(0, 0);
-        let data = raw
-            .into_iter()
-            .map(|(position, length, token_type)| {
-                let delta_line = position.line - previous.line;
-                let delta_start = if delta_line == 0 {
-                    position.character - previous.character
-                } else {
-                    position.character
-                };
-                previous = position;
-                lsp::SemanticToken {
-                    delta_line,
-                    delta_start,
-                    length,
-                    token_type,
-                    token_modifiers_bitset: 0,
-                }
-            })
-            .collect();
         Ok(Some(lsp::SemanticTokensResult::Tokens(
-            lsp::SemanticTokens {
-                result_id: None,
-                data,
-            },
+            crate::semantic_tokens::tokens(&document.analysis, self.position_encoding)?,
         )))
     }
 
@@ -2476,34 +2366,6 @@ fn valid_anchor_name(value: &str) -> bool {
                 || character.is_control()
                 || matches!(character, '[' | ']' | '<' | '>' | '#')
         })
-}
-
-fn push_semantic_range(
-    output: &mut Vec<(lsp::Position, u32, u32)>,
-    range: CoreTextRange,
-    token_type: u32,
-    source_document: &SourceDocument,
-    encoding: PositionEncoding,
-) -> Result<(), String> {
-    let range = range_to_lsp(range, source_document, encoding)?;
-    for line in range.start.line..=range.end.line {
-        let start = if line == range.start.line {
-            range.start.character
-        } else {
-            0
-        };
-        let end = if line == range.end.line {
-            range.end.character
-        } else {
-            source_document
-                .line_length(line, encoding.core())
-                .map_err(|error| error.to_string())?
-        };
-        if end > start {
-            output.push((lsp::Position::new(line, start), end - start, token_type));
-        }
-    }
-    Ok(())
 }
 
 #[allow(deprecated)]
