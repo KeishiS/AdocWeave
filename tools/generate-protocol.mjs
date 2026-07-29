@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
+import { generateRustPreprocessInputs } from "./protocol-rust-codegen.mjs";
 
 const root = new URL("../", import.meta.url);
 const schema = JSON.parse(readFileSync(new URL("protocol/public-api.json", root), "utf8"));
@@ -24,7 +25,7 @@ const workerMessageFields = Object.fromEntries(
       : [],
   ),
 );
-const validationSchema = {
+const validationSchema = runtimeValidationSchema({
   enums: schema.enums,
   settings: schema.settings,
   definitions: schema.definitions,
@@ -36,14 +37,16 @@ const validationSchema = {
   response: schema.response,
   productSet: schema.productSet,
   workerEnvelopes: schema.workerEnvelopes,
-};
+});
 const mjs = `${header}export const PROTOCOL_SCHEMA_VERSION = ${schema.schemaVersion};\nexport const WORKER_PROTOCOL_VERSION = ${schema.workerProtocolVersion};\nexport const PACKAGE_VERSION = ${JSON.stringify(schema.packageVersion)};\nexport const PRODUCT_FIELDS = ${JSON.stringify(names)};\nexport const REQUEST_FIELDS = ${JSON.stringify(requestFields)};\nexport const REQUEST_ENUMS = ${JSON.stringify(requestEnums)};\nexport const WORKER_MESSAGE_FIELDS = ${JSON.stringify(workerMessageFields)};\nconst VALIDATION_SCHEMA = ${JSON.stringify(validationSchema)};\n${runtimeValidatorSource()}`;
 const dts = `${header}${objectDeclaration("ProductSet", schema.productSet)}\n\n${Object.entries(schema.enums).map(([name, values]) => enumDeclaration(name, values)).join("\n\n")}\n\n${Object.entries(schema.settings).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.definitions).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.preprocessDefinitions).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.taggedUnions).map(([name, contract]) => unionDeclaration(name, contract)).join("\n\n")}\n\n${Object.entries(schema.dtos).map(([name, contract]) => objectDeclaration(name, contract)).join("\n\n")}\n\n${objectDeclaration("WasmRequest", schema.request)}\n\n${objectDeclaration("PreprocessRequest", schema.preprocessRequest)}\n\n${updateRequestDeclaration()}\n\n${objectDeclaration("AdocWeaveWasmResponse", schema.response)}\n\n${unionDeclaration("WorkerRequest", schema.workerEnvelopes.requests)}\n\n${unionDeclaration("WorkerResponse", schema.workerEnvelopes.responses)}\n\n${objectDeclaration("AdocWeaveError", schema.workerEnvelopes.clientError)}\n\nexport declare const PROTOCOL_SCHEMA_VERSION: ${schema.schemaVersion};\nexport declare const WORKER_PROTOCOL_VERSION: ${schema.workerProtocolVersion};\nexport declare const PACKAGE_VERSION: ${JSON.stringify(schema.packageVersion)};\nexport declare const PRODUCT_FIELDS: readonly [${names.map(JSON.stringify).join(", ")}];\nexport declare const REQUEST_FIELDS: readonly [${requestFields.map(JSON.stringify).join(", ")}];\nexport declare const REQUEST_ENUMS: ${literalType(requestEnums)};\nexport declare const WORKER_MESSAGE_FIELDS: ${literalType(workerMessageFields)};\nexport declare function validateWorkerMessage(value: unknown, direction: "requests" | "responses"): value is WorkerRequest | WorkerResponse;\nexport declare function validateClientError(value: unknown): value is AdocWeaveError;\n`;
 const rust = `${header}\npub const PROTOCOL_SCHEMA_VERSION: u16 = ${schema.schemaVersion};\npub const WORKER_PROTOCOL_VERSION: u16 = ${schema.workerProtocolVersion};\n\n#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]\n#[serde(rename_all = "camelCase", deny_unknown_fields)]\npub struct WasmProductSet {\n${rustFields.map((name) => `    pub ${name}: bool,`).join("\n")}\n}\n\nimpl Default for WasmProductSet {\n    fn default() -> Self {\n        let products = adocweave::ProductSet::browser_default();\n        Self {\n${rustFields.map((name) => `            ${name}: products.${name},`).join("\n")}\n        }\n    }\n}\n\nimpl From<WasmProductSet> for adocweave::ProductSet {\n    fn from(value: WasmProductSet) -> Self {\n        Self {\n${rustFields.map((name) => `            ${name}: value.${name},`).join("\n")}\n        }\n    }\n}\n`;
+const preprocessRust = `${header}\n${generateRustPreprocessInputs(schema)}\n`;
 const outputs = [
   [new URL("web-worker/protocol.generated.mjs", root), mjs],
   [new URL("web-worker/protocol.generated.d.mts", root), dts],
   [new URL("crates/adocweave-wasm/src/protocol_generated.rs", root), rust],
+  [new URL("crates/adocweave-wasm/src/preprocess_wire_generated.rs", root), preprocessRust],
 ];
 const check = process.argv.includes("--check");
 let stale = false;
@@ -93,6 +96,12 @@ function validateSchema() {
     }
   }
   if (corpus.oldVersion === schema.packageVersion) throw new Error("old-version corpus uses the current version");
+}
+
+function runtimeValidationSchema(value) {
+  return JSON.parse(JSON.stringify(value, (name, item) =>
+    name === "collection" ? undefined : item
+  ));
 }
 
 function validateOutputContracts() {
