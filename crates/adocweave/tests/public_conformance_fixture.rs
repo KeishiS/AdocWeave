@@ -9,6 +9,9 @@ use adocweave::{AnalysisOptions, Engine, SourceId};
 use serde::Deserialize;
 use serde_json::Value;
 
+const CONFORMANCE_MANIFEST_PATH: &str = "crates/adocweave/conformance/cases.json";
+const CONFORMANCE_FIXTURE_ROOT: &str = "fixtures/conformance";
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Manifest {
@@ -201,9 +204,9 @@ fn assert_cross_runtime_bijection(manifest: &Manifest) {
         "duplicate public sourceId"
     );
 
-    let cross_runtime: Value =
-        serde_json::from_str(&read("crates/adocweave/conformance/cases.json"))
-            .expect("valid cross-runtime manifest");
+    assert!(root().join(CONFORMANCE_FIXTURE_ROOT).is_dir());
+    let cross_runtime: Value = serde_json::from_str(&read(CONFORMANCE_MANIFEST_PATH))
+        .expect("valid cross-runtime manifest");
     let public_entries: Vec<&Value> = cross_runtime["cases"]
         .as_array()
         .expect("cross-runtime cases")

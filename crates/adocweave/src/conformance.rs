@@ -13,8 +13,18 @@ use crate::reference::ReferenceKey;
 use crate::render::RenderInputs;
 use crate::source::TextRange;
 
+#[doc(hidden)]
+pub const CONFORMANCE_MANIFEST_PATH: &str = "crates/adocweave/conformance/cases.json";
+#[doc(hidden)]
+pub const CONFORMANCE_FIXTURE_ROOT: &str = "fixtures/conformance";
+
+#[doc(hidden)]
+pub const fn conformance_contract_paths() -> (&'static str, &'static str) {
+    (CONFORMANCE_MANIFEST_PATH, CONFORMANCE_FIXTURE_ROOT)
+}
+
 /// Returns an inline source fixture from the shared cross-runtime manifest at
-/// `crates/adocweave/conformance/cases.json`.
+/// the core crate's bundled runtime contract.
 /// File-backed fixtures deliberately return `None`: consumers should retain
 /// compile-time inclusion for those files, while inline cases can be reused
 /// without duplicating source text in every test suite. Test consumers resolve

@@ -22,6 +22,11 @@ native、WASMおよびLSPはこのmanifestまたは参照先の同じソース�
 複製fixtureを作らない。個別のfixtureは、他のcaseの入力や期待出力へ依存せず、
 そのfixtureだけで一つの動作を検証できる内容にする。
 
+`conformance/consumers.json`は、このruntime契約を直接読む処理の一覧である。
+各consumerはmanifest pathとfixture rootを別々の定数または設定値として受け取り、
+manifestの所在をfixture参照の基準にしない。新しいreaderを追加するときは、
+同じ変更でこの一覧へ追加し、両方の値を分離して使用する検査を追加する。
+
 `public-conformance.json`は、利用側の適合性試験で再利用する公開fixtureのmanifestである。
 各caseで入力、投影、HTML、解析診断、描画診断、適用profileおよび対象構文を一つの対応として示し、
 manifest全体で出力契約versionとlicenseを示す。各caseの`stableContract`だけを利用側が依存できる

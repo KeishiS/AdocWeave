@@ -1,19 +1,43 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "manifest": "crates/adocweave/conformance/cases.json",
   "fixtureRoot": "fixtures/conformance",
   "consumers": [
     {
       "name": "native-core",
-      "path": "crates/adocweave/src/conformance.rs"
+      "path": "crates/adocweave/src/conformance.rs",
+      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
+      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
     },
     {
       "name": "wasm",
-      "path": "crates/adocweave-wasm/tests/conformance.rs"
+      "path": "crates/adocweave-wasm/tests/conformance.rs",
+      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
+      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
     },
     {
       "name": "browser",
-      "path": "web-worker/cross-runtime.test.mjs"
+      "path": "web-worker/cross-runtime.test.mjs",
+      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
+      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+    },
+    {
+      "name": "html5",
+      "path": "tools/html5-check.mjs",
+      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
+      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+    },
+    {
+      "name": "repository-governance",
+      "path": "crates/adocweave/tests/repository_governance.rs",
+      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
+      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
+    },
+    {
+      "name": "public-conformance",
+      "path": "crates/adocweave/tests/public_conformance_fixture.rs",
+      "manifestBinding": "CONFORMANCE_MANIFEST_PATH",
+      "fixtureRootBinding": "CONFORMANCE_FIXTURE_ROOT"
     }
   ]
 }

@@ -5,6 +5,9 @@ use std::process::Command;
 use adocweave::{AnalysisOptions, Engine};
 use serde::Deserialize;
 
+const CONFORMANCE_MANIFEST_PATH: &str = "crates/adocweave/conformance/cases.json";
+const CONFORMANCE_FIXTURE_ROOT: &str = "fixtures/conformance";
+
 #[derive(Deserialize)]
 struct CorpusManifest {
     normative: Vec<NormativeCase>,
@@ -78,6 +81,8 @@ struct ConformanceConsumers {
 struct ConformanceConsumer {
     name: String,
     path: String,
+    manifest_binding: String,
+    fixture_root_binding: String,
 }
 
 #[derive(Deserialize)]
@@ -542,24 +547,30 @@ fn conformance_fixture_has_every_declared_consumer() {
             .expect("conformance consumer manifest"),
     )
     .expect("valid conformance consumer manifest");
-    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.schema_version, 2);
+    assert_eq!(manifest.manifest, CONFORMANCE_MANIFEST_PATH);
+    assert_eq!(manifest.fixture_root, CONFORMANCE_FIXTURE_ROOT);
+    assert_eq!(
+        adocweave::output::conformance::conformance_contract_paths(),
+        (CONFORMANCE_MANIFEST_PATH, CONFORMANCE_FIXTURE_ROOT)
+    );
     assert!(root.join(&manifest.manifest).is_file());
     assert!(root.join(&manifest.fixture_root).is_dir());
-    assert_eq!(manifest.consumers.len(), 3);
+    assert_eq!(manifest.consumers.len(), 6);
     for consumer in manifest.consumers {
         let content = fs::read_to_string(root.join(&consumer.path))
             .unwrap_or_else(|error| panic!("{}: {error}", consumer.name));
         assert!(
-            content.contains(&manifest.manifest),
-            "{} does not consume manifest {}",
+            content.matches(&consumer.manifest_binding).count() >= 2,
+            "{} does not declare and use manifest binding {}",
             consumer.name,
-            manifest.manifest
+            consumer.manifest_binding
         );
         assert!(
-            content.contains(&manifest.fixture_root),
-            "{} does not resolve files from fixture root {}",
+            content.matches(&consumer.fixture_root_binding).count() >= 2,
+            "{} does not declare and use fixture root binding {}",
             consumer.name,
-            manifest.fixture_root
+            consumer.fixture_root_binding
         );
     }
 }
@@ -568,7 +579,14 @@ fn conformance_fixture_has_every_declared_consumer() {
 fn core_source_package_contains_conformance_manifest() {
     let root = repository_root();
     let output = Command::new("cargo")
-        .args(["package", "--list", "-p", "adocweave", "--allow-dirty"])
+        .args([
+            "package",
+            "--list",
+            "-p",
+            "adocweave",
+            "--allow-dirty",
+            "--offline",
+        ])
         .current_dir(&root)
         .output()
         .expect("cargo package --list");
@@ -604,8 +622,7 @@ fn html5_validation_manifest_has_fixed_tools_and_complete_inputs() {
     assert_eq!(template.matches(&manifest.template.marker).count(), 1);
 
     let conformance: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("crates/adocweave/conformance/cases.json"))
-            .expect("conformance manifest"),
+        &fs::read_to_string(root.join(CONFORMANCE_MANIFEST_PATH)).expect("conformance manifest"),
     )
     .expect("valid conformance manifest");
     let conformance_modes = conformance["cases"]

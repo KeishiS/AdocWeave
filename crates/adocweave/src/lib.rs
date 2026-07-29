@@ -106,7 +106,8 @@ pub mod semantic {
 pub mod output {
     pub mod conformance {
         pub use crate::conformance::{
-            ConformanceSnapshot, DocumentProducts, ProductSet, fixture_source, products, snapshot,
+            ConformanceSnapshot, DocumentProducts, ProductSet, conformance_contract_paths,
+            fixture_source, products, snapshot,
         };
     }
     pub mod diagnostics {
