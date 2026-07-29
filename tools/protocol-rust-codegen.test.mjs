@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { generateRustPreprocessInputs } from "./protocol-rust-codegen.mjs";
+import {
+  generateRustPreprocessInputs,
+  generateRustResponseTypes,
+  generateRustSharedTypes,
+} from "./protocol-rust-codegen.mjs";
 
 const schema = JSON.parse(
   await readFile(new URL("../protocol/public-api.json", import.meta.url), "utf8"),
@@ -136,5 +140,253 @@ test("Rust enum variants reject non-kebab values, keywords, and duplicates", () 
   assert.throws(
     () => generateRustPreprocessInputs(collision),
     /enum values collide as Rust identifier ServerMode/,
+  );
+});
+
+test("shared Rust enums are generated once with schema-derived defaults", () => {
+  const generated = generateRustSharedTypes(schema);
+  assert.match(generated, /pub enum WasmMathLanguage/);
+  assert.match(generated, /pub enum WasmSeverity/);
+  assert.match(generated, /#\[default\]\s+Warning/);
+
+  const changed = structuredClone(schema);
+  changed.enums.Severity.push("critical");
+  assert.match(generateRustSharedTypes(changed), /Critical/);
+
+  const conflicting = structuredClone(schema);
+  conflicting.definitions.SeverityProbe = {
+    fields: [{ json: "severity", type: "Severity", default: "error" }],
+  };
+  assert.throws(
+    () => generateRustSharedTypes(conflicting),
+    /Severity has conflicting shared Rust defaults/,
+  );
+});
+
+test("response Rust types are generated from the complete reachable schema", () => {
+  const generated = generateRustResponseTypes(schema);
+
+  for (const name of [
+    "WasmResponse",
+    "ParseSummary",
+    "WasmDiagnostic",
+    "WasmDocumentProjection",
+    "WasmReferenceKey",
+    "WasmProjectedResolutionOutcome",
+    "WasmTextRange",
+  ]) {
+    assert.match(generated, new RegExp(`\\b${name}\\b`));
+  }
+  assert.match(generated, /pub products: WasmProductSet/);
+  assert.match(generated, /pub projection: Option<WasmDocumentProjection>/);
+  assert.match(generated, /pub children: Vec<WasmDocumentSymbol>/);
+  assert.match(generated, /tag = "status"/);
+  assert.match(generated, /display_text: Option<String>/);
+  assert.match(generated, /\/\/\/ A half-open UTF-8 byte range/);
+  assert.match(generated, /pub severity: WasmSeverity/);
+  assert.match(generated, /pub language: WasmMathLanguage/);
+  assert.match(
+    generated,
+    /derive\(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq\)\]\n#\[serde\(rename_all = "camelCase", deny_unknown_fields\)\]\npub struct WasmAttributeQueryProduct/,
+  );
+  assert.doesNotMatch(generated, /pub enum WasmSeverity/);
+  assert.doesNotMatch(generated, /pub enum WasmMathLanguage/);
+  assert.doesNotMatch(generated, /WasmAnalysisOptions/);
+  assert.doesNotMatch(generated, /adocweave::/);
+
+  const actual = [...generated.matchAll(/pub (?:struct|enum) ([A-Z][A-Za-z0-9]*)/g)]
+    .map((match) => match[1])
+    .sort();
+  const expected = [...expectedResponseTypes(schema)]
+    .filter((name) => !["MathLanguage", "ProductSet", "Severity"].includes(name))
+    .map((name) => ({
+      AdocWeaveWasmResponse: "WasmResponse",
+      ParseSummary: "ParseSummary",
+    })[name] ?? `Wasm${name}`)
+    .sort();
+  assert.deepEqual(actual, expected);
+});
+
+function expectedResponseTypes(value) {
+  const contracts = {
+    ...value.definitions,
+    ...value.dtos,
+    ...value.enums,
+    ...value.taggedUnions,
+    AdocWeaveWasmResponse: value.response,
+    ProductSet: value.productSet,
+  };
+  const reached = new Set();
+  const pending = ["AdocWeaveWasmResponse"];
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (reached.has(name)) continue;
+    reached.add(name);
+    const contract = contracts[name];
+    const fields = contract.variants
+      ? Object.values(contract.variants).flat()
+      : Array.isArray(contract)
+        ? []
+        : contract.fields;
+    for (const field of fields) {
+      for (const reference of field.type.match(/[A-Z][A-Za-z0-9]*/g) ?? []) {
+        if (reference !== "Required" && contracts[reference] && !reached.has(reference)) {
+          pending.push(reference);
+        }
+      }
+    }
+  }
+  return reached;
+}
+
+test("response generation is deterministic and follows schema field changes", () => {
+  const first = generateRustResponseTypes(schema);
+  const second = generateRustResponseTypes(structuredClone(schema));
+  assert.equal(first, second);
+
+  const changed = structuredClone(schema);
+  changed.response.fields.push({ json: "traceId", type: "string | null" });
+  assert.match(
+    generateRustResponseTypes(changed),
+    /pub trace_id: Option<String>/,
+  );
+
+  const reordered = structuredClone(schema);
+  const variants = reordered.taggedUnions.ReferenceKey.variants;
+  reordered.taggedUnions.ReferenceKey.variants = Object.fromEntries(
+    Object.entries(variants).reverse(),
+  );
+  assert.equal(generateRustResponseTypes(reordered), first);
+});
+
+test("response generation fails closed for unsupported reachable types", () => {
+  const unsupported = structuredClone(schema);
+  unsupported.response.fields.push({ json: "clock", type: "safeInteger" });
+  assert.throws(
+    () => generateRustResponseTypes(unsupported),
+    /unsupported response Rust field type safeInteger/,
+  );
+
+  const missing = structuredClone(schema);
+  missing.response.fields.push({ json: "missing", type: "MissingContract" });
+  assert.throws(
+    () => generateRustResponseTypes(missing),
+    /unsupported reachable response Rust type MissingContract/,
+  );
+
+  for (const type of [
+    "string | null | null",
+    "Required<Required<ProductSet>>",
+    "Required<Severity>",
+    "TextRange[][]",
+    " TextRange",
+  ]) {
+    const malformed = structuredClone(schema);
+    malformed.response.fields.push({ json: "malformed", type });
+    assert.throws(
+      () => generateRustResponseTypes(malformed),
+      /unsupported response Rust field type/,
+      type,
+    );
+  }
+
+  const invalidDescription = structuredClone(schema);
+  invalidDescription.dtos.TextRange.description = "first\n/// injected";
+  assert.throws(
+    () => generateRustResponseTypes(invalidDescription),
+    /TextRange has an invalid Rust documentation description/,
+  );
+});
+
+test("response unions reject tag collisions and Rust identifier collisions", () => {
+  const tagCollision = structuredClone(schema);
+  tagCollision.taggedUnions.ReferenceKey.variants.local.push({
+    json: "kind",
+    type: "string",
+  });
+  assert.throws(
+    () => generateRustResponseTypes(tagCollision),
+    /field collides with tag kind/,
+  );
+
+  const fieldCollision = structuredClone(schema);
+  fieldCollision.response.fields.push(
+    { json: "traceId", type: "string" },
+    { json: "traceId", type: "string" },
+  );
+  assert.throws(
+    () => generateRustResponseTypes(fieldCollision),
+    /fields collide as Rust identifier trace_id/,
+  );
+
+  const contractCollision = structuredClone(schema);
+  contractCollision.dtos.ParseSummary = { fields: [] };
+  assert.throws(
+    () => generateRustResponseTypes(contractCollision),
+    /duplicate response Rust contract ParseSummary/,
+  );
+});
+
+test("response generation rejects infinitely sized types but permits Vec recursion", () => {
+  const direct = structuredClone(schema);
+  direct.definitions.DirectCycle = {
+    fields: [{ json: "next", type: "DirectCycle | null" }],
+  };
+  direct.response.fields.push({ json: "cycle", type: "DirectCycle" });
+  assert.throws(
+    () => generateRustResponseTypes(direct),
+    /infinitely sized cycle: DirectCycle -> DirectCycle/,
+  );
+
+  const indirect = structuredClone(schema);
+  indirect.definitions.FirstCycle = {
+    fields: [{ json: "next", type: "SecondCycle" }],
+  };
+  indirect.definitions.SecondCycle = {
+    fields: [{ json: "next", type: "FirstCycle | null" }],
+  };
+  indirect.response.fields.push({ json: "cycle", type: "FirstCycle" });
+  assert.throws(
+    () => generateRustResponseTypes(indirect),
+    /infinitely sized cycle:/,
+  );
+
+  const vector = structuredClone(schema);
+  vector.definitions.TreeNode = {
+    fields: [{ json: "children", type: "TreeNode[]" }],
+  };
+  vector.response.fields.push({ json: "tree", type: "TreeNode" });
+  assert.match(
+    generateRustResponseTypes(vector),
+    /pub children: Vec<WasmTreeNode>/,
+  );
+});
+
+test("response Default derives require an explicit complete schema default", () => {
+  const generated = generateRustResponseTypes(schema);
+  assert.match(
+    generated,
+    /derive\(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq\)\]\n#\[serde\(rename_all = "camelCase", deny_unknown_fields\)\]\npub struct WasmAttributeQueryProduct/,
+  );
+  assert.doesNotMatch(
+    generated,
+    /derive\([^)]*Default[^)]*\)\]\n#\[serde\(rename_all = "camelCase", deny_unknown_fields\)\]\npub struct (?:WasmResponse|ParseSummary)/,
+  );
+
+  const incomplete = structuredClone(schema);
+  incomplete.dtos.AttributeQueryProduct.fields.push({
+    json: "language",
+    type: "MathLanguage",
+  });
+  assert.throws(
+    () => generateRustResponseTypes(incomplete),
+    /AttributeQueryProduct outputDefault must cover every field exactly once/,
+  );
+
+  const mismatched = structuredClone(schema);
+  mismatched.dtos.AttributeQueryProduct.outputDefault.bindings = ["not-empty"];
+  assert.throws(
+    () => generateRustResponseTypes(mismatched),
+    /AttributeQueryProduct.bindings outputDefault does not match Rust Default/,
   );
 });

@@ -597,6 +597,7 @@
   },
   "dtos": {
     "TextRange": {
+      "description": "A half-open UTF-8 byte range in the submitted source.",
       "fields": [
         { "json": "start", "type": "u32" },
         { "json": "end", "type": "u32" }
@@ -650,6 +651,7 @@
       ]
     },
     "DocumentAttributeOccurrence": {
+      "description": "One source-preserving standard document-attribute occurrence.",
       "fields": [
         { "json": "range", "type": "TextRange" },
         { "json": "nameRange", "type": "TextRange" },
@@ -660,6 +662,10 @@
       ]
     },
     "AttributeQueryProduct": {
+      "outputDefault": {
+        "bindings": [],
+        "references": []
+      },
       "fields": [
         { "json": "bindings", "type": "AttributeBindingQuery[]" },
         { "json": "references", "type": "AttributeReferenceQuery[]" }
