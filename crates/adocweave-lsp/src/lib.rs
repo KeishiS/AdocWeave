@@ -2,13 +2,13 @@
 
 mod backend;
 mod lifecycle;
+mod position;
 mod service;
 mod state;
 mod workspace;
 
-pub use service::{
-    HostReferenceIndex, HostReferenceRequest, NoHostReferenceIndex, PositionEncoding,
-};
+pub use position::PositionEncoding;
+pub use service::{HostReferenceIndex, HostReferenceRequest, NoHostReferenceIndex};
 
 pub const SERVER_NAME: &str = "adocweave-lsp";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
