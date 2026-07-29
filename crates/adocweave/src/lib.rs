@@ -10,6 +10,7 @@ mod block_grammar;
 mod block_model;
 mod block_sequence;
 mod budget;
+mod cancellation;
 mod catalog;
 mod conformance;
 mod core;
@@ -122,11 +123,11 @@ pub mod output {
             INVALID_ATTRIBUTE, INVALID_CATALOG, INVALID_CROSS_REFERENCE,
             INVALID_DOCUMENT_STRUCTURE, INVALID_HEADING_LEVEL, INVALID_LIST_PRESENTATION,
             INVALID_STEM, INVALID_TABLE, INVALID_URL_SCHEME, LINE_TOO_LONG, LINT_RULES, LintConfig,
-            LintRuleDescriptor, LintRuleId, MACRO_BOUNDARY, MISSING_SOURCE_LANGUAGE,
+            LintError, LintRuleDescriptor, LintRuleId, MACRO_BOUNDARY, MISSING_SOURCE_LANGUAGE,
             NESTING_LIMIT_EXCEEDED, NON_ASCIIDOC_XREF, PROTECTED_ATTRIBUTE, RuleSettings,
             TRAILING_WHITESPACE, UNCLOSED_BLOCK, UNCLOSED_INLINE, UNDEFINED_ATTRIBUTE,
-            UNRESOLVED_CROSS_REFERENCE, UNUSED_ATTRIBUTE, lint_analysis, lint_rule,
-            render_lint_rule_catalog_json,
+            UNRESOLVED_CROSS_REFERENCE, UNUSED_ATTRIBUTE, lint_analysis, lint_analysis_cancellable,
+            lint_rule, render_lint_rule_catalog_json,
         };
     }
     pub mod formatter {
@@ -155,14 +156,16 @@ pub mod preprocess {
     pub use crate::preprocessor::{
         AnalysisProjection, Directive, DirectiveKind, EffectiveProcessingOptions, ExpandedOffset,
         ExpandedRange, IncludeRequest, OriginRange, Originated, PreprocessError,
-        PreprocessErrorKind, PreprocessNotice, PreprocessNoticeKind, PreprocessOptions,
-        PreprocessedAnalysis, PreprocessedAnalysisError, PreprocessedDocument,
+        PreprocessErrorKind, PreprocessFailure, PreprocessNotice, PreprocessNoticeKind,
+        PreprocessOptions, PreprocessedAnalysis, PreprocessedAnalysisError, PreprocessedDocument,
         ProcessingOptionsError, ProjectedAttributeBinding, ProjectedAttributeReference,
         ProjectedDiagnostic, ProjectedDocumentAttribute, ProjectedDocumentAttributeValueLine,
         ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget, ProjectedReference,
-        ProjectedResource, ProjectionError, ProjectionLimits, ResourceDocument, ResourceSnapshot,
-        SafeMode, SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
-        preprocess_and_analyze, preprocess_and_analyze_with_options, resolve_include_target,
+        ProjectedResource, ProjectionError, ProjectionFailure, ProjectionLimits, ResourceDocument,
+        ResourceSnapshot, SafeMode, SourceMapSegment, SourceMapping, SourceOrigin,
+        discover_includes, preprocess, preprocess_and_analyze, preprocess_and_analyze_cancellable,
+        preprocess_and_analyze_cancellable_with_options, preprocess_and_analyze_with_options,
+        preprocess_cancellable, resolve_include_target,
     };
 }
 

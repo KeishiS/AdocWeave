@@ -18,9 +18,10 @@ use std::sync::Arc;
 use adocweave::output::diagnostics::Severity;
 use adocweave::preprocess::{
     AnalysisProjection, DirectiveKind, EffectiveProcessingOptions, PreprocessOptions,
-    PreprocessedAnalysis, ProjectionLimits, ResourceDocument, ResourceSnapshot, preprocess,
+    PreprocessedAnalysisError, ProjectionFailure, ProjectionLimits, ResourceDocument,
+    ResourceSnapshot, preprocess_and_analyze_cancellable_with_options,
 };
-use adocweave::{AnalysisOptions, Engine, SourceId};
+use adocweave::{AnalysisOptions, SourceId};
 use dependency_graph::DependencyGraph;
 
 /// Stable, host-defined identity for one workspace resource.
@@ -684,35 +685,42 @@ impl WorkspaceSnapshot {
                 )
             })
             .collect::<ResourceSnapshot>();
-        let mut preprocess_options = options.preprocess().clone();
-        preprocess_options.source_id = Some(SourceId::new(root.to_string()));
-        let document =
-            preprocess(&root_resource.text, &snapshot, &preprocess_options).map_err(|error| {
-                WorkspaceError::new(WorkspaceErrorCode::Preprocess, error.to_string()).with_origin(
-                    error.source_id.as_ref(),
-                    error.range,
-                    error.kind.as_str(),
-                )
-            })?;
+        let options = options
+            .clone()
+            .with_source_id(Some(SourceId::new(root.to_string())));
+        let preprocessed = preprocess_and_analyze_cancellable_with_options(
+            &root_resource.text,
+            &snapshot,
+            &options,
+            cancellation,
+        )
+        .map_err(|error| match error {
+            PreprocessedAnalysisError::Options(error) => {
+                WorkspaceError::new(WorkspaceErrorCode::InvalidOptions, error.to_string())
+            }
+            PreprocessedAnalysisError::Preprocess(error) => WorkspaceError::new(
+                WorkspaceErrorCode::Preprocess,
+                error.to_string(),
+            )
+            .with_origin(error.source_id.as_ref(), error.range, error.kind.as_str()),
+            PreprocessedAnalysisError::Parse(error) => {
+                WorkspaceError::new(WorkspaceErrorCode::Analysis, error.to_string())
+            }
+            PreprocessedAnalysisError::Cancelled => {
+                WorkspaceError::new(WorkspaceErrorCode::Cancelled, "processing was cancelled")
+            }
+        })?;
         check_cancelled(cancellation)?;
-        let dependencies = actual_dependencies(&document, root);
-        let source_id = SourceId::new(root.to_string());
-        let analysis = Engine::new(options.analysis().clone())
-            .analyze_cancellable_with_source_id(Some(&source_id), &document.source, cancellation)
+        let dependencies = actual_dependencies(&preprocessed.document, root);
+        let projection = preprocessed
+            .project_origins_cancellable(projection_limits, cancellation)
             .map_err(|error| {
-                let code = if error == adocweave::ParseError::Cancelled {
+                let code = if error == ProjectionFailure::Cancelled {
                     WorkspaceErrorCode::Cancelled
                 } else {
-                    WorkspaceErrorCode::Analysis
+                    WorkspaceErrorCode::Projection
                 };
                 WorkspaceError::new(code, error.to_string())
-            })?;
-        check_cancelled(cancellation)?;
-        let preprocessed = PreprocessedAnalysis { document, analysis };
-        let projection = preprocessed
-            .project_origins(projection_limits)
-            .map_err(|error| {
-                WorkspaceError::new(WorkspaceErrorCode::Projection, error.to_string())
             })?;
         check_cancelled(cancellation)?;
         let counts = DiagnosticCounts::from_projection(&projection);
@@ -1158,12 +1166,12 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_reaches_the_core_parser() {
-        struct CancelDuringCore(AtomicUsize);
+    fn cancellation_during_preprocessing_returns_no_partial_analysis() {
+        struct CancelDuringPreprocessing(AtomicUsize);
 
-        impl adocweave::CancellationCheck for CancelDuringCore {
+        impl adocweave::CancellationCheck for CancelDuringPreprocessing {
             fn is_cancelled(&self) -> bool {
-                self.0.fetch_add(1, Ordering::Relaxed) >= 2
+                self.0.fetch_add(1, Ordering::Relaxed) >= 3
             }
         }
 
@@ -1180,7 +1188,7 @@ mod tests {
                 &AnalysisOptions::default(),
                 &options(),
                 ProjectionLimits::default(),
-                &CancelDuringCore(AtomicUsize::new(0)),
+                &CancelDuringPreprocessing(AtomicUsize::new(0)),
             )
             .expect_err("cancelled");
         assert_eq!(error.code, WorkspaceErrorCode::Cancelled);

@@ -65,3 +65,22 @@ fn projection_product_field_types_are_publicly_nameable() {
     let _: Option<adocweave::preprocess::ProjectedReference> = None;
     let _: Option<adocweave::preprocess::ProjectedResource> = None;
 }
+
+#[test]
+fn cancellable_lint_api_is_public() {
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("paragraph\n")
+        .expect("analysis");
+    let cancellation = adocweave::CancellationToken::new();
+    cancellation.cancel();
+
+    assert_eq!(
+        adocweave::output::diagnostics::lint_analysis_cancellable(
+            &analysis,
+            &adocweave::output::diagnostics::LintConfig::default(),
+            &cancellation,
+        )
+        .expect_err("cancelled lint"),
+        adocweave::output::diagnostics::LintError::Cancelled
+    );
+}

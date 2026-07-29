@@ -13,14 +13,14 @@ pub(super) fn lint_tables_with_observer<'document>(
 ) {
     let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
         observe(node);
-        if sink.is_full() {
+        if sink.should_stop() {
             return ControlFlow::Break(());
         }
         let crate::walker::SemanticNode::Table(table) = node else {
             return ControlFlow::Continue(());
         };
         for problem in &table.problems {
-            if sink.is_full() {
+            if sink.should_stop() {
                 break;
             }
             let message = match problem.kind {
@@ -36,7 +36,7 @@ pub(super) fn lint_tables_with_observer<'document>(
             sink.emit(INVALID_TABLE, problem.range, || {
                 LintDiagnosticBody::new(message)
             });
-            if sink.is_full() {
+            if sink.should_stop() {
                 return ControlFlow::Break(());
             }
         }

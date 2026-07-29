@@ -144,33 +144,58 @@ impl PreprocessedDocument {
     /// the relative byte range is preserved. A transformed segment (for example
     /// `indent` or `leveloffset`) conservatively maps to its complete source line.
     pub fn origins_for_range(&self, output_range: ExpandedRange) -> Vec<SourceOrigin> {
+        self.origins_for_range_checked(output_range, &mut || false)
+            .expect("a noncancellable source-map query cannot be cancelled")
+    }
+
+    pub(super) fn origins_for_range_cancellable(
+        &self,
+        output_range: ExpandedRange,
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<Vec<SourceOrigin>, ()> {
+        self.origins_for_range_checked(output_range, &mut || checkpoint.is_cancelled())
+    }
+
+    fn origins_for_range_checked(
+        &self,
+        output_range: ExpandedRange,
+        is_cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Vec<SourceOrigin>, ()> {
         if output_range.is_empty() {
-            let segment = self
-                .source_map
-                .iter()
-                .find(|segment| {
-                    segment.output_range.start() <= output_range.start()
-                        && output_range.start() < segment.output_range.end()
-                })
-                .or_else(|| {
-                    self.source_map
-                        .last()
-                        .filter(|segment| segment.output_range.end() == output_range.start())
-                });
+            let mut segment = None;
+            for candidate in &self.source_map {
+                if is_cancelled() {
+                    return Err(());
+                }
+                if candidate.output_range.start() <= output_range.start()
+                    && output_range.start() < candidate.output_range.end()
+                {
+                    segment = Some(candidate);
+                    break;
+                }
+            }
+            let segment = segment.or_else(|| {
+                self.source_map
+                    .last()
+                    .filter(|segment| segment.output_range.end() == output_range.start())
+            });
             let Some(segment) = segment else {
-                return Vec::new();
+                return Ok(Vec::new());
             };
             let range = project_range(segment, output_range.start(), output_range.end());
-            return vec![SourceOrigin {
+            return Ok(vec![SourceOrigin {
                 source_id: segment.origin.source_id.clone(),
                 range: OriginRange::new(range),
-            }];
+            }]);
         }
         let mut origins: Vec<SourceOrigin> = Vec::new();
         let first = self
             .source_map
             .partition_point(|segment| segment.output_range.end() <= output_range.start());
         for segment in &self.source_map[first..] {
+            if is_cancelled() {
+                return Err(());
+            }
             if output_range.end() <= segment.output_range.start() {
                 break;
             }
@@ -215,31 +240,41 @@ impl PreprocessedDocument {
                 origins.push(origin);
             }
         }
-        origins
+        Ok(origins)
     }
 
-    pub(super) fn origins_for_empty_range_within(
+    pub(super) fn origins_for_empty_range_within_cancellable(
         &self,
         output_range: ExpandedRange,
         containing_range: ExpandedRange,
-    ) -> Vec<SourceOrigin> {
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<Vec<SourceOrigin>, ()> {
         debug_assert!(output_range.is_empty());
-        let Some(segment) = self.source_map.iter().find(|segment| {
-            segment.output_range.start() <= output_range.start()
+        let mut selected = None;
+        for segment in &self.source_map {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            if segment.output_range.start() <= output_range.start()
                 && output_range.start() <= segment.output_range.end()
                 && segment.output_range.start() < containing_range.end()
                 && containing_range.start() < segment.output_range.end()
-        }) else {
-            return self.origins_for_range(output_range);
+            {
+                selected = Some(segment);
+                break;
+            }
+        }
+        let Some(segment) = selected else {
+            return self.origins_for_range_cancellable(output_range, checkpoint);
         };
-        vec![SourceOrigin {
+        Ok(vec![SourceOrigin {
             source_id: segment.origin.source_id.clone(),
             range: OriginRange::new(project_range(
                 segment,
                 output_range.start(),
                 output_range.end(),
             )),
-        }]
+        }])
     }
 
     pub(super) fn mapping_is_identity(&self, output_range: ExpandedRange) -> bool {
@@ -286,6 +321,8 @@ fn text_range(start: usize, end: usize) -> TextRange {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     fn origin(source: &str, start: usize, end: usize) -> (Option<SourceId>, TextRange) {
@@ -294,6 +331,47 @@ mod tests {
 
     fn contains(outer: TextRange, inner: TextRange) -> bool {
         outer.start() <= inner.start() && inner.end() <= outer.end()
+    }
+
+    #[test]
+    fn projection_cancels_while_crossing_many_source_map_segments() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl crate::core::CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let segment_count = crate::cancellation::CHECKPOINT_INTERVAL * 2;
+        let source_map = (0..segment_count)
+            .map(|offset| SourceMapSegment {
+                output_range: ExpandedRange::new(text_range(offset, offset + 1)),
+                origin: SourceOrigin {
+                    source_id: Some(SourceId::new(offset.to_string())),
+                    range: OriginRange::new(text_range(0, 1)),
+                },
+                mapping: SourceMapping::Identity,
+            })
+            .collect();
+        let document = PreprocessedDocument::from_parts(
+            "a".repeat(segment_count),
+            source_map,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("source map");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+        let mut checkpoint = crate::cancellation::CancellationCheckpoint::new(&cancellation);
+
+        assert_eq!(
+            document.origins_for_range_cancellable(
+                ExpandedRange::new(text_range(0, segment_count)),
+                &mut checkpoint,
+            ),
+            Err(())
+        );
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
     }
 
     #[test]

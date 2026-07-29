@@ -12,7 +12,7 @@ pub(super) fn lint_attributes(context: &LintContext<'_>, sink: &mut LintDiagnost
     let document = context.document();
     let protected_attributes = sink.config().protected_attributes.clone();
     for attribute in document.attributes() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         if let Some(expected) = protected_attributes.get(&attribute.name) {
@@ -33,7 +33,7 @@ pub(super) fn lint_attributes(context: &LintContext<'_>, sink: &mut LintDiagnost
         }
     }
 
-    if sink.is_full() {
+    if sink.should_stop() {
         return;
     }
     let environment = document.attribute_environment();
@@ -52,11 +52,11 @@ pub(super) fn lint_attributes(context: &LintContext<'_>, sink: &mut LintDiagnost
         .collect();
     let mut used_bindings = BTreeSet::<AttributeBindingId>::new();
     lint_attribute_reference_uses(inline_references, &mut used_bindings, sink);
-    if sink.is_full() {
+    if sink.should_stop() {
         return;
     }
     for binding in environment.bindings() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         let references = references
@@ -99,11 +99,11 @@ pub(super) fn lint_attributes(context: &LintContext<'_>, sink: &mut LintDiagnost
             });
         }
     }
-    if sink.is_full() {
+    if sink.should_stop() {
         return;
     }
     for binding in environment.bindings() {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         let occurrence = binding.occurrence();
@@ -124,7 +124,7 @@ fn lint_attribute_reference_uses(
     sink: &mut LintDiagnosticSink<'_>,
 ) {
     for reference in references {
-        if sink.is_full() {
+        if sink.should_stop() {
             break;
         }
         used_bindings.extend(reference.binding_id);

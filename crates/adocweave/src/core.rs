@@ -424,9 +424,15 @@ fn analyze_cancellable_with_source_id(
     lint_config
         .protected_attributes
         .extend(options.attributes.clone());
-    let diagnostics =
-        lint::lint_parsed_document(lint::LintContext::new(&syntax, &ast), &lint_config)
-            .map_err(ParseError::Position)?;
+    let diagnostics = lint::lint_parsed_document_cancellable(
+        lint::LintContext::new(&syntax, &ast),
+        &lint_config,
+        cancellation,
+    )
+    .map_err(|error| match error {
+        lint::LintError::Position(error) => ParseError::Position(error),
+        lint::LintError::Cancelled => ParseError::Cancelled,
+    })?;
     if cancellation.is_cancelled() {
         return Err(ParseError::Cancelled);
     }

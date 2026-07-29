@@ -10,7 +10,11 @@ mod syntax;
 mod tables;
 
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
 
+use crate::cancellation::CancellationCheckpoint;
+use crate::core::{CancellationCheck, NeverCancel};
 use crate::diagnostic::{
     Applicability, Diagnostic, DiagnosticCode, DiagnosticId, Fix, RelatedInformation, Severity,
     TextEdit, sort_diagnostics,
@@ -74,6 +78,23 @@ pub struct LintRuleDescriptor {
     pub fixable: bool,
     pub user_configurable: bool,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LintError {
+    Position(PositionError),
+    Cancelled,
+}
+
+impl fmt::Display for LintError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Position(error) => error.fmt(formatter),
+            Self::Cancelled => formatter.write_str("linting was cancelled"),
+        }
+    }
+}
+
+impl Error for LintError {}
 
 macro_rules! lint_rule_catalog {
     (@enabled) => {
@@ -355,6 +376,8 @@ impl LintConfig {
 struct LintDiagnosticSink<'a> {
     config: &'a LintConfig,
     diagnostics: Vec<Diagnostic>,
+    cancellation: CancellationCheckpoint<'a>,
+    cancelled: bool,
 }
 
 struct LintDiagnosticBody {
@@ -429,10 +452,17 @@ struct LintFixSpec {
 }
 
 impl<'a> LintDiagnosticSink<'a> {
+    #[cfg(test)]
     fn new(config: &'a LintConfig) -> Self {
+        Self::new_cancellable(config, &NeverCancel)
+    }
+
+    fn new_cancellable(config: &'a LintConfig, cancellation: &'a dyn CancellationCheck) -> Self {
         Self {
             config,
             diagnostics: Vec::new(),
+            cancellation: CancellationCheckpoint::new(cancellation),
+            cancelled: false,
         }
     }
 
@@ -442,6 +472,14 @@ impl<'a> LintDiagnosticSink<'a> {
 
     fn config(&self) -> &LintConfig {
         self.config
+    }
+
+    fn should_stop(&mut self) -> bool {
+        if self.cancelled || self.is_full() {
+            return true;
+        }
+        self.cancelled = self.cancellation.is_cancelled();
+        self.cancelled
     }
 
     fn emit(
@@ -529,47 +567,85 @@ pub fn lint_analysis(
     analysis: &crate::core::Analysis,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    lint_parsed_document(LintContext::new(analysis.syntax(), analysis.ast()), config)
+    match lint_analysis_cancellable(analysis, config, &NeverCancel) {
+        Ok(diagnostics) => Ok(diagnostics),
+        Err(LintError::Position(error)) => Err(error),
+        Err(LintError::Cancelled) => {
+            unreachable!("NeverCancel cannot cancel lint analysis")
+        }
+    }
 }
 
+/// Applies diagnostics to one analysis with cooperative cancellation.
+pub fn lint_analysis_cancellable(
+    analysis: &crate::core::Analysis,
+    config: &LintConfig,
+    cancellation: &dyn CancellationCheck,
+) -> Result<Vec<Diagnostic>, LintError> {
+    lint_parsed_document_cancellable(
+        LintContext::new(analysis.syntax(), analysis.ast()),
+        config,
+        cancellation,
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn lint_parsed_document(
     context: LintContext<'_>,
     config: &LintConfig,
 ) -> Result<Vec<Diagnostic>, PositionError> {
-    let mut sink = LintDiagnosticSink::new(config);
-    source::lint_source_lines(&context, &mut sink)?;
+    match lint_parsed_document_cancellable(context, config, &NeverCancel) {
+        Ok(diagnostics) => Ok(diagnostics),
+        Err(LintError::Position(error)) => Err(error),
+        Err(LintError::Cancelled) => {
+            unreachable!("NeverCancel cannot cancel lint analysis")
+        }
+    }
+}
 
-    if !sink.is_full() {
+pub(crate) fn lint_parsed_document_cancellable(
+    context: LintContext<'_>,
+    config: &LintConfig,
+    cancellation: &dyn CancellationCheck,
+) -> Result<Vec<Diagnostic>, LintError> {
+    let mut sink = LintDiagnosticSink::new_cancellable(config, cancellation);
+    source::lint_source_lines(&context, &mut sink).map_err(LintError::Position)?;
+
+    if !sink.should_stop() {
         syntax::lint_syntax_issues(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         structure::lint_headings(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         attributes::lint_attributes(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         references::lint_anchors(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         references::lint_links_and_references(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         presentation::lint_list_presentation(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         presentation::lint_document_presentation(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         tables::lint_tables(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         catalogs::lint_catalogs(&context, &mut sink);
     }
-    if !sink.is_full() {
+    if !sink.should_stop() {
         structure::lint_document_structure(&context, &mut sink);
     }
-    Ok(sink.finish())
+    if sink.cancelled || sink.cancellation.is_cancelled_now() {
+        Err(LintError::Cancelled)
+    } else {
+        Ok(sink.finish())
+    }
 }
 
 #[cfg(test)]
@@ -579,15 +655,41 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::{cell::Cell, ops::ControlFlow};
 
     use super::{
         DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID, INVALID_ANCHOR, INVALID_CATALOG, INVALID_TABLE,
-        LINE_TOO_LONG, LINT_RULES, LintConfig, LintDiagnosticBody, LintDiagnosticSink, LintRuleId,
-        MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE, UNUSED_ATTRIBUTE,
-        lint, lint_rule, lint_with_analysis_limits, render_lint_rule_catalog_json, text_range,
+        LINE_TOO_LONG, LINT_RULES, LintConfig, LintDiagnosticBody, LintDiagnosticSink, LintError,
+        LintRuleId, MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE,
+        UNUSED_ATTRIBUTE, lint, lint_analysis_cancellable, lint_rule, lint_with_analysis_limits,
+        render_lint_rule_catalog_json, text_range,
     };
+    use crate::core::{AnalysisOptions, CancellationCheck, Engine};
     use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
+
+    #[test]
+    fn linting_cancels_at_a_bounded_line_checkpoint() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = "paragraph\n".repeat(crate::cancellation::CHECKPOINT_INTERVAL * 3);
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze(&source)
+            .expect("analysis");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        let error = lint_analysis_cancellable(&analysis, &LintConfig::default(), &cancellation)
+            .expect_err("linting should be cancelled");
+
+        assert_eq!(error, LintError::Cancelled);
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+    }
 
     #[test]
     fn lint_rule_catalog_is_unique_resolvable_and_sorted_in_json() {
