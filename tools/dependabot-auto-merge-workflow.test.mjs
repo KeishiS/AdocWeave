@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -23,6 +24,18 @@ const contributing = await readFile(
   "utf8",
 );
 const makefile = await readFile(new URL("../Makefile.toml", import.meta.url), "utf8");
+const reconciliationPullRequestFilter = new URL(
+  "./dependabot-auto-merge-pr-numbers.jq",
+  import.meta.url,
+);
+const reconciliationDisableResultFilter = new URL(
+  "./dependabot-auto-merge-disable-result.jq",
+  import.meta.url,
+);
+const reconciliationPullRequestDetailFilter = new URL(
+  "./dependabot-auto-merge-pr-detail.jq",
+  import.meta.url,
+);
 const decide = controller.match(/\n  decide:\n[\s\S]*?(?=\n  revoke:\n)/)?.[0] ?? "";
 const revoke = controller.match(/\n  revoke:\n[\s\S]*?(?=\n  enable:\n)/)?.[0] ?? "";
 const enable = controller.match(
@@ -204,6 +217,9 @@ test("repository changes continuously reconcile existing auto-merge requests", (
   assert.match(reconciliation, /pull-requests:\s*write/);
   assert.match(reconciliation, /vulnerability-alerts:\s*read/);
   assert.match(reconciliation, /dependabot-alert-snapshot\.sh/);
+  assert.match(reconciliation, /dependabot-auto-merge-disable-result\.jq/);
+  assert.match(reconciliation, /dependabot-auto-merge-pr-detail\.jq/);
+  assert.match(reconciliation, /dependabot-auto-merge-pr-numbers\.jq/);
   assert.equal(
     [...reconciliation.matchAll(
       /reconcile \.github\/dependabot-auto-merge-policy\.json/g,
@@ -218,6 +234,252 @@ test("repository changes continuously reconcile existing auto-merge requests", (
   assert.match(reconciliation, /steps\.safety\.outcome == 'failure'/);
   assert.match(reconciliation, /disablePullRequestAutoMerge/);
   assert.doesNotMatch(reconciliation, /enablePullRequestAutoMerge|pull_request_target:/);
+});
+
+function filterReconciliationPullRequests(pages) {
+  return spawnSync(
+    "jq",
+    ["-e", "-s", "-f", reconciliationPullRequestFilter.pathname],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_REPOSITORY: "KeishiS/adocweave",
+      },
+      input: pages.map((page) => JSON.stringify(page)).join("\n"),
+    },
+  );
+}
+
+function pullRequest(number, overrides = {}) {
+  return {
+    number,
+    user: { login: "dependabot[bot]" },
+    base: {
+      ref: "main",
+      repo: { full_name: "KeishiS/adocweave" },
+    },
+    head: {
+      ref: `dependabot/cargo/dependency-${number}`,
+      repo: { full_name: "KeishiS/adocweave" },
+    },
+    ...overrides,
+  };
+}
+
+function validateReconciliationDisableResult(result, pullRequestNumber = 17) {
+  return spawnSync(
+    "jq",
+    [
+      "-e",
+      "--argjson",
+      "pr_number",
+      String(pullRequestNumber),
+      "-f",
+      reconciliationDisableResultFilter.pathname,
+    ],
+    {
+      encoding: "utf8",
+      input: JSON.stringify(result),
+    },
+  );
+}
+
+function validateReconciliationPullRequestDetail(
+  pullRequestDetail,
+  pullRequestNumber = 17,
+) {
+  return spawnSync(
+    "jq",
+    [
+      "-e",
+      "--argjson",
+      "pr_number",
+      String(pullRequestNumber),
+      "--arg",
+      "repository",
+      "KeishiS/adocweave",
+      "-f",
+      reconciliationPullRequestDetailFilter.pathname,
+    ],
+    {
+      encoding: "utf8",
+      input: JSON.stringify(pullRequestDetail),
+    },
+  );
+}
+
+function pullRequestDetail(autoMerge = null) {
+  return {
+    ...pullRequest(17),
+    node_id: "PR_kwDOExample17",
+    auto_merge: autoMerge,
+  };
+}
+
+test("reconciliation accepts an empty Dependabot Pull Request set", () => {
+  const result = filterReconciliationPullRequests([[]]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), []);
+});
+
+test("reconciliation selects Dependabot Pull Requests across every API page", () => {
+  const result = filterReconciliationPullRequests([
+    [
+      pullRequest(17),
+      pullRequest(18, { user: { login: "contributor" } }),
+    ],
+    [
+      pullRequest(19),
+      pullRequest(20, {
+        head: {
+          ref: "feature/not-dependabot",
+          repo: { full_name: "KeishiS/adocweave" },
+        },
+      }),
+    ],
+  ]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [17, 19]);
+});
+
+test("reconciliation fails closed for an invalid Pull Request API response", () => {
+  const missingResponse = filterReconciliationPullRequests([]);
+  const invalidPage = filterReconciliationPullRequests([
+    { message: "Resource not accessible by integration" },
+  ]);
+  const invalidEntry = filterReconciliationPullRequests([
+    [{ number: 17, user: null }],
+  ]);
+
+  assert.notEqual(missingResponse.status, 0);
+  assert.match(missingResponse.stderr, /must contain one or more arrays/);
+  assert.notEqual(invalidPage.status, 0);
+  assert.match(invalidPage.stderr, /must contain one or more arrays/);
+  assert.notEqual(invalidEntry.status, 0);
+  assert.match(invalidEntry.stderr, /contains an invalid entry/);
+  for (const number of [0, -1, 1.5]) {
+    const invalidNumber = filterReconciliationPullRequests([
+      [pullRequest(number)],
+    ]);
+    assert.notEqual(invalidNumber.status, 0, String(number));
+    assert.match(invalidNumber.stderr, /contains an invalid entry/);
+  }
+});
+
+test("reconciliation requires a confirmed GraphQL auto-merge cancellation", () => {
+  const success = {
+    data: {
+      disablePullRequestAutoMerge: {
+        pullRequest: {
+          number: 17,
+          autoMergeRequest: null,
+        },
+      },
+    },
+  };
+  const graphQlError = {
+    ...success,
+    errors: [{ message: "auto-merge could not be disabled" }],
+  };
+  const stillEnabled = structuredClone(success);
+  stillEnabled.data.disablePullRequestAutoMerge.pullRequest.autoMergeRequest = {
+    enabledAt: "2026-07-29T21:00:00Z",
+  };
+
+  assert.equal(validateReconciliationDisableResult(success).status, 0);
+  assert.notEqual(validateReconciliationDisableResult(graphQlError).status, 0);
+  assert.notEqual(validateReconciliationDisableResult(stillEnabled).status, 0);
+  assert.notEqual(validateReconciliationDisableResult(success, 18).status, 0);
+});
+
+test("reconciliation trusts only a validated Pull Request detail response", () => {
+  const disabled = validateReconciliationPullRequestDetail(pullRequestDetail());
+  const enabled = validateReconciliationPullRequestDetail(
+    pullRequestDetail({
+      enabled_by: { login: "maintainer" },
+      merge_method: "squash",
+      commit_title: null,
+      commit_message: null,
+    }),
+  );
+
+  assert.equal(disabled.status, 0, disabled.stderr);
+  assert.deepEqual(JSON.parse(disabled.stdout), {
+    nodeId: "PR_kwDOExample17",
+    autoMergeEnabled: false,
+  });
+  assert.equal(enabled.status, 0, enabled.stderr);
+  assert.deepEqual(JSON.parse(enabled.stdout), {
+    nodeId: "PR_kwDOExample17",
+    autoMergeEnabled: true,
+  });
+});
+
+test("reconciliation rejects missing or drifted Pull Request identity", () => {
+  const missingAutoMerge = pullRequestDetail();
+  delete missingAutoMerge.auto_merge;
+  const invalidResponses = [
+    {},
+    missingAutoMerge,
+    { ...pullRequestDetail(), number: 18 },
+    { ...pullRequestDetail(), node_id: "" },
+    { ...pullRequestDetail(), user: { login: "contributor" } },
+    {
+      ...pullRequestDetail(),
+      base: {
+        ref: "release",
+        repo: { full_name: "KeishiS/adocweave" },
+      },
+    },
+    {
+      ...pullRequestDetail(),
+      head: {
+        ref: "dependabot/cargo/dependency-17",
+        repo: { full_name: "fork/adocweave" },
+      },
+    },
+    {
+      ...pullRequestDetail(),
+      head: {
+        ref: "feature/not-dependabot",
+        repo: { full_name: "KeishiS/adocweave" },
+      },
+    },
+  ];
+
+  for (const response of invalidResponses) {
+    const result = validateReconciliationPullRequestDetail(response);
+    assert.notEqual(result.status, 0, JSON.stringify(response));
+    assert.match(result.stderr, /detail response is invalid or its identity changed/);
+  }
+});
+
+test("reconciliation rejects an invalid auto-merge detail shape", () => {
+  for (const autoMerge of [
+    "enabled",
+    {},
+    {
+      enabled_by: { login: "" },
+      merge_method: "squash",
+      commit_title: null,
+      commit_message: null,
+    },
+    {
+      enabled_by: { login: "maintainer" },
+      merge_method: "unsupported",
+      commit_title: null,
+      commit_message: null,
+    },
+  ]) {
+    const result = validateReconciliationPullRequestDetail(
+      pullRequestDetail(autoMerge),
+    );
+    assert.notEqual(result.status, 0, JSON.stringify(autoMerge));
+    assert.match(result.stderr, /detail response is invalid or its identity changed/);
+  }
 });
 
 test("automation changes require a frozen two-stage procedure", () => {

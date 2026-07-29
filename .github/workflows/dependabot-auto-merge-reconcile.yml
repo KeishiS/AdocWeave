@@ -8,6 +8,9 @@ on:
       - ".github/workflows/dependabot-auto-merge.yml"
       - ".github/workflows/dependabot-auto-merge-reconcile.yml"
       - "tools/dependabot-alert-snapshot.sh"
+      - "tools/dependabot-auto-merge-disable-result.jq"
+      - "tools/dependabot-auto-merge-pr-detail.jq"
+      - "tools/dependabot-auto-merge-pr-numbers.jq"
       - "tools/dependabot-auto-merge-policy.mjs"
   schedule:
     - cron: "*/5 * * * *"
@@ -79,42 +82,41 @@ jobs:
         run: |
           gh api --paginate \
             "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" \
-            | jq -es '
-                if length > 0 and all(.[]; type == "array")
-                then add
-                else error("Pull Request response must contain one or more arrays")
-                end
-                | map(select(
-                    .user.login == "dependabot[bot]"
-                    and .base.ref == "main"
-                    and .base.repo.full_name == env.GITHUB_REPOSITORY
-                    and .head.repo.full_name == env.GITHUB_REPOSITORY
-                    and (.head.ref | startswith("dependabot/"))
-                  ))
-                | .[].number
-              ' > reconciliation-pr-numbers.txt
-          while IFS= read -r pr_number; do
-            gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
-              > "reconciliation-pr-$pr_number.json"
-            if jq -e '.auto_merge != null' \
-              "reconciliation-pr-$pr_number.json" > /dev/null
-            then
-              # shellcheck disable=SC2016
-              gh api graphql \
-                -f query='
-                  mutation($pullRequest: ID!) {
-                    disablePullRequestAutoMerge(input: {
-                      pullRequestId: $pullRequest
-                    }) {
-                      pullRequest { number autoMergeRequest { enabledAt } }
-                    }
-                  }' \
-                -f pullRequest="$(
-                  jq -r .node_id "reconciliation-pr-$pr_number.json"
-                )" \
-                | jq . >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done < reconciliation-pr-numbers.txt
+            | jq -esf tools/dependabot-auto-merge-pr-numbers.jq \
+              > reconciliation-pr-numbers.json
+          jq -r '.[]' reconciliation-pr-numbers.json \
+            | while IFS= read -r pr_number; do
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+                > "reconciliation-pr-$pr_number.json"
+              jq -e \
+                --argjson pr_number "$pr_number" \
+                --arg repository "$GITHUB_REPOSITORY" \
+                -f tools/dependabot-auto-merge-pr-detail.jq \
+                "reconciliation-pr-$pr_number.json" \
+                > "reconciliation-validated-pr-$pr_number.json"
+              if jq -e '.autoMergeEnabled == true' \
+                "reconciliation-validated-pr-$pr_number.json" > /dev/null
+              then
+                # shellcheck disable=SC2016
+                gh api graphql \
+                  -f query='
+                    mutation($pullRequest: ID!) {
+                      disablePullRequestAutoMerge(input: {
+                        pullRequestId: $pullRequest
+                      }) {
+                        pullRequest { number autoMergeRequest { enabledAt } }
+                      }
+                    }' \
+                  -f pullRequest="$(
+                    jq -r .nodeId "reconciliation-validated-pr-$pr_number.json"
+                  )" > "reconciliation-disable-$pr_number.json"
+                jq -e --argjson pr_number "$pr_number" \
+                  -f tools/dependabot-auto-merge-disable-result.jq \
+                  "reconciliation-disable-$pr_number.json" > /dev/null
+                jq . "reconciliation-disable-$pr_number.json" \
+                  >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
       - name: Report failed safety evaluation
         if: always() && steps.safety.outcome == 'failure'
         run: exit 1
