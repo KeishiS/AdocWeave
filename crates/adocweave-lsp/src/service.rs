@@ -186,6 +186,7 @@ pub(crate) struct LanguageService {
     workspace: WorkspaceResources,
     workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
     workspace_error: Option<String>,
+    workspace_input_error: Option<String>,
 }
 
 impl fmt::Debug for LanguageService {
@@ -212,6 +213,7 @@ impl Default for LanguageService {
             workspace: WorkspaceResources::default(),
             workspace_roots: std::collections::BTreeMap::new(),
             workspace_error: None,
+            workspace_input_error: None,
         }
     }
 }
@@ -377,15 +379,22 @@ impl LanguageService {
     }
 
     pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Vec<AnalysisJob> {
+        if self.workspace_error.is_some() {
+            return Vec::new();
+        }
         let document = params.text_document;
-        let affected = self
-            .workspace
-            .upsert_open(
-                document.uri.clone(),
-                i64::from(document.version),
-                document.text.clone(),
-            )
-            .unwrap_or_else(|_| std::collections::BTreeSet::from([document.uri.to_string()]));
+        let affected = match self.workspace.upsert_open(
+            document.uri.clone(),
+            i64::from(document.version),
+            document.text.clone(),
+        ) {
+            Ok(affected) => affected,
+            Err(error) => {
+                self.workspace_input_error = Some(error);
+                return Vec::new();
+            }
+        };
+        self.workspace_input_error = None;
         let workspace = self.workspace.input(&document.uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
         let mut job = self.documents.begin_open_with_options(
@@ -763,7 +772,12 @@ impl LanguageService {
         let Some(source) = source else {
             return Ok(lsp::PublishDiagnosticsParams::new(
                 uri.clone(),
-                Vec::new(),
+                self.workspace_error
+                    .as_deref()
+                    .or(self.workspace_input_error.as_deref())
+                    .map(crate::diagnostics::workspace_error)
+                    .into_iter()
+                    .collect(),
                 None,
             ));
         };
@@ -797,6 +811,9 @@ impl LanguageService {
             })
             .collect::<Result<Vec<_>, String>>()?;
         if let Some(error) = &self.workspace_error {
+            diagnostics.push(crate::diagnostics::workspace_error(error));
+        }
+        if let Some(error) = &self.workspace_input_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         for workspace in self.documents.workspace_analyses() {
