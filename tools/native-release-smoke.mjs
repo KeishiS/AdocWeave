@@ -5,7 +5,6 @@ import nodePath from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
-  TEMPORARY_DIRECTORY_REMOVAL_OPTIONS,
   archiveEntries,
   createRuntimeAdapters,
   macosMinimumVersion,
@@ -14,6 +13,12 @@ import {
   unexpectedWindowsDlls,
   validateArchiveEntries,
 } from "./platform-contract.mjs";
+import {
+  combineNativeSmokeErrors,
+  createNativeSmokeDeadline,
+  removeNativeSmokeDirectory,
+  smokeLsp,
+} from "./native-lsp-smoke.mjs";
 
 const runtime = createRuntimeAdapters({
   fileSystem: nodeFileSystem,
@@ -34,11 +39,9 @@ const {
   readFileSync,
   realpathSync,
   renameSync,
-  rmSync,
   writeFileSync,
 } = runtime.fileSystem;
 const { execFileSync, spawn } = runtime.processControl;
-const { clearTimeout: clearRuntimeTimeout, setTimeout: setRuntimeTimeout } = runtime.time;
 const { basename, join, resolve, sep } = runtime.pathApi;
 
 const [artifactDirectory, target] = process.argv.slice(2);
@@ -170,98 +173,39 @@ function version(binary) {
   if (value.packageVersion !== manifest.packageVersion) throw new Error(`${value.name} package version mismatch`);
 }
 
-function send(child, message) {
-  const body = JSON.stringify(message);
-  child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
-}
-
-async function smokeLsp(binary) {
-  const child = spawn(binary, [], { stdio: ["pipe", "pipe", "pipe"] });
-  let buffer = Buffer.alloc(0);
-  const messages = [];
-  const waiters = [];
-  const publish = (message) => {
-    messages.push(message);
-    for (const waiter of [...waiters]) {
-      if (waiter.predicate(message)) {
-        clearRuntimeTimeout(waiter.timer);
-        waiter.resolve(message);
-        waiters.splice(waiters.indexOf(waiter), 1);
-      }
-    }
-  };
-  child.stdout.on("data", (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    while (true) {
-      const boundary = buffer.indexOf("\r\n\r\n");
-      if (boundary < 0) return;
-      const header = buffer.subarray(0, boundary).toString("ascii");
-      const match = /(?:^|\r\n)Content-Length: (\d+)(?:\r\n|$)/i.exec(header);
-      if (!match) throw new Error("LSP response has no Content-Length");
-      const length = Number(match[1]);
-      const end = boundary + 4 + length;
-      if (buffer.length < end) return;
-      publish(JSON.parse(buffer.subarray(boundary + 4, end).toString("utf8")));
-      buffer = buffer.subarray(end);
-    }
-  });
-  const waitFor = (predicate) => new Promise((resolvePromise, reject) => {
-    const found = messages.find(predicate);
-    if (found) return resolvePromise(found);
-    const waiter = { predicate, resolve: resolvePromise };
-    waiters.push(waiter);
-    waiter.timer = setRuntimeTimeout(() => {
-      const index = waiters.indexOf(waiter);
-      if (index >= 0) waiters.splice(index, 1);
-      reject(new Error("timed out waiting for LSP response"));
-    }, 10_000);
-  });
-
-  send(child, { jsonrpc: "2.0", id: 1, method: "initialize", params: { processId: null, rootUri: null, capabilities: {} } });
-  const initialized = await waitFor((message) => message.id === 1);
-  if (initialized.result?.serverInfo?.version !== manifest.packageVersion) throw new Error("LSP serverInfo version mismatch");
-  send(child, { jsonrpc: "2.0", method: "initialized", params: {} });
-  send(child, {
-    jsonrpc: "2.0",
-    method: "textDocument/didOpen",
-    params: { textDocument: { uri: "file:///tmp/adocweave-smoke.adoc", languageId: "asciidoc", version: 1, text: "=Bad\n" } },
-  });
-  const diagnostics = await waitFor((message) => message.method === "textDocument/publishDiagnostics");
-  if (!Array.isArray(diagnostics.params?.diagnostics) || diagnostics.params.diagnostics.length === 0) {
-    throw new Error("LSP smoke fixture produced no diagnostics");
-  }
-  send(child, { jsonrpc: "2.0", id: 2, method: "shutdown", params: null });
-  await waitFor((message) => message.id === 2);
-  send(child, { jsonrpc: "2.0", method: "exit", params: null });
-  child.stdin.end();
-  const exitCode = await new Promise((resolvePromise) => child.once("close", resolvePromise));
-  if (exitCode !== 0) throw new Error(`LSP exited with ${exitCode}`);
-}
-
-async function smokeForcedProcessLifecycle(binary) {
+async function smokeForcedProcessLifecycle(binary, deadline) {
   const lifecycle = join(scratch, `lifecycle${platform.executableSuffix}`);
   const replaced = `${lifecycle}.replaced`;
   copyFileSync(binary, lifecycle);
   if (platform.os !== "win32") execFileSync("chmod", ["755", lifecycle]);
   const child = spawn(lifecycle, [], { stdio: ["pipe", "pipe", "pipe"] });
-  await new Promise((resolvePromise, reject) => {
-    child.once("spawn", resolvePromise);
-    child.once("error", reject);
-  });
-  const exited = new Promise((resolvePromise) => child.once("close", resolvePromise));
-  child.kill();
-  const exit = await Promise.race([
-    exited,
-    new Promise((_, reject) =>
-      setRuntimeTimeout(() => reject(new Error("forced Language Server stop timed out")), 5_000)),
-  ]);
-  if (exit === undefined && child.exitCode === null && child.signalCode === null) {
-    throw new Error("forced Language Server stop did not report an exit");
+  try {
+    await deadline.run(new Promise((resolvePromise, reject) => {
+      child.once("spawn", resolvePromise);
+      child.once("error", reject);
+    }), "forced lifecycle process startup", 5_000);
+    const exited = new Promise((resolvePromise) => child.once("close", resolvePromise));
+    child.kill();
+    const exit = await deadline.run(
+      exited,
+      "forced Language Server stop",
+      5_000,
+    );
+    if (exit === undefined && child.exitCode === null && child.signalCode === null) {
+      throw new Error("forced Language Server stop did not report an exit");
+    }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    child.stdin?.destroy?.();
+    child.stdout?.destroy?.();
+    child.stderr?.destroy?.();
   }
   renameSync(lifecycle, replaced);
-  rmSync(replaced);
+  runtime.fileSystem.rmSync(replaced);
 }
 
+let smokeDeadline;
+let operationError;
 try {
   const cli = extract(archive("adocweave-cli"), `adocweave${platform.executableSuffix}`);
   const lsp = extract(archive("adocweave-lsp"), `adocweave-lsp${platform.executableSuffix}`);
@@ -274,13 +218,22 @@ try {
   run(cli, ["check", fixture]);
   if (!run(cli, ["convert", fixture]).includes("<h1")) throw new Error("CLI convert produced no heading");
   run(cli, ["format", "--check", fixture]);
-  await smokeLsp(lsp);
-  await smokeForcedProcessLifecycle(lsp);
-  process.stdout.write(`native release smoke passed: ${target}\n`);
+  smokeDeadline = createNativeSmokeDeadline();
+  await smokeLsp(lsp, manifest.packageVersion, smokeDeadline);
+  await smokeForcedProcessLifecycle(lsp, smokeDeadline);
+} catch (error) {
+  operationError = error;
 } finally {
+  const cleanupDeadline = smokeDeadline ?? createNativeSmokeDeadline();
   try {
-    rmSync(scratch, TEMPORARY_DIRECTORY_REMOVAL_OPTIONS);
-  } catch (error) {
-    process.stderr.write(`warning: native smokeの一時ディレクトリを削除できませんでした: ${error.message}\n`);
+    await removeNativeSmokeDirectory(scratch, cleanupDeadline, {
+      platform: runtime.platform.os,
+    });
+  } catch (cleanupError) {
+    operationError = combineNativeSmokeErrors(operationError, cleanupError);
+  } finally {
+    cleanupDeadline.dispose();
   }
 }
+if (operationError) throw operationError;
+process.stdout.write(`native release smoke passed: ${target}\n`);

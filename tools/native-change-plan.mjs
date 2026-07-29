@@ -94,6 +94,8 @@ const NATIVE_TOOLS = [
   "local-native-check.mjs",
   "native-change-plan.mjs",
   "native-change-plan.test.mjs",
+  "native-lsp-smoke.mjs",
+  "native-lsp-smoke.test.mjs",
   "native-release-smoke.mjs",
   "normalize-darwin-archives.sh",
   "platform-contract.mjs",

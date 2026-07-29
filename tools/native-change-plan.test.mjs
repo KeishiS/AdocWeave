@@ -14,6 +14,8 @@ test("native archiveへ影響する入力だけを選択する", () => {
   for (const pathname of [
     "crates/adocweave/src/lib.rs",
     "crates/adocweave-cli/src/main.rs",
+    "tools/native-lsp-smoke.mjs",
+    "tools/native-lsp-smoke.test.mjs",
     "tools/native-release-smoke.mjs",
     ".github/workflows/release.yml",
     "Cargo.lock",
@@ -53,6 +55,8 @@ test("global archiveへ影響する入力だけを選択する", () => {
   for (const pathname of [
     "crates/adocweave-cli/src/main.rs",
     "crates/adocweave-lsp/src/main.rs",
+    "tools/native-lsp-smoke.mjs",
+    "tools/native-lsp-smoke.test.mjs",
     "tools/native-release-smoke.mjs",
     "docs/user-guide/command-line.adoc",
   ]) {
