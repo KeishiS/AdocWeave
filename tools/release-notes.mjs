@@ -36,6 +36,9 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。前処理設定へdefault付きの属性展開上限を追加しました。worker envelopeは変更していません。`,
   "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型、前処理とWorkspaceの公開設定・エラー型、filesystem読込およびresource上限planの公開境界を変更しました。",
+  "`RetainedLayerCharge`、`RetainedResourceBudget`、`AnalysisSnapshotLimitError`、`AnalysisSnapshotBudget`および`Workspace::try_snapshot_resources`を公開Rust APIへ追加しました。",
+  "`LocalFilesystemSession::rollback_reread`は`Result<(), ResourceError>`を返します。別sessionのtoken、二重適用および後続更新後の古いtokenを`ResourceError::InvalidRollback`として拒否します。",
+  "`LocalFilesystemSession`は複数rootで共有するfile数とbyte数から候補の読込容量を本文読込前に決め、replacementでは同じcanonical resourceの直前のchargeだけを差し引きます。",
   "CLI引数およびHTML契約はv0.18.0から変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
@@ -50,6 +53,11 @@ const migrationNotes = [
   "WASM protocol schema 7では`preprocess.options`へ`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`を追加しました。省略時は従来と同じ32と1048576を使用します。combined requestで`analysisOptions.syntax.limits`へ非既定値を指定する場合は、前処理側にも同じ値を指定してください。不一致は処理前に`invalid-options`として拒否されます。",
   "`PreprocessedAnalysisError`へ`Cancelled`を追加しました。この列挙型を網羅的に`match`するRustコードは、処理の取り消しを扱う分岐を追加してください。協調キャンセルが必要な場合は`preprocess_cancellable`、`preprocess_and_analyze_cancellable_with_options`、`lint_analysis_cancellable`または`PreprocessedAnalysis::project_origins_cancellable`を使用してください。",
   "`adocweave_host::ResourceLimits`は`FilesystemReadLimits`へ、`adocweave_workspace::ResourceLimits`は`RetainedResourceLimits`へ変わりました。project設定からは`ResolvedResourceLimitPlan`を取得し、`filesystem_reads`、`retained_layers`および`analysis_snapshot`を対応する境界へ渡してください。",
+  "保持するdisk・overlayの課金には`RetainedLayerCharge`と`RetainedResourceBudget::with_layers`、解析snapshotの課金には`AnalysisSnapshotBudget::charge`を使用してください。`AnalysisSnapshotLimitError`はresource数、単一resource byte数および合計byte数のどの境界で拒否したかを表します。",
+  "制限付きのWorkspace入力は、先に`Workspace::snapshot`で全rootを複製してから絞り込まず、`Workspace::try_snapshot_resources`のpredicateで許可と課金を確認してください。predicateが失敗すると、そのresource以降はsnapshotへ複製されません。",
+  "`FilesystemReadRollback`は発行した`LocalFilesystemSession`内で、直後のrereadを取り消す場合だけ使用してください。`rollback_reread`の失敗時は現在のchargeが維持されるため、古いtokenを再適用せず呼出側の更新を中止してください。",
+  "CLIは同じproject scopeのfile primaryとincludeで一つのfilesystem・retained予算を共有します。標準入力はfilesystem読込へ課金しませんが、`--base-dir`から解決したincludeと同じretained・解析snapshot予算へ課金します。別の設定fileまたは設定なしの別folderは独立したscopeです。",
+  "Language Serverのproject設定再読込では、`ConfigErrorCode::ReadFailed`だけが直前のWorkspaceとdocument viewを保持します。有効な厳格化によるresource拒否や無効な設定はfail-closedで古いviewを破棄し、open documentへ`workspace-input-error`を設定します。",
   "JSONの`packageVersion`は文字列のままです。source mapの`mapping`も`identity`または`whole-origin`の文字列を維持します。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];

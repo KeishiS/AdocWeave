@@ -56,6 +56,18 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /`adocweave_host::ResourceLimits`は`FilesystemReadLimits`/);
   assert.match(notes, /`adocweave_workspace::ResourceLimits`は`RetainedResourceLimits`/);
   assert.match(notes, /`ResolvedResourceLimitPlan`/);
+  assert.match(notes, /`RetainedLayerCharge`、`RetainedResourceBudget`/);
+  assert.match(notes, /`AnalysisSnapshotLimitError`、`AnalysisSnapshotBudget`/);
+  assert.match(notes, /`Workspace::try_snapshot_resources`/);
+  assert.match(
+    notes,
+    /`LocalFilesystemSession::rollback_reread`は`Result<\(\), ResourceError>`を返します/,
+  );
+  assert.match(notes, /`ResourceError::InvalidRollback`/);
+  assert.match(notes, /標準入力はfilesystem読込へ課金しません/);
+  assert.match(notes, /設定なしの別folderは独立したscope/);
+  assert.match(notes, /`ConfigErrorCode::ReadFailed`だけが直前のWorkspaceとdocument viewを保持/);
+  assert.match(notes, /`workspace-input-error`/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
