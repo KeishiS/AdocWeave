@@ -17,6 +17,8 @@ test "$2" = --paginate
 test "$3" = "repos/KeishiS/adocweave/dependabot/alerts?state=open&per_page=100"
 case "$FAKE_GH_MODE" in
   pages) printf '%s\\n' '[{"number":1},{"number":2}]' '[{"number":3}]' ;;
+  empty) printf '%s\\n' '[]' ;;
+  no-output) ;;
   malformed) printf '%s\\n' '{"message":"unexpected"}' ;;
   failure) exit 22 ;;
   *) exit 64 ;;
@@ -41,6 +43,18 @@ test("alert inventory counts every paginated response", async () => {
   const result = await runInventory("pages");
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), "3");
+});
+
+test("alert inventory accepts an empty alert array as zero", async () => {
+  const result = await runInventory("empty");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "0");
+});
+
+test("alert inventory rejects a successful API call without output", async () => {
+  const result = await runInventory("no-output");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Dependabot alert response must contain one or more arrays/);
 });
 
 test("alert inventory rejects a malformed response", async () => {

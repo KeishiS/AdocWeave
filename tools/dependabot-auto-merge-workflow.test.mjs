@@ -11,6 +11,8 @@ const controller = await readFile(
   "utf8",
 );
 const makefile = await readFile(new URL("../Makefile.toml", import.meta.url), "utf8");
+const decide = controller.match(/\n  decide:\n[\s\S]*?(?=\n  enable:\n)/)?.[0] ?? "";
+const enable = controller.match(/\n  enable:\n[\s\S]*$/)?.[0] ?? "";
 
 test("eligibility is a read-only pull request job check over trusted base code", () => {
   assert.match(eligibility, /\n  pull_request:\n/);
@@ -31,8 +33,10 @@ test("eligibility is a read-only pull request job check over trusted base code",
 });
 
 test("security alert inventory paginates beyond 100 and fails closed", () => {
-  assert.match(eligibility, /tools\/dependabot-alert-inventory\.sh "\$GITHUB_REPOSITORY"/);
-  assert.match(controller, /tools\/dependabot-alert-inventory\.sh "\$GITHUB_REPOSITORY"/g);
+  const helperCall = /tools\/dependabot-alert-inventory\.sh "\$GITHUB_REPOSITORY"/g;
+  assert.equal([...eligibility.matchAll(helperCall)].length, 1);
+  assert.equal([...decide.matchAll(helperCall)].length, 1);
+  assert.equal([...enable.matchAll(helperCall)].length, 1);
   assert.match(eligibility, /lookup_completed=true/);
   assert.match(eligibility, /open_count=\$open_count/);
   assert.match(eligibility, /--argjson open_security_alerts "\$OPEN_SECURITY_ALERTS"/);

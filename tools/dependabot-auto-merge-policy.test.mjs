@@ -5,7 +5,7 @@ import test from "node:test";
 import {
   evaluateController,
   evaluateEligibility,
-  evaluateStrictRulesets,
+  evaluateStrictRulesetProtection,
   validatePolicy,
 } from "./dependabot-auto-merge-policy.mjs";
 
@@ -227,10 +227,11 @@ function strictRuleset(include = ["~DEFAULT_BRANCH"], exclude = []) {
   };
 }
 
-test("strict ruleset accepts only explicit main/default includes without excludes", () => {
+test("strict ruleset protection is only one prerequisite and does not activate frozen policy", () => {
+  assert.equal(policy.enabled, false);
   for (const include of [["~DEFAULT_BRANCH"], ["refs/heads/main"]]) {
     assert.deepEqual(
-      evaluateStrictRulesets({
+      evaluateStrictRulesetProtection({
         policy,
         branch: "main",
         rulesets: [strictRuleset(include)],
@@ -264,7 +265,7 @@ for (const [name, mutate] of [
     const ruleset = strictRuleset();
     mutate(ruleset);
     assert.deepEqual(
-      evaluateStrictRulesets({ policy, branch: "main", rulesets: [ruleset] }),
+      evaluateStrictRulesetProtection({ policy, branch: "main", rulesets: [ruleset] }),
       { eligible: false, reasons: ["strict-ruleset"] },
     );
   });

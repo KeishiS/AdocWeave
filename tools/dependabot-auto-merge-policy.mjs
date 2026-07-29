@@ -156,7 +156,7 @@ export function evaluateController(input) {
   return decision(reasons.length === 0, reasons);
 }
 
-export function evaluateStrictRulesets(input) {
+export function evaluateStrictRulesetProtection(input) {
   let policy;
   try {
     policy = validatePolicy(input.policy);
@@ -259,7 +259,7 @@ async function main() {
     ? evaluateEligibility({ ...input, policy })
     : mode === "controller"
       ? evaluateController({ ...input, policy })
-      : evaluateStrictRulesets({ ...input, policy });
+      : evaluateStrictRulesetProtection({ ...input, policy });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
