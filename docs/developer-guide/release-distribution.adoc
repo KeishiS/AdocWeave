@@ -155,6 +155,10 @@ Browser package、Zed拡張またはVS Code拡張だけに影響する場合はg
 installation E2Eはnative candidateの検証が成功した場合だけ実行し、global成果物など別系統の
 意図的なskipを失敗として継承しません。native candidateの検証が失敗、cancelまたはskipになった場合は
 installation E2Eを実行せず、最終gateを失敗させます。
+Pull Requestでは変更計画が選択したcandidate familyだけをインストール・削除します。native成果物は
+対象OSのrunner、global成果物はUbuntu runnerで個別に検証し、構築していないfamilyを要求しません。
+両familyを選択した場合は両方の検証成功を最終gateで要求します。未公開versionの``main`` candidateと
+tagから再利用するcandidateでは、配布契約に含まれる全assetを引き続き要求します。
 
 成果物のbuildと配布計画の生成は、``cargo make ci-preflight``が成功した後に開始します。
 この事前検査では書式、生成file、workflow policy、release contractおよび変更pathの分類を確認します。

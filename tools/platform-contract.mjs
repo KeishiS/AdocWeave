@@ -42,6 +42,40 @@ export function executableNames(executableSuffix) {
   return [`adocweave${executableSuffix}`, `adocweave-lsp${executableSuffix}`];
 }
 
+export function selectedInstallationFamilies(scope = "complete") {
+  if (!["complete", "native-only", "global-only"].includes(scope)) {
+    throw new Error("installation scope must be complete, native-only, or global-only");
+  }
+  return Object.freeze({
+    native: scope !== "global-only",
+    global: scope !== "native-only",
+  });
+}
+
+export function requiredInstallationAssets(scope, target, version, archiveType) {
+  const families = selectedInstallationFamilies(scope);
+  return [
+    ...(families.native
+      ? [
+        `adocweave-cli-${target}.${archiveType}`,
+        `adocweave-lsp-${target}.${archiveType}`,
+      ]
+      : []),
+    ...(families.global
+      ? [
+        `adocweave-browser-${version}.tar.xz`,
+        `adocweave-zed-${version}.tar.xz`,
+        `adocweave-vscode-${version}.vsix`,
+      ]
+      : []),
+  ];
+}
+
+export function missingInstallationAssets(available, required) {
+  const names = new Set(available);
+  return required.filter((name) => !names.has(name));
+}
+
 export function installationLayout(prefix, version, pathApi) {
   const productRoot = pathApi.join(prefix, "lib", "adocweave");
   const shareRoot = pathApi.join(prefix, "share", "adocweave", version);
