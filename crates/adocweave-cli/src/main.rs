@@ -1846,8 +1846,9 @@ complete -c adocweave -l fix
                         .collect::<Vec<_>>()
                         .join(" -and ");
                     format!(
-                        "  }} elseif ($words.Count -le {count} -and {conditions}) {{\n    @({children})",
-                        count = group.parent.len() + 2,
+                        "  }} elseif ({conditions} -and ($words.Count -eq {parent_count} -or ($words.Count -eq {child_count} -and $wordToComplete -ne ''))) {{\n    @({children})",
+                        parent_count = group.parent.len() + 1,
+                        child_count = group.parent.len() + 2,
                         children = powershell_words(&group.children),
                     )
                 })
@@ -2561,8 +2562,8 @@ mod tests {
         }
 
         let powershell = render_completion_script(CompletionShell::PowerShell, &trees[1]);
-        let deep = "$words.Count -le 4 -and $words[1] -eq 'workspace' -and $words[2] -eq 'inspect'";
-        let shallow = "$words.Count -le 3 -and $words[1] -eq 'workspace'";
+        let deep = "$words[1] -eq 'workspace' -and $words[2] -eq 'inspect' -and ($words.Count -eq 3 -or ($words.Count -eq 4 -and $wordToComplete -ne ''))";
+        let shallow = "$words[1] -eq 'workspace' -and ($words.Count -eq 2 -or ($words.Count -eq 3 -and $wordToComplete -ne ''))";
         let deep_position = powershell.find(deep).expect("deep PowerShell branch");
         let shallow_position = powershell.find(shallow).expect("shallow PowerShell branch");
         assert!(
@@ -2573,6 +2574,24 @@ mod tests {
             powershell[deep_position..shallow_position].contains("@('show')"),
             "the deepest parent must offer its child"
         );
+
+        let repository_powershell =
+            render_completion_script(CompletionShell::PowerShell, &trees[0]);
+        let config = "$words[1] -eq 'config' -and ($words.Count -eq 2 -or ($words.Count -eq 3 -and $wordToComplete -ne ''))";
+        assert!(
+            repository_powershell.contains(config),
+            "config show must use the parent/partial-child guard"
+        );
+
+        let nested_position_matches =
+            |parent_len: usize, words_count: usize, partial_child: bool| {
+                words_count == parent_len + 1 || (words_count == parent_len + 2 && partial_child)
+            };
+        for parent_len in [1, 2] {
+            assert!(nested_position_matches(parent_len, parent_len + 1, false));
+            assert!(nested_position_matches(parent_len, parent_len + 2, true));
+            assert!(!nested_position_matches(parent_len, parent_len + 2, false));
+        }
     }
 
     #[test]
