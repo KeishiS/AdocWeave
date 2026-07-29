@@ -73,7 +73,9 @@ export async function smokeLsp(
   packageVersion,
   deadline,
   {
+    clearTimer = clearTimeout,
     spawnProcess = spawn,
+    setTimer = setTimeout,
     waitForProcessExit = waitForExit,
   } = {},
 ) {
@@ -161,6 +163,7 @@ export async function smokeLsp(
         lifecycle,
         deadline,
         waitForProcessExit,
+        { clearTimer, setTimer },
       );
     }
     destroyProcessStreams(child);
@@ -178,6 +181,7 @@ export async function removeNativeSmokeDirectory(
   } = {},
 ) {
   let attempts = 0;
+  let lastRetryableError;
   while (true) {
     attempts += 1;
     try {
@@ -187,20 +191,38 @@ export async function removeNativeSmokeDirectory(
       );
       return attempts;
     } catch (error) {
-      if (!shouldRetryRemoval(error, platform)) throw error;
+      if (!shouldRetryRemoval(error, platform)) {
+        if (deadline.signal.aborted && lastRetryableError) {
+          throw cleanupDeadlineError(attempts, lastRetryableError, error);
+        }
+        throw error;
+      }
+      lastRetryableError = error;
       const remainingMs = deadline.remainingMs();
       if (remainingMs <= REMOVAL_RETRY_DELAY_MS) {
-        throw new Error(
-          `native smoke temporary directory cleanup exhausted its total deadline after ${attempts} attempts`,
-          { cause: error },
-        );
+        throw cleanupDeadlineError(attempts, error);
       }
-      await deadline.run(
-        delay(Math.min(REMOVAL_RETRY_DELAY_MS, remainingMs), deadline.signal),
-        "temporary directory cleanup retry",
-      );
+      try {
+        await deadline.run(
+          delay(Math.min(REMOVAL_RETRY_DELAY_MS, remainingMs), deadline.signal),
+          "temporary directory cleanup retry",
+        );
+      } catch (deadlineError) {
+        throw cleanupDeadlineError(attempts, error, deadlineError);
+      }
     }
   }
+}
+
+export function combineNativeSmokeErrors(operationError, cleanupError) {
+  const cleanup = asError(cleanupError);
+  if (!operationError) return cleanup;
+  const operation = asError(operationError);
+  return new AggregateError(
+    [operation, cleanup],
+    `${operation.message}\n一時ディレクトリの削除にも失敗しました: ${cleanup.message}`,
+    { cause: operation },
+  );
 }
 
 function createJsonRpcReader(child, lifecycle) {
@@ -375,28 +397,42 @@ function observeLifecycle(child) {
   };
 }
 
-async function terminateProcess(child, lifecycle, deadline, waitForProcessExit) {
+async function terminateProcess(
+  child,
+  lifecycle,
+  deadline,
+  waitForProcessExit,
+  timers,
+) {
   child.stdin?.destroy?.();
   if (hasExited(child)) {
-    await waitForCloseWithinDeadline(lifecycle, deadline);
+    await waitForCloseWithinDeadline(lifecycle, deadline, timers);
     return;
   }
   child.kill();
   if (await waitWithinDeadline(
-    waitForProcessExit(child, PROCESS_STOP_GRACE_MS),
+    (signal) => waitForProcessExit(
+      child,
+      PROCESS_STOP_GRACE_MS,
+      { signal },
+    ),
     deadline,
     "Language Server graceful termination",
   )) {
-    await waitForCloseWithinDeadline(lifecycle, deadline);
+    await waitForCloseWithinDeadline(lifecycle, deadline, timers);
     return;
   }
   child.kill("SIGKILL");
   if (await waitWithinDeadline(
-    waitForProcessExit(child, PROCESS_KILL_GRACE_MS),
+    (signal) => waitForProcessExit(
+      child,
+      PROCESS_KILL_GRACE_MS,
+      { signal },
+    ),
     deadline,
     "Language Server forced termination",
   )) {
-    await waitForCloseWithinDeadline(lifecycle, deadline);
+    await waitForCloseWithinDeadline(lifecycle, deadline, timers);
     return;
   }
   child.stdout?.destroy?.();
@@ -404,28 +440,52 @@ async function terminateProcess(child, lifecycle, deadline, waitForProcessExit) 
   child.unref?.();
 }
 
-async function waitForCloseWithinDeadline(lifecycle, deadline) {
+async function waitForCloseWithinDeadline(
+  lifecycle,
+  deadline,
+  {
+    clearTimer,
+    setTimer,
+  },
+) {
   if (lifecycle.closedState) return;
+  let timer;
   try {
     await deadline.run(
       Promise.race([
         lifecycle.closed,
-        new Promise((resolve) => setTimeout(resolve, 500)),
+        new Promise((resolve) => {
+          timer = setTimer(resolve, 500);
+        }),
       ]),
       "Language Server stdio closure",
     );
   } catch {
     // The process has exited; stream destruction below releases remaining handles.
+  } finally {
+    clearTimer(timer);
   }
 }
 
 async function waitWithinDeadline(operation, deadline, phase) {
   if (deadline.remainingMs() <= 0) return false;
   try {
-    return await deadline.run(operation, phase);
+    return await deadline.run(operation(deadline.signal), phase);
   } catch {
     return false;
   }
+}
+
+function cleanupDeadlineError(attempts, removalError, deadlineError) {
+  const detail = deadlineError ? `: ${deadlineError.message}` : "";
+  return new Error(
+    `native smoke temporary directory cleanup exhausted its total deadline after ${attempts} attempts${detail}`,
+    { cause: removalError },
+  );
+}
+
+function asError(error) {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function destroyProcessStreams(child) {

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   LSP_SMOKE_TEARDOWN_RESERVE_MS,
   LSP_SMOKE_TOTAL_TIMEOUT_MS,
+  combineNativeSmokeErrors,
   createNativeSmokeDeadline,
   removeNativeSmokeDirectory,
   smokeLsp,
@@ -38,6 +39,88 @@ test("a stalled JSON-RPC reader reaches the total deadline and releases the proc
   assert.equal(child.stdout.destroyCount, 1);
   assert.equal(child.stderr.destroyCount, 1);
   assert.equal(child.stdout.listenerCount("data"), 0);
+});
+
+test("a stubborn process leaves no exit wait after the total deadline", async () => {
+  const child = new FakeChild({ stubborn: true });
+  const deadline = createNativeSmokeDeadline(40);
+  let activeWaits = 0;
+  let waitCalls = 0;
+  const waitForProcessExit = (_child, _milliseconds, { signal } = {}) => {
+    waitCalls += 1;
+    assert.equal(signal, deadline.signal);
+    signal.throwIfAborted();
+    activeWaits += 1;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (complete, value) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", aborted);
+        activeWaits -= 1;
+        complete(value);
+      };
+      const aborted = () => finish(reject, signal.reason);
+      signal.addEventListener("abort", aborted, { once: true });
+      if (signal.aborted) aborted();
+    });
+  };
+
+  const error = await smokeLsp(
+    "adocweave-lsp",
+    TEST_PACKAGE_VERSION,
+    deadline,
+    {
+      spawnProcess: () => child,
+      waitForProcessExit,
+    },
+  ).then(
+    () => undefined,
+    (failure) => failure,
+  );
+  deadline.dispose();
+
+  assert.match(error.message, /total deadline/);
+  assert.deepEqual(child.kills, ["SIGTERM", "SIGKILL"]);
+  assert.ok(waitCalls <= 2, waitCalls);
+  assert.equal(activeWaits, 0);
+  assert.equal(child.listenerCount("exit"), 0);
+});
+
+test("process close clears its fallback timer", async () => {
+  const child = new FakeChild({
+    closeLater: true,
+    startupError: new Error("bad executable"),
+  });
+  const deadline = createNativeSmokeDeadline(1000);
+  const timers = new Set();
+  let timerCalls = 0;
+  const setTimer = (callback, milliseconds) => {
+    timerCalls += 1;
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      callback();
+    }, milliseconds);
+    timers.add(timer);
+    return timer;
+  };
+  const clearTimer = (timer) => {
+    clearTimeout(timer);
+    timers.delete(timer);
+  };
+
+  await assert.rejects(
+    smokeLsp("broken-lsp", TEST_PACKAGE_VERSION, deadline, {
+      clearTimer,
+      setTimer,
+      spawnProcess: () => child,
+    }),
+    /failed to start LSP process/,
+  );
+  deadline.dispose();
+
+  assert.equal(timerCalls, 1);
+  assert.equal(timers.size, 0);
 });
 
 test("a process startup error fails immediately without waiting for the deadline", async () => {
@@ -162,6 +245,37 @@ test("a stalled temporary directory cleanup is bounded by the same deadline", as
   assert.ok(Date.now() - started < 1000);
 });
 
+test("Windows cleanup deadline preserves the last EPERM as its cause", async () => {
+  const locked = new Error("still locked");
+  locked.code = "EPERM";
+  const deadline = createNativeSmokeDeadline(20);
+  const error = await removeNativeSmokeDirectory("temporary", deadline, {
+    platform: "win32",
+    removeDirectory: async () => {
+      throw locked;
+    },
+  }).then(
+    () => undefined,
+    (failure) => failure,
+  );
+  deadline.dispose();
+
+  assert.match(error.message, /cleanup exhausted its total deadline/);
+  assert.equal(error.cause, locked);
+});
+
+test("operation and cleanup errors are both retained", () => {
+  const operation = new Error("artifact smoke failed");
+  const cleanup = new Error("temporary directory remained");
+  const combined = combineNativeSmokeErrors(operation, cleanup);
+
+  assert.ok(combined instanceof AggregateError);
+  assert.deepEqual(combined.errors, [operation, cleanup]);
+  assert.equal(combined.cause, operation);
+  assert.match(combined.message, /artifact smoke failed/);
+  assert.match(combined.message, /temporary directory remained/);
+});
+
 function respondingChild() {
   return new FakeChild({
     onRequest(request, child) {
@@ -212,14 +326,16 @@ class FakeStdin extends FakeStream {
 }
 
 class FakeChild extends EventEmitter {
-  constructor({ onRequest, startupError } = {}) {
+  constructor({ closeLater = false, onRequest, startupError, stubborn = false } = {}) {
     super();
+    this.closeLater = closeLater;
     this.exitCode = null;
     this.signalCode = null;
     this.kills = [];
     this.stdout = new FakeStream();
     this.stderr = new FakeStream();
     this.stdin = new FakeStdin(this, onRequest);
+    this.stubborn = stubborn;
     queueMicrotask(() => {
       if (startupError) this.emit("error", startupError);
       else this.emit("spawn");
@@ -228,6 +344,7 @@ class FakeChild extends EventEmitter {
 
   kill(signal = "SIGTERM") {
     this.kills.push(signal);
+    if (this.stubborn) return true;
     queueMicrotask(() => this.finish(null, signal));
     return true;
   }
@@ -237,7 +354,11 @@ class FakeChild extends EventEmitter {
     this.exitCode = code;
     this.signalCode = signal;
     this.emit("exit", code, signal);
-    this.emit("close", code, signal);
+    if (this.closeLater) {
+      setImmediate(() => this.emit("close", code, signal));
+    } else {
+      this.emit("close", code, signal);
+    }
   }
 
   respond(message) {

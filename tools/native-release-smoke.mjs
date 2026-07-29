@@ -14,6 +14,7 @@ import {
   validateArchiveEntries,
 } from "./platform-contract.mjs";
 import {
+  combineNativeSmokeErrors,
   createNativeSmokeDeadline,
   removeNativeSmokeDirectory,
   smokeLsp,
@@ -229,11 +230,7 @@ try {
       platform: runtime.platform.os,
     });
   } catch (cleanupError) {
-    if (operationError) {
-      operationError.message = `${operationError.message}\n一時ディレクトリの削除にも失敗しました: ${cleanupError.message}`;
-    } else {
-      operationError = cleanupError;
-    }
+    operationError = combineNativeSmokeErrors(operationError, cleanupError);
   } finally {
     cleanupDeadline.dispose();
   }
