@@ -85,7 +85,7 @@ fn execute_request(
             preprocess(
                 &request.source,
                 &preprocess_plan.snapshot,
-                &preprocess_plan.options,
+                preprocess_plan.options.preprocess(),
             )
             .map_err(|error| WasmError {
                 code: error.kind.as_str().to_owned(),
@@ -328,6 +328,14 @@ mod tests {
         assert_eq!(
             core.max_source_map_segments,
             expected.max_source_map_segments
+        );
+        assert_eq!(
+            core.max_attribute_expansion_depth,
+            expected.max_attribute_expansion_depth
+        );
+        assert_eq!(
+            core.max_attribute_expansion_bytes,
+            expected.max_attribute_expansion_bytes
         );
     }
 
@@ -1312,7 +1320,7 @@ mod tests {
             source_id: "part".to_owned(),
             source: "text".into(),
         };
-        let cases: [LimitCase; 5] = [
+        let cases: [LimitCase; 7] = [
             (
                 "include::part.adoc[]\n",
                 |options| options.max_include_depth = 0,
@@ -1333,6 +1341,16 @@ mod tests {
                 "text",
                 |options| options.max_source_map_segments = 0,
                 "source-map-limit",
+            ),
+            (
+                ":base: 12345\n:expanded: {base}\ninclude::{expanded}.adoc[]\n",
+                |options| options.max_attribute_expansion_depth = 0,
+                "missing-resource",
+            ),
+            (
+                ":base: 12345\n:expanded: {base}\ninclude::{expanded}.adoc[]\n",
+                |options| options.max_attribute_expansion_bytes = 4,
+                "missing-resource",
             ),
         ];
         for (source, configure, expected) in cases {
@@ -1359,20 +1377,117 @@ mod tests {
 
     #[test]
     fn analysis_and_preprocess_attribute_inputs_cannot_diverge() {
-        let mut request = request("text");
-        request
-            .analysis_options
-            .attributes
-            .insert("locked".to_owned(), Some("analysis".to_owned()));
+        for mismatch in 0..3 {
+            let mut request = request("include::missing.adoc[]\n");
+            request.preprocess = Some(WasmAnalysisPreprocessInput {
+                resources: BTreeMap::new(),
+                options: WasmPreprocessOptions::default(),
+            });
+            match mismatch {
+                0 => {
+                    request
+                        .analysis_options
+                        .attributes
+                        .insert("locked".to_owned(), Some("analysis".to_owned()));
+                }
+                1 => {
+                    request
+                        .analysis_options
+                        .syntax
+                        .limits
+                        .max_attribute_expansion_depth += 1;
+                }
+                2 => {
+                    request
+                        .analysis_options
+                        .syntax
+                        .limits
+                        .max_attribute_expansion_bytes += 1;
+                }
+                _ => unreachable!(),
+            }
+
+            let error =
+                process_request(request, &NeverCancel).expect_err("conflicting processing options");
+            assert_eq!(error.code, "invalid-options");
+        }
+    }
+
+    #[test]
+    fn wasm_combined_processing_uses_one_external_attribute_contract() {
+        let attributes = BTreeMap::from([("selected".to_owned(), Some("part".to_owned()))]);
+        let mut request = request("ifdef::selected[]\ninclude::{selected}.adoc[]\nendif::[]\n");
+        request.analysis_options.attributes.clone_from(&attributes);
         request.preprocess = Some(WasmAnalysisPreprocessInput {
-            resources: BTreeMap::new(),
+            resources: BTreeMap::from([(
+                "part.adoc".to_owned(),
+                WasmResource {
+                    source_id: "part".to_owned(),
+                    source: ":selected: other\nincluded {selected}\n".to_owned(),
+                },
+            )]),
             options: WasmPreprocessOptions {
-                attributes: BTreeMap::from([("locked".to_owned(), Some("preprocess".to_owned()))]),
+                attributes,
                 ..WasmPreprocessOptions::default()
             },
         });
 
-        let error = process_request(request, &NeverCancel).expect_err("conflicting attributes");
-        assert_eq!(error.code, "invalid-options");
+        let response = process_request(request, &NeverCancel).expect("combined processing");
+
+        assert!(response.html.contains("included part"));
+        assert!(
+            response
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "protected-attribute")
+        );
+    }
+
+    #[test]
+    fn wasm_combined_processing_applies_matching_non_default_attribute_expansion_limits() {
+        let source = ":base: 12345\n:expanded: {base}\ninclude::{expanded}.adoc[]\n";
+        for (depth, bytes, accepted) in [(1, 5, true), (0, 5, false), (1, 4, false)] {
+            let mut request = request(source);
+            request
+                .analysis_options
+                .syntax
+                .limits
+                .max_attribute_expansion_depth = depth;
+            request
+                .analysis_options
+                .syntax
+                .limits
+                .max_attribute_expansion_bytes = bytes;
+            request.preprocess = Some(WasmAnalysisPreprocessInput {
+                resources: BTreeMap::from([(
+                    "12345.adoc".to_owned(),
+                    WasmResource {
+                        source_id: "included".to_owned(),
+                        source: "analysis {expanded}\n".to_owned(),
+                    },
+                )]),
+                options: WasmPreprocessOptions {
+                    max_attribute_expansion_depth: depth,
+                    max_attribute_expansion_bytes: bytes,
+                    ..WasmPreprocessOptions::default()
+                },
+            });
+
+            let result = process_request(request, &NeverCancel);
+            if accepted {
+                let response = result.expect("matching boundary is accepted");
+                assert!(
+                    response.html.contains("analysis 12345"),
+                    "analysis must use the same non-default expansion limits"
+                );
+            } else {
+                assert_eq!(
+                    result
+                        .expect_err("matching strict boundary is enforced")
+                        .code,
+                    "missing-resource"
+                );
+            }
+        }
     }
 }

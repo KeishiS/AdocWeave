@@ -10,7 +10,7 @@ use adocweave::output::html::{
     ResourceCapabilities, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
     UnknownSourceLanguage, UnresolvedReferencePresentation,
 };
-use adocweave::preprocess::{PreprocessOptions, ResourceSnapshot};
+use adocweave::preprocess::{EffectiveProcessingOptions, ResourceSnapshot};
 use adocweave::resolution::{ActiveUrlPolicy, AuthoredUrlPolicy};
 use adocweave::{
     AnalysisLimits, AnalysisOptions, DiagnosticProfile, Engine, ProductSet, SourceId, SyntaxMode,
@@ -31,7 +31,7 @@ use crate::shared_wire_generated::{WasmMathLanguage, WasmSeverity};
 
 pub(crate) struct PreprocessExecution {
     pub(crate) snapshot: ResourceSnapshot,
-    pub(crate) options: PreprocessOptions,
+    pub(crate) options: EffectiveProcessingOptions,
 }
 
 /// Core configuration and remaining analysis-dependent wire inputs.
@@ -59,7 +59,7 @@ pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, Wa
     let analysis_options = request.analysis_options;
     let render_options = request.render_policy;
     let source_id = request.source_id.map(SourceId::new);
-    let engine = Engine::new(AnalysisOptions {
+    let analysis_options = AnalysisOptions {
         syntax: SyntaxOptions {
             syntax_mode: match analysis_options.syntax.syntax_mode {
                 WasmSyntaxMode::Permissive => SyntaxMode::Permissive,
@@ -71,11 +71,23 @@ pub(crate) fn convert(request: NormalizedRequest) -> Result<ExecutionRequest, Wa
             lint: lint_config(analysis_options.diagnostics)?,
         },
         attributes: analysis_options.attributes,
-    });
-    let preprocess = request.preprocess.map(|input| PreprocessExecution {
-        snapshot: resource_snapshot(input.resources),
-        options: to_core_options(source_id.clone(), input.options),
-    });
+    };
+    let preprocess = request
+        .preprocess
+        .map(|input| {
+            let options = to_core_options(source_id.clone(), input.options);
+            EffectiveProcessingOptions::new(analysis_options.clone(), options)
+                .map(|options| PreprocessExecution {
+                    snapshot: resource_snapshot(input.resources),
+                    options,
+                })
+                .map_err(|error| WasmError {
+                    code: "invalid-options".to_owned(),
+                    message: error.to_string(),
+                })
+        })
+        .transpose()?;
+    let engine = Engine::new(analysis_options);
     let max_output_bytes = usize::try_from(request.output_limits.max_output_bytes)
         .expect("u32 fits usize on supported targets");
 

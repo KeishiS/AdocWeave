@@ -75,6 +75,8 @@ pub struct PreprocessOptions {
     pub max_total_bytes: u32,
     pub max_expanded_nodes: u32,
     pub max_source_map_segments: u32,
+    pub max_attribute_expansion_depth: u32,
+    pub max_attribute_expansion_bytes: u32,
 }
 
 impl Default for PreprocessOptions {
@@ -91,9 +93,94 @@ impl Default for PreprocessOptions {
             max_total_bytes: 50 * 1024 * 1024,
             max_expanded_nodes: 1_000_000,
             max_source_map_segments: 1_000_000,
+            max_attribute_expansion_depth: 32,
+            max_attribute_expansion_bytes: 1024 * 1024,
         }
     }
 }
+
+/// A validated, immutable configuration for preprocessing followed by analysis.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectiveProcessingOptions {
+    analysis: crate::core::AnalysisOptions,
+    preprocess: PreprocessOptions,
+}
+
+impl EffectiveProcessingOptions {
+    /// Validates that settings consumed by both stages have one effective value.
+    pub fn new(
+        analysis: crate::core::AnalysisOptions,
+        preprocess: PreprocessOptions,
+    ) -> Result<Self, ProcessingOptionsError> {
+        if analysis.attributes != preprocess.attributes {
+            return Err(ProcessingOptionsError::ExternalAttributes);
+        }
+        if analysis.syntax.limits.max_attribute_expansion_depth
+            != preprocess.max_attribute_expansion_depth
+        {
+            return Err(ProcessingOptionsError::AttributeExpansionDepth);
+        }
+        if analysis.syntax.limits.max_attribute_expansion_bytes
+            != preprocess.max_attribute_expansion_bytes
+        {
+            return Err(ProcessingOptionsError::AttributeExpansionBytes);
+        }
+        Ok(Self {
+            analysis,
+            preprocess,
+        })
+    }
+
+    /// Returns the analysis settings in this effective contract.
+    pub const fn analysis(&self) -> &crate::core::AnalysisOptions {
+        &self.analysis
+    }
+
+    /// Returns the preprocessing settings in this effective contract.
+    pub const fn preprocess(&self) -> &PreprocessOptions {
+        &self.preprocess
+    }
+}
+
+/// Inconsistent values supplied through a compatibility processing entry point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessingOptionsError {
+    /// External attributes differ between analysis and preprocessing.
+    ExternalAttributes,
+    /// Attribute expansion depth limits differ between stages.
+    AttributeExpansionDepth,
+    /// Attribute expansion byte limits differ between stages.
+    AttributeExpansionBytes,
+}
+
+impl ProcessingOptionsError {
+    /// Returns the stable kebab-case code.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExternalAttributes => "external-attributes-mismatch",
+            Self::AttributeExpansionDepth => "attribute-expansion-depth-mismatch",
+            Self::AttributeExpansionBytes => "attribute-expansion-bytes-mismatch",
+        }
+    }
+}
+
+impl fmt::Display for ProcessingOptionsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ExternalAttributes => {
+                "analysis and preprocessing external attributes do not match"
+            }
+            Self::AttributeExpansionDepth => {
+                "analysis and preprocessing attribute expansion depth limits do not match"
+            }
+            Self::AttributeExpansionBytes => {
+                "analysis and preprocessing attribute expansion byte limits do not match"
+            }
+        })
+    }
+}
+
+impl Error for ProcessingOptionsError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DirectiveKind {
@@ -267,6 +354,8 @@ pub struct PreprocessedAnalysis {
 
 #[derive(Debug)]
 pub enum PreprocessedAnalysisError {
+    /// Combined processing settings are inconsistent.
+    Options(ProcessingOptionsError),
     Preprocess(PreprocessError),
     Parse(ParseError),
 }
@@ -274,6 +363,7 @@ pub enum PreprocessedAnalysisError {
 impl fmt::Display for PreprocessedAnalysisError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Options(error) => error.fmt(formatter),
             Self::Preprocess(error) => error.fmt(formatter),
             Self::Parse(error) => error.fmt(formatter),
         }
@@ -289,9 +379,20 @@ pub fn preprocess_and_analyze(
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
-    let document =
-        preprocess(source, snapshot, options).map_err(PreprocessedAnalysisError::Preprocess)?;
-    let analysis = Engine::new(engine.options_with_attributes(&options.attributes))
+    let options = EffectiveProcessingOptions::new(engine.options().clone(), options.clone())
+        .map_err(PreprocessedAnalysisError::Options)?;
+    preprocess_and_analyze_with_options(source, snapshot, &options)
+}
+
+/// Expands and analyzes with one previously validated effective configuration.
+pub fn preprocess_and_analyze_with_options(
+    source: &str,
+    snapshot: &ResourceSnapshot,
+    options: &EffectiveProcessingOptions,
+) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
+    let document = preprocess(source, snapshot, options.preprocess())
+        .map_err(PreprocessedAnalysisError::Preprocess)?;
+    let analysis = Engine::new(options.analysis().clone())
         .analyze(&document.source)
         .map_err(PreprocessedAnalysisError::Parse)?;
     Ok(PreprocessedAnalysis { document, analysis })
@@ -357,7 +458,6 @@ pub fn preprocess(
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
 ) -> Result<PreprocessedDocument, PreprocessError> {
-    let analysis_limits = crate::limits::AnalysisLimits::default();
     let mut context = Context {
         snapshot,
         options,
@@ -370,8 +470,8 @@ pub fn preprocess(
         state: ExpansionState::new(
             &options.attributes,
             AttributeExpansionLimits {
-                max_depth: analysis_limits.max_attribute_expansion_depth,
-                max_bytes: analysis_limits.max_attribute_expansion_bytes,
+                max_depth: options.max_attribute_expansion_depth,
+                max_bytes: options.max_attribute_expansion_bytes,
             },
         ),
     };
@@ -1307,13 +1407,11 @@ endif::[]
             ["host.adoc", "folded- value.adoc"]
         );
 
-        let analyzed = preprocess_and_analyze(
-            &Engine::new(crate::AnalysisOptions::default()),
-            source,
-            &snapshot,
-            &options,
-        )
-        .expect("preprocessed analysis");
+        let mut analysis_options = crate::AnalysisOptions::default();
+        analysis_options.attributes.clone_from(&options.attributes);
+        let analyzed =
+            preprocess_and_analyze(&Engine::new(analysis_options), source, &snapshot, &options)
+                .expect("preprocessed analysis");
         let locked = analyzed
             .analysis
             .attribute_environment()

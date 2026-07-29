@@ -1,4 +1,4 @@
 import releaseManifest from "../release-manifest.json" with { type: "json" };
 
 export const RELEASE_NOTES_VERSION = releaseManifest.packageVersion;
-export const PUBLIC_PROTOCOL_SCHEMA_VERSION = 6;
+export const PUBLIC_PROTOCOL_SCHEMA_VERSION = 7;

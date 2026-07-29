@@ -145,9 +145,7 @@ pub(super) fn adopt(service: &mut LanguageService, job: AnalysisJob) {
         return;
     }
     if let Some(input) = &job.workspace {
-        let mut options = job.request.options.clone();
-        options.attributes.clone_from(&input.options.attributes);
-        let analysis = match input.analyze(&options, job.cancellation.as_ref()) {
+        let analysis = match input.analyze(&job.request.options, job.cancellation.as_ref()) {
             Ok(analysis) => analysis,
             Err(error) => {
                 assert_eq!(

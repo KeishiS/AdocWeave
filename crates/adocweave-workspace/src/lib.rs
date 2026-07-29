@@ -17,8 +17,8 @@ use std::sync::Arc;
 
 use adocweave::output::diagnostics::Severity;
 use adocweave::preprocess::{
-    AnalysisProjection, DirectiveKind, PreprocessOptions, PreprocessedAnalysis, ProjectionLimits,
-    ResourceDocument, ResourceSnapshot, preprocess,
+    AnalysisProjection, DirectiveKind, EffectiveProcessingOptions, PreprocessOptions,
+    PreprocessedAnalysis, ProjectionLimits, ResourceDocument, ResourceSnapshot, preprocess,
 };
 use adocweave::{AnalysisOptions, Engine, SourceId};
 use dependency_graph::DependencyGraph;
@@ -170,6 +170,8 @@ impl Default for WorkspaceLimits {
 /// Stable category for workspace state and analysis failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkspaceErrorCode {
+    /// Analysis and preprocessing settings disagree before processing starts.
+    InvalidOptions,
     /// Invalid host resource identity.
     InvalidResourceId,
     /// Required resource or registered root not present.
@@ -256,6 +258,7 @@ impl WorkspaceErrorCode {
     /// Returns the stable kebab-case code.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::InvalidOptions => "invalid-options",
             Self::InvalidResourceId => "invalid-resource-id",
             Self::MissingResource => "missing-resource",
             Self::StaleRevision => "stale-revision",
@@ -641,6 +644,22 @@ impl WorkspaceSnapshot {
         projection_limits: ProjectionLimits,
         cancellation: &impl Cancellation,
     ) -> Result<WorkspaceAnalysis, WorkspaceError> {
+        let options =
+            EffectiveProcessingOptions::new(analysis_options.clone(), preprocess_options.clone())
+                .map_err(|error| {
+                WorkspaceError::new(WorkspaceErrorCode::InvalidOptions, error.to_string())
+            })?;
+        self.analyze_with_options(root, &options, projection_limits, cancellation)
+    }
+
+    /// Preprocesses, analyzes, and projects one root with validated settings.
+    pub fn analyze_with_options(
+        &self,
+        root: &ResourceId,
+        options: &EffectiveProcessingOptions,
+        projection_limits: ProjectionLimits,
+        cancellation: &impl Cancellation,
+    ) -> Result<WorkspaceAnalysis, WorkspaceError> {
         check_cancelled(cancellation)?;
         if !self.roots.contains(root) {
             return Err(WorkspaceError::new(
@@ -665,7 +684,7 @@ impl WorkspaceSnapshot {
                 )
             })
             .collect::<ResourceSnapshot>();
-        let mut preprocess_options = preprocess_options.clone();
+        let mut preprocess_options = options.preprocess().clone();
         preprocess_options.source_id = Some(SourceId::new(root.to_string()));
         let document =
             preprocess(&root_resource.text, &snapshot, &preprocess_options).map_err(|error| {
@@ -678,7 +697,7 @@ impl WorkspaceSnapshot {
         check_cancelled(cancellation)?;
         let dependencies = actual_dependencies(&document, root);
         let source_id = SourceId::new(root.to_string());
-        let analysis = Engine::new(analysis_options.clone())
+        let analysis = Engine::new(options.analysis().clone())
             .analyze_cancellable_with_source_id(Some(&source_id), &document.source, cancellation)
             .map_err(|error| {
                 let code = if error == adocweave::ParseError::Cancelled {
@@ -975,6 +994,140 @@ mod tests {
             workspace.affected_roots(&part),
             BTreeSet::from([root.clone()])
         );
+    }
+
+    #[test]
+    fn effective_options_share_external_attributes_across_workspace_stages() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        let part = id("file:///book/part.adoc");
+        workspace
+            .upsert_disk(
+                root.clone(),
+                Revision::new(1),
+                "ifdef::selected[]\ninclude::{selected}.adoc[]\nendif::[]\n",
+            )
+            .expect("root");
+        workspace
+            .upsert_disk(
+                part.clone(),
+                Revision::new(1),
+                ":selected: other\nincluded {selected}\n",
+            )
+            .expect("part");
+        workspace.register_root(root.clone()).expect("root");
+        let attributes = BTreeMap::from([("selected".to_owned(), Some("part".to_owned()))]);
+        let mut analysis = AnalysisOptions::default();
+        analysis.attributes.clone_from(&attributes);
+        let mut preprocess = options();
+        preprocess.attributes = attributes;
+        let effective = EffectiveProcessingOptions::new(analysis, preprocess)
+            .expect("matching processing options");
+
+        let result = workspace
+            .snapshot()
+            .analyze_with_options(
+                &root,
+                &effective,
+                ProjectionLimits::default(),
+                &NeverCancelled,
+            )
+            .expect("workspace analysis");
+
+        assert_eq!(
+            result
+                .analysis
+                .attribute_environment()
+                .final_values()
+                .get("selected")
+                .map(String::as_str),
+            Some("part")
+        );
+        assert_eq!(
+            result.dependencies.get(&root),
+            Some(&BTreeSet::from([part]))
+        );
+    }
+
+    #[test]
+    fn workspace_compatibility_entry_rejects_mismatch_before_root_lookup() {
+        for mismatch in 0..3 {
+            let analysis = AnalysisOptions::default();
+            let mut preprocess = options();
+            match mismatch {
+                0 => {
+                    preprocess
+                        .attributes
+                        .insert("different".to_owned(), Some("value".to_owned()));
+                }
+                1 => preprocess.max_attribute_expansion_depth += 1,
+                2 => preprocess.max_attribute_expansion_bytes += 1,
+                _ => unreachable!(),
+            }
+
+            let error = Workspace::default()
+                .snapshot()
+                .analyze(
+                    &id("missing"),
+                    &analysis,
+                    &preprocess,
+                    ProjectionLimits::default(),
+                    &NeverCancelled,
+                )
+                .expect_err("options must be checked first");
+
+            assert_eq!(error.code, WorkspaceErrorCode::InvalidOptions);
+            assert_eq!(error.diagnostic_code(), "invalid-options");
+        }
+    }
+
+    #[test]
+    fn workspace_uses_the_effective_attribute_expansion_boundaries() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        let part = id("file:///book/12345.adoc");
+        workspace
+            .upsert_disk(
+                root.clone(),
+                Revision::new(1),
+                ":base: 12345\n:expanded: {base}\ninclude::{expanded}.adoc[]\n",
+            )
+            .expect("root");
+        workspace
+            .upsert_disk(part, Revision::new(1), "included\n")
+            .expect("part");
+        workspace.register_root(root.clone()).expect("root");
+
+        for (depth, bytes, expected) in [
+            (1, 5, Ok(())),
+            (0, 5, Err("missing-resource")),
+            (1, 4, Err("missing-resource")),
+        ] {
+            let mut analysis = AnalysisOptions::default();
+            analysis.syntax.limits.max_attribute_expansion_depth = depth;
+            analysis.syntax.limits.max_attribute_expansion_bytes = bytes;
+            let mut preprocess = options();
+            preprocess.max_attribute_expansion_depth = depth;
+            preprocess.max_attribute_expansion_bytes = bytes;
+            let result = workspace.snapshot().analyze(
+                &root,
+                &analysis,
+                &preprocess,
+                ProjectionLimits::default(),
+                &NeverCancelled,
+            );
+            match expected {
+                Ok(()) => {
+                    result.expect("accepted boundary");
+                }
+                Err(code) => {
+                    assert_eq!(
+                        result.expect_err("rejected boundary").diagnostic_code(),
+                        code
+                    );
+                }
+            }
+        }
     }
 
     #[test]

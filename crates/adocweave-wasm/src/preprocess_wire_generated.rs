@@ -32,6 +32,8 @@ pub struct WasmPreprocessOptions {
     pub max_total_bytes: u32,
     pub max_expanded_nodes: u32,
     pub max_source_map_segments: u32,
+    pub max_attribute_expansion_depth: u32,
+    pub max_attribute_expansion_bytes: u32,
 }
 
 impl Default for WasmPreprocessOptions {
@@ -47,6 +49,8 @@ impl Default for WasmPreprocessOptions {
             max_total_bytes: 52428800,
             max_expanded_nodes: 1000000,
             max_source_map_segments: 1000000,
+            max_attribute_expansion_depth: 32,
+            max_attribute_expansion_bytes: 1048576,
         }
     }
 }
