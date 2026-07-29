@@ -49,15 +49,16 @@ pub(crate) fn request_offset(
         return Err("position.line is outside the document".to_owned());
     }
     source_document
-        .position_to_offset(
-            CorePosition {
-                line: position.line,
-                character: position.character,
-            },
-            encoding.core(),
-        )
+        .position_to_offset(lsp_position_to_core(position), encoding.core())
         .map(|offset| offset.to_u32())
         .map_err(|error| error.to_string())
+}
+
+pub(crate) const fn lsp_position_to_core(position: lsp::Position) -> CorePosition {
+    CorePosition {
+        line: position.line,
+        character: position.character,
+    }
 }
 
 pub(crate) fn range_to_lsp(

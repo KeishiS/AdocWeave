@@ -6,19 +6,17 @@ use std::sync::Arc;
 use adocweave::output::diagnostics::{RuleSettings, lint_rule};
 use adocweave::output::formatter;
 use adocweave::resolution::ReferenceKey;
-use adocweave::semantic::{DocumentElement, document_element_at, source_language_candidates};
 use adocweave::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
 use crate::diagnostics::QuickFixCapabilities;
 use crate::document_symbols::SymbolPresentation;
+use crate::editing;
 use crate::hover::HoverPresentation;
 use crate::navigation::{self, NavigationInput};
-use crate::position::{
-    PositionEncoding, cursor_touches_range, negotiate_encoding, range_contains_offset,
-    range_to_lsp, request_offset,
-};
+use crate::position::{PositionEncoding, lsp_position_to_core, negotiate_encoding, request_offset};
+use crate::presentation;
 use crate::state::DocumentStore;
 use crate::state::{
     Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis as DocumentWorkspaceAnalysis,
@@ -405,16 +403,18 @@ impl LanguageService {
                 None => source = change.text,
                 Some(range) => {
                     let index = SourceDocument::new(&source).map_err(|error| error.to_string())?;
-                    let position = |position: lsp::Position| adocweave::text::Position {
-                        line: position.line,
-                        character: position.character,
-                    };
                     let start = index
-                        .position_to_offset(position(range.start), self.position_encoding.core())
+                        .position_to_offset(
+                            lsp_position_to_core(range.start),
+                            self.position_encoding.core(),
+                        )
                         .map_err(|error| error.to_string())?
                         .to_usize();
                     let end = index
-                        .position_to_offset(position(range.end), self.position_encoding.core())
+                        .position_to_offset(
+                            lsp_position_to_core(range.end),
+                            self.position_encoding.core(),
+                        )
                         .map_err(|error| error.to_string())?
                         .to_usize();
                     if start > end {
@@ -916,23 +916,7 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        let output = formatter::format_analysis(&document.analysis, &document.format)
-            .map_err(|error| error.to_string())?;
-        let edits = output
-            .edits
-            .iter()
-            .map(|edit| {
-                Ok(lsp::TextEdit::new(
-                    range_to_lsp(
-                        edit.range,
-                        document.analysis.source_document(),
-                        self.position_encoding,
-                    )?,
-                    edit.replacement.clone(),
-                ))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        Ok(Some(edits))
+        editing::formatting(&document.analysis, &document.format, self.position_encoding).map(Some)
     }
 
     pub fn hover(
@@ -966,150 +950,17 @@ impl LanguageService {
         position: lsp::Position,
     ) -> Result<Option<lsp::CompletionResponse>, String> {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
-            return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
+            return Ok(Some(presentation::empty_completion()));
         };
-        let offset = request_offset(
-            document.analysis.source_document(),
+        let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+        presentation::completion(
+            &document.analysis,
+            &workspaces,
+            uri,
             position,
             self.position_encoding,
-        )?;
-        if attribute_completion_context(document.analysis.source(), offset as usize) {
-            let values =
-                self.documents
-                    .workspace_analyses()
-                    .find_map(|workspace| {
-                        expanded_offset_for_origin(workspace, uri, offset).map(|expanded| {
-                            workspace
-                                .analysis
-                                .attribute_environment()
-                                .values_at(expanded)
-                        })
-                    })
-                    .unwrap_or_else(|| {
-                        document.analysis.attribute_environment().values_at(
-                            adocweave::text::TextSize::new(offset as usize).expect("offset"),
-                        )
-                    });
-            let items = values
-                .into_iter()
-                .map(|(name, value)| lsp::CompletionItem {
-                    label: name,
-                    detail: Some(value),
-                    kind: Some(lsp::CompletionItemKind::VARIABLE),
-                    ..lsp::CompletionItem::default()
-                })
-                .collect();
-            return Ok(Some(lsp::CompletionResponse::Array(items)));
-        }
-        if document
-            .analysis
-            .references()
-            .iter()
-            .any(|reference| cursor_touches_range(reference.target_range, offset))
-        {
-            let items = document
-                .analysis
-                .reference_targets()
-                .iter()
-                .map(|target| lsp::CompletionItem {
-                    label: target.id.clone(),
-                    detail: Some(target.label.clone()),
-                    kind: Some(lsp::CompletionItemKind::REFERENCE),
-                    ..lsp::CompletionItem::default()
-                })
-                .collect();
-            return Ok(Some(lsp::CompletionResponse::Array(items)));
-        }
-        let Some(element) = document_element_at(document.analysis.document(), offset) else {
-            return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
-        };
-        let metadata_candidates: Option<(&[&str], lsp::CompletionItemKind)> = match element {
-            DocumentElement::MetadataRole(_) => {
-                Some((&["lead", "discrete"], lsp::CompletionItemKind::VALUE))
-            }
-            DocumentElement::MetadataOption(_) => Some((
-                &[
-                    "autowidth",
-                    "collapsible",
-                    "footer",
-                    "header",
-                    "interactive",
-                    "nowrap",
-                ],
-                lsp::CompletionItemKind::VALUE,
-            )),
-            DocumentElement::ElementAttribute(_) => Some((
-                &[
-                    "CAUTION",
-                    "IMPORTANT",
-                    "NOTE",
-                    "TIP",
-                    "WARNING",
-                    "cols",
-                    "frame",
-                    "grid",
-                    "id",
-                    "options",
-                    "quote",
-                    "role",
-                    "stripes",
-                    "subs",
-                    "verse",
-                    "width",
-                ],
-                lsp::CompletionItemKind::PROPERTY,
-            )),
-            DocumentElement::MetadataTitle(_) | DocumentElement::MetadataId(_) => {
-                return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
-            }
-            _ => None,
-        };
-        if let Some((candidates, kind)) = metadata_candidates {
-            let items = candidates
-                .iter()
-                .map(|candidate| lsp::CompletionItem {
-                    label: (*candidate).to_owned(),
-                    kind: Some(kind),
-                    ..lsp::CompletionItem::default()
-                })
-                .collect();
-            return Ok(Some(lsp::CompletionResponse::Array(items)));
-        }
-        let source = match element {
-            DocumentElement::SourceLanguage(source) | DocumentElement::SourceAttribute(source) => {
-                source
-            }
-            DocumentElement::HeadingMarker(_) | DocumentElement::HeadingText(_) => {
-                return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
-            }
-            DocumentElement::MetadataTitle(_)
-            | DocumentElement::MetadataId(_)
-            | DocumentElement::MetadataRole(_)
-            | DocumentElement::MetadataOption(_)
-            | DocumentElement::ElementAttribute(_) => unreachable!(),
-        };
-        let offset = offset as usize;
-        let text = document.analysis.source();
-        let attribute_start = source.attribute_range.start().to_usize();
-        if offset > text.len() || !text[attribute_start..offset].contains(',') {
-            return Ok(Some(lsp::CompletionResponse::Array(Vec::new())));
-        }
-        let prefix = source
-            .language_range
-            .and_then(|range| {
-                let start = range.start().to_usize();
-                (start <= offset).then(|| &text[start..offset])
-            })
-            .unwrap_or("");
-        let items = source_language_candidates(prefix)
-            .iter()
-            .map(|language| lsp::CompletionItem {
-                label: language.to_string(),
-                kind: Some(lsp::CompletionItemKind::VALUE),
-                ..lsp::CompletionItem::default()
-            })
-            .collect();
-        Ok(Some(lsp::CompletionResponse::Array(items)))
+        )
+        .map(Some)
     }
 
     pub fn definition(
@@ -1177,27 +1028,17 @@ impl LanguageService {
         position: lsp::Position,
         new_name: &str,
     ) -> Result<Option<lsp::WorkspaceEdit>, String> {
-        if !valid_anchor_name(new_name) {
-            return Ok(None);
-        }
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
-        let offset = request_offset(
-            document.analysis.source_document(),
+        let Some(key) = editing::rename_target(
+            &document.analysis,
             position,
+            new_name,
             self.position_encoding,
-        )?;
-        let Some(target) = document
-            .analysis
-            .reference_targets()
-            .iter()
-            .find(|target| range_contains_offset(target.id_range, offset))
+        )?
         else {
             return Ok(None);
-        };
-        let key = ReferenceKey::Local {
-            anchor: target.id.clone(),
         };
         let host_request = host_reference_request(&document, uri, key, self.position_encoding);
         let locations = if let Some(locations) = self.host_index.references(&host_request, true)? {
@@ -1205,20 +1046,7 @@ impl LanguageService {
         } else {
             self.references(uri, position, true)?.unwrap_or_default()
         };
-        if locations.is_empty() {
-            return Ok(None);
-        }
-        let mut changes = std::collections::HashMap::<lsp::Url, Vec<lsp::TextEdit>>::new();
-        for location in locations {
-            changes
-                .entry(location.uri)
-                .or_default()
-                .push(lsp::TextEdit::new(location.range, new_name.to_owned()));
-        }
-        Ok(Some(lsp::WorkspaceEdit {
-            changes: Some(changes),
-            ..lsp::WorkspaceEdit::default()
-        }))
+        Ok(editing::rename_edit(locations, new_name))
     }
 
     pub fn document_links(&self, uri: &lsp::Url) -> Result<Option<Vec<lsp::DocumentLink>>, String> {
@@ -1271,17 +1099,12 @@ impl LanguageService {
         if !self.client.semantic_tokens_full {
             return Ok(None);
         }
-        let Some(document) = self.documents.snapshot(uri.as_str()) else {
-            return Ok(Some(lsp::SemanticTokensResult::Tokens(
-                lsp::SemanticTokens {
-                    result_id: None,
-                    data: Vec::new(),
-                },
-            )));
-        };
-        Ok(Some(lsp::SemanticTokensResult::Tokens(
-            crate::semantic_tokens::tokens(&document.analysis, self.position_encoding)?,
-        )))
+        let document = self.documents.snapshot(uri.as_str());
+        crate::semantic_tokens::response(
+            document.as_ref().map(|document| document.analysis.as_ref()),
+            self.position_encoding,
+        )
+        .map(Some)
     }
 }
 
@@ -1297,58 +1120,6 @@ fn code_action_kind_requested(
                     .strip_prefix(kind.as_str())
                     .is_some_and(|suffix| suffix.starts_with('.'))
         })
-    })
-}
-
-fn expanded_offset_for_origin(
-    workspace: &DocumentWorkspaceAnalysis,
-    uri: &lsp::Url,
-    offset: u32,
-) -> Option<adocweave::text::TextSize> {
-    workspace.document.source_map().iter().find_map(|segment| {
-        if segment.mapping != adocweave::preprocess::SourceMapping::Identity
-            || segment
-                .origin
-                .source_id
-                .as_ref()
-                .is_none_or(|source_id| source_id.as_str() != uri.as_str())
-        {
-            return None;
-        }
-        let origin = segment.origin.range.text_range();
-        if !(origin.start().to_u32() <= offset && offset <= origin.end().to_u32()) {
-            return None;
-        }
-        let relative = offset.checked_sub(origin.start().to_u32())?;
-        adocweave::text::TextSize::new(segment.output_range.start().to_usize() + relative as usize)
-            .ok()
-    })
-}
-
-fn attribute_completion_context(source: &str, offset: usize) -> bool {
-    if offset > source.len() || !source.is_char_boundary(offset) {
-        return false;
-    }
-    let line_start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
-    let bytes = &source.as_bytes()[line_start..offset];
-    let mut open = None;
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'\\' && bytes.get(index + 1) == Some(&b'{') {
-            index += 2;
-            continue;
-        }
-        match bytes[index] {
-            b'{' => open = Some(index),
-            b'}' => open = None,
-            _ => {}
-        }
-        index += 1;
-    }
-    open.is_some_and(|open| {
-        bytes[open + 1..]
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
     })
 }
 
@@ -1369,13 +1140,4 @@ fn host_reference_request(
 
 fn revision_version_i32(revision: &adocweave::DocumentRevision) -> i32 {
     i32::try_from(revision.version).expect("LSP document versions originate as i32")
-}
-
-fn valid_anchor_name(value: &str) -> bool {
-    !value.is_empty()
-        && !value.chars().any(|character| {
-            character.is_whitespace()
-                || character.is_control()
-                || matches!(character, '[' | ']' | '<' | '>' | '#')
-        })
 }
