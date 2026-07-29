@@ -851,3 +851,25 @@ fn core_package_has_no_native_host_or_runtime_dependency() {
     assert!(cli.contains("adocweave = { path = \"../adocweave\" }"));
     assert!(cli.contains("adocweave-host = { path = \"../adocweave-host\" }"));
 }
+
+#[test]
+fn workspace_state_has_no_filesystem_or_host_dependency() {
+    let root = repository_root();
+    let manifest = fs::read_to_string(root.join("crates/adocweave-workspace/Cargo.toml"))
+        .expect("workspace manifest");
+    let source =
+        fs::read_to_string(root.join("crates/adocweave-workspace/src/lib.rs")).expect("workspace");
+    let host =
+        fs::read_to_string(root.join("crates/adocweave-host/src/local_resource.rs")).expect("host");
+
+    assert!(!manifest.contains("adocweave-host"));
+    for forbidden in [
+        "std::fs",
+        "LocalFilesystemPolicy",
+        "LocalFilesystemSession",
+        "LogicalSourceId",
+    ] {
+        assert!(!source.contains(forbidden), "{forbidden}");
+    }
+    assert!(host.contains("pub fn scan_utf8("));
+}

@@ -78,7 +78,6 @@ name = "adocweave-workspace"
 version = "0.18.0"
 dependencies = [
  "adocweave",
- "adocweave-host",
 ]
 
 [[package]]

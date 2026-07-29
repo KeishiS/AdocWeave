@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -159,12 +160,77 @@ impl LocalFilesystemPolicy {
 }
 
 impl LocalFilesystemSession {
+    const MAX_SCAN_ENTRIES: usize = 100_000;
+
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
 
     pub const fn limits(&self) -> ResourceLimits {
         self.limits
+    }
+
+    /// Scans every configured root for regular `.adoc` files.
+    ///
+    /// Directory entries and candidates are sorted before reading, symlinks are
+    /// not followed, and all reads consume this session's shared resource
+    /// budget. The caller supplies logical identities so canonical filesystem
+    /// paths do not become semantic source IDs.
+    pub fn scan_utf8(
+        &mut self,
+        mut source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
+    ) -> Result<Vec<LoadedFilesystemSource>, ResourceError> {
+        let mut paths = Vec::new();
+        let mut scanned_entries = 0_usize;
+        for root in &self.roots {
+            let mut pending = VecDeque::from([root.clone()]);
+            while let Some(path) = pending.pop_front() {
+                let metadata =
+                    fs::symlink_metadata(&path).map_err(|source| ResourceError::Inspect {
+                        path: path.clone(),
+                        source: source.to_string(),
+                    })?;
+                if metadata.file_type().is_symlink() {
+                    continue;
+                }
+                if metadata.is_dir() {
+                    let mut children = Vec::new();
+                    for child in fs::read_dir(&path).map_err(|source| ResourceError::Inspect {
+                        path: path.clone(),
+                        source: source.to_string(),
+                    })? {
+                        children.push(child.map_err(|source| ResourceError::Inspect {
+                            path: path.clone(),
+                            source: source.to_string(),
+                        })?);
+                        scanned_entries += 1;
+                        if scanned_entries > Self::MAX_SCAN_ENTRIES {
+                            return Err(ResourceError::ScanEntryLimit {
+                                limit: Self::MAX_SCAN_ENTRIES,
+                            });
+                        }
+                    }
+                    children.sort_by_key(fs::DirEntry::file_name);
+                    pending.extend(children.into_iter().map(|entry| entry.path()));
+                } else if path.extension().and_then(|value| value.to_str()) == Some("adoc") {
+                    paths.push(path);
+                    if paths.len() > self.limits.max_files {
+                        return Err(ResourceError::FileLimit {
+                            limit: self.limits.max_files,
+                        });
+                    }
+                }
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        paths
+            .into_iter()
+            .map(|path| {
+                let source_id = source_id(&path)?;
+                self.read_utf8(source_id, &path)
+            })
+            .collect()
     }
 
     /// Returns the concurrent-filesystem guarantee of all configured roots.
@@ -404,6 +470,7 @@ pub enum ResourceError {
     InvalidUtf8 { path: PathBuf, source: String },
     ResourceTooLarge(PathBuf),
     FileLimit { limit: usize },
+    ScanEntryLimit { limit: usize },
     ByteLimit,
     Unverifiable(String),
 }
@@ -451,6 +518,12 @@ impl fmt::Display for ResourceError {
             }
             Self::FileLimit { limit } => {
                 write!(formatter, "local resource file limit exceeded: {limit}")
+            }
+            Self::ScanEntryLimit { limit } => {
+                write!(
+                    formatter,
+                    "local filesystem scan entry limit exceeded: {limit}"
+                )
             }
             Self::ByteLimit => formatter.write_str("local resource byte limit exceeded"),
             Self::Unverifiable(reason) => {
@@ -530,6 +603,116 @@ mod tests {
 
     fn source_id() -> LogicalSourceId {
         LogicalSourceId::new("test-source").expect("source ID")
+    }
+
+    fn path_source_id(path: &Path) -> Result<LogicalSourceId, ResourceError> {
+        LogicalSourceId::new(format!(
+            "logical:{}",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| ResourceError::Unverifiable(
+                    "test path has no UTF-8 file name".to_owned()
+                ))?
+        ))
+    }
+
+    #[test]
+    fn scan_is_deterministic_and_keeps_paths_out_of_logical_ids() {
+        let root = TestDir::new("scan");
+        let nested = root.path().join("nested");
+        fs::create_dir(&nested).expect("nested directory");
+        fs::write(root.path().join("b.adoc"), "second\n").expect("second source");
+        fs::write(nested.join("a.adoc"), "first\n").expect("first source");
+        fs::write(root.path().join("ignored.txt"), "ignored\n").expect("ignored source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned(), root.path().to_owned()],
+            ResourceLimits::default(),
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+
+        let loaded = session.scan_utf8(path_source_id).expect("scan");
+
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(
+            loaded
+                .iter()
+                .map(|source| source.source_id().as_str())
+                .collect::<Vec<_>>(),
+            ["logical:b.adoc", "logical:a.adoc"]
+        );
+        assert_eq!(
+            loaded
+                .iter()
+                .map(LoadedFilesystemSource::source)
+                .collect::<Vec<_>>(),
+            ["second\n", "first\n"]
+        );
+        assert!(loaded.iter().all(|source| {
+            !source
+                .source_id()
+                .as_str()
+                .contains(root.path().to_string_lossy().as_ref())
+        }));
+        assert_eq!(
+            (session.budget().files(), session.budget().bytes()),
+            (2, 13)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_does_not_follow_symlinked_files_or_directories() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("scan-symlink-root");
+        let outside = TestDir::new("scan-symlink-outside");
+        let outside_file = outside.path().join("outside.adoc");
+        fs::write(&outside_file, "outside\n").expect("outside source");
+        symlink(&outside_file, root.path().join("file.adoc")).expect("file symlink");
+        symlink(outside.path(), root.path().join("directory")).expect("directory symlink");
+        fs::write(root.path().join("inside.adoc"), "inside\n").expect("inside source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+
+        let loaded = session.scan_utf8(path_source_id).expect("scan");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].source_id().as_str(), "logical:inside.adoc");
+        assert_eq!(loaded[0].source(), "inside\n");
+    }
+
+    #[test]
+    fn scan_applies_candidate_and_shared_byte_budgets_in_the_host_session() {
+        let root = TestDir::new("scan-budget");
+        fs::write(root.path().join("a.adoc"), "1234").expect("first source");
+        fs::write(root.path().join("b.adoc"), "5678").expect("second source");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            ResourceLimits {
+                max_files: 1,
+                max_total_bytes: 8,
+                max_resource_bytes: 4,
+            },
+        )
+        .expect("policy");
+        assert_eq!(
+            policy.session().expect("session").scan_utf8(path_source_id),
+            Err(ResourceError::FileLimit { limit: 1 })
+        );
+
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            ResourceLimits {
+                max_files: 2,
+                max_total_bytes: 7,
+                max_resource_bytes: 4,
+            },
+        )
+        .expect("policy");
+        assert_eq!(
+            policy.session().expect("session").scan_utf8(path_source_id),
+            Err(ResourceError::ByteLimit)
+        );
     }
 
     #[test]

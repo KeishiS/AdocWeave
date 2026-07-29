@@ -15,18 +15,19 @@ Language Server内部にあります。desktopアプリ、server、indexerおよ
 
 == 決定
 
-``adocweave-host``はresource identity、検証済みfilesystem access、budgetおよび依存graphを所有する
-低水準crateとして維持します。新しい``adocweave-workspace`` crateを追加し、``adocweave``と
-``adocweave-host``へ一方向に依存させます。CLI、Language Serverおよび将来のadapterは高水準crateを
-利用します。
+``adocweave-host``は検証済みfilesystem access、filesystem provenanceおよびI/O budgetを所有する
+低水準crateとして維持します。``adocweave-workspace``はresource identity、本文の層、解析root、
+依存graphおよびsnapshotを所有し、``adocweave``だけへ依存します。CLI、Language Serverおよび将来のadapterは、
+hostから受け取った検証済みresourceをWorkspaceへ明示的に渡します。
 
 公開APIはLSP ``Url``やTokio型ではなく、`ResourceId`、`ResourceRevision`、`WorkspaceGeneration`、
 `WorkspaceChange`、mutableな``Workspace``、immutableな``WorkspaceSnapshot``および
 ``WorkspaceAnalysisSnapshot``を使用します。open overlayとdisk revisionを区別し、すべての変更は
 失敗時に以前のsnapshotを維持する原子的なstate transitionとします。
 
-初期filesystem scanとfile読込はhost adapterへ隔離し、Workspace state machineへ検証済み本文を
-明示的に渡します。解析はruntime非依存の``CancellationCheck``を受け取り、結果採用時にresource revision、
+初期filesystem scan、symlink判定、file読込およびI/O budgetはhost sessionへ隔離し、Workspace state machineへ
+検証済みの論理IDと本文を明示的に渡します。Workspace snapshotの構築後と解析中にはI/Oを行いません。
+解析はruntime非依存の``CancellationCheck``を受け取り、結果採用時にresource revision、
 workspace generationおよび設定generationを照合します。
 
 静的なinclude検出は保守的なprefetch hintに限定します。実際に使用した依存関係は、読み取り順の属性を

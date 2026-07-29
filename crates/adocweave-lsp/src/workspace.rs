@@ -5,10 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
-use adocweave_host::{LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId};
+use adocweave_host::{
+    LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId, ResourceError,
+};
 use adocweave_workspace::{
     Generation, ResourceId, Revision, Workspace, WorkspaceAnalysis, WorkspaceLimits,
-    WorkspaceSnapshot, scan_filesystem_with_session,
+    WorkspaceSnapshot,
 };
 use async_lsp::lsp_types::Url;
 
@@ -75,16 +77,24 @@ impl WorkspaceResources {
         paths.sort();
         paths.dedup();
         let mut filesystem = (!paths.is_empty())
-            .then(|| LocalFilesystemPolicy::new(paths.clone(), limits.resources))
+            .then(|| LocalFilesystemPolicy::new(paths.clone(), host_limits(limits.resources)))
             .transpose()
             .map_err(|error| error.to_string())?
             .map(|policy| policy.session())
             .transpose()
             .map_err(|error| error.to_string())?;
         let files = match filesystem.as_mut() {
-            Some(session) => {
-                scan_filesystem_with_session(session).map_err(|error| error.to_string())?
-            }
+            Some(session) => session
+                .scan_utf8(|path| {
+                    let uri = Url::from_file_path(path).map_err(|()| {
+                        ResourceError::Unverifiable(format!(
+                            "cannot convert workspace path to URI: {}",
+                            path.display()
+                        ))
+                    })?;
+                    LogicalSourceId::new(uri.to_string())
+                })
+                .map_err(|error| error.to_string())?,
             None => Vec::new(),
         };
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
@@ -92,9 +102,10 @@ impl WorkspaceResources {
         let mut next_disk_version = self.next_disk_version;
         for file in files {
             next_disk_version = next_disk_version.saturating_add(1);
-            let id = path_id(&file.path)?;
+            let (source_id, text) = file.into_parts();
+            let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
             inner
-                .upsert_disk(id.clone(), Revision::new(next_disk_version), file.text)
+                .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
                 .map_err(|error| error.to_string())?;
             inner.register_root(id).map_err(|error| error.to_string())?;
         }
@@ -334,10 +345,14 @@ fn uri_id(uri: &Url) -> Result<ResourceId, String> {
     ResourceId::new(uri.to_string()).map_err(|error| error.to_string())
 }
 
-fn path_id(path: &Path) -> Result<ResourceId, String> {
-    let uri = Url::from_file_path(path)
-        .map_err(|()| format!("cannot convert path to URI: {}", path.display()))?;
-    uri_id(&uri)
+const fn host_limits(
+    limits: adocweave_workspace::ResourceLimits,
+) -> adocweave_host::ResourceLimits {
+    adocweave_host::ResourceLimits {
+        max_files: limits.max_files,
+        max_total_bytes: limits.max_total_bytes,
+        max_resource_bytes: limits.max_resource_bytes,
+    }
 }
 
 fn strings(values: BTreeSet<ResourceId>) -> BTreeSet<String> {
@@ -373,6 +388,67 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn filesystem_scan_ingests_logical_resources_before_snapshot_analysis() {
+        let root = TestDirectory::new();
+        let first = root.0.join("a.adoc");
+        let second = root.0.join("b.adoc");
+        std::fs::write(&first, "first\n").expect("first source");
+        std::fs::write(&second, "second\n").expect("second source");
+        std::fs::write(root.0.join("ignored.txt"), "ignored\n").expect("ignored source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let first_uri = Url::from_file_path(&first).expect("first URI");
+        let second_uri = Url::from_file_path(&second).expect("second URI");
+        let mut resources = WorkspaceResources::default();
+
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        assert_eq!(
+            resources.inner.roots(),
+            &BTreeSet::from([
+                uri_id(&first_uri).expect("first resource ID"),
+                uri_id(&second_uri).expect("second resource ID"),
+            ])
+        );
+        assert_eq!(
+            resources
+                .get(&first_uri)
+                .expect("first resource")
+                .text()
+                .as_ref(),
+            "first\n"
+        );
+        assert_eq!(
+            resources
+                .get(&second_uri)
+                .expect("second resource")
+                .text()
+                .as_ref(),
+            "second\n"
+        );
+
+        let input = resources.input(&first_uri).expect("workspace input");
+        std::fs::remove_file(first).expect("remove first source after snapshot");
+        std::fs::remove_file(second).expect("remove second source after snapshot");
+        assert_eq!(
+            input
+                .snapshot
+                .get(&input.root)
+                .expect("snapshot resource")
+                .text()
+                .as_ref(),
+            "first\n"
+        );
+    }
+
+    #[test]
+    fn workspace_and_host_default_resource_limits_stay_aligned() {
+        assert_eq!(
+            host_limits(adocweave_workspace::ResourceLimits::default()),
+            adocweave_host::ResourceLimits::default()
+        );
     }
 
     #[test]
