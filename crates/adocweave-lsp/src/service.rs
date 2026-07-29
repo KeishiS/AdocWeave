@@ -253,6 +253,19 @@ fn attach_workspace(
     }
 }
 
+fn parse_open_sources(sources: &[(String, i32, String)]) -> Vec<(lsp::Url, i64, Arc<str>)> {
+    sources
+        .iter()
+        .filter_map(|(uri, version, source)| {
+            Some((
+                uri.parse().ok()?,
+                i64::from(*version),
+                Arc::<str>::from(source.as_str()),
+            ))
+        })
+        .collect()
+}
+
 impl LanguageService {
     pub fn with_host_index(host_index: Arc<dyn HostReferenceIndex>) -> Self {
         Self {
@@ -499,7 +512,7 @@ impl LanguageService {
                 continue;
             }
             let changed = if change.typ == lsp::FileChangeType::DELETED {
-                Ok(self.workspace.remove_disk(&change.uri))
+                self.workspace.remove_disk(&change.uri)
             } else {
                 self.workspace.reload_file(change.uri)
             };
@@ -516,20 +529,13 @@ impl LanguageService {
     fn reload_project_configuration(&mut self) -> Vec<AnalysisJob> {
         let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
         let open_sources = self.documents.open_sources();
-        if let Err(error) = self.workspace.load_roots(&roots) {
+        let parsed_open_sources = parse_open_sources(&open_sources);
+        if let Err(error) = self
+            .workspace
+            .reload_roots_with_open_sources(&roots, &parsed_open_sources)
+        {
             self.workspace_error = Some(error);
             return Vec::new();
-        }
-        for (uri, version, source) in &open_sources {
-            let Ok(uri) = uri.parse() else {
-                continue;
-            };
-            if let Err(error) = self
-                .workspace
-                .upsert_open(uri, i64::from(*version), source.clone())
-            {
-                self.workspace_error = Some(error);
-            }
         }
         self.workspace_error = None;
         open_sources
@@ -561,23 +567,16 @@ impl LanguageService {
         }
         let root_uris = roots.values().cloned().collect::<Vec<_>>();
         let open_sources = self.documents.open_sources();
-        if let Err(error) = self.workspace.load_roots(&root_uris) {
+        let parsed_open_sources = parse_open_sources(&open_sources);
+        if let Err(error) = self
+            .workspace
+            .reload_roots_with_open_sources(&root_uris, &parsed_open_sources)
+        {
             self.workspace_error = Some(error);
             return Vec::new();
         }
         self.workspace_roots = roots;
         self.workspace_error = None;
-        for (uri, version, source) in &open_sources {
-            let Ok(uri) = uri.parse() else {
-                continue;
-            };
-            if let Err(error) = self
-                .workspace
-                .upsert_open(uri, i64::from(*version), source.clone())
-            {
-                self.workspace_error = Some(error);
-            }
-        }
         open_sources
             .into_iter()
             .filter_map(|(uri, _, _)| {
