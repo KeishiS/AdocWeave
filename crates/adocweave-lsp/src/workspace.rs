@@ -9,8 +9,8 @@ use adocweave_host::{
     FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
 };
 use adocweave_workspace::{
-    Generation, ResourceId, RetainedResourceBudget, RetainedResourceLimits, Revision, Workspace,
-    WorkspaceAnalysis, WorkspaceLimits, WorkspaceSnapshot,
+    Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
+    Revision, Workspace, WorkspaceAnalysis, WorkspaceLimits, WorkspaceSnapshot,
 };
 use async_lsp::lsp_types::Url;
 
@@ -47,14 +47,20 @@ impl WorkspaceInput {
     }
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ProjectScopeId {
+    workspace_root: PathBuf,
+    config_path: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceResources {
     inner: Workspace,
     roots: Vec<PathBuf>,
-    filesystems: BTreeMap<Option<PathBuf>, Arc<Mutex<LocalFilesystemSession>>>,
-    project_plans: BTreeMap<Option<PathBuf>, adocweave_config::ResolvedResourceLimitPlan>,
-    resource_projects: BTreeMap<ResourceId, Option<PathBuf>>,
-    retained_layers: BTreeMap<Option<PathBuf>, RetainedResourceBudget>,
+    filesystems: BTreeMap<ProjectScopeId, Arc<Mutex<LocalFilesystemSession>>>,
+    project_plans: BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>,
+    resource_projects: BTreeMap<ResourceId, ProjectScopeId>,
+    retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget>,
     next_disk_version: i64,
 }
 
@@ -77,6 +83,20 @@ impl PreparedWorkspaceRead {
 impl WorkspaceResources {
     pub fn load_roots(&mut self, roots: &[Url]) -> Result<(), String> {
         self.load_roots_with_limits(roots, adapter_managed_workspace_limits())
+    }
+
+    pub fn reload_roots_with_open_sources(
+        &mut self,
+        roots: &[Url],
+        open_sources: &[(Url, i64, Arc<str>)],
+    ) -> Result<(), String> {
+        let mut replacement = self.clone();
+        replacement.load_roots(roots)?;
+        for (uri, version, source) in open_sources {
+            replacement.upsert_open(uri.clone(), *version, Arc::clone(source))?;
+        }
+        *self = replacement;
+        Ok(())
     }
 
     fn load_roots_with_limits(
@@ -118,42 +138,37 @@ impl WorkspaceResources {
         let mut filesystems = BTreeMap::new();
         let mut resource_projects = BTreeMap::new();
         let mut project_plans = BTreeMap::new();
-        let mut retained_layers: BTreeMap<Option<PathBuf>, RetainedResourceBudget> =
-            BTreeMap::new();
+        let mut retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget> = BTreeMap::new();
         let mut next_disk_version = self.next_disk_version;
         for path in candidates {
-            let config = match config_for_path_typed(&paths, &path) {
+            let (scope, config) = match scope_and_config_for_path_typed(&paths, &path) {
                 Ok(config) => config,
-                Err(error) if invalid_project_config(error.code) => {
-                    // Keep only trusted canonical boundaries. An invalid
-                    // nearest project file must not fall back to an old plan.
-                    self.inner = Workspace::new_at_generation(limits, seed);
-                    self.roots = paths;
-                    self.filesystems.clear();
-                    self.project_plans.clear();
-                    self.resource_projects.clear();
-                    self.retained_layers.clear();
-                    return Err(error.to_string());
+                Err(error) => {
+                    if self.roots.is_empty() {
+                        self.roots = paths;
+                    }
+                    return Err(error);
                 }
-                Err(error) => return Err(error.to_string()),
             };
-            let project = config.as_ref().map(|snapshot| snapshot.path.clone());
             let plan = config.as_ref().map_or_else(
                 adocweave_config::ResolvedResourceLimitPlan::default,
                 |snapshot| snapshot.config.resources.limit_plan,
             );
-            if let Some(previous) = project_plans.insert(project.clone(), plan)
+            if let Some(previous) = project_plans.insert(scope.clone(), plan)
                 && previous != plan
             {
                 return Err("project resource limit plan changed during workspace scan".to_owned());
             }
-            let filesystem = match filesystems.entry(project.clone()) {
+            let filesystem = match filesystems.entry(scope.clone()) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                 std::collections::btree_map::Entry::Vacant(entry) => {
-                    let session = LocalFilesystemPolicy::new(paths.clone(), plan.filesystem_reads)
-                        .map_err(|error| error.to_string())?
-                        .session()
-                        .map_err(|error| error.to_string())?;
+                    let session = LocalFilesystemPolicy::new(
+                        [scope.workspace_root.clone()],
+                        plan.filesystem_reads,
+                    )
+                    .map_err(|error| error.to_string())?
+                    .session()
+                    .map_err(|error| error.to_string())?;
                     entry.insert(Arc::new(Mutex::new(session)))
                 }
             };
@@ -172,7 +187,7 @@ impl WorkspaceResources {
             let (source_id, text) = file.into_parts();
             let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
             let budget = retained_layers
-                .get(&project)
+                .get(&scope)
                 .cloned()
                 .unwrap_or_default()
                 .with_disk(id.clone(), Some(text.len() as u64), plan.retained_layers)
@@ -183,8 +198,8 @@ impl WorkspaceResources {
             inner
                 .register_root(id.clone())
                 .map_err(|error| error.to_string())?;
-            retained_layers.insert(project.clone(), budget);
-            resource_projects.insert(id, project);
+            retained_layers.insert(scope.clone(), budget);
+            resource_projects.insert(id, scope);
         }
         self.inner = inner;
         self.roots = paths;
@@ -200,34 +215,23 @@ impl WorkspaceResources {
         let path = uri
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        let (project, plan) = self.plan_for_path(&path)?;
+        let (scope, plan) = self.plan_for_path(&path)?;
         let id = uri_id(&uri)?;
-        if self
-            .resource_projects
-            .get(&id)
-            .is_some_and(|previous| previous != &project)
-        {
-            return Err("workspace project changed; a full reload is required".to_owned());
-        }
-        let prepared = self.read_workspace_file(&path, project.clone(), plan)?;
-        self.next_disk_version = self.next_disk_version.saturating_add(1);
+        let prepared = self.read_workspace_file(&path, &scope, plan)?;
+        let next_disk_version = self.next_disk_version.saturating_add(1);
         let result = (|| {
-            let budget = self
-                .retained_layers
-                .get(&project)
-                .cloned()
-                .unwrap_or_default()
-                .with_disk(
-                    id.clone(),
-                    Some(prepared.text.len() as u64),
-                    plan.retained_layers,
-                )
-                .map_err(|error| error.to_string())?;
+            let previous_charge = self.retained_charge(&id);
+            let charge = RetainedLayerCharge::new(
+                Some(prepared.text.len() as u64),
+                previous_charge.overlay_bytes(),
+            );
+            let retained_layers =
+                self.move_retained_charge(&id, &scope, charge, plan.retained_layers)?;
             let mut inner = self.inner.clone();
             let affected = inner
                 .upsert_disk(
                     id.clone(),
-                    Revision::new(self.next_disk_version),
+                    Revision::new(next_disk_version),
                     Arc::clone(&prepared.text),
                 )
                 .map_err(|error| error.to_string())?;
@@ -236,26 +240,37 @@ impl WorkspaceResources {
                     .register_root(id.clone())
                     .map_err(|error| error.to_string())?;
             }
-            Ok((budget, inner, affected))
+            Ok((retained_layers, inner, affected))
         })();
-        let (budget, inner, affected) = match result {
+        let (retained_layers, inner, affected) = match result {
             Ok(committed) => committed,
             Err(error) => {
                 prepared.rollback()?;
                 return Err(error);
             }
         };
+        let previous_scope = self.resource_projects.get(&id).cloned();
+        if previous_scope
+            .as_ref()
+            .is_some_and(|previous| previous != &scope)
+        {
+            self.release_filesystem_charge(previous_scope.as_ref(), &path)?;
+        }
         self.inner = inner;
-        self.retained_layers.insert(project.clone(), budget);
-        self.project_plans.insert(project.clone(), plan);
-        self.resource_projects.insert(id, project);
+        self.retained_layers = retained_layers;
+        self.filesystems
+            .insert(scope.clone(), Arc::clone(&prepared.filesystem));
+        self.project_plans.insert(scope.clone(), plan);
+        self.resource_projects.insert(id, scope);
+        self.next_disk_version = next_disk_version;
+        self.gc_scopes();
         Ok(strings(affected))
     }
 
     fn read_workspace_file(
-        &mut self,
+        &self,
         path: &Path,
-        project: Option<PathBuf>,
+        scope: &ProjectScopeId,
         plan: adocweave_config::ResolvedResourceLimitPlan,
     ) -> Result<PreparedWorkspaceRead, String> {
         if path.extension().and_then(|value| value.to_str()) != Some("adoc") {
@@ -264,27 +279,23 @@ impl WorkspaceResources {
                 path.display()
             ));
         }
-        if let Some(previous) = self.project_plans.get(&project)
+        if let Some(previous) = self.project_plans.get(scope)
             && previous != &plan
         {
             return Err(
                 "workspace resource limit plan changed; a full reload is required".to_owned(),
             );
         }
-        if !self.filesystems.contains_key(&project) {
-            let session = LocalFilesystemPolicy::new(self.roots.clone(), plan.filesystem_reads)
-                .map_err(|error| error.to_string())?
-                .session()
-                .map_err(|error| error.to_string())?;
-            self.filesystems
-                .insert(project.clone(), Arc::new(Mutex::new(session)));
-            self.project_plans.insert(project.clone(), plan);
-        }
-        let filesystem = Arc::clone(
-            self.filesystems
-                .get(&project)
-                .expect("project filesystem session was inserted"),
-        );
+        let filesystem = if let Some(filesystem) = self.filesystems.get(scope) {
+            Arc::clone(filesystem)
+        } else {
+            let session =
+                LocalFilesystemPolicy::new([scope.workspace_root.clone()], plan.filesystem_reads)
+                    .map_err(|error| error.to_string())?
+                    .session()
+                    .map_err(|error| error.to_string())?;
+            Arc::new(Mutex::new(session))
+        };
         let (loaded, rollback) = filesystem
             .lock()
             .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
@@ -299,6 +310,69 @@ impl WorkspaceResources {
             filesystem,
             rollback,
         })
+    }
+
+    fn retained_charge(&self, id: &ResourceId) -> RetainedLayerCharge {
+        self.resource_projects
+            .get(id)
+            .and_then(|scope| self.retained_layers.get(scope))
+            .map_or_else(RetainedLayerCharge::default, |budget| budget.charge(id))
+    }
+
+    fn move_retained_charge(
+        &self,
+        id: &ResourceId,
+        scope: &ProjectScopeId,
+        charge: RetainedLayerCharge,
+        limits: RetainedResourceLimits,
+    ) -> Result<BTreeMap<ProjectScopeId, RetainedResourceBudget>, String> {
+        let mut retained_layers = self.retained_layers.clone();
+        if let Some(previous_scope) = self.resource_projects.get(id)
+            && previous_scope != scope
+        {
+            let previous = retained_layers
+                .get(previous_scope)
+                .cloned()
+                .unwrap_or_default()
+                .without_resource(id);
+            retained_layers.insert(previous_scope.clone(), previous);
+        }
+        let replacement = retained_layers
+            .get(scope)
+            .cloned()
+            .unwrap_or_default()
+            .with_layers(id.clone(), charge, limits)
+            .map_err(|error| error.to_string())?;
+        retained_layers.insert(scope.clone(), replacement);
+        Ok(retained_layers)
+    }
+
+    fn release_filesystem_charge(
+        &self,
+        scope: Option<&ProjectScopeId>,
+        path: &Path,
+    ) -> Result<(), String> {
+        let Some(filesystem) = scope.and_then(|scope| self.filesystems.get(scope)) else {
+            return Ok(());
+        };
+        filesystem
+            .lock()
+            .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
+            .release(path);
+        Ok(())
+    }
+
+    fn gc_scopes(&mut self) {
+        let retained = self
+            .resource_projects
+            .values()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        self.retained_layers
+            .retain(|scope, budget| retained.contains(scope) || !budget.is_empty());
+        self.project_plans
+            .retain(|scope, _| retained.contains(scope));
+        self.filesystems.retain(|scope, _| retained.contains(scope));
     }
 
     pub fn get(&self, uri: &Url) -> Option<&adocweave_workspace::Resource> {
@@ -317,91 +391,154 @@ impl WorkspaceResources {
         let path = uri
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        let (project, plan) = self.plan_for_path(&path)?;
-        let budget = self
-            .retained_layers
-            .get(&project)
-            .cloned()
-            .unwrap_or_default()
-            .with_overlay(id.clone(), Some(text.len() as u64), plan.retained_layers)
-            .map_err(|error| error.to_string())?;
-        let affected = self
-            .inner
-            .upsert_overlay(id.clone(), Revision::new(version), text)
-            .map_err(|error| error.to_string())?;
-        if !self.inner.roots().contains(&id) {
-            self.inner
-                .register_root(id.clone())
-                .map_err(|error| error.to_string())?;
+        let (scope, plan) = self.plan_for_path(&path)?;
+        if self
+            .project_plans
+            .get(&scope)
+            .is_some_and(|previous| previous != &plan)
+        {
+            return Err(
+                "workspace resource limit plan changed; a full reload is required".to_owned(),
+            );
         }
+        let previous_scope = self.resource_projects.get(&id).cloned();
+        let previous_charge = self.retained_charge(&id);
+        let migrating_disk = previous_scope
+            .as_ref()
+            .is_some_and(|previous| previous != &scope)
+            && previous_charge.disk_bytes().is_some();
+        let prepared_disk = migrating_disk
+            .then(|| self.read_workspace_file(&path, &scope, plan))
+            .transpose()?;
+        let next_disk_version = self
+            .next_disk_version
+            .saturating_add(i64::from(migrating_disk));
+        let result = (|| {
+            let charge = RetainedLayerCharge::new(
+                prepared_disk
+                    .as_ref()
+                    .map_or(previous_charge.disk_bytes(), |prepared| {
+                        Some(prepared.text.len() as u64)
+                    }),
+                Some(text.len() as u64),
+            );
+            let retained_layers =
+                self.move_retained_charge(&id, &scope, charge, plan.retained_layers)?;
+            let mut inner = self.inner.clone();
+            if let Some(prepared) = &prepared_disk {
+                inner
+                    .upsert_disk(
+                        id.clone(),
+                        Revision::new(next_disk_version),
+                        Arc::clone(&prepared.text),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            let affected = inner
+                .upsert_overlay(id.clone(), Revision::new(version), Arc::clone(&text))
+                .map_err(|error| error.to_string())?;
+            if !inner.roots().contains(&id) {
+                inner
+                    .register_root(id.clone())
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok((retained_layers, inner, affected))
+        })();
+        let (retained_layers, inner, affected) = match result {
+            Ok(committed) => committed,
+            Err(error) => {
+                if let Some(prepared) = prepared_disk {
+                    prepared.rollback()?;
+                }
+                return Err(error);
+            }
+        };
+        if previous_scope
+            .as_ref()
+            .is_some_and(|previous| previous != &scope)
+        {
+            self.release_filesystem_charge(previous_scope.as_ref(), &path)?;
+        }
+        self.inner = inner;
+        self.retained_layers = retained_layers;
+        if let Some(prepared) = &prepared_disk {
+            self.filesystems
+                .insert(scope.clone(), Arc::clone(&prepared.filesystem));
+        }
+        self.project_plans.insert(scope.clone(), plan);
+        self.resource_projects.insert(id.clone(), scope);
+        self.next_disk_version = next_disk_version;
+        self.gc_scopes();
         let mut affected = strings(affected);
         affected.insert(id.to_string());
-        self.retained_layers.insert(project.clone(), budget);
-        self.project_plans.insert(project.clone(), plan);
-        self.resource_projects.insert(id, project);
         Ok(affected)
     }
 
-    pub fn remove_disk(&mut self, uri: &Url) -> BTreeSet<String> {
-        let id = uri_id(uri).ok();
-        let project = id
-            .as_ref()
-            .and_then(|id| self.resource_projects.get(id))
-            .cloned()
-            .flatten();
-        if let Ok(path) = uri.to_file_path()
-            && let Some(filesystem) = self.filesystems.get(&project)
-            && let Ok(mut session) = filesystem.lock()
-        {
-            session.release(&path);
-        }
-        let Some(id) = id else {
-            return BTreeSet::new();
-        };
-        let affected = strings(self.inner.remove_disk(&id));
-        if let Some(project) = self.resource_projects.get(&id).cloned()
-            && let Some(plan) = self.project_plans.get(&project).copied()
-        {
-            let budget = self
-                .retained_layers
-                .get(&project)
+    pub fn remove_disk(&mut self, uri: &Url) -> Result<BTreeSet<String>, String> {
+        let id = uri_id(uri)?;
+        let path = uri
+            .to_file_path()
+            .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
+        let scope = self.resource_projects.get(&id).cloned();
+        let mut retained_layers = self.retained_layers.clone();
+        if let Some(scope) = &scope {
+            let plan = self
+                .project_plans
+                .get(scope)
+                .copied()
+                .ok_or_else(|| "workspace resource limit plan is missing".to_owned())?;
+            let charge = self.retained_charge(&id);
+            let budget = retained_layers
+                .get(scope)
                 .cloned()
                 .unwrap_or_default()
-                .with_disk(id.clone(), None, plan.retained_layers);
-            if let Ok(budget) = budget {
-                self.retained_layers.insert(project, budget);
-            }
+                .with_layers(
+                    id.clone(),
+                    RetainedLayerCharge::new(None, charge.overlay_bytes()),
+                    plan.retained_layers,
+                )
+                .map_err(|error| error.to_string())?;
+            retained_layers.insert(scope.clone(), budget);
         }
+        let mut inner = self.inner.clone();
+        let affected = strings(inner.remove_disk(&id));
+        self.release_filesystem_charge(scope.as_ref(), &path)?;
+        self.inner = inner;
+        self.retained_layers = retained_layers;
         if self.inner.get(&id).is_none() {
             self.resource_projects.remove(&id);
         }
-        affected
+        self.gc_scopes();
+        Ok(affected)
     }
 
     pub fn close_open(&mut self, uri: &Url) -> Result<BTreeSet<String>, String> {
         let id = uri_id(uri)?;
-        let affected = self
-            .inner
-            .close_overlay(&id)
-            .map_err(|error| error.to_string())?;
+        let mut retained_layers = self.retained_layers.clone();
         if let Some(project) = self.resource_projects.get(&id).cloned() {
             let plan = self
                 .project_plans
                 .get(&project)
                 .copied()
                 .ok_or_else(|| "workspace resource limit plan is missing".to_owned())?;
-            let budget = self
-                .retained_layers
+            let budget = retained_layers
                 .get(&project)
                 .cloned()
                 .unwrap_or_default()
                 .with_overlay(id.clone(), None, plan.retained_layers)
                 .map_err(|error| error.to_string())?;
-            self.retained_layers.insert(project, budget);
+            retained_layers.insert(project, budget);
         }
+        let mut inner = self.inner.clone();
+        let affected = inner
+            .close_overlay(&id)
+            .map_err(|error| error.to_string())?;
+        self.inner = inner;
+        self.retained_layers = retained_layers;
         if self.inner.get(&id).is_none() {
             self.resource_projects.remove(&id);
         }
+        self.gc_scopes();
         Ok(strings(affected))
     }
 
@@ -532,12 +669,13 @@ impl WorkspaceResources {
     fn plan_for_path(
         &self,
         path: &Path,
-    ) -> Result<(Option<PathBuf>, adocweave_config::ResolvedResourceLimitPlan), String> {
-        let config = config_for_path(&self.roots, path)?;
-        Ok(config.map_or_else(
-            || (None, adocweave_config::ResolvedResourceLimitPlan::default()),
-            |snapshot| (Some(snapshot.path), snapshot.config.resources.limit_plan),
-        ))
+    ) -> Result<(ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan), String> {
+        let (scope, config) = scope_and_config_for_path_typed(&self.roots, path)?;
+        let plan = config.as_ref().map_or_else(
+            adocweave_config::ResolvedResourceLimitPlan::default,
+            |snapshot| snapshot.config.resources.limit_plan,
+        );
+        Ok((scope, plan))
     }
 }
 
@@ -584,12 +722,48 @@ fn config_for_path_typed(
     adocweave_config::discover_and_load(start, boundary)
 }
 
-const fn invalid_project_config(code: adocweave_config::ConfigErrorCode) -> bool {
-    !matches!(
-        code,
-        adocweave_config::ConfigErrorCode::ReadFailed
-            | adocweave_config::ConfigErrorCode::OutsideBoundary
-    )
+fn scope_and_config_for_path_typed(
+    roots: &[PathBuf],
+    path: &Path,
+) -> Result<(ProjectScopeId, Option<adocweave_config::ConfigSnapshot>), String> {
+    let boundary = roots
+        .iter()
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count());
+    let Some(boundary) = boundary else {
+        if roots.is_empty() {
+            return Ok((
+                ProjectScopeId {
+                    workspace_root: path.parent().unwrap_or_else(|| Path::new("")).to_owned(),
+                    config_path: None,
+                },
+                None,
+            ));
+        }
+        return Err("workspace resource is outside every workspace root".to_owned());
+    };
+    let mut start = path;
+    while !start.exists() {
+        let Some(parent) = start.parent() else {
+            return Ok((
+                ProjectScopeId {
+                    workspace_root: boundary.clone(),
+                    config_path: None,
+                },
+                None,
+            ));
+        };
+        start = parent;
+    }
+    let config =
+        adocweave_config::discover_and_load(start, boundary).map_err(|error| error.to_string())?;
+    Ok((
+        ProjectScopeId {
+            workspace_root: boundary.clone(),
+            config_path: config.as_ref().map(|snapshot| snapshot.path.clone()),
+        },
+        config,
+    ))
 }
 
 fn snapshot_limit_error() -> String {
@@ -789,7 +963,7 @@ mod tests {
             .expect("load workspace");
 
         std::fs::remove_file(&first).expect("remove first");
-        resources.remove_disk(&first_uri);
+        resources.remove_disk(&first_uri).expect("remove disk");
         std::fs::write(&second, "second\n").expect("new source");
         let second_uri = Url::from_file_path(&second).expect("second URI");
         resources
@@ -851,6 +1025,202 @@ mod tests {
     }
 
     #[test]
+    fn unconfigured_workspace_roots_have_independent_scopes() {
+        let first = TestDirectory::new();
+        let second = TestDirectory::new();
+        std::fs::write(first.0.join("document.adoc"), "one").expect("first source");
+        std::fs::write(second.0.join("document.adoc"), "two").expect("second source");
+        let mut resources = WorkspaceResources::default();
+
+        resources
+            .load_roots(&[
+                Url::from_directory_path(&first.0).expect("first root"),
+                Url::from_directory_path(&second.0).expect("second root"),
+            ])
+            .expect("load roots");
+
+        assert_eq!(resources.filesystems.len(), 2);
+        assert_eq!(resources.retained_layers.len(), 2);
+        assert!(
+            resources
+                .project_plans
+                .keys()
+                .all(|scope| scope.config_path.is_none())
+        );
+    }
+
+    #[test]
+    fn project_migration_releases_the_previous_scope_and_collects_it() {
+        let root = TestDirectory::new();
+        let nested = root.0.join("nested");
+        std::fs::create_dir(&nested).expect("nested");
+        let path = nested.join("document.adoc");
+        std::fs::write(&path, "old").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        let previous_scope = resources
+            .resource_projects
+            .get(&uri_id(&document_uri).expect("resource ID"))
+            .cloned()
+            .expect("previous scope");
+
+        write_resource_config(&nested, 1, 8, 8, false);
+        std::fs::write(&path, "new").expect("new source");
+        resources
+            .reload_file(document_uri.clone())
+            .expect("migrate project");
+
+        let current_scope = resources
+            .resource_projects
+            .get(&uri_id(&document_uri).expect("resource ID"))
+            .expect("current scope");
+        assert_ne!(current_scope, &previous_scope);
+        assert!(!resources.filesystems.contains_key(&previous_scope));
+        assert!(!resources.retained_layers.contains_key(&previous_scope));
+        assert!(!resources.project_plans.contains_key(&previous_scope));
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("migrated")
+                .text()
+                .as_ref(),
+            "new"
+        );
+    }
+
+    #[test]
+    fn failed_project_migration_preserves_every_committed_layer() {
+        let root = TestDirectory::new();
+        let nested = root.0.join("nested");
+        std::fs::create_dir(&nested).expect("nested");
+        let path = nested.join("document.adoc");
+        std::fs::write(&path, "old").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        let id = uri_id(&document_uri).expect("resource ID");
+        let previous_scope = resources
+            .resource_projects
+            .get(&id)
+            .cloned()
+            .expect("previous scope");
+        let previous_generation = resources.generation();
+        let previous_budget = resources
+            .filesystems
+            .get(&previous_scope)
+            .expect("filesystem")
+            .lock()
+            .expect("lock")
+            .budget();
+
+        write_resource_config(&nested, 1, 2, 2, false);
+        std::fs::write(&path, "oversized").expect("oversized source");
+        resources
+            .reload_file(document_uri.clone())
+            .expect_err("migration limit");
+
+        assert_eq!(resources.generation(), previous_generation);
+        assert_eq!(resources.resource_projects.get(&id), Some(&previous_scope));
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("old state")
+                .text()
+                .as_ref(),
+            "old"
+        );
+        assert_eq!(
+            resources
+                .filesystems
+                .get(&previous_scope)
+                .expect("filesystem")
+                .lock()
+                .expect("lock")
+                .budget(),
+            previous_budget
+        );
+        assert_eq!(resources.filesystems.len(), 1);
+        assert_eq!(resources.retained_layers.len(), 1);
+    }
+
+    #[test]
+    fn failed_overlay_registration_is_atomic_across_workspace_and_budget() {
+        let root = TestDirectory::new();
+        let disk = root.0.join("disk.adoc");
+        let overlay = root.0.join("overlay.adoc");
+        std::fs::write(&disk, "disk").expect("disk source");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots_with_limits(
+                &[Url::from_directory_path(&root.0).expect("root URI")],
+                WorkspaceLimits {
+                    resources: RetainedResourceLimits {
+                        max_files: usize::MAX,
+                        max_total_bytes: u64::MAX,
+                        max_resource_bytes: u64::MAX,
+                    },
+                    max_roots: 1,
+                },
+            )
+            .expect("load workspace");
+        let overlay_uri = Url::from_file_path(overlay).expect("overlay URI");
+        let previous_generation = resources.generation();
+        let previous_retained = resources.retained_layers.clone();
+
+        resources
+            .upsert_open(overlay_uri.clone(), 1, "open")
+            .expect_err("root limit");
+
+        assert_eq!(resources.generation(), previous_generation);
+        assert!(resources.get(&overlay_uri).is_none());
+        assert_eq!(resources.retained_layers.len(), previous_retained.len());
+        assert!(
+            !resources
+                .resource_projects
+                .contains_key(&uri_id(&overlay_uri).expect("resource ID"))
+        );
+    }
+
+    #[test]
+    fn failed_configuration_reload_preserves_disk_and_open_overlay() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 1, 8, 8, false);
+        let path = root.0.join("document.adoc");
+        std::fs::write(&path, "disk").expect("disk source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("load workspace");
+        resources
+            .upsert_open(document_uri.clone(), 1, "open")
+            .expect("open overlay");
+        let previous_generation = resources.generation();
+
+        write_resource_config(&root.0, 1, 4, 4, false);
+        resources
+            .reload_roots_with_open_sources(
+                &[root_uri],
+                &[(document_uri.clone(), 2, Arc::from("too large"))],
+            )
+            .expect_err("overlay limit");
+
+        assert_eq!(resources.generation(), previous_generation);
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("previous overlay")
+                .text()
+                .as_ref(),
+            "open"
+        );
+    }
+
+    #[test]
     fn retained_layer_plan_rejects_overlay_bytes_before_workspace_ingest() {
         let root = TestDirectory::new();
         write_resource_config(&root.0, 1, 3, 3, false);
@@ -890,7 +1260,7 @@ mod tests {
         resources.load_roots(&[root_uri]).expect("load workspace");
 
         std::fs::remove_file(first).expect("remove first source");
-        resources.remove_disk(&first_uri);
+        resources.remove_disk(&first_uri).expect("remove disk");
         std::fs::write(&second, "new\n").expect("second source");
         resources
             .reload_file(second_uri.clone())
@@ -1024,7 +1394,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_configuration_fails_closed_instead_of_retaining_the_old_plan() {
+    fn invalid_configuration_preserves_state_but_rejects_new_input() {
         let root = TestDirectory::new();
         write_resource_config(&root.0, 1, 8, 8, false);
         let path = root.0.join("document.adoc");
@@ -1042,7 +1412,14 @@ mod tests {
             .load_roots(&[root_uri])
             .expect_err("invalid configuration");
 
-        assert!(resources.get(&document_uri).is_none());
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("previous state")
+                .text()
+                .as_ref(),
+            "old"
+        );
         assert!(resources.input(&document_uri).is_err());
     }
 

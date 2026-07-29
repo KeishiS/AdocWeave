@@ -150,10 +150,33 @@ impl Default for RetainedResourceLimits {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct RetainedLayerCharge {
+/// Byte charges retained for the two independently owned resource layers.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RetainedLayerCharge {
+    /// Bytes retained for the filesystem-backed layer.
     disk_bytes: Option<u64>,
+    /// Bytes retained for the open-document layer.
     overlay_bytes: Option<u64>,
+}
+
+impl RetainedLayerCharge {
+    /// Constructs one layer charge.
+    pub const fn new(disk_bytes: Option<u64>, overlay_bytes: Option<u64>) -> Self {
+        Self {
+            disk_bytes,
+            overlay_bytes,
+        }
+    }
+
+    /// Returns the disk-layer charge.
+    pub const fn disk_bytes(self) -> Option<u64> {
+        self.disk_bytes
+    }
+
+    /// Returns the overlay-layer charge.
+    pub const fn overlay_bytes(self) -> Option<u64> {
+        self.overlay_bytes
+    }
 }
 
 /// Transactional accounting for disk and overlay layers in one project scope.
@@ -166,6 +189,36 @@ pub struct RetainedResourceBudget {
 }
 
 impl RetainedResourceBudget {
+    /// Returns the layer charges for one resource identity.
+    pub fn charge(&self, id: &ResourceId) -> RetainedLayerCharge {
+        self.resources.get(id).copied().unwrap_or_default()
+    }
+
+    /// Returns whether this scope retains no resource layers.
+    pub fn is_empty(&self) -> bool {
+        self.resources.is_empty()
+    }
+
+    /// Returns a budget with both layers replaced atomically.
+    pub fn with_layers(
+        &self,
+        id: ResourceId,
+        charge: RetainedLayerCharge,
+        limits: RetainedResourceLimits,
+    ) -> Result<Self, WorkspaceError> {
+        let mut replacement = self.clone();
+        replacement.resources.insert(id.clone(), charge);
+        replacement.validate_replacement(id, limits)?;
+        Ok(replacement)
+    }
+
+    /// Returns a budget with both layers released.
+    pub fn without_resource(&self, id: &ResourceId) -> Self {
+        let mut replacement = self.clone();
+        replacement.resources.remove(id);
+        replacement
+    }
+
     /// Returns a budget with one disk layer inserted, replaced, or removed.
     pub fn with_disk(
         &self,
