@@ -62,6 +62,7 @@ pub struct WorkspaceResources {
     resource_projects: BTreeMap<ResourceId, ProjectScopeId>,
     retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget>,
     next_disk_version: i64,
+    last_load_failed_closed: bool,
 }
 
 struct PreparedWorkspaceRead {
@@ -92,10 +93,35 @@ impl WorkspaceResources {
         open_sources: &[(Url, i64, Arc<str>)],
     ) -> Result<(), String> {
         let mut replacement = self.clone();
-        replacement.load_roots(roots)?;
+        if let Err(error) = replacement.load_roots(roots) {
+            if replacement.last_load_failed_closed {
+                *self = replacement;
+            }
+            return Err(error);
+        }
         for (uri, version, source) in open_sources {
-            if replacement.has_resource_authority(uri)? {
-                replacement.upsert_open(uri.clone(), *version, Arc::clone(source))?;
+            let has_authority = match replacement.has_resource_authority(uri) {
+                Ok(has_authority) => has_authority,
+                Err(error) => {
+                    replacement.fail_closed(
+                        replacement.roots.clone(),
+                        adapter_managed_workspace_limits(),
+                    );
+                    *self = replacement;
+                    return Err(error);
+                }
+            };
+            if has_authority {
+                if let Err(error) =
+                    replacement.upsert_open(uri.clone(), *version, Arc::clone(source))
+                {
+                    replacement.fail_closed(
+                        replacement.roots.clone(),
+                        adapter_managed_workspace_limits(),
+                    );
+                    *self = replacement;
+                    return Err(error);
+                }
             }
         }
         *self = replacement;
@@ -107,7 +133,9 @@ impl WorkspaceResources {
         roots: &[Url],
         limits: WorkspaceLimits,
     ) -> Result<(), String> {
-        let mut paths = roots
+        self.last_load_failed_closed = false;
+        let seed = Generation::new(self.inner.generation().get().saturating_add(1));
+        let mut paths = match roots
             .iter()
             .map(|root| {
                 root.to_file_path()
@@ -115,98 +143,149 @@ impl WorkspaceResources {
                     .canonicalize()
                     .map_err(|error| format!("cannot canonicalize workspace root: {error}"))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.fail_closed(Vec::new(), limits);
+                return Err(error);
+            }
+        };
         paths.sort();
         paths.dedup();
-        let discovery = (!paths.is_empty())
-            .then(|| {
-                LocalFilesystemPolicy::new(
-                    paths.clone(),
-                    adocweave_host::FilesystemReadLimits::default(),
-                )
-            })
-            .transpose()
-            .map_err(|error| error.to_string())?
-            .map(|policy| policy.session())
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        let candidates = match discovery.as_ref() {
-            Some(session) => session
-                .discover_adoc_paths()
-                .map_err(|error| error.to_string())?,
-            None => Vec::new(),
-        };
-        let seed = Generation::new(self.inner.generation().get().saturating_add(1));
-        let mut inner = Workspace::new_at_generation(limits, seed);
-        let mut filesystems = BTreeMap::new();
-        let mut resource_projects = BTreeMap::new();
-        let mut project_plans = BTreeMap::new();
-        let mut retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget> = BTreeMap::new();
-        let mut next_disk_version = self.next_disk_version;
-        for path in candidates {
-            let (scope, config) = scope_and_config_for_path_typed(&paths, &path)?;
-            if !resource_path_is_allowed(config.as_ref(), &path) {
-                continue;
-            }
-            let plan = config.as_ref().map_or_else(
-                adocweave_config::ResolvedResourceLimitPlan::default,
-                |snapshot| snapshot.config.resources.limit_plan,
-            );
-            if let Some(previous) = project_plans.insert(scope.clone(), plan)
-                && previous != plan
-            {
-                return Err("project resource limit plan changed during workspace scan".to_owned());
-            }
-            let filesystem = match filesystems.entry(scope.clone()) {
-                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    let session = LocalFilesystemPolicy::new(
-                        [scope.workspace_root.clone()],
-                        plan.filesystem_reads,
+        let preserve_previous = std::cell::Cell::new(false);
+        let load_result = (|| {
+            let discovery = (!paths.is_empty())
+                .then(|| {
+                    LocalFilesystemPolicy::new(
+                        paths.clone(),
+                        adocweave_host::FilesystemReadLimits::default(),
                     )
-                    .map_err(|error| error.to_string())?
-                    .session()
-                    .map_err(|error| error.to_string())?;
-                    entry.insert(Arc::new(Mutex::new(session)))
-                }
+                })
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .map(|policy| policy.session())
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let candidates = match discovery.as_ref() {
+                Some(session) => session
+                    .discover_adoc_paths()
+                    .map_err(|error| error.to_string())?,
+                None => Vec::new(),
             };
-            let uri = Url::from_file_path(&path).map_err(|()| {
-                format!("cannot convert workspace path to URI: {}", path.display())
-            })?;
-            let file = filesystem
-                .lock()
-                .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-                .read_utf8(
-                    LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
-                    &path,
-                )
-                .map_err(|error| error.to_string())?;
-            next_disk_version = next_disk_version.saturating_add(1);
-            let (source_id, text) = file.into_parts();
-            let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
-            let budget = retained_layers
-                .get(&scope)
-                .cloned()
-                .unwrap_or_default()
-                .with_disk(id.clone(), Some(text.len() as u64), plan.retained_layers)
-                .map_err(|error| error.to_string())?;
-            inner
-                .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
-                .map_err(|error| error.to_string())?;
-            inner
-                .register_root(id.clone())
-                .map_err(|error| error.to_string())?;
-            retained_layers.insert(scope.clone(), budget);
-            resource_projects.insert(id, scope);
+            let mut inner = Workspace::new_at_generation(limits, seed);
+            let mut filesystems = BTreeMap::new();
+            let mut resource_projects = BTreeMap::new();
+            let mut project_plans = BTreeMap::new();
+            let mut retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget> =
+                BTreeMap::new();
+            let mut next_disk_version = self.next_disk_version;
+            for path in candidates {
+                let config = match config_for_path_typed(&paths, &path) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        preserve_previous
+                            .set(error.code == adocweave_config::ConfigErrorCode::ReadFailed);
+                        return Err(error.to_string());
+                    }
+                };
+                let workspace_root = paths
+                    .iter()
+                    .filter(|root| path.starts_with(root))
+                    .max_by_key(|root| root.components().count())
+                    .cloned()
+                    .expect("discovered resource belongs to a canonical workspace root");
+                let scope = ProjectScopeId {
+                    workspace_root,
+                    config_path: config.as_ref().map(|snapshot| snapshot.path.clone()),
+                };
+                if !resource_path_is_allowed(config.as_ref(), &path) {
+                    continue;
+                }
+                let plan = config.as_ref().map_or_else(
+                    adocweave_config::ResolvedResourceLimitPlan::default,
+                    |snapshot| snapshot.config.resources.limit_plan,
+                );
+                if let Some(previous) = project_plans.insert(scope.clone(), plan)
+                    && previous != plan
+                {
+                    return Err(
+                        "project resource limit plan changed during workspace scan".to_owned()
+                    );
+                }
+                let filesystem = match filesystems.entry(scope.clone()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        let session = LocalFilesystemPolicy::new(
+                            [scope.workspace_root.clone()],
+                            plan.filesystem_reads,
+                        )
+                        .map_err(|error| error.to_string())?
+                        .session()
+                        .map_err(|error| error.to_string())?;
+                        entry.insert(Arc::new(Mutex::new(session)))
+                    }
+                };
+                let uri = Url::from_file_path(&path).map_err(|()| {
+                    format!("cannot convert workspace path to URI: {}", path.display())
+                })?;
+                let file = filesystem
+                    .lock()
+                    .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
+                    .read_utf8(
+                        LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
+                        &path,
+                    )
+                    .map_err(|error| error.to_string())?;
+                next_disk_version = next_disk_version.saturating_add(1);
+                let (source_id, text) = file.into_parts();
+                let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
+                let budget = retained_layers
+                    .get(&scope)
+                    .cloned()
+                    .unwrap_or_default()
+                    .with_disk(id.clone(), Some(text.len() as u64), plan.retained_layers)
+                    .map_err(|error| error.to_string())?;
+                inner
+                    .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
+                    .map_err(|error| error.to_string())?;
+                inner
+                    .register_root(id.clone())
+                    .map_err(|error| error.to_string())?;
+                retained_layers.insert(scope.clone(), budget);
+                resource_projects.insert(id, scope);
+            }
+            self.inner = inner;
+            self.roots = paths.clone();
+            self.filesystems = filesystems;
+            self.project_plans = project_plans;
+            self.resource_projects = resource_projects;
+            self.retained_layers = retained_layers;
+            self.next_disk_version = next_disk_version;
+            Ok(())
+        })();
+        if let Err(error) = load_result {
+            if !preserve_previous.get() {
+                self.fail_closed(paths, limits);
+            }
+            return Err(error);
         }
-        self.inner = inner;
-        self.roots = paths;
-        self.filesystems = filesystems;
-        self.project_plans = project_plans;
-        self.resource_projects = resource_projects;
-        self.retained_layers = retained_layers;
-        self.next_disk_version = next_disk_version;
         Ok(())
+    }
+
+    fn fail_closed(&mut self, roots: Vec<PathBuf>, limits: WorkspaceLimits) {
+        let seed = Generation::new(self.inner.generation().get().saturating_add(1));
+        self.inner = Workspace::new_at_generation(limits, seed);
+        self.roots = roots;
+        self.filesystems.clear();
+        self.project_plans.clear();
+        self.resource_projects.clear();
+        self.retained_layers.clear();
+        self.last_load_failed_closed = true;
+    }
+
+    pub(crate) const fn last_load_failed_closed(&self) -> bool {
+        self.last_load_failed_closed
     }
 
     pub fn reload_file(&mut self, uri: Url) -> Result<BTreeSet<String>, String> {
@@ -1236,7 +1315,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_configuration_reload_preserves_disk_and_open_overlay() {
+    fn valid_stricter_reload_clears_disk_and_open_overlay() {
         let root = TestDirectory::new();
         write_resource_config(&root.0, 1, 8, 8, false);
         let path = root.0.join("document.adoc");
@@ -1250,8 +1329,6 @@ mod tests {
         resources
             .upsert_open(document_uri.clone(), 1, "open")
             .expect("open overlay");
-        let previous_generation = resources.generation();
-
         write_resource_config(&root.0, 1, 4, 4, false);
         resources
             .reload_roots_with_open_sources(
@@ -1260,15 +1337,8 @@ mod tests {
             )
             .expect_err("overlay limit");
 
-        assert_eq!(resources.generation(), previous_generation);
-        assert_eq!(
-            resources
-                .get(&document_uri)
-                .expect("previous overlay")
-                .text()
-                .as_ref(),
-            "open"
-        );
+        assert!(resources.last_load_failed_closed());
+        assert!(resources.get(&document_uri).is_none());
     }
 
     #[test]
@@ -1434,6 +1504,7 @@ mod tests {
             .expect_err("configuration read failure");
 
         assert!(error.contains("read-failed"), "{error}");
+        assert!(!resources.last_load_failed_closed());
         assert_eq!(
             resources
                 .get(&document_uri)
@@ -1445,7 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_configuration_preserves_state_but_rejects_new_input() {
+    fn invalid_configuration_clears_state_and_rejects_new_input() {
         let root = TestDirectory::new();
         write_resource_config(&root.0, 1, 8, 8, false);
         let path = root.0.join("document.adoc");
@@ -1463,19 +1534,13 @@ mod tests {
             .load_roots(&[root_uri])
             .expect_err("invalid configuration");
 
-        assert_eq!(
-            resources
-                .get(&document_uri)
-                .expect("previous state")
-                .text()
-                .as_ref(),
-            "old"
-        );
+        assert!(resources.last_load_failed_closed());
+        assert!(resources.get(&document_uri).is_none());
         assert!(resources.input(&document_uri).is_err());
     }
 
     #[test]
-    fn initial_invalid_configuration_leaves_every_workspace_field_unchanged() {
+    fn initial_invalid_configuration_commits_an_empty_trusted_state() {
         let root = TestDirectory::new();
         std::fs::write(root.0.join("document.adoc"), "source").expect("source");
         std::fs::write(root.0.join(adocweave_config::FILE_NAME), "invalid = true\n")
@@ -1489,10 +1554,11 @@ mod tests {
             .load_roots(&[root_uri])
             .expect_err("invalid configuration");
 
-        assert_eq!(resources.generation(), generation);
+        assert!(resources.generation() > generation);
         assert_eq!(resources.next_disk_version, next_disk_version);
-        assert!(resources.roots.is_empty());
+        assert_eq!(resources.roots, vec![root.0.canonicalize().expect("root")]);
         assert!(resources.inner.roots().is_empty());
+        assert!(resources.last_load_failed_closed());
         assert!(resources.filesystems.is_empty());
         assert!(resources.project_plans.is_empty());
         assert!(resources.resource_projects.is_empty());
