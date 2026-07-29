@@ -178,6 +178,71 @@ fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
 }
 
 #[test]
+fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-outside-open-{unique}"));
+    let docs = root.join("docs");
+    let other = root.join("other");
+    fs::create_dir_all(&docs).expect("docs");
+    fs::create_dir_all(&other).expect("other");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[resources]\nroots = [\"docs\"]\n",
+    )
+    .expect("configuration");
+    let accepted_path = docs.join("accepted.adoc");
+    let rejected_path = other.join("rejected.adoc");
+    fs::write(&accepted_path, "accepted").expect("accepted source");
+    fs::write(&rejected_path, "rejected").expect("rejected source");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let accepted_uri = lsp::Url::from_file_path(&accepted_path).expect("accepted URI");
+    let rejected_uri = lsp::Url::from_file_path(&rejected_path).expect("rejected URI");
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    })));
+    let jobs = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": accepted_uri,
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "accepted"
+        }
+    })));
+    assert_eq!(jobs.len(), 1);
+    let open_sources = service.documents.open_sources();
+
+    let rejected = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": rejected_uri,
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "open"
+        }
+    })));
+
+    assert!(rejected.is_empty());
+    assert_eq!(service.documents.open_sources(), open_sources);
+    assert!(service.documents.get(rejected_uri.as_str()).is_none());
+    let diagnostics = service.diagnostics(&rejected_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(lsp::NumberOrString::String(
+                "workspace-resource-error".to_owned(),
+            ))
+            && diagnostic
+                .message
+                .contains("outside configured resource roots")
+    }));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn workspace_folders_null_does_not_fall_back_to_legacy_root_uri() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

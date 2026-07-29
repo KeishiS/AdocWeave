@@ -1193,36 +1193,49 @@ fn resolve_input_path_scopes(
     paths: &[PathBuf],
     boundary: &Path,
 ) -> Result<std::collections::BTreeMap<PathBuf, ResolvedCliInput>, CliError> {
-    let mut scopes = std::collections::BTreeMap::<CliProjectScopeId, (usize, usize)>::new();
+    resolve_input_path_scopes_with_hook(arguments, paths, boundary, |_| {})
+}
+
+fn resolve_input_path_scopes_with_hook(
+    arguments: &Arguments,
+    paths: &[PathBuf],
+    boundary: &Path,
+    mut after_path: impl FnMut(usize),
+) -> Result<std::collections::BTreeMap<PathBuf, ResolvedCliInput>, CliError> {
+    let mut scopes = std::collections::BTreeMap::<
+        CliProjectScopeId,
+        (usize, adocweave_config::ResolvedProjectConfig),
+    >::new();
     let mut resolved = std::collections::BTreeMap::new();
-    for path in paths {
+    for (index, path) in paths.iter().enumerate() {
         let snapshot = load_project_config_at(arguments, path, boundary)?;
         let scope = cli_project_scope(path, snapshot.as_ref());
         let config = snapshot.as_ref().map_or_else(
             adocweave_config::ResolvedProjectConfig::default,
             |snapshot| snapshot.config.clone(),
         );
-        let limit = config.resources.limit_plan.filesystem_reads.max_files;
-        let entry = scopes.entry(scope).or_insert((0, limit));
-        if entry.1 != limit {
+        let entry = scopes.entry(scope.clone()).or_insert((0, config.clone()));
+        if entry.1 != config {
             return Err(CliError::ResourceLimit(
-                "project resource limit plan changed while collecting inputs".to_owned(),
+                "project configuration changed while collecting inputs".to_owned(),
             ));
         }
         entry.0 = entry.0.saturating_add(1);
-        if entry.0 > entry.1 {
+        let limit = entry.1.resources.limit_plan.filesystem_reads.max_files;
+        if entry.0 > limit {
             return Err(CliError::ResourceLimit(format!(
                 "filesystem resource count limit exceeded: {}",
-                entry.1
+                limit
             )));
         }
         resolved.insert(
             path.clone(),
             ResolvedCliInput {
-                scope: cli_project_scope(path, snapshot.as_ref()),
-                config,
+                scope,
+                config: entry.1.clone(),
             },
         );
+        after_path(index);
     }
     Ok(resolved)
 }
@@ -2264,7 +2277,7 @@ mod tests {
         Action, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS, DEFAULT_PREVIEW_PORT,
         DiagnosticFormat, FormatOptions, MAX_SCAN_ENTRIES, ProjectRetainedBudget,
         charge_scan_entry, cli_project_scope, parse_arguments, render_completion_script,
-        resolve_input_path_scopes,
+        resolve_input_path_scopes_with_hook,
     };
     use crate::commands::model::{self, CommandId};
 
@@ -2693,35 +2706,26 @@ mod tests {
         .expect("multi-path arguments") else {
             panic!("expected run action");
         };
-        let resolved = resolve_input_path_scopes(
+        let error = resolve_input_path_scopes_with_hook(
             &arguments,
             &[first.clone(), second.clone()],
             directory.path(),
+            |index| {
+                if index == 0 {
+                    std::fs::write(
+                        &config,
+                        "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 2\nmax-total-bytes = 1\nmax-resource-bytes = 1\n",
+                    )
+                    .expect("stricter config");
+                }
+            },
         )
-        .expect("resolve project once");
-
-        std::fs::write(
-            &config,
-            "schema-version = 1\n[resources]\nroots = [\".\"]\nmax-files = 1\nmax-total-bytes = 1\nmax-resource-bytes = 1\n",
-        )
-        .expect("stricter config");
-        assert_eq!(
-            resolved[&first]
-                .config
-                .resources
-                .limit_plan
-                .filesystem_reads
-                .max_files,
-            2
-        );
-        assert_eq!(
-            resolved[&second]
-                .config
-                .resources
-                .limit_plan
-                .filesystem_reads
-                .max_files,
-            2
+        .expect_err("configuration changed between paths");
+        assert!(
+            error
+                .to_string()
+                .contains("project configuration changed while collecting inputs"),
+            "{error}"
         );
     }
 

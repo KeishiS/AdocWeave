@@ -183,7 +183,7 @@ impl RetainedLayerCharge {
 ///
 /// The returned replacement budget is committed by the caller only after the
 /// corresponding workspace update succeeds.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RetainedResourceBudget {
     resources: BTreeMap<ResourceId, RetainedLayerCharge>,
     resource_count: usize,

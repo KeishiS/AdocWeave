@@ -115,6 +115,8 @@ diskとoverlayを新しい範囲へ移し、旧filesystem課金を解放して�
 project設定の変更通知と本文の変更通知を同時に受け取った場合は、project全体を先に再読込し、新しいplanを
 適用してから本文をWorkspaceへ渡します。既存sessionのplanと現在の設定が一致しない場合は個別読込を拒否し、
 旧planで本文を読みません。
+CLIの複数path処理は、全入力のproject設定を本文読込前に解決します。同じproject scopeから異なる設定内容を
+観測した場合は処理を開始せず、各入力で別のplanを使いません。
 
 ``ResolvedResourceLimitPlan``は、一つのproject設定からfilesystem読込、diskとoverlayの保持、および
 解析snapshotの三つの上限を構築します。これらは同じ設定値から作られますが、課金対象が異なるため別の型です。
@@ -122,8 +124,14 @@ project設定の変更通知と本文の変更通知を同時に受け取った�
 ``RetainedResourceLimits``を確認した後にだけWorkspaceへ取り込みます。解析時はroot文書に最も近い設定の
 ``AnalysisSnapshotLimits``を、include許可範囲へ絞った有効resourceに適用します。
 filesystemの再読込後に保持上限またはWorkspace更新を拒否した場合は、再読込前の課金へ戻します。
+``RetainedResourceBudget::try_replace_layers``とWorkspaceはresource数と保持byte数を差分更新し、
+候補の検証が成功した後にだけresourceと合計値を更新します。初期走査でも保持済みresource全体を
+入力ごとに複製または再集計しません。
 解析snapshotは許可範囲のresourceを列挙しながら件数、各本文のbyte数および合計byte数を加算し、
 上限を超えた時点で後続resourceを複製せずに拒否します。許可範囲外のresourceはこの加算に含めません。
+複数のworkspace rootでは、設定の有無にかかわらず別rootのresourceをsnapshotへ含めません。
+同じworkspace root内でproject設定がある場合は、その設定の``resources.roots``が許可する
+nested projectのresourceをroot文書のplanで課金します。
 
 workspace rootの再読込は、新しいfilesystem session、plan、保持予算およびWorkspaceを一時状態へ構築し、
 全て成功した後に置き換えます。``ConfigErrorCode::ReadFailed``による一時的な設定fileの読込失敗だけは、
@@ -132,6 +140,9 @@ workspace rootの再読込は、新しいfilesystem session、plan、保持予�
 旧planまたは既定値へfallbackせず、open documentを再解析して``workspace-input-error``を設定し、
 古いdocument viewを破棄します。それ以外の通常のproject移行でdisk、overlay、保持予算および解析rootの
 いずれかを更新できない場合は、同じ操作に含まれる全状態を更新前へ戻します。
+初回読込後にopen documentを戻す段階でも、設定fileの読込失敗は同じ分類を維持します。
+``didOpen``と再読込時のopen documentは同じresource root検査を通り、許可範囲外のURIは
+DocumentStore、Workspace、保持予算およびgenerationを変更せずに拒否します。
 
 複数rootは独立したfilesystem境界です。あるroot内のsymlinkが別の許可済みrootを指す場合も、
 読込開始時に選んだrootから外へ移動するため拒否します。同じfileを両方のrootから参照する必要がある場合は、

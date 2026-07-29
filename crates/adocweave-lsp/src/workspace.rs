@@ -553,10 +553,14 @@ impl WorkspaceResources {
         version: i64,
         text: impl Into<Arc<str>>,
     ) -> Result<BTreeSet<String>, String> {
-        let path = uri
-            .to_file_path()
-            .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        let (scope, plan) = self.plan_for_path(&path)?;
+        let Some((scope, plan)) = self
+            .open_scope_and_plan(&uri)
+            .map_err(|error| error.to_string())?
+        else {
+            return Err(format!(
+                "workspace resource is outside configured resource roots: {uri}"
+            ));
+        };
         self.upsert_open_with_plan(uri, version, text.into(), scope, plan)
     }
 
@@ -779,8 +783,11 @@ impl WorkspaceResources {
         let limits = project_config.resources.limit_plan.analysis_snapshot;
         let mut budget = adocweave_config::AnalysisSnapshotBudget::new(limits);
         let snapshot = self.inner.try_snapshot_resources(|id, resource| {
-            let same_scope = root_scope.config_path.is_some()
-                || self.resource_projects.get(id) == Some(root_scope);
+            let resource_scope = self.resource_projects.get(id);
+            let same_scope = resource_scope.is_some_and(|scope| {
+                scope.workspace_root == root_scope.workspace_root
+                    && (root_scope.config_path.is_some() || scope == root_scope)
+            });
             let allowed = if !same_scope {
                 false
             } else if id == &root_id {
@@ -867,19 +874,6 @@ impl WorkspaceResources {
             |snapshot| snapshot.config.resources.limit_plan,
         );
         Ok(Some((scope, plan)))
-    }
-
-    fn plan_for_path(
-        &self,
-        path: &Path,
-    ) -> Result<(ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan), String> {
-        let (scope, config) = scope_and_config_for_path_typed(&self.roots, path)
-            .map_err(|error| error.to_string())?;
-        let plan = config.as_ref().map_or_else(
-            adocweave_config::ResolvedResourceLimitPlan::default,
-            |snapshot| snapshot.config.resources.limit_plan,
-        );
-        Ok((scope, plan))
     }
 }
 
@@ -1304,6 +1298,80 @@ mod tests {
             error.code,
             adocweave_workspace::WorkspaceErrorCode::Preprocess
         );
+    }
+
+    #[test]
+    fn configured_multi_root_without_explicit_roots_excludes_another_workspace_root() {
+        let first = TestDirectory::new();
+        let second = TestDirectory::new();
+        std::fs::write(
+            first.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[resources]\ninclude = true\nroots = []\n",
+        )
+        .expect("first config");
+        let first_path = first.0.join("document.adoc");
+        let second_path = second.0.join("private.adoc");
+        std::fs::write(&first_path, "first").expect("first source");
+        std::fs::write(&second_path, "private").expect("second source");
+        let first_uri = Url::from_file_path(&first_path).expect("first URI");
+        let second_id =
+            uri_id(&Url::from_file_path(&second_path).expect("second URI")).expect("second ID");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(&[
+                Url::from_directory_path(&first.0).expect("first root URI"),
+                Url::from_directory_path(&second.0).expect("second root URI"),
+            ])
+            .expect("load roots");
+
+        let input = resources.input(&first_uri).expect("first input");
+        assert!(input.options.enable_includes);
+        assert_eq!(input.snapshot.resources().count(), 1);
+        assert!(input.snapshot.get(&second_id).is_none());
+    }
+
+    #[test]
+    fn open_outside_configured_roots_preserves_workspace_and_budgets() {
+        let root = TestDirectory::new();
+        let docs = root.0.join("docs");
+        let other = root.0.join("other");
+        std::fs::create_dir(&docs).expect("docs");
+        std::fs::create_dir(&other).expect("other");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[resources]\nroots = [\"docs\"]\n",
+        )
+        .expect("config");
+        let accepted = docs.join("accepted.adoc");
+        let rejected = other.join("rejected.adoc");
+        std::fs::write(&accepted, "accepted").expect("accepted source");
+        std::fs::write(&rejected, "rejected").expect("rejected source");
+        let rejected_uri = Url::from_file_path(&rejected).expect("rejected URI");
+        let rejected_id = uri_id(&rejected_uri).expect("rejected ID");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(&[Url::from_directory_path(&root.0).expect("root URI")])
+            .expect("load root");
+        let generation = resources.generation();
+        let projects = resources.resource_projects.clone();
+        let budgets = resources.retained_layers.clone();
+
+        let error = resources
+            .upsert_open(rejected_uri, 1, "open")
+            .expect_err("outside authority");
+        assert!(
+            error.contains("outside configured resource roots"),
+            "{error}"
+        );
+        assert_eq!(resources.generation(), generation);
+        assert_eq!(resources.resource_projects, projects);
+        assert!(
+            resources
+                .get(&Url::from_file_path(rejected).expect("URI"))
+                .is_none()
+        );
+        assert!(!resources.resource_projects.contains_key(&rejected_id));
+        assert_eq!(resources.retained_layers, budgets);
     }
 
     #[test]
