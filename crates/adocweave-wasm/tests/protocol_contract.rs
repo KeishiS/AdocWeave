@@ -2,9 +2,10 @@ use adocweave::NeverCancel;
 use adocweave_wasm::{
     WasmActiveUrlPolicy, WasmAnalysisOptions, WasmAnalysisPreprocessInput, WasmAuthoredUrlPolicy,
     WasmDiagnosticProfile, WasmDocumentMode, WasmExternalLinkPolicy, WasmLimits, WasmOutputLimits,
-    WasmPreprocessOptions, WasmPreprocessRequest, WasmRenderPolicy, WasmRequest, WasmResource,
-    WasmResourceCapabilities, WasmRuleSettings, WasmSafeMode, WasmSourceLanguagePolicy,
-    WasmStylesheet, WasmSyntaxMode, WasmSyntaxOptions, WasmUnknownSourceLanguage,
+    WasmPreprocessOptions, WasmPreprocessRequest, WasmRenderInputs, WasmRenderPolicy, WasmRequest,
+    WasmResolvedReference, WasmResolvedResource, WasmResource, WasmResourceCapabilities,
+    WasmResourceOutcome, WasmRuleSettings, WasmSafeMode, WasmSourceLanguagePolicy, WasmStylesheet,
+    WasmSyntaxMode, WasmSyntaxOptions, WasmUnknownSourceLanguage,
     WasmUnresolvedReferencePresentation, preprocess_request, process_request,
 };
 use serde_json::{Value, json};
@@ -198,6 +199,10 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     const WIRE: &str = include_str!("../src/request_wire.rs");
     const NORMALIZATION: &str = include_str!("../src/request_normalization.rs");
     const CONVERSION: &str = include_str!("../src/request_conversion.rs");
+    const RENDER_GENERATED: &str = include_str!("../src/render_input_wire_generated.rs");
+    const RENDER_WIRE: &str = include_str!("../src/render_input_wire.rs");
+    const RENDER_NORMALIZATION: &str = include_str!("../src/render_input_normalization.rs");
+    const RENDER_CONVERSION: &str = include_str!("../src/render_input_conversion.rs");
 
     assert!(WIRE.contains("protocol/public-api.json"));
     assert!(WIRE.contains("pub struct WasmRequest"));
@@ -209,8 +214,10 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     assert!(!NORMALIZATION.contains("adocweave::"));
     assert!(!NORMALIZATION.contains("Engine"));
     assert!(!NORMALIZATION.contains("RenderPolicy"));
+    assert!(NORMALIZATION.contains("NormalizedRenderInputs"));
 
     assert!(CONVERSION.contains("NormalizedRequest"));
+    assert!(CONVERSION.contains("NormalizedRenderInputs"));
     assert!(CONVERSION.contains("pub(crate) struct ExecutionRequest"));
     assert!(CONVERSION.contains("Engine"));
     assert!(CONVERSION.contains("RenderPolicy"));
@@ -220,6 +227,41 @@ fn request_modules_keep_wire_normalization_conversion_and_execution_one_way() {
     assert!(FACADE.contains("request_normalization::normalize(request)?"));
     assert!(FACADE.contains("request_conversion::convert(request)?"));
     assert!(FACADE.contains("fn execute_request("));
+
+    assert!(RENDER_GENERATED.starts_with("// @generated"));
+    assert!(RENDER_GENERATED.contains("pub struct WasmRenderInputs"));
+    assert!(!RENDER_GENERATED.contains("adocweave::"));
+    assert!(RENDER_WIRE.contains("render_input_wire_generated"));
+    assert!(!RENDER_WIRE.contains("adocweave::"));
+    assert!(RENDER_NORMALIZATION.contains("pub(crate) struct NormalizedRenderInputs"));
+    assert!(!RENDER_NORMALIZATION.contains("adocweave::"));
+    assert!(!RENDER_NORMALIZATION.contains("use adocweave::Analysis"));
+    assert!(RENDER_CONVERSION.contains("inputs: NormalizedRenderInputs"));
+    assert!(RENDER_CONVERSION.contains("analysis: &Analysis"));
+}
+
+#[test]
+fn generated_render_inputs_match_the_schema_safe_integer_boundary() {
+    fn assert_public<T>() {}
+    assert_public::<WasmRenderInputs>();
+    assert_public::<WasmResolvedReference>();
+    assert_public::<WasmResolvedResource>();
+
+    let outcome = |byte_length: Value| {
+        serde_json::from_value::<WasmResourceOutcome>(json!({
+            "status": "resolved",
+            "href": "asset.png",
+            "mediaType": "image/png",
+            "byteLength": byte_length
+        }))
+    };
+    assert!(outcome(json!(9_007_199_254_740_991_u64)).is_ok());
+    for invalid in [json!(9_007_199_254_740_992_u64), json!(-1), json!(1.5)] {
+        assert!(
+            outcome(invalid.clone()).is_err(),
+            "byteLength accepted {invalid}"
+        );
+    }
 }
 
 #[test]
