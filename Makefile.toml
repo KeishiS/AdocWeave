@@ -105,8 +105,13 @@ dependencies = [
 ]
 
 [tasks.protocol-generated-check]
+dependencies = ["protocol-rust-codegen-test"]
 command = "node"
 args = ["tools/generate-protocol.mjs", "--check"]
+
+[tasks.protocol-rust-codegen-test]
+command = "node"
+args = ["--test", "tools/protocol-rust-codegen.test.mjs"]
 
 [tasks.protocol-corpus-check]
 command = "cargo"
