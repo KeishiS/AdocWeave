@@ -190,9 +190,11 @@ package versionが一致しない要求や未知のfieldは拒否します。ver
 エラーは安定した``code``と利用者向けの``message``だけを返します。source、応答およびエラーは呼び出しごとの
 所有値であり、次回の呼び出しで無効になるpointerを公開しません。
 
-JSON応答のwire型は``protocol/public-api.json``から生成します。コアの解析型をwire型へ変換する処理は
-WASM adapterに置き、生成された型へコアの型や変換規則を持ち込みません。field、列挙値またはtag付きunionを
-変更する場合は、schemaを更新して生成物とprotocol検査を同時に更新します。
+JSONの要求、前処理の入出力、応答およびエラーのwire型は``protocol/public-api.json``から生成します。
+生成された型はコアの型へ依存しません。要求はwire型のfield間制約を検査してからコアの設定へ変換し、
+未検査の値を実行処理へ渡しません。前処理と通常の応答では、コアの結果を生成されたwire型へ投影する処理だけを
+WASM adapterに置きます。field、列挙値またはtag付きunionを変更する場合は、schemaを更新して生成物と
+protocol検査を同時に更新します。
 
 HTML、整形、問題一覧、構造情報、外部リンクの解決結果は用途ごとの公開moduleにあります。型名とJSONの
 詳細はAPIドキュメントを参照してください。

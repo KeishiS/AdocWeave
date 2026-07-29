@@ -6,10 +6,20 @@ const RUST_NAMES = {
   SafeMode: "WasmSafeMode",
 };
 
+const PREPROCESS_OUTPUT_RUST_TYPES = new Set([
+  "PreprocessResponse",
+  "SourceMapSegment",
+  "SourceMapping",
+  "WasmError",
+]);
+
 const RESPONSE_RUST_NAME_OVERRIDES = {
   AdocWeaveWasmResponse: "WasmResponse",
   ParseSummary: "ParseSummary",
+  PreprocessResponse: "WasmPreprocessResponse",
   ProductSet: "WasmProductSet",
+  SourceMapSegment: "WasmSourceMapSegment",
+  WasmError: "WasmError",
 };
 
 const RESPONSE_EXTERNAL_TYPES = new Set([
@@ -127,6 +137,49 @@ export function generateRustPreprocessInputs(schema) {
     rustObject("AnalysisPreprocessInput", contracts.AnalysisPreprocessInput),
     rustObject("PreprocessRequest", contracts.PreprocessRequest),
   ].join("\n\n");
+}
+
+export function generateRustPreprocessOutputs(schema) {
+  const contracts = collectPreprocessOutputContracts(schema);
+  const reached = reachableResponseTypes(
+    ["PreprocessResponse", "WasmError"],
+    contracts,
+  );
+  const expected = [...PREPROCESS_OUTPUT_RUST_TYPES].sort();
+  if (JSON.stringify([...reached].sort()) !== JSON.stringify(expected)) {
+    throw new Error(
+      `generated preprocess Rust output types must exactly match reachable outputs: ${[...reached].sort().join(", ")}`,
+    );
+  }
+  validateResponseRustNames(reached);
+  validateSizedResponseTypes(reached, contracts);
+  return [...reached]
+    .sort()
+    .map((name) => {
+      const contract = contracts[name];
+      if (Array.isArray(contract)) return rustResponseEnum(name, contract);
+      return rustResponseObject(name, contract, reached, contracts);
+    })
+    .join("\n\n");
+}
+
+function collectPreprocessOutputContracts(schema) {
+  const contracts = {};
+  for (const [namespace, entries] of [
+    ["preprocessDefinitions", schema.preprocessDefinitions],
+    ["enums", schema.enums],
+  ]) {
+    if (!entries || typeof entries !== "object") {
+      throw new Error(`missing preprocess Rust output contract namespace ${namespace}`);
+    }
+    for (const [name, contract] of Object.entries(entries)) {
+      if (Object.hasOwn(contracts, name)) {
+        throw new Error(`duplicate preprocess Rust output contract ${name}`);
+      }
+      contracts[name] = contract;
+    }
+  }
+  return contracts;
 }
 
 export function generateRustSharedTypes(schema) {

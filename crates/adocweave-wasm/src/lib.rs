@@ -2,8 +2,8 @@
 
 use adocweave::preprocess::{ProjectionLimits, preprocess};
 use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId, VERSION};
-use serde::Serialize;
 
+mod preprocess_projection;
 mod preprocess_wire;
 mod preprocess_wire_generated;
 mod protocol_generated;
@@ -21,8 +21,8 @@ mod response_wire;
 mod response_wire_generated;
 mod shared_wire_generated;
 pub use preprocess_wire::{
-    WasmAnalysisPreprocessInput, WasmPreprocessOptions, WasmPreprocessRequest,
-    WasmPreprocessResponse, WasmResource, WasmSafeMode, WasmSourceMapSegment,
+    WasmAnalysisPreprocessInput, WasmError, WasmPreprocessOptions, WasmPreprocessRequest,
+    WasmPreprocessResponse, WasmResource, WasmSafeMode, WasmSourceMapSegment, WasmSourceMapping,
 };
 pub use protocol_generated::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, WasmProductSet};
 pub use render_input_wire::{
@@ -45,13 +45,6 @@ use response_projection::{enforce_output_limit, project_response};
 pub use response_wire::*;
 pub use shared_wire_generated::{WasmMathLanguage, WasmSeverity};
 
-#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct WasmError {
-    pub code: String,
-    pub message: String,
-}
-
 pub fn preprocess_request(
     request: WasmPreprocessRequest,
 ) -> Result<WasmPreprocessResponse, WasmError> {
@@ -71,31 +64,7 @@ pub fn preprocess_request(
         code: error.kind.as_str().to_owned(),
         message: error.to_string(),
     })?;
-    let source_map = document
-        .source_map()
-        .iter()
-        .map(|segment| WasmSourceMapSegment {
-            output_start: segment.output_range.start().to_u32(),
-            output_end: segment.output_range.end().to_u32(),
-            source_id: segment
-                .origin
-                .source_id
-                .as_ref()
-                .map(|source_id| source_id.as_str().to_owned()),
-            source_start: segment.origin.range.start().to_u32(),
-            source_end: segment.origin.range.end().to_u32(),
-            mapping: match segment.mapping {
-                adocweave::preprocess::SourceMapping::Identity => "identity",
-                adocweave::preprocess::SourceMapping::WholeOrigin => "whole-origin",
-            }
-            .to_owned(),
-        })
-        .collect();
-    Ok(WasmPreprocessResponse {
-        package_version: VERSION,
-        source: document.source,
-        source_map,
-    })
+    Ok(preprocess_projection::project(document))
 }
 
 pub fn process_request(
@@ -245,6 +214,7 @@ fn serialize_error(error: &WasmError) -> String {
 #[cfg(target_arch = "wasm32")]
 mod bindings {
     use js_sys::Function;
+    use serde::Serialize;
     use serde::de::DeserializeOwned;
     use wasm_bindgen::prelude::*;
 
@@ -1254,7 +1224,10 @@ mod tests {
         .expect("preprocessed response");
         assert_eq!(response.source, "=== Intro\n");
         assert_eq!(response.source_map[0].source_id.as_deref(), Some("intro"));
-        assert_eq!(response.source_map[0].mapping, "whole-origin");
+        assert_eq!(
+            response.source_map[0].mapping,
+            WasmSourceMapping::WholeOrigin
+        );
 
         let mut native_snapshot = ResourceSnapshot::default();
         native_snapshot.insert(
@@ -1322,8 +1295,10 @@ mod tests {
             assert_eq!(
                 wasm.mapping,
                 match native.mapping {
-                    adocweave::preprocess::SourceMapping::Identity => "identity",
-                    adocweave::preprocess::SourceMapping::WholeOrigin => "whole-origin",
+                    adocweave::preprocess::SourceMapping::Identity => WasmSourceMapping::Identity,
+                    adocweave::preprocess::SourceMapping::WholeOrigin => {
+                        WasmSourceMapping::WholeOrigin
+                    }
                 }
             );
         }
