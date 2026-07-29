@@ -479,7 +479,7 @@ dependencies = [
 ]
 
 [tasks.browser-runtime-check]
-description = "Opt-in real-browser acceptance for the browser release archive and bundler path"
+description = "Run the release-intent browser archive in isolated, fallback, and bundler Chromium paths"
 dependencies = ["test-browser-smoke", "test-browser-bundler"]
 
 [tasks.build-wasm-node]

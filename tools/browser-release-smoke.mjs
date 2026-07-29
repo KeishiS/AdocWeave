@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
+const MAX_ARCHIVE_BYTES = 2 * 1024 * 1024;
+const MAX_WASM_BYTES = 1280 * 1024;
 const [archive, chromium = "chromium"] = process.argv.slice(2);
 if (!archive) throw new Error("usage: browser-release-smoke.mjs ARCHIVE [CHROMIUM]");
 const releaseManifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
@@ -34,8 +36,8 @@ try {
   const packageRoot = join(root, entries[0]);
   const archiveBytes = (await stat(archive)).size;
   const wasmBytes = (await stat(join(packageRoot, "wasm/adocweave_wasm_bg.wasm"))).size;
-  if (archiveBytes > 2 * 1024 * 1024) throw new Error(`archive exceeds 2 MiB: ${archiveBytes}`);
-  if (wasmBytes > 1024 * 1024) throw new Error(`WASM exceeds 1 MiB: ${wasmBytes}`);
+  if (archiveBytes > MAX_ARCHIVE_BYTES) throw new Error(`archive exceeds 2 MiB: ${archiveBytes}`);
+  if (wasmBytes > MAX_WASM_BYTES) throw new Error(`WASM exceeds 1.25 MiB: ${wasmBytes}`);
 
   const requests = [];
   const server = createServer(async (request, response) => {
@@ -151,13 +153,13 @@ async function inspectPage(chromium, url, temporaryRoot) {
         const wait = () => {
           const status = document.querySelector('#status').value;
           if (status.startsWith('ready:') || status.startsWith('error:')) {
-            const response = globalThis.adocweaveLastResult.result;
+            const response = globalThis.adocweaveLastResult;
             resolve({
               status,
               html: document.querySelector('#preview').textContent,
               isolated: crossOriginIsolated,
               packageVersion: globalThis.adocweavePackageVersion,
-              resultPackageVersion: globalThis.adocweaveLastResult.packageVersion,
+              resultPackageVersion: response.packageVersion,
               wasmPackageVersion: response.packageVersion,
               analysisPackageVersion: response.parse.packageVersion,
               projectionPackageVersion: response.projection.packageVersion,

@@ -123,6 +123,8 @@ export function validateReleaseWorkflowPolicy({
   plan,
   windowsDistBootstrap,
   windowsDistInstaller,
+  browserSmoke,
+  releaseDistribution,
 }) {
   const releaseDoc = parseWorkflow("release.yml", release);
   const publishDoc = parseWorkflow("release-publish.yml", publish);
@@ -313,6 +315,17 @@ export function validateReleaseWorkflowPolicy({
     item.name === "Browser, Zed, and VS Code artifact build and verification",
   "global artifact step is missing").run;
   requireCommand(globalRun, "cargo make release-global-artifacts", "global uploaded artifacts must pass their complete gate");
+  const browserAcceptance = step(releaseJobs["build-global"], (item) =>
+    item.name === "Browser release archive runtime and bundler acceptance",
+  "release-intent browser archive acceptance is missing");
+  if (browserAcceptance.if !== "needs.changes.outputs.release_main == 'true'") {
+    fail("browser archive acceptance may only run for release-intent main");
+  }
+  requireCommand(
+    browserAcceptance.run,
+    "cargo make browser-runtime-check",
+    "release-intent global candidates must pass the extracted browser archive gate",
+  );
   const smokeRun = step(smokeDoc.jobs?.smoke, (item) =>
     item.name === "Extracted release binary smoke tests", "native smoke is missing").run;
   requireCommand(smokeRun, "node tools/native-release-smoke.mjs", "native smoke must inspect extracted artifacts");
@@ -431,6 +444,9 @@ export function validateReleaseWorkflowPolicy({
       "test-cross-runtime",
     ],
   });
+  requireTask(tasks, "browser-runtime-check", {
+    dependencies: ["test-browser-smoke", "test-browser-bundler"],
+  });
   requireTask(tasks, "quality", {
     dependencies: ["quality-fast", "quality-rust", "quality-adapters"],
   });
@@ -488,6 +504,31 @@ export function validateReleaseWorkflowPolicy({
   requireText(dist, 'cargo-dist-version = "0.32.0"', "cargo-dist must be pinned exactly");
   requireText(dist, 'allow-dirty = ["ci"]', "workflow override must be intentional");
   requireText(dist, 'hosting = "github"', "GitHub Releases must be the only configured host");
+  requireText(
+    browserSmoke,
+    "const MAX_ARCHIVE_BYTES = 2 * 1024 * 1024;",
+    "browser archive performance budget must remain 2 MiB",
+  );
+  requireText(
+    browserSmoke,
+    "const MAX_WASM_BYTES = 1280 * 1024;",
+    "raw browser WASM performance budget must remain 1.25 MiB",
+  );
+  requireText(
+    browserSmoke,
+    "archiveBytes > MAX_ARCHIVE_BYTES",
+    "browser archive validation must enforce its performance budget",
+  );
+  requireText(
+    browserSmoke,
+    "wasmBytes > MAX_WASM_BYTES",
+    "raw browser WASM validation must enforce its performance budget",
+  );
+  requireText(
+    releaseDistribution,
+    "archiveを2 MiB以下、archive内のraw WASMを1.25 MiB以下",
+    "release distribution must document browser performance budgets",
+  );
 }
 
 export function loadWorkflowPolicyInputs() {
@@ -506,6 +547,8 @@ export function loadWorkflowPolicyInputs() {
     plan: JSON.parse(read("release/distribution-plan.json")),
     windowsDistBootstrap: JSON.parse(read("release/windows-dist-bootstrap.json")),
     windowsDistInstaller: read("tools/install-pinned-cargo-dist.ps1"),
+    browserSmoke: read("tools/browser-release-smoke.mjs"),
+    releaseDistribution: read("docs/developer-guide/release-distribution.adoc"),
   };
 }
 
