@@ -119,8 +119,8 @@ test("Rust field identifiers reject keywords, invalid characters, and collisions
   );
 });
 
-test("Rust enum variants reject invalid values and transformed collisions", () => {
-  for (const value of ["bad_value", "self"]) {
+test("Rust enum variants reject non-kebab values, keywords, and duplicates", () => {
+  for (const value of ["bad_value", "serverMode", "self"]) {
     const changed = structuredClone(schema);
     changed.enums.SafeMode.push(value);
     assert.throws(
@@ -132,7 +132,7 @@ test("Rust enum variants reject invalid values and transformed collisions", () =
   }
 
   const collision = structuredClone(schema);
-  collision.enums.SafeMode.push("server-mode", "serverMode");
+  collision.enums.SafeMode.push("server-mode", "server-mode");
   assert.throws(
     () => generateRustPreprocessInputs(collision),
     /enum values collide as Rust identifier ServerMode/,

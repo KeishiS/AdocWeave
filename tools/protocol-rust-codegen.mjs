@@ -216,7 +216,7 @@ function rustField(value) {
 }
 
 function rustVariant(value) {
-  if (typeof value !== "string" || !/^[a-z][A-Za-z0-9]*(?:-[a-z][A-Za-z0-9]*)*$/.test(value)) {
+  if (typeof value !== "string" || !/^[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*$/.test(value)) {
     throw new Error(`unsupported Rust enum value ${JSON.stringify(value)}`);
   }
   return value
