@@ -5,9 +5,11 @@
   "mergeMethod": "SQUASH",
   "maximumDependencies": 1,
   "allowDependencyGroups": false,
+  "allowIndirectDependencies": false,
   "allowMaintainerChanges": false,
+  "allowSecurityUpdates": false,
   "requiresStrictStatusChecks": true,
-  "requiredApprovals": 0,
+  "requiredApprovals": 1,
   "requiredCheckAppId": 15368,
   "requiredChecks": [
     "quality / dependencies",
@@ -21,8 +23,7 @@
       "directory": "/",
       "dependencyTypes": [
         "direct:production",
-        "direct:development",
-        "indirect"
+        "direct:development"
       ],
       "updateTypes": [
         "version-update:semver-patch"
@@ -38,8 +39,7 @@
       "directory": "/editors/zed",
       "dependencyTypes": [
         "direct:production",
-        "direct:development",
-        "indirect"
+        "direct:development"
       ],
       "updateTypes": [
         "version-update:semver-patch"
@@ -54,8 +54,7 @@
       "directory": "/fuzz",
       "dependencyTypes": [
         "direct:production",
-        "direct:development",
-        "indirect"
+        "direct:development"
       ],
       "updateTypes": [
         "version-update:semver-patch"

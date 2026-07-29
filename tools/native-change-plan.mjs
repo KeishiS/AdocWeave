@@ -61,6 +61,8 @@ const NON_RELEASE_FILES = new Set([
   "tools/dependency-governance.sh",
   "tools/dependabot-alert-inventory.sh",
   "tools/dependabot-alert-inventory.test.mjs",
+  "tools/dependabot-alert-snapshot.sh",
+  "tools/dependabot-alert-snapshot.test.mjs",
   "tools/dependabot-auto-merge-policy.mjs",
   "tools/dependabot-auto-merge-policy.test.mjs",
   "tools/dependabot-auto-merge-workflow.test.mjs",

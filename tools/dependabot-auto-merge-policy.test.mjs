@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   evaluateController,
   evaluateEligibility,
+  evaluateReconciliation,
   evaluateStrictRulesetProtection,
   validatePolicy,
 } from "./dependabot-auto-merge-policy.mjs";
@@ -41,6 +42,7 @@ function eligibleInput() {
       dependencies: ["serde"],
       dependencyGroup: "",
       maintainerChanges: false,
+      securityUpdate: false,
     },
     changedFiles: ["Cargo.toml", "Cargo.lock"],
   };
@@ -60,11 +62,12 @@ function controllerInput() {
     securityAlerts: {
       lookupCompleted: true,
       openCount: 0,
+      securityUpdate: false,
     },
     changedFiles: [...input.changedFiles],
     review: {
       changesRequested: false,
-      approvedCount: 0,
+      approvedCount: input.policy.requiredApprovals,
     },
     eligibilityCheck: {
       name: "dependabot / eligibility",
@@ -84,8 +87,15 @@ function controllerInput() {
 }
 
 test("tracked policy starts frozen and excludes high-risk ecosystems", () => {
-  assert.equal(validatePolicy(policy).enabled, false);
-  assert.equal(validatePolicy(policy).requiresStrictStatusChecks, true);
+  const validated = validatePolicy(policy);
+  assert.equal(validated.enabled, false);
+  assert.equal(validated.maximumDependencies, 1);
+  assert.equal(validated.allowDependencyGroups, false);
+  assert.equal(validated.allowIndirectDependencies, false);
+  assert.equal(validated.allowMaintainerChanges, false);
+  assert.equal(validated.allowSecurityUpdates, false);
+  assert.equal(validated.requiresStrictStatusChecks, true);
+  assert.equal(validated.requiredApprovals, 1);
   assert.deepEqual(
     [...new Set(policy.allowedUpdates.map((entry) => entry.packageEcosystem))].sort(),
     ["cargo", "npm"],
@@ -93,7 +103,8 @@ test("tracked policy starts frozen and excludes high-risk ecosystems", () => {
   assert.ok(
     policy.allowedUpdates.every(
       (entry) => entry.updateTypes.length === 1
-        && entry.updateTypes[0] === "version-update:semver-patch",
+        && entry.updateTypes[0] === "version-update:semver-patch"
+        && !entry.dependencyTypes.includes("indirect"),
     ),
   );
 });
@@ -149,9 +160,16 @@ for (const [name, mutate, expected] of [
     input.metadata.dependencyType = "direct:production";
     input.changedFiles = ["editors/vscode/package.json"];
   }, "dependency-type"],
+  ["indirect Cargo dependency", (input) => {
+    input.metadata.dependencyType = "indirect";
+  }, "dependency-type"],
   ["group", (input) => { input.metadata.dependencyGroup = "tooling"; }, "dependency-group"],
   ["multiple dependencies", (input) => { input.metadata.dependencies = ["serde", "syn"]; }, "dependency-count-or-name"],
   ["maintainer changes", (input) => { input.metadata.maintainerChanges = true; }, "maintainer-changes"],
+  ["security update", (input) => { input.metadata.securityUpdate = true; }, "security-update"],
+  ["unknown security update state", (input) => {
+    delete input.metadata.securityUpdate;
+  }, "security-update"],
   ["source file", (input) => { input.changedFiles.push("crates/adocweave/src/lib.rs"); }, "changed-files"],
   ["workflow file", (input) => { input.changedFiles.push(".github/workflows/release.yml"); }, "changed-files"],
 ]) {
@@ -174,6 +192,12 @@ for (const [name, mutate, expected] of [
   ["controller alert lookup missing", (input) => {
     delete input.securityAlerts;
   }, "open-security-alert-or-lookup"],
+  ["controller security update", (input) => {
+    input.securityAlerts.securityUpdate = true;
+  }, "open-security-alert-or-lookup"],
+  ["controller security state missing", (input) => {
+    delete input.securityAlerts.securityUpdate;
+  }, "open-security-alert-or-lookup"],
   ["draft", (input) => { input.pullRequest.draft = true; }, "draft"],
   ["conflict", (input) => { input.pullRequest.mergeable = false; }, "merge-conflict-or-unknown"],
   ["unknown mergeability", (input) => { input.pullRequest.mergeable = null; }, "merge-conflict-or-unknown"],
@@ -189,7 +213,6 @@ for (const [name, mutate, expected] of [
   }, "controller-changed-files"],
   ["changes requested", (input) => { input.review.changesRequested = true; }, "review"],
   ["missing approval", (input) => {
-    input.policy.requiredApprovals = 1;
     input.review.approvedCount = 0;
   }, "review"],
   ["old eligibility", (input) => { input.eligibilityCheck.headSha = "5".repeat(40); }, "eligibility-attestation"],
@@ -219,11 +242,28 @@ function strictRuleset(include = ["~DEFAULT_BRANCH"], exclude = []) {
   return {
     target: "branch",
     enforcement: "active",
+    bypass_actors: [],
     conditions: { ref_name: { include, exclude } },
-    rules: [{
-      type: "required_status_checks",
-      parameters: { strict_required_status_checks_policy: true },
-    }],
+    rules: [
+      {
+        type: "required_status_checks",
+        parameters: {
+          strict_required_status_checks_policy: true,
+          required_status_checks: policy.requiredChecks.map((context) => ({
+            context,
+            integration_id: policy.requiredCheckAppId,
+          })),
+        },
+      },
+      {
+        type: "pull_request",
+        parameters: {
+          required_approving_review_count: policy.requiredApprovals,
+          dismiss_stale_reviews_on_push: true,
+          require_last_push_approval: true,
+        },
+      },
+    ],
   };
 }
 
@@ -239,6 +279,55 @@ test("strict ruleset protection is only one prerequisite and does not activate f
       { eligible: true, reasons: [] },
     );
   }
+});
+
+test("strict ruleset rejects bypass actors in every applicable ruleset", () => {
+  for (const references of [
+    { include: ["refs/heads/main"], exclude: [] },
+    { include: ["refs/heads/*"], exclude: [] },
+    { include: ["refs/heads/main"], exclude: ["refs/heads/release"] },
+  ]) {
+    const bypassed = strictRuleset(["refs/heads/main"]);
+    bypassed.conditions.ref_name = references;
+    bypassed.bypass_actors.push({
+      actor_id: 5,
+      actor_type: "RepositoryRole",
+      bypass_mode: "always",
+    });
+    assert.deepEqual(
+      evaluateStrictRulesetProtection({
+        policy,
+        branch: "main",
+        rulesets: [strictRuleset(["~DEFAULT_BRANCH"]), bypassed],
+      }),
+      { eligible: false, reasons: ["strict-ruleset"] },
+    );
+  }
+});
+
+test("reconciliation fails closed for policy freeze and unsafe alert state", () => {
+  const safeAlerts = {
+    lookupCompleted: true,
+    openCount: 0,
+    securityUpdate: false,
+  };
+  assert.deepEqual(
+    evaluateReconciliation({ policy, securityAlerts: safeAlerts }),
+    { eligible: false, reasons: ["release-freeze"] },
+  );
+  const enabledPolicy = structuredClone(policy);
+  enabledPolicy.enabled = true;
+  assert.deepEqual(
+    evaluateReconciliation({
+      policy: enabledPolicy,
+      securityAlerts: { ...safeAlerts, lookupCompleted: false },
+    }),
+    { eligible: false, reasons: ["open-security-alert-or-lookup"] },
+  );
+  assert.deepEqual(
+    evaluateReconciliation({ policy: enabledPolicy, securityAlerts: safeAlerts }),
+    { eligible: true, reasons: [] },
+  );
 });
 
 for (const [name, mutate] of [
@@ -257,8 +346,43 @@ for (const [name, mutate] of [
   ["inactive enforcement", (ruleset) => {
     ruleset.enforcement = "disabled";
   }],
+  ["GitHub Actions bypass", (ruleset) => {
+    ruleset.bypass_actors.push({
+      actor_id: policy.requiredCheckAppId,
+      actor_type: "Integration",
+      bypass_mode: "always",
+    });
+  }],
+  ["repository role bypass", (ruleset) => {
+    ruleset.bypass_actors.push({
+      actor_id: 5,
+      actor_type: "RepositoryRole",
+      bypass_mode: "always",
+    });
+  }],
+  ["missing bypass inventory", (ruleset) => {
+    delete ruleset.bypass_actors;
+  }],
   ["non-strict status checks", (ruleset) => {
     ruleset.rules[0].parameters.strict_required_status_checks_policy = false;
+  }],
+  ["missing required status check", (ruleset) => {
+    ruleset.rules[0].parameters.required_status_checks.pop();
+  }],
+  ["wrong required status check app", (ruleset) => {
+    ruleset.rules[0].parameters.required_status_checks[0].integration_id = 1;
+  }],
+  ["missing pull request rule", (ruleset) => {
+    ruleset.rules.pop();
+  }],
+  ["no required approval", (ruleset) => {
+    ruleset.rules[1].parameters.required_approving_review_count = 0;
+  }],
+  ["stale reviews remain valid", (ruleset) => {
+    ruleset.rules[1].parameters.dismiss_stale_reviews_on_push = false;
+  }],
+  ["last push approval is not required", (ruleset) => {
+    ruleset.rules[1].parameters.require_last_push_approval = false;
   }],
 ]) {
   test(`strict ruleset rejects ${name}`, () => {
@@ -274,8 +398,29 @@ for (const [name, mutate] of [
 test("invalid and broadened policies fail closed", () => {
   for (const mutate of [
     (changed) => { changed.enabled = "yes"; },
+    (changed) => { changed.maximumDependencies = 2; },
+    (changed) => { changed.allowIndirectDependencies = true; },
+    (changed) => { changed.allowSecurityUpdates = true; },
     (changed) => { changed.requiresStrictStatusChecks = false; },
+    (changed) => { changed.requiredApprovals = 0; },
+    (changed) => { changed.requiredCheckAppId = 1; },
     (changed) => { changed.requiredChecks.push(changed.requiredChecks[0]); },
+    (changed) => { changed.requiredChecks[0] = "easy-check"; },
+    (changed) => { changed.allowedUpdates[0].dependencyTypes.push("indirect"); },
+    (changed) => {
+      const npm = changed.allowedUpdates.find(
+        (entry) => entry.packageEcosystem === "npm",
+      );
+      npm.dependencyTypes.push("direct:production");
+    },
+    (changed) => { changed.allowedUpdates[0].directory = "/other"; },
+    (changed) => { changed.allowedUpdates[0].changedFiles.push("src/*"); },
+    (changed) => {
+      changed.allowedUpdates.push({
+        ...changed.allowedUpdates[0],
+        directory: "/other",
+      });
+    },
     (changed) => { changed.allowedUpdates[0].updateTypes = ["version-update:semver-minor"]; },
     (changed) => { changed.allowedUpdates.push({
       ...changed.allowedUpdates[0],

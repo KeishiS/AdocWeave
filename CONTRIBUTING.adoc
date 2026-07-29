@@ -126,9 +126,12 @@ base commitだけをcheckoutします。Pull Request由来のcodeはcheckoutも�
 ``dependabot / eligibility`` checkを失敗させます。
 
 自動mergeの候補は、Dependabotが同じrepositoryに作成した``main``向けのbranchに限定します。
-Cargoのpatch更新とVS Code拡張の開発用npm依存のpatch更新だけを候補とし、次の更新は手動で確認します。
+Cargoの直接依存関係とVS Code拡張の開発用npm依存関係のpatch更新だけを候補とし、次の更新は
+手動で確認します。
 
 * majorまたはminor更新
+* Cargoの間接依存関係の更新
+* セキュリティ更新
 * repositoryに未解決のDependabot alertが存在する間のすべての更新
 * GitHub Actionsの更新
 * VS Code拡張のruntime依存
@@ -140,29 +143,58 @@ Cargoのpatch更新とVS Code拡張の開発用npm依存のpatch更新だけを�
 mergeしません。自動化はGitHubのauto-mergeへ、検証済みのhead commitを指定して登録します。
 workflow自身がPull Requestを直ちにmergeすることはありません。判定workflowはPull Request由来のcodeを
 checkoutまたは実行せず、write権限をauto-merge登録だけを行うjobへ限定します。
+CI成功後にreviewが提出または取り消された場合は、権限を持たないsignal workflowを起点として判定をやり直します。
+判定時には対象headと現在のbaseに対する成功済み``CI and Release`` runをAPIから再取得し、以前の別headや
+別baseの結果を利用しません。
 
 自動mergeを開始する前に、repositoryの``main`` rulesetで必須checkのstrict設定を有効にします。
-これは``requiresStrictStatusChecks``でも固定する実運用上の必須条件であり、policyを有効にするだけでは
-満たされません。rulesetでstrict設定が有効であることを確認できない場合は、``enabled``を``false``のままにします。
+rulesetにはpolicyの``requiredChecks``を同じGitHub Actions integration IDで登録し、承認を1件以上要求します。
+新しいcommitがpushされたときは古い承認を取り消し、最後にpushした人以外の承認を要求します。
+rulesetのbypass actorは空にします。GitHub Actions integration、repository roleまたは別の主体が規則を
+迂回できる適用対象rulesetが1件でもある場合は、自動mergeの保護として受け入れません。
+これらは実運用上の必須条件であり、policyを有効にするだけでは満たされません。rulesetで確認できない場合は、
+``enabled``を``false``のままにします。
 また、REST APIによる未解決Dependabot alertの全ページ照会に失敗した場合、結果が欠けた場合またはalertが1件でも
 存在する場合は、更新内容にかかわらず自動mergeを停止します。この照会にはrepositoryのGitHub Actions tokenを使い、
 個人用access tokenは使用しません。
+security updateの判定ではOPEN、FIXED、DISMISSEDおよびAUTO_DISMISSEDのalertをそれぞれ全ページ取得します。
+応答が空、欠落、不正または権限不足である場合は、security updateではないと推測せず停止します。
 
 activation前には実repositoryでintegration gateを実施します。Actions tokenで未解決Dependabot alertの全pageと
 有効なruleset詳細を取得できること、``main``向けrulesetの
-``strict_required_status_checks_policy``が``true``であること、および対象headでGitHub Actionsの
-``dependabot / eligibility`` checkを識別できることを確認します。policyを有効化した後の最初の許可対象patch更新を
+``strict_required_status_checks_policy``が``true``であること、必須checkとそのintegration IDがpolicyに一致すること、
+承認数、古い承認の取り消しおよび最後のpushに対する承認の設定がpolicy以上に厳しいこと、ならびに対象headで
+GitHub Actionsの``dependabot / eligibility`` checkを識別できることを確認します。policyを有効化した後の最初の
+許可対象patch更新を
 監視し、eligibility、CI、controllerおよびenable直前の再照合がすべて成功するまで通常運用へ移行しません。
 API権限や応答形式を確認できない場合はfail-closedで停止し、policyを直ちに``enabled = false``へ戻します。
 activation gateではrulesetのref条件を安全側に限定し、``main``またはdefault branchをincludeし、excludeが空の
 rulesetだけをstrict設定の根拠として受け入れます。exclude patternが1件でもある場合は、そのpatternが``main``へ
 一致するかを推測せずに停止します。
-さらに、人間の承認を0件のままにするか1件以上にするか、Cargoの間接dependencyを許可するか、
-security patchを将来許可するかをrepository管理者が決定します。GitHub Actions、npm runtime依存および
-minor以上の更新は、初期導入の対象にしません。
+初期導入では、人間の承認を1件要求し、Cargoの間接依存関係とセキュリティ更新を許可しません。
+単独管理でも、管理者自身がDependabot Pull Requestを承認できます。承認できない状況では登録を保留し、
+予期しないmetadataや自動化の変更によるmergeを防ぎます。間接依存関係は依存関係全体の広い範囲へ影響し得るため、
+手動で確認します。セキュリティ更新は脆弱性の影響、修正版および緊急度を個別に判断する必要があるため、
+脆弱性情報と更新内容を検証する専用の許可規則を別途設計するまで手動で扱います。GitHub Actions、
+npmの実行時依存関係およびminor以上の更新も、初期導入の対象にしません。
 
-停止するときは、通常のPull Requestでpolicyの``enabled``を``false``へ変更します。すでにauto-mergeが
-有効なDependabot Pull Requestがある場合は、対象とhead commitを確認してGitHub上でauto-mergeを解除します。
+停止するときは、通常のPull Requestでpolicyの``enabled``を``false``へ変更します。policyまたは判定処理の変更を
+検知した場合は、既存のDependabot Pull Requestに登録されたauto-mergeを自動で解除します。Dependabot alertは
+5分間隔の監査で再確認し、未解決alertを検知した場合も解除します。手動監査でもpolicyとalertを再確認し、
+設定を解釈できない場合、alertを取得できない場合または停止中は
+既存のauto-mergeを解除します。CIまたはreviewを契機とする再判定で不適格になった場合も同様です。
+
+workflowまたは判定toolを変更するときは、停止と変更を一つのPull Requestにまとめません。最初のPull Requestでは
+policyの``enabled``だけを``false``へ変更し、mainへの統合後にreconciliationが成功したことと、既存の
+Dependabot Pull Requestからauto-mergeが解除されたことをGitHub APIで確認します。その確認後に、別の
+Pull Requestでworkflowまたは判定toolを変更します。workflow自身を削除または変更するpushは、変更前の
+reconciliationを実行する保証がないためです。
+
+現在の方式では、Dependabot alertの照会とauto-mergeを登録するGraphQL mutationを一つの原子的な操作には
+できません。照会後にalertが発生した場合や、5分間隔の監査が実行される前には、安全でないauto-mergeが
+残る時間差があります。定期監査はこの時間差を解消する保証ではありません。この残存リスクの扱いと
+auto-merge方式の採否を決定するまで、policyの``enabled``は``false``のまま維持します。
+
 復旧するときは、停止理由が解消され、rulesetとActions権限が期待どおりであることを確認してから、
 policyを変更するPull Requestを作成します。復旧後も既存の判定結果を再利用せず、各Pull Requestの最新headで
 CIとeligibility checkを再実行します。手動で条件を迂回するoverrideは設けません。

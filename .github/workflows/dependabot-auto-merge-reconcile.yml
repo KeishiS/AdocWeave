@@ -1,0 +1,120 @@
+name: Dependabot auto-merge reconciliation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/dependabot-auto-merge-policy.json"
+      - ".github/workflows/dependabot-auto-merge.yml"
+      - ".github/workflows/dependabot-auto-merge-reconcile.yml"
+      - "tools/dependabot-alert-snapshot.sh"
+      - "tools/dependabot-auto-merge-policy.mjs"
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      vulnerability-alerts: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Evaluate repository-wide safety state
+        id: safety
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "safe=false" >> "$GITHUB_OUTPUT"
+          jq -n '{
+            securityAlerts: {
+              lookupCompleted: true,
+              openCount: 0,
+              securityUpdate: false
+            }
+          }' > reconciliation-policy-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            reconcile .github/dependabot-auto-merge-policy.json \
+            reconciliation-policy-input.json > reconciliation-policy-decision.json
+          if ! jq -e '.eligible == true' \
+            reconciliation-policy-decision.json > /dev/null
+          then
+            jq . reconciliation-policy-decision.json >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tools/dependabot-alert-snapshot.sh \
+            "$GITHUB_REPOSITORY" '[]' '[".github/dependabot-auto-merge-policy.json"]' \
+            > reconciliation-alert-snapshot.json
+          jq -n \
+            --slurpfile security_alerts reconciliation-alert-snapshot.json '
+              {
+                securityAlerts: {
+                  lookupCompleted: $security_alerts[0].lookupCompleted,
+                  openCount: $security_alerts[0].openCount,
+                  securityUpdate: $security_alerts[0].securityUpdate
+                }
+              }
+            ' > reconciliation-input.json
+          node tools/dependabot-auto-merge-policy.mjs \
+            reconcile .github/dependabot-auto-merge-policy.json \
+            reconciliation-input.json > reconciliation-decision.json
+          jq . reconciliation-decision.json >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$GITHUB_EVENT_NAME" != "push" ]] \
+            && jq -e '.eligible == true' reconciliation-decision.json > /dev/null
+          then
+            echo "safe=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Disable existing Dependabot auto-merge requests
+        if: always() && steps.safety.outputs.safe != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" \
+            | jq -es '
+                if length > 0 and all(.[]; type == "array")
+                then add
+                else error("Pull Request response must contain one or more arrays")
+                end
+                | map(select(
+                    .user.login == "dependabot[bot]"
+                    and .base.ref == "main"
+                    and .base.repo.full_name == env.GITHUB_REPOSITORY
+                    and .head.repo.full_name == env.GITHUB_REPOSITORY
+                    and (.head.ref | startswith("dependabot/"))
+                  ))
+                | .[].number
+              ' > reconciliation-pr-numbers.txt
+          while IFS= read -r pr_number; do
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+              > "reconciliation-pr-$pr_number.json"
+            if jq -e '.auto_merge != null' \
+              "reconciliation-pr-$pr_number.json" > /dev/null
+            then
+              # shellcheck disable=SC2016
+              gh api graphql \
+                -f query='
+                  mutation($pullRequest: ID!) {
+                    disablePullRequestAutoMerge(input: {
+                      pullRequestId: $pullRequest
+                    }) {
+                      pullRequest { number autoMergeRequest { enabledAt } }
+                    }
+                  }' \
+                -f pullRequest="$(
+                  jq -r .node_id "reconciliation-pr-$pr_number.json"
+                )" \
+                | jq . >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < reconciliation-pr-numbers.txt
+      - name: Report failed safety evaluation
+        if: always() && steps.safety.outcome == 'failure'
+        run: exit 1

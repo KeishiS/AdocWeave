@@ -3,6 +3,29 @@ import { readFile } from "node:fs/promises";
 const DEPENDABOT_LOGIN = "dependabot[bot]";
 const DEPENDABOT_BRANCH = /^dependabot\/[a-z0-9_-]+\/[a-zA-Z0-9._/-]+$/;
 const SAFE_TEXT = /^[a-zA-Z0-9@._:/,+-]+$/;
+const GITHUB_ACTIONS_APP_ID = 15368;
+const REQUIRED_CHECKS = new Set([
+  "quality / dependencies",
+  "quality / fuzz",
+  "quality / nix-package",
+  "quality / verify",
+]);
+const ALLOWED_DEPENDENCY_TYPES = new Map([
+  ["cargo", new Set(["direct:production", "direct:development"])],
+  ["npm", new Set(["direct:development"])],
+]);
+const ALLOWED_UPDATE_BOUNDARIES = new Map([
+  ["cargo:/", new Set(["Cargo.toml", "Cargo.lock", "crates/*/Cargo.toml"])],
+  [
+    "cargo:/editors/zed",
+    new Set(["editors/zed/Cargo.toml", "editors/zed/Cargo.lock"]),
+  ],
+  ["cargo:/fuzz", new Set(["fuzz/Cargo.toml", "fuzz/Cargo.lock"])],
+  [
+    "npm:/editors/vscode",
+    new Set(["editors/vscode/package.json", "editors/vscode/package-lock.json"]),
+  ],
+]);
 
 export function validatePolicy(policy) {
   if (!policy || policy.version !== 1 || typeof policy.enabled !== "boolean") {
@@ -11,18 +34,20 @@ export function validatePolicy(policy) {
   if (policy.baseBranch !== "main" || policy.mergeMethod !== "SQUASH") {
     throw new Error("Dependabot auto-merge must target main with squash");
   }
-  if (!Number.isSafeInteger(policy.maximumDependencies)
-      || policy.maximumDependencies < 1
+  if (policy.maximumDependencies !== 1
       || policy.allowDependencyGroups !== false
+      || policy.allowIndirectDependencies !== false
       || policy.allowMaintainerChanges !== false
+      || policy.allowSecurityUpdates !== false
       || policy.requiresStrictStatusChecks !== true
       || !Number.isSafeInteger(policy.requiredApprovals)
-      || policy.requiredApprovals < 0
-      || !Number.isSafeInteger(policy.requiredCheckAppId)
-      || policy.requiredCheckAppId < 1) {
+      || policy.requiredApprovals < 1
+      || policy.requiredCheckAppId !== GITHUB_ACTIONS_APP_ID) {
     throw new Error("Dependabot auto-merge limits must fail closed");
   }
-  if (!uniqueStrings(policy.requiredChecks) || policy.requiredChecks.length === 0) {
+  if (!uniqueStrings(policy.requiredChecks)
+      || policy.requiredChecks.length !== REQUIRED_CHECKS.size
+      || policy.requiredChecks.some((name) => !REQUIRED_CHECKS.has(name))) {
     throw new Error("Dependabot required checks must be a non-empty unique list");
   }
   if (!Array.isArray(policy.allowedUpdates) || policy.allowedUpdates.length === 0) {
@@ -31,14 +56,20 @@ export function validatePolicy(policy) {
   const boundaries = new Set();
   for (const update of policy.allowedUpdates) {
     const boundary = `${update.packageEcosystem}:${update.directory}`;
+    const allowedFiles = ALLOWED_UPDATE_BOUNDARIES.get(boundary);
     if (boundaries.has(boundary)
-        || !["cargo", "npm"].includes(update.packageEcosystem)
+        || !allowedFiles
         || !/^\/(?:[a-z0-9._-]+(?:\/[a-z0-9._-]+)*)?$/.test(update.directory)
         || !uniqueStrings(update.dependencyTypes)
         || !uniqueStrings(update.updateTypes)
         || !uniqueStrings(update.changedFiles)
+        || update.dependencyTypes.some(
+          (value) => !ALLOWED_DEPENDENCY_TYPES.get(update.packageEcosystem)?.has(value),
+        )
         || update.updateTypes.some((value) => value !== "version-update:semver-patch")
-        || update.changedFiles.some((value) => !safeFilePattern(value))) {
+        || update.changedFiles.some(
+          (value) => !safeFilePattern(value) || !allowedFiles.has(value),
+        )) {
       throw new Error(`invalid Dependabot update boundary: ${boundary}`);
     }
     boundaries.add(boundary);
@@ -73,6 +104,7 @@ export function evaluateEligibility(input) {
   if (!boundary) reasons.push("metadata-boundary-denied");
   if (metadata.targetBranch !== policy.baseBranch) reasons.push("metadata-target-branch");
   if (metadata.maintainerChanges !== false) reasons.push("maintainer-changes");
+  if (metadata.securityUpdate !== false) reasons.push("security-update");
   if (metadata.dependencyGroup) reasons.push("dependency-group");
   if (!Array.isArray(metadata.dependencies)
       || metadata.dependencies.length === 0
@@ -97,7 +129,8 @@ export function evaluateEligibility(input) {
 function validateSecurityAlerts(securityAlerts, reasons) {
   if (securityAlerts?.lookupCompleted !== true
       || !Number.isSafeInteger(securityAlerts.openCount)
-      || securityAlerts.openCount !== 0) {
+      || securityAlerts.openCount !== 0
+      || securityAlerts.securityUpdate !== false) {
     reasons.push("open-security-alert-or-lookup");
   }
 }
@@ -156,6 +189,19 @@ export function evaluateController(input) {
   return decision(reasons.length === 0, reasons);
 }
 
+export function evaluateReconciliation(input) {
+  const reasons = [];
+  let policy;
+  try {
+    policy = validatePolicy(input.policy);
+  } catch (error) {
+    return decision(false, [`policy-invalid:${error.message}`]);
+  }
+  if (!policy.enabled) reasons.push("release-freeze");
+  validateSecurityAlerts(input.securityAlerts, reasons);
+  return decision(reasons.length === 0, reasons);
+}
+
 export function evaluateStrictRulesetProtection(input) {
   let policy;
   try {
@@ -166,21 +212,68 @@ export function evaluateStrictRulesetProtection(input) {
   if (!Array.isArray(input.rulesets) || input.branch !== policy.baseBranch) {
     return decision(false, ["strict-ruleset"]);
   }
-  const eligible = input.rulesets.some((ruleset) => {
+  const activeBranchRulesets = input.rulesets.filter(
+    (ruleset) => ruleset?.target === "branch" && ruleset.enforcement === "active",
+  );
+  const possiblyApplicableRulesets = activeBranchRulesets.filter((ruleset) => {
     const references = ruleset?.conditions?.ref_name;
-    return ruleset?.target === "branch"
-      && ruleset.enforcement === "active"
-      && Array.isArray(references?.include)
+    if (!Array.isArray(references?.include)
+        || !Array.isArray(references.exclude)) {
+      return true;
+    }
+    if (references.exclude.some(
+      (pattern) => pattern === "~DEFAULT_BRANCH"
+        || pattern === `refs/heads/${policy.baseBranch}`,
+    )) {
+      return false;
+    }
+    return references.include.some(
+      (pattern) => pattern === "~DEFAULT_BRANCH"
+        || pattern === `refs/heads/${policy.baseBranch}`
+        || typeof pattern !== "string"
+        || !/^refs\/heads\/[a-zA-Z0-9._/-]+$/.test(pattern),
+    );
+  });
+  if (possiblyApplicableRulesets.some(
+    (ruleset) => !Array.isArray(ruleset.bypass_actors)
+      || ruleset.bypass_actors.length !== 0,
+  )) {
+    return decision(false, ["strict-ruleset"]);
+  }
+  const strictRulesets = activeBranchRulesets.filter((ruleset) => {
+    const references = ruleset?.conditions?.ref_name;
+    return Array.isArray(references?.include)
       && references.include.some(
-        (pattern) => pattern === "~DEFAULT_BRANCH" || pattern === `refs/heads/${policy.baseBranch}`,
+        (pattern) => pattern === "~DEFAULT_BRANCH"
+          || pattern === `refs/heads/${policy.baseBranch}`,
       )
       && Array.isArray(references.exclude)
-      && references.exclude.length === 0
-      && Array.isArray(ruleset.rules)
-      && ruleset.rules.some(
-        (rule) => rule?.type === "required_status_checks"
-          && rule.parameters?.strict_required_status_checks_policy === true,
-      );
+      && references.exclude.length === 0;
+  });
+  if (strictRulesets.length === 0) {
+    return decision(false, ["strict-ruleset"]);
+  }
+  const eligible = strictRulesets.some((ruleset) => {
+    const statusRule = ruleset?.rules?.find(
+      (rule) => rule?.type === "required_status_checks",
+    );
+    const pullRequestRule = ruleset?.rules?.find(
+      (rule) => rule?.type === "pull_request",
+    );
+    const requiredStatusChecks = statusRule?.parameters?.required_status_checks;
+    return Array.isArray(ruleset.rules)
+      && statusRule?.parameters?.strict_required_status_checks_policy === true
+      && Array.isArray(requiredStatusChecks)
+      && policy.requiredChecks.every(
+        (name) => requiredStatusChecks.some(
+          (check) => check?.context === name
+            && check.integration_id === policy.requiredCheckAppId,
+        ),
+      )
+      && pullRequestRule?.parameters?.required_approving_review_count
+        >= policy.requiredApprovals
+      && pullRequestRule?.parameters?.dismiss_stale_reviews_on_push === true
+      && pullRequestRule?.parameters?.require_last_push_approval === true;
   });
   return decision(eligible, eligible ? [] : ["strict-ruleset"]);
 }
@@ -247,10 +340,10 @@ function decision(eligible, reasons) {
 
 async function main() {
   const [mode, policyPath, inputPath] = process.argv.slice(2);
-  if (!["eligibility", "controller", "strict-rulesets"].includes(mode)
+  if (!["eligibility", "controller", "reconcile", "strict-rulesets"].includes(mode)
       || !policyPath || !inputPath) {
     throw new Error(
-      "usage: dependabot-auto-merge-policy.mjs eligibility|controller|strict-rulesets POLICY INPUT",
+      "usage: dependabot-auto-merge-policy.mjs eligibility|controller|reconcile|strict-rulesets POLICY INPUT",
     );
   }
   const policy = JSON.parse(await readFile(policyPath, "utf8"));
@@ -259,7 +352,9 @@ async function main() {
     ? evaluateEligibility({ ...input, policy })
     : mode === "controller"
       ? evaluateController({ ...input, policy })
-      : evaluateStrictRulesetProtection({ ...input, policy });
+      : mode === "reconcile"
+        ? evaluateReconciliation({ ...input, policy })
+        : evaluateStrictRulesetProtection({ ...input, policy });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
