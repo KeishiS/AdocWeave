@@ -1,0 +1,48 @@
+AdocWeave command-line interface
+
+Usage:
+  adocweave <COMMAND> [FILE]
+
+Commands:
+  convert  Convert an AsciiDoc document
+  preview  Serve a live, loopback-only document preview
+  check    Check an AsciiDoc document
+  format   Format an AsciiDoc document
+  symbols  Print document symbols as JSON
+  config show  Print the resolved project configuration as JSON
+  completion SHELL  Print Bash, Zsh, Fish, or PowerShell completion
+  help     Print this message
+
+Arguments:
+  [FILE]   Input file; omit it or use '-' to read standard input
+
+Options:
+  --format FORMAT  Emit check diagnostics as human, json, github, or sarif
+  --json      Emit check diagnostics as JSON (deprecated alias)
+  --fail-on LEVEL  Fail check on error, warning, or never (default: error)
+  --summary   Emit check diagnostic counts to standard error
+  --fix       Apply non-conflicting, always-safe check fixes
+  --config FILE  Use an explicit project configuration
+  --no-config    Disable project configuration discovery
+  --list-rules  List available check rules; requires --json
+  --enable-rule CODE  Enable an opt-in check rule; repeatable
+  --check     Check formatting without writing formatted text
+  --write     Atomically replace formatted input files
+  --diff      Print unified formatting differences
+  --dry-run   Report changes without writing them
+  --glob PATTERN  Add files matching a glob pattern
+  --color WHEN  Use auto, always, or never for terminal colors
+  --include   Enable bounded local include processing
+  --base-dir DIR    Resolve root document includes from DIR
+  --allow-root DIR  Permit include resources below DIR; repeatable
+  --local-targets     Check local file targets; check only
+  --project-root DIR  Restrict local targets below DIR; requires --local-targets
+  --complete  Convert to a complete HTML document instead of a fragment
+  --css FILE      Embed CSS from FILE into the complete document; repeatable
+  --css-url URL   Link an allowed stylesheet URL; repeatable
+  --bind ADDRESS  Preview listen address (default: 127.0.0.1)
+  --port PORT     Preview listen port (default: 4000)
+  --debounce-ms MILLISECONDS  Preview rebuild debounce (default: 100)
+  --allow-external  Permit an explicitly selected non-loopback address
+  -V, --version  Print version
+  -h, --help  Print help

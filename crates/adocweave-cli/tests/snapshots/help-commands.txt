@@ -1,0 +1,63 @@
+=== convert ===
+Usage:
+  adocweave convert [OPTIONS] [FILE]
+
+Example:
+  adocweave convert --complete manual.adoc
+=== preview ===
+使用法:
+  adocweave preview [OPTIONS] FILE
+
+引数:
+  FILE  プレビューするAsciiDocファイル（標準入力とシンボリックリンクは使用不可）
+
+オプション:
+  --bind ADDRESS  待ち受けるIPアドレス（既定値: 127.0.0.1）
+  --port PORT  待ち受けるポート（既定値: 4000）
+  --debounce-ms MILLISECONDS  連続した変更をまとめる待ち時間（既定値: 100）
+  --allow-external  ループバック以外のIPアドレスでの待ち受けを許可
+  --include  上限を設けてローカルincludeを展開
+  --base-dir DIR  起点文書のincludeをDIRから解決
+  --allow-root DIR  includeを許可する範囲（複数指定可）
+  --css FILE  完全なHTML文書へCSSを埋め込み（複数指定可）
+  --css-url URL  許可されたCSSのURLを追加（複数指定可）
+  --config FILE  指定したプロジェクト設定を使用
+  --no-config  プロジェクト設定の探索を無効化
+  --color WHEN  端末表示の色をauto、always、neverから選択（既定値: auto）
+  -h, --help  この説明を表示
+
+安全性:
+  ループバック以外のIPアドレスには--allow-externalが必要です。
+  このサーバーは利用者認証とTLSによる通信の暗号化を提供しません。
+
+例:
+  adocweave preview --include manual.adoc
+=== check ===
+Usage:
+  adocweave check [OPTIONS] [FILE...]
+
+Examples:
+  adocweave check --fail-on warning docs
+  adocweave check --format github --summary manual.adoc
+  adocweave check --format sarif docs > adocweave.sarif
+  adocweave check --fix docs
+=== format ===
+Usage:
+  adocweave format [OPTIONS] [FILE...]
+
+Examples:
+  adocweave format --check docs
+  adocweave format --diff manual.adoc
+  adocweave format --write docs
+=== symbols ===
+Usage:
+  adocweave symbols [FILE]
+
+Example:
+  adocweave symbols manual.adoc
+=== config show ===
+Usage:
+  adocweave config show [--config FILE | --no-config]
+
+Example:
+  adocweave config show

@@ -50,60 +50,10 @@ use check_output::{
     CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, github_annotation,
     prefix_human_source, sarif_log, sarif_result, sarif_results,
 };
+use commands::model::{CommandId, LookupError};
 use file_workflow::{
     PendingWrite, atomic_write_all, colorize_lines, safe_write_format_config, unified_diff,
 };
-
-const HELP: &str = "\
-AdocWeave command-line interface
-
-Usage:
-  adocweave <COMMAND> [FILE]
-
-Commands:
-  convert  Convert an AsciiDoc document
-  preview  Serve a live, loopback-only document preview
-  check    Check an AsciiDoc document
-  format   Format an AsciiDoc document
-  symbols  Print document symbols as JSON
-  config show  Print the resolved project configuration as JSON
-  completion SHELL  Print Bash, Zsh, Fish, or PowerShell completion
-  help     Print this message
-
-Arguments:
-  [FILE]   Input file; omit it or use '-' to read standard input
-
-Options:
-  --format FORMAT  Emit check diagnostics as human, json, github, or sarif
-  --json      Emit check diagnostics as JSON (deprecated alias)
-  --fail-on LEVEL  Fail check on error, warning, or never (default: error)
-  --summary   Emit check diagnostic counts to standard error
-  --fix       Apply non-conflicting, always-safe check fixes
-  --config FILE  Use an explicit project configuration
-  --no-config    Disable project configuration discovery
-  --list-rules  List available check rules; requires --json
-  --enable-rule CODE  Enable an opt-in check rule; repeatable
-  --check     Check formatting without writing formatted text
-  --write     Atomically replace formatted input files
-  --diff      Print unified formatting differences
-  --dry-run   Report changes without writing them
-  --glob PATTERN  Add files matching a glob pattern
-  --color WHEN  Use auto, always, or never for terminal colors
-  --include   Enable bounded local include processing
-  --base-dir DIR    Resolve root document includes from DIR
-  --allow-root DIR  Permit include resources below DIR; repeatable
-  --local-targets     Check local file targets; check only
-  --project-root DIR  Restrict local targets below DIR; requires --local-targets
-  --complete  Convert to a complete HTML document instead of a fragment
-  --css FILE      Embed CSS from FILE into the complete document; repeatable
-  --css-url URL   Link an allowed stylesheet URL; repeatable
-  --bind ADDRESS  Preview listen address (default: 127.0.0.1)
-  --port PORT     Preview listen port (default: 4000)
-  --debounce-ms MILLISECONDS  Preview rebuild debounce (default: 100)
-  --allow-external  Permit an explicitly selected non-loopback address
-  -V, --version  Print version
-  -h, --help  Print help
-";
 const DEFAULT_PREVIEW_PORT: u16 = 4000;
 const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
 
@@ -202,16 +152,6 @@ impl Error for CliError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Operation {
-    Convert,
-    Preview,
-    Check,
-    Format,
-    Symbols,
-    ConfigShow,
-}
-
 /// A stylesheet argument in command-line order; files are embedded, URLs are
 /// linked, and both apply only to complete document output.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -264,14 +204,14 @@ enum CommandOptions {
 }
 
 impl CommandOptions {
-    const fn operation(&self) -> Operation {
+    const fn command_id(&self) -> CommandId {
         match self {
-            Self::Convert { .. } => Operation::Convert,
-            Self::Preview { .. } => Operation::Preview,
-            Self::Check(_) => Operation::Check,
-            Self::Format { .. } => Operation::Format,
-            Self::Symbols => Operation::Symbols,
-            Self::ConfigShow => Operation::ConfigShow,
+            Self::Convert { .. } => CommandId::Convert,
+            Self::Preview { .. } => CommandId::Preview,
+            Self::Check(_) => CommandId::Check,
+            Self::Format { .. } => CommandId::Format,
+            Self::Symbols => CommandId::Symbols,
+            Self::ConfigShow => CommandId::ConfigShow,
         }
     }
 }
@@ -292,7 +232,7 @@ struct Arguments {
 
 enum Action {
     Run(Box<Arguments>),
-    Help { operation: Option<Operation> },
+    Help { command: Option<CommandId> },
     Version { json: bool },
     Completion { shell: CompletionShell },
 }
@@ -305,15 +245,17 @@ enum CompletionShell {
     PowerShell,
 }
 
-fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action, CliError> {
-    let Some(command) = arguments.next() else {
+fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<Action, CliError> {
+    let arguments = arguments.collect::<Vec<_>>();
+    let Some(command) = arguments.first() else {
         return Err(CliError::Usage("a command is required".to_owned()));
     };
 
     if matches!(command.as_str(), "-h" | "--help" | "help") {
-        return Ok(Action::Help { operation: None });
+        return Ok(Action::Help { command: None });
     }
     if matches!(command.as_str(), "-V" | "--version") {
+        let mut arguments = arguments.into_iter().skip(1);
         let json = match arguments.next().as_deref() {
             None => false,
             Some("--json") if arguments.next().is_none() => true,
@@ -326,6 +268,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         return Ok(Action::Version { json });
     }
     if command == "completion" {
+        let mut arguments = arguments.into_iter().skip(1);
         let shell = match arguments.next().as_deref() {
             Some("bash") => CompletionShell::Bash,
             Some("zsh") => CompletionShell::Zsh,
@@ -346,19 +289,18 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         return Ok(Action::Completion { shell });
     }
 
-    let operation = match command.as_str() {
-        "convert" => Operation::Convert,
-        "preview" => Operation::Preview,
-        "check" => Operation::Check,
-        "format" => Operation::Format,
-        "symbols" => Operation::Symbols,
-        "config" => match arguments.next().as_deref() {
-            Some("show") => Operation::ConfigShow,
-            Some(value) => return Err(CliError::Usage(format!("unknown config command: {value}"))),
-            None => return Err(CliError::Usage("config requires a command".to_owned())),
-        },
-        _ => return Err(CliError::Usage(format!("unknown command: {command}"))),
-    };
+    let (command_id, consumed) = commands::model::lookup(&arguments).map_err(|error| {
+        CliError::Usage(match error {
+            LookupError::UnknownCommand(value) => format!("unknown command: {value}"),
+            LookupError::MissingSubcommand(parent) => {
+                format!("{parent} requires a command")
+            }
+            LookupError::UnknownSubcommand { parent, value } => {
+                format!("unknown {parent} command: {value}")
+            }
+        })
+    })?;
+    let mut arguments = arguments.into_iter().skip(consumed);
 
     let mut input = None;
     let mut additional_inputs = Vec::new();
@@ -393,7 +335,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         match argument.as_str() {
             "-h" | "--help" => {
                 return Ok(Action::Help {
-                    operation: Some(operation),
+                    command: Some(command_id),
                 });
             }
             "--config" => {
@@ -430,13 +372,13 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                     _ => return Err(CliError::Usage(format!("unknown color choice: {value}"))),
                 };
             }
-            "--glob" if matches!(operation, Operation::Check | Operation::Format) => {
+            "--glob" if matches!(command_id, CommandId::Check | CommandId::Format) => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--glob requires a pattern".to_owned()))?;
                 glob_patterns.push(value);
             }
-            "--json" if operation == Operation::Check => {
+            "--json" if command_id == CommandId::Check => {
                 if format_selected && diagnostic_format != DiagnosticFormat::Json {
                     return Err(CliError::Usage(
                         "--json conflicts with another --format value".to_owned(),
@@ -445,7 +387,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                 diagnostic_format = DiagnosticFormat::Json;
                 format_selected = true;
             }
-            "--format" if operation == Operation::Check => {
+            "--format" if command_id == CommandId::Check => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--format requires a value".to_owned()))?;
@@ -458,21 +400,21 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                 diagnostic_format = parsed;
                 format_selected = true;
             }
-            "--fail-on" if operation == Operation::Check => {
+            "--fail-on" if command_id == CommandId::Check => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--fail-on requires a level".to_owned()))?;
                 fail_on = FailOn::parse(&value)?;
             }
-            "--summary" if matches!(operation, Operation::Check | Operation::Format) => {
+            "--summary" if matches!(command_id, CommandId::Check | CommandId::Format) => {
                 summary = true
             }
-            "--fix" if operation == Operation::Check => fix = true,
-            "--dry-run" if matches!(operation, Operation::Check | Operation::Format) => {
+            "--fix" if command_id == CommandId::Check => fix = true,
+            "--dry-run" if matches!(command_id, CommandId::Check | CommandId::Format) => {
                 dry_run = true
             }
-            "--list-rules" if operation == Operation::Check => list_rules = true,
-            "--enable-rule" if operation == Operation::Check => {
+            "--list-rules" if command_id == CommandId::Check => list_rules = true,
+            "--enable-rule" if command_id == CommandId::Check => {
                 let code = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--enable-rule requires a code".to_owned()))?;
@@ -488,31 +430,31 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                     enabled_rules.push(descriptor.id);
                 }
             }
-            "--check" if operation == Operation::Format => format_check = true,
-            "--write" if operation == Operation::Format => format_write = true,
-            "--diff" if operation == Operation::Format => format_diff = true,
+            "--check" if command_id == CommandId::Format => format_check = true,
+            "--write" if command_id == CommandId::Format => format_write = true,
+            "--diff" if command_id == CommandId::Format => format_diff = true,
             "--include" => include = true,
-            "--local-targets" if operation == Operation::Check => local_targets = true,
-            "--project-root" if operation == Operation::Check => {
+            "--local-targets" if command_id == CommandId::Check => local_targets = true,
+            "--project-root" if command_id == CommandId::Check => {
                 let value = arguments.next().ok_or_else(|| {
                     CliError::Usage("--project-root requires a directory".to_owned())
                 })?;
                 project_root = Some(PathBuf::from(value));
             }
-            "--complete" if operation == Operation::Convert => complete = true,
-            "--css" if matches!(operation, Operation::Convert | Operation::Preview) => {
+            "--complete" if command_id == CommandId::Convert => complete = true,
+            "--css" if matches!(command_id, CommandId::Convert | CommandId::Preview) => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--css requires a file".to_owned()))?;
                 css.push(CssArgument::File(PathBuf::from(value)));
             }
-            "--css-url" if matches!(operation, Operation::Convert | Operation::Preview) => {
+            "--css-url" if matches!(command_id, CommandId::Convert | CommandId::Preview) => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--css-url requires a URL".to_owned()))?;
                 css.push(CssArgument::Url(value));
             }
-            "--bind" if operation == Operation::Preview => {
+            "--bind" if command_id == CommandId::Preview => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--bind requires an address".to_owned()))?;
@@ -520,7 +462,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                     .parse()
                     .map_err(|_| CliError::Usage(format!("invalid bind address: {value}")))?;
             }
-            "--port" if operation == Operation::Preview => {
+            "--port" if command_id == CommandId::Preview => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--port requires a value".to_owned()))?;
@@ -528,7 +470,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                     .parse()
                     .map_err(|_| CliError::Usage(format!("invalid port: {value}")))?;
             }
-            "--debounce-ms" if operation == Operation::Preview => {
+            "--debounce-ms" if command_id == CommandId::Preview => {
                 let value = arguments
                     .next()
                     .ok_or_else(|| CliError::Usage("--debounce-ms requires a value".to_owned()))?;
@@ -541,7 +483,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                     ));
                 }
             }
-            "--allow-external" if operation == Operation::Preview => allow_external = true,
+            "--allow-external" if command_id == CommandId::Preview => allow_external = true,
             "--base-dir" => {
                 let value = arguments
                     .next()
@@ -561,7 +503,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                 ));
             }
             _ if input.is_none() && !stdin_selected => input = Some(PathBuf::from(argument)),
-            _ if matches!(operation, Operation::Check | Operation::Format) && !stdin_selected => {
+            _ if matches!(command_id, CommandId::Check | CommandId::Format) && !stdin_selected => {
                 additional_inputs.push(PathBuf::from(argument));
             }
             _ => {
@@ -583,10 +525,10 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
     }
     if dry_run
         && !matches!(
-            operation,
-            Operation::Format if format_write
+            command_id,
+            CommandId::Format if format_write
         )
-        && !(operation == Operation::Check && fix)
+        && !(command_id == CommandId::Check && fix)
     {
         return Err(CliError::Usage(
             "--dry-run requires format --write or check --fix".to_owned(),
@@ -597,7 +539,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             "--local-targets and --project-root must be used together".to_owned(),
         ));
     }
-    if operation == Operation::Preview {
+    if command_id == CommandId::Preview {
         if stdin_selected || input.is_none() || !additional_inputs.is_empty() {
             return Err(CliError::Usage(
                 "preview requires exactly one input file".to_owned(),
@@ -615,7 +557,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
                 .to_owned(),
         ));
     }
-    if operation == Operation::ConfigShow
+    if command_id == CommandId::ConfigShow
         && (input.is_some()
             || !additional_inputs.is_empty()
             || !glob_patterns.is_empty()
@@ -655,15 +597,15 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
         }
     }
 
-    let command = match operation {
-        Operation::Convert => CommandOptions::Convert { complete, css },
-        Operation::Preview => CommandOptions::Preview {
+    let command = match command_id {
+        CommandId::Convert => CommandOptions::Convert { complete, css },
+        CommandId::Preview => CommandOptions::Preview {
             css,
             bind,
             port,
             debounce_ms,
         },
-        Operation::Check => CommandOptions::Check(CheckOptions {
+        CommandId::Check => CommandOptions::Check(CheckOptions {
             format: diagnostic_format,
             fail_on,
             summary,
@@ -672,15 +614,15 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Action
             list_rules,
             enabled_rules,
         }),
-        Operation::Format => CommandOptions::Format {
+        CommandId::Format => CommandOptions::Format {
             check: format_check,
             write: format_write,
             diff: format_diff,
             dry_run,
             summary,
         },
-        Operation::Symbols => CommandOptions::Symbols,
-        Operation::ConfigShow => CommandOptions::ConfigShow,
+        CommandId::Symbols => CommandOptions::Symbols,
+        CommandId::ConfigShow => CommandOptions::ConfigShow,
     };
     Ok(Action::Run(Box::new(Arguments {
         command,
@@ -1789,61 +1731,13 @@ complete -c adocweave -l fix
     }
 }
 
-fn command_help(operation: Operation) -> &'static str {
-    match operation {
-        Operation::Convert => {
-            "Usage:\n  adocweave convert [OPTIONS] [FILE]\n\nExample:\n  adocweave convert --complete manual.adoc\n"
-        }
-        Operation::Preview => {
-            "\
-使用法:
-  adocweave preview [OPTIONS] FILE
-
-引数:
-  FILE  プレビューするAsciiDocファイル（標準入力とシンボリックリンクは使用不可）
-
-オプション:
-  --bind ADDRESS  待ち受けるIPアドレス（既定値: 127.0.0.1）
-  --port PORT  待ち受けるポート（既定値: 4000）
-  --debounce-ms MILLISECONDS  連続した変更をまとめる待ち時間（既定値: 100）
-  --allow-external  ループバック以外のIPアドレスでの待ち受けを許可
-  --include  上限を設けてローカルincludeを展開
-  --base-dir DIR  起点文書のincludeをDIRから解決
-  --allow-root DIR  includeを許可する範囲（複数指定可）
-  --css FILE  完全なHTML文書へCSSを埋め込み（複数指定可）
-  --css-url URL  許可されたCSSのURLを追加（複数指定可）
-  --config FILE  指定したプロジェクト設定を使用
-  --no-config  プロジェクト設定の探索を無効化
-  --color WHEN  端末表示の色をauto、always、neverから選択（既定値: auto）
-  -h, --help  この説明を表示
-
-安全性:
-  ループバック以外のIPアドレスには--allow-externalが必要です。
-  このサーバーは利用者認証とTLSによる通信の暗号化を提供しません。
-
-例:
-  adocweave preview --include manual.adoc
-"
-        }
-        Operation::Check => {
-            "Usage:\n  adocweave check [OPTIONS] [FILE...]\n\nExamples:\n  adocweave check --fail-on warning docs\n  adocweave check --format github --summary manual.adoc\n  adocweave check --format sarif docs > adocweave.sarif\n  adocweave check --fix docs\n"
-        }
-        Operation::Format => {
-            "Usage:\n  adocweave format [OPTIONS] [FILE...]\n\nExamples:\n  adocweave format --check docs\n  adocweave format --diff manual.adoc\n  adocweave format --write docs\n"
-        }
-        Operation::Symbols => {
-            "Usage:\n  adocweave symbols [FILE]\n\nExample:\n  adocweave symbols manual.adoc\n"
-        }
-        Operation::ConfigShow => {
-            "Usage:\n  adocweave config show [--config FILE | --no-config]\n\nExample:\n  adocweave config show\n"
-        }
-    }
-}
-
 fn run() -> Result<ExitCode, CliError> {
     match parse_arguments(env::args().skip(1))? {
-        Action::Help { operation } => {
-            print!("{}", operation.map_or(HELP, command_help));
+        Action::Help { command } => {
+            let help = command.map_or_else(commands::model::root_help, |id| {
+                commands::model::spec(id).help.to_owned()
+            });
+            print!("{help}");
             Ok(ExitCode::SUCCESS)
         }
         Action::Version { json } => {
@@ -1878,7 +1772,7 @@ fn run() -> Result<ExitCode, CliError> {
                 println!("{output}");
                 return Ok(ExitCode::SUCCESS);
             }
-            let operation = arguments.command.operation();
+            let command_id = arguments.command.command_id();
             let include = arguments.include || project_config.resources.include;
             if !include && (arguments.base_dir.is_some() || !arguments.allowed_roots.is_empty()) {
                 return Err(CliError::Usage(
@@ -1901,7 +1795,7 @@ fn run() -> Result<ExitCode, CliError> {
                 &project_config,
                 include && arguments.allowed_roots.is_empty(),
                 project_root.is_some() && arguments.project_root.is_none(),
-                matches!(operation, Operation::Convert | Operation::Preview),
+                matches!(command_id, CommandId::Convert | CommandId::Preview),
             )?;
             if matches!(
                 &arguments.command,
@@ -2069,7 +1963,7 @@ fn run() -> Result<ExitCode, CliError> {
                     preprocess: &project_config.preprocess,
                 })
                 .map_err(CliError::Include)?;
-                let processed = if operation == Operation::Format {
+                let processed = if command_id == CommandId::Format {
                     input.clone()
                 } else {
                     include_input
@@ -2441,10 +2335,11 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         Action, CliError, CommandOptions, CssArgument, DEFAULT_PREVIEW_DEBOUNCE_MS,
-        DEFAULT_PREVIEW_PORT, DiagnosticFormat, HELP, Operation, PreviewBuildRequest,
-        PreviewBuildStage, PreviewDependencyObserver, check_preview_cancellation, command_help,
-        parse_arguments, preview_build, preview_build_with_stage_hook,
+        DEFAULT_PREVIEW_PORT, DiagnosticFormat, PreviewBuildRequest, PreviewBuildStage,
+        PreviewDependencyObserver, check_preview_cancellation, parse_arguments, preview_build,
+        preview_build_with_stage_hook,
     };
+    use crate::commands::model::{self, CommandId};
     use crate::local_include::DependencyObserver;
 
     fn arguments(values: &[&str]) -> impl Iterator<Item = String> {
@@ -2623,7 +2518,7 @@ mod tests {
             panic!("expected run action");
         };
 
-        assert_eq!(parsed.command.operation(), Operation::Convert);
+        assert_eq!(parsed.command.command_id(), CommandId::Convert);
         assert_eq!(
             parsed.input.as_deref(),
             Some(std::path::Path::new("document.adoc"))
@@ -2638,7 +2533,7 @@ mod tests {
             panic!("expected run action");
         };
 
-        assert_eq!(parsed.command.operation(), Operation::Check);
+        assert_eq!(parsed.command.command_id(), CommandId::Check);
         assert!(parsed.input.is_none());
     }
 
@@ -2650,11 +2545,18 @@ mod tests {
                 Ok(Action::Help { .. })
             ));
         }
+        assert!(matches!(
+            parse_arguments(arguments(&["config", "show", "--help"])),
+            Ok(Action::Help {
+                command: Some(CommandId::ConfigShow)
+            })
+        ));
     }
 
     #[test]
     fn preview_help_explains_options_defaults_and_external_access() {
-        let help = command_help(Operation::Preview);
+        let help = model::spec(CommandId::Preview).help;
+        let root_help = model::root_help();
         let port = DEFAULT_PREVIEW_PORT.to_string();
         let debounce = DEFAULT_PREVIEW_DEBOUNCE_MS.to_string();
         for expected in [
@@ -2686,7 +2588,7 @@ mod tests {
                 "preview helpの{name}既定値が実装と異なります"
             );
             assert!(
-                HELP.contains(&value),
+                root_help.contains(&value),
                 "全体helpの{name}既定値が実装と異なります"
             );
         }
