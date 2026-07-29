@@ -1,7 +1,9 @@
 //! Output-independent lint catalog, configuration, and orchestration.
 
+mod catalogs;
 mod source;
 mod syntax;
+mod tables;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow;
@@ -530,10 +532,10 @@ pub(crate) fn lint_parsed_document(
         lint_document_presentation(document, &mut sink);
     }
     if !sink.is_full() {
-        lint_tables(document, &mut sink);
+        tables::lint_tables(document, &mut sink);
     }
     if !sink.is_full() {
-        lint_catalogs(document, &mut sink);
+        catalogs::lint_catalogs(document, &mut sink);
     }
     if !sink.is_full() {
         lint_document_structure(document, &mut sink);
@@ -642,80 +644,6 @@ fn lint_document_structure(
             LintDiagnosticBody::new(message)
         });
     }
-}
-
-fn lint_catalogs(document: &crate::parser::AstDocument, sink: &mut LintDiagnosticSink<'_>) {
-    for problem in document.catalogs().problems() {
-        if sink.is_full() {
-            break;
-        }
-        let message = match problem.kind {
-            crate::catalog::CatalogProblemKind::MissingFootnoteDefinition => {
-                "named footnote definition does not exist"
-            }
-            crate::catalog::CatalogProblemKind::DuplicateFootnoteDefinition => {
-                "duplicate named footnote definition"
-            }
-            crate::catalog::CatalogProblemKind::DuplicateBibliographyEntry => {
-                "duplicate bibliography entry"
-            }
-            crate::catalog::CatalogProblemKind::EmptyIndexTerm => "index term is empty",
-        };
-        sink.emit(INVALID_CATALOG, problem.range, || {
-            LintDiagnosticBody::new(message).with_related(
-                problem
-                    .related_range
-                    .map(|range| RelatedInformation {
-                        message: "first definition is here".to_owned(),
-                        range,
-                    })
-                    .into_iter()
-                    .collect(),
-            )
-        });
-    }
-}
-
-fn lint_tables(document: &crate::parser::AstDocument, sink: &mut LintDiagnosticSink<'_>) {
-    lint_tables_with_observer(document, sink, |_| {});
-}
-
-fn lint_tables_with_observer<'document>(
-    document: &'document crate::parser::AstDocument,
-    sink: &mut LintDiagnosticSink<'_>,
-    mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
-) {
-    let _: ControlFlow<()> = crate::walker::try_walk_ast(document, |node| {
-        observe(node);
-        if sink.is_full() {
-            return ControlFlow::Break(());
-        }
-        let crate::walker::SemanticNode::Table(table) = node else {
-            return ControlFlow::Continue(());
-        };
-        for problem in &table.problems {
-            if sink.is_full() {
-                break;
-            }
-            let message = match problem.kind {
-                crate::table::TableProblemKind::InvalidFormat => "unsupported table format",
-                crate::table::TableProblemKind::InvalidSeparator => {
-                    "table separator must be one non-control character and match the delimiter"
-                }
-                crate::table::TableProblemKind::UnclosedQuotedCell => "unclosed quoted table cell",
-                crate::table::TableProblemKind::InvalidPresentation => {
-                    "invalid or conflicting table presentation attribute"
-                }
-            };
-            sink.emit(INVALID_TABLE, problem.range, || {
-                LintDiagnosticBody::new(message)
-            });
-            if sink.is_full() {
-                return ControlFlow::Break(());
-            }
-        }
-        ControlFlow::Continue(())
-    });
 }
 
 fn lint_links_and_references(
@@ -1202,8 +1130,7 @@ mod tests {
         LINE_TOO_LONG, LINT_RULES, LintConfig, LintDiagnosticBody, LintDiagnosticSink, LintRuleId,
         MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE, UNUSED_ATTRIBUTE,
         lint, lint_links_and_references_with_observer, lint_list_presentation_with_observer,
-        lint_rule, lint_tables_with_observer, lint_with_analysis_limits,
-        render_lint_rule_catalog_json, text_range,
+        lint_rule, lint_with_analysis_limits, render_lint_rule_catalog_json, text_range,
     };
     use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
 
@@ -1510,7 +1437,7 @@ mod tests {
                 .expect("table source");
         let mut sink = LintDiagnosticSink::new(&config);
         let mut visited = Vec::new();
-        lint_tables_with_observer(&table.ast, &mut sink, |node| {
+        super::tables::lint_tables_with_observer(&table.ast, &mut sink, |node| {
             visited.push(node_kind(node));
         });
         assert_eq!(sink.finish().len(), 1);
