@@ -6,6 +6,15 @@ const RUST_NAMES = {
   SafeMode: "WasmSafeMode",
 };
 
+const RUST_KEYWORDS = new Set([
+  "Self", "abstract", "as", "async", "await", "become", "box", "break", "const",
+  "continue", "crate", "do", "dyn", "else", "enum", "extern", "false", "final",
+  "fn", "for", "gen", "if", "impl", "in", "let", "loop", "macro", "match", "mod",
+  "move", "mut", "override", "priv", "pub", "ref", "return", "self", "static",
+  "struct", "super", "trait", "true", "try", "type", "typeof", "union", "unsafe",
+  "unsized", "use", "virtual", "where", "while", "yield",
+]);
+
 export function generateRustPreprocessInputs(schema) {
   const contracts = {
     ...schema.preprocessDefinitions,
@@ -68,8 +77,14 @@ function rustEnum(name, values, defaultValue) {
   if (!Array.isArray(values) || values.length === 0 || !values.includes(defaultValue)) {
     throw new Error(`${name} must have a valid default`);
   }
+  const identifiers = new Set();
   const variants = values.map((value) => {
     const variant = rustVariant(value);
+    validateRustIdentifier(variant, `${name} enum value ${JSON.stringify(value)}`);
+    if (identifiers.has(variant)) {
+      throw new Error(`${name} enum values collide as Rust identifier ${variant}`);
+    }
+    identifiers.add(variant);
     return value === defaultValue ? `    #[default]\n    ${variant},` : `    ${variant},`;
   });
   return `#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
@@ -97,19 +112,37 @@ function rustObject(name, contract) {
   const serde = allDefaulted
     ? '#[serde(default, rename_all = "camelCase", deny_unknown_fields)]'
     : '#[serde(rename_all = "camelCase", deny_unknown_fields)]';
+  const rustFields = new Set();
+  const helpers = [];
   const fields = contract.fields.map((field) => {
     validateField(field, name);
-    const defaultAttribute = !allDefaulted && Object.hasOwn(field, "default")
-      ? "    #[serde(default)]\n"
-      : "";
-    return `${defaultAttribute}    pub ${rustField(field.json)}: ${rustType(field)},`;
+    const identifier = rustField(field.json);
+    validateRustIdentifier(identifier, `${name}.${field.json}`);
+    if (rustFields.has(identifier)) {
+      throw new Error(`${name} fields collide as Rust identifier ${identifier}`);
+    }
+    rustFields.add(identifier);
+    let defaultAttribute = "";
+    if (!allDefaulted && Object.hasOwn(field, "default")) {
+      const helper = rustDefaultHelper(name, identifier);
+      defaultAttribute = `    #[serde(default = "${helper}")]\n`;
+      helpers.push(`fn ${helper}() -> ${rustType(field)} {
+    ${rustDefault(field)}
+}`);
+    }
+    return `${defaultAttribute}    pub ${identifier}: ${rustType(field)},`;
   });
   const definition = `#[derive(${derives.join(", ")})]
 ${serde}
 pub struct ${RUST_NAMES[name]} {
 ${fields.join("\n")}
 }`;
-  if (!allDefaulted || deriveDefault) return definition;
+  if (!allDefaulted) {
+    return helpers.length === 0 ? definition : `${helpers.join("\n\n")}
+
+${definition}`;
+  }
+  if (deriveDefault) return definition;
   const defaults = contract.fields.map(
     (field) => `            ${rustField(field.json)}: ${rustDefault(field)},`,
   );
@@ -135,6 +168,9 @@ function fieldUsesRustDefault(field) {
 
 function validateField(field, owner) {
   if (!field.json || !field.type) throw new Error(`${owner} has an invalid field`);
+  if (!/^[a-z][A-Za-z0-9]*$/.test(field.json)) {
+    throw new Error(`${owner}.${field.json} is not a supported JSON field name`);
+  }
   if (field.required !== true && !Object.hasOwn(field, "default")) {
     throw new Error(`${owner}.${field.json} must be required or defaulted`);
   }
@@ -180,8 +216,21 @@ function rustField(value) {
 }
 
 function rustVariant(value) {
+  if (typeof value !== "string" || !/^[a-z][A-Za-z0-9]*(?:-[a-z][A-Za-z0-9]*)*$/.test(value)) {
+    throw new Error(`unsupported Rust enum value ${JSON.stringify(value)}`);
+  }
   return value
     .split("-")
     .map((part) => `${part[0].toUpperCase()}${part.slice(1)}`)
     .join("");
+}
+
+function rustDefaultHelper(owner, field) {
+  return `default_${rustField(RUST_NAMES[owner]).replace(/^_/, "")}_${field}`;
+}
+
+function validateRustIdentifier(identifier, source) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier) || RUST_KEYWORDS.has(identifier)) {
+    throw new Error(`${source} produces invalid Rust identifier ${identifier}`);
+  }
 }

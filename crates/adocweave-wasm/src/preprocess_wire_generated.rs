@@ -58,15 +58,27 @@ pub struct WasmAnalysisPreprocessInput {
     pub options: WasmPreprocessOptions,
 }
 
+fn default_wasm_preprocess_request_source_id() -> Option<String> {
+    None
+}
+
+fn default_wasm_preprocess_request_resources() -> BTreeMap<String, WasmResource> {
+    Default::default()
+}
+
+fn default_wasm_preprocess_request_options() -> WasmPreprocessOptions {
+    Default::default()
+}
+
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmPreprocessRequest {
     pub package_version: String,
-    #[serde(default)]
+    #[serde(default = "default_wasm_preprocess_request_source_id")]
     pub source_id: Option<String>,
     pub source: String,
-    #[serde(default)]
+    #[serde(default = "default_wasm_preprocess_request_resources")]
     pub resources: BTreeMap<String, WasmResource>,
-    #[serde(default)]
+    #[serde(default = "default_wasm_preprocess_request_options")]
     pub options: WasmPreprocessOptions,
 }
