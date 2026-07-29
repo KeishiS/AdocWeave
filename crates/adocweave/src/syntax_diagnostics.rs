@@ -9,12 +9,16 @@ use crate::parser::{
 use crate::source::TextRange;
 use crate::syntax::{SyntaxFix, SyntaxIssue, SyntaxIssueClass};
 
-pub(crate) fn collect_and_clear(
+pub(crate) fn collect_and_clear_cancellable(
     blocks: &mut [AstBlock],
     attribute_problems: &[AttributeProblem],
-) -> Vec<SyntaxIssue> {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<Vec<SyntaxIssue>, ()> {
     let mut output = Vec::new();
     for problem in attribute_problems {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         let message = match problem.kind {
             AttributeProblemKind::InvalidName => "invalid document attribute name",
             AttributeProblemKind::InvalidValue => "invalid document attribute value",
@@ -25,18 +29,37 @@ pub(crate) fn collect_and_clear(
             message,
         ));
     }
-    struct IssueCollector<'output>(&'output mut Vec<SyntaxIssue>);
-    impl crate::walker::BlockVisitorMut for IssueCollector<'_> {
+    struct IssueCollector<'output, 'cancellation> {
+        output: &'output mut Vec<SyntaxIssue>,
+        checkpoint: crate::cancellation::CancellationCheckpoint<'cancellation>,
+        cancelled: bool,
+    }
+    impl crate::walker::BlockVisitorMut for IssueCollector<'_, '_> {
         fn visit_block(&mut self, block: &mut AstBlock) {
-            block_issues(block, self.0);
+            if self.cancelled {
+                return;
+            }
+            self.cancelled = block_issues(block, self.output, &mut self.checkpoint).is_err();
         }
 
         fn visit_list(&mut self, list: &mut ListBlock) {
-            list_issues(list, self.0);
+            if self.cancelled {
+                return;
+            }
+            self.cancelled = list_issues(list, self.output, &mut self.checkpoint).is_err();
         }
     }
-    crate::walker::walk_blocks_mut(blocks, &mut IssueCollector(&mut output));
-    output
+    let cancellation = checkpoint.cancellation();
+    let mut collector = IssueCollector {
+        output: &mut output,
+        checkpoint: crate::cancellation::CancellationCheckpoint::new(cancellation),
+        cancelled: false,
+    };
+    crate::walker::walk_blocks_mut_cancellable(blocks, &mut collector, checkpoint)?;
+    if collector.cancelled {
+        return Err(());
+    }
+    Ok(output)
 }
 
 fn issue(class: SyntaxIssueClass, range: TextRange, message: &'static str) -> SyntaxIssue {
@@ -49,8 +72,15 @@ fn issue(class: SyntaxIssueClass, range: TextRange, message: &'static str) -> Sy
     }
 }
 
-fn inline_issues(problems: &mut Vec<InlineProblem>, output: &mut Vec<SyntaxIssue>) {
+fn inline_issues(
+    problems: &mut Vec<InlineProblem>,
+    output: &mut Vec<SyntaxIssue>,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
     for problem in std::mem::take(problems) {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         let (class, message) = match problem.kind {
             InlineProblemKind::UnclosedMonospace => {
                 (SyntaxIssueClass::UnclosedInline, "unclosed monospace span")
@@ -112,16 +142,24 @@ fn inline_issues(problems: &mut Vec<InlineProblem>, output: &mut Vec<SyntaxIssue
         };
         output.push(issue(class, problem.range, message));
     }
+    Ok(())
 }
 
-fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
+fn block_issues(
+    block: &mut AstBlock,
+    output: &mut Vec<SyntaxIssue>,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
     if let Some(title) = &mut block.metadata_mut().title {
-        inline_issues(&mut title.inline_problems, output);
+        inline_issues(&mut title.inline_problems, output, checkpoint)?;
     }
     match block {
         AstBlock::Heading(heading) => {
-            inline_issues(&mut heading.inline_problems, output);
+            inline_issues(&mut heading.inline_problems, output, checkpoint)?;
             for problem in std::mem::take(&mut heading.problems) {
+                if checkpoint.is_cancelled() {
+                    return Err(());
+                }
                 match problem {
                     HeadingProblem::MissingSpace => {
                         let range =
@@ -150,20 +188,27 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
                 }
             }
         }
-        AstBlock::Paragraph(paragraph) => inline_issues(&mut paragraph.inline_problems, output),
+        AstBlock::Paragraph(paragraph) => {
+            inline_issues(&mut paragraph.inline_problems, output, checkpoint)?;
+        }
         AstBlock::LiteralParagraph(_) | AstBlock::Break(_) => {}
-        AstBlock::Source(block) => block_problem_issues(&mut block.problems, "source", output),
+        AstBlock::Source(block) => {
+            block_problem_issues(&mut block.problems, "source", output, checkpoint)?;
+        }
         AstBlock::Verbatim(block) => {
             let name = match block.kind {
                 crate::parser::VerbatimKind::Literal => "literal",
                 crate::parser::VerbatimKind::Listing => "listing",
                 crate::parser::VerbatimKind::Source(_) => "source",
             };
-            block_problem_issues(&mut block.problems, name, output);
+            block_problem_issues(&mut block.problems, name, output, checkpoint)?;
         }
         AstBlock::List(_) => {}
         AstBlock::Math(math) => {
             for problem in std::mem::take(&mut math.problems) {
+                if checkpoint.is_cancelled() {
+                    return Err(());
+                }
                 let message = match problem.kind {
                     MathProblemKind::Unclosed => "unclosed STEM block",
                     MathProblemKind::Empty => "STEM block is empty",
@@ -178,7 +223,7 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
             } else {
                 "delimited"
             };
-            block_problem_issues(&mut block.problems, block_name, output);
+            block_problem_issues(&mut block.problems, block_name, output, checkpoint)?;
         }
         AstBlock::Unsupported(block) => {
             if block.reason == "invalid source block attribute" {
@@ -190,14 +235,19 @@ fn block_issues(block: &mut AstBlock, output: &mut Vec<SyntaxIssue>) {
             }
         }
     }
+    Ok(())
 }
 
 fn block_problem_issues(
     problems: &mut Vec<BlockProblem>,
     block_name: &'static str,
     output: &mut Vec<SyntaxIssue>,
-) {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
     for problem in std::mem::take(problems) {
+        if checkpoint.is_cancelled() {
+            return Err(());
+        }
         let (class, message) = match (problem.kind, block_name) {
             (BlockProblemKind::UnclosedBlock, "literal") => {
                 (SyntaxIssueClass::UnclosedBlock, "unclosed literal block")
@@ -223,15 +273,26 @@ fn block_problem_issues(
         };
         output.push(issue(class, problem.range, message));
     }
+    Ok(())
 }
 
-fn list_issues(list: &mut ListBlock, output: &mut Vec<SyntaxIssue>) {
+fn list_issues(
+    list: &mut ListBlock,
+    output: &mut Vec<SyntaxIssue>,
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<(), ()> {
     for item in &mut list.items {
-        for term in &mut item.terms {
-            inline_issues(&mut term.inline_problems, output);
+        if checkpoint.is_cancelled() {
+            return Err(());
         }
-        inline_issues(&mut item.inline_problems, output);
+        for term in &mut item.terms {
+            inline_issues(&mut term.inline_problems, output, checkpoint)?;
+        }
+        inline_issues(&mut item.inline_problems, output, checkpoint)?;
         for problem in std::mem::take(&mut item.problems) {
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
             let (message, fix) = match problem.kind {
                 ListProblemKind::EmptyItem => ("list item is empty", None),
                 ListProblemKind::InconsistentMarker => {
@@ -259,4 +320,5 @@ fn list_issues(list: &mut ListBlock, output: &mut Vec<SyntaxIssue>) {
             });
         }
     }
+    Ok(())
 }

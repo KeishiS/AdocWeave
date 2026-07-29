@@ -23,67 +23,115 @@ pub struct DocumentFacts {
 }
 
 impl DocumentFacts {
-    fn build(document: &AstDocument, attributes: &AttributeEnvironment) -> Self {
+    fn build(
+        document: &AstDocument,
+        attributes: &AttributeEnvironment,
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<Self, ()> {
         let mut facts = Self::default();
         for binding in attributes.bindings() {
-            facts
-                .attribute_references
-                .extend(crate::attributes::value_references(binding, attributes));
+            if checkpoint.is_cancelled() {
+                return Err(());
+            }
+            for reference in crate::attributes::value_references(binding, attributes) {
+                if checkpoint.is_cancelled() {
+                    return Err(());
+                }
+                facts.attribute_references.push(reference);
+            }
         }
-        crate::walker::walk_ast(document, |node| match node {
-            crate::walker::SemanticNode::Inline(crate::inline::Inline::AttributeReference {
-                range,
-                name_range,
-                name,
-                ..
-            }) => facts.attribute_references.push(attribute_reference(
-                name,
-                *range,
-                *name_range,
-                attributes,
-            )),
-            crate::walker::SemanticNode::Inline(crate::inline::Inline::Link(link)) => {
-                facts.links.push(link.clone());
-                facts.attribute_references.extend(
-                    link.target_attributes
-                        .iter()
-                        .map(|reference| attribute_use(reference, attributes)),
-                );
+        let walked = crate::walker::try_walk_ast(document, |node| {
+            if checkpoint.is_cancelled() {
+                return std::ops::ControlFlow::Break(());
             }
-            crate::walker::SemanticNode::Inline(crate::inline::Inline::Reference(reference)) => {
-                facts.references.push(reference.clone());
-                facts.attribute_references.extend(
-                    reference
-                        .target_attributes
-                        .iter()
-                        .map(|reference| attribute_use(reference, attributes)),
-                );
+            match node {
+                crate::walker::SemanticNode::Inline(
+                    crate::inline::Inline::AttributeReference {
+                        range,
+                        name_range,
+                        name,
+                        ..
+                    },
+                ) => facts.attribute_references.push(attribute_reference(
+                    name,
+                    *range,
+                    *name_range,
+                    attributes,
+                )),
+                crate::walker::SemanticNode::Inline(crate::inline::Inline::Link(link)) => {
+                    facts.links.push(link.clone());
+                    for reference in &link.target_attributes {
+                        if checkpoint.is_cancelled() {
+                            return std::ops::ControlFlow::Break(());
+                        }
+                        facts
+                            .attribute_references
+                            .push(attribute_use(reference, attributes));
+                    }
+                }
+                crate::walker::SemanticNode::Inline(crate::inline::Inline::Reference(
+                    reference,
+                )) => {
+                    facts.references.push(reference.clone());
+                    for reference in &reference.target_attributes {
+                        if checkpoint.is_cancelled() {
+                            return std::ops::ControlFlow::Break(());
+                        }
+                        facts
+                            .attribute_references
+                            .push(attribute_use(reference, attributes));
+                    }
+                }
+                crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(node)) => {
+                    facts.macros.push(node.clone());
+                    for reference in &node.target_attributes {
+                        if checkpoint.is_cancelled() {
+                            return std::ops::ControlFlow::Break(());
+                        }
+                        facts
+                            .attribute_references
+                            .push(attribute_use(reference, attributes));
+                    }
+                    for resource in crate::resource::ResourceReference::from_macro(node) {
+                        if checkpoint.is_cancelled() {
+                            return std::ops::ControlFlow::Break(());
+                        }
+                        facts.resources.push(resource);
+                    }
+                }
+                _ => {}
             }
-            crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(node)) => {
-                facts.macros.push(node.clone());
-                facts.attribute_references.extend(
-                    node.target_attributes
-                        .iter()
-                        .map(|reference| attribute_use(reference, attributes)),
-                );
-                facts
-                    .resources
-                    .extend(crate::resource::ResourceReference::from_macro(node));
-            }
-            _ => {}
+            std::ops::ControlFlow::Continue(())
         });
-        facts
-            .attribute_references
-            .sort_by_key(|reference| reference.range.start());
-        facts.links.sort_by_key(|link| link.range.start());
-        facts
-            .references
-            .sort_by_key(|reference| reference.range.start());
-        facts.macros.sort_by_key(|node| node.range.start());
-        facts
-            .resources
-            .sort_by_key(|resource| resource.range().start());
-        facts
+        if walked.is_break() {
+            return Err(());
+        }
+        crate::cancellation::sort_by_cancellable(
+            &mut facts.attribute_references,
+            &mut |left, right| left.range.start().cmp(&right.range.start()),
+            checkpoint,
+        )?;
+        crate::cancellation::sort_by_cancellable(
+            &mut facts.links,
+            &mut |left, right| left.range.start().cmp(&right.range.start()),
+            checkpoint,
+        )?;
+        crate::cancellation::sort_by_cancellable(
+            &mut facts.references,
+            &mut |left, right| left.range.start().cmp(&right.range.start()),
+            checkpoint,
+        )?;
+        crate::cancellation::sort_by_cancellable(
+            &mut facts.macros,
+            &mut |left, right| left.range.start().cmp(&right.range.start()),
+            checkpoint,
+        )?;
+        crate::cancellation::sort_by_cancellable(
+            &mut facts.resources,
+            &mut |left, right| left.range().start().cmp(&right.range().start()),
+            checkpoint,
+        )?;
+        Ok(facts)
     }
 
     pub fn attribute_references(&self) -> &[crate::attributes::AttributeReference] {
@@ -159,20 +207,48 @@ pub(crate) struct ResolvedDocument {
     layout: crate::presentation::DocumentLayout,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResolvedBuildFailure {
+    Limit(crate::catalog::CatalogLimitExceeded),
+    Cancelled,
+}
+
 impl ResolvedDocument {
     pub(crate) fn build(
         document: &AstDocument,
         attributes: AttributeEnvironment,
         catalog_limits: AnalysisLimits,
-    ) -> Result<Self, crate::catalog::CatalogLimitExceeded> {
-        let facts = DocumentFacts::build(document, &attributes);
-        let identifiers = crate::document::build_identifiers(document);
-        let structure = crate::structure::build(document, &identifiers);
-        let index = crate::presentation::build_index(document);
-        let presentation =
-            crate::presentation::build_presentation(document, &structure, &index, &attributes);
-        let layout = crate::presentation::build_layout(document, &index, &presentation);
-        let catalogs = crate::catalog::build(&facts, &index, catalog_limits)?;
+        checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+    ) -> Result<Self, ResolvedBuildFailure> {
+        let facts = DocumentFacts::build(document, &attributes, checkpoint)
+            .map_err(|()| ResolvedBuildFailure::Cancelled)?;
+        let identifiers = crate::document::build_identifiers(document, checkpoint)
+            .map_err(|()| ResolvedBuildFailure::Cancelled)?;
+        let structure = crate::structure::build(document, &identifiers, checkpoint)
+            .map_err(|()| ResolvedBuildFailure::Cancelled)?;
+        let index = crate::presentation::build_index(document, checkpoint)
+            .map_err(|()| ResolvedBuildFailure::Cancelled)?;
+        let presentation = crate::presentation::build_presentation(
+            document,
+            &structure,
+            &index,
+            &attributes,
+            checkpoint,
+        )
+        .map_err(|()| ResolvedBuildFailure::Cancelled)?;
+        let layout = crate::presentation::build_layout(document, &index, &presentation, checkpoint)
+            .map_err(|()| ResolvedBuildFailure::Cancelled)?;
+        let catalogs =
+            crate::catalog::build(&facts, &index, catalog_limits, checkpoint).map_err(|error| {
+                match error {
+                    crate::catalog::CatalogBuildFailure::Limit(error) => {
+                        ResolvedBuildFailure::Limit(error)
+                    }
+                    crate::catalog::CatalogBuildFailure::Cancelled => {
+                        ResolvedBuildFailure::Cancelled
+                    }
+                }
+            })?;
         Ok(Self {
             attribute_environment: attributes,
             facts,
@@ -215,5 +291,38 @@ impl ResolvedDocument {
 
     pub(crate) const fn layout(&self) -> &crate::presentation::DocumentLayout {
         &self.layout
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::DocumentFacts;
+
+    #[test]
+    fn document_facts_build_cancels_during_the_semantic_walk() {
+        struct CancelAfterFirstCheckpoint(AtomicUsize);
+
+        impl crate::core::CancellationCheck for CancelAfterFirstCheckpoint {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+            }
+        }
+
+        let source = (0..crate::cancellation::CHECKPOINT_INTERVAL * 2)
+            .map(|index| format!("https://example.com/{index}[link]\n\n"))
+            .collect::<String>();
+        let parsed = crate::parser::parse(&source).expect("parse");
+        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
+
+        let result = DocumentFacts::build(
+            &parsed.ast,
+            parsed.ast.attribute_environment(),
+            &mut crate::cancellation::CancellationCheckpoint::new(&cancellation),
+        );
+
+        assert_eq!(result, Err(()));
+        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
     }
 }
