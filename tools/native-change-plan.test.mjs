@@ -18,6 +18,7 @@ test("native archiveへ影響する入力だけを選択する", () => {
     ".github/workflows/release.yml",
     "Cargo.lock",
     "dist-workspace.toml",
+    "release/version-sync.json",
     "LICENSE-MIT",
     "flake.nix",
   ]) {
@@ -43,6 +44,7 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "tools/browser-release-smoke.mjs",
     "tools/protocol-rust-codegen.mjs",
     "tools/protocol-rust-codegen.test.mjs",
+    "tools/sync-release-version.mjs",
     "release-manifest.json",
     "protocol/public-api.json",
   ]) {
@@ -117,6 +119,7 @@ test("成果物へ影響しない既知の文書とfixtureだけを明示的に�
     "tools/dependabot-auto-merge-policy.mjs",
     "tools/dependabot-auto-merge-policy.test.mjs",
     "tools/dependabot-auto-merge-workflow.test.mjs",
+    "tools/sync-release-version.test.mjs",
   ]) {
     assert.deepEqual(candidateImpact(pathname), { global: false, native: false }, pathname);
   }

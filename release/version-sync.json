@@ -1,0 +1,331 @@
+{
+  "schemaVersion": 1,
+  "authority": {
+    "type": "literal",
+    "path": "release-manifest.json",
+    "template": "\"packageVersion\": \"{version}\"",
+    "count": 1
+  },
+  "targets": [
+    {
+      "type": "literal",
+      "path": "Cargo.toml",
+      "template": "version = \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "cargo-lock",
+      "path": "Cargo.lock",
+      "packages": [
+        "adocweave",
+        "adocweave-cli",
+        "adocweave-config",
+        "adocweave-host",
+        "adocweave-lsp",
+        "adocweave-wasm",
+        "adocweave-workspace"
+      ]
+    },
+    {
+      "type": "cargo-lock",
+      "path": "fuzz/Cargo.lock",
+      "packages": ["adocweave"]
+    },
+    {
+      "type": "literal",
+      "path": "editors/zed/Cargo.toml",
+      "template": "version = \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "cargo-lock",
+      "path": "editors/zed/Cargo.lock",
+      "packages": ["adocweave-zed"]
+    },
+    {
+      "type": "literal",
+      "path": "editors/zed/extension.toml",
+      "template": "version = \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "editors/vscode/package.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "editors/vscode/package-lock.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 2
+    },
+    {
+      "type": "literal",
+      "path": "web-worker/package.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/distribution-plan.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/distribution-plan.json",
+      "template": "adocweave-browser-{version}.tar.xz",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/distribution-plan.json",
+      "template": "adocweave-zed-{version}.tar.xz",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/distribution-plan.json",
+      "template": "adocweave-vscode-{version}.vsix",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "dist-workspace.toml",
+      "template": "adocweave-browser-{version}.tar.xz",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "dist-workspace.toml",
+      "template": "adocweave-zed-{version}.tar.xz",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "dist-workspace.toml",
+      "template": "adocweave-vscode-{version}.vsix",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "protocol/public-api.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "crates/adocweave/conformance/cases.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "fixtures/public-conformance.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "fixtures/conformance/full.projection.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "fixtures/conformance/math-public-contract.projection.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "fixtures/conformance/source-block-presentation.projection.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/adocweave-dist-manifest.fixture.json",
+      "template": "\"packageVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/adocweave-dist-manifest.fixture.json",
+      "template": "adocweave-browser-{version}.tar.xz",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/adocweave-dist-manifest.fixture.json",
+      "template": "adocweave-zed-{version}.tar.xz",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/adocweave-dist-manifest.fixture.json",
+      "template": "adocweave-vscode-{version}.vsix",
+      "count": 1
+    }
+  ],
+  "generators": [
+    {
+      "id": "protocol",
+      "outputs": [
+        {
+          "path": "web-worker/protocol.generated.mjs",
+          "versionOccurrences": 1
+        },
+        {
+          "path": "web-worker/protocol.generated.d.mts",
+          "versionOccurrences": 1
+        },
+        {
+          "path": "crates/adocweave-wasm/src/protocol_generated.rs",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "crates/adocweave-wasm/src/preprocess_wire_generated.rs",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "crates/adocweave-wasm/src/shared_wire_generated.rs",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "crates/adocweave-wasm/src/response_wire_generated.rs",
+          "versionOccurrences": 0
+        }
+      ]
+    },
+    {
+      "id": "public-conformance",
+      "outputs": [
+        {
+          "path": "fixtures/public-conformance/document-structure.html",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/document-structure.projection.json",
+          "versionOccurrences": 1
+        },
+        {
+          "path": "fixtures/public-conformance/document-structure.diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/document-structure.render-diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/source-block.html",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/source-block.projection.json",
+          "versionOccurrences": 1
+        },
+        {
+          "path": "fixtures/public-conformance/source-block.diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/source-block.render-diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/formulas.html",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/formulas.projection.json",
+          "versionOccurrences": 1
+        },
+        {
+          "path": "fixtures/public-conformance/formulas.diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/formulas.render-diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/blocks.html",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/blocks.projection.json",
+          "versionOccurrences": 1
+        },
+        {
+          "path": "fixtures/public-conformance/blocks.diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/blocks.render-diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/diagnostics.html",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/diagnostics.projection.json",
+          "versionOccurrences": 1
+        },
+        {
+          "path": "fixtures/public-conformance/diagnostics.diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/diagnostics.render-diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/unsupported-source-option.html",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/unsupported-source-option.projection.json",
+          "versionOccurrences": 1
+        },
+        {
+          "path": "fixtures/public-conformance/unsupported-source-option.diagnostics.json",
+          "versionOccurrences": 0
+        },
+        {
+          "path": "fixtures/public-conformance/unsupported-source-option.render-diagnostics.json",
+          "versionOccurrences": 0
+        }
+      ]
+    }
+  ],
+  "preserved": [
+    {
+      "path": "fixtures/protocol/request-corpus.json",
+      "literal": "\"oldVersion\": \"0.10.0\"",
+      "count": 1
+    },
+    {
+      "path": "tools/native-change-plan.test.mjs",
+      "literal": "\"refs/tags/v0.17.0\"",
+      "count": 1
+    },
+    {
+      "path": "editors/vscode/test/server-selection.test.ts",
+      "literal": "\"0.16.0\"",
+      "count": 2
+    },
+    {
+      "path": "Cargo.lock",
+      "literal": "name = \"hashbrown\"\nversion = \"0.17.1\"",
+      "count": 1
+    },
+    {
+      "path": "editors/zed/Cargo.lock",
+      "literal": "name = \"hashbrown\"\nversion = \"0.17.1\"",
+      "count": 1
+    }
+  ]
+}

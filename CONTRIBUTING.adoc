@@ -212,7 +212,21 @@ source qualityは、書式や生成fileなどの短い検査、Rust workspaceの
 
 release作業も通常の変更と同様に、短命なbranchとpull requestから開始します。
 
-. release対象versionを全componentで一致させ、必要な仕様文書、Release Notes、テスト用入力を更新します。
+. 変更の互換性と利用者への影響からSemantic Versioningのversionを決め、管理対象componentを同期します。
++
+[source,console]
+----
+node tools/sync-release-version.mjs --version X.Y.Z
+----
++
+このtoolはlink:release/version-sync.json[version同期対象]に明示したmanifest、lockfile、契約fixtureおよび生成物だけを
+更新します。更新前に部分的なversion変更や管理対象外の同じversionを検出した場合は、fileを書き換えず停止します。
+. 差分を確認し、必要な仕様文書、Release Notesおよびテスト用入力を更新してから、同期状態を検査します。
++
+[source,console]
+----
+node tools/sync-release-version.mjs --check
+----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
 . 対象commitへ``vX.Y.Z`` tagを作成し、GitHubへpushします。
 . `github-release` Environmentでsource commitとcandidateを確認し、公開を承認します。
