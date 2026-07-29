@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { browserArtifactSizeError } from "./browser-release-budget.mjs";
+import { assertBrowserArtifactSizes } from "./browser-release-budget.mjs";
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
 const run = promisify(execFile);
@@ -35,8 +35,7 @@ try {
   const packageRoot = join(root, entries[0]);
   const archiveBytes = (await stat(archive)).size;
   const wasmBytes = (await stat(join(packageRoot, "wasm/adocweave_wasm_bg.wasm"))).size;
-  const sizeError = browserArtifactSizeError(archiveBytes, wasmBytes);
-  if (sizeError !== null) throw new Error(sizeError);
+  assertBrowserArtifactSizes(archiveBytes, wasmBytes);
 
   const requests = [];
   const server = createServer(async (request, response) => {

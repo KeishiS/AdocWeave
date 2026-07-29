@@ -327,11 +327,10 @@ export function validateReleaseWorkflowPolicy({
       browserAcceptance["continue-on-error"] !== false) {
     fail("browser archive acceptance must not continue after failure");
   }
-  requireCommand(
-    browserAcceptance.run,
-    "cargo make browser-runtime-check",
-    "release-intent global candidates must pass the extracted browser archive gate",
-  );
+  if (browserAcceptance.run !==
+      "nix develop .#ci -c cargo make browser-runtime-check") {
+    fail("release-intent global candidates must use the exact browser archive gate command");
+  }
   const smokeRun = step(smokeDoc.jobs?.smoke, (item) =>
     item.name === "Extracted release binary smoke tests", "native smoke is missing").run;
   requireCommand(smokeRun, "node tools/native-release-smoke.mjs", "native smoke must inspect extracted artifacts");

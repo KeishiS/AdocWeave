@@ -10,3 +10,8 @@ export function browserArtifactSizeError(archiveBytes, wasmBytes) {
   }
   return null;
 }
+
+export function assertBrowserArtifactSizes(archiveBytes, wasmBytes) {
+  const error = browserArtifactSizeError(archiveBytes, wasmBytes);
+  if (error !== null) throw new Error(error);
+}

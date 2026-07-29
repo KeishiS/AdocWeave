@@ -166,8 +166,21 @@ test("release-intent global candidates cannot omit the browser archive runtime g
         "nix develop .#ci -c cargo make test-browser-release-package",
       ),
     }),
-    /extracted browser archive gate/,
+    /exact browser archive gate command/,
   );
+  for (const bypass of [" || true", "; true"]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        release: inputs.release.replace(
+          "nix develop .#ci -c cargo make browser-runtime-check",
+          `nix develop .#ci -c cargo make browser-runtime-check${bypass}`,
+        ),
+      }),
+      /exact browser archive gate command/,
+      bypass,
+    );
+  }
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,

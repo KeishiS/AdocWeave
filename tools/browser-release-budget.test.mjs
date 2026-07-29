@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   MAX_BROWSER_ARCHIVE_BYTES,
   MAX_BROWSER_WASM_BYTES,
+  assertBrowserArtifactSizes,
   browserArtifactSizeError,
 } from "./browser-release-budget.mjs";
 
@@ -30,5 +31,12 @@ test("raw browser WASM rejects the first byte beyond its performance budget", ()
   assert.equal(
     browserArtifactSizeError(MAX_BROWSER_ARCHIVE_BYTES, MAX_BROWSER_WASM_BYTES + 1),
     `WASM exceeds 1.25 MiB: ${MAX_BROWSER_WASM_BYTES + 1}`,
+  );
+});
+
+test("budget errors become release gate failures", () => {
+  assert.throws(
+    () => assertBrowserArtifactSizes(MAX_BROWSER_ARCHIVE_BYTES, MAX_BROWSER_WASM_BYTES + 1),
+    /WASM exceeds 1\.25 MiB/,
   );
 });
