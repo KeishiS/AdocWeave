@@ -102,15 +102,26 @@ impl WorkspaceResources {
             return Err(error);
         }
         for (uri, version, source) in open_sources {
-            let has_authority = match replacement.has_resource_authority(uri) {
+            let path = match uri.to_file_path() {
+                Ok(path) => path,
+                Err(()) => {
+                    self.last_load_failed_closed = false;
+                    return Err(format!("workspace resource is not a file URI: {uri}"));
+                }
+            };
+            let has_authority = match replacement.has_resource_authority(&path) {
                 Ok(has_authority) => has_authority,
                 Err(error) => {
-                    replacement.fail_closed(
-                        replacement.roots.clone(),
-                        adapter_managed_workspace_limits(),
-                    );
-                    *self = replacement;
-                    return Err(error);
+                    if config_failure_requires_fail_closed(error.code) {
+                        replacement.fail_closed(
+                            replacement.roots.clone(),
+                            adapter_managed_workspace_limits(),
+                        );
+                        *self = replacement;
+                    } else {
+                        self.last_load_failed_closed = false;
+                    }
+                    return Err(error.to_string());
                 }
             };
             if has_authority {
@@ -135,6 +146,15 @@ impl WorkspaceResources {
         roots: &[Url],
         limits: WorkspaceLimits,
     ) -> Result<(), String> {
+        self.load_roots_with_limits_and_hook(roots, limits, |_| {})
+    }
+
+    fn load_roots_with_limits_and_hook(
+        &mut self,
+        roots: &[Url],
+        limits: WorkspaceLimits,
+        mut before_config: impl FnMut(&Path),
+    ) -> Result<(), String> {
         self.last_load_failed_closed = false;
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
         let mut paths = match roots
@@ -148,14 +168,11 @@ impl WorkspaceResources {
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(paths) => paths,
-            Err(error) => {
-                self.fail_closed(Vec::new(), limits);
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         };
         paths.sort();
         paths.dedup();
-        let preserve_previous = std::cell::Cell::new(false);
+        let fail_closed = std::cell::Cell::new(false);
         let load_result = (|| {
             let discovery = (!paths.is_empty())
                 .then(|| {
@@ -183,11 +200,11 @@ impl WorkspaceResources {
                 BTreeMap::new();
             let mut next_disk_version = self.next_disk_version;
             for path in candidates {
+                before_config(&path);
                 let config = match config_for_path_typed(&paths, &path) {
                     Ok(config) => config,
                     Err(error) => {
-                        preserve_previous
-                            .set(error.code == adocweave_config::ConfigErrorCode::ReadFailed);
+                        fail_closed.set(config_failure_requires_fail_closed(error.code));
                         return Err(error.to_string());
                     }
                 };
@@ -238,7 +255,10 @@ impl WorkspaceResources {
                         LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
                         &path,
                     )
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|error| {
+                        fail_closed.set(resource_failure_requires_fail_closed(&error));
+                        error.to_string()
+                    })?;
                 next_disk_version = next_disk_version.saturating_add(1);
                 let (source_id, text) = file.into_parts();
                 let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
@@ -247,7 +267,10 @@ impl WorkspaceResources {
                     .cloned()
                     .unwrap_or_default()
                     .with_disk(id.clone(), Some(text.len() as u64), plan.retained_layers)
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|error| {
+                        fail_closed.set(true);
+                        error.to_string()
+                    })?;
                 inner
                     .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
                     .map_err(|error| error.to_string())?;
@@ -267,7 +290,7 @@ impl WorkspaceResources {
             Ok(())
         })();
         if let Err(error) = load_result {
-            if !preserve_previous.get() {
+            if fail_closed.get() {
                 self.fail_closed(paths, limits);
             }
             return Err(error);
@@ -779,12 +802,9 @@ impl WorkspaceResources {
         config_for_path(&self.roots, &path)
     }
 
-    fn has_resource_authority(&self, uri: &Url) -> Result<bool, String> {
-        let path = uri
-            .to_file_path()
-            .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        let config = config_for_path(&self.roots, &path)?;
-        Ok(resource_path_is_allowed(config.as_ref(), &path))
+    fn has_resource_authority(&self, path: &Path) -> Result<bool, adocweave_config::ConfigError> {
+        let config = config_for_path_typed(&self.roots, path)?;
+        Ok(resource_path_is_allowed(config.as_ref(), path))
     }
 
     fn plan_for_path(
@@ -798,6 +818,23 @@ impl WorkspaceResources {
         );
         Ok((scope, plan))
     }
+}
+
+const fn config_failure_requires_fail_closed(code: adocweave_config::ConfigErrorCode) -> bool {
+    !matches!(
+        code,
+        adocweave_config::ConfigErrorCode::ReadFailed
+            | adocweave_config::ConfigErrorCode::OutsideBoundary
+    )
+}
+
+const fn resource_failure_requires_fail_closed(error: &adocweave_host::ResourceError) -> bool {
+    matches!(
+        error,
+        adocweave_host::ResourceError::ResourceTooLarge(_)
+            | adocweave_host::ResourceError::FileLimit { .. }
+            | adocweave_host::ResourceError::ByteLimit
+    )
 }
 
 const fn adapter_managed_workspace_limits() -> WorkspaceLimits {
@@ -1515,6 +1552,92 @@ mod tests {
                 .as_ref(),
             "old"
         );
+    }
+
+    #[test]
+    fn transient_document_read_failure_preserves_the_previous_snapshot() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 1, 8, 8, false);
+        let path = root.0.join("document.adoc");
+        std::fs::write(&path, "old").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&path).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("load workspace");
+        let generation = resources.generation();
+
+        std::fs::write(&path, [0xff]).expect("invalid UTF-8 source");
+        let error = resources
+            .reload_roots_with_open_sources(&[root_uri], &[])
+            .expect_err("document read failure");
+
+        assert!(error.contains("UTF-8"), "{error}");
+        assert!(!resources.last_load_failed_closed());
+        assert_eq!(resources.generation(), generation);
+        assert_eq!(
+            resources
+                .get(&document_uri)
+                .expect("previous snapshot")
+                .text()
+                .as_ref(),
+            "old"
+        );
+    }
+
+    #[test]
+    fn configuration_change_during_scan_preserves_the_previous_snapshot() {
+        let root = TestDirectory::new();
+        write_resource_config(&root.0, 2, 16, 8, false);
+        std::fs::write(root.0.join("a.adoc"), "a").expect("first source");
+        std::fs::write(root.0.join("b.adoc"), "b").expect("second source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("load workspace");
+        let generation = resources.generation();
+        let mut candidates = 0;
+
+        let error = resources
+            .load_roots_with_limits_and_hook(
+                &[root_uri],
+                adapter_managed_workspace_limits(),
+                |_| {
+                    candidates += 1;
+                    if candidates == 2 {
+                        write_resource_config(&root.0, 2, 12, 8, false);
+                    }
+                },
+            )
+            .expect_err("configuration changed during scan");
+
+        assert!(error.contains("plan changed"), "{error}");
+        assert!(!resources.last_load_failed_closed());
+        assert_eq!(resources.generation(), generation);
+    }
+
+    #[test]
+    fn reload_failure_classification_distinguishes_limits_from_transient_io() {
+        assert!(!config_failure_requires_fail_closed(
+            adocweave_config::ConfigErrorCode::ReadFailed
+        ));
+        assert!(config_failure_requires_fail_closed(
+            adocweave_config::ConfigErrorCode::UnsupportedSchema
+        ));
+        assert!(!resource_failure_requires_fail_closed(
+            &adocweave_host::ResourceError::ScanEntryLimit { limit: 100 }
+        ));
+        assert!(!resource_failure_requires_fail_closed(
+            &adocweave_host::ResourceError::Read {
+                path: PathBuf::from("transient.adoc"),
+                source: "transient".to_owned(),
+            }
+        ));
+        assert!(resource_failure_requires_fail_closed(
+            &adocweave_host::ResourceError::FileLimit { limit: 1 }
+        ));
     }
 
     #[test]
