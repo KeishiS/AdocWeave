@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { shouldRetryRemoval } from "./platform-contract.mjs";
 import { hasExited, waitForExit } from "./process-lifecycle.mjs";
 
@@ -74,6 +76,7 @@ export async function smokeLsp(
   deadline,
   {
     clearTimer = clearTimeout,
+    documentUri = pathToFileURL(resolve("adocweave-smoke.adoc")).href,
     spawnProcess = spawn,
     setTimer = setTimeout,
     waitForProcessExit = waitForExit,
@@ -116,7 +119,7 @@ export async function smokeLsp(
       method: "textDocument/didOpen",
       params: {
         textDocument: {
-          uri: "file:///tmp/adocweave-smoke.adoc",
+          uri: documentUri,
           languageId: "asciidoc",
           version: 1,
           text: "=Bad\n",
@@ -469,10 +472,18 @@ async function waitForCloseWithinDeadline(
 
 async function waitWithinDeadline(operation, deadline, phase) {
   if (deadline.remainingMs() <= 0) return false;
+  const controller = new AbortController();
+  const abort = () => controller.abort(deadline.signal.reason);
+  deadline.signal.addEventListener("abort", abort, { once: true });
   try {
-    return await deadline.run(operation(deadline.signal), phase);
+    return await deadline.run(operation(controller.signal), phase);
   } catch {
     return false;
+  } finally {
+    deadline.signal.removeEventListener("abort", abort);
+    if (!controller.signal.aborted) {
+      controller.abort(new Error(`${phase} wait ended`));
+    }
   }
 }
 
