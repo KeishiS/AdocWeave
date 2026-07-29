@@ -1,6 +1,7 @@
 //! Pure preprocessing over caller-provided resource snapshots.
 
 mod directive;
+mod expansion;
 mod source_map;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,6 +18,7 @@ use crate::source::PositionError;
 use crate::source::{TextRange, TextSize};
 use crate::substitution::AttributeExpansionLimits;
 use directive::{ConditionalTransition, ParsedDirective, RecognizedDirective};
+use expansion::{ExpansionLimit, ExpansionState, IncludeFrame};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SafeMode {
@@ -843,24 +845,17 @@ pub fn preprocess(
         ),
         directives: Vec::new(),
         notices: Vec::new(),
-        active: Vec::new(),
-        expanded_nodes: 0,
-        includes: 0,
-        attributes: crate::attributes::SequentialAttributeState::with_locked_values(
+        state: ExpansionState::new(
             &options.attributes,
             AttributeExpansionLimits {
                 max_depth: analysis_limits.max_attribute_expansion_depth,
                 max_bytes: analysis_limits.max_attribute_expansion_bytes,
             },
         ),
-        attribute_delimiters: Vec::new(),
-        attribute_position: true,
     };
     context.expand(
         source,
-        options.source_id.clone(),
-        0,
-        options.base_uri.as_deref(),
+        IncludeFrame::root(options.source_id.clone(), options.base_uri.as_deref()),
     )?;
     context
         .source_map
@@ -882,22 +877,11 @@ struct Context<'a> {
     source_map: source_map::SourceMapBuilder,
     directives: Vec<Directive>,
     notices: Vec<PreprocessNotice>,
-    active: Vec<String>,
-    expanded_nodes: u64,
-    includes: u64,
-    attributes: crate::attributes::SequentialAttributeState,
-    attribute_delimiters: Vec<String>,
-    attribute_position: bool,
+    state: ExpansionState,
 }
 
 impl Context<'_> {
-    fn expand(
-        &mut self,
-        source: &str,
-        source_id: Option<SourceId>,
-        depth: u32,
-        base_uri: Option<&str>,
-    ) -> Result<(), PreprocessError> {
+    fn expand(&mut self, source: &str, frame: IncludeFrame) -> Result<(), PreprocessError> {
         let mut offset = 0;
         let lines = source
             .split_inclusive('\n')
@@ -911,18 +895,17 @@ impl Context<'_> {
                 }
             })
             .collect();
-        self.expand_selected(lines, source_id, depth, base_uri)
+        self.expand_selected(lines, frame)
     }
 
     fn expand_include(
         &mut self,
         include: ParsedDirective,
-        source_id: Option<SourceId>,
+        frame: &IncludeFrame,
         range: TextRange,
-        depth: u32,
-        base_uri: Option<&str>,
     ) -> Result<(), PreprocessError> {
-        if depth >= self.options.max_include_depth {
+        let source_id = frame.source_id();
+        if frame.depth() >= self.options.max_include_depth {
             return Err(error(
                 PreprocessErrorKind::DepthLimit,
                 source_id.clone(),
@@ -930,8 +913,11 @@ impl Context<'_> {
                 "include depth limit exceeded",
             ));
         }
-        self.includes += 1;
-        if self.includes > u64::from(self.options.max_includes) {
+        if self
+            .state
+            .register_include(self.options.max_includes)
+            .is_err()
+        {
             return Err(error(
                 PreprocessErrorKind::IncludeLimit,
                 source_id,
@@ -941,8 +927,8 @@ impl Context<'_> {
         }
         self.bump_node(source_id.clone(), range)?;
         let expanded_target =
-            directive::expand_attributes(&include.target, self.attributes.values());
-        let target = resolve_include_target(&expanded_target, base_uri);
+            directive::expand_attributes(&include.target, self.state.attributes());
+        let target = resolve_include_target(&expanded_target, frame.base_uri());
         validate_target(&target, self.options).map_err(|message| {
             error(
                 PreprocessErrorKind::UnsafeTarget,
@@ -951,7 +937,7 @@ impl Context<'_> {
                 message,
             )
         })?;
-        if self.active.contains(&target) {
+        if frame.contains_target(&target) {
             return Err(error(
                 PreprocessErrorKind::IncludeCycle,
                 source_id,
@@ -1011,25 +997,20 @@ impl Context<'_> {
         };
         let selected = select_lines(&document.source, &attributes);
         let transformed = transform_lines(selected, &attributes);
-        let nested_base = target_base(&target);
-        self.active.push(target);
-        self.expand_selected(
-            transformed,
-            Some(document.source_id.clone()),
-            depth + 1,
-            nested_base.as_deref(),
-        )?;
-        self.active.pop();
-        Ok(())
+        let child = frame.child(
+            target.clone(),
+            document.source_id.clone(),
+            target_base(&target),
+        );
+        self.expand_selected(transformed, child)
     }
 
     fn expand_selected(
         &mut self,
         lines: Vec<SelectedLine>,
-        source_id: Option<SourceId>,
-        depth: u32,
-        base_uri: Option<&str>,
+        frame: IncludeFrame,
     ) -> Result<(), PreprocessError> {
+        let source_id = frame.source_id();
         let selected_source = lines
             .iter()
             .map(|line| line.text.as_str())
@@ -1081,7 +1062,7 @@ impl Context<'_> {
                         ),
                         resource_source_id: None,
                     });
-                    match directive::transition(&directive, enabled, self.attributes.values()) {
+                    match directive::transition(&directive, enabled, self.state.attributes()) {
                         ConditionalTransition::Inline { selected } => {
                             if selected {
                                 let ending = &line.text[content.len()..];
@@ -1091,7 +1072,7 @@ impl Context<'_> {
                                     line.range,
                                     SourceMapping::WholeOrigin,
                                 )?;
-                                self.attribute_position = false;
+                                self.state.finish_directive_output();
                             }
                         }
                         ConditionalTransition::Open { enabled: condition } => {
@@ -1111,17 +1092,11 @@ impl Context<'_> {
                 }
                 RecognizedDirective::Include(include) if enabled => {
                     if self.options.enable_includes {
-                        self.expand_include(
-                            include,
-                            source_id.clone(),
-                            line.range,
-                            depth,
-                            base_uri,
-                        )?;
+                        self.expand_include(include, &frame, line.range)?;
                     } else {
                         self.bump_node(source_id.clone(), line.range)?;
                         let authored_target =
-                            directive::expand_attributes(&include.target, self.attributes.values());
+                            directive::expand_attributes(&include.target, self.state.attributes());
                         let optional = parse_attributes(&include.attributes)
                             .is_ok_and(|attributes| attributes.contains_key("optional"));
                         self.directives.push(Directive {
@@ -1139,7 +1114,7 @@ impl Context<'_> {
                             resource_source_id: None,
                         });
                         self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
-                        self.attribute_position = false;
+                        self.state.finish_directive_output();
                     }
                 }
                 RecognizedDirective::Escaped(literal) if enabled => {
@@ -1150,26 +1125,13 @@ impl Context<'_> {
                         line.range,
                         SourceMapping::WholeOrigin,
                     )?;
-                    self.attribute_position = false;
+                    self.state.finish_directive_output();
                 }
                 RecognizedDirective::Text if enabled => {
-                    let delimiter = crate::delimiter::spec(content).is_some();
-                    if delimiter {
-                        if self
-                            .attribute_delimiters
-                            .last()
-                            .is_some_and(|open| open == content)
-                        {
-                            self.attribute_delimiters.pop();
-                        } else {
-                            self.attribute_delimiters.push(content.to_owned());
-                        }
-                    }
+                    let delimiter = self.state.observe_delimiter(content);
                     let mut document_attribute = false;
                     self.bump_node(source_id.clone(), line.range)?;
-                    if !delimiter
-                        && self.attribute_delimiters.is_empty()
-                        && self.attribute_position
+                    if self.state.accepts_attribute(delimiter)
                         && crate::attributes::parse_line(
                             content,
                             selected_document.lines()[line_index]
@@ -1192,16 +1154,14 @@ impl Context<'_> {
                                 )
                             })?
                     {
-                        let _ = self.attributes.apply(&occurrence);
+                        self.state.apply_attribute(&occurrence);
                         document_attribute = true;
                         if last_line > line_index {
                             attribute_value_through = Some(last_line);
                         }
                     }
                     self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
-                    self.attribute_position = document_attribute
-                        || content.trim_matches([' ', '\t']).is_empty()
-                        || content.starts_with("//");
+                    self.state.finish_line(document_attribute, content);
                 }
                 RecognizedDirective::Include(_)
                 | RecognizedDirective::Escaped(_)
@@ -1224,8 +1184,7 @@ impl Context<'_> {
         source_id: Option<SourceId>,
         range: TextRange,
     ) -> Result<(), PreprocessError> {
-        self.expanded_nodes += 1;
-        if self.expanded_nodes > u64::from(self.options.max_expanded_nodes) {
+        if self.state.register_node(self.options.max_expanded_nodes) == Err(ExpansionLimit::Nodes) {
             return Err(error(
                 PreprocessErrorKind::NodeLimit,
                 source_id,
