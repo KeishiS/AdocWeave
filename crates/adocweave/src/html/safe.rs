@@ -2,6 +2,8 @@ use super::{ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS};
 use crate::url::{ActiveUrlPolicy, UrlDecision, UrlProvenance};
 
 const ACTIVE_URL_ATTRIBUTES: &[&str] = &["href", "poster", "src"];
+const BOOLEAN_ATTRIBUTES: &[&str] = &["controls"];
+const CLASS_ATTRIBUTE: &str = "class";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ElementName<'a>(&'a str);
@@ -17,8 +19,20 @@ pub(super) struct PassiveAttributeName<'a>(&'a str);
 
 impl<'a> PassiveAttributeName<'a> {
     pub(super) fn new(value: &'a str) -> Option<Self> {
-        (ALLOWED_ATTRIBUTES.contains(&value) && !ACTIVE_URL_ATTRIBUTES.contains(&value))
+        (ALLOWED_ATTRIBUTES.contains(&value)
+            && !ACTIVE_URL_ATTRIBUTES.contains(&value)
+            && !BOOLEAN_ATTRIBUTES.contains(&value)
+            && value != CLASS_ATTRIBUTE)
             .then_some(Self(value))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct BooleanAttributeName<'a>(&'a str);
+
+impl<'a> BooleanAttributeName<'a> {
+    pub(super) fn new(value: &'a str) -> Option<Self> {
+        BOOLEAN_ATTRIBUTES.contains(&value).then_some(Self(value))
     }
 }
 
@@ -38,7 +52,17 @@ pub(super) struct ClassName<'a>(&'a str);
 
 impl<'a> ClassName<'a> {
     pub(super) fn new(value: &'a str) -> Option<Self> {
-        ALLOWED_CLASSES.contains(&value).then_some(Self(value))
+        (value != "language-*" && ALLOWED_CLASSES.contains(&value)).then_some(Self(value))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SourceLanguageClass(String);
+
+impl SourceLanguageClass {
+    pub(super) fn new(language: &str) -> Option<Self> {
+        let language = crate::projection::canonical_source_language(language);
+        (!language.is_empty()).then(|| Self(format!("language-{language}")))
     }
 }
 
@@ -193,7 +217,11 @@ impl<'a> HtmlWriter<'a> {
         self.output.push('"');
     }
 
-    pub(super) fn boolean_attribute(&mut self, name: PassiveAttributeName<'_>) {
+    pub(super) fn source_language_class_attribute(&mut self, class: &SourceLanguageClass) {
+        self.attribute(CLASS_ATTRIBUTE, &class.0);
+    }
+
+    pub(super) fn boolean_attribute(&mut self, name: BooleanAttributeName<'_>) {
         self.output.push(' ');
         self.output.push_str(name.0);
     }
@@ -270,10 +298,27 @@ mod tests {
         assert!(PassiveAttributeName::new("id").is_some());
         assert!(PassiveAttributeName::new("onclick").is_none());
         assert!(PassiveAttributeName::new("href").is_none());
+        assert!(PassiveAttributeName::new("class").is_none());
+        assert!(PassiveAttributeName::new("controls").is_none());
         assert!(ActiveUrlAttributeName::new("href").is_some());
         assert!(ActiveUrlAttributeName::new("id").is_none());
+        assert!(BooleanAttributeName::new("controls").is_some());
+        assert!(BooleanAttributeName::new("id").is_none());
         assert!(ClassName::new("admonition-note").is_some());
+        assert!(ClassName::new("language-*").is_none());
         assert!(ClassName::new("attacker-controlled").is_none());
+    }
+
+    #[test]
+    fn source_languages_use_a_dedicated_normalized_class_domain() {
+        let class = SourceLanguageClass::new("Rust<&").expect("nonempty source language");
+        let mut output = String::new();
+        let mut writer = HtmlWriter::new(&mut output);
+        writer.start(ElementName::new("code").expect("allowlisted element"));
+        writer.source_language_class_attribute(&class);
+        writer.finish_start();
+        assert_eq!(output, "<code class=\"language-rust--\">");
+        assert!(SourceLanguageClass::new("").is_none());
     }
 
     #[test]

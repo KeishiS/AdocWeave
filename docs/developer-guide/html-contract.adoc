@@ -69,6 +69,9 @@ classには実装が列挙する固定値だけを使用します。
 Tableの``width``は1から100までの値を百分率として正規化し、``%``付きで出力します。Captionは安全な
 literal textとしてescapeし、inline書式や属性参照を再解析しません。
 
+順序付きlistの``start``、``reversed``および番号形式は型付きpresentationへ保持しますが、公開属性allowlistに
+含まれない``start``、``reversed``、``type``および``style``へ変換しません。HTMLでは通常の``ol``として出力します。
+
 == URLとリソース
 
 URLは由来を示すcontextとともに``RenderPolicy.active_urls``の``ActiveUrlPolicy``で検査します。

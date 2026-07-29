@@ -7,8 +7,9 @@ use crate::url::UrlProvenance;
 
 use super::plan::{self, PlannedReferenceHref};
 use super::safe::{
-    ActiveUrlAttributeName, AttributeValue, ClassName, ElementName, HtmlWriter,
-    OwnedSafeFragmentUrl, OwnedSafeUrl, PassiveAttributeName, SafeFragmentUrl, TextValue,
+    ActiveUrlAttributeName, AttributeValue, BooleanAttributeName, ClassName, ElementName,
+    HtmlWriter, OwnedSafeFragmentUrl, OwnedSafeUrl, PassiveAttributeName, SafeFragmentUrl,
+    SourceLanguageClass, TextValue,
 };
 use super::{
     InlineRenderContext, RenderPolicy, UnresolvedReferencePresentation, append_plan_diagnostics,
@@ -117,12 +118,44 @@ struct PlannedElement {
     line_break_after: bool,
 }
 
-enum PlannedAttribute {
+pub(super) enum PlannedAttribute {
     Passive(PassiveAttributeName<'static>, String),
     ActiveUrl(ActiveUrlAttributeName<'static>, OwnedSafeUrl),
     FragmentUrl(ActiveUrlAttributeName<'static>, OwnedSafeFragmentUrl),
     Classes(Vec<ClassName<'static>>),
-    Boolean(PassiveAttributeName<'static>),
+    SourceLanguage(SourceLanguageClass),
+    Boolean(BooleanAttributeName<'static>),
+}
+
+pub(super) struct BlockWriter;
+
+impl BlockWriter {
+    pub(super) fn start(output: &mut String, name: &'static str, attributes: &[PlannedAttribute]) {
+        let mut writer = HtmlWriter::new(output);
+        writer.start(element(name));
+        serialize_attributes(&mut writer, attributes);
+        writer.finish_start();
+    }
+
+    pub(super) fn end(output: &mut String, name: &'static str) {
+        HtmlWriter::new(output).end(element(name));
+    }
+
+    pub(super) fn void(output: &mut String, name: &'static str, attributes: &[PlannedAttribute]) {
+        Self::start(output, name, attributes);
+    }
+
+    pub(super) fn text(output: &mut String, value: &str) {
+        HtmlWriter::new(output).text(TextValue::new(value));
+    }
+
+    pub(super) fn inline_text(output: &mut String, value: &str) {
+        HtmlWriter::new(output).inline_text(TextValue::new(value));
+    }
+
+    pub(super) fn line_break(output: &mut String) {
+        HtmlWriter::new(output).line_break();
+    }
 }
 
 pub(super) fn plan_inlines(
@@ -649,21 +682,7 @@ fn serialize_nodes(output: &mut String, nodes: &[InlineNode]) {
             InlineNode::Element(element) => {
                 let mut writer = HtmlWriter::new(output);
                 writer.start(element.name);
-                for attribute in &element.attributes {
-                    match attribute {
-                        PlannedAttribute::Passive(name, value) => {
-                            writer.passive_attribute(*name, AttributeValue::new(value))
-                        }
-                        PlannedAttribute::ActiveUrl(name, value) => {
-                            writer.owned_active_url_attribute(*name, value);
-                        }
-                        PlannedAttribute::FragmentUrl(name, value) => {
-                            writer.owned_fragment_url_attribute(*name, value);
-                        }
-                        PlannedAttribute::Classes(classes) => writer.class_attribute(classes),
-                        PlannedAttribute::Boolean(name) => writer.boolean_attribute(*name),
-                    }
-                }
+                serialize_attributes(&mut writer, &element.attributes);
                 writer.finish_start();
                 serialize_nodes(output, &element.children);
                 if element.close {
@@ -673,6 +692,27 @@ fn serialize_nodes(output: &mut String, nodes: &[InlineNode]) {
                     output.push('\n');
                 }
             }
+        }
+    }
+}
+
+fn serialize_attributes(writer: &mut HtmlWriter<'_>, attributes: &[PlannedAttribute]) {
+    for attribute in attributes {
+        match attribute {
+            PlannedAttribute::Passive(name, value) => {
+                writer.passive_attribute(*name, AttributeValue::new(value))
+            }
+            PlannedAttribute::ActiveUrl(name, value) => {
+                writer.owned_active_url_attribute(*name, value);
+            }
+            PlannedAttribute::FragmentUrl(name, value) => {
+                writer.owned_fragment_url_attribute(*name, value);
+            }
+            PlannedAttribute::Classes(classes) => writer.class_attribute(classes),
+            PlannedAttribute::SourceLanguage(class) => {
+                writer.source_language_class_attribute(class);
+            }
+            PlannedAttribute::Boolean(name) => writer.boolean_attribute(*name),
         }
     }
 }
@@ -727,7 +767,7 @@ fn inline_text_node(value: &str) -> InlineNode {
     }
 }
 
-fn passive(name: &'static str, value: impl Into<String>) -> PlannedAttribute {
+pub(super) fn passive(name: &'static str, value: impl Into<String>) -> PlannedAttribute {
     PlannedAttribute::Passive(passive_name(name), value.into())
 }
 
@@ -735,11 +775,11 @@ fn active_url(name: &'static str, value: OwnedSafeUrl) -> PlannedAttribute {
     PlannedAttribute::ActiveUrl(active_name(name), value)
 }
 
-fn fragment_url(name: &'static str, value: OwnedSafeFragmentUrl) -> PlannedAttribute {
+pub(super) fn fragment_url(name: &'static str, value: OwnedSafeFragmentUrl) -> PlannedAttribute {
     PlannedAttribute::FragmentUrl(active_name(name), value)
 }
 
-fn classes(values: &[&'static str]) -> PlannedAttribute {
+pub(super) fn classes(values: &[&'static str]) -> PlannedAttribute {
     PlannedAttribute::Classes(
         values
             .iter()
@@ -749,7 +789,14 @@ fn classes(values: &[&'static str]) -> PlannedAttribute {
 }
 
 fn boolean(name: &'static str) -> PlannedAttribute {
-    PlannedAttribute::Boolean(passive_name(name))
+    PlannedAttribute::Boolean(boolean_name(name))
+}
+
+pub(super) fn source_language_class(language: &str) -> PlannedAttribute {
+    PlannedAttribute::SourceLanguage(
+        SourceLanguageClass::new(language)
+            .expect("source language classes require a nonempty normalized language"),
+    )
 }
 
 fn element(name: &'static str) -> ElementName<'static> {
@@ -762,6 +809,10 @@ fn passive_name(name: &'static str) -> PassiveAttributeName<'static> {
 
 fn active_name(name: &'static str) -> ActiveUrlAttributeName<'static> {
     ActiveUrlAttributeName::new(name).expect("inline plan uses active URL attributes")
+}
+
+fn boolean_name(name: &'static str) -> BooleanAttributeName<'static> {
+    BooleanAttributeName::new(name).expect("inline plan uses allowlisted boolean attributes")
 }
 
 #[cfg(test)]

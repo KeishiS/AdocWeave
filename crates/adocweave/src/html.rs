@@ -17,7 +17,7 @@ use crate::inline::Inline;
 use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs};
 use crate::url::{ActiveUrlPolicy, UrlProvenance};
-use body::RenderScope;
+use body::{BlockWriter, RenderScope, classes, passive, source_language_class};
 
 pub const ALLOWED_ELEMENTS: &[&str] = &[
     "a",
@@ -384,7 +384,18 @@ pub(crate) fn render_with_inputs_ast(
     let html = match document_head {
         Some(document_head) => {
             let head = head::serialize_document_head(&document_head);
-            format!("<!doctype html>\n<html lang=\"\">\n{head}<body>\n{fragment}</body>\n</html>\n")
+            let mut html = String::from("<!doctype html>\n");
+            BlockWriter::start(&mut html, "html", &[passive("lang", "")]);
+            BlockWriter::line_break(&mut html);
+            html.push_str(&head);
+            BlockWriter::start(&mut html, "body", &[]);
+            BlockWriter::line_break(&mut html);
+            html.push_str(&fragment);
+            BlockWriter::end(&mut html, "body");
+            BlockWriter::line_break(&mut html);
+            BlockWriter::end(&mut html, "html");
+            BlockWriter::line_break(&mut html);
+            html
         }
         None => fragment,
     };
@@ -429,26 +440,18 @@ fn serialize_body_traversal(
 
 fn render_header_metadata(output: &mut String, header: &crate::parser::DocumentHeader) {
     for author in &header.authors {
-        {
-            let mut writer = safe::HtmlWriter::new(output);
-            writer.start(safe::ElementName::new("p").expect("p is an allowed HTML element"));
-            writer.class_attribute(&[
-                safe::ClassName::new("author").expect("author is an allowed HTML class")
-            ]);
-            writer.finish_start();
-        }
-        escape_html_into(output, &author.name);
+        BlockWriter::start(output, "p", &[classes(&["author"])]);
+        BlockWriter::text(output, &author.name);
         if let Some(email) = &author.email {
-            output.push_str(" &lt;");
-            escape_html_into(output, email);
-            output.push_str("&gt;");
+            BlockWriter::text(output, " <");
+            BlockWriter::text(output, email);
+            BlockWriter::text(output, ">");
         }
-        safe::HtmlWriter::new(output)
-            .end(safe::ElementName::new("p").expect("p is an allowed HTML element"));
-        output.push('\n');
+        BlockWriter::end(output, "p");
+        BlockWriter::line_break(output);
     }
     if let Some(revision) = &header.revision {
-        output.push_str("<p class=\"revision\">");
+        BlockWriter::start(output, "p", &[classes(&["revision"])]);
         let mut separator = "";
         for value in [
             revision.number.as_ref(),
@@ -458,11 +461,12 @@ fn render_header_metadata(output: &mut String, header: &crate::parser::DocumentH
         .into_iter()
         .flatten()
         {
-            output.push_str(separator);
-            escape_html_into(output, &value.value);
+            BlockWriter::text(output, separator);
+            BlockWriter::text(output, &value.value);
             separator = " — ";
         }
-        output.push_str("</p>\n");
+        BlockWriter::end(output, "p");
+        BlockWriter::line_break(output);
     }
 }
 
@@ -502,27 +506,22 @@ fn render_block(
                     context,
                 );
                 render_paragraph(output, paragraph, None, context);
-                output.push_str("</div>\n");
+                BlockWriter::end(output, "div");
+                BlockWriter::line_break(output);
             } else {
                 render_paragraph(output, paragraph, explicit_id, context);
             }
         }
         AstBlock::LiteralParagraph(paragraph) => {
-            render_preformatted(output, explicit_id, None, &paragraph.value);
+            render_preformatted(output, explicit_id, &paragraph.value);
         }
         AstBlock::Break(block) => render_break(output, block.kind, explicit_id),
         AstBlock::Source(block) => {
-            output.push_str("<pre");
-            render_optional_id(output, explicit_id);
-            output.push_str("><code");
+            BlockWriter::start(output, "pre", &optional_id(explicit_id));
+            let mut attributes = Vec::new();
             if let Some(language) = &block.language {
                 if policy.source_languages.allows(language) {
-                    output.push_str(" class=\"language-");
-                    escape_html_into(
-                        output,
-                        &crate::projection::canonical_source_language(language),
-                    );
-                    output.push('"');
+                    attributes.push(source_language_class(language));
                 } else if policy.source_languages.unknown == UnknownSourceLanguage::Diagnostic {
                     context.diagnostics.push(render_diagnostic(
                         "source-language-not-allowed",
@@ -531,52 +530,52 @@ fn render_block(
                     ));
                 }
             }
-            output.push('>');
-            escape_html_into(output, &block.value);
-            output.push_str("</code></pre>\n");
+            BlockWriter::start(output, "code", &attributes);
+            BlockWriter::text(output, &block.value);
+            BlockWriter::end(output, "code");
+            BlockWriter::end(output, "pre");
+            BlockWriter::line_break(output);
         }
         AstBlock::Verbatim(block) => match &block.kind {
             crate::parser::VerbatimKind::Source(source) => {
                 let has_presentation = block.metadata.title.is_some() || source.line_numbers;
                 if has_presentation {
-                    output.push_str("<figure class=\"source-block\"");
-                    render_optional_id(output, explicit_id);
-                    output.push_str(">\n");
+                    let mut attributes = optional_id(explicit_id);
+                    attributes.push(classes(&["source-block"]));
+                    BlockWriter::start(output, "figure", &attributes);
+                    BlockWriter::line_break(output);
                     if let Some(title) = &block.metadata.title {
-                        output.push_str("<figcaption>");
-                        escape_html_into(
+                        BlockWriter::start(output, "figcaption", &[]);
+                        BlockWriter::text(
                             output,
                             &crate::projection::resolved_inline_text(&title.inlines),
                         );
-                        output.push_str("</figcaption>\n");
+                        BlockWriter::end(output, "figcaption");
+                        BlockWriter::line_break(output);
                     }
                 }
-                output.push_str("<pre");
+                let mut pre_attributes = Vec::new();
                 if !has_presentation {
-                    render_optional_id(output, explicit_id);
+                    pre_attributes.extend(optional_id(explicit_id));
                 }
                 if has_presentation
                     && let Some(language) = &source.language
                     && policy.source_languages.allows(language)
                 {
-                    output.push_str(" data-language=\"");
-                    escape_html_into(output, language);
-                    output.push('"');
+                    pre_attributes.push(passive("data-language", language));
                 }
                 if source.line_numbers {
-                    output.push_str(" data-line-numbers=\"true\" data-line-start=\"");
-                    output.push_str(&source.start_line.unwrap_or(1).to_string());
-                    output.push('"');
+                    pre_attributes.push(passive("data-line-numbers", "true"));
+                    pre_attributes.push(passive(
+                        "data-line-start",
+                        source.start_line.unwrap_or(1).to_string(),
+                    ));
                 }
-                output.push_str("><code");
+                BlockWriter::start(output, "pre", &pre_attributes);
+                let mut code_attributes = Vec::new();
                 if let Some(language) = &source.language {
                     if policy.source_languages.allows(language) {
-                        output.push_str(" class=\"language-");
-                        escape_html_into(
-                            output,
-                            &crate::projection::canonical_source_language(language),
-                        );
-                        output.push('"');
+                        code_attributes.push(source_language_class(language));
                     } else if policy.source_languages.unknown == UnknownSourceLanguage::Diagnostic {
                         context.diagnostics.push(render_diagnostic(
                             "source-language-not-allowed",
@@ -585,28 +584,33 @@ fn render_block(
                         ));
                     }
                 }
-                output.push('>');
-                escape_html_into(output, &block.value);
-                output.push_str("</code></pre>\n");
+                BlockWriter::start(output, "code", &code_attributes);
+                BlockWriter::text(output, &block.value);
+                BlockWriter::end(output, "code");
+                BlockWriter::end(output, "pre");
+                BlockWriter::line_break(output);
                 if has_presentation {
-                    output.push_str("</figure>\n");
+                    BlockWriter::end(output, "figure");
+                    BlockWriter::line_break(output);
                 }
             }
             crate::parser::VerbatimKind::Listing | crate::parser::VerbatimKind::Literal => {
-                render_preformatted(output, explicit_id, None, &block.value);
+                render_preformatted(output, explicit_id, &block.value);
             }
         },
         AstBlock::List(list) => render_list(output, list, explicit_id, policy, context, scope),
         AstBlock::Math(block) => {
             if policy.math_languages.allowed.contains(&block.language) {
-                output.push_str("<pre");
-                render_optional_id(output, explicit_id);
-                render_math_attributes(output, block.language, "block");
-                output.push_str("><code>");
-                escape_html_into(output, &block.value);
-                output.push_str("</code></pre>\n");
+                let mut attributes = optional_id(explicit_id);
+                attributes.extend(math_attributes(block.language, "block"));
+                BlockWriter::start(output, "pre", &attributes);
+                BlockWriter::start(output, "code", &[]);
+                BlockWriter::text(output, &block.value);
+                BlockWriter::end(output, "code");
+                BlockWriter::end(output, "pre");
+                BlockWriter::line_break(output);
             } else {
-                render_preformatted(output, explicit_id, None, &block.value);
+                render_preformatted(output, explicit_id, &block.value);
                 context.diagnostics.push(render_diagnostic(
                     "math-language-not-allowed",
                     "math language is rejected by the render policy",
@@ -621,28 +625,11 @@ fn render_block(
     }
 }
 
-fn render_preformatted(
-    output: &mut String,
-    explicit_id: Option<&str>,
-    class: Option<&str>,
-    value: &str,
-) {
-    output.push_str("<pre");
-    render_optional_id(output, explicit_id);
-    if let Some(class) = class {
-        output.push_str(" class=\"");
-        escape_html_into(output, class);
-        output.push('"');
-    }
-    output.push('>');
-    if class.is_some() {
-        output.push_str("<code>");
-    }
-    escape_html_into(output, value);
-    if class.is_some() {
-        output.push_str("</code>");
-    }
-    output.push_str("</pre>\n");
+fn render_preformatted(output: &mut String, explicit_id: Option<&str>, value: &str) {
+    BlockWriter::start(output, "pre", &optional_id(explicit_id));
+    BlockWriter::text(output, value);
+    BlockWriter::end(output, "pre");
+    BlockWriter::line_break(output);
 }
 
 fn render_delimited(
@@ -658,20 +645,22 @@ fn render_delimited(
             crate::parser::DelimitedPresentation::Admonition(admonition) => {
                 render_admonition_start(output, admonition, explicit_id, &block.metadata, context);
                 render_delimited_children(output, block, policy, context, scope);
-                output.push_str("</div>\n");
+                BlockWriter::end(output, "div");
+                BlockWriter::line_break(output);
                 return;
             }
             crate::parser::DelimitedPresentation::Quote(quote) => {
-                output.push_str("<div class=\"");
-                output.push_str(match quote.kind {
+                let quote_class = match quote.kind {
                     crate::parser::QuoteKind::Quote => "quote",
                     crate::parser::QuoteKind::Verse => "verse",
-                });
-                output.push('\"');
-                render_optional_id(output, explicit_id);
-                output.push_str(">\n");
+                };
+                let mut attributes = optional_id(explicit_id);
+                attributes.push(classes(&[quote_class]));
+                BlockWriter::start(output, "div", &attributes);
+                BlockWriter::line_break(output);
                 if quote.kind == crate::parser::QuoteKind::Quote {
-                    output.push_str("<blockquote>\n");
+                    BlockWriter::start(output, "blockquote", &[]);
+                    BlockWriter::line_break(output);
                 }
                 if quote.kind == crate::parser::QuoteKind::Verse {
                     render_verse_children(output, block, policy, context, scope);
@@ -679,22 +668,26 @@ fn render_delimited(
                     render_delimited_children(output, block, policy, context, scope);
                 }
                 if quote.kind == crate::parser::QuoteKind::Quote {
-                    output.push_str("</blockquote>\n");
+                    BlockWriter::end(output, "blockquote");
+                    BlockWriter::line_break(output);
                 }
                 if quote.attribution.is_some() || quote.citation.is_some() {
-                    output.push_str("<div class=\"attribution\">");
+                    BlockWriter::start(output, "div", &[classes(&["attribution"])]);
                     if let Some(attribution) = &quote.attribution {
-                        output.push_str("— ");
-                        escape_html_into(output, &attribution.value);
+                        BlockWriter::text(output, "— ");
+                        BlockWriter::text(output, &attribution.value);
                     }
                     if let Some(citation) = &quote.citation {
-                        output.push_str(" <cite>");
-                        escape_html_into(output, &citation.value);
-                        output.push_str("</cite>");
+                        BlockWriter::text(output, " ");
+                        BlockWriter::start(output, "cite", &[]);
+                        BlockWriter::text(output, &citation.value);
+                        BlockWriter::end(output, "cite");
                     }
-                    output.push_str("</div>\n");
+                    BlockWriter::end(output, "div");
+                    BlockWriter::line_break(output);
                 }
-                output.push_str("</div>\n");
+                BlockWriter::end(output, "div");
+                BlockWriter::line_break(output);
                 return;
             }
         }
@@ -702,19 +695,11 @@ fn render_delimited(
     match &block.content {
         crate::parser::DelimitedContent::Verbatim(value) => {
             if !matches!(block.kind, crate::parser::DelimitedBlockKind::Comment) {
-                output.push_str("<pre");
-                render_optional_id(output, explicit_id);
-                output.push('>');
-                escape_html_into(output, value);
-                output.push_str("</pre>\n");
+                render_preformatted(output, explicit_id, value);
             }
         }
         crate::parser::DelimitedContent::Passthrough(value) => {
-            output.push_str("<pre");
-            render_optional_id(output, explicit_id);
-            output.push('>');
-            escape_html_into(output, value);
-            output.push_str("</pre>\n");
+            render_preformatted(output, explicit_id, value);
         }
         crate::parser::DelimitedContent::Table(table) => {
             render_table(
@@ -761,19 +746,21 @@ fn render_verse_children(
         .iter()
         .all(|child| matches!(child, AstBlock::Paragraph(_)))
     {
-        output.push_str("<pre>");
+        BlockWriter::start(output, "pre", &[]);
         for (index, child) in children.iter().enumerate() {
             let AstBlock::Paragraph(paragraph) = child else {
                 unreachable!()
             };
             if index > 0 {
-                output.push_str("\n\n");
+                BlockWriter::line_break(output);
+                BlockWriter::line_break(output);
             }
             // Verse preserves source line boundaries. Rendering the stored source text
             // avoids the normal paragraph inline renderer's intentional newline folding.
-            escape_html_into(output, &paragraph.value);
+            BlockWriter::text(output, &paragraph.value);
         }
-        output.push_str("</pre>\n");
+        BlockWriter::end(output, "pre");
+        BlockWriter::line_break(output);
     } else {
         render_delimited_children(output, block, policy, context, scope);
     }
@@ -786,17 +773,25 @@ fn render_admonition_start(
     metadata: &crate::parser::BlockMetadata,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
-    output.push_str("<div class=\"admonition admonition-");
-    output.push_str(admonition.kind.label().to_ascii_lowercase().as_str());
-    output.push('\"');
-    render_optional_id(output, explicit_id);
-    output.push_str("><div class=\"title\">");
+    let kind_class = match admonition.kind.label() {
+        "CAUTION" => "admonition-caution",
+        "IMPORTANT" => "admonition-important",
+        "NOTE" => "admonition-note",
+        "TIP" => "admonition-tip",
+        "WARNING" => "admonition-warning",
+        _ => unreachable!("admonition kinds have fixed labels"),
+    };
+    let mut attributes = optional_id(explicit_id);
+    attributes.push(classes(&["admonition", kind_class]));
+    BlockWriter::start(output, "div", &attributes);
+    BlockWriter::start(output, "div", &[classes(&["title"])]);
     if let Some(title) = &metadata.title {
         render_inlines(output, &title.inlines, context);
     } else {
-        output.push_str(admonition.kind.label());
+        BlockWriter::text(output, admonition.kind.label());
     }
-    output.push_str("</div>\n");
+    BlockWriter::end(output, "div");
+    BlockWriter::line_break(output);
 }
 
 fn render_table(
@@ -811,56 +806,51 @@ fn render_table(
     use crate::table::{
         HorizontalAlignment, TableCellStyle, TableFrame, TableGrid, TableSection, TableStripes,
     };
-    output.push_str("<table");
-    render_optional_id(output, explicit_id);
-    output.push_str(" class=\"");
-    output.push_str(match table.presentation.frame {
+    let frame_class = match table.presentation.frame {
         TableFrame::All => "table-frame-all",
         TableFrame::Ends => "table-frame-ends",
         TableFrame::None => "table-frame-none",
         TableFrame::Sides => "table-frame-sides",
-    });
-    output.push(' ');
-    output.push_str(match table.presentation.grid {
+    };
+    let grid_class = match table.presentation.grid {
         TableGrid::All => "table-grid-all",
         TableGrid::Columns => "table-grid-cols",
         TableGrid::None => "table-grid-none",
         TableGrid::Rows => "table-grid-rows",
-    });
-    output.push(' ');
-    output.push_str(match table.presentation.stripes {
+    };
+    let stripes_class = match table.presentation.stripes {
         TableStripes::All => "table-stripes-all",
         TableStripes::Even => "table-stripes-even",
         TableStripes::Hover => "table-stripes-hover",
         TableStripes::None => "table-stripes-none",
         TableStripes::Odd => "table-stripes-odd",
-    });
-    output.push('"');
+    };
+    let mut attributes = optional_id(explicit_id);
+    attributes.push(classes(&[frame_class, grid_class, stripes_class]));
     if let Some(width) = table.presentation.width {
-        output.push_str(" width=\"");
-        output.push_str(&width.to_string());
-        output.push_str("%\"");
+        attributes.push(passive("width", format!("{width}%")));
     }
-    output.push_str(">\n");
+    BlockWriter::start(output, "table", &attributes);
+    BlockWriter::line_break(output);
     if let Some(caption) = &metadata.title {
-        output.push_str("<caption>");
+        BlockWriter::start(output, "caption", &[]);
         render_inlines(output, &caption.inlines, context);
-        output.push_str("</caption>\n");
+        BlockWriter::end(output, "caption");
+        BlockWriter::line_break(output);
     }
     let mut section = None;
     for row in &table.rows {
         if section != Some(row.section) {
             if let Some(previous) = section {
-                output.push_str(table_section_close(previous));
+                BlockWriter::end(output, table_section_name(previous));
+                BlockWriter::line_break(output);
             }
-            output.push_str(match row.section {
-                TableSection::Header => "<thead>\n",
-                TableSection::Body => "<tbody>\n",
-                TableSection::Footer => "<tfoot>\n",
-            });
+            BlockWriter::start(output, table_section_name(row.section), &[]);
+            BlockWriter::line_break(output);
             section = Some(row.section);
         }
-        output.push_str("<tr>\n");
+        BlockWriter::start(output, "tr", &[]);
+        BlockWriter::line_break(output);
         for cell in &row.cells {
             let tag = if row.section == TableSection::Header || cell.style == TableCellStyle::Header
             {
@@ -868,17 +858,12 @@ fn render_table(
             } else {
                 "td"
             };
-            output.push('<');
-            output.push_str(tag);
+            let mut cell_attributes = Vec::new();
             if cell.column_span > 1 {
-                output.push_str(" colspan=\"");
-                output.push_str(&cell.column_span.to_string());
-                output.push('"');
+                cell_attributes.push(passive("colspan", cell.column_span.to_string()));
             }
             if cell.row_span > 1 {
-                output.push_str(" rowspan=\"");
-                output.push_str(&cell.row_span.to_string());
-                output.push('"');
+                cell_attributes.push(passive("rowspan", cell.row_span.to_string()));
             }
             let alignment = cell.horizontal_alignment.unwrap_or_else(|| {
                 table
@@ -896,37 +881,38 @@ fn render_table(
                         column.vertical_alignment
                     })
             });
-            output.push_str(" class=\"");
-            output.push_str(match alignment {
+            let horizontal_class = match alignment {
                 HorizontalAlignment::Left => "table-align-left",
                 HorizontalAlignment::Center => "table-align-center",
                 HorizontalAlignment::Right => "table-align-right",
-            });
-            output.push(' ');
-            output.push_str(match vertical_alignment {
+            };
+            let vertical_class = match vertical_alignment {
                 crate::table::VerticalAlignment::Top => "table-valign-top",
                 crate::table::VerticalAlignment::Middle => "table-valign-middle",
                 crate::table::VerticalAlignment::Bottom => "table-valign-bottom",
-            });
-            output.push_str("\">");
+            };
+            cell_attributes.push(classes(&[horizontal_class, vertical_class]));
+            BlockWriter::start(output, tag, &cell_attributes);
             render_table_cell(output, cell, policy, context, scope);
-            output.push_str("</");
-            output.push_str(tag);
-            output.push_str(">\n");
+            BlockWriter::end(output, tag);
+            BlockWriter::line_break(output);
         }
-        output.push_str("</tr>\n");
+        BlockWriter::end(output, "tr");
+        BlockWriter::line_break(output);
     }
     if let Some(section) = section {
-        output.push_str(table_section_close(section));
+        BlockWriter::end(output, table_section_name(section));
+        BlockWriter::line_break(output);
     }
-    output.push_str("</table>\n");
+    BlockWriter::end(output, "table");
+    BlockWriter::line_break(output);
 }
 
-fn table_section_close(section: crate::table::TableSection) -> &'static str {
+fn table_section_name(section: crate::table::TableSection) -> &'static str {
     match section {
-        crate::table::TableSection::Header => "</thead>\n",
-        crate::table::TableSection::Body => "</tbody>\n",
-        crate::table::TableSection::Footer => "</tfoot>\n",
+        crate::table::TableSection::Header => "thead",
+        crate::table::TableSection::Body => "tbody",
+        crate::table::TableSection::Footer => "tfoot",
     }
 }
 
@@ -940,9 +926,9 @@ fn render_table_cell(
     use crate::table::{TableCellContent, TableCellStyle};
     match &cell.content {
         TableCellContent::Verbatim(value) => {
-            output.push_str("<pre>");
-            escape_html_into(output, value);
-            output.push_str("</pre>");
+            BlockWriter::start(output, "pre", &[]);
+            BlockWriter::text(output, value);
+            BlockWriter::end(output, "pre");
         }
         TableCellContent::Inlines(inlines) => {
             let wrapper = match cell.style {
@@ -952,15 +938,11 @@ fn render_table_cell(
                 _ => None,
             };
             if let Some(wrapper) = wrapper {
-                output.push('<');
-                output.push_str(wrapper);
-                output.push('>');
+                BlockWriter::start(output, wrapper, &[]);
             }
             render_inlines(output, inlines, context);
             if let Some(wrapper) = wrapper {
-                output.push_str("</");
-                output.push_str(wrapper);
-                output.push('>');
+                BlockWriter::end(output, wrapper);
             }
         }
         TableCellContent::AsciiDoc(blocks) => {
@@ -972,12 +954,12 @@ fn render_table_cell(
 }
 
 fn render_break(output: &mut String, kind: crate::parser::BreakKind, id: Option<&str>) {
-    output.push_str("<hr");
-    render_optional_id(output, id);
+    let mut attributes = optional_id(id);
     if kind == crate::parser::BreakKind::Page {
-        output.push_str(" class=\"page-break\"");
+        attributes.push(classes(&["page-break"]));
     }
-    output.push_str(">\n");
+    BlockWriter::void(output, "hr", &attributes);
+    BlockWriter::line_break(output);
 }
 
 fn render_list(
@@ -994,57 +976,42 @@ fn render_list(
         crate::parser::ListKind::Description => "dl",
         crate::parser::ListKind::Callout => "ol",
     };
-    output.push('<');
-    output.push_str(tag);
-    render_optional_id(output, explicit_id);
+    let mut attributes = optional_id(explicit_id);
     if list.kind == crate::parser::ListKind::Callout {
-        output.push_str(" class=\"callout-list\"");
+        attributes.push(classes(&["callout-list"]));
     }
-    if list.kind == crate::parser::ListKind::Ordered {
-        if let Some(start) = list.presentation.start {
-            output.push_str(" start=\"");
-            output.push_str(&start.to_string());
-            output.push('\"');
-        }
-        if list.presentation.reversed {
-            output.push_str(" reversed");
-        }
-        match list.presentation.style {
-            crate::parser::OrderedListStyle::Arabic | crate::parser::OrderedListStyle::Decimal => {}
-            crate::parser::OrderedListStyle::LowerAlpha => output.push_str(" type=\"a\""),
-            crate::parser::OrderedListStyle::UpperAlpha => output.push_str(" type=\"A\""),
-            crate::parser::OrderedListStyle::LowerRoman => output.push_str(" type=\"i\""),
-            crate::parser::OrderedListStyle::UpperRoman => output.push_str(" type=\"I\""),
-            crate::parser::OrderedListStyle::LowerGreek => {
-                output.push_str(" style=\"list-style-type:lower-greek\"")
-            }
-        }
-    }
-    output.push_str(">\n");
+    BlockWriter::start(output, tag, &attributes);
+    BlockWriter::line_break(output);
     for item in &list.items {
         if list.kind == crate::parser::ListKind::Description {
             for term in &item.terms {
-                output.push_str("<dt>");
+                BlockWriter::start(output, "dt", &[]);
                 render_inlines(output, &term.inlines, context);
-                output.push_str("</dt>\n");
+                BlockWriter::end(output, "dt");
+                BlockWriter::line_break(output);
             }
-            output.push_str("<dd>");
+            BlockWriter::start(output, "dd", &[]);
         } else {
-            output.push_str("<li>");
+            BlockWriter::start(output, "li", &[]);
         }
         if let Some(state) = item.checklist {
-            output.push_str("<span class=\"checklist-marker\">");
-            output.push_str(if state == crate::parser::ChecklistState::Checked {
-                "☑"
-            } else {
-                "☐"
-            });
-            output.push_str("</span> ");
+            BlockWriter::start(output, "span", &[classes(&["checklist-marker"])]);
+            BlockWriter::text(
+                output,
+                if state == crate::parser::ChecklistState::Checked {
+                    "☑"
+                } else {
+                    "☐"
+                },
+            );
+            BlockWriter::end(output, "span");
+            BlockWriter::text(output, " ");
         }
         if let Some(id) = item.callout_id {
-            output.push_str("<span class=\"callout-number\">");
-            output.push_str(&id.to_string());
-            output.push_str("</span> ");
+            BlockWriter::start(output, "span", &[classes(&["callout-number"])]);
+            BlockWriter::text(output, &id.to_string());
+            BlockWriter::end(output, "span");
+            BlockWriter::text(output, " ");
         }
         render_inlines(output, &item.inlines, context);
         if scope.bibliography_section
@@ -1054,24 +1021,27 @@ fn render_list(
             render_bibliography_backrefs(output, entry);
         }
         for child in &item.children {
-            output.push('\n');
+            BlockWriter::line_break(output);
             render_list(output, child, None, policy, context, scope);
         }
         for continuation in &item.continuations {
             if !output.ends_with('\n') {
-                output.push('\n');
+                BlockWriter::line_break(output);
             }
             render_block(output, continuation, policy, context, scope);
         }
-        output.push_str(if list.kind == crate::parser::ListKind::Description {
-            "</dd>\n"
-        } else {
-            "</li>\n"
-        });
+        BlockWriter::end(
+            output,
+            if list.kind == crate::parser::ListKind::Description {
+                "dd"
+            } else {
+                "li"
+            },
+        );
+        BlockWriter::line_break(output);
     }
-    output.push_str("</");
-    output.push_str(tag);
-    output.push_str(">\n");
+    BlockWriter::end(output, tag);
+    BlockWriter::line_break(output);
 }
 
 fn bibliography_entry_for_item<'a>(
@@ -1099,11 +1069,21 @@ fn bibliography_reference_id(range: crate::source::TextRange) -> String {
 
 fn render_bibliography_backrefs(output: &mut String, entry: &crate::catalog::BibliographyEntry) {
     for (index, reference) in entry.references.iter().enumerate() {
-        output.push_str(" <a class=\"bibliography-backref\" href=\"#");
-        output.push_str(&bibliography_reference_id(reference.range));
-        output.push_str("\">↩");
-        output.push_str(&(index + 1).to_string());
-        output.push_str("</a>");
+        BlockWriter::text(output, " ");
+        let target = bibliography_reference_id(reference.range);
+        let href = safe::SafeFragmentUrl::new(&target)
+            .expect("generated bibliography reference IDs are control-free")
+            .into_owned();
+        BlockWriter::start(
+            output,
+            "a",
+            &[
+                classes(&["bibliography-backref"]),
+                body::fragment_url("href", href),
+            ],
+        );
+        BlockWriter::text(output, &format!("↩{}", index + 1));
+        BlockWriter::end(output, "a");
     }
 }
 
@@ -1115,19 +1095,23 @@ fn render_heading(
     context: &mut InlineRenderContext<'_, '_>,
 ) {
     if !heading.well_formed {
-        output.push_str("<p>");
+        BlockWriter::start(output, "p", &[]);
         render_inlines(output, &heading.inlines, context);
-        output.push_str("</p>\n");
+        BlockWriter::end(output, "p");
+        BlockWriter::line_break(output);
         return;
     }
 
     match heading.kind {
         HeadingKind::DocumentTitle if policy.render_document_title => {
-            output.push_str("<h1 class=\"document-title\" id=\"");
-            escape_html_into(output, id);
-            output.push_str("\">");
+            BlockWriter::start(
+                output,
+                "h1",
+                &[classes(&["document-title"]), passive("id", id)],
+            );
             render_inlines(output, &heading.inlines, context);
-            output.push_str("</h1>\n");
+            BlockWriter::end(output, "h1");
+            BlockWriter::line_break(output);
         }
         HeadingKind::DocumentTitle => {}
         HeadingKind::Part => render_heading_level(output, heading, id, 1, context),
@@ -1144,28 +1128,32 @@ fn render_heading_level(
     level: u8,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
-    let level = char::from(b'0' + level);
-    output.push_str("<h");
-    output.push(level);
+    let name = match level {
+        1 => "h1",
+        2 => "h2",
+        3 => "h3",
+        4 => "h4",
+        5 => "h5",
+        _ => unreachable!("parser only produces supported heading levels"),
+    };
+    let mut attributes = Vec::new();
     if context
         .structure
         .heading_at(heading.range)
         .is_some_and(|item| item.kind == crate::structure::SectionKind::Appendix)
     {
-        output.push_str(" class=\"appendix\"");
+        attributes.push(classes(&["appendix"]));
     }
-    output.push_str(" id=\"");
-    escape_html_into(output, id);
-    output.push_str("\">");
+    attributes.push(passive("id", id));
+    BlockWriter::start(output, name, &attributes);
     if let Some(presentation) = context.presentation.heading_at(heading.range)
         && presentation.numbered
     {
         render_section_number(output, &presentation.number);
     }
     render_inlines(output, &heading.inlines, context);
-    output.push_str("</h");
-    output.push(level);
-    output.push_str(">\n");
+    BlockWriter::end(output, name);
+    BlockWriter::line_break(output);
 }
 
 fn render_section_number(output: &mut String, number: &[u32]) {
@@ -1174,11 +1162,11 @@ fn render_section_number(output: &mut String, number: &[u32]) {
     }
     for (index, value) in number.iter().enumerate() {
         if index > 0 {
-            output.push('.');
+            BlockWriter::text(output, ".");
         }
-        output.push_str(&value.to_string());
+        BlockWriter::text(output, &value.to_string());
     }
-    output.push_str(". ");
+    BlockWriter::text(output, ". ");
 }
 
 fn render_paragraph(
@@ -1187,8 +1175,7 @@ fn render_paragraph(
     id: Option<&str>,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
-    output.push_str("<p");
-    render_optional_id(output, id);
+    let mut attributes = optional_id(id);
     if paragraph
         .metadata
         .roles
@@ -1200,11 +1187,12 @@ fn render_paragraph(
             .iter()
             .any(|attribute| attribute.name.is_none() && attribute.value == "lead")
     {
-        output.push_str(" class=\"lead\"");
+        attributes.push(classes(&["lead"]));
     }
-    output.push('>');
+    BlockWriter::start(output, "p", &attributes);
     render_inlines(output, &paragraph.inlines, context);
-    output.push_str("</p>\n");
+    BlockWriter::end(output, "p");
+    BlockWriter::line_break(output);
 }
 
 fn render_inlines(
@@ -1223,18 +1211,15 @@ const fn math_class(language: crate::inline::MathLanguage) -> &'static str {
     }
 }
 
-fn render_math_attributes(
-    output: &mut String,
+fn math_attributes(
     language: crate::inline::MathLanguage,
     display: &str,
-) {
-    output.push_str(" class=\"");
-    output.push_str(math_class(language));
-    output.push_str("\" data-math-language=\"");
-    output.push_str(language.as_asciidoc_name());
-    output.push_str("\" data-math-display=\"");
-    output.push_str(display);
-    output.push('"');
+) -> Vec<body::PlannedAttribute> {
+    vec![
+        classes(&[math_class(language)]),
+        passive("data-math-language", language.as_asciidoc_name()),
+        passive("data-math-display", display),
+    ]
 }
 
 struct InlineRenderContext<'inputs, 'render> {
@@ -1256,53 +1241,76 @@ fn render_toc(output: &mut String, presentation: &crate::presentation::DocumentP
         if entries.is_empty() {
             return;
         }
-        output.push_str("<ul>\n");
+        BlockWriter::start(output, "ul", &[]);
+        BlockWriter::line_break(output);
         for entry in entries {
-            output.push_str("<li><a href=\"#");
-            escape_html_into(output, &entry.id);
-            output.push_str("\">");
+            BlockWriter::start(output, "li", &[]);
+            let href = safe::SafeFragmentUrl::new(&entry.id)
+                .expect("TOC identifiers are nonempty and control-free")
+                .into_owned();
+            BlockWriter::start(output, "a", &[body::fragment_url("href", href)]);
             if presentation
                 .heading_at(entry.range)
                 .is_some_and(|heading| heading.numbered)
             {
                 render_section_number(output, &entry.number);
             }
-            escape_html_into(output, &entry.title);
-            output.push_str("</a>");
+            BlockWriter::text(output, &entry.title);
+            BlockWriter::end(output, "a");
             render_entries(output, &entry.children, presentation);
-            output.push_str("</li>\n");
+            BlockWriter::end(output, "li");
+            BlockWriter::line_break(output);
         }
-        output.push_str("</ul>\n");
+        BlockWriter::end(output, "ul");
+        BlockWriter::line_break(output);
     }
 
     if presentation.toc().is_empty() {
         return;
     }
-    output.push_str("<div class=\"toc\">\n");
+    BlockWriter::start(output, "div", &[classes(&["toc"])]);
+    BlockWriter::line_break(output);
     render_entries(output, presentation.toc(), presentation);
-    output.push_str("</div>\n");
+    BlockWriter::end(output, "div");
+    BlockWriter::line_break(output);
 }
 
 fn render_footnote_catalog(output: &mut String, catalogs: &crate::catalog::DocumentCatalogs) {
     if catalogs.footnotes().is_empty() {
         return;
     }
-    output.push_str("<div class=\"footnotes\">\n<ol>\n");
+    BlockWriter::start(output, "div", &[classes(&["footnotes"])]);
+    BlockWriter::line_break(output);
+    BlockWriter::start(output, "ol", &[]);
+    BlockWriter::line_break(output);
     for footnote in catalogs.footnotes() {
-        output.push_str("<li id=\"_footnote_");
-        output.push_str(&footnote.number.to_string());
-        output.push_str("\">");
-        escape_inline_text(output, &footnote.text);
+        let footnote_id = format!("_footnote_{}", footnote.number);
+        BlockWriter::start(output, "li", &[passive("id", footnote_id)]);
+        BlockWriter::inline_text(output, &footnote.text);
         for (index, _) in footnote.occurrences.iter().enumerate() {
-            output.push_str(" <a class=\"footnote-backref\" href=\"#_footnoteref_");
-            output.push_str(&footnote.number.to_string());
-            output.push('_');
-            output.push_str(&(index + 1).to_string());
-            output.push_str("\">↩</a>");
+            BlockWriter::text(output, " ");
+            let target = format!("_footnoteref_{}_{}", footnote.number, index + 1);
+            let href = safe::SafeFragmentUrl::new(&target)
+                .expect("generated footnote reference IDs are control-free")
+                .into_owned();
+            BlockWriter::start(
+                output,
+                "a",
+                &[
+                    classes(&["footnote-backref"]),
+                    body::fragment_url("href", href),
+                ],
+            );
+            BlockWriter::text(output, "↩");
+            BlockWriter::end(output, "a");
         }
-        output.push_str("</li>\n");
+        BlockWriter::end(output, "li");
+        BlockWriter::line_break(output);
     }
-    output.push_str("</ol>\n</div>\n");
+    BlockWriter::end(output, "ol");
+    BlockWriter::line_break(output);
+    BlockWriter::end(output, "div");
+    BlockWriter::line_break(output);
 }
 
 fn render_diagnostic(code: &str, message: &str, range: crate::source::TextRange) -> Diagnostic {
@@ -1346,33 +1354,20 @@ fn render_input_diagnostic(
 }
 
 fn render_unsupported(output: &mut String, unsupported: &Unsupported, id: Option<&str>) {
-    output.push_str("<p");
-    render_optional_id(output, id);
-    output.push('>');
-    escape_html_into(output, &unsupported.raw);
-    output.push_str("</p>\n");
+    BlockWriter::start(output, "p", &optional_id(id));
+    BlockWriter::text(output, &unsupported.raw);
+    BlockWriter::end(output, "p");
+    BlockWriter::line_break(output);
 }
 
-fn render_optional_id(output: &mut String, id: Option<&str>) {
-    if let Some(id) = id {
-        safe::HtmlWriter::new(output).passive_attribute(
-            safe::PassiveAttributeName::new("id")
-                .expect("id is a passive allowlisted HTML attribute"),
-            safe::AttributeValue::new(id),
-        );
-    }
-}
-
-fn escape_html_into(output: &mut String, text: &str) {
-    safe::HtmlWriter::new(output).text(safe::TextValue::new(text));
-}
-
-fn escape_inline_text(output: &mut String, text: &str) {
-    safe::HtmlWriter::new(output).inline_text(safe::TextValue::new(text));
+fn optional_id(id: Option<&str>) -> Vec<body::PlannedAttribute> {
+    id.map(|id| vec![passive("id", id)]).unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{
         ALLOWED_ATTRIBUTES, ALLOWED_CLASSES, ALLOWED_ELEMENTS, ExternalLinkPresentation,
         HtmlDocumentMode, MathLanguagePolicy, RenderPolicy, ResolvedReference,
@@ -2238,6 +2233,89 @@ mod tests {
         );
     }
 
+    fn output_inventory(html: &str) -> (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>) {
+        let mut elements = BTreeSet::new();
+        let mut attributes = BTreeSet::new();
+        let mut classes = BTreeSet::new();
+        let mut remaining = html;
+        while let Some(start) = remaining.find('<') {
+            remaining = &remaining[start + 1..];
+            let Some(end) = remaining.find('>') else {
+                break;
+            };
+            let tag = &remaining[..end];
+            remaining = &remaining[end + 1..];
+            let tag = tag.trim_start();
+            if tag.starts_with('!') {
+                continue;
+            }
+            let tag = tag.strip_prefix('/').unwrap_or(tag);
+            let name_end = tag.find(char::is_whitespace).unwrap_or(tag.len());
+            let name = &tag[..name_end];
+            elements.insert(name.to_owned());
+            if name_end == tag.len() || tag.starts_with('/') {
+                continue;
+            }
+            let mut rest = &tag[name_end..];
+            while !rest.trim_start().is_empty() {
+                rest = rest.trim_start();
+                let attribute_end = rest
+                    .find(|character: char| character.is_whitespace() || character == '=')
+                    .unwrap_or(rest.len());
+                let attribute = &rest[..attribute_end];
+                attributes.insert(attribute.to_owned());
+                rest = &rest[attribute_end..];
+                if let Some(value) = rest.strip_prefix("=\"") {
+                    let value_end = value.find('"').expect("serialized attribute is quoted");
+                    if attribute == "class" {
+                        classes.extend(
+                            value[..value_end]
+                                .split_ascii_whitespace()
+                                .map(str::to_owned),
+                        );
+                    }
+                    rest = &value[value_end + 1..];
+                }
+            }
+        }
+        (elements, attributes, classes)
+    }
+
+    #[test]
+    fn generated_output_inventory_is_within_the_public_allowlists() {
+        let parsed = parse(
+            "= Inventory\n:toc:\n\n== Section\n\n[NOTE]\n====\nbody\n====\n\n[source,rust,linenums]\n----\nfn main() {}\n----\n\n[cols=\"1,1\",options=\"header\"]\n|===\n|a |b\n|c |d\n|===\n\n* item\n",
+        )
+        .expect("parse");
+        let html = render(&parsed.ast, &RenderPolicy::default()).html;
+        let (elements, attributes, classes) = output_inventory(&html);
+
+        assert!(!elements.is_empty());
+        assert!(!attributes.is_empty());
+        assert!(!classes.is_empty());
+        assert!(
+            elements
+                .iter()
+                .all(|element| ALLOWED_ELEMENTS.contains(&element.as_str())),
+            "unexpected elements: {elements:?}"
+        );
+        assert!(
+            attributes
+                .iter()
+                .all(|attribute| ALLOWED_ATTRIBUTES.contains(&attribute.as_str())),
+            "unexpected attributes: {attributes:?}"
+        );
+        assert!(
+            classes.iter().all(|class| {
+                ALLOWED_CLASSES.contains(&class.as_str())
+                    || (ALLOWED_CLASSES.contains(&"language-*")
+                        && class.starts_with("language-")
+                        && class.len() > "language-".len())
+            }),
+            "unexpected classes: {classes:?}"
+        );
+    }
+
     #[test]
     fn html_security_never_passes_input_elements_or_attributes_through() {
         let parsed = parse(
@@ -2498,14 +2576,11 @@ mod tests {
     }
 
     #[test]
-    fn ordered_list_html_uses_resolved_presentation() {
+    fn ordered_list_html_does_not_bypass_the_public_attribute_allowlist() {
         let parsed = parse("[start=3,%reversed,upperroman]\n. one\n. two\n").expect("parse");
         let output = render(&parsed.ast, &RenderPolicy::default());
 
-        assert_eq!(
-            output.html,
-            "<ol start=\"3\" reversed type=\"I\">\n<li>one</li>\n<li>two</li>\n</ol>\n"
-        );
+        assert_eq!(output.html, "<ol>\n<li>one</li>\n<li>two</li>\n</ol>\n");
     }
 
     #[test]
