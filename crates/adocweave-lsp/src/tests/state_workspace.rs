@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn file_workspace_folder_analyzes_only_the_selected_document_as_a_root() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-single-file-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("document.adoc");
+    fs::write(&document_path, "single file\n").expect("document");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+
+    let mut service = LanguageService::default();
+    service.initialize(&typed(json!({
+        "processId": null,
+        "workspaceFolders": [{"uri": document_uri, "name": "document.adoc"}],
+        "capabilities": {"workspace": {"workspaceFolders": true}}
+    })));
+    open(&mut service, document_uri.as_str(), 1, "single file\n");
+
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code
+            != Some(lsp::NumberOrString::String(
+                "workspace-resource-error".to_owned(),
+            ))
+    }));
+    assert!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .expect("open document")
+            .workspace_analysis()
+            .is_some()
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn analysis_adoption_rejects_a_stale_workspace_generation() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

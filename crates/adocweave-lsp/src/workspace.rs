@@ -82,6 +82,8 @@ impl std::fmt::Display for ScopeConfigError {
 pub struct WorkspaceResources {
     inner: Workspace,
     roots: Vec<PathBuf>,
+    directory_roots: Vec<PathBuf>,
+    single_file_roots: BTreeSet<PathBuf>,
     filesystems: BTreeMap<ProjectScopeId, Arc<Mutex<LocalFilesystemSession>>>,
     project_plans: BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>,
     resource_projects: BTreeMap<ResourceId, ProjectScopeId>,
@@ -182,7 +184,7 @@ impl WorkspaceResources {
     ) -> Result<(), String> {
         self.last_load_failed_closed = false;
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
-        let mut paths = match roots
+        let root_paths = match roots
             .iter()
             .map(|root| {
                 root.to_file_path()
@@ -198,14 +200,39 @@ impl WorkspaceResources {
                 return Err(error);
             }
         };
+        let mut directory_roots = Vec::new();
+        let mut single_file_roots = BTreeSet::new();
+        for path in root_paths {
+            if path.is_dir() {
+                directory_roots.push(path);
+            } else if path.is_file() {
+                single_file_roots.insert(path);
+            } else {
+                self.fail_closed(Vec::new(), limits);
+                return Err("workspace root is neither a directory nor a regular file".to_owned());
+            }
+        }
+        directory_roots.sort();
+        directory_roots.dedup();
+        single_file_roots.retain(|path| {
+            !directory_roots
+                .iter()
+                .any(|directory| path.starts_with(directory))
+        });
+        let mut paths = directory_roots.clone();
+        paths.extend(
+            single_file_roots
+                .iter()
+                .filter_map(|path| path.parent().map(Path::to_owned)),
+        );
         paths.sort();
         paths.dedup();
         let preserve_previous = std::cell::Cell::new(false);
         let load_result = (|| {
-            let discovery = (!paths.is_empty())
+            let discovery = (!directory_roots.is_empty())
                 .then(|| {
                     LocalFilesystemPolicy::new(
-                        paths.clone(),
+                        directory_roots.clone(),
                         adocweave_host::FilesystemReadLimits::default(),
                     )
                 })
@@ -214,12 +241,15 @@ impl WorkspaceResources {
                 .map(|policy| policy.session())
                 .transpose()
                 .map_err(|error| error.to_string())?;
-            let candidates = match discovery.as_ref() {
+            let mut candidates = match discovery.as_ref() {
                 Some(session) => session
                     .discover_adoc_paths()
                     .map_err(|error| error.to_string())?,
                 None => Vec::new(),
             };
+            candidates.extend(single_file_roots.iter().cloned());
+            candidates.sort();
+            candidates.dedup();
             let mut inner = Workspace::new_at_generation(limits, seed);
             let mut filesystems = BTreeMap::new();
             let mut resource_projects = BTreeMap::new();
@@ -299,13 +329,17 @@ impl WorkspaceResources {
                 inner
                     .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
                     .map_err(|error| error.to_string())?;
-                inner
-                    .register_root(id.clone())
-                    .map_err(|error| error.to_string())?;
+                if path_is_analysis_root(&path, &directory_roots, &single_file_roots) {
+                    inner
+                        .register_root(id.clone())
+                        .map_err(|error| error.to_string())?;
+                }
                 resource_projects.insert(id, scope);
             }
             self.inner = inner;
             self.roots = paths.clone();
+            self.directory_roots = directory_roots;
+            self.single_file_roots = single_file_roots;
             self.filesystems = filesystems;
             self.project_plans = project_plans;
             self.resource_projects = resource_projects;
@@ -326,6 +360,8 @@ impl WorkspaceResources {
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
         self.inner = Workspace::new_at_generation(limits, seed);
         self.roots = roots;
+        self.directory_roots.clear();
+        self.single_file_roots.clear();
         self.filesystems.clear();
         self.project_plans.clear();
         self.resource_projects.clear();
@@ -342,16 +378,20 @@ impl WorkspaceResources {
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         let id = uri_id(&uri)?;
-        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &path)
+        let admitted_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !self.path_is_analysis_root(&admitted_path) {
+            return Ok(BTreeSet::new());
+        }
+        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &admitted_path)
             .map_err(|error| error.to_string())?;
-        if !resource_path_is_allowed(config.as_ref(), &path) {
-            return self.remove_outside_authority(&id, &path);
+        if !resource_path_is_allowed(config.as_ref(), &admitted_path) {
+            return self.remove_outside_authority(&id, &admitted_path);
         }
         let plan = config.as_ref().map_or_else(
             adocweave_config::ResolvedResourceLimitPlan::default,
             |snapshot| snapshot.config.resources.limit_plan,
         );
-        let prepared = self.read_workspace_file(&path, &scope, plan)?;
+        let prepared = self.read_workspace_file(&admitted_path, &scope, plan)?;
         let next_disk_version = self.next_disk_version.saturating_add(1);
         let result = (|| {
             let previous_charge = self.retained_charge(&id);
@@ -387,7 +427,8 @@ impl WorkspaceResources {
         if previous_scope
             .as_ref()
             .is_some_and(|previous| previous != &scope)
-            && let Err(error) = self.release_filesystem_charge(previous_scope.as_ref(), &path)
+            && let Err(error) =
+                self.release_filesystem_charge(previous_scope.as_ref(), &admitted_path)
         {
             prepared
                 .rollback()
@@ -865,8 +906,12 @@ impl WorkspaceResources {
         let path = uri.to_file_path().map_err(|()| {
             ScopeConfigError::Other(format!("workspace resource is not a file URI: {uri}"))
         })?;
-        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &path)?;
-        if !resource_path_is_allowed(config.as_ref(), &path) {
+        let admission_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !self.path_is_analysis_root(&admission_path) {
+            return Ok(None);
+        }
+        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &admission_path)?;
+        if !resource_path_is_allowed(config.as_ref(), &admission_path) {
             return Ok(None);
         }
         let plan = config.as_ref().map_or_else(
@@ -874,6 +919,10 @@ impl WorkspaceResources {
             |snapshot| snapshot.config.resources.limit_plan,
         );
         Ok(Some((scope, plan)))
+    }
+
+    fn path_is_analysis_root(&self, path: &Path) -> bool {
+        path_is_analysis_root(path, &self.directory_roots, &self.single_file_roots)
     }
 }
 
@@ -890,6 +939,16 @@ const fn adapter_managed_workspace_limits() -> WorkspaceLimits {
 
 fn uri_id(uri: &Url) -> Result<ResourceId, String> {
     ResourceId::new(uri.to_string()).map_err(|error| error.to_string())
+}
+
+fn path_is_analysis_root(
+    path: &Path,
+    directory_roots: &[PathBuf],
+    single_file_roots: &BTreeSet<PathBuf>,
+) -> bool {
+    (directory_roots.is_empty() && single_file_roots.is_empty())
+        || single_file_roots.contains(path)
+        || directory_roots.iter().any(|root| path.starts_with(root))
 }
 
 fn resource_path_is_allowed(
@@ -1083,6 +1142,63 @@ mod tests {
                 .as_ref(),
             "first\n"
         );
+    }
+
+    #[test]
+    fn single_file_root_registers_only_the_selected_document() {
+        let root = TestDirectory::new();
+        let selected = root.0.join("selected.adoc");
+        let included = root.0.join("included.adoc");
+        let unrelated = root.0.join("unrelated.adoc");
+        std::fs::write(&selected, "include::included.adoc[]\n").expect("selected source");
+        std::fs::write(&included, "included\n").expect("included source");
+        std::fs::write(&unrelated, "unrelated\n").expect("unrelated source");
+        let selected_uri = Url::from_file_path(&selected).expect("selected URI");
+        let included_uri = Url::from_file_path(&included).expect("included URI");
+        let unrelated_uri = Url::from_file_path(&unrelated).expect("unrelated URI");
+        let mut resources = WorkspaceResources::default();
+
+        resources
+            .load_roots(std::slice::from_ref(&selected_uri))
+            .expect("load single-file workspace");
+
+        assert_eq!(
+            resources.inner.roots(),
+            &BTreeSet::from([uri_id(&selected_uri).expect("selected resource ID")])
+        );
+        assert!(resources.get(&included_uri).is_none());
+        assert!(resources.get(&unrelated_uri).is_none());
+        resources
+            .reload_file(unrelated_uri.clone())
+            .expect("ignore unrelated resource");
+        assert!(resources.get(&unrelated_uri).is_none());
+
+        assert!(resources.input(&selected_uri).is_ok());
+    }
+
+    #[test]
+    fn directory_root_supersedes_a_nested_single_file_root() {
+        let root = TestDirectory::new();
+        let nested = root.0.join("docs");
+        std::fs::create_dir_all(&nested).expect("nested directory");
+        let first = nested.join("first.adoc");
+        let second = nested.join("second.adoc");
+        std::fs::write(&first, "first\n").expect("first source");
+        std::fs::write(&second, "second\n").expect("second source");
+        let directory_uri = Url::from_directory_path(&root.0).expect("directory URI");
+        let first_uri = Url::from_file_path(&first).expect("first URI");
+        let mut resources = WorkspaceResources::default();
+
+        resources
+            .load_roots(&[directory_uri, first_uri])
+            .expect("load mixed roots");
+
+        assert!(resources.single_file_roots.is_empty());
+        assert_eq!(
+            resources.roots,
+            vec![root.0.canonicalize().expect("canonical directory")]
+        );
+        assert_eq!(resources.inner.roots().len(), 2);
     }
 
     #[test]
