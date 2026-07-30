@@ -23,30 +23,33 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "`check --format json`が出力する診断1件のkey集合を、すべての実行経路で同じにしました。従来はincludeの有無や入力fileの数で異なる形を返していました。",
-  "`sourceId`、`related`および`fixes`が常に存在します。該当がない場合、`related`と`fixes`は空の配列になります。",
-  "`--include`を使用した場合も`fixes`を返すようになりました。範囲は展開後ではなく元fileの座標です。",
-  "WebAssemblyのtrapを通常の失敗と区別し、trapしたworkerを次の要求へ持ち越さないようにしました。",
-  "Rust公開APIの型、WASM protocol、Language Server protocolおよび設定schemaに破壊的変更はありません。",
+  "外部の書誌ライブラリーを参照する`cite:[key]`を引用として解析し、公開APIへ構造化して公開しました。citation key、macro全体と各keyのsource range、名前付き属性および文書全体での出現順を取得できます。",
+  "`cite:[a, b]`のように複数のkeyを指定できます。`locator`などの名前付き属性は引用の補足として保持します。",
+  "keyを一つも持たない`cite:[]`を`invalid-catalog`として診断します。従来は出力から黙って消えていました。",
+  "解析の入口を`Engine::analyze`と`Engine::analyze_with`の2つへ整理しました。渡す入力の組み合わせごとにmethodを用意しません。",
+  "既存の標準bibliography（`[[[key]]]`と`<<key>>`）は変更していません。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.20.1から変更していません。`,
-  "Rust公開APIの型、WASM protocol、Language Server protocolおよび設定schemaはv0.20.1から変更していません。",
-  "破壊的変更：`check --format json`の出力形式を変更しました。全recordが`id`、`code`、`severity`、`sourceId`、`range`、`message`、`related`および`fixes`を持ちます。参照先検査の診断はこれらに加えて`target`、`line`および`column`を持ちます。keyの順序は辞書順になります。",
-  "browser向けclientは、WebAssemblyのtrapを`wasm-trapped`というcodeで通知します。従来は`worker-failed`に含まれていました。`isAdocWeaveClientLifecycleError`はどちらでも`true`を返します。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.21.0から変更していません。`,
+  "WASM protocol、CLI引数、Language Server protocolおよび設定schemaはv0.21.0から変更していません。",
+  "破壊的変更：`Engine::analyze_with_source_id`、`analyze_cancellable`および`analyze_cancellable_with_source_id`を削除し、`Engine::analyze_with`へ統合しました。`AnalysisInputs`で`SourceId`と協調キャンセルを渡します。",
+  "破壊的変更：`adocweave::ProductSet`と`adocweave::DocumentProducts`のcrate直下の再公開を外しました。`adocweave::output::conformance`から参照します。",
+  "対応するAsciiDocの範囲を広げました。`cite:`を含む既存文書は、従来テキストとして出力していた箇所が引用として解析されます。",
+  "`adocweave::AnalysisCacheKey`を新たに参照できます。",
+  "HTMLの許可classへ`citation`を追加しました。エスケープと許可リスト方式は変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。診断の集合、重要度、code、範囲および終了状態は変わりません。",
-  "`check --format json`の出力からkeyの有無で分岐している処理は、分岐を削除してください。`sourceId`、`related`および`fixes`は常に存在します。",
-  "`sourceId`は対象fileの識別子です。`null`になるのはincludeの射影で元fileの識別子が不明な場合だけです。",
-  "keyの順序に依存する処理と、出力文字列をそのまま比較しているtestは、値で比較する形へ更新してください。",
-  "`--include`を使用したcheckで`fixes`を無視していたconsumerは、返るようになった修正候補の扱いを確認してください。",
-  "browser向けclientでtrapからの回復を扱う場合は、`wasm-trapped`を判定に加えてください。workerの作り直しはclientが行うため、利用側の追加処理は不要です。",
+  "設定の移行は不要です。既存の診断code、HTML出力および終了状態は`cite:`を含まない文書で変わりません。",
+  "`Engine::analyze_with_source_id`を使っていた場合は`Engine::analyze_with(source, AnalysisInputs { source_id: Some(&id), ..Default::default() })`へ置き換えてください。",
+  "`Engine::analyze_cancellable`は`AnalysisInputs { cancellation: Some(&token), ..Default::default() }`、両方を渡す場合は両fieldを指定します。引数の順序がsourceを先にする形へそろいます。",
+  "`adocweave::ProductSet`と`adocweave::DocumentProducts`のimportを`adocweave::output::conformance`へ変更してください。",
+  "`cite:`をこれまで通常のテキストとして出力していた文書は、出力が変わります。引用として扱わない場合は記述を変更してください。",
+  "citation keyの解決は利用側アプリが行います。現在の版では解決結果をHTMLへ渡す経路がないため、解決前の表示は`unresolved_references`の設定に従います。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
@@ -57,8 +60,9 @@ const knownConstraints = [
   "Zed拡張はdevelopment extension、VS Code拡張はVSIXとして手動導入します。拡張registryへは公開しません。",
   "公式Playgroundはこのreleaseに含みません。`adocweave preview`は利用者の端末で実行するローカル機能です。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
-  "`check`の`--format human`、`--format github`および`--format sarif`の出力は変更していません。今回の変更は`--format json`だけが対象です。",
-  "`wasm-trapped`はbrowser向けclientが返すcodeです。native CLIとLanguage Serverの診断codeは変更していません。",
+  "AdocWeaveはBibTeXの保存・解析やCSL相当の書誌の組版を行いません。citation keyの解決は利用側アプリの責務です。",
+  "citationの引用情報はまだprojectionとWASM protocolへ公開していません。現在はRust APIの`Analysis::citations()`から取得します。",
+  "ホストが解決した引用表示をHTMLへ渡す経路はまだありません。解決前の表示は`unresolved_references`の設定に従い、`hidden`では出力しません。",
   "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
 ];
 
