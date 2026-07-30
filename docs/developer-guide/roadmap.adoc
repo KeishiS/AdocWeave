@@ -8,6 +8,16 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
+== 公開Rust APIのversion管理
+
+次の安定版を公開した後は、そのtagを最初の比較基準として公開Rust APIの変更を機械的に検査します。
+
+* https://github.com/KeishiS/adocweave/issues/265[公開Rust APIのSemVer差分検査]
+
+patch版へ意図しない破壊的変更を含めず、0.yのminor版で破壊的変更を行う場合は、
+機械可読な差分記録とRelease Notesの移行手順を対応付けます。検査に使うtool、比較対象のtag、
+対象crateおよびrelease種別を固定し、実行時に取得した最新版へ判定を依存させません。
+
 == 依存更新の運用
 
 製品versionとは独立して、依存更新の安全な運用を改善します。
