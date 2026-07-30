@@ -23,24 +23,24 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "Zed拡張のmanaged Language Server初回導入が、WASIで利用できないprocess IDの取得により停止する問題を修正しました。",
-  "一時fileと展開directoryの識別子を、WASIで利用できる時刻と拡張内の連番から生成します。",
+  "Zedで単一のAsciiDocファイルを開いたとき、ファイルURIをworkspace folderとして受け取ってもLanguage Serverを初期化できるようにしました。",
+  "単一ファイルのworkspaceでは、選択したファイルだけを解析の起点とし、親ディレクトリ内の別のAsciiDocファイルを自動では読み込みません。",
   "公開API、protocol、CLI引数、HTML出力および既定の診断に互換性へ影響する変更はありません。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.19.0から変更していません。`,
-  "Rust公開API、WASM protocol、CLI引数、Language Server protocol、HTML契約および設定schemaはv0.19.0から変更していません。",
-  "Zed拡張のインストール処理で使う一時file、一時directoryおよび退避directoryの識別子だけを変更します。配置するmanaged Language Serverの内容、検証markerおよびcache構造は変更しません。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.19.1から変更していません。`,
+  "Rust公開API、WASM protocol、CLI引数、Language Server protocol、HTML契約および設定schemaはv0.19.1から変更していません。",
+  "Language Serverが通常ファイルのworkspace rootを受け付けるようになります。ディレクトリのworkspace rootに対する既存の読み込み範囲は変更しません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  `Zedではv${RELEASE_NOTES_VERSION}の展開済みZed拡張directoryをdev extensionとして選び直し、Zedを再起動してください。v0.19.0のLSP cacheとロックのpathにはversionが含まれるため、v${RELEASE_NOTES_VERSION}の初回導入には使われません。`,
-  "managed Language Serverを確認する場合は、`lsp.adocweave.binary.path`の指定を外し、Zed processから見える`PATH`上に別の`adocweave-lsp`がない状態でAsciiDoc文書を開いてください。",
-  "Rust API、WASM、CLI、Language ServerおよびVS Code拡張の利用方法はv0.19.0から変わりません。",
+  `Zedではv${RELEASE_NOTES_VERSION}の展開済みZed拡張ディレクトリをdev extensionとして選び直し、Zedを再起動してください。`,
+  "単一ファイルから参照するinclude先も解析する必要がある場合は、そのファイルではなく親ディレクトリをworkspace folderとして開いてください。",
+  "Rust API、WASM、CLIおよびVS Code拡張の利用方法はv0.19.1から変わりません。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
@@ -51,6 +51,7 @@ const knownConstraints = [
   "Zed拡張はdevelopment extension、VS Code拡張はVSIXとして手動導入します。拡張registryへは公開しません。",
   "公式Playgroundはこのreleaseに含みません。`adocweave preview`は利用者の端末で実行するローカル機能です。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
+  "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
 ];
 
 function markdownList(items) {
