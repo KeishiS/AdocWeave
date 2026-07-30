@@ -14,9 +14,9 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /順序付き・順序なしリストの項目本文/);
-  assert.match(notes, /インデントの有無にかかわらず同じ項目のprincipal textとして解析/);
-  assert.match(notes, /xref、診断rangeおよびhard breakを正しい位置へ対応付けます/);
+  assert.match(notes, /確保する前に展開のbyte予算へ課金/);
+  assert.match(notes, /字下げを要求した`include::`の位置で`byte-limit`として報告/);
+  assert.match(notes, /整数演算のオーバーフローを取り除きました/);
   assert.match(notes, /設定schemaに破壊的変更はありません/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
@@ -24,15 +24,13 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /WASM protocol schema version/);
-  assert.match(notes, /v0\.19\.2から変更していません/);
-  assert.match(notes, /折り返し行を、リスト項目のprincipal textとして解析/);
-  assert.match(notes, /ListItemのtext、source range、inline診断およびHTML出力が意図的に変わります/);
+  assert.match(notes, /v0\.20\.0から変更していません/);
+  assert.match(notes, /失敗の内容が`byte-limit`に変わります/);
+  assert.match(notes, /上限の範囲に収まる入力の出力は変わりません/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /設定の移行は不要です/);
-  assert.match(notes, /継続行のインデントは任意です/);
-  assert.match(notes, /リスト項目との間に空行を追加してください/);
-  assert.match(notes, /複数行リストの期待値を更新してください/);
-  assert.match(notes, /単独行の`\+`を使用してください/);
+  assert.match(notes, /`resources.max-total-bytes`）の範囲で指定してください/);
+  assert.match(notes, /期待する診断codeを`byte-limit`へ更新してください/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
@@ -44,9 +42,8 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
   assert.match(notes, /Authenticode署名を行いません/);
-  assert.match(notes, /description listとcallout listの解析は変更していません/);
-  assert.match(notes, /インデントはsource textとsource rangeに保持/);
-  assert.match(notes, /独立したblockの開始位置で、項目のprincipal textを終了/);
+  assert.match(notes, /選択行ごとに累計して課金します/);
+  assert.match(notes, /負の`indent`が取り除く空白の数は、実際の行頭の空白数を上限とします/);
   assert.match(notes, /複数ファイルの解析にはディレクトリのworkspace folderが必要/);
   assert.match(
     notes,
@@ -60,7 +57,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.19.2"), /v0\.20\.0専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.20\.0専用/);
+  assert.throws(() => buildReleaseNotes("v0.20.0"), /v0\.20\.1専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.20\.1専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });

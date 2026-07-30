@@ -23,25 +23,25 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "順序付き・順序なしリストの項目本文を、空行を挟まない複数のソース行へ折り返せるようにしました。",
-  "継続行はインデントの有無にかかわらず同じ項目のprincipal textとして解析し、xref、診断rangeおよびhard breakを正しい位置へ対応付けます。",
+  "`include::`の`indent`属性による字下げを、確保する前に展開のbyte予算へ課金するようにしました。文書を開くだけで上限を超えるメモリを確保できる問題を修正しています。",
+  "予算を超える字下げは、字下げを要求した`include::`の位置で`byte-limit`として報告します。",
+  "`indent`と`leveloffset`へ極端な値を指定したときの整数演算のオーバーフローを取り除きました。",
   "公開APIの型、WASM protocol、CLI引数、Language Server protocolおよび設定schemaに破壊的変更はありません。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.19.2から変更していません。`,
-  "Rust公開APIの型、WASM protocol、CLI引数、Language Server protocolおよび設定schemaはv0.19.2から変更していません。",
-  "従来は複数のblockとして解析していた折り返し行を、リスト項目のprincipal textとして解析します。この入力ではListItemのtext、source range、inline診断およびHTML出力が意図的に変わります。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.20.0から変更していません。`,
+  "Rust公開APIの型、WASM protocol、CLI引数、Language Server protocolおよび設定schemaはv0.20.0から変更していません。",
+  "`indent`の字下げが展開後の合計byte数の上限を超える入力では、失敗の内容が`byte-limit`に変わります。上限の範囲に収まる入力の出力は変わりません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。既存の1行だけのリスト項目は従来どおり解析します。",
-  "長い項目本文は、次のリスト項目まで空行を挟まずに次のソース行へ続けてください。継続行のインデントは任意です。",
-  "空行なしの後続行をリスト外のblockとして扱う必要がある文書は、リスト項目との間に空行を追加してください。AST、HTMLまたは診断のsnapshotを検証するconsumerは、複数行リストの期待値を更新してください。",
-  "空行は項目本文を終了します。リスト項目へblockを付加する場合は、従来どおり単独行の`+`を使用してください。",
+  "設定の移行は不要です。上限の範囲に収まる`include::`の`indent`は従来どおり処理します。",
+  "`include::`の`indent`は、展開後の合計byte数の上限（`resources.max-total-bytes`）の範囲で指定してください。",
+  "大きな`indent`で失敗する入力を検証しているconsumerは、期待する診断codeを`byte-limit`へ更新してください。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
@@ -52,9 +52,8 @@ const knownConstraints = [
   "Zed拡張はdevelopment extension、VS Code拡張はVSIXとして手動導入します。拡張registryへは公開しません。",
   "公式Playgroundはこのreleaseに含みません。`adocweave preview`は利用者の端末で実行するローカル機能です。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
-  "複数行のprincipal textへの対応は順序付き・順序なしリストが対象です。description listとcallout listの解析は変更していません。",
-  "継続行のインデントはsource textとsource rangeに保持します。HTMLでは通常の空白として表示します。",
-  "次のリストマーカー、単独行の`+`または独立したblockの開始位置で、項目のprincipal textを終了します。",
+  "`indent`の字下げは選択行ごとに累計して課金します。予算へ達した時点で展開を停止するため、上限に近い設定では従来より早く失敗します。",
+  "負の`indent`が取り除く空白の数は、実際の行頭の空白数を上限とします。この挙動は変更していません。",
   "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
 ];
 
