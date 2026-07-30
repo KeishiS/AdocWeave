@@ -863,6 +863,13 @@ dependencies = [
 description = "Alias for the canonical local pull request gate"
 alias = "verify"
 
+[tasks.verify-with-global-candidate]
+description = "Run the pull request gate together with the global candidate acceptance CI performs"
+dependencies = [
+  "verify",
+  "release-global-candidate",
+]
+
 [tasks.release-check]
 description = "Run the publish gate and report release WASM artifact sizes"
 dependencies = [

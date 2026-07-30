@@ -162,8 +162,23 @@ source qualityは、書式や生成fileなどの短い検査、Rust workspaceの
 変更に応じて選択したcandidate build、smoke testおよびinstallation E2Eの結果を集約する必須checkです。
 成果物を構築するPull Requestでは、書式、生成file、workflow、release契約および
 変更pathの分類を``cargo make ci-preflight``で先に確認します。global成果物へ影響する場合は、
-実Chromiumによるarchiveの受入検査もPull Requestで実行します。ローカルの``cargo make verify``は
-同じ検査単位をすべて含みます。
+実Chromiumによるarchiveの受入検査もPull Requestで実行します。
+
+``cargo make verify``はsource gate、dependency governance、fuzzおよびNix packageを含みますが、
+実Chromiumによる受入検査は含みません。browser、ZedまたはVS Code向けの成果物へ影響する変更では、
+次を実行してCIの``build-global``と同じ範囲を手元で確認してください。
+
+[source,console]
+----
+cargo make verify-with-global-candidate
+----
+
+このtaskは``cargo make verify``に加えて、配布するbrowser、ZedおよびVS Codeのarchiveを構築し、
+分離環境、通常環境およびbundler経由の3経路で実Chromiumから実行します。
+
+手元では``nix develop``の開発環境が提供するChromiumを使用します。CIでは実行環境が用意した
+browserを使用するため、versionは一致しません。``ADOCWEAVE_BROWSER``で使用するbrowserを
+指定できます。
 
 == Tag
 
