@@ -1,6 +1,6 @@
 {
   "schemaVersion": 7,
-  "packageVersion": "0.20.0",
+  "packageVersion": "0.20.1",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
   "requestEnums": [
