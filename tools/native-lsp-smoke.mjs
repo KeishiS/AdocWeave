@@ -476,7 +476,13 @@ async function waitWithinDeadline(operation, deadline, phase) {
   const abort = () => controller.abort(deadline.signal.reason);
   deadline.signal.addEventListener("abort", abort, { once: true });
   try {
-    return await deadline.run(operation(controller.signal), phase);
+    const pending = Promise.resolve(operation(controller.signal));
+    // The total deadline can abort between the check above and the one inside
+    // `deadline.run`. `run` then throws before it awaits `pending`, and the
+    // `finally` below aborts `pending` to release the process handle. Nothing
+    // would be awaiting that rejection, so absorb it here.
+    pending.catch(() => {});
+    return await deadline.run(pending, phase);
   } catch {
     return false;
   } finally {
