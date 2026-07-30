@@ -371,14 +371,14 @@ args = [
 ]
 
 [tasks.build-wasm]
-description = "Build wasm-bindgen web artifacts under target/adocweave-wasm"
+description = "Build wasm-bindgen web artifacts with the fast release profile for local iteration"
 script_runner = "@shell"
 script = '''
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$(pwd)=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
 cargo build -p adocweave-wasm --release --target wasm32-unknown-unknown
 wasm-bindgen \
   --target web \
-  --out-dir target/adocweave-wasm \
+  --out-dir target/adocweave-wasm-dev \
   target/wasm32-unknown-unknown/release/adocweave_wasm.wasm
 '''
 
@@ -546,14 +546,19 @@ command = "npm"
 args = ["run", "test:cross-runtime", "--prefix", "web-worker"]
 
 [tasks.wasm-size]
-description = "Build WASM and report generated artifact byte sizes"
-dependencies = ["build-wasm"]
+description = "Report the byte sizes of the browser artifacts that ship"
+dependencies = ["package-browser-release"]
 script_runner = "@shell"
 script = '''
+# package-browser-release leaves the browser profile wasm-bindgen output here and
+# copies it into the archive, so these are the bytes consumers download.
 for artifact in target/adocweave-wasm/*; do
   bytes="$(wc -c < "$artifact")"
   echo "$bytes $artifact"
 done
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+archive="target/distrib/adocweave-browser-$version.tar.xz"
+echo "$(wc -c < "$archive") $archive"
 '''
 
 [tasks.test-grammar]
