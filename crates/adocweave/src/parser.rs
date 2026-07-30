@@ -1223,8 +1223,49 @@ fn parse_lists(
                     + 1,
             );
         }
-        let text = &content[text_start..];
-        let item_text_range = text_range(absolute + text_start, absolute + content.len())?;
+        let principal_start = absolute + text_start;
+        let mut principal_end = line.content_range().end().to_usize();
+        let mut principal_end_line = index + 1;
+        if matches!(kind, ListKind::Ordered | ListKind::Unordered) {
+            while principal_end_line < end_line {
+                if (context.is_cancelled)() {
+                    return Err(ParseFailure::Cancelled);
+                }
+                let continuation_line = source_document.lines()[principal_end_line];
+                let continuation_content = source_document
+                    .text(continuation_line.content_range())
+                    .expect("valid principal text line");
+                if continuation_content == "+"
+                    || crate::list_parser::marker(continuation_content).is_some()
+                {
+                    break;
+                }
+                let next_content = source_document
+                    .lines()
+                    .get(principal_end_line + 1)
+                    .and_then(|next| source_document.text(next.content_range()));
+                if !matches!(
+                    crate::block_grammar::recognize_line(
+                        continuation_content,
+                        next_content,
+                        continuation_line.content_range().start().to_usize(),
+                        continuation_line.full_range(),
+                        false,
+                    ),
+                    crate::block_grammar::LineRecognition::Paragraph
+                        | crate::block_grammar::LineRecognition::LiteralParagraph
+                ) {
+                    break;
+                }
+                principal_end = continuation_line.content_range().end().to_usize();
+                principal_end_line += 1;
+            }
+        }
+        let text = context
+            .source
+            .get(principal_start..principal_end)
+            .expect("principal text range is valid UTF-8");
+        let item_text_range = text_range(principal_start, principal_end)?;
         let parsed = parse_inlines(
             text,
             item_text_range,
@@ -1296,14 +1337,19 @@ fn parse_lists(
             Vec::new()
         };
         let mut item = ListItem {
-            range: line.full_range(),
+            range: TextRange::new(
+                line.full_range().start(),
+                source_document.lines()[principal_end_line - 1]
+                    .full_range()
+                    .end(),
+            )?,
             marker_range,
             explicit_number,
             invalid_explicit_number,
             separator_range,
             text_range: item_text_range,
             text: text.to_owned(),
-            inlines: parsed.inlines,
+            inlines: split_hard_breaks(parsed.inlines),
             terms,
             checklist,
             callout_id,
@@ -1313,7 +1359,7 @@ fn parse_lists(
             continuation_ranges: Vec::new(),
             problems,
         };
-        index += 1;
+        index = principal_end_line;
         while source_document
             .lines()
             .get(index)
@@ -3055,6 +3101,110 @@ mod tests {
         assert_eq!(unordered.items.len(), 2);
         assert_eq!(unordered.items[0].children[0].items[0].text, "nested");
         assert!(matches!(parsed.ast.blocks()[1], AstBlock::List(_)));
+    }
+
+    #[test]
+    fn ordered_and_unordered_items_accept_multiline_principal_text() {
+        for (source, kind, expected) in [
+            (
+                ". first\ncontinued first\n. second\ncontinued second\n",
+                ListKind::Ordered,
+                ["first\ncontinued first", "second\ncontinued second"],
+            ),
+            (
+                ". first\n  continued first\n. second\n  continued second\n",
+                ListKind::Ordered,
+                ["first\n  continued first", "second\n  continued second"],
+            ),
+            (
+                "* first\ncontinued first\n* second\ncontinued second\n",
+                ListKind::Unordered,
+                ["first\ncontinued first", "second\ncontinued second"],
+            ),
+            (
+                "* first\n  continued first\n* second\n  continued second\n",
+                ListKind::Unordered,
+                ["first\n  continued first", "second\n  continued second"],
+            ),
+        ] {
+            let parsed = parse(source).expect("multiline list");
+            let [AstBlock::List(list)] = parsed.ast.blocks() else {
+                panic!("one list");
+            };
+            assert_eq!(list.kind, kind);
+            assert_eq!(list.items.len(), 2);
+            assert_eq!(list.items[0].text, expected[0]);
+            assert_eq!(list.items[1].text, expected[1]);
+            assert!(
+                list.items
+                    .iter()
+                    .all(|item| item.continuations.is_empty() && item.problems.is_empty())
+            );
+            assert_eq!(parsed.syntax.reconstruct(), source);
+        }
+    }
+
+    #[test]
+    fn multiline_principal_text_stops_at_list_and_block_boundaries() {
+        let source =
+            ". parent\nparent body\n.. child\nchild body\n. sibling\nsibling body\n\noutside\n";
+        let parsed = parse(source).expect("nested multiline list");
+        let [AstBlock::List(list), AstBlock::Paragraph(outside)] = parsed.ast.blocks() else {
+            panic!("list followed by an outside paragraph");
+        };
+
+        assert_eq!(list.items.len(), 2);
+        assert_eq!(list.items[0].text, "parent\nparent body");
+        assert_eq!(list.items[0].children.len(), 1);
+        assert_eq!(list.items[0].children[0].items[0].text, "child\nchild body");
+        assert_eq!(list.items[1].text, "sibling\nsibling body");
+        assert_eq!(outside.value, "outside");
+    }
+
+    #[test]
+    fn multiline_principal_text_preserves_continuations_and_inline_ranges() {
+        let source = "* principal\ncontinued xref:target[label]\n+\nattached paragraph\n* sibling\nsibling body\n";
+        let parsed = parse(source).expect("multiline list with continuation");
+        let [AstBlock::List(list)] = parsed.ast.blocks() else {
+            panic!("one list");
+        };
+        let first = &list.items[0];
+
+        assert_eq!(first.text, "principal\ncontinued xref:target[label]");
+        assert_eq!(first.continuations.len(), 1);
+        assert!(matches!(
+            &first.continuations[0],
+            AstBlock::Paragraph(paragraph) if paragraph.value == "attached paragraph"
+        ));
+        let reference = first
+            .inlines
+            .iter()
+            .find_map(|inline| match inline {
+                Inline::Reference(reference) => Some(reference),
+                _ => None,
+            })
+            .expect("cross-reference on the continuation line");
+        assert_eq!(
+            &source[reference.target_range.start().to_usize()
+                ..reference.target_range.end().to_usize()],
+            "target"
+        );
+        assert_eq!(list.items[1].text, "sibling\nsibling body");
+    }
+
+    #[test]
+    fn multiline_list_principal_text_resolves_an_explicit_hard_break() {
+        let parsed = parse(". first +\ncontinued\n. second\n").expect("multiline list");
+        let [AstBlock::List(list)] = parsed.ast.blocks() else {
+            panic!("one list");
+        };
+
+        assert!(
+            list.items[0]
+                .inlines
+                .iter()
+                .any(|inline| matches!(inline, Inline::HardBreak { .. }))
+        );
     }
 
     #[test]

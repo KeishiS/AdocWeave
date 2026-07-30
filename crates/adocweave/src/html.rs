@@ -2550,6 +2550,28 @@ mod tests {
     }
 
     #[test]
+    fn ordered_list_multiline_principal_text_stays_in_each_item() {
+        let parsed = parse(". ほげ\n  ほげ\n. ほが\n  ほが\n").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            "<ol>\n<li>ほげ   ほげ</li>\n<li>ほが   ほが</li>\n</ol>\n"
+        );
+    }
+
+    #[test]
+    fn ordered_list_multiline_principal_text_renders_an_explicit_hard_break() {
+        let parsed = parse(". first +\ncontinued\n. second\n").expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default());
+
+        assert_eq!(
+            output.html,
+            "<ol>\n<li>first<br>\ncontinued</li>\n<li>second</li>\n</ol>\n"
+        );
+    }
+
+    #[test]
     fn lists_match_the_supported_asciidoctor_fixture() {
         let parsed = parse(include_str!(
             "../../../fixtures/lists/asciidoctor-compatible.adoc"

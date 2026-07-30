@@ -2022,6 +2022,30 @@ mod tests {
     }
 
     #[test]
+    fn multiline_list_principal_text_keeps_diagnostic_ranges_on_continuation_lines() {
+        let source = "* first\n本文xref:target[]\n";
+        let mut config = LintConfig::default();
+        config.set_rule(
+            MACRO_BOUNDARY,
+            RuleSettings {
+                enabled: true,
+                severity: Severity::Warning,
+            },
+        );
+
+        let diagnostics = lint(source, &config).expect("lint");
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "macro-boundary")
+            .expect("macro boundary diagnostic");
+
+        assert_eq!(
+            &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()],
+            "xref"
+        );
+    }
+
+    #[test]
     fn expanded_xref_target_does_not_keep_the_authored_safety_diagnostic() {
         let diagnostics = lint(
             "= Title\n:asset: data\n\nxref:{asset}.toml[Data]\n",
