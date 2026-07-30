@@ -29,20 +29,31 @@
         overlays = [ (import rust-overlay) ];
       };
       stableRust = pkgs: pkgs.rust-bin.stable.latest.default;
+      rustTargets = [
+        "aarch64-unknown-linux-musl"
+        "aarch64-apple-darwin"
+        "x86_64-pc-windows-msvc"
+        "x86_64-unknown-linux-musl"
+        "wasm32-unknown-unknown"
+        "wasm32-wasip2"
+      ];
       developmentRust = pkgs: (stableRust pkgs).override {
         extensions = [
           "clippy"
           "rust-src"
           "rustfmt"
         ];
-        targets = [
-          "aarch64-unknown-linux-musl"
-          "aarch64-apple-darwin"
-          "x86_64-pc-windows-msvc"
-          "x86_64-unknown-linux-musl"
-          "wasm32-unknown-unknown"
-          "wasm32-wasip2"
+        targets = rustTargets;
+      };
+      # CI builds and lints only. The prebuilt standard library documentation and
+      # the standard library source are editor conveniences, and every job pays
+      # for them because rust-overlay outputs are not in the public binary cache.
+      ciRust = pkgs: pkgs.rust-bin.stable.latest.minimal.override {
+        extensions = [
+          "clippy"
+          "rustfmt"
         ];
+        targets = rustTargets;
       };
       rustPlatform = pkgs: pkgs.makeRustPlatform {
         cargo = stableRust pkgs;
@@ -187,15 +198,12 @@
             nodejs
             typescript
             ripgrep
-            rust-analyzer
-            (developmentRust pkgs)
             stdenv.cc
             wasm-bindgen-cli
             xz
             yq-go
             zip
             unzip
-            adocweave-fuzz
           ];
           vscodeRuntime = with pkgs; [
             alsa-lib
@@ -222,17 +230,32 @@
             libxrandr
             libxcb
           ];
-          shell = packages: pkgs.mkShell ({
-              inherit packages;
+          shell = { rust, extra ? [ ], rustSource ? false }: pkgs.mkShell ({
+              packages = commonPackages ++ [ rust ] ++ extra;
               ADOCWEAVE_DIST_BIN = "${pkgs.cargo-dist}/bin/dist";
-              RUST_SRC_PATH = "${developmentRust pkgs}/lib/rustlib/src/rust/library";
+            } // pkgs.lib.optionalAttrs rustSource {
+              RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
             } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
               LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath vscodeRuntime;
             });
         in
         {
-          default = shell (commonPackages ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.chromium pkgs.xvfb ]);
-          ci = shell (commonPackages ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.xvfb ]);
+          default = shell {
+            rust = developmentRust pkgs;
+            rustSource = true;
+            extra = [ pkgs.rust-analyzer adocweave-fuzz ]
+              ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.chromium pkgs.xvfb ];
+          };
+          ci = shell {
+            rust = ciRust pkgs;
+            extra = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.xvfb ];
+          };
+          # The nightly toolchain that cargo-fuzz needs is roughly 1.5 GiB and is
+          # rebuilt by every job that carries it, so only the fuzz gate gets it.
+          ci-fuzz = shell {
+            rust = ciRust pkgs;
+            extra = [ adocweave-fuzz ];
+          };
           html5 = pkgs.mkShell {
             packages = [
               pkgs.nodejs

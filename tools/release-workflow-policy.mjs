@@ -527,16 +527,18 @@ export function validateReleaseWorkflowPolicy({
     fail("only a publishing release plan may invoke the isolated publisher");
   }
 
-  for (const [name, task, timeout] of [
-    ["rust", "quality-rust", 25],
-    ["adapters", "quality-adapters", 25],
-    ["dependencies", "dependency-governance", 15],
-    ["fuzz", "fuzz", 15],
-    ["nix-package", "nix-package-check", 20],
+  // The fuzz gate uses its own shell so that the nightly toolchain cargo-fuzz
+  // needs stays out of every other job's closure.
+  for (const [name, task, timeout, shell] of [
+    ["rust", "quality-rust", 25, ".#ci"],
+    ["adapters", "quality-adapters", 25, ".#ci"],
+    ["dependencies", "dependency-governance", 15, ".#ci"],
+    ["fuzz", "fuzz", 15, ".#ci-fuzz"],
+    ["nix-package", "nix-package-check", 20, ".#ci"],
   ]) {
     requireTimeout(contractJobs[name], timeout, `${name} quality job must have a timeout`);
     const run = (contractJobs[name]?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
-    requireCommand(run, `nix develop .#ci -c cargo make ${task}`, `${name} must use its canonical local task`);
+    requireCommand(run, `nix develop ${shell} -c cargo make ${task}`, `${name} must use its canonical local task`);
   }
   const completeFast = step(contractJobs["source-fast"], (item) =>
     item.name === "Complete fast source policy execution",
