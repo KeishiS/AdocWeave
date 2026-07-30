@@ -310,6 +310,18 @@ impl fmt::Display for ParseError {
 
 impl Error for ParseError {}
 
+/// Optional inputs for one analysis.
+///
+/// Every field defaults to absent, so callers name only what they need:
+/// `AnalysisInputs { source_id: Some(&id), ..AnalysisInputs::default() }`.
+#[derive(Default)]
+pub struct AnalysisInputs<'inputs> {
+    /// Identity recorded on the analysis and its diagnostics.
+    pub source_id: Option<&'inputs SourceId>,
+    /// Cooperative cancellation checked at bounded checkpoints.
+    pub cancellation: Option<&'inputs dyn CancellationCheck>,
+}
+
 /// Stateless analysis engine with deterministic options.
 #[derive(Clone, Debug)]
 pub struct Engine {
@@ -329,44 +341,28 @@ impl Engine {
         analyze(source, &self.options)
     }
 
-    pub fn analyze_with_source_id(
-        &self,
-        source_id: Option<SourceId>,
-        source: &str,
-    ) -> Result<Analysis, ParseError> {
-        analyze_cancellable_with_source_id(source, source_id.as_ref(), &self.options, &NeverCancel)
-    }
-
-    pub fn analyze_cancellable(
+    /// Analyzes `source` with inputs beyond the engine options.
+    ///
+    /// [`Engine::analyze`] covers the common case. This entry takes the optional
+    /// inputs as one value so that a new input becomes a field instead of a new
+    /// method for every combination.
+    pub fn analyze_with(
         &self,
         source: &str,
-        cancellation: &dyn CancellationCheck,
+        inputs: AnalysisInputs<'_>,
     ) -> Result<Analysis, ParseError> {
-        analyze_cancellable(source, &self.options, cancellation)
-    }
-
-    pub fn analyze_cancellable_with_source_id(
-        &self,
-        source_id: Option<&SourceId>,
-        source: &str,
-        cancellation: &dyn CancellationCheck,
-    ) -> Result<Analysis, ParseError> {
-        analyze_cancellable_with_source_id(source, source_id, &self.options, cancellation)
+        analyze_cancellable_with_source_id(
+            source,
+            inputs.source_id,
+            &self.options,
+            inputs.cancellation.unwrap_or(&NeverCancel),
+        )
     }
 }
 
 /// Analyzes with a cancellation token that never cancels.
 pub(crate) fn analyze(source: &str, options: &AnalysisOptions) -> Result<Analysis, ParseError> {
     analyze_cancellable_with_source_id(source, None, options, &NeverCancel)
-}
-
-/// Analyzes caller-provided source without performing I/O or reference resolution.
-pub(crate) fn analyze_cancellable(
-    source: &str,
-    options: &AnalysisOptions,
-    cancellation: &dyn CancellationCheck,
-) -> Result<Analysis, ParseError> {
-    analyze_cancellable_with_source_id(source, None, options, cancellation)
 }
 
 fn analyze_cancellable_with_source_id(
@@ -498,8 +494,8 @@ mod tests {
     use std::thread;
 
     use super::{
-        AnalysisOptions, CancellationCheck, CancellationToken, Engine, ParseError, SourceId,
-        SyntaxOptions, analyze, analyze_cancellable,
+        AnalysisInputs, AnalysisOptions, CancellationCheck, CancellationToken, Engine, ParseError,
+        SourceId, SyntaxOptions, analyze, analyze_cancellable_with_source_id,
     };
 
     #[test]
@@ -530,10 +526,22 @@ mod tests {
     fn public_api_is_deterministic_and_source_id_is_opaque() {
         let engine = Engine::new(AnalysisOptions::default());
         let first = engine
-            .analyze_with_source_id(Some(SourceId::new("host:any/value")), "== 日本語\n")
+            .analyze_with(
+                "== 日本語\n",
+                AnalysisInputs {
+                    source_id: Some(&SourceId::new("host:any/value")),
+                    ..AnalysisInputs::default()
+                },
+            )
             .expect("analyze");
         let second = engine
-            .analyze_with_source_id(Some(SourceId::new("host:any/value")), "== 日本語\n")
+            .analyze_with(
+                "== 日本語\n",
+                AnalysisInputs {
+                    source_id: Some(&SourceId::new("host:any/value")),
+                    ..AnalysisInputs::default()
+                },
+            )
             .expect("analyze");
 
         assert_eq!(first.source_id, second.source_id);
@@ -628,8 +636,13 @@ mod tests {
 
         let source = "a".repeat(16 * 1024);
         let cancellation = CancelAfterFirstCheck(std::sync::atomic::AtomicUsize::new(0));
-        let error = analyze_cancellable(&source, &AnalysisOptions::default(), &cancellation)
-            .expect_err("cancelled");
+        let error = analyze_cancellable_with_source_id(
+            &source,
+            None,
+            &AnalysisOptions::default(),
+            &cancellation,
+        )
+        .expect_err("cancelled");
         assert_eq!(error, ParseError::Cancelled);
         assert_eq!(error.code().as_str(), "cancelled");
         assert_eq!(error.to_string(), "analysis was cancelled");
@@ -646,8 +659,9 @@ mod tests {
 
         let cancellation = CancelDuringParser(std::sync::atomic::AtomicUsize::new(0));
         assert!(matches!(
-            analyze_cancellable(
+            analyze_cancellable_with_source_id(
                 "first\nsecond\nthird\n",
+                None,
                 &AnalysisOptions::default(),
                 &cancellation,
             ),
@@ -821,9 +835,12 @@ mod tests {
     #[test]
     fn reference_resolution_queries_are_host_independent() {
         let parsed = Engine::new(AnalysisOptions::default())
-            .analyze_with_source_id(
-                Some(SourceId::new("opaque:source")),
+            .analyze_with(
                 "xref:other.adoc#part[] xref:note:123e4567-e89b-12d3-a456-426614174000#part[]",
+                AnalysisInputs {
+                    source_id: Some(&SourceId::new("opaque:source")),
+                    ..AnalysisInputs::default()
+                },
             )
             .expect("analyze");
         let queries = parsed.reference_queries();

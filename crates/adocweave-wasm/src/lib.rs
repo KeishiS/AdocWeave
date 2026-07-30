@@ -100,10 +100,12 @@ fn execute_request(
             None,
             Some(
                 engine
-                    .analyze_cancellable_with_source_id(
-                        request.source_id.as_ref(),
+                    .analyze_with(
                         &request.source,
-                        cancellation,
+                        adocweave::AnalysisInputs {
+                            source_id: request.source_id.as_ref(),
+                            cancellation: Some(cancellation),
+                        },
                     )
                     .map_err(wasm_error)?,
             ),

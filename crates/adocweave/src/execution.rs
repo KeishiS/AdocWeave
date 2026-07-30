@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use crate::{Analysis, AnalysisOptions, CancellationCheck, Engine, ParseError, SourceId};
+use crate::{
+    Analysis, AnalysisInputs, AnalysisOptions, CancellationCheck, Engine, ParseError, SourceId,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentRevision {
@@ -53,10 +55,12 @@ impl AnalysisRequest {
         cancellation: &dyn CancellationCheck,
     ) -> Result<AnalysisResult, ParseError> {
         let cache_key = self.cache_key();
-        let analysis = Engine::new(self.options.clone()).analyze_cancellable_with_source_id(
-            self.revision.source_id.as_ref(),
+        let analysis = Engine::new(self.options.clone()).analyze_with(
             &self.source,
-            cancellation,
+            AnalysisInputs {
+                source_id: self.revision.source_id.as_ref(),
+                cancellation: Some(cancellation),
+            },
         )?;
         Ok(AnalysisResult {
             revision: self.revision.clone(),

@@ -936,7 +936,13 @@ mod tests {
         let cancellation = crate::CancellationToken::new();
         cancellation.cancel();
         let cancellation_result = crate::Engine::new(crate::AnalysisOptions::default())
-            .analyze_cancellable("paragraph\n", &cancellation);
+            .analyze_with(
+                "paragraph\n",
+                crate::AnalysisInputs {
+                    cancellation: Some(&cancellation),
+                    ..crate::AnalysisInputs::default()
+                },
+            );
         assert!(matches!(
             cancellation_result,
             Err(crate::ParseError::Cancelled)
