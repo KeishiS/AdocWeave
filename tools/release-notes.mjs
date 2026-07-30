@@ -23,25 +23,30 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "`include::`の`indent`属性による字下げを、確保する前に展開のbyte予算へ課金するようにしました。文書を開くだけで上限を超えるメモリを確保できる問題を修正しています。",
-  "予算を超える字下げは、字下げを要求した`include::`の位置で`byte-limit`として報告します。",
-  "`indent`と`leveloffset`へ極端な値を指定したときの整数演算のオーバーフローを取り除きました。",
-  "公開APIの型、WASM protocol、CLI引数、Language Server protocolおよび設定schemaに破壊的変更はありません。",
+  "`check --format json`が出力する診断1件のkey集合を、すべての実行経路で同じにしました。従来はincludeの有無や入力fileの数で異なる形を返していました。",
+  "`sourceId`、`related`および`fixes`が常に存在します。該当がない場合、`related`と`fixes`は空の配列になります。",
+  "`--include`を使用した場合も`fixes`を返すようになりました。範囲は展開後ではなく元fileの座標です。",
+  "WebAssemblyのtrapを通常の失敗と区別し、trapしたworkerを次の要求へ持ち越さないようにしました。",
+  "Rust公開APIの型、WASM protocol、Language Server protocolおよび設定schemaに破壊的変更はありません。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.20.0から変更していません。`,
-  "Rust公開APIの型、WASM protocol、CLI引数、Language Server protocolおよび設定schemaはv0.20.0から変更していません。",
-  "`indent`の字下げが展開後の合計byte数の上限を超える入力では、失敗の内容が`byte-limit`に変わります。上限の範囲に収まる入力の出力は変わりません。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.20.1から変更していません。`,
+  "Rust公開APIの型、WASM protocol、Language Server protocolおよび設定schemaはv0.20.1から変更していません。",
+  "破壊的変更：`check --format json`の出力形式を変更しました。全recordが`id`、`code`、`severity`、`sourceId`、`range`、`message`、`related`および`fixes`を持ちます。参照先検査の診断はこれらに加えて`target`、`line`および`column`を持ちます。keyの順序は辞書順になります。",
+  "browser向けclientは、WebAssemblyのtrapを`wasm-trapped`というcodeで通知します。従来は`worker-failed`に含まれていました。`isAdocWeaveClientLifecycleError`はどちらでも`true`を返します。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。上限の範囲に収まる`include::`の`indent`は従来どおり処理します。",
-  "`include::`の`indent`は、展開後の合計byte数の上限（`resources.max-total-bytes`）の範囲で指定してください。",
-  "大きな`indent`で失敗する入力を検証しているconsumerは、期待する診断codeを`byte-limit`へ更新してください。",
+  "設定の移行は不要です。診断の集合、重要度、code、範囲および終了状態は変わりません。",
+  "`check --format json`の出力からkeyの有無で分岐している処理は、分岐を削除してください。`sourceId`、`related`および`fixes`は常に存在します。",
+  "`sourceId`は対象fileの識別子です。`null`になるのはincludeの射影で元fileの識別子が不明な場合だけです。",
+  "keyの順序に依存する処理と、出力文字列をそのまま比較しているtestは、値で比較する形へ更新してください。",
+  "`--include`を使用したcheckで`fixes`を無視していたconsumerは、返るようになった修正候補の扱いを確認してください。",
+  "browser向けclientでtrapからの回復を扱う場合は、`wasm-trapped`を判定に加えてください。workerの作り直しはclientが行うため、利用側の追加処理は不要です。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
@@ -52,8 +57,8 @@ const knownConstraints = [
   "Zed拡張はdevelopment extension、VS Code拡張はVSIXとして手動導入します。拡張registryへは公開しません。",
   "公式Playgroundはこのreleaseに含みません。`adocweave preview`は利用者の端末で実行するローカル機能です。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
-  "`indent`の字下げは選択行ごとに累計して課金します。予算へ達した時点で展開を停止するため、上限に近い設定では従来より早く失敗します。",
-  "負の`indent`が取り除く空白の数は、実際の行頭の空白数を上限とします。この挙動は変更していません。",
+  "`check`の`--format human`、`--format github`および`--format sarif`の出力は変更していません。今回の変更は`--format json`だけが対象です。",
+  "`wasm-trapped`はbrowser向けclientが返すcodeです。native CLIとLanguage Serverの診断codeは変更していません。",
   "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
 ];
 
