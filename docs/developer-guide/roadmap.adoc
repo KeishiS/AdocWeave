@@ -8,15 +8,48 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 公開Rust APIのversion管理
+== 公開Rust APIの整理とversion管理
 
-次の安定版を公開した後は、そのtagを最初の比較基準として公開Rust APIの変更を機械的に検査します。
+公開Rust APIには、同じ操作に対する入口が複数あります。解析は``Engine``の4変種と
+``AnalysisRequest``が併存し、前処理は6変種があります。利用側からは、どれが標準の入口なのか
+判断できません。
 
+* https://github.com/KeishiS/adocweave/issues/307[公開Rust APIの入口統合]
 * https://github.com/KeishiS/adocweave/issues/265[公開Rust APIのSemVer差分検査]
 
-patch版へ意図しない破壊的変更を含めず、0.yのminor版で破壊的変更を行う場合は、
+この2つは順序が決まっています。先に入口を統合し、その版のtagをSemVer差分検査の最初の比較基準と
+します。整理する前に基準を固定すると、直後のminor版で大量の差分を意図した破壊的変更として
+記録する作業が生じます。
+
+差分検査では、patch版へ意図しない破壊的変更を含めず、0.yのminor版で破壊的変更を行う場合は、
 機械可読な差分記録とRelease Notesの移行手順を対応付けます。検査に使うtool、比較対象のtag、
 対象crateおよびrelease種別を固定し、実行時に取得した最新版へ判定を依存させません。
+
+== Language Serverの応答性
+
+読み取り専用の要求は専用のCPUプールで処理しますが、通知の処理はイベントループ上で同期実行します。
+大きなワークスペースでは、初期化中と打鍵中にほかの要求へ応答できません。
+
+* https://github.com/KeishiS/adocweave/issues/308[通知処理のイベントループからの退避]
+
+== CLIとLanguage Serverの挙動差
+
+同じ製品の中で、終了コードの規約、設定の適用範囲および設定読み込みの資源境界が分かれています。
+文書の記述と実装が一致していない箇所もあります。
+
+* https://github.com/KeishiS/adocweave/issues/309[CLIとLanguage Serverの挙動差の解消]
+
+終了コードの変更は破壊的変更です。公開Rust APIの整理と同じrelease trainでまとめるか、
+別のminor版で行うかは着手時に判断します。
+
+== 文書の用語統一
+
+日本語の地の文に一般名詞の英語表記が残っています。「専門分野が異なる学部生でも前から順に読める
+文章」という目標に対して、この混在が最大の障害です。
+
+* https://github.com/KeishiS/adocweave/issues/310[日本語文書の用語統一]
+
+一括置換はせず、用語表と判定基準を決めてからuser-guideより順に進めます。
 
 == 保留中の対話的な確認環境
 
@@ -35,9 +68,11 @@ patch版へ意図しない破壊的変更を含めず、0.yのminor版で破壊�
 
 * https://github.com/KeishiS/adocweave/issues/33[単体CLIのlocal resource profile評価]
 * https://github.com/KeishiS/adocweave/issues/34[RenovateによるNix依存更新の評価]
+* https://github.com/KeishiS/adocweave/issues/283[外部書誌ライブラリー向けのciteマクロ]
 
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
+citeマクロは、対応するAsciiDocの範囲を広げる判断を伴うため、対応範囲の方針を決めてから採否を判断します。
 
 == 実施しない公開経路
 
