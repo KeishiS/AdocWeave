@@ -51,6 +51,7 @@ const NON_RELEASE_FILES = new Set([
   ".gitattributes",
   ".gitignore",
   ".github/dependabot-auto-merge-policy.json",
+  ".github/SECURITY.md",
   ".github/dependabot.yml",
   ".github/pull_request_template.md",
   "AGENTS.md",

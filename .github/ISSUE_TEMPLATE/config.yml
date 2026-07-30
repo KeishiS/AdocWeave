@@ -1,2 +1,5 @@
 blank_issues_enabled: false
-contact_links: []
+contact_links:
+  - name: 脆弱性の報告
+    url: https://github.com/KeishiS/adocweave/security/advisories/new
+    about: セキュリティ上の問題は公開のIssueではなく、非公開の脆弱性報告から連絡してください。
