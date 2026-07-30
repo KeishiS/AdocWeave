@@ -34,6 +34,14 @@ impl SourceMapBuilder {
         }
     }
 
+    /// Reports how many bytes the expansion may still append.
+    ///
+    /// Callers that build expanded text before appending it use this budget to
+    /// reject oversized work before allocating it.
+    pub(super) fn remaining_bytes(&self) -> usize {
+        self.max_bytes.saturating_sub(self.source.len())
+    }
+
     pub(super) fn append(
         &mut self,
         value: &str,
