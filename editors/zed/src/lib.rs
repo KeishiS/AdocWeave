@@ -166,9 +166,13 @@ fn commit_staging(staging: &Path, destination: &Path) -> Result<(), String> {
 static OPERATION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_operation_id() -> String {
+    // Zed runs the extension on WASI, which does not provide a process ID.
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
     format!(
-        "{}-{}",
-        std::process::id(),
+        "{timestamp}-{}",
         OPERATION_COUNTER.fetch_add(1, Ordering::Relaxed)
     )
 }
@@ -272,7 +276,7 @@ mod tests {
     #[test]
     fn failed_cache_commit_restores_the_previous_verified_directory() {
         let root =
-            std::env::temp_dir().join(format!("adocweave-zed-rollback-{}", std::process::id()));
+            std::env::temp_dir().join(format!("adocweave-zed-rollback-{}", unique_operation_id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let destination = root.join("current");
