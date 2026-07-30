@@ -11,6 +11,10 @@ on:
         required: false
         type: boolean
         default: true
+      save_build_cache:
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,6 +54,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - name: Locked toolchain exposure for dependency caching
+        run: nix develop .#ci -c bash -c 'command -v cargo' | xargs dirname >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: quality-rust
+          key: ${{ hashFiles('flake.lock') }}
+          save-if: ${{ inputs.save_build_cache }}
       - name: Rust source gate execution
         run: nix develop .#ci -c cargo make quality-rust
 
@@ -61,6 +72,16 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - name: Locked toolchain exposure for dependency caching
+        run: nix develop .#ci -c bash -c 'command -v cargo' | xargs dirname >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: quality-adapters
+          key: ${{ hashFiles('flake.lock') }}
+          workspaces: |
+            .
+            editors/zed
+          save-if: ${{ inputs.save_build_cache }}
       - name: Adapter source gate execution
         run: nix develop .#ci -c cargo make quality-adapters
 

@@ -5,6 +5,17 @@ import { join } from "node:path";
 
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
+// Quality gates allowed to restore a dependency build. They only verify source
+// and distribute nothing, so a restored build cannot reach a release artifact.
+// The fuzz gate is deliberately absent: it builds with a nightly toolchain and
+// sanitizers, and its exploration is meant to start from the locked closure.
+const CACHEABLE_QUALITY_JOBS = new Set(["rust", "adapters"]);
+
+export function isBuildCache(uses) {
+  return uses.startsWith("actions/cache/") ||
+    uses.startsWith("actions/cache@") ||
+    uses.startsWith("Swatinem/rust-cache@");
+}
 
 function fail(message) {
   throw new Error(message);
@@ -452,9 +463,18 @@ export function validateReleaseWorkflowPolicy({
       release.includes("cargo-dist-installer.ps1")) {
     fail("Windows cargo-dist must not use a registry build or network installer");
   }
-  if (workflowUses(releaseDoc).some(({ value }) => value.startsWith("actions/cache/")) ||
+  if (workflowUses(releaseDoc).some(({ value }) => isBuildCache(value)) ||
       release.includes("target/cargo-dist-bin")) {
     fail("release workflow must not cache executable build tools");
+  }
+  // Verification jobs may restore dependency builds because nothing they produce
+  // is distributed. Jobs that produce candidate or release artifacts must build
+  // every byte from the locked closure.
+  for (const [name, job] of Object.entries(contractJobs)) {
+    const cached = (job?.steps ?? []).some((item) => isBuildCache(item.uses ?? ""));
+    if (cached && !CACHEABLE_QUALITY_JOBS.has(name)) {
+      fail(`build caching is limited to the listed verification gates: ${name} must not cache builds`);
+    }
   }
 
   const browserAcceptance = step(releaseJobs["build-global"], (item) =>

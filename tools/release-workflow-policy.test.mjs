@@ -34,6 +34,32 @@ test("browser startup production bounds are canonical and mutation-resistant", (
   }
 });
 
+test("build caching stays inside the verification gates", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  const cacheStep = "      - uses: Swatinem/rust-cache@" +
+    "c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1\n";
+
+  const cachedFuzz = inputs.contract.replace(
+    "      - name: Fuzz target compilation and exploration\n",
+    `${cacheStep}      - name: Fuzz target compilation and exploration\n`,
+  );
+  assert.notEqual(cachedFuzz, inputs.contract);
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({ ...inputs, contract: cachedFuzz }),
+    /build caching is limited to the listed verification gates: fuzz/,
+  );
+
+  const cachedRelease = inputs.release.replace(
+    "      - name: Target archive builds\n",
+    `${cacheStep}      - name: Target archive builds\n`,
+  );
+  assert.notEqual(cachedRelease, inputs.release);
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({ ...inputs, release: cachedRelease }),
+    /must not cache executable build tools/,
+  );
+});
+
 test("every external action requires a full commit SHA", () => {
   assert.throws(
     () => validatePinnedActions({
