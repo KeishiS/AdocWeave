@@ -55,14 +55,14 @@ test("build and publish workflows cannot receive repository secrets", () => {
   );
 });
 
-test("publisher cannot omit its protected environment or cleanup", () => {
+test("publisher cannot omit its named environment or cleanup", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       publish: inputs.publish.replace("environment: github-release", "environment: unprotected"),
     }),
-    /protected github-release environment/,
+    /named github-release environment/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({

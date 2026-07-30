@@ -116,94 +116,19 @@ Dependabotのpull requestでも通常のreviewと必須検査を省略しませ�
 advisoryおよびRust stableへの影響を、GitHub Actions更新では完全なcommit SHAへの固定とRelease Notesを
 確認します。
 
-[#dependabot-auto-merge]
-=== Dependabotの自動merge
+[#dependabot-updates]
+=== Dependabotの手動merge
 
-``.github/dependabot-auto-merge-policy.json``は、自動mergeの停止状態と許可範囲の正本です。
-``enabled``が``false``の場合、項目が欠けている場合または設定を解釈できない場合は、自動mergeしません。
-初期状態は停止です。eligibilityは通常の``pull_request``から起動するread-only jobとして実行し、
-base commitだけをcheckoutします。Pull Request由来のcodeはcheckoutも実行もせず、不適格または停止中は
-``dependabot / eligibility`` checkを失敗させます。
+DependabotのPull Requestは更新範囲にかかわらず自動mergeせず、人が変更内容と必須検査を確認して統合します。
+repositoryにはDependabotのauto-mergeを登録するworkflowとwrite権限を置きません。
 
-自動mergeの候補は、Dependabotが同じrepositoryに作成した``main``向けのbranchに限定します。
-Cargoの直接依存関係とVS Code拡張の開発用npm依存関係のpatch更新だけを候補とし、次の更新は
-手動で確認します。
+reviewでは、manifestとlockfileの差分、直接・間接依存関係、SemVerの更新範囲、security advisory、
+license、取得元、重複依存および生成されるnoticeとSBOMを確認します。GitHub Actions更新では完全なcommit SHAへの
+固定と上流Release Notesも確認します。必須検査、競合確認および最新の``main``への追従を省略しません。
 
-* majorまたはminor更新
-* Cargoの間接依存関係の更新
-* セキュリティ更新
-* repositoryに未解決のDependabot alertが存在する間のすべての更新
-* GitHub Actionsの更新
-* VS Code拡張のruntime依存
-* 複数dependencyの更新とgrouped update
-* Dependabot以外が加えた変更
-* 許可されたmanifestとlockfile以外を含む変更
-
-候補であっても、最新の``main``を基準とする必須check、review規則および競合検査がすべて完了するまで
-mergeしません。自動化はGitHubのauto-mergeへ、検証済みのhead commitを指定して登録します。
-workflow自身がPull Requestを直ちにmergeすることはありません。判定workflowはPull Request由来のcodeを
-checkoutまたは実行せず、write権限をauto-merge登録だけを行うjobへ限定します。
-同じPull Requestに対する判定は同時実行せず、実行中の判定を取り消さずに直列化します。
-CI成功後にreviewが提出または取り消された場合は、権限を持たないsignal workflowを起点として判定をやり直します。
-判定時には対象headと現在のbaseに対する成功済み``CI and Release`` runをAPIから再取得し、以前の別headや
-別baseの結果を利用しません。
-
-自動mergeを開始する前に、repositoryの``main`` rulesetで必須checkのstrict設定を有効にします。
-rulesetにはpolicyの``requiredChecks``を同じGitHub Actions integration IDで登録し、承認を1件以上要求します。
-新しいcommitがpushされたときは古い承認を取り消し、最後にpushした人以外の承認を要求します。
-rulesetのbypass actorは空にします。GitHub Actions integration、repository roleまたは別の主体が規則を
-迂回できる適用対象rulesetが1件でもある場合は、自動mergeの保護として受け入れません。
-これらは実運用上の必須条件であり、policyを有効にするだけでは満たされません。rulesetで確認できない場合は、
-``enabled``を``false``のままにします。
-また、REST APIによる未解決Dependabot alertの全ページ照会に失敗した場合、結果が欠けた場合またはalertが1件でも
-存在する場合は、更新内容にかかわらず自動mergeを停止します。この照会にはrepositoryのGitHub Actions tokenを使い、
-個人用access tokenは使用しません。
-security updateの判定ではOPEN、FIXED、DISMISSEDおよびAUTO_DISMISSEDのalertをそれぞれ全ページ取得します。
-応答が空、欠落、不正または権限不足である場合は、security updateではないと推測せず停止します。
-auto-merge登録前の最終確認ではcheck、review、CIおよびrulesetを先に確認し、OPEN alertを最後に取得します。
-判定記録には対象headとbase、alertの観測完了時刻、controllerとrulesetの判定およびmutationの識別子を残します。
-
-activation前には実repositoryでintegration gateを実施します。Actions tokenで未解決Dependabot alertの全pageと
-有効なruleset詳細を取得できること、``main``向けrulesetの
-``strict_required_status_checks_policy``が``true``であること、必須checkとそのintegration IDがpolicyに一致すること、
-承認数、古い承認の取り消しおよび最後のpushに対する承認の設定がpolicy以上に厳しいこと、ならびに対象headで
-GitHub Actionsの``dependabot / eligibility`` checkを識別できることを確認します。policyを有効化した後の最初の
-許可対象patch更新を
-監視し、eligibility、CI、controllerおよびenable直前の再照合がすべて成功するまで通常運用へ移行しません。
-API権限や応答形式を確認できない場合はfail-closedで停止し、policyを直ちに``enabled = false``へ戻します。
-activation gateではrulesetのref条件を安全側に限定し、``main``またはdefault branchをincludeし、excludeが空の
-rulesetだけをstrict設定の根拠として受け入れます。exclude patternが1件でもある場合は、そのpatternが``main``へ
-一致するかを推測せずに停止します。
-初期導入では、人間の承認を1件要求し、Cargoの間接依存関係とセキュリティ更新を許可しません。
-単独管理でも、管理者自身がDependabot Pull Requestを承認できます。承認できない状況では登録を保留し、
-予期しないmetadataや自動化の変更によるmergeを防ぎます。間接依存関係は依存関係全体の広い範囲へ影響し得るため、
-手動で確認します。セキュリティ更新は脆弱性の影響、修正版および緊急度を個別に判断する必要があるため、
-脆弱性情報と更新内容を検証する専用の許可規則を別途設計するまで手動で扱います。GitHub Actions、
-npmの実行時依存関係およびminor以上の更新も、初期導入の対象にしません。
-
-停止するときは、通常のPull Requestでpolicyの``enabled``を``false``へ変更します。policyまたは判定処理の変更を
-検知した場合は、既存のDependabot Pull Requestに登録されたauto-mergeを自動で解除します。Dependabot alertは
-5分間隔の監査で再確認し、未解決alertを検知した場合も解除します。定期監査ではactiveなrulesetと、
-auto-mergeが登録された各Pull Requestのhead、base、check、review、変更fileおよび現在のbaseに対するCIも
-再確認し、不明な状態または不適格な状態を検知した場合は登録済みのauto-mergeを解除します。
-手動監査でもpolicyとalertを再確認し、
-設定を解釈できない場合、alertを取得できない場合または停止中は
-既存のauto-mergeを解除します。CIまたはreviewを契機とする再判定で不適格になった場合も同様です。
-
-workflowまたは判定toolを変更するときは、停止と変更を一つのPull Requestにまとめません。最初のPull Requestでは
-policyの``enabled``だけを``false``へ変更し、mainへの統合後にreconciliationが成功したことと、既存の
-Dependabot Pull Requestからauto-mergeが解除されたことをGitHub APIで確認します。その確認後に、別の
-Pull Requestでworkflowまたは判定toolを変更します。workflow自身を削除または変更するpushは、変更前の
-reconciliationを実行する保証がないためです。
-
-現在の方式では、Dependabot alertの照会とauto-mergeを登録するGraphQL mutationを一つの原子的な操作には
-できません。照会後にalertが発生した場合や、5分間隔の監査が実行される前には、安全でないauto-mergeが
-残る時間差があります。定期監査はこの時間差を解消する保証ではありません。この残存リスクの扱いと
-auto-merge方式の採否を決定するまで、policyの``enabled``は``false``のまま維持します。
-
-復旧するときは、停止理由が解消され、rulesetとActions権限が期待どおりであることを確認してから、
-policyを変更するPull Requestを作成します。復旧後も既存の判定結果を再利用せず、各Pull Requestの最新headで
-CIとeligibility checkを再実行します。手動で条件を迂回するoverrideは設けません。
+自動mergeを再検討する場合は、同じ管理者が作成した通常のPull Requestを統合できるreview体制、
+Dependabot alertを完全に取得できるActions権限、strictなrulesetおよびalert照会後の時間差を解消する設計を
+新しいIssueで扱います。設定やworkflowを直接追加して開始しません。
 
 Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新します。Frontendへruntime dependencyを追加する
 場合は、lockfileに基づくSBOM生成を先に実装します。
@@ -267,7 +192,7 @@ node tools/sync-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
 . 対象commitへ``vX.Y.Z`` tagを作成し、GitHubへpushします。
-. `github-release` Environmentでsource commitとcandidateを確認し、公開を承認します。
+. tag pushから起動した公開workflowがsource commitとcandidateを再確認し、GitHub Releaseを自動公開します。
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
 
@@ -279,8 +204,9 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 新しいversionで最初から実行します。tag、assetまたはattestationの手動削除は監査可能な破壊的操作であるため、
 実行前に対象、影響および理由を確認し、記録してください。
 
-repositoryの初期設定では``github-release`` Environmentを作成し、必要なreviewerとstable version tagだけを許可する
-deployment ruleを設定します。
+repositoryの初期設定では``github-release`` Environmentを名前付きの権限・監査境界として作成します。
+required reviewerとdeployment ruleは設定せず、workflowのstable tag検証とmain candidate再利用検査が
+成功した場合だけ自動公開します。
 
 [#release-checklist]
 == Release checklist

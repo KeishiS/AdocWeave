@@ -11,10 +11,14 @@
 
 release candidate tagを受理しません。mainの成功commitへ``vX.Y.Z``を一度だけ付け、同じworkflowでstable
 GitHub Releaseを公開します。公開後の修正はtagを付け替えず、新しいstable versionとして公開します。
+``github-release`` Environmentはrequired reviewerとdeployment ruleを持たない名前付きの権限・監査境界とし、
+workflowによるstable tag検証とmain candidate再利用検査の成功後に自動公開します。
 
 == 帰結
 
 公開経路はstable SemVerだけを扱います。stable tag前の自動検査を公開条件とし、
 公開後の修正は新versionで行うため、tag後の検査結果でtagを変更しません。
+公開開始後に人が承認を挟む停止点はありません。tag作成を公開判断として扱うため、tagをpushする前に
+source commitとmain candidateを確認します。
 未知の環境での長期試験が必要になった場合だけ、通常release trainとは別の検証用branchまたは
 事前配布を明示的に設計します。

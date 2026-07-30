@@ -1,0 +1,21 @@
+= ADR 0015: 依存更新の手動merge
+:status: accepted
+
+== 文脈
+
+Dependabotの低riskなpatch更新だけをGitHubのauto-mergeへ登録する仕組みを実装し、停止状態で
+fail-closedになることを検証しました。しかし、安全に有効化するには別の承認者、strictなruleset、
+Dependabot alertを完全に取得できるActions権限およびalert照会後の時間差を扱う運用が必要です。
+このrepositoryは一人で管理しているため、通常のPull Requestを統合できるreview経路と両立しません。
+
+== 決定
+
+DependabotのPull Requestは自動mergeせず、人が依存関係、security advisory、license、取得元、
+生成物および必須検査を確認して統合します。自動merge policy、判定workflow、mutation用write権限および
+専用toolはrepositoryから削除します。
+
+== 帰結
+
+定型的なpatch更新にも人の確認が必要ですが、通常のPull Requestを停止させるrulesetや、
+alert照会とauto-merge登録の時間差を受け入れる必要がなく、自動化固有の保守対象も残りません。
+自動mergeを再検討する場合は、review体制と権限境界を含む新しいIssueとADRで判断します。
