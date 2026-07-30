@@ -14,64 +14,24 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /公開Rust APIとWASM protocol schemaに互換性へ影響する変更/);
-  assert.match(notes, /wire型を公開schemaから生成/);
-  assert.match(notes, /filesystemの列挙と読込をhostへ集約/);
-  assert.match(notes, /文書外属性と属性展開上限を一つの検証済み処理契約へ統合/);
-  assert.match(notes, /前処理、解析、Lintおよび生成元への位置投影へ協調キャンセルを伝播/);
-  assert.match(notes, /filesystem読込、Workspaceのdisk・overlay保持および解析snapshotの上限plan/);
+  assert.match(notes, /Zed拡張のmanaged Language Server初回導入/);
+  assert.match(notes, /WASIで利用できないprocess ID/);
+  assert.match(notes, /時刻と拡張内の連番/);
+  assert.match(notes, /公開API、protocol、CLI引数、HTML出力および既定の診断に互換性へ影響する変更はありません/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
-  assert.match(notes, /前処理設定へdefault付きの属性展開上限を追加/);
-  assert.match(notes, /worker envelopeは変更していません/);
-  assert.match(notes, /CLI引数およびHTML契約.*v0\.18\.0から変更していません/);
+  assert.match(notes, /WASM protocol schema version/);
+  assert.match(notes, /v0\.19\.0から変更していません/);
+  assert.match(notes, /Zed拡張のインストール処理で使う一時file、一時directoryおよび退避directoryの識別子だけを変更/);
+  assert.match(notes, /cache構造は変更しません/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /`WasmPreprocessResponse::package_version`は`&'static str`から所有値の`String`/);
-  assert.match(notes, /response\.package_version\.as_str\(\)/);
-  assert.match(notes, /VERSION\.to_owned\(\)/);
-  assert.match(notes, /`WasmSourceMapSegment::mapping`は`String`から`WasmSourceMapping`/);
-  assert.match(notes, /WasmSourceMapping::Identity/);
-  assert.match(notes, /WasmSourceMapping::WholeOrigin/);
-  assert.match(notes, /`PreprocessOptions`と`WasmPreprocessOptions`へ`max_attribute_expansion_depth`/);
-  assert.match(notes, /WasmPreprocessOptions::default/);
-  assert.match(notes, /EffectiveProcessingOptions::new/);
-  assert.match(notes, /PreprocessedAnalysisError::Options/);
-  assert.match(notes, /WorkspaceErrorCode::InvalidOptions/);
-  assert.match(notes, /`scan_filesystem`、`scan_filesystem_with_session`、`FilesystemResource`/);
-  assert.match(notes, /LocalFilesystemSession::scan_utf8/);
-  assert.match(notes, /hostの`ResourceError`/);
-  assert.match(notes, /`adocweave_host::DependencyGraph`の公開を終了/);
-  assert.match(notes, /WorkspaceAnalysis::dependencies/);
-  assert.match(notes, /WASM protocol schema 7/);
-  assert.match(notes, /`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`/);
-  assert.match(notes, /省略時は従来と同じ32と1048576/);
-  assert.match(notes, /不一致は処理前に`invalid-options`/);
-  assert.match(notes, /`PreprocessedAnalysisError`へ`Cancelled`を追加/);
-  assert.match(notes, /網羅的に`match`するRustコード/);
-  assert.match(notes, /preprocess_and_analyze_cancellable_with_options/);
-  assert.match(notes, /PreprocessedAnalysis::project_origins_cancellable/);
-  assert.match(notes, /`adocweave_host::ResourceLimits`は`FilesystemReadLimits`/);
-  assert.match(notes, /`adocweave_workspace::ResourceLimits`は`RetainedResourceLimits`/);
-  assert.match(notes, /`ResolvedResourceLimitPlan`/);
-  assert.match(notes, /`RetainedLayerCharge`、`RetainedResourceBudget`/);
-  assert.match(notes, /`RetainedResourceBudget::try_replace_layers`/);
-  assert.match(notes, /`AnalysisSnapshotLimitError`、`AnalysisSnapshotBudget`/);
-  assert.match(notes, /`Workspace::try_snapshot_resources`/);
-  assert.match(
-    notes,
-    /`LocalFilesystemSession::rollback_reread`は`Result<\(\), ResourceError>`を返します/,
-  );
-  assert.match(notes, /`ResourceError::InvalidRollback`/);
-  assert.match(notes, /標準入力はfilesystem読込へ課金しません/);
-  assert.match(notes, /設定なしの別folderは独立したscope/);
-  assert.match(notes, /全入力のproject設定を本文読込前に固定/);
-  assert.match(notes, /別workspace rootのresourceをsnapshotへ含めず/);
-  assert.match(notes, /`didOpen`も設定のresource root外URIを状態変更前に拒否/);
-  assert.match(notes, /`ConfigErrorCode::ReadFailed`だけが直前のWorkspaceとdocument viewを保持/);
-  assert.match(notes, /`workspace-input-error`/);
+  assert.match(notes, /v0\.19\.1の展開済みZed拡張directoryをdev extensionとして選び直し/);
+  assert.match(notes, /v0\.19\.0のLSP cacheとロックのpathにはversionが含まれる/);
+  assert.match(notes, /`lsp\.adocweave\.binary\.path`の指定を外し/);
+  assert.match(notes, /Rust API、WASM、CLI、Language ServerおよびVS Code拡張の利用方法はv0\.19\.0から変わりません/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
@@ -79,6 +39,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
     new RegExp(`\`--version --json\`が\`${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}\`を返す`),
   );
   assert.match(notes, /以前のVSIXとnative directoryを保持/);
+  assert.match(notes, /rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動/);
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
   assert.match(notes, /Authenticode署名を行いません/);
@@ -94,7 +55,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.18.0"), /v0\.19\.0専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.19\.0専用/);
+  assert.throws(() => buildReleaseNotes("v0.19.0"), /v0\.19\.1専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.19\.1専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });

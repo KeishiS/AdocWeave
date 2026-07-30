@@ -23,42 +23,24 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "WASMの要求、前処理、応答およびエラーのwire型を公開schemaから生成し、wire値の検査・変換とコア処理の境界を明確にしました。",
-  "filesystemの列挙と読込をhostへ集約し、Workspaceは検証済みの論理ID、本文、snapshotおよび依存関係だけを扱うようにしました。",
-  "前処理と解析で共有する文書外属性と属性展開上限を一つの検証済み処理契約へ統合しました。",
-  "前処理、解析、Lintおよび生成元への位置投影へ協調キャンセルを伝播し、取り消し後の部分結果を返さない入口を追加しました。",
-  "project設定からfilesystem読込、Workspaceのdisk・overlay保持および解析snapshotの上限planを一度だけ解決し、CLIとLanguage Serverへ同じ境界で適用しました。",
-  "公開Rust APIとWASM protocol schemaに互換性へ影響する変更があります。次の移行手順を確認してください。",
+  "Zed拡張のmanaged Language Server初回導入が、WASIで利用できないprocess IDの取得により停止する問題を修正しました。",
+  "一時fileと展開directoryの識別子を、WASIで利用できる時刻と拡張内の連番から生成します。",
+  "公開API、protocol、CLI引数、HTML出力および既定の診断に互換性へ影響する変更はありません。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。前処理設定へdefault付きの属性展開上限を追加しました。worker envelopeは変更していません。`,
-  "`WasmPreprocessResponse::package_version`と`WasmSourceMapSegment::mapping`のRust型、前処理とWorkspaceの公開設定・エラー型、filesystem読込およびresource上限planの公開境界を変更しました。",
-  "`RetainedLayerCharge`、`RetainedResourceBudget`、`RetainedResourceBudget::try_replace_layers`、`AnalysisSnapshotLimitError`、`AnalysisSnapshotBudget`および`Workspace::try_snapshot_resources`を公開Rust APIへ追加しました。",
-  "`LocalFilesystemSession::rollback_reread`は`Result<(), ResourceError>`を返します。別sessionのtoken、二重適用および後続更新後の古いtokenを`ResourceError::InvalidRollback`として拒否します。",
-  "`LocalFilesystemSession`は複数rootで共有するfile数とbyte数から候補の読込容量を本文読込前に決め、replacementでは同じcanonical resourceの直前のchargeだけを差し引きます。",
-  "CLI引数およびHTML契約はv0.18.0から変更していません。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.19.0から変更していません。`,
+  "Rust公開API、WASM protocol、CLI引数、Language Server protocol、HTML契約および設定schemaはv0.19.0から変更していません。",
+  "Zed拡張のインストール処理で使う一時file、一時directoryおよび退避directoryの識別子だけを変更します。配置するmanaged Language Serverの内容、検証markerおよびcache構造は変更しません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "`WasmPreprocessResponse::package_version`は`&'static str`から所有値の`String`へ変わりました。文字列として借用する場合は`response.package_version.as_str()`を使用し、値を直接構築する場合は`VERSION.to_owned()`などの所有値を渡してください。",
-  "`WasmSourceMapSegment::mapping`は`String`から`WasmSourceMapping`へ変わりました。`\"identity\".to_owned()`と`\"whole-origin\".to_owned()`は、それぞれ`WasmSourceMapping::Identity`と`WasmSourceMapping::WholeOrigin`へ置き換えてください。",
-  "`PreprocessOptions`と`WasmPreprocessOptions`へ`max_attribute_expansion_depth`と`max_attribute_expansion_bytes`を追加しました。Rustの構造体を直接構築する場合は両fieldを指定するか、型に応じて`..PreprocessOptions::default()`または`..WasmPreprocessOptions::default()`を使用してください。",
-  "前処理と解析を一度に行うRustコードは、同じ文書外属性と属性展開上限を持つ`AnalysisOptions`と`PreprocessOptions`から`EffectiveProcessingOptions::new`を呼び、`preprocess_and_analyze_with_options`または`WorkspaceSnapshot::analyze_with_options`へ渡してください。従来の入口は不一致を`PreprocessedAnalysisError::Options`または`WorkspaceErrorCode::InvalidOptions`として拒否します。",
-  "`adocweave-workspace`の`scan_filesystem`、`scan_filesystem_with_session`、`FilesystemResource`および`WorkspaceErrorCode::Filesystem`を削除しました。`LocalFilesystemSession::scan_utf8`でhost側から読込み、検証済みの論理IDと本文を`Workspace::upsert_disk`へ渡してください。読込エラーはWorkspaceへ渡す前にhostの`ResourceError`として処理してください。",
-  "`adocweave_host::DependencyGraph`の公開を終了しました。依存関係はWorkspaceが所有するため、解析後は`WorkspaceAnalysis::dependencies`を参照してください。",
-  "WASM protocol schema 7では`preprocess.options`へ`maxAttributeExpansionDepth`と`maxAttributeExpansionBytes`を追加しました。省略時は従来と同じ32と1048576を使用します。combined requestで`analysisOptions.syntax.limits`へ非既定値を指定する場合は、前処理側にも同じ値を指定してください。不一致は処理前に`invalid-options`として拒否されます。",
-  "`PreprocessedAnalysisError`へ`Cancelled`を追加しました。この列挙型を網羅的に`match`するRustコードは、処理の取り消しを扱う分岐を追加してください。協調キャンセルが必要な場合は`preprocess_cancellable`、`preprocess_and_analyze_cancellable_with_options`、`lint_analysis_cancellable`または`PreprocessedAnalysis::project_origins_cancellable`を使用してください。",
-  "`adocweave_host::ResourceLimits`は`FilesystemReadLimits`へ、`adocweave_workspace::ResourceLimits`は`RetainedResourceLimits`へ変わりました。project設定からは`ResolvedResourceLimitPlan`を取得し、`filesystem_reads`、`retained_layers`および`analysis_snapshot`を対応する境界へ渡してください。",
-  "保持するdisk・overlayの逐次課金には`RetainedLayerCharge`とclone不要の`RetainedResourceBudget::try_replace_layers`を使用してください。値を返す互換入口には`RetainedResourceBudget::with_layers`を使用できます。解析snapshotの課金には`AnalysisSnapshotBudget::charge`を使用してください。`AnalysisSnapshotLimitError`はresource数、単一resource byte数および合計byte数のどの境界で拒否したかを表します。",
-  "制限付きのWorkspace入力は、先に`Workspace::snapshot`で全rootを複製してから絞り込まず、`Workspace::try_snapshot_resources`のpredicateで許可と課金を確認してください。predicateが失敗すると、そのresource以降はsnapshotへ複製されません。",
-  "`FilesystemReadRollback`は発行した`LocalFilesystemSession`内で、直後のrereadを取り消す場合だけ使用してください。`rollback_reread`の失敗時は現在のchargeが維持されるため、古いtokenを再適用せず呼出側の更新を中止してください。",
-  "CLIは同じproject scopeのfile primaryとincludeで一つのfilesystem・retained予算を共有します。複数pathでは全入力のproject設定を本文読込前に固定し、収集中に同じscopeの設定内容が変わった場合は拒否します。標準入力はfilesystem読込へ課金しませんが、`--base-dir`から解決したincludeと同じretained・解析snapshot予算へ課金します。別の設定fileまたは設定なしの別folderは独立したscopeです。",
-  "Language Serverのproject設定再読込では、初回走査後のopen document復元を含めて`ConfigErrorCode::ReadFailed`だけが直前のWorkspaceとdocument viewを保持します。有効な厳格化によるresource拒否や無効な設定はfail-closedで古いviewを破棄し、open documentへ`workspace-input-error`を設定します。設定の有無にかかわらず別workspace rootのresourceをsnapshotへ含めず、`didOpen`も設定のresource root外URIを状態変更前に拒否します。",
-  "JSONの`packageVersion`は文字列のままです。source mapの`mapping`も`identity`または`whole-origin`の文字列を維持します。",
+  `Zedではv${RELEASE_NOTES_VERSION}の展開済みZed拡張directoryをdev extensionとして選び直し、Zedを再起動してください。v0.19.0のLSP cacheとロックのpathにはversionが含まれるため、v${RELEASE_NOTES_VERSION}の初回導入には使われません。`,
+  "managed Language Serverを確認する場合は、`lsp.adocweave.binary.path`の指定を外し、Zed processから見える`PATH`上に別の`adocweave-lsp`がない状態でAsciiDoc文書を開いてください。",
+  "Rust API、WASM、CLI、Language ServerおよびVS Code拡張の利用方法はv0.19.0から変わりません。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
@@ -111,6 +93,7 @@ export function buildReleaseNotes(tag) {
     `${REQUIRED_RELEASE_NOTE_HEADINGS[5]}\n\n` +
     `native archiveはversion別directoryへ展開し、\`--version --json\`が\`${RELEASE_NOTES_VERSION}\`を返すことを確認してから選択先を切り替えてください。\n\n` +
     "VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。\n\n" +
+    "Zedでは新versionのmanaged Language Server取得とeditor機能を確認するまで旧versionのZed directoryを保持します。rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動してください。\n\n" +
     "rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
   return notes;
 }
