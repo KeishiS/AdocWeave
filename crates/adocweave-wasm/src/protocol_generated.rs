@@ -19,7 +19,7 @@ pub struct WasmProductSet {
 
 impl Default for WasmProductSet {
     fn default() -> Self {
-        let products = adocweave::ProductSet::browser_default();
+        let products = adocweave::output::conformance::ProductSet::browser_default();
         Self {
             syntax: products.syntax,
             canonical_ast: products.canonical_ast,
@@ -34,7 +34,7 @@ impl Default for WasmProductSet {
     }
 }
 
-impl From<WasmProductSet> for adocweave::ProductSet {
+impl From<WasmProductSet> for adocweave::output::conformance::ProductSet {
     fn from(value: WasmProductSet) -> Self {
         Self {
             syntax: value.syntax,

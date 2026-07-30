@@ -427,10 +427,12 @@ pub fn preprocess_and_analyze_cancellable_with_options(
             PreprocessFailure::Cancelled => PreprocessedAnalysisError::Cancelled,
         })?;
     let analysis = Engine::new(options.analysis().clone())
-        .analyze_cancellable_with_source_id(
-            options.preprocess().source_id.as_ref(),
+        .analyze_with(
             &document.source,
-            cancellation,
+            crate::AnalysisInputs {
+                source_id: options.preprocess().source_id.as_ref(),
+                cancellation: Some(cancellation),
+            },
         )
         .map_err(|error| {
             if error == ParseError::Cancelled {

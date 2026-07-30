@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 #[cfg(test)]
 use adocweave::OutputLimits;
+use adocweave::output::conformance::ProductSet;
 use adocweave::output::diagnostics::{LintConfig, RuleSettings, Severity, lint_rule};
 use adocweave::output::html::{
     ExternalLinkPresentation, HtmlDocumentMode, MathLanguagePolicy, RenderPolicy,
@@ -13,8 +14,7 @@ use adocweave::output::html::{
 use adocweave::preprocess::{EffectiveProcessingOptions, ResourceSnapshot};
 use adocweave::resolution::{ActiveUrlPolicy, AuthoredUrlPolicy};
 use adocweave::{
-    AnalysisLimits, AnalysisOptions, DiagnosticProfile, Engine, ProductSet, SourceId, SyntaxMode,
-    SyntaxOptions,
+    AnalysisLimits, AnalysisOptions, DiagnosticProfile, Engine, SourceId, SyntaxMode, SyntaxOptions,
 };
 
 use crate::WasmError;

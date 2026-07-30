@@ -1104,6 +1104,7 @@ mod tests {
     use crate::{AnalysisOptions, Engine, SourceId};
 
     use super::*;
+    use crate::core::AnalysisInputs;
 
     #[test]
     fn rendering_features_are_typed_unique_and_deterministically_sorted() {
@@ -1223,7 +1224,13 @@ fn main() {}
 stem:[x+y]
 ";
         let analysis = Engine::new(AnalysisOptions::default())
-            .analyze_with_source_id(Some(SourceId::new("host:document")), source)
+            .analyze_with(
+                source,
+                AnalysisInputs {
+                    source_id: Some(&SourceId::new("host:document")),
+                    ..AnalysisInputs::default()
+                },
+            )
             .expect("analysis");
         let projected = project(&analysis, &RenderInputs::default());
         let html = crate::html::render(analysis.document(), &crate::html::RenderPolicy::default());

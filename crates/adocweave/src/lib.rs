@@ -200,12 +200,11 @@ pub mod text {
     };
 }
 
-pub use conformance::{DocumentProducts, ProductSet};
 pub use core::{
-    Analysis, AnalysisOptions, CancellationCheck, CancellationToken, DiagnosticProfile, Engine,
-    NeverCancel, ParseError, SourceId, SyntaxOptions,
+    Analysis, AnalysisInputs, AnalysisOptions, CancellationCheck, CancellationToken,
+    DiagnosticProfile, Engine, NeverCancel, ParseError, SourceId, SyntaxOptions,
 };
-pub use execution::{AnalysisRequest, AnalysisResult, DocumentRevision};
+pub use execution::{AnalysisCacheKey, AnalysisRequest, AnalysisResult, DocumentRevision};
 pub use limits::{AnalysisLimits, OutputLimits, SyntaxMode};
 pub use local_target::{LocalTargetKind, LocalTargetReference, LocalTargetSyntax};
 

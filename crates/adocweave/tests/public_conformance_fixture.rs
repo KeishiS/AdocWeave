@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use adocweave::output::conformance::{ProductSet, products};
 use adocweave::output::html::RenderPolicy;
 use adocweave::resolution::RenderInputs;
-use adocweave::{AnalysisOptions, Engine, SourceId};
+use adocweave::{AnalysisInputs, AnalysisOptions, Engine, SourceId};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -86,9 +86,12 @@ fn manifest() -> Manifest {
 
 fn generated(case: &Case) -> adocweave::output::conformance::DocumentProducts {
     let analysis = Engine::new(AnalysisOptions::default())
-        .analyze_with_source_id(
-            Some(SourceId::new(&case.source_id)),
+        .analyze_with(
             &read(&case.files.source),
+            AnalysisInputs {
+                source_id: Some(&SourceId::new(&case.source_id)),
+                ..AnalysisInputs::default()
+            },
         )
         .expect("public fixture analyzes");
     products(

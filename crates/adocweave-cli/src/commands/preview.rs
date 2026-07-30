@@ -257,7 +257,13 @@ fn build_with_stage_hook(
     };
     ensure_active(cancellation)?;
     let analysis = Engine::new(request.project.analysis.clone())
-        .analyze_cancellable(&processed, cancellation)
+        .analyze_with(
+            &processed,
+            adocweave::AnalysisInputs {
+                cancellation: Some(cancellation),
+                ..adocweave::AnalysisInputs::default()
+            },
+        )
         .map_err(Error::Analysis)?;
     ensure_active(cancellation)?;
     let render_policy = html_policy::build(

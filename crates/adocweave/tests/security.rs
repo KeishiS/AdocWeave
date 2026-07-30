@@ -1,12 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use adocweave::AnalysisLimits;
 use adocweave::output::html::{RenderPolicy, render, render_with_inputs};
 use adocweave::resolution::RenderInputs;
 use adocweave::resolution::ResolvedReference;
 use adocweave::resolution::ResolvedResource;
 use adocweave::resolution::{ReferenceKey, ResolutionFailureKind};
 use adocweave::{Analysis, AnalysisOptions, CancellationCheck, Engine, ParseError};
+use adocweave::{AnalysisInputs, AnalysisLimits};
 
 type LimitCase = (&'static str, fn(&mut AnalysisLimits));
 type BoundaryCase = (
@@ -599,7 +599,13 @@ fn duplicated_table_cell_materialization_is_cooperatively_cancellable() {
     };
     let mut options = AnalysisOptions::default();
     options.syntax.limits.max_table_columns = 100_000;
-    let result = Engine::new(options).analyze_cancellable(&source, &cancellation);
+    let result = Engine::new(options).analyze_with(
+        &source,
+        AnalysisInputs {
+            cancellation: Some(&cancellation),
+            ..AnalysisInputs::default()
+        },
+    );
     assert!(matches!(result, Err(ParseError::Cancelled)));
     assert!(cancellation.checks.load(Ordering::Relaxed) <= 66);
 }
@@ -737,11 +743,14 @@ fn cooperative_cancellation_returns_no_analysis_to_render() {
     }
 
     let source = "paragraph\n\n".repeat(10_000);
-    let result = Engine::new(AnalysisOptions::default()).analyze_cancellable(
+    let result = Engine::new(AnalysisOptions::default()).analyze_with(
         &source,
-        &CancelAfter {
-            checks: AtomicUsize::new(0),
-            threshold: 1,
+        AnalysisInputs {
+            cancellation: Some(&CancelAfter {
+                checks: AtomicUsize::new(0),
+                threshold: 1,
+            }),
+            ..AnalysisInputs::default()
         },
     );
     assert!(matches!(result, Err(ParseError::Cancelled)));
