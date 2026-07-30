@@ -735,8 +735,20 @@ impl Context<'_> {
         };
         let selected = select_lines(&document.source, &attributes, self.cancellation)
             .map_err(|_| PreprocessFailure::Cancelled)?;
-        let transformed = transform_lines(selected, &attributes, self.cancellation)
-            .map_err(|_| PreprocessFailure::Cancelled)?;
+        let remaining_bytes = self.source_map.remaining_bytes();
+        let transformed =
+            transform_lines(selected, &attributes, remaining_bytes, self.cancellation).map_err(
+                |failure| match failure {
+                    TransformFailure::Cancelled => PreprocessFailure::Cancelled,
+                    TransformFailure::ByteLimit => error(
+                        PreprocessErrorKind::ByteLimit,
+                        source_id.clone(),
+                        range,
+                        "preprocessor byte limit exceeded",
+                    )
+                    .into(),
+                },
+            )?;
         let child = frame.child(
             target.clone(),
             document.source_id.clone(),
@@ -1201,11 +1213,25 @@ fn parse_line_selection(
     Ok(LineSelection { ranges: normalized })
 }
 
+/// Why a selected include body could not be transformed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransformFailure {
+    Cancelled,
+    ByteLimit,
+}
+
+/// Applies `indent` and `leveloffset` to the selected include body.
+///
+/// The `indent` attribute comes from the document and grows every selected
+/// line, so the padding is charged against the remaining expansion budget
+/// before it is allocated. Charging afterwards would let a single directive
+/// materialize far more text than `max_total_bytes` permits.
 fn transform_lines(
     lines: Vec<SelectedLine>,
     attributes: &BTreeMap<String, String>,
+    remaining_bytes: usize,
     cancellation: &dyn CancellationCheck,
-) -> Result<Vec<SelectedLine>, TextRange> {
+) -> Result<Vec<SelectedLine>, TransformFailure> {
     let mut checkpoint = CancellationCheckpoint::new(cancellation);
     let indent = attributes
         .get("indent")
@@ -1216,18 +1242,27 @@ fn transform_lines(
         .and_then(|value| value.parse::<i32>().ok())
         .unwrap_or(0);
     let mut output = Vec::with_capacity(lines.len());
+    let mut charged_padding = 0usize;
     for mut line in lines {
         if checkpoint.is_cancelled() {
-            return Err(line.range);
+            return Err(TransformFailure::Cancelled);
         }
         let original = line.text.clone();
         if leveloffset != 0 {
             line.text = apply_leveloffset(&line.text, leveloffset);
         }
         if indent > 0 {
-            line.text = format!("{}{}", " ".repeat(indent as usize), line.text);
+            let padding = indent.unsigned_abs() as usize;
+            charged_padding = charged_padding.saturating_add(padding);
+            if charged_padding > remaining_bytes {
+                return Err(TransformFailure::ByteLimit);
+            }
+            let mut padded = String::with_capacity(padding.saturating_add(line.text.len()));
+            padded.extend(std::iter::repeat_n(' ', padding));
+            padded.push_str(&line.text);
+            line.text = padded;
         } else if indent < 0 {
-            let remove = (-indent) as usize;
+            let remove = indent.unsigned_abs() as usize;
             let leading = line
                 .text
                 .bytes()
@@ -1249,7 +1284,10 @@ fn apply_leveloffset(line: &str, offset: i32) -> String {
     if marker_count == 0 || line.as_bytes().get(marker_count) != Some(&b' ') {
         return line.to_owned();
     }
-    let adjusted = (marker_count as i32 + offset).clamp(1, 6) as usize;
+    let adjusted = i32::try_from(marker_count)
+        .unwrap_or(i32::MAX)
+        .saturating_add(offset)
+        .clamp(1, 6) as usize;
     format!("{}{}", "=".repeat(adjusted), &line[marker_count..])
 }
 
@@ -1565,6 +1603,83 @@ mod tests {
                 .map(SourceId::as_str),
             Some("part")
         );
+    }
+
+    #[test]
+    fn include_indent_is_charged_before_the_padding_is_allocated() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("part"),
+                source: "one\ntwo\nthree\n".into(),
+            },
+        );
+        let options = PreprocessOptions {
+            source_id: Some(SourceId::new("root")),
+            max_total_bytes: 1024,
+            ..PreprocessOptions::default()
+        };
+
+        // Charging before the allocation reports the limit against the include
+        // directive that requested the padding. Charging afterwards would report
+        // it against a line of the included resource, after that line was built.
+        let error = preprocess(
+            "line\ninclude::part.adoc[indent=4096]\n",
+            &snapshot,
+            &options,
+        )
+        .expect_err("indent byte limit");
+        assert_eq!(error.kind, PreprocessErrorKind::ByteLimit);
+        assert_eq!(error.source_id.as_ref().map(SourceId::as_str), Some("root"));
+        assert_eq!(error.range, range(5, 37));
+
+        let document = preprocess(
+            "include::part.adoc[indent=2]\n",
+            &snapshot,
+            &PreprocessOptions {
+                source_id: Some(SourceId::new("root")),
+                ..PreprocessOptions::default()
+            },
+        )
+        .expect("indent within the budget");
+        assert_eq!(document.source, "  one\n  two\n  three\n");
+    }
+
+    #[test]
+    fn include_indent_and_leveloffset_extremes_do_not_overflow() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            ResourceDocument {
+                source_id: SourceId::new("part"),
+                source: "    = Included\n    body\n".into(),
+            },
+        );
+
+        let dedented = preprocess(
+            "include::part.adoc[indent=-2147483648]\n",
+            &snapshot,
+            &PreprocessOptions::default(),
+        )
+        .expect("minimum indent");
+        assert_eq!(dedented.source, "= Included\nbody\n");
+
+        let raised = preprocess(
+            "include::part.adoc[leveloffset=2147483647]\n",
+            &snapshot,
+            &PreprocessOptions::default(),
+        )
+        .expect("maximum leveloffset");
+        assert_eq!(raised.source, "    = Included\n    body\n");
+
+        let lowered = preprocess(
+            "include::part.adoc[indent=-4,leveloffset=-2147483648]\n",
+            &snapshot,
+            &PreprocessOptions::default(),
+        )
+        .expect("minimum leveloffset");
+        assert_eq!(lowered.source, "= Included\nbody\n");
     }
 
     #[test]
