@@ -207,9 +207,14 @@ HTMLリンク化にはホストの安全な解決結果が必要です。
 
 |標準macroとmedia
 |部分対応
-|email／mailto、footnote、inline／bibliography anchor、index term、feature flag付きUI macro、
+|email／mailto、footnote、inline／bibliography anchor、外部書誌向けのcite、index term、feature flag付きUI macro、
 inline／block image、icon、audioおよびvideoを共通macro modelで扱います。footnoteの番号・再利用・back reference、
-bibliography entry／参照edgeおよび階層index catalogに対応します。UI macroは``render_ui_macros``を有効にした場合だけ
+bibliography entry／参照edgeおよび階層index catalogに対応します。
+``cite:[key]``は外部の書誌ライブラリーを参照する引用です。名前のない属性を記述順のcitation keyとして扱い、
+``cite:[smith2024, tanaka2025]``のように複数指定できます。``locator``などの名前付き属性は引用の補足として保持します。
+AdocWeaveはBibTeXの保存・解析や書誌の組版を行わず、keyの解決は利用側アプリが行います。
+解決前のHTMLは``unresolved_references``の設定に従い、``hidden``では出力しません。
+UI macroは``render_ui_macros``を有効にした場合だけ
 専用HTMLを生成し、無効時も表示文字列を保持します。欠落・重複したcatalog定義と空index termは
 ``invalid-catalog``として診断します。Mediaはhostが解決したURLとMIME typeを再検証し、image／iconには
 `image/*`、audioには``audio/*``、videoには``video/*``だけを使用します。Videoの``poster``は独立したimage resourceとして

@@ -237,7 +237,11 @@ markerでは最後のバックスラッシュと開始markerだけをliteral化�
 リンク・xrefまたは書式spanを優先し、同じ位置ではリンク・xrefを優先します。
 
 標準macroは``name:target[attributes]``を共通形とし、mediaのblock formだけ
-``name::target[attributes]``を使用します。footnote、kbd、btnおよびindextermは空targetを許します。
+``name::target[attributes]``を使用します。footnote、kbd、btn、citeおよびindextermは空targetを許します。
+``cite:``は外部の書誌ライブラリーを参照するmacroで、常に空targetです。属性listのうち名前のない値を
+記述順のcitation keyとし、``name=value``形式の属性は引用の補足として保持します。keyを一つも持たない
+citationは``invalid-catalog``として診断します。認識優先順位は他の標準macroと同じで、
+``cite:``という接頭辞に続けて``[``が現れる場合だけmacroとして認識します。
 inline anchorの``[[id]]``とbibliography anchorの``[[[id]]]``は同じmacro modelへ正規化します。
 targetはinline解析せず、属性listはquote内のcommaを除くcommaで分割し、named属性の``name=value``を
 位置付きで保持します。

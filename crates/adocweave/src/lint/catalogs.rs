@@ -4,6 +4,18 @@ use super::{INVALID_CATALOG, LintContext, LintDiagnosticBody, LintDiagnosticSink
 
 pub(super) fn lint_catalogs(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
     let document = context.document();
+    // A citation without a key names nothing, so it would silently disappear
+    // from the output instead of reaching the host's bibliography library.
+    for citation in crate::citation::citations(document.resolved.facts().macros()) {
+        if sink.should_stop() {
+            break;
+        }
+        if citation.keys.iter().all(|key| key.value.trim().is_empty()) {
+            sink.emit(INVALID_CATALOG, citation.range, || {
+                LintDiagnosticBody::new("citation names no bibliography key")
+            });
+        }
+    }
     for problem in document.catalogs().problems() {
         if sink.should_stop() {
             break;
