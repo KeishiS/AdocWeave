@@ -8,6 +8,7 @@ import {
   resolveCliArgsFromVSCodeExecutablePath,
 } from "@vscode/test-electron";
 import { unzipSync, zipSync } from "fflate";
+import { exitAfterSuccessfulCleanup } from "./exit-after-successful-cleanup.mjs";
 
 if (process.platform === "linux" && process.env.GITHUB_ACTIONS === "true") {
   delete process.env.LD_LIBRARY_PATH;
@@ -93,3 +94,5 @@ try {
 } finally {
   rmSync(scratch, { force: true, recursive: true });
 }
+
+exitAfterSuccessfulCleanup();
