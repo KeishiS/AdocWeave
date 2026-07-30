@@ -272,6 +272,10 @@ export class AdocWeaveClient {
           };
           this.#expectedVersions.delete(data.generation);
           this.#rejectPendingError(error);
+          // A trapped instance cannot be reused: the abort left the linear
+          // memory and the allocator in an unknown state. Dropping the worker
+          // makes the next request start from a fresh instance.
+          if (error.code === "wasm-trapped") this.#terminateWorker(null, worker);
           this.#notifyError(error);
         }
       };
@@ -424,6 +428,7 @@ const LIFECYCLE_ERROR_CODES = new Set([
   "superseded",
   "unsupported-package-version",
   "unsupported-worker-protocol",
+  "wasm-trapped",
   "worker-failed",
 ]);
 

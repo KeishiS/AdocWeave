@@ -176,6 +176,29 @@ test("protocol mismatch returns a stable error without executing WASM", () => {
   assert.equal(state.messages[0].error.code, "unsupported-worker-protocol");
 });
 
+test("a WebAssembly trap is reported apart from an ordinary failure", () => {
+  const trapped = harness(() => {
+    throw new WebAssembly.RuntimeError("unreachable executed");
+  });
+  trapped.controller.submit(request(1, 1));
+  Atomics.store(trapped.cancellation, 0, 1);
+  trapped.flush();
+
+  assertMessageFields(trapped.messages[0], "responses.error");
+  assertWorkerContract(trapped.messages[0], "responses");
+  assert.equal(trapped.messages[0].error.code, "wasm-trapped");
+  assert.equal(trapped.messages[0].error.message, "unreachable executed");
+
+  const failed = harness(() => {
+    throw new Error("ordinary failure");
+  });
+  failed.controller.submit(request(1, 1));
+  Atomics.store(failed.cancellation, 0, 1);
+  failed.flush();
+
+  assert.equal(failed.messages[0].error.code, "worker-failed");
+});
+
 test("client sends the current WASM API version with responsibility-specific defaults", async () => {
   const messages = [];
   class FakeWorker {
@@ -234,6 +257,59 @@ test("client sends the current WASM API version with responsibility-specific def
     messages[1].payload.preprocess.resources["part.adoc"].sourceId,
     "part.adoc",
   );
+  client.dispose();
+});
+
+test("a trapped worker is discarded before the next request", async () => {
+  const created = [];
+  class FakeWorker {
+    listeners = new Map();
+    terminated = false;
+    constructor() {
+      created.push(this);
+    }
+    postMessage(message) {
+      if (message.type === "initialize") {
+        queueMicrotask(() => this.listeners.get("message")?.({
+          data: { protocolVersion: WORKER_PROTOCOL_VERSION, type: "ready" },
+        }));
+        return;
+      }
+      queueMicrotask(() => this.listeners.get("message")?.({
+        data: {
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          type: "error",
+          version: message.version,
+          generation: message.generation,
+          error: { code: "wasm-trapped", message: "unreachable executed" },
+        },
+      }));
+    }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    terminate() { this.terminated = true; }
+  }
+
+  const errors = [];
+  const client = new AdocWeaveWorkerClient({
+    workerUrl: "worker.js",
+    moduleUrl: "module.js",
+    wasmUrl: "module.wasm",
+    Worker: FakeWorker,
+    onError: (error) => errors.push(error),
+  });
+
+  client.update({ version: 1, source: "first" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].code, "wasm-trapped");
+  assert.equal(created.length, 1);
+  assert.equal(created[0].terminated, true, "the trapped instance is not reused");
+
+  client.update({ version: 2, source: "second" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(created.length, 2, "the next request starts a new instance");
   client.dispose();
 });
 

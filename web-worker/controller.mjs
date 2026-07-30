@@ -85,8 +85,18 @@ function normalizeError(error) {
       return { code: "worker-failed", message: error };
     }
   }
-  return {
-    code: "worker-failed",
-    message: error instanceof Error ? error.message : String(error),
-  };
+  const message = error instanceof Error ? error.message : String(error);
+  // A Rust panic reaches this point as a WebAssembly trap because the browser
+  // profile aborts instead of unwinding. The instance keeps whatever state the
+  // panic left behind, so the client has to discard it rather than reuse it.
+  if (isWebAssemblyTrap(error)) {
+    return { code: "wasm-trapped", message };
+  }
+  return { code: "worker-failed", message };
+}
+
+function isWebAssemblyTrap(error) {
+  return typeof WebAssembly !== "undefined" &&
+    typeof WebAssembly.RuntimeError === "function" &&
+    error instanceof WebAssembly.RuntimeError;
 }
