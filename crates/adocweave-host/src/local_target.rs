@@ -708,18 +708,27 @@ impl Error for LocalTargetError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TestDir(PathBuf);
 
     impl TestDir {
         fn new() -> Self {
+            // The test harness runs these in parallel threads of one process, so
+            // the process id is shared and a coarse clock can hand two callers the
+            // same nonce. A colliding directory is removed by the first `Drop`
+            // while the other test is still using it, so the counter is what keeps
+            // the names distinct.
+            static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
             let nonce = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("clock after epoch")
                 .as_nanos();
+            let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "adocweave-local-target-{}-{nonce}",
+                "adocweave-local-target-{}-{nonce}-{sequence}",
                 std::process::id()
             ));
             fs::create_dir_all(path.join("docs/sub")).expect("create directories");
