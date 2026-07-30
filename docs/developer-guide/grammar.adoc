@@ -188,13 +188,21 @@ link             = URL, [ "[", inline-sequence, "]" ] ;
 cross-reference  = "<<", anchor-id, [ ",", inline-sequence ], ">>"
                  | "xref:", reference-destination,
                    "[", inline-sequence, "]" ;
-unordered-list-item = "*", { "*" }, (" " | "\t"), inline-sequence ;
-ordered-list-item   = ".", { "." }, (" " | "\t"), inline-sequence ;
+unordered-list-item = "*", { "*" }, (" " | "\t"), principal-text ;
+ordered-list-item   = ".", { "." }, (" " | "\t"), principal-text ;
+principal-text      = inline-sequence,
+                      { line-ending, principal-continuation-line } ;
+principal-continuation-line = { " " | "\t" }, inline-sequence ;
 list-continuation   = "+", line-end,
                       (literal-block | source-block) ;
 inline-math      = ("stem:[" | "latexmath:["), opaque-math, "]" ;
 hard-break       = " +", line-ending ;
 ----
+
+順序なし・順序付きリストの``principal-text``は、空行を挟まない通常段落行とインデント行を一つの
+項目本文として扱います。兄弟・子リストのマーカー、独立ブロックの開始行および単独の``+``は項目本文を
+終了します。改行とインデントは入力範囲を保つため解析結果へ残しますが、HTMLでは通常の段落内空白として
+折り畳みます。
 
 EBNFには次の区切り記号条件を追加します。
 
