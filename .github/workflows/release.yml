@@ -134,6 +134,7 @@ jobs:
     with:
       common_preflight_scheduled: ${{ needs.changes.outputs.preflight_required == 'true' }}
       run_nix_package: ${{ github.event_name == 'pull_request' }}
+      save_build_cache: ${{ github.ref == 'refs/heads/main' }}
 
   build-native:
     if: needs.changes.outputs.native_required == 'true'
