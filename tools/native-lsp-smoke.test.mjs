@@ -90,6 +90,53 @@ test("a stubborn process leaves no exit wait after the total deadline", async ()
   assert.equal(child.listenerCount("exit"), 0);
 });
 
+test("a wait released after the deadline aborts does not escape the caller", async () => {
+  // The total deadline aborts between the remaining-time check in
+  // `waitWithinDeadline` and the one inside `deadline.run`. Injected timers
+  // reproduce that ordering without depending on wall-clock timing.
+  let expire;
+  const deadline = createNativeSmokeDeadline(1000, {
+    now: () => 0,
+    setTimer: (callback) => {
+      expire ??= callback;
+      return callback;
+    },
+    clearTimer: () => {},
+  });
+  const child = new FakeChild({ stubborn: true });
+  const rejections = [];
+  const onUnhandled = (reason) => rejections.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+
+  try {
+    const settled = smokeLsp("adocweave-lsp", TEST_PACKAGE_VERSION, deadline, {
+      spawnProcess: () => child,
+      waitForProcessExit: (_child, _milliseconds, { signal } = {}) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    });
+    expire();
+    const error = await settled.then(
+      () => undefined,
+      (failure) => failure,
+    );
+
+    assert.match(error.message, /total deadline/);
+    assert.deepEqual(child.kills, ["SIGTERM", "SIGKILL"]);
+    // Unhandled rejections surface on the next macrotask, after the microtask
+    // queue that rejects the released wait has drained.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(rejections, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    deadline.dispose();
+  }
+});
+
 test("process close clears its fallback timer", async () => {
   const child = new FakeChild({
     closeLater: true,
