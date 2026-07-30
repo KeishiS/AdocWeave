@@ -9,7 +9,7 @@ use crate::check_output::{
     CheckOutcome, DiagnosticCounts, DiagnosticFormat, FailOn, github_annotation,
     prefix_human_source, sarif_log, sarif_result,
 };
-use crate::{local_include, local_target};
+use crate::{diagnostic_json, local_include, local_target};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Options {
@@ -30,6 +30,7 @@ pub(crate) enum Error {
     Include(local_include::LocalIncludeError),
     LocalTarget(adocweave_host::LocalTargetError),
     FixConflict(diagnostic::EditConflict),
+    Serialize(String),
 }
 
 pub(crate) struct LocalContext<'context> {
@@ -167,15 +168,14 @@ pub(crate) fn process(
     counts.add_host_errors(host.len());
     let output = match check.format {
         DiagnosticFormat::Json => {
-            let core = diagnostic::render_json(analysis.diagnostics());
-            if host.is_empty() {
-                core
-            } else {
-                let mut values = serde_json::from_str::<Vec<serde_json::Value>>(&core)
-                    .expect("core diagnostic renderer returns a JSON array");
-                values.extend(local_target::json_values(&host));
-                serde_json::to_string(&values).expect("diagnostics are serializable")
-            }
+            let mut sorted = analysis.diagnostics().to_vec();
+            diagnostic::sort_diagnostics(&mut sorted);
+            let mut values = sorted
+                .iter()
+                .map(|item| diagnostic_json::record(item, Some(source_id)))
+                .collect::<Vec<_>>();
+            values.extend(local_target::json_values(&host));
+            serde_json::to_string(&values).map_err(|error| Error::Serialize(error.to_string()))?
         }
         DiagnosticFormat::Human => {
             let core = diagnostic::render_human(
@@ -384,19 +384,10 @@ pub(crate) fn process_preprocessed(
             .diagnostics
             .iter()
             .flat_map(|diagnostic| {
-                diagnostic.origins.iter().map(move |origin| {
-                    serde_json::json!({
-                        "id": diagnostic.diagnostic.id.as_str(),
-                        "code": diagnostic.diagnostic.code.as_str(),
-                        "severity": diagnostic.diagnostic.severity.as_str(),
-                        "message": diagnostic.diagnostic.message,
-                        "sourceId": origin.source_id.as_ref().map(adocweave::SourceId::as_str),
-                        "range": {
-                            "start": origin.range.start().to_u32(),
-                            "end": origin.range.end().to_u32()
-                        }
-                    })
-                })
+                diagnostic
+                    .origins
+                    .iter()
+                    .map(move |origin| diagnostic_json::projected_record(diagnostic, origin))
             })
             .collect::<Vec<_>>();
         values.extend(local_target::json_values(&host));
@@ -406,11 +397,7 @@ pub(crate) fn process_preprocessed(
                 counts,
                 fail_on: check.fail_on,
             })
-            .map_err(|error| {
-                Error::Include(local_include::LocalIncludeError::Analysis(
-                    error.to_string(),
-                ))
-            });
+            .map_err(|error| Error::Serialize(error.to_string()));
     }
     if check.format == DiagnosticFormat::Sarif {
         let mut results = Vec::new();

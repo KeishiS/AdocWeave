@@ -849,9 +849,54 @@ fn check_supports_human_and_json_diagnostics() {
             .contains("1:9: warning[trailing-whitespace]: trailing whitespace")
     );
     assert!(json.status.success());
-    assert!(
-        String::from_utf8_lossy(&json.stdout).starts_with("[{\"id\":\"trailing-whitespace@8:9\"")
-    );
+    let records = serde_json::from_slice::<Vec<serde_json::Value>>(&json.stdout)
+        .expect("check JSON is an array");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["id"], "trailing-whitespace@8:9");
+    assert_eq!(records[0]["sourceId"], "<stdin>");
+    assert_eq!(records[0]["related"], serde_json::json!([]));
+    assert_eq!(records[0]["fixes"][0]["applicability"], "always");
+}
+
+/// Every path emits the same keys, so a consumer that reads one record reads all
+/// of them. A document that gains an include used to change the key set.
+#[test]
+fn check_json_records_share_one_key_set() {
+    let expected = [
+        "code", "fixes", "id", "message", "range", "related", "severity", "sourceId",
+    ];
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("part.adoc"), "== Included\n\ntrailing \n").expect("part");
+    std::fs::write(
+        root.path().join("root.adoc"),
+        "= Root\n\ntrailing \n\ninclude::part.adoc[]\n\nxref:missing.adoc[missing]\n",
+    )
+    .expect("root document");
+
+    for arguments in [
+        vec!["check", "--format", "json", "root.adoc"],
+        vec!["check", "--format", "json", "--include", "root.adoc"],
+    ] {
+        let output = adocweave()
+            .current_dir(root.path())
+            .args(&arguments)
+            .output()
+            .expect("command");
+        let records = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout)
+            .unwrap_or_else(|error| panic!("{arguments:?} produced invalid JSON: {error}"));
+        assert!(!records.is_empty(), "{arguments:?} produced no diagnostics");
+        for record in &records {
+            let mut keys = record
+                .as_object()
+                .expect("each record is an object")
+                .keys()
+                .filter(|key| !["target", "line", "column"].contains(&key.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            keys.sort();
+            assert_eq!(keys, expected, "{arguments:?} record {record}");
+        }
+    }
 }
 
 #[test]

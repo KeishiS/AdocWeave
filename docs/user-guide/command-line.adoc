@@ -35,6 +35,12 @@ codeを判定に使用してください。``--json``は``--format json``の互�
 ``--include``を使用した場合も、問題の位置は展開後の仮想文書ではなく、
 問題がある元fileのpath、行およびcolumnとして表示します。
 
+``--format json``は、問題1件を1つのobjectとして配列で返します。すべてのobjectが同じ項目を持ちます。
+``sourceId``は問題がある元file、``related``は関連位置、``fixes``は自動修正候補です。
+該当がない場合、``related``と``fixes``は空の配列、``sourceId``は``null``になります。
+``--include``の有無、入力fileの数および参照先の検査結果によって項目が増減することはありません。
+参照先の検査で報告する問題は、これらに加えて``target``、``line``および``column``を持ちます。
+
 ``asciidoc-file-link``は、``.adoc``または``.asciidoc``で終わる文書を``link``で参照した場合に、
 ``xref``の使用を提案します。``non-asciidoc-xref``は、`.json`、`.toml`、``.pdf``など、
 AsciiDoc以外の拡張子を持つfileを``xref``で参照した場合に、``link``の使用を提案します。

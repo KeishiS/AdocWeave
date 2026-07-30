@@ -148,10 +148,16 @@ pub fn json_values(diagnostics: &[HostDiagnostic]) -> Vec<serde_json::Value> {
                     "start": diagnostic.range.start().to_u32(),
                     "end": diagnostic.range.end().to_u32()
                 },
-                "target": diagnostic.target
-                ,"line": diagnostic.line
-                ,"column": diagnostic.column
+                "target": diagnostic.target,
+                "line": diagnostic.line,
+                "column": diagnostic.column
             })
+        })
+        .map(|value| match value {
+            // Local target diagnostics carry no related information and no fix,
+            // but every record emits the same keys.
+            serde_json::Value::Object(object) => crate::diagnostic_json::with_common_keys(object),
+            other => other,
         })
         .collect()
 }

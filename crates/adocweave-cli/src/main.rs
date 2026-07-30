@@ -13,6 +13,7 @@ use adocweave::{AnalysisOptions, OutputLimits, ParseError};
 
 mod check_output;
 mod commands;
+mod diagnostic_json;
 mod file_workflow;
 mod local_include;
 mod local_target;
@@ -76,6 +77,7 @@ enum CliError {
     ConcurrentModification(PathBuf),
     FixConflict(adocweave::output::diagnostics::EditConflict),
     Preview(preview::Error),
+    Serialize(String),
 }
 
 impl fmt::Display for CliError {
@@ -118,6 +120,9 @@ impl fmt::Display for CliError {
             ),
             Self::FixConflict(source) => write!(formatter, "conflicting automatic fixes: {source}"),
             Self::Preview(source) => source.fmt(formatter),
+            Self::Serialize(message) => {
+                write!(formatter, "cannot serialize diagnostics: {message}")
+            }
         }
     }
 }
@@ -134,6 +139,7 @@ impl Error for CliError {
             Self::FixConflict(source) => Some(source),
             Self::Preview(source) => Some(source),
             Self::Usage(_)
+            | Self::Serialize(_)
             | Self::InvalidUtf8 { .. }
             | Self::OutputLimit { .. }
             | Self::ResourceLimit(_)
@@ -166,6 +172,7 @@ fn check_error(error: commands::check::Error) -> CliError {
         commands::check::Error::Include(source) => CliError::Include(source),
         commands::check::Error::LocalTarget(source) => CliError::LocalTarget(source),
         commands::check::Error::FixConflict(source) => CliError::FixConflict(source),
+        commands::check::Error::Serialize(message) => CliError::Serialize(message),
     }
 }
 
@@ -1543,17 +1550,12 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 };
                 counts.merge(outcome.counts);
                 if check.format == DiagnosticFormat::Json {
-                    let mut values =
+                    // Every record already carries its own source, so the batch
+                    // only concatenates what each document produced.
+                    machine_results.extend(
                         serde_json::from_str::<Vec<serde_json::Value>>(&outcome.output)
-                            .expect("check JSON is an array");
-                    for value in &mut values {
-                        if let Some(object) = value.as_object_mut() {
-                            object.entry("sourceId").or_insert_with(|| {
-                                serde_json::Value::String(source_id.to_string())
-                            });
-                        }
-                    }
-                    machine_results.extend(values);
+                            .map_err(|error| CliError::Usage(error.to_string()))?,
+                    );
                 } else if check.format == DiagnosticFormat::Sarif {
                     machine_results.extend(sarif_results(&outcome.output));
                 } else {
