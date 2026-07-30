@@ -73,7 +73,7 @@ jobs:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
       - name: Fuzz target compilation and exploration
-        run: nix develop .#ci -c cargo make fuzz
+        run: nix develop .#ci-fuzz -c cargo make fuzz
 
   nix-package:
     if: inputs.run_nix_package
