@@ -33,6 +33,7 @@ pub enum StandardMacroKind {
     Footnote,
     Anchor,
     BibliographyAnchor,
+    Citation,
     IndexTerm,
     Keyboard,
     Button,

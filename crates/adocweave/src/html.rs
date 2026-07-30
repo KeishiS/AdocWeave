@@ -107,6 +107,7 @@ pub const ALLOWED_CLASSES: &[&str] = &[
     "callout-list",
     "callout-number",
     "checklist-marker",
+    "citation",
     "document-title",
     "footnote",
     "footnote-backref",
@@ -1478,6 +1479,32 @@ mod tests {
     }
 
     #[test]
+    fn cite_keeps_every_key_in_source_order_and_follows_the_unresolved_policy() {
+        let source = "See cite:[smith2024, tanaka2025] and cite:[a, locator=\"p. 12\"].\n";
+        let parsed = parse(source).expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default()).html;
+
+        assert!(output.contains("<span class=\"citation\">smith2024</span>"));
+        assert!(output.contains("<span class=\"citation\">tanaka2025</span>"));
+        assert!(
+            output.find("smith2024").expect("first key")
+                < output.find("tanaka2025").expect("second key")
+        );
+        // A named attribute describes the citation and is not a key.
+        assert!(!output.contains("p. 12"));
+
+        let hidden = render(
+            &parsed.ast,
+            &RenderPolicy {
+                unresolved_references: UnresolvedReferencePresentation::Hidden,
+                ..RenderPolicy::default()
+            },
+        )
+        .html;
+        assert!(!hidden.contains("citation"));
+    }
+
+    #[test]
     fn bibliography_section_uses_catalog_entries_for_citation_back_references() {
         let parsed = parse(
             "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nSee <<ref,Entry>>.\n",
@@ -2187,6 +2214,7 @@ mod tests {
                 "callout-list",
                 "callout-number",
                 "checklist-marker",
+                "citation",
                 "document-title",
                 "footnote",
                 "footnote-backref",

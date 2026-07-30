@@ -432,6 +432,32 @@ fn plan_standard_macro(
             }
             output.push(element_with_children("span", attributes, Vec::new()));
         }
+        // A citation has no display text of its own. Until a host resolves the
+        // key, the same policy that governs an unresolved cross reference
+        // decides whether the key stays visible.
+        Kind::Citation => {
+            // Positional attributes are citation keys in source order. Named
+            // attributes such as `locator` describe the citation, not a key.
+            let keys = node
+                .attributes
+                .iter()
+                .filter(|attribute| attribute.name.is_none())
+                .map(|attribute| attribute.value.as_str())
+                .collect::<Vec<_>>();
+            match context.policy.unresolved_references {
+                UnresolvedReferencePresentation::Target
+                | UnresolvedReferencePresentation::LabelOnly => {
+                    for key in keys {
+                        output.push(element_with_children(
+                            "span",
+                            vec![classes(&["citation"])],
+                            vec![inline_text_node(key)],
+                        ));
+                    }
+                }
+                UnresolvedReferencePresentation::Hidden => {}
+            }
+        }
         Kind::IndexTerm => output.push(element_with_children(
             "span",
             vec![classes(&["index-term"])],

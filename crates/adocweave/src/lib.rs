@@ -12,6 +12,7 @@ mod block_sequence;
 mod budget;
 mod cancellation;
 mod catalog;
+mod citation;
 mod conformance;
 mod core;
 mod delimiter;
@@ -73,6 +74,7 @@ pub mod semantic {
         BibliographyEntry, BibliographyReference, CatalogProblem, CatalogProblemKind,
         DocumentCatalogs, Footnote, FootnoteOccurrence, IndexEntry,
     };
+    pub use crate::citation::{Citation, CitationKey};
     pub use crate::document::{
         Document, DocumentElement, DocumentIdentifiers, DocumentSymbol, HeadingId, ReferenceTarget,
         ReferenceTargetKind, SymbolKind, document_element_at, document_symbols,

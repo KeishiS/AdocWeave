@@ -229,6 +229,14 @@ impl Analysis {
         self.facts().macros()
     }
 
+    /// Returns source-ordered citations of external bibliography entries.
+    ///
+    /// AdocWeave does not resolve citation keys. The host owns the bibliography
+    /// library and decides how each key becomes a display string.
+    pub fn citations(&self) -> Vec<crate::citation::Citation> {
+        crate::citation::citations(self.macros())
+    }
+
     pub fn resource_queries(&self) -> Vec<crate::resource::ResourceQuery> {
         self.resources()
             .iter()

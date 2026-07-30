@@ -537,7 +537,9 @@ fn inline_text_with_attributes(inlines: &[Inline], include_attribute_values: boo
             Inline::Macro(node) => {
                 use crate::inline::StandardMacroKind as Kind;
                 match node.kind {
-                    Kind::Anchor | Kind::BibliographyAnchor | Kind::IndexTerm => {}
+                    // A citation carries no readable text of its own: the display
+                    // string comes from the host that resolves the key.
+                    Kind::Anchor | Kind::BibliographyAnchor | Kind::Citation | Kind::IndexTerm => {}
                     Kind::Email => output.push_str(&node.target),
                     Kind::Footnote
                     | Kind::Keyboard
