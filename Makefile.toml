@@ -175,20 +175,8 @@ tools/dependency-governance.sh
 
 [tasks.dependency-governance-test]
 description = "Test dependency boundary and exception policy"
-dependencies = ["dependabot-auto-merge-policy-test"]
 command = "node"
 args = ["--test", "tools/verify-dependency-boundaries.test.mjs"]
-
-[tasks.dependabot-auto-merge-policy-test]
-description = "Test the frozen Dependabot auto-merge policy and workflow boundaries"
-command = "node"
-args = [
-  "--test",
-  "tools/dependabot-alert-inventory.test.mjs",
-  "tools/dependabot-alert-snapshot.test.mjs",
-  "tools/dependabot-auto-merge-policy.test.mjs",
-  "tools/dependabot-auto-merge-workflow.test.mjs",
-]
 
 [tasks.third-party-notices]
 description = "Generate the release third-party notices from locked Cargo metadata"

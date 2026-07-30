@@ -108,7 +108,9 @@ archiveへ埋め込みません。
 == 権限境界
 
 計画、build、smoke testおよびcandidate集約はread-onlyで実行し、repository secretを参照しません。
-Releaseへの書き込みとOIDCは、保護された``github-release`` Environmentを使用する公開jobだけへ付与します。
+Releaseへの書き込みとOIDCは、``github-release`` Environmentを使用する公開jobだけへ付与します。
+このEnvironmentはrequired reviewerとdeployment ruleを持たない名前付きの権限・監査境界です。
+stable tagの形式、main candidateの再利用および成果物の完全性をworkflowで検査し、成功後に自動公開します。
 外部actionは完全なcommit SHAへ固定します。
 
 tagの公開処理は、同じcommitに対する検証済みmain candidateを再利用します。成果物を再構築せず、metadataを

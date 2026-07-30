@@ -18,16 +18,6 @@ patch版へ意図しない破壊的変更を含めず、0.yのminor版で破壊�
 機械可読な差分記録とRelease Notesの移行手順を対応付けます。検査に使うtool、比較対象のtag、
 対象crateおよびrelease種別を固定し、実行時に取得した最新版へ判定を依存させません。
 
-== 依存更新の運用
-
-製品versionとは独立して、依存更新の安全な運用を改善します。
-
-* https://github.com/KeishiS/adocweave/issues/19[Dependabot PRの安全な自動merge]
-
-必須検査とmainを保護するrulesetを維持したまま、対象を限定した依存更新だけを段階的に
-自動mergeできるか検証します。許可する更新範囲、必要な承認数および停止・復旧方法を
-決めるまでは、実際の自動mergeを有効にしません。
-
 == 保留中の対話的な確認環境
 
 公開済みのBrowser APIとHTML契約を利用し、Webブラウザーだけで文書を試せる環境を提供する案を

@@ -650,7 +650,7 @@ export function validateReleaseWorkflowPolicy({
     }
   }
   if (publishJob?.environment !== "github-release") {
-    fail("publisher must use the protected github-release environment");
+    fail("publisher must use the named github-release environment");
   }
   requireTimeout(publishJob, 20, "publisher must have a timeout");
   const publishRuns = (publishJob?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
