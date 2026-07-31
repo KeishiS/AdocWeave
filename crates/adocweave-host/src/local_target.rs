@@ -921,12 +921,17 @@ mod tests {
             "escape-dir/child.adoc",
             "escape-chain/child.adoc",
         ] {
+            // `Unverifiable` carries the underlying errno in its message, so the
+            // whole error is reported here. Without it a failure only states
+            // that the code differs, which is what left the earlier occurrences
+            // of this flake undiagnosable.
+            let error = policy
+                .inspect(&root.0.join("docs"), target)
+                .expect_err("dangling symlink escape");
             assert_eq!(
-                policy
-                    .inspect(&root.0.join("docs"), target)
-                    .expect_err("dangling symlink escape")
-                    .diagnostic_code(),
-                "local-target-outside-root"
+                error.diagnostic_code(),
+                "local-target-outside-root",
+                "{target}: {error:?}"
             );
         }
     }
