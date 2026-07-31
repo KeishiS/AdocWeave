@@ -19,6 +19,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /断片ごとに参照先anchorを指定できます/);
   assert.match(notes, /その項目へlinkし、項目側の戻りlinkにも並びます/);
   assert.match(notes, /解決できるはずのlocal targetを検査不能として報告することがあった問題を修正しました/);
+  assert.match(notes, /前処理の入口を6変種から整理し/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -27,6 +28,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /schema versionをv0\.22\.0の7から9へ更新しました/);
   assert.match(notes, /`RenderInputs::new`を削除しました/);
+  assert.match(notes, /`EffectiveProcessingOptions::preprocess_and_analyze`へ統合しています/);
   assert.match(notes, /診断code`unknown-citation-anchor`を追加しました/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /設定の移行は不要です/);
