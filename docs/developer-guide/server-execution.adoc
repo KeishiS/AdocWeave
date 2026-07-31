@@ -27,6 +27,14 @@ Semaphore、``spawn_blocking``またはthread poolなどの具体的な投入方
 ``AnalysisRequest::analyze``はpanicを捕捉しません。通常入力の失敗は``ParseError``として扱い、panicの隔離と
 workerの再起動はFFI、taskまたはthreadなどの利用側アプリの境界で行います。panicを構文診断へ変換しません。
 
+この境界は、AdocWeave自身がpanicしないことを前提とします。lint規則が、宣言していない修正候補や適用できない
+修正候補を作った場合は、AdocWeaveの欠陥です。それでも実行を終わらせません。Language Serverは一つのプロセスで
+打鍵に応答するため、ここでプロセスが終わるとエディターの作業内容が失われます。CLIはそれまでに見つけた診断を
+すべて失います。どちらも、修正候補を伴わない診断を返すより悪い結果です。
+
+そのため、修正候補だけを落として診断は返します。欠陥はdebug buildのdebug assertionで停止するため、
+開発中に見つかります。release buildでは停止しません。
+
 === 協調キャンセル
 
 ``Engine::analyze_with``、``preprocess_with``、``preprocess_and_analyze_with``、
