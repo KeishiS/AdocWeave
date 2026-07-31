@@ -4,11 +4,11 @@
 約束するものではありません。各作業の詳しい内容、依存関係および完了条件は、リンク先の
 GitHub Issueを参照してください。
 
-完了した作業の経緯はIssue、versionごとの変更は
+完了した作業の経緯はIssue、バージョンごとの変更は
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 公開Rust APIのversion管理
+== 公開Rust APIのバージョン管理
 
 公開Rust APIの入口の整理は完了しました。解析は``Engine::analyze``と``analyze_with``、前処理は
 ``preprocess``系の4つの関数と``EffectiveProcessingOptions``のmethodに揃っています。次は、この形を
@@ -71,7 +71,7 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 公式Playgroundの公開には、配信先、公開URL、公開作業を行う権限および問題発生時に以前の状態へ戻す
 権限を決める必要があります。これらが決まるまで実装済みのローカルプレビューとは分離し、
-製品versionの更新やほかの機能を公開するための前提にはしません。
+製品バージョンの更新やほかの機能を公開するための前提にはしません。
 
 == 条件付き候補
 

@@ -26,14 +26,14 @@ cargo make test-vscode-extension-host
 cargo make test-vscode-release-package
 ----
 
-Extension host testは固定versionの公式VS Codeを隔離したuser data directoryへ取得し、local buildの
+Extension host testは固定バージョンの公式VS Codeを隔離したuser dataディレクトリへ取得し、local buildの
 ``adocweave-lsp``を絶対pathで指定します。診断、Outline、Code Action、Format、Hover、補完、Definition、
 References、Document Link、Rename、Semantic Tokens、UTF-16位置、include先の更新、連続編集後の古い結果の不採用、
 複数workspace folder、再起動および終了後のprocess残存を確認します。通常利用しているVS Code profileは使用しません。
 
 ``test-vscode-release-package``は同じsourceからVSIXを2回構築し、byte列の一致、許可file一覧、license、
 source mapと``node_modules``の不在、sizeおよび機械固有pathの不在を検査します。さらに、隔離したVS Codeへ
-VSIXを導入し、更新、以前のversionへのrollbackおよびuninstallを確認します。
+VSIXを導入し、更新、以前のバージョンへのrollbackおよびuninstallを確認します。
 
 == 手動確認
 
@@ -46,7 +46,7 @@ npm ci --ignore-scripts --prefix editors/vscode
 npm run build --prefix editors/vscode
 ----
 
-. 空のprofile directoryを作り、VS Code CLIの``--extensionDevelopmentPath``でExtension Development Hostを
+. 空のprofileディレクトリを作り、VS Code CLIの``--extensionDevelopmentPath``でExtension Development Hostを
   起動します。``code``は手元で使用するVS Codeの実行fileへ置き換えられます。
 +
 [source,console]
@@ -77,23 +77,23 @@ code \
 次の順序で選択します。
 
 . ``adocweave.server.path``で明示した絶対path
-. extension hostの``PATH``上にある互換versionの``adocweave-lsp``
+. extension hostの``PATH``上にある互換バージョンの``adocweave-lsp``
 . 検証済みmanaged cache
-. 同じversionのGitHub Releaseから取得したmanaged binary
+. 同じバージョンのGitHub Releaseから取得したmanaged binary
 
-明示pathは``--version --json``に失敗するかversionが一致しない場合に停止し、別のbinaryへfallbackしません。
+明示pathは``--version --json``に失敗するかバージョンが一致しない場合に停止し、別のbinaryへfallbackしません。
 ``PATH``上の不一致は警告してmanaged binaryへ進みます。workspace scopeの明示pathは、
-そのworkspaceが信頼済みの場合だけ使用します。引数、環境変数、download先および任意commandは設定できません。
+そのワークスペースが信頼済みの場合だけ使用します。引数、環境変数、download先および任意commandは設定できません。
 
-Managed binaryは配布manifestのsource commit、version、target、archive、実行file名、byte数およびSHA-256を
+Managed binaryは配布manifestのsource commit、バージョン、target、archive、実行file名、byte数およびSHA-256を
 検証します。ZIPは展開量を制限し、絶対path、drive prefix、``..``、大小文字衝突および重複実行fileを拒否します。
-検証済みcacheはversion、targetおよびasset digestごとに分離し、起動時にbinary digestを再確認します。
+検証済みキャッシュはバージョン、targetおよびasset digestごとに分離し、起動時にbinary digestを再確認します。
 
 == 清掃
 
 Extension Development Hostを終了するとLanguage Clientへ`shutdown`と`exit`を送り、期限内に終了しない
 processを停止します。コマンド`AdocWeave: 管理対象Language Serverを削除`はLanguage Serverを停止してから、
-この拡張のglobal storage内にあるmanaged server専用directoryだけを削除します。
+この拡張のglobal storage内にあるmanaged server専用ディレクトリだけを削除します。
 
-自動testの隔離profileはtest runnerが削除します。通常profile全体、共有extension directoryまたは親cacheを
+自動testの隔離profileはtest runnerが削除します。通常profile全体、共有extensionディレクトリまたは親キャッシュを
 清掃目的で再帰削除しません。

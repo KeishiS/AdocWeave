@@ -11,8 +11,8 @@ AdocWeaveは、AsciiDocの読み取り、問題の検出、整形、HTMLへの�
 
 == バージョン
 
-公開API、WebAssembly、HTML出力、構造情報は、同じpackage versionを使います。
-現在の値と必要なRust versionは次のfileが基準です。
+公開API、WebAssembly、HTML出力、構造情報は、同じパッケージバージョンを使います。
+現在の値と必要なRustのバージョンは次のfileが基準です。
 link:../../release-manifest.json[release manifest]
 公開結果を保存するアプリケーションは、AdocWeaveの更新時にHTMLおよび検索用情報を再構築してください。
 
@@ -32,7 +32,7 @@ xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]に�
 == 構造情報
 
 ``adocweave::output::projection::project``は、一つの``Analysis``と同じrevisionの``RenderInputs``から、
-HTMLに依存しない``DocumentProjection``を生成します。生成時にsourceを再解析せず、filesystem、network、
+HTMLに依存しない``DocumentProjection``を生成します。生成時にsourceを再解析せず、ファイルシステム、ネットワーク、
 DBまたはアプリ固有のschemaへアクセスしません。
 
 構造情報には次を含みます。
@@ -43,7 +43,7 @@ DBまたはアプリ固有のschemaへアクセスしません。
 * Footnote、bibliographyおよび階層indexのcatalog
 * TOC、appendix、book partおよびmanpage header
 * 検索用文字列と元sourceのrange
-* 生成元の``SourceId``とpackage version
+* 生成元の``SourceId``とパッケージバージョン
 
 通常linkは``ExternalLink``、xrefは``ReferenceEdge``として区別します。xrefの参照先は文書内、別文書または
 任意schemeのいずれかです。``RenderInputs``を渡した場合はsource rangeが一致するedgeだけへ解決結果を
@@ -63,14 +63,14 @@ TOC出力の有無を``RenderingFeatures``として返します。言語は重�
 このqueryはpreprocess後の``Analysis``から作ったprojectionを対象とし、展開されたincludeの内容も反映します。
 返す値は文書が持つ意味上の機能だけであり、HTML構造、renderer、JavaScriptライブラリ、themeおよび資産URLを
 選択しません。``RenderingFeatures``は非網羅的な公開型です。将来fieldを追加する場合や返す言語名を増やす
-場合はminor versionの変更としてRelease Notesに記録します。既存の``MathLanguage``へvariantを追加すると
+場合はminor版の変更としてRelease Notesに記録します。既存の``MathLanguage``へvariantを追加すると
 利用側の網羅的なmatchへ影響するため、このqueryは同enumを公開fieldとして保持せず、安定したAsciiDoc向け
 言語名を返します。
 
 解決失敗は安定した種類だけを保持し、自由形式のmessageや表示名を含めません。権限拒否、対象不在または
 内部障害から、非公開のタイトル、DB情報または内部例外を構造情報へ漏らしません。
 
-同じpackage version、``Analysis``および解決結果からは同じ順序のJSONを生成します。保存した構造情報は
+同じパッケージバージョン、``Analysis``および解決結果からは同じ順序のJSONを生成します。保存した構造情報は
 AdocWeaveの更新時に再生成してください。
 公開protocolへ必須fieldを追加する場合は``schemaVersion``を更新し、``workerProtocolVersion``はworker
 envelope自体を変更する場合だけ更新します。Package versionはリリース用Pull Requestでrelease manifestと
@@ -142,10 +142,10 @@ source rangeは``Analysis::document_attribute_occurrences()``から取得しま�
 spaceへ畳み、hard breakのplusを残してmarkerを改行へ畳んだ意味評価用の値です。
 ``lines``から各物理行と継続markerのrangeを取得できます。
 ``Analysis::attribute_references()``は各参照の名前、range、有効値および決定binding IDを返します。
-Binding IDは同じ解析snapshot内だけで有効であり、``AttributeEnvironment::binding()``で対応する
+Binding IDは同じ解析スナップショット内だけで有効であり、``AttributeEnvironment::binding()``で対応する
 source occurrenceを取得します。
 属性fixtureと保証対象の対応は link:../../fixtures/attributes/manifest.json[属性の公開仕様manifest]を基準とし、
-repository検査でfixture一覧とこの文書体系の同期を確認します。
+リポジトリ検査でfixture一覧とこの文書体系の同期を確認します。
 
 前処理と解析を一度に行う場合は、``AnalysisOptions``と``PreprocessOptions``から
 ``EffectiveProcessingOptions``を作り、その``preprocess_and_analyze``を呼び出します。
@@ -183,8 +183,8 @@ unset後の参照は``undefined-attribute``、循環と展開上限超過は``at
 == WebAssembly API
 
 ``adocweave-wasm``は、ブラウザーとJavaScriptからコアAPIを利用するための入口です。要求には
-`packageVersion`、`sourceId`、文書version、generation、source、必要な出力および設定を渡します。
-package versionが一致しない要求や未知のfieldは拒否します。versionとgenerationは``u32``の範囲に制限します。
+`packageVersion`、`sourceId`、文書バージョン、generation、source、必要な出力および設定を渡します。
+パッケージバージョンが一致しない要求や未知のfieldは拒否します。バージョンとgenerationは``u32``の範囲に制限します。
 
 出力はsyntax tree、AST、HTML、文書属性の出現箇所、resource query、診断、symbolおよび構造情報から選択できます。
 省略時はHTML、resource query、診断および構造情報を返します。`analysisOptions`、`renderPolicy`、
@@ -195,7 +195,7 @@ package versionが一致しない要求や未知のfieldは拒否します。ver
 参照とresourceのJSON表現および
 安全性の規則はxref:server-execution.adoc#render-inputs[変換入力]を基準とします。
 
-応答には入力のversionとgeneration、package version、解析結果の概要および要求した出力を含めます。
+応答には入力のバージョンとgeneration、パッケージバージョン、解析結果の概要および要求した出力を含めます。
 エラーは安定した``code``と利用者向けの``message``だけを返します。source、応答およびエラーは呼び出しごとの
 所有値であり、次回の呼び出しで無効になるpointerを公開しません。
 
