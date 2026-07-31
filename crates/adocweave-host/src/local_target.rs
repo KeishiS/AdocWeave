@@ -285,15 +285,29 @@ impl LocalTargetSession {
         if let Some(result) = self.inspections.get(&candidate) {
             return result.clone();
         }
+        self.charge_path_request(&candidate)?;
+        let result = self.policy.inspect_candidate(&candidate);
+        self.inspections.insert(candidate, result.clone());
+        result
+    }
+
+    /// Counts one path against the number this session may examine.
+    ///
+    /// A path already examined costs nothing, so repeated references to the
+    /// same target do not exhaust the bound. The bound itself applies on every
+    /// platform: it limits how much work an authored document can ask for, which
+    /// does not depend on how the filesystem resolves a path.
+    fn charge_path_request(&mut self, candidate: &Path) -> Result<(), LocalTargetError> {
+        if self.inspections.contains_key(candidate) {
+            return Ok(());
+        }
         if self.requests >= self.max_paths {
             return Err(LocalTargetError::LimitExceeded {
                 limit: self.max_paths,
             });
         }
         self.requests += 1;
-        let result = self.policy.inspect_candidate(&candidate);
-        self.inspections.insert(candidate, result.clone());
-        result
+        Ok(())
     }
 
     fn candidate(&mut self, base: &Path, target: &str) -> Result<PathBuf, LocalTargetError> {
@@ -378,16 +392,12 @@ impl LocalTargetSession {
         after_open: impl FnOnce(),
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        // The number of distinct paths a session may examine is a resource
+        // bound, so it holds on every platform. The two branches below differ
+        // only in how a path is resolved and opened.
+        self.charge_path_request(candidate)?;
         #[cfg(target_os = "linux")]
         let (canonical, file) = {
-            if !self.inspections.contains_key(candidate) {
-                if self.requests >= self.max_paths {
-                    return Err(LocalTargetError::LimitExceeded {
-                        limit: self.max_paths,
-                    });
-                }
-                self.requests += 1;
-            }
             let opened = self.policy.open_confined(candidate)?;
             self.inspections
                 .insert(candidate.to_owned(), Ok(opened.canonical_path.clone()));
@@ -396,6 +406,8 @@ impl LocalTargetSession {
         #[cfg(not(target_os = "linux"))]
         let (canonical, file) = {
             let canonical = self.policy.inspect_candidate(candidate)?;
+            self.inspections
+                .insert(candidate.to_owned(), Ok(canonical.clone()));
             let file = self.policy.open_confined(&canonical)?;
             (canonical, file)
         };
@@ -978,6 +990,52 @@ mod tests {
     }
 
     #[cfg(unix)]
+    /// The path bound holds whichever way the platform resolves a path.
+    ///
+    /// The bound limits how much filesystem work one authored document can ask
+    /// for. That is a property of the document, not of the operating system, so
+    /// a document rejected on Linux must be rejected on macOS and Windows too.
+    #[test]
+    fn reading_is_bounded_by_the_path_limit_on_every_platform() {
+        let root = TestDir::new();
+        for name in ["a.adoc", "b.adoc", "c.adoc"] {
+            fs::write(root.0.join("docs").join(name), "text\n").expect("source");
+        }
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+        let docs = root.0.join("docs");
+
+        assert!(session.read_candidate_utf8(&docs.join("a.adoc")).is_ok());
+        assert!(session.read_candidate_utf8(&docs.join("b.adoc")).is_ok());
+        // A path already read costs nothing, so a repeated reference does not
+        // exhaust the bound.
+        assert!(session.read_candidate_utf8(&docs.join("a.adoc")).is_ok());
+        assert!(matches!(
+            session.read_candidate_utf8(&docs.join("c.adoc")),
+            Err(LocalTargetError::LimitExceeded { limit: 2 })
+        ));
+    }
+
+    /// One bound covers both entry points rather than each holding its own.
+    #[test]
+    fn inspecting_and_reading_share_the_same_path_limit() {
+        let root = TestDir::new();
+        for name in ["a.adoc", "b.adoc"] {
+            fs::write(root.0.join("docs").join(name), "text\n").expect("source");
+        }
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
+        let docs = root.0.join("docs");
+
+        assert!(session.inspect(&docs, "a.adoc").is_ok());
+        assert!(matches!(
+            session.read_candidate_utf8(&docs.join("b.adoc")),
+            Err(LocalTargetError::LimitExceeded { limit: 1 })
+        ));
+        // The path the session already examined is still readable.
+        assert!(session.read_candidate_utf8(&docs.join("a.adoc")).is_ok());
+    }
+
     #[test]
     fn dangling_leaf_symlink_escape_uses_the_shared_fixture() {
         use std::os::unix::fs::symlink;
