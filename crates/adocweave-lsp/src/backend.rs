@@ -70,6 +70,12 @@ impl Backend {
             })
             .notification::<notification::Initialized>(|state, _| {
                 state.register_dynamic_capabilities();
+                // The workspace walk runs here rather than inside `initialize`,
+                // so the client receives the capabilities without waiting for
+                // every `.adoc` file below the roots to be read.
+                for job in state.service.scan_workspace_roots() {
+                    state.schedule_analysis(job);
+                }
                 ControlFlow::Continue(())
             })
             .request::<request::Shutdown, _>(|state, _| {

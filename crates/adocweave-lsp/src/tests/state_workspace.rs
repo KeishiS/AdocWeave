@@ -13,11 +13,14 @@ fn file_workspace_folder_analyzes_only_the_selected_document_as_a_root() {
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
 
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null,
-        "workspaceFolders": [{"uri": document_uri, "name": "document.adoc"}],
-        "capabilities": {"workspace": {"workspaceFolders": true}}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "workspaceFolders": [{"uri": document_uri, "name": "document.adoc"}],
+            "capabilities": {"workspace": {"workspaceFolders": true}}
+        })),
+    );
     open(&mut service, document_uri.as_str(), 1, "single file\n");
 
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
@@ -60,7 +63,7 @@ fn analysis_adoption_rejects_a_stale_workspace_generation() {
         "rootUri": root_uri,
         "capabilities": {}
     }));
-    service.initialize(&params);
+    initialize_with_params(&mut service, params);
     let job = service
         .begin_open(typed(json!({
             "textDocument": {
@@ -143,11 +146,14 @@ fn oversized_did_open_preserves_every_committed_state_and_emits_no_job() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null,
-        "rootUri": root_uri,
-        "capabilities": {}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
     let accepted = service.begin_open(typed(json!({
         "textDocument": {
             "uri": document_uri,
@@ -239,11 +245,14 @@ fn did_open_outside_configured_roots_preserves_state_and_emits_no_job() {
     let accepted_uri = lsp::Url::from_file_path(&accepted_path).expect("accepted URI");
     let rejected_uri = lsp::Url::from_file_path(&rejected_path).expect("rejected URI");
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null,
-        "rootUri": root_uri,
-        "capabilities": {}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
     let jobs = service.begin_open(typed(json!({
         "textDocument": {
             "uri": accepted_uri,
@@ -298,7 +307,7 @@ fn workspace_folders_null_does_not_fall_back_to_legacy_root_uri() {
         "workspaceFolders": null,
         "capabilities": {"workspace": {"workspaceFolders": true}}
     }));
-    service.initialize(&params);
+    initialize_with_params(&mut service, params);
     open(
         &mut service,
         document_uri.as_str(),
@@ -334,7 +343,7 @@ fn legacy_root_path_is_used_only_when_root_uri_is_null() {
         "rootUri": null,
         "capabilities": {}
     }));
-    service.initialize(&params);
+    initialize_with_params(&mut service, params);
     open(
         &mut service,
         document_uri.as_str(),
@@ -380,7 +389,7 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
         ],
         "capabilities": {"workspace": {"workspaceFolders": true}}
     }));
-    let result = service.initialize(&params);
+    let result = initialize_with_params(&mut service, params);
     let value = serde_json::to_value(result).expect("initialize result");
     assert_eq!(
         value["capabilities"]["workspace"]["workspaceFolders"]["supported"],
@@ -464,11 +473,14 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null,
-        "rootUri": root_uri,
-        "capabilities": {}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
     open(&mut service, document_uri.as_str(), 1, source);
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
@@ -525,11 +537,14 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null,
-        "rootUri": root_uri,
-        "capabilities": {}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
     open(&mut service, document_uri.as_str(), 1, "open overlay");
 
     fs::write(
@@ -581,11 +596,14 @@ fn project_configuration_bounds_lsp_diagnostics_before_protocol_projection() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null,
-        "rootUri": root_uri,
-        "capabilities": {}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
     open(&mut service, document_uri.as_str(), 1, source);
 
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
@@ -633,14 +651,17 @@ fn each_workspace_folder_uses_its_own_project_configuration() {
     let disabled_uri = lsp::Url::from_file_path(&disabled_path).expect("disabled document URI");
 
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null,
-        "workspaceFolders": [
-            {"uri": enabled_root_uri, "name": "enabled"},
-            {"uri": disabled_root_uri, "name": "disabled"}
-        ],
-        "capabilities": {"workspace": {"workspaceFolders": true}}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "workspaceFolders": [
+                {"uri": enabled_root_uri, "name": "enabled"},
+                {"uri": disabled_root_uri, "name": "disabled"}
+            ],
+            "capabilities": {"workspace": {"workspaceFolders": true}}
+        })),
+    );
     open(&mut service, enabled_uri.as_str(), 1, source);
     open(&mut service, disabled_uri.as_str(), 1, source);
 
@@ -679,11 +700,14 @@ fn invalid_project_configuration_does_not_fall_back_to_default_analysis() {
     let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null,
-        "rootUri": root_uri,
-        "capabilities": {}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
     open(&mut service, document_uri.as_str(), 1, "trailing \n");
 
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
@@ -782,9 +806,12 @@ fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
     let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
     let mut service = LanguageService::default();
-    service.initialize(&typed(json!({
-        "processId": null, "rootUri": root_uri, "capabilities": {}
-    })));
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null, "rootUri": root_uri, "capabilities": {}
+        })),
+    );
     open(&mut service, document_uri.as_str(), 1, "`open`\n");
     fs::write(
         &config_path,

@@ -25,7 +25,7 @@ fn minimal_client_never_receives_capability_gated_response_shapes() {
         "rootUri": null,
         "capabilities": {}
     }));
-    let result = service.initialize(&params);
+    let result = initialize_with_params(&mut service, params);
     let capabilities = serde_json::to_value(result.capabilities).expect("capabilities");
 
     assert_eq!(capabilities["positionEncoding"], "utf-16");
@@ -107,7 +107,7 @@ fn client_preferences_select_plaintext_hover_and_unversioned_code_action_edits()
             }
         }
     }));
-    service.initialize(&params);
+    initialize_with_params(&mut service, params);
     open(&mut service, "file:///mixed.adoc", 4, "= Mixed\n\ntext  \n");
 
     let hover = serde_json::to_value(

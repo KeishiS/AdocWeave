@@ -10,6 +10,19 @@ pub(super) fn uri(value: &str) -> lsp::Url {
     value.parse().expect("valid URI")
 }
 
+/// Runs the lifecycle a client performs: `initialize`, then `initialized`.
+///
+/// The workspace walk happens on the notification, so a test that only calls
+/// `initialize` observes a service that has not read its roots yet.
+pub(super) fn initialize_with_params(
+    service: &mut LanguageService,
+    params: lsp::InitializeParams,
+) -> lsp::InitializeResult {
+    let result = service.initialize(&params);
+    let _ = service.scan_workspace_roots();
+    result
+}
+
 pub(super) async fn write_message(output: &mut (impl AsyncWriteExt + Unpin), message: &Value) {
     let body = serde_json::to_vec(message).expect("serialize");
     output
@@ -48,7 +61,7 @@ pub(super) fn initialize(
         "rootUri": null,
         "capabilities": full_capabilities(encodings)
     }));
-    service.initialize(&params)
+    initialize_with_params(service, params)
 }
 
 pub(super) fn full_capabilities(encodings: &[&str]) -> Value {
