@@ -10,20 +10,20 @@ xref:../user-guide/release-installation.adoc[インストールと更新]を参�
 * link:../../release/adocweave-dist-manifest.schema.json[JSON Schema]
 
 成果物名、対象環境、個数および
-versionを本文へ重複して記載しません。
+バージョンを本文へ重複して記載しません。
 
 == 配布境界
 
-CLI、Language Server、WebAssembly、browser package、Zed拡張およびVS Code拡張は、一つのpackage versionとして
+CLI、Language Server、WebAssembly、browser package、Zed拡張およびVS Code拡張は、一つのパッケージバージョンとして
 GitHub Releasesへまとめて公開します。crates.io、npm、Homebrew、WinGet、Visual Studio Marketplace、
 Open VSXおよびZed Extension Registryには公開しません。GitHubが自動生成するsource archiveは、
 検証対象のbinary配布物に含めません。
 
 公開には``vX.Y.Z``形式のstable tagだけを使用します。tag、source commit、release manifestおよび各成果物の
-versionが一致しない場合は公開しません。異なるpackage versionの成果物を組み合わせて利用することも
+バージョンが一致しない場合は公開しません。異なるパッケージバージョンの成果物を組み合わせて利用することも
 想定しません。
 
-private repositoryから取得する場合、利用者が明示的に与えたGitHub認証だけを使用します。credentialを
+privateリポジトリから取得する場合、利用者が明示的に与えたGitHub認証だけを使用します。credentialを
 archive、manifest、log、source codeまたは設定例へ埋め込みません。
 
 == ネイティブアーカイブ
@@ -38,29 +38,29 @@ CLIとLanguage Serverは別々の``.zip`` archiveとして配布します。全p
 * `THIRD_PARTY_NOTICES.adoc`
 
 Native binaryはCargoの``dist`` profileで対象OSとarchitectureのnative runner上に構築します。具体的な
-target、runner、最小OS version、linkage、archiveおよび実行file名は配布計画を基準とします。Linux musl
+target、ランナー、最小OS version、linkage、archiveおよび実行file名は配布計画を基準とします。Linux musl
 binaryではELF architecture、静的linkおよび実行権限を検査します。macOS binaryではMach-O architecture、
 deployment target、system dynamic libraryだけへのlinkおよび実行権限を検査します。Windows binaryでは
 PE architecture、``.exe``名、CRLF入力、空白とUnicodeを含むpathおよびstdio process lifecycleを検査します。
 
-Windowsで成果物を構築する``cargo-dist``は、公式GitHub Releaseのversion付きZIPを使用します。取得する
-version、asset名、URL、SHA-256およびZIP内の許可file一覧は
+Windowsで成果物を構築する``cargo-dist``は、公式GitHub Releaseのバージョン付きZIPを使用します。取得する
+バージョン、asset名、URL、SHA-256およびZIP内の許可file一覧は
 ``release/windows-dist-bootstrap.json``へ固定します。
-SHA-256と許可file一覧を検証してから、``dist.exe``だけを一時directoryから実行用directoryへ移します。
-任意のnetwork installer、package registryからのsource buildおよび実行toolのcacheは使用しません。
+SHA-256と許可file一覧を検証してから、``dist.exe``だけを一時ディレクトリから実行用ディレクトリへ移します。
+任意のnetwork installer、package registryからのsource buildおよび実行toolのキャッシュは使用しません。
 download、SHA-256検証、ZIP内の許可file一覧の検証または展開のいずれかに失敗した場合はcandidateの構築を
-中止し、成功と失敗のどちらでも一時directoryの削除を試みます。
+中止し、成功と失敗のどちらでも一時ディレクトリの削除を試みます。
 
 Native binaryへDeveloper ID、notarizationまたはAuthenticodeによるOS code signingは行いません。GitHub Artifact
 Attestationはbuild provenanceであり、OS code signingの代替ではありません。macOSではdownload元に応じて
 quarantine確認が必要になる場合があり、Windowsでは発行元未署名の警告が表示される場合があります。
 
-``THIRD_PARTY_NOTICES.adoc``はCargoとVS Code拡張のlockfileから生成し、配布対象packageの名前、versionおよび
-SPDX licenseを列挙します。license情報がないpackageは受理しません。
+``THIRD_PARTY_NOTICES.adoc``はCargoとVS Code拡張のlockfileから生成し、配布対象パッケージの名前、バージョンおよび
+SPDX licenseを列挙します。license情報がないパッケージは受理しません。
 
-展開後のsmoke testは、workspaceの``target``にある実行ファイルを誤用しないよう、新しい一時directory内の
-実行ファイルだけを使用します。CLIではversion、文書検査、変換および整形を確認します。Language Serverでは
-versionに加え、初期化、文書open、診断、shutdownおよびexitをstdio経由で確認します。
+展開後のsmoke testは、ワークスペースの``target``にある実行ファイルを誤用しないよう、新しい一時ディレクトリ内の
+実行ファイルだけを使用します。CLIではバージョン、文書検査、変換および整形を確認します。Language Serverでは
+バージョンに加え、初期化、文書open、診断、shutdownおよびexitをstdio経由で確認します。
 
 == ブラウザーパッケージとエディター拡張
 
@@ -73,7 +73,7 @@ global成果物へ影響するPull Requestとrelease用main candidateでは公�
 この性能予算と実行時の互換性を確認します。静的なarchive検査と実行検査は一つのtask graphで行い、
 実行検査後に同じarchiveをcandidateとして保存します。
 受入検査に使うbrowserは``flake.lock``で固定したChromiumです。CIはこのbrowserを持つdevShellでgateを
-実行し、runner imageに同梱されたbrowserを使いません。ほかのtoolと同じく、versionの変更は
+実行し、runner imageに同梱されたbrowserを使いません。ほかのtoolと同じく、バージョンの変更は
 ``flake.lock``の差分として記録に残ります。Chromiumは大きいため、このgateを実行するjobだけが取得します。
 
 Chromiumの起動確認は1回20秒、最大3回、合計75秒を上限とします。
@@ -88,22 +88,22 @@ Chromiumの起動確認は1回20秒、最大3回、合計75秒を上限としま
 
 VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの`node_modules`とsource mapを同梱しません。
 許可file一覧、license、package size、機械固有pathの不在および同一sourceから2回構築したbyte列の一致を確認します。
-VSIXのmanaged Language Serverは同じversionの配布manifestだけを使用します。この判断の背景は
+VSIXのmanaged Language Serverは同じバージョンの配布manifestだけを使用します。この判断の背景は
 xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]を参照してください。
 
 == 配布メタデータ
 
 ``tools/release-metadata.mjs``を配布manifest、SPDX SBOMおよびchecksumの生成器とします。target別の成果物を
-一つのcandidate directoryへ集約した後、実際に公開するarchiveから次を決定的に生成します。
+一つのcandidateディレクトリへ集約した後、実際に公開するarchiveから次を決定的に生成します。
 
-* 配布manifestへのpackage version、source commit、archive名、種類、対象環境、byte数およびSHA-256の記録
+* 配布manifestへのパッケージバージョン、source commit、archive名、種類、対象環境、byte数およびSHA-256の記録
 * SPDX SBOMへのarchive内のfileと、lockfileから得たRustおよびfrontend packageの記録
 * checksum一覧への公開archive、配布manifestおよびSBOMの名前順での記録
 
 Frontendへruntime dependencyを追加する場合、対応するlockfileからSBOMを生成できるようになるまで公開しません。
 推測したdownload URLはSBOMへ記録しません。
 
-生成器の検証機能はmetadataを同じ入力から再生成し、byte単位の一致とcandidate directory内の成果物集合を
+生成器の検証機能はmetadataを同じ入力から再生成し、byte単位の一致とcandidateディレクトリ内の成果物集合を
 確認します。未知のfile、subdirectory、欠落、改変またはsource commitの不一致を受理しません。
 
 公開するすべての成果物にはGitHub Artifact Attestationsによるprovenanceを付与します。credentialや署名fileは
@@ -117,7 +117,7 @@ Releaseへの書き込みとOIDCは、``github-release`` Environmentを使用す
 stable tagの形式、main candidateの再利用および成果物の完全性をworkflowで検査し、成功後に自動公開します。
 外部actionは完全なcommit SHAへ固定します。
 
-tagの公開処理は、同じcommitに対する検証済みmain candidateを再利用します。成果物を再構築せず、metadataを
+tagの公開処理は、同じコミットに対する検証済みmain candidateを再利用します。成果物を再構築せず、metadataを
 再検証してからprivate draftへ追加し、成果物集合とattestationが揃った後にstable releaseとして公開します。
 
 == 検証
@@ -133,16 +133,16 @@ cargo make release-gate
 ----
 
 ``platform-contract``は、WindowsとPOSIXのpath計算、実行file名、archive path、Windows DLL許可一覧、
-macOS deployment target、VSIX metadataおよび一時directory削除の再試行条件をfixtureで検証します。
+macOS deployment target、VSIX metadataおよび一時ディレクトリ削除の再試行条件をfixtureで検証します。
 このtaskはhost OSに依存せず、pull requestとlocalで同じtestを実行します。
-実OS操作ではfilesystem、process制御、時刻、platformおよびpath実装をruntime adapterとして注入し、
+実OS操作ではファイルシステム、process制御、時刻、platformおよびpath実装をruntime adapterとして注入し、
 ``platform-contract``の判定からNode.jsのhost APIを分離します。
 
 ``cross-native-check``はWindows MSVCとmacOS ARM64向けに``cargo check``を実行します。この検査は型検査と
 条件付きcompileだけを対象とし、linkと実行は行いません。
 
 対象OSでローカル成果物を検証する場合は、次のtaskを使用します。既定では``target/distrib``を読み、
-現在のOSとarchitectureに対応するtargetを配布計画から選択します。別directoryを使用する場合は
+現在のOSとarchitectureに対応するtargetを配布計画から選択します。別ディレクトリを使用する場合は
 ``NATIVE_ARTIFACT_DIR``、candidate外のmanifestを使用する場合は``NATIVE_MANIFEST``を指定します。
 
 [source,console]
@@ -158,14 +158,14 @@ quarantine属性および各OSでのprocess lifecycleを再現しません。こ
 Pull Requestでは、変更pathを``native-change-plan.mjs``で判定します。CLIまたはLanguage Serverの
 Native archiveへ影響する場合はWindowsとmacOSのbuild、native smokeおよびinstallation E2Eを実行します。
 Browser package、Zed拡張またはVS Code拡張だけに影響する場合はglobal成果物だけを構築し、
-実Chromiumによる受入検査も行います。tracked fileは成果物への影響をすべて明示的に分類し、
+実Chromiumによる受入検査も行います。Gitが追跡するファイルは成果物への影響をすべて明示的に分類し、
 未分類のpathが追加された場合は事前検査を失敗させます。
 installation E2Eはnative candidateの検証が成功した場合だけ実行し、global成果物など別系統の
 意図的なskipを失敗として継承しません。native candidateの検証が失敗、cancelまたはskipになった場合は
 installation E2Eを実行せず、最終gateを失敗させます。
 Pull Requestでは変更計画が選択したcandidate familyだけをインストール・削除します。native成果物は
 対象OSのrunner、global成果物はUbuntu runnerで個別に検証し、構築していないfamilyを要求しません。
-両familyを選択した場合は両方の検証成功を最終gateで要求します。未公開versionの``main`` candidateと
+両familyを選択した場合は両方の検証成功を最終gateで要求します。未公開バージョンの``main`` candidateと
 tagから再利用するcandidateでは、配布仕様に含まれる全assetを引き続き要求します。
 
 === 公開Rust APIの互換性
@@ -175,56 +175,56 @@ tagから再利用するcandidateでは、配布仕様に含まれる全assetを
 
 比較の対象は、library targetを持つworkspace memberです。binaryだけを提供するcrateはほかのcrateから
 名前で参照できるRust APIを持たないため対象外とし、その理由を``tools/semver-gate.mjs``に記録します。
-crate名は列挙して渡します。``cargo semver-checks --workspace``はこのrepositoryでは何も検査せずに
+crate名は列挙して渡します。``cargo semver-checks --workspace``はこのリポジトリでは何も検査せずに
 成功するためです。全crateが``publish = false``であり、対象として選ばれません。検査後は、挙げたcrateが
 実際に比較されたかを出力から確認し、一つでも欠けていれば失敗させます。
 
-許容する差分はbaselineと候補のversionから決まります。patch版に破壊的変更があれば失敗させ、
+許容する差分はbaselineと候補のバージョンから決まります。patch版に破壊的変更があれば失敗させ、
 0.yのminor版では破壊的変更を許容します。ただし許容する場合は、Release Notesに破壊的変更の記載が
 あることを条件とします。利用側は、compileが通らなくなってから差分を知るのではなく、
 移行手順から知るべきだからです。
 
-baselineは候補versionより前で最も新しいstable tagです。該当するtagが無い場合はfail openせず失敗させます。
+baselineは候補バージョンより前で最も新しいstable tagです。該当するtagが無い場合はfail openせず失敗させます。
 検査に使う``cargo-semver-checks``はflakeで版を固定し、実行時に最新版を取得しません。
 
 === source検査の範囲
 
 Pull Requestでは、変更したpathが到達できるsource検査だけを実行します。文書だけを変更したPull Requestで、
-core crateの再compile、fuzz、Nix packageおよび公開Rust APIの差分検査を行っても、結果は変わらないためです。
+core crateの再compile、fuzz、Nixパッケージおよび公開Rust APIの差分検査を行っても、結果は変わらないためです。
 
-jobは常に起動し、実行するかどうかをstepの条件で決めます。branch保護が要求する検査名は、
+jobは常に起動し、実行するかどうかをstepの条件で決めます。ブランチ保護が要求する検査名は、
 実行しなかった場合も``success``のまま維持する必要があるためです。実行しなかったstepは、その変更が
 その検査へ到達しないことを記録します。
 
 次の変更はすべての検査を実行します。
 
-* task graph、toolchainの固定、flakeまたはworkflowの変更。これらは、どの検査の結果も変え得ます。
+* task graph、ツールチェーンの固定、flakeまたはworkflowの変更。これらは、どの検査の結果も変え得ます。
 * 成果物への影響を分類できないpath。分類漏れをすり抜けさせると、検証しないまま公開します。
-* ``main`` pushとtag。``main``は独立にreviewされたbranchが初めて出会う場所であり、
-  各branchが個別に検査を通っていても全体を検査します。
+* ``main`` pushとtag。``main``は独立にreviewされたブランチが初めて出会う場所であり、
+  各ブランチが個別に検査を通っていても全体を検査します。
 
 成果物のbuildと配布計画の生成は、``cargo make ci-preflight``が成功した後に開始します。
 この事前検査では書式、生成file、workflow policy、release contractおよび変更pathの分類を確認します。
-成果物を作らないPull Requestと、公開済みversionの通常の``main`` pushでは配布計画を生成しません。
+成果物を作らないPull Requestと、公開済みバージョンの通常の``main`` pushでは配布計画を生成しません。
 Pull Requestの``quality / verify``はsource qualityに加え、変更に応じて選択したbuild、smoke test、
 candidate検証およびinstallation E2Eが完了してから成功します。
 
-release manifestのversionに対応するtagが存在する通常の``main`` pushではsource quality gateを実行し、
-release candidateを構築しません。未公開versionへ更新したrelease用Pull Requestが``main``へ統合されてから
+release manifestのバージョンに対応するtagが存在する通常の``main`` pushではsource quality gateを実行し、
+release candidateを構築しません。未公開バージョンへ更新したrelease用Pull Requestが``main``へ統合されてから
 tagを作成するまでは、配布計画にある全targetとglobal成果物を構築し、metadataとinstallation E2Eを含む
-完全なcandidateを保存します。candidateが失敗した後の修正commitでも同じ検査を再実行します。
-後から作成したversion tagは、同じcommitに対する成功済みcandidateを再検証して再利用します。
-新しいcommitによって不要になったPull Requestまたは``main``のrunは取り消しますが、tagの公開runは取り消しません。
+完全なcandidateを保存します。candidateが失敗した後の修正コミットでも同じ検査を再実行します。
+後から作成したversion tagは、同じコミットに対する成功済みcandidateを再検証して再利用します。
+新しいコミットによって不要になったPull Requestまたは``main``のrunは取り消しますが、tagの公開runは取り消しません。
 
 === candidateの保持期間
 
 ``main`` candidateはworkflow artifactとして14日間保持します。tagはこの期間内に作成してください。
 期間を過ぎるとartifactが失われ、tagの公開処理は再利用するcandidateを見つけられずに失敗します。
-その場合は、同じcommitへ空でない変更を加えて``main`` candidateを作り直す必要があります。
+その場合は、同じコミットへ空でない変更を加えて``main`` candidateを作り直す必要があります。
 
-``main`` pushのrunは``cancel-in-progress``の対象です。version同期のcommitが``main``へ入った直後に
-別のcommitが入ると、前者のcandidateは取り消されます。tagを作成できるのは常に最新の``main``
-commitに対してだけです。releaseを準備してからtagを作成するまでの間は、``main``へほかの変更を
+``main`` pushのrunは``cancel-in-progress``の対象です。バージョン同期のコミットが``main``へ入った直後に
+別のコミットが入ると、前者のcandidateは取り消されます。tagを作成できるのは常に最新の``main``
+コミットに対してだけです。releaseを準備してからtagを作成するまでの間は、``main``へほかの変更を
 統合しないでください。
 
 この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は

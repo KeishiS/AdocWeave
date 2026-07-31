@@ -47,30 +47,30 @@ HTMLやエディター固有の表示規則をParserへ持ち込みません。
 
 == 利用側アプリとの境界
 
-コア解析はfilesystem、network、database、環境変数および非同期runtimeへ直接アクセスしません。
+コア解析はファイルシステム、ネットワーク、database、環境変数および非同期runtimeへ直接アクセスしません。
 外部resourceを必要とする処理は、利用側アプリが安全性と権限を確認したスナップショットをコアへ渡します。
 
 ``adocweave-workspace``は、disk resource、open overlay、解析root、include依存graphおよび世代付き
-スナップショットをruntime非依存かつI/O非依存の状態機械として提供します。filesystem関連crateへ依存せず、
+スナップショットをruntime非依存かつI/O非依存の状態機械として提供します。ファイルシステム関連crateへ依存せず、
 検証済みのresource IDと本文だけを受け取ります。
 
 project設定のresource上限は``ResolvedResourceLimitPlan``として一度だけ解決します。このplanは、
-filesystemから読む本文、Workspaceが保持するdiskとoverlayの層、および解析snapshotが参照する有効resourceを
+ファイルシステムから読む本文、Workspaceが保持するdiskとoverlayの層、および解析スナップショットが参照する有効resourceを
 別々の型で制約します。Language Serverは各文書に最も近いproject設定からplanを選び、読込と保持では
 allocationまたは取り込みを始める前に上限を適用します。
 課金範囲はworkspace rootと最も近いproject設定の組で識別し、設定の新設や削除で範囲が変わる場合は、
 旧範囲の課金解放と新範囲への移行を一つの更新として確定します。
 
 Native adapterは``adocweave-host``の``LocalFilesystemSession``を共有します。Linuxではrootの
-directory handleを起点にfileを開いてから読み取り、path検査後に別のfileを開き直しません。
-初期directory列挙、symlink判定、UTF-8読込およびfile数・byte数の上限も同じsessionが担当します。
+ディレクトリハンドルを起点にfileを開いてから読み取り、path検査後に別のfileを開き直しません。
+初期ディレクトリ列挙、symlink判定、UTF-8読込およびfile数・byte数の上限も同じsessionが担当します。
 論理的なsource ID、不変な本文およびfilesystem provenanceは一つの読込結果として構築します。
 依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
 
 ``adocweave-config``は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
-設定は解析とI/O policyへの入力であり、workspace外へのアクセス権限を追加しません。
+設定は解析とI/O policyへの入力であり、ワークスペース外へのアクセス権限を追加しません。
 
-利用側アプリは外部resourceの取得、pathやURLの検査、認証、cache、timeoutおよび利用者固有の
+利用側アプリは外部resourceの取得、pathやURLの検査、認証、キャッシュ、timeoutおよび利用者固有の
 参照索引を担当します。コアは渡された入力から決定的な解析結果を生成し、取得処理を呼び戻しません。
 詳しい実行順序はxref:server-execution.adoc[利用側アプリの実行仕様]で定義します。
 
@@ -80,8 +80,8 @@ directory handleを起点にfileを開いてから読み取り、path検査後�
 
 == 純粋性と信頼境界
 
-同じ入力、設定、外部resourceのスナップショットおよびpackage versionからは、
-同じ解析結果と出力を生成します。時刻、乱数、filesystemの列挙順およびmapの挿入順を結果へ反映しません。
+同じ入力、設定、外部resourceのスナップショットおよびパッケージバージョンからは、
+同じ解析結果と出力を生成します。時刻、乱数、ファイルシステムの列挙順およびmapの挿入順を結果へ反映しません。
 
 文書入力、外部resourceおよび利用側アプリが返すURLを信頼済みのHTMLとして扱いません。
 HTML出力では要素、属性、classおよびURLを許可集合に制限し、各出力文脈に合わせてescapeします。
@@ -96,7 +96,7 @@ HTML出力では要素、属性、classおよびURLを許可集合に制限し�
 結果は両方が現在値と一致する場合だけ採用し、異なる世代の解析結果を合成しません。
 
 CPU解析はprotocolやUIのevent loopから分離し、同時実行数と待機数を制限します。
-キャンセルはコア解析へ伝播し、キャンセル済みまたは古い結果を診断、表示、編集およびcacheへ採用しません。
+キャンセルはコア解析へ伝播し、キャンセル済みまたは古い結果を診断、表示、編集およびキャッシュへ採用しません。
 Language Server固有の規則はxref:language-server.adoc[Language Serverの実行仕様]で定義します。
 
 共有状態のlockはスナップショット取得と結果採用判定に限定します。CPU解析、外部I/O、

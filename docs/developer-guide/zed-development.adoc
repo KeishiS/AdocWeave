@@ -16,12 +16,12 @@ xref:../user-guide/release-installation.adoc#zed-installation[Zedへの導入]�
 
 * Zedと``zed``または``zeditor`` CLI（Linuxではdistributionにより異なるbinary名）
 * `cargo`、`rustc`、``rustfmt``およびClippy
-* ``rustup``で管理されたRust toolchainと、Zedが要求するWASM target
+* ``rustup``で管理されたRustツールチェーンと、Zedが要求するWASM target
 * C compiler（Nix開発環境では``stdenv.cc``に含まれるもの）
-* 初回のgrammar、WASI SDKおよびRust依存関係を取得するためのnetwork接続
+* 初回のgrammar、WASI SDKおよびRust依存関係を取得するためのネットワーク接続
 
 Zed公式文書は、Rustを含む開発拡張のbuildに``rustup``で導入したRustを要求しています。Zedが
-`wasm32-wasip2` targetの導入に失敗する場合は、Zedが参照するtoolchainで次を実行します。
+`wasm32-wasip2` targetの導入に失敗する場合は、Zedが参照するツールチェーンで次を実行します。
 
 [source,console]
 ----
@@ -35,14 +35,14 @@ rustup target add wasm32-wasip2
 nix develop
 ----
 
-Nix shellのRust toolchainでリポジトリ本体をbuildできても、Zedの開発拡張builderは別processとして
+Nix shellのRustツールチェーンでリポジトリ本体をbuildできても、Zedの開発拡張builderは別processとして
 ``rustup``とWASM targetを探します。``nix develop``だけで``wasm32-wasip2``導入エラーが解消するとは限りません。
 
 == 隔離したZed利用者データによる推奨手順
 
-通常利用しているZedの拡張、設定、DBおよびcacheへ影響させないため、workspace外の一時directoryを
-user data directoryとして使います。workspace内へ置くと、Zedのworktree監視が拡張builder自身のWASI SDK、
-grammarおよびcacheの更新を走査し、一時的なsymlinkやinotify watchについて無関係なerror／warningを記録します。
+通常利用しているZedの拡張、設定、DBおよびキャッシュへ影響させないため、ワークスペース外の一時ディレクトリを
+user dataディレクトリとして使います。ワークスペース内へ置くと、Zedのworktree監視が拡張builder自身のWASI SDK、
+grammarおよびキャッシュの更新を走査し、一時的なsymlinkやinotify watchについて無関係なerror／warningを記録します。
 
 . リポジトリrootでLanguage ServerとZed拡張を検査します。
 
@@ -54,7 +54,7 @@ cargo make test-zed
 cargo make check-zed-wasm
 ----
 
-``test-zed``はmanaged binaryのmanifest検査、hash不一致、archive抽出、cache改変および更新失敗時の
+``test-zed``はmanaged binaryのmanifest検査、hash不一致、archive抽出、キャッシュ改変および更新失敗時の
 rollbackも確認します。
 
 . 同じshellでLanguage Serverを``PATH``へ追加し、隔離したZedをforegroundで起動します。
@@ -80,12 +80,12 @@ Zedを別のlauncherや既存processから開くと、上記shellの``PATH``を�
 
 . ZedでExtension Galleryを開き、``Install Dev Extension``を選びます。コマンドパレットから
   ``zed: install dev extension``を実行しても構いません。
-. directory選択画面で、リポジトリrootではなく``editors/zed``を選びます。このdirectoryには
+. ディレクトリ選択画面で、リポジトリrootではなく``editors/zed``を選びます。このディレクトリには
   ``extension.toml``があります。
 . ``fixtures/zed/manual.adoc``を開きます。
 
 初回導入時、ZedはRust拡張をWebAssembly componentへbuildし、``extension.toml``に固定した
-``tree-sitter-asciidoc``を取得してgrammarをbuildします。Tree-sitterのparserはgrammar repositoryが
+``tree-sitter-asciidoc``を取得してgrammarをbuildします。Tree-sitterのparserはgrammarリポジトリが
 提供する``grammar.js``から生成された``parser.c``をC compilerでcompileします。``parser.c``は
 AdocWeave Language ServerのRust parserではなく、Zedのsyntax highlighting用grammarです。
 
@@ -100,7 +100,7 @@ AdocWeave Language ServerのRust parserではなく、Zedのsyntax highlighting�
 
 [cols="1,3",options="header"]
 |===
-|OS |user data directory
+|OS |user dataディレクトリ
 
 |Linux
 |`$XDG_DATA_HOME/zed`。未設定時は通常``~/.local/share/zed``
@@ -185,16 +185,16 @@ captureがなければinline grammarへのinjectionまたはhighlight queryの�
 ``zed: open log``でZed logを開きます。foreground起動時は同じ内容の一部をterminalでも確認できます。
 
 `failed to install the wasm32-wasip2 target`::
-Zedが使用するRustが``rustup``管理か確認し、同じtoolchainへ``rustup target add wasm32-wasip2``を実行します。
+Zedが使用するRustが``rustup``管理か確認し、同じツールチェーンへ``rustup target add wasm32-wasip2``を実行します。
 
 ``grammars/asciidoc/src/parser.c``がない::
-grammar repositoryの取得結果または``extension.toml``のrepository、commit、pathが不整合です。
-AdocWeaveのRust parserをCへ変換する必要はありません。取得cacheを消して再導入する前に、Zed logに表示された
-grammar checkoutが固定commitと一致することを確認します。
+grammarリポジトリの取得結果または``extension.toml``のリポジトリ、コミット、pathが不整合です。
+AdocWeaveのRust parserをCへ変換する必要はありません。取得キャッシュを消して再導入する前に、Zed logに表示された
+grammar checkoutが固定コミットと一致することを確認します。
 
 ``adocweave-lsp``の取得または起動に失敗する::
 local buildを使う場合は``command -v adocweave-lsp``と``$PWD/target/debug/adocweave-lsp --version``を、Zedを起動する
-shellで確認します。managed binaryを使う場合はZed logにあるinstallation statusを確認し、versionと同じGitHub Releaseに
+shellで確認します。managed binaryを使う場合はZed logにあるinstallation statusを確認し、バージョンと同じGitHub Releaseに
 manifestと対象platformのLSP assetがあることを確認します。
 
 AsciiDocとして認識されるが色付けされない::
@@ -203,16 +203,16 @@ dev extensionを再導入して、Zed logに``asciidoc``と``asciidoc_inline``�
 Semantic Tokensを``off``にしても色付けされない場合はLSPではなくgrammarまたはquery側の問題です。
 
 ``wasi-sdk-temp``内のsymlinkまたはinotify watch errorが出る::
-``--user-data-dir``が開いているworkspaceの内側にないか確認します。WASI SDK取得の完了後にgrammarと拡張がcompileされていれば、
+``--user-data-dir``が開いているワークスペースの内側にないか確認します。WASI SDK取得の完了後にgrammarと拡張がcompileされていれば、
 一時展開をworktree監視が観測しただけです。次回は上記のように``/tmp``へ隔離profileを作ります。SDK取得またはcompile自体が
 失敗している場合だけbuilder障害として扱います。
 
 == 検証後の削除
 
 隔離手順を使った場合はZedを終了してから、表示して控えた``$ZED_DEV_DATA``だけを削除すれば、今回作成したZedの
-設定、DB、拡張およびcacheをまとめて除去できます。Language Serverのbuild成果物は通常のCargo
-``target``に残るため、他の開発成果物と同じ扱いにします。Zedが拡張source directoryへ生成する
-``extension.wasm``とgrammar build directoryもリポジトリの無視対象であり、不要なら同時に削除できます。
+設定、DB、拡張およびキャッシュをまとめて除去できます。Language Serverのbuild成果物は通常のCargo
+``target``に残るため、他の開発成果物と同じ扱いにします。Zedが拡張sourceディレクトリへ生成する
+``extension.wasm``とgrammar buildディレクトリもリポジトリの無視対象であり、不要なら同時に削除できます。
 
 [source,console]
 ----
@@ -223,7 +223,7 @@ rm -rf editors/zed/extension.wasm editors/zed/grammars
 ----
 
 通常profileへ導入した場合はExtension GalleryからAdocWeave dev extensionを削除します。Zed全体の
-user data directoryを削除すると他の拡張、設定、DBおよびlogも失われるため、清掃目的でdirectory
+user dataディレクトリを削除すると他の拡張、設定、DBおよびlogも失われるため、清掃目的でディレクトリ
 全体を削除してはいけません。
 
 == 参照

@@ -3,15 +3,15 @@
 この文書では、サーバー、デスクトップアプリ、Language ServerおよびWeb Workerが解析から変換までを
 実行する場合の責務、順序および安全性の境界を定義します。
 
-コアcrateはthread pool、async runtime、filesystem、network、DB、時刻およびログ出力を所有しません。
+コアcrateはthread pool、async runtime、ファイルシステム、ネットワーク、DB、時刻およびログ出力を所有しません。
 利用側アプリが処理の投入、外部情報の取得、キャンセル、結果の採用および観測を管理します。
 
 == 解析
 
 === 所有権と実行順序
 
-利用側アプリは``AnalysisRequest``へ、不透明な``SourceId``、文書version、単調増加するgeneration、
-入力snapshotおよび完全な``AnalysisOptions``を所有値として渡します。
+利用側アプリは``AnalysisRequest``へ、不透明な``SourceId``、文書バージョン、単調増加するgeneration、
+入力スナップショットおよび完全な``AnalysisOptions``を所有値として渡します。
 
 推奨する実行順序は次のとおりです。
 
@@ -45,12 +45,12 @@ workerの再起動はFFI、taskまたはthreadなどの利用側アプリの境�
 
 === キャッシュ
 
-``AnalysisCacheKey``は、package version、生入力、``SourceId``および解析結果・診断を変える
+``AnalysisCacheKey``は、パッケージバージョン、生入力、``SourceId``および解析結果・診断を変える
 ``AnalysisOptions``から決定します。``RenderPolicy``と``OutputLimits``は含めません。
 Mapとsetは規範順に並べるため、挿入順は結果へ影響しません。``AnalysisOptions``または構成型へfieldを追加する
 場合は、キャッシュキーも同時に更新します。
 
-文書versionとgenerationはキャッシュキーへ含めません。同じ入力、設定および処理系なら解析結果を共有できます。
+文書バージョンとgenerationはキャッシュキーへ含めません。同じ入力、設定および処理系なら解析結果を共有できます。
 ただし、キャッシュから得た結果にもrevisionの採用判定を適用します。
 
 === 観測
@@ -68,8 +68,8 @@ Mapとsetは規範順に並べるため、挿入順は結果へ影響しませ�
 [#preprocessing]
 == 外部ファイルの展開
 
-通常の解析はfilesystemやnetworkへアクセスしません。利用側アプリが必要なresourceを取得して
-``ResourceSnapshot``を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じsnapshotと
+通常の解析はファイルシステムやネットワークへアクセスしません。利用側アプリが必要なresourceを取得して
+``ResourceSnapshot``を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じスナップショットと
 設定から同じ展開結果を生成します。
 
 WASMの解析requestでincludeを展開する場合は、``preprocess.resources``へ取得済みresourceを、
@@ -92,7 +92,7 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 ``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
 
-Native側のdirectory列挙とfile読込は``LocalFilesystemSession``を経由します。このsessionは許可したrootごとの
+Native側のディレクトリ列挙とfile読込は``LocalFilesystemSession``を経由します。このsessionは許可したrootごとの
 filesystem adapter、symlink判定および全rootで共有するfile数・byte数の上限を所有します。初期走査では
 ``.adoc``の通常file候補を決定的な順序で列挙します。Language Serverは各候補に最も近い
 ``.adocweave.toml``を解決してから、その設定の読込上限を持つsessionで本文を読みます。呼出側はpathから
@@ -103,34 +103,34 @@ filesystem adapter、symlink判定および全rootで共有するfile数・byte�
 直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
 相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
 
-Linuxでは、CLIのincludeとLanguage Serverのworkspace走査・読込が同じhandle相対adapterを使用します。
-``adocweave-workspace``はfilesystemへアクセスせず、検証済みの論理IDと本文を取り込みます。
+Linuxでは、CLIのincludeとLanguage Serverのワークスペース走査・読込が同じhandle相対adapterを使用します。
+``adocweave-workspace``はファイルシステムへアクセスせず、検証済みの論理IDと本文を取り込みます。
 macOSとWindowsでは``StaticSnapshotOnly``を返し、同時に書き換えられる
-workspaceをsecurity境界として扱いません。
+ワークスペースをsecurity境界として扱いません。
 Language Serverは初回走査とfile変更通知で、解決したproject設定ごとのsessionを共有します。変更通知では
-本文cacheを使用せずに対象を再度openしますが、走査から継続するfile数・byte数の上限は初期化しません。
+本文キャッシュを使用せずに対象を再度openしますが、走査から継続するfile数・byte数の上限は初期化しません。
 resourceを削除した場合は、そのprojectの読込課金と保持課金を解放します。
 projectの識別には設定pathだけでなくworkspace rootも含めます。設定を持たない複数のworkspace rootが
 同じ既定budgetを共有することはありません。設定の新設または削除でresourceのprojectが変わる場合は、
-diskとoverlayを新しい範囲へ移し、旧filesystem課金を解放して参照されなくなったsessionとplanを破棄します。
+diskとoverlayを新しい範囲へ移し、旧ファイルシステム課金を解放して参照されなくなったsessionとplanを破棄します。
 project設定の変更通知と本文の変更通知を同時に受け取った場合は、project全体を先に再読込し、新しいplanを
 適用してから本文をWorkspaceへ渡します。既存sessionのplanと現在の設定が一致しない場合は個別読込を拒否し、
 旧planで本文を読みません。
 CLIの複数path処理は、全入力のproject設定を本文読込前に解決します。同じproject scopeから異なる設定内容を
 観測した場合は処理を開始せず、各入力で別のplanを使いません。
 
-``ResolvedResourceLimitPlan``は、一つのproject設定からfilesystem読込、diskとoverlayの保持、および
-解析snapshotの三つの上限を構築します。これらは同じ設定値から作られますが、課金対象が異なるため別の型です。
+``ResolvedResourceLimitPlan``は、一つのproject設定からファイルシステム読込、diskとoverlayの保持、および
+解析スナップショットの三つの上限を構築します。これらは同じ設定値から作られますが、課金対象が異なるため別の型です。
 本文は``FilesystemReadLimits``を適用した後にだけ読み込み、diskまたはoverlayは
 ``RetainedResourceLimits``を確認した後にだけWorkspaceへ取り込みます。解析時はroot文書に最も近い設定の
 ``AnalysisSnapshotLimits``を、include許可範囲へ絞った有効resourceに適用します。
-filesystemの再読込後に保持上限またはWorkspace更新を拒否した場合は、再読込前の課金へ戻します。
+ファイルシステムの再読込後に保持上限またはWorkspace更新を拒否した場合は、再読込前の課金へ戻します。
 ``RetainedResourceBudget::try_replace_layers``とWorkspaceはresource数と保持byte数を差分更新し、
 候補の検証が成功した後にだけresourceと合計値を更新します。初期走査でも保持済みresource全体を
 入力ごとに複製または再集計しません。
-解析snapshotは許可範囲のresourceを列挙しながら件数、各本文のbyte数および合計byte数を加算し、
+解析スナップショットは許可範囲のresourceを列挙しながら件数、各本文のbyte数および合計byte数を加算し、
 上限を超えた時点で後続resourceを複製せずに拒否します。許可範囲外のresourceはこの加算に含めません。
-複数のworkspace rootでは、設定の有無にかかわらず別rootのresourceをsnapshotへ含めません。
+複数のworkspace rootでは、設定の有無にかかわらず別rootのresourceをスナップショットへ含めません。
 同じworkspace root内でproject設定がある場合は、その設定の``resources.roots``が許可する
 nested projectのresourceをroot文書のplanで課金します。
 
@@ -145,24 +145,24 @@ workspace rootの再読込は、新しいfilesystem session、plan、保持予�
 ``didOpen``と再読込時のopen documentは同じresource root検査を通り、許可範囲外のURIは
 DocumentStore、Workspace、保持予算およびgenerationを変更せずに拒否します。
 
-複数rootは独立したfilesystem境界です。あるroot内のsymlinkが別の許可済みrootを指す場合も、
+複数rootは独立したファイルシステム境界です。あるroot内のsymlinkが別の許可済みrootを指す場合も、
 読込開始時に選んだrootから外へ移動するため拒否します。同じfileを両方のrootから参照する必要がある場合は、
 symlinkではなく対象fileが属するroot以下の絶対pathを指定します。
 
 ``base_uri``はroot文書の相対targetへ前置する論理的なsnapshot keyであり、実在するpathを意味しません。
-Include先の相対targetは、そのresource keyの親を基準に解決します。取得方法、cache、認証、timeout、
+Include先の相対targetは、そのresource keyの親を基準に解決します。取得方法、キャッシュ、認証、timeout、
 redirect、response size、content typeおよびnetwork addressの制限は利用側アプリが管理します。
 
 プリプロセッサはincludeの深さ、件数、展開後byte数、node数およびsource map segment数を制限します。
-Includeを無効にした場合はdirectiveを展開せず、snapshotも参照しません。循環、絶対path、path traversal、
+Includeを無効にした場合はdirectiveを展開せず、スナップショットも参照しません。循環、絶対path、path traversal、
 制御文字および許可していないschemeを拒否します。
 
-CLI、Language Serverおよびworkspace走査は、同一のpath検査、上限付きUTF-8読み取り、byte数集計および
-filesystem競合耐性を使用します。各adapterで異なる読込処理やsymlink判定を設けません。
+CLI、Language Serverおよびワークスペース走査は、同一のpath検査、上限付きUTF-8読み取り、byte数集計および
+ファイルシステム競合耐性を使用します。各adapterで異なる読込処理やsymlink判定を設けません。
 CLIはproject設定を解決してからroot本文を上限付きで読み、rootを最初の解析snapshot resourceとして課金します。
 includeは同じplanの残り件数と残りbyte数だけを使用し、Language Serverと同じ
 ``AnalysisSnapshotBudget``でresource件数、各本文のbyte数および合計byte数を検査します。
-Canonical pathは検査、cacheおよびprovenanceに限定し、診断とsource mapにはinclude要求から導出した
+Canonical pathは検査、キャッシュおよびprovenanceに限定し、診断とsource mapにはinclude要求から導出した
 論理的な``SourceId``を使用します。Aliasが同じcanonical fileを指す場合も論理IDは統合しません。
 
 === ソースマップ
@@ -182,8 +182,8 @@ WASMの``attributeQueries``は、各bindingの操作、有効値、決定binding
 == 変換入力
 
 ``RenderInputs``は、同じ``Analysis``から得たreference query、resource queryおよび``cite:``マクロに対する
-解決結果をまとめた、出力形式に依存しないsnapshotです。変換処理はこの値を読むだけであり、filesystem、
-network、DBまたはresolverを呼び出しません。
+解決結果をまとめた、出力形式に依存しないスナップショットです。変換処理はこの値を読むだけであり、ファイルシステム、
+ネットワーク、DBまたはresolverを呼び出しません。
 
 ``RenderInputs``は空の値から作り、``with_references``、``with_resources``、``with_citations``で
 必要な種類だけを与えます。渡さなかった種類は、解決結果が一つもない状態として扱います。
@@ -257,7 +257,7 @@ WASM APIは同じ構造をJSONで受け取り、rangeが入力sourceのUTF-8境�
 利用側アプリの診断および変換診断を表示するときは、source位置とcodeによる安定した順序へ統合します。
 
 診断codeは機械判定に使用できる安定した識別子とし、messageを判定条件にしません。診断IDはcodeとsource
-rangeから決定的に生成します。同じ入力、設定およびpackage versionからは、範囲、重要度、関連情報および
+rangeから決定的に生成します。同じ入力、設定およびパッケージバージョンからは、範囲、重要度、関連情報および
 修正候補を含めて同じ順序の診断を返します。
 
 修正候補は重複しない``TextEdit``だけを持ちます。``Always``は構文上安全に適用できる変更、``Maybe``は利用者の
@@ -276,4 +276,4 @@ Promiseを破棄するだけで、実行中の同期WASMが停止したとはみ
 
 WASMもnativeと同じ処理上限を使用し、上限超過時に別のparserへ切り替えません。必要な出力だけを要求し、
 最後に成功した表示を保持したまま利用側アプリがエラーと再試行手段を表示します。DOM、認証、DB、
-network、CSPおよび表示sandboxは利用側アプリが管理します。生成HTMLは信頼済みDOMとして扱いません。
+ネットワーク、CSPおよび表示sandboxは利用側アプリが管理します。生成HTMLは信頼済みDOMとして扱いません。

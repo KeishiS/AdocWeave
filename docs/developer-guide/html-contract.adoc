@@ -4,7 +4,7 @@
 xref:../user-guide/command-line.adoc[コマンドライン]、参照先やresourceの解決結果を渡す方法は
 xref:server-execution.adoc#render-inputs[変換入力]を参照してください。
 
-HTML出力はpackage versionの一部であり、独立した仕様versionを持ちません。異なるpackage version間で
+HTML出力はパッケージバージョンの一部であり、独立した仕様バージョンを持ちません。異なるパッケージバージョン間で
 DOM構造、属性順、空白またはbyte列が同一であることは保証しません。
 
 == 文書モード
@@ -78,7 +78,7 @@ URLは由来を示すcontextとともに``RenderPolicy.active_urls``の``ActiveU
 文書に記述されたlink、
 解決済みxrefおよび解決済みresourceを区別し、利用側アプリが返したURLも信頼済みとして扱いません。
 
-制御文字、空白、不正なscheme、絶対filesystem path、backslash、network-path referenceおよびpath traversalを
+制御文字、空白、不正なscheme、絶対filesystemのpath、backslash、ネットワーク-path referenceおよびpath traversalを
 拒否します。許可するscheme、root-relative URL、外部画像およびdata URIはpolicyで明示します。
 root-relative URLの許可は解決済みの値だけに適用し、文書へ直接記述した値へは適用しません。
 
@@ -100,10 +100,10 @@ URLとMIME typeを検査します。posterだけを利用できない場合は�
 == HTML5標準適合性検査
 
 生成HTMLの標準適合性は``cargo make html5-check``で検査します。検査対象は
-``fixtures/html/validation.json``で一意に管理し、断片出力は同directoryの固定テンプレートで完全HTML文書へ
+``fixtures/html/validation.json``で一意に管理し、断片出力は同ディレクトリの固定テンプレートで完全HTML文書へ
 変換します。完全文書出力は包まず、そのまま検査します。生成物は``target/html5/``だけへ書き込みます。
 
-Validatorには``flake.lock``で固定したNixpkgsのNu Html Checkerを使用し、manifestにversionと実行optionを
+Validatorには``flake.lock``で固定したNixpkgsのNu Html Checkerを使用し、manifestにバージョンと実行optionを
 記録します。errorとwarningをいずれも失敗として扱い、言語推定だけを無効にします。既知違反のallowlistは
 設けません。不正な入れ子、標準外属性および不完全な文書のnegative fixtureがvalidatorで拒否されることも
 同じtaskで確認します。
@@ -131,7 +131,7 @@ JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexm
 
 == 決定性
 
-同じpackage version、解析結果、``RenderPolicy``および``RenderInputs``からは同じHTMLを生成します。
+同じパッケージバージョン、解析結果、``RenderPolicy``および``RenderInputs``からは同じHTMLを生成します。
 属性順、改行、空白および末尾改行はテスト用の期待出力で固定し、変更時は意図した差分であることを
 確認します。
 
@@ -164,7 +164,7 @@ HTML断片、およびquoteの既存`blockPresentations`だけを保証します
 == golden fixtureの保守
 
 期待出力fileは手で書き換えず、現在の実装から書き出します。公開適合性fixtureと、native・WASM間の
-一致を検査する共有fixtureのそれぞれに、書き出すコマンドと、file がその書き出し結果と一致することを
+一致を検査する共有fixtureのそれぞれに、書き出すコマンドと、ファイルがその書き出し結果と一致することを
 検査するtestがあります。
 
 [source,console]
@@ -175,10 +175,10 @@ cargo test -p adocweave-wasm --test conformance regenerate_shared_fixture_produc
 
 書き出すコマンドはgateに含めません。golden fileは、実装の変更が公開仕様へ与えた影響を見えるようにする
 ためのものであり、読まずに上書きするとその目的が失われます。公開仕様を変えたときは、コマンドを実行してから
-差分を1件ずつ読み、意図した変更だけであることを確かめてcommitします。
+差分を1件ずつ読み、意図した変更だけであることを確かめてコミットします。
 
-一致を検査するtestはgateに含めます。これにより、fileの整形が書き手ごとに揺れることも、複数のcaseが
-参照するfileの更新漏れも、commit前に分かります。
+一致を検査するtestはgateに含めます。これにより、ファイルの整形が書き手ごとに揺れることも、複数のcaseが
+参照するfileの更新漏れも、コミット前に分かります。
 
 共有fixtureのcaseの一部は、公開適合性fixtureのfileをそのまま期待出力として参照します。これらのfileは
 公開適合性fixture側のコマンドが書き出し、共有側は書き換えません。一つのfileを二つのコマンドが
