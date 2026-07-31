@@ -194,6 +194,112 @@ fn release_package_version_is_explicit() {
     assert_eq!(manifest.rust_version, env!("CARGO_PKG_RUST_VERSION"));
 }
 
+/// Builds the expected file contents of one case from the current implementation.
+///
+/// Regeneration and the cleanliness check share this function so a fixture can
+/// never disagree with the command that writes it. Cases that expect an error,
+/// and products a case does not name, contribute nothing.
+///
+/// Some shared cases reuse a file from the public conformance set. Those files
+/// belong to `public_conformance_fixture`, which writes them in the byte form
+/// the core crate emits, so they are left out here: one file cannot answer to
+/// two regeneration commands.
+fn expected_products(entry: &Value, fixtures: &Path) -> Vec<(PathBuf, String)> {
+    if entry["expectedErrorCode"].is_string() {
+        return Vec::new();
+    }
+    let response = process_request(request_for(entry, fixtures), &NeverCancel)
+        .unwrap_or_else(|error| panic!("{}: {}", entry["name"], error.code));
+    let mut products = Vec::new();
+    let mut text = |field: &str, content: String| {
+        if let Some(file) = entry[field].as_str()
+            && !file.starts_with("../")
+        {
+            products.push((resolve(fixtures, file), content));
+        }
+    };
+    // The HTML fixture holds the rendered document exactly; every other product
+    // is JSON, written sorted and indented so a review reads the difference
+    // rather than one long line.
+    text("expectedHtmlFile", response.html);
+    text("expectedAstFile", format!("{}\n", response.ast));
+    for (field, value) in [
+        (
+            "expectedDiagnosticsFile",
+            serde_json::to_value(&response.diagnostics),
+        ),
+        (
+            "expectedRenderDiagnosticsFile",
+            serde_json::to_value(&response.render_diagnostics),
+        ),
+        (
+            "expectedProjectionFile",
+            serde_json::to_value(&response.projection),
+        ),
+        (
+            "expectedSymbolsFile",
+            serde_json::to_value(&response.symbols),
+        ),
+    ] {
+        let value = value.expect("product serializes as JSON");
+        text(field, format!("{}\n", canonical_json(&value)));
+    }
+    products
+}
+
+/// Renders one product as the bytes a fixture stores.
+fn canonical_json(value: &Value) -> String {
+    serde_json::to_string_pretty(value).expect("JSON product formats")
+}
+
+fn shared_cases() -> (Vec<Value>, PathBuf) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let consumers: ConformanceConsumers = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/conformance/consumers.json"))
+            .expect("conformance consumers"),
+    )
+    .expect("valid conformance consumers");
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(consumers.manifest)).expect("conformance manifest"),
+    )
+    .expect("valid conformance manifest");
+    let cases = manifest["cases"].as_array().expect("cases").clone();
+    (cases, root.join(consumers.fixture_root))
+}
+
+#[test]
+fn shared_fixture_regeneration_is_clean() {
+    let (cases, fixtures) = shared_cases();
+    for entry in &cases {
+        for (path, expected) in expected_products(entry, &fixtures) {
+            assert_eq!(
+                fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path:?}: {error}")),
+                expected,
+                "{}: {} differs from regeneration",
+                entry["name"],
+                path.display()
+            );
+        }
+    }
+}
+
+/// Rewrites every shared fixture from the current implementation.
+///
+/// Run this after a deliberate contract change, then read each difference. The
+/// command is not part of any gate: a golden fixture exists to show what a
+/// change did to the published contract, and overwriting it unread discards
+/// exactly that.
+#[test]
+#[ignore = "fixture maintainer command"]
+fn regenerate_shared_fixture_products() {
+    let (cases, fixtures) = shared_cases();
+    for entry in &cases {
+        for (path, content) in expected_products(entry, &fixtures) {
+            fs::write(&path, content).unwrap_or_else(|error| panic!("{path:?}: {error}"));
+        }
+    }
+}
+
 fn request_for(entry: &Value, fixtures: &Path) -> WasmRequest {
     let source = entry["sourceFile"].as_str().map_or_else(
         || entry["source"].as_str().expect("inline source").to_owned(),
