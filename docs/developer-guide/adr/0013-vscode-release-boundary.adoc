@@ -17,7 +17,7 @@ VSIXは同じcandidate workflowで一度だけ構築し、配布manifest、SBOM�
 配布manifestから選択します。
 
 Visual Studio MarketplaceおよびOpen VSXへは公開しません。VSIXはGitHub Releaseから取得して手動で導入します。
-registry公開を将来評価する場合も、managed Language Serverの互換契約とGitHub Releaseの正本性は変更しません。
+registry公開を将来評価する場合も、managed Language Serverの互換性の保証とGitHub Releaseの正本性は変更しません。
 
 == 結果
 

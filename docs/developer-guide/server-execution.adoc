@@ -78,7 +78,7 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 
 文書外属性は``AnalysisOptions.attributes``、WASMでは``analysisOptions.attributes``へ指定します。
 文字列はhard-lockedなset、``null``はhard-lockedなunsetを表します。前処理と解析を組み合わせるRust APIでは、
-``EffectiveProcessingOptions``が文書外属性と属性展開の深さ・生成byte数の上限を一つの処理契約として検証します。
+``EffectiveProcessingOptions``が文書外属性と属性展開の深さ・生成byte数の上限について、両者が一致していることを検証します。
 ``EffectiveProcessingOptions::preprocess_and_analyze``と``WorkspaceSnapshot::analyze_with_options``は、
 この検証済みの値をそのまま使います。
 

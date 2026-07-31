@@ -31,7 +31,7 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 * https://github.com/KeishiS/adocweave/issues/320[共有conformance fixtureの再生成コマンドと冪等性検査]
 
-そのため公開契約が増えるたびに複数のファイルを手作業で更新する必要があり、整形も3通りに分かれています。
+そのため公開仕様が増えるたびに複数のファイルを手作業で更新する必要があり、整形も3通りに分かれています。
 更新漏れはテストが落ちるまで気付けません。
 
 == Language Serverの応答性
@@ -64,7 +64,7 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 == 保留中の対話的な確認環境
 
-公開済みのBrowser APIとHTML契約を利用し、Webブラウザーだけで文書を試せる環境を提供する案を
+公開済みのBrowser APIとHTML出力の仕様を利用し、Webブラウザーだけで文書を試せる環境を提供する案を
 保留しています。
 
 * https://github.com/KeishiS/adocweave/issues/84[公式Playground]

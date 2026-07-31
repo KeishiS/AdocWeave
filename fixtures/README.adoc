@@ -13,7 +13,7 @@ fixtureは担当機能ごとに分類する。各機能ディレクトリには�
 `release/core.adoc`は機能横断のコアリリースfixtureである。期待HTMLを同じディレクトリへ
 置き、CLI、Lint、Formatterのテストで同じソースを使う。
 
-runtime横断fixtureのmanifestは、core crateが所有するruntime契約として
+runtime横断fixtureのmanifestは、core crateが所有するruntime間の公開仕様として
 `../crates/adocweave/conformance/cases.json`に置く。manifest内の`sourceFile`と
 `expectedFile`は、manifestの所在ではなくfixture rootである`fixtures/conformance/`を
 基準に解決する。
@@ -23,7 +23,7 @@ native、WASMおよびLSPはこのmanifestまたは参照先の同じソース�
 そのfixtureだけで一つの動作を検証できる内容にする。
 
 `conformance/consumers.json`は、repository内のreaderが使用するmanifest pathと
-fixture rootの単一の設定源であり、このruntime契約を直接読む処理の一覧でもある。
+fixture rootの単一の設定源であり、このmanifestを直接読む処理の一覧でもある。
 `capabilities`は各readerがmanifestだけを使うか、参照先fixtureも読むかを示す。
 core crateはsource packageへ埋め込むmanifestだけを使い、その他のreaderはこの設定を
 読み込んでmanifestとfixture rootを別々に解決する。新しいreaderを追加するときは、
@@ -31,16 +31,16 @@ core crateはsource packageへ埋め込むmanifestだけを使い、その他の
 
 `public-conformance.json`は、利用側の適合性試験で再利用する公開fixtureのmanifestである。
 各caseで入力、投影、HTML、解析診断、描画診断、適用profileおよび対象構文を一つの対応として示し、
-manifest全体で出力契約versionとlicenseを示す。各caseの`stableContract`だけを利用側が依存できる
-契約とし、比較用file全体のbyte列、`implementationDetails`および
+manifest全体で``outputContractVersion``とlicenseを示す。各caseの`stableContract`だけを利用側が
+依存できる範囲とし、比較用file全体のbyte列、`implementationDetails`および
 `globalImplementationDetails`に列挙した表現はrepository内の回帰検査に限定する。
 Manifest、参照するAsciiDocおよび期待出力を含む公開fixture一式は、repository rootの
 link:../LICENSE-MIT[MIT License]またはlink:../LICENSE-APACHE[Apache License 2.0]の条件で
 再利用できる。
 
 `schemaVersion`はmanifest形式の非互換変更、`outputContractVersion`は`stableContract`の
-非互換変更で更新する。公開契約を変更するときは、manifest、参照する期待出力およびRelease Notesを
-同じ変更で更新する。契約外の空白、属性順または未選択の投影fieldだけを変更する場合は
+非互換変更で更新する。公開仕様を変更するときは、manifest、参照する期待出力およびRelease Notesを
+同じ変更で更新する。公開仕様に含まれない空白、属性順または未選択の投影fieldだけを変更する場合は
 `outputContractVersion`を更新しない。
 
 `syntax-support.json`は、対応表、互換性評価、文法および対応するfixtureの同期を検査するための

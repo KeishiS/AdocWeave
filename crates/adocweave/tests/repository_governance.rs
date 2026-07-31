@@ -391,6 +391,53 @@ fn tracked_adoc_corpus_is_lossless_and_has_valid_ranges() {
     }
 }
 
+/// Words whose dictionary translation misleads a Japanese reader.
+///
+/// These are checkable because they are plain Japanese: an identifier, command
+/// or configuration key never contains them, so a match is never a false one.
+/// The check only says where a decision is needed. What to write instead
+/// depends on what the sentence refers to, which only the author knows, and
+/// `docs/developer-guide/terminology.adoc` explains why.
+const FORBIDDEN_JAPANESE_WORDS: &[&str] = &["契約"];
+
+/// The document that defines the rule quotes the words it forbids.
+const TERMINOLOGY_DOCUMENT: &str = "docs/developer-guide/terminology.adoc";
+
+#[test]
+fn authored_documents_avoid_the_forbidden_japanese_words() {
+    let output = Command::new("git")
+        .args(["ls-files", "-z", "*.adoc"])
+        .current_dir(repository_root())
+        .output()
+        .expect("git ls-files");
+    assert!(output.status.success());
+    let mut found = Vec::new();
+    for path in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let path = std::str::from_utf8(path).expect("UTF-8 repository path");
+        if path == TERMINOLOGY_DOCUMENT {
+            continue;
+        }
+        let source = fs::read_to_string(repository_root().join(path)).expect("authored document");
+        for (number, line) in source.lines().enumerate() {
+            for word in FORBIDDEN_JAPANESE_WORDS {
+                if line.contains(word) {
+                    found.push(format!("{path}:{}: {word}", number + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{TERMINOLOGY_DOCUMENT}が使わないと定めた語があります。\
+         何と書くかは、その箇所が何を指しているかによります。\n{}",
+        found.join("\n")
+    );
+}
+
 #[test]
 fn normative_documents_have_no_diagnostics() {
     for case in manifest().normative {

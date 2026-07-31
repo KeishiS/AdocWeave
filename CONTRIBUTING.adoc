@@ -26,6 +26,13 @@ git switch main
 git pull --ff-only origin main
 git switch -c fix/browser-archive-import-check
 ----
++
+branch名は``種別/目的``の形にします。種別には``feat``、`fix`、`refactor`、`perf`、`docs`、
+`ci`、``chore``のいずれかを使います。目的の部分は、branchの一覧を見たときに何をしているか
+分かる長さにします。
++
+人以外が作業する場合は、作業主体を先頭に付けて``agent/種別/目的``とします。
+どのbranchを人が確認すべきかが一覧から分かるようにするためです。
 
 . 一つのbranchでは一つの目的に集中し、実装と対応するテストとドキュメントを更新します。
 . 変更をcommitする前に検証を実行します。
@@ -160,7 +167,7 @@ CIではdependency governance、source quality、fuzz quality、Nix package qual
 source qualityは、書式や生成fileなどの短い検査、Rust workspaceの検査、WASM・browser・editor adapterの
 検査に分けて並列実行します。``quality / verify``はこれらとdependency governance、fuzz、Nix packageに加え、
 変更に応じて選択したcandidate build、smoke testおよびinstallation E2Eの結果を集約する必須checkです。
-成果物を構築するPull Requestでは、書式、生成file、workflow、release契約および
+成果物を構築するPull Requestでは、書式、生成file、workflow、``release-contract``および
 変更pathの分類を``cargo make ci-preflight``で先に確認します。global成果物へ影響する場合は、
 実Chromiumによるarchiveの受入検査もPull Requestで実行します。
 
@@ -197,7 +204,7 @@ release作業も通常の変更と同様に、短命なbranchとpull requestか�
 node tools/sync-release-version.mjs --version X.Y.Z
 ----
 +
-このtoolはlink:release/version-sync.json[version同期対象]に明示したmanifest、lockfile、契約fixtureおよび生成物だけを
+このtoolはlink:release/version-sync.json[version同期対象]に明示したmanifest、lockfile、公開仕様のfixtureおよび生成物だけを
 更新します。更新前に部分的なversion変更や管理対象外の同じversionを検出した場合は、fileを書き換えず停止します。
 . 差分を確認し、必要な仕様文書、Release Notesおよびテスト用入力を更新してから、同期状態を検査します。
 +
