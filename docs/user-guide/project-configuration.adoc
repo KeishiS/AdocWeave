@@ -1,17 +1,17 @@
 = プロジェクト設定
 
-AdocWeaveは、CLIとLanguage Serverで共通の``.adocweave.toml``を使用します。設定fileは処理対象の
-directoryから親へ探索し、起動時のworkspace rootまたはCLIの作業directoryで探索を停止します。
-近い設定fileを一つだけ使用し、複数fileを処理する場合はfileごとに探索します。設定の継承、
-環境変数・チルダの展開、外部fileの読込およびnetwork accessは行いません。
+AdocWeaveは、CLIとLanguage Serverで共通の``.adocweave.toml``を使用します。設定ファイルは処理対象の
+ディレクトリから親へ探索し、起動時のワークスペースルートまたはCLIの作業ディレクトリで探索を停止します。
+最も近い設定ファイルを一つだけ使用し、複数のファイルを処理する場合はファイルごとに探索します。設定の継承、
+環境変数とチルダの展開、外部ファイルの読み込みおよびネットワークアクセスは行いません。
 
 探索を停止する位置は、いずれも利用者が与えた根です。Language Serverではエディターが開いている
-workspace folder、CLIではコマンドを実行した作業directoryです。処理対象がその根の外にある場合、
-設定fileは適用しません。作業directoryの外にあるfileへ設定を適用したい場合は``--config FILE``で
+workspace folder、CLIではコマンドを実行した作業ディレクトリです。処理対象がその根の外にある場合、
+設定ファイルは適用しません。作業ディレクトリの外にあるファイルへ設定を適用したい場合は``--config FILE``で
 明示してください。
 
-設定fileの読み込みには1 MiBの上限があります。設定fileが記述するのは根、上限および規則の設定であり、
-この大きさを超えることはありません。上限を超えるfileは読み込まずにerrorとします。
+設定ファイルの読み込みには1 MiBの上限があります。設定ファイルが記述するのは根、上限および規則の設定であり、
+この大きさを超えることはありません。上限を超えるファイルは読み込まずにエラーとします。
 
 最小の設定は次のとおりです。
 
@@ -20,9 +20,9 @@ workspace folder、CLIではコマンドを実行した作業directoryです。�
 schema-version = 1
 ----
 
-不明な項目、未対応の``schema-version``、絶対path、親directoryへ移動するpathおよび上限を超える値は
-errorになります。設定内の相対pathは設定fileのdirectoryを基準にします。設定fileはworkspace外への
-filesystem権限を与えず、CLIとLanguage Serverが独立して定めたworkspace境界内でだけ使用できます。
+不明な項目、未対応の``schema-version``、絶対パス、親ディレクトリへ移動するパスおよび上限を超える値は
+エラーになります。設定内の相対パスは設定ファイルのディレクトリを基準にします。設定ファイルはワークスペース外への
+ファイルシステム権限を与えず、CLIとLanguage Serverが独立して定めたワークスペース境界内でだけ使用できます。
 
 [#project-configuration-example]
 == 設定例
@@ -76,16 +76,16 @@ stylesheet-urls = ["https://example.com/manual.css"]
 表示します。
 
 ``lint.rules.CODE``では、組込み規則ごとに``enabled``と``severity``を指定できます。既定で有効な規則の
-無効化と重要度変更、および既定で無効な規則の有効化を同じ形式で行います。不明なcodeはerrorです。
+無効化と重要度変更、および既定で無効な規則の有効化を同じ形式で行います。不明なcodeはエラーです。
 
-resource上限は組込み上限以下にだけ設定できます。`roots`、``project-root``およびstylesheet fileは
-設定directory内の相対pathに限定されます。network includeは設定できません。
+リソース上限は組込み上限以下にだけ設定できます。`roots`、``project-root``およびstylesheetのファイルは
+設定ディレクトリ内の相対パスに限定されます。ネットワーク経由のincludeは設定できません。
 
 JSON Schemaはlink:../../config/adocweave.schema.json[`config/adocweave.schema.json`]です。
 
 == CLIでの選択
 
-通常は設定を自動探索します。明示的な設定fileを使う場合は``--config FILE``、探索を停止して既定値を
+通常は設定を自動探索します。明示的な設定ファイルを使う場合は``--config FILE``、探索を停止して既定値を
 使う場合は``--no-config``を指定します。この二つは同時に指定できません。解決済み設定は次のcommandで
 確認できます。
 
@@ -103,7 +103,7 @@ adocweave config show --config config/ci.toml
 
 Language Serverはworkspace folderごとに設定探索を停止し、文書ごとに最も近い設定を使用します。
 ``.adocweave.toml``の作成、変更または削除を監視し、open文書を新しい設定generationで再解析します。
-解析中に設定が変わった場合、古い結果は採用しません。不正な設定を既定値へ置き換えず、設定errorが
+解析中に設定が変わった場合、古い結果は採用しません。不正な設定を既定値へ置き換えず、設定のエラーが
 解消するまで、その設定に依存する診断、整形および問い合わせ結果を公開しません。
 
 エディターが通常ファイルをworkspace folderとして渡した場合は、そのファイルだけを解析の起点として

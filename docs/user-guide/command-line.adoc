@@ -31,21 +31,21 @@
 ``check``は文書の問題を位置、重要度、安定したcodeおよびmessageとともに表示します。
 自動処理では``--format json``、``--format github``または``--format sarif``を指定し、変更される可能性があるmessageではなく
 codeを判定に使用してください。``--json``は``--format json``の互換aliasです。
-同じ入力、設定およびpackage versionからは同じ順序で問題を返します。
+同じ入力、設定およびパッケージバージョンからは同じ順序で問題を返します。
 ``--include``を使用した場合も、問題の位置は展開後の仮想文書ではなく、
-問題がある元fileのpath、行およびcolumnとして表示します。
+問題がある元ファイルのパス、行および桁として表示します。
 
 ``--format json``は、問題1件を1つのobjectとして配列で返します。すべてのobjectが同じ項目を持ちます。
-``sourceId``は問題がある元file、``related``は関連位置、``fixes``は自動修正候補です。
+``sourceId``は問題がある元ファイル、``related``は関連位置、``fixes``は自動修正候補です。
 該当がない場合、``related``と``fixes``は空の配列、``sourceId``は``null``になります。
-``--include``の有無、入力fileの数および参照先の検査結果によって項目が増減することはありません。
+``--include``の有無、入力ファイルの数および参照先の検査結果によって項目が増減することはありません。
 参照先の検査で報告する問題は、これらに加えて``target``、``line``および``column``を持ちます。
 
 ``asciidoc-file-link``は、``.adoc``または``.asciidoc``で終わる文書を``link``で参照した場合に、
 ``xref``の使用を提案します。``non-asciidoc-xref``は、`.json`、`.toml`、``.pdf``など、
-AsciiDoc以外の拡張子を持つfileを``xref``で参照した場合に、``link``の使用を提案します。
-拡張子は大文字小文字を区別せず、queryとfragmentを除いて判定します。対象fileの実在性は検査しません。
-schemeのない相対targetを明示macroで記述し、targetに属性参照がない場合に限り、
+AsciiDoc以外の拡張子を持つファイルを``xref``で参照した場合に、``link``の使用を提案します。
+拡張子は大文字小文字を区別せず、queryとfragmentを除いて判定します。対象ファイルの実在性は検査しません。
+schemeのない相対の参照先を明示macroで記述し、参照先に属性参照がない場合に限り、
 macro名だけを置換する自動修正を提示します。
 
 通常の``check``はファイルシステムへアクセスせず、``../guide.adoc``のような相対リンクと文書間参照を
@@ -90,10 +90,10 @@ adocweave check --fail-on warning --format github docs
 adocweave check --fail-on warning --format sarif docs > adocweave.sarif
 ----
 
-GitHub ActionsではRelease assetのversionを固定し、``--format github``を使用します。更新時は新しい
-versionを別directoryで検証してから切り替えてください。
+GitHub ActionsではRelease assetのバージョンを固定し、``--format github``を使用します。更新時は新しい
+バージョンを別のディレクトリで検証してから切り替えてください。
 
-相対リンク、文書間参照、画像などのresourceおよびincludeの実在性を検査する場合は、
+相対リンク、文書間参照、画像などのリソースおよびincludeの実在性を検査する場合は、
 ``--local-targets``と``--project-root DIR``を指定します。
 
 [source,console]
@@ -101,23 +101,23 @@ versionを別directoryで検証してから切り替えてください。
 adocweave check --local-targets --project-root . docs/manual.adoc
 ----
 
-この検査は記述元fileの親directoryを基準にし、正規化後もproject root内にある``..``を許可します。
-絶対path、外部URL、local anchorおよびscheme付きtargetは対象外です。欠落、project root外への移動、
-directory、権限不足および検査不能なtargetは安定したcodeを持つerrorとなります。これらはほかの診断と
-同じくerror件数へ加算されるため、終了コードは``--fail-on``の設定に従います。``--fail-on never``を
-指定した場合は、これらのerrorがあっても終了コードは0です。
-同じfileへの複数の参照は位置ごとに報告しますが、filesystemの検査結果はcommand内で共有します。
-一意なtargetの検査件数は``resources.max-files``を上限とし、超過したtargetには
-``local-target-limit-exceeded``を報告して、それ以降のfilesystem検査を行いません。
-標準入力の基準directoryはproject rootです。
+この検査は記述元ファイルの親ディレクトリを基準にし、正規化後もproject root内にある``..``を許可します。
+絶対パス、外部URL、文書内anchorおよびscheme付きの参照先は対象外です。欠落、project root外への移動、
+ディレクトリ、権限不足および検査できない参照先は、安定したcodeを持つerror診断となります。これらはほかの
+診断と同じくerror件数へ加算されるため、終了コードは``--fail-on``の設定に従います。``--fail-on never``を
+指定した場合は、これらの診断があっても終了コードは0です。
+同じファイルへの複数の参照は位置ごとに報告しますが、ファイルシステムの検査結果はコマンド内で共有します。
+一意な参照先の検査件数は``resources.max-files``を上限とし、超過した参照先には
+``local-target-limit-exceeded``を報告して、それ以降のファイルシステム検査を行いません。
+標準入力の基準ディレクトリはproject rootです。
 
-Linuxでは、project rootのdirectory handleを基準に各path componentを開く``HandleRelative``方式を使用し、
-検証後のpathを名前から開き直す競合を避けます。検査の最中に、ほかのプロセスがpath上のdirectoryをrenameしたり
-mountしたりすると、kernelはその検査を安全に完了できないと判断して中断します。この場合は同じ検査をやり直します。
+Linuxでは、project rootのディレクトリハンドルを基準にパスの構成要素を一つずつ開く``HandleRelative``方式を
+使用し、検証後のパスを名前から開き直す競合を避けます。検査の最中に、ほかのプロセスがパス上のディレクトリを
+移動したりmountしたりすると、kernelはその検査を安全に完了できないと判断して中断します。この場合は同じ検査をやり直します。
 やり直しの回数には上限があり、変更が続いて完了できない場合は``local-target-unverifiable``を報告します。
 macOSとWindowsでは``StaticSnapshotOnly``方式を使用します。
-この方式は、検査中にworkspaceを同時変更しない、信頼済みのworkspaceだけを対象とします。信頼できない入力を
-検査する場合は、書換え不能なsnapshotへコピーしてから実行してください。
+この方式は、検査中にワークスペースを同時変更しない、信頼済みのワークスペースだけを対象とします。信頼できない入力を
+検査する場合は、書換え不能なスナップショットへコピーしてから実行してください。
 
 利用可能な規則は文書を読み込まずにJSONで取得できます。
 
@@ -151,8 +151,8 @@ adocweave check --enable-rule macro-boundary document.adoc
 ``format``は整形後の内容を標準出力へ書き、入力fileを直接変更しません。
 ``--check``を指定すると内容を出力せず、変更が不要なら終了コード0、必要ならそれ以外を返します。
 
-複数file、directoryまたは``--glob PATTERN``を指定すると、canonical path順に重複なく処理します。
-directoryでは``.adoc``だけを再帰的に選び、symlinkはたどりません。複数入力の整形では
+複数のファイル、ディレクトリまたは``--glob PATTERN``を指定すると、正規化したパスの順に重複なく処理します。
+ディレクトリでは``.adoc``だけを再帰的に選び、symlinkはたどりません。複数入力の整形では
 `--check`、``--diff``または``--write``のいずれか一つが必須です。
 
 [source,console]
@@ -162,10 +162,10 @@ adocweave format --diff --glob 'docs/**/*.adoc'
 adocweave format --write docs README.adoc
 ----
 
-``--write``は全fileを読込・解析した後、元fileと同じdirectoryに一時fileを作り、内容を同期してから
-置換します。書換え直前に元のbyte列が変わっていた場合は置換しません。file mode、既存の主な改行形式
+``--write``は全fileを読込・解析した後、元fileと同じディレクトリに一時fileを作り、内容を同期してから
+置換します。書換え直前に元のbyte列が変わっていた場合は置換しません。ファイルの実行権限、既存の主な改行形式
 および最終改行は、プロジェクト設定で明示的に変更していない限り保持します。一時fileの準備前に
-errorが発生した場合は一件も変更しません。置換開始後のI/O errorでは、それ以前に置換済みのfileだけが
+エラーが発生した場合は一件も変更しません。置換開始後の入出力エラーでは、それ以前に置換済みのファイルだけが
 更新される可能性があります。各fileの置換自体はatomicです。
 
 ``--dry-run``を``--write``と併用すると書換えません。``--summary``は対象数と変更数を標準エラー出力へ
@@ -218,29 +218,29 @@ adocweave convert --include docs/manual.adoc
 adocweave check --include docs/manual.adoc
 ----
 
-file入力では、``--base-dir``を省略するとroot文書の親directoryを基準にします。
+ファイル入力では、``--base-dir``を省略するとroot文書の親ディレクトリを基準にします。
 標準入力は位置を持たないため、``--include``と同時に``--base-dir DIR``が必須です。
-``--allow-root DIR``は複数指定でき、省略時はbase directoryだけを許可します。
+``--allow-root DIR``は複数指定でき、省略時はbase ディレクトリだけを許可します。
 
 [source,console]
 ----
 adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
 ----
 
-targetはbase directoryからの相対pathに限定します。
+参照先はbase directoryからの相対パスに限定します。
 絶対path、`..`、scheme付きtarget、制御文字および許可root外へ解決されるsymlinkを拒否します。
 通常linkと異なり、include targetの``?``と``#``はURL成分として分離せずfile名の一部として扱います。
-個別resourceは10 MiB、resource tree全体は50 MiB、file数は10,000件を上限とします。
+個別のリソースは10 MiB、リソース全体は50 MiB、ファイル数は10,000件を上限とします。
 循環、include深さ、展開nodeおよび展開後byte数にはコアpreprocessorの上限も適用します。
-network resourceは取得しません。
+ネットワーク上のリソースは取得しません。
 
-`convert`、``check``および``symbols``は同じ展開snapshotを使用します。
+`convert`、``check``および``symbols``は同じ展開スナップショットを使用します。
 ``check``の診断は元resourceの論理的な``SourceId``、行、columnへ投影します。Include resourceには
-``include:``で始まるIDを使用し、canonical pathは診断へ公開しません。
-``format``はinclude treeを安全性検査しますが、展開結果をroot fileへ書き戻さずroot入力だけを整形します。
+``include:``で始まるIDを使用し、正規化したパスは診断へ公開しません。
+``format``はincludeの展開先を安全性検査しますが、展開結果をrootのファイルへ書き戻さずroot入力だけを整形します。
 
 ``check --include --local-targets --project-root DIR``では、includeの読み取りとほかのlocal targetの
-実在検査が同じcacheと上限を使用します。この組み合わせでは、正規化後もproject root内に収まる``..``を
+実在検査が同じキャッシュと上限を使用します。この組み合わせでは、正規化後もproject root内に収まる``..``を
 許可し、``--allow-root``は使用しません。``optional``を指定したincludeの欠落はerrorにしません。
 
 == ローカルプレビュー

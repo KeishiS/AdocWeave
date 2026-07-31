@@ -39,7 +39,7 @@ HTML出力では保持したテキストをエスケープします。
 
 |Preamble
 |対応
-|header終端から最初のsectionまたはbook partまでのblock列を、人工的なAST nodeを加えずprojectionとして公開します。
+|header終端から最初のsectionまたはbook partまでのblock列を、人工的なnodeを加えずprojectionとして公開します。
 
 |文書タイトル
 |対応
@@ -67,7 +67,7 @@ hover情報、安定した生成IDを提供します。
 |対応
 |文書headerとroot block間の定義、再定義および解除をlosslessに保持します。変更は記述位置より後へ作用し、
 属性値中の参照は定義時点の値で確定します。Include先の変更は呼出元へ戻った後も有効で、
-include targetと条件分岐も到達時点の値を使用します。選択されなかった分岐、Delimited block内部および
+includeの参照先と条件分岐も到達時点の値を使用します。選択されなかった分岐、Delimited block内部および
 inline属性代入は属性状態を変更しません。
 値の行末が正確に`` \``である場合は次の物理行へ継続します。通常の継続は1個の空白へ畳み、
 `` + \``によるhard breakは改行として保持します。属性値は汎用文字列であり、
@@ -196,7 +196,7 @@ copy操作は利用側アプリが提供します。不正な``start``は診断�
 
 |文書間・スキーム付きxref
 |構文対応
-|親directoryを含む相対targetもResolverなしで解析、検査、整形、抽出できます。
+|親ディレクトリを含む相対targetもResolverなしで解析、検査、整形、抽出できます。
 HTMLリンク化にはホストの安全な解決結果が必要です。
 空labelには解決成功と同じrevisionの任意のプレーンテキスト表示名を渡せます。
 
@@ -297,7 +297,7 @@ index termを意味nodeとして扱い、文書catalogへfootnote、bibliography
 
 |Preprocessor directive
 |部分対応
-|純粋なresource snapshot上で``include``、`ifdef`、`ifndef`、`ifeval`、`endif`、escape、基本include属性
+|純粋なresource スナップショット上で``include``、`ifdef`、`ifndef`、`ifeval`、`endif`、escape、基本include属性
 およびsource mapに対応します。引用符を考慮した属性値と、参照先がない場合だけ空展開する``optional``に対応します。
 WildcardおよびURI転送は未対応です。
 
