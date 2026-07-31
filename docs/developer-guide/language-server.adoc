@@ -169,6 +169,11 @@ server lifecycle state machineはinitialize前のrequestを
 `ServerNotInitialized`、重複initializeとshutdown後のrequestを``InvalidRequest``とし、
 無効な状態の通知を破棄します。shutdown後のexitだけを正常終了とします。
 
+``initialize``はworkspace folderを記録するだけで、その中身を読みません。読み込みは``initialized``
+通知で行います。workspace全体の走査は文書数に比例して時間がかかり、その間ほかの要求へ応答できないため、
+capabilityの応答を待たせない位置へ移しています。走査の完了前に開いた文書は失われません。走査は
+開いている文書を保ったままworkspaceを作り直し、完了後に再解析します。
+
 製品transportはstdioだけを提供し、network transportは非目標とします。LSP仕様型はprotocol境界で
 のみ使用し、コア型との変換関数をテスト可能な安定面とします。
 

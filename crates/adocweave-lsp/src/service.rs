@@ -301,16 +301,15 @@ impl LanguageService {
                 .into_iter()
                 .collect()
         };
-        match self.workspace.load_roots(&roots) {
-            Ok(()) => {
-                self.workspace_roots = roots
-                    .into_iter()
-                    .map(|uri| (uri.to_string(), uri))
-                    .collect();
-                self.workspace_error = None;
-            }
-            Err(error) => self.workspace_error = Some(error),
-        }
+        // The roots are recorded here, but reading them is left to
+        // `scan_workspace_roots`. Scanning a large workspace takes long enough
+        // to be noticed, and the protocol does not require it to finish before
+        // the capabilities are returned.
+        self.workspace_roots = roots
+            .into_iter()
+            .map(|uri| (uri.to_string(), uri))
+            .collect();
+        self.workspace_error = None;
         lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
                 position_encoding: Some(self.position_encoding.lsp()),
@@ -622,6 +621,23 @@ impl LanguageService {
                 Some(job)
             })
             .collect()
+    }
+
+    /// Reads the workspace roots recorded by `initialize`.
+    ///
+    /// This walks every directory below each root and reads the `.adoc` files
+    /// it finds, so it is the one part of initialization whose cost grows with
+    /// the workspace. It is separated from `initialize` so the response, and
+    /// the requests that follow it, do not wait for the walk.
+    pub fn scan_workspace_roots(&mut self) -> Vec<AnalysisJob> {
+        if self.workspace_roots.is_empty() {
+            return Vec::new();
+        }
+        // Documents opened before the walk finished are preserved rather than
+        // replaced, so an editor that opens a file immediately does not lose it.
+        // That is the same requirement a project file change has, so the two
+        // share one implementation.
+        self.reload_project_configuration()
     }
 
     pub fn watched_files_registration(&self) -> Option<lsp::RegistrationParams> {
