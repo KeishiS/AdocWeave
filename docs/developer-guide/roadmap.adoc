@@ -8,6 +8,19 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
+== 外部書誌向けciteの完成
+
+``cite:``の構文解析と意味モデルは公開済みです。現在はRust APIの
+``Analysis::citations()``からだけ取得でき、ホストが解決した引用表示をHTMLへ渡す経路もありません。
+利用側アプリが引用を実際に扱えるようにするため、残りの二段階を進めます。
+
+* https://github.com/KeishiS/adocweave/issues/313[citeの引用情報をprojectionとWASMへ公開]
+* https://github.com/KeishiS/adocweave/issues/314[ホストが解決したciteの表示をHTMLへ描画]
+
+この順序で進めます。ホストはまずprojectionから引用keyと位置を取得し、解決した結果を
+``RenderInputs``へ渡します。projectionを公開しないまま描画経路だけを用意しても、ホストは
+解決すべきkeyを知る手段がありません。
+
 == 公開Rust APIの整理とversion管理
 
 公開Rust APIには、同じ操作に対する入口が複数あります。解析は``Engine``の4変種と
@@ -68,11 +81,9 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 * https://github.com/KeishiS/adocweave/issues/33[単体CLIのlocal resource profile評価]
 * https://github.com/KeishiS/adocweave/issues/34[RenovateによるNix依存更新の評価]
-* https://github.com/KeishiS/adocweave/issues/283[外部書誌ライブラリー向けのciteマクロ]
 
 単体CLIのlocal resource profileは、相対resourceを解決する需要が確認された場合に再評価します。
 RenovateによるNix依存更新は、手動更新が継続的な負担となった場合に再評価します。
-citeマクロは、対応するAsciiDocの範囲を広げる判断を伴うため、対応範囲の方針を決めてから採否を判断します。
 
 == 実施しない公開経路
 
