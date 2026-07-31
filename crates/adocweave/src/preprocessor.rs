@@ -698,8 +698,11 @@ impl Context<'_> {
             .into());
         }
         self.bump_node(source_id.clone(), range)?;
-        let expanded_target =
-            directive::expand_attributes(&include.target, self.state.attributes());
+        let expanded_target = directive::expand_attributes(
+            &include.target,
+            self.state.attributes(),
+            self.state.attribute_limits(),
+        );
         let target = resolve_include_target(&expanded_target, frame.base_uri());
         validate_target(&target, self.options).map_err(|message| {
             error(
@@ -853,7 +856,12 @@ impl Context<'_> {
                         ),
                         resource_source_id: None,
                     });
-                    match directive::transition(&directive, enabled, self.state.attributes()) {
+                    match directive::transition(
+                        &directive,
+                        enabled,
+                        self.state.attributes(),
+                        self.state.attribute_limits(),
+                    ) {
                         ConditionalTransition::Inline { selected } => {
                             if selected {
                                 let ending = &line.text[content.len()..];
@@ -887,8 +895,11 @@ impl Context<'_> {
                         self.expand_include(include, &frame, line.range)?;
                     } else {
                         self.bump_node(source_id.clone(), line.range)?;
-                        let authored_target =
-                            directive::expand_attributes(&include.target, self.state.attributes());
+                        let authored_target = directive::expand_attributes(
+                            &include.target,
+                            self.state.attributes(),
+                            self.state.attribute_limits(),
+                        );
                         let optional = parse_attributes(&include.attributes)
                             .is_ok_and(|attributes| attributes.contains_key("optional"));
                         self.directives.push(Directive {

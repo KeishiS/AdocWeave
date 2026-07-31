@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::DirectiveKind;
+use crate::substitution::{AttributeExpansionLimits, expand_attribute_text};
 
 #[derive(Clone, Debug)]
 pub(super) struct ParsedDirective {
@@ -45,6 +46,7 @@ pub(super) fn transition(
     directive: &ParsedDirective,
     parent_enabled: bool,
     attributes: &BTreeMap<String, String>,
+    limits: AttributeExpansionLimits,
 ) -> ConditionalTransition {
     match directive.kind {
         DirectiveKind::Ifdef | DirectiveKind::Ifndef if !directive.attributes.is_empty() => {
@@ -65,32 +67,54 @@ pub(super) fn transition(
         },
         DirectiveKind::Ifeval => ConditionalTransition::Open {
             enabled: parent_enabled
-                && evaluate_expression(&expand_attributes(&directive.attributes, attributes)),
+                && evaluate_expression(&expand_attributes(
+                    &directive.attributes,
+                    attributes,
+                    limits,
+                )),
         },
         DirectiveKind::Endif => ConditionalTransition::Close,
         DirectiveKind::Include => unreachable!("include is not a conditional transition"),
     }
 }
 
-pub(super) fn expand_attributes(value: &str, attributes: &BTreeMap<String, String>) -> String {
-    let mut output = String::new();
-    let mut cursor = 0;
-    while let Some(open) = value[cursor..].find('{').map(|offset| cursor + offset) {
-        output.push_str(&value[cursor..open]);
-        let Some(close) = value[open + 1..].find('}').map(|offset| open + 1 + offset) else {
-            output.push_str(&value[open..]);
-            return output;
-        };
-        let name = &value[open + 1..close];
-        if let Some(replacement) = attributes.get(name) {
-            output.push_str(replacement);
-        } else {
-            output.push_str(&value[open..=close]);
-        }
-        cursor = close + 1;
-    }
-    output.push_str(&value[cursor..]);
-    output
+/// Substitutes attribute references in a directive's own text.
+///
+/// The values handed in are already fully expanded, so this performs one
+/// substitution rather than the recursive evaluation the document body uses.
+/// The two must still agree on what an attribute reference *is*: a document
+/// that writes `\{name}` means the literal text in a conditional expression
+/// exactly as it does in a paragraph.
+pub(super) fn expand_attributes(
+    value: &str,
+    attributes: &BTreeMap<String, String>,
+    limits: AttributeExpansionLimits,
+) -> String {
+    // What this shares with the document body is the reading of the text: which
+    // braces open a reference, what `\{` means, and where a reference ends. Two
+    // answers to that question would let the same document mean different
+    // things in a paragraph and in a conditional expression.
+    //
+    // The values handed in were already expanded under the caller's limits, so
+    // the resolver never recurses and reports depth zero. The size limit is
+    // raised for the substitution itself: charging a value twice would reject a
+    // directive whose attribute the caller already accepted.
+    let limits = AttributeExpansionLimits {
+        max_bytes: u32::MAX,
+        ..limits
+    };
+    expand_attribute_text(value, limits, |name| {
+        Ok((
+            attributes
+                .get(name)
+                .cloned()
+                // An attribute with no value is left as written, so a reader
+                // sees the reference that did not resolve.
+                .unwrap_or_else(|| format!("{{{name}}}")),
+            0,
+        ))
+    })
+    .map_or_else(|_| value.to_owned(), |(expanded, _)| expanded)
 }
 
 fn parse_include(value: &str) -> Option<ParsedDirective> {
@@ -157,6 +181,32 @@ fn evaluate_expression(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_limits() -> AttributeExpansionLimits {
+        AttributeExpansionLimits {
+            max_depth: 16,
+            max_bytes: 1024,
+        }
+    }
+
+    /// A directive reads attribute references exactly as the body does.
+    ///
+    /// The same document must not mean one thing in a paragraph and another in
+    /// a conditional expression.
+    #[test]
+    fn directive_text_reads_attribute_references_like_the_document_body() {
+        let attributes = BTreeMap::from([("name".to_owned(), "value".to_owned())]);
+        let expand = |value: &str| expand_attributes(value, &attributes, test_limits());
+
+        assert_eq!(expand("{name}"), "value");
+        assert_eq!(expand("{missing}"), "{missing}");
+        assert_eq!(expand("{}"), "{}");
+        // An escaped brace is literal text, which is what the body does with it.
+        assert_eq!(expand("\\{name}"), "{name}");
+        assert_eq!(expand("a \\{name} b {name}"), "a {name} b value");
+        // An unterminated reference is left as written.
+        assert_eq!(expand("{name"), "{name");
+    }
 
     #[test]
     fn recognition_distinguishes_complete_escaped_and_text_lines() {
@@ -236,7 +286,7 @@ mod tests {
                 panic!("expected conditional: {source}");
             };
             assert_eq!(
-                transition(&directive, parent_enabled, &attributes),
+                transition(&directive, parent_enabled, &attributes, test_limits()),
                 expected,
                 "{source}, parent_enabled={parent_enabled}"
             );

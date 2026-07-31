@@ -54,6 +54,10 @@ impl ExpansionState {
         self.attributes.values()
     }
 
+    pub(super) const fn attribute_limits(&self) -> AttributeExpansionLimits {
+        self.attributes.limits()
+    }
+
     pub(super) fn observe_delimiter(&mut self, content: &str) -> bool {
         if crate::delimiter::spec(content).is_none() {
             return false;
