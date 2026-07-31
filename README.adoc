@@ -68,6 +68,7 @@ adocweave format --write docs
 === 開発
 
 * xref:docs/developer-guide/architecture.adoc[アーキテクチャ]。
+* xref:docs/developer-guide/terminology.adoc[用語の表記] — 文書を書くときの表記の基準です。
 * xref:docs/README.adoc[文書と公開仕様の一覧]。
 * xref:docs/developer-guide/roadmap.adoc[今後の予定]。
 

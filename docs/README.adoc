@@ -23,6 +23,9 @@ user-guideと重複させません。
 
 == このリポジトリで使用する用語
 
+この節は、AdocWeave固有の考え方を表す語の意味を定めます。一般名詞を日本語と原綴りのどちらで
+書くかは、xref:developer-guide/terminology.adoc[用語の表記]を基準とします。
+
 [cols="1,3",options="header"]
 |===
 |表記 |この文書での意味
