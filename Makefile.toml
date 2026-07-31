@@ -836,11 +836,23 @@ dependencies = [
 [tasks.quality-rust]
 description = "Run native Rust compilation, lint, tests, API documentation, and AsciiDoc checks"
 dependencies = [
+  "quality-rust-source",
+  "quality-documents",
+]
+
+[tasks.quality-rust-source]
+description = "Run native Rust compilation, lint, tests, and API documentation"
+dependencies = [
   "check",
   "cross-native-check",
   "clippy",
   "test",
   "doc-check",
+]
+
+[tasks.quality-documents]
+description = "Check authored AsciiDoc and the HTML it produces"
+dependencies = [
   "adoc-check",
   "docs-lint",
   "html5-check",

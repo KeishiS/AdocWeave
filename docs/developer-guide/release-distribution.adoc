@@ -187,6 +187,22 @@ crate名は列挙して渡します。``cargo semver-checks --workspace``はこ�
 baselineは候補versionより前で最も新しいstable tagです。該当するtagが無い場合はfail openせず失敗させます。
 検査に使う``cargo-semver-checks``はflakeで版を固定し、実行時に最新版を取得しません。
 
+=== source検査の範囲
+
+Pull Requestでは、変更したpathが到達できるsource検査だけを実行します。文書だけを変更したPull Requestで、
+core crateの再compile、fuzz、Nix packageおよび公開Rust APIの差分検査を行っても、結果は変わらないためです。
+
+jobは常に起動し、実行するかどうかをstepの条件で決めます。branch保護が要求する検査名は、
+実行しなかった場合も``success``のまま維持する必要があるためです。実行しなかったstepは、その変更が
+その検査へ到達しないことを記録します。
+
+次の変更はすべての検査を実行します。
+
+* task graph、toolchainの固定、flakeまたはworkflowの変更。これらは、どの検査の結果も変え得ます。
+* 成果物への影響を分類できないpath。分類漏れをすり抜けさせると、検証しないまま公開します。
+* ``main`` pushとtag。``main``は独立にreviewされたbranchが初めて出会う場所であり、
+  各branchが個別に検査を通っていても全体を検査します。
+
 成果物のbuildと配布計画の生成は、``cargo make ci-preflight``が成功した後に開始します。
 この事前検査では書式、生成file、workflow policy、release contractおよび変更pathの分類を確認します。
 成果物を作らないPull Requestと、公開済みversionの通常の``main`` pushでは配布計画を生成しません。

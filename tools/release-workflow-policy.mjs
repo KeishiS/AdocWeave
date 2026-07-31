@@ -552,7 +552,7 @@ export function validateReleaseWorkflowPolicy({
   // The fuzz gate uses its own shell so that the nightly toolchain cargo-fuzz
   // needs stays out of every other job's closure.
   for (const [name, task, timeout, shell] of [
-    ["rust", "quality-rust", 25, ".#ci"],
+    ["rust", "quality-rust-source", 25, ".#ci"],
     ["adapters", "quality-adapters", 25, ".#ci"],
     ["dependencies", "dependency-governance", 15, ".#ci"],
     ["fuzz", "fuzz", 15, ".#ci-fuzz"],
@@ -563,6 +563,13 @@ export function validateReleaseWorkflowPolicy({
     const run = (contractJobs[name]?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
     requireCommand(run, `nix develop ${shell} -c cargo make ${task}`, `${name} must use its canonical local task`);
   }
+  // Scoping a gate must not lose one of its halves: the rust job runs the
+  // document checks as well, under its own condition.
+  requireCommand(
+    (contractJobs.rust?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n"),
+    "nix develop .#ci -c cargo make quality-documents",
+    "the rust quality job must also run the document gate",
+  );
   const completeFast = step(contractJobs["source-fast"], (item) =>
     item.name === "Complete fast source policy execution",
   "complete fast source step is missing");
@@ -617,17 +624,17 @@ export function validateReleaseWorkflowPolicy({
       "adoc-check-targets",
     ],
   });
+  // The gate is split so a change that cannot reach Rust source still runs the
+  // document checks, and the other way round. Running `quality-rust` keeps
+  // performing both.
   requireTask(tasks, "quality-rust", {
-    dependencies: [
-      "check",
-      "cross-native-check",
-      "clippy",
-      "test",
-      "doc-check",
-      "adoc-check",
-      "docs-lint",
-      "html5-check",
-    ],
+    dependencies: ["quality-rust-source", "quality-documents"],
+  });
+  requireTask(tasks, "quality-rust-source", {
+    dependencies: ["check", "cross-native-check", "clippy", "test", "doc-check"],
+  });
+  requireTask(tasks, "quality-documents", {
+    dependencies: ["adoc-check", "docs-lint", "html5-check"],
   });
   requireTask(tasks, "quality-adapters", {
     dependencies: [

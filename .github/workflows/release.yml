@@ -28,6 +28,13 @@ jobs:
       native_matrix: ${{ steps.changes.outputs.native_matrix }}
       preflight_required: ${{ steps.changes.outputs.preflight_required }}
       release_main: ${{ steps.changes.outputs.release_main }}
+      quality_rust_source: ${{ steps.changes.outputs.quality_rust_source }}
+      quality_documents: ${{ steps.changes.outputs.quality_documents }}
+      quality_adapters: ${{ steps.changes.outputs.quality_adapters }}
+      quality_dependencies: ${{ steps.changes.outputs.quality_dependencies }}
+      quality_fuzz: ${{ steps.changes.outputs.quality_fuzz }}
+      quality_nix_package: ${{ steps.changes.outputs.quality_nix_package }}
+      quality_semver: ${{ steps.changes.outputs.quality_semver }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,8 +140,14 @@ jobs:
     uses: ./.github/workflows/quality.yml
     with:
       common_preflight_scheduled: ${{ needs.changes.outputs.preflight_required == 'true' }}
-      run_nix_package: ${{ github.event_name == 'pull_request' }}
+      run_nix_package: ${{ github.event_name == 'pull_request' && needs.changes.outputs.quality_nix_package == 'true' }}
       save_build_cache: ${{ github.ref == 'refs/heads/main' }}
+      run_rust_source: ${{ needs.changes.outputs.quality_rust_source == 'true' }}
+      run_documents: ${{ needs.changes.outputs.quality_documents == 'true' }}
+      run_adapters: ${{ needs.changes.outputs.quality_adapters == 'true' }}
+      run_dependencies: ${{ needs.changes.outputs.quality_dependencies == 'true' }}
+      run_fuzz: ${{ needs.changes.outputs.quality_fuzz == 'true' }}
+      run_semver: ${{ needs.changes.outputs.quality_semver == 'true' }}
 
   build-native:
     if: needs.changes.outputs.native_required == 'true'

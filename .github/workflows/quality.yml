@@ -15,6 +15,30 @@ on:
         required: false
         type: boolean
         default: false
+      run_rust_source:
+        required: false
+        type: boolean
+        default: true
+      run_documents:
+        required: false
+        type: boolean
+        default: true
+      run_adapters:
+        required: false
+        type: boolean
+        default: true
+      run_dependencies:
+        required: false
+        type: boolean
+        default: true
+      run_fuzz:
+        required: false
+        type: boolean
+        default: true
+      run_semver:
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -29,7 +53,11 @@ jobs:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
       - name: Dependency boundary audit
+        if: ${{ inputs.run_dependencies }}
         run: nix develop .#ci -c cargo make dependency-governance
+      - name: Dependency boundary not reachable by this change
+        if: ${{ !inputs.run_dependencies }}
+        run: echo "no changed path can reach the dependency boundary audit"
 
   source-fast:
     runs-on: ubuntu-24.04
@@ -62,7 +90,17 @@ jobs:
           key: ${{ hashFiles('flake.lock') }}
           save-if: ${{ inputs.save_build_cache }}
       - name: Rust source gate execution
-        run: nix develop .#ci -c cargo make quality-rust
+        if: ${{ inputs.run_rust_source }}
+        run: nix develop .#ci -c cargo make quality-rust-source
+      - name: Rust source gate not reachable by this change
+        if: ${{ !inputs.run_rust_source }}
+        run: echo "no changed path can reach the Rust source gate"
+      - name: Document gate execution
+        if: ${{ inputs.run_documents }}
+        run: nix develop .#ci -c cargo make quality-documents
+      - name: Document gate not reachable by this change
+        if: ${{ !inputs.run_documents }}
+        run: echo "no changed path can reach the document gate"
 
   adapters:
     runs-on: ubuntu-24.04
@@ -83,7 +121,11 @@ jobs:
             editors/zed
           save-if: ${{ inputs.save_build_cache }}
       - name: Adapter source gate execution
+        if: ${{ inputs.run_adapters }}
         run: nix develop .#ci -c cargo make quality-adapters
+      - name: Adapter contracts not reachable by this change
+        if: ${{ !inputs.run_adapters }}
+        run: echo "no changed path can reach the adapter contracts"
 
   fuzz:
     runs-on: ubuntu-24.04
@@ -94,7 +136,11 @@ jobs:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
       - name: Fuzz target compilation and exploration
+        if: ${{ inputs.run_fuzz }}
         run: nix develop .#ci-fuzz -c cargo make fuzz
+      - name: Fuzz targets not reachable by this change
+        if: ${{ !inputs.run_fuzz }}
+        run: echo "no changed path can reach the fuzz targets"
 
   nix-package:
     if: inputs.run_nix_package
@@ -120,7 +166,11 @@ jobs:
           fetch-depth: 0
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
       - name: Public Rust API compatibility against the previous stable tag
+        if: ${{ inputs.run_semver }}
         run: nix develop .#ci-semver -c cargo make semver-check
+      - name: Public Rust API not reachable by this change
+        if: ${{ !inputs.run_semver }}
+        run: echo "no changed path can reach the public Rust API"
 
   aggregate:
     if: always()
