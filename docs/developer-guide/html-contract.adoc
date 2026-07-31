@@ -82,6 +82,11 @@ URLは由来を示すcontextとともに``RenderPolicy.active_urls``の``ActiveU
 拒否します。許可するscheme、root-relative URL、外部画像およびdata URIはpolicyで明示します。
 root-relative URLの許可は解決済みの値だけに適用し、文書へ直接記述した値へは適用しません。
 
+``javascript``と``vbscript``は、利用側アプリが許可schemeへ加えても出力しません。これらはbrowserが
+codeとして実行するURLであり、許可する設定を受け付けること自体が誤りだからです。この保証はstylesheetの
+検査と同じ考え方です。``data``はこの一覧に含めません。data URIは実行されない内容を運び、独自の設定項目を
+持つためです。
+
 解決できない参照、拒否したURLおよび利用できないresourceはactive要素へ変換せず、表示文字列や代替文字列を
 escapeした非activeな内容として出力します。解決済み表示文字列はプレーンテキストとして扱い、AsciiDocや
 HTMLとして再解析しません。詳しいfallback規則はxref:server-execution.adoc#render-inputs[変換入力]を
