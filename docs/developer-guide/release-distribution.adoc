@@ -164,6 +164,25 @@ Pull Requestでは変更計画が選択したcandidate familyだけをインス�
 両familyを選択した場合は両方の検証成功を最終gateで要求します。未公開versionの``main`` candidateと
 tagから再利用するcandidateでは、配布契約に含まれる全assetを引き続き要求します。
 
+=== 公開Rust APIの互換性
+
+``cargo make semver-check``は、候補の公開Rust APIを直前のstable tagと比較します。compileとtestが
+通っても、利用側が名前で参照している型や関数が消えたことは分かりません。この検査はその差分を列挙します。
+
+比較の対象は、library targetを持つworkspace memberです。binaryだけを提供するcrateはほかのcrateから
+名前で参照できるRust APIを持たないため対象外とし、その理由を``tools/semver-gate.mjs``に記録します。
+crate名は列挙して渡します。``cargo semver-checks --workspace``はこのrepositoryでは何も検査せずに
+成功するためです。全crateが``publish = false``であり、対象として選ばれません。検査後は、挙げたcrateが
+実際に比較されたかを出力から確認し、一つでも欠けていれば失敗させます。
+
+許容する差分はbaselineと候補のversionから決まります。patch版に破壊的変更があれば失敗させ、
+0.yのminor版では破壊的変更を許容します。ただし許容する場合は、Release Notesに破壊的変更の記載が
+あることを条件とします。利用側は、compileが通らなくなってから差分を知るのではなく、
+移行手順から知るべきだからです。
+
+baselineは候補versionより前で最も新しいstable tagです。該当するtagが無い場合はfail openせず失敗させます。
+検査に使う``cargo-semver-checks``はflakeで版を固定し、実行時に最新版を取得しません。
+
 成果物のbuildと配布計画の生成は、``cargo make ci-preflight``が成功した後に開始します。
 この事前検査では書式、生成file、workflow policy、release contractおよび変更pathの分類を確認します。
 成果物を作らないPull Requestと、公開済みversionの通常の``main`` pushでは配布計画を生成しません。

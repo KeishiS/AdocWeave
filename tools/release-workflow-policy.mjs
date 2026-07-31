@@ -555,6 +555,7 @@ export function validateReleaseWorkflowPolicy({
     ["dependencies", "dependency-governance", 15, ".#ci"],
     ["fuzz", "fuzz", 15, ".#ci-fuzz"],
     ["nix-package", "nix-package-check", 20, ".#ci"],
+    ["semver", "semver-check", 20, ".#ci-semver"],
   ]) {
     requireTimeout(contractJobs[name], timeout, `${name} quality job must have a timeout`);
     const run = (contractJobs[name]?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
@@ -577,7 +578,7 @@ export function validateReleaseWorkflowPolicy({
   requireTimeout(contractJobs["source-fast"], 10, "source-fast quality job must have a timeout");
   requireNeeds(
     contractJobs.aggregate,
-    ["source-fast", "rust", "adapters", "dependencies", "fuzz", "nix-package"],
+    ["source-fast", "rust", "adapters", "dependencies", "fuzz", "nix-package", "semver"],
     "the stable required check must aggregate every local gate unit",
   );
   if (contractJobs.aggregate?.if !== "always()") {

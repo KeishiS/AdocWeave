@@ -640,8 +640,8 @@ test("quality required check aggregates every canonical local unit", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       contract: inputs.contract.replace(
-        "needs: [source-fast, rust, adapters, dependencies, fuzz, nix-package]",
-        "needs: [source-fast, rust, adapters, fuzz, nix-package]",
+        "needs: [source-fast, rust, adapters, dependencies, fuzz, nix-package, semver]",
+        "needs: [source-fast, rust, adapters, fuzz, nix-package, semver]",
       ),
     }),
     /aggregate every local gate unit/,
