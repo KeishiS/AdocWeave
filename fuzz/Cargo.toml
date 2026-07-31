@@ -33,3 +33,10 @@ path = "fuzz_targets/render.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "preprocess"
+path = "fuzz_targets/preprocess.rs"
+test = false
+doc = false
+bench = false

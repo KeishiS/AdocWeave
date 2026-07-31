@@ -186,6 +186,16 @@ Canonical pathは検査、キャッシュおよびprovenanceに限定し、診�
 WASMの``attributeQueries``は、各bindingの操作、有効値、決定bindingおよび属性参照を返します。
 前処理を指定したrequestでは、bindingと参照の``sourceId``およびrangeを元resourceへ投影します。
 
+=== 生成入力による探索
+
+``preprocess`` fuzz targetは、生成した入力でinclude展開を実行します。ほかのtargetは一つのsource文字列
+から始まるため、directiveの解析、tagと行の選択、indentとleveloffsetの変換、および展開後の位置を元へ
+戻すsource mapに、生成入力が届きません。このtargetはresource snapshotも与えるため、includeが解決して
+これらの経路を通ります。
+
+入力はNUL byteで区切り、先頭をroot文書、続く各部分を``part.adoc``、``other.adoc``および``nested.adoc``
+として渡します。resource名を固定しているのは、生成した``include::``が解決する対象を持つようにするためです。
+
 [#render-inputs]
 == 変換入力
 
