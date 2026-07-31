@@ -108,9 +108,23 @@ jobs:
       - name: Nix package build and execution
         run: nix develop .#ci -c cargo make nix-package-check
 
+  semver:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # The gate builds rustdoc for the baseline tag as well as the candidate,
+      # so it needs the tags and the commits they point at.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+      - name: Public Rust API compatibility against the previous stable tag
+        run: nix develop .#ci-semver -c cargo make semver-check
+
   aggregate:
     if: always()
-    needs: [source-fast, rust, adapters, dependencies, fuzz, nix-package]
+    needs: [source-fast, rust, adapters, dependencies, fuzz, nix-package, semver]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

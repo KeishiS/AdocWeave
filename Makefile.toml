@@ -130,6 +130,7 @@ dependencies = [
   "release-metadata-test",
   "release-notes-test",
   "release-workflow-policy",
+  "semver-gate-test",
 ]
 script_runner = "@shell"
 script = '''
@@ -164,6 +165,17 @@ args = ["--test", "tools/sync-release-version.test.mjs"]
 description = "Test canonical release manifest, SPDX SBOM, and checksum generation"
 command = "node"
 args = ["--test", "tools/release-metadata.test.mjs"]
+
+[tasks.semver-check]
+description = "Compare the candidate public Rust API against the previous stable tag"
+dependencies = ["semver-gate-test"]
+command = "node"
+args = ["tools/semver-gate.mjs"]
+
+[tasks.semver-gate-test]
+description = "Test release step derivation, baseline selection, and fail-closed behavior"
+command = "node"
+args = ["--test", "tools/semver-gate.test.mjs"]
 
 [tasks.dependency-governance]
 description = "Audit every dependency boundary, license, source, advisory, and exception"

@@ -256,6 +256,13 @@
             rust = ciRust pkgs;
             extra = [ adocweave-fuzz ];
           };
+          # Only the API compatibility gate needs cargo-semver-checks, and it
+          # builds rustdoc for both the candidate and the baseline tag, so it
+          # stays out of the shells that every other job realizes.
+          ci-semver = shell {
+            rust = ciRust pkgs;
+            extra = [ pkgs.cargo-semver-checks ];
+          };
           html5 = pkgs.mkShell {
             packages = [
               pkgs.nodejs
