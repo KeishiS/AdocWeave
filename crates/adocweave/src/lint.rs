@@ -482,13 +482,24 @@ impl<'a> LintDiagnosticSink<'a> {
         self.cancelled
     }
 
+    /// Records one diagnostic, dropping a fix this rule may not offer.
+    ///
+    /// A rule that produces a fix it did not declare, or edits that overlap, is
+    /// a defect in this crate. It is still not a reason to end the calling
+    /// process: a Language Server that dies mid-keystroke loses the editor
+    /// session, and a command-line run loses every diagnostic it had already
+    /// found. The diagnostic itself is reported without the fix, so the author
+    /// keeps the finding and the defect stays visible in the tests below.
     fn emit(
         &mut self,
         rule: LintRuleId,
         range: TextRange,
         body: impl FnOnce() -> LintDiagnosticBody,
     ) {
-        let descriptor = lint_rule(rule.as_str()).expect("lint diagnostic rule is registered");
+        let Some(descriptor) = lint_rule(rule.as_str()) else {
+            debug_assert!(false, "lint diagnostic rule is not registered: {rule:?}");
+            return;
+        };
         if self.is_full() {
             return;
         }
@@ -497,19 +508,26 @@ impl<'a> LintDiagnosticSink<'a> {
             return;
         }
         let body = body();
-        assert!(
+        debug_assert!(
             body.fixes.is_empty() || descriptor.fixable,
             "non-fixable lint rule emitted a fix: {}",
             rule.as_str()
         );
-        let fixes = body
-            .fixes
-            .into_iter()
-            .map(|fix| {
-                Fix::new(fix.title, fix.applicability, fix.edits)
-                    .expect("lint fix edits cannot conflict")
-            })
-            .collect();
+        let fixes = if descriptor.fixable {
+            body.fixes
+                .into_iter()
+                .filter_map(|fix| {
+                    let title = fix.title.clone();
+                    Fix::new(fix.title, fix.applicability, fix.edits)
+                        .inspect_err(|_| {
+                            debug_assert!(false, "lint fix edits conflict: {rule:?} {title}");
+                        })
+                        .ok()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.diagnostics.push(Diagnostic {
             id: DiagnosticId::new(format!(
                 "{}@{}:{}",
@@ -667,6 +685,77 @@ mod tests {
     };
     use crate::core::{AnalysisOptions, CancellationCheck, Engine};
     use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
+
+    /// A defect inside a lint rule must not end the calling process.
+    ///
+    /// The Language Server answers keystrokes from one process, so a panic here
+    /// takes the editor session with it. The command-line interface loses every
+    /// diagnostic it had already found. Both are worse outcomes than reporting
+    /// the finding without its fix, so these paths are exercised in release
+    /// builds where the debug assertions do not fire.
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn a_defective_rule_loses_its_fix_rather_than_the_whole_run() {
+        let range = text_range(0, 1).expect("range");
+        let edit = TextEdit {
+            range,
+            replacement: "x".to_owned(),
+        };
+        let conflicting = LintDiagnosticBody {
+            message: "message".to_owned(),
+            related: Vec::new(),
+            fixes: vec![super::LintFixSpec {
+                title: "title".to_owned(),
+                applicability: Applicability::Always,
+                // The same range twice cannot be applied as one fix.
+                edits: vec![edit.clone(), edit],
+            }],
+        };
+
+        let config = LintConfig::default();
+
+        // A rule that may offer a fix, but produced one that cannot be applied.
+        let mut sink = LintDiagnosticSink::new(&config);
+        sink.emit(TRAILING_WHITESPACE, range, || conflicting);
+        let diagnostics = sink.finish();
+        assert_eq!(diagnostics.len(), 1, "the finding survives");
+        assert!(
+            diagnostics[0].fixes.is_empty(),
+            "the unusable fix is dropped"
+        );
+
+        // A rule that may not offer a fix at all, but produced one.
+        let mut sink = LintDiagnosticSink::new(&config);
+        sink.emit(LINE_TOO_LONG, range, || LintDiagnosticBody {
+            message: "message".to_owned(),
+            related: Vec::new(),
+            fixes: vec![super::LintFixSpec {
+                title: "title".to_owned(),
+                applicability: Applicability::Always,
+                edits: vec![TextEdit {
+                    range,
+                    replacement: String::new(),
+                }],
+            }],
+        });
+        let diagnostics = sink.finish();
+        assert_eq!(diagnostics.len(), 1, "the finding survives");
+        assert!(
+            diagnostics[0].fixes.is_empty(),
+            "the undeclared fix is dropped"
+        );
+
+        // A rule the catalog does not know reports nothing and returns.
+        let mut sink = LintDiagnosticSink::new(&config);
+        sink.emit(LintRuleId("never-registered"), range, || {
+            LintDiagnosticBody {
+                message: "message".to_owned(),
+                related: Vec::new(),
+                fixes: Vec::new(),
+            }
+        });
+        assert!(sink.finish().is_empty());
+    }
 
     #[test]
     fn linting_cancels_at_a_bounded_line_checkpoint() {
@@ -1221,7 +1310,9 @@ mod tests {
         assert_eq!(diagnostics[1].related[0].range, first);
     }
 
+    /// Debug builds still stop at the defect, so it is found while developing.
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "non-fixable lint rule emitted a fix: line-too-long")]
     fn diagnostic_sink_rejects_fixes_from_non_fixable_rules() {
         let config = LintConfig::default();
@@ -1239,7 +1330,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "lint diagnostic rule is registered")]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "lint diagnostic rule is not registered")]
     fn diagnostic_sink_rejects_rules_missing_from_the_catalog() {
         let rule = LintRuleId("missing-from-catalog");
         let mut config = LintConfig::default();
