@@ -14,23 +14,24 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /引用として解析し、公開APIへ構造化して公開しました/);
-  assert.match(notes, /`locator`などの名前付き属性は引用の補足として保持します/);
-  assert.match(notes, /解析の入口を`Engine::analyze`と`Engine::analyze_with`の2つへ整理/);
-  assert.match(notes, /keyを一つも持たない/);
+  assert.match(notes, /引用情報を公開projectionとWASM protocolへ公開しました/);
+  assert.match(notes, /解決した引用表示をHTMLへ渡せるようにしました/);
+  assert.match(notes, /断片ごとに参照先anchorを指定できます/);
+  assert.match(notes, /その項目へlinkし、項目側の戻りlinkにも並びます/);
+  assert.match(notes, /解決できるはずのlocal targetを検査不能として報告することがあった問題を修正しました/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /WASM protocol schema version/);
-  assert.match(notes, /v0\.21\.0から変更していません/);
-  assert.match(notes, /`Engine::analyze_with`へ統合しました/);
-  assert.match(notes, /`adocweave::output::conformance`から参照します/);
+  assert.match(notes, /schema versionをv0\.22\.0の7から9へ更新しました/);
+  assert.match(notes, /`RenderInputs::new`を削除しました/);
+  assert.match(notes, /診断code`unknown-citation-anchor`を追加しました/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /設定の移行は不要です/);
-  assert.match(notes, /`Engine::analyze_with\(source, AnalysisInputs \{ source_id: Some\(&id\)/);
-  assert.match(notes, /importを`adocweave::output::conformance`へ変更してください/);
+  assert.match(notes, /`RenderInputs::default\(\)\.with_references\(references\)\.with_resources\(resources\)`へ置き換えてください/);
+  assert.match(notes, /macro全体のrangeで解決結果を渡してください/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
@@ -42,8 +43,8 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
   assert.match(notes, /Authenticode署名を行いません/);
-  assert.match(notes, /citation keyの解決は利用側アプリの責務です/);
-  assert.match(notes, /解決前の表示は`unresolved_references`の設定に従い/);
+  assert.match(notes, /引用表示の組み立ては利用側アプリの責務です/);
+  assert.match(notes, /解決結果を渡さない引用の表示は`unresolved_references`の設定に従い/);
   assert.match(notes, /複数ファイルの解析にはディレクトリのworkspace folderが必要/);
   assert.match(
     notes,
@@ -57,7 +58,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.21.0"), /v0\.22\.0専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.22\.0専用/);
+  assert.throws(() => buildReleaseNotes("v0.22.0"), /v0\.23\.0専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.23\.0専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });

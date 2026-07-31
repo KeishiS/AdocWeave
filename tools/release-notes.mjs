@@ -23,33 +23,35 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "外部の書誌ライブラリーを参照する`cite:[key]`を引用として解析し、公開APIへ構造化して公開しました。citation key、macro全体と各keyのsource range、名前付き属性および文書全体での出現順を取得できます。",
-  "`cite:[a, b]`のように複数のkeyを指定できます。`locator`などの名前付き属性は引用の補足として保持します。",
-  "keyを一つも持たない`cite:[]`を`invalid-catalog`として診断します。従来は出力から黙って消えていました。",
-  "解析の入口を`Engine::analyze`と`Engine::analyze_with`の2つへ整理しました。渡す入力の組み合わせごとにmethodを用意しません。",
-  "既存の標準bibliography（`[[[key]]]`と`<<key>>`）は変更していません。",
+  "`cite:`の引用情報を公開projectionとWASM protocolへ公開しました。citation key、macro全体と各keyのsource range、名前付き属性および文書全体での出現順を、解析結果を再度字句解析せずに取得できます。",
+  "利用側アプリが解決した引用表示をHTMLへ渡せるようにしました。`RenderInputs`へ引用の解決結果を与えると、その文字列で描画します。",
+  "解決結果は表示順に並べた文字列の断片で、断片ごとに参照先anchorを指定できます。`(Smith 2024; Tanaka 2025)`のように、括弧や区切り文字を素の文字列のまま残し、著者名の部分だけをlinkにできます。",
+  "`cite:[key]`のkeyが同じ文書の`[bibliography]`項目を指す場合、利用側アプリの解決なしでもその項目へlinkし、項目側の戻りlinkにも並びます。戻りlinkの番号は原文の位置の順に付きます。",
+  "`RenderInputs`を、空の値から必要な種類だけを与えて組み立てる形へ変更しました。",
+  "Linuxで、検査中にほかのプロセスがworkspaceを変更した場合に、解決できるはずのlocal targetを検査不能として報告することがあった問題を修正しました。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.21.0から変更していません。`,
-  "WASM protocol、CLI引数、Language Server protocolおよび設定schemaはv0.21.0から変更していません。",
-  "破壊的変更：`Engine::analyze_with_source_id`、`analyze_cancellable`および`analyze_cancellable_with_source_id`を削除し、`Engine::analyze_with`へ統合しました。`AnalysisInputs`で`SourceId`と協調キャンセルを渡します。",
-  "破壊的変更：`adocweave::ProductSet`と`adocweave::DocumentProducts`のcrate直下の再公開を外しました。`adocweave::output::conformance`から参照します。",
-  "対応するAsciiDocの範囲を広げました。`cite:`を含む既存文書は、従来テキストとして出力していた箇所が引用として解析されます。",
-  "`adocweave::AnalysisCacheKey`を新たに参照できます。",
-  "HTMLの許可classへ`citation`を追加しました。エスケープと許可リスト方式は変更していません。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。schema versionをv0.22.0の7から9へ更新しました。`,
+  "公開projectionへ`citations`を追加しました。既存のfieldは変更していません。",
+  "WASM protocolへ`ResolvedCitation`、`CitationSegment`および`ResolvedCitationOutcome`を追加し、`renderInputs`へ`citations`を追加しました。省略した場合は解決結果が一つもない状態として扱うため、既存の要求はそのまま受け付けます。",
+  "破壊的変更：`RenderInputs::new`を削除しました。`RenderInputs::default()`から`with_references`、`with_resources`および`with_citations`で必要な種類だけを与えます。",
+  "CLI引数、Language Server protocolおよび設定schemaはv0.21.0から変更していません。",
+  "利用側アプリが解決した引用の断片は、公開可能なプレーンテキストとして扱います。AsciiDoc、属性参照またはHTMLとして再解析しません。anchorは出力直前に検査し、その文書が定義している対象を指す場合だけlinkを生成します。",
+  "診断code`unknown-citation-anchor`を追加しました。解決済みの引用が、文書の定義しないanchorを指した場合に返します。",
+  "HTMLの許可class、エスケープおよび許可リスト方式は変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。既存の診断code、HTML出力および終了状態は`cite:`を含まない文書で変わりません。",
-  "`Engine::analyze_with_source_id`を使っていた場合は`Engine::analyze_with(source, AnalysisInputs { source_id: Some(&id), ..Default::default() })`へ置き換えてください。",
-  "`Engine::analyze_cancellable`は`AnalysisInputs { cancellation: Some(&token), ..Default::default() }`、両方を渡す場合は両fieldを指定します。引数の順序がsourceを先にする形へそろいます。",
-  "`adocweave::ProductSet`と`adocweave::DocumentProducts`のimportを`adocweave::output::conformance`へ変更してください。",
-  "`cite:`をこれまで通常のテキストとして出力していた文書は、出力が変わります。引用として扱わない場合は記述を変更してください。",
-  "citation keyの解決は利用側アプリが行います。現在の版では解決結果をHTMLへ渡す経路がないため、解決前の表示は`unresolved_references`の設定に従います。",
+  "設定の移行は不要です。既存の診断code、HTML出力および終了状態は、`cite:`を含まず引用の解決結果を渡さない文書で変わりません。",
+  "`RenderInputs::new(references, resources)`を使っていた場合は`RenderInputs::default().with_references(references).with_resources(resources)`へ置き換えてください。空の`Vec`しか渡していなかった種類は、対応する呼び出しを省略できます。",
+  "WASM APIの`renderInputs`は変更不要です。`citations`を省略した場合の動作はv0.22.0と同じです。",
+  "公開projectionをJSON schemaや型定義で検証している場合は、`citations`の追加に合わせて更新してください。",
+  "`cite:[key]`のkeyが文書内の`[bibliography]`項目と同じ名前の場合、v0.22.0ではkeyをそのまま表示していましたが、この版からその項目へのlinkになります。項目側にも戻りlinkが増えます。",
+  "利用側アプリが引用を解決する場合は、`cite:`から閉じ括弧までのmacro全体のrangeで解決結果を渡してください。個々のkeyのrangeでは照合しません。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
@@ -60,9 +62,9 @@ const knownConstraints = [
   "Zed拡張はdevelopment extension、VS Code拡張はVSIXとして手動導入します。拡張registryへは公開しません。",
   "公式Playgroundはこのreleaseに含みません。`adocweave preview`は利用者の端末で実行するローカル機能です。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
-  "AdocWeaveはBibTeXの保存・解析やCSL相当の書誌の組版を行いません。citation keyの解決は利用側アプリの責務です。",
-  "citationの引用情報はまだprojectionとWASM protocolへ公開していません。現在はRust APIの`Analysis::citations()`から取得します。",
-  "ホストが解決した引用表示をHTMLへ渡す経路はまだありません。解決前の表示は`unresolved_references`の設定に従い、`hidden`では出力しません。",
+  "AdocWeaveはBibTeXの保存・解析やCSL相当の書誌の組版を行いません。citation keyの解決と引用表示の組み立ては利用側アプリの責務です。",
+  "解決結果を渡さない引用の表示は`unresolved_references`の設定に従い、`hidden`では出力しません。ただし文書内の`[bibliography]`項目を指すkeyは、設定にかかわらずその項目へのlinkとして出力します。",
+  "引用の解決結果は文書全体の並べ替えを行いません。番号付きの引用styleで通し番号を振る場合は、利用側アプリが出現順を見て文字列を決めてください。出現順は公開projectionの`citations`から取得できます。",
   "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
 ];
 
