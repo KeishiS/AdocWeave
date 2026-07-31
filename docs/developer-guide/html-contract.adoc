@@ -150,15 +150,15 @@ HTML、解析診断および描画診断の対応を検査できます。各case
 * table、quoteおよびlist
 * 安全でないURLの解析診断、描画診断および非active HTML fallback
 
-公開契約は`stableContract`に列挙した意味上の値とHTML構造だけです。期待出力file全体はAdocWeave内の
+公開仕様は`stableContract`に列挙した意味上の値とHTML構造だけです。期待出力file全体はAdocWeave内の
 決定性とruntime間の一致を検査するgolden fileであり、JSONのkey順と空白、HTMLの属性順、字下げ、
 空白、末尾改行および未選択の投影fieldは利用側の安定APIではありません。利用側はこれらのbyte列を
-固定せず、必要な契約項目だけを選択して検査します。
+固定せず、必要な項目だけを選択して検査します。
 
 Source blockではtitle、language、option、linenums、開始行およびsource本文と、対応する安全なHTML構造を
 保証します。数式ではprojectionのlanguage `latex`、表示形式`inline`または`block`、source本文と、
 HTMLの``data-math-language="latexmath"``および``data-math-display``を保証します。Tableのcell構造、
-quoteの追加presentationおよびlist itemを表す未選択のprojection fieldは現行契約に含めず、tableとlistの
+quoteの追加presentationおよびlist itemを表す未選択のprojection fieldは現行の公開仕様に含めず、tableとlistの
 HTML断片、およびquoteの既存`blockPresentations`だけを保証します。
 
 == golden fixtureの保守
@@ -173,8 +173,8 @@ cargo test -p adocweave --test public_conformance_fixture regenerate_public_fixt
 cargo test -p adocweave-wasm --test conformance regenerate_shared_fixture_products -- --ignored
 ----
 
-書き出すコマンドはgateに含めません。golden fileは、実装の変更が公開契約へ与えた影響を見えるようにする
-ためのものであり、読まずに上書きするとその目的が失われます。契約を変えたときは、コマンドを実行してから
+書き出すコマンドはgateに含めません。golden fileは、実装の変更が公開仕様へ与えた影響を見えるようにする
+ためのものであり、読まずに上書きするとその目的が失われます。公開仕様を変えたときは、コマンドを実行してから
 差分を1件ずつ読み、意図した変更だけであることを確かめてcommitします。
 
 一致を検査するtestはgateに含めます。これにより、fileの整形が書き手ごとに揺れることも、複数のcaseが

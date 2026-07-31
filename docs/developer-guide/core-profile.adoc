@@ -144,7 +144,7 @@ spaceへ畳み、hard breakのplusを残してmarkerを改行へ畳んだ意味�
 ``Analysis::attribute_references()``は各参照の名前、range、有効値および決定binding IDを返します。
 Binding IDは同じ解析snapshot内だけで有効であり、``AttributeEnvironment::binding()``で対応する
 source occurrenceを取得します。
-属性fixtureと保証対象の対応は link:../../fixtures/attributes/manifest.json[属性契約manifest]を基準とし、
+属性fixtureと保証対象の対応は link:../../fixtures/attributes/manifest.json[属性の公開仕様manifest]を基準とし、
 repository検査でfixture一覧とこの文書体系の同期を確認します。
 
 前処理と解析を一度に行う場合は、``AnalysisOptions``と``PreprocessOptions``から

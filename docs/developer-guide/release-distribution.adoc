@@ -136,7 +136,7 @@ cargo make release-gate
 macOS deployment target、VSIX metadataおよび一時directory削除の再試行条件をfixtureで検証します。
 このtaskはhost OSに依存せず、pull requestとlocalで同じtestを実行します。
 実OS操作ではfilesystem、process制御、時刻、platformおよびpath実装をruntime adapterとして注入し、
-契約判定からNode.jsのhost APIを分離します。
+``platform-contract``の判定からNode.jsのhost APIを分離します。
 
 ``cross-native-check``はWindows MSVCとmacOS ARM64向けに``cargo check``を実行します。この検査は型検査と
 条件付きcompileだけを対象とし、linkと実行は行いません。
@@ -166,7 +166,7 @@ installation E2Eを実行せず、最終gateを失敗させます。
 Pull Requestでは変更計画が選択したcandidate familyだけをインストール・削除します。native成果物は
 対象OSのrunner、global成果物はUbuntu runnerで個別に検証し、構築していないfamilyを要求しません。
 両familyを選択した場合は両方の検証成功を最終gateで要求します。未公開versionの``main`` candidateと
-tagから再利用するcandidateでは、配布契約に含まれる全assetを引き続き要求します。
+tagから再利用するcandidateでは、配布仕様に含まれる全assetを引き続き要求します。
 
 === 公開Rust APIの互換性
 
@@ -215,6 +215,17 @@ tagを作成するまでは、配布計画にある全targetとglobal成果物�
 完全なcandidateを保存します。candidateが失敗した後の修正commitでも同じ検査を再実行します。
 後から作成したversion tagは、同じcommitに対する成功済みcandidateを再検証して再利用します。
 新しいcommitによって不要になったPull Requestまたは``main``のrunは取り消しますが、tagの公開runは取り消しません。
+
+=== candidateの保持期間
+
+``main`` candidateはworkflow artifactとして14日間保持します。tagはこの期間内に作成してください。
+期間を過ぎるとartifactが失われ、tagの公開処理は再利用するcandidateを見つけられずに失敗します。
+その場合は、同じcommitへ空でない変更を加えて``main`` candidateを作り直す必要があります。
+
+``main`` pushのrunは``cancel-in-progress``の対象です。version同期のcommitが``main``へ入った直後に
+別のcommitが入ると、前者のcandidateは取り消されます。tagを作成できるのは常に最新の``main``
+commitに対してだけです。releaseを準備してからtagを作成するまでの間は、``main``へほかの変更を
+統合しないでください。
 
 この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は
 xref:../../CONTRIBUTING.adoc[コントリビューションガイド]に従います。
