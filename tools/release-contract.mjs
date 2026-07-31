@@ -309,7 +309,7 @@ function verifyRepository() {
       !releaseWorkflow.includes("uses: ./.github/workflows/native-artifact-smoke.yml")) {
     fail("release workflow does not gate on native archive smoke tests");
   }
-  if (!releaseWorkflow.includes("nix develop .#ci -c cargo make release-global-candidate")) {
+  if (!releaseWorkflow.includes("nix develop .#ci-browser -c cargo make release-global-candidate")) {
     fail("release workflow must build and runtime-test the exact global archives before upload");
   }
   if (!nativeSmokeWorkflow.includes("matrix: ${{ fromJSON(inputs.matrix) }}") ||

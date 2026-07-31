@@ -263,6 +263,14 @@
             rust = ciRust pkgs;
             extra = [ pkgs.cargo-semver-checks ];
           };
+          # The browser acceptance gate must run against a browser this
+          # repository pins, not whichever one the runner image happens to
+          # carry. Chromium is large, so only the job that runs that gate
+          # realizes it.
+          ci-browser = shell {
+            rust = ciRust pkgs;
+            extra = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.chromium pkgs.xvfb ];
+          };
           html5 = pkgs.mkShell {
             packages = [
               pkgs.nodejs
