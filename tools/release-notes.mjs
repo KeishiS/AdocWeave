@@ -29,6 +29,7 @@ const highlights = [
   "`cite:[key]`のkeyが同じ文書の`[bibliography]`項目を指す場合、利用側アプリの解決なしでもその項目へlinkし、項目側の戻りlinkにも並びます。戻りlinkの番号は原文の位置の順に付きます。",
   "`RenderInputs`を、空の値から必要な種類だけを与えて組み立てる形へ変更しました。",
   "Linuxで、検査中にほかのプロセスがworkspaceを変更した場合に、解決できるはずのlocal targetを検査不能として報告することがあった問題を修正しました。",
+  "前処理の入口を6変種から整理し、任意の入力を`PreprocessInputs`へまとめました。",
 ];
 
 const contractNotes = [
@@ -37,6 +38,7 @@ const contractNotes = [
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。schema versionをv0.22.0の7から9へ更新しました。`,
   "公開projectionへ`citations`を追加しました。既存のfieldは変更していません。",
   "WASM protocolへ`ResolvedCitation`、`CitationSegment`および`ResolvedCitationOutcome`を追加し、`renderInputs`へ`citations`を追加しました。省略した場合は解決結果が一つもない状態として扱うため、既存の要求はそのまま受け付けます。",
+  "破壊的変更：前処理の入口から`preprocess_cancellable`、`preprocess_and_analyze_cancellable`、`preprocess_and_analyze_with_options`および`preprocess_and_analyze_cancellable_with_options`を削除しました。`preprocess_with`、`preprocess_and_analyze_with`および`EffectiveProcessingOptions::preprocess_and_analyze`へ統合しています。",
   "破壊的変更：`RenderInputs::new`を削除しました。`RenderInputs::default()`から`with_references`、`with_resources`および`with_citations`で必要な種類だけを与えます。",
   "CLI引数、Language Server protocolおよび設定schemaはv0.21.0から変更していません。",
   "利用側アプリが解決した引用の断片は、公開可能なプレーンテキストとして扱います。AsciiDoc、属性参照またはHTMLとして再解析しません。anchorは出力直前に検査し、その文書が定義している対象を指す場合だけlinkを生成します。",
@@ -48,6 +50,8 @@ const contractNotes = [
 const migrationNotes = [
   "設定の移行は不要です。既存の診断code、HTML出力および終了状態は、`cite:`を含まず引用の解決結果を渡さない文書で変わりません。",
   "`RenderInputs::new(references, resources)`を使っていた場合は`RenderInputs::default().with_references(references).with_resources(resources)`へ置き換えてください。空の`Vec`しか渡していなかった種類は、対応する呼び出しを省略できます。",
+  "`preprocess_cancellable(source, snapshot, options, &token)`は`preprocess_with(source, snapshot, options, PreprocessInputs { cancellation: Some(&token) })`へ置き換えてください。`preprocess_and_analyze_cancellable`も同じ形です。キャンセルを渡していなかった場合は`PreprocessInputs::default()`を使います。",
+  "`preprocess_and_analyze_with_options(source, snapshot, &effective)`は`effective.preprocess_and_analyze(source, snapshot, PreprocessInputs::default())`へ置き換えてください。",
   "WASM APIの`renderInputs`は変更不要です。`citations`を省略した場合の動作はv0.22.0と同じです。",
   "公開projectionをJSON schemaや型定義で検証している場合は、`citations`の追加に合わせて更新してください。",
   "`cite:[key]`のkeyが文書内の`[bibliography]`項目と同じ名前の場合、v0.22.0ではkeyをそのまま表示していましたが、この版からその項目へのlinkになります。項目側にも戻りlinkが増えます。",
