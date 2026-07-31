@@ -90,7 +90,10 @@ directory、権限不足および検査不能なtargetは安定したcodeを持�
 標準入力の基準directoryはproject rootです。
 
 Linuxでは、project rootのdirectory handleを基準に各path componentを開く``HandleRelative``方式を使用し、
-検証後のpathを名前から開き直す競合を避けます。macOSとWindowsでは``StaticSnapshotOnly``方式を使用します。
+検証後のpathを名前から開き直す競合を避けます。検査の最中に、ほかのプロセスがpath上のdirectoryをrenameしたり
+mountしたりすると、kernelはその検査を安全に完了できないと判断して中断します。この場合は同じ検査をやり直します。
+やり直しの回数には上限があり、変更が続いて完了できない場合は``local-target-unverifiable``を報告します。
+macOSとWindowsでは``StaticSnapshotOnly``方式を使用します。
 この方式は、検査中にworkspaceを同時変更しない、信頼済みのworkspaceだけを対象とします。信頼できない入力を
 検査する場合は、書換え不能なsnapshotへコピーしてから実行してください。
 

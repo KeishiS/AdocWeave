@@ -9,6 +9,14 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::local_resource::FilesystemReadLimits;
 
+/// How many times a confined open may be retried after a concurrent-change race.
+///
+/// Each retry is a single syscall against a path that is almost always stable,
+/// so a small bound absorbs ordinary churn without turning a persistently
+/// changing directory into an unbounded wait.
+#[cfg(target_os = "linux")]
+const CONFINED_OPEN_ATTEMPTS: u32 = 8;
+
 #[derive(Clone, Copy)]
 pub(crate) struct CandidateReadCapacity {
     pub allow_file: bool,
@@ -143,13 +151,28 @@ impl LocalTargetPolicy {
         let root =
             fs::File::open(&self.root).map_err(|source| classify_io(self.root.clone(), source))?;
         let flags = OFlags::RDONLY | OFlags::CLOEXEC;
-        let file = match openat2(
-            &root,
-            relative,
-            flags,
-            Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
-        ) {
+        // `RESOLVE_BENEATH` makes the kernel give up with `EAGAIN` when another
+        // process renames or mounts something along this path while it is being
+        // resolved. The lookup was neither denied nor granted, so the only
+        // correct response is to look again. The attempt count is bounded so a
+        // filesystem under constant churn fails instead of spinning.
+        let mut attempts = 0;
+        let file = loop {
+            let outcome = openat2(
+                &root,
+                relative,
+                flags,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+            );
+            attempts += 1;
+            if matches!(outcome, Err(rustix::io::Errno::AGAIN)) && attempts < CONFINED_OPEN_ATTEMPTS
+            {
+                continue;
+            }
+            break outcome;
+        };
+        let file = match file {
             Ok(file) => fs::File::from(file),
             Err(error)
                 if error == rustix::io::Errno::NOSYS || error == rustix::io::Errno::INVAL =>
@@ -900,6 +923,58 @@ mod tests {
                 "local-target-outside-root"
             );
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_concurrent_rename_along_the_path_does_not_change_the_verdict() {
+        use std::os::unix::fs::symlink;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let root = TestDir::new();
+        let destination =
+            include_str!("../../../fixtures/local-target/dangling-symlink.target").trim();
+        symlink(destination, root.0.join("docs/escape-dir")).expect("dangling directory symlink");
+        fs::write(root.0.join("docs/inside.adoc"), "= Inside\n").expect("regular file");
+        fs::create_dir(root.0.join("docs/churn")).expect("churn directory");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+
+        // Renaming a sibling makes the kernel abandon a confined lookup with
+        // `EAGAIN`, which is the race that used to surface as an intermittent
+        // `local-target-unverifiable`.
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let churn = {
+            let stop = std::sync::Arc::clone(&stop);
+            let docs = root.0.join("docs");
+            std::thread::spawn(move || {
+                let (left, right) = (docs.join("churn"), docs.join("churn-moved"));
+                let mut at_left = true;
+                while !stop.load(Ordering::Relaxed) {
+                    let (from, to) = if at_left {
+                        (&left, &right)
+                    } else {
+                        (&right, &left)
+                    };
+                    if fs::rename(from, to).is_ok() {
+                        at_left = !at_left;
+                    }
+                }
+            })
+        };
+
+        let docs = root.0.join("docs");
+        for _ in 0..2000 {
+            assert_eq!(
+                policy
+                    .inspect(&docs, "escape-dir/child.adoc")
+                    .expect_err("dangling symlink escape")
+                    .diagnostic_code(),
+                "local-target-outside-root"
+            );
+            policy.inspect(&docs, "inside.adoc").expect("regular file");
+        }
+        stop.store(true, Ordering::Relaxed);
+        churn.join().expect("churn thread");
     }
 
     #[cfg(unix)]
