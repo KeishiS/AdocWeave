@@ -104,6 +104,30 @@ pub struct WasmBlockPresentationProjection {
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmCitationAttributeProjection {
+    pub source_range: WasmTextRange,
+    pub name: Option<String>,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmCitationKeyProjection {
+    pub source_range: WasmTextRange,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmCitationProjection {
+    pub order: u32,
+    pub source_range: WasmTextRange,
+    pub keys: Vec<WasmCitationKeyProjection>,
+    pub attributes: Vec<WasmCitationAttributeProjection>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDiagnostic {
     pub id: String,
     pub code: String,
@@ -174,6 +198,7 @@ pub struct WasmDocumentProjection {
     pub source_id: Option<String>,
     pub source_blocks: Vec<WasmSourceBlockProjection>,
     pub formulas: Vec<WasmFormulaProjection>,
+    pub citations: Vec<WasmCitationProjection>,
     pub block_presentations: Vec<WasmBlockPresentationProjection>,
     pub ordered_lists: Vec<WasmOrderedListProjection>,
     pub reference_edges: Vec<WasmReferenceEdge>,

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 7,
+  "schemaVersion": 8,
   "packageVersion": "0.22.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
@@ -266,6 +266,27 @@
         { "json": "sourceRange", "type": "TextRange", "required": true },
         { "json": "contentRange", "type": "TextRange", "required": true },
         { "json": "source", "type": "string", "required": true }
+      ]
+    },
+    "CitationKeyProjection": {
+      "fields": [
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "key", "type": "string", "required": true }
+      ]
+    },
+    "CitationAttributeProjection": {
+      "fields": [
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "name", "type": "string | null", "required": true },
+        { "json": "value", "type": "string", "required": true }
+      ]
+    },
+    "CitationProjection": {
+      "fields": [
+        { "json": "order", "type": "u32", "required": true },
+        { "json": "sourceRange", "type": "TextRange", "required": true },
+        { "json": "keys", "type": "CitationKeyProjection[]", "required": true },
+        { "json": "attributes", "type": "CitationAttributeProjection[]", "required": true }
       ]
     },
     "ProjectedText": {
@@ -641,6 +662,7 @@
         { "json": "sourceId", "type": "string | null" },
         { "json": "sourceBlocks", "type": "SourceBlockProjection[]" },
         { "json": "formulas", "type": "FormulaProjection[]" },
+        { "json": "citations", "type": "CitationProjection[]" },
         { "json": "blockPresentations", "type": "BlockPresentationProjection[]" },
         { "json": "orderedLists", "type": "OrderedListProjection[]" },
         { "json": "referenceEdges", "type": "ReferenceEdge[]" },

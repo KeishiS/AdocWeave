@@ -23,6 +23,11 @@ pub struct DocumentProjection {
     pub ordered_lists: Vec<OrderedListProjection>,
     pub block_presentations: Vec<BlockPresentationProjection>,
     pub formulas: Vec<FormulaProjection>,
+    /// Citations of entries held by a bibliography library outside the document.
+    ///
+    /// AdocWeave never resolves these keys. A host reads them, resolves them
+    /// against its own library, and passes the result back for rendering.
+    pub citations: Vec<crate::citation::Citation>,
     pub searchable_text: SearchableText,
     pub catalogs: crate::catalog::DocumentCatalogs,
     pub structure: crate::structure::DocumentStructure,
@@ -366,6 +371,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         ordered_lists,
         block_presentations,
         formulas,
+        citations: analysis.citations(),
         searchable_text: searchable_text(analysis),
         catalogs: analysis.catalogs().clone(),
         structure: analysis.structure().clone(),
@@ -732,6 +738,49 @@ impl DocumentProjection {
                 json_string(&formula.source),
             )
             .expect("writing to String cannot fail");
+        }
+        output.push_str("],\"citations\":[");
+        for (index, citation) in self.citations.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            write!(
+                output,
+                "{{\"order\":{},\"sourceRange\":{},\"keys\":[",
+                citation.order,
+                json_range(citation.range),
+            )
+            .expect("writing to String cannot fail");
+            for (key_index, key) in citation.keys.iter().enumerate() {
+                if key_index > 0 {
+                    output.push(',');
+                }
+                write!(
+                    output,
+                    "{{\"sourceRange\":{},\"key\":{}}}",
+                    json_range(key.range),
+                    json_string(&key.value),
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push_str("],\"attributes\":[");
+            for (attribute_index, attribute) in citation.attributes.iter().enumerate() {
+                if attribute_index > 0 {
+                    output.push(',');
+                }
+                write!(
+                    output,
+                    "{{\"sourceRange\":{},\"name\":{},\"value\":{}}}",
+                    json_range(attribute.range),
+                    attribute
+                        .name
+                        .as_deref()
+                        .map_or_else(|| "null".to_owned(), json_string),
+                    json_string(&attribute.value),
+                )
+                .expect("writing to String cannot fail");
+            }
+            output.push_str("]}");
         }
         output.push_str("],\"orderedLists\":[");
         for (index, list) in self.ordered_lists.iter().enumerate() {
@@ -1491,6 +1540,37 @@ let x = 1;
     }
 
     #[test]
+    fn citations_reach_the_projection_json_with_keys_attributes_and_order() {
+        let source = "See cite:[smith2024, tanaka2025] and cite:[a, locator=\"p. 12\"].\n";
+        let analysis = crate::Engine::new(crate::AnalysisOptions::default())
+            .analyze(source)
+            .expect("analysis");
+        let json = project(&analysis, &RenderInputs::default()).render_json();
+
+        // Keys keep their source order and their own ranges.
+        assert!(json.contains(
+            "\"citations\":[{\"order\":0,\"sourceRange\":{\"start\":4,\"end\":32},\"keys\":[\
+             {\"sourceRange\":{\"start\":10,\"end\":19},\"key\":\"smith2024\"},\
+             {\"sourceRange\":{\"start\":21,\"end\":31},\"key\":\"tanaka2025\"}],\"attributes\":[]}"
+        ));
+        // A named attribute is reported apart from the keys.
+        assert!(json.contains("\"key\":\"a\"}],\"attributes\":[{\"sourceRange\":"));
+        assert!(json.contains("\"name\":\"locator\",\"value\":\"p. 12\""));
+        assert!(json.contains("\"order\":1,"));
+
+        // The recorded ranges address the original source.
+        let value = project(&analysis, &RenderInputs::default());
+        for citation in &value.citations {
+            for key in &citation.keys {
+                assert_eq!(
+                    &source[key.range.start().to_usize()..key.range.end().to_usize()],
+                    key.value
+                );
+            }
+        }
+    }
+
+    #[test]
     fn projections_keep_the_public_baseline_json_contract() {
         let analysis = Engine::new(AnalysisOptions::default())
             .analyze("= T")
@@ -1502,7 +1582,7 @@ let x = 1;
                 "\"packageVersion\":\"<package-version>\"",
                 1,
             ),
-            "{\"packageVersion\":\"<package-version>\",\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"packageVersion\":\"<package-version>\",\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"citations\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

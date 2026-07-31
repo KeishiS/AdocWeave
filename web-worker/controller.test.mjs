@@ -334,6 +334,7 @@ test("generated validators cover result and client error recursively", () => {
       diagnostics: [], renderDiagnostics: [], symbols: [],
       projection: {
         packageVersion: PACKAGE_VERSION, sourceId: null, sourceBlocks: [], formulas: [],
+        citations: [],
         blockPresentations: [], orderedLists: [], referenceEdges: [], externalLinks: [],
         searchableText: { text: "", segments: [] },
         structure: { headings: [], toc: [], manpage: null },

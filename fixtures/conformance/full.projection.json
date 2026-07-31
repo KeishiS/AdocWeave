@@ -1,5 +1,24 @@
 {
   "catalogs": { "bibliography": [], "footnotes": [], "index": [] },
+  "citations": [
+    {
+      "order": 0,
+      "sourceRange": { "end": 221, "start": 193 },
+      "keys": [
+        { "sourceRange": { "end": 208, "start": 199 }, "key": "smith2024" },
+        { "sourceRange": { "end": 220, "start": 210 }, "key": "tanaka2025" }
+      ],
+      "attributes": []
+    },
+    {
+      "order": 1,
+      "sourceRange": { "end": 257, "start": 226 },
+      "keys": [{ "sourceRange": { "end": 239, "start": 232 }, "key": "doe2026" }],
+      "attributes": [
+        { "sourceRange": { "end": 256, "start": 241 }, "name": "locator", "value": "p. 12" }
+      ]
+    }
+  ],
   "packageVersion": "0.22.0",
   "externalLinks": [
     {
@@ -44,9 +63,10 @@
       { "kind": "prose", "sourceRange": { "end": 60, "start": 48 }, "text": "Introduction" },
       { "kind": "prose", "sourceRange": { "end": 154, "start": 62 }, "text": "link 戻る Other Note" },
       { "kind": "prose", "sourceRange": { "end": 163, "start": 158 }, "text": "first" },
-      { "kind": "prose", "sourceRange": { "end": 173, "start": 167 }, "text": "nested" }
+      { "kind": "prose", "sourceRange": { "end": 173, "start": 167 }, "text": "nested" },
+      { "kind": "prose", "sourceRange": { "end": 258, "start": 189 }, "text": "See  and ." }
     ],
-    "text": "統合文書\nIntroduction\nlink 戻る Other Note\nfirst\nnested"
+    "text": "統合文書\nIntroduction\nlink 戻る Other Note\nfirst\nnested\nSee  and ."
   },
   "sourceBlocks": [],
   "orderedLists": [],
