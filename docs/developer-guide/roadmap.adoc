@@ -58,7 +58,9 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 * https://github.com/KeishiS/adocweave/issues/310[日本語文書の用語統一]
 
-一括置換はせず、用語表と判定基準を決めてからuser-guideより順に進めます。
+判定基準と用語表はxref:terminology.adoc[用語の表記]に定めました。一括置換は行いません。同じ綴りが
+識別子と一般名詞の両方に現れるため、置換だけでは識別子を壊すからです。本文の修正はuser-guideより
+順に進めます。
 
 == 保留中の対話的な確認環境
 
