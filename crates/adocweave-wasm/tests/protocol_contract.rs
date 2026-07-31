@@ -81,6 +81,11 @@ fn expanded_request(corpus: &Value) -> Value {
             "sourceStart": 0,
             "sourceEnd": 1,
             "outcome": { "status": "failed", "kind": "missing" }
+        }],
+        "citations": [{
+            "sourceStart": 0,
+            "sourceEnd": 1,
+            "outcome": { "status": "resolved", "segments": [{ "text": "(Smith 2024)" }] }
         }]
     });
     request["outputLimits"] = json!({});

@@ -432,30 +432,79 @@ fn plan_standard_macro(
             }
             output.push(element_with_children("span", attributes, Vec::new()));
         }
-        // A citation has no display text of its own. Until a host resolves the
-        // key, the same policy that governs an unresolved cross reference
-        // decides whether the key stays visible.
+        // A citation has no display text of its own. A key that names an entry
+        // defined in this document links to it. Any other key belongs to a
+        // library outside the document, so until a host resolves it the same
+        // policy that governs an unresolved cross reference decides whether the
+        // key stays visible.
         Kind::Citation => {
             // Positional attributes are citation keys in source order. Named
             // attributes such as `locator` describe the citation, not a key.
             let keys = node
                 .attributes
                 .iter()
-                .filter(|attribute| attribute.name.is_none())
-                .map(|attribute| attribute.value.as_str())
+                .filter(|key| key.name.is_none())
                 .collect::<Vec<_>>();
-            match context.policy.unresolved_references {
-                UnresolvedReferencePresentation::Target
-                | UnresolvedReferencePresentation::LabelOnly => {
-                    for key in keys {
+            if let Some(segments) = plan_resolved_citation(node.range, context) {
+                // The entries this document defines already link back to each
+                // key, so those landing points must survive even though the
+                // host's text replaced the keys themselves.
+                let mut children = keys
+                    .iter()
+                    .filter(|key| {
+                        context
+                            .catalogs
+                            .bibliography()
+                            .iter()
+                            .any(|entry| entry.id == key.value)
+                    })
+                    .map(|key| {
+                        element_with_children(
+                            "span",
+                            vec![passive("id", bibliography_reference_id(key.value_range))],
+                            Vec::new(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                children.extend(segments);
+                output.push(element_with_children(
+                    "span",
+                    vec![classes(&["citation"])],
+                    children,
+                ));
+                return;
+            }
+            for key in keys {
+                let href = context
+                    .catalogs
+                    .bibliography()
+                    .iter()
+                    .find(|entry| entry.id == key.value)
+                    .and_then(|entry| SafeFragmentUrl::new(&entry.id))
+                    .map(SafeFragmentUrl::into_owned);
+                if let Some(href) = href {
+                    output.push(element_with_children(
+                        "a",
+                        vec![
+                            classes(&["citation"]),
+                            passive("id", bibliography_reference_id(key.value_range)),
+                            fragment_url("href", href),
+                        ],
+                        vec![inline_text_node(&key.value)],
+                    ));
+                    continue;
+                }
+                match context.policy.unresolved_references {
+                    UnresolvedReferencePresentation::Target
+                    | UnresolvedReferencePresentation::LabelOnly => {
                         output.push(element_with_children(
                             "span",
                             vec![classes(&["citation"])],
-                            vec![inline_text_node(key)],
+                            vec![inline_text_node(&key.value)],
                         ));
                     }
+                    UnresolvedReferencePresentation::Hidden => {}
                 }
-                UnresolvedReferencePresentation::Hidden => {}
             }
         }
         Kind::IndexTerm => output.push(element_with_children(
@@ -827,6 +876,64 @@ pub(super) fn source_language_class(language: &str) -> PlannedAttribute {
 
 fn element(name: &'static str) -> ElementName<'static> {
     ElementName::new(name).expect("inline plan uses allowlisted HTML elements")
+}
+
+/// Plans the children of a citation the host resolved, if it resolved this one.
+///
+/// The host owns the citation text, so it arrives as data and never as markup:
+/// every segment is escaped, and an anchor is honoured only when this document
+/// really defines that target. A segment naming an unknown anchor is reported
+/// and stays as plain text, so a stale bibliography cannot produce a dead link.
+/// `None` means the host said nothing about this citation.
+fn plan_resolved_citation(
+    range: crate::source::TextRange,
+    context: &mut InlineRenderContext<'_, '_>,
+) -> Option<Vec<InlineNode>> {
+    let outcome = match context.input_usage.citation_at(range) {
+        crate::render::ResolutionMatch::Unique(resolution) => &resolution.outcome,
+        // A duplicate is already reported as a render input problem, and a
+        // missing resolution simply leaves the keys to the unresolved policy.
+        crate::render::ResolutionMatch::Duplicate | crate::render::ResolutionMatch::Missing => {
+            return None;
+        }
+    };
+    let segments = match outcome {
+        crate::citation::CitationOutcome::Resolved { segments } => segments,
+        crate::citation::CitationOutcome::Failed(failure) => {
+            context.diagnostics.push(render_diagnostic(
+                failure.kind.diagnostic_code(),
+                "the host could not resolve this citation",
+                range,
+            ));
+            return None;
+        }
+    };
+    let mut children = Vec::new();
+    for segment in segments {
+        let href = segment
+            .anchor
+            .as_deref()
+            .filter(|anchor| context.identifiers.target_by_id(anchor).is_some())
+            .and_then(SafeFragmentUrl::new)
+            .map(SafeFragmentUrl::into_owned);
+        match (href, segment.anchor.as_deref()) {
+            (Some(href), _) => children.push(element_with_children(
+                "a",
+                vec![fragment_url("href", href)],
+                vec![inline_text_node(&segment.text)],
+            )),
+            (None, Some(anchor)) => {
+                context.diagnostics.push(render_diagnostic(
+                    "unknown-citation-anchor",
+                    &format!("resolved citation names the unknown anchor `{anchor}`"),
+                    range,
+                ));
+                children.push(inline_text_node(&segment.text));
+            }
+            (None, None) => children.push(inline_text_node(&segment.text)),
+        }
+    }
+    Some(children)
 }
 
 fn passive_name(name: &'static str) -> PassiveAttributeName<'static> {

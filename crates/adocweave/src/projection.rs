@@ -1342,7 +1342,10 @@ body
         let resolution =
             ResolvedReference::resolved(analysis.references()[0].range, "https://example/other")
                 .with_display_text("Resolved document title");
-        let projected = project(&analysis, &RenderInputs::new(vec![resolution], Vec::new()));
+        let projected = project(
+            &analysis,
+            &RenderInputs::default().with_references(vec![resolution]),
+        );
 
         assert!(matches!(
             projected.reference_edges[0].resolution,
@@ -1528,11 +1531,11 @@ let x = 1;
         let second = ResolvedReference::resolved(range, "https://example/second");
         let forward = project(
             &analysis,
-            &RenderInputs::new(vec![first.clone(), second.clone()], Vec::new()),
+            &RenderInputs::default().with_references(vec![first.clone(), second.clone()]),
         );
         let reverse = project(
             &analysis,
-            &RenderInputs::new(vec![second, first], Vec::new()),
+            &RenderInputs::default().with_references(vec![second, first]),
         );
 
         assert_eq!(forward, reverse);

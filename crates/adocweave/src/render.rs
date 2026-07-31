@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::citation::ResolvedCitation;
 use crate::reference::ResolvedReference;
 use crate::resource::ResolvedResource;
 use crate::source::TextRange;
@@ -10,53 +11,106 @@ use crate::source::TextRange;
 ///
 /// Construction performs no I/O. Exact-range indexes are built once so every
 /// consumer observes the same order-independent duplicate semantics.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RenderInputs {
-    references: Vec<ResolvedReference>,
-    resources: Vec<ResolvedResource>,
-    reference_index: BTreeMap<TextRange, Vec<usize>>,
-    resource_index: BTreeMap<TextRange, Vec<usize>>,
-}
-
-impl Default for RenderInputs {
-    fn default() -> Self {
-        Self::new(Vec::new(), Vec::new())
-    }
+    references: ResolutionSet<ResolvedReference>,
+    resources: ResolutionSet<ResolvedResource>,
+    citations: ResolutionSet<ResolvedCitation>,
 }
 
 impl RenderInputs {
-    pub fn new(references: Vec<ResolvedReference>, resources: Vec<ResolvedResource>) -> Self {
-        let reference_index = range_index(&references, |resolution| resolution.source_range);
-        let resource_index = range_index(&resources, |resolution| resolution.source_range);
-        Self {
-            references,
-            resources,
-            reference_index,
-            resource_index,
-        }
+    /// Adds the reference resolutions, replacing any set earlier.
+    #[must_use]
+    pub fn with_references(mut self, references: Vec<ResolvedReference>) -> Self {
+        self.references = ResolutionSet::new(references, |resolution| resolution.source_range);
+        self
+    }
+
+    /// Adds the resource resolutions, replacing any set earlier.
+    #[must_use]
+    pub fn with_resources(mut self, resources: Vec<ResolvedResource>) -> Self {
+        self.resources = ResolutionSet::new(resources, |resolution| resolution.source_range);
+        self
+    }
+
+    /// Adds the citation resolutions, replacing any set earlier.
+    #[must_use]
+    pub fn with_citations(mut self, citations: Vec<ResolvedCitation>) -> Self {
+        self.citations = ResolutionSet::new(citations, |resolution| resolution.source_range);
+        self
     }
 
     pub fn references(&self) -> &[ResolvedReference] {
-        &self.references
+        &self.references.values
     }
 
     pub fn resources(&self) -> &[ResolvedResource] {
-        &self.resources
+        &self.resources.values
+    }
+
+    pub fn citations(&self) -> &[ResolvedCitation] {
+        &self.citations.values
     }
 
     pub fn reference_at(&self, range: TextRange) -> ResolutionMatch<'_, ResolvedReference> {
-        lookup(&self.references, &self.reference_index, range)
+        self.references.at(range)
     }
 
     pub fn resource_at(&self, range: TextRange) -> ResolutionMatch<'_, ResolvedResource> {
-        lookup(&self.resources, &self.resource_index, range)
+        self.resources.at(range)
+    }
+
+    pub fn citation_at(&self, range: TextRange) -> ResolutionMatch<'_, ResolvedCitation> {
+        self.citations.at(range)
     }
 
     pub fn track_usage(&self) -> RenderInputUsage<'_> {
         RenderInputUsage {
-            inputs: self,
-            used_references: vec![false; self.references.len()],
-            used_resources: vec![false; self.resources.len()],
+            references: self.references.track(),
+            resources: self.resources.track(),
+            citations: self.citations.track(),
+        }
+    }
+}
+
+/// Host resolutions of one kind, indexed by the source range they answer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResolutionSet<T> {
+    values: Vec<T>,
+    index: BTreeMap<TextRange, Vec<usize>>,
+}
+
+// Derived `Default` would demand `T: Default`, which no resolution type owes.
+impl<T> Default for ResolutionSet<T> {
+    fn default() -> Self {
+        Self {
+            values: Vec::new(),
+            index: BTreeMap::new(),
+        }
+    }
+}
+
+impl<T> ResolutionSet<T> {
+    fn new(values: Vec<T>, range: impl Fn(&T) -> TextRange) -> Self {
+        let mut index = BTreeMap::<_, Vec<usize>>::new();
+        for (position, value) in values.iter().enumerate() {
+            index.entry(range(value)).or_default().push(position);
+        }
+        Self { values, index }
+    }
+
+    fn at(&self, range: TextRange) -> ResolutionMatch<'_, T> {
+        match self.index.get(&range).map(Vec::as_slice) {
+            None | Some([]) => ResolutionMatch::Missing,
+            Some([position]) => ResolutionMatch::Unique(&self.values[*position]),
+            Some(_) => ResolutionMatch::Duplicate,
+        }
+    }
+
+    fn track(&self) -> UsageTracker<'_, T> {
+        UsageTracker {
+            set: self,
+            used: vec![false; self.values.len()],
         }
     }
 }
@@ -72,6 +126,7 @@ pub enum ResolutionMatch<'a, T> {
 pub enum RenderInputDomain {
     Reference,
     Resource,
+    Citation,
 }
 
 impl RenderInputDomain {
@@ -79,6 +134,7 @@ impl RenderInputDomain {
         match self {
             Self::Reference => "reference",
             Self::Resource => "resource",
+            Self::Citation => "citation",
         }
     }
 }
@@ -97,62 +153,41 @@ pub struct RenderInputProblem {
 }
 
 pub struct RenderInputUsage<'a> {
-    inputs: &'a RenderInputs,
-    used_references: Vec<bool>,
-    used_resources: Vec<bool>,
+    references: UsageTracker<'a, ResolvedReference>,
+    resources: UsageTracker<'a, ResolvedResource>,
+    citations: UsageTracker<'a, ResolvedCitation>,
 }
 
 impl<'a> RenderInputUsage<'a> {
     pub fn reference_at(&mut self, range: TextRange) -> ResolutionMatch<'a, ResolvedReference> {
-        mark_and_lookup(
-            &self.inputs.references,
-            &self.inputs.reference_index,
-            &mut self.used_references,
-            range,
-        )
+        self.references.at(range)
     }
 
     pub fn resource_at(&mut self, range: TextRange) -> ResolutionMatch<'a, ResolvedResource> {
-        mark_and_lookup(
-            &self.inputs.resources,
-            &self.inputs.resource_index,
-            &mut self.used_resources,
-            range,
-        )
+        self.resources.at(range)
     }
 
-    pub fn finish(mut self) -> Vec<RenderInputProblem> {
+    pub fn citation_at(&mut self, range: TextRange) -> ResolutionMatch<'a, ResolvedCitation> {
+        self.citations.at(range)
+    }
+
+    pub fn finish(self) -> Vec<RenderInputProblem> {
         let mut problems = Vec::new();
-        record_duplicates(
-            &self.inputs.reference_index,
-            &mut self.used_references,
+        self.references.finish(
             RenderInputDomain::Reference,
+            |resolution| resolution.source_range,
             &mut problems,
         );
-        record_duplicates(
-            &self.inputs.resource_index,
-            &mut self.used_resources,
+        self.resources.finish(
             RenderInputDomain::Resource,
+            |resolution| resolution.source_range,
             &mut problems,
         );
-        for (resolution, used) in self.inputs.references.iter().zip(self.used_references) {
-            if !used {
-                problems.push(RenderInputProblem {
-                    kind: RenderInputProblemKind::Unused,
-                    domain: RenderInputDomain::Reference,
-                    range: resolution.source_range,
-                });
-            }
-        }
-        for (resolution, used) in self.inputs.resources.iter().zip(self.used_resources) {
-            if !used {
-                problems.push(RenderInputProblem {
-                    kind: RenderInputProblemKind::Unused,
-                    domain: RenderInputDomain::Resource,
-                    range: resolution.source_range,
-                });
-            }
-        }
+        self.citations.finish(
+            RenderInputDomain::Citation,
+            |resolution| resolution.source_range,
+            &mut problems,
+        );
         problems.sort_by_key(|problem| {
             (
                 problem.range.start(),
@@ -165,61 +200,53 @@ impl<'a> RenderInputUsage<'a> {
     }
 }
 
-fn range_index<T>(
-    values: &[T],
-    range: impl Fn(&T) -> TextRange,
-) -> BTreeMap<TextRange, Vec<usize>> {
-    let mut index = BTreeMap::<_, Vec<usize>>::new();
-    for (position, value) in values.iter().enumerate() {
-        index.entry(range(value)).or_default().push(position);
-    }
-    index
+/// Records which resolutions of one kind the renderer consumed.
+struct UsageTracker<'a, T> {
+    set: &'a ResolutionSet<T>,
+    used: Vec<bool>,
 }
 
-fn lookup<'a, T>(
-    values: &'a [T],
-    index: &BTreeMap<TextRange, Vec<usize>>,
-    range: TextRange,
-) -> ResolutionMatch<'a, T> {
-    match index.get(&range).map(Vec::as_slice) {
-        None | Some([]) => ResolutionMatch::Missing,
-        Some([position]) => ResolutionMatch::Unique(&values[*position]),
-        Some(_) => ResolutionMatch::Duplicate,
+impl<'a, T> UsageTracker<'a, T> {
+    fn at(&mut self, range: TextRange) -> ResolutionMatch<'a, T> {
+        if let Some(positions) = self.set.index.get(&range) {
+            for position in positions {
+                self.used[*position] = true;
+            }
+        }
+        self.set.at(range)
     }
-}
 
-fn mark_and_lookup<'a, T>(
-    values: &'a [T],
-    index: &BTreeMap<TextRange, Vec<usize>>,
-    used: &mut [bool],
-    range: TextRange,
-) -> ResolutionMatch<'a, T> {
-    if let Some(positions) = index.get(&range) {
-        for position in positions {
-            used[*position] = true;
+    /// A resolution the renderer never asked for, and a range answered more than
+    /// once, are both host mistakes. Duplicates count as consumed so the same
+    /// resolution is not also reported as unused.
+    fn finish(
+        mut self,
+        domain: RenderInputDomain,
+        range: impl Fn(&T) -> TextRange,
+        problems: &mut Vec<RenderInputProblem>,
+    ) {
+        for (duplicated, positions) in &self.set.index {
+            if positions.len() < 2 {
+                continue;
+            }
+            for position in positions {
+                self.used[*position] = true;
+            }
+            problems.push(RenderInputProblem {
+                kind: RenderInputProblemKind::Duplicate,
+                domain,
+                range: *duplicated,
+            });
         }
-    }
-    lookup(values, index, range)
-}
-
-fn record_duplicates(
-    index: &BTreeMap<TextRange, Vec<usize>>,
-    used: &mut [bool],
-    domain: RenderInputDomain,
-    problems: &mut Vec<RenderInputProblem>,
-) {
-    for (range, positions) in index {
-        if positions.len() < 2 {
-            continue;
+        for (resolution, used) in self.set.values.iter().zip(self.used) {
+            if !used {
+                problems.push(RenderInputProblem {
+                    kind: RenderInputProblemKind::Unused,
+                    domain,
+                    range: range(resolution),
+                });
+            }
         }
-        for position in positions {
-            used[*position] = true;
-        }
-        problems.push(RenderInputProblem {
-            kind: RenderInputProblemKind::Duplicate,
-            domain,
-            range: *range,
-        });
     }
 }
 
@@ -233,15 +260,14 @@ mod tests {
     fn indexes_are_order_independent_and_usage_is_audited_once() {
         let range = TextRange::new(TextSize::ZERO, TextSize::new(1).expect("size")).expect("range");
         let reference = ResolvedReference::resolved(range, "https://example/reference");
-        let inputs = RenderInputs::new(
-            vec![reference.clone(), reference],
-            vec![ResolvedResource::resolved(
+        let inputs = RenderInputs::default()
+            .with_references(vec![reference.clone(), reference])
+            .with_resources(vec![ResolvedResource::resolved(
                 range,
                 "https://example/image.png",
                 "image/png".parse().expect("media type"),
                 Some(42),
-            )],
-        );
+            )]);
 
         assert_eq!(inputs.references().len(), 2);
         assert!(matches!(
@@ -258,6 +284,24 @@ mod tests {
             [RenderInputProblem {
                 kind: RenderInputProblemKind::Duplicate,
                 domain: RenderInputDomain::Reference,
+                range,
+            }]
+        );
+    }
+
+    #[test]
+    fn every_domain_reports_unused_resolutions_the_renderer_never_asked_for() {
+        let range = TextRange::new(TextSize::ZERO, TextSize::new(1).expect("size")).expect("range");
+        let inputs = RenderInputs::default().with_citations(vec![ResolvedCitation::resolved(
+            range,
+            vec![crate::citation::CitationSegment::text("(Smith 2024)")],
+        )]);
+
+        assert_eq!(
+            inputs.track_usage().finish(),
+            [RenderInputProblem {
+                kind: RenderInputProblemKind::Unused,
+                domain: RenderInputDomain::Citation,
                 range,
             }]
         );

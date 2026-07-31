@@ -66,6 +66,73 @@ pub(crate) fn citations(macros: &[StandardMacro]) -> Vec<Citation> {
         .collect()
 }
 
+/// One `cite:` macro as the host's bibliography library resolved it.
+///
+/// AdocWeave never reads the library, so the host owns both the citation text
+/// and the decision of which part of it links where. The resolution is matched
+/// to the macro by its exact source range, like every other render input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedCitation {
+    /// Range of the whole `cite:` macro, as reported by [`Citation::range`].
+    pub source_range: TextRange,
+    pub outcome: CitationOutcome,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CitationOutcome {
+    /// Citation text in reading order, split so parts of it can link.
+    Resolved {
+        segments: Vec<CitationSegment>,
+    },
+    Failed(crate::reference::ResolverFailure),
+}
+
+/// One run of citation text, optionally linking to a bibliography entry.
+///
+/// A citation style decides its own punctuation, so the host sends the text it
+/// wants shown. Splitting it into segments lets `(Smith 2024; Tanaka 2025)`
+/// link each name while leaving the brackets and separator as plain text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CitationSegment {
+    pub text: String,
+    /// Anchor of the entry this run names, without `#`. `None` leaves it plain.
+    pub anchor: Option<String>,
+}
+
+impl CitationSegment {
+    /// Builds a run of plain citation text.
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            anchor: None,
+        }
+    }
+
+    /// Builds a run of citation text linking to an entry in the same document.
+    pub fn linked(text: impl Into<String>, anchor: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            anchor: Some(anchor.into()),
+        }
+    }
+}
+
+impl ResolvedCitation {
+    pub fn resolved(source_range: TextRange, segments: Vec<CitationSegment>) -> Self {
+        Self {
+            source_range,
+            outcome: CitationOutcome::Resolved { segments },
+        }
+    }
+
+    pub fn failed(source_range: TextRange, failure: crate::reference::ResolverFailure) -> Self {
+        Self {
+            source_range,
+            outcome: CitationOutcome::Failed(failure),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{AnalysisOptions, Engine};

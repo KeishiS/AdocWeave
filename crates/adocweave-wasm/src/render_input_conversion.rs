@@ -5,8 +5,8 @@ use adocweave::Analysis;
 use crate::WasmError;
 use crate::render_input_normalization::NormalizedRenderInputs;
 use crate::render_input_wire::{
-    WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmResourceFailureKind,
-    WasmResourceOutcome,
+    WasmCitationOutcome, WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome,
+    WasmResourceFailureKind, WasmResourceOutcome,
 };
 
 pub(crate) fn convert(
@@ -14,13 +14,12 @@ pub(crate) fn convert(
     analysis: &Analysis,
 ) -> Result<adocweave::resolution::RenderInputs, WasmError> {
     let inputs = inputs.into_wire();
-    let references =
-        inputs
-            .references
-            .into_iter()
-            .map(|resolution| {
-                let range = source_range(resolution.source_start, resolution.source_end, analysis)?;
-                Ok(match resolution.outcome {
+    let references = inputs
+        .references
+        .into_iter()
+        .map(|resolution| {
+            let range = source_range(resolution.source_start, resolution.source_end, analysis)?;
+            Ok(match resolution.outcome {
                 WasmReferenceOutcome::Resolved {
                     href,
                     display_text,
@@ -29,49 +28,30 @@ pub(crate) fn convert(
                     let mut resolved =
                         adocweave::resolution::ResolvedReference::resolved(range, href)
                             .with_notices(
-                            notices
-                                .into_iter()
-                                .map(|notice| adocweave::resolution::ResolutionNotice {
+                                notices
+                                    .into_iter()
+                                    .map(|notice| {
+                                        adocweave::resolution::ResolutionNotice {
                                     kind: match notice {
                                         WasmReferenceNotice::Fallback => {
                                             adocweave::resolution::ResolutionNoticeKind::Fallback
                                         }
                                     },
-                                })
-                                .collect(),
-                        );
+                                }
+                                    })
+                                    .collect(),
+                            );
                     if let Some(display_text) = display_text {
                         resolved = resolved.with_display_text(display_text);
                     }
                     resolved
                 }
                 WasmReferenceOutcome::Failed { kind } => {
-                    adocweave::resolution::ResolvedReference::failed(
-                        range,
-                        adocweave::resolution::ResolverFailure {
-                            kind: match kind {
-                                WasmReferenceFailureKind::MissingTarget => {
-                                    adocweave::resolution::ResolutionFailureKind::MissingTarget
-                                }
-                                WasmReferenceFailureKind::MissingAnchor => {
-                                    adocweave::resolution::ResolutionFailureKind::MissingAnchor
-                                }
-                                WasmReferenceFailureKind::AmbiguousTarget => {
-                                    adocweave::resolution::ResolutionFailureKind::AmbiguousTarget
-                                }
-                                WasmReferenceFailureKind::OutsideRoot => {
-                                    adocweave::resolution::ResolutionFailureKind::OutsideRoot
-                                }
-                                WasmReferenceFailureKind::ResolverFailure => {
-                                    adocweave::resolution::ResolutionFailureKind::ResolverFailure
-                                }
-                            },
-                        },
-                    )
+                    adocweave::resolution::ResolvedReference::failed(range, reference_failure(kind))
                 }
             })
-            })
-            .collect::<Result<Vec<_>, WasmError>>()?;
+        })
+        .collect::<Result<Vec<_>, WasmError>>()?;
     let resources = inputs
         .resources
         .into_iter()
@@ -119,9 +99,57 @@ pub(crate) fn convert(
             })
         })
         .collect::<Result<Vec<_>, WasmError>>()?;
-    Ok(adocweave::resolution::RenderInputs::new(
-        references, resources,
-    ))
+    let citations = inputs
+        .citations
+        .into_iter()
+        .map(|resolution| {
+            let range = source_range(resolution.source_start, resolution.source_end, analysis)?;
+            Ok(match resolution.outcome {
+                WasmCitationOutcome::Resolved { segments } => {
+                    adocweave::resolution::ResolvedCitation::resolved(
+                        range,
+                        segments
+                            .into_iter()
+                            .map(|segment| adocweave::resolution::CitationSegment {
+                                text: segment.text,
+                                anchor: segment.anchor,
+                            })
+                            .collect(),
+                    )
+                }
+                WasmCitationOutcome::Failed { kind } => {
+                    adocweave::resolution::ResolvedCitation::failed(range, reference_failure(kind))
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, WasmError>>()?;
+    Ok(adocweave::resolution::RenderInputs::default()
+        .with_references(references)
+        .with_resources(resources)
+        .with_citations(citations))
+}
+
+/// Maps a wire failure kind to the core kind shared by references and citations.
+fn reference_failure(kind: WasmReferenceFailureKind) -> adocweave::resolution::ResolverFailure {
+    adocweave::resolution::ResolverFailure {
+        kind: match kind {
+            WasmReferenceFailureKind::MissingTarget => {
+                adocweave::resolution::ResolutionFailureKind::MissingTarget
+            }
+            WasmReferenceFailureKind::MissingAnchor => {
+                adocweave::resolution::ResolutionFailureKind::MissingAnchor
+            }
+            WasmReferenceFailureKind::AmbiguousTarget => {
+                adocweave::resolution::ResolutionFailureKind::AmbiguousTarget
+            }
+            WasmReferenceFailureKind::OutsideRoot => {
+                adocweave::resolution::ResolutionFailureKind::OutsideRoot
+            }
+            WasmReferenceFailureKind::ResolverFailure => {
+                adocweave::resolution::ResolutionFailureKind::ResolverFailure
+            }
+        },
+    }
 }
 
 fn source_range(
