@@ -27,11 +27,7 @@ impl AuthoredUrlPolicy {
             return UrlDecision::Rejected;
         }
         let Some(colon) = value.find(':') else {
-            return if self.allow_relative && !value.starts_with('/') && !value.contains('\\') {
-                UrlDecision::Allowed
-            } else {
-                UrlDecision::Rejected
-            };
+            return classify_authored_relative(value, self.allow_relative);
         };
         classify_scheme(value, colon, &self.allowed_schemes, false)
     }
@@ -88,6 +84,15 @@ fn default_allowed_schemes() -> BTreeSet<String> {
     ["http", "https"].map(String::from).into_iter().collect()
 }
 
+/// Schemes that never become active output, whatever a host allows.
+///
+/// `allowed_schemes` is filled in by the host, and a host that adds one of
+/// these has asked for a URL the browser executes as code. The stylesheet
+/// policy already refuses to emit such a URL regardless of configuration; this
+/// list gives the same guarantee to every other active URL. `data` stays out of
+/// it because a data URI carries inert content and has its own switch.
+const NEVER_ACTIVE_SCHEMES: &[&str] = &["javascript", "vbscript"];
+
 fn classify_url(
     value: &str,
     allowed_schemes: &BTreeSet<String>,
@@ -120,6 +125,9 @@ fn classify_scheme(
         return UrlDecision::Rejected;
     }
     let normalized = scheme.to_ascii_lowercase();
+    if NEVER_ACTIVE_SCHEMES.contains(&normalized.as_str()) {
+        return UrlDecision::Rejected;
+    }
     if normalized == "data" && !allow_data_uris {
         return UrlDecision::Rejected;
     }
@@ -178,6 +186,24 @@ fn contains_incomplete_scheme(value: &str, allowed_schemes: &BTreeSet<String>) -
             .any(|allowed| allowed.eq_ignore_ascii_case(prefix))
 }
 
+/// Judges a relative path a document author wrote.
+///
+/// This answers "is this worth a diagnostic", not "is this safe to emit". A
+/// document may legitimately link to `../guide.adoc`, and an encoded segment
+/// may be the correct spelling of a real filename, so neither is reported here.
+/// [`classify_relative`] refuses both, because it decides what becomes active
+/// output and a resolver has no reason to produce either.
+///
+/// A backslash and a root-relative path are refused in both places: neither is
+/// a relative path an author meant to write.
+fn classify_authored_relative(value: &str, allow_relative: bool) -> UrlDecision {
+    if !allow_relative || value.starts_with('/') || value.contains('\\') {
+        return UrlDecision::Rejected;
+    }
+    UrlDecision::Allowed
+}
+
+/// Judges a relative path immediately before it becomes active output.
 fn classify_relative(value: &str, allow_relative: bool, allow_root_relative: bool) -> UrlDecision {
     if value.contains('\\')
         || value.split('/').any(|segment| segment == "..")
@@ -254,7 +280,51 @@ pub enum UrlDecision {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{ActiveUrlPolicy, AuthoredUrlPolicy, UrlDecision, UrlProvenance};
+
+    /// A host cannot allow a scheme the browser executes as code.
+    #[test]
+    fn schemes_that_execute_are_refused_whatever_the_host_allows() {
+        let hostile: BTreeSet<String> = ["javascript", "vbscript", "JavaScript"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let active = ActiveUrlPolicy {
+            allowed_schemes: hostile.clone(),
+            allow_data_uris: true,
+            ..ActiveUrlPolicy::default()
+        };
+        let authored = AuthoredUrlPolicy {
+            allowed_schemes: hostile,
+            allow_relative: true,
+        };
+
+        for value in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "vbscript:msgbox(1)",
+        ] {
+            assert_eq!(
+                active.classify(value, UrlProvenance::Authored),
+                UrlDecision::Rejected,
+                "{value}"
+            );
+            assert_eq!(authored.classify(value), UrlDecision::Rejected, "{value}");
+        }
+
+        // A data URI carries inert content and keeps its own switch.
+        assert_eq!(
+            ActiveUrlPolicy {
+                allowed_schemes: ["data"].map(String::from).into_iter().collect(),
+                allow_data_uris: true,
+                ..ActiveUrlPolicy::default()
+            }
+            .classify("data:image/png;base64,AA", UrlProvenance::ResolvedResource),
+            UrlDecision::Allowed
+        );
+    }
 
     #[test]
     fn authored_and_active_policies_are_independent() {

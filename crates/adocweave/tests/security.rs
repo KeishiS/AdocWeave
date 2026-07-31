@@ -227,6 +227,38 @@ fn hostile_stylesheet_configuration_never_reaches_the_output() {
     assert!(codes.contains(&"invalid-stylesheet-url"));
 }
 
+/// A hostile scheme must not reach active output, whatever the host allows.
+///
+/// The stylesheet policy already guarantees this: a host that configures
+/// `javascript:` as a stylesheet URL still gets safe output. The same must hold
+/// for the URL scheme allowlist, which a host can also fill in.
+#[test]
+fn hostile_url_scheme_configuration_never_reaches_the_output() {
+    use adocweave::resolution::ActiveUrlPolicy;
+
+    let analysis = Engine::new(AnalysisOptions::default())
+        .analyze("javascript:alert(1)[click] vbscript:msgbox(1)[click]")
+        .expect("analysis");
+    let hostile = ["javascript", "vbscript", "data"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let output = render(
+        analysis.document(),
+        &RenderPolicy {
+            active_urls: ActiveUrlPolicy {
+                allowed_schemes: hostile,
+                ..ActiveUrlPolicy::default()
+            },
+            ..RenderPolicy::default()
+        },
+    );
+
+    let lower = output.html.to_ascii_lowercase();
+    assert!(!lower.contains("javascript:"), "{}", output.html);
+    assert!(!lower.contains("vbscript:"), "{}", output.html);
+}
+
 #[test]
 fn heading_anchor_cannot_break_out_of_the_id_attribute() {
     let source = "[[x\"onclick=\"alert(1)]]\n== Target\n";
