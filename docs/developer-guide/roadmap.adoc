@@ -10,7 +10,7 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 == 外部書誌向けciteの完成
 
-v0.22.0で``cite:``の構文解析と意味モデルを公開しました。現在はRust APIの
+``cite:``の構文解析と意味モデルは公開済みです。現在はRust APIの
 ``Analysis::citations()``からだけ取得でき、ホストが解決した引用表示をHTMLへ渡す経路もありません。
 利用側アプリが引用を実際に扱えるようにするため、残りの二段階を進めます。
 
