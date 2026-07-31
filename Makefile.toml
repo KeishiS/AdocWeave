@@ -594,7 +594,7 @@ command = "adocweave-fuzz"
 args = ["check", "--fuzz-dir", "fuzz"]
 
 [tasks.fuzz-smoke]
-description = "Run deterministic short fuzz smoke tests (set FUZZ_SECONDS to override)"
+description = "Confirm each fuzz target survives its known corpus (set FUZZ_SECONDS to override)"
 script_runner = "@shell"
 script = '''
 seconds="${FUZZ_SECONDS:-5}"
@@ -618,7 +618,7 @@ done
 '''
 
 [tasks.fuzz]
-description = "Compile every fuzz target and run deterministic short exploration"
+description = "Compile every fuzz target and confirm the known corpus still passes"
 dependencies = ["fuzz-check", "fuzz-smoke"]
 
 [tasks.test-release-core]

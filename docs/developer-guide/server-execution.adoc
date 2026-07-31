@@ -186,9 +186,22 @@ Canonical pathは検査、キャッシュおよびprovenanceに限定し、診�
 WASMの``attributeQueries``は、各bindingの操作、有効値、決定bindingおよび属性参照を返します。
 前処理を指定したrequestでは、bindingと参照の``sourceId``およびrangeを元resourceへ投影します。
 
-=== 生成入力による探索
+=== fuzz targetの位置付け
 
-``preprocess`` fuzz targetは、生成した入力でinclude展開を実行します。ほかのtargetは一つのsource文字列
+fuzz targetは**回帰の確認**に使います。探索のために長時間動かす運用は行いません。
+
+``cargo make fuzz``は、``fuzz/corpus/``にある既知の入力を一時ディレクトリへ複写し、各targetを短時間
+実行します。実行後に一時ディレクトリを削除するため、その回に生成された入力は残りません。定期実行の
+workflowも設けていません。
+
+この形にしているのは、探索を続ける運用には、失敗したときに調べて直す人と、その時間が要るためです。
+個人が保守するリポジトリでその前提を置くと、失敗が放置されて検査そのものが信用されなくなります。
+「既知の入力で落ちない」という保証だけを、確実に維持できる形で残しています。
+
+``fuzz/corpus/``へ入力を足すのは、実際に不具合を見つけたときです。その入力をcorpusへ加えることで、
+同じ経路の再発を以後の検査が捉えます。生成された入力を自動で蓄積することはしません。
+
+``preprocess`` targetは、生成した入力でinclude展開を実行します。ほかのtargetは一つのsource文字列
 から始まるため、directiveの解析、tagと行の選択、indentとleveloffsetの変換、および展開後の位置を元へ
 戻すsource mapに、生成入力が届きません。このtargetはresource snapshotも与えるため、includeが解決して
 これらの経路を通ります。
