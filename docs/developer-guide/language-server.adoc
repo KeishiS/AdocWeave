@@ -71,6 +71,12 @@ Language Serverは``adocweave-config``を使用し、workspace folderごとに�
 変わった場合は結果を採用しません。エディターの``enabledRules``は共有設定の後に適用し、設定が与える
 filesystem境界やresource上限を拡張しません。
 
+読み込んだ設定は、探索を開始したdirectoryごとに保持します。設定の解決は、workspace rootまでdirectoryを
+遡り、見つけたfileのpath解決、読み込み、digest計算およびTOML解析を行います。保持しない場合、この処理が
+打鍵のたびに、ほかの要求へ応答するthreadの上で繰り返されます。保持した内容は、workspace folderまたは
+設定fileの変更でworkspaceを読み直すときにすべて捨てます。ある directoryの設定が上位directoryのfileから
+来ることがあるため、一つのfileの変更が複数の記録を古くするからです。
+
 == 通知と要求
 
 LSP通知と要求は同じ並行処理規則を使用しません。
