@@ -17,38 +17,38 @@ AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としま�
 |領域 |AdocWeaveの動作
 
 |未対応構文
-|寛容modeでは元の内容を保持し、厳格modeではコア操作を拒否します。
+|寛容モードでは元の内容を保持し、厳格モードではコア操作を拒否します。
 
 |インライン書式
-|highlight、subscript、superscript、typographic quoteを含む対応書式について、境界と不完全なmarkerの
+|highlight、subscript、superscript、typographic quoteを含む対応書式について、境界と不完全なマーカーの
 回復規則だけを保証します。AsciiDoc処理系すべてとの同一結果は保証しません。
 
 |Passthrough
-|置換を抑止する不透明nodeとして保持しますが、raw HTMLとして出力せずHTML escapeします。
+|置換を抑止する不透明なノードとして保持しますが、生のHTMLとして出力せずHTMLエスケープします。
 
 |Quoteとverse
-|styleなしの``____``はcompound blockとして扱い、``[quote,Author,Source]``だけを``blockquote``として出力します。
-``[verse]``は改行を保持し、内容のinline書式を解釈しません。
+|styleなしの``____``は入れ子を許すブロックとして扱い、``[quote,Author,Source]``だけを``blockquote``として出力します。
+``[verse]``は改行を保持し、内容のインライン書式を解釈しません。
 
 |Admonition
-|admonition paragraphとblockを型付き意味として扱い、未知のstyleは通常のblockとして保持します。
+|admonition paragraphとadmonition blockを型付き意味として扱い、未知のstyleは通常のブロックとして保持します。
 
 |表
-|PSV／CSV／DSV／TSVと対応する表示属性を扱います。AsciiDoc style cellのblock解析はPSVを対象とし、
-開始delimiter直後の単一物理行と後続空行によるheader推論に対応します。複数物理行の先頭rowは
-`header` optionで明示します。
+|PSV／CSV／DSV／TSVと対応する表示属性を扱います。AsciiDoc style cellのブロック解析はPSVを対象とし、
+開始区切り直後の単一物理行と後続の空行によるheader推論に対応します。複数物理行の先頭行は
+``header`` optionで明示します。
 
 |ソースブロック
 |`linenums`、`%linenums`または``options=linenums``と、同時に指定した1以上の``start``を扱います。
-その他のsource option、行番号の描画、themeおよびcopy操作には対応しません。
+その他のsource option、行番号の描画、テーマおよびコピー操作には対応しません。
 
-|相互参照とresource
-|文書間xrefとmediaの実在確認、取得および権限検査を行わず、利用側アプリが解決結果を渡します。
-Mediaのactive要素にはmacro種別と一致するMIME typeを必須とし、video posterも独立したimage resourceとして
-解決します。Mediaのlink化とicon set固有の表示には対応していません。
+|相互参照とリソース
+|文書間xrefとメディアの実在確認、取得および権限検査を行わず、利用側アプリが解決結果を渡します。
+メディアのactive要素にはmacro種別と一致するMIME typeを必須とし、video posterも独立した画像リソースとして
+解決します。メディアのリンク化とicon set固有の表示には対応していません。
 
 |Preprocessor
-|利用側アプリが渡す不変resource snapshotだけを展開します。wildcardとURI転送には対応しません。
+|利用側アプリが渡す不変のリソーススナップショットだけを展開します。ワイルドカードとURI転送には対応しません。
 
 |Markdown互換構文
 |AsciiDoc標準の必須範囲ではないため対応しません。
