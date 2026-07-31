@@ -24,6 +24,34 @@ use sha2::{Digest, Sha256};
 /// Conventional project configuration filename.
 pub const FILE_NAME: &str = ".adocweave.toml";
 
+/// The range one project file governs.
+///
+/// Two documents share a scope when the same project file applies to both from
+/// the same workspace root. The root is part of the identity because two roots
+/// without a project file each get the default settings, and charging their
+/// resources to one budget would let one root exhaust the other's.
+///
+/// The command-line interface and the Language Server both group resources this
+/// way, so the identity lives beside the configuration it names rather than
+/// once in each of them.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ProjectScopeId {
+    /// Workspace root the document was reached from.
+    pub workspace_root: PathBuf,
+    /// Project file that applies, or `None` when the scope uses the defaults.
+    pub config_path: Option<PathBuf>,
+}
+
+impl ProjectScopeId {
+    /// Names the scope a document belongs to.
+    pub fn new(workspace_root: PathBuf, snapshot: Option<&ConfigSnapshot>) -> Self {
+        Self {
+            workspace_root,
+            config_path: snapshot.map(|snapshot| snapshot.path.clone()),
+        }
+    }
+}
+
 /// Largest project file that is read.
 ///
 /// A project file names roots, limits and rule settings. One megabyte is far

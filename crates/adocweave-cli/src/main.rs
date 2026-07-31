@@ -45,6 +45,7 @@ use file_workflow::{PendingWrite, atomic_write_all, colorize_lines};
 const DEFAULT_PREVIEW_PORT: u16 = 4000;
 const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
 
+use adocweave_config::ProjectScopeId;
 use adocweave_host::ExitStatus;
 
 use arguments::{Action, Arguments, ColorChoice, CommandOptions, CompletionShell, parse_arguments};
@@ -487,32 +488,27 @@ fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> 
     Ok(files.into_iter().collect())
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct CliProjectScopeId {
-    workspace_root: PathBuf,
-    config_path: Option<PathBuf>,
-}
-
+/// Names the scope one input belongs to.
+///
+/// The Language Server is told its roots by the editor. A command-line run is
+/// not, so the root is taken from the project file's directory, or from the
+/// input's own directory when no project file applies.
 fn cli_project_scope(
     path: &Path,
     snapshot: Option<&adocweave_config::ConfigSnapshot>,
-) -> CliProjectScopeId {
-    let config_path = snapshot.map(|snapshot| snapshot.path.clone());
-    let workspace_root = config_path
-        .as_deref()
+) -> ProjectScopeId {
+    let workspace_root = snapshot
+        .map(|snapshot| snapshot.path.as_path())
         .and_then(Path::parent)
         .or_else(|| path.parent())
         .unwrap_or_else(|| Path::new(""))
         .to_owned();
-    CliProjectScopeId {
-        workspace_root,
-        config_path,
-    }
+    ProjectScopeId::new(workspace_root, snapshot)
 }
 
 #[derive(Clone, Debug)]
 struct ResolvedCliInput {
-    scope: CliProjectScopeId,
+    scope: ProjectScopeId,
     config: adocweave_config::ResolvedProjectConfig,
 }
 
@@ -531,7 +527,7 @@ fn resolve_input_path_scopes_with_hook(
     mut after_path: impl FnMut(usize),
 ) -> Result<std::collections::BTreeMap<PathBuf, ResolvedCliInput>, CliError> {
     let mut scopes = std::collections::BTreeMap::<
-        CliProjectScopeId,
+        ProjectScopeId,
         (usize, adocweave_config::ResolvedProjectConfig),
     >::new();
     let mut resolved = std::collections::BTreeMap::new();
@@ -604,12 +600,10 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
         source,
     })?;
     let resolved_inputs = resolve_input_path_scopes(arguments, &paths, &boundary)?;
-    let mut project_filesystems = std::collections::BTreeMap::<
-        CliProjectScopeId,
-        adocweave_host::LocalFilesystemSession,
-    >::new();
+    let mut project_filesystems =
+        std::collections::BTreeMap::<ProjectScopeId, adocweave_host::LocalFilesystemSession>::new();
     let mut project_retained =
-        std::collections::BTreeMap::<CliProjectScopeId, ProjectRetainedBudget>::new();
+        std::collections::BTreeMap::<ProjectScopeId, ProjectRetainedBudget>::new();
     match &arguments.command {
         CommandOptions::Format(options) => {
             if !options.supports_multiple_inputs() {

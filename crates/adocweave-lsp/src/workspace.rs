@@ -47,11 +47,7 @@ impl WorkspaceInput {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct ProjectScopeId {
-    workspace_root: PathBuf,
-    config_path: Option<PathBuf>,
-}
+use adocweave_config::ProjectScopeId;
 
 #[derive(Debug)]
 enum ScopeConfigError {
