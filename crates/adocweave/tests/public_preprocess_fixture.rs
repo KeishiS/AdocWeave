@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use adocweave::SourceId;
 use adocweave::preprocess::{
-    DirectiveKind, PreprocessErrorKind, PreprocessFailure, PreprocessOptions, ProjectionFailure,
-    ProjectionLimits, ResourceDocument, ResourceSnapshot, SourceMapping, preprocess,
-    preprocess_and_analyze_cancellable, preprocess_cancellable,
+    DirectiveKind, PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessOptions,
+    ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceSnapshot, SourceMapping,
+    preprocess, preprocess_and_analyze_with, preprocess_with,
 };
 use adocweave::{AnalysisOptions, CancellationToken, Engine};
 use serde_json::Value;
@@ -203,11 +203,13 @@ fn cancellable_preprocess_and_projection_apis_are_public() {
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     assert_eq!(
-        preprocess_cancellable(
+        preprocess_with(
             "text\n",
             &ResourceSnapshot::default(),
             &PreprocessOptions::default(),
-            &cancellation,
+            PreprocessInputs {
+                cancellation: Some(&cancellation)
+            }
         )
         .expect_err("cancelled preprocess"),
         PreprocessFailure::Cancelled
@@ -227,12 +229,14 @@ fn cancellable_preprocess_and_projection_apis_are_public() {
         ProjectionFailure::Cancelled
     );
     assert!(matches!(
-        preprocess_and_analyze_cancellable(
+        preprocess_and_analyze_with(
             &Engine::new(AnalysisOptions::default()),
             "text\n",
             &ResourceSnapshot::default(),
             &PreprocessOptions::default(),
-            &cancellation,
+            PreprocessInputs {
+                cancellation: Some(&cancellation)
+            }
         ),
         Err(adocweave::preprocess::PreprocessedAnalysisError::Cancelled)
     ));

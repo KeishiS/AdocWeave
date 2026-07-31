@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use adocweave::output::diagnostics::Severity;
 use adocweave::preprocess::{
-    AnalysisProjection, DirectiveKind, EffectiveProcessingOptions, PreprocessOptions,
-    PreprocessedAnalysisError, ProjectionFailure, ProjectionLimits, ResourceDocument,
-    ResourceSnapshot, preprocess_and_analyze_cancellable_with_options,
+    AnalysisProjection, DirectiveKind, EffectiveProcessingOptions, PreprocessInputs,
+    PreprocessOptions, PreprocessedAnalysisError, ProjectionFailure, ProjectionLimits,
+    ResourceDocument, ResourceSnapshot,
 };
 use adocweave::{AnalysisOptions, SourceId};
 use dependency_graph::DependencyGraph;
@@ -911,28 +911,29 @@ impl WorkspaceSnapshot {
         let options = options
             .clone()
             .with_source_id(Some(SourceId::new(root.to_string())));
-        let preprocessed = preprocess_and_analyze_cancellable_with_options(
-            &root_resource.text,
-            &snapshot,
-            &options,
-            cancellation,
-        )
-        .map_err(|error| match error {
-            PreprocessedAnalysisError::Options(error) => {
-                WorkspaceError::new(WorkspaceErrorCode::InvalidOptions, error.to_string())
-            }
-            PreprocessedAnalysisError::Preprocess(error) => WorkspaceError::new(
-                WorkspaceErrorCode::Preprocess,
-                error.to_string(),
+        let preprocessed = options
+            .preprocess_and_analyze(
+                &root_resource.text,
+                &snapshot,
+                PreprocessInputs {
+                    cancellation: Some(cancellation),
+                },
             )
-            .with_origin(error.source_id.as_ref(), error.range, error.kind.as_str()),
-            PreprocessedAnalysisError::Parse(error) => {
-                WorkspaceError::new(WorkspaceErrorCode::Analysis, error.to_string())
-            }
-            PreprocessedAnalysisError::Cancelled => {
-                WorkspaceError::new(WorkspaceErrorCode::Cancelled, "processing was cancelled")
-            }
-        })?;
+            .map_err(|error| match error {
+                PreprocessedAnalysisError::Options(error) => {
+                    WorkspaceError::new(WorkspaceErrorCode::InvalidOptions, error.to_string())
+                }
+                PreprocessedAnalysisError::Preprocess(error) => {
+                    WorkspaceError::new(WorkspaceErrorCode::Preprocess, error.to_string())
+                        .with_origin(error.source_id.as_ref(), error.range, error.kind.as_str())
+                }
+                PreprocessedAnalysisError::Parse(error) => {
+                    WorkspaceError::new(WorkspaceErrorCode::Analysis, error.to_string())
+                }
+                PreprocessedAnalysisError::Cancelled => {
+                    WorkspaceError::new(WorkspaceErrorCode::Cancelled, "processing was cancelled")
+                }
+            })?;
         check_cancelled(cancellation)?;
         let dependencies = actual_dependencies(&preprocessed.document, root);
         let projection = preprocessed

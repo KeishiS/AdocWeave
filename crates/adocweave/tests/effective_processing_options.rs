@@ -3,9 +3,8 @@ use std::sync::Arc;
 
 use adocweave::output::diagnostics::PROTECTED_ATTRIBUTE;
 use adocweave::preprocess::{
-    EffectiveProcessingOptions, PreprocessErrorKind, PreprocessOptions, ProcessingOptionsError,
-    ResourceDocument, ResourceSnapshot, preprocess, preprocess_and_analyze,
-    preprocess_and_analyze_with_options,
+    EffectiveProcessingOptions, PreprocessErrorKind, PreprocessInputs, PreprocessOptions,
+    ProcessingOptionsError, ResourceDocument, ResourceSnapshot, preprocess, preprocess_and_analyze,
 };
 use adocweave::{AnalysisOptions, Engine, SourceId};
 
@@ -38,12 +37,13 @@ fn snapshot() -> ResourceSnapshot {
 fn one_effective_contract_drives_conditionals_includes_analysis_and_protected_attributes() {
     let (analysis, preprocess) = matching_options();
     let options = EffectiveProcessingOptions::new(analysis, preprocess).expect("matching settings");
-    let result = preprocess_and_analyze_with_options(
-        "ifdef::selected[]\ninclude::{selected}.adoc[]\nendif::[]\n",
-        &snapshot(),
-        &options,
-    )
-    .expect("processing");
+    let result = options
+        .preprocess_and_analyze(
+            "ifdef::selected[]\ninclude::{selected}.adoc[]\nendif::[]\n",
+            &snapshot(),
+            PreprocessInputs::default(),
+        )
+        .expect("processing");
 
     assert!(result.document.source.contains("included {selected}"));
     assert_eq!(

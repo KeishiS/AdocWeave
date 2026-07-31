@@ -1,8 +1,7 @@
 //! Versioned, allocation-owning WASM boundary over the deterministic core.
 
 use adocweave::preprocess::{
-    PreprocessedAnalysisError, ProjectionFailure, ProjectionLimits, preprocess,
-    preprocess_and_analyze_cancellable_with_options,
+    PreprocessInputs, PreprocessedAnalysisError, ProjectionFailure, ProjectionLimits, preprocess,
 };
 use adocweave::{CancellationCheck, NeverCancel, ParseError, SourceId, VERSION};
 
@@ -86,13 +85,15 @@ fn execute_request(
     let (preprocessed_analysis, standalone_analysis) = match request.processing {
         request_conversion::ProcessingExecution::Combined { snapshot, options } => (
             Some(
-                preprocess_and_analyze_cancellable_with_options(
-                    &request.source,
-                    &snapshot,
-                    &options,
-                    cancellation,
-                )
-                .map_err(preprocessed_analysis_error)?,
+                options
+                    .preprocess_and_analyze(
+                        &request.source,
+                        &snapshot,
+                        PreprocessInputs {
+                            cancellation: Some(cancellation),
+                        },
+                    )
+                    .map_err(preprocessed_analysis_error)?,
             ),
             None,
         ),
