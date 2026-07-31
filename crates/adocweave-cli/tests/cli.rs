@@ -1622,6 +1622,36 @@ fn list_rules_rejects_missing_json_and_document_options() {
     }
 }
 
+/// `--list-rules` works with the canonical option, not only its compatibility alias.
+#[test]
+fn list_rules_accepts_the_canonical_format_option() {
+    let canonical = adocweave()
+        .args(["check", "--list-rules", "--format", "json"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the adocweave binary should run");
+    let alias = adocweave()
+        .args(["check", "--list-rules", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the adocweave binary should run");
+
+    assert!(canonical.status.success());
+    assert_eq!(canonical.stdout, alias.stdout);
+
+    // The message names the option a caller should reach for.
+    let rejected = adocweave()
+        .args(["check", "--list-rules"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the adocweave binary should run");
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("--format json"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+}
+
 #[test]
 fn check_accepts_relative_targets_without_activating_them_in_html() {
     let source = b"link:../release-manifest.json[release manifest]\n\
