@@ -51,6 +51,11 @@ Zedまたは他のLSP client
 * runtime非依存のキャンセル可能な解析
 * source origin付き解析結果と古い結果の採用拒否
 
+解析へ渡すリソーススナップショットは、除外されるリソースが1件もない場合、workspaceが保持する
+状態そのものを共有します。Language Serverは打鍵のたびにこのスナップショットを作り直すため、
+「すべて残す」という答えを表すのに全リソースを複製すると、1打鍵の費用がworkspaceの規模に
+比例して増えます。除外が起きた場合だけ絞り込んだ集合を新しく作ります。
+
 ``adocweave``コアは次を所有します。
 
 * AsciiDocのsyntax tree、AST、診断、Formatterおよびprojection
