@@ -10,3 +10,5 @@ https://{host}/doc[*link*] <<intro,戻る>> xref:other.adoc#part[Other] xref:not
 ** nested
 
 stem:[x < y]
+
+See cite:[smith2024, tanaka2025] and cite:[doe2026, locator="p. 12"].

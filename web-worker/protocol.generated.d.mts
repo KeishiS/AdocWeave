@@ -205,6 +205,24 @@ export interface FormulaProjection {
   source: string;
 }
 
+export interface CitationKeyProjection {
+  sourceRange: TextRange;
+  key: string;
+}
+
+export interface CitationAttributeProjection {
+  sourceRange: TextRange;
+  name: string | null;
+  value: string;
+}
+
+export interface CitationProjection {
+  order: number;
+  sourceRange: TextRange;
+  keys: CitationKeyProjection[];
+  attributes: CitationAttributeProjection[];
+}
+
 export interface ProjectedText {
   sourceRange: TextRange;
   text: string;
@@ -427,6 +445,7 @@ export interface DocumentProjection {
   sourceId: string | null;
   sourceBlocks: SourceBlockProjection[];
   formulas: FormulaProjection[];
+  citations: CitationProjection[];
   blockPresentations: BlockPresentationProjection[];
   orderedLists: OrderedListProjection[];
   referenceEdges: ReferenceEdge[];
@@ -568,7 +587,7 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 7;
+export declare const PROTOCOL_SCHEMA_VERSION: 8;
 export declare const WORKER_PROTOCOL_VERSION: 2;
 export declare const PACKAGE_VERSION: "0.22.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];
