@@ -29,6 +29,30 @@ GitHub Release archiveとNixパッケージは別の配布経路であり、Nix�
 
 いずれの経路でも、導入前に「取得と完全性の検証」のchecksumとattestationの確認を行ってください。
 
+この文書は複数の導入経路を扱います。全体を順に読む必要はありません。目的に応じて次の節へ進んでください。
+
+[cols="2,3"]
+|===
+| 目的 | 読む節
+
+| 自分の端末でCLIを使う（Nix）
+| <<nix-installation>>
+
+| 自分の端末でCLIを使う（Nixを使わない）
+| 「配布物の選択」「取得と完全性の検証」「利用者単位の導入」
+
+| 複数の利用者が使う端末へ導入する
+| 「配布物の選択」「取得と完全性の検証」「システム全体への導入」
+
+| Webアプリへ組み込む
+| <<browser-library-deployment>>
+
+| エディターで使う
+| <<zed-installation>>、<<vscode-installation>>
+|===
+
+いずれの経路でも、導入前に「取得と完全性の検証」のchecksumとattestationの確認を行ってください。
+
 [#nix-installation]
 == Nixによる導入
 
