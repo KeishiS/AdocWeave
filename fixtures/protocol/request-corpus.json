@@ -52,7 +52,11 @@
       "resolved": { "status": "resolved", "href": "a.png", "mediaType": "image/png", "byteLength": null },
       "failed": { "status": "failed", "kind": "missing" }
     } },
-    { "enum": "ResourceFailureKind", "path": "/renderInputs/resources/0/outcome/kind" }
+    { "enum": "ResourceFailureKind", "path": "/renderInputs/resources/0/outcome/kind" },
+    { "enum": "CitationStatus", "path": "/renderInputs/citations/0/outcome/status", "templates": {
+      "resolved": { "status": "resolved", "segments": [{ "text": "(Smith 2024)" }] },
+      "failed": { "status": "failed", "kind": "missing-target" }
+    } }
   ],
   "objectCases": [
     { "object": "WasmRequest", "path": "" },
@@ -60,6 +64,8 @@
     { "object": "RenderInputs", "path": "/renderInputs" },
     { "object": "ResolvedReference", "path": "/renderInputs/references/0" },
     { "object": "ResolvedResource", "path": "/renderInputs/resources/0" },
+    { "object": "ResolvedCitation", "path": "/renderInputs/citations/0" },
+    { "object": "CitationSegment", "path": "/renderInputs/citations/0/outcome/segments/0" },
     { "object": "AnalysisPreprocessInput", "path": "/preprocess" },
     { "object": "AnalysisOptions", "path": "/analysisOptions" },
     { "object": "SyntaxOptions", "path": "/analysisOptions/syntax" },
@@ -83,6 +89,7 @@
       "resolved": { "status": "resolved", "href": "#target" },
       "failed": { "status": "failed", "kind": "missing-target" }
     } },
+    { "union": "ResolvedCitationOutcome", "path": "/renderInputs/citations/0/outcome", "variants": { "resolved": { "status": "resolved", "segments": [{ "text": "(Smith 2024)" }] }, "failed": { "status": "failed", "kind": "missing-target" } } },
     { "union": "ResolvedResourceOutcome", "path": "/renderInputs/resources/0/outcome", "variants": {
       "resolved": { "status": "resolved", "href": "a.png", "mediaType": "image/png", "byteLength": null },
       "failed": { "status": "failed", "kind": "missing" }

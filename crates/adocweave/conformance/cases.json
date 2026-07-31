@@ -241,6 +241,30 @@
       "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {
+      "name": "resolved-citation",
+      "source": "[bibliography]\n== Sources\n\n* bibanchor:smith2024[] Smith, Example Work\n\nSee cite:[smith2024, tanaka2025].\n",
+      "expectedHtmlFile": "resolved-citation.html",
+      "renderInputs": {
+        "citations": [
+          {
+            "sourceStart": 76,
+            "sourceEnd": 104,
+            "outcome": {
+              "status": "resolved",
+              "segments": [
+                { "text": "(" },
+                { "text": "Smith 2024", "anchor": "smith2024" },
+                { "text": "; Tanaka 2025)" }
+              ]
+            }
+          }
+        ]
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "host解決済みの引用表示、文書内anchorへのlinkおよびback referenceはnativeとWASMで同じ安全なHTMLを生成する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
       "name": "media-backend-presentation",
       "sourceFile": "media-backend-presentation.adoc",
       "expectedHtmlFile": "media-backend-presentation.html",

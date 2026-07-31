@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "packageVersion": "0.22.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
@@ -15,7 +15,8 @@
     "ReferenceFailureKind",
     "ReferenceNotice",
     "ResourceStatus",
-    "ResourceFailureKind"
+    "ResourceFailureKind",
+    "CitationStatus"
   ],
   "requestObjects": [
     "WasmRequest",
@@ -23,6 +24,8 @@
     "RenderInputs",
     "ResolvedReference",
     "ResolvedResource",
+    "ResolvedCitation",
+    "CitationSegment",
     "AnalysisPreprocessInput",
     "AnalysisOptions",
     "SyntaxOptions",
@@ -40,7 +43,8 @@
   "requestUnions": [
     "Stylesheet",
     "ResolvedReferenceOutcome",
-    "ResolvedResourceOutcome"
+    "ResolvedResourceOutcome",
+    "ResolvedCitationOutcome"
   ],
   "preprocessObjects": [
     "PreprocessRequest",
@@ -76,6 +80,7 @@
     "ReferenceNotice": ["fallback"],
     "ResourceStatus": ["resolved", "failed"],
     "ResourceFailureKind": ["missing", "outside-root", "scheme-denied", "permission-denied", "media-type-unavailable", "resolver-failure"],
+    "CitationStatus": ["resolved", "failed"],
     "DocumentAttributeOperation": ["set", "unset"],
     "AttributeExpansionError": ["undefined", "cycle", "depth-limit-exceeded", "size-limit-exceeded"],
     "AttributeValueContinuation": ["soft", "hard"],
@@ -158,7 +163,8 @@
       "unknownFields": "reject",
       "fields": [
         { "json": "references", "type": "ResolvedReference[]", "default": [] },
-        { "json": "resources", "type": "ResolvedResource[]", "default": [] }
+        { "json": "resources", "type": "ResolvedResource[]", "default": [] },
+        { "json": "citations", "type": "ResolvedCitation[]", "default": [] }
       ]
     },
     "ResolvedReference": {
@@ -175,6 +181,21 @@
         { "json": "sourceStart", "type": "u32", "required": true },
         { "json": "sourceEnd", "type": "u32", "required": true },
         { "json": "outcome", "type": "ResolvedResourceOutcome", "required": true }
+      ]
+    },
+    "ResolvedCitation": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "sourceStart", "type": "u32", "required": true },
+        { "json": "sourceEnd", "type": "u32", "required": true },
+        { "json": "outcome", "type": "ResolvedCitationOutcome", "required": true }
+      ]
+    },
+    "CitationSegment": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "text", "type": "string", "required": true },
+        { "json": "anchor", "type": "string | null", "default": null }
       ]
     },
     "AnalysisLimits": {
@@ -463,6 +484,14 @@
           { "json": "byteLength", "type": "safeInteger | null", "default": null }
         ],
         "failed": [{ "json": "kind", "type": "ResourceFailureKind", "required": true }]
+      }
+    },
+    "ResolvedCitationOutcome": {
+      "tag": "status",
+      "unknownFields": "reject",
+      "variants": {
+        "resolved": [{ "json": "segments", "type": "CitationSegment[]", "default": [] }],
+        "failed": [{ "json": "kind", "type": "ReferenceFailureKind", "required": true }]
       }
     },
     "ReferenceKey": {

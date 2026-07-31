@@ -84,9 +84,12 @@ const REQUEST_WIRE_RUST_NAME_OVERRIDES = {
 };
 
 const RENDER_INPUT_RUST_NAMES = {
+  CitationSegment: "WasmCitationSegment",
   ReferenceFailureKind: "WasmReferenceFailureKind",
   ReferenceNotice: "WasmReferenceNotice",
   RenderInputs: "WasmRenderInputs",
+  ResolvedCitation: "WasmResolvedCitation",
+  ResolvedCitationOutcome: "WasmCitationOutcome",
   ResolvedReference: "WasmResolvedReference",
   ResolvedReferenceOutcome: "WasmReferenceOutcome",
   ResolvedResource: "WasmResolvedResource",
@@ -716,9 +719,12 @@ function requestWireTypeIsCopy(parsed, reached, contracts, visiting) {
 
 export function generateRustRenderInputs(schema) {
   const contracts = {
+    CitationSegment: schema.definitions?.CitationSegment,
     ReferenceFailureKind: schema.enums?.ReferenceFailureKind,
     ReferenceNotice: schema.enums?.ReferenceNotice,
     RenderInputs: schema.definitions?.RenderInputs,
+    ResolvedCitation: schema.definitions?.ResolvedCitation,
+    ResolvedCitationOutcome: schema.taggedUnions?.ResolvedCitationOutcome,
     ResolvedReference: schema.definitions?.ResolvedReference,
     ResolvedReferenceOutcome: schema.taggedUnions?.ResolvedReferenceOutcome,
     ResolvedResource: schema.definitions?.ResolvedResource,
@@ -762,6 +768,13 @@ where
       contracts.ResolvedResourceOutcome,
       reached,
     ),
+    renderInputUnion(
+      "ResolvedCitationOutcome",
+      contracts.ResolvedCitationOutcome,
+      reached,
+    ),
+    renderInputObject("CitationSegment", contracts.CitationSegment, reached),
+    renderInputObject("ResolvedCitation", contracts.ResolvedCitation, reached),
     renderInputObject("ResolvedReference", contracts.ResolvedReference, reached),
     renderInputObject("ResolvedResource", contracts.ResolvedResource, reached),
     renderInputObject("RenderInputs", contracts.RenderInputs, reached),

@@ -317,7 +317,7 @@ mod tests {
             "image/png".parse().expect("media type"),
             Some(42),
         );
-        let inputs = RenderInputs::new(Vec::new(), vec![resolved]);
+        let inputs = RenderInputs::default().with_resources(vec![resolved]);
         let mut usage = inputs.track_usage();
         let planned = plan_resource(
             source_range,

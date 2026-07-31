@@ -180,16 +180,20 @@ WASMの``attributeQueries``は、各bindingの操作、有効値、決定binding
 [#render-inputs]
 == 変換入力
 
-``RenderInputs``は、同じ``Analysis``から得たreference queryとresource queryに対する解決結果をまとめた、
-出力形式に依存しないsnapshotです。変換処理はこの値を読むだけであり、filesystem、network、DBまたは
-resolverを呼び出しません。
+``RenderInputs``は、同じ``Analysis``から得たreference query、resource queryおよび``cite:``マクロに対する
+解決結果をまとめた、出力形式に依存しないsnapshotです。変換処理はこの値を読むだけであり、filesystem、
+network、DBまたはresolverを呼び出しません。
+
+``RenderInputs``は空の値から作り、``with_references``、``with_resources``、``with_citations``で
+必要な種類だけを与えます。渡さなかった種類は、解決結果が一つもない状態として扱います。
 
 === 照合
 
 参照と主resourceの解決結果は、元の構文node全体のUTF-8 byte rangeで照合します。Video posterは
 ``poster``属性値のrangeで照合し、``ResourcePurpose::VideoPoster``として主videoと区別します。各resource queryは
-所有するmacroのrangeも保持します。target文字列による照合は、同じtargetの複数出現を区別できないため
-使用しません。
+所有するmacroのrangeも保持します。引用の解決結果は``cite:``から閉じ括弧までのmacro全体のrangeで照合し、
+個々のkeyのrangeでは照合しません。一つのmacroが複数のkeyを挙げても、表示するのは引用一つ分の文字列だからです。
+target文字列による照合は、同じtargetの複数出現を区別できないため使用しません。
 
 一つのqueryには結果を一つだけ渡します。同じ種類とrangeに複数の結果がある場合はどれも採用せず、
 ``duplicate-render-input``を返します。解析結果に対応しない入力は``unused-render-input``とします。
@@ -215,9 +219,24 @@ Imageはalt、iconはalt、title、targetの順、audioとvideoはtitle、target
 Video本体とposterは独立して解決します。安全なvideo本体を利用できる場合、posterだけの欠落、失敗、重複、
 URL拒否またはmedia type不一致ではposterを省略してvideoを維持し、posterの失敗理由を診断として返します。
 
+=== 引用の解決
+
+AdocWeaveは書誌libraryを読まないため、``cite:``をどう表示するかは利用側アプリが決めます。成功結果は
+表示順に並べた文字列の断片であり、断片ごとに参照先anchorを任意で指定できます。``(Smith 2024; Tanaka 2025)``
+のように、括弧や区切り文字は素の文字列のまま残し、著者名の部分だけをlinkにできます。
+
+断片の文字列は公開可能なプレーンテキストとして扱い、AsciiDoc、属性参照またはHTMLとして再解析しません。
+anchorは出力直前に検査し、その文書が実際に定義している対象を指す場合だけlinkを生成します。定義のない
+anchorはlinkにせず素の文字列として出力し、``unknown-citation-anchor``を返します。解決に失敗した場合は
+失敗の種類に対応する診断を返し、未解決の引用と同じ扱いに戻します。
+
+利用側が解決結果を渡さない場合でも、文書内の書誌項目を指すkeyはlinkになります。``[bibliography]``節の
+``bibanchor:``で定義したanchorと同じ名前のkeyは、``<<anchor>>``と同じくその項目を参照し、項目側の
+back referenceにも並びます。back referenceの番号は、読者が出会う順、つまり原文の位置の順に付きます。
+
 === 処理順序
 
-. 同じrevisionの``Analysis``からreference queryとresource queryを取得します。
+. 同じrevisionの``Analysis``からreference query、resource queryおよび引用を取得します。
 . I/O、権限検査、実在確認およびURL生成を変換処理の外で完了します。
 . queryのrangeを変更せず、成功または型付き失敗を``RenderInputs``へ格納します。
 . 同じ``Analysis``、``RenderPolicy``および``RenderInputs``を変換処理へ渡します。

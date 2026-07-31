@@ -103,10 +103,10 @@ fn hostile_resolver_href_is_revalidated_by_the_renderer() {
     let output = render_with_inputs(
         analysis.document(),
         &RenderPolicy::default(),
-        &RenderInputs::new(
-            vec![ResolvedReference::resolved(range, "javascript:alert(1)")],
-            vec![],
-        ),
+        &RenderInputs::default().with_references(vec![ResolvedReference::resolved(
+            range,
+            "javascript:alert(1)",
+        )]),
     );
 
     assert_eq!(output.html, "<p>unsafe</p>\n");
@@ -127,15 +127,12 @@ fn hostile_resource_href_is_revalidated_by_the_renderer() {
     let output = render_with_inputs(
         analysis.document(),
         &RenderPolicy::default(),
-        &RenderInputs::new(
-            vec![],
-            vec![ResolvedResource::resolved(
-                range,
-                "javascript:alert(1)",
-                "image/png".parse().expect("media type"),
-                Some(42),
-            )],
-        ),
+        &RenderInputs::default().with_resources(vec![ResolvedResource::resolved(
+            range,
+            "javascript:alert(1)",
+            "image/png".parse().expect("media type"),
+            Some(42),
+        )]),
     );
 
     assert_eq!(output.html, "<p>safe</p>\n");
@@ -166,23 +163,20 @@ fn hostile_video_poster_is_omitted_without_disabling_safe_video() {
     let output = render_with_inputs(
         analysis.document(),
         &RenderPolicy::default(),
-        &RenderInputs::new(
-            vec![],
-            vec![
-                ResolvedResource::resolved(
-                    primary.range(),
-                    "https://cdn.example/demo.mp4",
-                    "video/mp4".parse().expect("media type"),
-                    Some(42),
-                ),
-                ResolvedResource::resolved(
-                    poster.range(),
-                    "javascript:alert(1)",
-                    "image/jpeg".parse().expect("media type"),
-                    Some(42),
-                ),
-            ],
-        ),
+        &RenderInputs::default().with_resources(vec![
+            ResolvedResource::resolved(
+                primary.range(),
+                "https://cdn.example/demo.mp4",
+                "video/mp4".parse().expect("media type"),
+                Some(42),
+            ),
+            ResolvedResource::resolved(
+                poster.range(),
+                "javascript:alert(1)",
+                "image/jpeg".parse().expect("media type"),
+                Some(42),
+            ),
+        ]),
     );
 
     assert!(output.html.contains("<video "));
