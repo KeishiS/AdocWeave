@@ -90,6 +90,73 @@ fn configured_resource_limit_rejects_root_before_processing() {
 }
 
 #[test]
+fn each_kind_of_failure_reports_its_own_exit_status() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("clean.adoc"), "= Title\n\ntext\n").expect("clean document");
+    std::fs::write(root.path().join("broken.adoc"), "= Title\n\n<<missing>>\n")
+        .expect("document with a diagnostic");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[resources]\nmax-files = 1\nmax-total-bytes = 4\nmax-resource-bytes = 4\n",
+    )
+    .expect("configuration");
+    let run = |arguments: &[&str]| {
+        adocweave()
+            .current_dir(root.path())
+            .args(arguments)
+            .output()
+            .expect("command")
+            .status
+            .code()
+    };
+
+    // 0: the work finished and nothing reached the failure threshold.
+    assert_eq!(run(&["check", "--no-config", "clean.adoc"]), Some(0));
+    // 1: diagnostics reached the threshold.
+    assert_eq!(
+        run(&[
+            "check",
+            "--no-config",
+            "--fail-on",
+            "warning",
+            "broken.adoc"
+        ]),
+        Some(1)
+    );
+    // 2: the command cannot be acted on as written.
+    assert_eq!(run(&["not-a-command"]), Some(2));
+    assert_eq!(
+        run(&["check", "--no-config", "--fail-on", "bogus", "clean.adoc"]),
+        Some(2)
+    );
+    // 3: a file could not be read.
+    assert_eq!(run(&["check", "--no-config", "absent.adoc"]), Some(3));
+    // 4: a configured limit stopped the work.
+    assert_eq!(run(&["check", "clean.adoc"]), Some(4));
+}
+
+#[test]
+fn only_a_misused_command_is_pointed_at_the_help_text() {
+    let root = tempfile::tempdir().expect("root");
+    let stderr = |arguments: &[&str]| {
+        String::from_utf8_lossy(
+            &adocweave()
+                .current_dir(root.path())
+                .args(arguments)
+                .output()
+                .expect("command")
+                .stderr,
+        )
+        .into_owned()
+    };
+
+    assert!(stderr(&["not-a-command"]).contains("--help"));
+    // A missing file is not a misuse of the command, so the help text would not
+    // tell the caller anything about it.
+    assert!(!stderr(&["check", "--no-config", "absent.adoc"]).contains("--help"));
+}
+
+#[test]
 fn configured_resource_limit_bounds_standard_input_while_reading() {
     let root = tempfile::tempdir().expect("root");
     let config = root.path().join(".adocweave.toml");

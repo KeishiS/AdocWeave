@@ -23,6 +23,13 @@ use sha2::{Digest, Sha256};
 
 /// Conventional project configuration filename.
 pub const FILE_NAME: &str = ".adocweave.toml";
+
+/// Largest project file that is read.
+///
+/// A project file names roots, limits and rule settings. One megabyte is far
+/// beyond any of that, so the bound rejects a file that is not a project file
+/// without constraining a real one.
+pub const MAX_PROJECT_FILE_BYTES: u64 = 1024 * 1024;
 /// Configuration schema version accepted by this package.
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -136,12 +143,36 @@ impl ConfigSnapshot {
                 "the project file has no parent directory",
             )
         })?;
+        // Every other read AdocWeave performs is bounded. Without a bound here,
+        // a project file is the one path on which a large or endless file is
+        // read into memory in full.
+        let length = fs::metadata(&path)
+            .map_err(|_| {
+                ConfigError::new(
+                    ConfigErrorCode::ReadFailed,
+                    "the project file cannot be inspected",
+                )
+            })?
+            .len();
+        if length > MAX_PROJECT_FILE_BYTES {
+            return Err(ConfigError::new(
+                ConfigErrorCode::ReadFailed,
+                "the project file exceeds the maximum size",
+            ));
+        }
         let source = fs::read_to_string(&path).map_err(|_| {
             ConfigError::new(
                 ConfigErrorCode::ReadFailed,
                 "the project file cannot be read as UTF-8",
             )
         })?;
+        if source.len() as u64 > MAX_PROJECT_FILE_BYTES {
+            // The file grew between the two calls.
+            return Err(ConfigError::new(
+                ConfigErrorCode::ReadFailed,
+                "the project file exceeds the maximum size",
+            ));
+        }
         let content_sha256 = Sha256::digest(source.as_bytes()).into();
         let config = ResolvedProjectConfig::parse(&source, directory)?;
         Ok(Self {

@@ -55,8 +55,28 @@ macro名だけを置換する自動修正を提示します。
 [#check-exit-status]
 === 終了状態
 
+終了コードは、失敗の理由ごとに次の値を返します。CLIとLanguage Serverで同じ値を使うため、
+どちらを実行したかによって意味が変わりません。
+
+[cols="1,4"]
+|===
+| コード | 意味
+
+| 0 | 処理が完了し、しきい値に達した診断がありません
+| 1 | 診断がしきい値に達しました
+| 2 | 指定した引数またはオプションを実行できません
+| 3 | ファイル、ストリームまたはリソースの読み書きに失敗しました
+| 4 | 入力サイズまたはリソースの上限を超えました
+|===
+
+「失敗したかどうか」だけを見る場合は、これまでどおり0とそれ以外で判定できます。値を見分ける必要があるのは、
+たとえばコマンドの書き間違い（2）と対象ファイルの不在（3）を別々に扱いたい場合です。
+
+Language Serverは、``shutdown``を受け取る前に``exit``を受け取った場合だけ1を返します。これはLanguage Server
+Protocolが定める値であり、上の規約より優先します。
+
 ``--fail-on error``はerrorが一件以上、``--fail-on warning``はerrorまたはwarningが一件以上ある場合に
-終了コードを0以外にします。既定値は``error``です。``--fail-on never``は診断の重要度によって失敗させず、
+終了コードを1にします。既定値は``error``です。``--fail-on never``は診断の重要度によって失敗させず、
 入力、設定またはI/Oのerrorだけを失敗として扱います。human、JSON、GitHub Actions annotationおよびSARIFの
 形式を変えても診断集合と終了状態は変わりません。
 
@@ -83,7 +103,9 @@ adocweave check --local-targets --project-root . docs/manual.adoc
 
 この検査は記述元fileの親directoryを基準にし、正規化後もproject root内にある``..``を許可します。
 絶対path、外部URL、local anchorおよびscheme付きtargetは対象外です。欠落、project root外への移動、
-directory、権限不足および検査不能なtargetは安定したcodeを持つerrorとなり、終了コードは0以外になります。
+directory、権限不足および検査不能なtargetは安定したcodeを持つerrorとなります。これらはほかの診断と
+同じくerror件数へ加算されるため、終了コードは``--fail-on``の設定に従います。``--fail-on never``を
+指定した場合は、これらのerrorがあっても終了コードは0です。
 同じfileへの複数の参照は位置ごとに報告しますが、filesystemの検査結果はcommand内で共有します。
 一意なtargetの検査件数は``resources.max-files``を上限とし、超過したtargetには
 ``local-target-limit-exceeded``を報告して、それ以降のfilesystem検査を行いません。
