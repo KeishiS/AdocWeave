@@ -5,6 +5,14 @@ directoryから親へ探索し、起動時のworkspace rootまたはCLIの作業
 近い設定fileを一つだけ使用し、複数fileを処理する場合はfileごとに探索します。設定の継承、
 環境変数・チルダの展開、外部fileの読込およびnetwork accessは行いません。
 
+探索を停止する位置は、いずれも利用者が与えた根です。Language Serverではエディターが開いている
+workspace folder、CLIではコマンドを実行した作業directoryです。処理対象がその根の外にある場合、
+設定fileは適用しません。作業directoryの外にあるfileへ設定を適用したい場合は``--config FILE``で
+明示してください。
+
+設定fileの読み込みには1 MiBの上限があります。設定fileが記述するのは根、上限および規則の設定であり、
+この大きさを超えることはありません。上限を超えるfileは読み込まずにerrorとします。
+
 最小の設定は次のとおりです。
 
 [source,toml]

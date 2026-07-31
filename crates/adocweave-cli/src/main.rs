@@ -49,6 +49,8 @@ use file_workflow::{PendingWrite, atomic_write_all, colorize_lines};
 const DEFAULT_PREVIEW_PORT: u16 = 4000;
 const DEFAULT_PREVIEW_DEBOUNCE_MS: u64 = 100;
 
+use adocweave_host::ExitStatus;
+
 #[derive(Debug)]
 enum CliError {
     Usage(String),
@@ -148,6 +150,39 @@ impl Error for CliError {
             | Self::ConfigAuthority(_)
             | Self::Path(_)
             | Self::ConcurrentModification(_) => None,
+        }
+    }
+}
+
+impl CliError {
+    /// Names the category a caller sees as the exit status.
+    const fn exit_status(&self) -> ExitStatus {
+        match self {
+            // What the caller asked for cannot be acted on as written.
+            Self::Usage(_) | Self::Path(_) | Self::Stylesheet(_) | Self::ConfigAuthority(_) => {
+                ExitStatus::Usage
+            }
+            // A file, stream or resource could not be read or written. The input
+            // may be fine; the surroundings were not.
+            Self::Read { .. }
+            | Self::Write(_)
+            | Self::Include(_)
+            | Self::LocalTarget(_)
+            | Self::Config(_)
+            | Self::ConcurrentModification(_)
+            | Self::Preview(_) => ExitStatus::InputOutput,
+            // A configured bound was reached, so the work stopped rather than
+            // grew without limit.
+            Self::OutputLimit { .. } | Self::ResourceLimit(_) => ExitStatus::LimitExceeded,
+            // The document itself is the problem, which is what a diagnostic
+            // reports. Everything left describes the document or the analysis of
+            // it, so it shares the status diagnostics use.
+            Self::InvalidUtf8 { .. }
+            | Self::Analysis(_)
+            | Self::Position(_)
+            | Self::FormattingRequired
+            | Self::FixConflict(_)
+            | Self::Serialize(_) => ExitStatus::Diagnostics,
         }
     }
 }
@@ -1411,7 +1446,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 eprintln!("{summary}");
             }
             Ok(Some(if outcome.formatting_required {
-                ExitCode::FAILURE
+                ExitStatus::Diagnostics.into()
             } else {
                 ExitCode::SUCCESS
             }))
@@ -1586,7 +1621,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 }
             }
             Ok(Some(if counts.fails(check.fail_on) {
-                ExitCode::FAILURE
+                ExitStatus::Diagnostics.into()
             } else {
                 ExitCode::SUCCESS
             }))
@@ -2266,9 +2301,14 @@ fn main() -> ExitCode {
     match run() {
         Ok(exit_code) => exit_code,
         Err(error) => {
+            let status = error.exit_status();
             eprintln!("adocweave: {error}");
-            eprintln!("Try 'adocweave --help' for more information.");
-            ExitCode::FAILURE
+            // Only a caller who wrote the command wrong is helped by being sent
+            // to the help text.
+            if status == ExitStatus::Usage {
+                eprintln!("Try 'adocweave --help' for more information.");
+            }
+            status.into()
         }
     }
 }

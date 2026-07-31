@@ -1,3 +1,5 @@
+use adocweave_host::ExitStatus;
+
 #[tokio::main]
 async fn main() {
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
@@ -28,11 +30,20 @@ async fn main() {
         }
         _ => {
             eprintln!("adocweave-lsp: unsupported arguments");
-            std::process::exit(2);
+            std::process::exit(i32::from(ExitStatus::Usage.code()));
         }
     }
     if let Err(error) = adocweave_lsp::run_stdio().await {
+        // The Language Server Protocol fixes the status for `exit` without a
+        // preceding `shutdown`, so that case keeps the number the specification
+        // names. Anything else ended because the standard input and output
+        // transport failed.
+        let status = if matches!(error, async_lsp::Error::Protocol(_)) {
+            ExitStatus::Diagnostics
+        } else {
+            ExitStatus::InputOutput
+        };
         eprintln!("adocweave-lsp: {error}");
-        std::process::exit(1);
+        std::process::exit(i32::from(status.code()));
     }
 }
