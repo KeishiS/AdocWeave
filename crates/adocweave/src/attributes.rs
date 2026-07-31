@@ -321,6 +321,10 @@ impl SequentialAttributeState {
         &self.values
     }
 
+    pub(crate) const fn limits(&self) -> AttributeExpansionLimits {
+        self.limits
+    }
+
     pub(crate) fn is_locked(&self, name: &str) -> bool {
         self.locked.contains(&canonical_name(name))
     }
