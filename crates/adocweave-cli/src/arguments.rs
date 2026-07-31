@@ -459,7 +459,9 @@ pub(crate) fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result
     }
     if list_rules {
         if diagnostic_format != DiagnosticFormat::Json {
-            return Err(CliError::Usage("--list-rules requires --json".to_owned()));
+            return Err(CliError::Usage(
+                "--list-rules requires --format json".to_owned(),
+            ));
         }
         if input.is_some()
             || !additional_inputs.is_empty()

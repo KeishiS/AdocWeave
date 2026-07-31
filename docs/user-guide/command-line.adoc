@@ -127,7 +127,7 @@ macOSとWindowsでは``StaticSnapshotOnly``方式を使用します。
 
 [source,console]
 ----
-adocweave check --list-rules --json
+adocweave check --list-rules --format json
 ----
 
 出力には``schemaVersion``、``packageVersion``およびcode順の``rules``を含めます。各規則の

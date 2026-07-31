@@ -212,7 +212,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
         commands: &[CommandId::Check],
         root: false,
         version: false,
-        root_help_line: "  --list-rules  List available check rules; requires --json\n",
+        root_help_line: "  --list-rules  List available check rules; requires --format json\n",
         command_help_line: None,
     },
     OptionSpec {

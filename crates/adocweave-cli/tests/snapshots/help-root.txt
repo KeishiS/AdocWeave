@@ -24,7 +24,7 @@ Options:
   --fix       Apply non-conflicting, always-safe check fixes
   --config FILE  Use an explicit project configuration
   --no-config    Disable project configuration discovery
-  --list-rules  List available check rules; requires --json
+  --list-rules  List available check rules; requires --format json
   --enable-rule CODE  Enable an opt-in check rule; repeatable
   --check     Check formatting without writing formatted text
   --write     Atomically replace formatted input files
