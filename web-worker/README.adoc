@@ -50,14 +50,14 @@ Worker障害などのterminal errorでは、未完了のPromiseをrejectし、``
 Promiseのrejectを処理するcallbackと``onError``の同期的な実行順には依存しないでください。
 ``defaultAssetUrls()``は``import.meta.url``を基準にWorkerとWASMを解決するため、静的hostingとbundlerの
 どちらでも同じ公開入口を使用できます。moduleのimportだけではWorkerを生成しません。
-Clientの構築時にもWorkerやWASM network requestは開始せず、``ready``の参照または``analyze()``で初めて
+Clientの構築時にもWorkerやWASMのnetwork requestは開始せず、``ready``の参照または``analyze()``で初めて
 Workerを初期化します。Fallback modeで未完了の``ready``と``analyze()``を同時に開始した場合、
 ``analyze()``側のWorkerを採用し、先に取得した``ready``は``superseded``でrejectします。
 動作するtextarea例は``example/index.html``に含まれます。APIと返却値の詳細は
 xref:../docs/developer-guide/core-profile.adoc#wasm-api[WebAssembly API]を参照してください。
 
-ViteまたはWebpackではbrowser release packageの``worker``と``wasm``を同じ公開directoryへ資産として
+ViteまたはWebpackではbrowser release packageの``worker``と``wasm``を同じ公開ディレクトリへ資産として
 コピーし、配備後の``worker/index.mjs`` URLを``defaultAssetUrls``へ渡します。WorkerとWASMをJavaScript
 bundleへinline化せず、返されたURLをそのまま使用します。この配置はcontent hash付きbase URLとCDN URLでも
-同じ相対関係を維持します。Release gateでは実packageをesbuildでbundleしたbrowser smoke、CSP、WASM size
+同じ相対関係を維持します。Release gateでは実パッケージをesbuildでbundleしたbrowser smoke、CSP、WASM size
 およびURL解決を検証します。
