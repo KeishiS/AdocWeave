@@ -14,12 +14,11 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /終了コードを、失敗の理由ごとに0から4へ分けました/);
-  assert.match(notes, /直前のstable tagと比較する検査をrelease gateへ追加しました/);
-  assert.match(notes, /設定fileの読み込みに上限を設けました/);
-  assert.match(notes, /読み込んだ設定をdirectoryごとに保持します/);
-  assert.match(notes, /受入検査に使うChromiumをflakeで固定しました/);
-  assert.match(notes, /到達できるsource検査だけを実行するようにしました/);
+  assert.match(notes, /利用側アプリが許可schemeへ加えても出力しない/);
+  assert.match(notes, /文書本文と同じくエスケープとして読む/);
+  assert.match(notes, /プロセスが終わらないようにしました/);
+  assert.match(notes, /すべてのプラットフォームで適用する/);
+  assert.match(notes, /workspace全体の走査を待たずに応答する/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -27,13 +26,13 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.23\.0から変更していません/);
-  assert.match(notes, /破壊的変更：CLIとLanguage Serverの終了コードを/);
-  assert.match(notes, /Language Server Protocolが定める値であり/);
-  assert.match(notes, /設定fileの読み込みに1 MiBの上限を設けました/);
+  assert.match(notes, /``data``はこの扱いに含めず/);
+  assert.match(notes, /``adocweave_config::ProjectScopeId``を追加しました/);
+  assert.match(notes, /schema versionを3から4へ更新しました/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /設定の移行は不要です/);
-  assert.match(notes, /これまでどおり0とそれ以外で判定できます/);
-  assert.match(notes, /「失敗は必ず1」を前提にしている場合は、判定を見直してください/);
+  assert.match(notes, /そのURLは出力されなくなります/);
+  assert.match(notes, /属性として展開するには``\\``を外してください/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
@@ -48,7 +47,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /引用表示の組み立ては利用側アプリの責務です/);
   assert.match(notes, /解決結果を渡さない引用の表示は`unresolved_references`の設定に従い/);
   assert.match(notes, /複数ファイルの解析にはディレクトリのworkspace folderが必要/);
-  assert.match(notes, /Language Serverの初期化は、workspace全体の走査を終えてから応答します/);
+  assert.match(notes, /workspaceの走査を初期化の応答後に行います/);
   assert.match(
     notes,
     new RegExp(`WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}`),
@@ -61,7 +60,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.23.0"), /v0\.24\.0専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.24\.0専用/);
+  assert.throws(() => buildReleaseNotes("v0.24.0"), /v0\.25\.0専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.25\.0専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });

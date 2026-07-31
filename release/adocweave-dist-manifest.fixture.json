@@ -5,7 +5,7 @@
       "byteSize": 101,
       "executable": null,
       "kind": "browser",
-      "name": "adocweave-browser-0.24.0.tar.xz",
+      "name": "adocweave-browser-0.25.0.tar.xz",
       "sha256": "0101010101010101010101010101010101010101010101010101010101010101",
       "target": null
     },
@@ -86,7 +86,7 @@
       "byteSize": 113,
       "executable": null,
       "kind": "vscode",
-      "name": "adocweave-vscode-0.24.0.vsix",
+      "name": "adocweave-vscode-0.25.0.vsix",
       "sha256": "1313131313131313131313131313131313131313131313131313131313131313",
       "target": null
     },
@@ -95,12 +95,12 @@
       "byteSize": 112,
       "executable": null,
       "kind": "zed",
-      "name": "adocweave-zed-0.24.0.tar.xz",
+      "name": "adocweave-zed-0.25.0.tar.xz",
       "sha256": "1212121212121212121212121212121212121212121212121212121212121212",
       "target": null
     }
   ],
-  "packageVersion": "0.24.0",
+  "packageVersion": "0.25.0",
   "schemaVersion": 2,
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567"
 }
