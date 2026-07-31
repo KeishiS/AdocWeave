@@ -1,10 +1,10 @@
 = コントリビューションガイド
 
-AdocWeaveへの変更は短命なbranchで作業し、pull requestを通してmainへ統合します。
+AdocWeaveへの変更は短命なブランチで作業し、pull requestを通してmainへ統合します。
 
 == 開発環境
 
-開発環境はNixで提供しています。repositoryのrootで次を実行してください。
+開発環境はNixで提供しています。リポジトリのrootで次を実行してください。
 
 [source,console]
 ----
@@ -12,13 +12,13 @@ nix develop
 cargo make verify
 ----
 
-``cargo make verify``はPull Request用の標準検査です。source、依存関係、fuzz target、Nix package、
+``cargo make verify``はPull Request用の標準検査です。source、依存関係、fuzz target、Nixパッケージ、
 browserおよびeditor adapter、HTML5標準適合性、文書をまとめて検査します。``cargo make ci``も
 同じ検査を実行します。
 
 == 作業の進め方
 
-. ``main``を最新にし、変更の目的に合う短命なbranchを作成します。
+. ``main``を最新にし、変更の目的に合う短命なブランチを作成します。
 +
 [source,console]
 ----
@@ -27,22 +27,17 @@ git pull --ff-only origin main
 git switch -c fix/browser-archive-import-check
 ----
 +
-branch名は``種別/目的``の形にします。種別には``feat``、`fix`、`refactor`、`perf`、`docs`、
-`ci`、``chore``のいずれかを使います。目的の部分は、branchの一覧を見たときに何をしているか
-分かる長さにします。
-+
-人以外が作業する場合は、作業主体を先頭に付けて``agent/種別/目的``とします。
-どのbranchを人が確認すべきかが一覧から分かるようにするためです。
+ブランチ名の付け方は<<branch-names>>を参照してください。
 
-. 一つのbranchでは一つの目的に集中し、実装と対応するテストとドキュメントを更新します。
-. 変更をcommitする前に検証を実行します。
+. 一つのブランチでは一つの目的に集中し、実装と対応するテストとドキュメントを更新します。
+. 変更をコミットする前に検証を実行します。
 +
 [source,console]
 ----
 cargo make verify
 ----
 
-. 最新の``origin/main``へrebaseし、branchをpushしてpull requestを作成します。
+. 最新の``origin/main``へrebaseし、ブランチをpushしてpull requestを作成します。
 +
 [source,console]
 ----
@@ -52,17 +47,19 @@ git push -u origin fix/browser-archive-import-check
 gh pr create
 ----
 
-. pull request完了後は作業branchを削除します。
+. pull request完了後は作業ブランチを削除します。
 
 競合の解消が難しい場合や変更の目的が増えた場合は、pull requestを分割します。
 
-== Branch名
+[#branch-names]
+== ブランチ名
 
-変更内容に応じて、次の接頭辞を使います。
+ブランチ名は``種別/目的``の形にします。目的の部分は、ブランチの一覧を見たときに何をしているか
+分かる長さにします。
 
 [cols="1,3",options="header"]
 |===
-|接頭辞 |用途
+|種別 |用途
 
 |`feat/<topic>`
 |利用者に見える機能の追加
@@ -73,18 +70,27 @@ gh pr create
 |`refactor/<topic>`
 |外部の意味を変えない内部構造の整理
 
+|`perf/<topic>`
+|外部の意味を変えない性能の改善
+
 |`ci/<topic>`
 |CI、build、release、開発環境の変更
 
 |`docs/<topic>`
 |文書だけの変更
+
+|`chore/<topic>`
+|上のいずれにも当たらない保守作業
 |===
+
+人以外が作業する場合は、作業主体を先頭に付けて``agent/種別/目的``とします。どのブランチを人が
+確認すべきかが一覧から分かるようにするためです。
 
 == 変更時の確認
 
 * 不具合修正には、可能な限り再発を防ぐテストを追加します。
 * 依存関係を更新する場合は、対象のlockfileだけを更新し、``cargo make dependency-governance``を実行します。
-* Nix flakeまたはpackageを変更する場合は、``cargo make nix-package-check``を実行します。
+* Nix flakeまたはパッケージを変更する場合は、``cargo make nix-package-check``を実行します。
 * ``.adoc``文書は既存の用語と書式に合わせます。
 * 比較用の期待出力は、実際の出力との差分を確認し、意図した変更である場合だけ更新します。
 * AsciiDoc構文を変更する場合は、`docs/user-guide/syntax-support.adoc`、`docs/user-guide/compatibility.adoc`、
@@ -103,7 +109,7 @@ AsciiDoc構文を追加または変更する場合は、同じ変更で次を確
 == 依存関係
 
 依存境界、許可するlicenseと取得元、重複依存および一時的な例外は``security/``以下の機械可読な設定を
-基準とします。文書へpackage一覧やversionを転記しません。
+基準とします。文書へパッケージ一覧やversionを転記しません。
 
 依存関係を更新するときは次を確認します。
 
@@ -127,7 +133,7 @@ advisoryおよびRust stableへの影響を、GitHub Actions更新では完全�
 === Dependabotの手動merge
 
 DependabotのPull Requestは更新範囲にかかわらず自動mergeせず、人が変更内容と必須検査を確認して統合します。
-repositoryにはDependabotのauto-mergeを登録するworkflowとwrite権限を置きません。
+リポジトリにはDependabotのauto-mergeを登録するworkflowとwrite権限を置きません。
 
 reviewでは、manifestとlockfileの差分、直接・間接依存関係、SemVerの更新範囲、security advisory、
 license、取得元、重複依存および生成されるnoticeとSBOMを確認します。GitHub Actions更新では完全なcommit SHAへの
@@ -146,11 +152,11 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 
 * 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
 * version固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。
-* CLI option、診断code、package version、対応target、公開APIおよびschemaなど、codeや機械可読な
+* CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeや機械可読な
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、
   作業計画はGitHub Issuesを正本とします。
-* 完了した作業の経緯はGit履歴とGitHub Issuesで確認し、repository内にIssue台帳を複製しません。
+* 完了した作業の経緯はGit履歴とGitHub Issuesで確認し、リポジトリ内にIssue台帳を複製しません。
 * 利用者から見える変更では、関連文書を同じpull requestで更新します。文書更新が不要な場合は、
   その理由をpull requestへ記載します。
 * 文書内のcommand例は、可能な限りCIまたは自動testで実行できる形にします。
@@ -160,18 +166,18 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 pull requestを作成するときは、link:.github/pull_request_template.md[Pull Request template]を使用します。
 変更の目的、主な変更点、実行した検証を簡潔に記載し、未実施の検証がある場合は理由を記載してください。
 
-CIではdependency governance、source quality、fuzz quality、Nix package qualityを確認します。失敗した場合は、
+CIではdependency governance、source quality、fuzz quality、Nixパッケージの検査を確認します。失敗した場合は、
 該当する``cargo make`` taskをNix開発環境で再実行し、設定の基準である``.github/workflows``と
 ``Makefile.toml``を確認してください。
 
-source qualityは、書式や生成fileなどの短い検査、Rust workspaceの検査、WASM・browser・editor adapterの
-検査に分けて並列実行します。``quality / verify``はこれらとdependency governance、fuzz、Nix packageに加え、
+source qualityは、書式や生成fileなどの短い検査、Rustワークスペースの検査、WASM・browser・editor adapterの
+検査に分けて並列実行します。``quality / verify``はこれらとdependency governance、fuzz、Nixパッケージに加え、
 変更に応じて選択したcandidate build、smoke testおよびinstallation E2Eの結果を集約する必須checkです。
 成果物を構築するPull Requestでは、書式、生成file、workflow、``release-contract``および
 変更pathの分類を``cargo make ci-preflight``で先に確認します。global成果物へ影響する場合は、
 実Chromiumによるarchiveの受入検査もPull Requestで実行します。
 
-``cargo make verify``はsource gate、dependency governance、fuzzおよびNix packageを含みますが、
+``cargo make verify``はsource gate、dependency governance、fuzzおよびNixパッケージを含みますが、
 実Chromiumによる受入検査は含みません。browser、ZedまたはVS Code向けの成果物へ影響する変更では、
 次を実行してCIの``build-global``と同じ範囲を手元で確認してください。
 
@@ -190,12 +196,12 @@ browserを使用するため、versionは一致しません。``ADOCWEAVE_BROWSE
 == Tag
 
 安定版には``vX.Y.Z``形式のtagを使用します。tagは``main``の先端であり、
-同じcommitに対するmain candidateのすべてのcheckが成功していることを確認してから作成します。
-作業branchや未検証のcommitにはtagを付けず、``release/*``の長期branchも作成しません。
+同じコミットに対するmain candidateのすべてのcheckが成功していることを確認してから作成します。
+作業ブランチや未検証のコミットにはtagを付けず、``release/*``の長期ブランチも作成しません。
 
 == Release
 
-release作業も通常の変更と同様に、短命なbranchとpull requestから開始します。
+release作業も通常の変更と同様に、短命なブランチとpull requestから開始します。
 
 . 変更の互換性と利用者への影響からSemantic Versioningのversionを決め、管理対象componentを同期します。
 +
@@ -213,7 +219,7 @@ node tools/sync-release-version.mjs --version X.Y.Z
 node tools/sync-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
-. 対象commitへ``vX.Y.Z`` tagを作成し、GitHubへpushします。
+. 対象コミットへ``vX.Y.Z`` tagを作成し、GitHubへpushします。
 . tag pushから起動した公開workflowがsource commitとcandidateを再確認し、GitHub Releaseを自動公開します。
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
@@ -226,7 +232,7 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 新しいversionで最初から実行します。tag、assetまたはattestationの手動削除は監査可能な破壊的操作であるため、
 実行前に対象、影響および理由を確認し、記録してください。
 
-repositoryの初期設定では``github-release`` Environmentを名前付きの権限・監査境界として作成します。
+リポジトリの初期設定では``github-release`` Environmentを名前付きの権限・監査境界として作成します。
 required reviewerとdeployment ruleは設定せず、workflowのstable tag検証とmain candidate再利用検査が
 成功した場合だけ自動公開します。
 
@@ -234,17 +240,17 @@ required reviewerとdeployment ruleは設定せず、workflowのstable tag検証
 == Release checklist
 
 個人開発でも公開後の調査を再現できるよう、各releaseで同じ項目を確認します。公開後の手動確認は、
-repositoryのcheckoutやworkspaceの``target``を``PATH``へ含めないclean環境で、公開assetだけを使って実行します。
+リポジトリのcheckoutやワークスペースの``target``を``PATH``へ含めないclean環境で、公開assetだけを使って実行します。
 
 === 公開前
 
-* [ ] ``flake.lock``で固定したRust stable、``release-manifest.json``の``rustVersion``、root workspaceと
+* [ ] ``flake.lock``で固定したRust stable、``release-manifest.json``の``rustVersion``、rootワークスペースと
       Zed crateの``rust-version``が一致しています。
-* [ ] Rust workspace、WASM、browser package、Zed拡張、配布planのpackage versionが
+* [ ] Rustワークスペース、WASM、browser package、Zed拡張、配布planのパッケージバージョンが
       ``release-manifest.json``と一致しています。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
-* [ ] 対象commitが現在の``origin/main``の先端であり、同じcommitのmain candidateが成功しています。
+* [ ] 対象コミットが現在の``origin/main``の先端であり、同じコミットのmain candidateが成功しています。
 * [ ] xref:docs/developer-guide/release-distribution.adoc[配布仕様]に定義したtarget、archive、metadataおよびasset集合が
       candidateと一致しています。
 
@@ -266,11 +272,11 @@ repositoryのcheckoutやworkspaceの``target``を``PATH``へ含めないclean環
 * [ ] 公開VSIXを隔離profileへ導入し、AsciiDoc認識、基本構文色付け、managed LSPの取得、offline cache、
       再起動および全LSP機能を確認しました。以前のVSIXへのrollback後にも起動でき、managed cacheの削除と
       拡張のuninstall後に管理対象fileが残っていません。
-* [ ] native利用側アプリでpackage versionを照合し、`AnalysisOptions`、`SourceId`、文書versionおよびgenerationを
-      明示しました。DB、network、file、権限および任意scheme Resolverをcoreの外へ置き、更新対象が
+* [ ] native利用側アプリでパッケージバージョンを照合し、`AnalysisOptions`、`SourceId`、文書versionおよびgenerationを
+      明示しました。DB、ネットワーク、file、権限および任意scheme Resolverをcoreの外へ置き、更新対象が
       xref:docs/developer-guide/core-profile.adoc[対応範囲]と一致し、Resolverが返したURLを``ActiveUrlPolicy``で再検証しました。
-* [ ] Nix flakeをtag commitへ固定し、Linux x86-64／ARM64で``nix run``、profileへの導入・rollback・削除、
-      利用側flakeへの固定、NixOS package評価およびoverlayを確認しました。runtime closureにbrowser、Node.js、
+* [ ] Nix flakeをtagのコミットへ固定し、Linux x86-64／ARM64で``nix run``、profileへの導入・rollback・削除、
+      利用側flakeへの固定、NixOSパッケージ評価およびoverlayを確認しました。runtime closureにbrowser、Node.js、
       Rust compiler、Cargoまたはfuzz toolが含まれていないことも確認しました。
 * [ ] 導入前後のfile一覧を比較し、CLI、LSP、browser package、Zed拡張およびVS Code拡張の削除後に
       管理対象fileが残っていないことを確認しました。

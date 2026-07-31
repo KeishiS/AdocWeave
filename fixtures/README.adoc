@@ -22,7 +22,7 @@ native、WASMおよびLSPはこのmanifestまたは参照先の同じソース�
 複製fixtureを作らない。個別のfixtureは、他のcaseの入力や期待出力へ依存せず、
 そのfixtureだけで一つの動作を検証できる内容にする。
 
-`conformance/consumers.json`は、repository内のreaderが使用するmanifest pathと
+`conformance/consumers.json`は、リポジトリ内のreaderが使用するmanifest pathと
 fixture rootの単一の設定源であり、このmanifestを直接読む処理の一覧でもある。
 `capabilities`は各readerがmanifestだけを使うか、参照先fixtureも読むかを示す。
 core crateはsource packageへ埋め込むmanifestだけを使い、その他のreaderはこの設定を
@@ -33,8 +33,8 @@ core crateはsource packageへ埋め込むmanifestだけを使い、その他の
 各caseで入力、投影、HTML、解析診断、描画診断、適用profileおよび対象構文を一つの対応として示し、
 manifest全体で``outputContractVersion``とlicenseを示す。各caseの`stableContract`だけを利用側が
 依存できる範囲とし、比較用file全体のbyte列、`implementationDetails`および
-`globalImplementationDetails`に列挙した表現はrepository内の回帰検査に限定する。
-Manifest、参照するAsciiDocおよび期待出力を含む公開fixture一式は、repository rootの
+`globalImplementationDetails`に列挙した表現はリポジトリ内の回帰検査に限定する。
+Manifest、参照するAsciiDocおよび期待出力を含む公開fixture一式は、リポジトリのrootの
 link:../LICENSE-MIT[MIT License]またはlink:../LICENSE-APACHE[Apache License 2.0]の条件で
 再利用できる。
 
@@ -48,4 +48,4 @@ manifestである。人向けの仕様は`docs/`に記載し、このファイ�
 
 `html/validation.json`はHTML5標準適合性検査の対象、固定validator設定およびnegative fixtureを管理します。
 断片出力は`html/validation-template.html`の一意なmarkerへ挿入し、完全HTML文書として検査します。
-検査時に生成する文書は`target/html5/`へ出力し、fixture directoryへ書き戻しません。
+検査時に生成する文書は`target/html5/`へ出力し、fixtureディレクトリへ書き戻しません。
