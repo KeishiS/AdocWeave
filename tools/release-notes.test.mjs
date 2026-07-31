@@ -18,6 +18,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /解決した引用表示をHTMLへ渡せるようにしました/);
   assert.match(notes, /断片ごとに参照先anchorを指定できます/);
   assert.match(notes, /その項目へlinkし、項目側の戻りlinkにも並びます/);
+  assert.match(notes, /解決できるはずのlocal targetを検査不能として報告することがあった問題を修正しました/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
