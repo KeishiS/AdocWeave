@@ -86,6 +86,17 @@ Chromiumの起動確認は1回20秒、最大3回、合計75秒を上限としま
 圧縮方式の変更や収録物の拡張を妨げないための余裕を含みます。上限を変更する場合は、実際の成果物を計測し、
 増減の理由と新しい余裕が適切かをreviewします。
 
+=== Node.jsのバージョン
+
+Node.jsのバージョンは``release-manifest.json``の``nodeVersion``だけが決めます。CIのほとんどのjobは
+devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNode.jsがこの値と一致することを
+確かめます。一致しない場合、shellは構築できません。
+
+``native-artifact-smoke``はmacOSとWindowsのrunnerでも動くためdevShellを使えず、``setup-node``が
+必要です。このworkflowは``nodeVersion``を読んで``setup-node``へ渡します。バージョンをworkflowへ
+直接書くと、devShellのNode.jsと分かれても誰も気付かないため、``tools/release-workflow-policy.mjs``が
+manifest以外からの取得を拒否します。
+
 VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの`node_modules`とsource mapを同梱しません。
 許可file一覧、license、package size、機械固有pathの不在および同一sourceから2回構築したbyte列の一致を確認します。
 VSIXのmanaged Language Serverは同じバージョンの配布manifestだけを使用します。この判断の背景は
