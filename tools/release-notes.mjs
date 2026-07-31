@@ -23,39 +23,35 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "`cite:`の引用情報を公開projectionとWASM protocolへ公開しました。citation key、macro全体と各keyのsource range、名前付き属性および文書全体での出現順を、解析結果を再度字句解析せずに取得できます。",
-  "利用側アプリが解決した引用表示をHTMLへ渡せるようにしました。`RenderInputs`へ引用の解決結果を与えると、その文字列で描画します。",
-  "解決結果は表示順に並べた文字列の断片で、断片ごとに参照先anchorを指定できます。`(Smith 2024; Tanaka 2025)`のように、括弧や区切り文字を素の文字列のまま残し、著者名の部分だけをlinkにできます。",
-  "`cite:[key]`のkeyが同じ文書の`[bibliography]`項目を指す場合、利用側アプリの解決なしでもその項目へlinkし、項目側の戻りlinkにも並びます。戻りlinkの番号は原文の位置の順に付きます。",
-  "`RenderInputs`を、空の値から必要な種類だけを与えて組み立てる形へ変更しました。",
-  "Linuxで、検査中にほかのプロセスがworkspaceを変更した場合に、解決できるはずのlocal targetを検査不能として報告することがあった問題を修正しました。",
-  "前処理の入口を6変種から整理し、任意の入力を`PreprocessInputs`へまとめました。",
+  "CLIとLanguage Serverの終了コードを、失敗の理由ごとに0から4へ分けました。使用法の誤り、入出力の失敗、診断による失敗および上限超過を呼び出し側が区別できます。",
+  "公開Rust APIの差分を、直前のstable tagと比較する検査をrelease gateへ追加しました。patch版に破壊的変更があれば公開前に失敗します。",
+  "設定fileの読み込みに上限を設けました。ほかのすべての読み込みが有界であるのに対し、ここだけがsizeを見ずに全体をメモリへ読んでいました。",
+  "Language Serverが、読み込んだ設定をdirectoryごとに保持します。これまでは打鍵のたびに設定fileのpath解決、読み込み、digest計算およびTOML解析を、ほかの要求へ応答するthreadの上で繰り返していました。",
+  "共有conformance fixtureに、現在の実装から成果物を書き出すコマンドと、fileがその結果と一致することを検査するtestを用意しました。",
+  "受入検査に使うChromiumをflakeで固定しました。これまでCIは実行環境に同梱されたbrowserを使っており、そのversionは記録に残りませんでした。",
+  "変更したpathが到達できるsource検査だけを実行するようにしました。文書だけの変更で、coreの再compileやfuzzを行いません。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。schema versionをv0.22.0の7から9へ更新しました。`,
-  "公開projectionへ`citations`を追加しました。既存のfieldは変更していません。",
-  "WASM protocolへ`ResolvedCitation`、`CitationSegment`および`ResolvedCitationOutcome`を追加し、`renderInputs`へ`citations`を追加しました。省略した場合は解決結果が一つもない状態として扱うため、既存の要求はそのまま受け付けます。",
-  "破壊的変更：前処理の入口から`preprocess_cancellable`、`preprocess_and_analyze_cancellable`、`preprocess_and_analyze_with_options`および`preprocess_and_analyze_cancellable_with_options`を削除しました。`preprocess_with`、`preprocess_and_analyze_with`および`EffectiveProcessingOptions::preprocess_and_analyze`へ統合しています。",
-  "破壊的変更：`RenderInputs::new`を削除しました。`RenderInputs::default()`から`with_references`、`with_resources`および`with_citations`で必要な種類だけを与えます。",
-  "CLI引数、Language Server protocolおよび設定schemaはv0.21.0から変更していません。",
-  "利用側アプリが解決した引用の断片は、公開可能なプレーンテキストとして扱います。AsciiDoc、属性参照またはHTMLとして再解析しません。anchorは出力直前に検査し、その文書が定義している対象を指す場合だけlinkを生成します。",
-  "診断code`unknown-citation-anchor`を追加しました。解決済みの引用が、文書の定義しないanchorを指した場合に返します。",
-  "HTMLの許可class、エスケープおよび許可リスト方式は変更していません。",
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
+  "破壊的変更：CLIとLanguage Serverの終了コードを、失敗の理由ごとに分けました。0は成功、1は診断がしきい値に達した場合、2は指定した引数またはオプションを実行できない場合、3はファイル、ストリームまたはリソースの読み書きに失敗した場合、4は入力サイズまたはリソースの上限を超えた場合です。",
+  "Language Serverは、shutdownを受け取る前にexitを受け取った場合だけ1を返します。これはLanguage Server Protocolが定める値であり、上の規約より優先します。",
+  "公開Rust API、WASM protocol、CLI引数、Language Server protocolおよび設定schemaは、終了コードを除いてv0.23.0から変更していません。",
+  "設定fileの読み込みに1 MiBの上限を設けました。上限を超えるfileは読み込まずerrorとします。",
+  "文書の記述を実装に合わせました。local targetの欠落、root外および権限不足は、ほかの診断と同じくerror件数へ加算されるため、--fail-on neverでは終了コードが0になります。以前の文書は無条件に「0以外」と記載していました。",
+  "設定の探索境界を明記しました。Language Serverはworkspace folder、CLIは作業directoryで探索を停止し、処理対象がその外にある場合は設定fileを適用しません。",
+  "HTML出力、診断code、公開projectionおよび許可リスト方式は変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。既存の診断code、HTML出力および終了状態は、`cite:`を含まず引用の解決結果を渡さない文書で変わりません。",
-  "`RenderInputs::new(references, resources)`を使っていた場合は`RenderInputs::default().with_references(references).with_resources(resources)`へ置き換えてください。空の`Vec`しか渡していなかった種類は、対応する呼び出しを省略できます。",
-  "`preprocess_cancellable(source, snapshot, options, &token)`は`preprocess_with(source, snapshot, options, PreprocessInputs { cancellation: Some(&token) })`へ置き換えてください。`preprocess_and_analyze_cancellable`も同じ形です。キャンセルを渡していなかった場合は`PreprocessInputs::default()`を使います。",
-  "`preprocess_and_analyze_with_options(source, snapshot, &effective)`は`effective.preprocess_and_analyze(source, snapshot, PreprocessInputs::default())`へ置き換えてください。",
-  "WASM APIの`renderInputs`は変更不要です。`citations`を省略した場合の動作はv0.22.0と同じです。",
-  "公開projectionをJSON schemaや型定義で検証している場合は、`citations`の追加に合わせて更新してください。",
-  "`cite:[key]`のkeyが文書内の`[bibliography]`項目と同じ名前の場合、v0.22.0ではkeyをそのまま表示していましたが、この版からその項目へのlinkになります。項目側にも戻りlinkが増えます。",
-  "利用側アプリが引用を解決する場合は、`cite:`から閉じ括弧までのmacro全体のrangeで解決結果を渡してください。個々のkeyのrangeでは照合しません。",
+  "設定の移行は不要です。HTML出力、診断codeおよび公開projectionは変わりません。",
+  "終了コードが0かどうかだけを判定している場合、変更は不要です。これまでどおり0とそれ以外で判定できます。",
+  "「失敗は必ず1」を前提にしている場合は、判定を見直してください。使用法の誤りは2、入出力の失敗は3、上限超過は4を返します。",
+  "1 MiBを超える設定fileを使っている場合は、読み込まずerrorになります。設定fileが記述するのは根、上限および規則の設定であり、この大きさになることは想定していません。",
+  "--fail-on neverでlocal targetの失敗を終了コードとして受け取っていた場合、その動作は以前から0です。文書の記載を実装に合わせました。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
@@ -70,6 +66,7 @@ const knownConstraints = [
   "解決結果を渡さない引用の表示は`unresolved_references`の設定に従い、`hidden`では出力しません。ただし文書内の`[bibliography]`項目を指すkeyは、設定にかかわらずその項目へのlinkとして出力します。",
   "引用の解決結果は文書全体の並べ替えを行いません。番号付きの引用styleで通し番号を振る場合は、利用側アプリが出現順を見て文字列を決めてください。出現順は公開projectionの`citations`から取得できます。",
   "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
+  "Language Serverの初期化は、workspace全体の走査を終えてから応答します。大きなworkspaceでは、その間ほかの要求へ応答できません。打鍵中の応答性はこのreleaseで改善しています。",
 ];
 
 function markdownList(items) {
