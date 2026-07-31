@@ -1395,6 +1395,12 @@ mod tests {
         super::render_with_inputs_ast(document, policy, inputs)
     }
 
+    fn analyze(source: &str) -> crate::core::Analysis {
+        crate::core::Engine::new(crate::core::AnalysisOptions::default())
+            .analyze(source)
+            .expect("analysis")
+    }
+
     fn echo_resource_inputs(document: &crate::parser::AstDocument) -> RenderInputs {
         let mut resources = Vec::new();
         crate::walker::walk_ast(document, |node| {
@@ -1416,7 +1422,7 @@ mod tests {
                 }
             }
         });
-        RenderInputs::new(Vec::new(), resources)
+        RenderInputs::default().with_resources(resources)
     }
 
     #[test]
@@ -1502,6 +1508,157 @@ mod tests {
         )
         .html;
         assert!(!hidden.contains("citation"));
+    }
+
+    #[test]
+    fn a_host_resolved_citation_replaces_the_keys_with_the_supplied_text() {
+        let source = "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:smith2024[] Entry\n\nSee cite:[smith2024, tanaka2025].\n";
+        let analysis = analyze(source);
+        let citation = &analysis.citations()[0];
+        let inputs = RenderInputs::default().with_citations(vec![
+            crate::citation::ResolvedCitation::resolved(
+                citation.range,
+                vec![
+                    crate::citation::CitationSegment::text("("),
+                    crate::citation::CitationSegment::linked("Smith 2024", "smith2024"),
+                    crate::citation::CitationSegment::text("; Tanaka 2025)"),
+                ],
+            ),
+        ]);
+        let output = render_with_inputs(analysis.ast(), &RenderPolicy::default(), &inputs);
+
+        assert!(
+            output
+                .html
+                .contains("(<a href=\"#smith2024\">Smith 2024</a>; Tanaka 2025)</span>")
+        );
+        // The host's text replaces the keys rather than joining them.
+        assert!(!output.html.contains("tanaka2025"));
+        assert!(output.diagnostics.is_empty());
+
+        // The entry links back to the citation, so the landing point must exist
+        // even though the host's text replaced the key that carried it.
+        let backref = output
+            .html
+            .split("class=\"bibliography-backref\" href=\"#")
+            .nth(1)
+            .expect("back reference")
+            .split('"')
+            .next()
+            .expect("back reference target");
+        assert!(output.html.contains(&format!("<span id=\"{backref}\">")));
+    }
+
+    #[test]
+    fn a_resolved_citation_is_data_and_never_markup_or_a_dead_link() {
+        let source = "See cite:[smith2024].\n";
+        let analysis = analyze(source);
+        let citation = &analysis.citations()[0];
+        let inputs = RenderInputs::default().with_citations(vec![
+            crate::citation::ResolvedCitation::resolved(
+                citation.range,
+                vec![crate::citation::CitationSegment::linked(
+                    "<b>Smith</b> & Co",
+                    "never_defined",
+                )],
+            ),
+        ]);
+        let output = render_with_inputs(analysis.ast(), &RenderPolicy::default(), &inputs);
+
+        // The supplied text is escaped, and the unknown anchor leaves plain text
+        // behind instead of a link that goes nowhere.
+        assert!(
+            output
+                .html
+                .contains("<span class=\"citation\">&lt;b&gt;Smith&lt;/b&gt; &amp; Co</span>")
+        );
+        assert!(!output.html.contains("href=\"#never_defined\""));
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["unknown-citation-anchor"]
+        );
+    }
+
+    #[test]
+    fn a_citation_resolution_that_matches_nothing_is_reported_as_an_unused_input() {
+        let analysis = analyze("See cite:[smith2024].\n");
+        let elsewhere = analysis.references().first().map_or_else(
+            || analysis.citations()[0].keys[0].range,
+            |reference| reference.range,
+        );
+        let inputs = RenderInputs::default().with_citations(vec![
+            crate::citation::ResolvedCitation::resolved(
+                elsewhere,
+                vec![crate::citation::CitationSegment::text("(Smith 2024)")],
+            ),
+        ]);
+        let output = render_with_inputs(analysis.ast(), &RenderPolicy::default(), &inputs);
+
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(
+                    |diagnostic| diagnostic.code.as_str() == "unused-render-input"
+                        && diagnostic.message.contains("citation")
+                )
+        );
+        // Without a matching resolution the key follows the unresolved policy.
+        assert!(
+            output
+                .html
+                .contains("<span class=\"citation\">smith2024</span>")
+        );
+    }
+
+    #[test]
+    fn cite_links_keys_defined_by_this_document_and_earns_a_back_reference() {
+        let parsed = parse(
+            "= References\n\n[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nSee cite:[ref, absent].\n",
+        )
+        .expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default()).html;
+
+        // The document defines `ref`, so the citation links to the entry and the
+        // entry links back.
+        assert!(output.contains("<a class=\"citation\" id=\"_bibliography_ref_"));
+        assert!(output.contains("href=\"#ref\">ref</a>"));
+        assert_eq!(output.matches("class=\"bibliography-backref\"").count(), 1);
+        // `absent` belongs to a library outside the document and stays unresolved.
+        assert!(output.contains("<span class=\"citation\">absent</span>"));
+    }
+
+    #[test]
+    fn cite_and_cross_reference_back_references_are_numbered_in_source_order() {
+        let parsed = parse(
+            "[bibliography]\n== Sources\n\n* bibanchor:ref[] Entry\n\nFirst cite:[ref] then <<ref>> then cite:[ref].\n",
+        )
+        .expect("parse");
+        let output = render(&parsed.ast, &RenderPolicy::default()).html;
+
+        // Two citations and one cross reference cite the same entry.
+        assert_eq!(output.matches("class=\"bibliography-backref\"").count(), 3);
+        // Back reference targets follow the order the reader meets the citing
+        // sites, regardless of which pass collected them.
+        let targets = output
+            .match_indices("href=\"#_bibliography_ref_")
+            .map(|(index, _)| {
+                output[index..]
+                    .split('"')
+                    .nth(1)
+                    .expect("href value")
+                    .trim_start_matches("#_bibliography_ref_")
+                    .parse::<u32>()
+                    .expect("generated offset")
+            })
+            .collect::<Vec<_>>();
+        let mut sorted = targets.clone();
+        sorted.sort_unstable();
+        assert_eq!(targets, sorted);
     }
 
     #[test]
@@ -1920,13 +2077,10 @@ mod tests {
         let output = render_with_inputs(
             analysis.ast(),
             &policy,
-            &RenderInputs::new(
-                vec![ResolvedReference::resolved(
-                    analysis.references()[0].range,
-                    "https://app.example/notes/123",
-                )],
-                Vec::new(),
-            ),
+            &RenderInputs::default().with_references(vec![ResolvedReference::resolved(
+                analysis.references()[0].range,
+                "https://app.example/notes/123",
+            )]),
         );
 
         assert!(output.html.contains(
@@ -1964,15 +2118,12 @@ mod tests {
         let output = render_with_inputs(
             analysis.ast(),
             &policy,
-            &RenderInputs::new(
-                Vec::new(),
-                vec![ResolvedResource::resolved(
-                    image,
-                    "https://cdn.example/x.png",
-                    "image/png".parse().expect("media type"),
-                    None,
-                )],
-            ),
+            &RenderInputs::default().with_resources(vec![ResolvedResource::resolved(
+                image,
+                "https://cdn.example/x.png",
+                "image/png".parse().expect("media type"),
+                None,
+            )]),
         );
 
         assert!(!output.html.contains("language-python"));
@@ -1997,18 +2148,15 @@ mod tests {
         let output = render_with_inputs(
             analysis.ast(),
             &RenderPolicy::default(),
-            &RenderInputs::new(
-                vec![
-                    ResolvedReference::resolved(
-                        analysis.references()[0].range,
-                        "https://app.example/notes/123",
-                    )
-                    .with_notices(vec![crate::reference::ResolutionNotice {
-                        kind: crate::reference::ResolutionNoticeKind::Fallback,
-                    }]),
-                ],
-                Vec::new(),
-            ),
+            &RenderInputs::default().with_references(vec![
+                ResolvedReference::resolved(
+                    analysis.references()[0].range,
+                    "https://app.example/notes/123",
+                )
+                .with_notices(vec![crate::reference::ResolutionNotice {
+                    kind: crate::reference::ResolutionNoticeKind::Fallback,
+                }]),
+            ]),
         );
 
         assert_eq!(
@@ -2025,15 +2173,12 @@ mod tests {
         let output = render_with_inputs(
             analysis.ast(),
             &RenderPolicy::default(),
-            &RenderInputs::new(
-                vec![ResolvedReference::failed(
-                    analysis.references()[0].range,
-                    crate::reference::ResolverFailure {
-                        kind: crate::reference::ResolutionFailureKind::MissingTarget,
-                    },
-                )],
-                Vec::new(),
-            ),
+            &RenderInputs::default().with_references(vec![ResolvedReference::failed(
+                analysis.references()[0].range,
+                crate::reference::ResolverFailure {
+                    kind: crate::reference::ResolutionFailureKind::MissingTarget,
+                },
+            )]),
         );
 
         assert_eq!(output.html, "<p>Public label</p>\n");
@@ -2052,21 +2197,18 @@ mod tests {
                  xref:note:01800000-0000-7000-8000-000000000002[Authored *label*]",
             )
             .expect("analysis");
-        let inputs = RenderInputs::new(
-            vec![
-                ResolvedReference::resolved(
-                    analysis.references()[0].range,
-                    "/notes/01800000-0000-7000-8000-000000000001",
-                )
-                .with_display_text("公開 <タイトル> & *not markup*"),
-                ResolvedReference::resolved(
-                    analysis.references()[1].range,
-                    "/notes/01800000-0000-7000-8000-000000000002",
-                )
-                .with_display_text("Resolver title must not replace the authored label"),
-            ],
-            Vec::new(),
-        );
+        let inputs = RenderInputs::default().with_references(vec![
+            ResolvedReference::resolved(
+                analysis.references()[0].range,
+                "/notes/01800000-0000-7000-8000-000000000001",
+            )
+            .with_display_text("公開 <タイトル> & *not markup*"),
+            ResolvedReference::resolved(
+                analysis.references()[1].range,
+                "/notes/01800000-0000-7000-8000-000000000002",
+            )
+            .with_display_text("Resolver title must not replace the authored label"),
+        ]);
 
         let output = render_with_inputs(
             analysis.ast(),
@@ -2092,15 +2234,12 @@ mod tests {
         let analysis = crate::core::Engine::new(crate::core::AnalysisOptions::default())
             .analyze("xref:note:private[]")
             .expect("analysis");
-        let inputs = RenderInputs::new(
-            vec![ResolvedReference::failed(
-                analysis.references()[0].range,
-                crate::reference::ResolverFailure {
-                    kind: crate::reference::ResolutionFailureKind::MissingTarget,
-                },
-            )],
-            Vec::new(),
-        );
+        let inputs = RenderInputs::default().with_references(vec![ResolvedReference::failed(
+            analysis.references()[0].range,
+            crate::reference::ResolverFailure {
+                kind: crate::reference::ResolutionFailureKind::MissingTarget,
+            },
+        )]);
 
         let output = render_with_inputs(
             analysis.ast(),
@@ -2469,13 +2608,10 @@ mod tests {
         let output = render_with_inputs(
             &parsed.ast,
             &RenderPolicy::default(),
-            &crate::render::RenderInputs::new(
-                vec![ResolvedReference::resolved(
-                    external,
-                    "https://notes.example/part",
-                )],
-                vec![],
-            ),
+            &RenderInputs::default().with_references(vec![ResolvedReference::resolved(
+                external,
+                "https://notes.example/part",
+            )]),
         );
 
         assert!(output.html.contains("<a href=\"#local\">Here</a>"));
@@ -2780,15 +2916,12 @@ mod tests {
         let output = render_with_inputs(
             &parsed.ast,
             &RenderPolicy::default(),
-            &RenderInputs::new(
-                vec![],
-                vec![ResolvedResource::resolved(
-                    range,
-                    "https://cdn.example/diagram.bin",
-                    MediaType::parse("audio/mpeg").expect("media type"),
-                    None,
-                )],
-            ),
+            &RenderInputs::default().with_resources(vec![ResolvedResource::resolved(
+                range,
+                "https://cdn.example/diagram.bin",
+                MediaType::parse("audio/mpeg").expect("media type"),
+                None,
+            )]),
         );
         assert_eq!(output.html, "<p>Diagram</p>\n");
         assert_eq!(
@@ -2812,7 +2945,8 @@ mod tests {
         );
         assert!(output.diagnostics.is_empty());
 
-        let primary_only = RenderInputs::new(vec![], vec![inputs.resources()[0].clone()]);
+        let primary_only =
+            RenderInputs::default().with_resources(vec![inputs.resources()[0].clone()]);
         let output = render_with_inputs(&parsed.ast, &RenderPolicy::default(), &primary_only);
         assert!(
             output
@@ -2840,18 +2974,15 @@ mod tests {
             "resource-capability-disabled"
         );
 
-        let mismatched_poster = RenderInputs::new(
-            vec![],
-            vec![
-                inputs.resources()[0].clone(),
-                ResolvedResource::resolved(
-                    inputs.resources()[1].source_range,
-                    "https://example.org/poster.mp3",
-                    "audio/mpeg".parse().expect("media type"),
-                    None,
-                ),
-            ],
-        );
+        let mismatched_poster = RenderInputs::default().with_resources(vec![
+            inputs.resources()[0].clone(),
+            ResolvedResource::resolved(
+                inputs.resources()[1].source_range,
+                "https://example.org/poster.mp3",
+                "audio/mpeg".parse().expect("media type"),
+                None,
+            ),
+        ]);
         let output = render_with_inputs(&parsed.ast, &RenderPolicy::default(), &mismatched_poster);
         assert!(output.html.contains("<video "));
         assert!(!output.html.contains(" poster="));
@@ -2889,7 +3020,7 @@ mod tests {
         let failed = render_with_inputs(
             &parsed.ast,
             &RenderPolicy::default(),
-            &RenderInputs::new(vec![], vec![failed]),
+            &RenderInputs::default().with_resources(vec![failed]),
         );
         assert_eq!(
             failed.diagnostics[0].code.as_str(),
@@ -2899,7 +3030,7 @@ mod tests {
         let duplicate = render_with_inputs(
             &parsed.ast,
             &RenderPolicy::default(),
-            &RenderInputs::new(vec![], vec![resolved.clone(), resolved.clone()]),
+            &RenderInputs::default().with_resources(vec![resolved.clone(), resolved.clone()]),
         );
         assert_eq!(
             duplicate.diagnostics[0].code.as_str(),
@@ -2914,18 +3045,15 @@ mod tests {
         let unused = render_with_inputs(
             &parsed.ast,
             &RenderPolicy::default(),
-            &RenderInputs::new(
-                vec![],
-                vec![
-                    resolved,
-                    ResolvedResource::resolved(
-                        unused_range,
-                        "https://unused.example/image.png",
-                        "image/png".parse().expect("media type"),
-                        None,
-                    ),
-                ],
-            ),
+            &RenderInputs::default().with_resources(vec![
+                resolved,
+                ResolvedResource::resolved(
+                    unused_range,
+                    "https://unused.example/image.png",
+                    "image/png".parse().expect("media type"),
+                    None,
+                ),
+            ]),
         );
         assert!(unused.html.contains("<img"));
         assert_eq!(unused.diagnostics[0].code.as_str(), "unused-render-input");

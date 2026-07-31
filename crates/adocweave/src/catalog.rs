@@ -244,6 +244,40 @@ pub(crate) fn build(
         });
     }
 
+    // A `cite:` key that names an entry defined in this document cites it just
+    // as `<<anchor>>` does, so it earns the same back reference. Keys the
+    // document does not define belong to an external library and are left to
+    // the host.
+    for node in facts.macros() {
+        if checkpoint.is_cancelled() {
+            return Err(CatalogBuildFailure::Cancelled);
+        }
+        if node.kind != StandardMacroKind::Citation {
+            continue;
+        }
+        for key in node.attributes.iter().filter(|key| key.name.is_none()) {
+            let Some(entry) = bibliography
+                .get(key.value.as_str())
+                .and_then(|index| catalogs.bibliography.get_mut(*index))
+            else {
+                continue;
+            };
+            let Some(block) = document_index.block_containing(key.value_range) else {
+                continue;
+            };
+            entry.references.push(BibliographyReference {
+                range: key.value_range,
+                block,
+            });
+        }
+    }
+
+    // Back references are numbered in the order the reader meets them, so the
+    // citing sites are ordered by position rather than by which pass found them.
+    for entry in &mut catalogs.bibliography {
+        entry.references.sort_by_key(|reference| reference.range);
+    }
+
     for (id, range) in pending_references {
         if checkpoint.is_cancelled() {
             return Err(CatalogBuildFailure::Cancelled);

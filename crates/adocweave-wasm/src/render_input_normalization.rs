@@ -1,6 +1,8 @@
 //! Analysis-independent render-input validation.
 
-use crate::render_input_wire::{WasmReferenceOutcome, WasmRenderInputs, WasmResourceOutcome};
+use crate::render_input_wire::{
+    WasmCitationOutcome, WasmReferenceOutcome, WasmRenderInputs, WasmResourceOutcome,
+};
 use crate::render_input_wire_generated::MAX_SAFE_INTEGER;
 use crate::{WasmError, WasmLimits, WasmOutputLimits};
 
@@ -16,7 +18,9 @@ pub(crate) fn normalize(
     analysis_limits: &WasmLimits,
     output_limits: &WasmOutputLimits,
 ) -> Result<NormalizedRenderInputs, WasmError> {
-    let count = inputs.references.len() as u64 + inputs.resources.len() as u64;
+    let count = inputs.references.len() as u64
+        + inputs.resources.len() as u64
+        + inputs.citations.len() as u64;
     if count > u64::from(analysis_limits.max_references) {
         return Err(limit_error("render input count"));
     }
@@ -32,8 +36,20 @@ pub(crate) fn normalize(
         } => href.len() as u64 + media_type.len() as u64,
         WasmResourceOutcome::Failed { .. } => 0,
     });
+    // A citation carries the text the host wants shown, so its segments count
+    // against the same output budget as a resolved href.
+    let citation_bytes = inputs.citations.iter().map(|input| match &input.outcome {
+        WasmCitationOutcome::Resolved { segments } => segments
+            .iter()
+            .map(|segment| {
+                segment.text.len() as u64 + segment.anchor.as_ref().map_or(0, String::len) as u64
+            })
+            .fold(0_u64, u64::saturating_add),
+        WasmCitationOutcome::Failed { .. } => 0,
+    });
     let bytes = reference_bytes
         .chain(resource_bytes)
+        .chain(citation_bytes)
         .fold(0_u64, u64::saturating_add);
     if bytes > u64::from(output_limits.max_output_bytes) {
         return Err(limit_error("render input bytes"));
@@ -103,12 +119,14 @@ mod tests {
         let inputs = WasmRenderInputs {
             references: vec![reference.clone(), reference.clone()],
             resources: Vec::new(),
+            citations: Vec::new(),
         };
         assert!(normalize(inputs, &limits(2), &WasmOutputLimits::default()).is_ok());
 
         let inputs = WasmRenderInputs {
             references: vec![reference.clone(), reference.clone(), reference],
             resources: Vec::new(),
+            citations: Vec::new(),
         };
         let error = normalize(inputs, &limits(2), &WasmOutputLimits::default()).unwrap_err();
         assert_eq!(error.code, "limit-exceeded");
@@ -127,6 +145,7 @@ mod tests {
                 },
             }],
             resources: Vec::new(),
+            citations: Vec::new(),
         };
         assert!(normalize(inputs("abc"), &limits(1), &output_limits(5)).is_ok());
         let error = normalize(inputs("abcd"), &limits(1), &output_limits(5)).unwrap_err();
@@ -153,6 +172,7 @@ mod tests {
             WasmRenderInputs {
                 references: vec![reference.clone(), reference],
                 resources: vec![resource.clone(), resource],
+                citations: Vec::new(),
             },
             &limits(4),
             &WasmOutputLimits::default(),
@@ -189,6 +209,7 @@ mod tests {
                     byte_length: Some(byte_length),
                 },
             }],
+            citations: Vec::new(),
         };
         assert!(
             normalize(

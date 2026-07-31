@@ -82,6 +82,39 @@ pub enum WasmResourceOutcome {
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(
+    tag = "status",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum WasmCitationOutcome {
+    Resolved {
+        #[serde(default)]
+        segments: Vec<WasmCitationSegment>,
+    },
+    Failed {
+        kind: WasmReferenceFailureKind,
+    },
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmCitationSegment {
+    pub text: String,
+    #[serde(default)]
+    pub anchor: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmResolvedCitation {
+    pub source_start: u32,
+    pub source_end: u32,
+    pub outcome: WasmCitationOutcome,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResolvedReference {
     pub source_start: u32,
@@ -104,4 +137,6 @@ pub struct WasmRenderInputs {
     pub references: Vec<WasmResolvedReference>,
     #[serde(default)]
     pub resources: Vec<WasmResolvedResource>,
+    #[serde(default)]
+    pub citations: Vec<WasmResolvedCitation>,
 }

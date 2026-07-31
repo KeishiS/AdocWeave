@@ -171,8 +171,9 @@ pub mod preprocess {
     };
 }
 
-/// Host-provided reference and resource resolution contracts.
+/// Host-provided reference, resource and citation resolution contracts.
 pub mod resolution {
+    pub use crate::citation::{CitationOutcome, CitationSegment, ResolvedCitation};
     pub use crate::reference::{
         DocumentCandidate, ReferenceKey, ReferenceQuery, ReferenceResolver, ResolutionCacheKey,
         ResolutionFailureKind, ResolutionNotice, ResolutionNoticeKind, ResolutionOutcome,
