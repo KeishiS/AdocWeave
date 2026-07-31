@@ -201,7 +201,7 @@ test("every global candidate must run the browser archive runtime gate", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        "nix develop .#ci -c cargo make release-global-candidate",
+        "nix develop .#ci-browser -c cargo make release-global-candidate",
         "nix develop .#ci -c cargo make test-browser-release-package",
       ),
     }),
@@ -212,8 +212,8 @@ test("every global candidate must run the browser archive runtime gate", () => {
       () => validateReleaseWorkflowPolicy({
         ...inputs,
         release: inputs.release.replace(
-          "nix develop .#ci -c cargo make release-global-candidate",
-          `nix develop .#ci -c cargo make release-global-candidate${bypass}`,
+          "nix develop .#ci-browser -c cargo make release-global-candidate",
+          `nix develop .#ci-browser -c cargo make release-global-candidate${bypass}`,
         ),
       }),
       /exact combined archive gate command/,
@@ -225,10 +225,10 @@ test("every global candidate must run the browser archive runtime gate", () => {
       ...inputs,
       release: inputs.release.replace(
         "      - name: Browser, Zed, and VS Code candidate build and runtime verification\n" +
-        "        run: nix develop .#ci -c cargo make release-global-candidate",
+        "        run: nix develop .#ci-browser -c cargo make release-global-candidate",
         "      - name: Browser, Zed, and VS Code candidate build and runtime verification\n" +
           "        if: github.event_name == 'push'\n" +
-          "        run: nix develop .#ci -c cargo make release-global-candidate",
+          "        run: nix develop .#ci-browser -c cargo make release-global-candidate",
       ),
     }),
     /must always run together/,
@@ -271,10 +271,10 @@ test("every global candidate must run the browser archive runtime gate", () => {
       ...inputs,
       release: inputs.release.replace(
         "      - name: Browser, Zed, and VS Code candidate build and runtime verification\n" +
-          "        run: nix develop .#ci -c cargo make release-global-candidate",
+          "        run: nix develop .#ci-browser -c cargo make release-global-candidate",
         "      - name: Browser, Zed, and VS Code candidate build and runtime verification\n" +
           "        continue-on-error: true\n" +
-          "        run: nix develop .#ci -c cargo make release-global-candidate",
+          "        run: nix develop .#ci-browser -c cargo make release-global-candidate",
       ),
     }),
     /browser archive acceptance must not continue/,

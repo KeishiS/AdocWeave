@@ -72,6 +72,10 @@ global成果物へ影響するPull Requestとrelease用main candidateでは公�
 分離されたChromium環境、通常のChromium環境およびbundlerで構築した経路から同じ公開APIを実行して、
 この性能予算と実行時の互換性を確認します。静的なarchive検査と実行検査は一つのtask graphで行い、
 実行検査後に同じarchiveをcandidateとして保存します。
+受入検査に使うbrowserは``flake.lock``で固定したChromiumです。CIはこのbrowserを持つdevShellでgateを
+実行し、runner imageに同梱されたbrowserを使いません。ほかのtoolと同じく、versionの変更は
+``flake.lock``の差分として記録に残ります。Chromiumは大きいため、このgateを実行するjobだけが取得します。
+
 Chromiumの起動確認は1回20秒、最大3回、合計75秒を上限とします。
 起動に失敗した場合は新しいprofileで再試行し、各試行の番号、経過時間、標準エラー出力および終了状態を記録します。
 各試行の上限にはDevTools接続の確認と、失敗したbrowser processの終了処理を含めます。まず通常終了を要求し、

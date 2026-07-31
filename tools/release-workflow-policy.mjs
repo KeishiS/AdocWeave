@@ -491,9 +491,11 @@ export function validateReleaseWorkflowPolicy({
       browserAcceptance["continue-on-error"] !== false) {
     fail("browser archive acceptance must not continue after failure");
   }
+  // The browser this gate drives has to come from the flake like every other
+  // tool, not from whatever the runner image ships.
   if (browserAcceptance.run !==
-      "nix develop .#ci -c cargo make release-global-candidate") {
-    fail("global candidates must use the exact combined archive gate command");
+      "nix develop .#ci-browser -c cargo make release-global-candidate") {
+    fail("global candidates must use the exact combined archive gate command in the pinned browser shell");
   }
   const smokeRun = step(smokeDoc.jobs?.smoke, (item) =>
     item.name === "Extracted release binary smoke tests", "native smoke is missing").run;
