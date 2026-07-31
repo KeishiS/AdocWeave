@@ -499,7 +499,7 @@ fn roadmap_uses_unique_github_issue_urls() {
     assert!(!numbers.is_empty(), "roadmap has no GitHub Issues");
 
     let expected = [
-        "33", "34", "82", "83", "84", "86", "265", "307", "308", "309", "310", "313", "314",
+        "33", "34", "82", "83", "84", "86", "265", "308", "309", "310", "320",
     ]
     .into_iter()
     .map(str::to_owned)
