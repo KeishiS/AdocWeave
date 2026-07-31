@@ -6,6 +6,7 @@ import {
   affectsNativeCandidate,
   auditCandidatePaths,
   candidateImpact,
+  qualityScope,
   classifyCandidatePath,
   nativeChangePlan,
 } from "./native-change-plan.mjs";
@@ -235,4 +236,54 @@ test("version tagではmain candidateを再構築しない", () => {
   const plan = nativeChangePlan("push", [], distributionPlan, "refs/tags/v0.17.0");
   assert.equal(plan.candidateRequired, false);
   assert.equal(plan.preflightRequired, true);
+});
+
+test("文書だけの変更ではRust sourceの検査を実行しない", () => {
+  const scope = qualityScope(["docs/user-guide/command-line.adoc"]);
+
+  assert.equal(scope.documents, true);
+  assert.equal(scope.rustSource, false);
+  assert.equal(scope.adapters, false);
+  assert.equal(scope.fuzz, false);
+  assert.equal(scope.nixPackage, false);
+  assert.equal(scope.semver, false);
+  assert.equal(scope.dependencies, false);
+});
+
+test("core crateの変更ではRust sourceとそれに依存する検査を実行する", () => {
+  const scope = qualityScope(["crates/adocweave/src/html.rs"]);
+
+  assert.equal(scope.rustSource, true);
+  // fuzz、Nix packageおよびAPI差分検査はいずれもcore crateを構築します。
+  assert.equal(scope.fuzz, true);
+  assert.equal(scope.nixPackage, true);
+  assert.equal(scope.semver, true);
+  assert.equal(scope.documents, false);
+});
+
+test("VS Code拡張だけの変更ではRust sourceの検査を実行しない", () => {
+  const scope = qualityScope(["editors/vscode/src/extension.ts"]);
+
+  assert.equal(scope.adapters, true);
+  assert.equal(scope.dependencies, true);
+  assert.equal(scope.rustSource, false);
+  assert.equal(scope.fuzz, false);
+  assert.equal(scope.nixPackage, false);
+});
+
+test("検査の定義を変える変更ではすべてを実行する", () => {
+  // task graph、toolchainおよびworkflowは、どの検査の結果も変え得ます。
+  for (const pathname of ["Makefile.toml", "flake.nix", ".github/workflows/quality.yml"]) {
+    const scope = qualityScope([pathname]);
+    assert.deepEqual(Object.values(scope), Array(Object.keys(scope).length).fill(true), pathname);
+  }
+});
+
+test("分類できないpathと空の変更集合ではすべてを実行する", () => {
+  // 未分類のpathをすり抜けさせると、検証されないまま公開されます。
+  const unknown = qualityScope(["brand-new-directory/thing.rs"]);
+  assert.deepEqual(Object.values(unknown), Array(Object.keys(unknown).length).fill(true));
+
+  const empty = qualityScope([]);
+  assert.deepEqual(Object.values(empty), Array(Object.keys(empty).length).fill(true));
 });

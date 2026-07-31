@@ -186,6 +186,85 @@ export function auditCandidatePaths(paths) {
   return paths.filter((pathname) => !classifyCandidatePath(pathname).classified);
 }
 
+/// Paths that decide whether the Rust source checks have anything to verify.
+const RUST_SOURCE_ROOTS = ["crates/", "fuzz/", "security/"];
+const RUST_SOURCE_FILES = new Set([
+  "Cargo.lock",
+  "Cargo.toml",
+  "rust-toolchain.toml",
+  "deny.toml",
+]);
+/// Paths that decide whether the adapter contracts have anything to verify.
+const ADAPTER_ROOTS = ["crates/", "editors/", "protocol/", "web-worker/", "fixtures/"];
+/// Paths whose authored AsciiDoc or generated HTML the document checks read.
+const DOCUMENT_ROOTS = ["docs/", "fixtures/"];
+const DOCUMENT_FILES = new Set([
+  "README.adoc",
+  "CONTRIBUTING.adoc",
+  "THIRD_PARTY_NOTICES.adoc",
+]);
+
+/// Files that change how a check itself behaves.
+///
+/// Editing the toolchain pin, the task graph or a workflow can change the
+/// outcome of any check, so those changes are verified in full rather than
+/// scoped by what they appear to touch.
+const CHECK_DEFINITION_ROOTS = [".github/workflows/", ".cargo/"];
+const CHECK_DEFINITION_FILES = new Set([
+  "Makefile.toml",
+  "flake.lock",
+  "flake.nix",
+  "rust-toolchain.toml",
+]);
+
+const affects = (pathname, roots, files) =>
+  startsWithAny(pathname, roots) || files.has(pathname);
+
+/// Decides which quality checks a set of changed paths can actually affect.
+///
+/// Every job still runs, so the names a branch rule requires keep reporting
+/// success. What changes is whether the job does its work or records that the
+/// change cannot reach it. A change that alters how a check behaves, and a
+/// change this function cannot place, both run everything: being wrong in that
+/// direction costs time, while the other direction ships unverified code.
+export function qualityScope(paths) {
+  const everything = {
+    rustSource: true,
+    documents: true,
+    adapters: true,
+    dependencies: true,
+    fuzz: true,
+    nixPackage: true,
+    semver: true,
+  };
+  if (paths.length === 0) return everything;
+  if (
+    paths.some((pathname) =>
+      affects(pathname, CHECK_DEFINITION_ROOTS, CHECK_DEFINITION_FILES) ||
+      !classifyCandidatePath(pathname).classified
+    )
+  ) {
+    return everything;
+  }
+  const rustSource = paths.some((pathname) =>
+    affects(pathname, RUST_SOURCE_ROOTS, RUST_SOURCE_FILES)
+  );
+  const dependencies = paths.some((pathname) =>
+    RUST_SOURCE_FILES.has(pathname) || pathname.startsWith("editors/")
+  );
+  return {
+    rustSource,
+    documents: paths.some((pathname) => affects(pathname, DOCUMENT_ROOTS, DOCUMENT_FILES)),
+    adapters: paths.some((pathname) => startsWithAny(pathname, ADAPTER_ROOTS)),
+    dependencies,
+    // Fuzz targets and the Nix package both build the core crates, so only a
+    // change to Rust source or its build inputs can change their outcome.
+    fuzz: rustSource,
+    nixPackage: rustSource,
+    semver: rustSource,
+  };
+}
+
 function matrixEntry(target) {
   const entry = {
     target: target.triple,
@@ -224,6 +303,10 @@ export function nativeChangePlan(
     preflightRequired: nativeRequired || globalRequired || ref.startsWith("refs/tags/"),
     releaseMain,
     matrix: { include: targets },
+    // Only a pull request is scoped. `main` is where independently reviewed
+    // branches meet for the first time, so it is verified in full even when
+    // each branch was verified on its own.
+    quality: pullRequest ? qualityScope(paths) : qualityScope([]),
   };
 }
 
@@ -267,6 +350,13 @@ function main() {
       `preflight_required=${plan.preflightRequired}`,
       `release_main=${plan.releaseMain}`,
       `native_matrix=${JSON.stringify(plan.matrix)}`,
+      `quality_rust_source=${plan.quality.rustSource}`,
+      `quality_documents=${plan.quality.documents}`,
+      `quality_adapters=${plan.quality.adapters}`,
+      `quality_dependencies=${plan.quality.dependencies}`,
+      `quality_fuzz=${plan.quality.fuzz}`,
+      `quality_nix_package=${plan.quality.nixPackage}`,
+      `quality_semver=${plan.quality.semver}`,
       "",
     ].join("\n"),
     { flag: "a" },
