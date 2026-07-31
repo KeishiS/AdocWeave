@@ -8,35 +8,31 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 外部書誌向けciteの完成
+== 公開Rust APIのversion管理
 
-``cite:``の構文解析と意味モデルは公開済みです。現在はRust APIの
-``Analysis::citations()``からだけ取得でき、ホストが解決した引用表示をHTMLへ渡す経路もありません。
-利用側アプリが引用を実際に扱えるようにするため、残りの二段階を進めます。
+公開Rust APIの入口の整理は完了しました。解析は``Engine::analyze``と``analyze_with``、前処理は
+``preprocess``系の4つの関数と``EffectiveProcessingOptions``のmethodに揃っています。次は、この形を
+保ちながら版を重ねられるようにします。
 
-* https://github.com/KeishiS/adocweave/issues/313[citeの引用情報をprojectionとWASMへ公開]
-* https://github.com/KeishiS/adocweave/issues/314[ホストが解決したciteの表示をHTMLへ描画]
-
-この順序で進めます。ホストはまずprojectionから引用keyと位置を取得し、解決した結果を
-``RenderInputs``へ渡します。projectionを公開しないまま描画経路だけを用意しても、ホストは
-解決すべきkeyを知る手段がありません。
-
-== 公開Rust APIの整理とversion管理
-
-公開Rust APIには、同じ操作に対する入口が複数あります。解析は``Engine``の4変種と
-``AnalysisRequest``が併存し、前処理は6変種があります。利用側からは、どれが標準の入口なのか
-判断できません。
-
-* https://github.com/KeishiS/adocweave/issues/307[公開Rust APIの入口統合]
 * https://github.com/KeishiS/adocweave/issues/265[公開Rust APIのSemVer差分検査]
 
-この2つは順序が決まっています。先に入口を統合し、その版のtagをSemVer差分検査の最初の比較基準と
-します。整理する前に基準を固定すると、直後のminor版で大量の差分を意図した破壊的変更として
-記録する作業が生じます。
+入口の整理を終えた版のtagを、SemVer差分検査の最初の比較基準とします。整理する前に基準を固定していれば、
+直後のminor版で大量の差分を意図した破壊的変更として記録する作業が生じていました。
 
 差分検査では、patch版へ意図しない破壊的変更を含めず、0.yのminor版で破壊的変更を行う場合は、
 機械可読な差分記録とRelease Notesの移行手順を対応付けます。検査に使うtool、比較対象のtag、
 対象crateおよびrelease種別を固定し、実行時に取得した最新版へ判定を依存させません。
+
+== golden fixtureの保守
+
+``fixtures/public-conformance/``には、現在の実装から成果物を書き出す再生成コマンドと、
+ディスク上のファイルが再生成結果と一致することを検査するテストの対があります。共有fixtureである
+``fixtures/conformance/``には、そのどちらもありません。
+
+* https://github.com/KeishiS/adocweave/issues/320[共有conformance fixtureの再生成コマンドと冪等性検査]
+
+そのため公開契約が増えるたびに複数のファイルを手作業で更新する必要があり、整形も3通りに分かれています。
+更新漏れはテストが落ちるまで気付けません。
 
 == Language Serverの応答性
 
@@ -52,8 +48,8 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 
 * https://github.com/KeishiS/adocweave/issues/309[CLIとLanguage Serverの挙動差の解消]
 
-終了コードの変更は破壊的変更です。公開Rust APIの整理と同じrelease trainでまとめるか、
-別のminor版で行うかは着手時に判断します。
+終了コードの変更は破壊的変更です。ほかの破壊的変更と同じrelease trainでまとめるか、
+単独のminor版で行うかは着手時に判断します。
 
 == 文書の用語統一
 
