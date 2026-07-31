@@ -88,6 +88,15 @@ pub struct WorkspaceResources {
     project_plans: BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>,
     resource_projects: BTreeMap<ResourceId, ProjectScopeId>,
     retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget>,
+    /// Project files already discovered and parsed, keyed by the directory the
+    /// search started from.
+    ///
+    /// Resolving a document's configuration walks up to the workspace root,
+    /// then canonicalizes, reads, hashes and parses the project file. Without
+    /// this the work repeats on every keystroke, on the thread that answers
+    /// every other request. Discovery depends only on the directory and the
+    /// roots, so the directory is a complete key while the roots hold still.
+    config_cache: BTreeMap<PathBuf, Option<adocweave_config::ConfigSnapshot>>,
     next_disk_version: i64,
     last_load_failed_closed: bool,
 }
@@ -183,6 +192,10 @@ impl WorkspaceResources {
         limits: WorkspaceLimits,
     ) -> Result<(), String> {
         self.last_load_failed_closed = false;
+        // A reload is the only way the roots or a project file can change, so it
+        // is also the only point at which a remembered configuration can go
+        // stale.
+        self.forget_configs();
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
         let root_paths = match roots
             .iter()
@@ -773,7 +786,7 @@ impl WorkspaceResources {
         Ok(strings(affected))
     }
 
-    pub fn input(&self, root: &Url) -> Result<WorkspaceInput, String> {
+    pub fn input(&mut self, root: &Url) -> Result<WorkspaceInput, String> {
         let root_id = uri_id(root)?;
         if self.inner.get(&root_id).is_none() {
             return Err(format!("workspace resource is missing: {root}"));
@@ -781,7 +794,9 @@ impl WorkspaceResources {
         let root_scope = self
             .resource_projects
             .get(&root_id)
-            .ok_or_else(|| format!("workspace project scope is missing: {root}"))?;
+            .ok_or_else(|| format!("workspace project scope is missing: {root}"))?
+            .clone();
+        let root_scope = &root_scope;
         let mut allowed_schemes = BTreeSet::new();
         allowed_schemes.insert("file".to_owned());
         let config_snapshot = self.config_for_uri(root)?;
@@ -861,7 +876,7 @@ impl WorkspaceResources {
         })
     }
 
-    pub fn input_is_current(&self, input: &WorkspaceInput) -> bool {
+    pub fn input_is_current(&mut self, input: &WorkspaceInput) -> bool {
         input.generation == self.generation()
             && self.config_for_id(&input.root).is_ok_and(|snapshot| {
                 snapshot.map(|value| value.content_sha256) == input.config_sha256
@@ -879,7 +894,7 @@ impl WorkspaceResources {
     }
 
     fn config_for_id(
-        &self,
+        &mut self,
         id: &ResourceId,
     ) -> Result<Option<adocweave_config::ConfigSnapshot>, String> {
         let uri = Url::parse(id.as_str()).map_err(|error| error.to_string())?;
@@ -887,13 +902,40 @@ impl WorkspaceResources {
     }
 
     fn config_for_uri(
-        &self,
+        &mut self,
         uri: &Url,
     ) -> Result<Option<adocweave_config::ConfigSnapshot>, String> {
         let path = uri
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        config_for_path(&self.roots, &path)
+        self.cached_config_for_path(&path)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Resolves a path's project file, reading it at most once per directory.
+    fn cached_config_for_path(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<adocweave_config::ConfigSnapshot>, adocweave_config::ConfigError> {
+        let Some(start) = existing_ancestor(path) else {
+            return Ok(None);
+        };
+        if let Some(cached) = self.config_cache.get(&start) {
+            return Ok(cached.clone());
+        }
+        let config = config_for_path_typed(&self.roots, path)?;
+        self.config_cache.insert(start, config.clone());
+        Ok(config)
+    }
+
+    /// Forgets every remembered project file.
+    ///
+    /// Called when a project file or the set of roots changes. A snapshot found
+    /// for one directory can come from an ancestor, so a single edited file can
+    /// invalidate entries recorded under many directories; clearing all of them
+    /// keeps the cache from ever answering with a stale configuration.
+    fn forget_configs(&mut self) {
+        self.config_cache.clear();
     }
 
     fn open_scope_and_plan(
@@ -966,11 +1008,16 @@ fn resource_path_is_allowed(
     })
 }
 
-fn config_for_path(
-    roots: &[PathBuf],
-    path: &Path,
-) -> Result<Option<adocweave_config::ConfigSnapshot>, String> {
-    config_for_path_typed(roots, path).map_err(|error| error.to_string())
+/// Walks up to the nearest directory that exists.
+///
+/// A document being created does not exist on disk yet, and configuration
+/// discovery has to start somewhere real.
+fn existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut start = path;
+    while !start.exists() {
+        start = start.parent()?;
+    }
+    Some(start.to_owned())
 }
 
 fn config_for_path_typed(
@@ -1089,6 +1136,34 @@ mod tests {
             ),
         )
         .expect("project configuration");
+    }
+
+    #[test]
+    fn a_project_file_is_read_once_per_directory_and_forgotten_when_it_changes() {
+        let root = TestDirectory::new();
+        let source = root.0.join("a.adoc");
+        std::fs::write(&source, "first\n").expect("source");
+        write_resource_config(&root.0, 8, 4096, 4096, true);
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("load workspace");
+
+        let first = resources.input(&source_uri).expect("workspace input");
+        assert_eq!(resources.config_cache.len(), 1);
+
+        // Replacing the file on disk without reloading must not change the
+        // answer: repeated keystrokes read the remembered configuration.
+        write_resource_config(&root.0, 4, 2048, 2048, true);
+        let repeated = resources.input(&source_uri).expect("workspace input");
+        assert_eq!(repeated.config_sha256, first.config_sha256);
+
+        // A reload is what tells the server the project file may have changed.
+        resources.load_roots(&[root_uri]).expect("reload workspace");
+        let reloaded = resources.input(&source_uri).expect("workspace input");
+        assert_ne!(reloaded.config_sha256, first.config_sha256);
     }
 
     #[test]
