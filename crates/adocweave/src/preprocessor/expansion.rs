@@ -117,7 +117,11 @@ impl IncludeFrame {
         active_targets.push(target);
         Self {
             source_id: Some(source_id),
-            depth: self.depth + 1,
+            // The caller rejects a frame that already reached the configured
+            // depth, and the include count runs out long before this could
+            // wrap. Saturating keeps that reasoning from becoming a silent
+            // wrap if either bound is later raised or removed.
+            depth: self.depth.saturating_add(1),
             base_uri,
             active_targets,
         }

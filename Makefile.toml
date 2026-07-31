@@ -600,7 +600,7 @@ script = '''
 seconds="${FUZZ_SECONDS:-5}"
 smoke_root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-fuzz-smoke.XXXXXX")"
 trap 'rm -rf "$smoke_root"' EXIT
-for target in analyze process render; do
+for target in analyze preprocess process render; do
   corpus="$smoke_root/$target"
   log="$smoke_root/$target.log"
   mkdir -p "$corpus"
