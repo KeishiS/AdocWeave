@@ -382,6 +382,22 @@ impl fmt::Display for PreprocessedAnalysisError {
 
 impl Error for PreprocessedAnalysisError {}
 
+/// Optional inputs for one preprocessing run.
+///
+/// Every field defaults to absent, so callers name only what they need:
+/// `PreprocessInputs { cancellation: Some(&token) }`.
+#[derive(Default)]
+pub struct PreprocessInputs<'inputs> {
+    /// Cooperative cancellation checked at bounded checkpoints.
+    pub cancellation: Option<&'inputs dyn CancellationCheck>,
+}
+
+impl PreprocessInputs<'_> {
+    fn cancellation(&self) -> &dyn CancellationCheck {
+        self.cancellation.unwrap_or(&NeverCancel)
+    }
+}
+
 /// Expands a caller-provided snapshot and analyzes the resulting text.
 pub fn preprocess_and_analyze(
     engine: &Engine,
@@ -389,43 +405,61 @@ pub fn preprocess_and_analyze(
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
-    preprocess_and_analyze_cancellable(engine, source, snapshot, options, &NeverCancel)
+    preprocess_and_analyze_with(
+        engine,
+        source,
+        snapshot,
+        options,
+        PreprocessInputs::default(),
+    )
 }
 
-/// Expands and analyzes caller-provided input with cooperative cancellation.
-pub fn preprocess_and_analyze_cancellable(
+/// Expands and analyzes caller-provided input with optional inputs.
+pub fn preprocess_and_analyze_with(
     engine: &Engine,
     source: &str,
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
-    cancellation: &dyn CancellationCheck,
+    inputs: PreprocessInputs<'_>,
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
     let options = EffectiveProcessingOptions::new(engine.options().clone(), options.clone())
         .map_err(PreprocessedAnalysisError::Options)?;
-    preprocess_and_analyze_cancellable_with_options(source, snapshot, &options, cancellation)
+    options.preprocess_and_analyze(source, snapshot, inputs)
 }
 
-/// Expands and analyzes with one previously validated effective configuration.
-pub fn preprocess_and_analyze_with_options(
-    source: &str,
-    snapshot: &ResourceSnapshot,
-    options: &EffectiveProcessingOptions,
-) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
-    preprocess_and_analyze_cancellable_with_options(source, snapshot, options, &NeverCancel)
+impl EffectiveProcessingOptions {
+    /// Expands and analyzes with this already validated configuration.
+    ///
+    /// Callers that validate once and process many documents use this instead
+    /// of the free functions, which validate on every call.
+    pub fn preprocess_and_analyze(
+        &self,
+        source: &str,
+        snapshot: &ResourceSnapshot,
+        inputs: PreprocessInputs<'_>,
+    ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
+        preprocess_and_analyze_effective(source, snapshot, self, inputs.cancellation())
+    }
 }
 
-/// Expands and analyzes with validated settings and cooperative cancellation.
-pub fn preprocess_and_analyze_cancellable_with_options(
+fn preprocess_and_analyze_effective(
     source: &str,
     snapshot: &ResourceSnapshot,
     options: &EffectiveProcessingOptions,
     cancellation: &dyn CancellationCheck,
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
-    let document = preprocess_cancellable(source, snapshot, options.preprocess(), cancellation)
-        .map_err(|failure| match failure {
-            PreprocessFailure::Error(error) => PreprocessedAnalysisError::Preprocess(error),
-            PreprocessFailure::Cancelled => PreprocessedAnalysisError::Cancelled,
-        })?;
+    let document = preprocess_with(
+        source,
+        snapshot,
+        options.preprocess(),
+        PreprocessInputs {
+            cancellation: Some(cancellation),
+        },
+    )
+    .map_err(|failure| match failure {
+        PreprocessFailure::Error(error) => PreprocessedAnalysisError::Preprocess(error),
+        PreprocessFailure::Cancelled => PreprocessedAnalysisError::Cancelled,
+    })?;
     let analysis = Engine::new(options.analysis().clone())
         .analyze_with(
             &document.source,
@@ -527,7 +561,7 @@ pub fn preprocess(
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
 ) -> Result<PreprocessedDocument, PreprocessError> {
-    match preprocess_cancellable(source, snapshot, options, &NeverCancel) {
+    match preprocess_with(source, snapshot, options, PreprocessInputs::default()) {
         Ok(document) => Ok(document),
         Err(PreprocessFailure::Error(error)) => Err(error),
         Err(PreprocessFailure::Cancelled) => {
@@ -536,13 +570,14 @@ pub fn preprocess(
     }
 }
 
-/// Expands a caller-provided snapshot with cooperative cancellation.
-pub fn preprocess_cancellable(
+/// Expands a caller-provided snapshot with optional inputs.
+pub fn preprocess_with(
     source: &str,
     snapshot: &ResourceSnapshot,
     options: &PreprocessOptions,
-    cancellation: &dyn CancellationCheck,
+    inputs: PreprocessInputs<'_>,
 ) -> Result<PreprocessedDocument, PreprocessFailure> {
+    let cancellation = inputs.cancellation();
     if cancellation.is_cancelled() {
         return Err(PreprocessFailure::Cancelled);
     }
@@ -1406,11 +1441,13 @@ mod tests {
         };
         let source = "paragraph\n".repeat(CHECKPOINT_INTERVAL * 3);
 
-        let failure = preprocess_cancellable(
+        let failure = preprocess_with(
             &source,
             &ResourceSnapshot::default(),
             &PreprocessOptions::default(),
-            &cancellation,
+            PreprocessInputs {
+                cancellation: Some(&cancellation),
+            },
         )
         .expect_err("preprocessing should be cancelled");
 
@@ -1427,11 +1464,11 @@ mod tests {
             &PreprocessOptions::default(),
         )
         .expect("preprocess");
-        let actual = preprocess_cancellable(
+        let actual = preprocess_with(
             source,
             &ResourceSnapshot::default(),
             &PreprocessOptions::default(),
-            &NeverCancel,
+            PreprocessInputs::default(),
         )
         .expect("cancellable preprocess");
 
@@ -1516,12 +1553,14 @@ mod tests {
         cancellation.cancel();
 
         assert!(matches!(
-            preprocess_and_analyze_cancellable(
+            preprocess_and_analyze_with(
                 &Engine::new(crate::core::AnalysisOptions::default()),
                 "paragraph\n",
                 &ResourceSnapshot::default(),
                 &PreprocessOptions::default(),
-                &cancellation,
+                PreprocessInputs {
+                    cancellation: Some(&cancellation)
+                }
             ),
             Err(PreprocessedAnalysisError::Cancelled)
         ));
@@ -1542,12 +1581,12 @@ mod tests {
         let expected =
             preprocess_and_analyze(&engine, "include::part.adoc[]\n", &snapshot, &options)
                 .expect("compatibility analysis");
-        let actual = preprocess_and_analyze_cancellable(
+        let actual = preprocess_and_analyze_with(
             &engine,
             "include::part.adoc[]\n",
             &snapshot,
             &options,
-            &NeverCancel,
+            PreprocessInputs::default(),
         )
         .expect("cancellable analysis");
 
@@ -1564,12 +1603,12 @@ mod tests {
         let expected_error =
             preprocess_and_analyze(&engine, "include::missing.adoc[]\n", &snapshot, &options)
                 .expect_err("compatibility preprocessing error");
-        let actual_error = preprocess_and_analyze_cancellable(
+        let actual_error = preprocess_and_analyze_with(
             &engine,
             "include::missing.adoc[]\n",
             &snapshot,
             &options,
-            &NeverCancel,
+            PreprocessInputs::default(),
         )
         .expect_err("cancellable preprocessing error");
         assert_eq!(actual_error, expected_error);

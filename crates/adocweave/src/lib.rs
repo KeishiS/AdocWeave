@@ -158,16 +158,16 @@ pub mod preprocess {
     pub use crate::preprocessor::{
         AnalysisProjection, Directive, DirectiveKind, EffectiveProcessingOptions, ExpandedOffset,
         ExpandedRange, IncludeRequest, OriginRange, Originated, PreprocessError,
-        PreprocessErrorKind, PreprocessFailure, PreprocessNotice, PreprocessNoticeKind,
-        PreprocessOptions, PreprocessedAnalysis, PreprocessedAnalysisError, PreprocessedDocument,
-        ProcessingOptionsError, ProjectedAttributeBinding, ProjectedAttributeReference,
-        ProjectedDiagnostic, ProjectedDocumentAttribute, ProjectedDocumentAttributeValueLine,
-        ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget, ProjectedReference,
-        ProjectedResource, ProjectionError, ProjectionFailure, ProjectionLimits, ResourceDocument,
-        ResourceSnapshot, SafeMode, SourceMapSegment, SourceMapping, SourceOrigin,
-        discover_includes, preprocess, preprocess_and_analyze, preprocess_and_analyze_cancellable,
-        preprocess_and_analyze_cancellable_with_options, preprocess_and_analyze_with_options,
-        preprocess_cancellable, resolve_include_target,
+        PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessNotice,
+        PreprocessNoticeKind, PreprocessOptions, PreprocessedAnalysis, PreprocessedAnalysisError,
+        PreprocessedDocument, ProcessingOptionsError, ProjectedAttributeBinding,
+        ProjectedAttributeReference, ProjectedDiagnostic, ProjectedDocumentAttribute,
+        ProjectedDocumentAttributeValueLine, ProjectedDocumentSymbol, ProjectedFix,
+        ProjectedLocalTarget, ProjectedReference, ProjectedResource, ProjectionError,
+        ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode,
+        SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
+        preprocess_and_analyze, preprocess_and_analyze_with, preprocess_with,
+        resolve_include_target,
     };
 }
 

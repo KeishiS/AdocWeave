@@ -29,10 +29,10 @@ workerの再起動はFFI、taskまたはthreadなどの利用側アプリの境�
 
 === 協調キャンセル
 
-``Engine::analyze_cancellable``、``preprocess_cancellable``、
-``preprocess_and_analyze_cancellable``、``lint_analysis_cancellable``および
-``PreprocessedAnalysis::project_origins_cancellable``は、呼出側が所有する同じ
-``CancellationCheck``を受け取ります。Workspace解析は前処理、構文解析、lintおよび生成元への位置投影へ
+``Engine::analyze_with``、``preprocess_with``、``preprocess_and_analyze_with``、
+``lint_analysis_cancellable``および``PreprocessedAnalysis::project_origins_cancellable``は、
+呼出側が所有する同じ``CancellationCheck``を受け取ります。前処理と解析の入口では、
+``PreprocessInputs``の``cancellation``へ渡します。指定しない場合はキャンセルを行いません。Workspace解析は前処理、構文解析、lintおよび生成元への位置投影へ
 同じtokenを渡し、いずれかの段階でキャンセルを検出した場合は途中結果を返しません。
 
 各段階は開始時と終了時に加えて、行、構文nodeまたは投影対象rangeを処理する長いloopで検査します。
@@ -79,7 +79,8 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 文書外属性は``AnalysisOptions.attributes``、WASMでは``analysisOptions.attributes``へ指定します。
 文字列はhard-lockedなset、``null``はhard-lockedなunsetを表します。前処理と解析を組み合わせるRust APIでは、
 ``EffectiveProcessingOptions``が文書外属性と属性展開の深さ・生成byte数の上限を一つの処理契約として検証します。
-``preprocess_and_analyze_with_options``と``WorkspaceSnapshot::analyze_with_options``には、この検証済みの値を渡します。
+``EffectiveProcessingOptions::preprocess_and_analyze``と``WorkspaceSnapshot::analyze_with_options``は、
+この検証済みの値をそのまま使います。
 
 解析設定と前処理設定を別々に受け取る``preprocess_and_analyze``では、文書外属性と二つの属性展開上限を
 同じ値にします。不一致はincludeの探索や解析を始める前に
