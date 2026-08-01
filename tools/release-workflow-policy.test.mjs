@@ -791,6 +791,30 @@ test("native smoke cannot repeat source adapter tests", () => {
   );
 });
 
+test("native smoke must take the Node.js version from the release manifest", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      smoke: inputs.smoke.replace(
+        "node-version: ${{ steps.node-version.outputs.value }}",
+        "node-version: 24",
+      ),
+    }),
+    /must consume the resolved release manifest value/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      smoke: inputs.smoke.replace(
+        "        run: echo \"value=$(jq -er .nodeVersion release-manifest.json)\" >> \"$GITHUB_OUTPUT\"",
+        "        run: echo \"value=24.18.0\" >> \"$GITHUB_OUTPUT\"",
+      ),
+    }),
+    /must come from the release manifest/,
+  );
+});
+
 test("private draft publication must use the returned upload URL and avoid tag-only APIs", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(

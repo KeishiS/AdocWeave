@@ -25,9 +25,16 @@ jobs:
         with:
           name: artifacts-build-local-${{ matrix.target }}
           path: target/distrib
+      # This job also runs on macOS and Windows runners, so it cannot use the Nix
+      # devShell. Writing the Node.js version here would split it from the release
+      # manifest, so the manifest value is read and handed to setup-node.
+      - name: Resolve the pinned Node.js version
+        id: node-version
+        shell: bash
+        run: echo "value=$(jq -er .nodeVersion release-manifest.json)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24
+          node-version: ${{ steps.node-version.outputs.value }}
       - name: Resolve the Visual C++ dependency inspector
         if: runner.os == 'Windows'
         shell: pwsh

@@ -8,14 +8,16 @@ test("worker consumes the public WASM contract registry", async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
 
   assert.deepEqual(Object.keys(manifest).sort(), [
+    "nodeVersion",
     "packageVersion",
     "rustVersion",
     "schemaVersion",
   ]);
-  assert.equal(manifest.schemaVersion, 3);
+  assert.equal(manifest.schemaVersion, 4);
   assert.equal(manifest.packageVersion, PACKAGE_VERSION);
   assert.equal(manifest.packageVersion, BROWSER_PACKAGE_VERSION);
   assert.match(manifest.rustVersion, /^\d+\.\d+\.\d+$/);
+  assert.match(manifest.nodeVersion, /^\d+\.\d+\.\d+$/);
 });
 
 test("READMEはBrowserのversion境界とprojection境界を説明する", async () => {

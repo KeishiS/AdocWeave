@@ -1,5 +1,6 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "packageVersion": "0.25.0",
-  "rustVersion": "1.97.1"
+  "rustVersion": "1.97.1",
+  "nodeVersion": "24.18.0"
 }
