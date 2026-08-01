@@ -65,6 +65,19 @@ test("global archiveへ影響する入力だけを選択する", () => {
   }
 });
 
+test("規約検査crateはcandidateへ影響しない", () => {
+  // このcrateはlibraryもbinaryも持たず、testだけを持ちます。変更しても
+  // release成果物に届かないため、candidateの再構築を要求しません。
+  for (const pathname of [
+    "crates/adocweave-governance/Cargo.toml",
+    "crates/adocweave-governance/tests/repository_governance.rs",
+  ]) {
+    assert.deepEqual(candidateImpact(pathname), { global: false, native: false }, pathname);
+    assert.equal(classifyCandidatePath(pathname).classified, true, pathname);
+  }
+  assert.deepEqual(auditCandidatePaths(["crates/adocweave-governance/Cargo.toml"]), []);
+});
+
 test("未分類のsourceとbuild入力はfail-safeで両方のcandidateを要求する", () => {
   for (const pathname of [
     "crates/new-adapter/src/lib.rs",

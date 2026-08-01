@@ -37,6 +37,8 @@ export const CHECKED_CRATES = [
 /// being forgotten.
 export const UNCHECKED_CRATES = {
   "adocweave-cli": "binaryだけを提供し、library targetを持たないため",
+  "adocweave-governance":
+    "リポジトリ規約の検査だけを持ち、libraryが空で公開する型がないため",
 };
 
 export const STABLE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;

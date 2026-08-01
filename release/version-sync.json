@@ -20,6 +20,7 @@
         "adocweave",
         "adocweave-cli",
         "adocweave-config",
+        "adocweave-governance",
         "adocweave-host",
         "adocweave-lsp",
         "adocweave-wasm",

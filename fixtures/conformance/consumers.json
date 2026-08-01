@@ -25,7 +25,7 @@
     },
     {
       "name": "repository-governance",
-      "path": "crates/adocweave/tests/repository_governance.rs",
+      "path": "crates/adocweave-governance/tests/repository_governance.rs",
       "capabilities": ["fixture-root", "manifest"]
     },
     {
