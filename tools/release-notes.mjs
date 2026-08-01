@@ -13,13 +13,19 @@ const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROO
 export { RELEASE_NOTES_VERSION };
 export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
-// The release manifest schema version this release train started from.
+// The release manifest schema version the previous stable release shipped.
 //
 // An earlier release shipped notes announcing a manifest change that had not
 // been made: the same body stated one schema version in one line and a
-// different transition in another. Deriving both numbers from the manifest
-// keeps a sentence from outliving the change it describes.
-export const PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION = 3;
+// different transition in another. Deriving the sentence from this value and
+// the manifest keeps a claim from outliving the change it describes, and keeps
+// a release that changes nothing from announcing a transition.
+export const PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION = 4;
+
+const manifestSchemaNote =
+  manifest.schemaVersion === PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION
+    ? `release manifestのschema versionは${manifest.schemaVersion}のままで、項目を追加も削除もしていません。`
+    : `release manifestのschema versionを${PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION}から${manifest.schemaVersion}へ更新しました。`;
 
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## 対応環境",
@@ -31,28 +37,26 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "Language Serverの打鍵ごとの処理を、ワークスペースの規模に依存しないようにしました。解析へ渡すリソースの一覧を打鍵のたびに複製していたためです。8,000文書のワークスペースで1打鍵あたり26ミリ秒から10.6ミリ秒になります。",
-  "Language Serverのワークスペース走査を、要求へ応答するthreadの外へ移しました。走査中もHoverやDocument Symbolなどの要求へ応答します。",
-  "名前を変えられる位置かどうかを、Renameを始める前に答えるようにしました。``prepareRename``を扱うエディターでは、対象のない位置でRenameが始まって何も起きない状態がなくなります。",
-  "Node.jsのバージョンをrelease manifestの``nodeVersion``だけで決めるようにしました。CIの一部がメジャーバージョンだけを指定しており、実際に使われた値が記録に残っていませんでした。",
+  "配布物の動作を変えない、文書と内部構成だけのreleaseです。CLI、Language Server、WebAssembly、browser package、Zed拡張およびVS Code拡張の挙動はv0.26.0と同じです。",
+  "利用者向け文書と開発者向け文書の用語をそろえました。英語をそのまま並べた複合語を、対象と動作が分かる日本語の説明へ書き換えています。",
+  "構文解析、構文木の変換および診断の生成について、処理内部の判断を固定する単体テストを追加しました。",
+  "リポジトリの規約を検査するtestを``adocweave-governance`` crateへ移しました。``cargo test -p adocweave``は構文解析のtestだけを実行します。このcrateはlibraryもbinaryも持たず、配布物に含みません。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
-  `release manifestへ\`\`nodeVersion\`\`を追加し、schema versionを${PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION}から${manifest.schemaVersion}へ更新しました。Nixを使えないrunnerも、この値でNode.jsを選びます。`,
-  "訂正：v0.25.0のRelease Notesは、この``nodeVersion``の追加をv0.25.0で行ったと記載していました。実際にはv0.25.0のrelease manifestのschema versionは3で、``nodeVersion``はありません。変更を行ったのはこのreleaseです。",
-  "挙動の変更：``textDocument/rename``の``prepareSupport``を宣言するclientへ、``renameProvider``を``RenameOptions``として返し、``prepareProvider``を宣言します。名前を変えられるのはアンカー定義の上だけで、それ以外の位置では``textDocument/prepareRename``が結果を返しません。``prepareSupport``を宣言しないclientへの応答は変わりません。",
-  "公開Rust API、WASM protocol、CLI引数、Language Server protocolのそのほかおよび設定schemaはv0.25.0から変更していません。",
+  manifestSchemaNote,
+  "公開Rust API、WASM protocol、HTML出力、公開projection、CLI引数、Language Server protocolおよび設定schemaはv0.26.0から変更していません。破壊的変更と挙動の変更はありません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。診断code、終了コード、公開projectionおよびAsciiDocの解釈は変わりません。",
-  `release manifestを機械的に読んでいる場合は、\`\`schemaVersion\`\`が${manifest.schemaVersion}になり\`\`nodeVersion\`\`が加わります。`,
-  "``prepareRename``を扱うエディターでは、アンカー定義の上でだけRenameを始められます。以前はどの位置でも始められましたが、対象のない位置では編集が返らず何も起きませんでした。エディター側の設定変更は不要です。",
-  `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
+  "設定と利用側コードの移行は不要です。診断code、終了コード、公開projectionおよびAsciiDocの解釈は変わりません。",
+  `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
+  `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
+  "v0.26.0で問題が起きていない場合、このreleaseへ更新しなくても動作は変わりません。",
 ];
 
 const knownConstraints = [
