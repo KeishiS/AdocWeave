@@ -41,6 +41,8 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /実行時に受理されていた設定の移行は不要です/);
   assert.doesNotMatch(notes, /設定schemaはv0\.27\.1から変更していません/);
   assert.match(notes, /公開入口の``PROTOCOL_SCHEMA_VERSION``を記録/);
+  assert.match(notes, /WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず/);
+  assert.match(notes, new RegExp(`\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`));
   assert.match(notes, /``schemaVersion``は4のままです/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
   assert.match(notes, /sha256sum --check/);

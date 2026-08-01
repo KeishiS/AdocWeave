@@ -60,9 +60,9 @@ const contractNotes = [
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
   `公開契約に破壊的変更はありません。v${PREVIOUS_RELEASE_VERSION}の設定schema変更に関する説明は、実際の変更内容へ訂正しました。`,
-  "Browser packageの公開入口へ``PROTOCOL_SCHEMA_VERSION``を追加しました。WASM protocol schema自体のversionと内容は変えていません。",
+  `Browser packageの公開入口へ\`\`PROTOCOL_SCHEMA_VERSION\`\`を追加しました。WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。`,
   "設定schemaの``html.stylesheet-files``へ相対パスの制約を加えました。実行時には以前から同じ制約を適用しているため、受理される設定の範囲は変わりません。",
-  "公開Rust API、WASM protocol、公開projection、CLI引数およびLanguage Server protocolは変更していません。",
+  "公開Rust API、WASM protocolのfield構造、公開projection、CLI引数およびLanguage Server protocolは変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
