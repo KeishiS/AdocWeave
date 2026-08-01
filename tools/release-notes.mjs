@@ -37,10 +37,9 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "アンカーの表示テキストをIDと分けて読むようにしました。AsciiDocは``[[[smith2024,1]]]``のようにカンマの後ろへ表示テキストを書きます。これまではカンマ以降もIDの一部として読んでいたため、仕様どおりに書いた文書は``<<smith2024>>``が解決できず、参照先が無いという診断が出ていました。インラインアンカー``[[id,表示テキスト]]``も同じです。",
-  "参考文献の項目に表示テキストを持たせ、公開projectionへ出します。番号を付ける引用styleでは、番号を利用側アプリが決めたあと、表示と相互linkをAdocWeaveへ任せられます。",
-  "条件分岐とincludeのdirectiveを字句として認識するようにしました。前処理を行わない解析では``ifeval::[\"a\" == \"b\"]``が名前付きマクロとして読まれ、先頭の``ifeval:``がURL schemeに見えるため、条件分岐を書いた利用者は書いていないURLを拒否したと告げられていました。HTMLも属性展開まで適用された壊れた段落になっていました。",
-  "利用側アプリ用の文書属性の接頭辞を設定で予約する案は、実施しない判断としました。理由はロードマップに記録しています。",
+  "lint規則``unprocessed-directive``の識別子``UNPROCESSED_DIRECTIVE``を公開APIから参照できるようにしました。直前のreleaseで規則を追加したとき、crate rootの再公開一覧への追加が漏れていました。",
+  "規則そのものの動作は変わりません。既定で有効であり、診断もこれまでどおり出ます。定数が無いことで困るのは、規則のseverityを変える、無効にする、コード上で規則を特定する場合です。",
+  "規則の定数が再公開から漏れていないかを検査するtestを加えました。規則は定数を定義するcatalog macroと、crate rootの再公開という手書きの二箇所に書きます。前者だけに書いた規則は診断を出し続けるため、その名前を書く人が現れるまで何も失敗しませんでした。",
 ];
 
 const contractNotes = [
@@ -48,25 +47,17 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  "破壊的変更：``BibliographyEntry``へ``label``を追加しました。``[[[id,表示テキスト]]]``のカンマ以降を保持します。表示テキストが無い場合は``None``です。この構造体を自分で構築している利用側は、``label``の指定を加えてください。",
-  "破壊的変更：``Unsupported``へ``kind``を追加し、``UnsupportedKind``を公開しました。このバージョンが読めない構文（``Syntax``）と、対応済みだが今回の解析では評価していないpreprocessor directive（``UnprocessedDirective``）を区別します。``UnsupportedKind``の既定は``Syntax``です。",
-  "破壊的変更：``SyntaxIssueClass``へ``UnprocessedDirective``を追加しました。この列挙を網羅的に``match``している利用側は、分岐の追加が必要です。",
-  "公開projectionの``catalogs.bibliography``の各項目へ``label``が加わります。値は文字列またはnullです。",
-  "WASM protocolのschema versionとWorker protocol versionは変更していません。追加した``label``は既存の項目を変えません。",
-  "挙動の変更：条件分岐とincludeのdirectiveを含む行の診断codeが``invalid-url-scheme``から``unprocessed-directive``へ変わります。HTML出力では、これらの行が1つの段落へ吸収されず、書いたままの文字列として残ります。",
-  "挙動の変更：``[[[id,表示テキスト]]]``と``[[id,表示テキスト]]``のIDがカンマの手前までになります。カンマを含むIDを書いていた文書では、参照先のIDが変わります。",
-  "CLI引数、Language Server protocolおよび設定schemaはv0.26.1から変更していません。",
+  "``adocweave::output::diagnostics``へ``UNPROCESSED_DIRECTIVE``を追加しました。既存の名前、型および挙動は変えていないため、加算的な変更です。",
+  "公開Rust API、WASM protocol、HTML出力、公開projection、CLI引数、Language Server protocolおよび設定schemaは、この追加のほかにv0.27.0から変更していません。破壊的変更と挙動の変更はありません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。終了コードとAsciiDocのそのほかの解釈は変わりません。",
-  "Rust APIを使う利用側は、``BibliographyEntry``と``Unsupported``を自分で構築している箇所へ新しい項目を加えてください。``SyntaxIssueClass``を網羅的に``match``している箇所には``UnprocessedDirective``の分岐を加えてください。読み取りだけの利用側に変更は要りません。",
-  "公開projectionを保存している利用側は、``catalogs.bibliography``へ``label``が加わるため、保存済みの結果を作り直してください。",
-  "条件分岐またはincludeのdirectiveを含む文書を、前処理を行わずに解析している利用側は、``invalid-url-scheme``で拒否していた判定を``unprocessed-directive``へ変えてください。",
-  "カンマを含むアンカーIDを書いていた文書は、IDがカンマの手前までになります。該当する文書では、``<<ID>>``の書き方を確認してください。",
+  "設定と利用側コードの移行は不要です。診断code、終了コード、公開projection、HTML出力およびAsciiDocの解釈は変わりません。",
+  "``unprocessed-directive``をname文字列で引いていた利用側は、``UNPROCESSED_DIRECTIVE``へ置き換えられます。置き換えると、規則名が変わった場合にcompileで気付けます。置き換えなくても動作は変わりません。",
   `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
+  "v0.27.0で問題が起きていない場合、このreleaseへ更新しなくても動作は変わりません。",
 ];
 
 const knownConstraints = [

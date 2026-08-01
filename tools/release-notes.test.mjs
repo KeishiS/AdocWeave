@@ -15,10 +15,9 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /アンカーの表示テキストをIDと分けて読むようにしました/);
-  assert.match(notes, /参考文献の項目に表示テキストを持たせ/);
-  assert.match(notes, /条件分岐とincludeのdirectiveを字句として認識するようにしました/);
-  assert.match(notes, /実施しない判断としました/);
+  assert.match(notes, /``UNPROCESSED_DIRECTIVE``を公開APIから参照できるようにしました/);
+  assert.match(notes, /規則そのものの動作は変わりません/);
+  assert.match(notes, /再公開から漏れていないかを検査するtestを加えました/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -27,16 +26,13 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.23\.0から変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
-  // semver gateは受理した破壊的変更ごとに、移行手順を読める本文を要求します。
-  assert.match(notes, /破壊的変更：``BibliographyEntry``へ``label``を追加しました/);
-  assert.match(notes, /破壊的変更：``Unsupported``へ``kind``を追加し/);
-  assert.match(notes, /破壊的変更：``SyntaxIssueClass``へ``UnprocessedDirective``を追加しました/);
-  assert.match(notes, /挙動の変更：条件分岐とincludeのdirective/);
-  assert.match(notes, /挙動の変更：``\[\[\[id,表示テキスト\]\]\]``と``\[\[id,表示テキスト\]\]``のID/);
+  // patch版のため、semver gateは破壊的変更を受理しません。本文も述べません。
+  assert.doesNotMatch(notes, /破壊的変更：/);
+  assert.match(notes, /破壊的変更と挙動の変更はありません/);
+  assert.match(notes, /``UNPROCESSED_DIRECTIVE``を追加しました/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /設定の移行は不要です/);
-  assert.match(notes, /``SyntaxIssueClass``を網羅的に``match``している箇所/);
-  assert.match(notes, /保存済みの結果を作り直してください/);
+  assert.match(notes, /設定と利用側コードの移行は不要です/);
+  assert.match(notes, /name文字列で引いていた利用側/);
   assert.match(notes, /``schemaVersion``は4のままです/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
   assert.match(notes, /sha256sum --check/);
@@ -92,7 +88,7 @@ test("Release Notesが述べるschema versionはmanifestの実際の値と一致
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.26.1"), /v0\.27\.0専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.27\.0専用/);
+  assert.throws(() => buildReleaseNotes("v0.27.0"), /v0\.27\.1専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.27\.1専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });
