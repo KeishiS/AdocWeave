@@ -27,6 +27,7 @@ export type AdocWeaveClientLifecycleErrorCode =
   | "superseded"
   | "unsupported-package-version"
   | "unsupported-worker-protocol"
+  | "wasm-trapped"
   | "worker-failed";
 
 export declare class AdocWeaveClientError<Code extends string = string> extends Error {
