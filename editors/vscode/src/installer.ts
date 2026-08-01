@@ -74,6 +74,17 @@ function trustedResponseUrl(value: string): boolean {
   );
 }
 
+/// Reads a declared size, or reports that the server declared none.
+///
+/// An absent header is not a size of zero, and a header that is empty or not a
+/// whole number is a size nobody can compare against. Each of those means the
+/// declared size cannot be checked, not that the download is wrong.
+function declaredContentLength(header: string | null): number | undefined {
+  if (header === null || header.trim() === "") return undefined;
+  const value = Number(header);
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 async function download(
   url: URL,
   fetcher: typeof fetch,
@@ -91,10 +102,15 @@ async function download(
   if (!response.ok || !trustedResponseUrl(response.url)) {
     throw new Error("managed-download-failed");
   }
-  const declared = Number(response.headers.get("content-length"));
+  // A response without the header used to parse as `Number(null)`, which is 0
+  // and finite, so a chunked transfer was refused as a size mismatch even
+  // though nothing was wrong with it. The header only lets a wrong size be
+  // refused before the body is read: the received byte count is verified below
+  // whether or not the server declared one.
+  const declared = declaredContentLength(response.headers.get("content-length"));
   if (
-    (Number.isFinite(declared) && declared > maximumBytes) ||
-    (expectedBytes !== undefined && Number.isFinite(declared) && declared !== expectedBytes)
+    declared !== undefined &&
+    (declared > maximumBytes || (expectedBytes !== undefined && declared !== expectedBytes))
   ) {
     throw new Error("managed-download-size-mismatch");
   }

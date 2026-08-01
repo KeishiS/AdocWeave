@@ -365,3 +365,57 @@ test("書込み権限がないstorageでは既存内容を変更しません", {
     await removeTemporaryDirectory(storagePath);
   }
 });
+
+test("Content-Lengthを返さない配信でもmanaged binaryを導入します", async () => {
+  // ヘッダーの無い応答は Number(null) が 0 と評価され、0 は有限なので
+  // 期待sizeとの不一致として拒否されていました。chunked転送のように
+  // Content-Lengthを返さない正常な配信が導入できません。
+  const storagePath = await mkdtemp(join(tmpdir(), "adocweave-managed-"));
+  const platform = platformForHost("linux", "x64");
+  const archive = zipSync({ [platform.executable]: new TextEncoder().encode("server") });
+  const withoutContentLength: typeof fetch = async (input, init) => {
+    const original = await releaseFetcher(archive)(input, init);
+    const body = new Uint8Array(await original.arrayBuffer());
+    const stripped = new Response(body);
+    Object.defineProperty(stripped, "url", { value: original.url });
+    return stripped;
+  };
+  try {
+    const installed = await installManagedServer(platform, {
+      fetcher: withoutContentLength,
+      storagePath,
+      version: "0.16.0",
+    });
+    assert.equal(await readFile(installed, "utf8"), "server");
+  } finally {
+    await removeTemporaryDirectory(storagePath);
+  }
+});
+
+test("Content-Lengthが期待sizeと違う配信は本文を読む前に拒否します", async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), "adocweave-managed-"));
+  const platform = platformForHost("linux", "x64");
+  const archive = zipSync({ [platform.executable]: new TextEncoder().encode("server") });
+  const wrongContentLength: typeof fetch = async (input, init) => {
+    const original = await releaseFetcher(archive)(input, init);
+    if (!String(input).endsWith(".zip")) return original;
+    const body = new Uint8Array(await original.arrayBuffer());
+    const lying = new Response(body, {
+      headers: { "content-length": String(body.byteLength + 1) },
+    });
+    Object.defineProperty(lying, "url", { value: original.url });
+    return lying;
+  };
+  try {
+    await assert.rejects(
+      installManagedServer(platform, {
+        fetcher: wrongContentLength,
+        storagePath,
+        version: "0.16.0",
+      }),
+      /managed-download-size-mismatch/,
+    );
+  } finally {
+    await removeTemporaryDirectory(storagePath);
+  }
+});
