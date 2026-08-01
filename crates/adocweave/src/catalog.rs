@@ -61,6 +61,12 @@ pub struct FootnoteOccurrence {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BibliographyEntry {
     pub id: String,
+    /// Display text written after the comma in `[[[id,xreftext]]]`.
+    ///
+    /// A numbered citation style is written this way, so the number stays
+    /// identifying information about the work rather than becoming part of the
+    /// entry's prose. `None` when the anchor carries no display text.
+    pub label: Option<String>,
     pub definition_range: TextRange,
     pub definition_block: crate::presentation::BlockId,
     pub references: Vec<BibliographyReference>,
@@ -178,6 +184,10 @@ pub(crate) fn build(
                     catalog_bytes += node.target.len() as u64;
                     catalogs.bibliography.push(BibliographyEntry {
                         id: node.target.clone(),
+                        label: node
+                            .attributes
+                            .first()
+                            .map(|attribute| attribute.value.clone()),
                         definition_range: node.range,
                         definition_block,
                         references: Vec::new(),

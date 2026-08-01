@@ -419,6 +419,7 @@
     "BibliographyEntry": {
       "fields": [
         { "json": "id", "type": "string", "required": true },
+        { "json": "label", "type": "string | null", "required": true },
         { "json": "definitionRange", "type": "TextRange", "required": true },
         { "json": "references", "type": "TextRange[]", "required": true }
       ]

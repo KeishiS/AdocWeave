@@ -79,6 +79,7 @@ pub enum WasmAttributeValueContinuation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmBibliographyEntry {
     pub id: String,
+    pub label: Option<String>,
     pub definition_range: WasmTextRange,
     pub references: Vec<WasmTextRange>,
 }

@@ -309,6 +309,9 @@ WildcardおよびURI転送は未対応です。
 bibliography参照edgeおよび階層index catalogに対応します。`[bibliography]` section内の順序なしlistは
 catalogのcitation／back referenceを出力します。bibliography styleのdoctype、document title／discrete heading、
 multipart bookのsection scopeを検証します。citation styleの整形およびindex rangeは未対応です。
+``[[[id,表示テキスト]]]``のようにカンマの後ろへ表示テキストを書くと、IDと分けて保持し、``<<id>>``の
+表示に使います。番号を付ける引用styleはこの書き方で表します。表示テキストを書かない場合はIDを表示します。
+インラインアンカー``[[id,表示テキスト]]``も同じ規則です。
 
 |Markdown互換構文
 |未対応
