@@ -15,10 +15,10 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /1打鍵あたり26ミリ秒から10\.6ミリ秒になります/);
-  assert.match(notes, /要求へ応答するthreadの外へ移しました/);
-  assert.match(notes, /Renameを始める前に答えるようにしました/);
-  assert.match(notes, /``nodeVersion``だけで決めるようにしました/);
+  assert.match(notes, /配布物の動作を変えない、文書と内部構成だけのrelease/);
+  assert.match(notes, /対象と動作が分かる日本語の説明へ書き換えています/);
+  assert.match(notes, /処理内部の判断を固定する単体テストを追加しました/);
+  assert.match(notes, /``adocweave-governance`` crateへ移しました/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -26,16 +26,12 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.23\.0から変更していません/);
-  assert.match(notes, /schema versionを3から4へ更新しました/);
-  assert.match(notes, /``prepareProvider``を宣言します/);
-  // 直前のreleaseのRelease Notesが、行っていないmanifestの変更を告知しました。
-  // 公開済みの本文は書き換えず、ここで訂正します。
-  assert.match(notes, /訂正：v0\.25\.0のRelease Notesは/);
-  assert.match(notes, /変更を行ったのはこのreleaseです/);
+  assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
+  assert.match(notes, /破壊的変更と挙動の変更はありません/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /設定の移行は不要です/);
-  assert.match(notes, /``schemaVersion``が4になり``nodeVersion``が加わります/);
-  assert.match(notes, /アンカー定義の上でだけRenameを始められます/);
+  assert.match(notes, /設定と利用側コードの移行は不要です/);
+  assert.match(notes, /``schemaVersion``は4のままです/);
+  assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
   assert.match(
@@ -65,23 +61,31 @@ test("Release Notesが述べるschema versionはmanifestの実際の値と一致
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
 
   // 過去のReleaseで、行っていないmanifestの変更を告知したことがあります。同じ本文が
-  // 一方で現在のschema versionを述べ、他方で別の遷移を述べていました。本文に現れる
-  // 遷移の到達値は、必ずmanifestの現在値と一致します。
+  // 一方で現在のschema versionを述べ、他方で別の遷移を述べていました。遷移を述べるのは
+  // 実際に値が変わったreleaseだけとし、到達値は必ずmanifestの現在値と一致させます。
   const transitions = [...notes.matchAll(/schema versionを(\d+)から(\d+)へ/g)];
-  assert.notEqual(transitions.length, 0, "schema versionの遷移が本文にありません");
-  for (const [, from, to] of transitions) {
-    assert.equal(Number(from), PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION);
-    assert.equal(Number(to), manifest.schemaVersion);
+  if (manifest.schemaVersion === PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION) {
+    assert.equal(transitions.length, 0, "変更していないschema versionの遷移を述べています");
+    assert.match(notes, new RegExp(`schema versionは${manifest.schemaVersion}のまま`));
+  } else {
+    assert.notEqual(transitions.length, 0, "schema versionの遷移が本文にありません");
+    for (const [, from, to] of transitions) {
+      assert.equal(Number(from), PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION);
+      assert.equal(Number(to), manifest.schemaVersion);
+    }
   }
-  assert.equal(manifest.schemaVersion, PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION + 1);
-  for (const [, value] of notes.matchAll(/``schemaVersion``が(\d+)になり/g)) {
+  assert.ok(
+    manifest.schemaVersion >= PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION,
+    "manifestのschema versionが直前のreleaseより小さくなっています",
+  );
+  for (const [, value] of notes.matchAll(/``schemaVersion``は(\d+)のまま/g)) {
     assert.equal(Number(value), manifest.schemaVersion);
   }
 });
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.25.0"), /v0\.26\.0専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.26\.0専用/);
+  assert.throws(() => buildReleaseNotes("v0.26.0"), /v0\.26\.1専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.26\.1専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });
