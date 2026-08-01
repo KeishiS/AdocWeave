@@ -109,7 +109,7 @@ AsciiDoc構文を追加または変更する場合は、同じ変更で次を確
 == 依存関係
 
 依存境界、許可するlicenseと取得元、重複依存および一時的な例外は``security/``以下の機械可読な設定を
-基準とします。文書へパッケージ一覧やversionを転記しません。
+基準とします。文書へパッケージ一覧やバージョンを転記しません。
 
 依存関係を更新するときは次を確認します。
 
@@ -119,7 +119,7 @@ AsciiDoc構文を追加または変更する場合は、同じ変更で次を確
 . license、取得元、重複依存、生成されるnotice、SBOMおよびbrowser sizeの差分を確認します。
 . 通常の品質検査を通してからpull requestを統合します。
 
-重複versionは一律に禁止しません。増減した場合は、上流のversion制約、解消可能性、実行ファイルの大きさおよび
+重複するバージョンは一律に禁止しません。増減した場合は、上流のバージョン制約、解消可能性、実行ファイルの大きさおよび
 対応するRust stableへの影響を確認してから、理由付きの基準を更新します。
 
 Advisoryを一時的に除外する場合は、RustSec advisory ID、担当者、影響しないと判断した理由、将来の期限および
@@ -151,7 +151,7 @@ Nix入力はDependabotの対象外であり、``flake.lock``を手動で更新�
 文書の重複と陳腐化を避けるため、次の規則に従います。
 
 * 新しい文書を追加する前に、既存の文書へ統合できないか確認します。
-* version固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。
+* バージョン固有の変更内容と移行手順は、原則としてGitHub Release Notesへ記載します。
 * CLI option、診断code、パッケージバージョン、対応target、公開APIおよびschemaなど、codeや機械可読な
   manifestから取得できる情報を文書へ重複して記載しません。
 * 現行仕様、設計理由および作業計画を同じ文書に混在させません。現行仕様は``docs/``、設計理由はADR、
@@ -170,10 +170,10 @@ CIではdependency governance、source quality、fuzz quality、Nixパッケー�
 該当する``cargo make`` taskをNix開発環境で再実行し、設定の基準である``.github/workflows``と
 ``Makefile.toml``を確認してください。
 
-source qualityは、書式や生成fileなどの短い検査、Rustワークスペースの検査、WASM・browser・editor adapterの
+source qualityは、書式や生成ファイルなどの短い検査、Rustワークスペースの検査、WASM・browser・editor adapterの
 検査に分けて並列実行します。``quality / verify``はこれらとdependency governance、fuzz、Nixパッケージに加え、
 変更に応じて選択したcandidate build、smoke testおよびinstallation E2Eの結果を集約する必須checkです。
-成果物を構築するPull Requestでは、書式、生成file、workflow、``release-contract``および
+成果物を構築するPull Requestでは、書式、生成ファイル、workflow、``release-contract``および
 変更pathの分類を``cargo make ci-preflight``で先に確認します。global成果物へ影響する場合は、
 実Chromiumによるarchiveの受入検査もPull Requestで実行します。
 
@@ -190,7 +190,7 @@ cargo make verify-with-global-candidate
 分離環境、通常環境およびbundler経由の3経路で実Chromiumから実行します。
 
 手元では``nix develop``の開発環境が提供するChromiumを使用します。CIでは実行環境が用意した
-browserを使用するため、versionは一致しません。``ADOCWEAVE_BROWSER``で使用するbrowserを
+browserを使用するため、バージョンは一致しません。``ADOCWEAVE_BROWSER``で使用するbrowserを
 指定できます。
 
 == Tag
@@ -203,15 +203,15 @@ browserを使用するため、versionは一致しません。``ADOCWEAVE_BROWSE
 
 release作業も通常の変更と同様に、短命なブランチとpull requestから開始します。
 
-. 変更の互換性と利用者への影響からSemantic Versioningのversionを決め、管理対象componentを同期します。
+. 変更の互換性と利用者への影響からSemantic Versioningのバージョンを決め、管理対象componentを同期します。
 +
 [source,console]
 ----
 node tools/sync-release-version.mjs --version X.Y.Z
 ----
 +
-このtoolはlink:release/version-sync.json[version同期対象]に明示したmanifest、lockfile、公開仕様のfixtureおよび生成物だけを
-更新します。更新前に部分的なversion変更や管理対象外の同じversionを検出した場合は、fileを書き換えず停止します。
+このtoolはlink:release/version-sync.json[バージョン同期対象]に明示したmanifest、lockfile、公開仕様のfixtureおよび生成物だけを
+更新します。更新前に部分的なバージョン変更や管理対象外の同じバージョンを検出した場合は、ファイルを書き換えず停止します。
 . 差分を確認し、必要な仕様文書、Release Notesおよびテスト用入力を更新してから、同期状態を検査します。
 +
 [source,console]
@@ -229,7 +229,7 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 公開に失敗した場合は、再実行前にprivate draft、既存assetおよびattestationの対象digestを確認します。
 
 公開後に問題が見つかった場合は、既存のtagやassetを置換せず、修正をpull requestで``main``へ統合して
-新しいversionで最初から実行します。tag、assetまたはattestationの手動削除は監査可能な破壊的操作であるため、
+新しいバージョンで最初から実行します。tag、assetまたはattestationの手動削除は監査可能な破壊的操作であるため、
 実行前に対象、影響および理由を確認し、記録してください。
 
 リポジトリの初期設定では``github-release`` Environmentを名前付きの権限・監査境界として作成します。
@@ -259,8 +259,8 @@ required reviewerとdeployment ruleは設定せず、workflowのstable tag検証
 * [ ] GitHub Releaseがstableであり、配布planに記載したassetだけを含み、各assetが非0 byteです。
 * [ ] xref:docs/user-guide/release-installation.adoc[導入手順]に従い、download後のchecksumとattestationを別々に検証しました。
       main candidateにはattestationがなく、公開assetではattestationを必須とします。
-* [ ] 対応architectureごとにCLIとLSPをclean ``PATH``へ導入し、``--version --json``が対象versionを返します。
-      versionの選択、更新、rollbackおよび完全削除は
+* [ ] 対応architectureごとにCLIとLSPをclean ``PATH``へ導入し、``--version --json``が対象のバージョンを返します。
+      バージョンの選択、更新、rollbackおよび完全削除は
       xref:docs/user-guide/release-installation.adoc[インストールと更新]に従って確認します。
 * [ ] browser packageで実WASMを読み込み、共通fixtureのHTML、診断、シンボルおよびprojectionを確認しました。
       明示labelの優先、解決済み表示テキストのescape、解決失敗時の機密情報非漏洩、最新generationだけの採用、
