@@ -160,6 +160,21 @@ pub struct Unsupported {
     pub range: TextRange,
     pub raw: String,
     pub reason: String,
+    pub kind: UnsupportedKind,
+}
+
+/// Why a block was kept as text instead of being understood.
+///
+/// The two cases differ in what the reader can do about them, so
+/// `SyntaxMode::Strict` treats them differently. A construct this version does
+/// not implement makes the document unprocessable. A preprocessor directive is
+/// implemented, and reached the parser only because the caller analyzed without
+/// preprocessing, so the document itself is still processable.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UnsupportedKind {
+    #[default]
+    Syntax,
+    UnprocessedDirective,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

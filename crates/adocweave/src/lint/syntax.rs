@@ -6,7 +6,7 @@ use super::{
     HEADING_MARKER_SPACE, INCONSISTENT_LIST, INVALID_ATTRIBUTE, INVALID_CROSS_REFERENCE,
     INVALID_HEADING_LEVEL, INVALID_STEM, INVALID_URL_SCHEME, LintContext, LintDiagnosticBody,
     LintDiagnosticSink, MACRO_BOUNDARY, MISSING_SOURCE_LANGUAGE, NESTING_LIMIT_EXCEEDED,
-    UNCLOSED_BLOCK, UNCLOSED_INLINE,
+    UNCLOSED_BLOCK, UNCLOSED_INLINE, UNPROCESSED_DIRECTIVE,
 };
 
 pub(super) fn lint_syntax_issues(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
@@ -28,6 +28,7 @@ pub(super) fn lint_syntax_issues(context: &LintContext<'_>, sink: &mut LintDiagn
             SyntaxIssueClass::InconsistentList => INCONSISTENT_LIST,
             SyntaxIssueClass::InvalidStem => INVALID_STEM,
             SyntaxIssueClass::MacroBoundary => MACRO_BOUNDARY,
+            SyntaxIssueClass::UnprocessedDirective => UNPROCESSED_DIRECTIVE,
         };
         if issue.class == SyntaxIssueClass::MacroBoundary {
             let SyntaxIssueDetail::MacroBoundary { name } = issue.detail else {
