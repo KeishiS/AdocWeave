@@ -26,13 +26,13 @@ Nix環境での実行と導入もxref:docs/user-guide/release-installation.adoc#
 # HTMLへ変換する
 adocweave convert manual.adoc > manual.html
 
-# CIでdirectory全体を確認する
+# CIでディレクトリ全体を確認する
 adocweave check --fail-on warning --format github --summary docs
 
 # 整形が必要かだけを確認する
 adocweave format --check docs
 
-# 確認後に複数fileを安全に整形する
+# 確認後に複数のファイルを安全に整形する
 adocweave format --diff docs
 adocweave format --write docs
 ----

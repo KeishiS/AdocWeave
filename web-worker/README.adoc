@@ -1,6 +1,6 @@
 = AdocWeave browser package
 
-このarchiveは、AdocWeaveのWebAssembly moduleとWeb Worker adapterを同じversionで提供します。
+このarchiveは、AdocWeaveのWebAssembly moduleとWeb Worker adapterを同じバージョンで提供します。
 公的なpackage registryへは登録せず、リポジトリ所有者のGitHub Releasesから取得して展開します。
 
 == 内容
@@ -34,8 +34,8 @@ projectionを一つの結果として返します。``result.result``は存在�
 schema 6では、WASM adapterがcoreから受け取るprojection JSONを、入れ子のobject（nested object）や
 種類を示すfieldで形が変わるtagged unionも含むすべてのobject境界で厳格に検証します。
 内部の取り決めにないfieldを検出した場合は処理を失敗させます。利用側はbindings、型定義およびfixtureを
-schema 6から再生成し、保存済みの出力をschema versionで区別してください。
-WASM結果の``packageVersion``がこのBrowser packageのversionと一致しない場合は、
+schema 6から再生成し、保存済みの出力をschemaのバージョンで区別してください。
+WASM結果の``packageVersion``がこのBrowser packageのバージョンと一致しない場合は、
 結果を採用せず、解析Promiseを``unsupported-package-version``でrejectします。現在のgenerationでは、
 Worker応答の``version``が解析要求の``version``と一致しない場合も応答を採用せず、解析Promiseを
 ``invalid-worker-response``でrejectして、そのWorkerを終了します。

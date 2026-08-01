@@ -12,7 +12,7 @@ nix develop
 cargo make verify
 ----
 
-``cargo make verify``はPull Request用の標準検査です。source、依存関係、Nixパッケージ、
+``cargo make verify``はPull Request用の標準検査です。ソース、依存関係、Nixパッケージ、
 browserおよびeditor adapter、HTML5標準適合性、文書をまとめて検査し、fuzz targetが既知の入力で
 落ちないことを確認します。``cargo make ci``も同じ検査を実行します。
 
@@ -220,7 +220,7 @@ node tools/sync-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
 . 対象コミットへ``vX.Y.Z`` tagを作成し、GitHubへpushします。
-. tag pushから起動した公開workflowがsource commitとcandidateを再確認し、GitHub Releaseを自動公開します。
+. tag pushから起動した公開workflowが対象コミットとcandidateを再確認し、GitHub Releaseを自動公開します。
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
 
