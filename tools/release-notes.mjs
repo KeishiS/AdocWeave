@@ -48,11 +48,10 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 
 const highlights = [
   `v${PREVIOUS_RELEASE_VERSION}のRelease Notesで設定schemaに変更がないと案内していた誤りを訂正しました。実際には\`\`resources.roots\`\`と\`\`local-targets.project-root\`\`へ相対パスの制約を加え、\`\`local-targets.enabled\`\`が\`\`true\`\`の場合は\`\`project-root\`\`を必須にしていました。実行時の設定検査に変更はありません。`,
-  "前処理のdirectiveが属性名の大文字と小文字を区別しなくなりました。AsciiDocの属性名は大文字と小文字を区別しませんが、``ifdef``、``ifndef``、``ifeval``および``include``は書かれた名前をそのまま探しており、小文字の綴りだけが一致していました。``Web``という属性を渡した利用者が``ifdef::Web[]``と書いても成立せず、同じ文書の本文にある``{WEB}``は解決するという食い違いが起きていました。",
-  "存在しないファイルを繰り返し参照しても、調べられるパス数の上限を重複して消費しなくなりました。読み取りの失敗を記録していなかったため、同じ欠落パスを二回読むと上限を二回消費し、次の実在するファイルが上限超過で読めませんでした。",
-  "Browser packageの型定義に``wasm-trapped``を追加しました。実行時の判定にはこの符号が含まれており、型定義だけが欠けていたため、型で絞り込んだあとに網羅的な分岐を書けませんでした。同梱するREADMEが古いschema versionを案内していた点も直しました。",
-  "VS Code拡張が、Content-Lengthを返さない配信からもLanguage Serverを導入できるようになりました。ヘッダーが無い応答をサイズ不一致として拒否していました。",
-  "Zed拡張の導入ロックを、作成した処理だけが削除するようにしました。取得に15分以上かかると後続の処理がロックを引き継ぎますが、先行する処理の終了時に後続のロックまで削除しており、三つ目の導入が同時に始まれました。",
+  "Zed拡張のLanguage Server導入ロックを、複数プロセスが同時に取得できない方式へ変更しました。所有者を書き込む途中の空ファイルを古いロックとして削除でき、二つの導入処理が同時に進む場合がありました。",
+  "Browser packageの公開入口から``PROTOCOL_SCHEMA_VERSION``を取得できるようにしました。READMEは保存済み出力をこの値で識別するよう案内していましたが、実行時のexportとTypeScript宣言がありませんでした。",
+  "``html.stylesheet-files``の設定schemaを実行時の検査へそろえました。絶対パスと親ディレクトリへ移動する``..``は以前から実行時に拒否していましたが、エディターなどのschema検査では受理していました。",
+  "VS Code拡張の依存関係検査を強化しました。環境変数にかかわらず開発依存を脆弱性監査へ含め、lockfileのSHA-512 digestが正しい形式と長さであることを検査します。",
 ];
 
 const contractNotes = [
@@ -60,21 +59,19 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  `公開契約に破壊的変更はありません。v${PREVIOUS_RELEASE_VERSION}では、設定schemaの\`\`resources.roots\`\`と\`\`local-targets.project-root\`\`へ相対パスの制約を加え、\`\`local-targets.enabled\`\`が\`\`true\`\`の場合は\`\`project-root\`\`を必須にしていました。これらは以前から実行時に拒否していた設定をschemaでも拒否する変更です。`,
-  "Browser packageの``AdocWeaveClientLifecycleErrorCode``へ``wasm-trapped``を加えました。この符号は以前から実行時に返っており、型定義だけが実態を表していませんでした。この列挙を網羅的に扱っているTypeScriptの利用側は、分岐の追加が必要です。",
-  "挙動の変更：``ifdef``、``ifndef``、``ifeval``および``include``が、属性名の大文字と小文字を区別しなくなります。これまで成立しなかった大文字を含む綴りが成立します。小文字の綴りの結果は変わりません。",
-  "挙動の変更：存在しないパスを繰り返し参照しても、調べられるパス数の上限を一度しか消費しません。異なる欠落パスは、これまでどおりそれぞれ消費します。",
+  `公開契約に破壊的変更はありません。v${PREVIOUS_RELEASE_VERSION}の設定schema変更に関する説明は、実際の変更内容へ訂正しました。`,
+  "Browser packageの公開入口へ``PROTOCOL_SCHEMA_VERSION``を追加しました。WASM protocol schema自体のversionと内容は変えていません。",
+  "設定schemaの``html.stylesheet-files``へ相対パスの制約を加えました。実行時には以前から同じ制約を適用しているため、受理される設定の範囲は変わりません。",
+  "公開Rust API、WASM protocol、公開projection、CLI引数およびLanguage Server protocolは変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  `実行時に受理されていた設定の移行は不要です。絶対パス、親ディレクトリへ移動する\`\`..\`\`、または\`\`project-root\`\`を省略した有効な\`\`local-targets\`\`は以前から実行時に拒否していました。v${PREVIOUS_RELEASE_VERSION}からはエディターなどのschema検査でも拒否します。`,
-  "大文字を含む綴りでdirectiveの属性名を書いた文書は、これまで条件が成立しませんでした。このreleaseからは成立するため、結果が変わります。小文字の綴りで書いた文書の結果は変わりません。",
-  "存在しないパスを繰り返し参照する文書では、上限超過にならず解析が進みます。上限超過を前提にしていた利用側は、期待する結果を確認してください。",
-  "TypeScriptで``AdocWeaveClientLifecycleErrorCode``を網羅的に扱っている場合は、``wasm-trapped``の分岐を加えてください。実行時にはこれまでもこの符号が返っており、分岐の欠落は型では現れていませんでした。",
+  "実行時に受理されていた設定の移行は不要です。``html.stylesheet-files``へ絶対パスまたは親ディレクトリへ移動する``..``を指定していた設定は、以前から実行時に拒否されています。",
+  "Browser packageの保存済み出力を読み書きする利用側は、公開入口の``PROTOCOL_SCHEMA_VERSION``を記録してschemaの一致を確認できます。既存のimportと処理を変更する必要はありません。",
   `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
-  "VS Code拡張とZed拡張は、導入の不具合を直しているため更新を推奨します。",
+  "Zed拡張は導入処理の競合を直しているため更新を推奨します。",
 ];
 
 const knownConstraints = [
