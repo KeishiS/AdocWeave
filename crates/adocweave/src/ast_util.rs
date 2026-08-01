@@ -300,3 +300,218 @@ impl AstBlock {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_model::{BlockMetadata, DocumentHeader, Heading, HeadingKind, Paragraph};
+
+    fn range() -> crate::source::TextRange {
+        crate::source::TextRange::new(crate::source::TextSize::ZERO, crate::source::TextSize::ZERO)
+            .expect("zero range")
+    }
+
+    fn heading(kind: HeadingKind) -> AstBlock {
+        AstBlock::Heading(Heading {
+            metadata: BlockMetadata::default(),
+            range: range(),
+            marker_range: range(),
+            separator_range: range(),
+            text_range: range(),
+            kind,
+            well_formed: true,
+            hierarchy_valid: true,
+            text: String::new(),
+            inlines: Vec::new(),
+            inline_problems: Vec::new(),
+            problems: Vec::new(),
+        })
+    }
+
+    fn paragraph(value: &str) -> AstBlock {
+        AstBlock::Paragraph(Paragraph {
+            metadata: BlockMetadata::default(),
+            range: range(),
+            content_range: range(),
+            value: value.to_owned(),
+            inlines: Vec::new(),
+            admonition: None,
+            inline_problems: Vec::new(),
+        })
+    }
+
+    fn document(blocks: Vec<AstBlock>) -> AstDocument {
+        AstDocument::new(
+            blocks,
+            Vec::new(),
+            0,
+            Vec::new(),
+            DocumentHeader {
+                range: None,
+                authors: Vec::new(),
+                revision: None,
+                doctype: crate::block_model::DocumentType::Article,
+                end: crate::source::TextSize::ZERO,
+            },
+        )
+    }
+
+    fn texts(blocks: &[AstBlock]) -> Vec<&str> {
+        blocks
+            .iter()
+            .map(|block| match block {
+                AstBlock::Paragraph(paragraph) => paragraph.value.as_str(),
+                AstBlock::Heading(_) => "<heading>",
+                _ => "<other>",
+            })
+            .collect()
+    }
+
+    /// The preamble is what sits between the document title and the first
+    /// section.
+    ///
+    /// Both ends are found independently, so the cases where one end is missing
+    /// decide the answer on their own and are worth stating separately.
+    #[test]
+    fn the_preamble_starts_after_the_title_and_ends_at_the_first_section() {
+        let ast = document(vec![
+            heading(HeadingKind::DocumentTitle),
+            paragraph("lead"),
+            paragraph("more"),
+            heading(HeadingKind::Section { level: 1 }),
+            paragraph("body"),
+        ]);
+        assert_eq!(texts(ast.preamble()), ["lead", "more"]);
+    }
+
+    /// With no section, everything after the title is the preamble.
+    #[test]
+    fn a_document_without_a_section_treats_the_rest_as_preamble() {
+        let ast = document(vec![heading(HeadingKind::DocumentTitle), paragraph("only")]);
+        assert_eq!(texts(ast.preamble()), ["only"]);
+    }
+
+    /// With no title, the preamble starts at the first block.
+    #[test]
+    fn a_document_without_a_title_starts_its_preamble_at_the_first_block() {
+        let ast = document(vec![
+            paragraph("lead"),
+            heading(HeadingKind::Section { level: 1 }),
+        ]);
+        assert_eq!(texts(ast.preamble()), ["lead"]);
+
+        let ast = document(vec![paragraph("lead"), paragraph("more")]);
+        assert_eq!(texts(ast.preamble()), ["lead", "more"]);
+    }
+
+    /// A section or part immediately after the title leaves no preamble.
+    ///
+    /// A part ends the preamble for the same reason a section does: both begin
+    /// the body of the document.
+    #[test]
+    fn a_section_or_part_right_after_the_title_leaves_no_preamble() {
+        for kind in [HeadingKind::Section { level: 1 }, HeadingKind::Part] {
+            let ast = document(vec![heading(HeadingKind::DocumentTitle), heading(kind)]);
+            assert!(ast.preamble().is_empty(), "{kind:?}");
+
+            // The same holds when the body starts the document outright.
+            let ast = document(vec![heading(kind), paragraph("body")]);
+            assert!(ast.preamble().is_empty(), "{kind:?}");
+        }
+    }
+
+    /// A discrete heading does not end the preamble.
+    ///
+    /// It carries no place in the hierarchy, so the document body has not
+    /// started yet.
+    #[test]
+    fn a_discrete_heading_does_not_end_the_preamble() {
+        let ast = document(vec![
+            heading(HeadingKind::DocumentTitle),
+            heading(HeadingKind::Discrete { level: 2 }),
+            paragraph("still lead"),
+            heading(HeadingKind::Section { level: 1 }),
+        ]);
+        assert_eq!(texts(ast.preamble()), ["<heading>", "still lead"]);
+    }
+
+    /// An empty document and a title-only document both have no preamble.
+    #[test]
+    fn an_empty_or_title_only_document_has_no_preamble() {
+        assert!(document(Vec::new()).preamble().is_empty());
+        assert!(
+            document(vec![heading(HeadingKind::DocumentTitle)])
+                .preamble()
+                .is_empty()
+        );
+        assert!(
+            document(vec![
+                heading(HeadingKind::DocumentTitle),
+                heading(HeadingKind::DocumentTitle),
+            ])
+            .preamble()
+            .is_empty()
+        );
+    }
+
+    /// Header attributes are the leading run of the recorded attributes.
+    ///
+    /// The count decides the split, so the document keeps one list and the
+    /// header view is a slice of it rather than a second copy.
+    #[test]
+    fn header_attributes_are_the_leading_run_of_all_attributes() {
+        fn occurrence(name: &str) -> crate::attributes::DocumentAttributeOccurrence {
+            crate::attributes::DocumentAttributeOccurrence {
+                range: range(),
+                name_range: range(),
+                name: name.to_owned(),
+                value: crate::attributes::DocumentAttributeValue {
+                    source_range: range(),
+                    source_text: String::new(),
+                    folded_text: String::new(),
+                    lines: Vec::new(),
+                },
+                operation: crate::attributes::DocumentAttributeOperation::Set,
+                valid: true,
+            }
+        }
+
+        let ast = AstDocument::new(
+            Vec::new(),
+            vec![occurrence("a"), occurrence("b"), occurrence("c")],
+            2,
+            Vec::new(),
+            DocumentHeader {
+                range: None,
+                authors: Vec::new(),
+                revision: None,
+                doctype: crate::block_model::DocumentType::Article,
+                end: crate::source::TextSize::ZERO,
+            },
+        );
+        assert_eq!(ast.attributes().len(), 3);
+        let header = ast
+            .header_attributes()
+            .iter()
+            .map(|attribute| attribute.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(header, ["a", "b"]);
+    }
+
+    /// The node count includes the document itself and each block's metadata.
+    ///
+    /// It starts at one for the document, so an empty document is one node
+    /// rather than none. Every block then contributes two: the block and the
+    /// metadata node the walker always visits for it, whether or not any
+    /// metadata was written. A caller sizing work from this number is counting
+    /// the traversal, not the blocks.
+    #[test]
+    fn the_node_count_covers_the_document_and_every_block_with_its_metadata() {
+        assert_eq!(document(Vec::new()).node_count(), 1);
+        assert_eq!(document(vec![paragraph("one")]).node_count(), 3);
+        assert_eq!(
+            document(vec![paragraph("one"), heading(HeadingKind::Part)]).node_count(),
+            5
+        );
+    }
+}
