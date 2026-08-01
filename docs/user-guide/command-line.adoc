@@ -146,13 +146,13 @@ adocweave check --enable-rule macro-boundary document.adoc
 
 対象は``xref``、`link`、数式、passthrough、標準inline macro、URLおよびemailの完全な構文です。
 診断はmacro名を示し、直前がASCII英数字の場合だけ、空白を挿入する確実ではない修正候補を返します。
-短縮xref、block macro、不完全またはescapeされた構文、comment、sourceおよびliteral block、
+短縮xref、block macro、不完全またはescapeされた構文、comment、sourceブロックおよびliteralブロック、
 ほかの不透明なinline構文の内部は対象外です。任意の``subs``属性による置換設定は現在対応していません。
 
 [#formatting]
 == 整形
 
-``format``は整形後の内容を標準出力へ書き、入力fileを直接変更しません。
+``format``は整形後の内容を標準出力へ書き、入力ファイルを直接変更しません。
 ``--check``を指定すると内容を出力せず、変更が不要なら終了コード0、必要ならそれ以外を返します。
 
 複数のファイル、ディレクトリまたは``--glob PATTERN``を指定すると、正規化したパスの順に重複なく処理します。
@@ -166,11 +166,11 @@ adocweave format --diff --glob 'docs/**/*.adoc'
 adocweave format --write docs README.adoc
 ----
 
-``--write``は全fileを読込・解析した後、元fileと同じディレクトリに一時fileを作り、内容を同期してから
+``--write``は全ファイルを読込・解析した後、元のファイルと同じディレクトリに一時ファイルを作り、内容を同期してから
 置換します。書換え直前に元のbyte列が変わっていた場合は置換しません。ファイルの実行権限、既存の主な改行形式
-および最終改行は、プロジェクト設定で明示的に変更していない限り保持します。一時fileの準備前に
+および最終改行は、プロジェクト設定で明示的に変更していない限り保持します。一時ファイルの準備前に
 エラーが発生した場合は一件も変更しません。置換開始後の入出力エラーでは、それ以前に置換済みのファイルだけが
-更新される可能性があります。各fileの置換自体はatomicです。
+更新される可能性があります。各ファイルの置換自体はatomicです。
 
 ``--dry-run``を``--write``と併用すると書換えません。``--summary``は対象数と変更数を標準エラー出力へ
 書きます。

@@ -4,7 +4,7 @@
 導入、checksumおよびattestationの確認手順は
 xref:../user-guide/release-installation.adoc[インストールと更新]を参照してください。
 
-配布対象の機械可読な基準は次のfileです。
+配布対象の機械可読な基準は次のファイルです。
 
 * link:../../release/distribution-plan.json[配布計画]
 * link:../../release/adocweave-dist-manifest.schema.json[JSON Schema]
@@ -16,20 +16,20 @@ xref:../user-guide/release-installation.adoc[インストールと更新]を参�
 
 CLI、Language Server、WebAssembly、browser package、Zed拡張およびVS Code拡張は、一つのパッケージバージョンとして
 GitHub Releasesへまとめて公開します。crates.io、npm、Homebrew、WinGet、Visual Studio Marketplace、
-Open VSXおよびZed Extension Registryには公開しません。GitHubが自動生成するsource archiveは、
+Open VSXおよびZed Extension Registryには公開しません。GitHubが自動生成するソースarchiveは、
 検証対象のbinary配布物に含めません。
 
-公開には``vX.Y.Z``形式のstable tagだけを使用します。tag、source commit、release manifestおよび各成果物の
+公開には``vX.Y.Z``形式のstable tagだけを使用します。tag、対象コミット、release manifestおよび各成果物の
 バージョンが一致しない場合は公開しません。異なるパッケージバージョンの成果物を組み合わせて利用することも
 想定しません。
 
 privateリポジトリから取得する場合、利用者が明示的に与えたGitHub認証だけを使用します。credentialを
-archive、manifest、log、source codeまたは設定例へ埋め込みません。
+archive、manifest、log、ソースコードまたは設定例へ埋め込みません。
 
 == ネイティブアーカイブ
 
 CLIとLanguage Serverは別々の``.zip`` archiveとして配布します。全platformで同じflatなarchive layoutを使用し、
-次のfileだけを含めます。
+次のファイルだけを含めます。
 
 * 対応する実行ファイル
 * `README.adoc`
@@ -38,17 +38,17 @@ CLIとLanguage Serverは別々の``.zip`` archiveとして配布します。全p
 * `THIRD_PARTY_NOTICES.adoc`
 
 Native binaryはCargoの``dist`` profileで対象OSとarchitectureのnative runner上に構築します。具体的な
-target、ランナー、最小OS version、linkage、archiveおよび実行file名は配布計画を基準とします。Linux musl
+target、ランナー、最小OSバージョン、linkage、archiveおよび実行ファイル名は配布計画を基準とします。Linux musl
 binaryではELF architecture、静的linkおよび実行権限を検査します。macOS binaryではMach-O architecture、
 deployment target、system dynamic libraryだけへのlinkおよび実行権限を検査します。Windows binaryでは
 PE architecture、``.exe``名、CRLF入力、空白とUnicodeを含むpathおよびstdio process lifecycleを検査します。
 
 Windowsで成果物を構築する``cargo-dist``は、公式GitHub Releaseのバージョン付きZIPを使用します。取得する
-バージョン、asset名、URL、SHA-256およびZIP内の許可file一覧は
+バージョン、asset名、URL、SHA-256およびZIP内の許可ファイル一覧は
 ``release/windows-dist-bootstrap.json``へ固定します。
-SHA-256と許可file一覧を検証してから、``dist.exe``だけを一時ディレクトリから実行用ディレクトリへ移します。
-任意のnetwork installer、package registryからのsource buildおよび実行toolのキャッシュは使用しません。
-download、SHA-256検証、ZIP内の許可file一覧の検証または展開のいずれかに失敗した場合はcandidateの構築を
+SHA-256と許可ファイル一覧を検証してから、``dist.exe``だけを一時ディレクトリから実行用ディレクトリへ移します。
+任意のnetwork installer、package registryからのソースbuildおよび実行toolのキャッシュは使用しません。
+download、SHA-256検証、ZIP内の許可ファイル一覧の検証または展開のいずれかに失敗した場合はcandidateの構築を
 中止し、成功と失敗のどちらでも一時ディレクトリの削除を試みます。
 
 Native binaryへDeveloper ID、notarizationまたはAuthenticodeによるOS code signingは行いません。GitHub Artifact
