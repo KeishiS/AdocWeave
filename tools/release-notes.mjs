@@ -37,9 +37,11 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "lint規則``unprocessed-directive``の識別子``UNPROCESSED_DIRECTIVE``を公開APIから参照できるようにしました。直前のreleaseで規則を追加したとき、crate rootの再公開一覧への追加が漏れていました。",
-  "規則そのものの動作は変わりません。既定で有効であり、診断もこれまでどおり出ます。定数が無いことで困るのは、規則のseverityを変える、無効にする、コード上で規則を特定する場合です。",
-  "規則の定数が再公開から漏れていないかを検査するtestを加えました。規則は定数を定義するcatalog macroと、crate rootの再公開という手書きの二箇所に書きます。前者だけに書いた規則は診断を出し続けるため、その名前を書く人が現れるまで何も失敗しませんでした。",
+  "前処理のdirectiveが属性名の大文字と小文字を区別しなくなりました。AsciiDocの属性名は大文字と小文字を区別しませんが、``ifdef``、``ifndef``、``ifeval``および``include``は書かれた名前をそのまま探しており、小文字の綴りだけが一致していました。``Web``という属性を渡した利用者が``ifdef::Web[]``と書いても成立せず、同じ文書の本文にある``{WEB}``は解決するという食い違いが起きていました。",
+  "存在しないファイルを繰り返し参照しても、調べられるパス数の上限を重複して消費しなくなりました。読み取りの失敗を記録していなかったため、同じ欠落パスを二回読むと上限を二回消費し、次の実在するファイルが上限超過で読めませんでした。",
+  "Browser packageの型定義に``wasm-trapped``を追加しました。実行時の判定にはこの符号が含まれており、型定義だけが欠けていたため、型で絞り込んだあとに網羅的な分岐を書けませんでした。同梱するREADMEが古いschema versionを案内していた点も直しました。",
+  "VS Code拡張が、Content-Lengthを返さない配信からもLanguage Serverを導入できるようになりました。ヘッダーが無い応答をサイズ不一致として拒否していました。",
+  "Zed拡張の導入ロックを、作成した処理だけが削除するようにしました。取得に15分以上かかると後続の処理がロックを引き継ぎますが、先行する処理の終了時に後続のロックまで削除しており、三つ目の導入が同時に始まれました。",
 ];
 
 const contractNotes = [
@@ -47,17 +49,21 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  "``adocweave::output::diagnostics``へ``UNPROCESSED_DIRECTIVE``を追加しました。既存の名前、型および挙動は変えていないため、加算的な変更です。",
-  "公開Rust API、WASM protocol、HTML出力、公開projection、CLI引数、Language Server protocolおよび設定schemaは、この追加のほかにv0.27.0から変更していません。破壊的変更と挙動の変更はありません。",
+  "公開Rust API、WASM protocol、公開projection、CLI引数、Language Server protocolおよび設定schemaはv0.27.1から変更していません。破壊的変更はありません。",
+  "Browser packageの``AdocWeaveClientLifecycleErrorCode``へ``wasm-trapped``を加えました。この符号は以前から実行時に返っており、型定義だけが実態を表していませんでした。この列挙を網羅的に扱っているTypeScriptの利用側は、分岐の追加が必要です。",
+  "挙動の変更：``ifdef``、``ifndef``、``ifeval``および``include``が、属性名の大文字と小文字を区別しなくなります。これまで成立しなかった大文字を含む綴りが成立します。小文字の綴りの結果は変わりません。",
+  "挙動の変更：存在しないパスを繰り返し参照しても、調べられるパス数の上限を一度しか消費しません。異なる欠落パスは、これまでどおりそれぞれ消費します。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定と利用側コードの移行は不要です。診断code、終了コード、公開projection、HTML出力およびAsciiDocの解釈は変わりません。",
-  "``unprocessed-directive``をname文字列で引いていた利用側は、``UNPROCESSED_DIRECTIVE``へ置き換えられます。置き換えると、規則名が変わった場合にcompileで気付けます。置き換えなくても動作は変わりません。",
+  "設定の移行は不要です。診断code、終了コードおよび設定schemaは変わりません。",
+  "大文字を含む綴りでdirectiveの属性名を書いた文書は、これまで条件が成立しませんでした。このreleaseからは成立するため、結果が変わります。小文字の綴りで書いた文書の結果は変わりません。",
+  "存在しないパスを繰り返し参照する文書では、上限超過にならず解析が進みます。上限超過を前提にしていた利用側は、期待する結果を確認してください。",
+  "TypeScriptで``AdocWeaveClientLifecycleErrorCode``を網羅的に扱っている場合は、``wasm-trapped``の分岐を加えてください。実行時にはこれまでもこの符号が返っており、分岐の欠落は型では現れていませんでした。",
   `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
-  "v0.27.0で問題が起きていない場合、このreleaseへ更新しなくても動作は変わりません。",
+  "VS Code拡張とZed拡張は、導入の不具合を直しているため更新を推奨します。",
 ];
 
 const knownConstraints = [
