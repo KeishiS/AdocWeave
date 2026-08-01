@@ -297,6 +297,30 @@ impl LocalTargetSession {
     /// same target do not exhaust the bound. The bound itself applies on every
     /// platform: it limits how much work an authored document can ask for, which
     /// does not depend on how the filesystem resolves a path.
+    /// Records a failed examination so a repeated reference costs nothing.
+    ///
+    /// The bound counts distinct paths and `charge_path_request` skips a path
+    /// already recorded, but only the successful branches recorded. Reading the
+    /// same missing path twice therefore charged twice and could exhaust the
+    /// bound before the first path that exists. `inspect` already records its
+    /// failures, so the two entry points disagreed on what a repeated reference
+    /// costs.
+    ///
+    /// The charge is kept rather than refunded: a path that does not exist
+    /// still costs the work of looking, and refunding it would let a document
+    /// name unlimited missing paths for free.
+    fn remember<T>(
+        &mut self,
+        candidate: &Path,
+        result: Result<T, LocalTargetError>,
+    ) -> Result<T, LocalTargetError> {
+        if let Err(error) = &result {
+            self.inspections
+                .insert(candidate.to_owned(), Err(error.clone()));
+        }
+        result
+    }
+
     fn charge_path_request(&mut self, candidate: &Path) -> Result<(), LocalTargetError> {
         if self.inspections.contains_key(candidate) {
             return Ok(());
@@ -398,14 +422,14 @@ impl LocalTargetSession {
         self.charge_path_request(candidate)?;
         #[cfg(target_os = "linux")]
         let (canonical, file) = {
-            let opened = self.policy.open_confined(candidate)?;
+            let opened = self.remember(candidate, self.policy.open_confined(candidate))?;
             self.inspections
                 .insert(candidate.to_owned(), Ok(opened.canonical_path.clone()));
             (opened.canonical_path, opened.file)
         };
         #[cfg(not(target_os = "linux"))]
         let (canonical, file) = {
-            let canonical = self.policy.inspect_candidate(candidate)?;
+            let canonical = self.remember(candidate, self.policy.inspect_candidate(candidate))?;
             self.inspections
                 .insert(candidate.to_owned(), Ok(canonical.clone()));
             let file = self.policy.open_confined(&canonical)?;
@@ -1012,6 +1036,69 @@ mod tests {
         assert!(session.read_candidate_utf8(&docs.join("a.adoc")).is_ok());
         assert!(matches!(
             session.read_candidate_utf8(&docs.join("c.adoc")),
+            Err(LocalTargetError::LimitExceeded { limit: 2 })
+        ));
+    }
+
+    /// A path that does not exist costs the bound once, however often it is named.
+    #[test]
+    fn repeating_a_missing_path_costs_the_bound_once() {
+        let root = TestDir::new();
+        fs::write(root.0.join("docs").join("a.adoc"), "text\n").expect("source");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+        let docs = root.0.join("docs");
+
+        // Only the successful branches recorded the examination, so the second
+        // read charged the bound again and the file that exists was refused.
+        assert!(
+            session
+                .read_candidate_utf8(&docs.join("missing.adoc"))
+                .is_err()
+        );
+        assert!(
+            session
+                .read_candidate_utf8(&docs.join("missing.adoc"))
+                .is_err()
+        );
+        assert!(session.read_candidate_utf8(&docs.join("a.adoc")).is_ok());
+    }
+
+    /// Both entry points agree on what a repeated missing path costs.
+    #[test]
+    fn inspecting_and_reading_charge_a_missing_path_the_same_way() {
+        let root = TestDir::new();
+        fs::write(root.0.join("docs").join("a.adoc"), "text\n").expect("source");
+        let docs = root.0.join("docs");
+
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut reading = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+        let _ = reading.read_candidate_utf8(&docs.join("missing.adoc"));
+        let _ = reading.read_candidate_utf8(&docs.join("missing.adoc"));
+
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut inspecting = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+        let _ = inspecting.inspect(&docs, "missing.adoc");
+        let _ = inspecting.inspect(&docs, "missing.adoc");
+
+        assert_eq!(
+            reading.read_candidate_utf8(&docs.join("a.adoc")).is_ok(),
+            inspecting.inspect(&docs, "a.adoc").is_ok()
+        );
+    }
+
+    /// Distinct missing paths still each cost the bound.
+    #[test]
+    fn each_missing_path_costs_the_bound() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+        let docs = root.0.join("docs");
+
+        assert!(session.read_candidate_utf8(&docs.join("one.adoc")).is_err());
+        assert!(session.read_candidate_utf8(&docs.join("two.adoc")).is_err());
+        assert!(matches!(
+            session.read_candidate_utf8(&docs.join("three.adoc")),
             Err(LocalTargetError::LimitExceeded { limit: 2 })
         ));
     }
