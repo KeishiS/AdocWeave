@@ -8,48 +8,18 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 公開Rust APIのバージョン管理
+== 内部品質の底上げ
 
-公開Rust APIの入口の整理は完了しました。解析は``Engine::analyze``と``analyze_with``、前処理は
-``preprocess``系の4つの関数と``EffectiveProcessingOptions``のmethodに揃っています。次は、この形を
-保ちながら版を重ねられるようにします。
+実装の振る舞いを、上位のテストを通してではなく、それぞれの境界で固定できていない箇所があります。
 
-* https://github.com/KeishiS/adocweave/issues/265[公開Rust APIのSemVer差分検査]
+* https://github.com/KeishiS/adocweave/issues/362[単体テストのない実装モジュールを減らす]
+* https://github.com/KeishiS/adocweave/issues/361[リポジトリ規約の検査を専用クレートへ移す]
 
-入口の整理を終えた版のtagを、SemVer差分検査の最初の比較基準とします。整理する前に基準を固定していれば、
-直後のminor版で大量の差分を意図した破壊的変更として記録する作業が生じていました。
+単体テストの追加はモジュールごとに別のPull Requestとします。既存の振る舞いを読み取って固定する
+作業のため、まとめると差分が大きく、reviewで正しさを確かめられません。
 
-差分検査では、patch版へ意図しない破壊的変更を含めず、0.yのminor版で破壊的変更を行う場合は、
-機械可読な差分記録とRelease Notesの移行手順を対応付けます。検査に使うtool、比較対象のtag、
-対象crateおよびrelease種別を固定し、実行時に取得した最新版へ判定を依存させません。
-
-== golden fixtureの保守
-
-``fixtures/public-conformance/``には、現在の実装から成果物を書き出す再生成コマンドと、
-ディスク上のファイルが再生成結果と一致することを検査するテストの対があります。共有fixtureである
-``fixtures/conformance/``には、そのどちらもありません。
-
-* https://github.com/KeishiS/adocweave/issues/320[共有conformance fixtureの再生成コマンドと冪等性検査]
-
-そのため公開仕様が増えるたびに複数のファイルを手作業で更新する必要があり、整形も3通りに分かれています。
-更新漏れはテストが落ちるまで気付けません。
-
-== Language Serverの応答性
-
-読み取り専用の要求は専用のCPUプールで処理しますが、通知の処理はイベントループ上で同期実行します。
-大きなワークスペースでは、初期化中と打鍵中にほかの要求へ応答できません。
-
-* https://github.com/KeishiS/adocweave/issues/308[通知処理のイベントループからの退避]
-
-== CLIとLanguage Serverの挙動差
-
-同じ製品の中で、終了コードの規約、設定の適用範囲および設定読み込みの資源境界が分かれています。
-文書の記述と実装が一致していない箇所もあります。
-
-* https://github.com/KeishiS/adocweave/issues/309[CLIとLanguage Serverの挙動差の解消]
-
-終了コードの変更は破壊的変更です。ほかの破壊的変更と同じrelease trainでまとめるか、
-単独のminor版で行うかは着手時に判断します。
+規約の検査はコアライブラリのtestに置かれており、リポジトリのファイル配置に依存しています。
+``cargo test -p adocweave``を実行する人は、構文解析のtestを期待して文書の検査も走らせています。
 
 == 文書の用語統一
 
@@ -61,6 +31,11 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 判定基準と用語表はxref:terminology.adoc[用語の表記]に定めました。一括置換は行いません。同じ綴りが
 識別子と一般名詞の両方に現れるため、置換だけでは識別子を壊すからです。本文の修正はuser-guideより
 順に進めます。
+
+残る書き換えは少数のファイルに集中しています。多い順に``user-guide/release-installation.adoc``、
+``developer-guide/release-distribution.adoc``、``CONTRIBUTING.adoc``、``user-guide/command-line.adoc``、
+``developer-guide/server-execution.adoc``および``developer-guide/grammar.adoc``です。
+``[source,console]``のようなAsciiDocのブロック指定は書式の一部なので原綴りのまま残します。
 
 == 保留中の対話的な確認環境
 
