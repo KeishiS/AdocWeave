@@ -8,14 +8,14 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== 内部品質の底上げ
+== テストの安定性
 
-実装の振る舞いを、上位のテストを通してではなく、それぞれの境界で固定できていない箇所があります。
+利用者から見える不具合ではありませんが、検査が理由なく落ちるとreleaseやreviewの判断を鈍らせます。
 
-* https://github.com/KeishiS/adocweave/issues/362[単体テストのない実装モジュールを減らす]
+* https://github.com/KeishiS/adocweave/issues/370[previewのテストが確保したポートを取り違えることがある]
 
-単体テストの追加はモジュールごとに別のPull Requestとします。既存の振る舞いを読み取って固定する
-作業のため、まとめると差分が大きく、reviewで正しさを確かめられません。
+``preview``のテストは空きポートをOSに選ばせ、listenerを閉じてから同じ番号で``preview``を起動します。
+閉じてから起動するまでの間にほかのプロセスがその番号を取ると、起動に失敗します。
 
 == 文書の用語統一
 
