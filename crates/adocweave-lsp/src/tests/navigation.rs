@@ -188,6 +188,90 @@ fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
 }
 
 #[test]
+fn prepare_rename_answers_only_where_rename_produces_an_edit() {
+    let mut service = LanguageService::default();
+    initialize(&mut service, &["utf-16"]);
+    open(
+        &mut service,
+        "file:///a.adoc",
+        1,
+        "[[target]]\n== A\n\nplain text\n",
+    );
+    let document = uri("file:///a.adoc");
+
+    let anchor = lsp::Position::new(0, 3);
+    let response = service
+        .prepare_rename(&document, anchor)
+        .expect("prepare rename")
+        .expect("renameable position");
+    assert_eq!(
+        response,
+        lsp::PrepareRenameResponse::RangeWithPlaceholder {
+            range: lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 8)),
+            placeholder: "target".to_owned(),
+        }
+    );
+    assert!(
+        service
+            .rename(&document, anchor, "renamed")
+            .expect("rename")
+            .is_some(),
+        "a position prepareRename accepts must produce an edit",
+    );
+
+    // Body text holds no anchor. Before prepareRename the editor started a
+    // rename here and received nothing.
+    let prose = lsp::Position::new(3, 2);
+    assert!(
+        service
+            .prepare_rename(&document, prose)
+            .expect("prepare rename")
+            .is_none(),
+    );
+    assert!(
+        service
+            .rename(&document, prose, "renamed")
+            .expect("rename")
+            .is_none(),
+        "a position prepareRename rejects must produce no edit",
+    );
+}
+
+#[test]
+fn prepare_rename_is_silent_for_clients_that_do_not_declare_support() {
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "rootUri": null,
+        "capabilities": {
+            "general": {"positionEncodings": ["utf-16"]},
+            "textDocument": {"rename": {"dynamicRegistration": false}}
+        }
+    }));
+    let result = initialize_with_params(&mut service, params);
+    assert_eq!(
+        result.capabilities.rename_provider,
+        Some(lsp::OneOf::Left(true)),
+        "a client without prepare support keeps the plain declaration",
+    );
+
+    open(&mut service, "file:///a.adoc", 1, "[[target]]\n== A\n");
+    assert!(
+        service
+            .prepare_rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3))
+            .expect("prepare rename")
+            .is_none(),
+    );
+    assert!(
+        service
+            .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+            .expect("rename")
+            .is_some(),
+        "rename itself keeps working without prepare support",
+    );
+}
+
+#[test]
 fn host_index_failure_does_not_disable_core_language_features() {
     let mut service = LanguageService::with_host_index(Arc::new(TestHostIndex {
         complete: false,

@@ -4,7 +4,7 @@
 
 == Version方針
 
-現在のパッケージバージョンとRust versionは次のfileを基準とします。
+現在のパッケージバージョン、RustおよびNode.jsのバージョンは次のファイルを基準とします。
 link:../release-manifest.json[release manifest]
 
 version固有の変更内容と移行手順は

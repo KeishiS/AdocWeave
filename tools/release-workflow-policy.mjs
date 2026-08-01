@@ -93,6 +93,27 @@ function requireTimeout(job, value, message) {
   if (job?.["timeout-minutes"] !== value) fail(message);
 }
 
+// The release manifest is the only place that decides the Node.js version.
+// Runners without Nix need setup-node, but writing a version there lets the
+// devShell and the workflow drift apart with nothing to notice. The workflow
+// may read the manifest and nothing else.
+function requireManifestNodeVersion(job) {
+  const setup = (job?.steps ?? [])
+    .filter((item) => typeof item.uses === "string" && item.uses.startsWith("actions/setup-node@"));
+  if (setup.length !== 1) fail("native smoke must configure Node.js exactly once");
+  const version = setup[0].with?.["node-version"];
+  const resolver = (job?.steps ?? []).find((item) => item.id === "node-version");
+  if (!resolver) fail("native smoke must resolve the Node.js version before setup-node");
+  requireCommand(
+    resolver.run,
+    "jq -er .nodeVersion release-manifest.json",
+    "the Node.js version must come from the release manifest",
+  );
+  if (version !== `\${{ steps.${resolver.id}.outputs.value }}`) {
+    fail("setup-node must consume the resolved release manifest value, not a literal version");
+  }
+}
+
 export function parseMakeTasks(source) {
   const headers = [...source.matchAll(/^\[tasks\.([^\]]+)\]\s*$/gm)];
   const tasks = new Map();
@@ -503,6 +524,7 @@ export function validateReleaseWorkflowPolicy({
   if (smoke.includes("npm ci") || smoke.includes("npm test")) {
     fail("native smoke must not repeat source adapter tests");
   }
+  requireManifestNodeVersion(smokeDoc.jobs?.smoke);
 
   const aggregateRun = step(releaseJobs["verify-candidate"], (item) =>
     item.name === "Complete candidate metadata generation and verification",

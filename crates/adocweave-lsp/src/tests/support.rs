@@ -83,6 +83,7 @@ pub(super) fn full_capabilities(encodings: &[&str]) -> Value {
             },
             "documentLink": {"tooltipSupport": true},
             "publishDiagnostics": {"versionSupport": true},
+            "rename": {"prepareSupport": true},
             "semanticTokens": {
                 "requests": {"full": true},
                 "tokenTypes": ["string", "variable"],

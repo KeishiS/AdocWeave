@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION,
   RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_VERSION,
   buildReleaseNotes,
@@ -56,6 +57,24 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, new RegExp(`統一package version：${RELEASE_NOTES_VERSION}`));
   assert.match(notes, new RegExp(`release manifest schema version：${manifest.schemaVersion}`));
   assert.match(notes, new RegExp(`対応Rust toolchain：${manifest.rustVersion}`));
+});
+
+test("Release Notesが述べるschema versionはmanifestの実際の値と一致する", () => {
+  const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
+
+  // 過去のReleaseで、行っていないmanifestの変更を告知したことがあります。同じ本文が
+  // 一方で現在のschema versionを述べ、他方で別の遷移を述べていました。本文に現れる
+  // 遷移の到達値は、必ずmanifestの現在値と一致します。
+  const transitions = [...notes.matchAll(/schema versionを(\d+)から(\d+)へ/g)];
+  assert.notEqual(transitions.length, 0, "schema versionの遷移が本文にありません");
+  for (const [, from, to] of transitions) {
+    assert.equal(Number(from), PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION);
+    assert.equal(Number(to), manifest.schemaVersion);
+  }
+  assert.equal(manifest.schemaVersion, PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION + 1);
+  for (const [, value] of notes.matchAll(/``schemaVersion``が(\d+)になり/g)) {
+    assert.equal(Number(value), manifest.schemaVersion);
+  }
 });
 
 test("Release Notesは別release trainのtagを拒否する", () => {
