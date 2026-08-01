@@ -300,6 +300,8 @@ index termを意味nodeとして扱い、文書catalogへfootnote、bibliography
 |純粋なresource スナップショット上で``include``、`ifdef`、`ifndef`、`ifeval`、`endif`、escape、基本include属性
 およびsource mapに対応します。引用符を考慮した属性値と、参照先がない場合だけ空展開する``optional``に対応します。
 WildcardおよびURI転送は未対応です。
+前処理を行わずに解析した場合、これらの行は評価されずそのままの文字列として残り、``unprocessed-directive``の
+診断が付きます。``SyntaxMode::Strict``では、評価していない行を含む文書を処理しません。
 
 |Bibliographyとfootnote
 |部分対応

@@ -20,6 +20,7 @@ pub(crate) enum LineRecognition {
     LiteralParagraph,
     Heading,
     List,
+    PreprocessorDirective,
     Unsupported,
     Paragraph,
 }
@@ -40,6 +41,7 @@ enum BlockRecognizer {
     LiteralParagraph,
     Heading,
     List,
+    PreprocessorDirective,
     Unsupported,
 }
 
@@ -58,6 +60,9 @@ const BLOCK_RECOGNIZER_PRIORITY: &[BlockRecognizer] = &[
     BlockRecognizer::LiteralParagraph,
     BlockRecognizer::Heading,
     BlockRecognizer::List,
+    // After `LiteralParagraph`, so an indented directive stays literal text:
+    // AsciiDoc only reads a directive that starts at the first column.
+    BlockRecognizer::PreprocessorDirective,
     BlockRecognizer::Unsupported,
 ];
 
@@ -106,6 +111,8 @@ impl BlockRecognizer {
                 .then_some(LineRecognition::LiteralParagraph),
             Self::Heading => content.starts_with('=').then_some(LineRecognition::Heading),
             Self::List => crate::list_parser::marker(content).map(|_| LineRecognition::List),
+            Self::PreprocessorDirective => crate::preprocessor::classify_line(content)
+                .map(|_| LineRecognition::PreprocessorDirective),
             Self::Unsupported => unsupported_reason(content).map(|_| LineRecognition::Unsupported),
         }
     }
@@ -321,6 +328,18 @@ pub(crate) fn parse_source_attribute(text: &str) -> Option<Option<(usize, usize)
     Some(Some((start, start + trimmed.len())))
 }
 
+/// Reason recorded on an [`crate::block_model::Unsupported`] block built from a
+/// preprocessor directive that this analysis did not preprocess.
+pub(crate) const CONDITIONAL_DIRECTIVE_REASON: &str = "conditional directive was not preprocessed";
+pub(crate) const INCLUDE_DIRECTIVE_REASON: &str = "include directive was not preprocessed";
+
+pub(crate) const fn directive_reason(line: crate::preprocessor::DirectiveLine) -> &'static str {
+    match line {
+        crate::preprocessor::DirectiveLine::Conditional => CONDITIONAL_DIRECTIVE_REASON,
+        crate::preprocessor::DirectiveLine::Include => INCLUDE_DIRECTIVE_REASON,
+    }
+}
+
 pub(crate) fn unsupported_reason(content: &str) -> Option<&'static str> {
     let trimmed = content.trim_start_matches([' ', '\t']);
     if trimmed.starts_with('[') {
@@ -420,6 +439,7 @@ mod tests {
                 BlockRecognizer::LiteralParagraph,
                 BlockRecognizer::Heading,
                 BlockRecognizer::List,
+                BlockRecognizer::PreprocessorDirective,
                 BlockRecognizer::Unsupported,
             ]
         );
@@ -457,5 +477,55 @@ mod tests {
             recognize(":name: value", None, false),
             LineRecognition::Paragraph
         );
+    }
+
+    #[test]
+    fn preprocessor_directives_are_recognized_before_the_paragraph_fallback() {
+        for line in [
+            "ifdef::web[]",
+            "ifdef::web[inline]",
+            "ifndef::print[]",
+            "ifeval::[\"{lang}\" == \"rust\"]",
+            "endif::[]",
+            "include::part.adoc[]",
+        ] {
+            assert_eq!(
+                recognize(line, None, false),
+                LineRecognition::PreprocessorDirective,
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn escaped_and_indented_directives_stay_text() {
+        // An escaped directive is written to be read, and AsciiDoc only reads a
+        // directive that starts at the first column. Neither is a directive, so
+        // neither may claim the reader's attention with a directive diagnostic.
+        assert_eq!(
+            recognize("\\ifdef::web[]", None, false),
+            LineRecognition::Paragraph
+        );
+        assert_eq!(
+            recognize("  ifdef::web[]", None, false),
+            LineRecognition::LiteralParagraph
+        );
+        assert_eq!(
+            recognize("ifdef::web", None, false),
+            LineRecognition::Paragraph
+        );
+    }
+
+    #[test]
+    fn directive_reasons_are_distinct() {
+        assert_eq!(
+            directive_reason(crate::preprocessor::DirectiveLine::Conditional),
+            CONDITIONAL_DIRECTIVE_REASON
+        );
+        assert_eq!(
+            directive_reason(crate::preprocessor::DirectiveLine::Include),
+            INCLUDE_DIRECTIVE_REASON
+        );
+        assert_ne!(CONDITIONAL_DIRECTIVE_REASON, INCLUDE_DIRECTIVE_REASON);
     }
 }

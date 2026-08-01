@@ -60,6 +60,7 @@ pub enum SyntaxIssueClass {
     InconsistentList,
     InvalidStem,
     MacroBoundary,
+    UnprocessedDirective,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

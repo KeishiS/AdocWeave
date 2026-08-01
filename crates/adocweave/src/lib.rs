@@ -68,7 +68,7 @@ pub mod semantic {
         ListPresentationProblemKind, ListProblem, ListProblemKind, LiteralParagraph, MathBlock,
         MathProblem, MathProblemKind, MetadataValue, OrderedListPresentation, OrderedListStyle,
         Paragraph, QuoteKind, QuotePresentation, Revision, SourceBlock, SourceInfo, Unsupported,
-        VerbatimBlock, VerbatimKind,
+        UnsupportedKind, VerbatimBlock, VerbatimKind,
     };
     pub use crate::catalog::{
         BibliographyEntry, BibliographyReference, CatalogProblem, CatalogProblemKind,

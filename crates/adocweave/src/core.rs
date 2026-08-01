@@ -465,9 +465,13 @@ fn has_unsupported_syntax(
         if checkpoint.is_cancelled() {
             return std::ops::ControlFlow::Break(Err(()));
         }
+        // A directive is supported syntax that this analysis did not evaluate,
+        // so the document stays processable: refusing it here would refuse
+        // every document that writes `include::` and is analyzed on its own.
         if matches!(
             node,
-            crate::walker::SemanticNode::Block(AstBlock::Unsupported(_))
+            crate::walker::SemanticNode::Block(AstBlock::Unsupported(block))
+                if block.kind == crate::block_model::UnsupportedKind::Syntax
         ) {
             return std::ops::ControlFlow::Break(Ok(true));
         }
