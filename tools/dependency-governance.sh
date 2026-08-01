@@ -40,7 +40,12 @@ cargo audit "${audit_args[@]}" --file editors/zed/Cargo.lock
 
 cargo deny --config deny.toml --manifest-path Cargo.toml --all-features check licenses bans sources
 cargo deny --config deny.toml --manifest-path editors/zed/Cargo.toml --all-features check licenses bans sources
+# The shipped boundary is audited on its own so a failure names it directly, and
+# then the whole tree is audited: Biome, TypeScript, esbuild and vsce run in CI
+# and build the VSIX, so a vulnerability in one of them reaches the artifact even
+# though the package itself never ships.
 npm audit --omit=dev --prefix editors/vscode
+npm audit --prefix editors/vscode
 
 node tools/verify-dependency-boundaries.mjs
 node tools/verify-vscode-dependencies.mjs

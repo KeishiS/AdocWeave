@@ -188,7 +188,11 @@ tools/dependency-governance.sh
 [tasks.dependency-governance-test]
 description = "Test dependency boundary and exception policy"
 command = "node"
-args = ["--test", "tools/verify-dependency-boundaries.test.mjs"]
+args = [
+  "--test",
+  "tools/verify-dependency-boundaries.test.mjs",
+  "tools/verify-vscode-dependencies.test.mjs",
+]
 
 [tasks.third-party-notices]
 description = "Generate the release third-party notices from locked Cargo metadata"
