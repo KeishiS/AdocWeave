@@ -6,11 +6,13 @@ import {
   AdocWeaveClient,
   AdocWeaveClientError,
   BROWSER_PACKAGE_VERSION,
+  PROTOCOL_SCHEMA_VERSION,
   analyzeOnce,
   defaultAssetUrls,
   isAdocWeaveClientLifecycleError,
 } from "./index.mjs";
 import { WORKER_PROTOCOL_VERSION } from "./contracts.mjs";
+import { PROTOCOL_SCHEMA_VERSION as GENERATED_PROTOCOL_SCHEMA_VERSION } from "./protocol.generated.mjs";
 
 test("public entry owns worker and WASM asset resolution", () => {
   for (const base of [
@@ -26,6 +28,11 @@ test("public entry owns worker and WASM asset resolution", () => {
   }
   assert.equal(typeof AdocWeaveClient, "function");
   assert.match(BROWSER_PACKAGE_VERSION, /^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$/);
+});
+
+test("public entry exposes the generated protocol schema version", () => {
+  assert.equal(PROTOCOL_SCHEMA_VERSION, GENERATED_PROTOCOL_SCHEMA_VERSION);
+  assert.ok(Number.isSafeInteger(PROTOCOL_SCHEMA_VERSION) && PROTOCOL_SCHEMA_VERSION > 0);
 });
 
 test("package metadata exposes only the typed public entry", async () => {

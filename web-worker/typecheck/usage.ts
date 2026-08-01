@@ -2,6 +2,7 @@ import {
   AdocWeaveClient,
   AdocWeaveClientError,
   AdocWeaveResult,
+  PROTOCOL_SCHEMA_VERSION,
   analyzeOnce,
   defaultAssetUrls,
   isAdocWeaveClientLifecycleError,
@@ -29,6 +30,8 @@ try {
 }
 const once = await analyzeOnce(defaultAssetUrls(), { version: 3, source: "= Once" });
 console.log(once.html, AdocWeaveClientError);
+const protocolSchemaVersion: number = PROTOCOL_SCHEMA_VERSION;
+console.log(protocolSchemaVersion);
 client.update({
   version: 1,
   source: "= Typed",

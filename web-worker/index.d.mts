@@ -5,6 +5,7 @@ import type {
 } from "./protocol.generated.d.mts";
 
 export type * from "./protocol.generated.d.mts";
+export { PROTOCOL_SCHEMA_VERSION } from "./protocol.generated.mjs";
 
 export type AdocWeaveResult =
   Omit<AdocWeaveWasmResponse, "version"> & { sourceVersion: number };
