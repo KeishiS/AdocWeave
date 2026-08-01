@@ -4,14 +4,23 @@
   "title": "AdocWeave project configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema-version"],
+  "required": [
+    "schema-version"
+  ],
   "properties": {
-    "schema-version": { "const": 1 },
+    "schema-version": {
+      "const": 1
+    },
     "analysis": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "syntax-mode": { "enum": ["permissive", "strict"] },
+        "syntax-mode": {
+          "enum": [
+            "permissive",
+            "strict"
+          ]
+        },
         "attributes": {
           "type": "object",
           "additionalProperties": {
@@ -19,14 +28,34 @@
             "additionalProperties": false,
             "oneOf": [
               {
-                "required": ["value"],
-                "not": { "required": ["unset"] },
-                "properties": { "value": { "type": "string" } }
+                "required": [
+                  "value"
+                ],
+                "not": {
+                  "required": [
+                    "unset"
+                  ]
+                },
+                "properties": {
+                  "value": {
+                    "type": "string"
+                  }
+                }
               },
               {
-                "required": ["unset"],
-                "not": { "required": ["value"] },
-                "properties": { "unset": { "const": true } }
+                "required": [
+                  "unset"
+                ],
+                "not": {
+                  "required": [
+                    "value"
+                  ]
+                },
+                "properties": {
+                  "unset": {
+                    "const": true
+                  }
+                }
               }
             ]
           }
@@ -37,9 +66,18 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "max-line-length": { "type": "integer", "minimum": 1 },
-        "max-consecutive-blank-lines": { "type": "integer", "minimum": 1 },
-        "max-diagnostics": { "type": "integer", "minimum": 1 },
+        "max-line-length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max-consecutive-blank-lines": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max-diagnostics": {
+          "type": "integer",
+          "minimum": 1
+        },
         "rules": {
           "type": "object",
           "propertyNames": {
@@ -80,9 +118,16 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "enabled": { "type": "boolean" },
+              "enabled": {
+                "type": "boolean"
+              },
               "severity": {
-                "enum": ["error", "warning", "information", "hint"]
+                "enum": [
+                  "error",
+                  "warning",
+                  "information",
+                  "hint"
+                ]
               }
             }
           }
@@ -93,13 +138,21 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "include": { "type": "boolean" },
+        "include": {
+          "type": "boolean"
+        },
         "roots": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "$ref": "#/$defs/relativePath"
+          },
           "uniqueItems": true
         },
-        "max-files": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "max-files": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
         "max-total-bytes": {
           "type": "integer",
           "minimum": 1,
@@ -116,16 +169,46 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "project-root": { "type": "string", "minLength": 1 }
-      }
+        "enabled": {
+          "type": "boolean"
+        },
+        "project-root": {
+          "$ref": "#/$defs/relativePath"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "required": [
+              "project-root"
+            ]
+          }
+        }
+      ]
     },
     "format": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "newline": { "enum": ["lf", "cr-lf"] },
-        "final-newline": { "type": "boolean" },
+        "newline": {
+          "enum": [
+            "lf",
+            "cr-lf"
+          ]
+        },
+        "final-newline": {
+          "type": "boolean"
+        },
         "max-consecutive-blank-lines": {
           "type": "integer",
           "minimum": 1
@@ -136,16 +219,32 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "complete": { "type": "boolean" },
+        "complete": {
+          "type": "boolean"
+        },
         "stylesheet-files": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "stylesheet-urls": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$",
+      "description": "プロジェクトディレクトリの内側を指す相対パス。絶対パスと、親ディレクトリへ移動する`..`は指定できません。"
     }
   }
 }

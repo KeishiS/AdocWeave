@@ -82,6 +82,9 @@ stylesheet-urls = ["https://example.com/manual.css"]
 設定ディレクトリ内の相対パスに限定されます。ネットワーク経由のincludeは設定できません。
 
 JSON Schemaはlink:../../config/adocweave.schema.json[`config/adocweave.schema.json`]です。
+編集中の検証と実行時の検証がずれないよう、同じ設定の集合を両方へ適用して受理と拒否の一致を
+確認しています。ただし``max-resource-bytes``が``max-total-bytes``を超えないという条件は、
+二つの項目の大小を比べるためJSON Schemaでは表現できません。この条件は実行時にだけ検出します。
 
 == CLIでの選択
 
