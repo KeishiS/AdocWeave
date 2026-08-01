@@ -2,8 +2,8 @@
 
 この文書では、GitHub ReleasesからCLIとLanguage Serverを導入し、更新および削除する手順を説明します。
 
-Rustツールチェーンおよびsource checkoutを使わない場合はGitHub Releaseを、Nixを利用する場合はflakeを使用できます。
-GitHub Release archiveとNixパッケージは別の配布経路であり、Nixパッケージはarchiveを再包装せずsourceからbuildします。
+Rustツールチェーンおよびソースの取得を行わない場合はGitHub Releaseを、Nixを利用する場合はflakeを使用できます。
+GitHub Release archiveとNixパッケージは別の配布経路であり、Nixパッケージはarchiveを再包装せず、ソースからbuildします。
 
 この文書は複数の導入経路を扱います。全体を順に読む必要はありません。目的に応じて次の節へ進んでください。
 
@@ -80,7 +80,7 @@ nix profile remove AdocWeave
 ``adocweave-lsp``が含まれます。``adocweave.overlays.default``から``pkgs.adocweave``として参照することもできます。
 専用のNixOS service moduleは提供しません。
 
-Nixパッケージは``Cargo.lock``に固定されたsourceからbuildします。利用できるbinary cacheがない場合は利用側で
+Nixパッケージは``Cargo.lock``に固定したソースからbuildします。利用できるbinary cacheがない場合は利用側で
 Rust buildが実行されます。Rust compiler、Cargo、Node.js、Chromiumおよびfuzz toolは完成したパッケージの
 runtime closureへ含めません。
 
@@ -203,7 +203,7 @@ ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave" "$PREFIX/bin/adocweave"
 ln -sfn "$PREFIX/lib/adocweave/current/bin/adocweave-lsp" "$PREFIX/bin/adocweave-lsp"
 ----
 
-``$HOME/.local/bin``が``PATH``にない場合だけshellのstartup fileへ追加し、新しいshellで確認します。
+``$HOME/.local/bin``が``PATH``にない場合だけshellの起動ファイルへ追加し、新しいshellで確認します。
 
 [source,console]
 ----
@@ -263,12 +263,12 @@ Get-Command adocweave.exe
 Get-Command adocweave-lsp.exe
 ----
 
-更新時は新しいversion ディレクトリを作成して動作確認後に`PATH`を切り替えます。rollbackでは以前の
+更新時は新しいバージョン別のディレクトリを作成して動作確認後に`PATH`を切り替えます。rollbackでは以前の
 バージョンを`$Version`へ指定して同じ`PATH`更新部分を再実行します。実行中の`.exe`を上書きせず、VS Codeと
-Zedを終了してから不要なversion ディレクトリだけを削除します。
+Zedを終了してから不要なバージョン別のディレクトリだけを削除します。
 
 Windowsから完全に削除する場合は、上記と同じ正規表現でAdocWeave管理下の2 entryだけを利用者`PATH`から
-除き、導入したversion ディレクトリを削除します。
+除き、導入したバージョン別のディレクトリを削除します。
 
 [source,powershell]
 ----
@@ -281,8 +281,8 @@ Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
 
 == 更新、バージョン固定およびロールバック
 
-新versionは既存ディレクトリへ上書きせず、別のversion ディレクトリへ展開・検証します。``current``を切り替えた後に
-``--version --json``を確認します。rollbackは``current``を以前のversion ディレクトリへ戻すだけであり、動作確認が終わるまで
+新しいバージョンは既存ディレクトリへ上書きせず、別のディレクトリへ展開・検証します。``current``を切り替えた後に
+``--version --json``を確認します。rollbackは``current``を以前のバージョン別のディレクトリへ戻すだけであり、動作確認が終わるまで
 旧ディレクトリを削除しません。CLI、LSP、browser、Zed拡張およびVS Code拡張は同じReleaseのバージョンを組み合わせ、異なるrelease trainを
 混在させません。
 
@@ -290,7 +290,7 @@ Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
 == ブラウザーライブラリーの配備
 
 ``$HOME/.local/share/adocweave/<version>/browser``をそのまま静的hostingへ配置します。公開入口は
-``worker/index.mjs``だけです。``worker/worker.mjs``とWASM補助fileは内部用であり、直接importしません。
+``worker/index.mjs``だけです。``worker/worker.mjs``とWASM補助ファイルは内部用であり、直接importしません。
 TypeScriptの型定義は``worker/index.d.mts``にあります。
 
 [source,javascript]
@@ -341,7 +341,7 @@ Worker再生成へ縮退します。CSPは``script-src 'self'``、``worker-src '
 要求しません。HTML結果はDOMへ無検証で挿入せず、ホストの表示sandboxとpolicyを適用します。
 
 URLにはバージョンまたはarchive digestを含め、WASMとJavaScriptへ同じcache keyを使います。更新時に既存URLの内容を
-置換せず、新URLへ切り替えます。配備前のarchiveは``sha256.sum``で検証し、配備後はserverから取得したfileのdigestを
+置換せず、新URLへ切り替えます。配備前のarchiveは``sha256.sum``で検証し、配備後はserverから取得したファイルのdigestを
 deploy記録へ残します。展開物の``example/index.html``と``example/app.mjs``はリアルタイム変換の最小例であり、同じserverから
 配信して入力更新、最新generationだけの表示およびfallback動作を確認できます。
 
@@ -350,7 +350,7 @@ deploy記録へ残します。展開物の``example/index.html``と``example/app
 
 Zed Extension Galleryへ公開しないため、展開済み``$HOME/.local/share/adocweave/<version>/zed``をdev extensionとして
 導入します。Extension Galleryの``Install Dev Extension``またはコマンドパレットの``zed: install dev extension``から、この
-ディレクトリを選びます。source リポジトリのcheckoutは不要です。
+ディレクトリを選びます。ソースリポジトリの取得は不要です。
 
 [#zed-language-server-selection]
 === ZedのLanguage Server選択
@@ -359,27 +359,27 @@ Zed拡張は、次の順序で最初に利用できる``adocweave-lsp``を選び
 
 . Zedの``lsp.adocweave.binary.path``で明示した実行ファイル
 . Zed processから見える``PATH``上の実行ファイル
-. 拡張と同じversionのGitHub Releaseから取得したmanaged binary
+. 拡張と同じバージョンのGitHub Releaseから取得したmanaged binary
 
 複数の由来を混在させません。明示した実行ファイルでは、同じ``binary``設定にある``arguments``と``env``も
 使用します。
 
 === 管理対象バイナリー
 
-Managed binaryは拡張と同じversionのReleaseから取得します。拡張は配布manifestのschema、version、target、
-asset名、byte数およびSHA-256を確認してからarchiveを展開します。所定の通常fileだけを上限付きで取り出し、
+Managed binaryは拡張と同じバージョンのReleaseから取得します。拡張は配布manifestのschema、バージョン、target、
+asset名、byte数およびSHA-256を確認してからarchiveを展開します。所定の通常ファイルだけを上限付きで取り出し、
 検証markerとともにZedの拡張用working ディレクトリへ原子的に配置します。project、利用者の``PATH``および
 system ディレクトリへ書き込みません。
 
 Cacheはパッケージバージョンとtargetごとに分けます。起動時にmarkerとbinaryのSHA-256が一致すればネットワークへ接続せず
 再利用します。markerの欠落やbinaryの改変時は起動せず、onlineの場合だけ再取得します。更新に失敗した場合は
-検証済みの旧versionを変更せず、同じversionの置換に失敗した場合は直前のキャッシュを復元します。
+検証済みの以前のバージョンを変更せず、同じバージョンの置換に失敗した場合は直前のキャッシュを復元します。
 
 対応するmanaged binaryがないplatform、manifestの不一致、assetの欠落、byte数またはhashの不一致は、
 実行ファイルを起動する前にエラーとして表示します。
 
-Zed extension APIからhost OSのversionは取得できません。そのためmacOSとWindowsの最小OS versionは
-download前には判定せず、配布binaryに設定したdeployment targetをOS loaderが強制します。最小version未満では
+Zed extension APIからhost OSのバージョンは取得できません。そのためmacOSとWindowsの最小OSバージョンは
+download前には判定せず、配布binaryに設定したdeployment targetをOS loaderが強制します。最小バージョン未満では
 binaryを起動できません。
 
 初回buildではZedがRust extension用ツールチェーンと、固定コミットの``tree-sitter-asciidoc`` grammarを取得します。初回build後は
@@ -387,7 +387,7 @@ binaryを起動できません。
 ありません。Managed binaryを使用する場合は、Zed設定のbinary指定を外し、``PATH``上に別の
 ``adocweave-lsp``がない状態でZedを起動します。
 
-更新時は新versionのZed ディレクトリを別に展開し、dev extensionをそのディレクトリへ再設定します。旧ディレクトリは、新versionの
+更新時は新しいバージョンのZed ディレクトリを別に展開し、dev extensionをそのディレクトリへ再設定します。旧ディレクトリは、新しいバージョンの
 managed LSP取得とeditor機能を確認するまで保持します。
 
 [#vscode-installation]
@@ -401,9 +401,9 @@ Visual Studio MarketplaceとOpen VSXへ公開しないため、同じReleaseの
 code --install-extension "adocweave-vscode-$VERSION.vsix" --force
 ----
 
-VS CodeのExtensions viewにAdocWeaveと対象versionが表示されることを確認します。更新時は新versionの
+VS CodeのExtensions viewにAdocWeaveと対象バージョンが表示されることを確認します。更新時は新しいバージョンの
 VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは以前のReleaseから検証済みVSIXを取得し、
-同じ方法で導入します。拡張とLanguage Serverのversionは完全一致が必要です。
+同じ方法で導入します。拡張とLanguage Serverのバージョンは完全一致が必要です。
 
 [#vscode-language-server-selection]
 === VS CodeのLanguage Server選択
@@ -411,12 +411,12 @@ VSIXを同じcommandで導入し、Windowを再読込します。rollbackでは�
 VS Code拡張は次の順序でLanguage Serverを選びます。
 
 . ``adocweave.server.path``で明示した絶対path
-. VS Code extension hostの``PATH``上にある互換version
+. VS Code extension hostの``PATH``上にある互換バージョン
 . 拡張のglobal storageにある検証済みmanaged キャッシュ
-. 同じversionのGitHub Releaseにあるmanaged binary
+. 同じバージョンのGitHub Releaseにあるmanaged binary
 
 ワークスペースの``adocweave.server.path``は、VS Codeがそのワークスペースを信頼している
-場合だけ使用します。未信頼ワークスペースでは利用者scopeの値だけを使用します。明示pathのversionが一致しない
+場合だけ使用します。未信頼ワークスペースでは利用者scopeの値だけを使用します。明示pathのバージョンが一致しない
 場合は別のbinaryへfallbackしません。``PATH``上の不一致では警告を表示してmanaged binaryへ進みます。
 
 Managed binaryは配布manifest、archive byte数、SHA-256、展開後binaryおよび``--version --json``を検証してから
@@ -439,7 +439,7 @@ VS Codeを終了します。
 code --uninstall-extension adocweave.adocweave-vscode
 ----
 
-続いて、導入したversionを指定してAdocWeave管理対象だけを削除します。
+続いて、導入したバージョンを指定してAdocWeave管理対象だけを削除します。
 
 [source,console]
 ----
@@ -452,6 +452,6 @@ rm -rf "$PREFIX/share/adocweave/$VERSION"
 rmdir --ignore-fail-on-non-empty "$PREFIX/lib/adocweave" "$PREFIX/share/adocweave"
 ----
 
-`$PREFIX/bin`、Zed user data全体または共有親ディレクトリを再帰削除してはいけません。別versionを保持する場合は``current``を
-先にそのversionへ切り替え、該当versionだけを削除します。通常profileに残るZedの一般キャッシュはZedが所有するため、場所を
+`$PREFIX/bin`、Zed user data全体または共有親ディレクトリを再帰削除してはいけません。別のバージョンを保持する場合は``current``を
+先にそのバージョンへ切り替え、該当するバージョンだけを削除します。通常profileに残るZedの一般キャッシュはZedが所有するため、場所を
 推測して削除せず、ZedのUIから拡張を削除します。完全に隔離したprofileで試験した場合だけprofile ディレクトリ全体を削除します。
