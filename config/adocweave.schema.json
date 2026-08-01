@@ -225,8 +225,7 @@
         "stylesheet-files": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "$ref": "#/$defs/relativePath"
           }
         },
         "stylesheet-urls": {

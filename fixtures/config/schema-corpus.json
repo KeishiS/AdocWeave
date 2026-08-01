@@ -13,6 +13,11 @@
       "accepted": true
     },
     {
+      "name": "相対パスのstylesheet file",
+      "config": { "schema-version": 1, "html": { "stylesheet-files": ["styles/manual.css"] } },
+      "accepted": true
+    },
+    {
       "name": "local targetsを無効にしたままproject-rootを書かない",
       "config": { "schema-version": 1, "local-targets": { "enabled": false } },
       "accepted": true
@@ -43,6 +48,16 @@
     {
       "name": "project-rootが親ディレクトリへ移動する",
       "config": { "schema-version": 1, "local-targets": { "project-root": "../escape" } },
+      "accepted": false
+    },
+    {
+      "name": "stylesheet fileが絶対パス",
+      "config": { "schema-version": 1, "html": { "stylesheet-files": ["/abs/style.css"] } },
+      "accepted": false
+    },
+    {
+      "name": "stylesheet fileが親ディレクトリへ移動する",
+      "config": { "schema-version": 1, "html": { "stylesheet-files": ["../style.css"] } },
       "accepted": false
     },
     {

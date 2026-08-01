@@ -7,18 +7,22 @@
 
 * ``wasm/adocweave_wasm.js``と``wasm/adocweave_wasm_bg.wasm``：``wasm-bindgen``のweb向け成果物
 * `wasm/adocweave_wasm.d.ts`：生成された場合のTypeScript declaration
-* ``worker/index.mjs``と``worker/index.d.mts``：frontend向けの公開ES module入口と型定義
+* ``worker/index.mjs``と``worker/index.d.mts``：frontend向けの公開ES module入口と型定義。
+  ``PROTOCOL_SCHEMA_VERSION``の公開入口
 * `worker/client.mjs`、`worker/controller.mjs`、`worker/worker.mjs`：最新generationだけを採用する内部実装
 * `worker/contracts.mjs`：公開パッケージ版
-* ``worker/protocol.generated.mjs``と``worker/protocol.generated.d.mts``：生成済みの公開型と、
-その版数を表す``PROTOCOL_SCHEMA_VERSION``
+* ``worker/protocol.generated.mjs``と``worker/protocol.generated.d.mts``：生成済みの公開型とschema versionの正本
 * `THIRD_PARTY_NOTICES.adoc`：rootとZedのlockfileから生成したthird-party package一覧
 
 == 最小例
 
 [source,javascript]
 ----
-import { analyzeOnce, defaultAssetUrls } from "./worker/index.mjs";
+import {
+  PROTOCOL_SCHEMA_VERSION,
+  analyzeOnce,
+  defaultAssetUrls,
+} from "./worker/index.mjs";
 
 const result = await analyzeOnce(defaultAssetUrls(), {
   version: 1,
@@ -26,6 +30,8 @@ const result = await analyzeOnce(defaultAssetUrls(), {
 });
 // HTMLの信頼方針はホストが決めます。この例では文字列として表示します。
 preview.textContent = result.html;
+// 保存する結果にはschema versionを添え、形式を変更したときに区別します。
+const storedResult = { protocolSchemaVersion: PROTOCOL_SCHEMA_VERSION, result };
 ----
 
 ``analyze()``と``onResult``は、``sourceVersion``、``generation``、HTML、診断、symbolおよび

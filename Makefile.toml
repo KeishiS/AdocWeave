@@ -475,9 +475,13 @@ root="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-browser-import.XXXXXX")"
 trap 'rm -f "$actual" "$expected"; rm -rf "$root"' EXIT
 tar -xJf "$archive" -C "$root"
 node --input-type=module -e '
-  const contracts = await import(process.argv[1]);
-  if (contracts.PACKAGE_VERSION !== process.argv[2]) throw new Error("browser archive package version mismatch");
-' "$root/$package/worker/contracts.mjs" "$version"
+  const publicApi = await import(process.argv[1]);
+  const protocol = await import(process.argv[2]);
+  if (publicApi.PACKAGE_VERSION !== process.argv[3]) throw new Error("browser archive package version mismatch");
+  if (publicApi.PROTOCOL_SCHEMA_VERSION !== protocol.PROTOCOL_SCHEMA_VERSION) {
+    throw new Error("browser archive protocol schema version mismatch");
+  }
+' "$root/$package/worker/index.mjs" "$root/$package/worker/protocol.generated.mjs" "$version"
 echo "browser release package verified: $second"
 '''
 

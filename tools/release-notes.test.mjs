@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION,
+  PREVIOUS_RELEASE_VERSION,
   RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_VERSION,
   buildReleaseNotes,
@@ -15,11 +16,16 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /属性名の大文字と小文字を区別しなくなりました/);
-  assert.match(notes, /上限を重複して消費しなくなりました/);
-  assert.match(notes, /``wasm-trapped``を追加しました/);
-  assert.match(notes, /Content-Lengthを返さない配信/);
-  assert.match(notes, /作成した処理だけが削除する/);
+  assert.match(
+    notes,
+    new RegExp(`v${PREVIOUS_RELEASE_VERSION.replaceAll(".", "\\.")}のRelease Notesで設定schemaに変更がないと案内していた誤り`),
+  );
+  assert.match(notes, /``resources\.roots``と``local-targets\.project-root``へ相対パスの制約/);
+  assert.match(notes, /``local-targets\.enabled``が``true``の場合は``project-root``を必須/);
+  assert.match(notes, /複数プロセスが同時に取得できない方式/);
+  assert.match(notes, /公開入口から``PROTOCOL_SCHEMA_VERSION``を取得/);
+  assert.match(notes, /``html\.stylesheet-files``の設定schemaを実行時の検査へそろえました/);
+  assert.match(notes, /開発依存を脆弱性監査へ含め/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -31,13 +37,12 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   // patch版のため、semver gateは破壊的変更を受理しません。本文も述べません。
   assert.doesNotMatch(notes, /破壊的変更：/);
   assert.match(notes, /破壊的変更はありません/);
-  // 挙動が変わるreleaseでは、何がどう変わるかを本文が述べます。
-  assert.match(notes, /挙動の変更：``ifdef``/);
-  assert.match(notes, /挙動の変更：存在しないパス/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /設定の移行は不要です/);
-  assert.match(notes, /小文字の綴りで書いた文書の結果は変わりません/);
-  assert.match(notes, /``wasm-trapped``の分岐を加えてください/);
+  assert.match(notes, /実行時に受理されていた設定の移行は不要です/);
+  assert.doesNotMatch(notes, /設定schemaはv0\.27\.1から変更していません/);
+  assert.match(notes, /公開入口の``PROTOCOL_SCHEMA_VERSION``を記録/);
+  assert.match(notes, /WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず/);
+  assert.match(notes, new RegExp(`\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`));
   assert.match(notes, /``schemaVersion``は4のままです/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
   assert.match(notes, /sha256sum --check/);
@@ -48,6 +53,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   );
   assert.match(notes, /以前のVSIXとnative directoryを保持/);
   assert.match(notes, /rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動/);
+  assert.match(notes, /すべてのZedプロセスを終了してから、エラーに表示されたロックのpathを削除/);
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
   assert.match(notes, /Authenticode署名を行いません/);
@@ -93,7 +99,8 @@ test("Release Notesが述べるschema versionはmanifestの実際の値と一致
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.27.1"), /v0\.27\.2専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.27\.2専用/);
+  const expectedError = new RegExp(`v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}専用`);
+  assert.throws(() => buildReleaseNotes(`v${PREVIOUS_RELEASE_VERSION}`), expectedError);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), expectedError);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });

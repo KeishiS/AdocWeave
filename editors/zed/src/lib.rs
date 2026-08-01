@@ -3,10 +3,9 @@ mod install;
 use install::{MANIFEST_NAME, REPOSITORY};
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use zed_extension_api as zed;
 
@@ -178,111 +177,81 @@ fn unique_operation_id() -> String {
 }
 
 struct InstallLock {
-    path: PathBuf,
-    owner: String,
+    directory: PathBuf,
+    owner: PathBuf,
 }
 
 impl InstallLock {
     fn acquire(path: &Path) -> Result<Self, String> {
-        for attempt in 0..2 {
-            match OpenOptions::new().write(true).create_new(true).open(path) {
-                Ok(mut file) => {
-                    // The whole line is the owner token, so the value compared
-                    // before removing is exactly the value written here.
-                    let owner = format!("{} {}", unix_timestamp()?, unique_operation_id());
-                    if let Err(error) = writeln!(file, "{owner}") {
-                        drop(file);
-                        cleanup_file(path);
-                        return Err(format!(
-                            "failed to initialize the LSP installation lock: {error}"
-                        ));
-                    }
-                    return Ok(Self {
-                        path: path.to_owned(),
-                        owner,
-                    });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt == 0 => {
-                    let Some(owner) = lock_owner(path)? else {
-                        return Err(
-                            "another AdocWeave LSP installation is already in progress".to_owned()
-                        );
-                    };
-                    // Remove the lock only while it still holds the owner this
-                    // read saw. A download that outlives the stale age has its
-                    // lock taken over; without this check the two would also
-                    // delete each other's lock on the way out, and a third
-                    // installation would start alongside both.
-                    remove_lock_owned_by(path, &owner)?;
-                }
-                Err(error) => {
+        let owner = path.join(format!("owner-{}", unique_operation_id()));
+        match fs::create_dir(path) {
+            Ok(()) => {
+                // The owner is recorded by creating its final name. This
+                // avoids publishing an empty or partially written owner record.
+                if let Err(error) = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&owner)
+                {
+                    // The directory still prevents a successor from acquiring
+                    // the lock, so this removes only our incomplete lock.
+                    let _ = fs::remove_dir(path);
                     return Err(format!(
-                        "failed to acquire the LSP installation lock: {error}"
-                    ))
+                        "failed to initialize the LSP installation lock: {error}"
+                    ));
                 }
+                Ok(Self {
+                    directory: path.to_owned(),
+                    owner,
+                })
             }
+            // WASI has no portable process identity or liveness check. An age
+            // threshold cannot distinguish a crashed owner from a slow one, so
+            // neither the current directory format nor the earlier file format
+            // is removed automatically.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+                "an existing lock at {} prevents the AdocWeave LSP installation; WASI cannot check its owner, so close every Zed process before removing this path and retrying",
+                path_string(path)
+            )),
+            Err(error) => Err(format!(
+                "failed to acquire the LSP installation lock: {error}"
+            )),
         }
-        Err("failed to acquire the LSP installation lock".to_owned())
     }
 }
 
 impl Drop for InstallLock {
     fn drop(&mut self) {
-        // Releasing removes this lock, not whatever lock happens to sit at the
-        // path. A download that ran past the stale age no longer owns the file,
-        // and deleting it there would leave the installation that took over
-        // running without a lock.
-        let _ = remove_lock_owned_by(&self.path, &self.owner);
+        // Only the process that removes its exact owner record may remove the
+        // directory, so cleanup cannot delete another process's lock.
+        let _ = remove_owned_lock(&self.directory, &self.owner);
     }
 }
-
-const STALE_LOCK_AGE: Duration = Duration::from_secs(15 * 60);
 
 fn lock_path(directory: &Path) -> PathBuf {
     let mut path = directory.as_os_str().to_os_string();
     path.push(".lock");
     PathBuf::from(path)
 }
-
-fn unix_timestamp() -> Result<u64, String> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .map_err(|error| format!("system clock is before the Unix epoch: {error}"))
-}
-
-/// Reads the owner of a lock that has outlived the stale age.
-///
-/// `None` means the lock is still current and must be left alone. A lock whose
-/// contents cannot be read as a timestamp was written by a version that did not
-/// record one, so it is treated as stale and owned by its whole contents.
-fn lock_owner(path: &Path) -> Result<Option<String>, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|error| format!("failed to inspect the LSP installation lock: {error}"))?;
-    let trimmed = content.trim();
-    let (created, _) = trimmed.split_once(' ').unwrap_or((trimmed, ""));
-    let Ok(created) = created.parse::<u64>() else {
-        return Ok(Some(trimmed.to_owned()));
-    };
-    if unix_timestamp()?.saturating_sub(created) < STALE_LOCK_AGE.as_secs() {
-        return Ok(None);
-    }
-    Ok(Some(trimmed.to_owned()))
-}
-
-/// Removes a lock only while its contents still name the expected owner.
-///
-/// Reading and removing are two steps, so another installation can replace the
-/// file in between. Comparing the contents immediately before removing keeps a
-/// caller from deleting a lock that now belongs to someone else.
-fn remove_lock_owned_by(path: &Path, owner: &str) -> Result<(), String> {
-    match fs::read_to_string(path) {
-        Ok(content) if content.trim() == owner.trim() => fs::remove_file(path)
-            .map_err(|error| format!("failed to release the LSP installation lock: {error}")),
-        Ok(_) => Ok(()),
+fn remove_owned_lock(directory: &Path, owner: &Path) -> Result<(), String> {
+    match fs::remove_file(owner) {
+        Ok(()) => match fs::remove_dir(directory) {
+            Ok(()) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(format!(
+                "failed to release the LSP installation lock: {error}"
+            )),
+        },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
-            "failed to inspect the LSP installation lock: {error}"
+            "failed to release the LSP installation lock: {error}"
         )),
     }
 }
@@ -310,6 +279,44 @@ fn path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier,
+    };
+    use std::thread;
+
+    fn concurrent_acquisition_count(path: PathBuf) -> usize {
+        const WORKERS: usize = 16;
+
+        let path = Arc::new(path);
+        let start = Arc::new(Barrier::new(WORKERS));
+        let attempted = Arc::new(AtomicUsize::new(0));
+        let acquired = Arc::new(AtomicUsize::new(0));
+        let mut workers = Vec::new();
+        for _ in 0..WORKERS {
+            let path = Arc::clone(&path);
+            let start = Arc::clone(&start);
+            let attempted = Arc::clone(&attempted);
+            let acquired = Arc::clone(&acquired);
+            workers.push(thread::spawn(move || {
+                start.wait();
+                let lock = InstallLock::acquire(&path).ok();
+                if lock.is_some() {
+                    acquired.fetch_add(1, Ordering::SeqCst);
+                }
+                attempted.fetch_add(1, Ordering::SeqCst);
+                while attempted.load(Ordering::SeqCst) != WORKERS {
+                    thread::yield_now();
+                }
+                drop(lock);
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        acquired.load(Ordering::SeqCst)
+    }
 
     #[test]
     fn failed_cache_commit_restores_the_previous_verified_directory() {
@@ -338,76 +345,105 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let path = root.join("install.lock");
         let first = InstallLock::acquire(&path).unwrap();
+        assert!(path.is_dir());
+        assert_eq!(fs::read_dir(&path).unwrap().count(), 1);
+        assert!(first.owner.is_file());
         assert!(InstallLock::acquire(&path).is_err());
         drop(first);
-        assert!(InstallLock::acquire(&path).is_ok());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn stale_installation_lock_is_recovered_without_colliding_with_other_targets() {
-        let root =
-            std::env::temp_dir().join(format!("adocweave-zed-stale-{}", unique_operation_id()));
-        fs::create_dir_all(&root).unwrap();
-        let cache = root.join("adocweave-lsp-0.16.0-x86_64-unknown-linux-musl");
-        let path = lock_path(&cache);
-        assert!(path.ends_with("adocweave-lsp-0.16.0-x86_64-unknown-linux-musl.lock"));
-        fs::write(&path, "0\n").unwrap();
-        let lock = InstallLock::acquire(&path).unwrap();
-        assert!(path.exists());
-        drop(lock);
         assert!(!path.exists());
+        drop(InstallLock::acquire(&path).unwrap());
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// A download that outlives the stale age must not delete its successor's lock.
     #[test]
-    fn releasing_an_overtaken_lock_leaves_the_new_owner_holding_it() {
+    fn concurrent_installations_have_exactly_one_owner() {
         let root =
-            std::env::temp_dir().join(format!("adocweave-zed-owner-{}", unique_operation_id()));
+            std::env::temp_dir().join(format!("adocweave-zed-race-{}", unique_operation_id()));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("install.lock");
 
-        // The first installation runs past the stale age, so the second takes
-        // the lock over.
-        fs::write(&path, "0\n").unwrap();
-        let overtaken = InstallLock {
-            path: path.clone(),
-            owner: "0".to_owned(),
-        };
-        let successor = InstallLock::acquire(&path).unwrap();
-
-        // The first one finishing must not remove the lock it no longer owns.
-        drop(overtaken);
-        assert!(path.exists(), "the successor still holds its lock");
-        assert!(
-            InstallLock::acquire(&path).is_err(),
-            "a third installation must not start alongside the successor"
-        );
-
-        drop(successor);
+        assert_eq!(concurrent_acquisition_count(path.clone()), 1);
         assert!(!path.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// The recorded owner is what decides removal, not the path alone.
     #[test]
-    fn a_lock_is_removed_only_by_the_owner_named_in_it() {
+    fn an_existing_lock_directory_blocks_concurrent_installations() {
+        let root = std::env::temp_dir().join(format!(
+            "adocweave-zed-existing-race-{}",
+            unique_operation_id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("install.lock");
+        fs::create_dir(&path).unwrap();
+        let owner = path.join("owner-0-existing");
+        fs::write(&owner, []).unwrap();
+
+        assert_eq!(concurrent_acquisition_count(path.clone()), 0);
+        assert!(owner.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_empty_initializing_lock_directory_is_not_removed() {
+        let root =
+            std::env::temp_dir().join(format!("adocweave-zed-empty-{}", unique_operation_id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("install.lock");
+        fs::create_dir(&path).unwrap();
+
+        assert!(InstallLock::acquire(&path).is_err());
+        assert!(path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_owner_with_an_old_timestamp_is_not_replaced() {
+        let root =
+            std::env::temp_dir().join(format!("adocweave-zed-old-{}", unique_operation_id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("install.lock");
+        fs::create_dir(&path).unwrap();
+        let old_owner = path.join("owner-0-existing");
+        fs::write(&old_owner, []).unwrap();
+
+        assert!(InstallLock::acquire(&path).is_err());
+        assert!(old_owner.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_earlier_file_lock_is_not_replaced() {
+        let root =
+            std::env::temp_dir().join(format!("adocweave-zed-legacy-{}", unique_operation_id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("install.lock");
+        fs::write(&path, "0 legacy-owner\n").unwrap();
+
+        let error = InstallLock::acquire(&path).err().unwrap();
+        assert!(error.contains(&path_string(&path)));
+        assert!(error.contains("close every Zed process"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "0 legacy-owner\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A non-owner must not remove the current owner's directory.
+    #[test]
+    fn a_non_owner_cannot_remove_the_current_lock() {
         let root =
             std::env::temp_dir().join(format!("adocweave-zed-token-{}", unique_operation_id()));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("install.lock");
-        fs::write(&path, "held by someone else\n").unwrap();
+        fs::create_dir(&path).unwrap();
+        let successor = path.join(format!("owner-{}", unique_operation_id()));
+        fs::write(&successor, []).unwrap();
 
-        remove_lock_owned_by(&path, "not the owner").unwrap();
+        remove_owned_lock(&path, &path.join("owner-0-predecessor")).unwrap();
         assert!(path.exists());
+        assert!(successor.exists());
 
-        remove_lock_owned_by(&path, "held by someone else").unwrap();
+        remove_owned_lock(&path, &successor).unwrap();
         assert!(!path.exists());
-
-        // Removing an absent lock is not a failure: the owner may have already
-        // released it.
-        remove_lock_owned_by(&path, "held by someone else").unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 }

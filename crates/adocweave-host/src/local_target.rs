@@ -291,12 +291,6 @@ impl LocalTargetSession {
         result
     }
 
-    /// Counts one path against the number this session may examine.
-    ///
-    /// A path already examined costs nothing, so repeated references to the
-    /// same target do not exhaust the bound. The bound itself applies on every
-    /// platform: it limits how much work an authored document can ask for, which
-    /// does not depend on how the filesystem resolves a path.
     /// Records a failed examination so a repeated reference costs nothing.
     ///
     /// The bound counts distinct paths and `charge_path_request` skips a path
@@ -321,6 +315,12 @@ impl LocalTargetSession {
         result
     }
 
+    /// Counts one path against the number this session may examine.
+    ///
+    /// A path already examined costs nothing, so repeated references to the
+    /// same target do not exhaust the bound. The bound itself applies on every
+    /// platform: it limits how much work an authored document can ask for, which
+    /// does not depend on how the filesystem resolves a path.
     fn charge_path_request(&mut self, candidate: &Path) -> Result<(), LocalTargetError> {
         if self.inspections.contains_key(candidate) {
             return Ok(());
