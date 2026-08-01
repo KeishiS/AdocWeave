@@ -16,12 +16,12 @@ AsciiDoc pre-specでは、一般の属性エントリを文書headerだけでな
 preprocessorのincludeとconditional directiveが異なる属性状態を参照します。
 
 位置ごとに完全なmapを保持すると、文書規模と属性変更数に応じて同じ値を複製します。
-元sourceのoffsetだけでは、複数のincludeを平坦化した後の意味上の順序も決定できません。
+元のソースのoffsetだけでは、複数のincludeを平坦化した後の意味上の順序も決定できません。
 
 == 決定
 
 属性の意味上の順序は、preprocessorが生成するexpanded sourceの読込順とします。
-元sourceの``SourceId``とrangeは順序の決定には使用せず、診断と公開queryへ投影する
+元のソースの``SourceId``とrangeは順序の決定には使用せず、診断と公開queryへ投影する
 provenanceとして保持します。
 
 解析結果は文書ごとに一つの``AttributeEnvironment``を所有します。environmentは属性名ごとの
@@ -33,7 +33,7 @@ expanded byte offsetが同じeventは単調増加する読込event IDで順序�
 
 * 安定した解析内ID
 * setまたはunsetの操作
-* source表現と畳み込み後の値
+* ソースの表現と畳み込み後の値
 * 各物理行、indent、内容、行末および継続markerのrange
 * 属性エントリ全体の終端より後から参照可能になる位置と読込event ID
 * 値中の属性参照を評価する位置
@@ -44,7 +44,7 @@ expanded byte offsetが同じeventは単調増加する読込event IDで順序�
 bindingへ結び直さず、その時点の未定義参照規則を適用します。cycleと処理上限も、参照した
 bindingの連鎖に対して検査します。
 
-複数物理行の属性値は、source表現と意味評価用の畳み込み後の値を同じ値objectへ保持します。
+複数物理行の属性値は、ソースの表現と意味評価用の畳み込み後の値を同じ値objectへ保持します。
 通常の継続markerは1個のspaceへ畳みます。hard breakではplusを残してmarkerを改行へ畳み、
 後段の置換処理が`` +``と改行をhard breakとして認識します。Formatterとsource projectionは
 物理行ごとのrangeを使用し、属性評価は畳み込み後の値だけを使用します。
@@ -66,10 +66,10 @@ headerでのみ意味を持つ組み込み属性は本文のbindingによって�
 
 公開queryは、位置ごとの解決値、その値を決めたbindingおよびsource occurrenceを返します。
 最終属性値はenvironmentから導出するviewとし、位置依存の意味情報の正本にはしません。
-includeを含む解析では、expanded rangeと元sourceのoriginを型で区別します。
+includeを含む解析では、expanded rangeと元のソースのoriginを型で区別します。
 
 属性エントリは、root文書とinclude文書を平坦化したexpanded sourceのroot block列で認識します。
-同じ元sourceを複数回includeした場合は、それぞれを別の読込eventとして扱います。
+同じソースを複数回includeした場合は、それぞれを別の読込eventとして扱います。
 delimited block内部の属性エントリはAsciiDoc pre-specで動作が定義されていないため、
 対応profileへ追加しません。inline属性代入記法もこの決定の対象外とします。
 
