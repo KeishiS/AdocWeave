@@ -8,30 +8,8 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-== テストの安定性
-
-利用者から見える不具合ではありませんが、検査が理由なく落ちるとreleaseやreviewの判断を鈍らせます。
-
-* https://github.com/KeishiS/adocweave/issues/370[previewのテストが確保したポートを取り違えることがある]
-
-``preview``のテストは空きポートをOSに選ばせ、listenerを閉じてから同じ番号で``preview``を起動します。
-閉じてから起動するまでの間にほかのプロセスがその番号を取ると、起動に失敗します。
-
-== 文書の用語統一
-
-日本語の地の文に一般名詞の英語表記が残っています。「専門分野が異なる学部生でも前から順に読める
-文章」という目標に対して、この混在が最大の障害です。
-
-* https://github.com/KeishiS/adocweave/issues/310[日本語文書の用語統一]
-
-判定基準と用語表はxref:terminology.adoc[用語の表記]に定めました。一括置換は行いません。同じ綴りが
-識別子と一般名詞の両方に現れるため、置換だけでは識別子を壊すからです。本文の修正はuser-guideより
-順に進めます。
-
-残る書き換えは少数のファイルに集中しています。多い順に``user-guide/release-installation.adoc``、
-``developer-guide/release-distribution.adoc``、``CONTRIBUTING.adoc``、``user-guide/command-line.adoc``、
-``developer-guide/server-execution.adoc``および``developer-guide/grammar.adoc``です。
-``[source,console]``のようなAsciiDocのブロック指定は書式の一部なので原綴りのまま残します。
+現在、着手を予定している作業はありません。以下は、着手するかどうかの判断が先に必要な項目です。
+判断の材料が揃うまで実装へ進みません。
 
 == 保留中の対話的な確認環境
 
