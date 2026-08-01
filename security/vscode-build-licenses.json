@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "comment": "VS Code拡張のビルド用依存が持つライセンスの目録です。配布物には同梱されませんが、CIとVSIX生成で実行されるため取得元とintegrityを検証します。ライセンスはこの一覧と完全一致することを求め、新しいライセンスが入った場合はreviewで気付けるようにします。",
+  "licenses": [
+    "(BSD-2-Clause OR MIT OR Apache-2.0)",
+    "(MIT AND Zlib)",
+    "(MIT OR CC0-1.0)",
+    "(MIT OR GPL-3.0-or-later)",
+    "(MIT OR WTFPL)",
+    "0BSD",
+    "Apache-2.0",
+    "Artistic-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "CC-BY-3.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT OR Apache-2.0",
+    "Python-2.0",
+    "SEE LICENSE IN LICENSE.txt",
+    "WTFPL"
+  ]
+}

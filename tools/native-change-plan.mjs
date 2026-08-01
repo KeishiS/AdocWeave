@@ -93,6 +93,7 @@ const NON_RELEASE_FILES = new Set([
   "tools/verify-dependency-boundaries.mjs",
   "tools/verify-dependency-boundaries.test.mjs",
   "tools/verify-duplicate-dependencies.mjs",
+  "tools/verify-vscode-dependencies.test.mjs",
 ]);
 const NATIVE_TOOLS = [
   "dependency-governance.sh",
@@ -214,8 +215,12 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   "tools/dependency-governance.sh",
   "tools/generate-third-party-notices.mjs",
   "tools/verify-dependency-boundaries.mjs",
+  // `dependency-governance` runs `dependency-governance-test` first, so these
+  // decide what the audit accepts just as the scripts they test do.
+  "tools/verify-dependency-boundaries.test.mjs",
   "tools/verify-duplicate-dependencies.mjs",
   "tools/verify-vscode-dependencies.mjs",
+  "tools/verify-vscode-dependencies.test.mjs",
 ]);
 /// Paths that decide whether the adapter contracts have anything to verify.
 const ADAPTER_ROOTS = ["crates/", "editors/", "protocol/", "web-worker/", "fixtures/"];
