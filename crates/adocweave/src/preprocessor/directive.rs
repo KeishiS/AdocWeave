@@ -131,7 +131,7 @@ pub(super) fn expand_attributes(
     expand_attribute_text(value, limits, |name| {
         Ok((
             attributes
-                .get(name)
+                .get(&crate::attributes::canonical_name(name))
                 .cloned()
                 // An attribute with no value is left as written, so a reader
                 // sees the reference that did not resolve.
@@ -171,14 +171,12 @@ fn parse(value: &str, prefix: &str, kind: DirectiveKind) -> Option<ParsedDirecti
 }
 
 fn attribute_condition(target: &str, attributes: &BTreeMap<String, String>, present: bool) -> bool {
+    let defined =
+        |name: &str| attributes.contains_key(&crate::attributes::canonical_name(name.trim()));
     let matches = if target.contains('+') {
-        target
-            .split('+')
-            .all(|name| attributes.contains_key(name.trim()))
+        target.split('+').all(defined)
     } else {
-        target
-            .split(',')
-            .any(|name| attributes.contains_key(name.trim()))
+        target.split(',').any(defined)
     };
     if present { matches } else { !matches }
 }

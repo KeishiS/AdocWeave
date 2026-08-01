@@ -575,7 +575,15 @@ fn scan_references(value: &str) -> Vec<(String, usize, usize, usize, usize)> {
     references
 }
 
-fn canonical_name(name: &str) -> String {
+/// Folds an attribute name to the form every attribute map is keyed by.
+///
+/// AsciiDoc attribute names do not distinguish case, so a document that writes
+/// `{WEB}` and a caller that supplies `Web` name the same attribute. Every
+/// lookup has to fold the written name the same way the map was built, or the
+/// two disagree: preprocessor directives searched with the name as written and
+/// matched only the lower-case spelling, so `ifdef::Web[]` failed for a caller
+/// who had supplied `Web` itself.
+pub(crate) fn canonical_name(name: &str) -> String {
     name.to_ascii_lowercase()
 }
 

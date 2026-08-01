@@ -302,6 +302,8 @@ index termを意味nodeとして扱い、文書catalogへfootnote、bibliography
 WildcardおよびURI転送は未対応です。
 前処理を行わずに解析した場合、これらの行は評価されずそのままの文字列として残り、``unprocessed-directive``の
 診断が付きます。``SyntaxMode::Strict``では、評価していない行を含む文書を処理しません。
+directiveへ書く属性名は大文字と小文字を区別しません。``ifdef::Web[]``と``ifdef::WEB[]``は同じ属性を指し、
+本文の``{web}``と同じものを参照します。
 
 |Bibliographyとfootnote
 |部分対応
