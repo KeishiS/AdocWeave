@@ -333,6 +333,7 @@ export interface Footnote {
 
 export interface BibliographyEntry {
   id: string;
+  label: string | null;
   definitionRange: TextRange;
   references: TextRange[];
 }

@@ -993,8 +993,12 @@ fn write_catalogs(output: &mut String, catalogs: &crate::catalog::DocumentCatalo
         }
         write!(
             output,
-            "{{\"id\":{},\"definitionRange\":{},\"references\":[",
+            "{{\"id\":{},\"label\":{},\"definitionRange\":{},\"references\":[",
             json_string(&entry.id),
+            entry
+                .label
+                .as_deref()
+                .map_or_else(|| "null".to_owned(), json_string),
             json_range(entry.definition_range),
         )
         .expect("writing to String cannot fail");
@@ -1601,7 +1605,24 @@ let x = 1;
         assert!(
             projection
                 .render_json()
-                .contains("\"bibliography\":[{\"id\":\"ref\",\"definitionRange\":")
+                .contains("\"bibliography\":[{\"id\":\"ref\",\"label\":null,\"definitionRange\":")
+        );
+    }
+
+    #[test]
+    fn bibliography_catalog_keeps_the_anchor_display_text() {
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze("* [[[smith2024,1]]] Smith, A. 2024.\n\nSee <<smith2024>>.")
+            .expect("analysis");
+        let projection = project(&analysis, &RenderInputs::default());
+
+        let entry = &projection.catalogs.bibliography()[0];
+        assert_eq!(entry.id, "smith2024");
+        assert_eq!(entry.label.as_deref(), Some("1"));
+        assert!(
+            projection
+                .render_json()
+                .contains("\"bibliography\":[{\"id\":\"smith2024\",\"label\":\"1\",")
         );
     }
 

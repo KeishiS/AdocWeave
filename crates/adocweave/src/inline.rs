@@ -1119,6 +1119,7 @@ struct ShorthandAnchorToken {
     open: usize,
     target_start: usize,
     target_end: usize,
+    label: Option<(usize, usize)>,
     end: usize,
 }
 
@@ -1220,7 +1221,8 @@ fn recognize_macro_with_index(
     if let Some(content) = rest.strip_prefix("[[[")
         && let Some(relative_end) = content.find("]]]")
     {
-        let target_end = open + 3 + relative_end;
+        let close = open + 3 + relative_end;
+        let (target_end, label) = split_anchor_label(value, open + 3, close);
         return InlineRecognition::matched(
             value,
             InlineToken::Macro(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
@@ -1228,14 +1230,16 @@ fn recognize_macro_with_index(
                 open,
                 target_start: open + 3,
                 target_end,
-                end: target_end + 3,
+                label,
+                end: close + 3,
             })),
         );
     }
     if let Some(content) = rest.strip_prefix("[[")
         && let Some(relative_end) = content.find("]]")
     {
-        let target_end = open + 2 + relative_end;
+        let close = open + 2 + relative_end;
+        let (target_end, label) = split_anchor_label(value, open + 2, close);
         return InlineRecognition::matched(
             value,
             InlineToken::Macro(MacroToken::ShorthandAnchor(ShorthandAnchorToken {
@@ -1243,7 +1247,8 @@ fn recognize_macro_with_index(
                 open,
                 target_start: open + 2,
                 target_end,
-                end: target_end + 2,
+                label,
+                end: close + 2,
             })),
         );
     }
@@ -1568,12 +1573,45 @@ fn build_macro(
     }
 }
 
+/// Splits `[[id,xreftext]]` and `[[[id,xreftext]]]` at the first comma.
+///
+/// AsciiDoc gives an anchor its display text after a comma, and a numbered
+/// citation style is written that way: `[[[smith2024,1]]]` shows as `1`.
+/// Reading the comma as part of the identifier made a document written to the
+/// language specification break, because `<<smith2024>>` then pointed at an
+/// identifier nobody wrote. A block anchor already splits here, so the inline
+/// and block forms now agree on where the identifier ends.
+fn split_anchor_label(
+    value: &str,
+    target_start: usize,
+    close: usize,
+) -> (usize, Option<(usize, usize)>) {
+    match value[target_start..close].find(',') {
+        Some(offset) => {
+            let comma = target_start + offset;
+            (comma, Some((comma + 1, close)))
+        }
+        None => (close, None),
+    }
+}
+
 fn build_shorthand_anchor(
     value: &str,
     range: TextRange,
     token: ShorthandAnchorToken,
 ) -> BuiltInline {
-    let empty = subrange(range, token.target_end, token.target_end);
+    let attributes_range = token.label.map_or_else(
+        || subrange(range, token.target_end, token.target_end),
+        |(start, end)| subrange(range, start, end),
+    );
+    let attributes = token.label.map_or_else(Vec::new, |(start, end)| {
+        vec![MacroAttribute {
+            range: subrange(range, start, end),
+            value_range: subrange(range, start, end),
+            name: None,
+            value: value[start..end].to_owned(),
+        }]
+    });
     BuiltInline {
         inline: Inline::Macro(StandardMacro {
             kind: token.kind,
@@ -1584,8 +1622,8 @@ fn build_shorthand_anchor(
             target: value[token.target_start..token.target_end].to_owned(),
             target_attributes: Vec::new(),
             target_expansion_error: None,
-            attributes_range: empty,
-            attributes: Vec::new(),
+            attributes_range,
+            attributes,
         }),
         end: token.end,
         problems: Vec::new(),
