@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "packageVersion": "0.26.1",
+  "packageVersion": "0.27.0",
   "distVersion": "0.32.0",
   "repository": "https://github.com/KeishiS/adocweave",
   "targets": [
@@ -103,21 +103,21 @@
       "executable": "adocweave-lsp.exe"
     },
     {
-      "name": "adocweave-browser-0.26.1.tar.xz",
+      "name": "adocweave-browser-0.27.0.tar.xz",
       "kind": "browser",
       "target": null,
       "archive": "tar.xz",
       "executable": null
     },
     {
-      "name": "adocweave-zed-0.26.1.tar.xz",
+      "name": "adocweave-zed-0.27.0.tar.xz",
       "kind": "zed",
       "target": null,
       "archive": "tar.xz",
       "executable": null
     },
     {
-      "name": "adocweave-vscode-0.26.1.vsix",
+      "name": "adocweave-vscode-0.27.0.vsix",
       "kind": "vscode",
       "target": null,
       "archive": "vsix",
