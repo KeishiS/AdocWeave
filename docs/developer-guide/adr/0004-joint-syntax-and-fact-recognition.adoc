@@ -3,7 +3,7 @@
 
 == 文脈
 
-lossless syntax treeだけを構築した後、semantic ASTのために同じsource範囲を再走査すると、block、
+lossless syntax treeだけを構築した後、semantic ASTのために同じソースの範囲を再走査すると、block、
 inlineおよび回復規則が二重化します。逆に、完成済みsemantic ASTを構文認識の中で確定すると、属性展開や
 アンカー結合がparserへ漏れます。
 
@@ -16,11 +16,11 @@ loweringにも持ち込みません。
 
 == 却下した案
 
-Syntax treeからsemantic ASTを作るためにsourceを再解析する案は、認識規則と処理コストを二重化するため
+Syntax treeからsemantic ASTを作るためにソースを再解析する案は、認識規則と処理コストを二重化するため
 採用しません。Syntax nodeへ全semantic値を複製する案も、lossless表現と正規化値の基準を曖昧にするため
 採用しません。
 
 == 帰結
 
-Syntax treeはsource表記と回復地点、semantic ASTは確定した意味の基準になります。parserのraw factは
+Syntax treeはソースの表記と回復地点、semantic ASTは確定した意味の基準になります。parserのraw factは
 crate内部だけに置き、公開仕様にはしません。

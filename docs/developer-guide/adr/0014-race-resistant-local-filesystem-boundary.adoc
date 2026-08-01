@@ -4,10 +4,10 @@
 
 == 文脈
 
-local target検査とinclude読込は、project rootの正規化、候補pathの正規化、file種別の検査および
-対象fileのopenを別々のfilesystem操作で行っています。検査中にworkspaceを書き換えない通常の利用では
-root外のsymlinkを拒否できますが、検査とopenの間に祖先directoryをrenameし、symlinkへ差し替える
-攻撃者がいる場合、検査したfileと実際に開くfileが一致しません。canonical pathのcacheや検証済みpathを
+local target検査とinclude読込は、project rootの正規化、候補pathの正規化、ファイル種別の検査および
+対象ファイルのopenを別々のfilesystem操作で行っています。検査中にworkspaceを書き換えない通常の利用では
+root外のsymlinkを拒否できますが、検査とopenの間に祖先ディレクトリをrenameし、symlinkへ差し替える
+攻撃者がいる場合、検査したファイルと実際に開くファイルが一致しません。canonical pathのcacheや検証済みpathを
 表す型だけでは、このTOCTOUを解消できません。
 
 AdocWeaveはLinux、macOSおよびWindowsでRust crateとして利用できます。一方、公式CLIとLanguage Serverの
@@ -16,14 +16,14 @@ path解決primitiveが異なるため、全platformで同じ競合耐性を標�
 
 == 脅威モデル
 
-検査対象の文書、file、symlinkおよびroot以下のdirectoryを、別processが検査と同時に作成、削除、renameまたは
-差し替えられるものとします。攻撃者はproject root外のfileを読ませること、通常file以外を読ませること、
+検査対象の文書、ファイル、symlinkおよびroot以下のディレクトリを、別processが検査と同時に作成、削除、renameまたは
+差し替えられるものとします。攻撃者はproject root外のファイルを読ませること、通常ファイル以外を読ませること、
 検査済み結果と別の内容を利用させることを試みます。AdocWeave process自体、明示的に与えたproject rootの
-directory handle、OS kernelおよび同じ権限でroot外を変更できないという実行環境は信頼します。
+ディレクトリhandle、OS kernelおよび同じ権限でroot外を変更できないという実行環境は信頼します。
 
 次は非目標です。
 
-* 同じ権限を持つprocessによる、取得済みfile handleの内容変更
+* 同じ権限を持つprocessによる、取得済みのファイルhandleの内容変更
 * mount namespace、bind mount、network filesystemまたはkernelの侵害に対する防御
 * project root自体を攻撃者がrenameまたは置換できる環境でのpath名の同一性
 * 一回のcommandを越えたfilesystem snapshotの提供
@@ -31,11 +31,11 @@ directory handle、OS kernelおよび同じ権限でroot外を変更できない
 
 == 決定
 
-Linux配布targetでは、project rootのdirectory handleを最初に取得し、そのhandleを起点とする解決とopenを
+Linux配布targetでは、project rootのディレクトリhandleを最初に取得し、そのhandleを起点とする解決とopenを
 同じkernel操作または同じhandle系列で行います。第一選択は``openat2``とし、rootからの脱出、magic linkおよび
-解決途中のroot外移動を禁止するresolve flagを使用します。対象を開いた後のhandleに対して通常fileであることを
+解決途中のroot外移動を禁止するresolve flagを使用します。対象を開いた後のhandleに対して通常ファイルであることを
 検査し、上限付きでbyte列を読み取ります。利用可能なkernelで``openat2``を使用できない場合は、各path要素を
-directory handleから``openat``相当で開き、symlinkを追跡しない保守的fallbackを使用します。このfallbackでは
+ディレクトリhandleから``openat``相当で開き、symlinkを追跡しない保守的fallbackを使用します。このfallbackでは
 root内を指すsymlinkも拒否してよく、競合耐性を下げて受理範囲を維持しません。
 
 macOS、Windowsおよび汎用Rust利用では、同等のhandle相対解決を実装したadapterだけが敵対的な同時変更への
@@ -46,7 +46,7 @@ local target検査とinclude読込を無効にするか、書換え不能なsnap
 
 検査だけのlocal target、本文を読むinclude、Language Serverのworkspace読込およびworkspace走査は
 同じfilesystem adapterを使用します。本文を読む処理は、用途ごとに一つのsessionと処理上限を共有します。成功cacheは
-論理候補pathではなく、同じ解決操作で得たfile identityと取得済み結果を保持します。失敗もcommand内だけで
+論理候補pathではなく、同じ解決操作で得たファイルのidentityと取得済み結果を保持します。失敗もcommand内だけで
 cacheし、次のcommandでは再検査します。Language Serverのfile変更通知では同じsessionと処理上限を維持したまま
 対象を再度openし、古い本文cacheを使用しません。診断とsource mapには論理的な``SourceId``を使用し、OS pathや
 handleを公開しません。

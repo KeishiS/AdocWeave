@@ -155,7 +155,7 @@ HTML、解析診断および描画診断の対応を検査できます。各case
 * table、quoteおよびlist
 * 安全でないURLの解析診断、描画診断および非active HTML fallback
 
-公開仕様は`stableContract`に列挙した意味上の値とHTML構造だけです。期待出力file全体はAdocWeave内の
+公開仕様は`stableContract`に列挙した意味上の値とHTML構造だけです。期待出力ファイル全体はAdocWeave内の
 決定性とruntime間の一致を検査するgolden fileであり、JSONのkey順と空白、HTMLの属性順、字下げ、
 空白、末尾改行および未選択の投影fieldは利用側の安定APIではありません。利用側はこれらのbyte列を
 固定せず、必要な項目だけを選択して検査します。

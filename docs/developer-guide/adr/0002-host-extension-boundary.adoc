@@ -10,11 +10,11 @@
 
 コアは標準構文、汎用属性、通常リンクおよび型付きxrefを解析します。任意スキームの意味、
 永続化、アクセス制御および解決済みURLはホストが解析後に付加します。
-xrefは記述時の構造とsource rangeを``authored_destination``へ保持し、属性展開後にresolver、
+xrefは記述時の構造とソースのrangeを``authored_destination``へ保持し、属性展開後にresolver、
 projectionおよび出力が共有する参照先を``target``へ保持します。consumerは意味判定に``target``を使用します。
 
-コアはlocal file候補を型付きqueryとして公開しますが、filesystemへアクセスしません。
-project root、path正規化、symlink解決、実在性、file種別および読み取り上限はホストが所有します。
+コアはlocalのファイル候補を型付きqueryとして公開しますが、filesystemへアクセスしません。
+project root、path正規化、symlink解決、実在性、ファイル種別および読み取り上限はホストが所有します。
 一つのcommandまたはrequestでは、include読込とlocal target検査が同じsessionを使用し、
 正規化済みpathごとの成功・失敗とUTF-8本文を共有します。
 
@@ -26,7 +26,7 @@ Filesystemから本文を取得するAPIは、canonical pathと取得済みbyte�
 
 Canonical pathはfilesystemのcache keyと安全性検査にだけ使用します。Source map、診断および
 公開queryでは、include要求から導出した論理的な``SourceId``を保持し、OS上のpathを公開しません。
-複数の論理targetが同じcanonical fileを指す場合も、読取りは共有し、生成元の識別子は区別します。
+複数の論理targetが同じcanonicalなファイルを指す場合も、読取りは共有し、生成元の識別子は区別します。
 
 == 帰結
 

@@ -12,7 +12,7 @@ AdocWeaveは、AsciiDocの読み取り、問題の検出、整形、HTMLへの�
 == バージョン
 
 公開API、WebAssembly、HTML出力、構造情報は、同じパッケージバージョンを使います。
-現在の値と必要なRustのバージョンは次のfileが基準です。
+現在の値と必要なRustのバージョンは次のファイルが基準です。
 link:../../release-manifest.json[release manifest]
 公開結果を保存するアプリケーションは、AdocWeaveの更新時にHTMLおよび検索用情報を再構築してください。
 
@@ -32,21 +32,21 @@ xref:../user-guide/syntax-support.adoc[対応しているAsciiDocの書式]に�
 == 構造情報
 
 ``adocweave::output::projection::project``は、一つの``Analysis``と同じrevisionの``RenderInputs``から、
-HTMLに依存しない``DocumentProjection``を生成します。生成時にsourceを再解析せず、ファイルシステム、ネットワーク、
+HTMLに依存しない``DocumentProjection``を生成します。生成時にソースを再解析せず、ファイルシステム、ネットワーク、
 DBまたはアプリ固有のschemaへアクセスしません。
 
 構造情報には次を含みます。
 
 * 文書タイトル、見出し、明示anchorおよび文書構造
 * 通常の外部linkと、文書内・文書間・任意schemeのxref
-* Source block、数式の表示形式・言語・未加工source・rangeおよびmedia resource
+* Source block、数式の表示形式・言語・未加工のソース・rangeおよびmedia resource
 * Footnote、bibliographyおよび階層indexのcatalog
 * TOC、appendix、book partおよびmanpage header
-* 検索用文字列と元sourceのrange
+* 検索用文字列と元のソースのrange
 * 生成元の``SourceId``とパッケージバージョン
 
 通常linkは``ExternalLink``、xrefは``ReferenceEdge``として区別します。xrefの参照先は文書内、別文書または
-任意schemeのいずれかです。``RenderInputs``を渡した場合はsource rangeが一致するedgeだけへ解決結果を
+任意schemeのいずれかです。``RenderInputs``を渡した場合はソースのrangeが一致するedgeだけへ解決結果を
 追加し、構造情報の生成中には参照を解決しません。
 
 数式の``FormulaProjection.kind``は表示形式を表す``inline``または``block``です。Rust APIの

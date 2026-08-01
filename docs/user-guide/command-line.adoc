@@ -181,10 +181,10 @@ adocweave format --write docs README.adoc
 
 == 安全な自動修正
 
-``check --fix``は、診断が``Applicability::Always``として提供する修正だけを適用します。全fileの
+``check --fix``は、診断が``Applicability::Always``として提供する修正だけを適用します。全ファイルの
 修正候補を検証してから``format --write``と同じatomic置換を使用します。複数診断のeditが重複または
-交差する場合は、そのfileを書き換えずerrorにします。``Maybe``の修正はCode Actionや差分を確認して
-適用してください。``--dry-run --summary``では書換えず、修正対象file数を``changed``として表示します。
+交差する場合は、そのファイルを書き換えずerrorにします。``Maybe``の修正はCode Actionや差分を確認して
+適用してください。``--dry-run --summary``では書換えず、修正対象のファイル数を``changed``として表示します。
 
 [source,console]
 ----
@@ -231,9 +231,9 @@ adocweave check --include docs/manual.adoc
 adocweave convert --include --base-dir docs --allow-root docs - < root.adoc
 ----
 
-参照先はbase directoryからの相対パスに限定します。
+参照先はbase ディレクトリからの相対パスに限定します。
 絶対path、`..`、scheme付きtarget、制御文字および許可root外へ解決されるsymlinkを拒否します。
-通常linkと異なり、include targetの``?``と``#``はURL成分として分離せずfile名の一部として扱います。
+通常linkと異なり、include targetの``?``と``#``はURL成分として分離せずファイル名の一部として扱います。
 個別のリソースは10 MiB、リソース全体は50 MiB、ファイル数は10,000件を上限とします。
 循環、include深さ、展開nodeおよび展開後byte数にはコアpreprocessorの上限も適用します。
 ネットワーク上のリソースは取得しません。
@@ -307,6 +307,6 @@ kbd:[Ctrl+C]または新しい変更を検出すると、実行中の生成処�
 adocweave convert --complete --css theme.css --css-url https://example.com/print.css manual.adoc
 ----
 
-``--css``と``--css-url``は``--complete``が必須です。CSS fileはUTF-8で、1 sourceあたり1 MiBを上限とします。
+``--css``と``--css-url``は``--complete``が必須です。CSSファイルはUTF-8で、1ファイルあたり1 MiBを上限とします。
 `</style`、``<!--``または改行・タブ以外の制御文字を含むCSS本文、URL policyが拒否するURL
 （既定は``http``と``https``だけ）および上限超過は、部分的なHTMLを出力せずエラーで終了します。

@@ -8,7 +8,7 @@ Core、LSP、Zed extension、browser artifactおよびNix packageは一つのrel
 同一release trainで整合性を確保する必要があります。
 
 Zed extensionとLanguage Serverを別repositoryへ分離すると、Zed固有のreviewと公開を独立できる可能性があります。一方で、
-release version、binary provenance、LSP protocol、Tree-sitter queryおよびrollbackの整合性をrepository間で新たに
+releaseのバージョン、binary provenance、LSP protocol、Tree-sitter queryおよびrollbackの整合性をrepository間で新たに
 保証しなければなりません。
 
 == 決定
@@ -20,7 +20,7 @@ Zed固有の責務はmonorepo内に局所化します。Core、LSPおよびZed�
 == 非採用案
 
 Zed extensionだけを別repositoryで公開し、LSP binaryを本体Releaseから取得する案は採用しません。この案ではextensionと
-binaryのversion不一致、artifact provenance、offline cacheおよびrollbackの障害を二つのrelease履歴にまたがって
+binaryのバージョン不一致、artifact provenance、offline cacheおよびrollbackの障害を二つのrelease履歴にまたがって
 調査する必要があり、現在の開発規模に対して運用コストが大きいです。
 
 == 再評価条件
@@ -34,7 +34,7 @@ binaryのversion不一致、artifact provenance、offline cacheおよびrollback
 * Zed extensionを本体と異なる所有者、権限境界またはsecurity response期限で運用する
   明確な要件の発生
 
-再評価では、repository分離前にCore/LSP/Zedの互換性範囲、artifact digest、source revisionおよびrollback対象を
+再評価では、repository分離前にCore/LSP/Zedの互換性範囲、artifact digest、ソースのrevisionおよびrollback対象を
 自動検証する仕組みを設計します。
 
 == 帰結

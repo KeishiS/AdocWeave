@@ -77,10 +77,10 @@ Language Serverは``adocweave-config``を使用し、workspace folderごとに�
 ファイルシステム境界やresource上限を拡張しません。
 
 読み込んだ設定は、探索を開始したディレクトリごとに保持します。設定の解決は、workspace rootまでディレクトリを
-遡り、見つけたfileのpath解決、読み込み、digest計算およびTOML解析を行います。保持しない場合、この処理が
+遡り、見つけたファイルのpath解決、読み込み、digest計算およびTOML解析を行います。保持しない場合、この処理が
 打鍵のたびに、ほかの要求へ応答するthreadの上で繰り返されます。保持した内容は、workspace folderまたは
-設定fileの変更でワークスペースを読み直すときにすべて捨てます。ある ディレクトリの設定が上位ディレクトリのfileから
-来ることがあるため、一つのfileの変更が複数の記録を古くするからです。
+設定ファイルの変更でワークスペースを読み直すときにすべて捨てます。あるディレクトリの設定が上位ディレクトリのファイルから
+来ることがあるため、一つのファイルの変更が複数の記録を古くするからです。
 
 == 通知と要求
 
@@ -279,9 +279,9 @@ symlinkは追跡せず、ワークスペース外、network URI、1 resource 10 
 拒否します。LSP自身はネットワーク上のリソースを取得しません。
 
 disk resourceとopen bufferは別のrevision domainとして保持します。open中のLSPのバージョンは同じopen期間だけで
-比較し、close後にversion 1から再openしても以前のバージョンと比較しません。open bufferをcloseした場合は
+比較し、close後にバージョン1から再openしても以前のバージョンと比較しません。open bufferをcloseした場合は
 resourceを削除せず、初期scanまたはwatch通知で得たdisk resourceへ戻し、そのresourceに依存するrootを
-再解析します。watch通知からdiskを読む場合も初期scanと同じcanonical workspace root、拡張子、regular file
+再解析します。watch通知からdiskを読む場合も初期scanと同じcanonical workspace root、拡張子、通常ファイル
 およびbyte上限の検査を通し、通知された任意のfile URIを直接読んではなりません。
 
 include展開結果は直接解析と別の不変のスナップショットとして採用し、diagnostic、include Definition、
