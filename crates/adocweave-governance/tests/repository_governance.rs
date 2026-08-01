@@ -664,6 +664,41 @@ fn project_config_schema_lists_every_lint_rule() {
 }
 
 #[test]
+fn every_lint_rule_constant_is_reexported() {
+    // A rule reaches consumers through two hand-written places: the catalog
+    // macro that defines the constant, and the re-export list in lib.rs. A rule
+    // added to only the first still produces diagnostics, so nothing fails
+    // until someone writes `use ...::THE_RULE` and cannot compile. That is how
+    // `unprocessed-directive` shipped in v0.27.0 without its constant.
+    let source = fs::read_to_string(repository_root().join("crates/adocweave/src/lib.rs"))
+        .expect("crate root");
+    let start = source
+        .find("pub use crate::lint::{")
+        .expect("lint re-export list");
+    let end = source[start..].find("};").expect("end of re-export list") + start;
+    let exported = &source[start..end];
+
+    let missing = adocweave::output::diagnostics::LINT_RULES
+        .iter()
+        .map(|rule| rule.id.as_str().replace('-', "_").to_uppercase())
+        .filter(|constant| {
+            !exported
+                .match_indices(constant.as_str())
+                .any(|(offset, _)| {
+                    let after = exported[offset + constant.len()..].chars().next();
+                    // `INVALID_ATTRIBUTE` must not be satisfied by a longer name.
+                    after.is_none_or(|character| !(character.is_alphanumeric() || character == '_'))
+                })
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "lint rule constants missing from the lib.rs re-export: {missing:?}"
+    );
+}
+
+#[test]
 fn conformance_fixture_has_every_declared_consumer() {
     let root = repository_root();
     let manifest: ConformanceConsumers = serde_json::from_str(
