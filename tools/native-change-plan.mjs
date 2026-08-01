@@ -197,6 +197,25 @@ const RUST_SOURCE_FILES = new Set([
   "rust-toolchain.toml",
   "deny.toml",
 ]);
+/// Every input the dependency boundary audit reads.
+///
+/// The audit was previously requested by the Rust source file set, which does
+/// not contain the advisory revision, the boundary and exception inventories,
+/// the duplicate baseline, or the audit scripts themselves. A pull request that
+/// edited one of those changed what the audit accepts and still reported
+/// success without running it. `tools/native-change-plan.test.mjs` reads the
+/// audit script and requires every repository path it names to appear here.
+export const DEPENDENCY_AUDIT_ROOTS = ["security/", "editors/"];
+export const DEPENDENCY_AUDIT_FILES = new Set([
+  "Cargo.lock",
+  "Cargo.toml",
+  "deny.toml",
+  "tools/dependency-governance.sh",
+  "tools/generate-third-party-notices.mjs",
+  "tools/verify-dependency-boundaries.mjs",
+  "tools/verify-duplicate-dependencies.mjs",
+  "tools/verify-vscode-dependencies.mjs",
+]);
 /// Paths that decide whether the adapter contracts have anything to verify.
 const ADAPTER_ROOTS = ["crates/", "editors/", "protocol/", "web-worker/", "fixtures/"];
 /// Paths whose authored AsciiDoc or generated HTML the document checks read.
@@ -253,7 +272,7 @@ export function qualityScope(paths) {
     affects(pathname, RUST_SOURCE_ROOTS, RUST_SOURCE_FILES)
   );
   const dependencies = paths.some((pathname) =>
-    RUST_SOURCE_FILES.has(pathname) || pathname.startsWith("editors/")
+    affects(pathname, DEPENDENCY_AUDIT_ROOTS, DEPENDENCY_AUDIT_FILES)
   );
   return {
     rustSource,
