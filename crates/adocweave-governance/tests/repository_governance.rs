@@ -545,7 +545,7 @@ fn roadmap_uses_unique_github_issue_urls() {
     }
     assert!(!numbers.is_empty(), "roadmap has no GitHub Issues");
 
-    let expected = ["33", "34", "82", "83", "84", "86", "310", "361", "362"]
+    let expected = ["33", "34", "82", "83", "84", "86", "310", "362"]
         .into_iter()
         .map(str::to_owned)
         .collect();
@@ -707,7 +707,7 @@ fn conformance_fixture_has_every_declared_consumer() {
         (
             "repository-governance",
             (
-                "crates/adocweave/tests/repository_governance.rs",
+                "crates/adocweave-governance/tests/repository_governance.rs",
                 capabilities(&["fixture-root", "manifest"]),
             ),
         ),
@@ -895,6 +895,46 @@ fn core_package_has_no_native_host_or_runtime_dependency() {
     assert!(!core.contains("tokio"));
     assert!(cli.contains("adocweave = { path = \"../adocweave\" }"));
     assert!(cli.contains("adocweave-host = { path = \"../adocweave-host\" }"));
+}
+
+/// The governance crate holds checks, not implementation.
+///
+/// These checks read the repository's own file layout. Keeping them out of a
+/// library is the point of the crate, so it carries no library at all: there is
+/// nothing for another crate to depend on, and nothing for the SemVer gate to
+/// compare.
+#[test]
+fn the_governance_crate_carries_no_implementation() {
+    let root = repository_root();
+    let package = root.join("crates/adocweave-governance");
+    assert!(
+        !package.join("src").exists(),
+        "the governance crate must carry no library or binary"
+    );
+
+    let manifest = fs::read_to_string(package.join("Cargo.toml")).expect("governance manifest");
+    assert!(
+        !manifest.contains("\n[dependencies]\n"),
+        "governance checks belong in dev-dependencies"
+    );
+    assert!(manifest.contains("\n[dev-dependencies]\n"));
+
+    for crate_name in [
+        "adocweave",
+        "adocweave-cli",
+        "adocweave-config",
+        "adocweave-host",
+        "adocweave-lsp",
+        "adocweave-wasm",
+        "adocweave-workspace",
+    ] {
+        let manifest = fs::read_to_string(root.join("crates").join(crate_name).join("Cargo.toml"))
+            .expect("crate manifest");
+        assert!(
+            !manifest.contains("adocweave-governance"),
+            "{crate_name} must not depend on the governance crate"
+        );
+    }
 }
 
 #[test]

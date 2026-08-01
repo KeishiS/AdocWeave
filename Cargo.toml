@@ -3,6 +3,7 @@ members = [
   "crates/adocweave",
   "crates/adocweave-cli",
   "crates/adocweave-config",
+  "crates/adocweave-governance",
   "crates/adocweave-host",
   "crates/adocweave-lsp",
   "crates/adocweave-workspace",

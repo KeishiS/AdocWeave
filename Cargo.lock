@@ -39,6 +39,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "adocweave-governance"
+version = "0.26.0"
+dependencies = [
+ "adocweave",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "adocweave-host"
 version = "0.26.0"
 dependencies = [
