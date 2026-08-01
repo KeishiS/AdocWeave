@@ -5,6 +5,8 @@ mod expansion;
 mod projection;
 mod source_map;
 
+pub(crate) use directive::{DirectiveLine, classify_line};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;

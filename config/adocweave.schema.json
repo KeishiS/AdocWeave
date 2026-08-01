@@ -71,6 +71,7 @@
               "unclosed-block",
               "unclosed-inline",
               "undefined-attribute",
+              "unprocessed-directive",
               "unresolved-cross-reference",
               "unused-attribute"
             ]

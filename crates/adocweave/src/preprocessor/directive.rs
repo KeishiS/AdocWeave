@@ -27,6 +27,31 @@ pub(super) enum ConditionalTransition {
     Close,
 }
 
+/// A preprocessor directive line, classified without evaluating it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DirectiveLine {
+    Conditional,
+    Include,
+}
+
+/// Classifies one line as a preprocessor directive.
+///
+/// The preprocessor consumes these lines before parsing, so the block grammar
+/// never saw them and read `ifeval::["a" == "b"]` as an inline macro: the
+/// leading `ifeval:` looked like a URL scheme, and the reader was told the URL
+/// was rejected. An analysis that does not preprocess still has to recognize
+/// the line, and both callers use this function so the lexical knowledge of a
+/// directive stays in one place.
+///
+/// An escaped directive (`\ifdef::web[]`) is not a directive and returns
+/// `None`, matching [`recognize`].
+pub(crate) fn classify_line(value: &str) -> Option<DirectiveLine> {
+    if parse_conditional(value).is_some() {
+        return Some(DirectiveLine::Conditional);
+    }
+    parse_include(value).map(|_| DirectiveLine::Include)
+}
+
 pub(super) fn recognize(value: &str) -> RecognizedDirective<'_> {
     if let Some(directive) = parse_conditional(value) {
         return RecognizedDirective::Conditional(directive);
