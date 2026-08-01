@@ -31,33 +31,27 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "``javascript``と``vbscript``のURLを、利用側アプリが許可schemeへ加えても出力しないようにしました。これらはbrowserがcodeとして実行するURLです。",
-  "``ifeval``などのdirectiveが、``\\{name}``を文書本文と同じくエスケープとして読むようにしました。これまでは属性として展開しており、同じ記法が本文と条件式で違う意味を持っていました。",
-  "lint規則の内部の欠陥で、CLIやLanguage Serverのプロセスが終わらないようにしました。修正候補だけを落として診断は返します。",
-  "ファイル検査の件数上限を、すべてのプラットフォームで適用するようにしました。これまでmacOSとWindowsでは上限が働かず、同じ文書がLinuxでだけ拒否されていました。",
-  "Language Serverの初期化が、workspace全体の走査を待たずに応答するようにしました。8,000文書のworkspaceで414ミリ秒から1ミリ秒になります。",
-  "日本語文書の一般名詞を日本語表記へそろえました。表記の基準は「用語の表記」に定めています。",
+  "Language Serverの打鍵ごとの処理を、ワークスペースの規模に依存しないようにしました。解析へ渡すリソースの一覧を打鍵のたびに複製していたためです。8,000文書のワークスペースで1打鍵あたり26ミリ秒から10.6ミリ秒になります。",
+  "Language Serverのワークスペース走査を、要求へ応答するthreadの外へ移しました。走査中もHoverやDocument Symbolなどの要求へ応答します。",
+  "名前を変えられる位置かどうかを、Renameを始める前に答えるようにしました。``prepareRename``を扱うエディターでは、対象のない位置でRenameが始まって何も起きない状態がなくなります。",
+  "Node.jsのバージョンをrelease manifestの``nodeVersion``だけで決めるようにしました。CIの一部がメジャーバージョンだけを指定しており、実際に使われた値が記録に残っていませんでした。",
 ];
 
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
-  "挙動の変更：``javascript``と``vbscript``のURLを、``ActiveUrlPolicy.allowed_schemes``へ加えても出力しません。``data``はこの扱いに含めず、``allow_data_uris``に従います。",
-  "挙動の変更：``include``と``ifeval``のdirectiveが``\\{name}``をエスケープとして読みます。以前は属性として展開していました。",
-  "挙動の変更：``resources.max-files``の上限が、macOSとWindowsでも読み込み経路に適用されます。以前はLinuxだけでした。",
-  "``adocweave_config::ProjectScopeId``を追加しました。CLIとLanguage Serverが同じ型でプロジェクト範囲を識別します。",
   `release manifestへ\`\`nodeVersion\`\`を追加し、schema versionを${PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION}から${manifest.schemaVersion}へ更新しました。Nixを使えないrunnerも、この値でNode.jsを選びます。`,
-  "公開Rust APIのそのほかの型、WASM protocol、CLI引数、Language Server protocolおよび設定schemaはv0.24.0から変更していません。",
+  "訂正：v0.25.0のRelease Notesは、この``nodeVersion``の追加をv0.25.0で行ったと記載していました。実際にはv0.25.0のrelease manifestのschema versionは3で、``nodeVersion``はありません。変更を行ったのはこのreleaseです。",
+  "挙動の変更：``textDocument/rename``の``prepareSupport``を宣言するclientへ、``renameProvider``を``RenameOptions``として返し、``prepareProvider``を宣言します。名前を変えられるのはアンカー定義の上だけで、それ以外の位置では``textDocument/prepareRename``が結果を返しません。``prepareSupport``を宣言しないclientへの応答は変わりません。",
+  "公開Rust API、WASM protocol、CLI引数、Language Server protocolのそのほかおよび設定schemaはv0.25.0から変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。診断code、終了コードおよび公開projectionは変わりません。",
-  "``javascript``または``vbscript``を許可schemeへ加えていた場合、そのURLは出力されなくなります。これらのURLをHTMLへ出したい場合、AdocWeaveは対応しません。",
-  "``\\{name}``をdirectiveの中で属性として展開させていた場合、その記法は文字列``{name}``になります。属性として展開するには``\\``を外してください。",
-  "macOSまたはWindowsで``resources.max-files``を超える数のファイルを読んでいた場合、``local-target-limit-exceeded``になります。上限を上げるか、対象を絞ってください。Linuxでは以前から同じ動作です。",
+  "設定の移行は不要です。診断code、終了コード、公開projectionおよびAsciiDocの解釈は変わりません。",
   `release manifestを機械的に読んでいる場合は、\`\`schemaVersion\`\`が${manifest.schemaVersion}になり\`\`nodeVersion\`\`が加わります。`,
+  "``prepareRename``を扱うエディターでは、アンカー定義の上でだけRenameを始められます。以前はどの位置でも始められましたが、対象のない位置では編集が返らず何も起きませんでした。エディター側の設定変更は不要です。",
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
@@ -72,7 +66,7 @@ const knownConstraints = [
   "解決結果を渡さない引用の表示は`unresolved_references`の設定に従い、`hidden`では出力しません。ただし文書内の`[bibliography]`項目を指すkeyは、設定にかかわらずその項目へのlinkとして出力します。",
   "引用の解決結果は文書全体の並べ替えを行いません。番号付きの引用styleで通し番号を振る場合は、利用側アプリが出現順を見て文字列を決めてください。出現順は公開projectionの`citations`から取得できます。",
   "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
-  "Language Serverはworkspaceの走査を初期化の応答後に行います。走査の完了前は、開いた文書の解析にworkspace内のほかの文書が反映されません。走査の完了後に再解析します。",
+  "Language Serverはworkspaceの走査を初期化の応答後に、要求へ応答するthreadの外で行います。走査中もほかの要求へ応答しますが、走査の完了前は、開いた文書の解析にworkspace内のほかの文書が反映されません。走査の完了後に再解析します。",
 ];
 
 function markdownList(items) {
