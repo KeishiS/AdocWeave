@@ -24,6 +24,7 @@
       releaseManifest = builtins.fromJSON (builtins.readFile ./release-manifest.json);
       packageVersion = releaseManifest.packageVersion;
       rustVersion = releaseManifest.rustVersion;
+      nodeVersion = releaseManifest.nodeVersion;
       mkPkgs = system: import nixpkgs {
         inherit system;
         overlays = [ (import rust-overlay) ];
@@ -175,6 +176,10 @@
         system:
         let
           pkgs = mkPkgs system;
+          # Runners without Nix read this version from the release manifest and
+          # hand it to setup-node. A moving devShell nodejs would split the two,
+          # so the shell refuses to build unless they agree.
+          checkedNodejs = assert pkgs.nodejs.version == nodeVersion; pkgs.nodejs;
           fuzzRust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default);
           adocweave-fuzz = pkgs.writeShellScriptBin "adocweave-fuzz" ''
             export PATH=${fuzzRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH
@@ -195,7 +200,7 @@
             gnutar
             jq
             lld
-            nodejs
+            checkedNodejs
             typescript
             ripgrep
             stdenv.cc
@@ -273,7 +278,7 @@
           };
           html5 = pkgs.mkShell {
             packages = [
-              pkgs.nodejs
+              checkedNodejs
               pkgs.validator-nu
             ];
             ADOCWEAVE_HTML_VALIDATOR = "${pkgs.validator-nu}/bin/vnu";

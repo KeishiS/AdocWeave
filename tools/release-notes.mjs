@@ -13,6 +13,14 @@ const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROO
 export { RELEASE_NOTES_VERSION };
 export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
+// The release manifest schema version this release train started from.
+//
+// An earlier release shipped notes announcing a manifest change that had not
+// been made: the same body stated one schema version in one line and a
+// different transition in another. Deriving both numbers from the manifest
+// keeps a sentence from outliving the change it describes.
+export const PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION = 3;
+
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## 対応環境",
   "## 公開契約と破壊的変更",
@@ -39,7 +47,7 @@ const contractNotes = [
   "挙動の変更：``include``と``ifeval``のdirectiveが``\\{name}``をエスケープとして読みます。以前は属性として展開していました。",
   "挙動の変更：``resources.max-files``の上限が、macOSとWindowsでも読み込み経路に適用されます。以前はLinuxだけでした。",
   "``adocweave_config::ProjectScopeId``を追加しました。CLIとLanguage Serverが同じ型でプロジェクト範囲を識別します。",
-  "release manifestへ``nodeVersion``を追加し、schema versionを3から4へ更新しました。",
+  `release manifestへ\`\`nodeVersion\`\`を追加し、schema versionを${PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION}から${manifest.schemaVersion}へ更新しました。Nixを使えないrunnerも、この値でNode.jsを選びます。`,
   "公開Rust APIのそのほかの型、WASM protocol、CLI引数、Language Server protocolおよび設定schemaはv0.24.0から変更していません。",
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
@@ -49,7 +57,7 @@ const migrationNotes = [
   "``javascript``または``vbscript``を許可schemeへ加えていた場合、そのURLは出力されなくなります。これらのURLをHTMLへ出したい場合、AdocWeaveは対応しません。",
   "``\\{name}``をdirectiveの中で属性として展開させていた場合、その記法は文字列``{name}``になります。属性として展開するには``\\``を外してください。",
   "macOSまたはWindowsで``resources.max-files``を超える数のファイルを読んでいた場合、``local-target-limit-exceeded``になります。上限を上げるか、対象を絞ってください。Linuxでは以前から同じ動作です。",
-  "release manifestを機械的に読んでいる場合は、``schemaVersion``が4になり``nodeVersion``が加わります。",
+  `release manifestを機械的に読んでいる場合は、\`\`schemaVersion\`\`が${manifest.schemaVersion}になり\`\`nodeVersion\`\`が加わります。`,
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。`,
 ];
 
