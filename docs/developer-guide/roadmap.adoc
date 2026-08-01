@@ -13,13 +13,9 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 実装の振る舞いを、上位のテストを通してではなく、それぞれの境界で固定できていない箇所があります。
 
 * https://github.com/KeishiS/adocweave/issues/362[単体テストのない実装モジュールを減らす]
-* https://github.com/KeishiS/adocweave/issues/361[リポジトリ規約の検査を専用クレートへ移す]
 
 単体テストの追加はモジュールごとに別のPull Requestとします。既存の振る舞いを読み取って固定する
 作業のため、まとめると差分が大きく、reviewで正しさを確かめられません。
-
-規約の検査はコアライブラリのtestに置かれており、リポジトリのファイル配置に依存しています。
-``cargo test -p adocweave``を実行する人は、構文解析のtestを期待して文書の検査も走らせています。
 
 == 文書の用語統一
 

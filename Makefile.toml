@@ -769,7 +769,7 @@ command = "cargo"
 args = [
   "test",
   "-p",
-  "adocweave",
+  "adocweave-governance",
   "--test",
   "repository_governance",
   "tracked_adoc_corpus_is_lossless_and_has_valid_ranges",
@@ -778,7 +778,7 @@ args = [
 [tasks.docs-lint]
 description = "Reject unexpected diagnostics in normative documents and abnormal fixtures"
 command = "cargo"
-args = ["test", "-p", "adocweave", "--test", "repository_governance"]
+args = ["test", "-p", "adocweave-governance", "--test", "repository_governance"]
 
 [tasks.build]
 description = "Build all workspace targets and features"
