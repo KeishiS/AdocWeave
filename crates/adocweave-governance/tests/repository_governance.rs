@@ -545,7 +545,12 @@ fn roadmap_uses_unique_github_issue_urls() {
     }
     assert!(!numbers.is_empty(), "roadmap has no GitHub Issues");
 
-    let expected = ["33", "34", "82", "83", "84", "86", "310", "362"]
+    // This list and the roadmap are both written by hand, so a closed Issue can
+    // sit in the roadmap until someone updates both. The check catches an Issue
+    // added to one and not the other; it cannot tell that an Issue is closed,
+    // because a test may not reach GitHub. Update this list in the same change
+    // that closes an Issue.
+    let expected = ["33", "34", "82", "83", "84", "86", "310", "370"]
         .into_iter()
         .map(str::to_owned)
         .collect();
