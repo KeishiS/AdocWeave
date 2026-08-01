@@ -10,7 +10,8 @@
 * ``worker/index.mjs``と``worker/index.d.mts``：frontend向けの公開ES module入口と型定義
 * `worker/client.mjs`、`worker/controller.mjs`、`worker/worker.mjs`：最新generationだけを採用する内部実装
 * `worker/contracts.mjs`：公開パッケージ版
-* ``worker/protocol.generated.mjs``と``worker/protocol.generated.d.mts``：schema 6の生成済み公開型と版数
+* ``worker/protocol.generated.mjs``と``worker/protocol.generated.d.mts``：生成済みの公開型と、
+その版数を表す``PROTOCOL_SCHEMA_VERSION``
 * `THIRD_PARTY_NOTICES.adoc`：rootとZedのlockfileから生成したthird-party package一覧
 
 == 最小例
@@ -31,10 +32,10 @@ preview.textContent = result.html;
 projectionを一つの結果として返します。``result.result``は存在せず、すべてのWASM productを
 ``result.projection``のように結果直下から参照します。要求しなかった``projection``は``null``、
 要求しなかった配列productは空配列です。
-schema 6では、WASM adapterがcoreから受け取るprojection JSONを、入れ子のobject（nested object）や
-種類を示すfieldで形が変わるtagged unionも含むすべてのobject境界で厳格に検証します。
+WASM adapterがcoreから受け取るprojection JSONは、入れ子のobject（nested object）や
+種類を示すfieldで形が変わるtagged unionも含むすべてのobject境界で厳格に検証されます。
 内部の取り決めにないfieldを検出した場合は処理を失敗させます。利用側はbindings、型定義およびfixtureを
-schema 6から再生成し、保存済みの出力をschemaのバージョンで区別してください。
+同梱の生成物から作り直し、保存済みの出力を``PROTOCOL_SCHEMA_VERSION``で区別してください。
 WASM結果の``packageVersion``がこのBrowser packageのバージョンと一致しない場合は、
 結果を採用せず、解析Promiseを``unsupported-package-version``でrejectします。現在のgenerationでは、
 Worker応答の``version``が解析要求の``version``と一致しない場合も応答を採用せず、解析Promiseを

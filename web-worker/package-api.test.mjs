@@ -726,3 +726,58 @@ function responseEnvelope(version, generation, packageVersion, html) {
 function errorWithCode(code) {
   return (error) => error instanceof AdocWeaveClientError && error.code === code;
 }
+
+test("公開する判定用unionは実行時の判定集合と一致する", async () => {
+  // 判定集合と公開unionは別々の手書きです。実行時にだけ足された符号は、
+  // 型ガードを通した利用者から見えません。分岐へ書くと型errorになり、
+  // 書かないまま網羅したつもりになります。wasm-trappedがその状態でした。
+  const client = await readFile(new URL("./client.mjs", import.meta.url), "utf8");
+  const runtimeBlock = client.match(
+    /const LIFECYCLE_ERROR_CODES = new Set\(\[([\s\S]*?)\]\)/,
+  );
+  assert.ok(runtimeBlock, "実行時の判定集合を読み取れません");
+  const runtime = [...runtimeBlock[1].matchAll(/"([a-z-]+)"/g)].map((match) => match[1]).sort();
+
+  const types = await readFile(new URL("./index.d.mts", import.meta.url), "utf8");
+  const typeBlock = types.match(
+    /export type AdocWeaveClientLifecycleErrorCode =([\s\S]*?);/,
+  );
+  assert.ok(typeBlock, "公開unionを読み取れません");
+  const declared = [...typeBlock[1].matchAll(/"([a-z-]+)"/g)].map((match) => match[1]).sort();
+
+  assert.notEqual(runtime.length, 0);
+  assert.deepEqual(declared, runtime);
+});
+
+test("公開unionのすべての符号を型ガードが受け入れる", async () => {
+  const types = await readFile(new URL("./index.d.mts", import.meta.url), "utf8");
+  const typeBlock = types.match(
+    /export type AdocWeaveClientLifecycleErrorCode =([\s\S]*?);/,
+  );
+  const declared = [...typeBlock[1].matchAll(/"([a-z-]+)"/g)].map((match) => match[1]);
+
+  for (const code of declared) {
+    assert.equal(
+      isAdocWeaveClientLifecycleError(new AdocWeaveClientError({ code, message: code })),
+      true,
+      code,
+    );
+  }
+  assert.equal(
+    isAdocWeaveClientLifecycleError(
+      new AdocWeaveClientError({ code: "not-a-lifecycle-code", message: "" }),
+    ),
+    false,
+  );
+});
+
+test("配布READMEはschema versionの番号を転記しない", async () => {
+  // READMEはbrowser packageへ同梱されます。番号を本文へ書くと正本の更新から
+  // 取り残され、配布物が誤った版数を案内します。実際にschema 6と案内したまま
+  // 正本が9になっていました。番号は生成物のPROTOCOL_SCHEMA_VERSIONが持ちます。
+  const readme = await readFile(new URL("./README.adoc", import.meta.url), "utf8");
+  const transcribed = [...readme.matchAll(/schema\s*(?:version)?\s*[0-9]+/gi)].map(
+    (match) => match[0],
+  );
+  assert.deepEqual(transcribed, [], `READMEへ転記されたschema version: ${transcribed}`);
+});
