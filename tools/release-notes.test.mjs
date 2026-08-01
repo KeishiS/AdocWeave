@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   PREVIOUS_RELEASE_MANIFEST_SCHEMA_VERSION,
+  PREVIOUS_RELEASE_VERSION,
   RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_VERSION,
   buildReleaseNotes,
@@ -15,6 +16,12 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
+  assert.match(
+    notes,
+    new RegExp(`v${PREVIOUS_RELEASE_VERSION.replaceAll(".", "\\.")}のRelease Notesで設定schemaに変更がないと案内していた誤り`),
+  );
+  assert.match(notes, /``resources\.roots``と``local-targets\.project-root``へ相対パスの制約/);
+  assert.match(notes, /``local-targets\.enabled``が``true``の場合は``project-root``を必須/);
   assert.match(notes, /属性名の大文字と小文字を区別しなくなりました/);
   assert.match(notes, /上限を重複して消費しなくなりました/);
   assert.match(notes, /``wasm-trapped``を追加しました/);
@@ -35,7 +42,8 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /挙動の変更：``ifdef``/);
   assert.match(notes, /挙動の変更：存在しないパス/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /設定の移行は不要です/);
+  assert.match(notes, /実行時に受理されていた設定の移行は不要です/);
+  assert.doesNotMatch(notes, /設定schemaはv0\.27\.1から変更していません/);
   assert.match(notes, /小文字の綴りで書いた文書の結果は変わりません/);
   assert.match(notes, /``wasm-trapped``の分岐を加えてください/);
   assert.match(notes, /``schemaVersion``は4のままです/);

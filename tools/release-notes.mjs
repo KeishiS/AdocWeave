@@ -13,6 +13,16 @@ const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROO
 export { RELEASE_NOTES_VERSION };
 export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
+const releaseVersionParts = RELEASE_NOTES_VERSION.split(".").map(Number);
+if (releaseVersionParts.length !== 3 || releaseVersionParts.some((part) => !Number.isInteger(part))) {
+  throw new Error(`Release NotesのversionがSemVerではありません：${RELEASE_NOTES_VERSION}`);
+}
+const [releaseMajor, releaseMinor, releasePatch] = releaseVersionParts;
+if (releasePatch < 1) {
+  throw new Error("Release Notesの訂正対象となる直前のpatch版がありません");
+}
+export const PREVIOUS_RELEASE_VERSION = `${releaseMajor}.${releaseMinor}.${releasePatch - 1}`;
+
 // The release manifest schema version the previous stable release shipped.
 //
 // An earlier release shipped notes announcing a manifest change that had not
@@ -37,6 +47,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
+  `v${PREVIOUS_RELEASE_VERSION}のRelease Notesで設定schemaに変更がないと案内していた誤りを訂正しました。実際には\`\`resources.roots\`\`と\`\`local-targets.project-root\`\`へ相対パスの制約を加え、\`\`local-targets.enabled\`\`が\`\`true\`\`の場合は\`\`project-root\`\`を必須にしていました。実行時の設定検査に変更はありません。`,
   "前処理のdirectiveが属性名の大文字と小文字を区別しなくなりました。AsciiDocの属性名は大文字と小文字を区別しませんが、``ifdef``、``ifndef``、``ifeval``および``include``は書かれた名前をそのまま探しており、小文字の綴りだけが一致していました。``Web``という属性を渡した利用者が``ifdef::Web[]``と書いても成立せず、同じ文書の本文にある``{WEB}``は解決するという食い違いが起きていました。",
   "存在しないファイルを繰り返し参照しても、調べられるパス数の上限を重複して消費しなくなりました。読み取りの失敗を記録していなかったため、同じ欠落パスを二回読むと上限を二回消費し、次の実在するファイルが上限超過で読めませんでした。",
   "Browser packageの型定義に``wasm-trapped``を追加しました。実行時の判定にはこの符号が含まれており、型定義だけが欠けていたため、型で絞り込んだあとに網羅的な分岐を書けませんでした。同梱するREADMEが古いschema versionを案内していた点も直しました。",
@@ -49,7 +60,7 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  "公開Rust API、WASM protocol、公開projection、CLI引数、Language Server protocolおよび設定schemaはv0.27.1から変更していません。破壊的変更はありません。",
+  `公開契約に破壊的変更はありません。v${PREVIOUS_RELEASE_VERSION}では、設定schemaの\`\`resources.roots\`\`と\`\`local-targets.project-root\`\`へ相対パスの制約を加え、\`\`local-targets.enabled\`\`が\`\`true\`\`の場合は\`\`project-root\`\`を必須にしていました。これらは以前から実行時に拒否していた設定をschemaでも拒否する変更です。`,
   "Browser packageの``AdocWeaveClientLifecycleErrorCode``へ``wasm-trapped``を加えました。この符号は以前から実行時に返っており、型定義だけが実態を表していませんでした。この列挙を網羅的に扱っているTypeScriptの利用側は、分岐の追加が必要です。",
   "挙動の変更：``ifdef``、``ifndef``、``ifeval``および``include``が、属性名の大文字と小文字を区別しなくなります。これまで成立しなかった大文字を含む綴りが成立します。小文字の綴りの結果は変わりません。",
   "挙動の変更：存在しないパスを繰り返し参照しても、調べられるパス数の上限を一度しか消費しません。異なる欠落パスは、これまでどおりそれぞれ消費します。",
@@ -57,7 +68,7 @@ const contractNotes = [
 ];
 
 const migrationNotes = [
-  "設定の移行は不要です。診断code、終了コードおよび設定schemaは変わりません。",
+  `実行時に受理されていた設定の移行は不要です。絶対パス、親ディレクトリへ移動する\`\`..\`\`、または\`\`project-root\`\`を省略した有効な\`\`local-targets\`\`は以前から実行時に拒否していました。v${PREVIOUS_RELEASE_VERSION}からはエディターなどのschema検査でも拒否します。`,
   "大文字を含む綴りでdirectiveの属性名を書いた文書は、これまで条件が成立しませんでした。このreleaseからは成立するため、結果が変わります。小文字の綴りで書いた文書の結果は変わりません。",
   "存在しないパスを繰り返し参照する文書では、上限超過にならず解析が進みます。上限超過を前提にしていた利用側は、期待する結果を確認してください。",
   "TypeScriptで``AdocWeaveClientLifecycleErrorCode``を網羅的に扱っている場合は、``wasm-trapped``の分岐を加えてください。実行時にはこれまでもこの符号が返っており、分岐の欠落は型では現れていませんでした。",
