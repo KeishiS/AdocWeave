@@ -81,7 +81,7 @@ Mapとsetは規範順に並べるため、挿入順は結果へ影響しませ�
 設定から同じ展開結果を生成します。
 
 WASMの解析requestでincludeを展開する場合は、``preprocess.resources``へ取得済みresourceを、
-``preprocess.options``へ前処理設定を指定します。``preprocess``を省略した場合は入力sourceをそのまま解析し、
+``preprocess.options``へ前処理設定を指定します。``preprocess``を省略した場合は入力のソースをそのまま解析し、
 暗黙のresource取得やinclude展開を行いません。
 
 文書外属性は``AnalysisOptions.attributes``、WASMでは``analysisOptions.attributes``へ指定します。
@@ -100,9 +100,9 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 ``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
 
-Native側のディレクトリ列挙とfile読込は``LocalFilesystemSession``を経由します。このsessionは許可したrootごとの
-filesystem adapter、symlink判定および全rootで共有するfile数・byte数の上限を所有します。初期走査では
-``.adoc``の通常file候補を決定的な順序で列挙します。Language Serverは各候補に最も近い
+Native側のディレクトリ列挙とファイル読込は``LocalFilesystemSession``を経由します。このsessionは許可したrootごとの
+filesystem adapter、symlink判定および全rootで共有するファイル数・byte数の上限を所有します。初期走査では
+``.adoc``の通常ファイル候補を決定的な順序で列挙します。Language Serverは各候補に最も近い
 ``.adocweave.toml``を解決してから、その設定の読込上限を持つsessionで本文を読みます。呼出側はpathから
 公開用の論理IDを割り当てます。個別読込では
 呼出側が``LogicalSourceId``と絶対pathを同時に渡します。どちらの読込結果も
@@ -115,8 +115,8 @@ Linuxでは、CLIのincludeとLanguage Serverのワークスペース走査・�
 ``adocweave-workspace``はファイルシステムへアクセスせず、検証済みの論理IDと本文を取り込みます。
 macOSとWindowsでは``StaticSnapshotOnly``を返し、同時に書き換えられる
 ワークスペースをsecurity境界として扱いません。
-Language Serverは初回走査とfile変更通知で、解決したproject設定ごとのsessionを共有します。変更通知では
-本文キャッシュを使用せずに対象を再度openしますが、走査から継続するfile数・byte数の上限は初期化しません。
+Language Serverは初回走査とファイル変更通知で、解決したproject設定ごとのsessionを共有します。変更通知では
+本文キャッシュを使用せずに対象を再度openしますが、走査から継続するファイル数・byte数の上限は初期化しません。
 resourceを削除した場合は、そのprojectの読込課金と保持課金を解放します。
 projectの識別には設定pathだけでなくworkspace rootも含めます。設定を持たない複数のworkspace rootが
 同じ既定budgetを共有することはありません。設定の新設または削除でresourceのprojectが変わる場合は、
@@ -143,19 +143,19 @@ CLIの複数path処理は、全入力のproject設定を本文読込前に解決
 nested projectのresourceをroot文書のplanで課金します。
 
 workspace rootの再読込は、新しいfilesystem session、plan、保持予算およびWorkspaceを一時状態へ構築し、
-全て成功した後に置き換えます。``ConfigErrorCode::ReadFailed``による一時的な設定fileの読込失敗だけは、
+全て成功した後に置き換えます。``ConfigErrorCode::ReadFailed``による一時的な設定ファイルの読込失敗だけは、
 直前の正常なWorkspace snapshotとdocument viewを保持します。構文、schemaまたは設定値が不正なproject設定や、
 有効な設定の厳格化によって既存resourceを受け入れられない場合は、空のtrusted stateへ移行します。
 旧planまたは既定値へfallbackせず、open documentを再解析して``workspace-input-error``を設定し、
 古いdocument viewを破棄します。それ以外の通常のproject移行でdisk、overlay、保持予算および解析rootの
 いずれかを更新できない場合は、同じ操作に含まれる全状態を更新前へ戻します。
-初回読込後にopen documentを戻す段階でも、設定fileの読込失敗は同じ分類を維持します。
+初回読込後にopen documentを戻す段階でも、設定ファイルの読込失敗は同じ分類を維持します。
 ``didOpen``と再読込時のopen documentは同じresource root検査を通り、許可範囲外のURIは
 DocumentStore、Workspace、保持予算およびgenerationを変更せずに拒否します。
 
 複数rootは独立したファイルシステム境界です。あるroot内のsymlinkが別の許可済みrootを指す場合も、
-読込開始時に選んだrootから外へ移動するため拒否します。同じfileを両方のrootから参照する必要がある場合は、
-symlinkではなく対象fileが属するroot以下の絶対pathを指定します。
+読込開始時に選んだrootから外へ移動するため拒否します。同じファイルを両方のrootから参照する必要がある場合は、
+symlinkではなく対象ファイルが属するroot以下の絶対pathを指定します。
 
 ``base_uri``はroot文書の相対targetへ前置する論理的なsnapshot keyであり、実在するpathを意味しません。
 Include先の相対targetは、そのresource keyの親を基準に解決します。取得方法、キャッシュ、認証、timeout、
