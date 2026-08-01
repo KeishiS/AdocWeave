@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+
+import { validSha512Integrity } from "./verify-vscode-dependencies.mjs";
 
 const lock = JSON.parse(readFileSync(new URL("../editors/vscode/package-lock.json", import.meta.url)));
 const recorded = JSON.parse(
@@ -20,12 +23,29 @@ test("ビルド用依存も取得元とintegrityを満たす", () => {
     .filter(
       ([, entry]) =>
         typeof entry.integrity !== "string" ||
-        !entry.integrity.startsWith("sha512-") ||
+        !validSha512Integrity(entry.integrity) ||
         typeof entry.resolved !== "string" ||
         !entry.resolved.startsWith("https://registry.npmjs.org/"),
     )
     .map(([path]) => path);
   assert.deepEqual(violations, []);
+});
+
+test("integrityは正しいBase64の64 byte SHA-512 digestだけを受理する", () => {
+  const digest = Buffer.alloc(64, 0xa5).toString("base64");
+  assert.equal(validSha512Integrity(`sha512-${digest}`), true);
+
+  const malformed = [
+    "sha512-",
+    "sha512-!!!!",
+    `sha512-${Buffer.alloc(63, 0xa5).toString("base64")}`,
+    `sha512-${digest.slice(0, -2)}`,
+    `sha512-${digest.slice(0, -2)}..`,
+    `sha256-${digest}`,
+  ];
+  for (const integrity of malformed) {
+    assert.equal(validSha512Integrity(integrity), false, integrity);
+  }
 });
 
 test("ビルド用依存のライセンス目録は実際と一致する", () => {
