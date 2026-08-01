@@ -473,7 +473,7 @@ impl adocweave::CancellationCheck for NeverCancelled {
 pub struct Workspace {
     generation: Generation,
     limits: WorkspaceLimits,
-    roots: BTreeSet<ResourceId>,
+    roots: Arc<BTreeSet<ResourceId>>,
     disk: BTreeMap<ResourceId, Resource>,
     overlays: BTreeMap<ResourceId, Resource>,
     retained_resource_count: usize,
@@ -499,7 +499,7 @@ impl Workspace {
         Self {
             generation,
             limits,
-            roots: BTreeSet::new(),
+            roots: Arc::default(),
             disk: BTreeMap::new(),
             overlays: BTreeMap::new(),
             retained_resource_count: 0,
@@ -538,7 +538,7 @@ impl Workspace {
                 "root limit exceeded",
             ));
         }
-        if self.roots.insert(id) {
+        if Arc::make_mut(&mut self.roots).insert(id) {
             self.generation = self.generation.next();
         }
         Ok(())
@@ -546,7 +546,7 @@ impl Workspace {
 
     /// Removes an analysis root without removing its resource.
     pub fn unregister_root(&mut self, id: &ResourceId) {
-        if self.roots.remove(id) {
+        if Arc::make_mut(&mut self.roots).remove(id) {
             self.generation = self.generation.next();
         }
     }
@@ -643,7 +643,7 @@ impl Workspace {
     pub fn snapshot(&self) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
             generation: self.generation,
-            roots: self.roots.clone(),
+            roots: Arc::clone(&self.roots),
             resources: Arc::clone(&self.effective),
         }
     }
@@ -657,19 +657,39 @@ impl Workspace {
         &self,
         mut retain: impl FnMut(&ResourceId, &Resource) -> Result<bool, E>,
     ) -> Result<WorkspaceSnapshot, E> {
+        // A Language Server rebuilds this on every keystroke, and the usual
+        // answer is that every resource stays. Copying the whole map to say so
+        // made the cost of one keypress grow with the size of the workspace, so
+        // the unfiltered answer shares the state it was built from instead.
+        // `retain` may charge a budget, so it runs exactly once per resource.
+        let mut kept = Vec::with_capacity(self.effective.len());
+        let mut excluded = false;
+        for (id, resource) in self.effective.iter() {
+            let retained = retain(id, resource)?;
+            excluded |= !retained;
+            kept.push(retained);
+        }
+        if !excluded {
+            return Ok(WorkspaceSnapshot {
+                generation: self.generation,
+                roots: Arc::clone(&self.roots),
+                resources: Arc::clone(&self.effective),
+            });
+        }
         let mut roots = BTreeSet::new();
         let mut resources = BTreeMap::new();
-        for (id, resource) in self.effective.iter() {
-            if retain(id, resource)? {
-                if self.roots.contains(id) {
-                    roots.insert(id.clone());
-                }
-                resources.insert(id.clone(), resource.clone());
+        for ((id, resource), retained) in self.effective.iter().zip(kept) {
+            if !retained {
+                continue;
             }
+            if self.roots.contains(id) {
+                roots.insert(id.clone());
+            }
+            resources.insert(id.clone(), resource.clone());
         }
         Ok(WorkspaceSnapshot {
             generation: self.generation,
-            roots,
+            roots: Arc::new(roots),
             resources: Arc::new(resources),
         })
     }
@@ -786,7 +806,7 @@ impl Workspace {
             Arc::make_mut(&mut self.effective).insert(id.clone(), resource);
         } else {
             Arc::make_mut(&mut self.effective).remove(&id);
-            self.roots.remove(&id);
+            Arc::make_mut(&mut self.roots).remove(&id);
             self.dependencies.remove(&id);
         }
         self.generation = self.generation.next();
@@ -800,7 +820,7 @@ impl Workspace {
     fn remove_effective(&mut self, id: &ResourceId) -> BTreeSet<ResourceId> {
         let affected = self.affected_roots(id);
         Arc::make_mut(&mut self.effective).remove(id);
-        self.roots.remove(id);
+        Arc::make_mut(&mut self.roots).remove(id);
         self.dependencies.remove(id);
         self.generation = self.generation.next();
         affected
@@ -811,7 +831,7 @@ impl Workspace {
 #[derive(Clone, Debug)]
 pub struct WorkspaceSnapshot {
     generation: Generation,
-    roots: BTreeSet<ResourceId>,
+    roots: Arc<BTreeSet<ResourceId>>,
     resources: Arc<BTreeMap<ResourceId, Resource>>,
 }
 
@@ -836,12 +856,20 @@ impl WorkspaceSnapshot {
     /// Registered roots excluded by the predicate are removed from the
     /// returned root set.
     pub fn filter_resources(&self, mut retain: impl FnMut(&ResourceId, &Resource) -> bool) -> Self {
+        let mut excluded = false;
         let resources: BTreeMap<ResourceId, Resource> = self
             .resources
             .iter()
-            .filter(|(id, resource)| retain(id, resource))
+            .filter(|(id, resource)| {
+                let retained = retain(id, resource);
+                excluded |= !retained;
+                retained
+            })
             .map(|(id, resource)| (id.clone(), resource.clone()))
             .collect();
+        if !excluded {
+            return self.clone();
+        }
         let roots = self
             .roots
             .iter()
@@ -850,7 +878,7 @@ impl WorkspaceSnapshot {
             .collect();
         Self {
             generation: self.generation,
-            roots,
+            roots: Arc::new(roots),
             resources: Arc::new(resources),
         }
     }
@@ -1655,6 +1683,52 @@ mod tests {
         assert_eq!(snapshot.resources().count(), 1);
         assert!(snapshot.get(&accepted).is_some());
         assert!(snapshot.get(&rejected).is_none());
-        assert_eq!(snapshot.roots, BTreeSet::from([accepted]));
+        assert_eq!(*snapshot.roots, BTreeSet::from([accepted]));
+    }
+
+    /// A snapshot that keeps everything shares the state it was built from.
+    ///
+    /// A Language Server rebuilds this on every keystroke. Copying the map to
+    /// say "all of it" made one keypress cost time proportional to the whole
+    /// workspace, so the identity of the shared allocation is the property
+    /// under test, not just the contents.
+    #[test]
+    fn an_unfiltered_snapshot_shares_workspace_state_instead_of_copying_it() {
+        let mut workspace = Workspace::default();
+        for index in 0..8 {
+            let resource = id(&format!("resource-{index}"));
+            workspace
+                .upsert_disk(resource.clone(), Revision::new(1), "text")
+                .expect("resource");
+            workspace.register_root(resource).expect("root");
+        }
+
+        let shared = workspace
+            .try_snapshot_resources::<std::convert::Infallible>(|_, _| Ok(true))
+            .expect("snapshot");
+        assert!(Arc::ptr_eq(&shared.resources, &workspace.effective));
+        assert!(Arc::ptr_eq(&shared.roots, &workspace.roots));
+        assert_eq!(shared.resources().count(), 8);
+
+        let filtered = workspace
+            .try_snapshot_resources::<std::convert::Infallible>(|id, _| {
+                Ok(id != &self::id("resource-0"))
+            })
+            .expect("snapshot");
+        assert!(!Arc::ptr_eq(&filtered.resources, &workspace.effective));
+        assert_eq!(filtered.resources().count(), 7);
+
+        // Filtering an already-shared snapshot keeps the same guarantee.
+        assert!(Arc::ptr_eq(
+            &shared.filter_resources(|_, _| true).resources,
+            &workspace.effective,
+        ));
+        assert_eq!(
+            shared
+                .filter_resources(|id, _| id != &self::id("resource-0"))
+                .resources()
+                .count(),
+            7,
+        );
     }
 }
