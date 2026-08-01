@@ -19,6 +19,7 @@ struct ReleaseManifest {
     schema_version: u16,
     package_version: String,
     rust_version: String,
+    node_version: String,
 }
 
 #[test]
@@ -189,9 +190,14 @@ fn release_package_version_is_explicit() {
     let manifest: ReleaseManifest =
         serde_json::from_str(include_str!("../../../release-manifest.json"))
             .expect("valid release manifest");
-    assert_eq!(manifest.schema_version, 3);
+    assert_eq!(manifest.schema_version, 4);
     assert_eq!(manifest.package_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(manifest.rust_version, env!("CARGO_PKG_RUST_VERSION"));
+    assert!(
+        manifest.node_version.split('.').count() == 3,
+        "node version must be exact, found {}",
+        manifest.node_version,
+    );
 }
 
 /// Builds the expected file contents of one case from the current implementation.

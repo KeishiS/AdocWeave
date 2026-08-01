@@ -27,6 +27,34 @@ pub(crate) fn formatting(
         .collect()
 }
 
+/// The anchor definition a rename started at this position would change.
+///
+/// `prepareRename` and `rename` must agree on which positions can be renamed:
+/// an editor that is told a position is renameable and then receives no edit
+/// looks broken. Both answers come from here, so they cannot diverge.
+pub(crate) fn renameable_anchor(
+    analysis: &Analysis,
+    position: lsp::Position,
+    encoding: PositionEncoding,
+) -> Result<Option<(ReferenceKey, lsp::Range, String)>, String> {
+    let offset = request_offset(analysis.source_document(), position, encoding)?;
+    let Some(target) = analysis
+        .reference_targets()
+        .iter()
+        .find(|target| range_contains_offset(target.id_range, offset))
+    else {
+        return Ok(None);
+    };
+    let range = range_to_lsp(target.id_range, analysis.source_document(), encoding)?;
+    Ok(Some((
+        ReferenceKey::Local {
+            anchor: target.id.clone(),
+        },
+        range,
+        target.id.clone(),
+    )))
+}
+
 pub(crate) fn rename_target(
     analysis: &Analysis,
     position: lsp::Position,
@@ -36,14 +64,7 @@ pub(crate) fn rename_target(
     if !valid_anchor_name(new_name) {
         return Ok(None);
     }
-    let offset = request_offset(analysis.source_document(), position, encoding)?;
-    Ok(analysis
-        .reference_targets()
-        .iter()
-        .find(|target| range_contains_offset(target.id_range, offset))
-        .map(|target| ReferenceKey::Local {
-            anchor: target.id.clone(),
-        }))
+    Ok(renameable_anchor(analysis, position, encoding)?.map(|(key, _, _)| key))
 }
 
 pub(crate) fn rename_edit(

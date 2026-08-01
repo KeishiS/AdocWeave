@@ -14,6 +14,10 @@ fn initialize_negotiates_encoding_and_advertises_existing_features() {
     assert_eq!(value["capabilities"]["referencesProvider"], true);
     assert!(value["capabilities"]["documentLinkProvider"].is_object());
     assert!(value["capabilities"]["semanticTokensProvider"].is_object());
+    assert_eq!(
+        value["capabilities"]["renameProvider"]["prepareProvider"],
+        true
+    );
     assert_eq!(value["serverInfo"]["name"], "adocweave-lsp");
 }
 
@@ -32,6 +36,8 @@ fn minimal_client_never_receives_capability_gated_response_shapes() {
     assert!(capabilities.get("codeActionProvider").is_none());
     assert!(capabilities.get("semanticTokensProvider").is_none());
     assert!(capabilities.get("workspace").is_none());
+    // A client that cannot ask before renaming is not told to ask.
+    assert_eq!(capabilities["renameProvider"], true);
 
     open(
         &mut service,

@@ -35,6 +35,7 @@ struct ClientProfile {
     diagnostic_version: bool,
     document_link_tooltip: bool,
     semantic_tokens_full: bool,
+    rename_prepare_support: bool,
     workspace_folders: bool,
     watched_files_dynamic_registration: bool,
 }
@@ -50,6 +51,7 @@ impl Default for ClientProfile {
             diagnostic_version: true,
             document_link_tooltip: true,
             semantic_tokens_full: true,
+            rename_prepare_support: true,
             workspace_folders: false,
             watched_files_dynamic_registration: false,
         }
@@ -124,6 +126,10 @@ impl ClientProfile {
                             .token_types
                             .contains(&lsp::SemanticTokenType::VARIABLE)
                 }),
+            rename_prepare_support: text_document
+                .and_then(|capabilities| capabilities.rename.as_ref())
+                .and_then(|capabilities| capabilities.prepare_support)
+                == Some(true),
             workspace_folders: workspace.and_then(|capabilities| capabilities.workspace_folders)
                 == Some(true),
             watched_files_dynamic_registration: workspace
@@ -335,7 +341,18 @@ impl LanguageService {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                 definition_provider: Some(lsp::OneOf::Left(true)),
                 references_provider: Some(lsp::OneOf::Left(true)),
-                rename_provider: Some(lsp::OneOf::Left(true)),
+                // Not every position holds a renameable anchor. Clients that
+                // support `prepareRename` are told so, and ask before starting
+                // a rename that would return no edit. Clients that do not keep
+                // the plain declaration and the behaviour they had before.
+                rename_provider: Some(if self.client.rename_prepare_support {
+                    lsp::OneOf::Right(lsp::RenameOptions {
+                        prepare_provider: Some(true),
+                        work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+                    })
+                } else {
+                    lsp::OneOf::Left(true)
+                }),
                 document_link_provider: Some(lsp::DocumentLinkOptions {
                     resolve_provider: Some(false),
                     work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
@@ -1074,6 +1091,32 @@ impl LanguageService {
             }
         }
         Ok(Some(result.fallback))
+    }
+
+    /// Answers whether a rename may start at this position.
+    ///
+    /// `None` tells the client the position cannot be renamed, so it reports
+    /// that instead of opening a rename the server would answer with nothing.
+    /// The anchor's current text becomes the placeholder the editor offers.
+    pub fn prepare_rename(
+        &self,
+        uri: &lsp::Url,
+        position: lsp::Position,
+    ) -> Result<Option<lsp::PrepareRenameResponse>, String> {
+        if !self.client.rename_prepare_support {
+            return Ok(None);
+        }
+        let Some(document) = self.documents.snapshot(uri.as_str()) else {
+            return Ok(None);
+        };
+        Ok(
+            editing::renameable_anchor(&document.analysis, position, self.position_encoding)?.map(
+                |(_, range, placeholder)| lsp::PrepareRenameResponse::RangeWithPlaceholder {
+                    range,
+                    placeholder,
+                },
+            ),
+        )
     }
 
     pub fn rename(

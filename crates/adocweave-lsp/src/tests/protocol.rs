@@ -158,6 +158,22 @@ async fn protocol_async_lsp_transport_runs_typed_lifecycle_and_features() {
             &mut client_write,
             &json!({
                 "jsonrpc":"2.0",
+                "id":20,
+                "method":"textDocument/prepareRename",
+                "params":{
+                    "textDocument":{"uri":"file:///typed.adoc"},
+                    "position":{"line":0,"character":3}
+                }
+            }),
+        )
+        .await;
+        let prepared = read_message(&mut client_read).await;
+        assert!(prepared["result"]["range"].is_object());
+        assert!(prepared["result"]["placeholder"].is_string());
+        write_message(
+            &mut client_write,
+            &json!({
+                "jsonrpc":"2.0",
                 "id":14,
                 "method":"textDocument/rename",
                 "params":{
