@@ -27,6 +27,29 @@ fn run_with_stdin(arguments: &[&str], input: &[u8]) -> Output {
         .expect("the adocweave binary should exit")
 }
 
+/// Reads the address `preview` bound, from the line it prints on startup.
+///
+/// Choosing a port by binding one, closing it and handing the number to
+/// `preview` leaves a gap in which any other process can take that port, and
+/// the test then fails for a reason that has nothing to do with what it checks.
+/// Passing `--port 0` closes the gap: the operating system assigns the port to
+/// `preview` itself, which never releases it, and reports which one it got.
+#[cfg(unix)]
+fn preview_address(stderr: &mut std::process::ChildStderr) -> std::net::SocketAddr {
+    use std::io::{BufRead, BufReader};
+
+    let mut line = String::new();
+    BufReader::new(stderr)
+        .read_line(&mut line)
+        .expect("preview startup line");
+    let address = line
+        .trim()
+        .strip_prefix("AdocWeave preview: http://")
+        .and_then(|rest| rest.strip_suffix('/'))
+        .unwrap_or_else(|| panic!("unexpected preview startup line: {line:?}"));
+    address.parse().expect("preview address")
+}
+
 #[cfg(unix)]
 fn try_preview_get(address: std::net::SocketAddr, path: &str) -> Option<String> {
     use std::io::Read;
@@ -462,28 +485,65 @@ fn multi_path_include_budget_is_shared_only_within_the_resolved_project() {
     );
 }
 
+/// `--port 0` lets the operating system choose, and preview says which it got.
+///
+/// Without this a caller has to pick a free port by binding one and closing it,
+/// which leaves a gap where another process can take that port. The tests here
+/// rely on the reported address, so it is checked directly rather than only
+/// through the tests that consume it.
 #[cfg(unix)]
 #[test]
-fn preview_sigterm_exits_cleanly_and_releases_the_listener() {
-    use std::net::{Ipv4Addr, TcpListener};
-
+fn preview_accepts_port_zero_and_reports_the_port_it_bound() {
     let directory = tempfile::tempdir().expect("tempdir");
     let document = directory.path().join("document.adoc");
-    std::fs::write(&document, "= SIGTERM readiness marker\n").expect("document");
-    let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
-    let address = reservation.local_addr().expect("address");
-    drop(reservation);
+    std::fs::write(&document, "= Chosen port\n").expect("document");
     let mut child = adocweave()
         .args([
             "preview",
             "--port",
-            &address.port().to_string(),
+            "0",
             document.to_str().expect("utf-8 path"),
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("preview");
+
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
+    assert_ne!(address.port(), 0, "the reported port must be the bound one");
+    assert!(address.ip().is_loopback());
+    assert!(preview_get(address, "/document").contains("Chosen port"));
+
+    // SAFETY: the process was spawned above and has not been reaped.
+    unsafe {
+        libc::kill(
+            i32::try_from(child.id()).expect("preview process id"),
+            libc::SIGTERM,
+        );
+    }
+    child.wait().expect("reap preview");
+}
+
+#[cfg(unix)]
+#[test]
+fn preview_sigterm_exits_cleanly_and_releases_the_listener() {
+    use std::net::TcpListener;
+
+    let directory = tempfile::tempdir().expect("tempdir");
+    let document = directory.path().join("document.adoc");
+    std::fs::write(&document, "= SIGTERM readiness marker\n").expect("document");
+    let mut child = adocweave()
+        .args([
+            "preview",
+            "--port",
+            "0",
+            document.to_str().expect("utf-8 path"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
     let Some(response) = try_preview_get(address, "/document") else {
         let status = child.try_wait().expect("preview status");
         if status.is_none() {
@@ -506,7 +566,6 @@ fn preview_sigterm_exits_cleanly_and_releases_the_listener() {
 #[cfg(unix)]
 #[test]
 fn preview_never_serves_an_include_through_an_outside_root_symlink() {
-    use std::net::{Ipv4Addr, TcpListener};
     use std::os::unix::fs::symlink;
     use std::time::Duration;
 
@@ -521,9 +580,6 @@ fn preview_never_serves_an_include_through_an_outside_root_symlink() {
     .expect("document");
     std::fs::write(include_dir.join("part.adoc"), "SAFE_ONE\n").expect("safe include");
     std::fs::write(outside.path().join("part.adoc"), "EXTERNAL_SECRET_BODY\n").expect("secret");
-    let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
-    let address = reservation.local_addr().expect("address");
-    drop(reservation);
     let mut child = adocweave()
         .current_dir(root.path())
         .args([
@@ -532,13 +588,14 @@ fn preview_never_serves_an_include_through_an_outside_root_symlink() {
             "--debounce-ms",
             "10",
             "--port",
-            &address.port().to_string(),
+            "0",
             "document.adoc",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
 
     assert!(preview_get(address, "/document").contains("SAFE_ONE"));
     std::fs::rename(&include_dir, root.path().join("parts-safe")).expect("move safe directory");
@@ -570,7 +627,6 @@ fn preview_never_serves_an_include_through_an_outside_root_symlink() {
 #[cfg(unix)]
 #[test]
 fn preview_non_privileged_child_recovers_after_include_permission_returns() {
-    use std::net::{Ipv4Addr, TcpListener};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::CommandExt;
     use std::time::Duration;
@@ -587,9 +643,6 @@ fn preview_non_privileged_child_recovers_after_include_permission_returns() {
         .expect("document mode");
     std::fs::set_permissions(&dependency, std::fs::Permissions::from_mode(0o644))
         .expect("include mode");
-    let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
-    let address = reservation.local_addr().expect("address");
-    drop(reservation);
     let mut command = adocweave();
     command
         .current_dir(root.path())
@@ -599,11 +652,11 @@ fn preview_non_privileged_child_recovers_after_include_permission_returns() {
             "--debounce-ms",
             "10",
             "--port",
-            &address.port().to_string(),
+            "0",
             "document.adoc",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     if running_as_root {
         // SAFETY: this runs in the forked child before exec and only drops privileges.
         unsafe {
@@ -616,6 +669,7 @@ fn preview_non_privileged_child_recovers_after_include_permission_returns() {
         }
     }
     let mut child = command.spawn().expect("non-privileged preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
 
     assert!(preview_get(address, "/document").contains("VISIBLE_ONE"));
     std::fs::set_permissions(&dependency, std::fs::Permissions::from_mode(0o000)).expect("deny");
@@ -660,15 +714,11 @@ fn preview_non_privileged_child_recovers_after_include_permission_returns() {
 #[cfg(unix)]
 #[test]
 fn preview_serves_and_recovers_from_an_initial_css_read_failure() {
-    use std::net::{Ipv4Addr, TcpListener};
     use std::time::Duration;
 
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("document.adoc"), "= Preview\n").expect("document");
     let css = root.path().join("preview.css");
-    let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
-    let address = reservation.local_addr().expect("address");
-    drop(reservation);
     let mut child = adocweave()
         .current_dir(root.path())
         .args([
@@ -678,13 +728,14 @@ fn preview_serves_and_recovers_from_an_initial_css_read_failure() {
             "--debounce-ms",
             "10",
             "--port",
-            &address.port().to_string(),
+            "0",
             "document.adoc",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
 
     assert!(preview_get(address, "/document").contains("Preview error"));
     assert!(child.try_wait().expect("child state").is_none());
@@ -704,15 +755,11 @@ fn preview_serves_and_recovers_from_an_initial_css_read_failure() {
 #[cfg(unix)]
 #[test]
 fn preview_serves_and_recovers_from_an_initial_include_read_failure() {
-    use std::net::{Ipv4Addr, TcpListener};
     use std::time::Duration;
 
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("document.adoc"), "include::part.adoc[]\n").expect("document");
     let include = root.path().join("part.adoc");
-    let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve port");
-    let address = reservation.local_addr().expect("address");
-    drop(reservation);
     let mut child = adocweave()
         .current_dir(root.path())
         .args([
@@ -721,13 +768,14 @@ fn preview_serves_and_recovers_from_an_initial_include_read_failure() {
             "--debounce-ms",
             "10",
             "--port",
-            &address.port().to_string(),
+            "0",
             "document.adoc",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("preview");
+    let address = preview_address(child.stderr.as_mut().expect("preview stderr"));
 
     assert!(preview_get(address, "/diagnostics").contains("missing"));
     assert!(child.try_wait().expect("child state").is_none());
