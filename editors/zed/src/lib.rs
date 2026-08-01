@@ -3,7 +3,6 @@ mod install;
 use install::{MANIFEST_NAME, REPOSITORY};
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -178,42 +177,44 @@ fn unique_operation_id() -> String {
 }
 
 struct InstallLock {
-    path: PathBuf,
-    owner: String,
+    directory: PathBuf,
+    owner: PathBuf,
 }
 
 impl InstallLock {
     fn acquire(path: &Path) -> Result<Self, String> {
+        let owner = path.join(format!(
+            "owner-{}-{}",
+            unix_timestamp()?,
+            unique_operation_id()
+        ));
         for attempt in 0..2 {
-            match OpenOptions::new().write(true).create_new(true).open(path) {
-                Ok(mut file) => {
-                    // The whole line is the owner token, so the value compared
-                    // before removing is exactly the value written here.
-                    let owner = format!("{} {}", unix_timestamp()?, unique_operation_id());
-                    if let Err(error) = writeln!(file, "{owner}") {
-                        drop(file);
-                        cleanup_file(path);
+            match fs::create_dir(path) {
+                Ok(()) => {
+                    // The owner is recorded by creating its final name. This
+                    // avoids publishing an empty or partially written owner
+                    // record that another process could mistake for stale.
+                    if let Err(error) = OpenOptions::new().write(true).create_new(true).open(&owner)
+                    {
+                        // The directory still prevents a successor from
+                        // acquiring the lock, so removing it cannot target a
+                        // successor created after this failed initialization.
+                        let _ = fs::remove_dir(path);
                         return Err(format!(
                             "failed to initialize the LSP installation lock: {error}"
                         ));
                     }
                     return Ok(Self {
-                        path: path.to_owned(),
-                        owner,
+                        directory: path.to_owned(),
+                        owner: owner.clone(),
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt == 0 => {
-                    let Some(owner) = lock_owner(path)? else {
+                    if !recover_stale_lock(path)? {
                         return Err(
                             "another AdocWeave LSP installation is already in progress".to_owned()
                         );
-                    };
-                    // Remove the lock only while it still holds the owner this
-                    // read saw. A download that outlives the stale age has its
-                    // lock taken over; without this check the two would also
-                    // delete each other's lock on the way out, and a third
-                    // installation would start alongside both.
-                    remove_lock_owned_by(path, &owner)?;
+                    }
                 }
                 Err(error) => {
                     return Err(format!(
@@ -228,11 +229,10 @@ impl InstallLock {
 
 impl Drop for InstallLock {
     fn drop(&mut self) {
-        // Releasing removes this lock, not whatever lock happens to sit at the
-        // path. A download that ran past the stale age no longer owns the file,
-        // and deleting it there would leave the installation that took over
-        // running without a lock.
-        let _ = remove_lock_owned_by(&self.path, &self.owner);
+        // Only the process that removes its exact owner record may remove the
+        // directory. A stale recovery that already removed this record makes
+        // this a no-op, so a successor's directory cannot be deleted.
+        let _ = remove_owned_lock(&self.directory, &self.owner);
     }
 }
 
@@ -251,38 +251,101 @@ fn unix_timestamp() -> Result<u64, String> {
         .map_err(|error| format!("system clock is before the Unix epoch: {error}"))
 }
 
-/// Reads the owner of a lock that has outlived the stale age.
-///
-/// `None` means the lock is still current and must be left alone. A lock whose
-/// contents cannot be read as a timestamp was written by a version that did not
-/// record one, so it is treated as stale and owned by its whole contents.
-fn lock_owner(path: &Path) -> Result<Option<String>, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|error| format!("failed to inspect the LSP installation lock: {error}"))?;
-    let trimmed = content.trim();
-    let (created, _) = trimmed.split_once(' ').unwrap_or((trimmed, ""));
-    let Ok(created) = created.parse::<u64>() else {
-        return Ok(Some(trimmed.to_owned()));
-    };
-    if unix_timestamp()?.saturating_sub(created) < STALE_LOCK_AGE.as_secs() {
-        return Ok(None);
+fn owner_timestamp(path: &Path) -> Option<u64> {
+    let name = path.file_name()?.to_str()?;
+    let (created, operation) = name.strip_prefix("owner-")?.split_once('-')?;
+    if operation.is_empty() {
+        return None;
     }
-    Ok(Some(trimmed.to_owned()))
+    created.parse().ok()
 }
 
-/// Removes a lock only while its contents still name the expected owner.
-///
-/// Reading and removing are two steps, so another installation can replace the
-/// file in between. Comparing the contents immediately before removing keeps a
-/// caller from deleting a lock that now belongs to someone else.
-fn remove_lock_owned_by(path: &Path, owner: &str) -> Result<(), String> {
-    match fs::read_to_string(path) {
-        Ok(content) if content.trim() == owner.trim() => fs::remove_file(path)
-            .map_err(|error| format!("failed to release the LSP installation lock: {error}")),
-        Ok(_) => Ok(()),
+fn recover_stale_lock(directory: &Path) -> Result<bool, String> {
+    let metadata = fs::metadata(directory)
+        .map_err(|error| format!("failed to inspect the LSP installation lock: {error}"))?;
+    // Earlier versions used a file at this path. It may still belong to a
+    // running process, and there is no atomic way to compare and remove that
+    // format, so leave it for its owner to release.
+    if !metadata.is_dir() {
+        return Ok(false);
+    }
+
+    let mut entries = fs::read_dir(directory)
+        .map_err(|error| format!("failed to inspect the LSP installation lock: {error}"))?;
+    let first = entries
+        .next()
+        .transpose()
+        .map_err(|error| format!("failed to inspect the LSP installation lock: {error}"))?;
+    let Some(owner) = first else {
+        // A fresh empty directory is an owner that is still being initialized.
+        // Only a directory left empty for the full stale interval is recoverable.
+        let Ok(modified) = metadata.modified() else {
+            return Ok(false);
+        };
+        let Ok(age) = SystemTime::now().duration_since(modified) else {
+            return Ok(false);
+        };
+        if age < STALE_LOCK_AGE {
+            return Ok(false);
+        }
+        return remove_empty_lock_directory(directory);
+    };
+    if entries.next().is_some() {
+        return Ok(false);
+    }
+    let owner = owner.path();
+    let Some(created) = owner_timestamp(&owner) else {
+        return Ok(false);
+    };
+    if unix_timestamp()?.saturating_sub(created) < STALE_LOCK_AGE.as_secs() {
+        return Ok(false);
+    }
+
+    match fs::remove_file(&owner) {
+        Ok(()) => remove_empty_lock_directory(directory),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "failed to recover the stale LSP installation lock: {error}"
+        )),
+    }
+}
+
+fn remove_empty_lock_directory(directory: &Path) -> Result<bool, String> {
+    match fs::remove_dir(directory) {
+        Ok(()) => Ok(true),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(format!(
+            "failed to recover the stale LSP installation lock: {error}"
+        )),
+    }
+}
+
+fn remove_owned_lock(directory: &Path, owner: &Path) -> Result<(), String> {
+    match fs::remove_file(owner) {
+        Ok(()) => match fs::remove_dir(directory) {
+            Ok(()) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(format!(
+                "failed to release the LSP installation lock: {error}"
+            )),
+        },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
-            "failed to inspect the LSP installation lock: {error}"
+            "failed to release the LSP installation lock: {error}"
         )),
     }
 }
@@ -310,6 +373,44 @@ fn path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier,
+    };
+    use std::thread;
+
+    fn concurrent_acquisition_count(path: PathBuf) -> usize {
+        const WORKERS: usize = 16;
+
+        let path = Arc::new(path);
+        let start = Arc::new(Barrier::new(WORKERS));
+        let attempted = Arc::new(AtomicUsize::new(0));
+        let acquired = Arc::new(AtomicUsize::new(0));
+        let mut workers = Vec::new();
+        for _ in 0..WORKERS {
+            let path = Arc::clone(&path);
+            let start = Arc::clone(&start);
+            let attempted = Arc::clone(&attempted);
+            let acquired = Arc::clone(&acquired);
+            workers.push(thread::spawn(move || {
+                start.wait();
+                let lock = InstallLock::acquire(&path).ok();
+                if lock.is_some() {
+                    acquired.fetch_add(1, Ordering::SeqCst);
+                }
+                attempted.fetch_add(1, Ordering::SeqCst);
+                while attempted.load(Ordering::SeqCst) != WORKERS {
+                    thread::yield_now();
+                }
+                drop(lock);
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        acquired.load(Ordering::SeqCst)
+    }
 
     #[test]
     fn failed_cache_commit_restores_the_previous_verified_directory() {
@@ -338,9 +439,41 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let path = root.join("install.lock");
         let first = InstallLock::acquire(&path).unwrap();
+        assert!(path.is_dir());
+        assert_eq!(fs::read_dir(&path).unwrap().count(), 1);
+        assert!(first.owner.is_file());
         assert!(InstallLock::acquire(&path).is_err());
         drop(first);
-        assert!(InstallLock::acquire(&path).is_ok());
+        assert!(!path.exists());
+        drop(InstallLock::acquire(&path).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_installations_have_exactly_one_owner() {
+        let root =
+            std::env::temp_dir().join(format!("adocweave-zed-race-{}", unique_operation_id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("install.lock");
+
+        assert_eq!(concurrent_acquisition_count(path.clone()), 1);
+        assert!(!path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_stale_recovery_has_exactly_one_owner() {
+        let root = std::env::temp_dir().join(format!(
+            "adocweave-zed-stale-race-{}",
+            unique_operation_id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("install.lock");
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("owner-0-abandoned"), []).unwrap();
+
+        assert_eq!(concurrent_acquisition_count(path.clone()), 1);
+        assert!(!path.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -352,7 +485,8 @@ mod tests {
         let cache = root.join("adocweave-lsp-0.16.0-x86_64-unknown-linux-musl");
         let path = lock_path(&cache);
         assert!(path.ends_with("adocweave-lsp-0.16.0-x86_64-unknown-linux-musl.lock"));
-        fs::write(&path, "0\n").unwrap();
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("owner-0-abandoned"), []).unwrap();
         let lock = InstallLock::acquire(&path).unwrap();
         assert!(path.exists());
         drop(lock);
@@ -370,10 +504,12 @@ mod tests {
 
         // The first installation runs past the stale age, so the second takes
         // the lock over.
-        fs::write(&path, "0\n").unwrap();
+        fs::create_dir(&path).unwrap();
+        let old_owner = path.join("owner-0-overtaken");
+        fs::write(&old_owner, []).unwrap();
         let overtaken = InstallLock {
-            path: path.clone(),
-            owner: "0".to_owned(),
+            directory: path.clone(),
+            owner: old_owner,
         };
         let successor = InstallLock::acquire(&path).unwrap();
 
@@ -390,24 +526,23 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// The recorded owner is what decides removal, not the path alone.
+    /// Removing an old owner must not remove a successor's directory.
     #[test]
-    fn a_lock_is_removed_only_by_the_owner_named_in_it() {
+    fn an_overtaken_owner_cannot_remove_its_successor() {
         let root =
             std::env::temp_dir().join(format!("adocweave-zed-token-{}", unique_operation_id()));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("install.lock");
-        fs::write(&path, "held by someone else\n").unwrap();
+        fs::create_dir(&path).unwrap();
+        let successor = path.join(format!("owner-{}-successor", unix_timestamp().unwrap()));
+        fs::write(&successor, []).unwrap();
 
-        remove_lock_owned_by(&path, "not the owner").unwrap();
+        remove_owned_lock(&path, &path.join("owner-0-predecessor")).unwrap();
         assert!(path.exists());
+        assert!(successor.exists());
 
-        remove_lock_owned_by(&path, "held by someone else").unwrap();
+        remove_owned_lock(&path, &successor).unwrap();
         assert!(!path.exists());
-
-        // Removing an absent lock is not a failure: the owner may have already
-        // released it.
-        remove_lock_owned_by(&path, "held by someone else").unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 }
