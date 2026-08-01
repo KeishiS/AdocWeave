@@ -31,7 +31,7 @@ Extension host testは固定バージョンの公式VS Codeを隔離したuser d
 References、Document Link、Rename、Semantic Tokens、UTF-16位置、include先の更新、連続編集後の古い結果の不採用、
 複数workspace folder、再起動および終了後のprocess残存を確認します。通常利用しているVS Code profileは使用しません。
 
-``test-vscode-release-package``は同じsourceからVSIXを2回構築し、byte列の一致、許可file一覧、license、
+``test-vscode-release-package``は同じソースからVSIXを2回構築し、byte列の一致、許可ファイル一覧、license、
 source mapと``node_modules``の不在、sizeおよび機械固有pathの不在を検査します。さらに、隔離したVS Codeへ
 VSIXを導入し、更新、以前のバージョンへのrollbackおよびuninstallを確認します。
 
@@ -47,7 +47,7 @@ npm run build --prefix editors/vscode
 ----
 
 . 空のprofileディレクトリを作り、VS Code CLIの``--extensionDevelopmentPath``でExtension Development Hostを
-  起動します。``code``は手元で使用するVS Codeの実行fileへ置き換えられます。
+  起動します。``code``は手元で使用するVS Codeの実行ファイルへ置き換えられます。
 +
 [source,console]
 ----
@@ -85,8 +85,8 @@ code \
 ``PATH``上の不一致は警告してmanaged binaryへ進みます。workspace scopeの明示pathは、
 そのワークスペースが信頼済みの場合だけ使用します。引数、環境変数、download先および任意commandは設定できません。
 
-Managed binaryは配布manifestのsource commit、バージョン、target、archive、実行file名、byte数およびSHA-256を
-検証します。ZIPは展開量を制限し、絶対path、drive prefix、``..``、大小文字衝突および重複実行fileを拒否します。
+Managed binaryは配布manifestの対象コミット、バージョン、target、archive、実行ファイル名、byte数およびSHA-256を
+検証します。ZIPは展開量を制限し、絶対path、drive prefix、``..``、大小文字衝突および重複する実行ファイルを拒否します。
 検証済みキャッシュはバージョン、targetおよびasset digestごとに分離し、起動時にbinary digestを再確認します。
 
 == 清掃

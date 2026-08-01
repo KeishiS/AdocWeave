@@ -3,7 +3,7 @@
 この文書では、リポジトリの作業treeからZed拡張とLanguage Serverを検証するための環境、
 操作手順および確認項目を定義します。公開Extension Galleryからの導入手順ではありません。
 
-Zedの開発拡張は次のfileを入口とします。
+Zedの開発拡張は次のファイルを入口とします。
 link:../../editors/zed/extension.toml[`editors/zed/extension.toml`]
 拡張はAsciiDoc用Tree-sitter grammar、inline grammarおよびhighlight／injection queryを提供します。
 開発手順ではworktreeの``PATH``から``adocweave-lsp``を探して起動するため、
@@ -113,7 +113,7 @@ AdocWeave Language ServerのRust parserではなく、Zedのsyntax highlighting�
 |===
 
 通常profileではextension関連状態もこのuser data配下に置かれます。一方、選択した
-``editors/zed``は開発sourceのままであり、``adocweave-lsp``はリポジトリの``target/debug``にあります。
+``editors/zed``は開発中のソースのままであり、``adocweave-lsp``はリポジトリの``target/debug``にあります。
 したがって、リポジトリを移動した場合や別shellからZedを再起動した場合は再導入または``PATH``の
 再設定が必要になります。
 
