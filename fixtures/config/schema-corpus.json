@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "comment": "設定の受理と拒否を、実装とJSON Schemaの両方へ同じ集合で問うためのコーパスです。crates/adocweave-config が実装側を、tools/config-schema.test.mjs がJSON Schema側を検査します。schemaOnlyAccepts が真の場合は、JSON Schemaでは表現できない制約であるため、schema側が受理しても失敗させません。",
+  "cases": [
+    {
+      "name": "最小の設定",
+      "config": { "schema-version": 1 },
+      "accepted": true
+    },
+    {
+      "name": "相対パスのresource root",
+      "config": { "schema-version": 1, "resources": { "roots": ["docs", "docs/api"] } },
+      "accepted": true
+    },
+    {
+      "name": "local targetsを無効にしたままproject-rootを書かない",
+      "config": { "schema-version": 1, "local-targets": { "enabled": false } },
+      "accepted": true
+    },
+    {
+      "name": "上限の大小関係が正しい",
+      "config": {
+        "schema-version": 1,
+        "resources": { "max-total-bytes": 1000, "max-resource-bytes": 100 }
+      },
+      "accepted": true
+    },
+    {
+      "name": "resource rootが親ディレクトリへ移動する",
+      "config": { "schema-version": 1, "resources": { "roots": ["../escape"] } },
+      "accepted": false
+    },
+    {
+      "name": "resource rootが絶対パス",
+      "config": { "schema-version": 1, "resources": { "roots": ["/abs"] } },
+      "accepted": false
+    },
+    {
+      "name": "project-rootが絶対パス",
+      "config": { "schema-version": 1, "local-targets": { "project-root": "/abs" } },
+      "accepted": false
+    },
+    {
+      "name": "project-rootが親ディレクトリへ移動する",
+      "config": { "schema-version": 1, "local-targets": { "project-root": "../escape" } },
+      "accepted": false
+    },
+    {
+      "name": "local targetsを有効にしてproject-rootを書かない",
+      "config": { "schema-version": 1, "local-targets": { "enabled": true } },
+      "accepted": false
+    },
+    {
+      "name": "未知の項目",
+      "config": { "schema-version": 1, "unknown-section": { "value": 1 } },
+      "accepted": false
+    },
+    {
+      "name": "未対応のschema-version",
+      "config": { "schema-version": 2 },
+      "accepted": false
+    },
+    {
+      "name": "resource上限が総量上限を超える",
+      "config": {
+        "schema-version": 1,
+        "resources": { "max-total-bytes": 100, "max-resource-bytes": 1000 }
+      },
+      "accepted": false,
+      "schemaOnlyAccepts": true,
+      "reason": "JSON Schemaは二つのfieldの大小を比較できません。実装だけが拒否します。"
+    }
+  ]
+}

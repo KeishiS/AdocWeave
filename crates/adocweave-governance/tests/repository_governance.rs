@@ -998,3 +998,63 @@ fn workspace_state_has_no_filesystem_or_host_dependency() {
     }
     assert!(host.contains("pub fn scan_utf8("));
 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigCorpus {
+    schema_version: u8,
+    cases: Vec<ConfigCorpusCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigCorpusCase {
+    name: String,
+    config: serde_json::Value,
+    accepted: bool,
+    #[serde(default)]
+    schema_only_accepts: bool,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[test]
+fn the_configuration_corpus_matches_the_implementation() {
+    // The JSON Schema and the implementation are two hand-written answers to
+    // the same question. `tools/config-schema.test.mjs` asks the schema; this
+    // asks the implementation, so a constraint added to one and not the other
+    // is reported instead of leaving an editor to accept what the run rejects.
+    let root = repository_root();
+    let corpus: ConfigCorpus = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/config/schema-corpus.json"))
+            .expect("configuration corpus"),
+    )
+    .expect("valid configuration corpus");
+    assert_eq!(corpus.schema_version, 1);
+    assert!(!corpus.cases.is_empty());
+
+    let mut disagreements = Vec::new();
+    for case in &corpus.cases {
+        let source = toml::to_string(&case.config).unwrap_or_else(|error| {
+            panic!("{}: corpusの設定をTOMLへ変換できません: {error}", case.name)
+        });
+        let accepted = adocweave_config::ResolvedProjectConfig::parse(
+            &source,
+            std::path::Path::new("/workspace"),
+        )
+        .is_ok();
+        if accepted != case.accepted {
+            disagreements.push(format!(
+                "{}: 実装={} corpus={}",
+                case.name,
+                if accepted { "受理" } else { "拒否" },
+                if case.accepted { "受理" } else { "拒否" },
+            ));
+        }
+        if case.schema_only_accepts {
+            assert!(!case.accepted, "{}", case.name);
+            assert!(case.reason.is_some(), "{}: 理由がありません", case.name);
+        }
+    }
+    assert_eq!(disagreements, Vec::<String>::new());
+}

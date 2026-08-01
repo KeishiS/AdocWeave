@@ -234,6 +234,7 @@ args = [
   "tools/release-installation-e2e.test.mjs",
   "tools/native-change-plan.test.mjs",
   "tools/verify-native-pr-candidate.test.mjs",
+  "tools/config-schema.test.mjs",
 ]
 
 [tasks.check-windows-target]
