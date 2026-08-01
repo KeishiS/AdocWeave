@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import distributionPlan from "../release/distribution-plan.json" with { type: "json" };
 import {
   affectsGlobalCandidate,
@@ -299,4 +300,48 @@ test("分類できないpathと空の変更集合ではすべてを実行する"
 
   const empty = qualityScope([]);
   assert.deepEqual(Object.values(empty), Array(Object.keys(empty).length).fill(true));
+});
+
+test("依存監査が読むすべての入力が監査を要求する", () => {
+  // 監査の実行条件はRust source fileの集合が決めていました。その集合は
+  // advisory revision、境界と例外の目録、重複のbaseline、監査script本体を
+  // 含みません。それらを変えたPull Requestは、監査が受理する内容を変えた
+  // うえで、監査を実行せずに成功していました。
+  for (
+    const pathname of [
+      "security/rustsec-advisory-db-revision.txt",
+      "security/dependency-boundaries.json",
+      "security/dependency-exceptions.json",
+      "security/duplicate-dependencies.json",
+      "tools/dependency-governance.sh",
+      "tools/verify-dependency-boundaries.mjs",
+      "tools/verify-duplicate-dependencies.mjs",
+      "tools/verify-vscode-dependencies.mjs",
+      "tools/generate-third-party-notices.mjs",
+      "Cargo.lock",
+      "Cargo.toml",
+      "deny.toml",
+      "editors/zed/Cargo.lock",
+      "editors/vscode/package-lock.json",
+    ]
+  ) {
+    assert.equal(qualityScope([pathname]).dependencies, true, pathname);
+  }
+});
+
+test("監査scriptが名指しするrepository pathは監査の入力一覧に載る", () => {
+  // 一覧とscriptはどちらも手書きです。scriptが新しいfileを読み始めても、
+  // 一覧へ加え忘れれば、そのfileの変更は監査を素通りします。この検査は
+  // scriptの本文からpathを読み、一覧との差を報告します。
+  const script = readFileSync(new URL("dependency-governance.sh", import.meta.url), "utf8");
+  const referenced = new Set(
+    [...script.matchAll(/(?:^|[\s"'`(])((?:security|tools)\/[A-Za-z0-9._/-]+)/g)]
+      .map((match) => match[1]),
+  );
+  assert.notEqual(referenced.size, 0, "監査scriptからpathを読み取れません");
+
+  const missing = [...referenced].filter((pathname) =>
+    !qualityScope([pathname]).dependencies
+  );
+  assert.deepEqual(missing, [], `監査の入力一覧に無いpath: ${missing.join(", ")}`);
 });
