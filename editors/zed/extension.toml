@@ -1,6 +1,6 @@
 id = "adocweave"
 name = "AdocWeave"
-version = "0.26.1"
+version = "0.27.0"
 schema_version = 1
 authors = ["AdocWeave contributors"]
 description = "AsciiDoc editing support powered by the AdocWeave Language Server"
