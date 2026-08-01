@@ -128,8 +128,8 @@ pub mod output {
             LintError, LintRuleDescriptor, LintRuleId, MACRO_BOUNDARY, MISSING_SOURCE_LANGUAGE,
             NESTING_LIMIT_EXCEEDED, NON_ASCIIDOC_XREF, PROTECTED_ATTRIBUTE, RuleSettings,
             TRAILING_WHITESPACE, UNCLOSED_BLOCK, UNCLOSED_INLINE, UNDEFINED_ATTRIBUTE,
-            UNRESOLVED_CROSS_REFERENCE, UNUSED_ATTRIBUTE, lint_analysis, lint_analysis_cancellable,
-            lint_rule, render_lint_rule_catalog_json,
+            UNPROCESSED_DIRECTIVE, UNRESOLVED_CROSS_REFERENCE, UNUSED_ATTRIBUTE, lint_analysis,
+            lint_analysis_cancellable, lint_rule, render_lint_rule_catalog_json,
         };
     }
     pub mod formatter {
