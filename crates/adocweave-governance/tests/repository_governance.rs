@@ -668,8 +668,8 @@ fn every_lint_rule_constant_is_reexported() {
     // A rule reaches consumers through two hand-written places: the catalog
     // macro that defines the constant, and the re-export list in lib.rs. A rule
     // added to only the first still produces diagnostics, so nothing fails
-    // until someone writes `use ...::THE_RULE` and cannot compile. That is how
-    // `unprocessed-directive` shipped in v0.27.0 without its constant.
+    // until someone writes `use ...::THE_RULE` and cannot compile. A released
+    // rule has already reached consumers that way, with no constant to name.
     let source = fs::read_to_string(repository_root().join("crates/adocweave/src/lib.rs"))
         .expect("crate root");
     let start = source

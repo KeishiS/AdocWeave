@@ -1,11 +1,12 @@
 //! Lint rule identifiers reached through the public API.
 //!
 //! A rule is written in two hand-maintained places: the catalog macro that
-//! defines its constant, and the re-export list in the crate root. `v0.27.0`
-//! shipped `unprocessed-directive` with only the first, so the rule produced
-//! diagnostics but consumers could not name it. Naming it by string still
-//! worked, and that is the failure mode this file exists to prevent: a renamed
-//! rule then goes unnoticed until a document is accepted that should not be.
+//! defines its constant, and the re-export list in the crate root.
+//! `unprocessed-directive` was released with only the first, so the rule
+//! produced diagnostics but consumers could not name it. Naming it by string
+//! still worked, and that is the failure mode these tests exist to prevent: a
+//! renamed rule then goes unnoticed until a document is accepted that should
+//! not be.
 
 use adocweave::output::diagnostics::{
     LINT_RULES, LintConfig, RuleSettings, Severity, UNPROCESSED_DIRECTIVE,
