@@ -53,6 +53,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   );
   assert.match(notes, /以前のVSIXとnative directoryを保持/);
   assert.match(notes, /rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動/);
+  assert.match(notes, /すべてのZedプロセスを終了してから、エラーに表示されたロックのpathを削除/);
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
   assert.match(notes, /Authenticode署名を行いません/);

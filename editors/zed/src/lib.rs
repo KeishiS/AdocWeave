@@ -209,10 +209,10 @@ impl InstallLock {
             // threshold cannot distinguish a crashed owner from a slow one, so
             // neither the current directory format nor the earlier file format
             // is removed automatically.
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(
-                "an existing lock prevents the AdocWeave LSP installation; its owner cannot be checked on WASI"
-                    .to_owned(),
-            ),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+                "an existing lock at {} prevents the AdocWeave LSP installation; WASI cannot check its owner, so close every Zed process before removing this path and retrying",
+                path_string(path)
+            )),
             Err(error) => Err(format!(
                 "failed to acquire the LSP installation lock: {error}"
             )),
@@ -420,7 +420,9 @@ mod tests {
         let path = root.join("install.lock");
         fs::write(&path, "0 legacy-owner\n").unwrap();
 
-        assert!(InstallLock::acquire(&path).is_err());
+        let error = InstallLock::acquire(&path).err().unwrap();
+        assert!(error.contains(&path_string(&path)));
+        assert!(error.contains("close every Zed process"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "0 legacy-owner\n");
         fs::remove_dir_all(root).unwrap();
     }
