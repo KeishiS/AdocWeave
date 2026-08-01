@@ -1117,3 +1117,88 @@ fn incremental_changes_preserve_crlf_line_boundaries() {
         "one\r\nsecond\r\n"
     );
 }
+
+/// Planning a scan reads the roots without changing the service.
+///
+/// The walk runs on a worker while the event loop keeps answering requests, so
+/// it must not touch state that the loop is free to change meanwhile. The
+/// separation is the property under test: planning alone leaves the workspace
+/// as it was, and only applying installs what was read.
+#[test]
+fn planning_a_workspace_scan_leaves_service_state_untouched() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root: PathBuf = std::env::temp_dir().join(format!("adocweave-detached-scan-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(root.join("found.adoc"), "= Found\n\n[[found]]\n== Found\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let found = lsp::Url::from_file_path(root.join("found.adoc")).expect("document URI");
+
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    }));
+    service.initialize(&params);
+
+    let scan = service.plan_workspace_scan().expect("roots to scan");
+    assert!(
+        service.workspace_analysis_count() == 0,
+        "planning must not install what it read",
+    );
+
+    let jobs = service.apply_workspace_scan(scan);
+    assert!(
+        jobs.is_empty(),
+        "no document is open, so nothing needs reanalysis",
+    );
+    assert!(service.workspace_resource(&found).is_some());
+
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+/// A document opened while the scan was running is not lost by applying it.
+///
+/// The read starts from the state at planning time. Overlaying the documents
+/// open when the result lands, rather than the ones open when it started,
+/// keeps an editor that opens a file immediately after initialization.
+#[test]
+fn a_document_opened_during_the_scan_survives_applying_it() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root: PathBuf = std::env::temp_dir().join(format!("adocweave-scan-race-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(root.join("on-disk.adoc"), "= On disk\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let opened = lsp::Url::from_file_path(root.join("on-disk.adoc")).expect("document URI");
+
+    let mut service = LanguageService::default();
+    let params = typed(json!({
+        "processId": null,
+        "rootUri": root_uri,
+        "capabilities": {}
+    }));
+    service.initialize(&params);
+
+    let scan = service.plan_workspace_scan().expect("roots to scan");
+    // The client opens the file, with unsaved edits, before the walk lands.
+    open(&mut service, opened.as_str(), 1, "= Edited in the editor\n");
+    let jobs = service.apply_workspace_scan(scan);
+
+    assert_eq!(jobs.len(), 1, "the open document is reanalyzed");
+    assert_eq!(
+        service
+            .workspace_resource(&opened)
+            .expect("open document")
+            .as_ref(),
+        "= Edited in the editor\n",
+        "applying the scan must not replace the editor's text with disk text",
+    );
+
+    fs::remove_dir_all(&root).expect("cleanup");
+}

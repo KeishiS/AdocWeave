@@ -12,14 +12,18 @@ pub(super) fn uri(value: &str) -> lsp::Url {
 
 /// Runs the lifecycle a client performs: `initialize`, then `initialized`.
 ///
-/// The workspace walk happens on the notification, so a test that only calls
-/// `initialize` observes a service that has not read its roots yet.
+/// The walk runs on a worker in the server and returns through an event. Here
+/// the two halves run back to back, so a test observes the state the client
+/// reaches once the scan has landed. A test that only calls `initialize`
+/// observes a service that has not read its roots yet.
 pub(super) fn initialize_with_params(
     service: &mut LanguageService,
     params: lsp::InitializeParams,
 ) -> lsp::InitializeResult {
     let result = service.initialize(&params);
-    let _ = service.scan_workspace_roots();
+    if let Some(scan) = service.plan_workspace_scan() {
+        let _ = service.apply_workspace_scan(scan);
+    }
     result
 }
 

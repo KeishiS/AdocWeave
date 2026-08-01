@@ -140,6 +140,15 @@ impl ClientProfile {
     }
 }
 
+/// A completed read of the workspace roots, waiting to be installed.
+///
+/// Carries no borrow of the service, so it can be produced on a worker and
+/// handed back to the event loop.
+#[derive(Clone, Debug)]
+pub struct WorkspaceScan {
+    loaded: crate::workspace::LoadedRoots,
+}
+
 pub trait HostReferenceIndex: Send + Sync {
     fn definition(&self, request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String>;
 
@@ -308,7 +317,7 @@ impl LanguageService {
                 .collect()
         };
         // The roots are recorded here, but reading them is left to
-        // `scan_workspace_roots`. Scanning a large workspace takes long enough
+        // `plan_workspace_scan`. Scanning a large workspace takes long enough
         // to be noticed, and the protocol does not require it to finish before
         // the capabilities are returned.
         self.workspace_roots = roots
@@ -551,14 +560,53 @@ impl LanguageService {
         jobs
     }
 
+    /// Reads the workspace roots without touching service state.
+    ///
+    /// This is the half of a reload whose cost grows with the workspace: it
+    /// walks every directory below each root and reads the `.adoc` files it
+    /// finds. It takes `&self` so a caller can run it on a worker while the
+    /// event loop keeps answering requests. Installing the result is
+    /// [`Self::apply_workspace_scan`], which is cheap and runs in order.
+    pub fn plan_workspace_scan(&self) -> Option<WorkspaceScan> {
+        if self.workspace_roots.is_empty() {
+            return None;
+        }
+        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
+        Some(WorkspaceScan {
+            loaded: self.workspace.load_roots_detached(&roots),
+        })
+    }
+
+    /// Installs a completed scan and returns the analyses it makes stale.
+    ///
+    /// The documents open at this moment are overlaid onto the read, not the
+    /// ones open when it started, so a document opened during the walk is kept.
+    pub fn apply_workspace_scan(&mut self, scan: WorkspaceScan) -> Vec<AnalysisJob> {
+        let open_sources = self.documents.open_sources();
+        let parsed_open_sources = parse_open_sources(&open_sources);
+        let outcome = self
+            .workspace
+            .apply_loaded_roots(scan.loaded, &parsed_open_sources);
+        self.finish_reload(outcome, open_sources)
+    }
+
     fn reload_project_configuration(&mut self) -> Vec<AnalysisJob> {
         let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
         let open_sources = self.documents.open_sources();
         let parsed_open_sources = parse_open_sources(&open_sources);
-        if let Err(error) = self
+        let outcome = self
             .workspace
-            .reload_roots_with_open_sources(&roots, &parsed_open_sources)
-        {
+            .reload_roots_with_open_sources(&roots, &parsed_open_sources);
+        self.finish_reload(outcome, open_sources)
+    }
+
+    /// Turns the result of a reload into the reanalyses it requires.
+    fn finish_reload(
+        &mut self,
+        outcome: Result<(), String>,
+        open_sources: Vec<(String, i32, String)>,
+    ) -> Vec<AnalysisJob> {
+        if let Err(error) = outcome {
             let failed_closed = self.workspace.last_load_failed_closed();
             self.workspace_error = Some(error.clone());
             if !failed_closed {
@@ -640,21 +688,16 @@ impl LanguageService {
             .collect()
     }
 
-    /// Reads the workspace roots recorded by `initialize`.
-    ///
-    /// This walks every directory below each root and reads the `.adoc` files
-    /// it finds, so it is the one part of initialization whose cost grows with
-    /// the workspace. It is separated from `initialize` so the response, and
-    /// the requests that follow it, do not wait for the walk.
-    pub fn scan_workspace_roots(&mut self) -> Vec<AnalysisJob> {
-        if self.workspace_roots.is_empty() {
-            return Vec::new();
-        }
-        // Documents opened before the walk finished are preserved rather than
-        // replaced, so an editor that opens a file immediately does not lose it.
-        // That is the same requirement a project file change has, so the two
-        // share one implementation.
-        self.reload_project_configuration()
+    /// Returns the effective text a workspace resource holds, if it is known.
+    #[cfg(test)]
+    pub fn workspace_resource(&self, uri: &lsp::Url) -> Option<std::sync::Arc<str>> {
+        self.workspace.resource_text(uri)
+    }
+
+    /// Returns how many documents the workspace currently holds.
+    #[cfg(test)]
+    pub fn workspace_analysis_count(&self) -> usize {
+        self.workspace.resource_count()
     }
 
     pub fn watched_files_registration(&self) -> Option<lsp::RegistrationParams> {

@@ -31,6 +31,7 @@ pub(crate) struct Backend {
     service: LanguageService,
     cpu_limit: Arc<Semaphore>,
     analysis_tasks: BTreeMap<String, AnalysisTask>,
+    scan_sequence: u64,
 }
 
 struct AnalysisTask {
@@ -42,6 +43,16 @@ struct AnalysisCompleted {
     job: AnalysisJob,
     result: Result<adocweave::AnalysisResult, String>,
     workspace_result: Option<Result<WorkspaceAnalysis, WorkspaceProblem>>,
+}
+
+/// A workspace read that finished on a worker and is ready to install.
+///
+/// `sequence` is the value the scan was scheduled with. A later scan makes an
+/// earlier one obsolete, and the earlier result is discarded rather than
+/// installed over the newer state.
+struct WorkspaceScanned {
+    sequence: u64,
+    scan: crate::service::WorkspaceScan,
 }
 
 impl Backend {
@@ -61,6 +72,7 @@ impl Backend {
             service: LanguageService::with_host_index(host_index),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
             analysis_tasks: BTreeMap::new(),
+            scan_sequence: 0,
         });
 
         router
@@ -70,12 +82,10 @@ impl Backend {
             })
             .notification::<notification::Initialized>(|state, _| {
                 state.register_dynamic_capabilities();
-                // The workspace walk runs here rather than inside `initialize`,
-                // so the client receives the capabilities without waiting for
-                // every `.adoc` file below the roots to be read.
-                for job in state.service.scan_workspace_roots() {
-                    state.schedule_analysis(job);
-                }
+                // The workspace walk runs on a worker rather than here, so the
+                // event loop answers requests while every `.adoc` file below
+                // the roots is read.
+                state.schedule_workspace_scan();
                 ControlFlow::Continue(())
             })
             .request::<request::Shutdown, _>(|state, _| {
@@ -205,7 +215,16 @@ impl Backend {
                     service.rename(uri, position, &new_name)
                 })
             })
-            .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed));
+            .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed))
+            .event::<WorkspaceScanned>(|state, scanned| {
+                if scanned.sequence != state.scan_sequence {
+                    return ControlFlow::Continue(());
+                }
+                for job in state.service.apply_workspace_scan(scanned.scan) {
+                    state.schedule_analysis(job);
+                }
+                ControlFlow::Continue(())
+            });
 
         ServiceBuilder::new()
             .layer(TracingLayer::default())
@@ -244,6 +263,27 @@ impl Backend {
         let service = self.service.clone();
         let limit = self.cpu_limit.clone();
         async move { run_cpu_request(limit, cancellation, move |_| operation(&service, &uri)).await }
+    }
+
+    /// Reads the workspace roots on a worker and installs the result later.
+    ///
+    /// The walk takes time proportional to the workspace, so running it here
+    /// would stop the event loop from answering anything until it finished.
+    /// Only the newest scan is installed; an older one that finishes later is
+    /// discarded rather than written over newer state.
+    fn schedule_workspace_scan(&mut self) {
+        self.scan_sequence = self.scan_sequence.saturating_add(1);
+        let sequence = self.scan_sequence;
+        let service = self.service.clone();
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let Ok(Some(scan)) =
+                tokio::task::spawn_blocking(move || service.plan_workspace_scan()).await
+            else {
+                return;
+            };
+            let _ = client.emit(WorkspaceScanned { sequence, scan });
+        });
     }
 
     fn schedule_analysis(&mut self, job: AnalysisJob) {

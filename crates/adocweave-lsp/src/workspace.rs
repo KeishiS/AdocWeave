@@ -74,6 +74,16 @@ impl std::fmt::Display for ScopeConfigError {
     }
 }
 
+/// A completed read of the workspace roots, not yet installed.
+///
+/// Produced by [`WorkspaceResources::load_roots_detached`] and consumed by
+/// [`WorkspaceResources::apply_loaded_roots`].
+#[derive(Clone, Debug)]
+pub struct LoadedRoots {
+    replacement: WorkspaceResources,
+    error: Option<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceResources {
     inner: Workspace,
@@ -127,14 +137,29 @@ impl WorkspaceResources {
         self.reload_roots_with_open_sources_after_load(roots, open_sources, || {})
     }
 
-    fn reload_roots_with_open_sources_after_load(
-        &mut self,
-        roots: &[Url],
-        open_sources: &[(Url, i64, Arc<str>)],
-        after_load: impl FnOnce(),
-    ) -> Result<(), String> {
+    /// Reads the roots into a detached copy of this state.
+    ///
+    /// Walking the roots and reading every `.adoc` below them takes time
+    /// proportional to the size of the workspace. Separating it lets a caller
+    /// run it away from the thread that answers requests. The result holds no
+    /// borrow of this state, and applying it is a separate, cheap step.
+    pub fn load_roots_detached(&self, roots: &[Url]) -> LoadedRoots {
         let mut replacement = self.clone();
-        if let Err(error) = replacement.load_roots(roots) {
+        let error = replacement.load_roots(roots).err();
+        LoadedRoots { replacement, error }
+    }
+
+    /// Installs a completed read and overlays the documents open right now.
+    ///
+    /// The open documents are read here rather than when the walk started, so
+    /// a document opened while the walk was running is not lost.
+    pub fn apply_loaded_roots(
+        &mut self,
+        loaded: LoadedRoots,
+        open_sources: &[(Url, i64, Arc<str>)],
+    ) -> Result<(), String> {
+        let LoadedRoots { replacement, error } = loaded;
+        if let Some(error) = error {
             if replacement.last_load_failed_closed {
                 *self = replacement;
             } else {
@@ -142,7 +167,28 @@ impl WorkspaceResources {
             }
             return Err(error);
         }
+        self.overlay_open_sources(replacement, open_sources)
+    }
+
+    fn reload_roots_with_open_sources_after_load(
+        &mut self,
+        roots: &[Url],
+        open_sources: &[(Url, i64, Arc<str>)],
+        after_load: impl FnOnce(),
+    ) -> Result<(), String> {
+        let loaded = self.load_roots_detached(roots);
+        if loaded.error.is_some() {
+            return self.apply_loaded_roots(loaded, open_sources);
+        }
         after_load();
+        self.apply_loaded_roots(loaded, open_sources)
+    }
+
+    fn overlay_open_sources(
+        &mut self,
+        mut replacement: Self,
+        open_sources: &[(Url, i64, Arc<str>)],
+    ) -> Result<(), String> {
         for (uri, version, source) in open_sources {
             let scope_and_plan = match replacement.open_scope_and_plan(uri) {
                 Ok(scope_and_plan) => scope_and_plan,
@@ -380,6 +426,21 @@ impl WorkspaceResources {
 
     pub(crate) const fn last_load_failed_closed(&self) -> bool {
         self.last_load_failed_closed
+    }
+
+    /// Returns the effective text held for one resource, if it is known.
+    #[cfg(test)]
+    pub(crate) fn resource_text(&self, uri: &Url) -> Option<Arc<str>> {
+        let id = uri_id(uri).ok()?;
+        self.inner
+            .get(&id)
+            .map(|resource| Arc::clone(resource.text()))
+    }
+
+    /// Returns how many resources the workspace holds.
+    #[cfg(test)]
+    pub(crate) fn resource_count(&self) -> usize {
+        self.inner.snapshot().resources().count()
     }
 
     pub fn reload_file(&mut self, uri: Url) -> Result<BTreeSet<String>, String> {
