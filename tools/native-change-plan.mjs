@@ -62,6 +62,7 @@ const NON_RELEASE_FILES = new Set([
   "deny.toml",
   "tools/adoc-check.mjs",
   "tools/adoc-check.test.mjs",
+  "tools/config-schema.test.mjs",
   "tools/dependency-governance.sh",
   "tools/dependabot-alert-inventory.sh",
   "tools/dependabot-alert-inventory.test.mjs",
