@@ -822,3 +822,234 @@ mod responsibility_tests {
         assert!(lowering.contains("fn normalize_heading_kinds"));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{HeadingKind, HeadingProblem, OrderedListStyle};
+
+    fn checkpoint() -> crate::cancellation::CancellationCheckpoint<'static> {
+        crate::cancellation::CancellationCheckpoint::new(&crate::core::NeverCancel)
+    }
+
+    fn range() -> crate::source::TextRange {
+        crate::source::TextRange::new(crate::source::TextSize::ZERO, crate::source::TextSize::ZERO)
+            .expect("zero range")
+    }
+
+    fn heading(kind: HeadingKind, problems: Vec<HeadingProblem>) -> AstBlock {
+        AstBlock::Heading(crate::block_model::Heading {
+            metadata: crate::block_model::BlockMetadata::default(),
+            range: range(),
+            marker_range: range(),
+            separator_range: range(),
+            text_range: range(),
+            kind,
+            well_formed: problems.is_empty(),
+            hierarchy_valid: problems.is_empty(),
+            text: String::new(),
+            inlines: Vec::new(),
+            inline_problems: Vec::new(),
+            problems,
+        })
+    }
+
+    fn kind_of(block: &AstBlock) -> HeadingKind {
+        let AstBlock::Heading(heading) = block else {
+            panic!("expected a heading");
+        };
+        heading.kind
+    }
+
+    fn role(block: &mut AstBlock, value: &str) {
+        let AstBlock::Heading(heading) = block else {
+            panic!("expected a heading");
+        };
+        heading
+            .metadata
+            .roles
+            .push(crate::block_model::MetadataValue {
+                value: value.to_owned(),
+                range: range(),
+            });
+    }
+
+    fn positional_attribute(block: &mut AstBlock, value: &str) {
+        let AstBlock::Heading(heading) = block else {
+            panic!("expected a heading");
+        };
+        heading
+            .metadata
+            .attributes
+            .push(crate::block_model::ElementAttribute {
+                name: None,
+                value: value.to_owned(),
+                range: range(),
+            });
+    }
+
+    /// A heading marked discrete keeps its level and stops being a title.
+    ///
+    /// The mark reaches the same decision from a role and from a positional
+    /// attribute, and `float` is the older spelling of `discrete`. All three
+    /// spellings are checked together because they must not drift apart.
+    #[test]
+    fn a_discrete_mark_demotes_a_heading_and_keeps_its_level() {
+        for spelling in ["discrete", "float"] {
+            let mut block = heading(
+                HeadingKind::Section { level: 3 },
+                vec![HeadingProblem::MisplacedDocumentTitle],
+            );
+            positional_attribute(&mut block, spelling);
+            normalize_heading_kind(&mut block, DocumentType::Article, &mut checkpoint())
+                .expect("not cancelled");
+            assert_eq!(
+                kind_of(&block),
+                HeadingKind::Discrete { level: 3 },
+                "positional {spelling}"
+            );
+        }
+
+        let mut block = heading(HeadingKind::Section { level: 2 }, Vec::new());
+        role(&mut block, "discrete");
+        normalize_heading_kind(&mut block, DocumentType::Article, &mut checkpoint())
+            .expect("not cancelled");
+        assert_eq!(kind_of(&block), HeadingKind::Discrete { level: 2 });
+
+        // A named attribute is not the discrete mark, only a positional one is.
+        let mut block = heading(HeadingKind::Section { level: 2 }, Vec::new());
+        let AstBlock::Heading(inner) = &mut block else {
+            panic!("expected a heading");
+        };
+        inner
+            .metadata
+            .attributes
+            .push(crate::block_model::ElementAttribute {
+                name: Some("role".to_owned()),
+                value: "discrete".to_owned(),
+                range: range(),
+            });
+        normalize_heading_kind(&mut block, DocumentType::Article, &mut checkpoint())
+            .expect("not cancelled");
+        assert_eq!(kind_of(&block), HeadingKind::Section { level: 2 });
+    }
+
+    /// A discrete document title becomes level 1, not level 0.
+    #[test]
+    fn a_discrete_document_title_and_part_both_become_level_one() {
+        for kind in [HeadingKind::DocumentTitle, HeadingKind::Part] {
+            let mut block = heading(kind, Vec::new());
+            role(&mut block, "discrete");
+            normalize_heading_kind(&mut block, DocumentType::Article, &mut checkpoint())
+                .expect("not cancelled");
+            assert_eq!(
+                kind_of(&block),
+                HeadingKind::Discrete { level: 1 },
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// Marking a heading discrete clears the misplaced-title complaint.
+    ///
+    /// The complaint says a document title appeared where one may not. Once the
+    /// heading is not a title, the complaint no longer describes anything, so it
+    /// is dropped and the heading counts as well formed again.
+    #[test]
+    fn a_discrete_mark_clears_the_misplaced_title_problem() {
+        let mut block = heading(
+            HeadingKind::DocumentTitle,
+            vec![HeadingProblem::MisplacedDocumentTitle],
+        );
+        role(&mut block, "discrete");
+        normalize_heading_kind(&mut block, DocumentType::Article, &mut checkpoint())
+            .expect("not cancelled");
+        let AstBlock::Heading(inner) = &block else {
+            panic!("expected a heading");
+        };
+        assert!(inner.problems.is_empty());
+        assert!(inner.well_formed);
+        assert!(inner.hierarchy_valid);
+    }
+
+    /// In a book, a second document title becomes a part instead of an error.
+    ///
+    /// Only a book has parts, and only a misplaced title is promoted. An article
+    /// keeps the complaint, and a book title that was not misplaced stays a
+    /// title.
+    #[test]
+    fn only_a_book_promotes_a_misplaced_document_title_to_a_part() {
+        let mut block = heading(
+            HeadingKind::DocumentTitle,
+            vec![HeadingProblem::MisplacedDocumentTitle],
+        );
+        normalize_heading_kind(&mut block, DocumentType::Book, &mut checkpoint())
+            .expect("not cancelled");
+        assert_eq!(kind_of(&block), HeadingKind::Part);
+        let AstBlock::Heading(inner) = &block else {
+            panic!("expected a heading");
+        };
+        assert!(inner.problems.is_empty());
+        assert!(inner.well_formed);
+
+        for doctype in [
+            DocumentType::Article,
+            DocumentType::Manpage,
+            DocumentType::Inline,
+        ] {
+            let mut block = heading(
+                HeadingKind::DocumentTitle,
+                vec![HeadingProblem::MisplacedDocumentTitle],
+            );
+            normalize_heading_kind(&mut block, doctype, &mut checkpoint()).expect("not cancelled");
+            assert_eq!(kind_of(&block), HeadingKind::DocumentTitle, "{doctype:?}");
+        }
+
+        let mut block = heading(HeadingKind::DocumentTitle, Vec::new());
+        normalize_heading_kind(&mut block, DocumentType::Book, &mut checkpoint())
+            .expect("not cancelled");
+        assert_eq!(kind_of(&block), HeadingKind::DocumentTitle);
+    }
+
+    /// Blocks that are not headings pass through untouched.
+    #[test]
+    fn normalization_ignores_blocks_that_are_not_headings() {
+        let mut block = AstBlock::Paragraph(crate::block_model::Paragraph {
+            metadata: crate::block_model::BlockMetadata::default(),
+            range: range(),
+            content_range: range(),
+            value: "text".to_owned(),
+            inlines: Vec::new(),
+            admonition: None,
+            inline_problems: Vec::new(),
+        });
+        let before = block.clone();
+        normalize_heading_kind(&mut block, DocumentType::Book, &mut checkpoint())
+            .expect("not cancelled");
+        assert_eq!(block, before);
+    }
+
+    /// The ordered list styles AsciiDoc names, and nothing else.
+    ///
+    /// An unknown name is rejected rather than falling back to a default, so a
+    /// typo keeps its own diagnostic instead of silently numbering differently.
+    #[test]
+    fn ordered_list_styles_are_named_exactly_and_surrounding_space_is_ignored() {
+        for (value, expected) in [
+            ("arabic", OrderedListStyle::Arabic),
+            ("decimal", OrderedListStyle::Decimal),
+            ("loweralpha", OrderedListStyle::LowerAlpha),
+            ("upperalpha", OrderedListStyle::UpperAlpha),
+            ("lowerroman", OrderedListStyle::LowerRoman),
+            ("upperroman", OrderedListStyle::UpperRoman),
+            ("lowergreek", OrderedListStyle::LowerGreek),
+        ] {
+            assert_eq!(ordered_list_style(value), Some(expected), "{value}");
+            assert_eq!(ordered_list_style(&format!("  {value}\t")), Some(expected));
+        }
+
+        for value in ["", "Arabic", "ARABIC", "roman", "arabic2", "arabic decimal"] {
+            assert_eq!(ordered_list_style(value), None, "{value}");
+        }
+    }
+}
