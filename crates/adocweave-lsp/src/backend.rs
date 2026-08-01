@@ -191,6 +191,12 @@ impl Backend {
                     service.semantic_tokens(uri)
                 })
             })
+            .request::<request::PrepareRenameRequest, _>(|state, params| {
+                let position = params.position;
+                state.cpu_request(params.text_document.uri, move |service, uri| {
+                    service.prepare_rename(uri, position)
+                })
+            })
             .request::<request::Rename, _>(|state, params| {
                 let request = params.text_document_position;
                 let position = request.position;

@@ -288,6 +288,15 @@ encodingを所有します。ホストは要求generationより古い索引か�
 Renameはhost indexが結果を返す場合はそれを優先し、それ以外は採用済みワークスペース スナップショット内の宣言と
 参照だけを編集します。対象がワークスペース外へ解決される場合や参照集合を構築できない場合は編集を返しません。
 
+名前を変えられるのはアンカー定義の上だけで、本文のどこででも始められるわけではありません。
+``textDocument/rename``の``prepareSupport``を宣言したclientへは``prepareProvider``を返し、
+``textDocument/prepareRename``で名前を変えられる範囲と現在の名前を答えます。名前を変えられない位置では
+結果を返さず、clientはRenameを始める前にその旨を表示します。``prepareSupport``を宣言しないclientへは
+従来どおり``renameProvider``を真として返し、挙動を変えません。
+
+``prepareRename``とRenameは同じ判定を通ります。``prepareRename``が受け入れた位置は、名前が妥当であれば
+必ず編集を返します。
+
 == エディター投影
 
 ``LanguageService``は文書状態、client capabilityおよび解析結果の採用判定を所有します。
