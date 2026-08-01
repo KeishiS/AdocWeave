@@ -40,3 +40,18 @@ extension registry、public package registryおよびOSのpackage managerへの�
 * https://github.com/KeishiS/adocweave/issues/82[公式extension registry]
 * https://github.com/KeishiS/adocweave/issues/83[crates.io・npm公開の評価]
 * https://github.com/KeishiS/adocweave/issues/86[Homebrew・WinGet・Scoopの評価]
+
+== 実施しない解析規則の追加
+
+AsciiDocの言語仕様が定めていない解析規則を、設定で追加することは行いません。次のIssueは、
+この判断と検討内容を残す記録として保留します。
+
+* https://github.com/KeishiS/adocweave/issues/384[利用側アプリ用の文書属性の接頭辞の予約]
+
+同じ文書が設定によって異なる意味を持つ状態を作らないためです。AdocWeaveは、文書の意味を
+文書自身と言語仕様だけから決めます。仕様が組込み属性として定めた名前は、設定にかかわらず
+仕様どおりに解釈します。
+
+利用側アプリが定める属性は、現在も組込みの意味を与えずに属性環境へ保持します。名前が
+利用側アプリのものであることは、その名前を決めた利用側アプリが知っています。AdocWeaveが
+接頭辞を設定として受け取っても、解釈を変えない点は同じです。
