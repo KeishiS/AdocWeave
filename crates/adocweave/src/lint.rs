@@ -220,6 +220,12 @@ lint_rule_catalog!(
         false
     ),
     (
+        UNPROCESSED_DIRECTIVE,
+        "unprocessed-directive",
+        "前処理されていないpreprocessor directive",
+        false
+    ),
+    (
         INVALID_CROSS_REFERENCE,
         "invalid-cross-reference",
         "不正な相互参照",

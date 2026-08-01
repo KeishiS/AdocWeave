@@ -232,6 +232,21 @@ fn block_issues(
                     block.range,
                     "unsupported source block option",
                 ));
+            } else if block.kind != crate::block_model::UnsupportedKind::UnprocessedDirective {
+                // Every other reason is already reported by the recognizer that
+                // produced it.
+            } else if block.reason == crate::block_grammar::CONDITIONAL_DIRECTIVE_REASON {
+                output.push(issue(
+                    SyntaxIssueClass::UnprocessedDirective,
+                    block.range,
+                    "conditional directive is kept as text because this analysis did not preprocess",
+                ));
+            } else if block.reason == crate::block_grammar::INCLUDE_DIRECTIVE_REASON {
+                output.push(issue(
+                    SyntaxIssueClass::UnprocessedDirective,
+                    block.range,
+                    "include directive is kept as text because this analysis did not preprocess",
+                ));
             }
         }
     }

@@ -400,6 +400,7 @@ fn recognize_source_or_math(
                     range: line.full_range(),
                     raw: content.to_owned(),
                     reason: "invalid source block attribute".to_owned(),
+                    kind: UnsupportedKind::Syntax,
                 }),
                 0,
             ),
@@ -470,6 +471,26 @@ fn recognize_simple_block(
                 ),
             ));
         }
+        LineRecognition::PreprocessorDirective => {
+            let reason = crate::preprocessor::classify_line(content)
+                .map(crate::block_grammar::directive_reason)
+                .ok_or(ParseFailure::InternalInvariant)?;
+            BlockCommit::single(
+                SyntaxNode::new(
+                    SyntaxKind::Unsupported,
+                    line.full_range(),
+                    vec![SyntaxNode::leaf(SyntaxKind::Unknown, line.full_range())],
+                ),
+                AstBlock::Unsupported(Unsupported {
+                    metadata: BlockMetadata::default(),
+                    range: line.full_range(),
+                    raw: content.to_owned(),
+                    reason: reason.to_owned(),
+                    kind: UnsupportedKind::UnprocessedDirective,
+                }),
+                0,
+            )
+        }
         LineRecognition::Unsupported => {
             let reason = unsupported_reason(content).ok_or(ParseFailure::InternalInvariant)?;
             BlockCommit::single(
@@ -483,6 +504,7 @@ fn recognize_simple_block(
                     range: line.full_range(),
                     raw: content.to_owned(),
                     reason: reason.to_owned(),
+                    kind: UnsupportedKind::Syntax,
                 }),
                 0,
             )
@@ -610,6 +632,7 @@ fn parse_block_sequence(
                 | LineRecognition::Math
                 | LineRecognition::Break
                 | LineRecognition::LiteralParagraph
+                | LineRecognition::PreprocessorDirective
                 | LineRecognition::Unsupported
         ) {
             parser.flush_paragraph(&mut blocks, &mut ast_blocks, config, budget)?;
@@ -654,6 +677,7 @@ fn parse_block_sequence(
                 LineRecognition::InvalidSource
                 | LineRecognition::Break
                 | LineRecognition::LiteralParagraph
+                | LineRecognition::PreprocessorDirective
                 | LineRecognition::Unsupported => parser.mark_body_content(),
                 _ => return Err(ParseFailure::InternalInvariant),
             }
@@ -1079,6 +1103,7 @@ fn flush_orphan_metadata(
             .trim_end_matches(['\r', '\n'])
             .to_owned(),
         reason: "block metadata is not attached to a block".to_owned(),
+        kind: UnsupportedKind::Syntax,
     }));
     syntax_blocks.extend(trailing_syntax);
     Ok(())
