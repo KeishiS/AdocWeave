@@ -15,9 +15,11 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(notes, /``UNPROCESSED_DIRECTIVE``を公開APIから参照できるようにしました/);
-  assert.match(notes, /規則そのものの動作は変わりません/);
-  assert.match(notes, /再公開から漏れていないかを検査するtestを加えました/);
+  assert.match(notes, /属性名の大文字と小文字を区別しなくなりました/);
+  assert.match(notes, /上限を重複して消費しなくなりました/);
+  assert.match(notes, /``wasm-trapped``を追加しました/);
+  assert.match(notes, /Content-Lengthを返さない配信/);
+  assert.match(notes, /作成した処理だけが削除する/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -28,11 +30,14 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
   // patch版のため、semver gateは破壊的変更を受理しません。本文も述べません。
   assert.doesNotMatch(notes, /破壊的変更：/);
-  assert.match(notes, /破壊的変更と挙動の変更はありません/);
-  assert.match(notes, /``UNPROCESSED_DIRECTIVE``を追加しました/);
+  assert.match(notes, /破壊的変更はありません/);
+  // 挙動が変わるreleaseでは、何がどう変わるかを本文が述べます。
+  assert.match(notes, /挙動の変更：``ifdef``/);
+  assert.match(notes, /挙動の変更：存在しないパス/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /設定と利用側コードの移行は不要です/);
-  assert.match(notes, /name文字列で引いていた利用側/);
+  assert.match(notes, /設定の移行は不要です/);
+  assert.match(notes, /小文字の綴りで書いた文書の結果は変わりません/);
+  assert.match(notes, /``wasm-trapped``の分岐を加えてください/);
   assert.match(notes, /``schemaVersion``は4のままです/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
   assert.match(notes, /sha256sum --check/);
@@ -88,7 +93,7 @@ test("Release Notesが述べるschema versionはmanifestの実際の値と一致
 
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
-  assert.throws(() => buildReleaseNotes("v0.27.0"), /v0\.27\.1専用/);
-  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.27\.1専用/);
+  assert.throws(() => buildReleaseNotes("v0.27.1"), /v0\.27\.2専用/);
+  assert.throws(() => buildReleaseNotes("v9.9.9"), /v0\.27\.2専用/);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });
