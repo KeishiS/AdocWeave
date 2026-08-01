@@ -46,7 +46,9 @@ test("配布時依存とビルド用依存は別のライセンス方針で扱�
 
 test("監査は配布時とビルド用の両方を対象にする", () => {
   assert.match(script, /npm audit --omit=dev --prefix editors\/vscode/);
-  assert.match(script, /^npm audit --prefix editors\/vscode$/m);
+  // NODE_ENV=productionなどによりnpmの既定値がomit=devでも、全体監査では
+  // ビルド用依存を戻します。
+  assert.match(script, /^npm audit --include=dev --prefix editors\/vscode$/m);
 });
 
 test("検査はdev依存を読み飛ばさない", () => {

@@ -45,7 +45,7 @@ cargo deny --config deny.toml --manifest-path editors/zed/Cargo.toml --all-featu
 # and build the VSIX, so a vulnerability in one of them reaches the artifact even
 # though the package itself never ships.
 npm audit --omit=dev --prefix editors/vscode
-npm audit --prefix editors/vscode
+npm audit --include=dev --prefix editors/vscode
 
 node tools/verify-dependency-boundaries.mjs
 node tools/verify-vscode-dependencies.mjs
