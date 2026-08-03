@@ -23,6 +23,14 @@
       "accepted": true
     },
     {
+      "name": "local targetsを有効にして相対パスのproject-rootを書く",
+      "config": {
+        "schema-version": 1,
+        "local-targets": { "enabled": true, "project-root": "docs" }
+      },
+      "accepted": true
+    },
+    {
       "name": "上限の大小関係が正しい",
       "config": {
         "schema-version": 1,
