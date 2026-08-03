@@ -79,6 +79,8 @@ const NON_RELEASE_FILES = new Set([
   "tools/native-change-plan.test.mjs",
   "tools/platform-contract.mjs",
   "tools/platform-contract.test.mjs",
+  "tools/release-claims.mjs",
+  "tools/release-claims.test.mjs",
   "tools/release-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
   "tools/release-notes.mjs",
