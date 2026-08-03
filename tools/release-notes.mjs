@@ -54,6 +54,35 @@ const highlights = [
   "VS Code拡張の依存関係検査を強化しました。環境変数にかかわらず開発依存を脆弱性監査へ含め、lockfileのSHA-512 digestが正しい形式と長さであることを検査します。",
 ];
 
+/// Public contracts this release states are unchanged since the previous stable tag.
+///
+/// The sentence in the notes is built from this list rather than written beside
+/// it. v0.27.2 announced that the configuration schema had not changed while the
+/// same release changed it: the claim was prose, so nothing compared it with the
+/// diff. `tools/release-claims.mjs` reads this list and checks every entry that
+/// has a single machine-readable source of truth.
+export const UNCHANGED_CONTRACTS = [
+  "公開Rust API",
+  "WASM protocol",
+  "公開projection",
+  "CLI引数",
+  "Language Server protocol",
+];
+
+/// The file that decides whether a named contract changed.
+///
+/// A contract without an entry here is stated but not checked: CLI arguments and
+/// the Language Server protocol are spread across the sources that implement
+/// them, and a file diff would report every unrelated edit. The tool names the
+/// unchecked contracts in its output so the reader knows how far the check goes.
+export const CONTRACT_SOURCES = {
+  "WASM protocol": "protocol/public-api.json",
+  設定schema: "config/adocweave.schema.json",
+};
+
+/// Fields that carry the release version rather than the contract's shape.
+export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
+
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
@@ -62,7 +91,7 @@ const contractNotes = [
   `公開契約に破壊的変更はありません。v${PREVIOUS_RELEASE_VERSION}の設定schema変更に関する説明は、実際の変更内容へ訂正しました。`,
   `Browser packageの公開入口へ\`\`PROTOCOL_SCHEMA_VERSION\`\`を追加しました。WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。`,
   "設定schemaの``html.stylesheet-files``へ相対パスの制約を加えました。実行時には以前から同じ制約を適用しているため、受理される設定の範囲は変わりません。",
-  "公開Rust API、WASM protocolのfield構造、公開projection、CLI引数およびLanguage Server protocolは変更していません。",
+  `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 

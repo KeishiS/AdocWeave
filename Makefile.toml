@@ -167,10 +167,18 @@ command = "node"
 args = ["--test", "tools/release-metadata.test.mjs"]
 
 [tasks.semver-check]
-description = "Compare the candidate public Rust API against the previous stable tag"
-dependencies = ["semver-gate-test"]
+description = "Compare the candidate public Rust API and Release Notes claims against the previous stable tag"
+dependencies = ["semver-gate-test", "release-claims-test"]
+script_runner = "@shell"
+script = '''
+node tools/semver-gate.mjs
+node tools/release-claims.mjs
+'''
+
+[tasks.release-claims-test]
+description = "Test how Release Notes claims are compared with the baseline contracts"
 command = "node"
-args = ["tools/semver-gate.mjs"]
+args = ["--test", "tools/release-claims.test.mjs"]
 
 [tasks.semver-gate-test]
 description = "Test release step derivation, baseline selection, and fail-closed behavior"
