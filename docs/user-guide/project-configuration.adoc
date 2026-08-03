@@ -83,7 +83,9 @@ stylesheet-urls = ["https://example.com/manual.css"]
 
 JSON Schemaはlink:../../config/adocweave.schema.json[`config/adocweave.schema.json`]です。
 編集中の検証と実行時の検証がずれないよう、同じ設定の集合を両方へ適用して受理と拒否の一致を
-確認しています。ただし``max-resource-bytes``が``max-total-bytes``を超えないという条件は、
+確認しています。相対パスに限る項目は実装から機械的に読み取り、JSON Schemaが同じ項目を制約して
+いること、および設定の集合が各項目の受理と拒否の両方を含むことも確認します。
+ただし``max-resource-bytes``が``max-total-bytes``を超えないという条件は、
 二つの項目の大小を比べるためJSON Schemaでは表現できません。この条件は実行時にだけ検出します。
 
 == CLIでの選択

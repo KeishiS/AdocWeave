@@ -198,3 +198,73 @@ test("JSON Schemaで表現できない制約には理由が書いてある", () 
     assert.equal(validate(schema, entry.config, entry.name).length, 0, entry.name);
   }
 });
+
+/// Configuration fields the implementation resolves as a relative path.
+///
+/// The set is read from the implementation rather than listed here. A field
+/// added there and forgotten in the schema is exactly what happened to
+/// `html.stylesheet-files`: the schema constrained the two fields someone
+/// remembered, and the corpus had no case for the third, so both sides agreed
+/// while the schema accepted a path the run refuses.
+function relativePathFields() {
+  const source = readFileSync(
+    new URL("../crates/adocweave-config/src/lib.rs", import.meta.url),
+    "utf8",
+  );
+  const fields = new Set();
+  for (const match of source.matchAll(/resolve_relative\(/g)) {
+    const window = source.slice(match.index, match.index + 200);
+    const quoted = window.match(/"([a-z][a-z0-9.-]*)(?:\.\{index\})?"/);
+    if (quoted) fields.add(quoted[1]);
+  }
+  return [...fields].sort();
+}
+
+/// Walks a dotted configuration field to the schema node that constrains its value.
+function schemaNodeFor(field) {
+  let node = schema;
+  for (const part of field.split(".")) {
+    const properties = resolve(node).properties;
+    if (!properties || !(part in properties)) return undefined;
+    node = properties[part];
+  }
+  // An array field constrains each element rather than the array.
+  const rules = resolve(node);
+  return rules.type === "array" ? rules.items : node;
+}
+
+/// Reports whether a case's configuration writes a value for a dotted field.
+function caseWrites(config, field) {
+  let value = config;
+  for (const part of field.split(".")) {
+    if (value === null || typeof value !== "object" || !(part in value)) return false;
+    value = value[part];
+  }
+  return true;
+}
+
+test("相対パスを解決する設定項目をschemaが制約している", () => {
+  const fields = relativePathFields();
+  assert.notEqual(fields.length, 0, "実装から相対パスの項目を読み取れません");
+
+  const unconstrained = fields.filter((field) => {
+    const node = schemaNodeFor(field);
+    return node?.$ref !== "#/$defs/relativePath";
+  });
+  assert.deepEqual(
+    unconstrained,
+    [],
+    `schemaが相対パスとして制約していない項目: ${unconstrained.join(", ")}`,
+  );
+});
+
+test("相対パスを解決する設定項目をcorpusが受理と拒否の両方で覆っている", () => {
+  // 制約を書いても、corpusに現れない項目は食い違いを検出できません。
+  const missing = [];
+  for (const field of relativePathFields()) {
+    const written = corpus.cases.filter((entry) => caseWrites(entry.config, field));
+    if (!written.some((entry) => entry.accepted)) missing.push(`${field}: 受理するcaseがありません`);
+    if (!written.some((entry) => !entry.accepted)) missing.push(`${field}: 拒否するcaseがありません`);
+  }
+  assert.deepEqual(missing, []);
+});
