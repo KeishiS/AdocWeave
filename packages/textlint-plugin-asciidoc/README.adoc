@@ -64,9 +64,15 @@ npx --yes \
 }
 ----
 
-見出し、段落、リスト、引用、表、リンク、footnote本文、画像の代替文、UI macroの表示文字列および
-インライン装飾を文章として渡します。コード、表示文字列のないURL、数式、属性参照、passおよび
-未対応構文は文章として渡しません。includeは展開せず、入力された一つの物理ファイルだけを解析します。
+見出し、block title、段落、リスト、引用、表、リンク、footnote本文、画像の代替文、iconの代替文またはtitle、
+audioとvideoのtitleおよびインライン装飾を文章として渡します。TxtASTにはblock title専用の標準nodeがないため、
+block titleはdepth 1の``Header``としてtitle向け規則の対象にします。
+
+コード、UI macroの表示要素、表示文字列のないURL、数式、属性参照、passおよび未対応構文は``Code``として
+構造だけを保ち、``Str``を対象とする文章規則から除外します。macroの文章部分に属性参照またはinline記法が
+ある場合も、誤った文字列を渡さないためmacro全体を除外します。titleなどがないmedia macroのfile名も文章と
+して扱いません。
+includeは展開せず、入力された一つの物理ファイルだけを解析します。
 
 == 自動修正
 

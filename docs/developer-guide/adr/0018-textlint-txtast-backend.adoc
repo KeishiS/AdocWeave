@@ -33,10 +33,21 @@ textlint固有の変換をpure Rustの``adocweave-textlint`` adapterへ集約し
 変換します。これにより、新しい意味要素を追加したときにRustとJavaScriptの変換表を別々に更新する必要を
 なくします。
 
-block titleと本体は、重ならない原文順の兄弟nodeとしてplanへ格納します。quoteだけを``BlockQuote``へ
-変換し、example、openおよびsidebarは内部blockへ展開します。数式、pass、属性参照などの対象外inlineは
-単に削除せず、文章のrunを分ける境界として扱います。macroは種類ごとに可視部分を明示し、footnote本文、
-画像の代替文およびUI macroの表示文字列を校正対象に含めます。
+block titleと本体は、重ならない原文順の兄弟nodeとしてplanへ格納します。TxtASTにはcaptionに対応する
+標準nodeがないため、block titleはdepth 1の``Header``へ変換します。これは文書のsection階層を表す変換ではなく、
+句点を要求する本文向け規則からtitleを分け、title向け規則を適用するための非可逆な対応です。独自nodeは
+textlintの標準型と規則が扱えないため採用しません。
+
+quoteだけを``BlockQuote``へ変換し、example、openおよびsidebarは内部blockへ展開します。数式、pass、
+属性参照、表示文字列のないURLなどの対象外inlineは``Code``として元の親nodeに残します。これにより``Str``を
+対象とする文章規則から除外し、見出し、段落および表の構造を分断しません。
+
+macroは種類ごとに可視部分と文章としての性質を区別します。footnote本文、画像の代替文、iconの代替文または
+title、audioとvideoのtitleは``Str``として周囲の文章に含めます。ただし、属性参照またはinline記法を含む値は、
+coreと同じ有界のinline recognizerで単一の``Inline::Text``になる場合だけ採用します。それ以外はmacro全体を
+``Code``として保守的に除外します。
+keyboard、buttonおよびmenuの各表示要素は自然文ではなくUI tokenとして``Code``へ変換します。titleなどがない
+media macroのtargetは、file名であって表示用の自然文ではないため文章へ渡しません。
 
 UTF-8 byte範囲からUTF-16範囲への変換は、planが参照する端点をsourceの一回の走査で変換します。
 改行位置はtextlintと同じくCR、LF、CRLF、U+2028およびU+2029を扱います。

@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use adocweave::Analysis;
 use adocweave::semantic::{
     Block, BlockMetadata, DelimitedBlockKind, DelimitedContent, HeadingKind, Inline, InlineStyle,
-    ListBlock, ListItem, ListKind, StandardMacro, StandardMacroKind, Table, TableCellContent,
-    VerbatimKind,
+    ListBlock, ListItem, ListKind, MacroAttribute, StandardMacro, StandardMacroKind, Table,
+    TableCellContent, VerbatimKind, is_plain_inline_text,
 };
 use adocweave::text::{SyntaxKind, TextRange, TextSize};
 use serde::Serialize;
@@ -474,31 +474,13 @@ impl<'analysis> Builder<'analysis> {
         depth: u8,
         inlines: &[Inline],
     ) -> Result<Vec<ByteNode>, PlanError> {
-        let runs = self.inline_runs(inlines)?.runs;
-        if runs.is_empty() {
-            self.budget.claim()?;
-            return Ok(vec![ByteNode::Header {
-                range: ByteRange(full_range),
-                depth,
-                children: Vec::new(),
-            }]);
-        }
-        let multiple = runs.len() > 1;
-        runs.into_iter()
-            .map(|children| {
-                let range = if multiple {
-                    span(&children)?
-                } else {
-                    ByteRange(full_range)
-                };
-                self.budget.claim()?;
-                Ok(ByteNode::Header {
-                    range,
-                    depth,
-                    children,
-                })
-            })
-            .collect()
+        let children = self.inline_nodes(inlines)?;
+        self.budget.claim()?;
+        Ok(vec![ByteNode::Header {
+            range: ByteRange(full_range),
+            depth,
+            children,
+        }])
     }
 
     fn paragraphs(
@@ -506,19 +488,15 @@ impl<'analysis> Builder<'analysis> {
         full_range: TextRange,
         inlines: &[Inline],
     ) -> Result<Vec<ByteNode>, PlanError> {
-        let runs = self.inline_runs(inlines)?.runs;
-        let multiple = runs.len() > 1;
-        runs.into_iter()
-            .map(|children| {
-                let range = if multiple {
-                    span(&children)?
-                } else {
-                    ByteRange(full_range)
-                };
-                self.budget.claim()?;
-                Ok(ByteNode::Paragraph { range, children })
-            })
-            .collect()
+        let children = self.inline_nodes(inlines)?;
+        if children.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.budget.claim()?;
+        Ok(vec![ByteNode::Paragraph {
+            range: ByteRange(full_range),
+            children,
+        }])
     }
 
     fn list(&mut self, list: &ListBlock) -> Result<ByteNode, PlanError> {
@@ -561,10 +539,7 @@ impl<'analysis> Builder<'analysis> {
             let mut cells = Vec::new();
             for cell in &row.cells {
                 let children = match &cell.content {
-                    TableCellContent::Inlines(inlines) => {
-                        let runs = self.inline_runs(inlines)?.runs;
-                        self.join_cell_runs(runs)?
-                    }
+                    TableCellContent::Inlines(inlines) => self.inline_nodes(inlines)?,
                     TableCellContent::AsciiDoc(blocks) => {
                         let mut runs = Vec::new();
                         self.table_cell_block_runs(blocks, &mut runs)?;
@@ -600,12 +575,12 @@ impl<'analysis> Builder<'analysis> {
     ) -> Result<(), PlanError> {
         for block in blocks {
             if let Some(title) = &block.metadata().title {
-                output.extend(self.inline_runs(&title.inlines)?.runs);
+                output.push(self.inline_nodes(&title.inlines)?);
             }
             match block {
-                Block::Heading(heading) => output.extend(self.inline_runs(&heading.inlines)?.runs),
+                Block::Heading(heading) => output.push(self.inline_nodes(&heading.inlines)?),
                 Block::Paragraph(paragraph) => {
-                    output.extend(self.inline_runs(&paragraph.inlines)?.runs);
+                    output.push(self.inline_nodes(&paragraph.inlines)?);
                 }
                 Block::List(list) => self.table_cell_list_runs(list, output)?,
                 Block::Delimited(delimited) => {
@@ -636,9 +611,9 @@ impl<'analysis> Builder<'analysis> {
     ) -> Result<(), PlanError> {
         for item in &list.items {
             for term in &item.terms {
-                output.extend(self.inline_runs(&term.inlines)?.runs);
+                output.push(self.inline_nodes(&term.inlines)?);
             }
-            output.extend(self.inline_runs(&item.inlines)?.runs);
+            output.push(self.inline_nodes(&item.inlines)?);
             for child in &item.children {
                 self.table_cell_list_runs(child, output)?;
             }
@@ -661,49 +636,27 @@ impl<'analysis> Builder<'analysis> {
         Ok(output)
     }
 
-    fn inline_runs(&mut self, inlines: &[Inline]) -> Result<Runs, PlanError> {
-        let mut runs = Vec::new();
-        let mut current = Vec::new();
-        let mut leading_boundary = false;
-        let mut trailing_boundary = false;
+    fn inline_nodes(&mut self, inlines: &[Inline]) -> Result<Vec<ByteNode>, PlanError> {
+        let mut output = Vec::new();
         for inline in inlines {
-            for piece in self.inline(inline)? {
-                match piece {
-                    Piece::Node(node) => {
-                        current.push(node);
-                        trailing_boundary = false;
-                    }
-                    Piece::Boundary => {
-                        if runs.is_empty() && current.is_empty() {
-                            leading_boundary = true;
-                        }
-                        flush(&mut runs, &mut current);
-                        trailing_boundary = true;
-                    }
-                }
-            }
+            output.extend(self.inline(inline)?);
         }
-        flush(&mut runs, &mut current);
-        Ok(Runs {
-            runs,
-            leading_boundary,
-            trailing_boundary,
-        })
+        Ok(output)
     }
 
-    fn inline(&mut self, inline: &Inline) -> Result<Vec<Piece>, PlanError> {
+    fn inline(&mut self, inline: &Inline) -> Result<Vec<ByteNode>, PlanError> {
         match inline {
-            Inline::Text(text) => Ok(vec![Piece::Node(self.str_node(ByteRange(text.range))?)]),
+            Inline::Text(text) => Ok(vec![self.str_node(ByteRange(text.range))?]),
             Inline::Literal {
                 range,
                 content_range,
                 ..
             } => {
                 self.budget.claim()?;
-                Ok(vec![Piece::Node(ByteNode::Code {
+                Ok(vec![ByteNode::Code {
                     range: ByteRange(*range),
                     value_range: ByteRange(*content_range),
-                })])
+                }])
             }
             Inline::Styled {
                 style,
@@ -711,72 +664,52 @@ impl<'analysis> Builder<'analysis> {
                 children,
                 ..
             } => {
-                let runs = self.inline_runs(children)?;
-                let multiple = runs.runs.len() > 1;
-                let mut pieces = Vec::new();
-                if runs.leading_boundary {
-                    pieces.push(Piece::Boundary);
-                }
-                for children in runs.runs {
-                    let child_range = if multiple {
-                        span(&children)?
-                    } else {
-                        ByteRange(*range)
-                    };
-                    match style {
-                        InlineStyle::Strong => {
-                            self.budget.claim()?;
-                            pieces.push(Piece::Node(ByteNode::Strong {
-                                range: child_range,
-                                children,
-                            }));
-                        }
-                        InlineStyle::Emphasis => {
-                            self.budget.claim()?;
-                            pieces.push(Piece::Node(ByteNode::Emphasis {
-                                range: child_range,
-                                children,
-                            }));
-                        }
-                        InlineStyle::Highlight
-                        | InlineStyle::Subscript
-                        | InlineStyle::Superscript
-                        | InlineStyle::CurvedDoubleQuote
-                        | InlineStyle::CurvedSingleQuote => {
-                            pieces.extend(children.into_iter().map(Piece::Node));
-                        }
+                let children = self.inline_nodes(children)?;
+                match style {
+                    InlineStyle::Strong => {
+                        self.budget.claim()?;
+                        Ok(vec![ByteNode::Strong {
+                            range: ByteRange(*range),
+                            children,
+                        }])
                     }
-                    if multiple {
-                        pieces.push(Piece::Boundary);
+                    InlineStyle::Emphasis => {
+                        self.budget.claim()?;
+                        Ok(vec![ByteNode::Emphasis {
+                            range: ByteRange(*range),
+                            children,
+                        }])
                     }
+                    InlineStyle::Highlight
+                    | InlineStyle::Subscript
+                    | InlineStyle::Superscript
+                    | InlineStyle::CurvedDoubleQuote
+                    | InlineStyle::CurvedSingleQuote => Ok(children),
                 }
-                if runs.trailing_boundary {
-                    pieces.push(Piece::Boundary);
-                }
-                Ok(pieces)
             }
-            Inline::AttributeReference { .. } | Inline::Formula(_) | Inline::Passthrough { .. } => {
-                Ok(vec![Piece::Boundary])
-            }
+            Inline::AttributeReference { range, .. } => self.opaque_inline(*range, *range),
+            Inline::Formula(formula) => self.opaque_inline(formula.range, formula.content_range),
+            Inline::Passthrough {
+                range,
+                content_range,
+                ..
+            } => self.opaque_inline(*range, *content_range),
             Inline::HardBreak { range } => {
                 self.budget.claim()?;
-                Ok(vec![
-                    Piece::Node(ByteNode::Break {
-                        range: ByteRange(*range),
-                    }),
-                    Piece::Boundary,
-                ])
+                Ok(vec![ByteNode::Break {
+                    range: ByteRange(*range),
+                }])
             }
             Inline::Link(link) => {
                 if link.label_range.is_none_or(TextRange::is_empty) {
-                    Ok(vec![Piece::Boundary])
+                    self.opaque_inline(link.range, link.range)
                 } else {
                     self.link(link.range, link.target.clone(), &link.label)
                 }
             }
             Inline::Reference(reference) => {
                 if reference.label_range.is_none_or(TextRange::is_empty) {
-                    Ok(vec![Piece::Boundary])
+                    self.opaque_inline(reference.range, reference.range)
                 } else {
                     self.link(
                         reference.range,
@@ -794,39 +727,20 @@ impl<'analysis> Builder<'analysis> {
         range: TextRange,
         url: String,
         label: &[Inline],
-    ) -> Result<Vec<Piece>, PlanError> {
-        let runs = self.inline_runs(label)?;
-        if runs.runs.is_empty() {
-            return Ok(vec![Piece::Boundary]);
+    ) -> Result<Vec<ByteNode>, PlanError> {
+        let children = self.inline_nodes(label)?;
+        if children.is_empty() {
+            return self.opaque_inline(range, range);
         }
-        let multiple = runs.runs.len() > 1;
-        let mut output = Vec::new();
-        if runs.leading_boundary {
-            output.push(Piece::Boundary);
-        }
-        for children in runs.runs {
-            let range = if multiple {
-                span(&children)?
-            } else {
-                ByteRange(range)
-            };
-            self.budget.claim()?;
-            output.push(Piece::Node(ByteNode::Link {
-                range,
-                url: url.clone(),
-                children,
-            }));
-            if multiple {
-                output.push(Piece::Boundary);
-            }
-        }
-        if runs.trailing_boundary {
-            output.push(Piece::Boundary);
-        }
-        Ok(output)
+        self.budget.claim()?;
+        Ok(vec![ByteNode::Link {
+            range: ByteRange(range),
+            url,
+            children,
+        }])
     }
 
-    fn macro_pieces(&mut self, node: &StandardMacro) -> Result<Vec<Piece>, PlanError> {
+    fn macro_pieces(&mut self, node: &StandardMacro) -> Result<Vec<ByteNode>, PlanError> {
         use StandardMacroKind as Kind;
         let first = node.attributes.first();
         let named = |name: &str| {
@@ -837,37 +751,79 @@ impl<'analysis> Builder<'analysis> {
                     .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name))
             })
         };
-        let ranges = match node.kind {
-            Kind::Footnote => first.into_iter().map(|value| value.value_range).collect(),
-            Kind::Keyboard | Kind::Button => {
-                vec![first.map_or(node.target_range, |value| value.value_range)]
+        let text = match node.kind {
+            Kind::Footnote => MacroText::Prose(first.into_iter().collect()),
+            Kind::Keyboard => MacroText::UiToken(
+                node.attributes
+                    .iter()
+                    .map(|value| value.value_range)
+                    .collect(),
+            ),
+            Kind::Button => {
+                MacroText::UiToken(first.into_iter().map(|value| value.value_range).collect())
             }
-            Kind::Menu => std::iter::once(node.target_range)
-                .chain(node.attributes.iter().map(|value| value.value_range))
-                .collect(),
-            Kind::Image => named("alt")
-                .or_else(|| node.attributes.iter().find(|value| value.name.is_none()))
-                .into_iter()
-                .map(|value| value.value_range)
-                .collect(),
-            Kind::Icon => named("alt")
-                .or_else(|| named("title"))
-                .map_or_else(|| vec![node.target_range], |value| vec![value.value_range]),
-            Kind::Audio | Kind::Video => named("title")
-                .map_or_else(|| vec![node.target_range], |value| vec![value.value_range]),
+            Kind::Menu => MacroText::UiToken(
+                std::iter::once(node.target_range)
+                    .chain(node.attributes.iter().map(|value| value.value_range))
+                    .collect(),
+            ),
+            Kind::Image => MacroText::Prose(
+                named("alt")
+                    .or_else(|| node.attributes.iter().find(|value| value.name.is_none()))
+                    .into_iter()
+                    .collect(),
+            ),
+            Kind::Icon => MacroText::Prose(
+                named("alt")
+                    .or_else(|| named("title"))
+                    .into_iter()
+                    .collect(),
+            ),
+            Kind::Audio | Kind::Video => MacroText::Prose(named("title").into_iter().collect()),
             Kind::Email
             | Kind::Anchor
             | Kind::BibliographyAnchor
             | Kind::Citation
-            | Kind::IndexTerm => Vec::new(),
+            | Kind::IndexTerm => MacroText::Opaque,
         };
-        if ranges.is_empty() {
-            return Ok(vec![Piece::Boundary]);
+        match text {
+            MacroText::Prose(attributes)
+                if !attributes.is_empty()
+                    && attributes
+                        .iter()
+                        .all(|attribute| plain_macro_prose(self.source, attribute)) =>
+            {
+                attributes
+                    .into_iter()
+                    .map(|attribute| self.str_node(ByteRange(attribute.value_range)))
+                    .collect()
+            }
+            MacroText::UiToken(ranges) if !ranges.is_empty() => ranges
+                .into_iter()
+                .map(|range| {
+                    self.budget.claim()?;
+                    Ok(ByteNode::Code {
+                        range: ByteRange(range),
+                        value_range: ByteRange(range),
+                    })
+                })
+                .collect(),
+            MacroText::Prose(_) | MacroText::UiToken(_) | MacroText::Opaque => {
+                self.opaque_inline(node.range, node.range)
+            }
         }
-        ranges
-            .into_iter()
-            .map(|range| self.str_node(ByteRange(range)).map(Piece::Node))
-            .collect()
+    }
+
+    fn opaque_inline(
+        &mut self,
+        range: TextRange,
+        value_range: TextRange,
+    ) -> Result<Vec<ByteNode>, PlanError> {
+        self.budget.claim()?;
+        Ok(vec![ByteNode::Code {
+            range: ByteRange(range),
+            value_range: ByteRange(value_range),
+        }])
     }
 
     fn str_node(&mut self, range: ByteRange) -> Result<ByteNode, PlanError> {
@@ -919,29 +875,18 @@ impl<'analysis> Builder<'analysis> {
     }
 }
 
-enum Piece {
-    Node(ByteNode),
-    Boundary,
+enum MacroText<'attribute> {
+    Prose(Vec<&'attribute MacroAttribute>),
+    UiToken(Vec<TextRange>),
+    Opaque,
 }
 
-struct Runs {
-    runs: Vec<Vec<ByteNode>>,
-    leading_boundary: bool,
-    trailing_boundary: bool,
-}
-
-fn flush(runs: &mut Vec<Vec<ByteNode>>, current: &mut Vec<ByteNode>) {
-    if !current.is_empty() {
-        runs.push(std::mem::take(current));
-    }
-}
-
-fn span(nodes: &[ByteNode]) -> Result<ByteRange, PlanError> {
-    let Some(first) = nodes.first() else {
-        return Err(PlanError::InvalidSourceRange);
+fn plain_macro_prose(source: &str, attribute: &MacroAttribute) -> bool {
+    let range = ByteRange(attribute.value_range);
+    let Some(value) = source.get(range.start()..range.end()) else {
+        return false;
     };
-    let last = nodes.last().expect("a first node implies a last node");
-    ByteRange::new(first.range().start(), last.range().end())
+    value == attribute.value && is_plain_inline_text(value)
 }
 
 fn sort_and_check(nodes: &mut [ByteNode]) -> Result<(), PlanError> {
@@ -1587,7 +1532,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_variant_matrix_preserves_types_and_splits_opaque_runs() {
+    fn inline_variant_matrix_preserves_types_and_marks_opaque_nodes_as_code() {
         let source = "前 **強調** _斜体_ #印# ^上^ ~下~ `code` {name} stem:[x] pass:[raw] link:https://example.com[表示] <<id,参照>> +\n後\n";
         let plan = build(source);
         let mut all = Vec::new();
@@ -1608,13 +1553,19 @@ mod tests {
             all.iter()
                 .any(|node| matches!(node, TxtAstNode::Break { .. }))
         );
-        assert!(
+        assert_eq!(
             plan.children
                 .iter()
                 .filter(|node| matches!(node, TxtAstNode::Paragraph { .. }))
+                .count(),
+            1,
+            "opaque inline constructs must preserve their paragraph"
+        );
+        assert!(
+            all.iter()
+                .filter(|node| matches!(node, TxtAstNode::Code { .. }))
                 .count()
-                >= 4,
-            "opaque inline constructs must create prose run boundaries"
+                >= 4
         );
     }
 
@@ -1667,7 +1618,7 @@ mod tests {
 
     #[test]
     fn standard_macro_policy_exposes_only_visible_natural_language() {
-        let source = "footnote:[脚注本文]\n\nkbd:[キー]\n\nbtn:[保存]\n\nmenu:File[Open,Recent]\n\nimage:pic.png[代替文]\n\nicon:save[title=保存アイコン]\n\naudio:sound.mp3[title=音声題]\n\nvideo:movie.mp4[title=動画題]\n\nuser@example.com [[anchor,非表示]] cite:[key] indexterm:[索引]\n";
+        let source = "footnote:[脚注本文] footnote:[C++ APIです。]\n\nkbd:[Ctrl,Shift,T]\n\nbtn:[保存]\n\nmenu:File[Open,Recent]\n\nimage:pic.png[代替文]\n\nicon:save[title=保存アイコン]\n\naudio:sound.mp3[title=音声題]\n\nvideo:movie.mp4[title=動画題]\n\naudio:sound.mp3[] video:movie.mp4[] icon:save[]\n\nbtn:[{label}] image:pic.png[{alt}] footnote:[**強調**です。]\n\nfootnote:[https://example.com/path] footnote:[user@example.com] image:pic.png[https://example.com] audio:x.mp3[title=https://example.com]\n\nuser@example.com [[anchor,非表示]] cite:[key] indexterm:[索引]\n";
         let plan = build(source);
         let mut all = Vec::new();
         visit(&plan.children, &mut all);
@@ -1680,11 +1631,7 @@ mod tests {
             .collect::<Vec<_>>();
         for expected in [
             "脚注本文",
-            "キー",
-            "保存",
-            "File",
-            "Open",
-            "Recent",
+            "C++ APIです。",
             "代替文",
             "保存アイコン",
             "音声題",
@@ -1703,6 +1650,32 @@ mod tests {
         assert!(!visible.contains(&"非表示"));
         assert!(!visible.contains(&"key"));
         assert!(!visible.contains(&"索引"));
+        for excluded in [
+            "sound.mp3",
+            "movie.mp4",
+            "save",
+            "{label}",
+            "{alt}",
+            "**強調**です。",
+            "https://example.com/path",
+            "user@example.com",
+            "https://example.com",
+        ] {
+            assert!(!visible.contains(&excluded), "unexpected prose: {excluded}");
+        }
+        let ui_tokens = all
+            .iter()
+            .filter_map(|node| match node {
+                TxtAstNode::Code { value_range, .. } => Some(text_at(source, *value_range)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for expected in ["Ctrl", "Shift", "T", "保存", "File", "Open", "Recent"] {
+            assert!(
+                ui_tokens.contains(&expected),
+                "missing UI token: {expected}"
+            );
+        }
     }
 
     #[test]
@@ -1725,7 +1698,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_link_labels_are_boundaries() {
+    fn empty_link_labels_are_non_prose_without_splitting_the_paragraph() {
         let source = "前 link:https://example.com[] 後";
         let plan = build(source);
         let mut all = Vec::new();
@@ -1735,12 +1708,39 @@ mod tests {
                 .any(|node| matches!(node, TxtAstNode::Link { .. })),
             "{all:?}"
         );
-        assert_eq!(
-            plan.children
+        let [TxtAstNode::Paragraph { children, .. }] = plan.children.as_slice() else {
+            panic!("empty link label split the paragraph: {:?}", plan.children);
+        };
+        assert!(
+            children
                 .iter()
-                .filter(|node| matches!(node, TxtAstNode::Paragraph { .. }))
+                .any(|node| matches!(node, TxtAstNode::Code { .. }))
+        );
+    }
+
+    #[test]
+    fn opaque_inlines_preserve_one_heading_and_one_table_cell() {
+        let source = "== 前 {unknown} 後\n\n|===\n|前{unknown}後\n|===\n";
+        let plan = build(source);
+        let mut all = Vec::new();
+        visit(&plan.children, &mut all);
+        assert_eq!(
+            all.iter()
+                .filter(|node| matches!(node, TxtAstNode::Header { .. }))
                 .count(),
-            2
+            1
+        );
+        assert_eq!(
+            all.iter()
+                .filter(|node| matches!(node, TxtAstNode::TableCell { .. }))
+                .count(),
+            1
+        );
+        assert!(
+            all.iter()
+                .filter(|node| matches!(node, TxtAstNode::Code { .. }))
+                .count()
+                >= 2
         );
     }
 

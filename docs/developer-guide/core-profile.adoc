@@ -108,8 +108,13 @@ planは文章を複製せず、原文から``raw``と``value``を取り出す範
 再解釈しません。
 
 Source blockとinline codeはcodeとして区別し、文章規則の対象から外します。数式、pass、属性参照および
-表示文字列のないmacroは文章の境界として扱います。footnote本文、画像の代替文およびUI macroの表示文字列は
-校正対象です。includeは展開せず、位置は解析した一つの物理文書を指します。
+表示文字列のないmacroも``Code``として元の親nodeに保持します。属性参照やinline記法を含まないfootnote本文、
+画像の代替文、iconの代替文またはtitle、audioとvideoのtitleは校正対象です。UI macroは各表示要素を``Code``として
+保持します。
+macroの文章部分は、``is_plain_inline_text``で文書解析と同じ有界のinline recognizerを適用し、単一の
+``Inline::Text``になるかを判定します。属性参照またはinline記法がある場合は、macro全体を文章規則から
+除外します。block titleはTxtASTにcaption nodeがないため、depth 1の``Header``として扱います。includeは
+展開せず、位置は解析した一つの物理文書を指します。
 
 === 利用側アプリの拡張
 

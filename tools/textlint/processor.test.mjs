@@ -24,19 +24,86 @@ test("AsciiDocを有効なTxtASTへ変換する", () => {
   assert.ok(ast.children.some((node) => node.type === "List"));
 });
 
-test("ブロックタイトルと文末の脚注に句点を誤警告しない", async () => {
+test("日本語技術文書presetがブロックタイトルと文末の脚注へ誤警告しない", async () => {
   const source = ".表題\n本文です。 footnote:[注釈です。]\n";
   const result = await new TextlintKernel().lintText(source, {
     ext: ".adoc",
     filePath: "block-title.adoc",
     plugins: [{ pluginId: "adocweave", plugin: { Processor } }],
-    rules: [{
-      ruleId: "ja-no-mixed-period",
-      rule: technicalWriting.rules["ja-no-mixed-period"],
-      options: structuredClone(technicalWriting.rulesConfig["ja-no-mixed-period"])
-    }]
+    rules: Object.entries(technicalWriting.rules).map(([ruleId, rule]) => ({
+      ruleId,
+      rule,
+      options: structuredClone(technicalWriting.rulesConfig[ruleId])
+    }))
   });
   assert.deepEqual(result.messages, []);
+});
+
+test("macroの自然文だけをStrとして公開する", () => {
+  const source = `本文です。 footnote:[注釈です。] footnote:[C++ APIです。]
+
+kbd:[Ctrl,Shift,T] btn:[保存] menu:File[Open,Recent]
+
+image:pic.png[代替文] icon:save[title=アイコン説明]
+
+audio:sound.mp3[] video:movie.mp4[] icon:save[]
+
+btn:[{label}] image:pic.png[{alt}] footnote:[**強調**です。]
+
+footnote:[https://example.com/path] footnote:[user@example.com]
+
+image:pic.png[https://example.com] audio:x.mp3[title=https://example.com]
+`;
+  const ast = new Processor().processor(".adoc").preProcess(source, "macros.adoc");
+  testAST(ast);
+  const nodes = [];
+  const stack = [ast];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    nodes.push(node);
+    stack.push(...(node.children ?? []));
+  }
+  const prose = nodes
+    .filter((node) => node.type === "Str")
+    .map((node) => node.value);
+  for (const expected of ["注釈です。", "C++ APIです。", "代替文", "アイコン説明"]) {
+    assert.ok(prose.includes(expected), `${expected}が文章として公開されていません`);
+  }
+  for (const excluded of [
+    "sound.mp3",
+    "movie.mp4",
+    "save",
+    "{label}",
+    "{alt}",
+    "**強調**です。",
+    "https://example.com/path",
+    "user@example.com",
+    "https://example.com"
+  ]) {
+    assert.ok(!prose.includes(excluded), `${excluded}が文章として公開されました`);
+  }
+  const code = nodes
+    .filter((node) => node.type === "Code")
+    .map((node) => node.value);
+  for (const expected of ["Ctrl", "Shift", "T", "保存", "File", "Open", "Recent"]) {
+    assert.ok(code.includes(expected), `${expected}がUI tokenとして保持されていません`);
+  }
+});
+
+test("対象外inlineが見出しと表の構造を分断しない", () => {
+  const source = "== 前 {unknown} 後\n\n|===\n|前{unknown}後\n|===\n";
+  const ast = new Processor().processor(".adoc").preProcess(source, "opaque.adoc");
+  testAST(ast);
+  assert.equal(ast.children.filter((node) => node.type === "Header").length, 1);
+  const cells = [];
+  const stack = [ast];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node.type === "TableCell") cells.push(node);
+    stack.push(...(node.children ?? []));
+  }
+  assert.equal(cells.length, 1);
+  assert.ok(cells[0].children.some((node) => node.type === "Code"));
 });
 
 test("TxtAST固有のプロパティを保持する", () => {

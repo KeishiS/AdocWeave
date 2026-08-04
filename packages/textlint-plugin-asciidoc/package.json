@@ -30,6 +30,7 @@
     "node": ">=20.18.0 <25"
   },
   "peerDependencies": {
+    "@textlint/types": "15.8.0",
     "textlint": "15.8.0"
   },
   "keywords": ["asciidoc", "textlint", "textlintplugin"],

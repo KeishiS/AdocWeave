@@ -222,8 +222,11 @@ pluginの``extensions``へ先頭の``.``を含む名前を追加します。
 }
 ----
 
-見出し、段落、リスト、引用、表、リンク、footnote本文、画像の代替文、UI macroの表示文字列およびinline装飾を
-文章規則へ渡します。code、表示文字列のないURL、数式、属性参照、passおよび未対応構文は文章として渡しません。
+見出し、block title、段落、リスト、引用、表、リンク、属性参照やinline記法を含まないfootnote本文、
+画像の代替文、iconの代替文またはtitle、audioとvideoのtitleおよびinline装飾を文章規則へ渡します。
+block titleはdepth 1の``Header``としてtitle向け規則の対象にします。
+code、UI macro、表示文字列のないURL、数式、属性参照、passおよび未対応構文は``Code``として保持し、``Str``を
+対象とする文章規則から除外します。属性参照またはinline記法を含むmacroの文章部分も保守的に除外します。
 includeは展開せず、入力した一つの物理ファイルだけを検査します。
 
 [source,console]
