@@ -23,8 +23,11 @@ AsciiDocの構文要素の名前も原綴りです。``admonition paragraph``、
 == 使わない表現
 
 次の語は、辞書的には正しくても意味を取り違えさせるため使いません。複合語を含め、この語を含む表現は
-すべて対象です。
+すべて対象です。検査対象の一覧は
+link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]を基準とします。この文書には、
+各項目を避ける理由と、書き直すときの判断基準を記載します。
 
+[#legal-contract-metaphor]
 `契約`::
 +
 --
