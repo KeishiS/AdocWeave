@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   assertDiagnostics,
   fixtureSource,
+  npmInvocation,
   runTextlintPluginReleaseSmoke,
 } from "./textlint-plugin-release-smoke.mjs";
 
@@ -110,6 +111,24 @@ test("fixtureは日本語、emoji、結合文字、指定した改行を含む",
   assert.match(lf, /e\u0301/u);
   assert.equal(lf.includes("\r"), false);
   assert.equal(crlf.split("\r\n").length, 4);
+});
+
+test("Windowsではcmd wrapperを介さずNode.jsでnpm CLIを起動する", () => {
+  assert.deepEqual(
+    npmInvocation({
+      environment: {},
+      executable: String.raw`C:\node\node.exe`,
+      platform: "win32",
+    }),
+    {
+      arguments: [String.raw`C:\node\node_modules\npm\bin\npm-cli.js`],
+      command: String.raw`C:\node\node.exe`,
+    },
+  );
+  assert.deepEqual(
+    npmInvocation({ executable: "/usr/bin/node", platform: "linux" }),
+    { arguments: [], command: "npm" },
+  );
 });
 
 async function createFixtureArchive() {

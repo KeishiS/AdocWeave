@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, win32 } from "node:path";
 import { createRequire } from "node:module";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
@@ -191,8 +191,9 @@ async function assertInstalledPackage(root) {
 }
 
 async function installTextlintAndPlugin({ archive, cwd }) {
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = await runProcess(npm, [
+  const npm = npmInvocation();
+  const result = await runProcess(npm.command, [
+    ...npm.arguments,
     "install",
     "--ignore-scripts",
     "--no-audit",
@@ -208,6 +209,17 @@ async function installTextlintAndPlugin({ archive, cwd }) {
     },
   });
   if (result.code !== 0) throw new Error(diagnosticForUnexpectedExit("npm install", result));
+}
+
+export function npmInvocation({
+  environment = process.env,
+  executable = process.execPath,
+  platform = process.platform,
+} = {}) {
+  if (platform !== "win32") return { arguments: [], command: "npm" };
+  const cli = environment.npm_execpath ??
+    win32.join(win32.dirname(executable), "node_modules", "npm", "bin", "npm-cli.js");
+  return { arguments: [cli], command: executable };
 }
 
 async function invokeTextlintCli({ args, cli, cwd, input }) {
