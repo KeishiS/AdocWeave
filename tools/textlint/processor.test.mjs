@@ -24,8 +24,8 @@ test("AsciiDocを有効なTxtASTへ変換する", () => {
   assert.ok(ast.children.some((node) => node.type === "List"));
 });
 
-test("ブロックタイトルを本文向けの句点規則から除外する", async () => {
-  const source = ".表題\n本文です。\n";
+test("ブロックタイトルと文末の脚注に句点を誤警告しない", async () => {
+  const source = ".表題\n本文です。 footnote:[注釈です。]\n";
   const result = await new TextlintKernel().lintText(source, {
     ext: ".adoc",
     filePath: "block-title.adoc",

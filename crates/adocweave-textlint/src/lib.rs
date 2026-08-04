@@ -864,12 +864,10 @@ impl<'analysis> Builder<'analysis> {
         if ranges.is_empty() {
             return Ok(vec![Piece::Boundary]);
         }
-        let mut pieces = vec![Piece::Boundary];
-        for range in ranges {
-            pieces.push(Piece::Node(self.str_node(ByteRange(range))?));
-            pieces.push(Piece::Boundary);
-        }
-        Ok(pieces)
+        ranges
+            .into_iter()
+            .map(|range| self.str_node(ByteRange(range)).map(Piece::Node))
+            .collect()
     }
 
     fn str_node(&mut self, range: ByteRange) -> Result<ByteNode, PlanError> {
@@ -1705,6 +1703,25 @@ mod tests {
         assert!(!visible.contains(&"非表示"));
         assert!(!visible.contains(&"key"));
         assert!(!visible.contains(&"索引"));
+    }
+
+    #[test]
+    fn visible_macro_text_preserves_surrounding_prose_run() {
+        let source = "本文です。 footnote:[注釈です。]\n";
+        let plan = build(source);
+        assert_eq!(plan.children.len(), 1);
+        let TxtAstNode::Paragraph { children, .. } = &plan.children[0] else {
+            panic!(
+                "本文と脚注が単一のParagraphではありません: {:?}",
+                plan.children
+            );
+        };
+        assert_eq!(children.len(), 2);
+        assert!(
+            children
+                .iter()
+                .all(|node| matches!(node, TxtAstNode::Str { .. }))
+        );
     }
 
     #[test]
