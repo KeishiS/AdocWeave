@@ -1,6 +1,7 @@
 = インストールと更新
 
-この文書では、GitHub ReleasesからCLIとLanguage Serverを導入し、更新および削除する手順を説明します。
+この文書では、GitHub ReleasesからCLI、Language Serverおよびtextlint用AsciiDoc Processorを導入し、
+更新および削除する手順を説明します。
 
 Rustツールチェーンおよびソースの取得を行わない場合はGitHub Releaseを、Nixを利用する場合はflakeを使用できます。
 GitHub Release archiveとNixパッケージは別の配布経路であり、Nixパッケージはarchiveを再包装せず、ソースからbuildします。
@@ -25,30 +26,9 @@ GitHub Release archiveとNixパッケージは別の配布経路であり、Nix�
 
 | エディターで使う
 | <<zed-installation>>、<<vscode-installation>>
-|===
 
-いずれの経路でも、導入前に「取得と完全性の検証」のchecksumとattestationの確認を行ってください。
-
-この文書は複数の導入経路を扱います。全体を順に読む必要はありません。目的に応じて次の節へ進んでください。
-
-[cols="2,3"]
-|===
-| 目的 | 読む節
-
-| 自分の端末でCLIを使う（Nix）
-| <<nix-installation>>
-
-| 自分の端末でCLIを使う（Nixを使わない）
-| 「配布物の選択」「取得と完全性の検証」「利用者単位の導入」
-
-| 複数の利用者が使う端末へ導入する
-| 「配布物の選択」「取得と完全性の検証」「システム全体への導入」
-
-| Webアプリへ組み込む
-| <<browser-library-deployment>>
-
-| エディターで使う
-| <<zed-installation>>、<<vscode-installation>>
+| AsciiDoc文書をtextlintで検査する
+| <<textlint-plugin-installation>>
 |===
 
 いずれの経路でも、導入前に「取得と完全性の検証」のchecksumとattestationの確認を行ってください。
@@ -108,6 +88,9 @@ runtime closureへ含めません。
 
 |VS Code拡張
 3+|`adocweave-vscode-<version>.vsix`
+
+|textlint用AsciiDoc Processor
+3+|`adocweave-textlint-plugin-asciidoc-<version>.tgz`
 |===
 
 targetはLinux ARM64の``aarch64-unknown-linux-musl``、Linux x86-64の``x86_64-unknown-linux-musl``、
@@ -158,7 +141,8 @@ sha256sum --check --ignore-missing sha256.sum
 
 GitHub CLIを使わない場合は、Release画面から各assetを個別に保存します。HTMLをarchive名で保存する事故を避けるため、
 download後にnative archiveでは``unzip -t <archive>``、browserとZedのarchiveでは
-``tar -tJf <archive>``も成功することを確認します。``curl | sh``形式のinstallerは提供しません。
+``tar -tJf <archive>``、textlint用パッケージでは``tar -tzf <archive>``も成功することを確認します。
+``curl | sh``形式のinstallerは提供しません。
 
 checksumとは別に、必要なassetのGitHub Artifact Attestationを検証します。
 
@@ -171,6 +155,97 @@ gh attestation verify sha256.sum --repo KeishiS/adocweave
 
 checksumは取得したbyte列が配布時の値と一致することを示します。attestationは、そのbyte列が対象リポジトリの
 GitHub Actionsから生成された来歴を示します。いずれも、成果物に脆弱性や悪意ある処理がないことまでは保証しません。
+
+[#textlint-plugin-installation]
+== textlint用AsciiDoc Processorの導入
+
+``@adocweave/textlint-plugin-asciidoc``はnpm registryへ公開しません。検証したGitHub Releaseのtarball URLと
+対応するtextlintを、利用するプロジェクトの開発用依存として固定します。
+
+[source,console]
+----
+VERSION=X.Y.Z
+npm install --save-dev textlint@15.8.0 \
+  "https://github.com/KeishiS/adocweave/releases/download/v$VERSION/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
+----
+
+対応環境はNode.js 20.18.0以上25未満とtextlint 15.8.0です。パッケージの``engines``と
+``peerDependencies``にも同じ範囲を記録します。パッケージにはNode.js用WebAssemblyを同梱するため、
+Rust、Cargo、``wasm-bindgen``、AdocWeave CLIおよび実行時の追加downloadは不要です。
+
+プロジェクトへ依存を導入せずに一度だけ試す場合は、``npx``の``--package``で必要な三つのパッケージを
+一時的に取得できます。次の例は、日本語技術文書向けの規則で``document.adoc``を検査します。
+
+[source,console]
+----
+VERSION=X.Y.Z
+RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/v$VERSION"
+PLUGIN="$RELEASE_URL/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
+npx --yes \
+  --package=textlint@15.8.0 \
+  --package="$PLUGIN" \
+  --package=textlint-rule-preset-ja-technical-writing@12.0.2 \
+  textlint --no-textlintrc \
+  --plugin @adocweave/asciidoc \
+  --preset ja-technical-writing \
+  document.adoc
+----
+
+この方法では作業ディレクトリへ``package.json``、``package-lock.json``および``node_modules``を作成しません。
+取得したパッケージはnpmのキャッシュへ保存されます。継続して利用する場合は、依存とバージョンを
+``package.json``と``package-lock.json``へ記録してください。
+
+``.textlintrc.json``では、AsciiDoc Processorと利用する規則を別々に指定します。次の例では、規則のパッケージも
+利用側で開発用依存へ追加します。
+
+[source,json]
+----
+{
+  "plugins": ["@adocweave/asciidoc"],
+  "rules": {
+    "preset-ja-technical-writing": true
+  }
+}
+----
+
+既定では``.adoc``、``.asciidoc``および``.asc``を認識します。別の拡張子をAsciiDocとして扱う場合は、
+pluginの``extensions``へ先頭の``.``を含む名前を追加します。
+
+[source,json]
+----
+{
+  "plugins": {
+    "@adocweave/asciidoc": {
+      "extensions": [".guide"]
+    }
+  }
+}
+----
+
+見出し、block title、段落、リスト、引用、表、リンク、属性参照やinline記法を含まないfootnote本文、
+画像の代替文、iconの代替文またはtitle、audioとvideoのtitleおよびinline装飾を文章規則へ渡します。
+block titleはdepth 1の``Header``としてtitle向け規則の対象にします。
+code、UI macro、表示文字列のないURL、数式、属性参照、passおよび未対応構文は``Code``として保持し、``Str``を
+対象とする文章規則から除外します。属性参照またはinline記法を含むmacroの文章部分も保守的に除外します。
+includeは展開せず、入力した一つの物理ファイルだけを検査します。
+
+[source,console]
+----
+npx textlint "docs/**/*.{adoc,asciidoc,asc}"
+----
+
+このProcessorは自動修正に対応しません。規則が修正情報を返してもProcessorが除去するため、
+``npx textlint --fix``を実行してもAsciiDoc文書を変更しません。問題の検出と元の文書上の行・列の報告だけを
+利用してください。
+
+更新時は新しいReleaseのtarball URLへ変更して``npm install``を実行し、``package-lock.json``の差分と検査結果を
+確認してから統合します。rollbackでは以前の検証済みURLへ戻し、lockfileから依存を再導入します。tarballと
+同梱WebAssemblyを別々のバージョンへ変更することはできません。削除する場合は次を実行します。
+
+[source,console]
+----
+npm uninstall --save-dev @adocweave/textlint-plugin-asciidoc
+----
 
 == 利用者単位の導入
 
@@ -283,8 +358,8 @@ Remove-Item -Recurse (Join-Path $env:LOCALAPPDATA "AdocWeave\$Version")
 
 新しいバージョンは既存ディレクトリへ上書きせず、別のディレクトリへ展開・検証します。``current``を切り替えた後に
 ``--version --json``を確認します。rollbackは``current``を以前のバージョン別のディレクトリへ戻すだけであり、動作確認が終わるまで
-旧ディレクトリを削除しません。CLI、LSP、browser、Zed拡張およびVS Code拡張は同じReleaseのバージョンを組み合わせ、異なるrelease trainを
-混在させません。
+旧ディレクトリを削除しません。CLI、LSP、browser、Zed拡張、VS Code拡張およびtextlint用パッケージは
+同じReleaseのバージョンを組み合わせ、異なるrelease trainを混在させません。
 
 [#browser-library-deployment]
 == ブラウザーライブラリーの配備

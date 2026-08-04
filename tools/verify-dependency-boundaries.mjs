@@ -35,6 +35,8 @@ export function validateDependencyBoundaries({ inventory, exceptions, exists, ma
     "zed-extension",
     "browser-worker",
     "vscode-extension",
+    "textlint-document-check",
+    "textlint-asciidoc-plugin",
     "ci-and-development-tools",
     "fuzz-harness",
   ]);
@@ -65,6 +67,8 @@ export function validateDependabotConfig(config) {
     "cargo\u0000/editors/zed",
     "cargo\u0000/fuzz",
     "npm\u0000/editors/vscode",
+    "npm\u0000/tools/textlint",
+    "npm\u0000/packages/textlint-plugin-asciidoc",
     "github-actions\u0000/",
   ]);
   const actual = new Set();

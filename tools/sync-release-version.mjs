@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = new URL("../", import.meta.url);
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const IGNORED_DIRECTORIES = new Set([
+  ".agents",
   ".git",
   ".vscode-test",
   "node_modules",
@@ -303,8 +304,9 @@ function sourceFiles(root) {
   if (tracked.status !== 0) return walkedSourceFiles(root);
   const result = new Map();
   for (const path of tracked.stdout.split("\0").filter(Boolean)) {
+    if (IGNORED_DIRECTORIES.has(path.split("/", 1)[0])) continue;
     const file = absolute(root, path);
-    if (!existsSync(file)) continue;
+    if (!existsSync(file) || !statSync(file).isFile()) continue;
     const buffer = readFileSync(file);
     if (!buffer.includes(0)) result.set(path, buffer.toString("utf8"));
   }

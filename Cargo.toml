@@ -6,6 +6,8 @@ members = [
   "crates/adocweave-governance",
   "crates/adocweave-host",
   "crates/adocweave-lsp",
+  "crates/adocweave-textlint",
+  "crates/adocweave-textlint-wasm",
   "crates/adocweave-workspace",
   "crates/adocweave-wasm",
 ]
@@ -19,7 +21,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/KeishiS/adocweave"
 rust-version = "1.97.1"
-version = "0.27.3"
+version = "0.30.0"
 
 # The profile used by dist 0.32.0 for release artifacts.
 [profile.dist]

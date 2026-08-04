@@ -24,9 +24,9 @@
         "required": ["name", "kind", "target", "archive", "byteSize", "sha256", "executable"],
         "properties": {
           "name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
-          "kind": { "enum": ["cli", "lsp", "browser", "zed", "vscode"] },
+          "kind": { "enum": ["cli", "lsp", "browser", "textlint-plugin", "zed", "vscode"] },
           "target": { "type": ["string", "null"] },
-          "archive": { "enum": ["tar.xz", "vsix", "zip"] },
+          "archive": { "enum": ["tar.xz", "tgz", "vsix", "zip"] },
           "byteSize": { "type": "integer", "minimum": 1 },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "executable": { "type": ["string", "null"] }

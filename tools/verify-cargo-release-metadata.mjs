@@ -12,7 +12,15 @@ if (!path || !zedPath) {
 try {
   const metadata = JSON.parse(readFileSync(path, "utf8"));
   const zedMetadata = JSON.parse(readFileSync(zedPath, "utf8"));
-  const expectedNames = ["adocweave", "adocweave-cli", "adocweave-host", "adocweave-lsp", "adocweave-wasm"];
+  const expectedNames = [
+    "adocweave",
+    "adocweave-cli",
+    "adocweave-host",
+    "adocweave-lsp",
+    "adocweave-textlint",
+    "adocweave-textlint-wasm",
+    "adocweave-wasm",
+  ];
   const packages = metadata.packages.filter((pkg) => expectedNames.includes(pkg.name));
   if (packages.length !== expectedNames.length) throw new Error("cargo metadata is missing a workspace package");
   for (const pkg of packages) {
