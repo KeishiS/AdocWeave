@@ -14,10 +14,13 @@ xref:../user-guide/release-installation.adoc[インストールと更新]を参�
 
 == 配布境界
 
-CLI、Language Server、WebAssembly、browser package、Zed拡張およびVS Code拡張は、一つのパッケージバージョンとして
-GitHub Releasesへまとめて公開します。crates.io、npm、Homebrew、WinGet、Visual Studio Marketplace、
+CLI、Language Server、WebAssembly、browser package、Zed拡張、VS Code拡張およびtextlint用AsciiDoc Processorは、
+一つのパッケージバージョンとしてGitHub Releasesへまとめて公開します。crates.io、npm、Homebrew、WinGet、Visual Studio Marketplace、
 Open VSXおよびZed Extension Registryには公開しません。GitHubが自動生成するソースarchiveは、
 検証対象のbinary配布物に含めません。
+
+textlint用Processorはnpm互換の``.tgz``ですが、npm registryまたはGitHub Packagesへ公開しません。
+パッケージには``private: true``を設定し、GitHub ReleaseのURLを明示した導入だけを対象とします。
 
 公開には``vX.Y.Z``形式のstable tagだけを使用します。tag、対象コミット、release manifestおよび各成果物の
 バージョンが一致しない場合は公開しません。異なるパッケージバージョンの成果物を組み合わせて利用することも
@@ -55,7 +58,7 @@ Native binaryへDeveloper ID、notarizationまたはAuthenticodeによるOS code
 Attestationはbuild provenanceであり、OS code signingの代替ではありません。macOSではdownload元に応じて
 quarantine確認が必要になる場合があり、Windowsでは発行元未署名の警告が表示される場合があります。
 
-``THIRD_PARTY_NOTICES.adoc``はCargoとVS Code拡張のlockfileから生成し、配布対象パッケージの名前、バージョンおよび
+第三者依存の通知はCargoとnpmのlockfileから生成し、各成果物へ到達するパッケージの名前、バージョンおよび
 SPDX licenseを列挙します。license情報がないパッケージは受理しません。
 
 展開後のsmoke testは、ワークスペースの``target``にある実行ファイルを誤用しないよう、新しい一時ディレクトリ内の
@@ -102,16 +105,42 @@ VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの`node_mod
 VSIXのmanaged Language Serverは同じバージョンの配布manifestだけを使用します。この判断の背景は
 xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]を参照してください。
 
+[#textlint-processor-package]
+== textlint用AsciiDoc Processorパッケージ
+
+``@adocweave/textlint-plugin-asciidoc``は、npmがURLから導入できる``.tgz``として、Native archiveと同じ
+GitHub Releaseへ一度だけ追加します。公開APIはtextlintの``Processor``に限定し、``.adoc``、``.asciidoc``、
+``.asc``および利用者が明示した追加拡張子をTxtASTへ変換します。日本語規則、AdocWeave固有の用語集、
+検査対象一覧および文書検査taskは収録しません。
+
+パッケージにはProcessor、TxtAST adapter、UTF-16位置変換、型定義、README、license、第三者依存の通知、
+``projectText``だけを公開するNode.js向けWebAssemblyとwrapperを収録します。WebAssemblyとパッケージは
+同じ統一バージョンから構築し、別のWebAssemblyへの差し替えは認めません。install時のscript、実行時npm依存、
+``node_modules``、source mapおよび機械固有pathを収録せず、実行時の追加downloadも行いません。
+
+自動修正は公開範囲に含めません。Processorはtextlint規則が返した診断から``fix``を除去します。
+``textlint --fix``を実行しても入力のbyte列が変化しないことを受入検査で確認します。includeは展開せず、
+一つの物理ファイルだけを診断対象とします。
+
+包装時は許可file一覧、archive内の絶対path、親directory参照、symlink、sizeおよび同じsourceから2回構築した
+byte列の一致を検査します。Linux、macOSおよびWindowsのcleanな一時projectへ公開tarballを導入し、
+``.adoc``、``.asciidoc``、``.asc``、標準入力、LF、CRLF、日本語、結合文字および絵文字について、診断位置と
+``--fix``による非変更を検査します。対応するNode.jsとtextlintの範囲は、この3環境で検証した範囲だけを
+package metadataと利用手順へ記載します。この判断の背景は
+xref:adr/0017-github-release-textlint-package.adoc[ADR 0017]を参照してください。
+
 == 配布メタデータ
 
 ``tools/release-metadata.mjs``を配布manifest、SPDX SBOMおよびchecksumの生成器とします。target別の成果物を
 一つのcandidateディレクトリへ集約した後、実際に公開するarchiveから次を決定的に生成します。
 
 * 配布manifestへのパッケージバージョン、source commit、archive名、種類、対象環境、byte数およびSHA-256の記録
-* SPDX SBOMへのarchive内のfileと、lockfileから得たRustおよびfrontend packageの記録
+* SPDX SBOMへのarchive内のfileと、lockfileから得たRustおよびnpm packageの記録
 * checksum一覧への公開archive、配布manifestおよびSBOMの名前順での記録
 
-Frontendへruntime dependencyを追加する場合、対応するlockfileからSBOMを生成できるようになるまで公開しません。
+Frontendまたはtextlint用パッケージへruntime dependencyを追加する場合、対応するlockfileからSBOMを生成できるように
+なるまで公開しません。textlint用パッケージのSBOMには、同梱WebAssemblyへ到達するCargo依存、npm package rootおよび
+archive内の各fileを関連付けます。
 推測したdownload URLはSBOMへ記録しません。
 
 生成器の検証機能はmetadataを同じ入力から再生成し、byte単位の一致とcandidateディレクトリ内の成果物集合を
@@ -168,14 +197,16 @@ quarantine属性および各OSでのprocess lifecycleを再現しません。こ
 
 Pull Requestでは、変更pathを``native-change-plan.mjs``で判定します。CLIまたはLanguage Serverの
 Native archiveへ影響する場合はWindowsとmacOSのbuild、native smokeおよびinstallation E2Eを実行します。
-Browser package、Zed拡張またはVS Code拡張だけに影響する場合はglobal成果物だけを構築し、
-実Chromiumによる受入検査も行います。Gitが追跡するファイルは成果物への影響をすべて明示的に分類し、
+Browser package、Zed拡張、VS Code拡張またはtextlint用パッケージだけに影響する場合はglobal成果物だけを構築します。
+Browser packageには実Chromiumによる受入検査を行い、textlint用パッケージにはLinux、macOSおよびWindowsでの
+導入・実行検査を行います。Gitが追跡するファイルは成果物への影響をすべて明示的に分類し、
 未分類のpathが追加された場合は事前検査を失敗させます。
 installation E2Eはnative candidateの検証が成功した場合だけ実行し、global成果物など別系統の
 意図的なskipを失敗として継承しません。native candidateの検証が失敗、cancelまたはskipになった場合は
 installation E2Eを実行せず、最終gateを失敗させます。
 Pull Requestでは変更計画が選択したcandidate familyだけをインストール・削除します。native成果物は
-対象OSのrunner、global成果物はUbuntu runnerで個別に検証し、構築していないfamilyを要求しません。
+対象OSのrunner、Browser・Zed・VS Code成果物はUbuntu runner、textlint用パッケージは3対象OSのrunnerで
+個別に検証し、構築していないfamilyを要求しません。
 両familyを選択した場合は両方の検証成功を最終gateで要求します。未公開バージョンの``main`` candidateと
 tagから再利用するcandidateでは、配布仕様に含まれる全assetを引き続き要求します。
 

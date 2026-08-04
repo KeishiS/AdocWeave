@@ -1,0 +1,54 @@
+= ADR 0017: GitHub Releaseでのtextlint Processorパッケージ配布
+:status: accepted
+
+== 文脈
+
+ADR 0016で定めた文章構造projectionとNode.js adapterにより、AdocWeaveのリポジトリ内では
+AsciiDoc文書をtextlintで校正できます。しかし、このadapterはリポジトリ内の構築先と設定を直接参照するため、
+別のプロジェクトではAdocWeaveのソース、Rust toolchainおよび``wasm-bindgen``なしに利用できません。
+
+一方、npm registryへの公開は配布境界に含めていません。一般の利用者が標準のtextlint Processorとして
+導入できることと、registryへ公開しないことを両立する配布方法が必要です。
+
+== 決定
+
+``@adocweave/textlint-plugin-asciidoc``をnpm互換パッケージとして構築し、AdocWeaveのGitHub Releaseへ
+``.tgz``成果物を添付します。パッケージには``private: true``を設定し、npm registryとGitHub Packagesへは
+公開しません。利用者はバージョンを固定したRelease URLをnpmへ渡して導入します。
+
+公開APIはtextlintの``Processor``に限定します。Processor、TxtAST adapter、UTF-8 byte範囲から
+JavaScriptのUTF-16位置への変換、Node.js向けWebAssembly、型定義、利用手順、licenseおよび第三者依存の
+通知を同じパッケージへ収録します。WebAssemblyは``projectText``だけを公開する構成で構築し、
+パッケージと同じAdocWeaveバージョンに固定します。利用者が別のWebAssemblyへ差し替える設定は設けません。
+
+パッケージはinstall時のscriptと実行時のnpm依存を持たず、起動時に追加の成果物を取得しません。
+対応するNode.jsとtextlintの範囲は、継続的インテグレーションで検証する範囲だけを``package.json``と
+利用手順へ記載します。
+
+日本語の規則、プロジェクト固有の用語集、対象文書一覧および``cargo make`` taskはパッケージへ含めません。
+これらは``tools/textlint``に残し、AdocWeave自身の文書検査も公開するProcessorを利用します。
+
+自動修正は公開範囲に含めません。Processorは規則の診断から``fix``を除去し、標準の
+``textlint --fix``を実行しても入力したAsciiDoc文書を変更しません。
+
+Node.js専用の文章構造projectionは引き続き既定で無効なCargo featureとします。Browser向けWebAssembly、
+公開WASM protocol、parser、HTML変換、CLIおよびLanguage Serverへ新しいfieldや動作を追加しません。
+
+== 採用しない案
+
+npm registryへの公開は導入手順を短くできますが、registryを新しい公開・権限境界にするため採用しません。
+GitリポジトリのURLから直接導入する方法は、monorepoのrootをnpmパッケージとして扱い、導入時に
+Rustによる構築を要求し得るため採用しません。WebAssemblyを別の成果物として取得する方法は、導入時の
+ネットワークアクセスとバージョンの組合せを増やすため採用しません。
+
+== 帰結
+
+利用者はNode.js、npmおよびtextlintだけでAsciiDoc Processorを導入できます。GitHub Releaseのtarball、
+同梱WebAssembly、tagおよびほかのAdocWeave成果物は一つの統一バージョンとして検証します。
+
+配布candidateでは、許可したファイルだけがパッケージに含まれること、再現可能なbyte列、安全なarchive path、
+checksum、SPDX SBOM、第三者依存の通知およびArtifact Attestationを検査します。Linux、macOSおよびWindowsでは、
+新しいプロジェクトへの導入、textlintによる検査および``--fix``による非変更を確認します。
+
+Processorが返すTxtASTの意味はバージョン間で互換性を維持しますが、パッケージ内部のprojection wire型は
+独立した公開protocolにしません。includeは展開せず、入力した一つの物理ファイルだけを校正します。

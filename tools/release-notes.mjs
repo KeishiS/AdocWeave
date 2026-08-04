@@ -17,7 +17,7 @@ const releaseVersionParts = RELEASE_NOTES_VERSION.split(".").map(Number);
 if (releaseVersionParts.length !== 3 || releaseVersionParts.some((part) => !Number.isInteger(part))) {
   throw new Error(`Release NotesのversionがSemVerではありません：${RELEASE_NOTES_VERSION}`);
 }
-export const PREVIOUS_RELEASE_VERSION = "0.27.3";
+export const PREVIOUS_RELEASE_VERSION = "0.28.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -43,10 +43,10 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "AsciiDocの文章を元のUTF-8 byte範囲と階層を保った``TextProjection``へ変換できるようにしました。見出し、段落、一覧、表、引用およびコメントを文章校正へ渡し、code、URL、数式およびAsciiDocの構文は対象から除外します。",
-  "``cargo make docs-prose-lint``を追加し、textlintでrepository内の日本語文書を検査できるようにしました。このtaskは文書を変更せず、検出した問題だけを報告します。",
-  "使用を禁止する用語を``config/japanese-terminology.json``へ集約しました。説明文書とtextlintが同じ定義を参照し、自動修正に使う置換語は定義しません。",
-  "Node.js向けWASMに限り、``text-projection`` featureで文章抽出APIを有効にできます。Browser packageの公開APIとWASM protocolにはこのAPIを追加していません。",
+  "AsciiDoc文書をtextlintで検査する``@adocweave/textlint-plugin-asciidoc``をGitHub Releaseのnpm互換tarballとして追加しました。npm registryへは公開しません。",
+  "Processor、TxtAST adapter、UTF-16位置変換およびNode.js向けWebAssemblyを一つのパッケージへ収録しました。導入時にRust、Cargoまたは``wasm-bindgen``を必要とせず、実行時に別の成果物を取得しません。",
+  "``.adoc``、``.asciidoc``および``.asc``に加え、Processor optionで指定した拡張子を扱えます。code、URL、数式、属性参照、passおよび未対応構文は文章規則へ渡しません。",
+  "自動修正は提供しません。規則が返した``fix``をProcessorで除去し、``textlint --fix``を実行してもAsciiDoc文書を変更しません。",
 ];
 
 /// Public contracts this release states are unchanged since the previous stable tag.
@@ -81,7 +81,7 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  "公開契約に破壊的変更はありません。Rust APIへ``text-projection`` featureと``output::text`` moduleを追加しました。既定のfeature構成と既存APIの動作は変わりません。",
+  "公開契約に破壊的変更はありません。Rust APIへ``text-projection`` featureと``output::text`` moduleを追加し、textlint ProcessorのTxtASTと対応拡張子を新しい公開契約とします。既存APIの動作は変わりません。",
   `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`projectText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
@@ -90,9 +90,10 @@ const contractNotes = [
 const migrationNotes = [
   "既存のRust API、CLI、Language ServerおよびBrowser packageを使う場合、移行作業は不要です。",
   "文章抽出APIを使うRust codeでは``text-projection`` featureを有効にし、``adocweave::output::text::project_text``を呼び出します。Node.js向けadapterは``adocweave-textlint-wasm``としてBrowser向けWASMから分離しました。",
-  "textlint連携はrepository内の文書検査に使うprivate toolであり、release assetには含めません。",
+  `textlint用Processorは、\`\`textlint@15.8.0\`\`とGitHub Releaseの\`\`adocweave-textlint-plugin-asciidoc-${RELEASE_NOTES_VERSION}.tgz\`\`を開発用依存へ追加し、\`\`@adocweave/asciidoc\`\` pluginを設定します。`,
+  "従来の``cargo make docs-prose-lint``は同じProcessorを使用します。AdocWeave固有の日本語規則、用語集および対象文書一覧は公開パッケージへ含めません。",
   `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
-  `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
+  `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
 ];
 
 const knownConstraints = [
@@ -103,6 +104,7 @@ const knownConstraints = [
   "ZedがLanguage Serverの導入中に異常終了すると、安全のため導入ロックを自動削除しません。すべてのZedプロセスを終了してから、エラーに表示されたロックのpathを削除して再試行してください。",
   "公式Playgroundはこのreleaseに含みません。`adocweave preview`は利用者の端末で実行するローカル機能です。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
+  "textlint用ProcessorはNode.js 20.18.0以上25未満とtextlint 15.8.0を対象とします。includeは展開せず、入力した一つの物理ファイルだけを検査します。",
   "AdocWeaveはBibTeXの保存・解析やCSL相当の書誌の組版を行いません。citation keyの解決と引用表示の組み立ては利用側アプリの責務です。",
   "解決結果を渡さない引用の表示は`unresolved_references`の設定に従い、`hidden`では出力しません。ただし文書内の`[bibliography]`項目を指すkeyは、設定にかかわらずその項目へのlinkとして出力します。",
   "引用の解決結果は文書全体の並べ替えを行いません。番号付きの引用styleで通し番号を振る場合は、利用側アプリが出現順を見て文字列を決めてください。出現順は公開projectionの`citations`から取得できます。",
@@ -142,7 +144,7 @@ export function buildReleaseNotes(tag) {
   const notes = `## 主な変更\n\n${markdownList(highlights)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[0]}\n\n${targets}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[1]}\n\n${markdownList(contractNotes)}\n\n` +
-    "consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、ZedまたはVS Code向け配布物を混在させないでください。\n\n" +
+    "consumerは記載されたpackage versionを厳密に一致させてください。異なるversionのCLI、LSP、browser、Zed、VS Codeまたはtextlint向け配布物を混在させないでください。\n\n" +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[2]}\n\n${markdownList(migrationNotes)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[3]}\n\n${markdownList(knownConstraints)}\n\n` +
     `${REQUIRED_RELEASE_NOTE_HEADINGS[4]}\n\n` +
@@ -151,6 +153,7 @@ export function buildReleaseNotes(tag) {
     `native archiveはversion別directoryへ展開し、\`--version --json\`が\`${RELEASE_NOTES_VERSION}\`を返すことを確認してから選択先を切り替えてください。\n\n` +
     "VS Codeでは検証済みVSIXを手動導入し、拡張とLanguage Serverのversion一致を確認してください。受入確認が成功するまで以前のVSIXとnative directoryを保持します。\n\n" +
     "Zedでは新versionのmanaged Language Server取得とeditor機能を確認するまで旧versionのZed directoryを保持します。rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動してください。\n\n" +
+    "textlint用Processorは新しいReleaseのtarball URLへ変更してlockfileを更新します。rollback時は以前の検証済みURLへ戻し、lockfileから依存を再導入してください。\n\n" +
     "rollback時は以前のversion別directoryまたはVSIXへ戻します。詳細は`docs/user-guide/release-installation.adoc`を参照してください。\n";
   return notes;
 }
