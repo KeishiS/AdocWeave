@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { test as testAST } from "@textlint/ast-tester";
 
 import { Processor } from "./processor.mjs";
+import { classifyTrackedFiles } from "./repository-lint-config.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const targets = JSON.parse(readFileSync(new URL("./targets.json", import.meta.url), "utf8"));
@@ -127,11 +128,7 @@ test("すべての執筆文書を原文に対応するTxtASTへ変換する", ()
     .trim()
     .split("\n")
     .filter(Boolean);
-  const authored = tracked.filter(
-    (path) =>
-      targets.authoredFiles.includes(path) ||
-      targets.authoredDirectories.some((directory) => path.startsWith(directory))
-  );
+  const authored = classifyTrackedFiles(targets, tracked).authored;
   assert.notEqual(authored.length, 0);
   const processor = new Processor().processor(".adoc");
   for (const path of authored) {

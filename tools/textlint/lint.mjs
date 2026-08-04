@@ -5,10 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import { TextlintKernel } from "@textlint/kernel";
 import commentsFilter from "textlint-filter-rule-comments";
-import technicalWriting from "textlint-rule-preset-ja-technical-writing";
 
 import plugin from "./processor.mjs";
-import { createTerminologyRule } from "./terminology-rule.mjs";
+import { classifyTrackedFiles, createRepositoryRules } from "./repository-lint-config.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const targets = JSON.parse(readFileSync(new URL("./targets.json", import.meta.url), "utf8"));
@@ -16,61 +15,24 @@ const terminology = JSON.parse(
   readFileSync(new URL("../../config/japanese-terminology.json", import.meta.url), "utf8")
 );
 
-if (targets.schemaVersion !== 1) {
-  throw new Error("文書対象一覧のschemaVersionを解釈できません。");
-}
-
 const tracked = execFileSync("git", ["ls-files", "-z", "*.adoc"], {
   cwd: repositoryRoot,
   encoding: "utf8"
 })
   .split("\0")
-  .filter(Boolean);
+  .filter(Boolean)
+  .sort();
 
-function classification(path) {
-  if (targets.authoredFiles.includes(path)) {
-    return "authored";
-  }
-  if (targets.authoredDirectories.some((directory) => path.startsWith(directory))) {
-    return "authored";
-  }
-  if (targets.excludedDirectories.some((entry) => path.startsWith(entry.path))) {
-    return "excluded";
-  }
-  return "unknown";
-}
-
-const unknown = tracked.filter((path) => classification(path) === "unknown");
-if (unknown.length > 0) {
-  console.error(`校正対象が分類されていません。\n${unknown.join("\n")}`);
+const classified = classifyTrackedFiles(targets, tracked);
+if (classified.unknown.length > 0) {
+  console.error(`校正対象が分類されていません。\n${classified.unknown.join("\n")}`);
   process.exitCode = 2;
 } else {
-  const selectedRules = [
-    "no-mix-dearu-desumasu",
-    "no-double-negative-ja",
-    "no-dropping-the-ra",
-    "no-nfd",
-    "no-hankaku-kana",
-    "no-invalid-control-character",
-    "no-unmatched-pair",
-    "no-zero-width-spaces"
-  ];
-  const rules = selectedRules.map((ruleId) => ({
-    ruleId,
-    rule: technicalWriting.rules[ruleId],
-    options:
-      ruleId === "no-mix-dearu-desumasu"
-        ? { preferInHeader: "", preferInBody: "ですます", preferInList: "ですます", strict: false }
-        : technicalWriting.rulesConfig[ruleId]
-  }));
-  rules.push({
-    ruleId: "adocweave-terminology",
-    rule: createTerminologyRule(terminology)
-  });
+  const rules = createRepositoryRules(terminology);
 
   const kernel = new TextlintKernel();
   let violations = 0;
-  for (const path of tracked.filter((entry) => classification(entry) === "authored")) {
+  for (const path of classified.authored) {
     const absolute = `${repositoryRoot}${path}`;
     const source = readFileSync(absolute, "utf8");
     const before = createHash("sha256").update(source).digest("hex");
