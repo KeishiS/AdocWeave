@@ -48,8 +48,6 @@ mod syntax;
 mod syntax_builder;
 mod syntax_diagnostics;
 mod table;
-#[cfg(feature = "text-projection")]
-mod text_projection;
 mod url;
 mod walker;
 
@@ -152,10 +150,6 @@ pub mod output {
             RenderingFeatures, SearchTextKind, SearchTextSegment, SearchableText,
             SourceBlockProjection, project, searchable_text,
         };
-    }
-    #[cfg(feature = "text-projection")]
-    pub mod text {
-        pub use crate::text_projection::{TextNode, TextNodeKind, TextProjection, project_text};
     }
 }
 
