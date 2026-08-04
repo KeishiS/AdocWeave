@@ -1,5 +1,5 @@
-import { toTxtAST } from "./adapter.mjs";
-import { projectText as projectWithBundledWasm } from "./bridge.mjs";
+import { materializeTxtAST } from "./adapter.mjs";
+import { parseText as parseWithBundledWasm } from "./bridge.mjs";
 
 const builtInExtensions = [".adoc", ".asciidoc", ".asc"];
 const extensionPattern = /^\.[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
@@ -26,40 +26,45 @@ function removeFix(message) {
   return diagnostic;
 }
 
-export class Processor {
-  #extensions;
-  #projectText;
-
-  constructor(options = {}, internals = {}) {
-    this.#extensions = Object.freeze([
-      ...new Set([...builtInExtensions, ...configuredExtensions(options)])
-    ]);
-    this.#projectText = internals.projectText ?? projectWithBundledWasm;
+export function createProcessorClass(parseText) {
+  if (typeof parseText !== "function") {
+    throw new TypeError("parseTextは関数で指定してください。");
   }
 
-  availableExtensions() {
-    return [...this.#extensions];
-  }
+  return class Processor {
+    #extensions;
 
-  processor(extension) {
-    const normalized = typeof extension === "string" ? extension.toLowerCase() : extension;
-    if (!this.#extensions.includes(normalized)) {
-      throw new Error(`未対応の拡張子です: ${String(extension)}`);
-    }
-    const projectText = this.#projectText;
-    return {
-      preProcess(source, filePath) {
-        if (typeof source !== "string") {
-          throw new TypeError("AsciiDocの入力は文字列で指定してください。");
-        }
-        return toTxtAST(source, projectText(source, filePath));
-      },
-      postProcess(messages, filePath) {
-        return {
-          messages: messages.map(removeFix),
-          filePath: filePath ?? "<text>"
-        };
+    constructor(options = {}) {
+      if (arguments.length > 1) {
+        throw new TypeError("Processorのconstructorはoptionsだけを受け取ります。");
       }
-    };
-  }
+      this.#extensions = Object.freeze([
+        ...new Set([...builtInExtensions, ...configuredExtensions(options)])
+      ]);
+    }
+
+    availableExtensions() {
+      return [...this.#extensions];
+    }
+
+    processor(extension) {
+      const normalized = typeof extension === "string" ? extension.toLowerCase() : extension;
+      if (!this.#extensions.includes(normalized)) {
+        throw new Error(`未対応の拡張子です: ${String(extension)}`);
+      }
+      return {
+        preProcess(source, filePath) {
+          return materializeTxtAST(source, parseText(source, filePath));
+        },
+        postProcess(messages, filePath) {
+          return {
+            messages: messages.map(removeFix),
+            filePath: filePath ?? "<text>"
+          };
+        }
+      };
+    }
+  };
 }
+
+export const Processor = createProcessorClass(parseWithBundledWasm);

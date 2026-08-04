@@ -146,7 +146,7 @@ async function writeManifest(cwd, packageName, textlintVersion) {
   await writeFile(join(plugin, "package.json"), JSON.stringify({ name: packageName }));
   await writeFile(
     join(plugin, "wasm", "adocweave_textlint_wasm.cjs"),
-    "module.exports = { projectText() {} };\n",
+    "module.exports = { parseText() {} };\n",
   );
   await writeFile(join(textlint, "package.json"), JSON.stringify({ version: textlintVersion }));
 }

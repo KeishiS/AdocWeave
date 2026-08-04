@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import plugin, { Processor } from "./index.mjs";
+import { createProcessorClass } from "./processor.mjs";
 
 function fixture() {
   const source = "= 見出し\n\n* 項目\n\nlink:https://example.com[表示]\n\n[source,rust]\n----\nlet x = 1;\n----\n";
-  const bytes = (offset) => Buffer.byteLength(source.slice(0, offset));
   const range = (text, from = 0) => {
     const start = source.indexOf(text, from);
-    return [bytes(start), bytes(start + text.length)];
+    return [start, start + text.length];
   };
   const headingRange = range("= 見出し");
   const headingTextRange = range("見出し");
@@ -20,35 +20,50 @@ function fixture() {
   const blockSource = "[source,rust]\n----\nlet x = 1;\n----";
   const blockRange = range(blockSource);
   const codeRange = range("let x = 1;");
-  const node = (kind, sourceRange, contentRange, children = [], extra = {}) => ({
-    kind,
-    sourceRange,
-    contentRange,
-    children,
-    ...extra
-  });
   return {
     source,
-    projection: {
-      sourceRange: [0, Buffer.byteLength(source)],
+    plan: {
+      type: "Document",
+      range: [0, source.length],
       children: [
-        node("heading", headingRange, headingTextRange, [
-          node("text", headingTextRange, headingTextRange)
-        ], { level: 1 }),
-        node("list", listRange, listRange, [
-          node("list-item", listRange, itemTextRange, [
-            node("text", itemTextRange, itemTextRange)
-          ])
-        ], { ordered: false }),
-        node("paragraph", linkRange, linkRange, [
-          node("link", linkRange, linkTextRange, [
-            node("text", linkTextRange, linkTextRange)
-          ], { url: "https://example.com" })
-        ]),
-        node("code-block", blockRange, codeRange, [], { language: "rust" })
+        {
+          type: "Header",
+          range: headingRange,
+          depth: 1,
+          children: [{ type: "Str", range: headingTextRange, valueRange: headingTextRange }]
+        },
+        {
+          type: "List",
+          range: listRange,
+          ordered: false,
+          children: [{
+            type: "ListItem",
+            range: listRange,
+            children: [{
+              type: "Paragraph",
+              range: itemTextRange,
+              children: [{ type: "Str", range: itemTextRange, valueRange: itemTextRange }]
+            }]
+          }]
+        },
+        {
+          type: "Paragraph",
+          range: linkRange,
+          children: [{
+            type: "Link",
+            range: linkRange,
+            url: "https://example.com",
+            children: [{ type: "Str", range: linkTextRange, valueRange: linkTextRange }]
+          }]
+        },
+        { type: "CodeBlock", range: blockRange, valueRange: codeRange, lang: "rust" }
       ]
     }
   };
+}
+
+function processorFor(plan) {
+  return new (createProcessorClass(() => plan))();
 }
 
 function descendants(root) {
@@ -61,29 +76,29 @@ function descendants(root) {
   return nodes;
 }
 
-test("default exportからProcessorを公開する", () => {
+test("default exportから公開Processorだけを公開する", () => {
   assert.equal(plugin.Processor, Processor);
+  assert.throws(() => new Processor({}, { parseText() {} }), /optionsだけ/);
 });
 
 test("追加拡張子を検証して重複なく登録する", () => {
-  const processor = new Processor({ extensions: [".guide", ".ADOC", ".guide"] });
+  const InjectedProcessor = createProcessorClass(() => fixture().plan);
+  const processor = new InjectedProcessor({ extensions: [".guide", ".ADOC", ".guide"] });
   assert.deepEqual(processor.availableExtensions(), [".adoc", ".asciidoc", ".asc", ".guide"]);
   assert.doesNotThrow(() => processor.processor(".GUIDE"));
-  assert.throws(() => new Processor({ extensions: ["guide"] }), /形式が不正/);
-  assert.throws(() => new Processor({ extensions: "guide" }), /配列/);
+  assert.throws(() => new InjectedProcessor({ extensions: ["guide"] }), /形式が不正/);
+  assert.throws(() => new InjectedProcessor({ extensions: "guide" }), /配列/);
   assert.throws(() => processor.processor(".md"), /未対応/);
 });
 
-test("node固有propertyと全range不変条件を維持する", () => {
-  const { source, projection } = fixture();
+test("planをkind別処理なしでTxtASTへ具体化する", () => {
+  const { source, plan } = fixture();
   let request;
-  const processor = new Processor({}, {
-    projectText(input, filePath) {
-      request = { input, filePath };
-      return projection;
-    }
-  }).processor(".adoc");
-  const ast = processor.preProcess(source, "文書.adoc");
+  const InjectedProcessor = createProcessorClass((input, filePath) => {
+    request = { input, filePath };
+    return plan;
+  });
+  const ast = new InjectedProcessor().processor(".adoc").preProcess(source, "文書.adoc");
   assert.deepEqual(request, { input: source, filePath: "文書.adoc" });
   for (const node of descendants(ast)) {
     assert.equal(node.raw, source.slice(node.range[0], node.range[1]), node.type);
@@ -98,108 +113,109 @@ test("node固有propertyと全range不変条件を維持する", () => {
   assert.equal(nodes.find((node) => node.type === "Link").url, "https://example.com");
   assert.equal(nodes.find((node) => node.type === "CodeBlock").lang, "rust");
   assert.equal(nodes.find((node) => node.type === "CodeBlock").value, "let x = 1;");
+  assert.equal(nodes.find((node) => node.type === "Str").value, "見出し");
 });
 
-test("projectionがnode固有propertyを欠く場合は値を捏造しない", () => {
-  for (const [index, property] of [[1, "ordered"], [2, "url"], [3, "language"]]) {
-    const { source, projection } = fixture();
-    delete projection.children[index][property];
-    if (property === "url") delete projection.children[index].children[0].url;
-    const processor = new Processor({}, { projectText: () => projection }).processor(".adoc");
-    assert.throws(() => processor.preProcess(source), new RegExp(property));
-  }
-});
-
-test("親range外のnodeを拒否する", () => {
-  const { source, projection } = fixture();
-  projection.children[0].children[0].sourceRange = projection.sourceRange;
-  const processor = new Processor({}, { projectText: () => projection }).processor(".adoc");
-  assert.throws(() => processor.preProcess(source), /親nodeのrange/);
-});
-
-test("見出しlevelとcode blockのcontentRangeを必須とする", () => {
-  for (const [index, property] of [[0, "level"], [3, "contentRange"]]) {
-    const { source, projection } = fixture();
-    delete projection.children[index][property];
-    const processor = new Processor({}, { projectText: () => projection }).processor(".adoc");
-    assert.throws(() => processor.preProcess(source), new RegExp(property));
-  }
-});
-
-test("表の親子関係をTxtASTへ保持する", () => {
-  const source = "|===\n|セル\n|===\n";
-  const cellStart = Buffer.byteLength("|===\n|");
-  const cellEnd = cellStart + Buffer.byteLength("セル");
-  const cellRange = [cellStart, cellEnd];
-  const projection = {
-    sourceRange: [0, Buffer.byteLength(source)],
+test("任意のnode固有propertyを保持し、生成propertyの上書きを拒ぐ", () => {
+  const source = "本文";
+  const plan = {
+    type: "Document",
+    range: [0, source.length],
+    raw: "偽の原文",
+    loc: null,
     children: [{
-      kind: "table",
-      sourceRange: [0, Buffer.byteLength(source) - 1],
-      contentRange: [4, Buffer.byteLength(source) - 5],
-      children: [{
-        kind: "table-row",
-        sourceRange: cellRange,
-        contentRange: null,
-        children: [{
-          kind: "table-cell",
-          sourceRange: cellRange,
-          contentRange: cellRange,
-          children: [{
-            kind: "text",
-            sourceRange: cellRange,
-            contentRange: cellRange,
-            children: [],
-          }],
-        }],
-      }],
-    }],
+      type: "FutureNode",
+      range: [0, source.length],
+      valueRange: [0, source.length],
+      futureProperty: { enabled: true },
+      value: "偽の値"
+    }]
   };
-  const ast = new Processor({}, { projectText: () => projection })
-    .processor(".adoc")
-    .preProcess(source);
-  const [table] = ast.children;
+  const ast = processorFor(plan).processor(".adoc").preProcess(source);
+  assert.equal(ast.raw, source);
+  assert.equal(ast.children[0].value, source);
+  assert.deepEqual(ast.children[0].futureProperty, { enabled: true });
+});
+
+test("planの構造とUTF-16 rangeをfail closedで検証する", () => {
+  const cases = [
+    [{ type: "Paragraph", range: [0, 0], children: [] }, /root/],
+    [{ type: "Document", range: [0, 1], children: [] }, /不正/],
+    [{ type: "Document", range: [0, 0] }, /children/],
+    [{ type: "Document", range: [0, 0], children: {} }, /children/]
+  ];
+  for (const [plan, expected] of cases) {
+    assert.throws(() => processorFor(plan).processor(".adoc").preProcess(""), expected);
+  }
+
+  const { source, plan } = fixture();
+  plan.children[0].children[0].range = plan.range;
+  assert.throws(
+    () => processorFor(plan).processor(".adoc").preProcess(source),
+    /親nodeのrange/
+  );
+});
+
+test("valueRangeをnodeのrange内に限定する", () => {
+  const source = "本文";
+  const plan = {
+    type: "Document",
+    range: [0, source.length],
+    children: [{ type: "Str", range: [1, 2], valueRange: [0, 2] }]
+  };
+  assert.throws(
+    () => processorFor(plan).processor(".adoc").preProcess(source),
+    /valueRangeがrangeに含まれていません/
+  );
+});
+
+test("兄弟nodeのrange重複を拒否する", () => {
+  const source = "本文です";
+  const plan = {
+    type: "Document",
+    range: [0, source.length],
+    children: [
+      { type: "Str", range: [0, 3], valueRange: [0, 3] },
+      { type: "Str", range: [2, source.length], valueRange: [2, source.length] }
+    ]
+  };
+  assert.throws(
+    () => processorFor(plan).processor(".adoc").preProcess(source),
+    /重複/
+  );
+});
+
+test("表の親子関係をplanどおり保持する", () => {
+  const source = "|===\n|セル\n|===\n";
+  const cellStart = source.indexOf("セル");
+  const cellRange = [cellStart, cellStart + "セル".length];
+  const plan = {
+    type: "Document",
+    range: [0, source.length],
+    children: [{
+      type: "Table",
+      range: [0, source.length - 1],
+      children: [{
+        type: "TableRow",
+        range: cellRange,
+        children: [{
+          type: "TableCell",
+          range: cellRange,
+          children: [{ type: "Str", range: cellRange, valueRange: cellRange }]
+        }]
+      }]
+    }]
+  };
+  const [table] = processorFor(plan).processor(".adoc").preProcess(source).children;
   assert.equal(table.type, "Table");
   assert.equal(table.children[0].type, "TableRow");
   assert.equal(table.children[0].children[0].type, "TableCell");
   assert.equal(table.children[0].children[0].children[0].value, "セル");
 });
 
-test("codeと数式を地の文のStrに含めない", () => {
-  const source = "本文 `code` stem:[x]\n";
-  const bytes = (text) => Buffer.byteLength(text);
-  const textRange = [0, bytes("本文 ")];
-  const codeRange = [textRange[1], bytes("本文 `code`")];
-  const codeContentRange = [bytes("本文 `"), bytes("本文 `code")];
-  const formulaRange = [bytes("本文 `code` "), bytes("本文 `code` stem:[x]")];
-  const projection = {
-    sourceRange: [0, bytes(source)],
-    children: [{
-      kind: "paragraph",
-      sourceRange: [0, bytes(source) - 1],
-      contentRange: [0, bytes(source) - 1],
-      children: [
-        { kind: "text", sourceRange: textRange, contentRange: textRange, children: [] },
-        { kind: "code", sourceRange: codeRange, contentRange: codeContentRange, children: [] },
-        { kind: "excluded", sourceRange: formulaRange, contentRange: formulaRange, children: [] },
-      ],
-    }],
-  };
-  const ast = new Processor({}, { projectText: () => projection })
-    .processor(".adoc")
-    .preProcess(source);
-  assert.deepEqual(
-    descendants(ast).filter(({ type }) => type === "Str").map(({ value }) => value),
-    ["本文 "],
-  );
-  assert.equal(descendants(ast).find(({ type }) => type === "Code").value, "code");
-});
-
 test("postProcessは入力を変えずにfixだけを除去する", () => {
   const original = [{ ruleId: "example", message: "問題です。", fix: { range: [0, 1], text: "修正" } }];
-  const output = new Processor({}, { projectText: () => ({}) })
-    .processor(".adoc")
-    .postProcess(original, undefined);
+  const output = processorFor({}).processor(".adoc").postProcess(original, undefined);
   assert.deepEqual(output, {
     messages: [{ ruleId: "example", message: "問題です。" }],
     filePath: "<text>"

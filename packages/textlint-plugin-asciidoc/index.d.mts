@@ -1,51 +1,28 @@
-export interface ProcessorOptions {
+import type {
+  TextlintMessage,
+  TextlintPluginOptions,
+  TextlintPluginPostProcessResult,
+  TextlintPluginPreProcessResult,
+  TextlintPluginProcessor
+} from "@textlint/types";
+
+export type ProcessorOptions = TextlintPluginOptions & {
   extensions?: readonly string[];
-}
+};
 
-export interface TxtPosition {
-  line: number;
-  column: number;
-}
-
-export interface TxtLocation {
-  start: TxtPosition;
-  end: TxtPosition;
-}
-
-export interface TxtNode {
-  type: string;
-  raw: string;
-  range: readonly [number, number];
-  loc: TxtLocation;
-  children?: readonly TxtNode[];
-  value?: string;
-  depth?: number;
-  url?: string;
-  ordered?: boolean;
-  lang?: string | null;
-}
-
-export interface TxtDocumentNode extends TxtNode {
-  type: "Document";
-  children: readonly TxtNode[];
-}
-
-export interface TextlintMessage {
-  readonly [key: string]: unknown;
-}
-
-export interface ProcessorFunctions {
-  preProcess(source: string, filePath?: string): TxtDocumentNode;
-  postProcess(
-    messages: readonly TextlintMessage[],
-    filePath?: string
-  ): { messages: TextlintMessage[]; filePath: string };
-}
-
-export declare class Processor {
+export declare class Processor implements TextlintPluginProcessor {
   constructor(options?: ProcessorOptions);
   availableExtensions(): string[];
-  processor(extension: string): ProcessorFunctions;
+  processor(extension: string): {
+    preProcess(
+      source: string,
+      filePath?: string
+    ): TextlintPluginPreProcessResult | Promise<TextlintPluginPreProcessResult>;
+    postProcess(
+      messages: TextlintMessage[],
+      filePath?: string
+    ): TextlintPluginPostProcessResult | Promise<TextlintPluginPostProcessResult>;
+  };
 }
 
 declare const plugin: { Processor: typeof Processor };

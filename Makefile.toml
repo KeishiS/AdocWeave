@@ -607,6 +607,18 @@ args = [
   "tools/textlint",
 ]
 
+[tasks.textlint-public-plugin-dependencies]
+private = true
+command = "npm"
+args = [
+  "--cache",
+  "target/npm-cache",
+  "ci",
+  "--ignore-scripts",
+  "--prefix",
+  "packages/textlint-plugin-asciidoc",
+]
+
 [tasks.textlint-plugin-check]
 description = "Test the reusable AsciiDoc textlint processor and repository-specific rules"
 dependencies = [
@@ -620,11 +632,14 @@ args = ["test", "--prefix", "tools/textlint"]
 
 [tasks.textlint-public-plugin-test]
 description = "Test the reusable textlint Processor without generated artifacts"
+dependencies = ["textlint-public-plugin-dependencies"]
 script_runner = "@shell"
 script = '''
 node --test \
   packages/textlint-plugin-asciidoc/*.test.mjs \
   tools/verify-textlint-wasm-memory.test.mjs
+tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext \
+  packages/textlint-plugin-asciidoc/types.test-d.mts
 '''
 
 [tasks.docs-prose-lint]
