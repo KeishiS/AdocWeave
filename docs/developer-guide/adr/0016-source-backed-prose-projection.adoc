@@ -1,5 +1,5 @@
 = ADR 0016: 原文に対応する文章構造と文書校正の分離
-:status: accepted
+:status: superseded by ADR 0018
 
 == 文脈
 
