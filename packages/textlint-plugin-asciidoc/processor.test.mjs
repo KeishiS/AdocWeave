@@ -126,6 +126,75 @@ test("見出しlevelとcode blockのcontentRangeを必須とする", () => {
   }
 });
 
+test("表の親子関係をTxtASTへ保持する", () => {
+  const source = "|===\n|セル\n|===\n";
+  const cellStart = Buffer.byteLength("|===\n|");
+  const cellEnd = cellStart + Buffer.byteLength("セル");
+  const cellRange = [cellStart, cellEnd];
+  const projection = {
+    sourceRange: [0, Buffer.byteLength(source)],
+    children: [{
+      kind: "table",
+      sourceRange: [0, Buffer.byteLength(source) - 1],
+      contentRange: [4, Buffer.byteLength(source) - 5],
+      children: [{
+        kind: "table-row",
+        sourceRange: cellRange,
+        contentRange: null,
+        children: [{
+          kind: "table-cell",
+          sourceRange: cellRange,
+          contentRange: cellRange,
+          children: [{
+            kind: "text",
+            sourceRange: cellRange,
+            contentRange: cellRange,
+            children: [],
+          }],
+        }],
+      }],
+    }],
+  };
+  const ast = new Processor({}, { projectText: () => projection })
+    .processor(".adoc")
+    .preProcess(source);
+  const [table] = ast.children;
+  assert.equal(table.type, "Table");
+  assert.equal(table.children[0].type, "TableRow");
+  assert.equal(table.children[0].children[0].type, "TableCell");
+  assert.equal(table.children[0].children[0].children[0].value, "セル");
+});
+
+test("codeと数式を地の文のStrに含めない", () => {
+  const source = "本文 `code` stem:[x]\n";
+  const bytes = (text) => Buffer.byteLength(text);
+  const textRange = [0, bytes("本文 ")];
+  const codeRange = [textRange[1], bytes("本文 `code`")];
+  const codeContentRange = [bytes("本文 `"), bytes("本文 `code")];
+  const formulaRange = [bytes("本文 `code` "), bytes("本文 `code` stem:[x]")];
+  const projection = {
+    sourceRange: [0, bytes(source)],
+    children: [{
+      kind: "paragraph",
+      sourceRange: [0, bytes(source) - 1],
+      contentRange: [0, bytes(source) - 1],
+      children: [
+        { kind: "text", sourceRange: textRange, contentRange: textRange, children: [] },
+        { kind: "code", sourceRange: codeRange, contentRange: codeContentRange, children: [] },
+        { kind: "excluded", sourceRange: formulaRange, contentRange: formulaRange, children: [] },
+      ],
+    }],
+  };
+  const ast = new Processor({}, { projectText: () => projection })
+    .processor(".adoc")
+    .preProcess(source);
+  assert.deepEqual(
+    descendants(ast).filter(({ type }) => type === "Str").map(({ value }) => value),
+    ["本文 "],
+  );
+  assert.equal(descendants(ast).find(({ type }) => type === "Code").value, "code");
+});
+
 test("postProcessは入力を変えずにfixだけを除去する", () => {
   const original = [{ ruleId: "example", message: "問題です。", fix: { range: [0, 1], text: "修正" } }];
   const output = new Processor({}, { projectText: () => ({}) })
