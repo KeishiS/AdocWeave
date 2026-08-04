@@ -22,9 +22,13 @@ AsciiDocの構文要素の名前も原綴りです。``admonition paragraph``、
 
 == 使わない表現
 
+// textlint-disable adocweave-terminology
 次の語は、辞書的には正しくても意味を取り違えさせるため使いません。複合語を含め、この語を含む表現は
-すべて対象です。
+すべて対象です。検査対象の一覧は
+link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]を基準とします。この文書には、
+各項目を避ける理由と、書き直すときの判断基準を記載します。
 
+[#legal-contract-metaphor]
 `契約`::
 +
 --
@@ -41,12 +45,14 @@ AsciiDocの構文要素の名前も原綴りです。``admonition paragraph``、
 公開契約、現行契約、契約項目、互換契約、処理契約、契約判定、release契約、契約fixture、HTML契約、
 配布契約、属性契約
 --
+// textlint-enable adocweave-terminology
 
-この節は``cargo make docs-lint``で検査します。禁止する語は純粋な日本語であり、識別子、コマンドおよび
-設定キーには現れないため、誤検出が起きません。検査が見るのは禁止語だけで、何に直すかは書き手が文脈で
-決めます。正しい表現が一つに定まらなくても検査は成立します。
+この節の規則は``cargo make docs-prose-lint``で検査します。AdocWeaveが文章として分類した箇所だけを
+検査するため、code、URLおよびAsciiDocの構文記号を対象にしません。検査が見るのは禁止語だけで、何に
+直すかは書き手が文脈で決めます。正しい表現が一つに定まらなくても検査は成立します。
 
-この文書自身は例として禁止語を含むため、検査の対象から除きます。
+この文書自身の例は、前後の``textlint-disable``と``textlint-enable``のcommentでプロジェクト用語規則だけを
+抑制します。ほかの日本語規則はこの文書にも適用します。
 
 == 判断が必要な語
 

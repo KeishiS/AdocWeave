@@ -357,6 +357,39 @@ export function validateReleaseWorkflowPolicy({
     'node tools/release-installation-e2e.mjs artifacts x86_64-unknown-linux-musl release-manifest.json "global-only"',
     "global installation E2E must use the global-only scope",
   );
+  const textlintInstallation = releaseJobs["textlint-plugin-installation-e2e"];
+  if (textlintInstallation?.if !==
+      "always() && needs.changes.outputs.global_required == 'true' && needs.verify-candidate.result == 'success'") {
+    fail("textlint plugin installation E2E must run for every verified selected global candidate");
+  }
+  requireNeeds(
+    textlintInstallation,
+    ["changes", "verify-candidate"],
+    "textlint plugin installation must consume a verified global candidate",
+  );
+  const textlintMatrix = textlintInstallation?.strategy?.matrix?.include;
+  if (JSON.stringify(textlintMatrix) !== JSON.stringify([
+    { runner: "ubuntu-24.04", node: "20.18.0" },
+    { runner: "ubuntu-24.04", node: "21.7.3" },
+    { runner: "ubuntu-24.04", node: "22.18.0" },
+    { runner: "ubuntu-24.04", node: "23.11.1" },
+    { runner: "ubuntu-24.04", node: "release" },
+    { runner: "macos-15", node: "release" },
+    { runner: "windows-2025", node: "release" },
+  ])) {
+    fail("textlint plugin installation E2E must cover the Node.js boundary and all supported operating systems");
+  }
+  const textlintRun = step(
+    textlintInstallation,
+    (item) => item.name === "textlint plugin installation and read-only CLI verification",
+    "textlint plugin installation E2E step is missing",
+  ).run;
+  requireCommand(
+    textlintRun,
+    "node tools/textlint-plugin-release-smoke.mjs",
+    "textlint plugin E2E must exercise the packed release artifact",
+  );
+  requireManifestNodeVersion(textlintInstallation);
 
   const mergeGate = releaseJobs["merge-gate"];
   if (mergeGate?.name !== "quality / verify" ||
@@ -376,6 +409,7 @@ export function validateReleaseWorkflowPolicy({
       "verify-candidate",
       "installation-e2e",
       "global-installation-e2e",
+      "textlint-plugin-installation-e2e",
     ],
     "the final pull request gate must wait for quality and every selected candidate stage",
   );
@@ -388,6 +422,7 @@ export function validateReleaseWorkflowPolicy({
     ['test "$RELEASE_PLAN_RESULT" = success', "final gate must require candidate planning"],
     ['test "$BUILD_GLOBAL_RESULT" = success', "final gate must require selected global build"],
     ['test "$GLOBAL_INSTALLATION_RESULT" = success', "final gate must require selected global installation E2E"],
+    ['test "$TEXTLINT_INSTALLATION_RESULT" = success', "final gate must require selected textlint plugin installation E2E"],
     ['test "$BUILD_NATIVE_RESULT" = success', "final gate must require selected native builds"],
     ['test "$NATIVE_SMOKE_RESULT" = success', "final gate must require selected native smoke"],
     ['test "$VERIFY_CANDIDATE_RESULT" = success', "final gate must require candidate verification"],
@@ -499,7 +534,7 @@ export function validateReleaseWorkflowPolicy({
   }
 
   const browserAcceptance = step(releaseJobs["build-global"], (item) =>
-    item.name === "Browser, Zed, and VS Code candidate build and runtime verification",
+    item.name === "Browser, textlint, Zed, and VS Code candidate build and runtime verification",
   "global candidate build and browser acceptance is missing");
   if (browserAcceptance.if !== undefined) {
     fail("global candidate build and browser acceptance must always run together");
@@ -518,6 +553,13 @@ export function validateReleaseWorkflowPolicy({
       "nix develop .#ci-browser -c cargo make release-global-candidate") {
     fail("global candidates must use the exact combined archive gate command in the pinned browser shell");
   }
+  const globalUpload = step(releaseJobs["build-global"], (item) =>
+    item.uses?.startsWith("actions/upload-artifact@"), "global candidate upload is missing");
+  requireCommand(
+    globalUpload.with?.path,
+    "target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz",
+    "global candidate upload must include the textlint plugin tarball",
+  );
   const smokeRun = step(smokeDoc.jobs?.smoke, (item) =>
     item.name === "Extracted release binary smoke tests", "native smoke is missing").run;
   requireCommand(smokeRun, "node tools/native-release-smoke.mjs", "native smoke must inspect extracted artifacts");
@@ -656,7 +698,7 @@ export function validateReleaseWorkflowPolicy({
     dependencies: ["check", "cross-native-check", "clippy", "test", "doc-check"],
   });
   requireTask(tasks, "quality-documents", {
-    dependencies: ["adoc-check", "docs-lint", "html5-check"],
+    dependencies: ["adoc-check", "docs-lint", "docs-prose-lint", "html5-check"],
   });
   requireTask(tasks, "quality-adapters", {
     dependencies: [
@@ -672,6 +714,7 @@ export function validateReleaseWorkflowPolicy({
       "test-vscode-extension-host",
       "test-vscode-release-package",
       "test-cross-runtime",
+      "textlint-plugin-check",
     ],
   });
   requireTask(tasks, "browser-runtime-check", {
@@ -733,6 +776,7 @@ export function validateReleaseWorkflowPolicy({
 
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke must have a timeout");
   requireTimeout(releaseJobs["installation-e2e"], 15, "installation must have a timeout");
+  requireTimeout(textlintInstallation, 15, "textlint plugin installation must have a timeout");
   requireTimeout(releaseJobs["reuse-candidate"], 15, "tag reuse must have a timeout");
   requireText(dist, 'cargo-dist-version = "0.32.0"', "cargo-dist must be pinned exactly");
   requireText(dist, 'allow-dirty = ["ci"]', "workflow override must be intentional");

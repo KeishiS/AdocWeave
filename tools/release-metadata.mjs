@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 import { canonicalJson, validateDistributionManifest } from "./release-contract.mjs";
+import { cargoTreePackageKeys } from "./generate-third-party-notices.mjs";
 
 export const RELEASE_METADATA_TOOL_VERSION = 1;
 const ROOT = new URL("../", import.meta.url);
@@ -29,19 +30,30 @@ function spdxId(prefix, value) {
 
 function archiveFiles(path, archiveName) {
   const zip = archiveName.endsWith(".zip") || archiveName.endsWith(".vsix");
-  const members = execFileSync(zip ? "unzip" : "tar", zip ? ["-Z1", path] : ["-tJf", path], { encoding: "utf8" })
+  const gzipTar = archiveName.endsWith(".tgz");
+  const listArgs = zip ? ["-Z1", path] : [gzipTar ? "-tzf" : "-tJf", path];
+  const members = execFileSync(zip ? "unzip" : "tar", listArgs, { encoding: "utf8" })
     .trimEnd()
     .split("\n")
     .filter(Boolean);
+  if (!zip) {
+    const verbose = execFileSync("tar", [gzipTar ? "-tvzf" : "-tvJf", path], { encoding: "utf8" })
+      .trimEnd()
+      .split("\n")
+      .filter(Boolean);
+    if (verbose.length !== members.length || verbose.some((line) => !["-", "d"].includes(line[0]))) {
+      fail(`archive contains a symlink or unsupported member type: ${archiveName}`);
+    }
+  }
   const files = [];
   for (const member of members) {
-    if (member.startsWith("/") || member.split("/").includes("..")) {
+    if (member.startsWith("/") || member.includes("\\") || member.split("/").includes("..")) {
       fail(`unsafe archive member in ${archiveName}: ${member}`);
     }
     if (member.endsWith("/")) continue;
     const contents = execFileSync(zip ? "unzip" : "tar", zip
       ? ["-p", path, escapeUnzipMember(member)]
-      : ["-xJOf", path, member], {
+      : [gzipTar ? "-xzOf" : "-xJOf", path, member], {
       maxBuffer: 64 * 1024 * 1024,
     });
     files.push({
@@ -58,15 +70,36 @@ function archiveFiles(path, archiveName) {
   return files.sort((left, right) => compareText(left.fileName, right.fileName));
 }
 
-function cargoPackages(manifestPath) {
+function cargoPackages(manifestPath, rootPackageName, filterPlatform) {
   const args = ["metadata", "--format-version=1", "--locked"];
   if (manifestPath) args.push("--manifest-path", manifestPath);
+  if (filterPlatform) args.push("--filter-platform", filterPlatform);
   const metadata = JSON.parse(execFileSync("cargo", args, {
     cwd: ROOT,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
   }));
-  return metadata.packages.map((entry) => ({
+  let packageIds;
+  let selectedPackages;
+  if (rootPackageName && filterPlatform) {
+    selectedPackages = cargoTreePackageKeys(rootPackageName, filterPlatform);
+  } else if (rootPackageName) {
+    const roots = metadata.packages.filter((entry) => entry.name === rootPackageName && entry.source === null);
+    if (roots.length !== 1) fail(`Cargo package is not unique: ${rootPackageName}`);
+    const nodes = new Map(metadata.resolve.nodes.map((node) => [node.id, node]));
+    packageIds = new Set();
+    const pending = [roots[0].id];
+    while (pending.length > 0) {
+      const id = pending.pop();
+      if (packageIds.has(id)) continue;
+      packageIds.add(id);
+      for (const dependency of nodes.get(id)?.deps ?? []) pending.push(dependency.pkg);
+    }
+  }
+  return metadata.packages.filter((entry) =>
+    (!packageIds || packageIds.has(entry.id)) &&
+    (!selectedPackages || selectedPackages.has(`${entry.name}\0${entry.version}`))
+  ).map((entry) => ({
     SPDXID: spdxId("CargoPackage", `${entry.name}\0${entry.version}\0${entry.source ?? "workspace"}`),
     downloadLocation: entry.source?.startsWith("registry+")
       ? `https://crates.io/crates/${entry.name}/${entry.version}`
@@ -110,6 +143,14 @@ function frontendPackage() {
     name: entry.name,
     versionInfo: entry.version,
   };
+}
+
+function textlintPluginPackage() {
+  const entry = readJson("packages/textlint-plugin-asciidoc/package.json");
+  if (entry.private !== true || Object.keys(entry.dependencies ?? {}).length !== 0) {
+    fail("textlint plugin must remain private and have zero runtime npm dependencies");
+  }
+  return npmPackage(entry.name, entry.version, entry.license);
 }
 
 function npmPackage(name, version, license = "NOASSERTION") {
@@ -187,9 +228,15 @@ export function buildMetadata(directory, sourceCommit) {
   validateDistributionManifest(distributionManifest, plan);
 
   const cargo = cargoPackages();
+  const textlintCargo = cargoPackages(
+    undefined,
+    "adocweave-textlint-wasm",
+    "wasm32-unknown-unknown",
+  );
   const zedCargo = cargoPackages("editors/zed/Cargo.toml");
   const allCargo = [...new Map([...cargo, ...zedCargo].map((entry) => [entry.SPDXID, entry])).values()];
   const frontend = frontendPackage();
+  const textlintPlugin = textlintPluginPackage();
   const vscodeNpm = vscodePackages();
   const archivePackages = [];
   const files = [];
@@ -224,6 +271,8 @@ export function buildMetadata(directory, sourceCommit) {
     }
     const dependencies = asset.kind === "browser"
       ? [...cargo, frontend]
+      : asset.kind === "textlint-plugin"
+        ? [...textlintCargo, textlintPlugin]
       : asset.kind === "zed"
         ? zedCargo
         : asset.kind === "vscode"
@@ -233,7 +282,7 @@ export function buildMetadata(directory, sourceCommit) {
       relationships.push({ spdxElementId: packageId, relationshipType: "DEPENDS_ON", relatedSpdxElement: dependency.SPDXID });
     }
   }
-  const packages = [...archivePackages, ...allCargo, frontend, ...vscodeNpm]
+  const packages = [...archivePackages, ...allCargo, frontend, textlintPlugin, ...vscodeNpm]
     .sort((left, right) => compareText(left.SPDXID, right.SPDXID));
   relationships.sort((left, right) =>
     compareText(

@@ -64,6 +64,7 @@ export function requiredInstallationAssets(scope, target, version, archiveType) 
     ...(families.global
       ? [
         `adocweave-browser-${version}.tar.xz`,
+        `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
         `adocweave-zed-${version}.tar.xz`,
         `adocweave-vscode-${version}.vsix`,
       ]
