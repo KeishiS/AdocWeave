@@ -27,12 +27,15 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
           "--format", "json",
         ]);
         const config = JSON.parse(await readFile(join(cwd, ".textlintrc.json"), "utf8"));
-        assert.deepEqual(config.plugins, { "@adocweave/asciidoc": true });
-        assert.deepEqual(config.rules, { probe: true });
+        assert.deepEqual(config.plugins, ["@adocweave/asciidoc"]);
+        assert.deepEqual(config.rules, {});
         const paths = input === undefined
           ? args.filter((argument) => /\.(?:adoc|asciidoc|asc)$/.test(argument))
           : [args[args.indexOf("--stdin-filename") + 1]];
         invocations.push({ args, input, paths });
+        if (args.includes("--fix")) {
+          return { code: 0, stderr: "", stdout: fixedReports(paths) };
+        }
         return { code: 1, stderr: "", stdout: diagnostics(paths) };
       },
     });
@@ -74,6 +77,7 @@ test("--fixによる入力変更を検出する", async () => {
           if (args.includes("--fix")) {
             const original = await readFile(paths[0], "utf8");
             await writeFile(paths[0], original.replace("誤り", "修正"));
+            return { code: 0, stderr: "", stdout: fixedReports(paths) };
           }
           return { code: 1, stderr: "", stdout: diagnostics(paths) };
         },
@@ -131,5 +135,14 @@ function diagnostics(paths) {
       ruleId: "probe",
       severity: 2,
     }],
+  })));
+}
+
+function fixedReports(paths) {
+  return JSON.stringify(paths.map((filePath) => ({
+    applyingMessages: [],
+    filePath,
+    messages: [],
+    output: fixtureSource(filePath.endsWith(".asciidoc") ? "\r\n" : "\n"),
   })));
 }

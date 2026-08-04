@@ -246,6 +246,7 @@ args = [
   "tools/native-lsp-smoke.test.mjs",
   "tools/platform-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
+  "tools/textlint-plugin-release-smoke.test.mjs",
   "tools/native-change-plan.test.mjs",
   "tools/verify-native-pr-candidate.test.mjs",
   "tools/config-schema.test.mjs",
@@ -614,10 +615,22 @@ args = [
 ]
 
 [tasks.textlint-plugin-check]
-description = "Test the private AsciiDoc textlint processor and rules"
-dependencies = ["build-textlint-wasm-node", "build-wasm", "textlint-dependencies"]
+description = "Test the reusable AsciiDoc textlint processor and repository-specific rules"
+dependencies = [
+  "build-textlint-wasm-node",
+  "build-wasm",
+  "textlint-dependencies",
+  "textlint-public-plugin-test",
+]
 command = "npm"
 args = ["test", "--prefix", "tools/textlint"]
+
+[tasks.textlint-public-plugin-test]
+description = "Test the reusable textlint Processor without generated artifacts"
+script_runner = "@shell"
+script = '''
+node --test packages/textlint-plugin-asciidoc/*.test.mjs
+'''
 
 [tasks.docs-prose-lint]
 description = "Check authored AsciiDoc prose without modifying files"
