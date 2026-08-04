@@ -1,0 +1,44 @@
+{
+  "name": "@adocweave/textlint-plugin-asciidoc",
+  "version": "0.28.0",
+  "description": "AsciiDoc Processor Plugin for textlint powered by AdocWeave",
+  "private": true,
+  "type": "module",
+  "main": "./index.mjs",
+  "types": "./index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./index.d.mts",
+      "import": "./index.mjs",
+      "default": "./index.mjs"
+    }
+  },
+  "files": [
+    "adapter.mjs",
+    "bridge.mjs",
+    "index.d.mts",
+    "index.mjs",
+    "position.mjs",
+    "processor.mjs",
+    "wasm/",
+    "README.adoc",
+    "THIRD_PARTY_NOTICES.adoc",
+    "LICENSE-APACHE",
+    "LICENSE-MIT"
+  ],
+  "engines": {
+    "node": ">=20.18.0 <25"
+  },
+  "peerDependencies": {
+    "textlint": "15.8.0"
+  },
+  "keywords": ["asciidoc", "textlint", "textlintplugin"],
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/KeishiS/adocweave",
+  "bugs": "https://github.com/KeishiS/adocweave/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeishiS/adocweave.git",
+    "directory": "packages/textlint-plugin-asciidoc"
+  }
+}

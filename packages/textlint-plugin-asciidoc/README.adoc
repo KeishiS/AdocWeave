@@ -1,0 +1,57 @@
+= AdocWeave textlint AsciiDoc plugin
+
+このパッケージは、AsciiDoc文書をAdocWeaveで解析し、textlintが扱うTxtASTへ変換するProcessor Pluginです。
+Node.js、textlintおよびこのパッケージだけで動作し、Rust、Cargoまたは実行時の追加ダウンロードを必要としません。
+
+== 導入
+
+このパッケージはnpm registryへ公開しません。AdocWeaveのGitHub Releaseへ添付された``.tgz``を指定して
+導入します。``X.Y.Z``には同じReleaseのバージョンを指定します。
+
+[source,console]
+----
+npm install --save-dev textlint \
+  https://github.com/KeishiS/adocweave/releases/download/vX.Y.Z/adocweave-textlint-plugin-asciidoc-X.Y.Z.tgz
+----
+
+``.textlintrc.json``では、利用する日本語規則などとは別にProcessorを指定します。
+
+[source,json]
+----
+{
+  "plugins": ["@adocweave/asciidoc"],
+  "rules": {
+    "your-rule": true
+  }
+}
+----
+
+== 対応範囲
+
+既定では``.adoc``、``.asciidoc``および``.asc``を扱います。別の拡張子を扱う場合は、先頭に``.``を
+付けて追加します。
+
+[source,json]
+----
+{
+  "plugins": {
+    "@adocweave/asciidoc": {
+      "extensions": [".guide"]
+    }
+  }
+}
+----
+
+見出し、段落、リスト、引用、表、リンクの表示文字列およびインライン装飾を文章として渡します。
+コード、URL、数式、属性参照、passおよび未対応構文は文章として渡しません。includeは展開せず、
+入力された一つの物理ファイルだけを解析します。
+
+== 自動修正
+
+このProcessorは自動修正に対応しません。規則が修正情報を返した場合も削除するため、``textlint --fix``で
+AsciiDoc文書を書き換えません。検出した問題は元の文書上の行と列へ報告します。
+
+== 対応環境
+
+Node.js 20.18.0以上25未満とtextlint 15.8.0を検証対象とします。WebAssemblyはパッケージへ同梱し、
+別のAdocWeaveバージョンへ差し替える機能は提供しません。
