@@ -1,5 +1,5 @@
 = ADR 0017: GitHub Releaseでのtextlint Processorパッケージ配布
-:status: accepted
+:status: accepted; adapter interface amended by ADR 0018
 
 == 文脈
 

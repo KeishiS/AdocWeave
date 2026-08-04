@@ -48,8 +48,6 @@ mod syntax;
 mod syntax_builder;
 mod syntax_diagnostics;
 mod table;
-#[cfg(feature = "text-projection")]
-mod text_projection;
 mod url;
 mod walker;
 
@@ -87,6 +85,7 @@ pub mod semantic {
         AttributeUse, Inline, InlineFormula, InlineLiteralKind, InlineProblem, InlineProblemKind,
         InlineStyle, InlineText, Link, MacroAttribute, MacroForm, MathLanguage, PassthroughKind,
         Reference, ReferenceDestination, StandardMacro, StandardMacroKind, inline_at,
+        is_plain_inline_text,
     };
     pub use crate::presentation::{
         BibliographySection, BlockId, DocumentIndex, DocumentLayout, DocumentPresentation,
@@ -152,10 +151,6 @@ pub mod output {
             RenderingFeatures, SearchTextKind, SearchTextSegment, SearchableText,
             SourceBlockProjection, project, searchable_text,
         };
-    }
-    #[cfg(feature = "text-projection")]
-    pub mod text {
-        pub use crate::text_projection::{TextNode, TextNodeKind, TextProjection, project_text};
     }
 }
 

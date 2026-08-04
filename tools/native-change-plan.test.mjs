@@ -44,6 +44,7 @@ test("global archiveへ影響する入力だけを選択する", () => {
   for (const pathname of [
     "crates/adocweave/src/lib.rs",
     "crates/adocweave-wasm/src/lib.rs",
+    "crates/adocweave-textlint/src/lib.rs",
     "crates/adocweave-textlint-wasm/src/lib.rs",
     "editors/vscode/src/extension.ts",
     "web-worker/client.mjs",

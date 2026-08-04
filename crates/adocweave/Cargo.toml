@@ -9,10 +9,6 @@ repository.workspace = true
 rust-version.workspace = true
 description = "An AsciiDoc processor with lossless syntax and language services"
 
-[features]
-default = []
-text-projection = []
-
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

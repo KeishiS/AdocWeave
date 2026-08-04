@@ -32,6 +32,7 @@ const NATIVE_ROOTS = [
 ];
 const GLOBAL_ROOTS = [
   "crates/adocweave-config/",
+  "crates/adocweave-textlint/",
   "crates/adocweave-textlint-wasm/",
   "crates/adocweave-wasm/",
   "crates/adocweave/",

@@ -415,47 +415,7 @@ fn tracked_adoc_corpus_is_lossless_and_has_valid_ranges() {
 }
 
 #[test]
-fn tracked_adoc_text_projections_have_nested_source_ranges() {
-    fn check(
-        path: &str,
-        source: &str,
-        parent: adocweave::text::TextRange,
-        children: &[adocweave::output::text::TextNode],
-    ) {
-        let mut previous = parent.start();
-        for child in children {
-            assert!(
-                parent.start() <= child.source_range.start(),
-                "{path}: {:?} {:?} starts before parent {:?}",
-                child.kind,
-                child.source_range,
-                parent
-            );
-            assert!(
-                child.source_range.end() <= parent.end(),
-                "{path}: {:?} {:?} ends after parent {:?}",
-                child.kind,
-                child.source_range,
-                parent
-            );
-            assert!(
-                previous <= child.source_range.start(),
-                "{path}: {:?} {:?} overlaps a previous sibling ending at {:?}",
-                child.kind,
-                child.source_range,
-                previous
-            );
-            assert!(source.is_char_boundary(child.source_range.start().to_usize()));
-            assert!(source.is_char_boundary(child.source_range.end().to_usize()));
-            if let Some(content) = child.content_range {
-                assert!(child.source_range.start() <= content.start());
-                assert!(content.end() <= child.source_range.end());
-            }
-            check(path, source, child.source_range, &child.children);
-            previous = child.source_range.end();
-        }
-    }
-
+fn tracked_adoc_corpus_builds_textlint_plans() {
     let output = Command::new("git")
         .args(["ls-files", "-z", "*.adoc"])
         .current_dir(repository_root())
@@ -469,12 +429,16 @@ fn tracked_adoc_text_projections_have_nested_source_ranges() {
     {
         let path = std::str::from_utf8(path).expect("UTF-8 repository path");
         let analysis = analyze(path);
-        let projection = adocweave::output::text::project_text(&analysis);
-        check(
-            path,
-            analysis.source(),
-            projection.source_range,
-            &projection.children,
+        let plan = adocweave_textlint::plan(&analysis, adocweave_textlint::PlanLimits::default())
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+        assert_eq!(
+            plan.range,
+            adocweave_textlint::Utf16Range(
+                0,
+                u32::try_from(analysis.source().encode_utf16().count())
+                    .expect("document UTF-16 length")
+            ),
+            "{path}"
         );
     }
 }
@@ -653,7 +617,7 @@ fn roadmap_uses_unique_github_issue_urls() {
     // added to one and not the other; it cannot tell that an Issue is closed,
     // because a test may not reach GitHub. Update this list in the same change
     // that closes an Issue.
-    let expected = ["33", "34", "82", "83", "84", "86", "384"]
+    let expected = ["33", "34", "82", "83", "84", "86", "384", "436"]
         .into_iter()
         .map(str::to_owned)
         .collect();

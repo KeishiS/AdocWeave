@@ -28,41 +28,41 @@ test("文章校正用exportをBrowser成果物から分離する", () => {
     `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`,
     "utf8"
   );
-  assert.doesNotMatch(browser, /projectText/);
-  assert.match(textlint, /projectText/);
+  assert.doesNotMatch(browser, /parseText/);
+  assert.match(textlint, /parseText/);
   assert.deepEqual(
     Object.keys(
       require(
         `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`
       )
     ),
-    ["projectText"]
+    ["parseText"]
   );
 });
 
 test("実WebAssembly境界がversionとrequest上限をcode付きで拒否する", () => {
-  const { projectText } = require(
+  const { parseText } = require(
     `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`
   );
   assert.equal(
-    errorPayload(() => projectText({
-      packageVersion: "0.0.0",
+    errorPayload(() => parseText({
+      componentVersion: "0.0.0",
       source: "",
       sourceId: null
     })).code,
-    "unsupported-api-version"
+    "component-version-mismatch"
   );
   assert.equal(
-    errorPayload(() => projectText({
-      packageVersion,
+    errorPayload(() => parseText({
+      componentVersion: packageVersion,
       source: "x".repeat(10 * 1024 * 1024 + 1),
       sourceId: null
     })).code,
     "input-too-large"
   );
   assert.equal(
-    errorPayload(() => projectText({
-      packageVersion,
+    errorPayload(() => parseText({
+      componentVersion: packageVersion,
       source: "",
       sourceId: "x".repeat(4 * 1024 + 1)
     })).code,

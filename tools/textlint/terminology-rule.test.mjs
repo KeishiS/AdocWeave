@@ -13,7 +13,9 @@ const catalog = {
     {
       id: "sample",
       term: "禁止語",
-      message: "別の表現を検討してください。"
+      match: "substring",
+      message: "別の表現を検討してください。",
+      documentation: "docs/developer-guide/terminology.adoc#sample"
     }
   ]
 };
@@ -54,4 +56,50 @@ test("AsciiDocコメントによる局所的な抑制を適用する", async () 
   );
   assert.equal(result.messages.length, 1);
   assert.equal(result.messages[0].line, 7);
+});
+
+test("空のtermを規則生成時に拒否する", () => {
+  const invalid = structuredClone(catalog);
+  invalid.forbiddenTerms[0].term = "";
+  assert.throws(() => createTerminologyRule(invalid), /termは空でない文字列/);
+});
+
+test("未対応のmatchを規則生成時に拒否する", () => {
+  const invalid = structuredClone(catalog);
+  invalid.forbiddenTerms[0].match = "word";
+  assert.throws(() => createTerminologyRule(invalid), /matchを解釈できません/);
+});
+
+test("重複するidを規則生成時に拒否する", () => {
+  const invalid = structuredClone(catalog);
+  invalid.forbiddenTerms.push({ ...invalid.forbiddenTerms[0], term: "別の禁止語" });
+  assert.throws(() => createTerminologyRule(invalid), /idが重複しています/);
+});
+
+test("規則生成後のcatalog変更を検査へ反映しない", () => {
+  const mutable = structuredClone(catalog);
+  const rule = createTerminologyRule(mutable);
+  mutable.forbiddenTerms[0].id = "changed";
+  mutable.forbiddenTerms[0].term = "変更後";
+  mutable.forbiddenTerms[0].message = "変更されました。";
+  mutable.forbiddenTerms.push({ ...catalog.forbiddenTerms[0], id: "added", term: "追加語" });
+
+  const reports = [];
+  class RuleError extends Error {
+    constructor(message, details) {
+      super(message);
+      this.details = details;
+    }
+  }
+  const visitor = rule({
+    Syntax: { Str: "Str" },
+    RuleError,
+    locator: { range: (range) => range },
+    report: (_node, error) => reports.push(error)
+  });
+  visitor.Str({ value: "禁止語、変更後、追加語" });
+
+  assert.equal(reports.length, 1);
+  assert.match(reports[0].message, /\[sample\]/);
+  assert.deepEqual(reports[0].details.padding, [0, 3]);
 });

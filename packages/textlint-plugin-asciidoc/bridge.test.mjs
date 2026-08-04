@@ -2,23 +2,30 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { createProjectText } from "./bridge.mjs";
+import { createParseText } from "./bridge.mjs";
 
-const packageVersion = JSON.parse(
+const componentVersion = JSON.parse(
   readFileSync(new URL("./package.json", import.meta.url), "utf8")
 ).version;
 
-test("package versionとsourceをWASMへ渡す", () => {
+test("component version、sourceIdおよびsourceをWASMへ渡す", () => {
   let request;
-  const projectText = createProjectText(() => ({
-    projectText(value) {
-      request = value;
-      return { sourceRange: [0, 0], children: [] };
-    }
-  }));
-  assert.deepEqual(projectText("", "doc.adoc"), { sourceRange: [0, 0], children: [] });
+  const parseText = createParseText({
+    componentVersion,
+    bridgeLoader: () => ({
+      parseText(value) {
+        request = value;
+        return { type: "Document", range: [0, 0], children: [] };
+      }
+    })
+  });
+  assert.deepEqual(parseText("", "doc.adoc"), {
+    type: "Document",
+    range: [0, 0],
+    children: []
+  });
   assert.deepEqual(request, {
-    packageVersion,
+    componentVersion,
     sourceId: "doc.adoc",
     source: ""
   });
@@ -26,47 +33,67 @@ test("package versionとsourceをWASMへ渡す", () => {
 
 test("WASMのJSON errorをcode付きErrorへ変換する", () => {
   for (const code of [
-    "unsupported-api-version",
+    "component-version-mismatch",
     "input-too-large",
     "output-too-large",
     "node-limit",
     "invalid-request"
   ]) {
-    const projectText = createProjectText(() => ({
-      projectText() {
-        throw JSON.stringify({ code, message: `${code}の説明` });
-      }
-    }));
+    const parseText = createParseText({
+      componentVersion,
+      bridgeLoader: () => ({
+        parseText() {
+          throw JSON.stringify({ code, message: `${code}の説明` });
+        }
+      })
+    });
     assert.throws(
-      () => projectText(""),
+      () => parseText(""),
       (error) => error instanceof Error && error.code === code && error.message === `${code}の説明`
     );
   }
 });
 
-test("WASM初期化失敗を利用者向けErrorへ変換する", () => {
-  const initializationError = new Error("同梱されたAdocWeave WebAssemblyを読み込めませんでした。");
-  initializationError.code = "wasm-initialization-failed";
-  const projectText = createProjectText(() => {
-    throw initializationError;
-  });
+test("factoryが設定、requestおよびWASM exportを検証する", () => {
+  assert.throws(() => createParseText({ componentVersion, bridgeLoader: null }), /bridgeLoader/);
   assert.throws(
-    () => projectText(""),
-    (error) =>
-      error instanceof Error &&
-      error.code === "wasm-initialization-failed" &&
-      error.message.includes("WebAssembly")
+    () => createParseText({ componentVersion: "", bridgeLoader: () => ({}) }),
+    /componentVersion/
   );
+  const missingExport = createParseText({ componentVersion, bridgeLoader: () => ({}) });
+  assert.throws(
+    () => missingExport(""),
+    (error) => error.code === "wasm-initialization-failed" && /parseText/.test(error.message)
+  );
+  const parseText = createParseText({
+    componentVersion,
+    bridgeLoader: () => ({ parseText: () => ({}) })
+  });
+  assert.throws(() => parseText(new Uint8Array()), /文字列/);
+  assert.throws(() => parseText("", 42), /sourceId/);
 });
 
-test("未知のthrow値もErrorへ変換する", () => {
-  const projectText = createProjectText(() => ({
-    projectText() {
-      throw 42;
+test("初期化失敗と未知のthrow値を利用者向けErrorへ変換する", () => {
+  const initializationFailure = createParseText({
+    componentVersion,
+    bridgeLoader: () => {
+      throw new Error("module load failed");
     }
-  }));
+  });
   assert.throws(
-    () => projectText(""),
+    () => initializationFailure(""),
+    (error) =>
+      error.code === "wasm-initialization-failed" &&
+      /WebAssembly/.test(error.message) &&
+      error.cause?.message === "module load failed"
+  );
+
+  const unknownFailure = createParseText({
+    componentVersion,
+    bridgeLoader: () => ({ parseText: () => { throw 42; } })
+  });
+  assert.throws(
+    () => unknownFailure(""),
     (error) => error instanceof Error && error.code === "adocweave-error"
   );
 });
