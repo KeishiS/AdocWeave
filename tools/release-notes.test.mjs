@@ -16,13 +16,11 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.equal(PREVIOUS_RELEASE_VERSION, "0.27.3");
-  assert.match(notes, /元のUTF-8 byte範囲と階層を保った``TextProjection``/);
-  assert.match(notes, /``cargo make docs-prose-lint``/);
-  assert.match(notes, /文書を変更せず、検出した問題だけを報告/);
-  assert.match(notes, /``config\/japanese-terminology\.json``へ集約/);
-  assert.match(notes, /自動修正に使う置換語は定義しません/);
-  assert.match(notes, /Browser packageの公開APIとWASM protocolにはこのAPIを追加していません/);
+  assert.equal(PREVIOUS_RELEASE_VERSION, "0.28.0");
+  assert.match(notes, /``@adocweave\/textlint-plugin-asciidoc``をGitHub Release/);
+  assert.match(notes, /npm registryへは公開しません/);
+  assert.match(notes, /実行時に別の成果物を取得しません/);
+  assert.match(notes, /``textlint --fix``を実行してもAsciiDoc文書を変更しません/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -35,8 +33,9 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /破壊的変更はありません/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /既存のRust API、CLI、Language ServerおよびBrowser packageを使う場合、移行作業は不要です/);
-  assert.match(notes, /``text-projection`` featureを有効/);
-  assert.match(notes, /private toolであり、release assetには含めません/);
+  assert.match(notes, /``textlint@15\.8\.0``/);
+  assert.match(notes, /``@adocweave\/asciidoc`` plugin/);
+  assert.match(notes, /日本語規則、用語集および対象文書一覧は公開パッケージへ含めません/);
   assert.match(notes, /WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず/);
   assert.match(notes, /Browser packageには含めません/);
   assert.match(notes, new RegExp(`\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`));
@@ -50,6 +49,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   );
   assert.match(notes, /以前のVSIXとnative directoryを保持/);
   assert.match(notes, /rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動/);
+  assert.match(notes, /以前の検証済みURLへ戻し、lockfileから依存を再導入/);
   assert.match(notes, /すべてのZedプロセスを終了してから、エラーに表示されたロックのpathを削除/);
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
@@ -97,7 +97,9 @@ test("Release Notesが述べるschema versionはmanifestの実際の値と一致
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
   const expectedError = new RegExp(`v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}専用`);
-  assert.throws(() => buildReleaseNotes(`v${PREVIOUS_RELEASE_VERSION}`), expectedError);
+  if (PREVIOUS_RELEASE_VERSION !== RELEASE_NOTES_VERSION) {
+    assert.throws(() => buildReleaseNotes(`v${PREVIOUS_RELEASE_VERSION}`), expectedError);
+  }
   assert.throws(() => buildReleaseNotes("v9.9.9"), expectedError);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });

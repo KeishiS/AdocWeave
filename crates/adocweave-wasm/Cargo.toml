@@ -9,10 +9,6 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Versioned WebAssembly adapter for AdocWeave"
 
-[features]
-default = []
-text-projection = ["adocweave/text-projection"]
-
 [dependencies]
 adocweave = { path = "../adocweave" }
 serde = { version = "1", features = ["derive"] }

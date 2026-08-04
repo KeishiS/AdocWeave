@@ -2,7 +2,17 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
-import { CHECKED_CRATES, UNCHECKED_CRATES, baselineTag, checkedCrates, parseVersion, releaseStep, reportedFailures } from "./semver-gate.mjs";
+import {
+  CHECKED_CRATES,
+  CRATE_INTRODUCTIONS,
+  UNCHECKED_CRATES,
+  baselineTag,
+  checkedCrates,
+  cratesForBaseline,
+  parseVersion,
+  releaseStep,
+  reportedFailures,
+} from "./semver-gate.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 const workspace = readFileSync(new URL("Cargo.toml", ROOT), "utf8");
@@ -27,6 +37,20 @@ test("library targetを持つcrateはすべて検査対象である", () => {
   );
 
   assert.deepEqual([...CHECKED_CRATES].sort(), withLibrary.sort());
+  for (const [name, version] of Object.entries(CRATE_INTRODUCTIONS)) {
+    assert.ok(CHECKED_CRATES.includes(name), `${name}が公開API検査の一覧にありません`);
+    assert.deepEqual(Object.keys(version).sort(), ["major", "minor", "patch"]);
+    assert.ok(Object.values(version).every(Number.isInteger));
+  }
+});
+
+test("新規crateの比較省略は、そのcrateを含むbaselineで自動的に失効する", () => {
+  const beforeIntroduction = cratesForBaseline(parseVersion("0.27.3", "baseline"));
+  const afterIntroduction = cratesForBaseline({ major: 0, minor: 29, patch: 0 });
+
+  assert.ok(!beforeIntroduction.includes("adocweave-textlint-wasm"));
+  assert.ok(afterIntroduction.includes("adocweave-textlint-wasm"));
+  assert.ok(beforeIntroduction.includes("adocweave"));
 });
 
 test("release種別はbaselineと候補のversionから決まる", () => {

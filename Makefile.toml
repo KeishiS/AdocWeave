@@ -200,6 +200,7 @@ args = [
   "--test",
   "tools/verify-dependency-boundaries.test.mjs",
   "tools/verify-textlint-dependencies.test.mjs",
+  "tools/verify-textlint-plugin-dependencies.test.mjs",
   "tools/verify-vscode-dependencies.test.mjs",
 ]
 
@@ -245,6 +246,7 @@ args = [
   "tools/native-lsp-smoke.test.mjs",
   "tools/platform-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
+  "tools/textlint-plugin-release-smoke.test.mjs",
   "tools/native-change-plan.test.mjs",
   "tools/verify-native-pr-candidate.test.mjs",
   "tools/config-schema.test.mjs",
@@ -357,6 +359,7 @@ description = "Install, select, and completely uninstall locally built release a
 dependencies = [
   "native-release-smoke-host",
   "package-browser-release",
+  "package-textlint-plugin-release",
   "package-zed-release",
   "test-vscode-release-package",
 ]
@@ -367,6 +370,7 @@ rm -rf "$candidate"
 mkdir -p "$candidate"
 cp target/native-smoke-host/artifacts/*.zip "$candidate/"
 cp target/distrib/adocweave-browser-*.tar.xz "$candidate/"
+cp target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz "$candidate/"
 cp target/distrib/adocweave-zed-*.tar.xz "$candidate/"
 cp target/distrib/adocweave-vscode-*.vsix "$candidate/"
 node tools/release-installation-e2e.mjs \
@@ -418,6 +422,29 @@ description = "Build the deterministic source-checkout-free Zed development exte
 dependencies = ["zed-query-contract"]
 command = "bash"
 args = ["tools/package-zed-release.sh"]
+
+[tasks.package-textlint-plugin-release]
+description = "Build the deterministic npm-compatible textlint plugin archive"
+command = "bash"
+args = ["tools/package-textlint-plugin-release.sh"]
+
+[tasks.test-textlint-plugin-release-package]
+description = "Verify textlint plugin archive contents, deterministic bytes, and real CLI behavior"
+dependencies = ["package-textlint-plugin-release"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+archive="target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
+first="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+cargo make package-textlint-plugin-release >/dev/null
+second="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+if [ "$first" != "$second" ]; then
+  echo "textlint plugin release archive is not deterministic" >&2
+  exit 1
+fi
+node tools/textlint-plugin-release-smoke.mjs "$archive"
+echo "textlint plugin release package verified: $second"
+'''
 
 [tasks.test-zed-release-package]
 description = "Verify the Zed release archive layout and deterministic bytes"
@@ -530,10 +557,11 @@ node tools/browser-release-smoke.mjs "$archive" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
 [tasks.release-global-artifacts]
-description = "Build and statically verify the exact browser, Zed, and VS Code archives uploaded by release CI"
+description = "Build and statically verify the exact browser, textlint, Zed, and VS Code archives uploaded by release CI"
 dependencies = [
   "test-browser-release-package",
   "test-browser-types",
+  "test-textlint-plugin-release-package",
   "test-zed-release-package",
   "test-vscode-release-package",
 ]
@@ -559,21 +587,13 @@ wasm-bindgen \
 '''
 
 [tasks.build-textlint-wasm-node]
-description = "Build the private Node.js text projection bridge"
-script_runner = "@shell"
-script = '''
-set -euo pipefail
-cargo build \
-  -p adocweave-wasm \
-  --release \
-  --target wasm32-unknown-unknown \
-  --features text-projection \
-  --target-dir target/textlint-wasm-build
-wasm-bindgen \
-  --target nodejs \
-  --out-dir target/adocweave-textlint-wasm-node \
-  target/textlint-wasm-build/wasm32-unknown-unknown/release/adocweave_wasm.wasm
-'''
+description = "Build the dedicated Node.js textlint WebAssembly adapter"
+command = "bash"
+args = [
+  "tools/build-textlint-wasm-node.sh",
+  "target/adocweave-textlint-wasm-node",
+  "target/textlint-wasm-build",
+]
 
 [tasks.textlint-dependencies]
 private = true
@@ -588,10 +608,24 @@ args = [
 ]
 
 [tasks.textlint-plugin-check]
-description = "Test the private AsciiDoc textlint processor and rules"
-dependencies = ["build-textlint-wasm-node", "build-wasm", "textlint-dependencies"]
+description = "Test the reusable AsciiDoc textlint processor and repository-specific rules"
+dependencies = [
+  "build-textlint-wasm-node",
+  "build-wasm",
+  "textlint-dependencies",
+  "textlint-public-plugin-test",
+]
 command = "npm"
 args = ["test", "--prefix", "tools/textlint"]
+
+[tasks.textlint-public-plugin-test]
+description = "Test the reusable textlint Processor without generated artifacts"
+script_runner = "@shell"
+script = '''
+node --test \
+  packages/textlint-plugin-asciidoc/*.test.mjs \
+  tools/verify-textlint-wasm-memory.test.mjs
+'''
 
 [tasks.docs-prose-lint]
 description = "Check authored AsciiDoc prose without modifying files"
@@ -967,6 +1001,7 @@ dependencies = [
   "test-profile-release",
   "wasm-size",
   "test-browser-release-package",
+  "test-textlint-plugin-release-package",
   "test-zed-release-package",
   "test-vscode-release-package",
   "release-installation-e2e-host",

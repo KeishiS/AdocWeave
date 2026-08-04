@@ -262,7 +262,7 @@ required reviewerとdeployment ruleは設定せず、workflowのstable tag検証
 
 * [ ] ``flake.lock``で固定したRust stable、``release-manifest.json``の``rustVersion``、rootワークスペースと
       Zed crateの``rust-version``が一致しています。
-* [ ] Rustワークスペース、WASM、browser package、Zed拡張、配布planのパッケージバージョンが
+* [ ] Rustワークスペース、WASM、browser package、Zed拡張、textlint用パッケージ、配布planのパッケージバージョンが
       ``release-manifest.json``と一致しています。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
@@ -288,11 +288,14 @@ required reviewerとdeployment ruleは設定せず、workflowのstable tag検証
 * [ ] 公開VSIXを隔離profileへ導入し、AsciiDoc認識、基本構文色付け、managed LSPの取得、offline cache、
       再起動および全LSP機能を確認しました。以前のVSIXへのrollback後にも起動でき、managed cacheの削除と
       拡張のuninstall後に管理対象fileが残っていません。
+* [ ] 公開textlint用tarballをLinux、macOSおよびWindowsの新しいプロジェクトへ導入し、``.adoc``、
+      ``.asciidoc``、``.asc``および標準入力を検査しました。診断位置が原文と一致し、``textlint --fix``の
+      前後で入力のbyte列が変化しないことも確認しました。
 * [ ] native利用側アプリでパッケージバージョンを照合し、`AnalysisOptions`、`SourceId`、文書versionおよびgenerationを
       明示しました。DB、ネットワーク、file、権限および任意scheme Resolverをcoreの外へ置き、更新対象が
       xref:docs/developer-guide/core-profile.adoc[対応範囲]と一致し、Resolverが返したURLを``ActiveUrlPolicy``で再検証しました。
 * [ ] Nix flakeをtagのコミットへ固定し、Linux x86-64／ARM64で``nix run``、profileへの導入・rollback・削除、
       利用側flakeへの固定、NixOSパッケージ評価およびoverlayを確認しました。runtime closureにbrowser、Node.js、
       Rust compiler、Cargoまたはfuzz toolが含まれていないことも確認しました。
-* [ ] 導入前後のfile一覧を比較し、CLI、LSP、browser package、Zed拡張およびVS Code拡張の削除後に
+* [ ] 導入前後のfile一覧を比較し、CLI、LSP、browser package、Zed拡張、VS Code拡張およびtextlint用パッケージの削除後に
       管理対象fileが残っていないことを確認しました。

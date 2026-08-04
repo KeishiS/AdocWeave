@@ -1,7 +1,8 @@
 //! Source-backed document structure for natural-language consumers.
 
 use crate::block_model::{
-    AstBlock, BlockMetadata, DelimitedBlockKind, DelimitedContent, HeadingKind, ListBlock, ListItem,
+    AstBlock, BlockMetadata, DelimitedBlockKind, DelimitedContent, HeadingKind, ListBlock,
+    ListItem, ListKind, VerbatimKind,
 };
 use crate::core::{Analysis, SourceId};
 use crate::inline::{Inline, InlineStyle};
@@ -23,6 +24,9 @@ pub struct TextNode {
     pub source_range: TextRange,
     pub content_range: Option<TextRange>,
     pub level: Option<u8>,
+    pub url: Option<String>,
+    pub ordered: Option<bool>,
+    pub language: Option<String>,
     pub children: Vec<TextNode>,
 }
 
@@ -68,6 +72,9 @@ pub fn project_text(analysis: &Analysis) -> TextProjection {
                 source_range: comment.range(),
                 content_range: line_comment_content_range(analysis.source(), comment.range()),
                 level: None,
+                url: None,
+                ordered: None,
+                language: None,
                 children: Vec::new(),
             },
         );
@@ -92,6 +99,9 @@ fn project_block(block: &AstBlock) -> TextNode {
                 HeadingKind::DocumentTitle | HeadingKind::Part => 1,
                 HeadingKind::Section { level } | HeadingKind::Discrete { level } => level,
             }),
+            url: None,
+            ordered: None,
+            language: None,
             children: project_inlines(&heading.inlines),
         },
         AstBlock::Paragraph(paragraph) => TextNode {
@@ -99,6 +109,9 @@ fn project_block(block: &AstBlock) -> TextNode {
             source_range: paragraph.range,
             content_range: Some(paragraph.content_range),
             level: None,
+            url: None,
+            ordered: None,
+            language: None,
             children: project_inlines(&paragraph.inlines),
         },
         AstBlock::LiteralParagraph(literal) => leaf(
@@ -107,15 +120,16 @@ fn project_block(block: &AstBlock) -> TextNode {
             Some(literal.content_range),
         ),
         AstBlock::Break(value) => leaf(TextNodeKind::Excluded, value.range, None),
-        AstBlock::Source(source) => leaf(
-            TextNodeKind::CodeBlock,
-            source.range,
-            Some(source.content_range),
-        ),
-        AstBlock::Verbatim(verbatim) => leaf(
-            TextNodeKind::CodeBlock,
+        AstBlock::Source(source) => {
+            code_block(source.range, source.content_range, source.language.clone())
+        }
+        AstBlock::Verbatim(verbatim) => code_block(
             verbatim.range,
-            Some(verbatim.content_range),
+            verbatim.content_range,
+            match &verbatim.kind {
+                VerbatimKind::Source(info) => info.language.clone(),
+                VerbatimKind::Listing | VerbatimKind::Literal => None,
+            },
         ),
         AstBlock::List(list) => project_list(list),
         AstBlock::Math(math) => leaf(TextNodeKind::Excluded, math.range, Some(math.content_range)),
@@ -144,6 +158,9 @@ fn project_block(block: &AstBlock) -> TextNode {
                 source_range: delimited.range,
                 content_range: Some(delimited.content_range),
                 level: None,
+                url: None,
+                ordered: None,
+                language: None,
                 children,
             }
         }
@@ -163,6 +180,9 @@ fn project_list(list: &ListBlock) -> TextNode {
         source_range: list.range,
         content_range: None,
         level: None,
+        url: None,
+        ordered: Some(matches!(list.kind, ListKind::Ordered)),
+        language: None,
         children: list.items.iter().map(project_list_item).collect(),
     };
     prepend_title(&mut node, &list.metadata);
@@ -178,6 +198,9 @@ fn project_list_item(item: &ListItem) -> TextNode {
         source_range: term.range,
         content_range: Some(term.range),
         level: None,
+        url: None,
+        ordered: None,
+        language: None,
         children: project_inlines(&term.inlines),
     }));
     children.extend(project_inlines(&item.inlines));
@@ -189,6 +212,9 @@ fn project_list_item(item: &ListItem) -> TextNode {
         source_range: item.range,
         content_range: Some(item.text_range),
         level: None,
+        url: None,
+        ordered: None,
+        language: None,
         children,
     }
 }
@@ -202,6 +228,9 @@ fn project_table_children(table: &Table) -> Vec<TextNode> {
             source_range: row.range,
             content_range: None,
             level: None,
+            url: None,
+            ordered: None,
+            language: None,
             children: row
                 .cells
                 .iter()
@@ -223,6 +252,9 @@ fn project_table_children(table: &Table) -> Vec<TextNode> {
                         source_range: cell.range,
                         content_range: Some(cell.content_range),
                         level: None,
+                        url: None,
+                        ordered: None,
+                        language: None,
                         children,
                     }
                 })
@@ -261,6 +293,9 @@ fn project_inline(inline: &Inline) -> TextNode {
             source_range: *range,
             content_range: Some(*content_range),
             level: None,
+            url: None,
+            ordered: None,
+            language: None,
             children: project_inlines(children),
         },
         Inline::AttributeReference { range, .. }
@@ -278,6 +313,9 @@ fn project_inline(inline: &Inline) -> TextNode {
             source_range: link.range,
             content_range: link.label_range,
             level: None,
+            url: Some(link.target.clone()),
+            ordered: None,
+            language: None,
             children: project_inlines(&link.label),
         },
         Inline::Reference(reference) => TextNode {
@@ -285,6 +323,9 @@ fn project_inline(inline: &Inline) -> TextNode {
             source_range: reference.range,
             content_range: reference.label_range,
             level: None,
+            url: Some(reference.expanded_target.clone()),
+            ordered: None,
+            language: None,
             children: project_inlines(&reference.label),
         },
         Inline::Formula(formula) => leaf(
@@ -305,6 +346,9 @@ fn prepend_title(node: &mut TextNode, metadata: &BlockMetadata) {
         source_range: title.range,
         content_range: Some(title.range),
         level: None,
+        url: None,
+        ordered: None,
+        language: None,
         children: project_inlines(&title.inlines),
     });
 }
@@ -326,6 +370,26 @@ fn leaf(kind: TextNodeKind, source_range: TextRange, content_range: Option<TextR
         source_range,
         content_range,
         level: None,
+        url: None,
+        ordered: None,
+        language: None,
+        children: Vec::new(),
+    }
+}
+
+fn code_block(
+    source_range: TextRange,
+    content_range: TextRange,
+    language: Option<String>,
+) -> TextNode {
+    TextNode {
+        kind: TextNodeKind::CodeBlock,
+        source_range,
+        content_range: Some(content_range),
+        level: None,
+        url: None,
+        ordered: None,
+        language,
         children: Vec::new(),
     }
 }
@@ -432,5 +496,57 @@ mod tests {
         let source = "= 文書😀\r\n\r\n// 指示\r\n\r\n本文の_強調_です。\r\n";
         let projected = projection(source);
         check(source, projected.source_range, &projected.children);
+    }
+
+    #[test]
+    fn preserves_node_specific_textlint_properties() {
+        fn collect<'a>(node: &'a TextNode, kind: TextNodeKind, output: &mut Vec<&'a TextNode>) {
+            if node.kind == kind {
+                output.push(node);
+            }
+            for child in &node.children {
+                collect(child, kind, output);
+            }
+        }
+
+        let source = ":site: https://example.com\n:page: other\n\nlink:{site}[表示] と xref:{page}.adoc#section[参照]\n\n* 項目\n\n. 項目\n\n----\nplain\n----\n\n[source,rust]\n----\nfn main() {}\n----\n";
+        let projected = projection(source);
+        let root = TextNode {
+            kind: TextNodeKind::Container,
+            source_range: projected.source_range,
+            content_range: None,
+            level: None,
+            url: None,
+            ordered: None,
+            language: None,
+            children: projected.children,
+        };
+        let mut links = Vec::new();
+        collect(&root, TextNodeKind::Link, &mut links);
+        assert_eq!(
+            links.first().and_then(|node| node.url.as_deref()),
+            Some("https://example.com")
+        );
+        let mut references = Vec::new();
+        collect(&root, TextNodeKind::Reference, &mut references);
+        assert_eq!(
+            references.first().and_then(|node| node.url.as_deref()),
+            Some("other.adoc#section")
+        );
+        let mut lists = Vec::new();
+        collect(&root, TextNodeKind::List, &mut lists);
+        assert_eq!(
+            lists.iter().map(|node| node.ordered).collect::<Vec<_>>(),
+            [Some(false), Some(true)]
+        );
+        let mut code_blocks = Vec::new();
+        collect(&root, TextNodeKind::CodeBlock, &mut code_blocks);
+        assert_eq!(
+            code_blocks
+                .iter()
+                .map(|node| node.language.as_deref())
+                .collect::<Vec<_>>(),
+            [None, Some("rust")]
+        );
     }
 }

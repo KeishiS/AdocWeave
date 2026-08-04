@@ -22,6 +22,7 @@ for (const [scope, expected] of [
     "global-only",
     [
       `adocweave-browser-${version}.tar.xz`,
+      `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
       `adocweave-zed-${version}.tar.xz`,
       `adocweave-vscode-${version}.vsix`,
     ],

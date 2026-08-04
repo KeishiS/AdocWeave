@@ -46,7 +46,8 @@ canonical ASTや検索用文字列をNode.js側で再解釈する方法は、Asc
 採用しません。生成HTMLや正規表現から文章を取り出す方法は、元のAsciiDoc上の構造と位置を失うため
 採用しません。
 
-初期用途はリポジトリ内の文書検査です。Node.js packageの公開とnpm registryへの登録は行いません。
+初期用途はリポジトリ内の文書検査です。このprojectionを利用するNode.jsパッケージの配布判断は
+xref:0017-github-release-textlint-package.adoc[ADR 0017]で定めます。
 
 == 帰結
 
@@ -54,5 +55,5 @@ canonical ASTや検索用文字列をNode.js側で再解釈する方法は、Asc
 canonical ASTおよび既存の``DocumentProjection``には影響しません。Browser buildでfeatureを有効にしない
 ことと、既存protocolへ校正用fieldが現れないことを検査します。
 
-includeを展開しない一つの物理ファイルだけが診断対象です。将来、外部向けプラグインまたはincludeを展開した
-校正を提供する場合は、配布方法、複数ファイルの位置対応および保守範囲を別のIssueとADRで判断します。
+includeを展開しない一つの物理ファイルだけが診断対象です。将来、includeを展開した校正を提供する場合は、
+複数ファイルの位置対応および保守範囲を別のIssueとADRで判断します。
