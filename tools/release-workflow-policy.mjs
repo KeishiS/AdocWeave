@@ -656,7 +656,7 @@ export function validateReleaseWorkflowPolicy({
     dependencies: ["check", "cross-native-check", "clippy", "test", "doc-check"],
   });
   requireTask(tasks, "quality-documents", {
-    dependencies: ["adoc-check", "docs-lint", "html5-check"],
+    dependencies: ["adoc-check", "docs-lint", "docs-prose-lint", "html5-check"],
   });
   requireTask(tasks, "quality-adapters", {
     dependencies: [
@@ -672,6 +672,7 @@ export function validateReleaseWorkflowPolicy({
       "test-vscode-extension-host",
       "test-vscode-release-package",
       "test-cross-runtime",
+      "textlint-plugin-check",
     ],
   });
   requireTask(tasks, "browser-runtime-check", {

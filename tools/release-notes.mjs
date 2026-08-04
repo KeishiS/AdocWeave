@@ -17,11 +17,7 @@ const releaseVersionParts = RELEASE_NOTES_VERSION.split(".").map(Number);
 if (releaseVersionParts.length !== 3 || releaseVersionParts.some((part) => !Number.isInteger(part))) {
   throw new Error(`Release NotesのversionがSemVerではありません：${RELEASE_NOTES_VERSION}`);
 }
-const [releaseMajor, releaseMinor, releasePatch] = releaseVersionParts;
-if (releasePatch < 1) {
-  throw new Error("Release Notesの訂正対象となる直前のpatch版がありません");
-}
-export const PREVIOUS_RELEASE_VERSION = `${releaseMajor}.${releaseMinor}.${releasePatch - 1}`;
+export const PREVIOUS_RELEASE_VERSION = "0.27.3";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -47,11 +43,10 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  `v${PREVIOUS_RELEASE_VERSION}のRelease Notesで設定schemaに変更がないと案内していた誤りを訂正しました。実際には\`\`resources.roots\`\`と\`\`local-targets.project-root\`\`へ相対パスの制約を加え、\`\`local-targets.enabled\`\`が\`\`true\`\`の場合は\`\`project-root\`\`を必須にしていました。実行時の設定検査に変更はありません。`,
-  "Zed拡張のLanguage Server導入ロックを、複数プロセスが同時に取得できない方式へ変更しました。所有者を書き込む途中の空ファイルを古いロックとして削除でき、二つの導入処理が同時に進む場合がありました。",
-  "Browser packageの公開入口から``PROTOCOL_SCHEMA_VERSION``を取得できるようにしました。READMEは保存済み出力をこの値で識別するよう案内していましたが、実行時のexportとTypeScript宣言がありませんでした。",
-  "``html.stylesheet-files``の設定schemaを実行時の検査へそろえました。絶対パスと親ディレクトリへ移動する``..``は以前から実行時に拒否していましたが、エディターなどのschema検査では受理していました。",
-  "VS Code拡張の依存関係検査を強化しました。環境変数にかかわらず開発依存を脆弱性監査へ含め、lockfileのSHA-512 digestが正しい形式と長さであることを検査します。",
+  "AsciiDocの文章を元のUTF-8 byte範囲と階層を保った``TextProjection``へ変換できるようにしました。見出し、段落、一覧、表、引用およびコメントを文章校正へ渡し、code、URL、数式およびAsciiDocの構文は対象から除外します。",
+  "``cargo make docs-prose-lint``を追加し、textlintでrepository内の日本語文書を検査できるようにしました。このtaskは文書を変更せず、検出した問題だけを報告します。",
+  "使用を禁止する用語を``config/japanese-terminology.json``へ集約しました。説明文書とtextlintが同じ定義を参照し、自動修正に使う置換語は定義しません。",
+  "Node.js向けWASMに限り、``text-projection`` featureで文章抽出APIを有効にできます。Browser packageの公開APIとWASM protocolにはこのAPIを追加していません。",
 ];
 
 /// Public contracts this release states are unchanged since the previous stable tag.
@@ -62,9 +57,7 @@ const highlights = [
 /// diff. `tools/release-claims.mjs` reads this list and checks every entry that
 /// has a single machine-readable source of truth.
 export const UNCHANGED_CONTRACTS = [
-  "公開Rust API",
   "WASM protocol",
-  "公開projection",
   "CLI引数",
   "Language Server protocol",
 ];
@@ -88,19 +81,18 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  `公開契約に破壊的変更はありません。v${PREVIOUS_RELEASE_VERSION}の設定schema変更に関する説明は、実際の変更内容へ訂正しました。`,
-  `Browser packageの公開入口へ\`\`PROTOCOL_SCHEMA_VERSION\`\`を追加しました。WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。`,
-  "設定schemaの``html.stylesheet-files``へ相対パスの制約を加えました。実行時には以前から同じ制約を適用しているため、受理される設定の範囲は変わりません。",
+  "公開契約に破壊的変更はありません。Rust APIへ``text-projection`` featureと``output::text`` moduleを追加しました。既定のfeature構成と既存APIの動作は変わりません。",
+  `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`projectText\`\`は専用featureでbuildする開発用packageだけに含み、Browser packageには含めません。`,
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "実行時に受理されていた設定の移行は不要です。``html.stylesheet-files``へ絶対パスまたは親ディレクトリへ移動する``..``を指定していた設定は、以前から実行時に拒否されています。",
-  "Browser packageの保存済み出力を読み書きする利用側は、公開入口の``PROTOCOL_SCHEMA_VERSION``を記録してschemaの一致を確認できます。既存のimportと処理を変更する必要はありません。",
+  "既存のRust API、CLI、Language ServerおよびBrowser packageを使う場合、移行作業は不要です。",
+  "文章抽出APIを使うRust codeでは``text-projection`` featureを有効にし、``adocweave::output::text::project_text``を呼び出します。",
+  "textlint連携はrepository内の文書検査に使うprivate toolであり、release assetには含めません。",
   `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
-  "Zed拡張は導入処理の競合を直しているため更新を推奨します。",
 ];
 
 const knownConstraints = [

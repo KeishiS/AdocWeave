@@ -724,8 +724,8 @@ test("Makefile canonical gate graph is parsed and mutation-resistant", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       makefile: inputs.makefile.replace(
-        '  "test-cross-runtime",\n]',
-        '  "test-cross-runtime",\n  "check",\n]',
+        '  "textlint-plugin-check",\n]',
+        '  "textlint-plugin-check",\n  "check",\n]',
       ),
     }),
     /quality-adapters dependencies must exactly match/,
@@ -739,6 +739,16 @@ test("Makefile canonical gate graph is parsed and mutation-resistant", () => {
       ),
     }),
     /ci-preflight dependencies must exactly match/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        '  "docs-prose-lint",\n',
+        "",
+      ),
+    }),
+    /quality-documents dependencies must exactly match/,
   );
 });
 

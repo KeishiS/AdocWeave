@@ -16,16 +16,13 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(
-    notes,
-    new RegExp(`v${PREVIOUS_RELEASE_VERSION.replaceAll(".", "\\.")}のRelease Notesで設定schemaに変更がないと案内していた誤り`),
-  );
-  assert.match(notes, /``resources\.roots``と``local-targets\.project-root``へ相対パスの制約/);
-  assert.match(notes, /``local-targets\.enabled``が``true``の場合は``project-root``を必須/);
-  assert.match(notes, /複数プロセスが同時に取得できない方式/);
-  assert.match(notes, /公開入口から``PROTOCOL_SCHEMA_VERSION``を取得/);
-  assert.match(notes, /``html\.stylesheet-files``の設定schemaを実行時の検査へそろえました/);
-  assert.match(notes, /開発依存を脆弱性監査へ含め/);
+  assert.equal(PREVIOUS_RELEASE_VERSION, "0.27.3");
+  assert.match(notes, /元のUTF-8 byte範囲と階層を保った``TextProjection``/);
+  assert.match(notes, /``cargo make docs-prose-lint``/);
+  assert.match(notes, /文書を変更せず、検出した問題だけを報告/);
+  assert.match(notes, /``config\/japanese-terminology\.json``へ集約/);
+  assert.match(notes, /自動修正に使う置換語は定義しません/);
+  assert.match(notes, /Browser packageの公開APIとWASM protocolにはこのAPIを追加していません/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -34,14 +31,14 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.23\.0から変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
-  // patch版のため、semver gateは破壊的変更を受理しません。本文も述べません。
   assert.doesNotMatch(notes, /破壊的変更：/);
   assert.match(notes, /破壊的変更はありません/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /実行時に受理されていた設定の移行は不要です/);
-  assert.doesNotMatch(notes, /設定schemaはv0\.27\.1から変更していません/);
-  assert.match(notes, /公開入口の``PROTOCOL_SCHEMA_VERSION``を記録/);
+  assert.match(notes, /既存のRust API、CLI、Language ServerおよびBrowser packageを使う場合、移行作業は不要です/);
+  assert.match(notes, /``text-projection`` featureを有効/);
+  assert.match(notes, /private toolであり、release assetには含めません/);
   assert.match(notes, /WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず/);
+  assert.match(notes, /Browser packageには含めません/);
   assert.match(notes, new RegExp(`\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`));
   assert.match(notes, /``schemaVersion``は4のままです/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
