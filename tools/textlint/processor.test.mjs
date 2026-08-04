@@ -5,6 +5,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { test as testAST } from "@textlint/ast-tester";
+import { TextlintKernel } from "@textlint/kernel";
+import technicalWriting from "textlint-rule-preset-ja-technical-writing";
 
 import { Processor } from "./processor.mjs";
 import { classifyTrackedFiles } from "./repository-lint-config.mjs";
@@ -20,6 +22,21 @@ test("AsciiDocを有効なTxtASTへ変換する", () => {
   assert.equal(ast.raw, source);
   assert.ok(ast.children.some((node) => node.type === "Header"));
   assert.ok(ast.children.some((node) => node.type === "List"));
+});
+
+test("ブロックタイトルを本文向けの句点規則から除外する", async () => {
+  const source = ".表題\n本文です。\n";
+  const result = await new TextlintKernel().lintText(source, {
+    ext: ".adoc",
+    filePath: "block-title.adoc",
+    plugins: [{ pluginId: "adocweave", plugin: { Processor } }],
+    rules: [{
+      ruleId: "ja-no-mixed-period",
+      rule: technicalWriting.rules["ja-no-mixed-period"],
+      options: structuredClone(technicalWriting.rulesConfig["ja-no-mixed-period"])
+    }]
+  });
+  assert.deepEqual(result.messages, []);
 });
 
 test("TxtAST固有のプロパティを保持する", () => {

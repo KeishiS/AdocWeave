@@ -371,30 +371,7 @@ impl<'analysis> Builder<'analysis> {
                     HeadingKind::Section { level } | HeadingKind::Discrete { level } => level,
                 }
                 .clamp(1, 6);
-                let runs = self.inline_runs(&heading.inlines)?.runs;
-                if runs.is_empty() {
-                    self.budget.claim()?;
-                    output.push(ByteNode::Header {
-                        range: ByteRange(heading.range),
-                        depth,
-                        children: Vec::new(),
-                    });
-                } else {
-                    let multiple = runs.len() > 1;
-                    for run in runs {
-                        let range = if multiple {
-                            span(&run)?
-                        } else {
-                            ByteRange(heading.range)
-                        };
-                        self.budget.claim()?;
-                        output.push(ByteNode::Header {
-                            range,
-                            depth,
-                            children: run,
-                        });
-                    }
-                }
+                output.extend(self.headers(heading.range, depth, &heading.inlines)?);
             }
             Block::Paragraph(paragraph) => {
                 output.extend(self.paragraphs(paragraph.range, &paragraph.inlines)?)
@@ -488,7 +465,40 @@ impl<'analysis> Builder<'analysis> {
         let Some(title) = &metadata.title else {
             return Ok(Vec::new());
         };
-        self.paragraphs(title.range, &title.inlines)
+        self.headers(title.range, 1, &title.inlines)
+    }
+
+    fn headers(
+        &mut self,
+        full_range: TextRange,
+        depth: u8,
+        inlines: &[Inline],
+    ) -> Result<Vec<ByteNode>, PlanError> {
+        let runs = self.inline_runs(inlines)?.runs;
+        if runs.is_empty() {
+            self.budget.claim()?;
+            return Ok(vec![ByteNode::Header {
+                range: ByteRange(full_range),
+                depth,
+                children: Vec::new(),
+            }]);
+        }
+        let multiple = runs.len() > 1;
+        runs.into_iter()
+            .map(|children| {
+                let range = if multiple {
+                    span(&children)?
+                } else {
+                    ByteRange(full_range)
+                };
+                self.budget.claim()?;
+                Ok(ByteNode::Header {
+                    range,
+                    depth,
+                    children,
+                })
+            })
+            .collect()
     }
 
     fn paragraphs(
@@ -1574,7 +1584,7 @@ mod tests {
         );
         assert!(plan.children.windows(2).any(|pair| matches!(
             pair,
-            [TxtAstNode::Paragraph { .. }, TxtAstNode::List { .. }]
+            [TxtAstNode::Header { depth: 1, .. }, TxtAstNode::List { .. }]
         )));
     }
 
