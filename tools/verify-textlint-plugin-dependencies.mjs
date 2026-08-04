@@ -27,7 +27,10 @@ for (const field of ["dependencies", "optionalDependencies", "bundledDependencie
     throw new Error(`textlint pluginに実行時依存があります: ${field}`);
   }
 }
-if (JSON.stringify(manifest.peerDependencies) !== JSON.stringify({ textlint: "15.8.0" })) {
+if (JSON.stringify(manifest.peerDependencies) !== JSON.stringify({
+  "@textlint/types": "15.8.0",
+  textlint: "15.8.0"
+})) {
   throw new Error("textlint pluginのpeer dependencyを解釈できません");
 }
 for (const name of ["preinstall", "install", "postinstall", "prepare", "prepack", "postpack"]) {

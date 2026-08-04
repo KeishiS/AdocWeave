@@ -114,11 +114,11 @@ GitHub Releaseへ一度だけ追加します。公開APIはtextlintの``Processo
 検査対象一覧および文書検査taskは収録しません。
 
 パッケージにはProcessor、TxtAST adapter、UTF-16位置変換、型定義、README、license、第三者依存の通知、
-``projectText``だけを公開するNode.js向けWebAssemblyとwrapperを収録します。WebAssemblyとパッケージは
+``parseText``だけを公開するNode.js向けWebAssemblyとwrapperを収録します。WebAssemblyとパッケージは
 同じ統一バージョンから構築し、別のWebAssemblyへの差し替えは認めません。install時のscript、実行時npm依存、
 ``node_modules``、source mapおよび機械固有pathを収録せず、実行時の追加downloadも行いません。
 
-入力は10 MiB、投影結果は50 MiB、投影するnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
+入力は10 MiB、TxtAST planは50 MiB、planのnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
 WebAssemblyのlinear memoryは256 MiBを上限とし、生成したbinaryのmemory sectionを検査します。
 tarballは8 MiB、展開後は16 MiB、収録fileは13件を上限とします。実CLIの受入検査はNode.jsのheapを
 128 MiBに制限して実行します。

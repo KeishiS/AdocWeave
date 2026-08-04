@@ -1,31 +1,47 @@
-const encoder = new TextEncoder();
-
 export function createPositionMapper(source) {
-  const byteToUtf16 = new Map([[0, 0]]);
-  let byteOffset = 0;
-  let utf16Offset = 0;
-  for (const character of source) {
-    byteOffset += encoder.encode(character).length;
-    utf16Offset += character.length;
-    byteToUtf16.set(byteOffset, utf16Offset);
-  }
-
-  const lineStarts = [0];
+  let lineCount = 1;
   for (let index = 0; index < source.length; index += 1) {
-    if (source[index] === "\r") {
+    const character = source[index];
+    if (character === "\r") {
       if (source[index + 1] === "\n") index += 1;
-      lineStarts.push(index + 1);
-    } else if (source[index] === "\n") {
-      lineStarts.push(index + 1);
+      lineCount += 1;
+    } else if (character === "\n" || character === "\u2028" || character === "\u2029") {
+      lineCount += 1;
+    }
+  }
+  const lineStarts = new Uint32Array(lineCount);
+  let line = 1;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "\r") {
+      if (source[index + 1] === "\n") index += 1;
+      lineStarts[line] = index + 1;
+      line += 1;
+    } else if (character === "\n" || character === "\u2028" || character === "\u2029") {
+      lineStarts[line] = index + 1;
+      line += 1;
     }
   }
 
-  function utf16(byte) {
-    const offset = byteToUtf16.get(byte);
-    if (offset === undefined) {
-      throw new Error(`UTF-8文字の途中または入力外を指す範囲です: ${byte}`);
+  function assertRange(range, label = "range") {
+    const splitsSurrogatePair = (offset) =>
+      offset > 0 &&
+      offset < source.length &&
+      /[\uD800-\uDBFF]/u.test(source[offset - 1]) &&
+      /[\uDC00-\uDFFF]/u.test(source[offset]);
+    if (
+      !Array.isArray(range) ||
+      range.length !== 2 ||
+      !range.every(Number.isSafeInteger) ||
+      range[0] < 0 ||
+      range[0] > range[1] ||
+      range[1] > source.length ||
+      splitsSurrogatePair(range[0]) ||
+      splitsSurrogatePair(range[1])
+    ) {
+      throw new Error(`${label}が不正です: ${JSON.stringify(range)}`);
     }
-    return offset;
+    return range;
   }
 
   function position(offset) {
@@ -42,28 +58,19 @@ export function createPositionMapper(source) {
     return { line: low + 1, column: offset - lineStarts[low] };
   }
 
-  function range(byteRange) {
-    if (
-      !Array.isArray(byteRange) ||
-      byteRange.length !== 2 ||
-      !Number.isSafeInteger(byteRange[0]) ||
-      !Number.isSafeInteger(byteRange[1]) ||
-      byteRange[0] < 0 ||
-      byteRange[0] > byteRange[1]
-    ) {
-      throw new Error(`不正なUTF-8 byte範囲です: ${JSON.stringify(byteRange)}`);
-    }
-    return [utf16(byteRange[0]), utf16(byteRange[1])];
+  function location(range) {
+    const valid = assertRange(range);
+    return { start: position(valid[0]), end: position(valid[1]) };
   }
 
-  function base(byteRange) {
-    const mapped = range(byteRange);
+  function base(range) {
+    const valid = assertRange(range);
     return {
-      raw: source.slice(mapped[0], mapped[1]),
-      range: mapped,
-      loc: { start: position(mapped[0]), end: position(mapped[1]) }
+      raw: source.slice(valid[0], valid[1]),
+      range: [...valid],
+      loc: location(valid)
     };
   }
 
-  return { base, position, range, utf16 };
+  return { assertRange, base, location, position };
 }

@@ -1,81 +1,33 @@
-//! Node.js-only WebAssembly boundary for source-backed text projections.
+//! Node.js-only WebAssembly request, resource-limit, and binding boundary.
 
-use adocweave::output::text::{TextNode, TextNodeKind, project_text};
 use adocweave::{AnalysisInputs, AnalysisOptions, Engine, SourceId, VERSION};
+use adocweave_textlint::{PlanError, PlanLimits, TxtAstPlan, plan};
 use serde::{Deserialize, Serialize};
 
 /// Maximum accepted AsciiDoc input size.
 pub const MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
-/// Maximum serialized projection size.
+/// Maximum serialized plan size.
 pub const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
-/// Maximum number of nodes in the text projection response.
-pub const MAX_PROJECTION_NODES: usize = 1_000_000;
+/// Maximum number of TxtAST nodes, including the document root.
+pub const MAX_PLAN_NODES: usize = 1_000_000;
 /// Maximum accepted logical source identifier size.
 pub const MAX_SOURCE_ID_BYTES: usize = 4 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TextProjectionRequest {
-    pub package_version: String,
+pub struct ParseTextRequest {
+    pub component_version: String,
     pub source_id: Option<String>,
     pub source: String,
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TextProjectionResponse {
-    pub package_version: String,
-    pub source_id: Option<String>,
-    pub source_range: [u32; 2],
-    pub children: Vec<TextProjectionNode>,
-}
-
-#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TextProjectionNode {
-    pub kind: TextProjectionNodeKind,
-    pub source_range: [u32; 2],
-    pub content_range: Option<[u32; 2]>,
-    pub level: Option<u8>,
-    pub url: Option<String>,
-    pub ordered: Option<bool>,
-    pub language: Option<String>,
-    pub children: Vec<TextProjectionNode>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum TextProjectionNodeKind {
-    BlockTitle,
-    Heading,
-    Paragraph,
-    List,
-    ListItem,
-    DescriptionTerm,
-    BlockQuote,
-    Table,
-    TableRow,
-    TableCell,
-    CodeBlock,
-    Comment,
-    Text,
-    Code,
-    Strong,
-    Emphasis,
-    Link,
-    Reference,
-    HardBreak,
-    Container,
-    Excluded,
-}
-
-#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
-pub struct TextProjectionError {
+pub struct ParseTextError {
     pub code: String,
     pub message: String,
 }
 
-impl TextProjectionError {
+impl ParseTextError {
     fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -84,34 +36,27 @@ impl TextProjectionError {
     }
 }
 
-pub fn project_text_request(
-    request: TextProjectionRequest,
-) -> Result<TextProjectionResponse, TextProjectionError> {
-    project_text_request_with_limits(
-        request,
-        MAX_INPUT_BYTES,
-        MAX_OUTPUT_BYTES,
-        MAX_PROJECTION_NODES,
-    )
+pub fn parse_text_request(request: ParseTextRequest) -> Result<TxtAstPlan, ParseTextError> {
+    parse_text_request_with_limits(request, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, MAX_PLAN_NODES)
 }
 
-fn project_text_request_with_limits(
-    request: TextProjectionRequest,
+fn parse_text_request_with_limits(
+    request: ParseTextRequest,
     max_input_bytes: usize,
     max_output_bytes: usize,
-    max_projection_nodes: usize,
-) -> Result<TextProjectionResponse, TextProjectionError> {
-    if request.package_version != VERSION {
-        return Err(TextProjectionError::new(
-            "unsupported-api-version",
+    max_plan_nodes: usize,
+) -> Result<TxtAstPlan, ParseTextError> {
+    if request.component_version != VERSION {
+        return Err(ParseTextError::new(
+            "component-version-mismatch",
             format!(
-                "unsupported package version {} (expected {VERSION})",
-                request.package_version
+                "component version {} does not match {VERSION}",
+                request.component_version
             ),
         ));
     }
     if request.source.len() > max_input_bytes {
-        return Err(TextProjectionError::new(
+        return Err(ParseTextError::new(
             "input-too-large",
             format!("input exceeds the {max_input_bytes} byte limit"),
         ));
@@ -121,7 +66,7 @@ fn project_text_request_with_limits(
         .as_ref()
         .is_some_and(|source_id| source_id.len() > MAX_SOURCE_ID_BYTES)
     {
-        return Err(TextProjectionError::new(
+        return Err(ParseTextError::new(
             "invalid-request",
             format!("sourceId exceeds the {MAX_SOURCE_ID_BYTES} byte limit"),
         ));
@@ -136,88 +81,79 @@ fn project_text_request_with_limits(
                 cancellation: None,
             },
         )
-        .map_err(|error| TextProjectionError::new(error.code().as_str(), error.to_string()))?;
-    let projection = project_text(&analysis);
-    let projection_nodes = projection.children.iter().map(count_nodes).sum::<usize>();
-    if projection_nodes > max_projection_nodes {
-        return Err(TextProjectionError::new(
-            "node-limit",
-            format!("projection exceeds the {max_projection_nodes} node limit"),
+        .map_err(|error| ParseTextError::new(error.code().as_str(), error.to_string()))?;
+    let result = plan(
+        &analysis,
+        PlanLimits {
+            max_nodes: max_plan_nodes,
+        },
+    )
+    .map_err(plan_error)?;
+    let mut output = LimitedWriter::new(max_output_bytes);
+    if let Err(error) = serde_json::to_writer(&mut output, &result)
+        && !output.exceeded
+    {
+        return Err(ParseTextError::new(
+            "serialization-failed",
+            error.to_string(),
         ));
     }
-    let response = TextProjectionResponse {
-        package_version: projection.package_version.to_owned(),
-        source_id: projection
-            .source_id
-            .map(|source_id| source_id.as_str().to_owned()),
-        source_range: range(projection.source_range),
-        children: projection.children.into_iter().map(project_node).collect(),
-    };
-    let output_bytes = serde_json::to_vec(&response)
-        .map_err(|error| TextProjectionError::new("serialization-failed", error.to_string()))?
-        .len();
-    if output_bytes > max_output_bytes {
-        return Err(TextProjectionError::new(
+    if output.exceeded {
+        return Err(ParseTextError::new(
             "output-too-large",
             format!("output exceeds the {max_output_bytes} byte limit"),
         ));
     }
-    Ok(response)
+    Ok(result)
 }
 
-fn count_nodes(node: &TextNode) -> usize {
-    node.children.iter().fold(1usize, |count, child| {
-        count.saturating_add(count_nodes(child))
-    })
+struct LimitedWriter {
+    written: usize,
+    max: usize,
+    exceeded: bool,
 }
 
-fn project_node(node: TextNode) -> TextProjectionNode {
-    TextProjectionNode {
-        kind: node.kind.into(),
-        source_range: range(node.source_range),
-        content_range: node.content_range.map(range),
-        level: node.level,
-        url: node.url,
-        ordered: node.ordered,
-        language: node.language,
-        children: node.children.into_iter().map(project_node).collect(),
-    }
-}
-
-fn range(range: adocweave::text::TextRange) -> [u32; 2] {
-    [range.start().to_u32(), range.end().to_u32()]
-}
-
-impl From<TextNodeKind> for TextProjectionNodeKind {
-    fn from(value: TextNodeKind) -> Self {
-        match value {
-            TextNodeKind::BlockTitle => Self::BlockTitle,
-            TextNodeKind::Heading => Self::Heading,
-            TextNodeKind::Paragraph => Self::Paragraph,
-            TextNodeKind::List => Self::List,
-            TextNodeKind::ListItem => Self::ListItem,
-            TextNodeKind::DescriptionTerm => Self::DescriptionTerm,
-            TextNodeKind::BlockQuote => Self::BlockQuote,
-            TextNodeKind::Table => Self::Table,
-            TextNodeKind::TableRow => Self::TableRow,
-            TextNodeKind::TableCell => Self::TableCell,
-            TextNodeKind::CodeBlock => Self::CodeBlock,
-            TextNodeKind::Comment => Self::Comment,
-            TextNodeKind::Text => Self::Text,
-            TextNodeKind::Code => Self::Code,
-            TextNodeKind::Strong => Self::Strong,
-            TextNodeKind::Emphasis => Self::Emphasis,
-            TextNodeKind::Link => Self::Link,
-            TextNodeKind::Reference => Self::Reference,
-            TextNodeKind::HardBreak => Self::HardBreak,
-            TextNodeKind::Container => Self::Container,
-            TextNodeKind::Excluded => Self::Excluded,
+impl LimitedWriter {
+    const fn new(max: usize) -> Self {
+        Self {
+            written: 0,
+            max,
+            exceeded: false,
         }
     }
 }
 
+impl std::io::Write for LimitedWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let Some(next) = self.written.checked_add(bytes.len()) else {
+            self.exceeded = true;
+            return Err(std::io::Error::other("serialized output limit exceeded"));
+        };
+        if next > self.max {
+            self.exceeded = true;
+            return Err(std::io::Error::other("serialized output limit exceeded"));
+        }
+        self.written = next;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn plan_error(error: PlanError) -> ParseTextError {
+    let code = match error {
+        PlanError::NodeLimitExceeded { .. } => "node-limit",
+        PlanError::InvalidSourceRange
+        | PlanError::OverlappingSiblings
+        | PlanError::InvalidNodeHierarchy => "invalid-plan",
+    };
+    ParseTextError::new(code, error.to_string())
+}
+
 #[cfg(any(test, target_arch = "wasm32"))]
-fn serialize_error(error: &TextProjectionError) -> String {
+fn serialize_error(error: &ParseTextError) -> String {
     serde_json::to_string(error).unwrap_or_else(|_| {
         "{\"code\":\"serialization-failed\",\"message\":\"failed to serialize error\"}".to_owned()
     })
@@ -230,15 +166,15 @@ mod bindings {
 
     use super::*;
 
-    #[wasm_bindgen(js_name = projectText)]
-    pub fn project_text_js(request: JsValue) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(js_name = parseText)]
+    pub fn parse_text_js(request: JsValue) -> Result<JsValue, JsValue> {
         let request = deserialize_request(request)?;
-        let response = project_text_request(request)
+        let response = parse_text_request(request)
             .map_err(|error| JsValue::from_str(&serialize_error(&error)))?;
         response
             .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
             .map_err(|error| {
-                let error = TextProjectionError::new("serialization-failed", error.to_string());
+                let error = ParseTextError::new("serialization-failed", error.to_string());
                 JsValue::from_str(&serialize_error(&error))
             })
     }
@@ -252,7 +188,7 @@ mod bindings {
     }
 
     fn invalid_request(message: String) -> JsValue {
-        JsValue::from_str(&serialize_error(&TextProjectionError::new(
+        JsValue::from_str(&serialize_error(&ParseTextError::new(
             "invalid-request",
             message,
         )))
@@ -262,82 +198,91 @@ mod bindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use adocweave_textlint::{DocumentType, TxtAstNode, Utf16Range};
 
-    fn request(source: &str) -> TextProjectionRequest {
-        TextProjectionRequest {
-            package_version: VERSION.to_owned(),
+    fn request(source: &str) -> ParseTextRequest {
+        ParseTextRequest {
+            component_version: VERSION.to_owned(),
             source_id: Some("docs:test.adoc".to_owned()),
             source: source.to_owned(),
         }
     }
 
     #[test]
-    fn projects_a_versioned_source_backed_response() {
+    fn returns_a_typed_txtast_plan() {
         let source = "= 文書\n\n本文です。\n";
-        let response = project_text_request(request(source)).expect("projection");
-        assert_eq!(response.package_version, VERSION);
-        assert_eq!(response.source_id.as_deref(), Some("docs:test.adoc"));
-        assert_eq!(response.source_range, [0, source.len() as u32]);
-        assert_eq!(response.children[0].kind, TextProjectionNodeKind::Heading);
-        assert_eq!(response.children[1].kind, TextProjectionNodeKind::Paragraph);
+        let response = parse_text_request(request(source)).expect("plan");
+        assert_eq!(response.node_type, DocumentType::Document);
+        assert_eq!(
+            response.range,
+            Utf16Range(0, source.encode_utf16().count() as u32)
+        );
+        assert!(matches!(
+            response.children[0],
+            TxtAstNode::Header { depth: 1, .. }
+        ));
+        assert!(matches!(response.children[1], TxtAstNode::Paragraph { .. }));
+        let json = serde_json::to_value(&response).expect("serialized plan");
+        assert_eq!(json["type"], "Document");
+        assert!(json.get("componentVersion").is_none());
+        assert!(json.get("sourceId").is_none());
+        assert_eq!(json["children"][0]["type"], "Header");
+        assert!(json["children"][0].get("depth").is_some());
     }
 
     #[test]
-    fn rejects_a_different_package_version() {
+    fn rejects_a_different_component_version() {
         let mut request = request("");
-        request.package_version = "0.0.0".to_owned();
-        let error = project_text_request(request).expect_err("version mismatch");
-        assert_eq!(error.code, "unsupported-api-version");
+        request.component_version = "0.0.0".to_owned();
+        let error = parse_text_request(request).expect_err("version mismatch");
+        assert_eq!(error.code, "component-version-mismatch");
     }
 
     #[test]
-    fn rejects_input_beyond_the_limit() {
-        let error = project_text_request_with_limits(
-            request("x"),
-            0,
-            MAX_OUTPUT_BYTES,
-            MAX_PROJECTION_NODES,
-        )
-        .expect_err("input limit");
-        assert_eq!(error.code, "input-too-large");
+    fn applies_all_boundary_limits() {
+        let input =
+            parse_text_request_with_limits(request("x"), 0, MAX_OUTPUT_BYTES, MAX_PLAN_NODES)
+                .expect_err("input limit");
+        assert_eq!(input.code, "input-too-large");
+
+        let output =
+            parse_text_request_with_limits(request("x"), MAX_INPUT_BYTES, 0, MAX_PLAN_NODES)
+                .expect_err("output limit");
+        assert_eq!(output.code, "output-too-large");
+
+        let nodes =
+            parse_text_request_with_limits(request("本文"), MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, 0)
+                .expect_err("node limit");
+        assert_eq!(nodes.code, "node-limit");
+
+        let mut source_id = request("");
+        source_id.source_id = Some("x".repeat(MAX_SOURCE_ID_BYTES + 1));
+        let source_id = parse_text_request(source_id).expect_err("source identifier limit");
+        assert_eq!(source_id.code, "invalid-request");
     }
 
     #[test]
-    fn rejects_output_beyond_the_limit() {
-        let error = project_text_request_with_limits(
-            request("x"),
+    fn output_limit_accepts_the_exact_serialized_size() {
+        let expected = parse_text_request(request("本文")).expect("plan");
+        let exact = serde_json::to_vec(&expected)
+            .expect("serialized plan")
+            .len();
+        parse_text_request_with_limits(request("本文"), MAX_INPUT_BYTES, exact, MAX_PLAN_NODES)
+            .expect("exact output limit");
+        let error = parse_text_request_with_limits(
+            request("本文"),
             MAX_INPUT_BYTES,
-            0,
-            MAX_PROJECTION_NODES,
+            exact - 1,
+            MAX_PLAN_NODES,
         )
-        .expect_err("output limit");
+        .expect_err("one byte below output size");
         assert_eq!(error.code, "output-too-large");
     }
 
     #[test]
-    fn rejects_a_projection_beyond_the_node_limit() {
-        let error = project_text_request_with_limits(
-            request("本文です。"),
-            MAX_INPUT_BYTES,
-            MAX_OUTPUT_BYTES,
-            0,
-        )
-        .expect_err("node limit");
-        assert_eq!(error.code, "node-limit");
-    }
-
-    #[test]
-    fn rejects_an_oversized_source_identifier() {
-        let mut request = request("");
-        request.source_id = Some("x".repeat(MAX_SOURCE_ID_BYTES + 1));
-        let error = project_text_request(request).expect_err("source identifier limit");
-        assert_eq!(error.code, "invalid-request");
-    }
-
-    #[test]
     fn request_rejects_unknown_fields() {
-        let error = serde_json::from_value::<TextProjectionRequest>(serde_json::json!({
-            "packageVersion": VERSION,
+        let error = serde_json::from_value::<ParseTextRequest>(serde_json::json!({
+            "componentVersion": VERSION,
             "sourceId": null,
             "source": "",
             "unknown": true
@@ -348,41 +293,10 @@ mod tests {
 
     #[test]
     fn errors_have_a_stable_serializable_shape() {
-        let error = TextProjectionError::new("invalid-request", "invalid request");
+        let error = ParseTextError::new("invalid-request", "invalid request");
         assert_eq!(
             serialize_error(&error),
             "{\"code\":\"invalid-request\",\"message\":\"invalid request\"}"
-        );
-    }
-
-    #[test]
-    fn preserves_node_specific_textlint_properties() {
-        fn find(
-            nodes: &[TextProjectionNode],
-            kind: TextProjectionNodeKind,
-        ) -> Option<&TextProjectionNode> {
-            nodes.iter().find_map(|node| {
-                (node.kind == kind)
-                    .then_some(node)
-                    .or_else(|| find(&node.children, kind))
-            })
-        }
-
-        let source = ":site: https://example.com\n\nlink:{site}[表示]\n\n. 項目\n\n[source,rust]\n----\nfn main() {}\n----\n";
-        let response = project_text_request(request(source)).expect("projection");
-        assert_eq!(
-            find(&response.children, TextProjectionNodeKind::Link)
-                .and_then(|node| node.url.as_deref()),
-            Some("https://example.com")
-        );
-        assert_eq!(
-            find(&response.children, TextProjectionNodeKind::List).and_then(|node| node.ordered),
-            Some(true)
-        );
-        assert_eq!(
-            find(&response.children, TextProjectionNodeKind::CodeBlock)
-                .and_then(|node| node.language.as_deref()),
-            Some("rust")
         );
     }
 }

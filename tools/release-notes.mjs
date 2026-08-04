@@ -17,7 +17,7 @@ const releaseVersionParts = RELEASE_NOTES_VERSION.split(".").map(Number);
 if (releaseVersionParts.length !== 3 || releaseVersionParts.some((part) => !Number.isInteger(part))) {
   throw new Error(`Release NotesのversionがSemVerではありません：${RELEASE_NOTES_VERSION}`);
 }
-export const PREVIOUS_RELEASE_VERSION = "0.28.0";
+export const PREVIOUS_RELEASE_VERSION = "0.29.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -35,7 +35,7 @@ const manifestSchemaNote =
 
 export const REQUIRED_RELEASE_NOTE_HEADINGS = [
   "## 対応環境",
-  "## 公開契約と破壊的変更",
+  "## 公開仕様と破壊的変更",
   `## v${RELEASE_NOTES_VERSION}への移行`,
   "## 既知の制約",
   "## 配布物の検証",
@@ -43,10 +43,11 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "AsciiDoc文書をtextlintで検査する``@adocweave/textlint-plugin-asciidoc``をGitHub Releaseのnpm互換tarballとして追加しました。npm registryへは公開しません。",
-  "Processor、TxtAST adapter、UTF-16位置変換およびNode.js向けWebAssemblyを一つのパッケージへ収録しました。導入時にRust、Cargoまたは``wasm-bindgen``を必要とせず、実行時に別の成果物を取得しません。",
-  "``.adoc``、``.asciidoc``および``.asc``に加え、Processor optionで指定した拡張子を扱えます。code、URL、数式、属性参照、passおよび未対応構文は文章規則へ渡しません。",
-  "自動修正は提供しません。規則が返した``fix``をProcessorで除去し、``textlint --fix``を実行してもAsciiDoc文書を変更しません。",
+  "textlint用TxtASTの生成を専用の``adocweave-textlint`` crateへ集約し、JavaScript側は原文と位置の付加だけを行う構成へ変更しました。",
+  "block title付き文書、AsciiDoc形式の表、description list、comment、改行および対象外inlineの前後を、重複や意図しない文章連結なしで扱います。",
+  "footnote本文、画像の代替文およびUI macroの表示文字列を校正対象へ追加しました。quote以外のcontainerを``BlockQuote``として扱いません。",
+  "UTF-16位置の生成に必要な記憶量を入力長に比例する小さな配列へ抑え、node数を構築中に制限します。出力サイズの確認ではJSON byte列を一時的に作りません。自動修正を行わない保証は維持します。",
+  "``npx --package``を使い、プロジェクトへ依存を追加せずGitHub ReleaseのProcessorを一度だけ実行する手順を追加しました。",
 ];
 
 /// Public contracts this release states are unchanged since the previous stable tag.
@@ -81,17 +82,18 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  "公開契約に破壊的変更はありません。textlint ProcessorのTxtASTと対応拡張子を新しい公開契約とし、既存APIの動作は変わりません。",
-  `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`projectText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
+  "破壊的変更：``adocweave``の``text-projection`` featureと``adocweave::output::text``を削除しました。",
+  `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`parseText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
+  "textlint Processorの設定、対応拡張子、自動修正を行わない保証および利用量の上限は変更していません。TxtASTへ含める文章と構造は改善しています。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "既存のRust API、CLI、Language ServerおよびBrowser packageを使う場合、移行作業は不要です。",
-  "Node.js向けadapterは``adocweave-textlint-wasm``としてBrowser向けWASMから分離しました。既存の文章抽出用Rust APIを使うcodeに移行作業はありません。",
-  `textlint用Processorは、\`\`textlint@15.8.0\`\`とGitHub Releaseの\`\`adocweave-textlint-plugin-asciidoc-${RELEASE_NOTES_VERSION}.tgz\`\`を開発用依存へ追加し、\`\`@adocweave/asciidoc\`\` pluginを設定します。`,
-  "従来の``cargo make docs-prose-lint``は同じProcessorを使用します。AdocWeave固有の日本語規則、用語集および対象文書一覧は公開パッケージへ含めません。",
+  "CLI、Language ServerおよびBrowser packageだけを使う場合、移行作業は不要です。parser、HTML変換、Language ServerおよびBrowser向けWASMの動作は変更していません。",
+  "削除した``adocweave::output::text``を直接使っていたRust codeは、``adocweave-textlint::plan``と``TxtAstPlan``へ移行してください。校正固有の変換を必要としない場合は、コアの``Analysis``をそのまま使います。",
+  `textlint用Processorは、\`\`textlint@15.8.0\`\`とGitHub Releaseの\`\`adocweave-textlint-plugin-asciidoc-${RELEASE_NOTES_VERSION}.tgz\`\`を開発用依存へ追加し、\`\`@adocweave/asciidoc\`\` pluginを設定します。v0.29.0から設定変更は不要です。`,
+  "``cargo make docs-prose-lint``は再設計後のProcessorを使用します。AdocWeave固有の日本語規則、用語集および対象文書一覧は公開パッケージへ含めません。",
   `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
 ];

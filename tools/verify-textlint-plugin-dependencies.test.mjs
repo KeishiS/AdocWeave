@@ -22,7 +22,10 @@ test("公開textlint pluginの実行時npm依存を0件に固定する", () => {
   assert.deepEqual(manifest.dependencies ?? {}, {});
   assert.deepEqual(manifest.optionalDependencies ?? {}, {});
   assert.deepEqual(manifest.bundledDependencies ?? [], []);
-  assert.deepEqual(manifest.peerDependencies, { textlint: "15.8.0" });
+  assert.deepEqual(manifest.peerDependencies, {
+    "@textlint/types": "15.8.0",
+    textlint: "15.8.0"
+  });
 });
 
 test("公開textlint pluginの開発依存は安全な取得元とライセンス情報を持つ", () => {

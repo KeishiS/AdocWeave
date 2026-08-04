@@ -69,6 +69,7 @@ test("textlint pluginの依存集合はwasm32向けnormal edgeと一致します
     "adocweave-textlint-wasm",
     "wasm32-unknown-unknown",
   );
+  assert.ok([...packages].some((key) => key.startsWith("adocweave-textlint\0")));
   assert.ok([...packages].some((key) => key.startsWith("adocweave-textlint-wasm\0")));
   assert.ok(packages.has(key("serde-wasm-bindgen", "0.6.5")));
   assert.ok(!packages.has(key("futures-channel", "0.3.33")));

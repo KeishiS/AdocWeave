@@ -4,25 +4,12 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
-let bridge;
+let bundledBridge;
 
-function loadBridge() {
-  if (bridge) return bridge;
-  try {
-    bridge = require("./wasm/adocweave_textlint_wasm.cjs");
-  } catch (cause) {
-    const error = new Error("同梱されたAdocWeave WebAssemblyを読み込めませんでした。", {
-      cause
-    });
-    error.code = "wasm-initialization-failed";
-    throw error;
-  }
-  if (typeof bridge.projectText !== "function") {
-    const error = new Error("同梱されたAdocWeave WebAssemblyにprojectTextがありません。");
-    error.code = "wasm-initialization-failed";
-    throw error;
-  }
-  return bridge;
+function loadBundledBridge() {
+  if (bundledBridge) return bundledBridge;
+  bundledBridge = require("./wasm/adocweave_textlint_wasm.cjs");
+  return bundledBridge;
 }
 
 function payloadFrom(error) {
@@ -52,17 +39,37 @@ function normalizeError(cause) {
   return error;
 }
 
-export function createProjectText(bridgeLoader) {
+export function createParseText({ bridgeLoader, componentVersion }) {
+  if (typeof bridgeLoader !== "function") {
+    throw new TypeError("bridgeLoaderは関数で指定してください。");
+  }
+  if (typeof componentVersion !== "string" || componentVersion.length === 0) {
+    throw new TypeError("componentVersionは空でない文字列で指定してください。");
+  }
+
   return (source, sourceId) => {
+    if (typeof source !== "string") {
+      throw new TypeError("AsciiDocの入力は文字列で指定してください。");
+    }
+    if (sourceId !== undefined && sourceId !== null && typeof sourceId !== "string") {
+      throw new TypeError("sourceIdは文字列またはnullで指定してください。");
+    }
     try {
-      const loaded = bridgeLoader();
-      if (typeof loaded?.projectText !== "function") {
-        const error = new Error("同梱されたAdocWeave WebAssemblyにprojectTextがありません。");
+      let loaded;
+      try {
+        loaded = bridgeLoader();
+      } catch (cause) {
+        const error = new Error("AdocWeave WebAssemblyを読み込めませんでした。", { cause });
         error.code = "wasm-initialization-failed";
         throw error;
       }
-      return loaded.projectText({
-        packageVersion: manifest.version,
+      if (typeof loaded?.parseText !== "function") {
+        const error = new Error("AdocWeave WebAssemblyにparseTextがありません。");
+        error.code = "wasm-initialization-failed";
+        throw error;
+      }
+      return loaded.parseText({
+        componentVersion,
         sourceId: sourceId ?? null,
         source
       });
@@ -72,4 +79,7 @@ export function createProjectText(bridgeLoader) {
   };
 }
 
-export const projectText = createProjectText(loadBridge);
+export const parseText = createParseText({
+  bridgeLoader: loadBundledBridge,
+  componentVersion: manifest.version
+});

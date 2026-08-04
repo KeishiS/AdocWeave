@@ -173,6 +173,28 @@ npm install --save-dev textlint@15.8.0 \
 ``peerDependencies``にも同じ範囲を記録します。パッケージにはNode.js用WebAssemblyを同梱するため、
 Rust、Cargo、``wasm-bindgen``、AdocWeave CLIおよび実行時の追加downloadは不要です。
 
+プロジェクトへ依存を導入せずに一度だけ試す場合は、``npx``の``--package``で必要な三つのパッケージを
+一時的に取得できます。次の例は、日本語技術文書向けの規則で``document.adoc``を検査します。
+
+[source,console]
+----
+VERSION=X.Y.Z
+RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/v$VERSION"
+PLUGIN="$RELEASE_URL/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
+npx --yes \
+  --package=textlint@15.8.0 \
+  --package="$PLUGIN" \
+  --package=textlint-rule-preset-ja-technical-writing@12.0.2 \
+  textlint --no-textlintrc \
+  --plugin @adocweave/asciidoc \
+  --preset ja-technical-writing \
+  document.adoc
+----
+
+この方法では作業ディレクトリへ``package.json``、``package-lock.json``および``node_modules``を作成しません。
+取得したパッケージはnpmのキャッシュへ保存されます。継続して利用する場合は、依存とバージョンを
+``package.json``と``package-lock.json``へ記録してください。
+
 ``.textlintrc.json``では、AsciiDoc Processorと利用する規則を別々に指定します。次の例では、規則のパッケージも
 利用側で開発用依存へ追加します。
 
@@ -200,9 +222,12 @@ pluginの``extensions``へ先頭の``.``を含む名前を追加します。
 }
 ----
 
-見出し、段落、リスト、引用、表、リンクの表示文字列およびinline装飾を文章規則へ渡します。code、URL、数式、
-属性参照、passおよび未対応構文は文章として渡しません。includeは展開せず、入力した一つの物理ファイルだけを
-検査します。
+見出し、block title、段落、リスト、引用、表、リンク、属性参照やinline記法を含まないfootnote本文、
+画像の代替文、iconの代替文またはtitle、audioとvideoのtitleおよびinline装飾を文章規則へ渡します。
+block titleはdepth 1の``Header``としてtitle向け規則の対象にします。
+code、UI macro、表示文字列のないURL、数式、属性参照、passおよび未対応構文は``Code``として保持し、``Str``を
+対象とする文章規則から除外します。属性参照またはinline記法を含むmacroの文章部分も保守的に除外します。
+includeは展開せず、入力した一つの物理ファイルだけを検査します。
 
 [source,console]
 ----

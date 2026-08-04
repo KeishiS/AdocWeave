@@ -11,7 +11,10 @@ test("registryへ公開せずruntime npm依存を持たない", () => {
   assert.equal(manifest.private, true);
   assert.equal(manifest.engines.node, ">=20.18.0 <25");
   assert.deepEqual(manifest.dependencies, undefined);
-  assert.deepEqual(manifest.peerDependencies, { textlint: "15.8.0" });
+  assert.deepEqual(manifest.peerDependencies, {
+    "@textlint/types": "15.8.0",
+    textlint: "15.8.0"
+  });
   assert.equal(lock.lockfileVersion, 3);
   assert.equal(lock.version, manifest.version);
   assert.equal(lock.packages[""].version, manifest.version);
