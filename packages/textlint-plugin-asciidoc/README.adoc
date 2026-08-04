@@ -51,6 +51,12 @@ npm install --save-dev textlint \
 このProcessorは自動修正に対応しません。規則が修正情報を返した場合も削除するため、``textlint --fix``で
 AsciiDoc文書を書き換えません。検出した問題は元の文書上の行と列へ報告します。
 
+== 使用量の上限
+
+一つの入力は10 MiB、投影結果は50 MiB、投影するnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
+上限を超えた場合は、``code``を持つ``Error``として処理を中止します。配布するtarballは8 MiB、展開後は
+16 MiB、収録fileは13件を上限とします。
+
 == 対応環境
 
 Node.js 20.18.0以上25未満とtextlint 15.8.0を検証対象とします。WebAssemblyはパッケージへ同梱し、

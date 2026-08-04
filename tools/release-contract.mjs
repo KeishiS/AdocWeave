@@ -362,10 +362,17 @@ function verifyRepository() {
       !extensionCargo.includes("publish = false")) {
     fail("non-GitHub package registries must remain disabled");
   }
-  if (Object.keys(textlintPlugin.dependencies ?? {}).length !== 0) {
-    fail("textlint plugin must have zero runtime npm dependencies");
+  for (const field of ["dependencies", "optionalDependencies", "bundledDependencies"]) {
+    const value = textlintPlugin[field];
+    if (value && (Array.isArray(value) ? value.length : Object.keys(value).length) !== 0) {
+      fail(`textlint plugin must have zero runtime npm dependencies: ${field}`);
+    }
   }
-  for (const name of ["preinstall", "install", "postinstall"]) {
+  if (textlintPlugin.engines?.node !== ">=20.18.0 <25" ||
+      JSON.stringify(textlintPlugin.peerDependencies) !== JSON.stringify({ textlint: "15.8.0" })) {
+    fail("textlint plugin runtime compatibility range is not canonical");
+  }
+  for (const name of ["preinstall", "install", "postinstall", "prepare", "prepack", "postpack"]) {
     if (textlintPlugin.scripts?.[name]) fail(`textlint plugin must not define ${name}`);
   }
 

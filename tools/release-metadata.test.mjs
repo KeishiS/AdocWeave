@@ -132,3 +132,24 @@ test("metadata generation rejects a symlink in the textlint plugin tarball", () 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("metadata generation rejects parent traversal in the textlint plugin tarball", () => {
+  const { root, artifacts } = fixture();
+  try {
+    const asset = plan.assets.find(({ kind }) => kind === "textlint-plugin");
+    const unsafe = join(root, "unsafe.txt");
+    writeFileSync(unsafe, "unsafe\n");
+    execFileSync("tar", [
+      "-czf",
+      join(artifacts, asset.name),
+      "--transform=s,^,../,",
+      "-C",
+      root,
+      "unsafe.txt",
+    ]);
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    assert.throws(() => writeMetadata(artifacts, commit), /unsafe archive member/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

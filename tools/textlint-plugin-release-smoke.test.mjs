@@ -27,10 +27,12 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
           "--format", "json",
         ]);
         const config = JSON.parse(await readFile(join(cwd, ".textlintrc.json"), "utf8"));
-        assert.deepEqual(config.plugins, ["@adocweave/asciidoc"]);
+        assert.deepEqual(config.plugins, {
+          "@adocweave/asciidoc": { extensions: [".guide"] },
+        });
         assert.deepEqual(config.rules, {});
         const paths = input === undefined
-          ? args.filter((argument) => /\.(?:adoc|asciidoc|asc)$/.test(argument))
+          ? args.filter((argument) => /\.(?:adoc|asciidoc|asc|guide)$/.test(argument))
           : [args[args.indexOf("--stdin-filename") + 1]];
         invocations.push({ args, input, paths });
         if (args.includes("--fix")) {
@@ -48,6 +50,7 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
     "sample.adoc",
     "sample.asciidoc",
     "sample.asc",
+    "sample.guide",
   ]);
   assert.deepEqual(invocations.slice(1, 4).map(({ paths }) => basename(paths[0])), [
     "stdin.adoc",
@@ -72,7 +75,7 @@ test("--fixによる入力変更を検出する", async () => {
         ),
         invokeTextlint: async ({ args, cwd, input }) => {
           const paths = input === undefined
-            ? args.filter((argument) => /\.(?:adoc|asciidoc|asc)$/.test(argument))
+            ? args.filter((argument) => /\.(?:adoc|asciidoc|asc|guide)$/.test(argument))
             : [args[args.indexOf("--stdin-filename") + 1]];
           if (args.includes("--fix")) {
             const original = await readFile(paths[0], "utf8");

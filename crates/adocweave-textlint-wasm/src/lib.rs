@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub const MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 /// Maximum serialized projection size.
 pub const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
+/// Maximum number of nodes in the text projection response.
+pub const MAX_PROJECTION_NODES: usize = 1_000_000;
 /// Maximum accepted logical source identifier size.
 pub const MAX_SOURCE_ID_BYTES: usize = 4 * 1024;
 
@@ -85,13 +87,19 @@ impl TextProjectionError {
 pub fn project_text_request(
     request: TextProjectionRequest,
 ) -> Result<TextProjectionResponse, TextProjectionError> {
-    project_text_request_with_limits(request, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES)
+    project_text_request_with_limits(
+        request,
+        MAX_INPUT_BYTES,
+        MAX_OUTPUT_BYTES,
+        MAX_PROJECTION_NODES,
+    )
 }
 
 fn project_text_request_with_limits(
     request: TextProjectionRequest,
     max_input_bytes: usize,
     max_output_bytes: usize,
+    max_projection_nodes: usize,
 ) -> Result<TextProjectionResponse, TextProjectionError> {
     if request.package_version != VERSION {
         return Err(TextProjectionError::new(
@@ -130,6 +138,13 @@ fn project_text_request_with_limits(
         )
         .map_err(|error| TextProjectionError::new(error.code().as_str(), error.to_string()))?;
     let projection = project_text(&analysis);
+    let projection_nodes = projection.children.iter().map(count_nodes).sum::<usize>();
+    if projection_nodes > max_projection_nodes {
+        return Err(TextProjectionError::new(
+            "node-limit",
+            format!("projection exceeds the {max_projection_nodes} node limit"),
+        ));
+    }
     let response = TextProjectionResponse {
         package_version: projection.package_version.to_owned(),
         source_id: projection
@@ -148,6 +163,12 @@ fn project_text_request_with_limits(
         ));
     }
     Ok(response)
+}
+
+fn count_nodes(node: &TextNode) -> usize {
+    node.children.iter().fold(1usize, |count, child| {
+        count.saturating_add(count_nodes(child))
+    })
 }
 
 fn project_node(node: TextNode) -> TextProjectionNode {
@@ -271,16 +292,38 @@ mod tests {
 
     #[test]
     fn rejects_input_beyond_the_limit() {
-        let error = project_text_request_with_limits(request("x"), 0, MAX_OUTPUT_BYTES)
-            .expect_err("input limit");
+        let error = project_text_request_with_limits(
+            request("x"),
+            0,
+            MAX_OUTPUT_BYTES,
+            MAX_PROJECTION_NODES,
+        )
+        .expect_err("input limit");
         assert_eq!(error.code, "input-too-large");
     }
 
     #[test]
     fn rejects_output_beyond_the_limit() {
-        let error = project_text_request_with_limits(request("x"), MAX_INPUT_BYTES, 0)
-            .expect_err("output limit");
+        let error = project_text_request_with_limits(
+            request("x"),
+            MAX_INPUT_BYTES,
+            0,
+            MAX_PROJECTION_NODES,
+        )
+        .expect_err("output limit");
         assert_eq!(error.code, "output-too-large");
+    }
+
+    #[test]
+    fn rejects_a_projection_beyond_the_node_limit() {
+        let error = project_text_request_with_limits(
+            request("本文です。"),
+            MAX_INPUT_BYTES,
+            MAX_OUTPUT_BYTES,
+            0,
+        )
+        .expect_err("node limit");
+        assert_eq!(error.code, "node-limit");
     }
 
     #[test]

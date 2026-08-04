@@ -118,6 +118,10 @@ GitHub Releaseへ一度だけ追加します。公開APIはtextlintの``Processo
 同じ統一バージョンから構築し、別のWebAssemblyへの差し替えは認めません。install時のscript、実行時npm依存、
 ``node_modules``、source mapおよび機械固有pathを収録せず、実行時の追加downloadも行いません。
 
+入力は10 MiB、投影結果は50 MiB、投影するnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
+tarballは8 MiB、展開後は16 MiB、収録fileは13件を上限とします。実CLIの受入検査はNode.jsのheapを
+128 MiBに制限して実行します。
+
 自動修正は公開範囲に含めません。Processorはtextlint規則が返した診断から``fix``を除去します。
 ``textlint --fix``を実行しても入力のbyte列が変化しないことを受入検査で確認します。includeは展開せず、
 一つの物理ファイルだけを診断対象とします。

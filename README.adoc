@@ -10,6 +10,7 @@ AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツ�
 * 意味を変えずに、対応済みの範囲を整形します。
 * VS CodeとZedで診断、補完、定義への移動を提供します。
 * ブラウザーや別のアプリケーションに組み込みます。
+* textlintからAsciiDoc文書を日本語規則などで検査します。
 
 対応状況はxref:docs/user-guide/syntax-support.adoc[対応している書式]を参照してください。AdocWeaveはAsciiDocの全機能を実装しません。
 対応範囲と他の実装との差異はxref:docs/user-guide/compatibility.adoc[AsciiDocとの互換性]に記載します。
@@ -18,6 +19,8 @@ AdocWeaveは、AsciiDoc文書の確認、整形、HTML変換を行うRust製ツ�
 
 GitHub Releasesからの導入方法はxref:docs/user-guide/release-installation.adoc[インストールと更新]を参照してください。
 Nix環境での実行と導入もxref:docs/user-guide/release-installation.adoc#nix-installation[Nixによる導入]を参照してください。
+textlintでAsciiDocを検査する場合は
+xref:docs/user-guide/release-installation.adoc#textlint-plugin-installation[textlint用Processorの導入]を参照してください。
 
 基本的な実行例:
 

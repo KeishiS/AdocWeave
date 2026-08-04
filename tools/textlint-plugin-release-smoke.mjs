@@ -24,6 +24,7 @@ const fileCases = [
   { name: "sample.adoc", newline: "\n" },
   { name: "sample.asciidoc", newline: "\r\n" },
   { name: "sample.asc", newline: "\n" },
+  { name: "sample.guide", newline: "\n" },
 ];
 
 const stdinCases = [
@@ -86,7 +87,7 @@ export async function runTextlintPluginReleaseSmoke(
     await writeFile(join(rulesDirectory, "probe.js"), probeRule);
     const config = join(root, ".textlintrc.json");
     await writeFile(config, `${JSON.stringify({
-      plugins: [PLUGIN_NAME],
+      plugins: { [PLUGIN_NAME]: { extensions: [".guide"] } },
       rules: {},
     }, null, 2)}\n`);
 
@@ -202,7 +203,7 @@ async function installTextlintAndPlugin({ archive, cwd }) {
 }
 
 async function invokeTextlintCli({ args, cli, cwd, input }) {
-  return runProcess(process.execPath, [cli, ...args], {
+  return runProcess(process.execPath, ["--max-old-space-size=128", cli, ...args], {
     cwd,
     env: { ...process.env, npm_config_offline: "true" },
     input,

@@ -9,7 +9,8 @@
     "web-worker/README.adoc"
   ],
   "authoredDirectories": [
-    "docs/"
+    "docs/",
+    "packages/textlint-plugin-asciidoc/"
   ],
   "excludedDirectories": [
     {

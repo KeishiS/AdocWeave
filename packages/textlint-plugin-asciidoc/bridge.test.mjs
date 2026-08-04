@@ -27,8 +27,9 @@ test("package versionとsourceをWASMへ渡す", () => {
 test("WASMのJSON errorをcode付きErrorへ変換する", () => {
   for (const code of [
     "unsupported-api-version",
-    "limit-exceeded",
-    "output-limit-exceeded",
+    "input-too-large",
+    "output-too-large",
+    "node-limit",
     "invalid-request"
   ]) {
     const projectText = createProjectText(() => ({
