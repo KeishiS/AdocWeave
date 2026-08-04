@@ -179,9 +179,11 @@ Rust、Cargo、``wasm-bindgen``、AdocWeave CLIおよび実行時の追加downlo
 [source,console]
 ----
 VERSION=X.Y.Z
+RELEASE_URL="https://github.com/KeishiS/adocweave/releases/download/v$VERSION"
+PLUGIN="$RELEASE_URL/adocweave-textlint-plugin-asciidoc-$VERSION.tgz"
 npx --yes \
   --package=textlint@15.8.0 \
-  --package="https://github.com/KeishiS/adocweave/releases/download/v$VERSION/adocweave-textlint-plugin-asciidoc-$VERSION.tgz" \
+  --package="$PLUGIN" \
   --package=textlint-rule-preset-ja-technical-writing@12.0.2 \
   textlint --no-textlintrc \
   --plugin @adocweave/asciidoc \
