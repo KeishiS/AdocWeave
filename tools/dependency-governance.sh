@@ -46,9 +46,13 @@ cargo deny --config deny.toml --manifest-path editors/zed/Cargo.toml --all-featu
 # though the package itself never ships.
 npm audit --omit=dev --prefix editors/vscode
 npm audit --include=dev --prefix editors/vscode
+npm audit --include=dev --prefix tools/textlint
+npm audit --include=dev --prefix packages/textlint-plugin-asciidoc
 
 node tools/verify-dependency-boundaries.mjs
 node tools/verify-vscode-dependencies.mjs
+node tools/verify-textlint-dependencies.mjs
+node tools/verify-textlint-plugin-dependencies.mjs
 cargo metadata --locked --format-version=1 > "$metadata"
 cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=1 > "$zed_metadata"
 node tools/verify-duplicate-dependencies.mjs "$metadata" "$zed_metadata"

@@ -224,9 +224,9 @@ test("every global candidate must run the browser archive runtime gate", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        "      - name: Browser, Zed, and VS Code candidate build and runtime verification\n" +
+        "      - name: Browser, textlint, Zed, and VS Code candidate build and runtime verification\n" +
         "        run: nix develop .#ci-browser -c cargo make release-global-candidate",
-        "      - name: Browser, Zed, and VS Code candidate build and runtime verification\n" +
+        "      - name: Browser, textlint, Zed, and VS Code candidate build and runtime verification\n" +
           "        if: github.event_name == 'push'\n" +
           "        run: nix develop .#ci-browser -c cargo make release-global-candidate",
       ),
@@ -270,15 +270,49 @@ test("every global candidate must run the browser archive runtime gate", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        "      - name: Browser, Zed, and VS Code candidate build and runtime verification\n" +
+        "      - name: Browser, textlint, Zed, and VS Code candidate build and runtime verification\n" +
           "        run: nix develop .#ci-browser -c cargo make release-global-candidate",
-        "      - name: Browser, Zed, and VS Code candidate build and runtime verification\n" +
+        "      - name: Browser, textlint, Zed, and VS Code candidate build and runtime verification\n" +
           "        continue-on-error: true\n" +
           "        run: nix develop .#ci-browser -c cargo make release-global-candidate",
       ),
     }),
     /browser archive acceptance must not continue/,
   );
+});
+
+test("textlint plugin candidateは配布tarballを全対応OSとNode境界で検査する", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  for (const [source, replacement, pattern] of [
+    [
+      "            target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz",
+      "            # textlint plugin tarball omitted",
+      /must include the textlint plugin tarball/,
+    ],
+    [
+      "          - runner: windows-2025\n            node: release",
+      "          - runner: ubuntu-24.04\n            node: release",
+      /all supported operating systems/,
+    ],
+    [
+      "          - runner: ubuntu-24.04\n            node: '22.18.0'",
+      "          # supported Node.js major omitted",
+      /Node\.js boundary/,
+    ],
+    [
+      "node tools/textlint-plugin-release-smoke.mjs",
+      "node --version # textlint smoke omitted",
+      /packed release artifact/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        release: inputs.release.replace(source, replacement),
+      }),
+      pattern,
+    );
+  }
 });
 
 test("candidate preflight cannot continue after a job or step failure", () => {
@@ -421,6 +455,16 @@ test("stable quality verify context must wait for every selected candidate stage
       ...inputs,
       release: inputs.release.replace(
         "      - installation-e2e\n",
+        "",
+      ),
+    }),
+    /final pull request gate must wait/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "      - textlint-plugin-installation-e2e\n",
         "",
       ),
     }),
@@ -724,8 +768,8 @@ test("Makefile canonical gate graph is parsed and mutation-resistant", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       makefile: inputs.makefile.replace(
-        '  "test-cross-runtime",\n]',
-        '  "test-cross-runtime",\n  "check",\n]',
+        '  "textlint-plugin-check",\n]',
+        '  "textlint-plugin-check",\n  "check",\n]',
       ),
     }),
     /quality-adapters dependencies must exactly match/,
@@ -739,6 +783,16 @@ test("Makefile canonical gate graph is parsed and mutation-resistant", () => {
       ),
     }),
     /ci-preflight dependencies must exactly match/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        '  "docs-prose-lint",\n',
+        "",
+      ),
+    }),
+    /quality-documents dependencies must exactly match/,
   );
 });
 

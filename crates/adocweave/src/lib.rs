@@ -85,6 +85,7 @@ pub mod semantic {
         AttributeUse, Inline, InlineFormula, InlineLiteralKind, InlineProblem, InlineProblemKind,
         InlineStyle, InlineText, Link, MacroAttribute, MacroForm, MathLanguage, PassthroughKind,
         Reference, ReferenceDestination, StandardMacro, StandardMacroKind, inline_at,
+        is_plain_inline_text,
     };
     pub use crate::presentation::{
         BibliographySection, BlockId, DocumentIndex, DocumentLayout, DocumentPresentation,

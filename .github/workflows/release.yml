@@ -235,7 +235,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
-      - name: Browser, Zed, and VS Code candidate build and runtime verification
+      - name: Browser, textlint, Zed, and VS Code candidate build and runtime verification
         run: nix develop .#ci-browser -c cargo make release-global-candidate
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -244,6 +244,7 @@ jobs:
           retention-days: 7
           path: |
             target/distrib/adocweave-browser-*.tar.xz
+            target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz
             target/distrib/adocweave-zed-*.tar.xz
             target/distrib/adocweave-vscode-*.vsix
 
@@ -343,6 +344,61 @@ jobs:
           release-manifest.json
           "global-only"
 
+  textlint-plugin-installation-e2e:
+    if: >-
+      always() &&
+      needs.changes.outputs.global_required == 'true' &&
+      needs.verify-candidate.result == 'success'
+    needs: [changes, verify-candidate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            node: '20.18.0'
+          - runner: ubuntu-24.04
+            node: '21.7.3'
+          - runner: ubuntu-24.04
+            node: '22.18.0'
+          - runner: ubuntu-24.04
+            node: '23.11.1'
+          - runner: ubuntu-24.04
+            node: release
+          - runner: macos-15
+            node: release
+          - runner: windows-2025
+            node: release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-candidate
+          path: artifacts
+      - name: Resolve the tested Node.js version
+        id: node-version
+        shell: bash
+        env:
+          REQUESTED_NODE: ${{ matrix.node }}
+        run: |
+          if [ "$REQUESTED_NODE" = release ]; then
+            value="$(jq -er .nodeVersion release-manifest.json)"
+          else
+            value="$REQUESTED_NODE"
+          fi
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.node-version.outputs.value }}
+      - name: textlint plugin installation and read-only CLI verification
+        shell: bash
+        run: >-
+          node tools/textlint-plugin-release-smoke.mjs
+          "artifacts/adocweave-textlint-plugin-asciidoc-$(jq -r .packageVersion release-manifest.json).tgz"
+
   merge-gate:
     name: quality / verify
     if: always() && github.event_name == 'pull_request'
@@ -357,6 +413,7 @@ jobs:
       - verify-candidate
       - installation-e2e
       - global-installation-e2e
+      - textlint-plugin-installation-e2e
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -367,6 +424,7 @@ jobs:
           CANDIDATE_REQUIRED: ${{ needs.changes.outputs.candidate_required }}
           GLOBAL_REQUIRED: ${{ needs.changes.outputs.global_required }}
           GLOBAL_INSTALLATION_RESULT: ${{ needs.global-installation-e2e.result }}
+          TEXTLINT_INSTALLATION_RESULT: ${{ needs.textlint-plugin-installation-e2e.result }}
           INSTALLATION_RESULT: ${{ needs.installation-e2e.result }}
           NATIVE_REQUIRED: ${{ needs.changes.outputs.native_required }}
           NATIVE_SMOKE_RESULT: ${{ needs.native-smoke.result }}
@@ -388,9 +446,11 @@ jobs:
           if [ "$GLOBAL_REQUIRED" = true ]; then
             test "$BUILD_GLOBAL_RESULT" = success
             test "$GLOBAL_INSTALLATION_RESULT" = success
+            test "$TEXTLINT_INSTALLATION_RESULT" = success
           else
             test "$BUILD_GLOBAL_RESULT" = skipped
             test "$GLOBAL_INSTALLATION_RESULT" = skipped
+            test "$TEXTLINT_INSTALLATION_RESULT" = skipped
           fi
           if [ "$NATIVE_REQUIRED" = true ]; then
             test "$BUILD_NATIVE_RESULT" = success

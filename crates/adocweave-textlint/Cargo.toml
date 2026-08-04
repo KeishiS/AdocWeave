@@ -1,0 +1,17 @@
+[package]
+name = "adocweave-textlint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Pure Rust TxtAST planning backend for AdocWeave"
+
+[dependencies]
+adocweave = { path = "../adocweave" }
+serde = { version = "1", features = ["derive"] }
+
+[package.metadata.dist]
+dist = false
