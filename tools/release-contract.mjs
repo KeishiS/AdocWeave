@@ -369,7 +369,10 @@ function verifyRepository() {
     }
   }
   if (textlintPlugin.engines?.node !== ">=20.18.0 <25" ||
-      JSON.stringify(textlintPlugin.peerDependencies) !== JSON.stringify({ textlint: "15.8.0" })) {
+      JSON.stringify(textlintPlugin.peerDependencies) !== JSON.stringify({
+        "@textlint/types": "15.8.0",
+        textlint: "15.8.0"
+      })) {
     fail("textlint plugin runtime compatibility range is not canonical");
   }
   for (const name of ["preinstall", "install", "postinstall", "prepare", "prepack", "postpack"]) {
