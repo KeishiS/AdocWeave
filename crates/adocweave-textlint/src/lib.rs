@@ -132,6 +132,11 @@ pub enum TxtAstNode {
         #[serde(rename = "valueRange")]
         value_range: Utf16Range,
     },
+    Code {
+        range: Utf16Range,
+        #[serde(rename = "valueRange")]
+        value_range: Utf16Range,
+    },
     Strong {
         range: Utf16Range,
         children: Vec<TxtAstNode>,
@@ -227,6 +232,10 @@ enum ByteNode {
         range: ByteRange,
         value_range: ByteRange,
     },
+    Code {
+        range: ByteRange,
+        value_range: ByteRange,
+    },
     Strong {
         range: ByteRange,
         children: Vec<Self>,
@@ -259,6 +268,7 @@ impl ByteNode {
             | Self::CodeBlock { range, .. }
             | Self::Comment { range, .. }
             | Self::Str { range, .. }
+            | Self::Code { range, .. }
             | Self::Strong { range, .. }
             | Self::Emphasis { range, .. }
             | Self::Link { range, .. }
@@ -282,6 +292,7 @@ impl ByteNode {
             Self::CodeBlock { .. }
             | Self::Comment { .. }
             | Self::Str { .. }
+            | Self::Code { .. }
             | Self::Break { .. } => None,
         }
     }
@@ -673,7 +684,17 @@ impl<'analysis> Builder<'analysis> {
     fn inline(&mut self, inline: &Inline) -> Result<Vec<Piece>, PlanError> {
         match inline {
             Inline::Text(text) => Ok(vec![Piece::Node(self.str_node(ByteRange(text.range))?)]),
-            Inline::Literal { .. } => Ok(vec![Piece::Boundary]),
+            Inline::Literal {
+                range,
+                content_range,
+                ..
+            } => {
+                self.budget.claim()?;
+                Ok(vec![Piece::Node(ByteNode::Code {
+                    range: ByteRange(*range),
+                    value_range: ByteRange(*content_range),
+                })])
+            }
             Inline::Styled {
                 style,
                 range,
@@ -970,6 +991,7 @@ fn validate_hierarchy(parent: ParentType, nodes: &[ByteNode]) -> Result<(), Plan
                 matches!(
                     node,
                     ByteNode::Str { .. }
+                        | ByteNode::Code { .. }
                         | ByteNode::Strong { .. }
                         | ByteNode::Emphasis { .. }
                         | ByteNode::Link { .. }
@@ -980,6 +1002,7 @@ fn validate_hierarchy(parent: ParentType, nodes: &[ByteNode]) -> Result<(), Plan
                 node,
                 ByteNode::Comment { .. }
                     | ByteNode::Str { .. }
+                    | ByteNode::Code { .. }
                     | ByteNode::Strong { .. }
                     | ByteNode::Emphasis { .. }
                     | ByteNode::Link { .. }
@@ -992,6 +1015,7 @@ fn validate_hierarchy(parent: ParentType, nodes: &[ByteNode]) -> Result<(), Plan
                 node,
                 ByteNode::Comment { .. }
                     | ByteNode::Str { .. }
+                    | ByteNode::Code { .. }
                     | ByteNode::Strong { .. }
                     | ByteNode::Emphasis { .. }
                     | ByteNode::Link { .. }
@@ -1028,6 +1052,7 @@ fn validate_hierarchy(parent: ParentType, nodes: &[ByteNode]) -> Result<(), Plan
             ByteNode::CodeBlock { .. }
             | ByteNode::Comment { .. }
             | ByteNode::Str { .. }
+            | ByteNode::Code { .. }
             | ByteNode::Break { .. } => (None, &[] as &[ByteNode]),
         };
         if let Some(child_parent) = child_parent {
@@ -1158,6 +1183,7 @@ fn range_in_comment_container(nodes: &[ByteNode], range: ByteRange) -> bool {
         ByteNode::CodeBlock { .. }
         | ByteNode::Comment { .. }
         | ByteNode::Str { .. }
+        | ByteNode::Code { .. }
         | ByteNode::Break { .. } => false,
     }
 }
@@ -1346,6 +1372,10 @@ impl Utf16Offsets {
                 range: self.range(range)?,
                 value_range: self.range(value_range)?,
             },
+            ByteNode::Code { range, value_range } => TxtAstNode::Code {
+                range: self.range(range)?,
+                value_range: self.range(value_range)?,
+            },
             ByteNode::Strong {
                 range,
                 children: value,
@@ -1382,7 +1412,8 @@ fn collect_offsets(node: &ByteNode, output: &mut BTreeSet<usize>) {
     match node {
         ByteNode::CodeBlock { value_range, .. }
         | ByteNode::Comment { value_range, .. }
-        | ByteNode::Str { value_range, .. } => {
+        | ByteNode::Str { value_range, .. }
+        | ByteNode::Code { value_range, .. } => {
             output.extend([value_range.start(), value_range.end()]);
         }
         _ => {}
@@ -1435,6 +1466,7 @@ mod tests {
             TxtAstNode::CodeBlock { .. }
             | TxtAstNode::Comment { .. }
             | TxtAstNode::Str { .. }
+            | TxtAstNode::Code { .. }
             | TxtAstNode::Break { .. } => &[],
         }
     }
@@ -1452,6 +1484,7 @@ mod tests {
             | TxtAstNode::CodeBlock { range, .. }
             | TxtAstNode::Comment { range, .. }
             | TxtAstNode::Str { range, .. }
+            | TxtAstNode::Code { range, .. }
             | TxtAstNode::Strong { range, .. }
             | TxtAstNode::Emphasis { range, .. }
             | TxtAstNode::Link { range, .. }
@@ -1578,6 +1611,53 @@ mod tests {
     }
 
     #[test]
+    fn inline_code_is_non_prose_and_preserves_paragraph_context() {
+        let source = "前 `サーバー` 後。";
+        let output = build(source);
+        let [TxtAstNode::Paragraph { children, .. }] = output.children.as_slice() else {
+            panic!(
+                "inline code must stay in one paragraph: {:?}",
+                output.children
+            );
+        };
+        assert!(matches!(
+            children.as_slice(),
+            [
+                TxtAstNode::Str { .. },
+                TxtAstNode::Code { .. },
+                TxtAstNode::Str { .. }
+            ]
+        ));
+        let code = children
+            .iter()
+            .find_map(|node| match node {
+                TxtAstNode::Code { value_range, .. } => Some(text_at(source, *value_range)),
+                _ => None,
+            })
+            .expect("inline code");
+        assert_eq!(code, "サーバー");
+        assert!(children.iter().all(|node| match node {
+            TxtAstNode::Str { value_range, .. } => text_at(source, *value_range) != "サーバー",
+            _ => true,
+        }));
+
+        for source in [
+            "C compiler（以下、``stdenv.cc``とします。）",
+            "基準である``path``とします。",
+        ] {
+            let output = build(source);
+            let [TxtAstNode::Paragraph { children, .. }] = output.children.as_slice() else {
+                panic!("code context was split: {source}");
+            };
+            assert!(
+                children
+                    .iter()
+                    .any(|node| matches!(node, TxtAstNode::Code { .. }))
+            );
+        }
+    }
+
+    #[test]
     fn standard_macro_policy_exposes_only_visible_natural_language() {
         let source = "footnote:[脚注本文]\n\nkbd:[キー]\n\nbtn:[保存]\n\nmenu:File[Open,Recent]\n\nimage:pic.png[代替文]\n\nicon:save[title=保存アイコン]\n\naudio:sound.mp3[title=音声題]\n\nvideo:movie.mp4[title=動画題]\n\nuser@example.com [[anchor,非表示]] cite:[key] indexterm:[索引]\n";
         let plan = build(source);
@@ -1618,8 +1698,8 @@ mod tests {
     }
 
     #[test]
-    fn empty_and_all_opaque_link_labels_are_boundaries() {
-        let source = "前 link:https://example.com[] 中 link:https://example.com[`code`] 後";
+    fn empty_link_labels_are_boundaries() {
+        let source = "前 link:https://example.com[] 後";
         let plan = build(source);
         let mut all = Vec::new();
         visit(&plan.children, &mut all);
@@ -1633,7 +1713,7 @@ mod tests {
                 .iter()
                 .filter(|node| matches!(node, TxtAstNode::Paragraph { .. }))
                 .count(),
-            3
+            2
         );
     }
 
@@ -1644,6 +1724,7 @@ mod tests {
                 node,
                 TxtAstNode::Comment { .. }
                     | TxtAstNode::Str { .. }
+                    | TxtAstNode::Code { .. }
                     | TxtAstNode::Strong { .. }
                     | TxtAstNode::Emphasis { .. }
                     | TxtAstNode::Link { .. }
