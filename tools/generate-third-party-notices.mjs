@@ -46,6 +46,40 @@ export function reachableThirdPartyPackages(metadata, rootPackageName) {
     .sort((left, right) => packageKey(left).localeCompare(packageKey(right)));
 }
 
+export function cargoTreePackageKeys(rootPackageName, target) {
+  const result = spawnSync(
+    "cargo",
+    [
+      "tree",
+      "--locked",
+      "--package",
+      rootPackageName,
+      "--target",
+      target,
+      "--edges",
+      "normal",
+      "--no-dedupe",
+      "--prefix",
+      "none",
+      "--format",
+      "{p}",
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  if (result.status !== 0) fail(result.stderr || "cargo tree failed");
+  return new Set(
+    result.stdout
+      .trimEnd()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const match = /^(\S+) v(\S+)(?: .*)?$/.exec(line);
+        if (!match) fail(`cargo treeのpackageを解析できません: ${line}`);
+        return `${match[1]}\0${match[2]}`;
+      }),
+  );
+}
+
 export function npmRuntimePackages(packageManifest, packageLock) {
   const dependencies = Object.keys(packageManifest.dependencies ?? {});
   return dependencies
@@ -109,8 +143,9 @@ ${table(vscodePackages, "npm packageとversion")}
 `;
 }
 
-export function renderTextlintPluginNotices(rootMetadata) {
-  const packages = reachableThirdPartyPackages(rootMetadata, "adocweave-textlint-wasm");
+export function renderTextlintPluginNotices(rootMetadata, selectedPackages) {
+  const packages = reachableThirdPartyPackages(rootMetadata, "adocweave-textlint-wasm")
+    .filter((pkg) => !selectedPackages || selectedPackages.has(`${pkg.name}\0${pkg.version}`));
   return `= Third-party notices
 
 このファイルには、同梱するNode.js向けWebAssemblyから到達するRust crateのSPDX license expressionと
@@ -144,7 +179,13 @@ export function generateThirdPartyNotices(outputPath) {
 export function generateTextlintPluginNotices(outputPath) {
   const output = resolve(root, outputPath);
   mkdirSync(dirname(output), { recursive: true });
-  writeFileSync(output, renderTextlintPluginNotices(cargoMetadata([])));
+  writeFileSync(
+    output,
+    renderTextlintPluginNotices(
+      cargoMetadata(["--filter-platform", "wasm32-unknown-unknown"]),
+      cargoTreePackageKeys("adocweave-textlint-wasm", "wasm32-unknown-unknown"),
+    ),
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import plan from "../release/distribution-plan.json" with { type: "json" };
+import { cargoTreePackageKeys } from "./generate-third-party-notices.mjs";
 import { verifyMetadata, writeMetadata } from "./release-metadata.mjs";
 
 function fixture() {
@@ -68,6 +69,29 @@ test("actual archives produce canonical manifest, SPDX SBOM, and unified checksu
       reference.referenceLocator === `pkg:npm/adocweave-vscode@${plan.packageVersion}`)));
     assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
       reference.referenceLocator === `pkg:npm/%40adocweave/textlint-plugin-asciidoc@${plan.packageVersion}`)));
+    const textlintAsset = plan.assets.find(({ kind }) => kind === "textlint-plugin");
+    const textlintArchive = sbom.packages.find((entry) => entry.name === textlintAsset.name);
+    const packageById = new Map(sbom.packages.map((entry) => [entry.SPDXID, entry]));
+    const textlintDependencies = sbom.relationships
+      .filter((entry) =>
+        entry.spdxElementId === textlintArchive.SPDXID &&
+        entry.relationshipType === "DEPENDS_ON"
+      )
+      .map((entry) => packageById.get(entry.relatedSpdxElement))
+      .flatMap((entry) => entry.externalRefs ?? [])
+      .map((entry) => entry.referenceLocator)
+      .sort();
+    const expectedTextlintDependencies = [
+      ...[...cargoTreePackageKeys(
+        "adocweave-textlint-wasm",
+        "wasm32-unknown-unknown",
+      )].map((key) => {
+        const [name, version] = key.split("\0");
+        return `pkg:cargo/${encodeURIComponent(name)}@${version}`;
+      }),
+      `pkg:npm/%40adocweave/textlint-plugin-asciidoc@${plan.packageVersion}`,
+    ].sort();
+    assert.deepEqual(textlintDependencies, expectedTextlintDependencies);
     assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
       reference.referenceLocator === "pkg:npm/fflate@0.8.3")));
     assert.deepEqual(checksums.map((line) => line.slice(66)), [

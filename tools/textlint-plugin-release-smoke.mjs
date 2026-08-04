@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { createRequire } from "node:module";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
@@ -173,9 +174,16 @@ export function assertDiagnostics(stdout, expectedPaths) {
 }
 
 async function assertInstalledPackage(root) {
-  const manifestPath = join(root, "node_modules", "@adocweave", "textlint-plugin-asciidoc", "package.json");
+  const packageRoot = join(root, "node_modules", "@adocweave", "textlint-plugin-asciidoc");
+  const manifestPath = join(packageRoot, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   assert.equal(manifest.name, PACKAGE_NAME, `installed package name must be ${PACKAGE_NAME}`);
+  const require = createRequire(import.meta.url);
+  assert.deepEqual(
+    Object.keys(require(join(packageRoot, "wasm", "adocweave_textlint_wasm.cjs"))),
+    ["projectText"],
+    "packed WebAssembly wrapper must export only projectText",
+  );
   const textlintManifest = JSON.parse(
     await readFile(join(root, "node_modules", "textlint", "package.json"), "utf8"),
   );

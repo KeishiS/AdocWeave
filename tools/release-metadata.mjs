@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 import { canonicalJson, validateDistributionManifest } from "./release-contract.mjs";
+import { cargoTreePackageKeys } from "./generate-third-party-notices.mjs";
 
 export const RELEASE_METADATA_TOOL_VERSION = 1;
 const ROOT = new URL("../", import.meta.url);
@@ -69,16 +70,20 @@ function archiveFiles(path, archiveName) {
   return files.sort((left, right) => compareText(left.fileName, right.fileName));
 }
 
-function cargoPackages(manifestPath, rootPackageName) {
+function cargoPackages(manifestPath, rootPackageName, filterPlatform) {
   const args = ["metadata", "--format-version=1", "--locked"];
   if (manifestPath) args.push("--manifest-path", manifestPath);
+  if (filterPlatform) args.push("--filter-platform", filterPlatform);
   const metadata = JSON.parse(execFileSync("cargo", args, {
     cwd: ROOT,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
   }));
   let packageIds;
-  if (rootPackageName) {
+  let selectedPackages;
+  if (rootPackageName && filterPlatform) {
+    selectedPackages = cargoTreePackageKeys(rootPackageName, filterPlatform);
+  } else if (rootPackageName) {
     const roots = metadata.packages.filter((entry) => entry.name === rootPackageName && entry.source === null);
     if (roots.length !== 1) fail(`Cargo package is not unique: ${rootPackageName}`);
     const nodes = new Map(metadata.resolve.nodes.map((node) => [node.id, node]));
@@ -91,7 +96,10 @@ function cargoPackages(manifestPath, rootPackageName) {
       for (const dependency of nodes.get(id)?.deps ?? []) pending.push(dependency.pkg);
     }
   }
-  return metadata.packages.filter((entry) => !packageIds || packageIds.has(entry.id)).map((entry) => ({
+  return metadata.packages.filter((entry) =>
+    (!packageIds || packageIds.has(entry.id)) &&
+    (!selectedPackages || selectedPackages.has(`${entry.name}\0${entry.version}`))
+  ).map((entry) => ({
     SPDXID: spdxId("CargoPackage", `${entry.name}\0${entry.version}\0${entry.source ?? "workspace"}`),
     downloadLocation: entry.source?.startsWith("registry+")
       ? `https://crates.io/crates/${entry.name}/${entry.version}`
@@ -220,7 +228,11 @@ export function buildMetadata(directory, sourceCommit) {
   validateDistributionManifest(distributionManifest, plan);
 
   const cargo = cargoPackages();
-  const textlintCargo = cargoPackages(undefined, "adocweave-textlint-wasm");
+  const textlintCargo = cargoPackages(
+    undefined,
+    "adocweave-textlint-wasm",
+    "wasm32-unknown-unknown",
+  );
   const zedCargo = cargoPackages("editors/zed/Cargo.toml");
   const allCargo = [...new Map([...cargo, ...zedCargo].map((entry) => [entry.SPDXID, entry])).values()];
   const frontend = frontendPackage();

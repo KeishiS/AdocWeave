@@ -295,6 +295,11 @@ test("textlint plugin candidateは配布tarballを全対応OSとNode境界で検
       /all supported operating systems/,
     ],
     [
+      "          - runner: ubuntu-24.04\n            node: '22.18.0'",
+      "          # supported Node.js major omitted",
+      /Node\.js boundary/,
+    ],
+    [
       "node tools/textlint-plugin-release-smoke.mjs",
       "node --version # textlint smoke omitted",
       /packed release artifact/,

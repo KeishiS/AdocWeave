@@ -119,6 +119,7 @@ GitHub Releaseへ一度だけ追加します。公開APIはtextlintの``Processo
 ``node_modules``、source mapおよび機械固有pathを収録せず、実行時の追加downloadも行いません。
 
 入力は10 MiB、投影結果は50 MiB、投影するnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
+WebAssemblyのlinear memoryは256 MiBを上限とし、生成したbinaryのmemory sectionを検査します。
 tarballは8 MiB、展開後は16 MiB、収録fileは13件を上限とします。実CLIの受入検査はNode.jsのheapを
 128 MiBに制限して実行します。
 

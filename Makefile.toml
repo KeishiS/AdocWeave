@@ -588,19 +588,12 @@ wasm-bindgen \
 
 [tasks.build-textlint-wasm-node]
 description = "Build the dedicated Node.js textlint WebAssembly adapter"
-script_runner = "@shell"
-script = '''
-set -euo pipefail
-cargo build \
-  -p adocweave-textlint-wasm \
-  --release \
-  --target wasm32-unknown-unknown \
-  --target-dir target/textlint-wasm-build
-wasm-bindgen \
-  --target nodejs \
-  --out-dir target/adocweave-textlint-wasm-node \
-  target/textlint-wasm-build/wasm32-unknown-unknown/release/adocweave_textlint_wasm.wasm
-'''
+command = "bash"
+args = [
+  "tools/build-textlint-wasm-node.sh",
+  "target/adocweave-textlint-wasm-node",
+  "target/textlint-wasm-build",
+]
 
 [tasks.textlint-dependencies]
 private = true
@@ -629,7 +622,9 @@ args = ["test", "--prefix", "tools/textlint"]
 description = "Test the reusable textlint Processor without generated artifacts"
 script_runner = "@shell"
 script = '''
-node --test packages/textlint-plugin-asciidoc/*.test.mjs
+node --test \
+  packages/textlint-plugin-asciidoc/*.test.mjs \
+  tools/verify-textlint-wasm-memory.test.mjs
 '''
 
 [tasks.docs-prose-lint]

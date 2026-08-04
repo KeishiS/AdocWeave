@@ -49,6 +49,8 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "web-worker/client.mjs",
     "tools/browser-release-smoke.mjs",
     "tools/package-textlint-plugin-release.sh",
+    "tools/build-textlint-wasm-node.sh",
+    "tools/verify-textlint-wasm-memory.mjs",
     "packages/textlint-plugin-asciidoc/processor.mjs",
     "tools/protocol-rust-codegen.mjs",
     "tools/protocol-rust-codegen.test.mjs",

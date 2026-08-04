@@ -370,6 +370,9 @@ export function validateReleaseWorkflowPolicy({
   const textlintMatrix = textlintInstallation?.strategy?.matrix?.include;
   if (JSON.stringify(textlintMatrix) !== JSON.stringify([
     { runner: "ubuntu-24.04", node: "20.18.0" },
+    { runner: "ubuntu-24.04", node: "21.7.3" },
+    { runner: "ubuntu-24.04", node: "22.18.0" },
+    { runner: "ubuntu-24.04", node: "23.11.1" },
     { runner: "ubuntu-24.04", node: "release" },
     { runner: "macos-15", node: "release" },
     { runner: "windows-2025", node: "release" },

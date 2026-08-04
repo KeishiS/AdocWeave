@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  cargoTreePackageKeys,
   npmRuntimePackages,
   reachableThirdPartyPackages,
   renderTextlintPluginNotices,
@@ -60,6 +61,18 @@ test("textlint plugin noticeには専用WASMから到達する依存だけを含
 test("notice rendering rejects dependencies without SPDX license metadata", () => {
   const metadata = { workspace_members: [workspace.id], packages: [workspace, packageOf("missing", "1.0.0", null)] };
   assert.throws(() => thirdPartyPackages(metadata), /missing 1\.0\.0 has no license metadata/);
+});
+
+test("textlint pluginの依存集合はwasm32向けnormal edgeと一致します", () => {
+  const key = (name, version) => `${name}\0${version}`;
+  const packages = cargoTreePackageKeys(
+    "adocweave-textlint-wasm",
+    "wasm32-unknown-unknown",
+  );
+  assert.ok([...packages].some((key) => key.startsWith("adocweave-textlint-wasm\0")));
+  assert.ok(packages.has(key("serde-wasm-bindgen", "0.6.5")));
+  assert.ok(!packages.has(key("futures-channel", "0.3.33")));
+  assert.ok(!packages.has(key("const-oid", "0.10.2")));
 });
 
 test("VS Code noticeにはmanifestで宣言した実行時依存だけを含めます", () => {

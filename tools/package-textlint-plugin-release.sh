@@ -31,16 +31,7 @@ node --input-type=module -e '
   }
 ' "$version"
 
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home"
-cargo build \
-  -p adocweave-textlint-wasm \
-  --release \
-  --target wasm32-unknown-unknown \
-  --target-dir target/textlint-plugin-wasm-build
-wasm-bindgen \
-  --target nodejs \
-  --out-dir "$wasm_output" \
-  target/textlint-plugin-wasm-build/wasm32-unknown-unknown/release/adocweave_textlint_wasm.wasm
+tools/build-textlint-wasm-node.sh "$wasm_output" target/textlint-plugin-wasm-build
 
 mkdir -p "$stage/wasm" "$output_directory"
 for name in adapter.mjs bridge.mjs index.d.mts index.mjs package.json position.mjs processor.mjs README.adoc; do
@@ -92,7 +83,7 @@ else
   echo "textlint plugin archive contains a symlink or unsupported member type" >&2
   exit 1
 fi
-if strings "$stage/wasm/adocweave_textlint_wasm_bg.wasm" | rg -q '/workspace|/home/|[A-Za-z]:\\'; then
+if strings "$stage/wasm/adocweave_textlint_wasm_bg.wasm" | rg -q '/(workspace|home|Users|tmp|private/tmp|builds?|runner|__w)/|[A-Za-z]:\\'; then
   echo "textlint plugin WebAssembly contains a machine-specific path" >&2
   exit 1
 fi
