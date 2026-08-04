@@ -24,6 +24,28 @@ export function thirdPartyPackages(metadata) {
     .sort((left, right) => packageKey(left).localeCompare(packageKey(right)));
 }
 
+export function reachableThirdPartyPackages(metadata, rootPackageName) {
+  const roots = metadata.packages.filter((pkg) => pkg.name === rootPackageName && !pkg.source);
+  if (roots.length !== 1) fail(`workspace packageを一意に特定できません: ${rootPackageName}`);
+  const workspace = new Set(metadata.workspace_members);
+  const nodes = new Map((metadata.resolve?.nodes ?? []).map((node) => [node.id, node]));
+  const visited = new Set();
+  const pending = [roots[0].id];
+  while (pending.length > 0) {
+    const id = pending.pop();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    for (const dependency of nodes.get(id)?.deps ?? []) pending.push(dependency.pkg);
+  }
+  return metadata.packages
+    .filter((pkg) => visited.has(pkg.id) && !workspace.has(pkg.id))
+    .map((pkg) => {
+      if (!pkg.license) fail(`${pkg.name} ${pkg.version} has no license metadata`);
+      return { name: pkg.name, version: pkg.version, license: pkg.license };
+    })
+    .sort((left, right) => packageKey(left).localeCompare(packageKey(right)));
+}
+
 export function npmRuntimePackages(packageManifest, packageLock) {
   const dependencies = Object.keys(packageManifest.dependencies ?? {});
   return dependencies
@@ -87,6 +109,18 @@ ${table(vscodePackages, "npm packageとversion")}
 `;
 }
 
+export function renderTextlintPluginNotices(rootMetadata) {
+  const packages = reachableThirdPartyPackages(rootMetadata, "adocweave-textlint-wasm");
+  return `= Third-party notices
+
+このファイルには、同梱するNode.js向けWebAssemblyから到達するRust crateのSPDX license expressionと
+versionを記載します。各licenseの全文と著作権表示は、crate packageおよび記載されたSPDX licenseを
+参照してください。この表はAdocWeave自身の\`MIT OR Apache-2.0\` licenseを置き換えません。
+
+${table(packages)}
+`;
+}
+
 function cargoMetadata(args) {
   const result = spawnSync("cargo", ["metadata", "--locked", "--format-version=1", ...args], {
     cwd: root,
@@ -107,14 +141,23 @@ export function generateThirdPartyNotices(outputPath) {
   writeFileSync(output, renderThirdPartyNotices(rootMetadata, zedMetadata, vscodePackages));
 }
 
+export function generateTextlintPluginNotices(outputPath) {
+  const output = resolve(root, outputPath);
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, renderTextlintPluginNotices(cargoMetadata([])));
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [outputPath] = process.argv.slice(2);
-  if (!outputPath || process.argv.length !== 3) {
-    process.stderr.write("usage: node tools/generate-third-party-notices.mjs OUTPUT_PATH\n");
+  const args = process.argv.slice(2);
+  const textlintPlugin = args[0] === "--textlint-plugin";
+  const outputPath = textlintPlugin ? args[1] : args[0];
+  if (!outputPath || args.length !== (textlintPlugin ? 2 : 1)) {
+    process.stderr.write("usage: node tools/generate-third-party-notices.mjs [--textlint-plugin] OUTPUT_PATH\n");
     process.exit(2);
   }
   try {
-    generateThirdPartyNotices(outputPath);
+    if (textlintPlugin) generateTextlintPluginNotices(outputPath);
+    else generateThirdPartyNotices(outputPath);
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

@@ -82,6 +82,15 @@
       "target": "x86_64-unknown-linux-musl"
     },
     {
+      "archive": "tgz",
+      "byteSize": 114,
+      "executable": null,
+      "kind": "textlint-plugin",
+      "name": "adocweave-textlint-plugin-asciidoc-0.28.0.tgz",
+      "sha256": "1414141414141414141414141414141414141414141414141414141414141414",
+      "target": null
+    },
+    {
       "archive": "vsix",
       "byteSize": 113,
       "executable": null,

@@ -43,6 +43,10 @@ artifacts = ["target/distrib/adocweave-zed-0.28.0.tar.xz"]
 build = ["bash", "tools/package-zed-release.sh"]
 
 [[dist.extra-artifacts]]
+artifacts = ["target/distrib/adocweave-textlint-plugin-asciidoc-0.28.0.tgz"]
+build = ["bash", "tools/package-textlint-plugin-release.sh"]
+
+[[dist.extra-artifacts]]
 artifacts = ["target/distrib/adocweave-vscode-0.28.0.vsix"]
 build = ["bash", "tools/package-vscode-release.sh"]
 

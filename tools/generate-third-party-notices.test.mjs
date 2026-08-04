@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   npmRuntimePackages,
+  reachableThirdPartyPackages,
+  renderTextlintPluginNotices,
   renderThirdPartyNotices,
   thirdPartyPackages,
 } from "./generate-third-party-notices.mjs";
@@ -28,6 +30,31 @@ test("notice rendering groups root dependencies and leaves shared Zed dependenci
   assert.match(rendered, /== Zed開発拡張archiveの追加依存[\s\S]*\|MIT\n\|gamma 3\.0\.0/);
   assert.doesNotMatch(rendered, /== Zed開発拡張archiveの追加依存[\s\S]*alpha 1\.0\.0/);
   assert.match(rendered, /== VS Code拡張の実行時依存[\s\S]*\|MIT\n\|delta 4\.0\.0/);
+});
+
+test("textlint plugin noticeには専用WASMから到達する依存だけを含めます", () => {
+  const adapter = { id: "adapter", name: "adocweave-textlint-wasm", version: "1.2.3" };
+  const core = { id: "core", name: "adocweave", version: "1.2.3" };
+  const alpha = packageOf("alpha", "1.0.0", "MIT");
+  const beta = packageOf("beta", "2.0.0", "Apache-2.0");
+  const metadata = {
+    workspace_members: [adapter.id, core.id],
+    packages: [adapter, core, alpha, beta],
+    resolve: {
+      nodes: [
+        { id: adapter.id, deps: [{ pkg: core.id }] },
+        { id: core.id, deps: [{ pkg: alpha.id }] },
+        { id: alpha.id, deps: [] },
+        { id: beta.id, deps: [] },
+      ],
+    },
+  };
+  assert.deepEqual(reachableThirdPartyPackages(metadata, adapter.name), [
+    { name: "alpha", version: "1.0.0", license: "MIT" },
+  ]);
+  const rendered = renderTextlintPluginNotices(metadata);
+  assert.match(rendered, /alpha 1\.0\.0/);
+  assert.doesNotMatch(rendered, /beta 2\.0\.0/);
 });
 
 test("notice rendering rejects dependencies without SPDX license metadata", () => {

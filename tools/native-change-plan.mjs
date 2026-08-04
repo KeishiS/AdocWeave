@@ -32,9 +32,11 @@ const NATIVE_ROOTS = [
 ];
 const GLOBAL_ROOTS = [
   "crates/adocweave-config/",
+  "crates/adocweave-textlint-wasm/",
   "crates/adocweave-wasm/",
   "crates/adocweave/",
   "editors/",
+  "packages/textlint-plugin-asciidoc/",
   "protocol/",
   "web-worker/",
 ];
@@ -100,6 +102,8 @@ const NON_RELEASE_FILES = new Set([
   "tools/npm-lock-policy.mjs",
   "tools/verify-textlint-dependencies.mjs",
   "tools/verify-textlint-dependencies.test.mjs",
+  "tools/verify-textlint-plugin-dependencies.mjs",
+  "tools/verify-textlint-plugin-dependencies.test.mjs",
 ]);
 const NATIVE_TOOLS = [
   "dependency-governance.sh",
@@ -135,10 +139,13 @@ const GLOBAL_TOOLS = [
   "host-executable.mjs",
   "host-executable.test.mjs",
   "package-browser-release.sh",
+  "package-textlint-plugin-release.sh",
   "package-vscode-release.sh",
   "package-zed-release.sh",
   "process-lifecycle.mjs",
   "process-lifecycle.test.mjs",
+  "textlint-plugin-release-smoke.mjs",
+  "textlint-plugin-release-smoke.test.mjs",
   "protocol-rust-codegen.mjs",
   "protocol-rust-codegen.test.mjs",
   "release-contract.mjs",
@@ -213,7 +220,12 @@ const RUST_SOURCE_FILES = new Set([
 /// edited one of those changed what the audit accepts and still reported
 /// success without running it. `tools/native-change-plan.test.mjs` reads the
 /// audit script and requires every repository path it names to appear here.
-export const DEPENDENCY_AUDIT_ROOTS = ["security/", "editors/", "tools/textlint/"];
+export const DEPENDENCY_AUDIT_ROOTS = [
+  "security/",
+  "editors/",
+  "packages/textlint-plugin-asciidoc/",
+  "tools/textlint/",
+];
 export const DEPENDENCY_AUDIT_FILES = new Set([
   "Cargo.lock",
   "Cargo.toml",
@@ -230,6 +242,8 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   "tools/npm-lock-policy.mjs",
   "tools/verify-textlint-dependencies.mjs",
   "tools/verify-textlint-dependencies.test.mjs",
+  "tools/verify-textlint-plugin-dependencies.mjs",
+  "tools/verify-textlint-plugin-dependencies.test.mjs",
 ]);
 /// Paths that decide whether the adapter contracts have anything to verify.
 const ADAPTER_ROOTS = [
@@ -238,10 +252,11 @@ const ADAPTER_ROOTS = [
   "protocol/",
   "web-worker/",
   "fixtures/",
+  "packages/textlint-plugin-asciidoc/",
   "tools/textlint/",
 ];
 /// Paths whose authored AsciiDoc or generated HTML the document checks read.
-const DOCUMENT_ROOTS = ["docs/", "fixtures/", "tools/textlint/"];
+const DOCUMENT_ROOTS = ["docs/", "fixtures/", "packages/textlint-plugin-asciidoc/", "tools/textlint/"];
 const DOCUMENT_FILES = new Set([
   "README.adoc",
   "CONTRIBUTING.adoc",

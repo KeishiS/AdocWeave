@@ -200,6 +200,7 @@ args = [
   "--test",
   "tools/verify-dependency-boundaries.test.mjs",
   "tools/verify-textlint-dependencies.test.mjs",
+  "tools/verify-textlint-plugin-dependencies.test.mjs",
   "tools/verify-vscode-dependencies.test.mjs",
 ]
 
@@ -357,6 +358,7 @@ description = "Install, select, and completely uninstall locally built release a
 dependencies = [
   "native-release-smoke-host",
   "package-browser-release",
+  "package-textlint-plugin-release",
   "package-zed-release",
   "test-vscode-release-package",
 ]
@@ -367,6 +369,7 @@ rm -rf "$candidate"
 mkdir -p "$candidate"
 cp target/native-smoke-host/artifacts/*.zip "$candidate/"
 cp target/distrib/adocweave-browser-*.tar.xz "$candidate/"
+cp target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz "$candidate/"
 cp target/distrib/adocweave-zed-*.tar.xz "$candidate/"
 cp target/distrib/adocweave-vscode-*.vsix "$candidate/"
 node tools/release-installation-e2e.mjs \
@@ -418,6 +421,29 @@ description = "Build the deterministic source-checkout-free Zed development exte
 dependencies = ["zed-query-contract"]
 command = "bash"
 args = ["tools/package-zed-release.sh"]
+
+[tasks.package-textlint-plugin-release]
+description = "Build the deterministic npm-compatible textlint plugin archive"
+command = "bash"
+args = ["tools/package-textlint-plugin-release.sh"]
+
+[tasks.test-textlint-plugin-release-package]
+description = "Verify textlint plugin archive contents, deterministic bytes, and real CLI behavior"
+dependencies = ["package-textlint-plugin-release"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+archive="target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
+first="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+cargo make package-textlint-plugin-release >/dev/null
+second="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+if [ "$first" != "$second" ]; then
+  echo "textlint plugin release archive is not deterministic" >&2
+  exit 1
+fi
+node tools/textlint-plugin-release-smoke.mjs "$archive"
+echo "textlint plugin release package verified: $second"
+'''
 
 [tasks.test-zed-release-package]
 description = "Verify the Zed release archive layout and deterministic bytes"
@@ -530,10 +556,11 @@ node tools/browser-release-smoke.mjs "$archive" "${ADOCWEAVE_BROWSER:-chromium}"
 '''
 
 [tasks.release-global-artifacts]
-description = "Build and statically verify the exact browser, Zed, and VS Code archives uploaded by release CI"
+description = "Build and statically verify the exact browser, textlint, Zed, and VS Code archives uploaded by release CI"
 dependencies = [
   "test-browser-release-package",
   "test-browser-types",
+  "test-textlint-plugin-release-package",
   "test-zed-release-package",
   "test-vscode-release-package",
 ]
@@ -967,6 +994,7 @@ dependencies = [
   "test-profile-release",
   "wasm-size",
   "test-browser-release-package",
+  "test-textlint-plugin-release-package",
   "test-zed-release-package",
   "test-vscode-release-package",
   "release-installation-e2e-host",

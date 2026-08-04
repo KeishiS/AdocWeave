@@ -74,6 +74,13 @@ export function expectedAssets(version, targets) {
     executable: null,
   });
   assets.push({
+    name: `adocweave-textlint-plugin-asciidoc-${version}.tgz`,
+    kind: "textlint-plugin",
+    target: null,
+    archive: "tgz",
+    executable: null,
+  });
+  assets.push({
     name: `adocweave-vscode-${version}.vsix`,
     kind: "vscode",
     target: null,
@@ -106,7 +113,7 @@ export function validateDistPlan(distPlan, plan, tag) {
   for (const [name, asset] of planned) {
     const actual = distPlan.artifacts[name];
     if (!actual) fail(`dist plan is missing public artifact: ${name}`);
-    if (asset.kind === "browser" || asset.kind === "zed" || asset.kind === "vscode") {
+    if (["browser", "textlint-plugin", "zed", "vscode"].includes(asset.kind)) {
       if (actual.kind !== "extra-artifact") fail(`${asset.kind} archive must be a dist extra artifact`);
       continue;
     }
@@ -212,6 +219,7 @@ function verifyRepository() {
   const conformance = json("crates/adocweave/conformance/cases.json");
   const publicConformance = json("fixtures/public-conformance.json");
   const worker = json("web-worker/package.json");
+  const textlintPlugin = json("packages/textlint-plugin-asciidoc/package.json");
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
   const dist = read("dist-workspace.toml");
@@ -268,6 +276,7 @@ function verifyRepository() {
     "release manifest": manifest.packageVersion,
     "distribution plan": plan.packageVersion,
     "browser package": worker.version,
+    "textlint plugin package": textlintPlugin.version,
     "cross-runtime conformance manifest": conformance.packageVersion,
     "public conformance manifest": publicConformance.packageVersion,
     "Zed extension": tomlValue(extension, "version"),
@@ -295,6 +304,11 @@ function verifyRepository() {
   if (!dist.includes(`artifacts = ["${zedArchive}"]`) ||
       !dist.includes('build = ["bash", "tools/package-zed-release.sh"]')) {
     fail("Zed package must be connected as the versioned dist extra artifact");
+  }
+  const textlintPluginArchive = `target/distrib/adocweave-textlint-plugin-asciidoc-${version}.tgz`;
+  if (!dist.includes(`artifacts = ["${textlintPluginArchive}"]`) ||
+      !dist.includes('build = ["bash", "tools/package-textlint-plugin-release.sh"]')) {
+    fail("textlint plugin must be connected as the versioned dist extra artifact");
   }
   const vscodeArchive = `target/distrib/adocweave-vscode-${version}.vsix`;
   if (!dist.includes(`artifacts = ["${vscodeArchive}"]`) ||
@@ -344,11 +358,18 @@ function verifyRepository() {
   if (JSON.stringify(plan.releaseMetadata) !== JSON.stringify(EXPECTED_RELEASE_METADATA)) {
     fail("release metadata asset plan is not canonical");
   }
-  if (!cargo.includes("publish = false") || worker.private !== true || !extensionCargo.includes("publish = false")) {
+  if (!cargo.includes("publish = false") || worker.private !== true || textlintPlugin.private !== true ||
+      !extensionCargo.includes("publish = false")) {
     fail("non-GitHub package registries must remain disabled");
   }
+  if (Object.keys(textlintPlugin.dependencies ?? {}).length !== 0) {
+    fail("textlint plugin must have zero runtime npm dependencies");
+  }
+  for (const name of ["preinstall", "install", "postinstall"]) {
+    if (textlintPlugin.scripts?.[name]) fail(`textlint plugin must not define ${name}`);
+  }
 
-  for (const crate of ["adocweave", "adocweave-cli", "adocweave-host", "adocweave-lsp", "adocweave-wasm"]) {
+  for (const crate of ["adocweave", "adocweave-cli", "adocweave-host", "adocweave-lsp", "adocweave-textlint-wasm", "adocweave-wasm"]) {
     const crateManifest = read(`crates/${crate}/Cargo.toml`);
     for (const inherited of ["version", "license", "homepage", "repository", "publish"]) {
       if (!crateManifest.includes(`${inherited}.workspace = true`)) fail(`${crate} does not inherit ${inherited}`);

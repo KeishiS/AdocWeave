@@ -235,7 +235,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
-      - name: Browser, Zed, and VS Code candidate build and runtime verification
+      - name: Browser, textlint, Zed, and VS Code candidate build and runtime verification
         run: nix develop .#ci-browser -c cargo make release-global-candidate
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -244,6 +244,7 @@ jobs:
           retention-days: 7
           path: |
             target/distrib/adocweave-browser-*.tar.xz
+            target/distrib/adocweave-textlint-plugin-asciidoc-*.tgz
             target/distrib/adocweave-zed-*.tar.xz
             target/distrib/adocweave-vscode-*.vsix
 
