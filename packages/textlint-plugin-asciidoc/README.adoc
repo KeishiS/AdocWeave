@@ -14,6 +14,26 @@ npm install --save-dev textlint@15.8.0 \
   https://github.com/KeishiS/adocweave/releases/download/vX.Y.Z/adocweave-textlint-plugin-asciidoc-X.Y.Z.tgz
 ----
 
+プロジェクトへ依存を導入せずに一度だけ試す場合は、``npx``の``--package``でtextlint、Processorおよび
+規則を一時的に取得します。次の例は日本語技術文書向けの規則で``document.adoc``を検査します。
+
+[source,console]
+----
+VERSION=X.Y.Z
+npx --yes \
+  --package=textlint@15.8.0 \
+  --package="https://github.com/KeishiS/adocweave/releases/download/v$VERSION/adocweave-textlint-plugin-asciidoc-$VERSION.tgz" \
+  --package=textlint-rule-preset-ja-technical-writing@12.0.2 \
+  textlint --no-textlintrc \
+  --plugin @adocweave/asciidoc \
+  --preset ja-technical-writing \
+  document.adoc
+----
+
+この方法では作業ディレクトリへ``package.json``、``package-lock.json``および``node_modules``を作成しません。
+取得したパッケージはnpmのキャッシュへ保存されます。継続して使う場合は、前述の方法で依存とバージョンを
+プロジェクトへ記録してください。
+
 ``.textlintrc.json``では、利用する日本語規則などとは別にProcessorを指定します。
 
 [source,json]

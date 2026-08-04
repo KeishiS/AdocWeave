@@ -173,6 +173,26 @@ npm install --save-dev textlint@15.8.0 \
 ``peerDependencies``にも同じ範囲を記録します。パッケージにはNode.js用WebAssemblyを同梱するため、
 Rust、Cargo、``wasm-bindgen``、AdocWeave CLIおよび実行時の追加downloadは不要です。
 
+プロジェクトへ依存を導入せずに一度だけ試す場合は、``npx``の``--package``で必要な三つのパッケージを
+一時的に取得できます。次の例は、日本語技術文書向けの規則で``document.adoc``を検査します。
+
+[source,console]
+----
+VERSION=X.Y.Z
+npx --yes \
+  --package=textlint@15.8.0 \
+  --package="https://github.com/KeishiS/adocweave/releases/download/v$VERSION/adocweave-textlint-plugin-asciidoc-$VERSION.tgz" \
+  --package=textlint-rule-preset-ja-technical-writing@12.0.2 \
+  textlint --no-textlintrc \
+  --plugin @adocweave/asciidoc \
+  --preset ja-technical-writing \
+  document.adoc
+----
+
+この方法では作業ディレクトリへ``package.json``、``package-lock.json``および``node_modules``を作成しません。
+取得したパッケージはnpmのキャッシュへ保存されます。継続して利用する場合は、依存とバージョンを
+``package.json``と``package-lock.json``へ記録してください。
+
 ``.textlintrc.json``では、AsciiDoc Processorと利用する規則を別々に指定します。次の例では、規則のパッケージも
 利用側で開発用依存へ追加します。
 
