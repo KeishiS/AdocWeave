@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "authoredFiles": [
+    "CONTRIBUTING.adoc",
+    "README.adoc",
+    "editors/vscode/README.adoc",
+    "editors/zed/README.adoc",
+    "fuzz/corpus/README.adoc",
+    "web-worker/README.adoc"
+  ],
+  "authoredDirectories": [
+    "docs/"
+  ],
+  "excludedDirectories": [
+    {
+      "path": "fixtures/",
+      "reason": "解析と出力の比較に使う入力であり、人が読む説明文書ではないため"
+    },
+    {
+      "path": "editors/vscode/test/fixtures/",
+      "reason": "VS Code拡張の試験入力であるため"
+    },
+    {
+      "path": "fuzz/corpus/analyze/",
+      "reason": "解析器のfuzz入力であるため"
+    },
+    {
+      "path": "fuzz/corpus/process/",
+      "reason": "WASM処理のfuzz入力であるため"
+    },
+    {
+      "path": "fuzz/corpus/render/",
+      "reason": "HTML変換のfuzz入力であるため"
+    }
+  ]
+}

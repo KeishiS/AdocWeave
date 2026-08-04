@@ -414,8 +414,70 @@ fn tracked_adoc_corpus_is_lossless_and_has_valid_ranges() {
     }
 }
 
-/// The document that defines the rule quotes the words it forbids.
-const TERMINOLOGY_DOCUMENT: &str = "docs/developer-guide/terminology.adoc";
+#[test]
+fn tracked_adoc_text_projections_have_nested_source_ranges() {
+    fn check(
+        path: &str,
+        source: &str,
+        parent: adocweave::text::TextRange,
+        children: &[adocweave::output::text::TextNode],
+    ) {
+        let mut previous = parent.start();
+        for child in children {
+            assert!(
+                parent.start() <= child.source_range.start(),
+                "{path}: {:?} {:?} starts before parent {:?}",
+                child.kind,
+                child.source_range,
+                parent
+            );
+            assert!(
+                child.source_range.end() <= parent.end(),
+                "{path}: {:?} {:?} ends after parent {:?}",
+                child.kind,
+                child.source_range,
+                parent
+            );
+            assert!(
+                previous <= child.source_range.start(),
+                "{path}: {:?} {:?} overlaps a previous sibling ending at {:?}",
+                child.kind,
+                child.source_range,
+                previous
+            );
+            assert!(source.is_char_boundary(child.source_range.start().to_usize()));
+            assert!(source.is_char_boundary(child.source_range.end().to_usize()));
+            if let Some(content) = child.content_range {
+                assert!(child.source_range.start() <= content.start());
+                assert!(content.end() <= child.source_range.end());
+            }
+            check(path, source, child.source_range, &child.children);
+            previous = child.source_range.end();
+        }
+    }
+
+    let output = Command::new("git")
+        .args(["ls-files", "-z", "*.adoc"])
+        .current_dir(repository_root())
+        .output()
+        .expect("git ls-files");
+    assert!(output.status.success());
+    for path in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let path = std::str::from_utf8(path).expect("UTF-8 repository path");
+        let analysis = analyze(path);
+        let projection = adocweave::output::text::project_text(&analysis);
+        check(
+            path,
+            analysis.source(),
+            projection.source_range,
+            &projection.children,
+        );
+    }
+}
 
 fn japanese_terminology() -> JapaneseTerminology {
     serde_json::from_str(
@@ -477,42 +539,6 @@ fn japanese_terminology_catalog_is_valid_and_documented() {
             anchor
         );
     }
-}
-
-#[test]
-fn authored_documents_avoid_the_forbidden_japanese_words() {
-    let terminology = japanese_terminology();
-    let output = Command::new("git")
-        .args(["ls-files", "-z", "*.adoc"])
-        .current_dir(repository_root())
-        .output()
-        .expect("git ls-files");
-    assert!(output.status.success());
-    let mut found = Vec::new();
-    for path in output
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-    {
-        let path = std::str::from_utf8(path).expect("UTF-8 repository path");
-        if path == TERMINOLOGY_DOCUMENT {
-            continue;
-        }
-        let source = fs::read_to_string(repository_root().join(path)).expect("authored document");
-        for (number, line) in source.lines().enumerate() {
-            for entry in &terminology.forbidden_terms {
-                if line.contains(&entry.term) {
-                    found.push(format!("{path}:{}: {}", number + 1, entry.term));
-                }
-            }
-        }
-    }
-    assert!(
-        found.is_empty(),
-        "{TERMINOLOGY_DOCUMENT}が使わないと定めた語があります。\
-         何と書くかは、その箇所が何を指しているかによります。\n{}",
-        found.join("\n")
-    );
 }
 
 #[test]
@@ -627,7 +653,7 @@ fn roadmap_uses_unique_github_issue_urls() {
     // added to one and not the other; it cannot tell that an Issue is closed,
     // because a test may not reach GitHub. Update this list in the same change
     // that closes an Issue.
-    let expected = ["33", "34", "82", "83", "84", "86", "384"]
+    let expected = ["33", "34", "82", "83", "84", "86", "384", "431"]
         .into_iter()
         .map(str::to_owned)
         .collect();

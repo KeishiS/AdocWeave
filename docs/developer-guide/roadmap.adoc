@@ -8,8 +8,15 @@ GitHub Issueを参照してください。
 https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notesに記録します。
 このページには完了したmilestoneの履歴を残しません。
 
-現在、着手を予定している作業はありません。以下は、着手するかどうかの判断が先に必要な項目です。
-判断の材料が揃うまで実装へ進みません。
+現在は、AdocWeaveが解析したAsciiDoc文書をtextlintで読み取り専用検査するための文章構造と
+Node.js adapterを実装しています。
+
+* https://github.com/KeishiS/adocweave/issues/431[AdocWeave文書をtextlintで読み取り専用検査する境界]
+
+parser、HTML、Language ServerおよびBrowser向け公開protocolを変更せず、原文上の位置を保持した
+TxtASTを生成します。プロジェクト固有の禁止語は一つの機械可読な用語集で管理し、自動修正は行いません。
+
+以下は、着手するかどうかの判断が先に必要な項目です。判断の材料が揃うまで実装へ進みません。
 
 == 保留中の対話的な確認環境
 
