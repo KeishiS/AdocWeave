@@ -64,6 +64,6 @@ Browser向けWebAssemblyへ入口を追加する方法は、textlintを使わな
 破壊的変更が生じます。0.x系のminor versionを更新し、同じversionのJavaScript packageとWebAssemblyだけを
 組み合わせます。公開するtextlint Processorの設定方法と、自動修正を行わない保証は変更しません。
 
-全block、inline、macroおよび回復構文に対する変換方針をRustの網羅的なmatchと契約testで固定します。
+全block、inline、macroおよび回復構文に対する変換方針をRustの網羅的なmatchと対応関係のtestで固定します。
 parser、HTML、Language ServerおよびBrowser成果物の既存検査も実行し、依存と動作が増えていないことを
 確認します。

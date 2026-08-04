@@ -115,9 +115,10 @@ unsupported_marker();
   ]) {
     assert.ok(!prose.includes(excluded), `${excluded}が文章規則へ渡されました`);
   }
-  const link = nodes.find((node) => node.type === "Link");
-  assert.equal(link.url, "https://example.invalid/path");
-  assert.deepEqual(link.children, []);
+  assert.ok(
+    !nodes.some((node) => node.type === "Link"),
+    "表示文字列のないURLをLink nodeとして渡しました"
+  );
 });
 
 test("すべての執筆文書を原文に対応するTxtASTへ変換する", () => {

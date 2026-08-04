@@ -11,12 +11,12 @@ https://github.com/KeishiS/adocweave/releases[GitHub Releases]のRelease Notes�
 == textlint連携の責務分離
 
 v0.29.0で追加したAsciiDoc Processorについて、TxtAST変換と配布工程の責務を整理します。
-正しさと使用量の上限に関わる変換backendを先に再設計し、その契約を基準に配布工程を整理します。
+正しさと使用量の上限に関わる変換backendを先に再設計し、その出力仕様を基準に配布工程を整理します。
 
 * https://github.com/KeishiS/adocweave/issues/435[textlint adapterの型付きTxtAST backend]
 * https://github.com/KeishiS/adocweave/issues/436[textlintプラグインの配布工程とconsumer fixtureの分離]
 
-後者は前者が定めるpackage構成と実行契約へ依存します。いずれも、parser、HTML変換、Language Serverおよび
+後者は前者が定めるpackage構成と実行条件へ依存します。いずれも、parser、HTML変換、Language Serverおよび
 Browser向けWebAssemblyの公開動作を変更せず、textlint専用境界だけを対象とします。
 
 以下は、着手するかどうかの判断が先に必要な項目です。判断の材料が揃うまで実装へ進みません。
