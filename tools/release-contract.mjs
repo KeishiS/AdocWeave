@@ -369,7 +369,14 @@ function verifyRepository() {
     if (textlintPlugin.scripts?.[name]) fail(`textlint plugin must not define ${name}`);
   }
 
-  for (const crate of ["adocweave", "adocweave-cli", "adocweave-host", "adocweave-lsp", "adocweave-textlint-wasm", "adocweave-wasm"]) {
+  for (const crate of [
+    "adocweave",
+    "adocweave-cli",
+    "adocweave-host",
+    "adocweave-lsp",
+    "adocweave-textlint-wasm",
+    "adocweave-wasm",
+  ]) {
     const crateManifest = read(`crates/${crate}/Cargo.toml`);
     for (const inherited of ["version", "license", "homepage", "repository", "publish"]) {
       if (!crateManifest.includes(`${inherited}.workspace = true`)) fail(`${crate} does not inherit ${inherited}`);

@@ -22,8 +22,6 @@ mod response_projection;
 mod response_wire;
 mod response_wire_generated;
 mod shared_wire_generated;
-#[cfg(feature = "text-projection")]
-mod text_projection_wire;
 pub use preprocess_wire::{
     WasmAnalysisPreprocessInput, WasmError, WasmPreprocessOptions, WasmPreprocessRequest,
     WasmPreprocessResponse, WasmResource, WasmSafeMode, WasmSourceMapSegment, WasmSourceMapping,
@@ -48,11 +46,6 @@ use response_projection::parse_optional_product;
 use response_projection::{enforce_output_limit, project_response};
 pub use response_wire::*;
 pub use shared_wire_generated::{WasmMathLanguage, WasmSeverity};
-#[cfg(feature = "text-projection")]
-pub use text_projection_wire::{
-    WasmTextNode, WasmTextNodeKind, WasmTextProjectionRequest, WasmTextProjectionResponse,
-    project_text_request,
-};
 
 pub fn preprocess_request(
     request: WasmPreprocessRequest,
@@ -263,17 +256,6 @@ mod bindings {
     pub fn preprocess_js(request: JsValue) -> Result<JsValue, JsValue> {
         let request = deserialize_request(request)?;
         let response = preprocess_request(request)
-            .map_err(|error| JsValue::from_str(&serialize_error(&error)))?;
-        response
-            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-            .map_err(|error| JsValue::from_str(&serialize_error(&serialization_error(error))))
-    }
-
-    #[cfg(feature = "text-projection")]
-    #[wasm_bindgen(js_name = projectText)]
-    pub fn project_text_js(request: JsValue) -> Result<JsValue, JsValue> {
-        let request = deserialize_request(request)?;
-        let response = project_text_request(request)
             .map_err(|error| JsValue::from_str(&serialize_error(&error)))?;
         response
             .serialize(&serde_wasm_bindgen::Serializer::json_compatible())

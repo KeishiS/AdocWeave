@@ -1,5 +1,5 @@
 [package]
-name = "adocweave-wasm"
+name = "adocweave-textlint-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,25 +7,20 @@ homepage.workspace = true
 publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Versioned WebAssembly adapter for AdocWeave"
+description = "Node.js WebAssembly adapter for AdocWeave textlint integration"
 
 [dependencies]
-adocweave = { path = "../adocweave" }
+adocweave = { path = "../adocweave", features = ["text-projection"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = "=0.3.98"
 serde-wasm-bindgen = "0.6"
 wasm-bindgen = "=0.2.121"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
-
-[[bin]]
-name = "adocweave-conformance-native"
-path = "src/bin/conformance-native.rs"
 
 [package.metadata.dist]
 dist = false

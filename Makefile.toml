@@ -586,20 +586,19 @@ wasm-bindgen \
 '''
 
 [tasks.build-textlint-wasm-node]
-description = "Build the private Node.js text projection bridge"
+description = "Build the dedicated Node.js textlint WebAssembly adapter"
 script_runner = "@shell"
 script = '''
 set -euo pipefail
 cargo build \
-  -p adocweave-wasm \
+  -p adocweave-textlint-wasm \
   --release \
   --target wasm32-unknown-unknown \
-  --features text-projection \
   --target-dir target/textlint-wasm-build
 wasm-bindgen \
   --target nodejs \
   --out-dir target/adocweave-textlint-wasm-node \
-  target/textlint-wasm-build/wasm32-unknown-unknown/release/adocweave_wasm.wasm
+  target/textlint-wasm-build/wasm32-unknown-unknown/release/adocweave_textlint_wasm.wasm
 '''
 
 [tasks.textlint-dependencies]

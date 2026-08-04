@@ -23,8 +23,8 @@ export function toTxtAST(source, projection) {
     return { type, ...positions.base(node.sourceRange), ...extra, children };
   }
 
-  function text(type, node, value = content(node)) {
-    return { type, ...positions.base(node.sourceRange), value };
+  function text(type, node, value = content(node), extra = {}) {
+    return { type, ...positions.base(node.sourceRange), ...extra, value };
   }
 
   function phrasing(node) {
@@ -38,8 +38,9 @@ export function toTxtAST(source, projection) {
       case "emphasis":
         return [parent("Emphasis", node, node.children.flatMap(phrasing))];
       case "link":
+        return [parent("Link", node, node.children.flatMap(phrasing), { url: node.url })];
       case "reference":
-        return [parent("Link", node, node.children.flatMap(phrasing), { url: "" })];
+        return [parent("Link", node, node.children.flatMap(phrasing), { url: node.url })];
       case "hard-break":
         return [{ type: "Break", ...positions.base(node.sourceRange) }];
       case "comment":
@@ -78,7 +79,7 @@ export function toTxtAST(source, projection) {
         const items = bodyChildren
           .filter((child) => child.kind === "list-item")
           .flatMap(convertBlock);
-        return [...prefix, parent("List", node, items, { ordered: null })];
+        return [...prefix, parent("List", node, items, { ordered: node.ordered })];
       }
       case "list-item": {
         const blocks = [];
@@ -131,7 +132,7 @@ export function toTxtAST(source, projection) {
       case "table-cell":
         return [parent("TableCell", node, bodyChildren.flatMap(phrasing))];
       case "code-block":
-        return [...prefix, text("CodeBlock", node)];
+        return [...prefix, text("CodeBlock", node, content(node), { lang: node.language })];
       case "comment":
         return [paragraphFor(node, phrasing(node))];
       case "excluded":

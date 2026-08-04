@@ -82,14 +82,14 @@ const contractNotes = [
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
   "公開契約に破壊的変更はありません。Rust APIへ``text-projection`` featureと``output::text`` moduleを追加しました。既定のfeature構成と既存APIの動作は変わりません。",
-  `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`projectText\`\`は専用featureでbuildする開発用packageだけに含み、Browser packageには含めません。`,
+  `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`projectText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
   "既存のRust API、CLI、Language ServerおよびBrowser packageを使う場合、移行作業は不要です。",
-  "文章抽出APIを使うRust codeでは``text-projection`` featureを有効にし、``adocweave::output::text::project_text``を呼び出します。",
+  "文章抽出APIを使うRust codeでは``text-projection`` featureを有効にし、``adocweave::output::text::project_text``を呼び出します。Node.js向けadapterは``adocweave-textlint-wasm``としてBrowser向けWASMから分離しました。",
   "textlint連携はrepository内の文書検査に使うprivate toolであり、release assetには含めません。",
   `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
   `CLI、LSP、browser、ZedおよびVS Code向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,

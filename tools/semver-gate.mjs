@@ -24,6 +24,7 @@ export const CHECKED_CRATES = [
   "adocweave-config",
   "adocweave-host",
   "adocweave-lsp",
+  "adocweave-textlint-wasm",
   "adocweave-wasm",
   "adocweave-workspace",
 ];

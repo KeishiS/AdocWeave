@@ -12,7 +12,9 @@ const require = createRequire(import.meta.url);
 
 let bridge;
 function loadBridge() {
-  bridge ??= require(`${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_wasm.js`);
+  bridge ??= require(
+    `${repositoryRoot}target/adocweave-textlint-wasm-node/adocweave_textlint_wasm.js`,
+  );
   return bridge;
 }
 

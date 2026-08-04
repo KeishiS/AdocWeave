@@ -21,6 +21,55 @@ test("AsciiDocを有効なTxtASTへ変換する", () => {
   assert.ok(ast.children.some((node) => node.type === "List"));
 });
 
+test("TxtAST固有のプロパティを保持する", () => {
+  const source = `:site: https://example.com
+:page: other
+
+link:{site}[表示] と xref:{page}.adoc#section[参照]
+
+* 箇条書き
+
+. 番号付き
+
+----
+plain
+----
+
+[source,rust]
+----
+fn main() {}
+----
+`;
+  const ast = new Processor().processor(".adoc").preProcess(source, "properties.adoc");
+  testAST(ast);
+
+  const nodes = [];
+  const stack = [ast];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    nodes.push(node);
+    stack.push(...(node.children ?? []));
+  }
+
+  const links = nodes.filter((node) => node.type === "Link");
+  assert.deepEqual(
+    links.map((node) => node.url),
+    ["other.adoc#section", "https://example.com"]
+  );
+  assert.deepEqual(
+    links.map((node) => node.children.map((child) => child.value).join("")),
+    ["参照", "表示"]
+  );
+  assert.deepEqual(
+    nodes.filter((node) => node.type === "List").map((node) => node.ordered),
+    [true, false]
+  );
+  assert.deepEqual(
+    nodes.filter((node) => node.type === "CodeBlock").map((node) => node.lang),
+    ["rust", null]
+  );
+});
+
 test("未対応の拡張子を拒否する", () => {
   assert.throws(() => new Processor().processor(".md"), /未対応/);
 });
