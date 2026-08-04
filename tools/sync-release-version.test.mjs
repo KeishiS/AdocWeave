@@ -299,6 +299,28 @@ test("Git worktreeでもgeneratorの未追跡fileを検出して削除する", (
   }
 });
 
+test("repository内の作業用worktree directoryをversion目録から除外する", () => {
+  const scope = fixture();
+  try {
+    assert.equal(spawnSync("git", ["init", "-q"], { cwd: scope.directory }).status, 0);
+    assert.equal(spawnSync("git", ["add", "."], { cwd: scope.directory }).status, 0);
+    const worktree = join(scope.directory, ".agents", "worker");
+    mkdirSync(worktree, { recursive: true });
+    assert.equal(spawnSync("git", ["init", "-q"], { cwd: worktree }).status, 0);
+    writeFileSync(join(worktree, "release-manifest.json"), '{"packageVersion":"1.2.3"}\n');
+    assert.doesNotThrow(() =>
+      syncReleaseVersion({
+        root: scope.root,
+        mode: "check",
+        registry: registry(),
+        runGenerator: generatedRunner,
+      })
+    );
+  } finally {
+    scope.cleanup();
+  }
+});
+
 test("Gitで追跡中の削除済みfileを検査対象から除外する", () => {
   const scope = fixture();
   try {
