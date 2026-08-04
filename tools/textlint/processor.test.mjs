@@ -74,6 +74,51 @@ test("未対応の拡張子を拒否する", () => {
   assert.throws(() => new Processor().processor(".md"), /未対応/);
 });
 
+test("属性参照、pass、URL、includeおよび未対応構文を文章規則へ渡さない", () => {
+  const source = `:name: 属性参照の値
+
+本文 {name} pass:[インライン通過] https://example.invalid/path
+
+include::存在しないpart.adoc[]
+
+++++
+ブロック通過
+++++
+
+[source,rust,options=unknown]
+----
+unsupported_marker();
+----
+`;
+  const ast = new Processor().processor(".adoc").preProcess(source, "excluded.adoc");
+  testAST(ast);
+  const nodes = [];
+  const stack = [ast];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    nodes.push(node);
+    stack.push(...(node.children ?? []));
+  }
+  const prose = nodes
+    .filter((node) => node.type === "Str")
+    .map((node) => node.value)
+    .join("");
+  assert.match(prose, /本文/);
+  for (const excluded of [
+    "属性参照の値",
+    "インライン通過",
+    "example.invalid",
+    "存在しないpart.adoc",
+    "ブロック通過",
+    "unsupported_marker",
+  ]) {
+    assert.ok(!prose.includes(excluded), `${excluded}が文章規則へ渡されました`);
+  }
+  const link = nodes.find((node) => node.type === "Link");
+  assert.equal(link.url, "https://example.invalid/path");
+  assert.deepEqual(link.children, []);
+});
+
 test("すべての執筆文書を原文に対応するTxtASTへ変換する", () => {
   const tracked = execFileSync("git", ["ls-files", "*.adoc"], {
     cwd: repositoryRoot,
