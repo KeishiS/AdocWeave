@@ -97,18 +97,19 @@ Literal blockとsource blockはcodeとして区別します。数式、文書属
 各segmentは元sourceのUTF-8 byte rangeを保持します。連結した検索文字列内のoffsetとは一致しないため、
 位置対応が必要な場合はsegmentごとのrangeを使用します。
 
-=== 原文に対応する文章構造
+=== textlint用文章構造
 
-``text-projection`` featureを有効にすると、``adocweave::output::text::project_text``は一つの
-``Analysis``から``TextProjection``を生成します。これは自然言語を処理するadapter向けの構造であり、
-見出し、段落、リスト、表、引用、code、commentおよびinline装飾の親子関係を保持します。
+``adocweave-textlint`` crateの``plan``は、一つの``Analysis``からTxtASTに対応する``TxtAstPlan``を生成します。
+校正対象の選択とTxtASTへの対応付けはコアへ含めず、この専用crateで行います。見出し、段落、リスト、表、
+引用、code、commentおよびinline装飾の親子関係を保ち、各範囲をJavaScript文字列と同じUTF-16単位で返します。
 
-各``TextNode``は構文記号を含む``source_range``と、本文だけを指す任意の``content_range``をUTF-8 byte単位で
-持ちます。子は元入力に現れる順であり、親の``source_range``に含まれます。文章の値は保持しません。
-adapterはrangeで同じ入力を切り出し、属性展開値や生成したlabelを原文として扱わないようにします。
+planは文章を複製せず、原文から``raw``と``value``を取り出す範囲を持ちます。Node.js用WebAssemblyは
+``parseText``でplanをJavaScriptへ渡し、JavaScript側は位置と文字列を付加するだけで、AsciiDoc構文を
+再解釈しません。
 
-Source block、inline code、数式、pass、属性参照および表示文字列のないmacroは文章の検査対象から外します。
-includeは展開せず、位置は解析した一つの物理文書を指します。
+Source blockとinline codeはcodeとして区別し、文章規則の対象から外します。数式、pass、属性参照および
+表示文字列のないmacroは文章の境界として扱います。footnote本文、画像の代替文およびUI macroの表示文字列は
+校正対象です。includeは展開せず、位置は解析した一つの物理文書を指します。
 
 === 利用側アプリの拡張
 

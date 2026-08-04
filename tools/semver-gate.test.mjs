@@ -46,10 +46,14 @@ test("library targetを持つcrateはすべて検査対象である", () => {
 
 test("新規crateの比較省略は、そのcrateを含むbaselineで自動的に失効する", () => {
   const beforeIntroduction = cratesForBaseline(parseVersion("0.27.3", "baseline"));
-  const afterIntroduction = cratesForBaseline({ major: 0, minor: 29, patch: 0 });
+  const afterWasmIntroduction = cratesForBaseline({ major: 0, minor: 29, patch: 0 });
+  const afterAdapterIntroduction = cratesForBaseline({ major: 0, minor: 30, patch: 0 });
 
   assert.ok(!beforeIntroduction.includes("adocweave-textlint-wasm"));
-  assert.ok(afterIntroduction.includes("adocweave-textlint-wasm"));
+  assert.ok(!beforeIntroduction.includes("adocweave-textlint"));
+  assert.ok(afterWasmIntroduction.includes("adocweave-textlint-wasm"));
+  assert.ok(!afterWasmIntroduction.includes("adocweave-textlint"));
+  assert.ok(afterAdapterIntroduction.includes("adocweave-textlint"));
   assert.ok(beforeIntroduction.includes("adocweave"));
 });
 

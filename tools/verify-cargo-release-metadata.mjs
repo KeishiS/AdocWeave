@@ -17,6 +17,7 @@ try {
     "adocweave-cli",
     "adocweave-host",
     "adocweave-lsp",
+    "adocweave-textlint",
     "adocweave-textlint-wasm",
     "adocweave-wasm",
   ];

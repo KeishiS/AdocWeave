@@ -24,6 +24,7 @@ export const CHECKED_CRATES = [
   "adocweave-config",
   "adocweave-host",
   "adocweave-lsp",
+  "adocweave-textlint",
   "adocweave-textlint-wasm",
   "adocweave-wasm",
   "adocweave-workspace",
@@ -35,6 +36,7 @@ export const CHECKED_CRATES = [
 /// the introduction version explicit makes the exemption expire
 /// automatically once the selected baseline contains the crate.
 export const CRATE_INTRODUCTIONS = {
+  "adocweave-textlint": { major: 0, minor: 30, patch: 0 },
   "adocweave-textlint-wasm": { major: 0, minor: 29, patch: 0 },
 };
 
