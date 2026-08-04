@@ -16,16 +16,12 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.match(
-    notes,
-    new RegExp(`v${PREVIOUS_RELEASE_VERSION.replaceAll(".", "\\.")}のRelease Notesで設定schemaに変更がないと案内していた誤り`),
-  );
-  assert.match(notes, /``resources\.roots``と``local-targets\.project-root``へ相対パスの制約/);
-  assert.match(notes, /``local-targets\.enabled``が``true``の場合は``project-root``を必須/);
-  assert.match(notes, /複数プロセスが同時に取得できない方式/);
-  assert.match(notes, /公開入口から``PROTOCOL_SCHEMA_VERSION``を取得/);
-  assert.match(notes, /``html\.stylesheet-files``の設定schemaを実行時の検査へそろえました/);
-  assert.match(notes, /開発依存を脆弱性監査へ含め/);
+  assert.equal(PREVIOUS_RELEASE_VERSION, "0.29.0");
+  assert.match(notes, /``adocweave-textlint`` crateへ集約/);
+  assert.match(notes, /footnote本文、画像の代替文およびUI macro/);
+  assert.match(notes, /quote以外のcontainerを``BlockQuote``として扱いません/);
+  assert.match(notes, /自動修正を行わない保証は維持/);
+  assert.match(notes, /``npx --package``/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -34,14 +30,18 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.23\.0から変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
-  // patch版のため、semver gateは破壊的変更を受理しません。本文も述べません。
-  assert.doesNotMatch(notes, /破壊的変更：/);
-  assert.match(notes, /破壊的変更はありません/);
+  assert.match(notes, /破壊的変更：/);
+  assert.match(notes, /``text-projection`` feature/);
+  assert.match(notes, /``adocweave::output::text``を削除/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /実行時に受理されていた設定の移行は不要です/);
-  assert.doesNotMatch(notes, /設定schemaはv0\.27\.1から変更していません/);
-  assert.match(notes, /公開入口の``PROTOCOL_SCHEMA_VERSION``を記録/);
+  assert.match(notes, /CLI、Language ServerおよびBrowser packageだけを使う場合、移行作業は不要です/);
+  assert.match(notes, /``adocweave-textlint::plan``と``TxtAstPlan``へ移行/);
+  assert.match(notes, /``textlint@15\.8\.0``/);
+  assert.match(notes, /``@adocweave\/asciidoc`` plugin/);
+  assert.match(notes, /日本語規則、用語集および対象文書一覧は公開パッケージへ含めません/);
   assert.match(notes, /WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず/);
+  assert.match(notes, /``parseText``は専用の``adocweave-textlint-wasm``だけに含み/);
+  assert.match(notes, /Browser packageには含めません/);
   assert.match(notes, new RegExp(`\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`));
   assert.match(notes, /``schemaVersion``は4のままです/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
@@ -53,6 +53,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   );
   assert.match(notes, /以前のVSIXとnative directoryを保持/);
   assert.match(notes, /rollback時は旧directoryをdev extensionとして選び直し、Zedを再起動/);
+  assert.match(notes, /以前の検証済みURLへ戻し、lockfileから依存を再導入/);
   assert.match(notes, /すべてのZedプロセスを終了してから、エラーに表示されたロックのpathを削除/);
   assert.match(notes, /registryへpackageまたは拡張を公開しません/);
   assert.match(notes, /Developer ID署名とnotarizationを行わず/);
@@ -100,7 +101,9 @@ test("Release Notesが述べるschema versionはmanifestの実際の値と一致
 test("Release Notesは別release trainのtagを拒否する", () => {
   assert.equal(manifest.packageVersion, RELEASE_NOTES_VERSION);
   const expectedError = new RegExp(`v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}専用`);
-  assert.throws(() => buildReleaseNotes(`v${PREVIOUS_RELEASE_VERSION}`), expectedError);
+  if (PREVIOUS_RELEASE_VERSION !== RELEASE_NOTES_VERSION) {
+    assert.throws(() => buildReleaseNotes(`v${PREVIOUS_RELEASE_VERSION}`), expectedError);
+  }
   assert.throws(() => buildReleaseNotes("v9.9.9"), expectedError);
   assert.throws(() => validateReleaseNotes("Generated changes"), /必須見出し/);
 });

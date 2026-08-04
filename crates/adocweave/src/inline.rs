@@ -4,7 +4,42 @@ mod lowering;
 
 use crate::budget::{BudgetExceeded, ParseBudget};
 pub use crate::inline_model::*;
+use crate::limits::AnalysisLimits;
 use crate::source::{TextRange, TextSize};
+
+/// Returns whether a source fragment is exactly one plain inline text node.
+///
+/// This uses the same bounded recognizer as document parsing. Escapes, links,
+/// macros, attribute references, styled text, code, pass-through content, and
+/// formulas therefore return `false` without exposing parser implementation
+/// types.
+pub fn is_plain_inline_text(value: &str) -> bool {
+    let limits = AnalysisLimits::default();
+    if value.len() > limits.max_line_bytes as usize {
+        return false;
+    }
+    let Ok(end) = TextSize::new(value.len()) else {
+        return false;
+    };
+    let range = TextRange::new(TextSize::ZERO, end).expect("zero-to-length range is ordered");
+    let Ok(mut budget) = ParseBudget::new(AnalysisLimits {
+        max_nodes: 2,
+        ..limits
+    }) else {
+        return false;
+    };
+    let Ok(output) =
+        parse_with_budget_impl(value, range, InlineParseConfig::default(), &mut budget)
+    else {
+        return false;
+    };
+    matches!(
+        output.inlines.as_slice(),
+        [Inline::Text(text)] if output.problems.is_empty()
+            && text.range == range
+            && text.value == value
+    )
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct InlineParseOutput {
@@ -2054,11 +2089,11 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DelimiterIndex, FormulaToken, Inline, InlineCandidate, InlineCandidateIndex,
-        InlineLiteralKind, InlineParseConfig, InlineProblemKind, InlineRecognition, InlineStyle,
-        InlineToken, LinkToken, MacroForm, MacroToken, MarkerForm, MarkerToken,
-        ReferenceDestination, ReferenceToken, StandardMacroKind, inline_at, next_candidate, parse,
-        parse_text, recognize_macro, recognize_marker,
+        AnalysisLimits, DelimiterIndex, FormulaToken, Inline, InlineCandidate,
+        InlineCandidateIndex, InlineLiteralKind, InlineParseConfig, InlineProblemKind,
+        InlineRecognition, InlineStyle, InlineToken, LinkToken, MacroForm, MacroToken, MarkerForm,
+        MarkerToken, ReferenceDestination, ReferenceToken, StandardMacroKind, inline_at,
+        is_plain_inline_text, next_candidate, parse, parse_text, recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -2068,6 +2103,33 @@ mod tests {
             TextSize::new(end).expect("small offset"),
         )
         .expect("ordered range")
+    }
+
+    #[test]
+    fn plain_inline_query_uses_the_document_recognizer_and_a_tight_budget() {
+        for value in ["日本語です。", "C++ APIです。", "A * Bです。"] {
+            assert!(
+                is_plain_inline_text(value),
+                "plain text was rejected: {value}"
+            );
+        }
+        for value in [
+            "",
+            "https://example.com/path",
+            "user@example.com",
+            "{name}",
+            "**強調**です。",
+            "`code`",
+            "pass:[raw]",
+        ] {
+            assert!(
+                !is_plain_inline_text(value),
+                "inline syntax was accepted: {value}"
+            );
+        }
+        let boundary = "a".repeat(AnalysisLimits::default().max_line_bytes as usize);
+        assert!(is_plain_inline_text(&boundary));
+        assert!(!is_plain_inline_text(&format!("{boundary}a")));
     }
 
     #[test]

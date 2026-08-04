@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "comment": "文書校正に使うtextlint依存のライセンス目録です。配布物には含めません。取得元とintegrityを検証し、実際のライセンス集合とこの一覧の一致を求めます。",
+  "licenses": [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT"
+  ],
+  "overrides": {
+    "node_modules/format": "MIT"
+  }
+}
