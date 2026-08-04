@@ -285,6 +285,14 @@ test("VS Code拡張だけの変更ではRust sourceの検査を実行しない",
   assert.equal(scope.nixPackage, false);
 });
 
+test("textlint toolの変更では文書、adapter、依存関係を検査する", () => {
+  const scope = qualityScope(["tools/textlint/adapter.mjs"]);
+  assert.equal(scope.documents, true);
+  assert.equal(scope.adapters, true);
+  assert.equal(scope.dependencies, true);
+  assert.equal(scope.rustSource, false);
+});
+
 test("検査の定義を変える変更ではすべてを実行する", () => {
   // task graph、toolchainおよびworkflowは、どの検査の結果も変え得ます。
   for (const pathname of ["Makefile.toml", "flake.nix", ".github/workflows/quality.yml"]) {
@@ -319,12 +327,16 @@ test("依存監査が読むすべての入力が監査を要求する", () => {
       "tools/verify-duplicate-dependencies.mjs",
       "tools/verify-vscode-dependencies.mjs",
       "tools/verify-vscode-dependencies.test.mjs",
+      "tools/npm-lock-policy.mjs",
+      "tools/verify-textlint-dependencies.mjs",
+      "tools/verify-textlint-dependencies.test.mjs",
       "tools/generate-third-party-notices.mjs",
       "Cargo.lock",
       "Cargo.toml",
       "deny.toml",
       "editors/zed/Cargo.lock",
       "editors/vscode/package-lock.json",
+      "tools/textlint/package-lock.json",
     ]
   ) {
     assert.equal(qualityScope([pathname]).dependencies, true, pathname);

@@ -48,6 +48,7 @@ const NON_RELEASE_ROOTS = [
   "fixtures/",
   "fuzz/",
   "security/",
+  "tools/textlint/",
 ];
 const NON_RELEASE_FILES = new Set([
   ".adocweave.toml",
@@ -96,6 +97,9 @@ const NON_RELEASE_FILES = new Set([
   "tools/verify-dependency-boundaries.test.mjs",
   "tools/verify-duplicate-dependencies.mjs",
   "tools/verify-vscode-dependencies.test.mjs",
+  "tools/npm-lock-policy.mjs",
+  "tools/verify-textlint-dependencies.mjs",
+  "tools/verify-textlint-dependencies.test.mjs",
 ]);
 const NATIVE_TOOLS = [
   "dependency-governance.sh",
@@ -209,7 +213,7 @@ const RUST_SOURCE_FILES = new Set([
 /// edited one of those changed what the audit accepts and still reported
 /// success without running it. `tools/native-change-plan.test.mjs` reads the
 /// audit script and requires every repository path it names to appear here.
-export const DEPENDENCY_AUDIT_ROOTS = ["security/", "editors/"];
+export const DEPENDENCY_AUDIT_ROOTS = ["security/", "editors/", "tools/textlint/"];
 export const DEPENDENCY_AUDIT_FILES = new Set([
   "Cargo.lock",
   "Cargo.toml",
@@ -223,11 +227,21 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   "tools/verify-duplicate-dependencies.mjs",
   "tools/verify-vscode-dependencies.mjs",
   "tools/verify-vscode-dependencies.test.mjs",
+  "tools/npm-lock-policy.mjs",
+  "tools/verify-textlint-dependencies.mjs",
+  "tools/verify-textlint-dependencies.test.mjs",
 ]);
 /// Paths that decide whether the adapter contracts have anything to verify.
-const ADAPTER_ROOTS = ["crates/", "editors/", "protocol/", "web-worker/", "fixtures/"];
+const ADAPTER_ROOTS = [
+  "crates/",
+  "editors/",
+  "protocol/",
+  "web-worker/",
+  "fixtures/",
+  "tools/textlint/",
+];
 /// Paths whose authored AsciiDoc or generated HTML the document checks read.
-const DOCUMENT_ROOTS = ["docs/", "fixtures/"];
+const DOCUMENT_ROOTS = ["docs/", "fixtures/", "tools/textlint/"];
 const DOCUMENT_FILES = new Set([
   "README.adoc",
   "CONTRIBUTING.adoc",

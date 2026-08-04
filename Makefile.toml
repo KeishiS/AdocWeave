@@ -199,6 +199,7 @@ command = "node"
 args = [
   "--test",
   "tools/verify-dependency-boundaries.test.mjs",
+  "tools/verify-textlint-dependencies.test.mjs",
   "tools/verify-vscode-dependencies.test.mjs",
 ]
 
@@ -557,6 +558,47 @@ wasm-bindgen \
   target/wasm32-unknown-unknown/release/adocweave_wasm.wasm
 '''
 
+[tasks.build-textlint-wasm-node]
+description = "Build the private Node.js text projection bridge"
+script_runner = "@shell"
+script = '''
+set -euo pipefail
+cargo build \
+  -p adocweave-wasm \
+  --release \
+  --target wasm32-unknown-unknown \
+  --features text-projection \
+  --target-dir target/textlint-wasm-build
+wasm-bindgen \
+  --target nodejs \
+  --out-dir target/adocweave-textlint-wasm-node \
+  target/textlint-wasm-build/wasm32-unknown-unknown/release/adocweave_wasm.wasm
+'''
+
+[tasks.textlint-dependencies]
+private = true
+command = "npm"
+args = [
+  "--cache",
+  "target/npm-cache",
+  "ci",
+  "--ignore-scripts",
+  "--prefix",
+  "tools/textlint",
+]
+
+[tasks.textlint-plugin-check]
+description = "Test the private AsciiDoc textlint processor and rules"
+dependencies = ["build-textlint-wasm-node", "build-wasm", "textlint-dependencies"]
+command = "npm"
+args = ["test", "--prefix", "tools/textlint"]
+
+[tasks.docs-prose-lint]
+description = "Check authored AsciiDoc prose without modifying files"
+dependencies = ["build-textlint-wasm-node", "textlint-dependencies"]
+command = "npm"
+args = ["run", "lint", "--prefix", "tools/textlint"]
+
 [tasks.build-conformance-native]
 description = "Build the native JSON conformance adapter"
 command = "cargo"
@@ -872,6 +914,7 @@ description = "Check authored AsciiDoc and the HTML it produces"
 dependencies = [
   "adoc-check",
   "docs-lint",
+  "docs-prose-lint",
   "html5-check",
 ]
 
@@ -890,6 +933,7 @@ dependencies = [
   "test-vscode-extension-host",
   "test-vscode-release-package",
   "test-cross-runtime",
+  "textlint-plugin-check",
 ]
 
 [tasks.quality]

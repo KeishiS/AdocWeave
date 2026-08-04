@@ -1,0 +1,58 @@
+= ADR 0016: 原文に対応する文章構造と文書校正の分離
+:status: accepted
+
+== 文脈
+
+AdocWeaveのAsciiDoc文書をtextlintで校正するには、見出し、段落、リスト、表およびinline要素の
+親子関係と、元の文書上の位置が必要です。既存のcanonical ASTは適合性比較向けの簡略表現であり、
+``DocumentProjection.searchableText``は検索向けに文章を平坦化するため、どちらもTxtASTへ変換する
+入力には不足します。
+
+textlintはJavaScript文字列上のUTF-16位置を使います。一方、AdocWeaveの位置はUTF-8 byte単位です。
+この差をコアで吸収するとJavaScript固有の表現がparser、HTML変換およびLanguage Serverと共有する
+意味情報へ入ります。また、既存のBrowser向けWebAssemblyへ校正用出力を追加すると、校正を使わない
+配布物の大きさと公開protocolも変わります。
+
+== 決定
+
+``Analysis``から要求時に導出する、原文に対応した文章構造projectionを追加します。このprojectionは
+文章要素の種類、親子関係、要素全体の範囲、本文の範囲および見出しlevelだけを持ちます。文章は値として
+複製せず、利用側が範囲を使って元入力から取り出します。属性展開後の値、生成したlink labelおよび
+include先の文章を混ぜません。
+
+textlintとの接続では、次の責務に分けます。
+
+* コア：校正対象と対象外の区分、UTF-8 byte範囲および文章構造
+* Node.js専用WebAssembly入口：projectionの所有値への変換
+* Node.js adapter：UTF-16位置、行と列およびTxtAST nodeへの変換
+* textlint規則：文章nodeの検査と診断
+* ``cargo make`` task：対象文書の選択、読み取り専用実行および終了状態
+
+Node.js専用入口は既定で無効なCargo featureとして構築します。既存の``process``、
+``protocol/public-api.json``、Web WorkerおよびBrowser成果物には追加しません。専用taskは通常のNode.js向け
+WebAssemblyとは異なる出力先を使います。
+
+プロジェクト固有の禁止語は``config/japanese-terminology.json``だけに定義します。Rustの検査とtextlint規則は
+同じファイルを読みます。理由と書き直すときの判断基準は``terminology.adoc``に記載し、JSONの項目から
+固定したIDで参照します。
+
+校正taskは自動修正を行いません。修正用task、``--fix``の呼び出しおよび修正位置の保証を公開範囲に
+含めません。
+
+== 採用しない案
+
+canonical ASTや検索用文字列をNode.js側で再解釈する方法は、AsciiDoc構文をadapterで再び推測するため
+採用しません。意味情報全体を公開する方法は、校正に不要な型まで互換性を維持する範囲に含めるため
+採用しません。生成HTMLや正規表現から文章を取り出す方法は、元のAsciiDoc上の構造と位置を失うため
+採用しません。
+
+初期用途はリポジトリ内の文書検査です。Node.js packageの公開とnpm registryへの登録は行いません。
+
+== 帰結
+
+新しいprojectionは既存の``Analysis``を変更せずに読み取るため、parserの認識結果、HTML、Language Server、
+canonical ASTおよび既存の``DocumentProjection``には影響しません。Browser buildでfeatureを有効にしない
+ことと、既存protocolへ校正用fieldが現れないことを検査します。
+
+includeを展開しない一つの物理ファイルだけが診断対象です。将来、外部向けプラグインまたはincludeを展開した
+校正を提供する場合は、配布方法、複数ファイルの位置対応および保守範囲を別のIssueとADRで判断します。
