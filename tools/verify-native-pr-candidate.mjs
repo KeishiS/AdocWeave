@@ -9,7 +9,7 @@ export function expectedPullRequestAssets(plan, { global = true, native = true }
   );
   return plan.assets
     .filter(({ kind, target }) =>
-      (global && ["browser", "vscode", "zed"].includes(kind)) ||
+      (global && ["browser", "textlint-plugin", "vscode", "zed"].includes(kind)) ||
       (native && target && nativeTargets.has(target)))
     .map(({ name }) => name)
     .sort();

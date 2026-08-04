@@ -1,5 +1,8 @@
-import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
+
+import { fetchedSafely, validSha512Integrity } from "./npm-lock-policy.mjs";
+
+export { validSha512Integrity } from "./npm-lock-policy.mjs";
 
 const manifest = JSON.parse(readFileSync("editors/vscode/package.json", "utf8"));
 const lock = JSON.parse(readFileSync("editors/vscode/package-lock.json", "utf8"));
@@ -32,24 +35,6 @@ if (buildLicenses.schemaVersion !== 1) {
 /// reaches them. Reading the two boundaries as one policy meant the build tools
 /// were checked as neither, since `--omit=dev` and `entry.dev === true` skipped
 /// them: Biome, TypeScript, esbuild and vsce all run in CI and produce the VSIX.
-export function validSha512Integrity(integrity) {
-  if (typeof integrity !== "string" || !integrity.startsWith("sha512-")) return false;
-  const encoded = integrity.slice("sha512-".length);
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0) return false;
-
-  const digest = Buffer.from(encoded, "base64");
-  return digest.byteLength === 64 && digest.toString("base64") === encoded;
-}
-
-function fetchedSafely(entry) {
-  return (
-    typeof entry.version === "string" &&
-    validSha512Integrity(entry.integrity) &&
-    typeof entry.resolved === "string" &&
-    entry.resolved.startsWith("https://registry.npmjs.org/")
-  );
-}
-
 const observedBuildLicenses = new Set();
 for (const [path, entry] of Object.entries(lock.packages)) {
   if (!path) continue;

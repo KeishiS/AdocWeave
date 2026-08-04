@@ -32,6 +32,22 @@
       "runtimeDependenciesAllowed": true
     },
     {
+      "id": "textlint-document-check",
+      "kind": "npm",
+      "manifest": "tools/textlint/package.json",
+      "lockfile": "tools/textlint/package-lock.json",
+      "distributed": false,
+      "runtimeDependenciesAllowed": false
+    },
+    {
+      "id": "textlint-asciidoc-plugin",
+      "kind": "npm",
+      "manifest": "packages/textlint-plugin-asciidoc/package.json",
+      "lockfile": "packages/textlint-plugin-asciidoc/package-lock.json",
+      "distributed": true,
+      "runtimeDependenciesAllowed": false
+    },
+    {
       "id": "ci-and-development-tools",
       "kind": "nix",
       "manifest": "flake.nix",

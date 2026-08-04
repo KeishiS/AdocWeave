@@ -8,7 +8,7 @@ import {
 
 test("pull request candidateはWindows・macOSとglobal成果物だけを要求する", () => {
   const expected = expectedPullRequestAssets(plan);
-  assert.equal(expected.length, 7);
+  assert.equal(expected.length, 8);
   assert(expected.includes("adocweave-cli-aarch64-apple-darwin.zip"));
   assert(expected.includes("adocweave-lsp-x86_64-pc-windows-msvc.zip"));
   assert(expected.includes(`adocweave-vscode-${plan.packageVersion}.vsix`));
@@ -34,6 +34,7 @@ test("global-only candidateはnative成果物を要求しない", () => {
   const expected = expectedPullRequestAssets(plan, { global: true, native: false });
   assert.deepEqual(expected, [
     `adocweave-browser-${plan.packageVersion}.tar.xz`,
+    `adocweave-textlint-plugin-asciidoc-${plan.packageVersion}.tgz`,
     `adocweave-vscode-${plan.packageVersion}.vsix`,
     `adocweave-zed-${plan.packageVersion}.tar.xz`,
   ]);

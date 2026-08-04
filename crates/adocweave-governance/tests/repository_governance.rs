@@ -32,6 +32,29 @@ struct ReleaseManifest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JapaneseTerminology {
+    schema_version: u8,
+    forbidden_terms: Vec<ForbiddenJapaneseTerm>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ForbiddenJapaneseTerm {
+    id: String,
+    term: String,
+    r#match: ForbiddenTermMatch,
+    message: String,
+    documentation: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ForbiddenTermMatch {
+    Substring,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SyntaxSupportManifest {
     schema_version: u8,
     features: Vec<SyntaxSupportFeature>,
@@ -391,51 +414,95 @@ fn tracked_adoc_corpus_is_lossless_and_has_valid_ranges() {
     }
 }
 
-/// Words whose dictionary translation misleads a Japanese reader.
-///
-/// These are checkable because they are plain Japanese: an identifier, command
-/// or configuration key never contains them, so a match is never a false one.
-/// The check only says where a decision is needed. What to write instead
-/// depends on what the sentence refers to, which only the author knows, and
-/// `docs/developer-guide/terminology.adoc` explains why.
-const FORBIDDEN_JAPANESE_WORDS: &[&str] = &["契約"];
-
-/// The document that defines the rule quotes the words it forbids.
-const TERMINOLOGY_DOCUMENT: &str = "docs/developer-guide/terminology.adoc";
-
 #[test]
-fn authored_documents_avoid_the_forbidden_japanese_words() {
+fn tracked_adoc_corpus_builds_textlint_plans() {
     let output = Command::new("git")
         .args(["ls-files", "-z", "*.adoc"])
         .current_dir(repository_root())
         .output()
         .expect("git ls-files");
     assert!(output.status.success());
-    let mut found = Vec::new();
     for path in output
         .stdout
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
     {
         let path = std::str::from_utf8(path).expect("UTF-8 repository path");
-        if path == TERMINOLOGY_DOCUMENT {
-            continue;
-        }
-        let source = fs::read_to_string(repository_root().join(path)).expect("authored document");
-        for (number, line) in source.lines().enumerate() {
-            for word in FORBIDDEN_JAPANESE_WORDS {
-                if line.contains(word) {
-                    found.push(format!("{path}:{}: {word}", number + 1));
-                }
-            }
-        }
+        let analysis = analyze(path);
+        let plan = adocweave_textlint::plan(&analysis, adocweave_textlint::PlanLimits::default())
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+        assert_eq!(
+            plan.range,
+            adocweave_textlint::Utf16Range(
+                0,
+                u32::try_from(analysis.source().encode_utf16().count())
+                    .expect("document UTF-16 length")
+            ),
+            "{path}"
+        );
     }
+}
+
+fn japanese_terminology() -> JapaneseTerminology {
+    serde_json::from_str(
+        &fs::read_to_string(repository_root().join("config/japanese-terminology.json"))
+            .expect("Japanese terminology catalog"),
+    )
+    .expect("valid Japanese terminology catalog")
+}
+
+#[test]
+fn japanese_terminology_catalog_is_valid_and_documented() {
+    let catalog = japanese_terminology();
+    assert_eq!(catalog.schema_version, 1, "unsupported terminology schema");
     assert!(
-        found.is_empty(),
-        "{TERMINOLOGY_DOCUMENT}が使わないと定めた語があります。\
-         何と書くかは、その箇所が何を指しているかによります。\n{}",
-        found.join("\n")
+        !catalog.forbidden_terms.is_empty(),
+        "terminology catalog has no forbidden terms"
     );
+
+    let root = repository_root();
+    let mut ids = BTreeSet::new();
+    let mut terms = BTreeSet::new();
+    for entry in catalog.forbidden_terms {
+        assert!(!entry.id.trim().is_empty(), "terminology ID is empty");
+        assert!(!entry.term.trim().is_empty(), "terminology term is empty");
+        assert!(
+            !entry.message.trim().is_empty(),
+            "terminology message is empty"
+        );
+        assert!(
+            ids.insert(entry.id.clone()),
+            "duplicate terminology ID: {}",
+            entry.id
+        );
+        assert!(
+            terms.insert(entry.term.clone()),
+            "duplicate forbidden term: {}",
+            entry.term
+        );
+        assert!(
+            matches!(entry.r#match, ForbiddenTermMatch::Substring),
+            "unsupported terminology match"
+        );
+
+        let (path, anchor) = entry
+            .documentation
+            .split_once('#')
+            .expect("terminology documentation must contain an anchor");
+        assert!(!path.is_empty(), "terminology documentation path is empty");
+        assert!(
+            !anchor.is_empty(),
+            "terminology documentation anchor is empty"
+        );
+        let documentation = fs::read_to_string(root.join(path))
+            .unwrap_or_else(|error| panic!("cannot read {path}: {error}"));
+        assert!(
+            documentation.contains(&format!("[#{anchor}]")),
+            "{} does not define [#{}]",
+            entry.documentation,
+            anchor
+        );
+    }
 }
 
 #[test]
@@ -550,7 +617,7 @@ fn roadmap_uses_unique_github_issue_urls() {
     // added to one and not the other; it cannot tell that an Issue is closed,
     // because a test may not reach GitHub. Update this list in the same change
     // that closes an Issue.
-    let expected = ["33", "34", "82", "83", "84", "86", "384"]
+    let expected = ["33", "34", "82", "83", "84", "86", "384", "436"]
         .into_iter()
         .map(str::to_owned)
         .collect();

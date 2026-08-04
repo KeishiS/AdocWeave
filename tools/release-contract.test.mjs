@@ -17,7 +17,7 @@ test("stable tags are exact and versioned", () => {
   }
 });
 
-test("asset matrix contains every declared native target, browser, and Zed archives", () => {
+test("asset matrix contains every declared native target and global archive", () => {
   assert.deepEqual(expectedAssets(plan.packageVersion, plan.targets), plan.assets);
   assert.deepEqual(
     plan.targets.map(({ triple }) => triple),
@@ -30,6 +30,16 @@ test("asset matrix contains every declared native target, browser, and Zed archi
   );
   assert.equal(plan.targets.find(({ os }) => os === "win32").archive, "zip");
   assert.ok(plan.targets.filter(({ os }) => os === "darwin").every(({ minimumOsVersion }) => minimumOsVersion === "14.0"));
+  assert.deepEqual(
+    plan.assets.find(({ kind }) => kind === "textlint-plugin"),
+    {
+      name: `adocweave-textlint-plugin-asciidoc-${plan.packageVersion}.tgz`,
+      kind: "textlint-plugin",
+      target: null,
+      archive: "tgz",
+      executable: null,
+    },
+  );
   assert.deepEqual(plan.releaseMetadata, EXPECTED_RELEASE_METADATA);
 });
 

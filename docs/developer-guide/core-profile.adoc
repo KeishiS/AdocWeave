@@ -97,6 +97,25 @@ Literal blockとsource blockはcodeとして区別します。数式、文書属
 各segmentは元sourceのUTF-8 byte rangeを保持します。連結した検索文字列内のoffsetとは一致しないため、
 位置対応が必要な場合はsegmentごとのrangeを使用します。
 
+=== textlint用文章構造
+
+``adocweave-textlint`` crateの``plan``は、一つの``Analysis``からTxtASTに対応する``TxtAstPlan``を生成します。
+校正対象の選択とTxtASTへの対応付けはコアへ含めず、この専用crateで行います。見出し、段落、リスト、表、
+引用、code、commentおよびinline装飾の親子関係を保ち、各範囲をJavaScript文字列と同じUTF-16単位で返します。
+
+planは文章を複製せず、原文から``raw``と``value``を取り出す範囲を持ちます。Node.js用WebAssemblyは
+``parseText``でplanをJavaScriptへ渡し、JavaScript側は位置と文字列を付加するだけで、AsciiDoc構文を
+再解釈しません。
+
+Source blockとinline codeはcodeとして区別し、文章規則の対象から外します。数式、pass、属性参照および
+表示文字列のないmacroも``Code``として元の親nodeに保持します。属性参照やinline記法を含まないfootnote本文、
+画像の代替文、iconの代替文またはtitle、audioとvideoのtitleは校正対象です。UI macroは各表示要素を``Code``として
+保持します。
+macroの文章部分は、``is_plain_inline_text``で文書解析と同じ有界のinline recognizerを適用し、単一の
+``Inline::Text``になるかを判定します。属性参照またはinline記法がある場合は、macro全体を文章規則から
+除外します。block titleはTxtASTにcaption nodeがないため、depth 1の``Header``として扱います。includeは
+展開せず、位置は解析した一つの物理文書を指します。
+
 === 利用側アプリの拡張
 
 アプリ固有のID、tag、DB列、アクセス制御および検索engine固有のtokenを標準の構造情報へ追加しません。

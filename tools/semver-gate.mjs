@@ -24,9 +24,21 @@ export const CHECKED_CRATES = [
   "adocweave-config",
   "adocweave-host",
   "adocweave-lsp",
+  "adocweave-textlint",
+  "adocweave-textlint-wasm",
   "adocweave-wasm",
   "adocweave-workspace",
 ];
+
+/// Versions in which public library crates first joined the release train.
+///
+/// A crate cannot be compared with a baseline from before it existed. Keeping
+/// the introduction version explicit makes the exemption expire
+/// automatically once the selected baseline contains the crate.
+export const CRATE_INTRODUCTIONS = {
+  "adocweave-textlint": { major: 0, minor: 30, patch: 0 },
+  "adocweave-textlint-wasm": { major: 0, minor: 29, patch: 0 },
+};
 
 /// Workspace members this gate does not compare, and why.
 ///
@@ -100,6 +112,17 @@ export function baselineTag(tags, candidate) {
   return newest;
 }
 
+/// Selects public crates that exist in the chosen baseline.
+export function cratesForBaseline(baseline) {
+  return CHECKED_CRATES.filter((name) => {
+    const introduced = CRATE_INTRODUCTIONS[name];
+    return (
+      introduced === undefined ||
+      compare(introduced, baseline) <= 0
+    );
+  });
+}
+
 function compare(left, right) {
   return (
     left.major - right.major || left.minor - right.minor || left.patch - right.patch
@@ -149,7 +172,14 @@ function main() {
   const known = run("git", ["rev-parse", "--verify", `${baseline.tag}^{commit}`]);
   if (known.status !== 0) fail(`baseline tag ${baseline.tag} がこのcloneにありません`);
 
-  const packages = CHECKED_CRATES.flatMap((name) => ["--package", name]);
+  const expectedCrates = cratesForBaseline(baseline.version);
+  const newCrates = CHECKED_CRATES.filter((name) => !expectedCrates.includes(name));
+  if (newCrates.length > 0) {
+    process.stdout.write(
+      `baselineより後に追加されたcrateは初回比較を省略します：${newCrates.join("、")}\n`,
+    );
+  }
+  const packages = expectedCrates.flatMap((name) => ["--package", name]);
   const { status, output } = run("cargo", [
     "semver-checks",
     "--baseline-rev",
@@ -159,7 +189,7 @@ function main() {
   process.stdout.write(output);
 
   const checked = checkedCrates(output);
-  const missing = CHECKED_CRATES.filter((name) => !checked.includes(name));
+  const missing = expectedCrates.filter((name) => !checked.includes(name));
   if (missing.length > 0) {
     fail(
       `次のcrateが比較されませんでした：${missing.join("、")}。` +

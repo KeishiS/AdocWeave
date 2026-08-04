@@ -1,0 +1,80 @@
+= ADR 0018: textlint専用TxtAST backendへの責務集約
+:status: accepted
+
+== 文脈
+
+ADR 0016では、自然文の構造をRust coreで``TextProjection``へ変換し、専用WebAssemblyを通して
+JavaScriptへ渡し、JavaScriptでTxtASTへ変換する責務分担を採用しました。この構成では、同じnodeの
+種類と必須項目をcore、WebAssemblyの転送用型、JavaScriptの変換処理へ重複して定義します。
+
+実装後の検証により、block titleと本体の範囲が重なる入力を処理できないこと、引用ではないcontainerを
+``BlockQuote``として扱うこと、表示されるmacro本文を除外することが分かりました。また、JavaScriptで
+入力中の全文字境界を保持する位置変換は、入力サイズに対して大きなmemory増幅を起こします。
+
+これらは個別の条件分岐だけでなく、AsciiDocの意味をTxtASTへ対応させる判断と、位置を変換する責務が
+複数の層へ分散していることから生じています。
+
+== 決定
+
+textlint固有の変換をpure Rustの``adocweave-textlint`` adapterへ集約します。このadapterは公開されている
+``Analysis``のsemantic modelとlossless syntax treeを読み、TxtASTと一対一に対応する``TxtAstPlan``を
+生成します。parser、HTML変換、Language ServerおよびBrowser向けWebAssemblyは、このadapterへ依存しません。
+
+責務を次のように分けます。
+
+* AdocWeave core：AsciiDocの解析結果、意味情報および原文範囲
+* textlint adapter：校正対象の選択、TxtAST nodeへの意味対応、文章境界およびUTF-16範囲
+* Node.js専用WebAssembly：request、使用量の上限、component versionの照合およびJavaScript binding
+* JavaScript package：原文からの``raw``と``value``の取得、``loc``の付与およびProcessor lifecycle
+* textlint規則：TxtASTで表された文章の検査と診断
+
+``TxtAstPlan``はTxtAST nodeの種類、UTF-16の``range``、文章値を取り出す``valueRange``、node固有の値および
+子nodeだけを持ちます。JavaScriptはnodeの種類を再解釈せず、すべてのplan nodeを同じ処理で具体的なTxtASTへ
+変換します。これにより、新しい意味要素を追加したときにRustとJavaScriptの変換表を別々に更新する必要を
+なくします。
+
+block titleと本体は、重ならない原文順の兄弟nodeとしてplanへ格納します。TxtASTにはcaptionに対応する
+標準nodeがないため、block titleはdepth 1の``Header``へ変換します。これは文書のsection階層を表す変換ではなく、
+句点を要求する本文向け規則からtitleを分け、title向け規則を適用するための非可逆な対応です。独自nodeは
+textlintの標準型と規則が扱えないため採用しません。
+
+quoteだけを``BlockQuote``へ変換し、example、openおよびsidebarは内部blockへ展開します。数式、pass、
+属性参照、表示文字列のないURLなどの対象外inlineは``Code``として元の親nodeに残します。これにより``Str``を
+対象とする文章規則から除外し、見出し、段落および表の構造を分断しません。
+
+macroは種類ごとに可視部分と文章としての性質を区別します。footnote本文、画像の代替文、iconの代替文または
+title、audioとvideoのtitleは``Str``として周囲の文章に含めます。ただし、属性参照またはinline記法を含む値は、
+coreと同じ有界のinline recognizerで単一の``Inline::Text``になる場合だけ採用します。それ以外はmacro全体を
+``Code``として保守的に除外します。
+keyboard、buttonおよびmenuの各表示要素は自然文ではなくUI tokenとして``Code``へ変換します。titleなどがない
+media macroのtargetは、file名であって表示用の自然文ではないため文章へ渡しません。
+
+UTF-8 byte範囲からUTF-16範囲への変換は、planが参照する端点をsourceの一回の走査で変換します。
+改行位置はtextlintと同じくCR、LF、CRLF、U+2028およびU+2029を扱います。
+
+coreの``text-projection`` featureと``adocweave::output::text``は削除します。これはtextlint adapter以外の
+利用箇所がなく、対象固有の校正方針をcoreの公開APIとして維持する理由がないためです。Node.js専用
+WebAssemblyはBrowser向けWebAssemblyと引き続き分離します。
+
+== 採用しない案
+
+既存の``TextProjection``へ本体範囲を追加し、JavaScriptの位置変換だけを差し替える方法は、当面の不具合を
+修正できます。しかしcore、転送用型およびJavaScriptの三つのnode体系と、校正方針の分散を残すため
+採用しません。
+
+最終的なTxtASTをWebAssembly内ですべて構築する方法は、``raw``と``value``の文字列をWebAssembly境界で
+複製します。JavaScript文字列から安全に切り出せる値まで複製する必要はないため、UTF-16範囲を持つplanを
+境界とします。
+
+Browser向けWebAssemblyへ入口を追加する方法は、textlintを使わない利用者の成果物と公開protocolを
+変更するため採用しません。
+
+== 帰結
+
+``adocweave::output::text``を利用するRust codeと、専用WebAssemblyの内部関数名および転送形式には
+破壊的変更が生じます。0.x系のminor versionを更新し、同じversionのJavaScript packageとWebAssemblyだけを
+組み合わせます。公開するtextlint Processorの設定方法と、自動修正を行わない保証は変更しません。
+
+全block、inline、macroおよび回復構文に対する変換方針をRustの網羅的なmatchと対応関係のtestで固定します。
+parser、HTML、Language ServerおよびBrowser成果物の既存検査も実行し、依存と動作が増えていないことを
+確認します。

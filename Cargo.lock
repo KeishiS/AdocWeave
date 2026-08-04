@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adocweave"
-version = "0.27.3"
+version = "0.30.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-cli"
-version = "0.27.3"
+version = "0.30.0"
 dependencies = [
  "adocweave",
  "adocweave-config",
@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-config"
-version = "0.27.3"
+version = "0.30.0"
 dependencies = [
  "adocweave",
  "adocweave-host",
@@ -40,10 +40,11 @@ dependencies = [
 
 [[package]]
 name = "adocweave-governance"
-version = "0.27.3"
+version = "0.30.0"
 dependencies = [
  "adocweave",
  "adocweave-config",
+ "adocweave-textlint",
  "serde",
  "serde_json",
  "toml",
@@ -51,14 +52,14 @@ dependencies = [
 
 [[package]]
 name = "adocweave-host"
-version = "0.27.3"
+version = "0.30.0"
 dependencies = [
  "rustix",
 ]
 
 [[package]]
 name = "adocweave-lsp"
-version = "0.27.3"
+version = "0.30.0"
 dependencies = [
  "adocweave",
  "adocweave-config",
@@ -74,8 +75,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "adocweave-textlint"
+version = "0.30.0"
+dependencies = [
+ "adocweave",
+ "serde",
+]
+
+[[package]]
+name = "adocweave-textlint-wasm"
+version = "0.30.0"
+dependencies = [
+ "adocweave",
+ "adocweave-textlint",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "adocweave-wasm"
-version = "0.27.3"
+version = "0.30.0"
 dependencies = [
  "adocweave",
  "js-sys",
@@ -87,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-workspace"
-version = "0.27.3"
+version = "0.30.0"
 dependencies = [
  "adocweave",
 ]
@@ -479,9 +500,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.186"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "linux-raw-sys"

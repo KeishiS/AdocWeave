@@ -23,6 +23,8 @@
         "adocweave-governance",
         "adocweave-host",
         "adocweave-lsp",
+        "adocweave-textlint",
+        "adocweave-textlint-wasm",
         "adocweave-wasm",
         "adocweave-workspace"
       ]
@@ -69,6 +71,18 @@
     },
     {
       "type": "literal",
+      "path": "packages/textlint-plugin-asciidoc/package.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "packages/textlint-plugin-asciidoc/package-lock.json",
+      "template": "\"version\": \"{version}\"",
+      "count": 2
+    },
+    {
+      "type": "literal",
       "path": "release/distribution-plan.json",
       "template": "\"packageVersion\": \"{version}\"",
       "count": 1
@@ -93,6 +107,12 @@
     },
     {
       "type": "literal",
+      "path": "release/distribution-plan.json",
+      "template": "adocweave-textlint-plugin-asciidoc-{version}.tgz",
+      "count": 1
+    },
+    {
+      "type": "literal",
       "path": "dist-workspace.toml",
       "template": "adocweave-browser-{version}.tar.xz",
       "count": 1
@@ -107,6 +127,12 @@
       "type": "literal",
       "path": "dist-workspace.toml",
       "template": "adocweave-vscode-{version}.vsix",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "dist-workspace.toml",
+      "template": "adocweave-textlint-plugin-asciidoc-{version}.tgz",
       "count": 1
     },
     {
@@ -167,6 +193,12 @@
       "type": "literal",
       "path": "release/adocweave-dist-manifest.fixture.json",
       "template": "adocweave-vscode-{version}.vsix",
+      "count": 1
+    },
+    {
+      "type": "literal",
+      "path": "release/adocweave-dist-manifest.fixture.json",
+      "template": "adocweave-textlint-plugin-asciidoc-{version}.tgz",
       "count": 1
     }
   ],

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "forbiddenTerms": [
+    {
+      "id": "legal-contract-metaphor",
+      "term": "契約",
+      "match": "substring",
+      "message": "この語が指す保証、条件または判定を具体的に記述してください。",
+      "documentation": "docs/developer-guide/terminology.adoc#legal-contract-metaphor"
+    }
+  ]
+}

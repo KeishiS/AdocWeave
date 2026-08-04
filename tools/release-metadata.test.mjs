@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import plan from "../release/distribution-plan.json" with { type: "json" };
+import { cargoTreePackageKeys } from "./generate-third-party-notices.mjs";
 import { verifyMetadata, writeMetadata } from "./release-metadata.mjs";
 
 function fixture() {
@@ -13,7 +14,7 @@ function fixture() {
   const artifacts = join(root, "artifacts");
   mkdirSync(artifacts);
   for (const asset of plan.assets) {
-    const archiveRoot = asset.name.replace(/\.(?:tar\.xz|zip)$/, "");
+    const archiveRoot = asset.name.replace(/\.(?:tar\.xz|tgz|vsix|zip)$/, "");
     const stage = join(root, archiveRoot);
     mkdirSync(stage);
     writeFileSync(join(stage, asset.executable ?? "index.mjs"), `${asset.name}\n`);
@@ -22,6 +23,9 @@ function fixture() {
     }
     if (asset.archive === "zip" || asset.archive === "vsix") {
       execFileSync("zip", ["-X", "-q", "-r", join(artifacts, asset.name), archiveRoot], { cwd: root });
+    } else if (asset.archive === "tgz") {
+      execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner",
+        "-czf", join(artifacts, asset.name), "-C", root, archiveRoot]);
     } else {
       execFileSync("tar", ["--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner",
         "-cJf", join(artifacts, asset.name), "-C", root, archiveRoot]);
@@ -63,6 +67,31 @@ test("actual archives produce canonical manifest, SPDX SBOM, and unified checksu
       reference.referenceLocator === `pkg:npm/%40adocweave/browser@${plan.packageVersion}`)));
     assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
       reference.referenceLocator === `pkg:npm/adocweave-vscode@${plan.packageVersion}`)));
+    assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
+      reference.referenceLocator === `pkg:npm/%40adocweave/textlint-plugin-asciidoc@${plan.packageVersion}`)));
+    const textlintAsset = plan.assets.find(({ kind }) => kind === "textlint-plugin");
+    const textlintArchive = sbom.packages.find((entry) => entry.name === textlintAsset.name);
+    const packageById = new Map(sbom.packages.map((entry) => [entry.SPDXID, entry]));
+    const textlintDependencies = sbom.relationships
+      .filter((entry) =>
+        entry.spdxElementId === textlintArchive.SPDXID &&
+        entry.relationshipType === "DEPENDS_ON"
+      )
+      .map((entry) => packageById.get(entry.relatedSpdxElement))
+      .flatMap((entry) => entry.externalRefs ?? [])
+      .map((entry) => entry.referenceLocator)
+      .sort();
+    const expectedTextlintDependencies = [
+      ...[...cargoTreePackageKeys(
+        "adocweave-textlint-wasm",
+        "wasm32-unknown-unknown",
+      )].map((key) => {
+        const [name, version] = key.split("\0");
+        return `pkg:cargo/${encodeURIComponent(name)}@${version}`;
+      }),
+      `pkg:npm/%40adocweave/textlint-plugin-asciidoc@${plan.packageVersion}`,
+    ].sort();
+    assert.deepEqual(textlintDependencies, expectedTextlintDependencies);
     assert.ok(sbom.packages.some((entry) => entry.externalRefs?.some((reference) =>
       reference.referenceLocator === "pkg:npm/fflate@0.8.3")));
     assert.deepEqual(checksums.map((line) => line.slice(66)), [
@@ -107,6 +136,43 @@ test("verification rejects every unplanned file regardless of its extension", ()
     writeMetadata(artifacts, commit);
     writeFileSync(join(artifacts, "unplanned.txt"), "must not be published\n");
     assert.throws(() => verifyMetadata(artifacts, commit), /unplanned public asset/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("metadata generation rejects a symlink in the textlint plugin tarball", () => {
+  const { root, artifacts } = fixture();
+  try {
+    const asset = plan.assets.find(({ kind }) => kind === "textlint-plugin");
+    const stage = join(root, "unsafe-plugin");
+    mkdirSync(stage);
+    writeFileSync(join(stage, "target"), "target\n");
+    symlinkSync("target", join(stage, "link"));
+    execFileSync("tar", ["-czf", join(artifacts, asset.name), "-C", root, "unsafe-plugin"]);
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    assert.throws(() => writeMetadata(artifacts, commit), /symlink or unsupported member type/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("metadata generation rejects parent traversal in the textlint plugin tarball", () => {
+  const { root, artifacts } = fixture();
+  try {
+    const asset = plan.assets.find(({ kind }) => kind === "textlint-plugin");
+    const unsafe = join(root, "unsafe.txt");
+    writeFileSync(unsafe, "unsafe\n");
+    execFileSync("tar", [
+      "-czf",
+      join(artifacts, asset.name),
+      "--transform=s,^,../,",
+      "-C",
+      root,
+      "unsafe.txt",
+    ]);
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    assert.throws(() => writeMetadata(artifacts, commit), /unsafe archive member/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
