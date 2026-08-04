@@ -82,7 +82,7 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  "Rust APIには破壊的変更があります。``adocweave``の``text-projection`` featureと``adocweave::output::text``を削除しました。",
+  "破壊的変更：``adocweave``の``text-projection`` featureと``adocweave::output::text``を削除しました。",
   `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`parseText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
   "textlint Processorの設定、対応拡張子、自動修正を行わない保証および利用量の上限は変更していません。TxtASTへ含める文章と構造は改善しています。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,

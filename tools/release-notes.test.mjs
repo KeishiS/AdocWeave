@@ -30,7 +30,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.23\.0から変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
-  assert.match(notes, /Rust APIには破壊的変更があります/);
+  assert.match(notes, /破壊的変更：/);
   assert.match(notes, /``text-projection`` feature/);
   assert.match(notes, /``adocweave::output::text``を削除/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
