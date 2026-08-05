@@ -81,8 +81,12 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /構造体リテラルまたは構造体のパターンで全フィールドを列挙/);
   assert.match(notes, /workspace: WorkspaceSettings::default/);
   assert.match(notes, /構造体のパターンには``workspace``を追加/);
+  assert.match(notes, /``ResourceError``へ、ファイルシステムのルート数が上限を超えた/);
+  assert.match(notes, /``ResourceError::RootLimit \{ limit \}``を処理する分岐/);
   assert.doesNotMatch(notes, /constructible_struct_adds_field/);
   assert.doesNotMatch(notes, /externally-constructible struct adds field/);
+  assert.doesNotMatch(notes, /enum_variant_added/);
+  assert.doesNotMatch(notes, /enum variant added on exhaustive enum/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /Language Serverのworkspace走査の除外設定は任意/);
   assert.match(notes, /\[workspace\.scan\]/);

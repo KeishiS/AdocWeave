@@ -9,6 +9,14 @@
       "summary": "externally-constructible struct adds field",
       "description": "``ResolvedProjectConfig``に公開フィールドの``workspace``を追加しました。構造体リテラルまたは構造体のパターンで全フィールドを列挙している利用側コードは、そのままではコンパイルできません。",
       "migration": "構造体リテラルには``workspace: WorkspaceSettings::default(),``を追加してください。例えば、``let config = ResolvedProjectConfig { workspace: WorkspaceSettings::default(), ..ResolvedProjectConfig::default() };``のように指定します。構造体のパターンには``workspace``を追加して値を受け取るか、残りのフィールドを無視する``..``を追加してください。"
+    },
+    {
+      "crate": "adocweave-host",
+      "lint": "enum_variant_added",
+      "item": "variant ResourceError:RootLimit",
+      "summary": "enum variant added on exhaustive enum",
+      "description": "公開enumの``ResourceError``へ、ファイルシステムのルート数が上限を超えたことを表す``RootLimit { limit }``を追加しました。すべてのvariantを列挙している``match``は、そのままではコンパイルできません。",
+      "migration": "``ResourceError``を網羅的に``match``している場合は、``ResourceError::RootLimit { limit }``を処理する分岐を追加してください。``limit``を使って上限値を利用者へ示すか、ほかのリソース上限エラーと同じ方法で処理できます。"
     }
   ]
 }

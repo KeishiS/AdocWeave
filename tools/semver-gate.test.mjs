@@ -213,6 +213,12 @@ const recordedChange = {
   description: "ResolvedProjectConfigにworkspaceを追加しました。",
   migration: "構造体リテラルへworkspaceを追加します。",
 };
+const detectedRootLimitChange = {
+  crate: "adocweave-host",
+  lint: "enum_variant_added",
+  item: "variant ResourceError:RootLimit",
+  summary: "enum variant added on exhaustive enum",
+};
 const record = (changes = [recordedChange]) => ({
   schemaVersion: 1,
   releaseVersion: releaseManifest.packageVersion,
@@ -225,10 +231,12 @@ test("破壊的変更記録はschemaと未知項目を厳密に検査する", ()
   assert.equal(actual.releaseVersion, releaseManifest.packageVersion);
   assert.deepEqual(
     actual.changes.map(({ crate, lint, item, summary }) => ({ crate, lint, item, summary })),
-    [detectedChange],
+    [detectedChange, detectedRootLimitChange],
   );
   assert.match(actual.changes[0].description, /構造体リテラルまたは構造体のパターン/);
   assert.match(actual.changes[0].migration, /WorkspaceSettings::default/);
+  assert.match(actual.changes[1].description, /ResourceError/);
+  assert.match(actual.changes[1].migration, /ResourceError::RootLimit/);
   assert.deepEqual(validateBreakingRustApi(record([])).changes, []);
   assert.throws(() => validateBreakingRustApi({ ...record(), extra: true }), /未知または不足/);
   assert.throws(
