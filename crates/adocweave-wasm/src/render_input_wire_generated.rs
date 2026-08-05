@@ -108,6 +108,23 @@ pub struct WasmCitationSegment {
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmGeneratedBibliographyEntry {
+    pub citation_key: String,
+    pub text: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WasmGeneratedBibliography {
+    pub title: String,
+    #[serde(default)]
+    pub entries: Vec<WasmGeneratedBibliographyEntry>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmResolvedCitation {
     pub source_start: u32,
     pub source_end: u32,
@@ -139,4 +156,6 @@ pub struct WasmRenderInputs {
     pub resources: Vec<WasmResolvedResource>,
     #[serde(default)]
     pub citations: Vec<WasmResolvedCitation>,
+    #[serde(default)]
+    pub generated_bibliography: Option<WasmGeneratedBibliography>,
 }

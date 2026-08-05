@@ -457,6 +457,9 @@ fn plan_standard_macro(
                             .bibliography()
                             .iter()
                             .any(|entry| entry.id == key.value)
+                            || context
+                                .generated_bibliography
+                                .is_some_and(|bibliography| bibliography.defines(&key.value))
                     })
                     .map(|key| {
                         element_with_children(
@@ -475,14 +478,24 @@ fn plan_standard_macro(
                 return;
             }
             for key in keys {
-                let href = context
+                let document_entry = context
                     .catalogs
                     .bibliography()
                     .iter()
-                    .find(|entry| entry.id == key.value)
-                    .and_then(|entry| SafeFragmentUrl::new(&entry.id))
+                    .find(|entry| entry.id == key.value);
+                let generated_entry = context
+                    .generated_bibliography
+                    .and_then(|bibliography| bibliography.entry(&key.value));
+                let href = document_entry
+                    .map(|entry| entry.id.as_str())
+                    .or_else(|| generated_entry.map(|entry| entry.input.citation_key()))
+                    .and_then(SafeFragmentUrl::new)
                     .map(SafeFragmentUrl::into_owned);
                 if let Some(href) = href {
+                    let label = document_entry
+                        .and_then(|entry| entry.label.as_deref())
+                        .or_else(|| generated_entry.and_then(|entry| entry.input.label()))
+                        .unwrap_or(&key.value);
                     output.push(element_with_children(
                         "a",
                         vec![
@@ -490,7 +503,7 @@ fn plan_standard_macro(
                             passive("id", bibliography_reference_id(key.value_range)),
                             fragment_url("href", href),
                         ],
-                        vec![inline_text_node(&key.value)],
+                        vec![inline_text_node(label)],
                     ));
                     continue;
                 }
@@ -913,7 +926,12 @@ fn plan_resolved_citation(
         let href = segment
             .anchor
             .as_deref()
-            .filter(|anchor| context.identifiers.target_by_id(anchor).is_some())
+            .filter(|anchor| {
+                context.identifiers.target_by_id(anchor).is_some()
+                    || context
+                        .generated_bibliography
+                        .is_some_and(|bibliography| bibliography.defines(anchor))
+            })
             .and_then(SafeFragmentUrl::new)
             .map(SafeFragmentUrl::into_owned);
         match (href, segment.anchor.as_deref()) {

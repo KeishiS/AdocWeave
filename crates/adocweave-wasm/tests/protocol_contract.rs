@@ -1,13 +1,15 @@
 use adocweave::NeverCancel;
 use adocweave_wasm::{
     WasmActiveUrlPolicy, WasmAnalysisOptions, WasmAnalysisPreprocessInput, WasmAuthoredUrlPolicy,
-    WasmDiagnosticProfile, WasmDocumentMode, WasmError, WasmExternalLinkPolicy, WasmLimits,
+    WasmCitationOutcome, WasmCitationSegment, WasmDiagnosticProfile, WasmDocumentMode, WasmError,
+    WasmExternalLinkPolicy, WasmGeneratedBibliography, WasmGeneratedBibliographyEntry, WasmLimits,
     WasmOutputLimits, WasmPreprocessOptions, WasmPreprocessRequest, WasmPreprocessResponse,
-    WasmRenderInputs, WasmRenderPolicy, WasmRequest, WasmResolvedReference, WasmResolvedResource,
-    WasmResource, WasmResourceCapabilities, WasmResourceOutcome, WasmRuleSettings, WasmSafeMode,
-    WasmSourceLanguagePolicy, WasmSourceMapSegment, WasmSourceMapping, WasmStylesheet,
-    WasmSyntaxMode, WasmSyntaxOptions, WasmUnknownSourceLanguage,
-    WasmUnresolvedReferencePresentation, preprocess_request, process_request,
+    WasmRenderInputs, WasmRenderPolicy, WasmRequest, WasmResolvedCitation, WasmResolvedReference,
+    WasmResolvedResource, WasmResource, WasmResourceCapabilities, WasmResourceOutcome,
+    WasmRuleSettings, WasmSafeMode, WasmSourceLanguagePolicy, WasmSourceMapSegment,
+    WasmSourceMapping, WasmStylesheet, WasmSyntaxMode, WasmSyntaxOptions,
+    WasmUnknownSourceLanguage, WasmUnresolvedReferencePresentation, preprocess_request,
+    process_request,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -86,7 +88,15 @@ fn expanded_request(corpus: &Value) -> Value {
             "sourceStart": 0,
             "sourceEnd": 1,
             "outcome": { "status": "resolved", "segments": [{ "text": "(Smith 2024)" }] }
-        }]
+        }],
+        "generatedBibliography": {
+            "title": "References",
+            "entries": [{
+                "citationKey": "smith2024",
+                "text": "Smith (2024)",
+                "label": "Smith 2024"
+            }]
+        }
     });
     request["outputLimits"] = json!({});
     request
@@ -333,6 +343,11 @@ fn generated_render_inputs_match_the_schema_safe_integer_boundary() {
     assert_public::<WasmRenderInputs>();
     assert_public::<WasmResolvedReference>();
     assert_public::<WasmResolvedResource>();
+    assert_public::<WasmResolvedCitation>();
+    assert_public::<WasmCitationOutcome>();
+    assert_public::<WasmCitationSegment>();
+    assert_public::<WasmGeneratedBibliography>();
+    assert_public::<WasmGeneratedBibliographyEntry>();
 
     let outcome = |byte_length: Value| {
         serde_json::from_value::<WasmResourceOutcome>(json!({

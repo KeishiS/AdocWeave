@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::citation::ResolvedCitation;
+use crate::generated_bibliography::GeneratedBibliography;
 use crate::reference::ResolvedReference;
 use crate::resource::ResolvedResource;
 use crate::source::TextRange;
@@ -16,6 +17,7 @@ pub struct RenderInputs {
     references: ResolutionSet<ResolvedReference>,
     resources: ResolutionSet<ResolvedResource>,
     citations: ResolutionSet<ResolvedCitation>,
+    generated_bibliography: Option<GeneratedBibliography>,
 }
 
 impl RenderInputs {
@@ -40,6 +42,13 @@ impl RenderInputs {
         self
     }
 
+    /// Adds a bibliography section whose strings remain plain text.
+    #[must_use]
+    pub fn with_generated_bibliography(mut self, bibliography: GeneratedBibliography) -> Self {
+        self.generated_bibliography = Some(bibliography);
+        self
+    }
+
     pub fn references(&self) -> &[ResolvedReference] {
         &self.references.values
     }
@@ -50,6 +59,10 @@ impl RenderInputs {
 
     pub fn citations(&self) -> &[ResolvedCitation] {
         &self.citations.values
+    }
+
+    pub fn generated_bibliography(&self) -> Option<&GeneratedBibliography> {
+        self.generated_bibliography.as_ref()
     }
 
     pub fn reference_at(&self, range: TextRange) -> ResolutionMatch<'_, ResolvedReference> {

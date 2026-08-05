@@ -118,6 +118,7 @@ export interface RenderInputs {
   references?: ResolvedReference[];
   resources?: ResolvedResource[];
   citations?: ResolvedCitation[];
+  generatedBibliography?: GeneratedBibliography | null;
 }
 
 export interface ResolvedReference {
@@ -141,6 +142,17 @@ export interface ResolvedCitation {
 export interface CitationSegment {
   text: string;
   anchor?: string | null;
+}
+
+export interface GeneratedBibliography {
+  title: string;
+  entries?: GeneratedBibliographyEntry[];
+}
+
+export interface GeneratedBibliographyEntry {
+  citationKey: string;
+  text: string;
+  label?: string | null;
 }
 
 export interface AnalysisLimits {
@@ -606,7 +618,7 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 9;
+export declare const PROTOCOL_SCHEMA_VERSION: 10;
 export declare const WORKER_PROTOCOL_VERSION: 2;
 export declare const PACKAGE_VERSION: "0.32.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];

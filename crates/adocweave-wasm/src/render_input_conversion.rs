@@ -123,10 +123,33 @@ pub(crate) fn convert(
             })
         })
         .collect::<Result<Vec<_>, WasmError>>()?;
-    Ok(adocweave::resolution::RenderInputs::default()
+    let generated_bibliography = inputs.generated_bibliography.map(|bibliography| {
+        adocweave::resolution::GeneratedBibliography::new(
+            bibliography.title,
+            bibliography
+                .entries
+                .into_iter()
+                .map(|entry| {
+                    let generated = adocweave::resolution::GeneratedBibliographyEntry::new(
+                        entry.citation_key,
+                        entry.text,
+                    );
+                    match entry.label {
+                        Some(label) => generated.with_label(label),
+                        None => generated,
+                    }
+                })
+                .collect(),
+        )
+    });
+    let inputs = adocweave::resolution::RenderInputs::default()
         .with_references(references)
         .with_resources(resources)
-        .with_citations(citations))
+        .with_citations(citations);
+    Ok(match generated_bibliography {
+        Some(bibliography) => inputs.with_generated_bibliography(bibliography),
+        None => inputs,
+    })
 }
 
 /// Maps a wire failure kind to the core kind shared by references and citations.
