@@ -5,6 +5,7 @@
 //! same document without changing parsing behavior.
 
 mod body;
+mod generated_bibliography;
 mod head;
 mod plan;
 mod safe;
@@ -340,6 +341,11 @@ pub(crate) fn render_with_inputs_ast(
         .values_at(document.header().end);
     let heading_ids = crate::document::generate_heading_ids_ast(document);
     let mut diagnostics = Vec::new();
+    let generated_bibliography = generated_bibliography::prepare(
+        inputs.generated_bibliography(),
+        document,
+        &mut diagnostics,
+    );
     let mut input_usage = inputs.track_usage();
     {
         let mut inline_context = InlineRenderContext {
@@ -350,6 +356,7 @@ pub(crate) fn render_with_inputs_ast(
             identifiers: document.identifiers(),
             structure: document.structure(),
             presentation: document.presentation(),
+            generated_bibliography: generated_bibliography.as_ref(),
         };
         let body_plan = body::plan_body_traversal(document, policy);
         serialize_body_traversal(
@@ -359,6 +366,9 @@ pub(crate) fn render_with_inputs_ast(
             policy,
             &mut inline_context,
         );
+        if let Some(bibliography) = &generated_bibliography {
+            generated_bibliography::render(&mut fragment, bibliography);
+        }
     }
     for problem in input_usage.finish() {
         let domain = problem.domain.as_str();
@@ -1231,6 +1241,8 @@ struct InlineRenderContext<'inputs, 'render> {
     identifiers: &'inputs crate::document::DocumentIdentifiers,
     structure: &'inputs crate::structure::DocumentStructure,
     presentation: &'inputs crate::presentation::DocumentPresentation,
+    generated_bibliography:
+        Option<&'render generated_bibliography::PreparedGeneratedBibliography<'inputs>>,
 }
 
 fn render_toc(output: &mut String, presentation: &crate::presentation::DocumentPresentation) {
@@ -1380,6 +1392,7 @@ mod tests {
     use crate::parser::parse;
     use crate::reference::ReferenceKey;
     use crate::render::RenderInputs;
+    use crate::resolution::{GeneratedBibliography, GeneratedBibliographyEntry};
     use crate::resource::{MediaType, ResolvedResource};
     use crate::url::{UrlDecision, UrlProvenance};
 
@@ -1581,6 +1594,117 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["unknown-citation-anchor"]
         );
+    }
+
+    #[test]
+    fn generated_bibliography_is_plain_text_and_links_both_directions() {
+        let analysis = analyze("See cite:[cpp] and cite:[cpp].\n");
+        let inputs = RenderInputs::default().with_generated_bibliography(
+            GeneratedBibliography::new(
+                "References\nfrom library",
+                vec![GeneratedBibliographyEntry::new(
+                    "cpp",
+                    "Effective C++ and More Effective C++; <b>& {author} pass:[x] +x+ ++x++ +++x+++",
+                )
+                .with_label("C++")],
+            ),
+        );
+
+        let output = render_with_inputs(analysis.ast(), &RenderPolicy::default(), &inputs);
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(output.html.matches("href=\"#cpp\">C++</a>").count(), 2);
+        assert!(output.html.contains(
+            "Effective C++ and More Effective C++; &lt;b&gt;&amp; {author} pass:[x] +x+ ++x++ +++x+++"
+        ));
+        assert!(!output.html.contains("<b>"));
+        assert!(output.html.contains("<h2>References from library</h2>"));
+        assert_eq!(
+            output
+                .html
+                .matches("class=\"bibliography-backref\"")
+                .count(),
+            2
+        );
+        for target in output
+            .html
+            .split("class=\"bibliography-backref\" href=\"#")
+            .skip(1)
+            .map(|suffix| suffix.split('"').next().expect("back reference target"))
+        {
+            assert!(output.html.contains(&format!("id=\"{target}\"")));
+        }
+    }
+
+    #[test]
+    fn resolved_citation_can_link_to_a_generated_bibliography_entry() {
+        let analysis = analyze("See cite:[smith2024].\n");
+        let citation = &analysis.citations()[0];
+        let inputs = RenderInputs::default()
+            .with_citations(vec![crate::citation::ResolvedCitation::resolved(
+                citation.range,
+                vec![crate::citation::CitationSegment::linked(
+                    "Smith (2024)",
+                    "smith2024",
+                )],
+            )])
+            .with_generated_bibliography(GeneratedBibliography::new(
+                "References",
+                vec![GeneratedBibliographyEntry::new("smith2024", "Smith. Book.")],
+            ));
+
+        let output = render_with_inputs(analysis.ast(), &RenderPolicy::default(), &inputs);
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(
+            output
+                .html
+                .contains("<a href=\"#smith2024\">Smith (2024)</a>")
+        );
+        assert!(
+            output.html.contains(
+                "<span id=\"smith2024\" class=\"bibliography-anchor\"></span>Smith. Book."
+            )
+        );
+    }
+
+    #[test]
+    fn generated_bibliography_reports_invalid_duplicate_shadowed_and_unused_entries() {
+        let analysis = analyze(
+            "[bibliography]\n== Sources\n\n* bibanchor:local[] Local\n\nSee cite:[used, local].\n",
+        );
+        let inputs =
+            RenderInputs::default().with_generated_bibliography(GeneratedBibliography::new(
+                "References",
+                vec![
+                    GeneratedBibliographyEntry::new("", "invalid"),
+                    GeneratedBibliographyEntry::new("used", "used"),
+                    GeneratedBibliographyEntry::new("used", "duplicate"),
+                    GeneratedBibliographyEntry::new("local", "shadowed"),
+                    GeneratedBibliographyEntry::new("unused", "unused"),
+                ],
+            ));
+
+        let output = render_with_inputs(analysis.ast(), &RenderPolicy::default(), &inputs);
+        let codes = output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            codes,
+            BTreeSet::from([
+                "duplicate-generated-bibliography-entry",
+                "invalid-generated-bibliography-entry",
+                "shadowed-generated-bibliography-entry",
+                "unused-generated-bibliography-entry",
+            ])
+        );
+        assert_eq!(output.html.matches("id=\"used\"").count(), 1);
+        assert_eq!(output.html.matches("id=\"local\"").count(), 1);
+        assert!(!output.html.contains("duplicate"));
+        assert!(!output.html.contains("shadowed"));
     }
 
     #[test]

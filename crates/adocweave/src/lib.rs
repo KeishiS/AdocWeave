@@ -21,6 +21,7 @@ mod document;
 mod document_header;
 mod execution;
 mod formatter;
+mod generated_bibliography;
 mod html;
 mod inline;
 mod inline_grammar;
@@ -179,6 +180,7 @@ pub mod preprocess {
 /// Host-provided reference, resource and citation resolution contracts.
 pub mod resolution {
     pub use crate::citation::{CitationOutcome, CitationSegment, ResolvedCitation};
+    pub use crate::generated_bibliography::{GeneratedBibliography, GeneratedBibliographyEntry};
     pub use crate::reference::{
         DocumentCandidate, ReferenceKey, ReferenceQuery, ReferenceResolver, ResolutionCacheKey,
         ResolutionFailureKind, ResolutionNotice, ResolutionNoticeKind, ResolutionOutcome,

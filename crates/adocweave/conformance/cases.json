@@ -265,6 +265,26 @@
       "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {
+      "name": "generated-bibliography",
+      "source": "See cite:[cpp].\n",
+      "expectedHtmlFile": "generated-bibliography.html",
+      "renderInputs": {
+        "generatedBibliography": {
+          "title": "References",
+          "entries": [
+            {
+              "citationKey": "cpp",
+              "text": "Effective C++ and More Effective C++; <b>& {author} pass:[x] +x+ ++x++ +++x+++",
+              "label": "C++"
+            }
+          ]
+        }
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "host生成の参考文献本文はAsciiDocとして再解析せず、nativeとWASMで同じplain text、引用linkおよびback referenceを生成する",
+      "contractImpact": "core-api,html,conformance,wasm-api"
+    },
+    {
       "name": "media-backend-presentation",
       "sourceFile": "media-backend-presentation.adoc",
       "expectedHtmlFile": "media-backend-presentation.html",

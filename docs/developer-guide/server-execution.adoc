@@ -232,8 +232,9 @@ workflowも設けていません。
 解決結果をまとめた、出力形式に依存しないスナップショットです。変換処理はこの値を読むだけであり、ファイルシステム、
 ネットワーク、DBまたはresolverを呼び出しません。
 
-``RenderInputs``は空の値から作り、``with_references``、``with_resources``、``with_citations``で
-必要な種類だけを与えます。渡さなかった種類は、解決結果が一つもない状態として扱います。
+``RenderInputs``は空の値から作り、``with_references``、``with_resources``、``with_citations``および
+``with_generated_bibliography``で必要な種類だけを与えます。渡さなかった種類は、解決結果または生成する
+参考文献がない状態として扱います。
 
 === 照合
 
@@ -282,11 +283,28 @@ anchorはlinkにせず素の文字列として出力し、``unknown-citation-anc
 ``bibanchor:``で定義したanchorと同じ名前のkeyは、``<<anchor>>``と同じくその項目を参照し、項目側の
 back referenceにも並びます。back referenceの番号は、読者が出会う順、つまり原文の位置の順に付きます。
 
+=== 生成する参考文献
+
+外部の書誌libraryにある項目を表示する場合は、``GeneratedBibliography``へ節の見出しと項目を渡します。
+各``GeneratedBibliographyEntry``はcitation key、項目本文および任意の表示labelを持ちます。見出し、本文、
+labelはプレーンテキストであり、AsciiDocのsourceへ連結して再解析しません。HTML文字、属性参照、macroおよび
+pass-through記法に見える文字列も、文字列のままescapeして表示します。
+
+変換処理は解析済みの``cite:``から生成項目の利用箇所を決定します。引用から項目へのlinkと、項目からすべての
+引用位置へ戻るback referenceを生成します。文書自身が同じIDを定義している場合は文書内の定義を優先し、
+生成項目を出力しません。空または制御文字を含むkey、入力内の重複、文書内定義との競合および未使用項目は、
+安定した診断codeで報告します。
+
+WASMでは``renderInputs.generatedBibliography``へ同じ構造を渡します。項目数はrender inputの件数上限へ、
+見出し、key、本文およびlabelは出力byte数の上限へ加算します。RustとWASMは同じ構造化入力から同じHTMLと
+診断を生成します。
+
 === 処理順序
 
 . 同じrevisionの``Analysis``からreference query、resource queryおよび引用を取得します。
 . I/O、権限検査、実在確認およびURL生成を変換処理の外で完了します。
-. queryのrangeを変更せず、成功または型付き失敗を``RenderInputs``へ格納します。
+. queryのrangeを変更せず、成功または型付き失敗を``RenderInputs``へ格納します。参考文献一覧を表示する場合は、
+書誌情報をsourceへ変換せず``GeneratedBibliography``として格納します。
 . 同じ``Analysis``、``RenderPolicy``および``RenderInputs``を変換処理へ渡します。
 . 文書revisionが変わった場合は、古い入力を再利用せず新しいqueryから作り直します。
 

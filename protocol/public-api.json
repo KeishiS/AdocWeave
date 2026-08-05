@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "packageVersion": "0.32.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
@@ -26,6 +26,8 @@
     "ResolvedResource",
     "ResolvedCitation",
     "CitationSegment",
+    "GeneratedBibliography",
+    "GeneratedBibliographyEntry",
     "AnalysisPreprocessInput",
     "AnalysisOptions",
     "SyntaxOptions",
@@ -164,7 +166,8 @@
       "fields": [
         { "json": "references", "type": "ResolvedReference[]", "default": [] },
         { "json": "resources", "type": "ResolvedResource[]", "default": [] },
-        { "json": "citations", "type": "ResolvedCitation[]", "default": [] }
+        { "json": "citations", "type": "ResolvedCitation[]", "default": [] },
+        { "json": "generatedBibliography", "type": "GeneratedBibliography | null", "default": null }
       ]
     },
     "ResolvedReference": {
@@ -196,6 +199,21 @@
       "fields": [
         { "json": "text", "type": "string", "required": true },
         { "json": "anchor", "type": "string | null", "default": null }
+      ]
+    },
+    "GeneratedBibliography": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "title", "type": "string", "required": true },
+        { "json": "entries", "type": "GeneratedBibliographyEntry[]", "default": [] }
+      ]
+    },
+    "GeneratedBibliographyEntry": {
+      "unknownFields": "reject",
+      "fields": [
+        { "json": "citationKey", "type": "string", "required": true },
+        { "json": "text", "type": "string", "required": true },
+        { "json": "label", "type": "string | null", "default": null }
       ]
     },
     "AnalysisLimits": {

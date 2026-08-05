@@ -85,6 +85,8 @@ const REQUEST_WIRE_RUST_NAME_OVERRIDES = {
 
 const RENDER_INPUT_RUST_NAMES = {
   CitationSegment: "WasmCitationSegment",
+  GeneratedBibliography: "WasmGeneratedBibliography",
+  GeneratedBibliographyEntry: "WasmGeneratedBibliographyEntry",
   ReferenceFailureKind: "WasmReferenceFailureKind",
   ReferenceNotice: "WasmReferenceNotice",
   RenderInputs: "WasmRenderInputs",
@@ -720,6 +722,8 @@ function requestWireTypeIsCopy(parsed, reached, contracts, visiting) {
 export function generateRustRenderInputs(schema) {
   const contracts = {
     CitationSegment: schema.definitions?.CitationSegment,
+    GeneratedBibliography: schema.definitions?.GeneratedBibliography,
+    GeneratedBibliographyEntry: schema.definitions?.GeneratedBibliographyEntry,
     ReferenceFailureKind: schema.enums?.ReferenceFailureKind,
     ReferenceNotice: schema.enums?.ReferenceNotice,
     RenderInputs: schema.definitions?.RenderInputs,
@@ -774,6 +778,8 @@ where
       reached,
     ),
     renderInputObject("CitationSegment", contracts.CitationSegment, reached),
+    renderInputObject("GeneratedBibliographyEntry", contracts.GeneratedBibliographyEntry, reached),
+    renderInputObject("GeneratedBibliography", contracts.GeneratedBibliography, reached),
     renderInputObject("ResolvedCitation", contracts.ResolvedCitation, reached),
     renderInputObject("ResolvedReference", contracts.ResolvedReference, reached),
     renderInputObject("ResolvedResource", contracts.ResolvedResource, reached),
@@ -948,6 +954,10 @@ function renderInputRustType(type, reached) {
   if (type === "string | null") return "Option<String>";
   if (type === "safeInteger | null") return "Option<u64>";
   if (type === "u32") return "u32";
+  const nullable = type.match(/^([A-Za-z][A-Za-z0-9]*) \| null$/);
+  if (nullable && reached.has(nullable[1])) {
+    return `Option<${RENDER_INPUT_RUST_NAMES[nullable[1]]}>`;
+  }
   const array = type.match(/^([A-Za-z][A-Za-z0-9]*)\[\]$/);
   if (array && reached.has(array[1])) {
     return `Vec<${RENDER_INPUT_RUST_NAMES[array[1]]}>`;

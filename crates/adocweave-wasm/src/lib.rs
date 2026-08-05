@@ -28,8 +28,10 @@ pub use preprocess_wire::{
 };
 pub use protocol_generated::{PROTOCOL_SCHEMA_VERSION, WORKER_PROTOCOL_VERSION, WasmProductSet};
 pub use render_input_wire::{
-    WasmReferenceFailureKind, WasmReferenceNotice, WasmReferenceOutcome, WasmRenderInputs,
-    WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
+    WasmCitationOutcome, WasmCitationSegment, WasmGeneratedBibliography,
+    WasmGeneratedBibliographyEntry, WasmReferenceFailureKind, WasmReferenceNotice,
+    WasmReferenceOutcome, WasmRenderInputs, WasmResolvedCitation, WasmResolvedReference,
+    WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
 };
 pub use request_enum_generated::{
     WasmDocumentMode, WasmSyntaxMode, WasmUnknownSourceLanguage,

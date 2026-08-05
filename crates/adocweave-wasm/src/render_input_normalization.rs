@@ -20,7 +20,11 @@ pub(crate) fn normalize(
 ) -> Result<NormalizedRenderInputs, WasmError> {
     let count = inputs.references.len() as u64
         + inputs.resources.len() as u64
-        + inputs.citations.len() as u64;
+        + inputs.citations.len() as u64
+        + inputs
+            .generated_bibliography
+            .as_ref()
+            .map_or(0, |bibliography| bibliography.entries.len() as u64);
     if count > u64::from(analysis_limits.max_references) {
         return Err(limit_error("render input count"));
     }
@@ -47,9 +51,22 @@ pub(crate) fn normalize(
             .fold(0_u64, u64::saturating_add),
         WasmCitationOutcome::Failed { .. } => 0,
     });
+    let bibliography_bytes = inputs
+        .generated_bibliography
+        .iter()
+        .flat_map(|bibliography| {
+            std::iter::once(bibliography.title.len() as u64).chain(bibliography.entries.iter().map(
+                |entry| {
+                    entry.citation_key.len() as u64
+                        + entry.text.len() as u64
+                        + entry.label.as_ref().map_or(0, String::len) as u64
+                },
+            ))
+        });
     let bytes = reference_bytes
         .chain(resource_bytes)
         .chain(citation_bytes)
+        .chain(bibliography_bytes)
         .fold(0_u64, u64::saturating_add);
     if bytes > u64::from(output_limits.max_output_bytes) {
         return Err(limit_error("render input bytes"));
@@ -92,8 +109,9 @@ fn invalid_input() -> WasmError {
 mod tests {
     use super::*;
     use crate::render_input_wire::{
-        WasmReferenceFailureKind, WasmReferenceOutcome, WasmResolvedReference,
-        WasmResolvedResource, WasmResourceFailureKind, WasmResourceOutcome,
+        WasmGeneratedBibliography, WasmGeneratedBibliographyEntry, WasmReferenceFailureKind,
+        WasmReferenceOutcome, WasmResolvedReference, WasmResolvedResource, WasmResourceFailureKind,
+        WasmResourceOutcome,
     };
 
     fn limits(max_references: u32) -> WasmLimits {
@@ -120,6 +138,7 @@ mod tests {
             references: vec![reference.clone(), reference.clone()],
             resources: Vec::new(),
             citations: Vec::new(),
+            generated_bibliography: None,
         };
         assert!(normalize(inputs, &limits(2), &WasmOutputLimits::default()).is_ok());
 
@@ -127,6 +146,7 @@ mod tests {
             references: vec![reference.clone(), reference.clone(), reference],
             resources: Vec::new(),
             citations: Vec::new(),
+            generated_bibliography: None,
         };
         let error = normalize(inputs, &limits(2), &WasmOutputLimits::default()).unwrap_err();
         assert_eq!(error.code, "limit-exceeded");
@@ -146,10 +166,40 @@ mod tests {
             }],
             resources: Vec::new(),
             citations: Vec::new(),
+            generated_bibliography: None,
         };
         assert!(normalize(inputs("abc"), &limits(1), &output_limits(5)).is_ok());
         let error = normalize(inputs("abcd"), &limits(1), &output_limits(5)).unwrap_err();
         assert_eq!(error.code, "limit-exceeded");
+    }
+
+    #[test]
+    fn bibliography_entries_share_the_count_and_output_budgets() {
+        let inputs = |text: &str| WasmRenderInputs {
+            generated_bibliography: Some(WasmGeneratedBibliography {
+                title: "R".to_owned(),
+                entries: vec![WasmGeneratedBibliographyEntry {
+                    citation_key: "k".to_owned(),
+                    text: text.to_owned(),
+                    label: Some("l".to_owned()),
+                }],
+            }),
+            ..WasmRenderInputs::default()
+        };
+
+        assert!(normalize(inputs("x"), &limits(1), &output_limits(4)).is_ok());
+        assert_eq!(
+            normalize(inputs("xx"), &limits(1), &output_limits(4))
+                .expect_err("one extra byte exceeds the output limit")
+                .code,
+            "limit-exceeded"
+        );
+        assert_eq!(
+            normalize(inputs("x"), &limits(0), &output_limits(4))
+                .expect_err("one bibliography entry consumes one input slot")
+                .code,
+            "limit-exceeded"
+        );
     }
 
     #[test]
@@ -173,6 +223,7 @@ mod tests {
                 references: vec![reference.clone(), reference],
                 resources: vec![resource.clone(), resource],
                 citations: Vec::new(),
+                generated_bibliography: None,
             },
             &limits(4),
             &WasmOutputLimits::default(),
@@ -210,6 +261,7 @@ mod tests {
                 },
             }],
             citations: Vec::new(),
+            generated_bibliography: None,
         };
         assert!(
             normalize(

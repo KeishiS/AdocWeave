@@ -1,0 +1,178 @@
+//! Validation, usage planning and serialization for host-generated bibliographies.
+
+use std::collections::BTreeMap;
+
+use crate::diagnostic::Diagnostic;
+use crate::generated_bibliography::{GeneratedBibliography, GeneratedBibliographyEntry};
+use crate::inline::Inline;
+use crate::parser::AstDocument;
+
+use super::body::{self, BlockWriter, classes, passive};
+use super::{bibliography_reference_id, render_input_diagnostic, safe};
+
+#[derive(Clone, Debug)]
+pub(super) struct PreparedGeneratedBibliography<'input> {
+    title: &'input str,
+    entries: Vec<PreparedGeneratedBibliographyEntry<'input>>,
+    entry_by_key: BTreeMap<&'input str, usize>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PreparedGeneratedBibliographyEntry<'input> {
+    pub(super) input: &'input GeneratedBibliographyEntry,
+    references: Vec<crate::source::TextRange>,
+}
+
+impl PreparedGeneratedBibliography<'_> {
+    pub(super) fn entry(&self, key: &str) -> Option<&PreparedGeneratedBibliographyEntry<'_>> {
+        self.entry_by_key
+            .get(key)
+            .and_then(|index| self.entries.get(*index))
+    }
+
+    pub(super) fn defines(&self, key: &str) -> bool {
+        self.entry_by_key.contains_key(key)
+    }
+}
+
+pub(super) fn prepare<'input>(
+    bibliography: Option<&'input GeneratedBibliography>,
+    document: &AstDocument,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<PreparedGeneratedBibliography<'input>> {
+    let bibliography = bibliography?;
+    let diagnostic_range =
+        crate::source::TextRange::new(crate::source::TextSize::ZERO, crate::source::TextSize::ZERO)
+            .expect("the zero range is ordered");
+    if bibliography.title().trim().is_empty() {
+        diagnostics.push(render_input_diagnostic(
+            "invalid-generated-bibliography",
+            "generated bibliography",
+            "generated bibliography title must not be empty",
+            diagnostic_range,
+        ));
+        return None;
+    }
+
+    let mut entries = Vec::new();
+    let mut entry_by_key = BTreeMap::new();
+    for (entry_index, entry) in bibliography.entries().iter().enumerate() {
+        let key = entry.citation_key();
+        let diagnostic_domain = format!("generated bibliography entry {entry_index}");
+        if !crate::block_grammar::valid_anchor_id(key) {
+            diagnostics.push(render_input_diagnostic(
+                "invalid-generated-bibliography-entry",
+                &diagnostic_domain,
+                "generated bibliography citation key is not a valid anchor identifier",
+                diagnostic_range,
+            ));
+            continue;
+        }
+        if entry_by_key.contains_key(key) {
+            diagnostics.push(render_input_diagnostic(
+                "duplicate-generated-bibliography-entry",
+                &diagnostic_domain,
+                &format!("generated bibliography contains the citation key `{key}` more than once"),
+                diagnostic_range,
+            ));
+            continue;
+        }
+        if document.identifiers().target_by_id(key).is_some() {
+            diagnostics.push(render_input_diagnostic(
+                "shadowed-generated-bibliography-entry",
+                &diagnostic_domain,
+                &format!(
+                    "the document definition of `{key}` takes precedence over the generated entry"
+                ),
+                diagnostic_range,
+            ));
+            continue;
+        }
+        entry_by_key.insert(key, entries.len());
+        entries.push(PreparedGeneratedBibliographyEntry {
+            input: entry,
+            references: Vec::new(),
+        });
+    }
+
+    crate::walker::walk_ast(document, |node| {
+        let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node else {
+            return;
+        };
+        if node.kind != crate::inline::StandardMacroKind::Citation {
+            return;
+        }
+        for key in node.attributes.iter().filter(|key| key.name.is_none()) {
+            if let Some(index) = entry_by_key.get(key.value.as_str()).copied() {
+                entries[index].references.push(key.value_range);
+            }
+        }
+    });
+
+    for (entry_index, entry) in entries.iter().enumerate() {
+        if entry.references.is_empty() {
+            diagnostics.push(render_input_diagnostic(
+                "unused-generated-bibliography-entry",
+                &format!("generated bibliography entry {entry_index}"),
+                &format!(
+                    "generated bibliography entry `{}` is not cited by the document",
+                    entry.input.citation_key()
+                ),
+                diagnostic_range,
+            ));
+        }
+    }
+
+    (!entries.is_empty()).then_some(PreparedGeneratedBibliography {
+        title: bibliography.title(),
+        entries,
+        entry_by_key,
+    })
+}
+
+pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBibliography<'_>) {
+    BlockWriter::start(output, "div", &[]);
+    BlockWriter::line_break(output);
+    BlockWriter::start(output, "h2", &[]);
+    BlockWriter::inline_text(output, bibliography.title);
+    BlockWriter::end(output, "h2");
+    BlockWriter::line_break(output);
+    BlockWriter::start(output, "ul", &[]);
+    BlockWriter::line_break(output);
+    for entry in &bibliography.entries {
+        BlockWriter::start(output, "li", &[]);
+        BlockWriter::start(
+            output,
+            "span",
+            &[
+                passive("id", entry.input.citation_key()),
+                classes(&["bibliography-anchor"]),
+            ],
+        );
+        BlockWriter::end(output, "span");
+        BlockWriter::inline_text(output, entry.input.text());
+        for (index, reference) in entry.references.iter().enumerate() {
+            BlockWriter::text(output, " ");
+            let target = bibliography_reference_id(*reference);
+            let href = safe::SafeFragmentUrl::new(&target)
+                .expect("generated bibliography reference IDs are control-free")
+                .into_owned();
+            BlockWriter::start(
+                output,
+                "a",
+                &[
+                    classes(&["bibliography-backref"]),
+                    body::fragment_url("href", href),
+                ],
+            );
+            BlockWriter::text(output, &format!("↩{}", index + 1));
+            BlockWriter::end(output, "a");
+        }
+        BlockWriter::end(output, "li");
+        BlockWriter::line_break(output);
+    }
+    BlockWriter::end(output, "ul");
+    BlockWriter::line_break(output);
+    BlockWriter::end(output, "div");
+    BlockWriter::line_break(output);
+}

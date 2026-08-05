@@ -66,6 +66,8 @@
     { "object": "ResolvedResource", "path": "/renderInputs/resources/0" },
     { "object": "ResolvedCitation", "path": "/renderInputs/citations/0" },
     { "object": "CitationSegment", "path": "/renderInputs/citations/0/outcome/segments/0" },
+    { "object": "GeneratedBibliography", "path": "/renderInputs/generatedBibliography" },
+    { "object": "GeneratedBibliographyEntry", "path": "/renderInputs/generatedBibliography/entries/0" },
     { "object": "AnalysisPreprocessInput", "path": "/preprocess" },
     { "object": "AnalysisOptions", "path": "/analysisOptions" },
     { "object": "SyntaxOptions", "path": "/analysisOptions/syntax" },
