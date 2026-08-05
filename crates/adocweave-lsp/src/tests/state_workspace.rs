@@ -127,9 +127,11 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
     assert_eq!(service.workspace_analysis_count(), 2);
 
     fs::write(&include_path, "second marker\n").expect("changed include");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": include_uri, "type": 2}]
-    })));
+    let jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": include_uri, "type": 2}]
+        })))
+        .jobs;
     assert_eq!(jobs.len(), 1);
     for job in jobs {
         adopt(&mut service, job);
@@ -142,9 +144,11 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
     assert!(analysis.analysis.source().contains("second marker"));
 
     fs::remove_file(&include_path).expect("remove include");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": include_uri, "type": 3}]
-    })));
+    let jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": include_uri, "type": 3}]
+        })))
+        .jobs;
     for job in jobs {
         adopt(&mut service, job);
     }
@@ -158,9 +162,11 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
         "a known non-adoc include failure must survive an in-flight scan"
     );
     fs::write(&include_path, "restored marker\n").expect("restore include");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": include_uri, "type": 1}]
-    })));
+    let jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": include_uri, "type": 1}]
+        })))
+        .jobs;
     assert_eq!(jobs.len(), 1, "a known deleted include must remain watched");
     for job in jobs {
         adopt(&mut service, job);
@@ -190,9 +196,10 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
     fs::write(&include_path, "ignored marker\n").expect("change unreferenced include");
     assert!(
         service
-            .workspace_files_changed(typed(json!({
+            .workspace_files_changed_with_journal(typed(json!({
                 "changes": [{"uri": include_uri, "type": 2}]
             })))
+            .jobs
             .is_empty(),
         "an unreferenced non-adoc include must no longer be watched"
     );
@@ -242,9 +249,11 @@ fn pending_non_adoc_include_recovers_from_a_workspace_problem() {
     );
 
     fs::write(&include_path, "recovered marker\n").expect("repair include");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": include_uri, "type": 2}]
-    })));
+    let jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": include_uri, "type": 2}]
+        })))
+        .jobs;
     assert_eq!(jobs.len(), 1, "the pending include must reanalyze its root");
     for job in jobs {
         adopt(&mut service, job);
@@ -787,7 +796,7 @@ fn analysis_adoption_rejects_a_stale_workspace_generation() {
         .expect("analysis");
 
     fs::write(&part_path, "new\n").expect("changed part");
-    service.workspace_files_changed(typed(json!({
+    service.workspace_files_changed_with_journal(typed(json!({
         "changes": [{"uri": part_uri, "type": 2}]
     })));
 
@@ -1118,7 +1127,7 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
         }
     }))));
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let jobs = service.apply_workspace_scan(scan);
+    let jobs = service.apply_workspace_scan(scan).jobs;
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].request.revision.version, 3);
     assert!(jobs[0].request.source.contains("overlay"));
@@ -1186,7 +1195,7 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
         }
     }))));
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let jobs = service.apply_workspace_scan(scan);
+    let jobs = service.apply_workspace_scan(scan).jobs;
 
     let retained_job = jobs
         .iter()
@@ -1297,13 +1306,14 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
     .expect("updated configuration");
     assert!(
         service
-            .workspace_files_changed(typed(json!({
+            .workspace_files_changed_with_journal(typed(json!({
                 "changes": [{"uri": config_uri, "type": 2}]
             })))
+            .jobs
             .is_empty()
     );
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let jobs = service.apply_workspace_scan(scan);
+    let jobs = service.apply_workspace_scan(scan).jobs;
     assert_eq!(jobs.len(), 1);
     for job in jobs {
         adopt(&mut service, job);
@@ -1354,13 +1364,14 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
     .expect("narrowed configuration");
     assert!(
         service
-            .workspace_files_changed(typed(json!({
+            .workspace_files_changed_with_journal(typed(json!({
                 "changes": [{"uri": config_uri, "type": 2}]
             })))
+            .jobs
             .is_empty()
     );
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let jobs = service.apply_workspace_scan(scan);
+    let jobs = service.apply_workspace_scan(scan).jobs;
 
     assert_eq!(jobs.len(), 1);
     assert!(jobs[0].workspace.is_none());
@@ -1583,13 +1594,14 @@ fn invalidated_project_configuration_clears_old_feature_views() {
     fs::write(&config_path, "schema-version = 99\n").expect("invalid configuration");
     assert!(
         service
-            .workspace_files_changed(typed(json!({
+            .workspace_files_changed_with_journal(typed(json!({
                 "changes": [{"uri": config_uri, "type": 2}]
             })))
+            .jobs
             .is_empty()
     );
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let jobs = service.apply_workspace_scan(scan);
+    let jobs = service.apply_workspace_scan(scan).jobs;
 
     assert_eq!(jobs.len(), 1);
     assert!(service.documents.snapshot(document_uri.as_str()).is_none());
@@ -1654,9 +1666,11 @@ fn watched_resource_failure_is_published_and_cleared_after_recovery() {
     );
 
     fs::write(&include_path, [0xff]).expect("invalid include");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": include_uri, "type": 2}]
-    })));
+    let jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": include_uri, "type": 2}]
+        })))
+        .jobs;
     assert_eq!(jobs.len(), 1, "watch failure must be published");
     for job in jobs {
         adopt(&mut service, job);
@@ -1674,9 +1688,12 @@ fn watched_resource_failure_is_published_and_cleared_after_recovery() {
     );
 
     fs::write(&unrelated_path, "changed\n").expect("changed unrelated document");
-    for job in service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": unrelated_uri, "type": 2}]
-    }))) {
+    for job in service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": unrelated_uri, "type": 2}]
+        })))
+        .jobs
+    {
         adopt(&mut service, job);
     }
     assert!(
@@ -1693,9 +1710,11 @@ fn watched_resource_failure_is_published_and_cleared_after_recovery() {
     );
 
     fs::write(&include_path, "restored\n").expect("restored include");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": include_uri, "type": 2}]
-    })));
+    let jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": include_uri, "type": 2}]
+        })))
+        .jobs;
     assert_eq!(jobs.len(), 1, "watch recovery must clear the failure");
     for job in jobs {
         adopt(&mut service, job);
@@ -1747,12 +1766,15 @@ fn watched_file_batch_applies_only_the_final_event_for_each_uri() {
     );
 
     fs::remove_file(&include_path).expect("remove include");
-    for job in service.workspace_files_changed(typed(json!({
-        "changes": [
-            {"uri": include_uri, "type": 2},
-            {"uri": include_uri, "type": 3}
-        ]
-    }))) {
+    for job in service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [
+                {"uri": include_uri, "type": 2},
+                {"uri": include_uri, "type": 3}
+            ]
+        })))
+        .jobs
+    {
         adopt(&mut service, job);
     }
 
@@ -1806,13 +1828,14 @@ fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
 
     assert!(
         service
-            .workspace_files_changed(typed(json!({
+            .workspace_files_changed_with_journal(typed(json!({
                 "changes": [{"uri": config_uri, "type": 2}]
             })))
+            .jobs
             .is_empty()
     );
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let jobs = service.apply_workspace_scan(scan);
+    let jobs = service.apply_workspace_scan(scan).jobs;
 
     assert_eq!(jobs.len(), 1);
     assert!(jobs[0].workspace.is_none());
@@ -2141,7 +2164,7 @@ fn planning_a_workspace_scan_leaves_service_state_untouched() {
         "planning must not install what it read",
     );
 
-    let jobs = service.apply_workspace_scan(scan);
+    let jobs = service.apply_workspace_scan(scan).jobs;
     assert!(
         jobs.is_empty(),
         "no document is open, so nothing needs reanalysis",
@@ -2179,7 +2202,7 @@ fn a_document_opened_during_the_scan_survives_applying_it() {
     let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
     // The client opens the file, with unsaved edits, before the walk lands.
     open(&mut service, opened.as_str(), 1, "= Edited in the editor\n");
-    let jobs = service.apply_workspace_scan(scan);
+    let jobs = service.apply_workspace_scan(scan).jobs;
 
     assert_eq!(jobs.len(), 1, "the open document is reanalyzed");
     assert_eq!(
@@ -2279,7 +2302,7 @@ fn transient_scan_failure_is_published_and_cleared_after_recovery() {
     fs::remove_file(&config).expect("remove configuration");
     fs::create_dir(&config).expect("unreadable configuration entry");
     let failed = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let jobs = service.apply_workspace_scan(failed);
+    let jobs = service.apply_workspace_scan(failed).jobs;
 
     assert_eq!(
         jobs.len(),
@@ -2310,7 +2333,7 @@ fn transient_scan_failure_is_published_and_cleared_after_recovery() {
     fs::remove_dir(&config).expect("remove invalid configuration entry");
     fs::write(&config, "schema-version = 1\n").expect("restored configuration");
     let recovered = service.plan_workspace_scan(&adocweave::NeverCancel);
-    let jobs = service.apply_workspace_scan(recovered);
+    let jobs = service.apply_workspace_scan(recovered).jobs;
     assert_eq!(jobs.len(), 1, "recovery must clear the published failure");
     for job in jobs {
         adopt(&mut service, job);
