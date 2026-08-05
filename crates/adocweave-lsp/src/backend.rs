@@ -31,7 +31,41 @@ pub(crate) struct Backend {
     service: LanguageService,
     cpu_limit: Arc<Semaphore>,
     analysis_tasks: BTreeMap<String, AnalysisTask>,
-    scan_sequence: u64,
+    workspace_scan: WorkspaceScanControl,
+}
+
+#[derive(Default)]
+struct WorkspaceScanControl {
+    sequence: u64,
+    cancellation: Option<Arc<CancellationToken>>,
+}
+
+impl WorkspaceScanControl {
+    fn begin(&mut self) -> (u64, Arc<CancellationToken>) {
+        self.invalidate();
+        let cancellation = Arc::new(CancellationToken::new());
+        self.cancellation = Some(Arc::clone(&cancellation));
+        (self.sequence, cancellation)
+    }
+
+    fn invalidate(&mut self) {
+        if let Some(cancellation) = self.cancellation.take() {
+            cancellation.cancel();
+        }
+        self.sequence = self.sequence.saturating_add(1);
+    }
+
+    const fn is_active(&self) -> bool {
+        self.cancellation.is_some()
+    }
+
+    fn accept(&mut self, sequence: u64) -> bool {
+        if sequence != self.sequence {
+            return false;
+        }
+        self.cancellation = None;
+        true
+    }
 }
 
 struct AnalysisTask {
@@ -72,7 +106,7 @@ impl Backend {
             service: LanguageService::with_host_index(host_index),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
             analysis_tasks: BTreeMap::new(),
-            scan_sequence: 0,
+            workspace_scan: WorkspaceScanControl::default(),
         });
 
         router
@@ -90,10 +124,12 @@ impl Backend {
             })
             .request::<request::Shutdown, _>(|state, _| {
                 state.cancel_all_analysis();
+                state.invalidate_workspace_scan();
                 async move { Ok(()) }
             })
             .notification::<notification::Exit>(|state, _| {
                 state.cancel_all_analysis();
+                state.invalidate_workspace_scan();
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidOpenTextDocument>(|state, params| {
@@ -125,21 +161,29 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWatchedFiles>(|state, params| {
-                if params.changes.iter().any(|change| {
+                let project_configuration_changed = params.changes.iter().any(|change| {
                     change.uri.path_segments().and_then(Iterator::last)
                         == Some(adocweave_config::FILE_NAME)
-                }) {
-                    state.invalidate_workspace_scan();
-                }
-                for job in state.service.workspace_files_changed(params) {
-                    state.schedule_analysis(job);
+                });
+                if project_configuration_changed {
+                    state.schedule_workspace_scan();
+                } else {
+                    let scan_was_active = state.workspace_scan.is_active();
+                    if scan_was_active {
+                        state.invalidate_workspace_scan();
+                    }
+                    for job in state.service.workspace_files_changed(params) {
+                        state.schedule_analysis(job);
+                    }
+                    if scan_was_active {
+                        state.schedule_workspace_scan();
+                    }
                 }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWorkspaceFolders>(|state, params| {
-                state.invalidate_workspace_scan();
-                for job in state.service.workspace_folders_changed(params) {
-                    state.schedule_analysis(job);
+                if state.service.workspace_folders_changed(params) {
+                    state.schedule_workspace_scan();
                 }
                 ControlFlow::Continue(())
             })
@@ -224,7 +268,7 @@ impl Backend {
             })
             .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed))
             .event::<WorkspaceScanned>(|state, scanned| {
-                if scanned.sequence != state.scan_sequence {
+                if !state.workspace_scan.accept(scanned.sequence) {
                     return ControlFlow::Continue(());
                 }
                 for job in state.service.apply_workspace_scan(scanned.scan) {
@@ -279,22 +323,27 @@ impl Backend {
     /// Only the newest scan is installed; an older one that finishes later is
     /// discarded rather than written over newer state.
     fn schedule_workspace_scan(&mut self) {
-        self.invalidate_workspace_scan();
-        let sequence = self.scan_sequence;
+        let (sequence, cancellation) = self.workspace_scan.begin();
         let service = self.service.clone();
         let client = self.client.clone();
         tokio::spawn(async move {
-            let Ok(Some(scan)) =
-                tokio::task::spawn_blocking(move || service.plan_workspace_scan()).await
+            let worker_cancellation = Arc::clone(&cancellation);
+            let Ok(scan) = tokio::task::spawn_blocking(move || {
+                service.plan_workspace_scan(worker_cancellation.as_ref())
+            })
+            .await
             else {
                 return;
             };
+            if cancellation.is_cancelled() {
+                return;
+            }
             let _ = client.emit(WorkspaceScanned { sequence, scan });
         });
     }
 
     fn invalidate_workspace_scan(&mut self) {
-        self.scan_sequence = self.scan_sequence.saturating_add(1);
+        self.workspace_scan.invalidate();
     }
 
     fn schedule_analysis(&mut self, job: AnalysisJob) {
@@ -519,6 +568,31 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn newer_workspace_scan_cancels_and_rejects_the_previous_result() {
+        let mut control = WorkspaceScanControl::default();
+        let (old_sequence, old_cancellation) = control.begin();
+        let (new_sequence, new_cancellation) = control.begin();
+
+        assert!(old_cancellation.is_cancelled());
+        assert!(!new_cancellation.is_cancelled());
+        assert!(!control.accept(old_sequence));
+        assert!(control.accept(new_sequence));
+        assert!(!control.is_active());
+    }
+
+    #[test]
+    fn invalidating_a_workspace_scan_cancels_it_without_accepting_a_result() {
+        let mut control = WorkspaceScanControl::default();
+        let (sequence, cancellation) = control.begin();
+
+        control.invalidate();
+
+        assert!(cancellation.is_cancelled());
+        assert!(!control.accept(sequence));
+        assert!(!control.is_active());
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrency_cpu_requests_never_exceed_the_explicit_limit() {

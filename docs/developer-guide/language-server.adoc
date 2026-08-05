@@ -199,7 +199,13 @@ watch通知にも除外規則を適用しません。
 組み込みの時点で開いている文書を重ねるため、走査中に開いた文書は失われません。エディターが保持する
 未保存の本文がディスクの本文で置き換わることもありません。走査が複数回始まった場合は最後のものだけを
 組み込み、先に始まって後から終わった結果は捨てます。
-設定変更またはworkspace folder変更を同期的に適用した場合も、進行中の古い走査結果を無効にします。
+設定変更とworkspace folder変更も同じworker経路で新しい走査を始めます。走査中にwatch通知を受けた場合は、
+進行中の走査を取り消して通知を現在の状態へ適用し、その後に最新のdisk状態から走査し直します。取消状態は
+各ディレクトリ項目、各候補文書およびinclude準備の間で確認し、途中まで読んだ結果を組み込みません。
+
+走査またはプロジェクト設定の読込に失敗した場合も、その後の``didOpen``で文書状態を登録します。通常の
+workspace inputは作らず、走査失敗を結び付けた解析jobを実行して``publishDiagnostics``で原因を通知します。
+失敗したworkspaceを既定設定による解析へ置き換えません。
 
 一方で``didOpen``、``didChange``、``didSave``および``didClose``の状態更新は、この節の先頭に記した
 とおりmain loopに残します。これらは受信順に適用する必要があり、workerへ移すと順序を保証できません。
@@ -275,8 +281,9 @@ Code Actionとして公開します。いずれも診断と同じ文書バージ
 
 ``workspace.workspaceFolders``を宣言したclientに対して、serverはworkspace folder対応と
 change notificationをinitialize結果で広告します。初期folder集合に加え、
-``workspace/didChangeWorkspaceFolders``で追加・削除されたrootを原子的に再構築し、open bufferを
-新しいワークスペース スナップショットへ再適用します。workspace folder対応clientの``workspaceFolders: null``は
+``workspace/didChangeWorkspaceFolders``で追加・削除されたrootを記録し、workerで新しいスナップショットを
+構築してから原子的に置き換えます。組み込み時点のopen bufferだけを新しいスナップショットへ再適用します。
+workspace folder対応clientの``workspaceFolders: null``は
 空集合として扱い、``rootUri``へfallbackしません。未対応clientだけがlegacy ``rootUri``を使用し、
 nullの場合はさらにdeprecatedなファイルシステム ``rootPath``へfallbackします。
 

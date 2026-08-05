@@ -4,11 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use adocweave::SourceId;
+#[cfg(test)]
+use adocweave::NeverCancel;
 use adocweave::preprocess::{
     PreprocessErrorKind, PreprocessOptions, ProjectionLimits, ResourceDocument, ResourceSnapshot,
     SafeMode, preprocess,
 };
+use adocweave::{CancellationCheck, SourceId};
 use adocweave_host::{
     FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
 };
@@ -129,10 +131,12 @@ impl PreparedWorkspaceRead {
 }
 
 impl WorkspaceResources {
+    #[cfg(test)]
     pub fn load_roots(&mut self, roots: &[Url]) -> Result<(), String> {
-        self.load_roots_with_limits(roots, adapter_managed_workspace_limits())
+        self.load_roots_with_limits(roots, adapter_managed_workspace_limits(), &NeverCancel)
     }
 
+    #[cfg(test)]
     pub fn reload_roots_with_open_sources(
         &mut self,
         roots: &[Url],
@@ -147,9 +151,21 @@ impl WorkspaceResources {
     /// proportional to the size of the workspace. Separating it lets a caller
     /// run it away from the thread that answers requests. The result holds no
     /// borrow of this state, and applying it is a separate, cheap step.
+    #[cfg(test)]
     pub fn load_roots_detached(&self, roots: &[Url]) -> LoadedRoots {
+        self.load_roots_detached_with_cancellation(roots, &NeverCancel)
+    }
+
+    /// Reads roots into a detached copy and stops promptly when superseded.
+    pub fn load_roots_detached_with_cancellation(
+        &self,
+        roots: &[Url],
+        cancellation: &dyn CancellationCheck,
+    ) -> LoadedRoots {
         let mut replacement = self.clone();
-        let error = replacement.load_roots(roots).err();
+        let error = replacement
+            .load_roots_with_limits(roots, adapter_managed_workspace_limits(), cancellation)
+            .err();
         LoadedRoots { replacement, error }
     }
 
@@ -174,6 +190,7 @@ impl WorkspaceResources {
         self.overlay_open_sources(replacement, open_sources)
     }
 
+    #[cfg(test)]
     fn reload_roots_with_open_sources_after_load(
         &mut self,
         roots: &[Url],
@@ -236,6 +253,7 @@ impl WorkspaceResources {
         &mut self,
         roots: &[Url],
         limits: WorkspaceLimits,
+        cancellation: &dyn CancellationCheck,
     ) -> Result<(), String> {
         self.last_load_failed_closed = false;
         // A reload is the only way the roots or a project file can change, so it
@@ -320,15 +338,18 @@ impl WorkspaceResources {
                 .map_err(|error| error.to_string())?;
             let mut candidates = match discovery.as_ref() {
                 Some(session) => session
-                    .discover_adoc_paths_with(|root, relative| {
-                        let directory = root.join(relative);
-                        let is_nested_workspace_root =
-                            directory != root && directory_roots.binary_search(&directory).is_ok();
-                        is_nested_workspace_root
-                            || scan_settings
-                                .get(root)
-                                .is_some_and(|settings| settings.excludes(relative))
-                    })
+                    .discover_adoc_paths_with_control(
+                        |root, relative| {
+                            let directory = root.join(relative);
+                            let is_nested_workspace_root = directory != root
+                                && directory_roots.binary_search(&directory).is_ok();
+                            is_nested_workspace_root
+                                || scan_settings
+                                    .get(root)
+                                    .is_some_and(|settings| settings.excludes(relative))
+                        },
+                        || cancellation.is_cancelled(),
+                    )
                     .map_err(|error| error.to_string())?,
                 None => Vec::new(),
             };
@@ -344,6 +365,9 @@ impl WorkspaceResources {
             let mut analysis_root_paths = Vec::new();
             let mut next_disk_version = self.next_disk_version;
             for path in candidates {
+                if cancellation.is_cancelled() {
+                    return Err("workspace scan was cancelled".to_owned());
+                }
                 let config = match config_for_path_typed(&paths, &path) {
                     Ok(config) => config,
                     Err(error) => {
@@ -438,7 +462,7 @@ impl WorkspaceResources {
                 let uri = Url::from_file_path(&path).map_err(|()| {
                     format!("cannot convert workspace path to URI: {}", path.display())
                 })?;
-                self.preload_include_closure(&uri)?;
+                self.preload_include_closure(&uri, cancellation)?;
             }
             Ok(())
         })();
@@ -883,7 +907,11 @@ impl WorkspaceResources {
         Ok(strings(affected))
     }
 
-    fn preload_include_closure(&mut self, root: &Url) -> Result<(), String> {
+    fn preload_include_closure(
+        &mut self,
+        root: &Url,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<(), String> {
         let root_id = uri_id(root)?;
         let root_scope = self
             .resource_projects
@@ -909,6 +937,9 @@ impl WorkspaceResources {
         let allowed_roots = configured_include_roots(&project_config, &self.roots)?;
         let mut attempted = BTreeSet::new();
         loop {
+            if cancellation.is_cancelled() {
+                return Err("workspace scan was cancelled".to_owned());
+            }
             let root_text = self
                 .inner
                 .get(&root_id)
@@ -1710,7 +1741,7 @@ mod tests {
         let mut limits = WorkspaceLimits::default();
         limits.resources.max_files = 1;
         resources
-            .load_roots_with_limits(&[root_uri], limits)
+            .load_roots_with_limits(&[root_uri], limits, &NeverCancel)
             .expect("load workspace");
 
         std::fs::write(&second, "second\n").expect("new source");
@@ -1734,7 +1765,7 @@ mod tests {
         let mut limits = WorkspaceLimits::default();
         limits.resources.max_files = 1;
         resources
-            .load_roots_with_limits(&[root_uri], limits)
+            .load_roots_with_limits(&[root_uri], limits, &NeverCancel)
             .expect("load workspace");
 
         std::fs::remove_file(&first).expect("remove first");
@@ -2053,6 +2084,7 @@ mod tests {
                     },
                     max_roots: 1,
                 },
+                &NeverCancel,
             )
             .expect("load workspace");
         let overlay_uri = Url::from_file_path(overlay).expect("overlay URI");
