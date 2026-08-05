@@ -56,13 +56,21 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.doesNotMatch(notes, /enum_variant_added/);
   assert.doesNotMatch(notes, /enum variant added on exhaustive enum/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /``schemaVersion``を10へ更新/);
-  assert.match(notes, /``generatedBibliography``を省略できます/);
+  assert.match(notes, /0\.33\.0のpackageとAPIへ更新/);
+  assert.match(notes, /requestの``packageVersion``も``0\.33\.0``にそろえて/);
+  assert.match(notes, /``schemaVersion``はrequestの項目ではありません/);
+  assert.match(notes, /requestには追加しないでください/);
+  assert.doesNotMatch(notes, /``schemaVersion``を10へ更新/);
+  assert.match(notes, /``PROTOCOL_SCHEMA_VERSION = 10``/);
+  assert.match(notes, /保存済みの結果やcache/);
+  assert.match(notes, /以前のschemaで作ったデータと区別/);
+  assert.match(notes, /任意項目の``renderInputs\.generatedBibliography``を省略できます/);
   assert.match(notes, new RegExp(textlintContract.compatibility.nodeEngine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(notes, new RegExp(textlintContract.compatibility.textlintVersion.replaceAll(".", "\\.")));
   assert.doesNotMatch(notes, /``npx --package``/);
   assert.doesNotMatch(notes, /再設計後のProcessor/);
-  assert.match(notes, /``render\.inputs``へ任意の``generatedBibliography``を追加/);
+  assert.match(notes, /``renderInputs\.generatedBibliography``へ任意の構造化入力を追加/);
+  assert.doesNotMatch(notes, /``render\.inputs``/);
   assert.match(notes, /AsciiDocやHTMLとして解釈しません/);
   assert.match(notes, /``RenderInputs::with_generated_bibliography``/);
   assert.match(notes, /``parseText``は専用の``adocweave-textlint-wasm``だけに含み/);
@@ -95,6 +103,14 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, new RegExp(`統一package version：${RELEASE_NOTES_VERSION}`));
   assert.match(notes, new RegExp(`release manifest schema version：${manifest.schemaVersion}`));
   assert.match(notes, new RegExp(`対応Rust toolchain：${manifest.rustVersion}`));
+
+  const requestFields = protocol.request.fields.map((field) => field.json);
+  assert.equal(requestFields.includes("schemaVersion"), false);
+  assert.equal(requestFields.includes("packageVersion"), true);
+  assert.equal(protocol.request.unknownFields, "reject");
+  assert.equal(protocol.definitions.RenderInputs.fields.find(
+    (field) => field.json === "generatedBibliography",
+  )?.default, null);
 });
 
 test("破壊的変更が無いreleaseでは定型文を記録から生成する", () => {

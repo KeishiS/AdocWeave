@@ -7,6 +7,7 @@ import {
   CONTRACT_VERSION_FIELDS,
   UNCHANGED_CONTRACTS,
 } from "./release-notes.mjs";
+import protocol from "../protocol/public-api.json" with { type: "json" };
 
 test("versionだけが違う契約は変更として報告しない", () => {
   // packageVersionはreleaseごとに必ず変わります。これを差分として数えると、
@@ -55,4 +56,12 @@ test("宣言した契約のうち正本を持つものは検査対象になる",
 
 test("versionを表すfieldを明示している", () => {
   assert.deepEqual(CONTRACT_VERSION_FIELDS, ["packageVersion"]);
+});
+
+test("WASM requestのversion fieldとprotocol schemaの識別子を区別する", () => {
+  const requestFields = protocol.request.fields.map((field) => field.json);
+  assert.ok(requestFields.includes("packageVersion"));
+  assert.equal(requestFields.includes("schemaVersion"), false);
+  assert.equal(protocol.schemaVersion, 10);
+  assert.equal(protocol.request.unknownFields, "reject");
 });
